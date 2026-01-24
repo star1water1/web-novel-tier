@@ -12,9 +12,8 @@
     },
     "assetBundlePatterns": ["**/*"],
     "newArchEnabled": true,
-
     "android": {
-      "package": "com.example.noveltier",
+      "package": "com.star1water.noveltier",
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -22,21 +21,22 @@
       },
       "permissions": []
     },
-
     "ios": {
-      "bundleIdentifier": "com.example.noveltier",
+      "bundleIdentifier": "com.star1water.noveltier",
       "supportsTablet": true
     },
-
     "web": {
       "bundler": "metro",
       "favicon": "./assets/favicon.png"
     },
-
     "updates": {
       "fallbackToCacheTimeout": 0
     },
-
-    "sdkVersion": "54.0.0"
+    "sdkVersion": "54.0.0",
+    "extra": {
+      "eas": {
+        "projectId": "98ffeff1-a782-48be-a747-f122336c5f2e"
+      }
+    }
   }
 }
