@@ -22,6 +22,12 @@
       "bundler": "metro"
     },
     "sdkVersion": "54.0.0",
+    "updates": {
+      "url": "https://u.expo.dev/98ffeff1-a782-48be-a747-f122336c5f2e"
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "extra": {
       "eas": {
         "projectId": "98ffeff1-a782-48be-a747-f122336c5f2e"
