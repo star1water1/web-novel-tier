@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Novel Tier",
-    "slug": "novel-tier",
+    "slug": "web-novel-tier",
     "scheme": "noveltier",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
