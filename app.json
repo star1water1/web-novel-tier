@@ -1,0 +1,42 @@
+{
+  "expo": {
+    "name": "Novel Tier",
+    "slug": "novel-tier",
+    "scheme": "noveltier",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0B0F1A"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "newArchEnabled": true,
+
+    "android": {
+      "package": "com.example.noveltier",
+      "softwareKeyboardLayoutMode": "resize",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0B0F1A"
+      },
+      "permissions": []
+    },
+
+    "ios": {
+      "bundleIdentifier": "com.example.noveltier",
+      "supportsTablet": true
+    },
+
+    "web": {
+      "bundler": "metro",
+      "favicon": "./assets/favicon.png"
+    },
+
+    "updates": {
+      "fallbackToCacheTimeout": 0
+    },
+
+    "sdkVersion": "54.0.0"
+  }
+}
