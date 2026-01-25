@@ -2,7 +2,7 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.4.6                                                                  ║
+ * ║  버전: 3.4.7                                                                  ║
  * ║  최종 수정: 2025-01-25                                                        ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
@@ -500,11 +500,24 @@
  * │        - 기존 데이터 자동 정상화: Phase 3 마이그레이션 추가                  │
  * │          (major_genre/sub_genre 누락 태그를 tags에 자동 병합)               │
  * │                                                                             │
- * │50. 🔧 안정성 개선 (v3.4.6):                                                 │
+ * │50. 🔧 안정성 개선 (v3.4.6 → v3.4.7):                                        │
  * │    - DB 연결 관리 강화                                                      │
  * │      · safeDbOperation 래퍼 함수 도입 (자동 재연결 + 재시도)                │
  * │      · 연결 오류 패턴 감지 (NullPointerException, prepareAsync 등)          │
  * │      · AppState 리스너로 백그라운드→포그라운드 전환 시 DB 리셋              │
+ * │    - expo-file-system 새 API 마이그레이션 (SDK 54)                          │
+ * │      · File, Directory, Paths 클래스 사용                                   │
+ * │      · 표지 라이브러리 시스템 전면 재작성                                   │
+ * │    - 매칭 큐잉 시스템 실제 적용 (v3.4.7)                                    │
+ * │      · decide() 함수를 enqueueMatchTask로 래핑                              │
+ * │      · pendingMatchPairs Set으로 중복 매치 방지                             │
+ * │      · 빠른 연타 시 트랜잭션 충돌 완전 방지                                 │
+ * │      · UI는 즉시 응답, DB는 순차 처리                                       │
+ * │      · 처리 중 상태 표시 (대기 건수 포함)                                   │
+ * │    - uuid 중복 방지 강화 (타임스탬프 + 카운터)                              │
+ * │    - 🚨 자동 승패 무한 루프 버그 수정                                       │
+ * │      · isAutoMatching 플래그로 중복 실행 방지                               │
+ * │      · 자동 승패 후 500ms 딜레이 (연속 실행 방지)                           │
  * │    - ⚠️ 웹 빌드 미지원 (Android 전용)                                       │
  * │      · app.json에 "platforms": ["android", "ios"] 설정 권장                 │
  * │      · 빌드 시: eas update --platform android                               │
@@ -1074,7 +1087,7 @@ import { Image as ExpoImage } from "expo-image";
 import * as SQLite from "expo-sqlite";
 import * as ImagePicker from "expo-image-picker";
 import * as NavigationBar from "expo-navigation-bar";
-import * as FileSystem from "expo-file-system";
+import { File, Directory, Paths } from "expo-file-system";
 
 /* =========================================================
    SQLite (Expo SDK 54 호환)
@@ -1206,6 +1219,93 @@ async function execBatch(queries) {
   );
 }
 
+/* =========================================================
+   🔄 매칭 큐잉 시스템 (v3.4.6)
+   - 빠른 연타에도 DB 트랜잭션 충돌 방지
+   - UI는 즉시 응답, DB는 순차 처리
+   - pending 매치 추적으로 중복 방지
+   ========================================================= */
+const matchQueue = [];
+let isProcessingMatchQueue = false;
+let matchQueueUpdateCallback = null; // 상태 업데이트용 콜백
+const pendingMatchPairs = new Set(); // 큐에서 처리 대기 중인 pair 키들
+
+// 큐 상태 업데이트 콜백 등록
+function setMatchQueueCallback(callback) {
+  matchQueueUpdateCallback = callback;
+}
+
+// 큐 상태 알림
+function notifyQueueStatus() {
+  if (matchQueueUpdateCallback) {
+    matchQueueUpdateCallback({
+      pending: matchQueue.length,
+      processing: isProcessingMatchQueue
+    });
+  }
+}
+
+// pair 키 생성 헬퍼 (중복 체크용)
+function matchPairKey(aId, bId) {
+  return aId < bId ? `${aId}|${bId}` : `${bId}|${aId}`;
+}
+
+// 매치가 이미 큐에 있는지 확인
+function isMatchPending(aId, bId) {
+  return pendingMatchPairs.has(matchPairKey(aId, bId));
+}
+
+// 매칭 작업을 큐에 추가 (pairKey도 함께 추적)
+function enqueueMatchTask(task, pairKey = null) {
+  return new Promise((resolve, reject) => {
+    // 중복 방지: 이미 큐에 있으면 무시
+    if (pairKey && pendingMatchPairs.has(pairKey)) {
+      console.log("매치 큐: 이미 대기 중인 조합, 무시:", pairKey);
+      resolve(null);
+      return;
+    }
+    
+    if (pairKey) {
+      pendingMatchPairs.add(pairKey);
+    }
+    
+    matchQueue.push({ task, resolve, reject, pairKey });
+    notifyQueueStatus();
+    processMatchQueue();
+  });
+}
+
+// 큐 순차 처리
+async function processMatchQueue() {
+  if (isProcessingMatchQueue) return;
+  isProcessingMatchQueue = true;
+  notifyQueueStatus();
+  
+  while (matchQueue.length > 0) {
+    const { task, resolve, reject, pairKey } = matchQueue.shift();
+    notifyQueueStatus();
+    
+    try {
+      const result = await task();
+      resolve(result);
+    } catch (e) {
+      console.warn("매칭 큐 처리 오류:", e.message);
+      reject(e);
+    } finally {
+      // 처리 완료 후 pending에서 제거
+      if (pairKey) {
+        pendingMatchPairs.delete(pairKey);
+      }
+    }
+    
+    // 각 작업 사이에 약간의 딜레이 (DB 안정성)
+    await new Promise(r => setTimeout(r, 50));
+  }
+  
+  isProcessingMatchQueue = false;
+  notifyQueueStatus();
+}
+
 /* -------------------- Migration -------------------- */
 async function columnExists(table, name) {
   const rows = await all(`PRAGMA table_info(${table});`);
@@ -1223,12 +1323,17 @@ async function ensureColumn(table, name, type, defaultExpr) {
   }
 }
 
+// 🔧 v3.4.6: 타임스탬프 + 카운터로 중복 방지 강화
+let uuidCounter = 0;
 function uuid() {
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+  const timestamp = Date.now().toString(36);
+  const counter = (uuidCounter++ % 1000).toString(36).padStart(3, '0');
+  const random = "xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0,
       v = c === "x" ? r : (r & 0x3) | 0x8;
     return v.toString(16);
   });
+  return `${timestamp}${counter}-${random}`;
 }
 
 async function initDb() {
@@ -3124,11 +3229,11 @@ function getFirstGenre(value) {
 }
 
 /* =========================================================
-   🖼️ 표지 라이브러리 시스템 (v3.4.5)
+   🖼️ 표지 라이브러리 시스템 (v3.4.6 - 새 FileSystem API)
    ========================================================= */
 
-// 표지 저장 디렉토리
-const COVER_DIR = FileSystem.documentDirectory + "covers/";
+// 표지 저장 디렉토리 (새 API: Directory 객체 사용)
+const COVER_DIR = new Directory(Paths.document, "covers");
 
 // 압축 설정 맵
 const COMPRESSION_PRESETS = {
@@ -3138,82 +3243,85 @@ const COMPRESSION_PRESETS = {
   heavy: { quality: 0.4, maxSize: 600 },            // 강한 압축
 };
 
-// 표지 디렉토리 초기화
+// 표지 디렉토리 초기화 (새 API)
 async function ensureCoverDir() {
-  if (!FileSystem) return; // 웹에서는 스킵
   try {
-    const dirInfo = await FileSystem.getInfoAsync(COVER_DIR);
-    if (!dirInfo.exists) {
-      await FileSystem.makeDirectoryAsync(COVER_DIR, { intermediates: true });
+    if (!COVER_DIR.exists) {
+      COVER_DIR.create({ intermediates: true });
     }
   } catch (e) {
     console.warn("ensureCoverDir error:", e);
   }
 }
 
-// 이미지를 표지 라이브러리에 저장 (단일)
+// 이미지를 표지 라이브러리에 저장 (새 API)
 async function saveCoverToLibrary(sourceUri, compressionLevel = "light") {
-  if (!FileSystem) {
-    console.warn("saveCoverToLibrary: FileSystem이 없음");
-    return null;
-  }
   try {
     await ensureCoverDir();
     
     const id = uuid();
     const fileName = `${id}.jpg`;
-    const destPath = COVER_DIR + fileName;
+    const destFile = new File(COVER_DIR, fileName);
     
-    console.log("saveCoverToLibrary - sourceUri:", sourceUri);
-    console.log("saveCoverToLibrary - destPath:", destPath);
+    // 소스 파일 객체 생성 (URI 문자열 직접 전달)
+    // 새 FileSystem API는 file:// URI를 직접 받을 수 있음
+    const sourceFile = new File(sourceUri);
     
-    // 파일 복사 (expo-image-picker가 이미 리사이즈/압축 옵션을 제공하므로 여기서는 단순 복사)
-    await FileSystem.copyAsync({
-      from: sourceUri,
-      to: destPath,
-    });
+    // 소스 파일 존재 확인
+    if (!sourceFile.exists) {
+      console.warn("saveCoverToLibrary: 소스 파일이 존재하지 않음:", sourceUri);
+      return null;
+    }
     
-    // 파일 정보 가져오기
-    const fileInfo = await FileSystem.getInfoAsync(destPath, { size: true });
+    // 파일 복사 (새 API - 동기 메서드)
+    sourceFile.copy(destFile);
     
-    console.log("saveCoverToLibrary - 성공, size:", fileInfo.size);
+    // 복사 후 대상 파일 존재 확인
+    if (!destFile.exists) {
+      console.warn("saveCoverToLibrary: 복사 후 대상 파일이 존재하지 않음");
+      return null;
+    }
+    
+    // 파일 정보 (새 API: 속성으로 접근)
+    const fileSize = destFile.size || 0;
     
     return {
       id,
-      file_path: destPath,
-      file_size: fileInfo.size || 0,
+      file_path: destFile.uri,
+      file_size: fileSize,
     };
   } catch (e) {
-    // 🔧 디버깅용 Alert 추가
-    Alert.alert("표지 저장 오류", `sourceUri: ${sourceUri?.substring(0, 50)}...\n\n오류: ${e.message}`);
-    console.warn("saveCoverToLibrary error:", e);
+    console.warn("saveCoverToLibrary error:", e.message);
+    // 🔧 v3.4.6: 디버깅용 상세 오류 (개발 중에만 활성화)
+    // Alert.alert("표지 저장 오류", `${e.message}\n\nsourceUri: ${sourceUri?.substring(0, 80)}...`);
     return null;
   }
 }
 
-// 표지 라이브러리에서 이미지 삭제
+// 표지 라이브러리에서 이미지 삭제 (새 API)
 async function deleteCoverFromLibrary(filePath) {
-  if (!FileSystem) return; // 웹에서는 스킵
   try {
-    const fileInfo = await FileSystem.getInfoAsync(filePath);
-    if (fileInfo.exists) {
-      await FileSystem.deleteAsync(filePath);
+    const file = new File(filePath);
+    if (file.exists) {
+      file.delete();
     }
   } catch (e) {
     console.warn("deleteCoverFromLibrary error:", e);
   }
 }
 
-// 표지 라이브러리 전체 용량 계산
+// 표지 라이브러리 전체 용량 계산 (새 API)
 async function getCoverLibrarySize() {
-  if (!FileSystem) return 0; // 웹에서는 0 반환
   try {
     await ensureCoverDir();
-    const files = await FileSystem.readDirectoryAsync(COVER_DIR);
+    if (!COVER_DIR.exists) return 0;
+    
+    const contents = COVER_DIR.list();
     let totalSize = 0;
-    for (const file of files) {
-      const info = await FileSystem.getInfoAsync(COVER_DIR + file, { size: true });
-      totalSize += info.size || 0;
+    for (const item of contents) {
+      if (item instanceof File) {
+        totalSize += item.size || 0;
+      }
     }
     return totalSize;
   } catch (e) {
@@ -13403,6 +13511,7 @@ export default function App() {
   const [autoEnabled, setAutoEnabled] = useState(false);
   const [autoGap, setAutoGap] = useState("250"); // 레거시 (하위호환)
   const [lastMatchId, setLastMatchId] = useState(null); // 언두용
+  const [isAutoMatching, setIsAutoMatching] = useState(false); // 🔧 v3.4.6: 자동 승패 처리 중 플래그
   
   // 🎯 v3.0.4: 확장된 자동승패 설정
   const [autoMatchSettings, setAutoMatchSettings] = useState({
@@ -13426,10 +13535,18 @@ export default function App() {
     percent: 0,
   });
 
+  // 🔄 v3.4.6: 매칭 큐 상태 (처리 중 표시용)
+  const [matchQueueStatus, setMatchQueueStatus] = useState({
+    pending: 0,
+    processing: false
+  });
+
   // 🔮 v3.0.3: 승부예측 분석 시스템
   const [matchAnalysis, setMatchAnalysis] = useState(null); // 현재 매칭의 분석 결과
   const [matchInsights, setMatchInsights] = useState([]); // 누적된 매칭 인사이트 (취향분석용)
 
+// === Part 1 끝 (13547줄) ===
+// === Part 2 시작 (이전 파일과 이어붙이세요) ===
   // 🆕 비교 모드
   const [compareMode, setCompareMode] = useState(false);
   const [compareIds, setCompareIds] = useState([]);
@@ -13456,8 +13573,6 @@ export default function App() {
   // 📋 v3.3.0: 예정 탭 (가등록 작품 관리)
   const [plannedList, setPlannedList] = useState([]);
   const [plannedQuery, setPlannedQuery] = useState("");
-// === Part 1 끝 ===
-// === Part 2 시작 (이전 파일과 이어붙이세요) ===
   const [plannedSortKey, setPlannedSortKey] = useState("created"); // created, title, priority
   const [plannedSortDir, setPlannedSortDir] = useState("DESC");
   const [plannedFilterPlatform, setPlannedFilterPlatform] = useState("ALL"); // 🆕 v3.4.2 플랫폼 필터
@@ -13726,6 +13841,13 @@ export default function App() {
 
   useEffect(() => {
     let mounted = true;
+    
+    // 🔄 v3.4.6: 매칭 큐 상태 콜백 등록
+    setMatchQueueCallback((status) => {
+      if (mounted) {
+        setMatchQueueStatus(status);
+      }
+    });
     
     const initialize = async () => {
       setIsLoading(true);
@@ -14029,7 +14151,10 @@ export default function App() {
     
     initialize();
     
-    return () => { mounted = false; };
+    return () => { 
+      mounted = false;
+      setMatchQueueCallback(null); // 🔄 v3.4.6: 콜백 정리
+    };
   }, []);
   
   // 🔧 v3.4.6: 앱이 포그라운드로 돌아올 때 DB 연결 강제 리셋
@@ -14782,7 +14907,13 @@ export default function App() {
       
       await loadCoverLibrary();
       
-      Alert.alert("완료", `${successCount}개의 표지를 라이브러리에 추가했습니다.`);
+      // 🔧 v3.4.6: 실패 개수도 함께 표시
+      const failCount = total - successCount;
+      if (failCount > 0) {
+        Alert.alert("완료", `${successCount}개 성공, ${failCount}개 실패\n\n실패한 이미지는 형식이 지원되지 않거나 접근할 수 없습니다.`);
+      } else {
+        Alert.alert("완료", `${successCount}개의 표지를 라이브러리에 추가했습니다.`);
+      }
     } catch (e) {
       console.warn("importCoversFromGallery error:", e);
       setCoverLibraryLoading(false);
@@ -16933,6 +17064,11 @@ export default function App() {
       const played = new Set(
         (matchRows || []).map((r) => pairKey(r.a_id, r.b_id))
       );
+      
+      // 🔄 v3.4.6: 큐에서 처리 대기 중인 매치도 제외
+      for (const pendingKey of pendingMatchPairs) {
+        played.add(pendingKey);
+      }
 
       const candidates = [];
       const focusId = focusMatchNovel?.id || null;
@@ -17022,11 +17158,24 @@ export default function App() {
   const decide = async (winnerId, decided_by = "user") => {
     if (!pair) return;
     
-    try {
-      const A = await first("SELECT * FROM novels WHERE id=?", [pair.A.id]);
-      const B = await first("SELECT * FROM novels WHERE id=?", [pair.B.id]);
+    // 🔄 v3.4.6: pair를 로컬에 캡처 (큐 처리 중 상태 변경 대비)
+    const currentPair = { A: { ...pair.A }, B: { ...pair.B } };
+    const pairKey = matchPairKey(currentPair.A.id, currentPair.B.id);
+    
+    // 🔄 v3.4.6: 이미 큐에서 처리 중인 조합이면 무시
+    if (isMatchPending(currentPair.A.id, currentPair.B.id)) {
+      console.log("decide: 이미 처리 중인 매치, 무시");
+      return;
+    }
+    
+    // 다음 매칭을 먼저 생성 (UI 반응성)
+    pickRandomUnseenPair();
+    
+    // 🔄 v3.4.6: 매칭 큐잉 시스템 사용 (빠른 연타 대응, pairKey로 중복 방지)
+    return enqueueMatchTask(async () => {
+      const A = await first("SELECT * FROM novels WHERE id=?", [currentPair.A.id]);
+      const B = await first("SELECT * FROM novels WHERE id=?", [currentPair.B.id]);
       if (!A || !B) {
-        setPair(null);
         return;
       }
       
@@ -17111,11 +17260,10 @@ export default function App() {
       }
       
       await loadList();
-      await pickRandomUnseenPair();
-    } catch (e) {
+    }, pairKey).catch((e) => {
       console.warn("decide 오류:", e);
       Alert.alert("오류", "매칭 결과 저장 중 오류가 발생했습니다.\n\n" + e.message);
-    }
+    });
   };
 
   // 🎯 v3.0.4: 확장된 자동승패 판정 함수
@@ -17301,7 +17449,11 @@ export default function App() {
   }, [autoMatchSettings]);
 
   // 자동 승패 (확장된 버전)
+  // 🔧 v3.4.6: 무한 루프 방지 - 처리 중 플래그 + 딜레이
   useEffect(() => {
+    // 이미 자동 승패 처리 중이면 무시
+    if (isAutoMatching) return;
+    
     (async () => {
       if (!autoEnabled || !pair) return;
       
@@ -17309,10 +17461,19 @@ export default function App() {
       const result = evaluateAutoMatch(pair.A, pair.B, matchAnalysis);
       
       if (result && result.winner) {
-        await decide(result.winner.id, "auto");
+        setIsAutoMatching(true);
+        
+        try {
+          await decide(result.winner.id, "auto");
+          
+          // 🔧 v3.4.6: 자동 승패 후 500ms 딜레이 (연속 실행 방지 + 결과 확인 시간)
+          await new Promise(r => setTimeout(r, 500));
+        } finally {
+          setIsAutoMatching(false);
+        }
       }
     })();
-  }, [pair, autoEnabled, autoMatchSettings, matchAnalysis, evaluateAutoMatch]);
+  }, [pair, autoEnabled, autoMatchSettings, matchAnalysis, evaluateAutoMatch, isAutoMatching]);
   
   // 자동승패 설정 저장
   const saveAutoMatchSettings = useCallback((updates) => {
@@ -21156,6 +21317,23 @@ async function importJSON() {
                   }}
                 />
               </View>
+              
+              {/* 🔄 v3.4.7: 매칭 큐 처리 중 표시 */}
+              {(matchQueueStatus.processing || matchQueueStatus.pending > 0) && (
+                <View style={{ 
+                  flexDirection: "row", 
+                  alignItems: "center", 
+                  marginTop: 10,
+                  backgroundColor: "#fef3c7",
+                  padding: 8,
+                  borderRadius: 8,
+                }}>
+                  <ActivityIndicator size="small" color="#f59e0b" style={{ marginRight: 8 }} />
+                  <Text style={{ color: "#92400e", fontWeight: "600" }}>
+                    매칭 처리 중... {matchQueueStatus.pending > 0 ? `(대기: ${matchQueueStatus.pending}건)` : ""}
+                  </Text>
+                </View>
+              )}
             </Section>
 
             <Section title="🎯 자동 승패 시스템">
