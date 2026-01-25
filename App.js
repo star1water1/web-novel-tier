@@ -500,15 +500,14 @@
  * │        - 기존 데이터 자동 정상화: Phase 3 마이그레이션 추가                  │
  * │          (major_genre/sub_genre 누락 태그를 tags에 자동 병합)               │
  * │                                                                             │
- * │50. 🔧 웹 빌드 호환성 수정 (v3.4.6):                                         │
- * │    - [CRITICAL] EAS 빌드 오류 수정                                          │
- * │      · 원인: expo-navigation-bar, expo-file-system이 웹에서 미지원          │
- * │      · 해결: 조건부 require로 변경 (Platform.OS !== "web")                  │
- * │    - 네이티브 전용 모듈 방어 로직                                           │
- * │      · NavigationBar: null 체크 후 사용                                     │
- * │      · FileSystem: null 체크 후 사용                                        │
- * │      · COVER_DIR: FileSystem 존재 시에만 설정                               │
- * │      · 표지 라이브러리 함수들: FileSystem 없으면 즉시 반환                   │
+ * │50. 🔧 안정성 개선 (v3.4.6):                                                 │
+ * │    - DB 연결 관리 강화                                                      │
+ * │      · safeDbOperation 래퍼 함수 도입 (자동 재연결 + 재시도)                │
+ * │      · 연결 오류 패턴 감지 (NullPointerException, prepareAsync 등)          │
+ * │      · AppState 리스너로 백그라운드→포그라운드 전환 시 DB 리셋              │
+ * │    - ⚠️ 웹 빌드 미지원 (Android 전용)                                       │
+ * │      · app.json에 "platforms": ["android", "ios"] 설정 권장                 │
+ * │      · 빌드 시: eas update --platform android                               │
  * │                                                                             │
  * └─────────────────────────────────────────────────────────────────────────────┘
  * 
@@ -1074,25 +1073,8 @@ import {
 import { Image as ExpoImage } from "expo-image";
 import * as SQLite from "expo-sqlite";
 import * as ImagePicker from "expo-image-picker";
-
-// 🔧 v3.4.6: 웹 빌드 호환성 - 네이티브 전용 모듈
-// ⚠️ 네이티브 빌드 시: npx expo install expo-navigation-bar expo-file-system
-let NavigationBar = null;
-let FileSystem = null;
-
-// 🔧 v3.4.6 fix: Platform.OS만으로 조건 판단 (typeof window 조건 제거)
-if (Platform.OS !== "web") {
-  try {
-    // Android에서만 NavigationBar 사용
-    if (Platform.OS === "android") {
-      NavigationBar = require("expo-navigation-bar");
-    }
-    // 네이티브에서만 FileSystem 사용
-    FileSystem = require("expo-file-system");
-  } catch (e) {
-    console.warn("Native modules not available:", e.message);
-  }
-}
+import * as NavigationBar from "expo-navigation-bar";
+import * as FileSystem from "expo-file-system";
 
 /* =========================================================
    SQLite (Expo SDK 54 호환)
@@ -3145,8 +3127,8 @@ function getFirstGenre(value) {
    🖼️ 표지 라이브러리 시스템 (v3.4.5)
    ========================================================= */
 
-// 🔧 v3.4.6: 웹 호환성 - FileSystem은 네이티브 전용
-const COVER_DIR = FileSystem ? FileSystem.documentDirectory + "covers/" : "";
+// 표지 저장 디렉토리
+const COVER_DIR = FileSystem.documentDirectory + "covers/";
 
 // 압축 설정 맵
 const COMPRESSION_PRESETS = {
@@ -13460,8 +13442,6 @@ export default function App() {
   
   // 🆕 v3.4.1: 최근 편집 작품 (빠른 접근용)
   const [recentlyEditedIds, setRecentlyEditedIds] = useState([]); // 최대 5개 ID 저장
-// === Part 1 끝 ===
-// === Part 2 시작 (이전 파일과 이어붙이세요) ===
   
   // 📋 v3.3.0: 예정 탭 (가등록 작품 관리)
   const [plannedList, setPlannedList] = useState([]);
@@ -13471,6 +13451,8 @@ export default function App() {
   const [plannedFilterPlatform, setPlannedFilterPlatform] = useState("ALL"); // 🆕 v3.4.2 플랫폼 필터
   // 예정 작품 등록 폼
   const [plannedTitle, setPlannedTitle] = useState("");
+// === Part 1 끝 ===
+// === Part 2 시작 (이전 파일과 이어붙이세요) ===
   const [plannedAuthor, setPlannedAuthor] = useState("");
   const [plannedTags, setPlannedTags] = useState("");
   const [plannedNote, setPlannedNote] = useState("");
