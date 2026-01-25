@@ -3153,13 +3153,19 @@ async function ensureCoverDir() {
 
 // 이미지를 표지 라이브러리에 저장 (단일)
 async function saveCoverToLibrary(sourceUri, compressionLevel = "light") {
-  if (!FileSystem) return null; // 웹에서는 스킵
+  if (!FileSystem) {
+    console.warn("saveCoverToLibrary: FileSystem이 없음");
+    return null;
+  }
   try {
     await ensureCoverDir();
     
     const id = uuid();
     const fileName = `${id}.jpg`;
     const destPath = COVER_DIR + fileName;
+    
+    console.log("saveCoverToLibrary - sourceUri:", sourceUri);
+    console.log("saveCoverToLibrary - destPath:", destPath);
     
     // 파일 복사 (expo-image-picker가 이미 리사이즈/압축 옵션을 제공하므로 여기서는 단순 복사)
     await FileSystem.copyAsync({
@@ -3170,12 +3176,16 @@ async function saveCoverToLibrary(sourceUri, compressionLevel = "light") {
     // 파일 정보 가져오기
     const fileInfo = await FileSystem.getInfoAsync(destPath, { size: true });
     
+    console.log("saveCoverToLibrary - 성공, size:", fileInfo.size);
+    
     return {
       id,
       file_path: destPath,
       file_size: fileInfo.size || 0,
     };
   } catch (e) {
+    // 🔧 디버깅용 Alert 추가
+    Alert.alert("표지 저장 오류", `sourceUri: ${sourceUri?.substring(0, 50)}...\n\n오류: ${e.message}`);
     console.warn("saveCoverToLibrary error:", e);
     return null;
   }
@@ -13446,13 +13456,13 @@ export default function App() {
   // 📋 v3.3.0: 예정 탭 (가등록 작품 관리)
   const [plannedList, setPlannedList] = useState([]);
   const [plannedQuery, setPlannedQuery] = useState("");
+// === Part 1 끝 ===
+// === Part 2 시작 (이전 파일과 이어붙이세요) ===
   const [plannedSortKey, setPlannedSortKey] = useState("created"); // created, title, priority
   const [plannedSortDir, setPlannedSortDir] = useState("DESC");
   const [plannedFilterPlatform, setPlannedFilterPlatform] = useState("ALL"); // 🆕 v3.4.2 플랫폼 필터
   // 예정 작품 등록 폼
   const [plannedTitle, setPlannedTitle] = useState("");
-// === Part 1 끝 ===
-// === Part 2 시작 (이전 파일과 이어붙이세요) ===
   const [plannedAuthor, setPlannedAuthor] = useState("");
   const [plannedTags, setPlannedTags] = useState("");
   const [plannedNote, setPlannedNote] = useState("");
