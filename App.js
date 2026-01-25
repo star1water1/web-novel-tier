@@ -2,8 +2,8 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.4.3                                                                  ║
- * ║  최종 수정: 2025-01-24                                                        ║
+ * ║  버전: 3.4.5                                                                  ║
+ * ║  최종 수정: 2025-01-25                                                        ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -441,6 +441,64 @@
  * │    - 예정탭에 태그 선택 모달 연동                                           │
  * │      · 기존 텍스트 입력 → 태그 선택 버튼으로 변경                           │
  * │      · 대장르/부장르 정보도 함께 저장                                       │
+ * │                                                                             │
+ * │48. 🔧 버그 수정 및 개선 (v3.4.4):                                            │
+ * │    - [CRITICAL] Promise.all 인덱스 매칭 버그 수정                           │
+ * │      · getAppMeta("tag_sentiments") 중복 호출로 인한 인덱스 밀림            │
+ * │      · 결과: savedRecentChanges에 award_system_settings 값이 들어감         │
+ * │      · 증상: 최신 변경 데이터가 기간 내에도 날아가는 현상                    │
+ * │      · 해결: 중복 호출 제거 및 인덱스 주석으로 명시                          │
+ * │    - 태그 고정 기능 복구                                                    │
+ * │      · TagSelectModal에 pinnedTags, onTogglePin props 누락 → 추가           │
+ * │      · sortWithPinnedFirst() 헬퍼로 고정 태그 상단 배치                      │
+ * │    - 대장르/부장르 태그 동기화 완전 통합                                     │
+ * │      · ⚠️ 핵심 설계: 대장르/부장르는 일반 태그와 "동등" (특별 취급 X)       │
+ * │      · handleTagModalConfirm: 모든 태그를 tags 문자열에 포함                │
+ * │      · 편집 모달: 텍스트 변경 시 대장르/부장르 자동 감지 및 분리             │
+ * │      · openTagModal 호출 시: tags에서 대장르/부장르 추출하여 전달            │
+ * │      · 대장르/부장르 뱃지: tags 문자열에서 실시간 계산하여 표시              │
+ * │    - 최신 탭에 표지 이미지 추가                                             │
+ * │      · 작품별 그룹 카드에 CoverImage 컴포넌트 추가                          │
+ * │      · novelGroup.novelId로 list에서 작품 찾아 표지 표시                    │
+ * │                                                                             │
+ * │49. 🔧 대량 편집 및 전체화면 모드 (v3.4.5):                                   │
+ * │    - [CRITICAL] 대량 편집 선택 안 됨 버그 수정                              │
+ * │      · 원인: FlatList에 extraData prop 누락 → selectedIds 변경 감지 실패    │
+ * │      · 해결: extraData={selectedIds} 추가, removeClippedSubviews=false      │
+ * │    - 대량 편집 함수 피드백 강화                                             │
+ * │      · 미선택 시 "먼저 작품을 선택해주세요" Alert 표시                       │
+ * │      · 작업 완료 시 "N개 작품에 적용했습니다" 확인 메시지                    │
+ * │    - 🆕 전체 화면 모드 (Android)                                            │
+ * │      · 상단 상태바 숨기기: StatusBar hidden 속성                             │
+ * │      · 하단 네비게이션 바 숨기기: expo-navigation-bar                        │
+ * │      · 설정 > 테마에서 토글 가능                                             │
+ * │      · 앱 시작 시 저장된 설정 자동 적용                                      │
+ * │    - 🖼️ 표지 라이브러리 시스템 (NEW!)                                        │
+ * │      · 갤러리에서 다중 이미지 일괄 가져오기 (allowsMultipleSelection)        │
+ * │      · 표지 전용 저장소: expo-file-system documentDirectory                  │
+ * │      · DB 테이블: cover_library (id, file_path, status, novel_id, ...)      │
+ * │      · 상태 관리: 미사용(unused) / 사용중(used) 자동 추적                    │
+ * │      · 표지 탭: 갤러리 뷰 + 필터(전체/미사용/사용중) + 용량 표시             │
+ * │      · 인앱 표지 선택: 작품 등록/편집 시 "DB" 버튼으로 라이브러리에서 선택   │
+ * │      · 이미지 압축 설정: 설정 > 표지 라이브러리에서 4단계 선택 가능          │
+ * │        (원본/가벼운압축[기본]/중간/강한 - quality + maxSize 조합)            │
+ * │      · 300+ 이미지 최적화: FlatList 가상화, expo-image 캐싱                  │
+ * │      · [FIX] 표지 상태 동기화 완전 구현:                                     │
+ * │        - addNovel: 신규 등록 시 표지 used 처리                               │
+ * │        - saveEdit: 표지 변경 시 old→unused, new→used                         │
+ * │        - removeNovel: 삭제 시 표지 unused 처리                               │
+ * │        - resetAll: 전체 초기화 시 모든 표지 unused                           │
+ * │        - addPlannedNovel: 예정작 등록 시 표지 used 처리                      │
+ * │        - savePlannedEdit: 예정작 편집 시 표지 상태 동기화                    │
+ * │        - removePlannedNovel: 예정작 삭제 시 표지 unused 처리                 │
+ * │        - convertPlannedToNovel: 등록전환 시 표지 상태 유지                   │
+ * │      · [FIX] 태그 동기화 일관성 개선:                                        │
+ * │        - 신규 등록: 텍스트 입력 시 대장르/부장르 자동 감지 (편집 모달과 동일)│
+ * │        - 신규 등록: 배지 표시를 tags 문자열 기준으로 실시간 감지             │
+ * │        - 예정탭 편집: 태그 선택 시 중복 방지 (대장르/부장르 분리 전달)       │
+ * │        - 예정탭 신규 등록: 태그 입력 UI + 모달 선택 기능 추가                │
+ * │        - 기존 데이터 자동 정상화: Phase 3 마이그레이션 추가                  │
+ * │          (major_genre/sub_genre 누락 태그를 tags에 자동 병합)               │
  * │                                                                             │
  * └─────────────────────────────────────────────────────────────────────────────┘
  * 
@@ -979,50 +1037,6 @@
  * ║ - 해결: validateBackupData, importJSON에서 v9~v11 모두 지원하도록 수정      ║
  * ║ - 영향: 백업/복원 기능 완전 복구                                             ║
  * ║                                                                              ║
- * ║ [DB 연결 끊김 - NullPointerException] (2025-01-24) v3.4.3                    ║
- * ║ - 증상: 매칭 탭 진입 시 "NativeDatabase.prepareAsync rejected" 오류          ║
- * ║ - 원인: 앱 백그라운드 후 DB 연결이 불안정한 상태로 남아있음                  ║
- * ║ - 해결:                                                                      ║
- * ║   1. openDb()에서 연결 테스트 실패 시 명시적으로 db.closeAsync() 호출       ║
- * ║   2. resetDbConnection()에서도 closeAsync() 호출                            ║
- * ║   3. 재연결 전 50ms 대기 시간 추가                                          ║
- * ║   4. 재시도 간격 증가 (100ms → 200ms * retry)                               ║
- * ║   5. database null 체크 추가                                                ║
- * ║   6. AppState 리스너 추가 - 포그라운드 복귀 시 DB 연결 확인                 ║
- * ║   7. 모든 DB 함수 호출에 try-catch 에러 처리 추가:                          ║
- * ║      openLogs, deleteLog, flipWinner, undoLastMatch,                        ║
- * ║      batchSetPlatforms, batchAddTag, batchRemoveTag,                        ║
- * ║      batchIncReadCount, batchSetStatus, batchSetWorkStatus, batchDelete,    ║
- * ║      removePlannedNovel, togglePin, removeNovel, resetAll                   ║
- * ║   8. useEffect 내부 DB 호출에 에러 처리 추가 (자동승패, 추천탭, 예정탭)     ║
- * ║   9. 티어 관리 버튼 에러 처리: 모두 승인, 선택 승인, 승급만, 강등만,        ║
- * ║      전체 리셋, S/A 티어 강등/승급/해제, 히스토리 복원                      ║
- * ║  10. 태그 관리 에러 처리: 미사용 태그 삭제, 전체 태그 삭제                  ║
- * ║  11. 설정 버튼 에러 처리: RD 리셋                                           ║
- * ║  12. pinnedTags/hiddenTags 로드 useEffect 에러 처리                         ║
- * ║                                                                              ║
- * ║ [대량편집 탭 개선] (2025-01-24) v3.4.3                                       ║
- * ║ - 문제: 버튼 클릭 시 아무 반응 없음, 사용자 피드백 부재                      ║
- * ║ - 해결:                                                                      ║
- * ║   1. 모든 batch 함수에 선택 없음/빈 입력 시 Alert 추가                      ║
- * ║   2. 작업 완료 시 성공 Alert 추가 (몇 개 적용되었는지 표시)                 ║
- * ║   3. 입력 필드 자동 초기화 (태그, 회차 수)                                  ║
- * ║   4. 전체 선택/전체 해제 버튼 추가                                          ║
- * ║   5. FlatList → map 변환 (ScrollView 내부 중첩 문제 해결)                   ║
- * ║   6. 삭제 확인 메시지 상세화                                                ║
- * ║                                                                              ║
- * ║ [탭 상태 유지 & 초기화 버그 수정] (2025-01-24) v3.4.3                        ║
- * ║ - 문제: 앱 재시작 시 마지막 탭이 초기화됨                                    ║
- * ║ - 해결:                                                                      ║
- * ║   1. last_screen 저장/복원 로직 추가                                        ║
- * ║   2. screen 변경 시 setAppMeta로 저장 (isLoading 체크)                      ║
- * ║   3. 초기화 시 savedLastScreen 복원                                         ║
- * ║                                                                              ║
- * ║ [치명적 버그 수정] Promise.all 순서 불일치                                   ║
- * ║ - 문제: getAppMeta("tag_sentiments") 중복 호출로 모든 설정값 밀림           ║
- * ║ - 영향: recentChanges, tagRelations, awardSettings 등 모든 설정 손실        ║
- * ║ - 해결: 중복 호출 제거, 변수와 Promise.all 순서 일치 확인                   ║
- * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  */
 
@@ -1043,11 +1057,14 @@ import {
   Linking,
   useColorScheme,
   ActivityIndicator,
-  AppState,
+  StatusBar,
+  Platform,
 } from "react-native";
 import { Image as ExpoImage } from "expo-image";
 import * as SQLite from "expo-sqlite";
 import * as ImagePicker from "expo-image-picker";
+import * as NavigationBar from "expo-navigation-bar";
+import * as FileSystem from "expo-file-system";
 
 /* =========================================================
    SQLite (Expo SDK 54 호환)
@@ -1057,20 +1074,13 @@ let dbPromise = null;
 
 // 데이터베이스 초기화 (재연결 지원, 동시 호출 방지)
 async function openDb() {
-  // 기존 연결이 있으면 테스트
   if (db) {
     try {
-      // 간단한 쿼리로 연결 상태 확인
+      // 연결 테스트
       await db.getAllAsync("SELECT 1;");
       return db;
     } catch (e) {
-      console.warn("DB 연결 테스트 실패, 재연결 시도:", e.message);
-      // 기존 연결 정리
-      try {
-        await db.closeAsync?.();
-      } catch (closeErr) {
-        console.warn("DB 닫기 실패:", closeErr.message);
-      }
+      // 연결이 끊어졌으면 리셋
       db = null;
       dbPromise = null;
     }
@@ -1078,22 +1088,14 @@ async function openDb() {
   
   // 동시에 여러 번 열리는 것 방지
   if (dbPromise) {
-    try {
-      return await dbPromise;
-    } catch (e) {
-      dbPromise = null;
-      // 계속 진행하여 새로 열기 시도
-    }
+    return dbPromise;
   }
   
   dbPromise = (async () => {
     try {
-      // 잠시 대기 (이전 연결 정리 시간)
-      await new Promise(r => setTimeout(r, 50));
       db = await SQLite.openDatabaseAsync("novel_tiers.db");
       return db;
     } catch (e) {
-      console.warn("DB 열기 실패:", e.message);
       db = null;
       dbPromise = null;
       throw e;
@@ -1107,13 +1109,6 @@ async function openDb() {
 
 // DB 연결 리셋 (에러 발생 시 호출)
 function resetDbConnection() {
-  if (db) {
-    try {
-      db.closeAsync?.();
-    } catch (e) {
-      console.warn("resetDbConnection closeAsync 실패:", e.message);
-    }
-  }
   db = null;
   dbPromise = null;
 }
@@ -1124,14 +1119,13 @@ async function exec(sql, params = []) {
   for (let i = 0; i < maxRetries; i++) {
     try {
       const database = await openDb();
-      if (!database) throw new Error("DB 연결 실패");
       return await database.runAsync(sql, params);
     } catch (e) {
       console.warn(`exec 오류 (시도 ${i + 1}/${maxRetries}):`, e.message);
       resetDbConnection();
       if (i === maxRetries - 1) throw e;
-      // 점점 길어지는 대기 시간
-      await new Promise(r => setTimeout(r, 200 * (i + 1)));
+      // 잠시 대기 후 재시도
+      await new Promise(r => setTimeout(r, 100 * (i + 1)));
     }
   }
 }
@@ -1142,13 +1136,12 @@ async function all(sql, params = []) {
   for (let i = 0; i < maxRetries; i++) {
     try {
       const database = await openDb();
-      if (!database) throw new Error("DB 연결 실패");
       return await database.getAllAsync(sql, params);
     } catch (e) {
       console.warn(`all 오류 (시도 ${i + 1}/${maxRetries}):`, e.message);
       resetDbConnection();
       if (i === maxRetries - 1) throw e;
-      await new Promise(r => setTimeout(r, 200 * (i + 1)));
+      await new Promise(r => setTimeout(r, 100 * (i + 1)));
     }
   }
 }
@@ -1158,13 +1151,12 @@ async function first(sql, params = []) {
   for (let i = 0; i < maxRetries; i++) {
     try {
       const database = await openDb();
-      if (!database) throw new Error("DB 연결 실패");
       return await database.getFirstAsync(sql, params);
     } catch (e) {
       console.warn(`first 오류 (시도 ${i + 1}/${maxRetries}):`, e.message);
       resetDbConnection();
       if (i === maxRetries - 1) throw e;
-      await new Promise(r => setTimeout(r, 200 * (i + 1)));
+      await new Promise(r => setTimeout(r, 100 * (i + 1)));
     }
   }
 }
@@ -1175,7 +1167,6 @@ async function execBatch(queries) {
   for (let i = 0; i < maxRetries; i++) {
     try {
       const database = await openDb();
-      if (!database) throw new Error("DB 연결 실패");
       await database.withTransactionAsync(async () => {
         for (const { sql, params } of queries) {
           await database.runAsync(sql, params || []);
@@ -1186,7 +1177,7 @@ async function execBatch(queries) {
       console.warn(`execBatch 오류 (시도 ${i + 1}/${maxRetries}):`, e.message);
       resetDbConnection();
       if (i === maxRetries - 1) throw e;
-      await new Promise(r => setTimeout(r, 200 * (i + 1)));
+      await new Promise(r => setTimeout(r, 100 * (i + 1)));
     }
   }
 }
@@ -1332,6 +1323,21 @@ async function initDb() {
   await ensureColumn("planned_novels", "why_interested", "TEXT", "''");
   await ensureColumn("planned_novels", "tag_data", "TEXT", "''");
   
+  // 🖼️ v3.4.5: 표지 라이브러리 테이블
+  await database.runAsync(`CREATE TABLE IF NOT EXISTS cover_library (
+    id TEXT PRIMARY KEY NOT NULL,
+    file_path TEXT NOT NULL,
+    status TEXT DEFAULT 'unused',
+    novel_id TEXT,
+    original_name TEXT,
+    width INTEGER,
+    height INTEGER,
+    file_size INTEGER,
+    created_at INTEGER
+  );`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_cover_status ON cover_library(status);`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_cover_novel ON cover_library(novel_id);`);
+  
   // 🆕 성능 최적화: 인덱스 추가
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_novels_rating ON novels(rating DESC);`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_novels_created ON novels(created_at DESC);`);
@@ -1441,6 +1447,114 @@ async function migrateTagSystem() {
       
       await setAppMeta("tag_system_version", 2);
       console.log(`태그 시스템 Phase 2 완료: ${migratedCount}개 작품 업데이트`);
+    }
+    
+    // 🔧 v3.4.5 Phase 3: major_genre/sub_genre를 tags에 병합 (일관성 보장)
+    if (version < 3) {
+      console.log("태그 시스템 v3.4.5 마이그레이션 Phase 3 시작 (태그 동기화)...");
+      
+      const novels = await all("SELECT id, tags, major_genre, sub_genre FROM novels");
+      let syncedCount = 0;
+      
+      for (const novel of novels) {
+        // 현재 tags 파싱
+        const currentTags = (novel.tags || "")
+          .split(",")
+          .map(t => t.trim())
+          .filter(Boolean);
+        
+        // major_genre, sub_genre 파싱
+        let majorGenres = [];
+        let subGenres = [];
+        try {
+          if (novel.major_genre) {
+            const parsed = JSON.parse(novel.major_genre);
+            majorGenres = Array.isArray(parsed) ? parsed : [parsed];
+          }
+        } catch {}
+        try {
+          if (novel.sub_genre) {
+            const parsed = JSON.parse(novel.sub_genre);
+            subGenres = Array.isArray(parsed) ? parsed : [parsed];
+          }
+        } catch {}
+        
+        // 누락된 장르를 tags에 추가
+        const tagsSet = new Set(currentTags.map(t => t.toLowerCase()));
+        const missingTags = [];
+        
+        for (const g of majorGenres) {
+          if (g && !tagsSet.has(g.toLowerCase())) {
+            missingTags.push(g);
+          }
+        }
+        for (const g of subGenres) {
+          if (g && !tagsSet.has(g.toLowerCase())) {
+            missingTags.push(g);
+          }
+        }
+        
+        if (missingTags.length > 0) {
+          const newTags = [...missingTags, ...currentTags].join(", ");
+          await exec(
+            "UPDATE novels SET tags = ? WHERE id = ?",
+            [newTags, novel.id]
+          );
+          syncedCount++;
+        }
+      }
+      
+      // 예정 작품도 동기화
+      const plannedNovels = await all("SELECT id, tags, major_genre, sub_genre FROM planned_novels");
+      let plannedSyncedCount = 0;
+      
+      for (const novel of plannedNovels) {
+        const currentTags = (novel.tags || "")
+          .split(",")
+          .map(t => t.trim())
+          .filter(Boolean);
+        
+        let majorGenres = [];
+        let subGenres = [];
+        try {
+          if (novel.major_genre) {
+            const parsed = JSON.parse(novel.major_genre);
+            majorGenres = Array.isArray(parsed) ? parsed : [parsed];
+          }
+        } catch {}
+        try {
+          if (novel.sub_genre) {
+            const parsed = JSON.parse(novel.sub_genre);
+            subGenres = Array.isArray(parsed) ? parsed : [parsed];
+          }
+        } catch {}
+        
+        const tagsSet = new Set(currentTags.map(t => t.toLowerCase()));
+        const missingTags = [];
+        
+        for (const g of majorGenres) {
+          if (g && !tagsSet.has(g.toLowerCase())) {
+            missingTags.push(g);
+          }
+        }
+        for (const g of subGenres) {
+          if (g && !tagsSet.has(g.toLowerCase())) {
+            missingTags.push(g);
+          }
+        }
+        
+        if (missingTags.length > 0) {
+          const newTags = [...missingTags, ...currentTags].join(", ");
+          await exec(
+            "UPDATE planned_novels SET tags = ? WHERE id = ?",
+            [newTags, novel.id]
+          );
+          plannedSyncedCount++;
+        }
+      }
+      
+      await setAppMeta("tag_system_version", 3);
+      console.log(`태그 시스템 Phase 3 완료: 본 목록 ${syncedCount}개, 예정 목록 ${plannedSyncedCount}개 동기화`);
     }
     
     return true;
@@ -2986,6 +3100,99 @@ function getFirstGenre(value) {
 }
 
 /* =========================================================
+   🖼️ 표지 라이브러리 시스템 (v3.4.5)
+   ========================================================= */
+
+// 표지 저장 디렉토리
+const COVER_DIR = FileSystem.documentDirectory + "covers/";
+
+// 압축 설정 맵
+const COMPRESSION_PRESETS = {
+  original: { quality: 1.0, maxSize: null },        // 원본 유지
+  light: { quality: 0.8, maxSize: 1200 },           // 가벼운 압축 (기본값)
+  medium: { quality: 0.6, maxSize: 800 },           // 중간 압축
+  heavy: { quality: 0.4, maxSize: 600 },            // 강한 압축
+};
+
+// 표지 디렉토리 초기화
+async function ensureCoverDir() {
+  try {
+    const dirInfo = await FileSystem.getInfoAsync(COVER_DIR);
+    if (!dirInfo.exists) {
+      await FileSystem.makeDirectoryAsync(COVER_DIR, { intermediates: true });
+    }
+  } catch (e) {
+    console.warn("ensureCoverDir error:", e);
+  }
+}
+
+// 이미지를 표지 라이브러리에 저장 (단일)
+async function saveCoverToLibrary(sourceUri, compressionLevel = "light") {
+  try {
+    await ensureCoverDir();
+    
+    const id = uuid();
+    const fileName = `${id}.jpg`;
+    const destPath = COVER_DIR + fileName;
+    
+    // 파일 복사 (expo-image-picker가 이미 리사이즈/압축 옵션을 제공하므로 여기서는 단순 복사)
+    await FileSystem.copyAsync({
+      from: sourceUri,
+      to: destPath,
+    });
+    
+    // 파일 정보 가져오기
+    const fileInfo = await FileSystem.getInfoAsync(destPath, { size: true });
+    
+    return {
+      id,
+      file_path: destPath,
+      file_size: fileInfo.size || 0,
+    };
+  } catch (e) {
+    console.warn("saveCoverToLibrary error:", e);
+    return null;
+  }
+}
+
+// 표지 라이브러리에서 이미지 삭제
+async function deleteCoverFromLibrary(filePath) {
+  try {
+    const fileInfo = await FileSystem.getInfoAsync(filePath);
+    if (fileInfo.exists) {
+      await FileSystem.deleteAsync(filePath);
+    }
+  } catch (e) {
+    console.warn("deleteCoverFromLibrary error:", e);
+  }
+}
+
+// 표지 라이브러리 전체 용량 계산
+async function getCoverLibrarySize() {
+  try {
+    await ensureCoverDir();
+    const files = await FileSystem.readDirectoryAsync(COVER_DIR);
+    let totalSize = 0;
+    for (const file of files) {
+      const info = await FileSystem.getInfoAsync(COVER_DIR + file, { size: true });
+      totalSize += info.size || 0;
+    }
+    return totalSize;
+  } catch (e) {
+    console.warn("getCoverLibrarySize error:", e);
+    return 0;
+  }
+}
+
+// 용량 포맷팅 헬퍼
+function formatFileSize(bytes) {
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+  return (bytes / (1024 * 1024 * 1024)).toFixed(2) + " GB";
+}
+
+/* =========================================================
    UI helpers (테마 prop 받도록 수정)
    ========================================================= */
 const PLATFORM_OPTIONS = ["문피아", "리디", "카카페", "노벨피아", "시리즈"];
@@ -3604,6 +3811,7 @@ const TagSelectModal = memo(({
   comboTags = [], // 조합식 태그 목록
   userMajorGenres = [],
   userSubGenres = [],
+  pinnedTags = [], // 🔧 v3.4.4: 고정 태그 목록 추가
   hiddenTags = [], // 숨김 태그 목록
   tagUsageCounts = {},
   tagCoOccurrences = {}, // 🆕 v3.2.1: 공동 출현 통계 { tag: { otherTag: count } }
@@ -3616,6 +3824,7 @@ const TagSelectModal = memo(({
   onAddUserMajorGenre,
   onAddUserSubGenre,
   onSetTagSentiment, // 🎭 v2.8.1: 태그 감정 설정 콜백
+  onTogglePin, // 🔧 v3.4.4: 태그 고정 토글 콜백
   enableIntensity = false, // 🏷️ v5.0: 농도 모드 기본 활성화 여부
   theme, // C 객체
 }) => {
@@ -3913,27 +4122,37 @@ const TagSelectModal = memo(({
     return tags.filter(t => t.toLowerCase().includes(q));
   }, [tagSearchQuery]);
 
+  // 🔧 v3.4.4: 고정 태그를 상단에 배치하는 정렬 헬퍼
+  const sortWithPinnedFirst = useCallback((tags) => {
+    const pinned = tags.filter(t => pinnedTags.includes(t));
+    const others = tags.filter(t => !pinnedTags.includes(t));
+    return [...pinned, ...others];
+  }, [pinnedTags]);
+
   const sortedMajor = useMemo(() => {
     const all = [...MAJOR_GENRES, ...userMajorGenres].filter(t => !hiddenTags.includes(t));
     const sorted = sortTagsByUsage(all, tagUsageCounts);
-    return filterBySearch(sorted);
-  }, [userMajorGenres, tagUsageCounts, hiddenTags, filterBySearch]);
+    const filtered = filterBySearch(sorted);
+    return sortWithPinnedFirst(filtered); // 🔧 v3.4.4: 고정 태그 상단
+  }, [userMajorGenres, tagUsageCounts, hiddenTags, filterBySearch, sortWithPinnedFirst]);
   
   const sortedSub = useMemo(() => {
     const all = [...SUB_GENRES, ...userSubGenres].filter(t => !hiddenTags.includes(t));
     const sorted = sortTagsByUsage(all, tagUsageCounts);
-    return filterBySearch(sorted);
-  }, [userSubGenres, tagUsageCounts, hiddenTags, filterBySearch]);
+    const filtered = filterBySearch(sorted);
+    return sortWithPinnedFirst(filtered); // 🔧 v3.4.4: 고정 태그 상단
+  }, [userSubGenres, tagUsageCounts, hiddenTags, filterBySearch, sortWithPinnedFirst]);
 
   const sortedGeneralTags = useMemo(() => {
     const result = {};
     for (const [category, tagList] of Object.entries(GENERAL_TAGS)) {
       const filtered = tagList.filter(t => !hiddenTags.includes(t));
       const sorted = sortTagsByUsage(filtered, tagUsageCounts);
-      result[category] = filterBySearch(sorted);
+      const searched = filterBySearch(sorted);
+      result[category] = sortWithPinnedFirst(searched); // 🔧 v3.4.4: 고정 태그 상단
     }
     return result;
-  }, [tagUsageCounts, hiddenTags, filterBySearch]);
+  }, [tagUsageCounts, hiddenTags, filterBySearch, sortWithPinnedFirst]);
 
   // 🎭 v2.8.1: 감정별 태그 분류
   const sentimentTags = useMemo(() => {
@@ -12085,6 +12304,7 @@ const DEFAULT_SETTINGS = {
   autoApproveMinMatches: 15,        // 자동 승인 최소 매칭 수
   showReviewBanner: true,           // 홈 화면 검토 배너 표시
   undoStackSize: 30,                // 되돌리기 스택 크기
+  fullscreenMode: false,            // 🆕 v3.4.4: 전체 화면 모드 (상태바 숨김)
   // 📝 보충 탭 기준 (v2.8)
   supplement: {
     enabled: true,                   // 보충 탭 활성화
@@ -12112,6 +12332,14 @@ const DEFAULT_SETTINGS = {
     showExpectedRating: false,       // 예상 레이팅 (숫자 입력)
     showScheduledStart: true,        // 읽기 시작 예정일
     showSimilarNovels: false,        // 비슷한 작품 (고급)
+  },
+  // 🖼️ 표지 라이브러리 설정 (v3.4.5)
+  coverLibrary: {
+    compressionLevel: "light",       // "original" | "light" | "medium" | "heavy"
+    // original: 원본 유지 (1~5MB)
+    // light: 가벼운 압축 - 80% quality, 최대 1200px (기본값)
+    // medium: 중간 압축 - 60% quality, 최대 800px
+    // heavy: 강한 압축 - 40% quality, 최대 600px
   },
 };
 
@@ -13001,7 +13229,11 @@ function generateInsights(data) {
 /* =========================================================
    App
    ========================================================= */
-   export default function App() {
+// === Part 1 끝 (13231줄) ===
+// === Part 2 시작 (13232줄부터) ===
+// 이 파일은 App_Part1.jsx와 이어집니다. 붙여넣기 시 Part 1 끝의 주석과 Part 2 시작의 주석을 제거하세요.
+
+export default function App() {
   // 🎨 다크모드
   const systemColorScheme = useColorScheme();
   const [darkMode, setDarkModeState] = useState(null); // null=시스템, true=다크, false=라이트
@@ -13101,6 +13333,7 @@ function generateInsights(data) {
   const [editItem, setEditItem] = useState(null);
   const [editOriginalReadCount, setEditOriginalReadCount] = useState(0); // 원본 읽은회차 (변동일 비교용)
   const [editOriginalTitle, setEditOriginalTitle] = useState(""); // 🔧 v3.0.2: 원본 제목 (변경 추적용)
+  const [editOriginalCoverImage, setEditOriginalCoverImage] = useState(""); // 🖼️ v3.4.5: 원본 표지 (표지 상태 추적용)
   const [editRating, setEditRating] = useState("");
   const [editPlatforms, setEditPlatforms] = useState([]); // 🆕 편집용 플랫폼
   const [editStatus, setEditStatus] = useState("reading"); // 🆕 편집용 상태
@@ -13286,6 +13519,15 @@ function generateInsights(data) {
   const [editingCoordSystem, setEditingCoordSystem] = useState(null); // 편집 중인 좌표계
   const [editingCoordTag, setEditingCoordTag] = useState(null); // 편집 중인 태그 {tag, x, y}
 
+  // 🖼️ v3.4.5: 표지 라이브러리 시스템
+  const [coverLibrary, setCoverLibrary] = useState([]); // DB에서 로드된 표지 목록
+  const [coverLibraryFilter, setCoverLibraryFilter] = useState("all"); // "all" | "unused" | "used"
+  const [coverLibraryLoading, setCoverLibraryLoading] = useState(false); // 로딩 상태 (대량 처리용)
+  const [coverLibraryProgress, setCoverLibraryProgress] = useState({ current: 0, total: 0 }); // 진행률
+  const [coverSelectModalOpen, setCoverSelectModalOpen] = useState(false); // 표지 선택 모달 (인앱 DB에서 선택)
+  const [coverSelectTarget, setCoverSelectTarget] = useState(null); // "new" | "edit" | "planned" | "plannedEdit"
+  const [coverLibrarySize, setCoverLibrarySize] = useState(0); // 전체 용량
+
   /** JSON 검증 실행 */
   const runImportValidation = () => {
     const result = validateImportData(importText);
@@ -13463,6 +13705,9 @@ function generateInsights(data) {
           if (!mounted) return;
           
           // 🚀 v2.8.1: 병렬 로드로 초기화 속도 개선
+          // 🔧 v3.4.4: Promise.all 인덱스 매칭 버그 수정
+          // ⚠️ 이전에 getAppMeta("tag_sentiments")가 중복 호출되어 인덱스가 밀려
+          //    savedRecentChanges에 award_system_settings가 들어가는 버그 발생했음
           const [
             savedDarkMode,
             savedPlatformCovers,
@@ -13484,29 +13729,27 @@ function generateInsights(data) {
             savedCustomComboTraits, // 🔗 v3.0.4: 조합 특성
             savedCustomComboTargets, // 🔗 v3.0.4: 조합 대상
             savedCoordinateSystems, // 📐 v3.2.0: 태그 좌표계
-            savedLastScreen, // 🆕 v3.4.3: 마지막 탭 복원
           ] = await Promise.all([
-            getAppMeta("settings_darkMode"),
-            getAppMeta("platform_covers"),
-            getAppMeta("app_settings"),
-            getAppMeta("tier_history"),
-            getAppMeta("custom_tags"),
-            getAppMeta("combo_tags"),
-            getAppMeta("tag_sentiments"),
-            getAppMeta("tag_attributes"), // 🆕 v3.4: 태그 속성
-            getAppMeta("user_major_genres"),
-            getAppMeta("user_sub_genres"),
-            getAppMeta("hidden_tags"),
-            getAppMeta("award_system_settings"), // 🏆 v2.9
-            getAppMeta("recent_changes"), // 📰 v3.0
-            getAppMeta("match_insights"), // 🔮 v3.0.3
-            getAppMeta("tag_relations"), // 🔗 v3.0.3
-            getAppMeta("upset_factors"), // 🔮 v3.0.3
-            getAppMeta("auto_match_settings"), // 🎯 v3.0.4
-            getAppMeta("custom_combo_traits"), // 🔗 v3.0.4: 조합 특성
-            getAppMeta("custom_combo_targets"), // 🔗 v3.0.4: 조합 대상
-            getTagCoordinateSystems(), // 📐 v3.2.0: 태그 좌표계 (헬퍼 함수 사용)
-            getAppMeta("last_screen"), // 🆕 v3.4.3: 마지막 탭
+            getAppMeta("settings_darkMode"),      // 0: savedDarkMode
+            getAppMeta("platform_covers"),        // 1: savedPlatformCovers
+            getAppMeta("app_settings"),           // 2: savedSettings
+            getAppMeta("tier_history"),           // 3: savedTierHistory
+            getAppMeta("custom_tags"),            // 4: savedCustomTags
+            getAppMeta("combo_tags"),             // 5: savedComboTags
+            getAppMeta("tag_sentiments"),         // 6: savedTagSentiments
+            getAppMeta("tag_attributes"),         // 7: savedTagAttributes
+            getAppMeta("user_major_genres"),      // 8: savedUserMajorGenres
+            getAppMeta("user_sub_genres"),        // 9: savedUserSubGenres
+            getAppMeta("hidden_tags"),            // 10: savedHiddenTags
+            getAppMeta("award_system_settings"),  // 11: savedAwardSystemSettings
+            getAppMeta("recent_changes"),         // 12: savedRecentChanges
+            getAppMeta("match_insights"),         // 13: savedMatchInsights
+            getAppMeta("tag_relations"),          // 14: savedTagRelations
+            getAppMeta("upset_factors"),          // 15: savedUpsetFactors
+            getAppMeta("auto_match_settings"),    // 16: savedAutoMatchSettings
+            getAppMeta("custom_combo_traits"),    // 17: savedCustomComboTraits
+            getAppMeta("custom_combo_targets"),   // 18: savedCustomComboTargets
+            getTagCoordinateSystems(),            // 19: savedCoordinateSystems
           ]);
           
           if (!mounted) return;
@@ -13537,6 +13780,15 @@ function generateInsights(data) {
             setAppSettings(merged);
             if (merged.tierThresholds) {
               globalTierThresholds = { ...DEFAULT_SETTINGS.tierThresholds, ...merged.tierThresholds };
+            }
+            // 🆕 v3.4.4: 전체 화면 모드 적용
+            if (Platform.OS === "android" && merged.fullscreenMode === true) {
+              try {
+                NavigationBar.setVisibilityAsync("hidden");
+                NavigationBar.setBehaviorAsync("overlay-swipe");
+              } catch (e) {
+                console.warn("NavigationBar init error:", e);
+              }
             }
           }
           
@@ -13670,6 +13922,9 @@ function generateInsights(data) {
           // 📋 v3.3.0: 예정 작품 목록 로드
           await loadPlannedList();
           
+          // 🖼️ v3.4.5: 표지 라이브러리 로드
+          await loadCoverLibrary();
+          
           // 🏷️ 태그 자동 수집 (비동기 - UI 블로킹 없음)
           setTimeout(async () => {
             try {
@@ -13711,12 +13966,6 @@ function generateInsights(data) {
             }
           }, 100); // UI 렌더링 후 실행
           
-          // 🆕 v3.4.3: 마지막으로 본 탭 복원
-          const validScreens = ["home", "reco", "rank", "planned", "recent", "awards", "match", "supplement", "review", "taste", "analysis", "bulk", "settings"];
-          if (savedLastScreen && typeof savedLastScreen === "string" && validScreens.includes(savedLastScreen)) {
-            setScreen(savedLastScreen);
-          }
-          
           setIsLoading(false);
           return; // 성공하면 종료
           
@@ -13745,39 +13994,6 @@ function generateInsights(data) {
     
     return () => { mounted = false; };
   }, []);
-  
-  // 🔧 v3.4.3: 앱 상태 변화 감지 - 포그라운드 복귀 시 DB 연결 확인
-  useEffect(() => {
-    const subscription = AppState.addEventListener("change", async (nextAppState) => {
-      if (nextAppState === "active") {
-        // 포그라운드로 돌아왔을 때 DB 연결 확인
-        try {
-          await openDb();
-        } catch (e) {
-          console.warn("포그라운드 복귀 시 DB 재연결 실패:", e);
-          resetDbConnection();
-          // 재시도
-          try {
-            await openDb();
-          } catch (e2) {
-            console.warn("DB 재연결 2차 시도 실패:", e2);
-          }
-        }
-      }
-    });
-    
-    return () => {
-      subscription.remove();
-    };
-  }, []);
-  
-  // 🆕 v3.4.3: 탭 변경 시 마지막 탭 저장
-  useEffect(() => {
-    // 초기 로드 중에는 저장하지 않음 (isLoading이 true인 동안)
-    if (!isLoading && screen) {
-      setAppMeta("last_screen", screen);
-    }
-  }, [screen, isLoading]);
   
   
   // -----------------------------------------
@@ -13881,6 +14097,13 @@ function generateInsights(data) {
       setPlannedWhyInterested("");
       
       await loadPlannedList();
+      
+      // 🖼️ v3.4.5: 표지가 있으면 라이브러리 상태 업데이트
+      if (plannedCoverImage) {
+        await updateCoverStatus(plannedCoverImage, id, "used");
+        await loadCoverLibrary();
+      }
+      
       Alert.alert("완료", "예정 작품이 추가되었습니다.");
     } catch (e) {
       console.warn("addPlannedNovel 오류:", e);
@@ -13896,13 +14119,19 @@ function generateInsights(data) {
         text: "삭제",
         style: "destructive",
         onPress: async () => {
-          try {
-            await exec("DELETE FROM planned_novels WHERE id=?", [id]);
-            await loadPlannedList();
-          } catch (e) {
-            console.warn("removePlannedNovel 오류:", e);
-            Alert.alert("오류", "예정 작품 삭제 중 오류가 발생했습니다.");
+          // 🖼️ v3.4.5: 삭제 전에 표지 확인
+          const planned = await first("SELECT cover_image FROM planned_novels WHERE id=?", [id]);
+          const coverPath = planned?.cover_image;
+          
+          await exec("DELETE FROM planned_novels WHERE id=?", [id]);
+          
+          // 🖼️ v3.4.5: 표지가 있었으면 미사용으로 변경
+          if (coverPath) {
+            await updateCoverStatus(coverPath, null, "unused");
+            await loadCoverLibrary();
           }
+          
+          await loadPlannedList();
         },
       },
     ]);
@@ -13929,6 +14158,11 @@ function generateInsights(data) {
         return;
       }
       
+      // 🖼️ v3.4.5: 표지 변경 시 라이브러리 상태 업데이트
+      const originalPlanned = await first("SELECT cover_image FROM planned_novels WHERE id=?", [n.id]);
+      const oldCover = originalPlanned?.cover_image || "";
+      const newCover = n.cover_image || "";
+      
       await exec(
         `UPDATE planned_novels SET title=?, author=?, tags=?, platforms=?, note=?, total_episodes=?, cover_image=?, link=?, work_status=?, major_genre=?, sub_genre=?, priority=?, expected_rating=?, expected_tier=?, interest_level=?, discovery_source=?, first_chapter_read=?, scheduled_start_date=?, similar_novels=?, why_interested=? WHERE id=?;`,
         [
@@ -13938,7 +14172,7 @@ function generateInsights(data) {
           n.platforms || "[]",
           n.note?.trim() || "",
           Number(n.total_episodes) || 0,
-          n.cover_image || "",
+          newCover,
           n.link?.trim() || "",
           n.work_status || "ongoing",
           n.major_genre || "",
@@ -13956,6 +14190,17 @@ function generateInsights(data) {
           n.id,
         ]
       );
+      
+      // 🖼️ v3.4.5: 표지 변경 시 라이브러리 상태 업데이트
+      if (oldCover !== newCover) {
+        if (oldCover) {
+          await updateCoverStatus(oldCover, null, "unused");
+        }
+        if (newCover) {
+          await updateCoverStatus(newCover, n.id, "used");
+        }
+        await loadCoverLibrary();
+      }
       
       setPlannedEditOpen(false);
       setPlannedEditItem(null);
@@ -14081,6 +14326,12 @@ function generateInsights(data) {
               
               await loadPlannedList();
               await loadList();
+              
+              // 🖼️ v3.4.5: 표지가 있으면 라이브러리 상태 업데이트
+              if (planned.cover_image) {
+                await applyNovelCover(id, planned.cover_image, null);
+                await loadCoverLibrary();
+              }
               
               // 📰 최신 변화 기록
               let majorGenreText = "-";
@@ -14381,6 +14632,220 @@ function generateInsights(data) {
     } catch (e) {
       console.warn("refreshDailyRecommendation 오류:", e);
       setDailyReco(null);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 🖼️ 표지 라이브러리 시스템 (v3.4.5)
+  // ═══════════════════════════════════════════════════════════════════
+
+  // 표지 라이브러리 로드
+  async function loadCoverLibrary() {
+    try {
+      const rows = await all(`SELECT * FROM cover_library ORDER BY created_at DESC;`);
+      setCoverLibrary(rows || []);
+      
+      // 용량 계산
+      const size = await getCoverLibrarySize();
+      setCoverLibrarySize(size);
+    } catch (e) {
+      console.warn("loadCoverLibrary error:", e);
+      setCoverLibrary([]);
+    }
+  }
+
+  // 갤러리에서 이미지 다중 선택 후 라이브러리에 저장
+  async function importCoversFromGallery() {
+    try {
+      const compressionLevel = appSettings.coverLibrary?.compressionLevel || "light";
+      const preset = COMPRESSION_PRESETS[compressionLevel] || COMPRESSION_PRESETS.light;
+      
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsMultipleSelection: true,
+        quality: preset.quality,
+        // 이미지 리사이즈 (expo-image-picker SDK 48+)
+        ...(preset.maxSize && {
+          exif: false,
+          allowsEditing: false,
+        }),
+      });
+
+      if (result.canceled || !result.assets || result.assets.length === 0) {
+        return;
+      }
+
+      const assets = result.assets;
+      const total = assets.length;
+      
+      setCoverLibraryLoading(true);
+      setCoverLibraryProgress({ current: 0, total });
+
+      const insertQueries = [];
+      let successCount = 0;
+
+      for (let i = 0; i < assets.length; i++) {
+        const asset = assets[i];
+        setCoverLibraryProgress({ current: i + 1, total });
+        
+        // 파일 저장
+        const saved = await saveCoverToLibrary(asset.uri, compressionLevel);
+        if (saved) {
+          const id = saved.id;
+          insertQueries.push({
+            sql: `INSERT INTO cover_library (id, file_path, status, novel_id, original_name, width, height, file_size, created_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+            params: [
+              id,
+              saved.file_path,
+              "unused",
+              null,
+              asset.fileName || `cover_${id}.jpg`,
+              asset.width || 0,
+              asset.height || 0,
+              saved.file_size,
+              Date.now(),
+            ],
+          });
+          successCount++;
+        }
+      }
+
+      if (insertQueries.length > 0) {
+        await execBatch(insertQueries);
+      }
+
+      setCoverLibraryLoading(false);
+      setCoverLibraryProgress({ current: 0, total: 0 });
+      
+      await loadCoverLibrary();
+      
+      Alert.alert("완료", `${successCount}개의 표지를 라이브러리에 추가했습니다.`);
+    } catch (e) {
+      console.warn("importCoversFromGallery error:", e);
+      setCoverLibraryLoading(false);
+      Alert.alert("오류", "이미지 가져오기 중 오류가 발생했습니다.");
+    }
+  }
+
+  // 표지 라이브러리에서 이미지 삭제
+  async function removeCoverFromLibrary(coverId) {
+    try {
+      const cover = coverLibrary.find(c => c.id === coverId);
+      if (!cover) return;
+
+      if (cover.status === "used") {
+        Alert.alert("알림", "사용 중인 표지는 삭제할 수 없습니다. 먼저 해당 작품의 표지를 변경해주세요.");
+        return;
+      }
+
+      Alert.alert("확인", "이 표지를 삭제할까요?", [
+        { text: "취소" },
+        {
+          text: "삭제",
+          style: "destructive",
+          onPress: async () => {
+            // 파일 삭제
+            await deleteCoverFromLibrary(cover.file_path);
+            // DB에서 삭제
+            await exec("DELETE FROM cover_library WHERE id=?", [coverId]);
+            await loadCoverLibrary();
+          },
+        },
+      ]);
+    } catch (e) {
+      console.warn("removeCoverFromLibrary error:", e);
+    }
+  }
+
+  // 미사용 표지 전체 삭제
+  async function removeAllUnusedCovers() {
+    try {
+      const unusedCovers = coverLibrary.filter(c => c.status === "unused");
+      if (unusedCovers.length === 0) {
+        Alert.alert("알림", "삭제할 미사용 표지가 없습니다.");
+        return;
+      }
+
+      Alert.alert("확인", `미사용 표지 ${unusedCovers.length}개를 모두 삭제할까요?`, [
+        { text: "취소" },
+        {
+          text: "삭제",
+          style: "destructive",
+          onPress: async () => {
+            setCoverLibraryLoading(true);
+            
+            for (const cover of unusedCovers) {
+              await deleteCoverFromLibrary(cover.file_path);
+            }
+            
+            await exec("DELETE FROM cover_library WHERE status='unused'");
+            
+            setCoverLibraryLoading(false);
+            await loadCoverLibrary();
+            Alert.alert("완료", `${unusedCovers.length}개의 미사용 표지를 삭제했습니다.`);
+          },
+        },
+      ]);
+    } catch (e) {
+      console.warn("removeAllUnusedCovers error:", e);
+      setCoverLibraryLoading(false);
+    }
+  }
+
+  // 표지 상태 업데이트 (작품에 표지 적용/해제 시 호출)
+  async function updateCoverStatus(filePath, novelId, status) {
+    try {
+      // filePath로 cover_library에서 찾기
+      const cover = await first("SELECT * FROM cover_library WHERE file_path=?", [filePath]);
+      if (cover) {
+        await exec(
+          "UPDATE cover_library SET status=?, novel_id=? WHERE id=?",
+          [status, novelId || null, cover.id]
+        );
+      }
+    } catch (e) {
+      console.warn("updateCoverStatus error:", e);
+    }
+  }
+
+  // 작품에 표지 적용 시 이전 표지 해제 + 새 표지 사용 중으로 변경
+  async function applyNovelCover(novelId, newCoverPath, oldCoverPath) {
+    try {
+      // 이전 표지가 있으면 미사용으로 변경
+      if (oldCoverPath && oldCoverPath !== newCoverPath) {
+        await updateCoverStatus(oldCoverPath, null, "unused");
+      }
+      // 새 표지가 라이브러리에 있으면 사용 중으로 변경
+      if (newCoverPath) {
+        await updateCoverStatus(newCoverPath, novelId, "used");
+      }
+    } catch (e) {
+      console.warn("applyNovelCover error:", e);
+    }
+  }
+
+  // 표지 선택 모달에서 표지 선택 시
+  async function selectCoverFromLibrary(cover) {
+    try {
+      const filePath = cover.file_path;
+      
+      if (coverSelectTarget === "new") {
+        setNewCoverImage(filePath);
+      } else if (coverSelectTarget === "edit" && editItem) {
+        const oldCover = editItem.cover_image;
+        setEditCoverImage(filePath);
+        // 편집 중인 아이템의 표지도 업데이트
+        setEditItem({ ...editItem, cover_image: filePath });
+      } else if (coverSelectTarget === "planned") {
+        setPlannedCoverImage(filePath);
+      } else if (coverSelectTarget === "plannedEdit" && plannedEditItem) {
+        setPlannedEditItem({ ...plannedEditItem, cover_image: filePath });
+      }
+      
+      setCoverSelectModalOpen(false);
+    } catch (e) {
+      console.warn("selectCoverFromLibrary error:", e);
     }
   }
 
@@ -14977,16 +15442,26 @@ function generateInsights(data) {
   }
 
   // 🏷️ 태그 선택 모달 확인 콜백
+  // 🔧 v3.4.4: 대장르/부장르도 일반 태그처럼 텍스트 입력창과 완전 동기화
+  // ⚠️ 설계 의도: 대장르/부장르는 "특별한" 태그가 아니라 일반 태그와 동일하게 취급됨
+  //    - 텍스트 입력창에 모든 태그(일반+대장르+부장르)가 표시됨
+  //    - 텍스트를 지우면 해당 태그(대장르/부장르 포함)가 삭제됨
+  //    - 텍스트로 입력하면 자동으로 대장르/부장르 여부를 감지하여 분류됨
   const handleTagModalConfirm = useCallback((selectedTags, selectedMajor, selectedSub, tagData = []) => {
-    // JSON 배열로 저장
+    // JSON 배열로 저장 (내부 구분용)
     const majorJson = selectedMajor.length > 0 ? JSON.stringify(selectedMajor) : "";
     const subJson = selectedSub.length > 0 ? JSON.stringify(selectedSub) : "";
+    
+    // 🔧 v3.4.4: 모든 태그를 하나의 문자열로 합침 (대장르, 부장르, 일반 태그 순)
+    // 이렇게 하면 텍스트 입력창에서 모든 태그를 볼 수 있고 편집할 수 있음
+    const allTagsArray = [...selectedMajor, ...selectedSub, ...selectedTags];
+    const allTagsString = allTagsArray.join(", ");
     
     // 🏷️ v5.0: tagData JSON 문자열
     const tagDataJson = tagData && tagData.length > 0 ? JSON.stringify(tagData) : "";
     
     if (tagModalTarget === "new") {
-      setTags(selectedTags.join(", "));
+      setTags(allTagsString);
       setNewMajorGenre(selectedMajor);
       setNewSubGenre(selectedSub);
       setNewTagData(tagData); // 🏷️ v5.0
@@ -14994,7 +15469,7 @@ function generateInsights(data) {
       // edit과 supplement 모두 editItem 업데이트
       setEditItem({
         ...editItem,
-        tags: selectedTags.join(", "),
+        tags: allTagsString, // 🔧 v3.4.4: 모든 태그 포함
         major_genre: majorJson,
         sub_genre: subJson,
         tag_data: tagDataJson, // 🏷️ v5.0
@@ -15003,10 +15478,15 @@ function generateInsights(data) {
       // 🆕 v3.4.3: 예정탭 편집에서 태그 선택
       setPlannedEditItem({
         ...plannedEditItem,
-        tags: selectedTags.join(", "),
+        tags: allTagsString, // 🔧 v3.4.4: 모든 태그 포함
         major_genre: majorJson,
         sub_genre: subJson,
       });
+    } else if (tagModalTarget === "plannedNew") {
+      // 🔧 v3.4.5: 예정탭 신규 등록에서 태그 선택
+      setPlannedTags(allTagsString);
+      setPlannedMajorGenre(selectedMajor);
+      setPlannedSubGenre(selectedSub);
     }
     setTagModalOpen(false);
   }, [tagModalTarget, editItem, plannedEditItem]);
@@ -15153,12 +15633,8 @@ function generateInsights(data) {
   // 상단 고정 태그 로드/저장
   useEffect(() => {
     (async () => {
-      try {
-        const saved = await getAppMeta("pinned_tags");
-        if (Array.isArray(saved)) setPinnedTags(saved);
-      } catch (e) {
-        console.warn("pinnedTags 로드 오류:", e);
-      }
+      const saved = await getAppMeta("pinned_tags");
+      if (Array.isArray(saved)) setPinnedTags(saved);
     })();
   }, []);
 
@@ -15170,12 +15646,8 @@ function generateInsights(data) {
   // 숨김 태그 로드/저장
   useEffect(() => {
     (async () => {
-      try {
-        const saved = await getAppMeta("hidden_tags");
-        if (Array.isArray(saved)) setHiddenTags(saved);
-      } catch (e) {
-        console.warn("hiddenTags 로드 오류:", e);
-      }
+      const saved = await getAppMeta("hidden_tags");
+      if (Array.isArray(saved)) setHiddenTags(saved);
     })();
   }, []);
 
@@ -15504,32 +15976,27 @@ function generateInsights(data) {
           text: "삭제",
           style: "destructive",
           onPress: async () => {
-            try {
-              if (unusedCustom.length > 0) {
-                const newCustom = customTags.filter(t => !unusedCustom.includes(t));
-                setCustomTags(newCustom);
-                await setAppMeta("custom_tags", newCustom);
-              }
-              if (unusedCombo.length > 0) {
-                const newCombo = comboTags.filter(t => !unusedCombo.includes(t));
-                setComboTags(newCombo);
-                await setAppMeta("combo_tags", newCombo);
-              }
-              if (unusedMajor.length > 0) {
-                const newMajor = userMajorGenres.filter(g => !unusedMajor.includes(g));
-                setUserMajorGenres(newMajor);
-                await setAppMeta("user_major_genres", newMajor);
-              }
-              if (unusedSub.length > 0) {
-                const newSub = userSubGenres.filter(g => !unusedSub.includes(g));
-                setUserSubGenres(newSub);
-                await setAppMeta("user_sub_genres", newSub);
-              }
-              Alert.alert("완료", `미사용 태그 ${total}개를 삭제했습니다.`);
-            } catch (e) {
-              console.warn("미사용 태그 삭제 오류:", e);
-              Alert.alert("오류", "미사용 태그 삭제 중 오류가 발생했습니다.");
+            if (unusedCustom.length > 0) {
+              const newCustom = customTags.filter(t => !unusedCustom.includes(t));
+              setCustomTags(newCustom);
+              await setAppMeta("custom_tags", newCustom);
             }
+            if (unusedCombo.length > 0) {
+              const newCombo = comboTags.filter(t => !unusedCombo.includes(t));
+              setComboTags(newCombo);
+              await setAppMeta("combo_tags", newCombo);
+            }
+            if (unusedMajor.length > 0) {
+              const newMajor = userMajorGenres.filter(g => !unusedMajor.includes(g));
+              setUserMajorGenres(newMajor);
+              await setAppMeta("user_major_genres", newMajor);
+            }
+            if (unusedSub.length > 0) {
+              const newSub = userSubGenres.filter(g => !unusedSub.includes(g));
+              setUserSubGenres(newSub);
+              await setAppMeta("user_sub_genres", newSub);
+            }
+            Alert.alert("완료", `미사용 태그 ${total}개를 삭제했습니다.`);
           }
         }
       ]
@@ -15547,60 +16014,55 @@ function generateInsights(data) {
           text: "삭제",
           style: "destructive",
           onPress: async () => {
-            try {
-              // 1. 커스텀/조합/대장르/부장르에서 제거
-              const newCustom = customTags.filter(t => t !== tag);
-              const newCombo = comboTags.filter(t => t !== tag);
-              const newMajor = userMajorGenres.filter(g => g !== tag);
-              const newSub = userSubGenres.filter(g => g !== tag);
-              setCustomTags(newCustom);
-              setComboTags(newCombo);
-              setUserMajorGenres(newMajor);
-              setUserSubGenres(newSub);
-              await setAppMeta("custom_tags", newCustom);
-              await setAppMeta("combo_tags", newCombo);
-              await setAppMeta("user_major_genres", newMajor);
-              await setAppMeta("user_sub_genres", newSub);
+            // 1. 커스텀/조합/대장르/부장르에서 제거
+            const newCustom = customTags.filter(t => t !== tag);
+            const newCombo = comboTags.filter(t => t !== tag);
+            const newMajor = userMajorGenres.filter(g => g !== tag);
+            const newSub = userSubGenres.filter(g => g !== tag);
+            setCustomTags(newCustom);
+            setComboTags(newCombo);
+            setUserMajorGenres(newMajor);
+            setUserSubGenres(newSub);
+            await setAppMeta("custom_tags", newCustom);
+            await setAppMeta("combo_tags", newCombo);
+            await setAppMeta("user_major_genres", newMajor);
+            await setAppMeta("user_sub_genres", newSub);
+            
+            // 2. 모든 작품에서 해당 태그 제거
+            const novels = await all("SELECT id, tags, major_genre, sub_genre FROM novels;");
+            const updates = [];
+            for (const n of novels) {
+              let changed = false;
+              // 일반 태그에서 제거
+              const tags = (n.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+              const newTags = tags.filter(t => t !== tag);
+              if (newTags.length !== tags.length) changed = true;
+              // 대장르에서 제거
+              const majors = parseMajorSub(n.major_genre);
+              const newMajors = majors.filter(g => g !== tag);
+              if (newMajors.length !== majors.length) changed = true;
+              // 부장르에서 제거
+              const subs = parseMajorSub(n.sub_genre);
+              const newSubs = subs.filter(g => g !== tag);
+              if (newSubs.length !== subs.length) changed = true;
               
-              // 2. 모든 작품에서 해당 태그 제거
-              const novels = await all("SELECT id, tags, major_genre, sub_genre FROM novels;");
-              const updates = [];
-              for (const n of novels) {
-                let changed = false;
-                // 일반 태그에서 제거
-                const tags = (n.tags || "").split(",").map(t => t.trim()).filter(Boolean);
-                const newTags = tags.filter(t => t !== tag);
-                if (newTags.length !== tags.length) changed = true;
-                // 대장르에서 제거
-                const majors = parseMajorSub(n.major_genre);
-                const newMajors = majors.filter(g => g !== tag);
-                if (newMajors.length !== majors.length) changed = true;
-                // 부장르에서 제거
-                const subs = parseMajorSub(n.sub_genre);
-                const newSubs = subs.filter(g => g !== tag);
-                if (newSubs.length !== subs.length) changed = true;
-                
-                if (changed) {
-                  updates.push({
-                    sql: "UPDATE novels SET tags=?, major_genre=?, sub_genre=? WHERE id=?",
-                    params: [
-                      newTags.join(", "),
-                      JSON.stringify(newMajors),
-                      JSON.stringify(newSubs),
-                      n.id
-                    ]
-                  });
-                }
+              if (changed) {
+                updates.push({
+                  sql: "UPDATE novels SET tags=?, major_genre=?, sub_genre=? WHERE id=?",
+                  params: [
+                    newTags.join(", "),
+                    JSON.stringify(newMajors),
+                    JSON.stringify(newSubs),
+                    n.id
+                  ]
+                });
               }
-              if (updates.length > 0) {
-                await execBatch(updates);
-              }
-              await loadList();
-              Alert.alert("완료", `"${tag}" 태그를 전체에서 삭제했습니다. (${updates.length}개 작품 수정)`);
-            } catch (e) {
-              console.warn("전체 태그 삭제 오류:", e);
-              Alert.alert("오류", "태그 삭제 중 오류가 발생했습니다.");
             }
+            if (updates.length > 0) {
+              await execBatch(updates);
+            }
+            await loadList();
+            Alert.alert("완료", `"${tag}" 태그를 전체에서 삭제했습니다. (${updates.length}개 작품 수정)`);
           }
         }
       ]
@@ -15912,13 +16374,8 @@ function generateInsights(data) {
 
   // 🆕 핀 토글
   const togglePin = useCallback(async (id, currentPinned) => {
-    try {
-      await exec("UPDATE novels SET pinned=? WHERE id=?", [currentPinned ? 0 : 1, id]);
-      await loadList();
-    } catch (e) {
-      console.warn("togglePin 오류:", e);
-      Alert.alert("오류", "고정 상태 변경 중 오류가 발생했습니다.");
-    }
+    await exec("UPDATE novels SET pinned=? WHERE id=?", [currentPinned ? 0 : 1, id]);
+    await loadList();
   }, []);
 
   // 📰 v3.0: 최신 변화 기록 추가 헬퍼
@@ -16063,6 +16520,12 @@ function generateInsights(data) {
       await loadList();
       await refreshWeeklyRecommendation(false);
       
+      // 🖼️ v3.4.5: 표지 라이브러리 상태 업데이트
+      if (newCoverImage) {
+        await applyNovelCover(id, newCoverImage, null);
+        await loadCoverLibrary();
+      }
+      
       // 📰 v3.0: 신규 등록 기록
       let majorGenreText = "-";
       try {
@@ -16092,17 +16555,23 @@ function generateInsights(data) {
         text: "삭제",
         style: "destructive",
         onPress: async () => {
-          try {
-            await execBatch([
-              { sql: "DELETE FROM matches WHERE a_id=? OR b_id=?", params: [id, id] },
-              { sql: "DELETE FROM novels WHERE id=?", params: [id] },
-            ]);
-            await rebuildAllFromMatches();
-            await loadList();
-          } catch (e) {
-            console.warn("removeNovel 오류:", e);
-            Alert.alert("오류", "작품 삭제 중 오류가 발생했습니다.\n\n" + e.message);
+          // 🖼️ v3.4.5: 삭제 전에 해당 작품의 표지 가져오기
+          const novel = await first("SELECT cover_image FROM novels WHERE id=?", [id]);
+          const coverPath = novel?.cover_image;
+          
+          await execBatch([
+            { sql: "DELETE FROM matches WHERE a_id=? OR b_id=?", params: [id, id] },
+            { sql: "DELETE FROM novels WHERE id=?", params: [id] },
+          ]);
+          
+          // 🖼️ v3.4.5: 표지가 있었으면 상태를 미사용으로 변경
+          if (coverPath) {
+            await updateCoverStatus(coverPath, null, "unused");
+            await loadCoverLibrary();
           }
+          
+          await rebuildAllFromMatches();
+          await loadList();
         },
       },
     ]);
@@ -16129,20 +16598,20 @@ function generateInsights(data) {
                   style: "destructive",
                   onPress: async () => {
                     setIsLoading(true);
-                    try {
-                      await execBatch([
-                        { sql: "DELETE FROM matches;" },
-                        { sql: "DELETE FROM novels;" },
-                      ]);
-                      setLastMatchId(null);
-                      setPair(null);
-                      await loadList();
-                      Alert.alert("완료", "모든 데이터가 삭제되었습니다.");
-                    } catch (e) {
-                      console.warn("resetAll 오류:", e);
-                      Alert.alert("오류", "초기화 중 오류가 발생했습니다.\n\n" + e.message);
-                    }
+                    await execBatch([
+                      { sql: "DELETE FROM matches;" },
+                      { sql: "DELETE FROM novels;" },
+                    ]);
+                    
+                    // 🖼️ v3.4.5: 모든 표지를 미사용 상태로 변경
+                    await exec("UPDATE cover_library SET status='unused', novel_id=NULL");
+                    await loadCoverLibrary();
+                    
+                    setLastMatchId(null);
+                    setPair(null);
+                    await loadList();
                     setIsLoading(false);
+                    Alert.alert("완료", "모든 데이터가 삭제되었습니다.");
                   },
                 },
               ]
@@ -16171,6 +16640,7 @@ function generateInsights(data) {
     setEditStatus(n.status || "reading");
     setEditWorkStatus(n.work_status || "ongoing"); // 🆕 작품 연재 상태
     setEditCoverImage(n.cover_image || "");
+    setEditOriginalCoverImage(n.cover_image || ""); // 🖼️ v3.4.5: 원본 표지 저장
     setEditLink(n.link || ""); // 🔗 링크
     
     // 📅 v3.0.3: 날짜 필드 로드 (timestamp → YYYY-MM-DD)
@@ -16329,6 +16799,12 @@ function generateInsights(data) {
           delta: delta
         }, newReadCountUpdatedAt); // 📅 수동 설정된 날짜로 기록
       }
+      
+      // 🖼️ v3.4.5: 표지 변경 시 라이브러리 상태 업데이트
+      if (editCoverImage !== editOriginalCoverImage) {
+        await applyNovelCover(n.id, editCoverImage, editOriginalCoverImage);
+        await loadCoverLibrary();
+      }
     } catch (e) {
       console.warn("saveEdit 오류:", e);
       Alert.alert("오류", "저장 중 오류가 발생했습니다.\n\n" + e.message);
@@ -16340,25 +16816,19 @@ function generateInsights(data) {
   async function openLogs(n) {
     setLogTarget(n);
     setLogOpen(true);
-    try {
-      // v2.8: 상대 작품의 rating, manual_tier도 가져와서 티어 표시
-      const rows = await all(
-        `SELECT m.*, 
-                a.title AS a_title, a.rating AS a_rating, a.manual_tier AS a_manual_tier,
-                b.title AS b_title, b.rating AS b_rating, b.manual_tier AS b_manual_tier
-         FROM matches m
-         LEFT JOIN novels a ON a.id=m.a_id
-         LEFT JOIN novels b ON b.id=m.b_id
-         WHERE a_id=? OR b_id=?
-         ORDER BY created_at DESC;`,
-        [n.id, n.id]
-      );
-      setLogs(rows || []);
-    } catch (e) {
-      console.warn("openLogs 오류:", e);
-      setLogs([]);
-      Alert.alert("오류", "대진 기록을 불러오는 중 오류가 발생했습니다.");
-    }
+    // v2.8: 상대 작품의 rating, manual_tier도 가져와서 티어 표시
+    const rows = await all(
+      `SELECT m.*, 
+              a.title AS a_title, a.rating AS a_rating, a.manual_tier AS a_manual_tier,
+              b.title AS b_title, b.rating AS b_rating, b.manual_tier AS b_manual_tier
+       FROM matches m
+       LEFT JOIN novels a ON a.id=m.a_id
+       LEFT JOIN novels b ON b.id=m.b_id
+       WHERE a_id=? OR b_id=?
+       ORDER BY created_at DESC;`,
+      [n.id, n.id]
+    );
+    setLogs(rows);
   }
 
   async function deleteLog(mid) {
@@ -16368,33 +16838,23 @@ function generateInsights(data) {
         text: "삭제",
         style: "destructive",
         onPress: async () => {
-          try {
-            await exec("DELETE FROM matches WHERE id=?", [mid]);
-            await rebuildAllFromMatches();
-            await loadList();
-            if (logTarget) await openLogs(logTarget);
-          } catch (e) {
-            console.warn("deleteLog 오류:", e);
-            Alert.alert("오류", "대진 기록 삭제 중 오류가 발생했습니다.\n\n" + e.message);
-          }
+          await exec("DELETE FROM matches WHERE id=?", [mid]);
+          await rebuildAllFromMatches();
+          await loadList();
+          if (logTarget) await openLogs(logTarget);
         },
       },
     ]);
   }
 
   async function flipWinner(mid) {
-    try {
-      const m = await first("SELECT * FROM matches WHERE id=?", [mid]);
-      if (!m) return;
-      const newWinner = m.winner_id === m.a_id ? m.b_id : m.a_id;
-      await exec("UPDATE matches SET winner_id=? WHERE id=?", [newWinner, mid]);
-      await rebuildAllFromMatches();
-      await loadList();
-      if (logTarget) await openLogs(logTarget);
-    } catch (e) {
-      console.warn("flipWinner 오류:", e);
-      Alert.alert("오류", "승자 변경 중 오류가 발생했습니다.\n\n" + e.message);
-    }
+    const m = await first("SELECT * FROM matches WHERE id=?", [mid]);
+    if (!m) return;
+    const newWinner = m.winner_id === m.a_id ? m.b_id : m.a_id;
+    await exec("UPDATE matches SET winner_id=? WHERE id=?", [newWinner, mid]);
+    await rebuildAllFromMatches();
+    await loadList();
+    if (logTarget) await openLogs(logTarget);
   }
 
   /* ---------- Matching ---------- */
@@ -16781,17 +17241,13 @@ function generateInsights(data) {
   // 자동 승패 (확장된 버전)
   useEffect(() => {
     (async () => {
-      try {
-        if (!autoEnabled || !pair) return;
-        
-        // 확장된 자동승패 판정
-        const result = evaluateAutoMatch(pair.A, pair.B, matchAnalysis);
-        
-        if (result && result.winner) {
-          await decide(result.winner.id, "auto");
-        }
-      } catch (e) {
-        console.warn("자동 승패 처리 오류:", e);
+      if (!autoEnabled || !pair) return;
+      
+      // 확장된 자동승패 판정
+      const result = evaluateAutoMatch(pair.A, pair.B, matchAnalysis);
+      
+      if (result && result.winner) {
+        await decide(result.winner.id, "auto");
       }
     })();
   }, [pair, autoEnabled, autoMatchSettings, matchAnalysis, evaluateAutoMatch]);
@@ -16849,30 +17305,20 @@ function generateInsights(data) {
   }, []);
   
   // 추천 탭 진입 시, 작품 리스트 최신화 후 추천 생성
-  useEffect(() => {
-    if (screen === "reco") {
-      (async () => {
-        try {
-          await loadList();
-          await loadPlannedList(); // 📋 v3.3.0: 예정 작품도 로드
-          await refreshDailyRecommendation(false);
-        } catch (e) {
-          console.warn("추천탭 로드 오류:", e);
-        }
-      })();
-    }
-  }, [screen]);
+useEffect(() => {
+  if (screen === "reco") {
+    (async () => {
+      await loadList();
+      await loadPlannedList(); // 📋 v3.3.0: 예정 작품도 로드
+      await refreshDailyRecommendation(false);
+    })();
+  }
+}, [screen]);
 
   // 예정 탭 진입 시 예정 목록 로드
   useEffect(() => {
     if (screen === "planned") {
-      (async () => {
-        try {
-          await loadPlannedList();
-        } catch (e) {
-          console.warn("예정탭 로드 오류:", e);
-        }
-      })();
+      loadPlannedList();
     }
   }, [screen]);
 
@@ -16888,17 +17334,12 @@ function generateInsights(data) {
         text: "되돌리기",
         style: "destructive",
         onPress: async () => {
-          try {
-            await exec("DELETE FROM matches WHERE id=?", [lastMatchId]);
-            setLastMatchId(null);
-            setPair(null);
-            await rebuildAllFromMatches();
-            await loadList();
-            Alert.alert("완료", "마지막 매칭을 되돌렸습니다.");
-          } catch (e) {
-            console.warn("undoLastMatch 오류:", e);
-            Alert.alert("오류", "매칭 되돌리기 중 오류가 발생했습니다.\n\n" + e.message);
-          }
+          await exec("DELETE FROM matches WHERE id=?", [lastMatchId]);
+          setLastMatchId(null);
+          setPair(null);
+          await rebuildAllFromMatches();
+          await loadList();
+          Alert.alert("완료", "마지막 매칭을 되돌렸습니다.");
         },
       },
     ]);
@@ -17299,29 +17740,20 @@ function generateInsights(data) {
       Alert.alert("알림", "먼저 작품을 선택해주세요.");
       return;
     }
-    if (!plats || plats.length === 0) {
-      Alert.alert("알림", "적용할 플랫폼을 선택해주세요.");
-      return;
-    }
-    try {
-      const queries = selectedIds.map((id) => ({
-        sql: "UPDATE novels SET platforms=? WHERE id=?",
-        params: [JSON.stringify(plats), id],
-      }));
-      await execBatch(queries);
-      await loadList();
-      Alert.alert("완료", `${selectedIds.length}개 작품에 플랫폼 적용 완료`);
-    } catch (e) {
-      console.warn("batchSetPlatforms 오류:", e);
-      Alert.alert("오류", "플랫폼 일괄 설정 중 오류가 발생했습니다.\n\n" + e.message);
-    }
+    const queries = selectedIds.map((id) => ({
+      sql: "UPDATE novels SET platforms=? WHERE id=?",
+      params: [JSON.stringify(plats), id],
+    }));
+    await execBatch(queries);
+    await loadList();
+    Alert.alert("완료", `${selectedIds.length}개 작품에 플랫폼을 적용했습니다.`);
   }
 
   // 🏷️ v3.1.2: 대량편집 농도 지원 - 기본 농도 3으로 태그 추가
   async function batchAddTag(t, intensity = 3) {
     t = (t || "").trim();
     if (!t) {
-      Alert.alert("알림", "추가할 태그를 입력해주세요.");
+      Alert.alert("알림", "태그를 입력해주세요.");
       return;
     }
     if (selectedIds.length === 0) {
@@ -17329,61 +17761,55 @@ function generateInsights(data) {
       return;
     }
 
-    try {
-      const placeholders = selectedIds.map(() => "?").join(",");
-      const rows = await all(
-        `SELECT id, tags, tag_data FROM novels WHERE id IN (${placeholders})`,
-        selectedIds
+    const placeholders = selectedIds.map(() => "?").join(",");
+    const rows = await all(
+      `SELECT id, tags, tag_data FROM novels WHERE id IN (${placeholders})`,
+      selectedIds
+    );
+
+    const queries = [];
+    for (const row of rows) {
+      // 1. tags 필드 업데이트
+      const tagSet = new Set(
+        (row.tags || "")
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean)
       );
-
-      const queries = [];
-      for (const row of rows) {
-        // 1. tags 필드 업데이트
-        const tagSet = new Set(
-          (row.tags || "")
-            .split(",")
-            .map((x) => x.trim())
-            .filter(Boolean)
-        );
-        tagSet.add(t);
-        const newTags = Array.from(tagSet).join(", ");
-        
-        // 2. tag_data 필드 업데이트 (농도 포함)
-        let tagData = [];
-        try {
-          tagData = JSON.parse(row.tag_data || "[]");
-          if (!Array.isArray(tagData)) tagData = [];
-        } catch { tagData = []; }
-        
-        // 기존에 같은 태그가 있으면 농도만 업데이트, 없으면 추가
-        const existingIdx = tagData.findIndex(td => td.tag === t);
-        if (existingIdx >= 0) {
-          tagData[existingIdx].intensity = intensity;
-        } else {
-          tagData.push({ tag: t, intensity });
-        }
-        
-        queries.push({
-          sql: "UPDATE novels SET tags=?, tag_data=? WHERE id=?",
-          params: [newTags, JSON.stringify(tagData), row.id],
-        });
+      tagSet.add(t);
+      const newTags = Array.from(tagSet).join(", ");
+      
+      // 2. tag_data 필드 업데이트 (농도 포함)
+      let tagData = [];
+      try {
+        tagData = JSON.parse(row.tag_data || "[]");
+        if (!Array.isArray(tagData)) tagData = [];
+      } catch { tagData = []; }
+      
+      // 기존에 같은 태그가 있으면 농도만 업데이트, 없으면 추가
+      const existingIdx = tagData.findIndex(td => td.tag === t);
+      if (existingIdx >= 0) {
+        tagData[existingIdx].intensity = intensity;
+      } else {
+        tagData.push({ tag: t, intensity });
       }
-
-      await execBatch(queries);
-      setBulkTag(""); // 입력 초기화
-      await loadList();
-      Alert.alert("완료", `${selectedIds.length}개 작품에 "${t}" 태그 추가 완료`);
-    } catch (e) {
-      console.warn("batchAddTag 오류:", e);
-      Alert.alert("오류", "태그 일괄 추가 중 오류가 발생했습니다.\n\n" + e.message);
+      
+      queries.push({
+        sql: "UPDATE novels SET tags=?, tag_data=? WHERE id=?",
+        params: [newTags, JSON.stringify(tagData), row.id],
+      });
     }
+
+    await execBatch(queries);
+    await loadList();
+    Alert.alert("완료", `${selectedIds.length}개 작품에 "${t}" 태그를 추가했습니다.`);
   }
 
   // 🏷️ v3.1.2: 대량편집 농도 지원 - tag_data에서도 제거
   async function batchRemoveTag(t) {
     t = (t || "").trim();
     if (!t) {
-      Alert.alert("알림", "삭제할 태그를 입력해주세요.");
+      Alert.alert("알림", "태그를 입력해주세요.");
       return;
     }
     if (selectedIds.length === 0) {
@@ -17391,78 +17817,62 @@ function generateInsights(data) {
       return;
     }
 
-    try {
-      const placeholders = selectedIds.map(() => "?").join(",");
-      const rows = await all(
-        `SELECT id, tags, tag_data FROM novels WHERE id IN (${placeholders})`,
-        selectedIds
+    const placeholders = selectedIds.map(() => "?").join(",");
+    const rows = await all(
+      `SELECT id, tags, tag_data FROM novels WHERE id IN (${placeholders})`,
+      selectedIds
+    );
+
+    const queries = [];
+    for (const row of rows) {
+      // 1. tags 필드 업데이트
+      const tagSet = new Set(
+        (row.tags || "")
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean)
       );
-
-      const queries = [];
-      let removedCount = 0;
-      for (const row of rows) {
-        // 1. tags 필드 업데이트
-        const tagSet = new Set(
-          (row.tags || "")
-            .split(",")
-            .map((x) => x.trim())
-            .filter(Boolean)
-        );
-        const hadTag = tagSet.has(t);
-        tagSet.delete(t);
-        if (hadTag) removedCount++;
-        const newTags = Array.from(tagSet).join(", ");
-        
-        // 2. tag_data 필드 업데이트 (해당 태그 제거)
-        let tagData = [];
-        try {
-          tagData = JSON.parse(row.tag_data || "[]");
-          if (!Array.isArray(tagData)) tagData = [];
-        } catch { tagData = []; }
-        
-        tagData = tagData.filter(td => td.tag !== t);
-        
-        queries.push({
-          sql: "UPDATE novels SET tags=?, tag_data=? WHERE id=?",
-          params: [newTags, JSON.stringify(tagData), row.id],
-        });
-      }
-
-      await execBatch(queries);
-      setBulkTag(""); // 입력 초기화
-      await loadList();
-      Alert.alert("완료", `${removedCount}개 작품에서 "${t}" 태그 삭제 완료`);
-    } catch (e) {
-      console.warn("batchRemoveTag 오류:", e);
-      Alert.alert("오류", "태그 일괄 삭제 중 오류가 발생했습니다.\n\n" + e.message);
+      tagSet.delete(t);
+      const newTags = Array.from(tagSet).join(", ");
+      
+      // 2. tag_data 필드 업데이트 (해당 태그 제거)
+      let tagData = [];
+      try {
+        tagData = JSON.parse(row.tag_data || "[]");
+        if (!Array.isArray(tagData)) tagData = [];
+      } catch { tagData = []; }
+      
+      tagData = tagData.filter(td => td.tag !== t);
+      
+      queries.push({
+        sql: "UPDATE novels SET tags=?, tag_data=? WHERE id=?",
+        params: [newTags, JSON.stringify(tagData), row.id],
+      });
     }
+
+    await execBatch(queries);
+    await loadList();
+    Alert.alert("완료", `${selectedIds.length}개 작품에서 "${t}" 태그를 삭제했습니다.`);
   }
 
   async function batchIncReadCount(delta) {
     const d = Number(delta) || 0;
     if (!d) {
-      Alert.alert("알림", "증감할 회차 수를 입력해주세요.\n(예: 10, -5)");
+      Alert.alert("알림", "증감할 숫자를 입력해주세요.");
       return;
     }
     if (selectedIds.length === 0) {
       Alert.alert("알림", "먼저 작품을 선택해주세요.");
       return;
     }
-    try {
-      const now = Date.now();
-      const queries = selectedIds.map((id) => ({
-        sql: "UPDATE novels SET read_count = MAX(0, read_count + ?), read_count_updated_at = ? WHERE id=?",
-        params: [d, now, id],
-      }));
-      await execBatch(queries);
-      setBulkDelta(""); // 입력 초기화
-      await loadList();
-      const sign = d > 0 ? "+" : "";
-      Alert.alert("완료", `${selectedIds.length}개 작품 읽은 회차 ${sign}${d} 적용 완료`);
-    } catch (e) {
-      console.warn("batchIncReadCount 오류:", e);
-      Alert.alert("오류", "읽은 회차 일괄 변경 중 오류가 발생했습니다.\n\n" + e.message);
-    }
+    const now = Date.now();
+    const queries = selectedIds.map((id) => ({
+      sql: "UPDATE novels SET read_count = MAX(0, read_count + ?), read_count_updated_at = ? WHERE id=?",
+      params: [d, now, id],
+    }));
+    await execBatch(queries);
+    await loadList();
+    Alert.alert("완료", `${selectedIds.length}개 작품에 읽은 회차 ${d > 0 ? '+' : ''}${d} 적용했습니다.`);
   }
 
   // 🆕 읽기 상태 일괄 변경
@@ -17472,20 +17882,13 @@ function generateInsights(data) {
       return;
     }
     if (!status) return;
-    
-    const statusLabel = STATUS_OPTIONS.find(s => s.key === status)?.label || status;
-    try {
-      const queries = selectedIds.map((id) => ({
-        sql: "UPDATE novels SET status=? WHERE id=?",
-        params: [status, id],
-      }));
-      await execBatch(queries);
-      await loadList();
-      Alert.alert("완료", `${selectedIds.length}개 작품 읽기 상태 → "${statusLabel}" 변경 완료`);
-    } catch (e) {
-      console.warn("batchSetStatus 오류:", e);
-      Alert.alert("오류", "상태 일괄 변경 중 오류가 발생했습니다.\n\n" + e.message);
-    }
+    const queries = selectedIds.map((id) => ({
+      sql: "UPDATE novels SET status=? WHERE id=?",
+      params: [status, id],
+    }));
+    await execBatch(queries);
+    await loadList();
+    Alert.alert("완료", `${selectedIds.length}개 작품의 읽기 상태를 변경했습니다.`);
   }
 
   // 🆕 작품 연재상태 일괄 변경
@@ -17495,20 +17898,13 @@ function generateInsights(data) {
       return;
     }
     if (!workStatus) return;
-    
-    const wsLabel = WORK_STATUS_OPTIONS.find(ws => ws.key === workStatus)?.label || workStatus;
-    try {
-      const queries = selectedIds.map((id) => ({
-        sql: "UPDATE novels SET work_status=? WHERE id=?",
-        params: [workStatus, id],
-      }));
-      await execBatch(queries);
-      await loadList();
-      Alert.alert("완료", `${selectedIds.length}개 작품 연재상태 → "${wsLabel}" 변경 완료`);
-    } catch (e) {
-      console.warn("batchSetWorkStatus 오류:", e);
-      Alert.alert("오류", "연재상태 일괄 변경 중 오류가 발생했습니다.\n\n" + e.message);
-    }
+    const queries = selectedIds.map((id) => ({
+      sql: "UPDATE novels SET work_status=? WHERE id=?",
+      params: [workStatus, id],
+    }));
+    await execBatch(queries);
+    await loadList();
+    Alert.alert("완료", `${selectedIds.length}개 작품의 연재 상태를 변경했습니다.`);
   }
 
   async function batchDelete() {
@@ -17516,34 +17912,27 @@ function generateInsights(data) {
       Alert.alert("알림", "먼저 작품을 선택해주세요.");
       return;
     }
-    Alert.alert("확인", `선택한 ${selectedIds.length}개 작품을 삭제할까요?\n\n관련 대진 기록도 함께 삭제됩니다.`, [
+    Alert.alert("확인", `선택 ${selectedIds.length}개 삭제?`, [
       { text: "취소" },
       {
         text: "삭제",
         style: "destructive",
         onPress: async () => {
-          try {
-            const count = selectedIds.length;
-            const queries = [];
-            for (const id of selectedIds) {
-              queries.push({
-                sql: "DELETE FROM matches WHERE a_id=? OR b_id=?",
-                params: [id, id],
-              });
-              queries.push({
-                sql: "DELETE FROM novels WHERE id=?",
-                params: [id],
-              });
-            }
-            await execBatch(queries);
-            await rebuildAllFromMatches();
-            setSelectedIds([]);
-            await loadList();
-            Alert.alert("완료", `${count}개 작품 삭제 완료`);
-          } catch (e) {
-            console.warn("batchDelete 오류:", e);
-            Alert.alert("오류", "일괄 삭제 중 오류가 발생했습니다.\n\n" + e.message);
+          const queries = [];
+          for (const id of selectedIds) {
+            queries.push({
+              sql: "DELETE FROM matches WHERE a_id=? OR b_id=?",
+              params: [id, id],
+            });
+            queries.push({
+              sql: "DELETE FROM novels WHERE id=?",
+              params: [id],
+            });
           }
+          await execBatch(queries);
+          await rebuildAllFromMatches();
+          setSelectedIds([]);
+          await loadList();
         },
       },
     ]);
@@ -18693,6 +19082,7 @@ async function importJSON() {
         ["매칭", "match"],
         ["분석", "analysis"],
         ["대량", "bulk"],
+        ["🖼️표지", "covers"], // 🆕 v3.4.5
         ["설정", "settings"],
       ].map(([label, key]) => {
         // 뱃지 표시 여부 계산
@@ -18757,6 +19147,13 @@ async function importJSON() {
   /* ---------- Render ---------- */
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+      {/* 🆕 v3.4.4: 전체 화면 모드 (상태바 숨김) */}
+      <StatusBar 
+        hidden={appSettings.fullscreenMode === true}
+        barStyle={isDark ? "light-content" : "dark-content"}
+        backgroundColor={C.bg}
+        translucent={appSettings.fullscreenMode === true}
+      />
       <LoadingOverlay />
       <ScrollView 
         contentContainerStyle={{ padding: 16, paddingBottom: 48 }}
@@ -18813,6 +19210,14 @@ async function importJSON() {
                 )}
                 <OutlineButton title="URL" onPress={() => openUrlModal(setNewCoverImage)} />
                 <OutlineButton title="갤러리" onPress={() => pickImageFromGallery(setNewCoverImage)} />
+                <OutlineButton 
+                  title="DB" 
+                  onPress={() => {
+                    setCoverSelectTarget("new");
+                    setCoverSelectModalOpen(true);
+                  }} 
+                  color={C.primary}
+                />
                 {newCoverImage && <OutlineButton title="삭제" onPress={() => setNewCoverImage("")} color={C.warn} />}
               </View>
 
@@ -18857,26 +19262,87 @@ async function importJSON() {
               <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
                 <Input
                   value={tags}
-                  onChangeText={setTags}
+                  onChangeText={(t) => {
+                    // 🔧 v3.4.5: 텍스트 변경 시 대장르/부장르 자동 동기화 (편집 모달과 일관성)
+                    const inputTags = t.split(",").map(tag => tag.trim()).filter(Boolean);
+                    
+                    const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
+                    const allSub = [...SUB_GENRES, ...userSubGenres];
+                    
+                    const detectedMajor = inputTags.filter(tag => 
+                      allMajor.some(m => m.toLowerCase() === tag.toLowerCase())
+                    ).map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
+                    
+                    const detectedSub = inputTags.filter(tag => 
+                      allSub.some(s => s.toLowerCase() === tag.toLowerCase())
+                    ).map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
+                    
+                    setTags(t);
+                    setNewMajorGenre(detectedMajor);
+                    setNewSubGenre(detectedSub);
+                  }}
                   placeholder="예: 무협, 현판, 헌터"
                   style={{ flex: 1 }}
                 />
                 <OutlineButton
                   title="🏷️ 고르기"
                   onPress={() => {
+                    // 🔧 v3.4.5: tags 문자열에서 대장르/부장르/일반태그를 분리하여 전달 (편집 모달과 일관성)
                     const currentTags = tags.split(",").map(t => t.trim()).filter(Boolean);
-                    openTagModal("new", currentTags, newMajorGenre, newSubGenre, newTagData);
+                    
+                    const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
+                    const allSub = [...SUB_GENRES, ...userSubGenres];
+                    
+                    // 대장르 감지
+                    const majorTags = currentTags.filter(tag => 
+                      allMajor.some(m => m.toLowerCase() === tag.toLowerCase())
+                    ).map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
+                    
+                    // 부장르 감지
+                    const subTags = currentTags.filter(tag => 
+                      allSub.some(s => s.toLowerCase() === tag.toLowerCase())
+                    ).map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
+                    
+                    // 일반 태그 (대장르/부장르 제외)
+                    const generalTags = currentTags.filter(tag => 
+                      !allMajor.some(m => m.toLowerCase() === tag.toLowerCase()) &&
+                      !allSub.some(s => s.toLowerCase() === tag.toLowerCase())
+                    );
+                    
+                    // 분리된 값으로 모달 열기 (JSON 문자열로 전달)
+                    openTagModal(
+                      "new", 
+                      generalTags, 
+                      majorTags.length > 0 ? JSON.stringify(majorTags) : "",
+                      subTags.length > 0 ? JSON.stringify(subTags) : "",
+                      newTagData
+                    );
                   }}
                   style={{ paddingHorizontal: 12 }}
                 />
               </View>
-              {/* 선택된 대장르/부장르 표시 */}
-              {(newMajorGenre.length > 0 || newSubGenre.length > 0) && (
-                <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 8 }}>
-                  {newMajorGenre.map((g) => <GenreBadge key={g} genre={g} type="major" />)}
-                  {newSubGenre.map((g) => <GenreBadge key={g} genre={g} type="sub" />)}
-                </View>
-              )}
+              {/* 선택된 대장르/부장르 표시 - 🔧 v3.4.5: tags 문자열에서 자동 감지하여 표시 */}
+              {(() => {
+                const currentTags = (tags || "").split(",").map(t => t.trim()).filter(Boolean);
+                const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
+                const allSub = [...SUB_GENRES, ...userSubGenres];
+                
+                const majorTags = currentTags.filter(tag => 
+                  allMajor.some(m => m.toLowerCase() === tag.toLowerCase())
+                );
+                const subTags = currentTags.filter(tag => 
+                  allSub.some(s => s.toLowerCase() === tag.toLowerCase())
+                );
+                
+                if (majorTags.length === 0 && subTags.length === 0) return null;
+                
+                return (
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 8 }}>
+                    {majorTags.map((g) => <GenreBadge key={g} genre={g} type="major" />)}
+                    {subTags.map((g) => <GenreBadge key={g} genre={g} type="sub" />)}
+                  </View>
+                );
+              })()}
               <Label style={{ marginTop: 10 }}>연재처(복수 선택 가능)</Label>
               <PlatformChips
                 platforms={platforms}
@@ -19814,6 +20280,93 @@ async function importJSON() {
                 ))}
               </View>
               
+              {/* 🔧 v3.4.5: 예정탭 신규 등록에 태그 기능 추가 */}
+              <Label style={{ marginTop: 10 }}>태그</Label>
+              <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
+                <Input
+                  value={plannedTags}
+                  onChangeText={(t) => {
+                    // 텍스트 변경 시 대장르/부장르 자동 감지
+                    const inputTags = t.split(",").map(tag => tag.trim()).filter(Boolean);
+                    
+                    const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
+                    const allSub = [...SUB_GENRES, ...userSubGenres];
+                    
+                    const detectedMajor = inputTags.filter(tag => 
+                      allMajor.some(m => m.toLowerCase() === tag.toLowerCase())
+                    ).map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
+                    
+                    const detectedSub = inputTags.filter(tag => 
+                      allSub.some(s => s.toLowerCase() === tag.toLowerCase())
+                    ).map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
+                    
+                    setPlannedTags(t);
+                    setPlannedMajorGenre(detectedMajor);
+                    setPlannedSubGenre(detectedSub);
+                  }}
+                  placeholder="예: 무협, 현판, 헌터"
+                  style={{ flex: 1 }}
+                />
+                <OutlineButton
+                  title="🏷️ 고르기"
+                  onPress={() => {
+                    // tags 문자열에서 대장르/부장르/일반태그를 분리하여 전달
+                    const currentTags = plannedTags.split(",").map(t => t.trim()).filter(Boolean);
+                    
+                    const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
+                    const allSub = [...SUB_GENRES, ...userSubGenres];
+                    
+                    // 대장르 감지
+                    const majorTags = currentTags.filter(tag => 
+                      allMajor.some(m => m.toLowerCase() === tag.toLowerCase())
+                    ).map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
+                    
+                    // 부장르 감지
+                    const subTags = currentTags.filter(tag => 
+                      allSub.some(s => s.toLowerCase() === tag.toLowerCase())
+                    ).map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
+                    
+                    // 일반 태그 (대장르/부장르 제외)
+                    const generalTags = currentTags.filter(tag => 
+                      !allMajor.some(m => m.toLowerCase() === tag.toLowerCase()) &&
+                      !allSub.some(s => s.toLowerCase() === tag.toLowerCase())
+                    );
+                    
+                    // 분리된 값으로 모달 열기
+                    openTagModal(
+                      "plannedNew", 
+                      generalTags, 
+                      majorTags.length > 0 ? JSON.stringify(majorTags) : "",
+                      subTags.length > 0 ? JSON.stringify(subTags) : "",
+                      []
+                    );
+                  }}
+                  style={{ paddingHorizontal: 12 }}
+                />
+              </View>
+              {/* 선택된 대장르/부장르 배지 표시 */}
+              {(() => {
+                const currentTags = (plannedTags || "").split(",").map(t => t.trim()).filter(Boolean);
+                const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
+                const allSub = [...SUB_GENRES, ...userSubGenres];
+                
+                const majorTags = currentTags.filter(tag => 
+                  allMajor.some(m => m.toLowerCase() === tag.toLowerCase())
+                );
+                const subTags = currentTags.filter(tag => 
+                  allSub.some(s => s.toLowerCase() === tag.toLowerCase())
+                );
+                
+                if (majorTags.length === 0 && subTags.length === 0) return null;
+                
+                return (
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 8 }}>
+                    {majorTags.map((g) => <GenreBadge key={g} genre={g} type="major" />)}
+                    {subTags.map((g) => <GenreBadge key={g} genre={g} type="sub" />)}
+                  </View>
+                );
+              })()}
+              
               <Label style={{ marginTop: 10 }}>우선순위</Label>
               <View style={{ flexDirection: "row", gap: 8 }}>
                 {[1, 2, 3, 4, 5].map((p) => (
@@ -19846,6 +20399,32 @@ async function importJSON() {
                 placeholder="예: 120 (모르면 비워두세요)" 
                 keyboardType="number-pad"
               />
+              
+              <Label style={{ marginTop: 10 }}>표지 이미지</Label>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                {plannedCoverImage ? (
+                  <ExpoImage
+                    source={{ uri: plannedCoverImage }}
+                    style={{ width: 50, height: 70, borderRadius: 6 }}
+                    contentFit="cover"
+                  />
+                ) : (
+                  <View style={{ width: 50, height: 70, borderRadius: 6, backgroundColor: C.line, justifyContent: "center", alignItems: "center" }}>
+                    <Text style={{ color: C.sub, fontSize: 10 }}>없음</Text>
+                  </View>
+                )}
+                <OutlineButton title="URL" onPress={() => openUrlModal(setPlannedCoverImage)} />
+                <OutlineButton title="갤러리" onPress={() => pickImageFromGallery(setPlannedCoverImage)} />
+                <OutlineButton 
+                  title="DB" 
+                  onPress={() => {
+                    setCoverSelectTarget("planned");
+                    setCoverSelectModalOpen(true);
+                  }} 
+                  color={C.primary}
+                />
+                {plannedCoverImage && <OutlineButton title="삭제" onPress={() => setPlannedCoverImage("")} color={C.warn} />}
+              </View>
               
               <Label style={{ marginTop: 10 }}>메모</Label>
               <Input 
@@ -20271,7 +20850,7 @@ async function importJSON() {
                             elevation: 2,
                           }}
                         >
-                          {/* 작품 제목 헤더 */}
+                          {/* 작품 제목 헤더 + 표지 */}
                           <View style={{ 
                             flexDirection: "row", 
                             alignItems: "center", 
@@ -20280,6 +20859,33 @@ async function importJSON() {
                             borderBottomWidth: 1,
                             borderBottomColor: C.line,
                           }}>
+                            {/* 🔧 v3.4.4: 표지 이미지 추가 */}
+                            {(() => {
+                              const novel = novelGroup.novelId 
+                                ? list.find(n => n.id === novelGroup.novelId) 
+                                : null;
+                              return novel ? (
+                                <CoverImage
+                                  uri={novel.cover_image}
+                                  platforms={novel.platforms}
+                                  platformCovers={platformCovers}
+                                  size={36}
+                                  theme={C}
+                                />
+                              ) : (
+                                <View style={{ 
+                                  width: 36, 
+                                  height: 36 * 1.4, 
+                                  borderRadius: 6, 
+                                  marginRight: 10,
+                                  backgroundColor: C.line,
+                                  justifyContent: 'center',
+                                  alignItems: 'center'
+                                }}>
+                                  <Text style={{ fontSize: 12, color: C.sub }}>📖</Text>
+                                </View>
+                              );
+                            })()}
                             <Text style={{ 
                               fontWeight: "800", 
                               fontSize: 16, 
@@ -21301,27 +21907,22 @@ async function importJSON() {
                     Alert.alert("확인", `${reviews.length}건을 모두 권장 티어로 적용할까요?`, [
                       { text: "취소" },
                       { text: "적용", onPress: async () => {
-                        try {
-                          const historyItems = [];
-                          const queries = reviews.map(n => {
-                            const recommended = tierFromRating(n.rating);
-                            const newTier = (recommended === 'S' || recommended === 'A') ? recommended : null;
-                            const current = getDisplayTier(n);
-                            historyItems.push({ id: n.id, title: n.title, from: current, to: newTier || recommended, at: Date.now() });
-                            return {
-                              sql: "UPDATE novels SET manual_tier=? WHERE id=?",
-                              params: [newTier, n.id],
-                            };
-                          });
-                          await execBatch(queries);
-                          setTierHistory(prev => [...historyItems, ...prev].slice(0, 20));
-                          setReviewSelectedIds([]);
-                          await loadList();
-                          Alert.alert("완료", `${reviews.length}건 적용됨`);
-                        } catch (e) {
-                          console.warn("모두 승인 오류:", e);
-                          Alert.alert("오류", "티어 일괄 적용 중 오류가 발생했습니다.");
-                        }
+                        const historyItems = [];
+                        const queries = reviews.map(n => {
+                          const recommended = tierFromRating(n.rating);
+                          const newTier = (recommended === 'S' || recommended === 'A') ? recommended : null;
+                          const current = getDisplayTier(n);
+                          historyItems.push({ id: n.id, title: n.title, from: current, to: newTier || recommended, at: Date.now() });
+                          return {
+                            sql: "UPDATE novels SET manual_tier=? WHERE id=?",
+                            params: [newTier, n.id],
+                          };
+                        });
+                        await execBatch(queries);
+                        setTierHistory(prev => [...historyItems, ...prev].slice(0, 20));
+                        setReviewSelectedIds([]);
+                        await loadList();
+                        Alert.alert("완료", `${reviews.length}건 적용됨`);
                       }},
                     ]);
                   }}
@@ -21342,27 +21943,22 @@ async function importJSON() {
                       Alert.alert("확인", `선택한 ${selected.length}건을 권장 티어로 적용할까요?`, [
                         { text: "취소" },
                         { text: "적용", onPress: async () => {
-                          try {
-                            const historyItems = [];
-                            const queries = selected.map(n => {
-                              const recommended = tierFromRating(n.rating);
-                              const newTier = (recommended === 'S' || recommended === 'A') ? recommended : null;
-                              const current = getDisplayTier(n);
-                              historyItems.push({ id: n.id, title: n.title, from: current, to: newTier || recommended, at: Date.now() });
-                              return {
-                                sql: "UPDATE novels SET manual_tier=? WHERE id=?",
-                                params: [newTier, n.id],
-                              };
-                            });
-                            await execBatch(queries);
-                            setTierHistory(prev => [...historyItems, ...prev].slice(0, 20));
-                            setReviewSelectedIds([]);
-                            await loadList();
-                            Alert.alert("완료", `${selected.length}건 적용됨`);
-                          } catch (e) {
-                            console.warn("선택 승인 오류:", e);
-                            Alert.alert("오류", "티어 일괄 적용 중 오류가 발생했습니다.");
-                          }
+                          const historyItems = [];
+                          const queries = selected.map(n => {
+                            const recommended = tierFromRating(n.rating);
+                            const newTier = (recommended === 'S' || recommended === 'A') ? recommended : null;
+                            const current = getDisplayTier(n);
+                            historyItems.push({ id: n.id, title: n.title, from: current, to: newTier || recommended, at: Date.now() });
+                            return {
+                              sql: "UPDATE novels SET manual_tier=? WHERE id=?",
+                              params: [newTier, n.id],
+                            };
+                          });
+                          await execBatch(queries);
+                          setTierHistory(prev => [...historyItems, ...prev].slice(0, 20));
+                          setReviewSelectedIds([]);
+                          await loadList();
+                          Alert.alert("완료", `${selected.length}건 적용됨`);
                         }},
                       ]);
                     }}
@@ -21385,36 +21981,31 @@ async function importJSON() {
                     Alert.alert("확인", `승급 ${promotes.length}건을 적용할까요?`, [
                       { text: "취소" },
                       { text: "적용", onPress: async () => {
-                        try {
-                          const historyItems = [];
-                          const queries = promotes.map(n => {
-                            const newTier = tierFromRating(n.rating);
-                            const current = getDisplayTier(n);
-                            historyItems.push({ id: n.id, title: n.title, from: current, to: newTier, at: Date.now() });
-                            return {
-                              sql: "UPDATE novels SET manual_tier=? WHERE id=?",
-                              params: [newTier, n.id],
-                            };
+                        const historyItems = [];
+                        const queries = promotes.map(n => {
+                          const newTier = tierFromRating(n.rating);
+                          const current = getDisplayTier(n);
+                          historyItems.push({ id: n.id, title: n.title, from: current, to: newTier, at: Date.now() });
+                          return {
+                            sql: "UPDATE novels SET manual_tier=? WHERE id=?",
+                            params: [newTier, n.id],
+                          };
+                        });
+                        await execBatch(queries);
+                        setTierHistory(prev => [...historyItems, ...prev].slice(0, 20));
+                        setReviewSelectedIds([]);
+                        await loadList();
+                        
+                        // 📰 v3.0: 티어 심사 통과 기록
+                        for (const item of historyItems) {
+                          await addRecentChange(item.id, item.title, "tier_review", {
+                            from: item.from,
+                            to: item.to,
+                            action: "promote"
                           });
-                          await execBatch(queries);
-                          setTierHistory(prev => [...historyItems, ...prev].slice(0, 20));
-                          setReviewSelectedIds([]);
-                          await loadList();
-                          
-                          // 📰 v3.0: 티어 심사 통과 기록
-                          for (const item of historyItems) {
-                            await addRecentChange(item.id, item.title, "tier_review", {
-                              from: item.from,
-                              to: item.to,
-                              action: "promote"
-                            });
-                          }
-                          
-                          Alert.alert("완료", `${promotes.length}건 승급됨`);
-                        } catch (e) {
-                          console.warn("승급 처리 오류:", e);
-                          Alert.alert("오류", "승급 처리 중 오류가 발생했습니다.");
                         }
+                        
+                        Alert.alert("완료", `${promotes.length}건 승급됨`);
                       }},
                     ]);
                   }}
@@ -21436,37 +22027,32 @@ async function importJSON() {
                     Alert.alert("확인", `강등 ${demotes.length}건을 적용할까요?`, [
                       { text: "취소" },
                       { text: "적용", onPress: async () => {
-                        try {
-                          const historyItems = [];
-                          const queries = demotes.map(n => {
-                            const recommended = tierFromRating(n.rating);
-                            const newTier = (recommended === 'S' || recommended === 'A') ? recommended : null;
-                            const current = getDisplayTier(n);
-                            historyItems.push({ id: n.id, title: n.title, from: current, to: newTier || recommended, at: Date.now() });
-                            return {
-                              sql: "UPDATE novels SET manual_tier=? WHERE id=?",
-                              params: [newTier, n.id],
-                            };
+                        const historyItems = [];
+                        const queries = demotes.map(n => {
+                          const recommended = tierFromRating(n.rating);
+                          const newTier = (recommended === 'S' || recommended === 'A') ? recommended : null;
+                          const current = getDisplayTier(n);
+                          historyItems.push({ id: n.id, title: n.title, from: current, to: newTier || recommended, at: Date.now() });
+                          return {
+                            sql: "UPDATE novels SET manual_tier=? WHERE id=?",
+                            params: [newTier, n.id],
+                          };
+                        });
+                        await execBatch(queries);
+                        setTierHistory(prev => [...historyItems, ...prev].slice(0, 20));
+                        setReviewSelectedIds([]);
+                        await loadList();
+                        
+                        // 📰 v3.0: 티어 심사 통과 기록 (강등)
+                        for (const item of historyItems) {
+                          await addRecentChange(item.id, item.title, "tier_review", {
+                            from: item.from,
+                            to: item.to,
+                            action: "demote"
                           });
-                          await execBatch(queries);
-                          setTierHistory(prev => [...historyItems, ...prev].slice(0, 20));
-                          setReviewSelectedIds([]);
-                          await loadList();
-                          
-                          // 📰 v3.0: 티어 심사 통과 기록 (강등)
-                          for (const item of historyItems) {
-                            await addRecentChange(item.id, item.title, "tier_review", {
-                              from: item.from,
-                              to: item.to,
-                              action: "demote"
-                            });
-                          }
-                          
-                          Alert.alert("완료", `${demotes.length}건 강등됨`);
-                        } catch (e) {
-                          console.warn("강등 처리 오류:", e);
-                          Alert.alert("오류", "강등 처리 중 오류가 발생했습니다.");
                         }
+                        
+                        Alert.alert("완료", `${demotes.length}건 강등됨`);
                       }},
                     ]);
                   }}
@@ -21483,16 +22069,11 @@ async function importJSON() {
                       [
                         { text: "취소" },
                         { text: "리셋", style: "destructive", onPress: async () => {
-                          try {
-                            await exec("UPDATE novels SET manual_tier=NULL");
-                            setTierHistory([]);
-                            setReviewSelectedIds([]);
-                            await loadList();
-                            Alert.alert("완료", "전체 리셋됨");
-                          } catch (e) {
-                            console.warn("전체 리셋 오류:", e);
-                            Alert.alert("오류", "전체 리셋 중 오류가 발생했습니다.");
-                          }
+                          await exec("UPDATE novels SET manual_tier=NULL");
+                          setTierHistory([]);
+                          setReviewSelectedIds([]);
+                          await loadList();
+                          Alert.alert("완료", "전체 리셋됨");
                         }},
                       ]
                     );
@@ -21762,26 +22343,16 @@ async function importJSON() {
                                     [
                                       { text: "닫기" },
                                       { text: "A로 강등", onPress: async () => {
-                                        try {
-                                          setTierHistory(prev => [{ id: n.id, title: n.title, from: 'S', to: 'A', at: Date.now() }, ...prev].slice(0, 20));
-                                          await exec("UPDATE novels SET manual_tier='A' WHERE id=?", [n.id]);
-                                          await loadList();
-                                        } catch (e) {
-                                          console.warn("S→A 강등 오류:", e);
-                                          Alert.alert("오류", "티어 변경 중 오류가 발생했습니다.");
-                                        }
+                                        setTierHistory(prev => [{ id: n.id, title: n.title, from: 'S', to: 'A', at: Date.now() }, ...prev].slice(0, 20));
+                                        await exec("UPDATE novels SET manual_tier='A' WHERE id=?", [n.id]);
+                                        await loadList();
                                       }},
                                       { text: "S 해제", style: "destructive", onPress: async () => {
-                                        try {
-                                          const recommended = tierFromRating(n.rating);
-                                          const newTier = (recommended === 'S' || recommended === 'A') ? recommended : null;
-                                          setTierHistory(prev => [{ id: n.id, title: n.title, from: 'S', to: newTier || recommended, at: Date.now() }, ...prev].slice(0, 20));
-                                          await exec("UPDATE novels SET manual_tier=? WHERE id=?", [newTier, n.id]);
-                                          await loadList();
-                                        } catch (e) {
-                                          console.warn("S 해제 오류:", e);
-                                          Alert.alert("오류", "티어 변경 중 오류가 발생했습니다.");
-                                        }
+                                        const recommended = tierFromRating(n.rating);
+                                        const newTier = (recommended === 'S' || recommended === 'A') ? recommended : null;
+                                        setTierHistory(prev => [{ id: n.id, title: n.title, from: 'S', to: newTier || recommended, at: Date.now() }, ...prev].slice(0, 20));
+                                        await exec("UPDATE novels SET manual_tier=? WHERE id=?", [newTier, n.id]);
+                                        await loadList();
                                       }},
                                     ]
                                   );
@@ -21826,26 +22397,16 @@ async function importJSON() {
                                     [
                                       { text: "닫기" },
                                       { text: "S로 승급", onPress: async () => {
-                                        try {
-                                          setTierHistory(prev => [{ id: n.id, title: n.title, from: 'A', to: 'S', at: Date.now() }, ...prev].slice(0, 20));
-                                          await exec("UPDATE novels SET manual_tier='S' WHERE id=?", [n.id]);
-                                          await loadList();
-                                        } catch (e) {
-                                          console.warn("A→S 승급 오류:", e);
-                                          Alert.alert("오류", "티어 변경 중 오류가 발생했습니다.");
-                                        }
+                                        setTierHistory(prev => [{ id: n.id, title: n.title, from: 'A', to: 'S', at: Date.now() }, ...prev].slice(0, 20));
+                                        await exec("UPDATE novels SET manual_tier='S' WHERE id=?", [n.id]);
+                                        await loadList();
                                       }},
                                       { text: "A 해제", style: "destructive", onPress: async () => {
-                                        try {
-                                          const recommended = tierFromRating(n.rating);
-                                          const newTier = (recommended === 'S' || recommended === 'A') ? recommended : null;
-                                          setTierHistory(prev => [{ id: n.id, title: n.title, from: 'A', to: newTier || recommended, at: Date.now() }, ...prev].slice(0, 20));
-                                          await exec("UPDATE novels SET manual_tier=? WHERE id=?", [newTier, n.id]);
-                                          await loadList();
-                                        } catch (e) {
-                                          console.warn("A 해제 오류:", e);
-                                          Alert.alert("오류", "티어 변경 중 오류가 발생했습니다.");
-                                        }
+                                        const recommended = tierFromRating(n.rating);
+                                        const newTier = (recommended === 'S' || recommended === 'A') ? recommended : null;
+                                        setTierHistory(prev => [{ id: n.id, title: n.title, from: 'A', to: newTier || recommended, at: Date.now() }, ...prev].slice(0, 20));
+                                        await exec("UPDATE novels SET manual_tier=? WHERE id=?", [newTier, n.id]);
+                                        await loadList();
                                       }},
                                     ]
                                   );
@@ -21985,14 +22546,9 @@ async function importJSON() {
                             Alert.alert("되돌리기", `${h.title}을(를) ${h.from}티어로 복원할까요?`, [
                               { text: "취소" },
                               { text: "복원", onPress: async () => {
-                                try {
-                                  await exec("UPDATE novels SET manual_tier=? WHERE id=?", [restoreTier, h.id]);
-                                  setTierHistory(prev => prev.filter((_, i) => i !== idx));
-                                  await loadList();
-                                } catch (e) {
-                                  console.warn("티어 복원 오류:", e);
-                                  Alert.alert("오류", "티어 복원 중 오류가 발생했습니다.");
-                                }
+                                await exec("UPDATE novels SET manual_tier=? WHERE id=?", [restoreTier, h.id]);
+                                setTierHistory(prev => prev.filter((_, i) => i !== idx));
+                                await loadList();
                               }},
                             ]);
                           }}
@@ -22146,43 +22702,9 @@ async function importJSON() {
                 onChangeText={setQuery}
                 placeholder="제목/작가/태그/메모/플랫폼 검색"
               />
-              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 8 }}>
-                <Text style={{ color: C.sub }}>
-                  선택 {selectedIds.length} / 총 {bulkFiltered.length}
-                </Text>
-                <View style={{ flexDirection: "row", gap: 8 }}>
-                  <TouchableOpacity
-                    onPress={() => {
-                      // 현재 필터된 목록 전체 선택
-                      const allIds = bulkFiltered.map(n => n.id);
-                      setSelectedIds(allIds);
-                    }}
-                    style={{ 
-                      paddingVertical: 6, 
-                      paddingHorizontal: 12, 
-                      backgroundColor: C.chip, 
-                      borderRadius: 8,
-                      borderWidth: 1,
-                      borderColor: C.line,
-                    }}
-                  >
-                    <Text style={{ color: C.primary, fontWeight: "700", fontSize: 13 }}>전체 선택</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => setSelectedIds([])}
-                    style={{ 
-                      paddingVertical: 6, 
-                      paddingHorizontal: 12, 
-                      backgroundColor: C.chip, 
-                      borderRadius: 8,
-                      borderWidth: 1,
-                      borderColor: C.line,
-                    }}
-                  >
-                    <Text style={{ color: C.sub, fontWeight: "700", fontSize: 13 }}>전체 해제</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
+              <Text style={{ color: C.sub, marginTop: 6 }}>
+                선택 {selectedIds.length} / 총 {bulkFiltered.length}
+              </Text>
             </Section>
 
             <Section title="정렬">
@@ -22349,15 +22871,20 @@ async function importJSON() {
               </View>
             </Section>
 
-            <Section title={`목록 (${bulkFiltered.length}작품)`}>
-              {bulkFiltered.length === 0 ? (
-                <Text style={{ color: C.sub, textAlign: "center", padding: 20 }}>작품이 없습니다.</Text>
-              ) : (
-                bulkFiltered.map((item) => {
+            <Section title="목록(스크롤)">
+              <FlatList
+                data={bulkFiltered}
+                keyExtractor={(item) => item.id}
+                extraData={selectedIds}
+                initialNumToRender={15}
+                maxToRenderPerBatch={10}
+                windowSize={5}
+                removeClippedSubviews={false}
+                scrollEnabled={false}
+                renderItem={({ item }) => {
                   const checked = selectedIds.includes(item.id);
                   return (
                     <TouchableOpacity
-                      key={item.id}
                       onPress={() => toggleSelect(item.id)}
                       style={{
                         borderWidth: 2,
@@ -22389,8 +22916,179 @@ async function importJSON() {
                       </View>
                     </TouchableOpacity>
                   );
-                })
+                }}
+                ListEmptyComponent={<Text style={{ color: C.sub, textAlign: "center", padding: 20 }}>작품이 없습니다.</Text>}
+              />
+            </Section>
+          </>
+        )}
+
+        {/* 🖼️ COVERS - 표지 라이브러리 (v3.4.5) */}
+        {screen === "covers" && (
+          <>
+            <H>표지 라이브러리</H>
+
+            {/* 통계 및 로딩 */}
+            <Section title="📊 라이브러리 현황">
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                <View>
+                  <Text style={{ color: C.text, fontWeight: "700" }}>
+                    총 {coverLibrary.length}장
+                  </Text>
+                  <Text style={{ color: C.sub, fontSize: 12 }}>
+                    사용 중: {coverLibrary.filter(c => c.status === "used").length}장 · 
+                    미사용: {coverLibrary.filter(c => c.status === "unused").length}장
+                  </Text>
+                  <Text style={{ color: C.sub, fontSize: 12 }}>
+                    용량: {formatFileSize(coverLibrarySize)}
+                  </Text>
+                </View>
+                <PrimaryButton
+                  title="📷 갤러리에서 추가"
+                  onPress={importCoversFromGallery}
+                  style={{ paddingHorizontal: 16 }}
+                />
+              </View>
+              
+              {coverLibraryLoading && (
+                <View style={{ marginTop: 12, padding: 12, backgroundColor: C.chip, borderRadius: 8 }}>
+                  <Text style={{ color: C.text, fontWeight: "600", marginBottom: 4 }}>
+                    이미지 처리 중... ({coverLibraryProgress.current}/{coverLibraryProgress.total})
+                  </Text>
+                  <View style={{ height: 6, backgroundColor: C.line, borderRadius: 3, overflow: "hidden" }}>
+                    <View style={{
+                      width: `${coverLibraryProgress.total > 0 ? (coverLibraryProgress.current / coverLibraryProgress.total * 100) : 0}%`,
+                      height: "100%",
+                      backgroundColor: C.primary,
+                    }} />
+                  </View>
+                </View>
               )}
+            </Section>
+
+            {/* 필터 */}
+            <Section title="🔍 필터">
+              <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+                {[
+                  { key: "all", label: `전체 (${coverLibrary.length})` },
+                  { key: "unused", label: `미사용 (${coverLibrary.filter(c => c.status === "unused").length})` },
+                  { key: "used", label: `사용 중 (${coverLibrary.filter(c => c.status === "used").length})` },
+                ].map(opt => (
+                  <Chip
+                    key={opt.key}
+                    label={opt.label}
+                    active={coverLibraryFilter === opt.key}
+                    onPress={() => setCoverLibraryFilter(opt.key)}
+                  />
+                ))}
+              </View>
+            </Section>
+
+            {/* 관리 */}
+            <Section title="🗑️ 관리">
+              <OutlineButton
+                title="미사용 표지 전체 삭제"
+                onPress={removeAllUnusedCovers}
+                color={C.warn}
+              />
+            </Section>
+
+            {/* 갤러리 */}
+            <Section title="🖼️ 표지 갤러리">
+              {(() => {
+                const filtered = coverLibrary.filter(c => {
+                  if (coverLibraryFilter === "unused") return c.status === "unused";
+                  if (coverLibraryFilter === "used") return c.status === "used";
+                  return true;
+                });
+                
+                if (filtered.length === 0) {
+                  return (
+                    <Text style={{ color: C.sub, textAlign: "center", padding: 40 }}>
+                      {coverLibrary.length === 0 
+                        ? "표지가 없습니다.\n갤러리에서 이미지를 추가해보세요!"
+                        : "해당하는 표지가 없습니다."}
+                    </Text>
+                  );
+                }
+                
+                return (
+                  <FlatList
+                    data={filtered}
+                    keyExtractor={(item) => item.id}
+                    numColumns={3}
+                    scrollEnabled={false}
+                    columnWrapperStyle={{ gap: 8, marginBottom: 8 }}
+                    renderItem={({ item }) => {
+                      const isUsed = item.status === "used";
+                      const novel = isUsed ? list.find(n => n.id === item.novel_id) : null;
+                      
+                      return (
+                        <TouchableOpacity
+                          style={{
+                            flex: 1,
+                            aspectRatio: 0.7,
+                            maxWidth: "32%",
+                            borderRadius: 8,
+                            overflow: "hidden",
+                            borderWidth: 2,
+                            borderColor: isUsed ? C.ok : C.line,
+                            position: "relative",
+                          }}
+                          onPress={() => {
+                            if (!isUsed) {
+                              removeCoverFromLibrary(item.id);
+                            } else {
+                              Alert.alert(
+                                "사용 중",
+                                `이 표지는 "${novel?.title || "알 수 없음"}"에서 사용 중입니다.`,
+                                [{ text: "확인" }]
+                              );
+                            }
+                          }}
+                        >
+                          <ExpoImage
+                            source={{ uri: item.file_path }}
+                            style={{ width: "100%", height: "100%" }}
+                            contentFit="cover"
+                            cachePolicy="memory-disk"
+                          />
+                          {/* 상태 뱃지 */}
+                          <View style={{
+                            position: "absolute",
+                            top: 4,
+                            right: 4,
+                            backgroundColor: isUsed ? C.ok : C.sub,
+                            paddingHorizontal: 6,
+                            paddingVertical: 2,
+                            borderRadius: 4,
+                          }}>
+                            <Text style={{ color: "#fff", fontSize: 9, fontWeight: "700" }}>
+                              {isUsed ? "사용 중" : "미사용"}
+                            </Text>
+                          </View>
+                          {/* 연결된 작품명 */}
+                          {isUsed && novel && (
+                            <View style={{
+                              position: "absolute",
+                              bottom: 0,
+                              left: 0,
+                              right: 0,
+                              backgroundColor: "rgba(0,0,0,0.7)",
+                              padding: 4,
+                            }}>
+                              <Text style={{ color: "#fff", fontSize: 9, fontWeight: "600" }} numberOfLines={1}>
+                                {novel.title}
+                              </Text>
+                            </View>
+                          )}
+                        </TouchableOpacity>
+                      );
+                    }}
+                    ListEmptyComponent={<Text style={{ color: C.sub, textAlign: "center" }}>표지가 없습니다.</Text>}
+                  />
+                );
+              })()}
             </Section>
           </>
         )}
@@ -22454,6 +23152,87 @@ async function importJSON() {
                   <Chip label="라이트" active={darkMode === false} onPress={() => setDarkMode(false)} />
                   <Chip label="다크" active={darkMode === true} onPress={() => setDarkMode(true)} />
                 </View>
+              </View>
+              
+              {/* 🆕 v3.4.4: 전체 화면 모드 */}
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 16 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: C.text, fontWeight: "700" }}>전체 화면 모드</Text>
+                  <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>
+                    상단 상태바와 하단 네비게이션 바를 숨깁니다 (Android)
+                  </Text>
+                </View>
+                <Switch
+                  value={appSettings.fullscreenMode === true}
+                  onValueChange={(v) => {
+                    saveAppSettings({ fullscreenMode: v });
+                    // Android 네비게이션 바 숨기기/표시
+                    if (Platform.OS === "android") {
+                      try {
+                        if (v) {
+                          NavigationBar.setVisibilityAsync("hidden");
+                          NavigationBar.setBehaviorAsync("overlay-swipe");
+                        } else {
+                          NavigationBar.setVisibilityAsync("visible");
+                        }
+                      } catch (e) {
+                        console.warn("NavigationBar error:", e);
+                      }
+                    }
+                  }}
+                />
+              </View>
+            </Section>
+
+            {/* 🖼️ 표지 라이브러리 설정 (v3.4.5) */}
+            <Section title="🖼️ 표지 라이브러리">
+              <Text style={{ color: C.sub, marginBottom: 12 }}>
+                갤러리에서 이미지를 가져올 때 적용되는 압축 설정입니다.
+              </Text>
+              
+              <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>이미지 압축 수준</Text>
+              <View style={{ backgroundColor: C.bg, padding: 12, borderRadius: 12 }}>
+                {[
+                  { key: "original", label: "원본 유지", desc: "압축 없음 (1~5MB/장)" },
+                  { key: "light", label: "가벼운 압축 (권장)", desc: "80% 품질, 최대 1200px (200~500KB/장)" },
+                  { key: "medium", label: "중간 압축", desc: "60% 품질, 최대 800px (80~200KB/장)" },
+                  { key: "heavy", label: "강한 압축", desc: "40% 품질, 최대 600px (30~80KB/장)" },
+                ].map((opt, idx) => (
+                  <TouchableOpacity
+                    key={opt.key}
+                    onPress={() => {
+                      saveAppSettings({
+                        coverLibrary: { ...appSettings.coverLibrary, compressionLevel: opt.key }
+                      });
+                    }}
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      paddingVertical: 10,
+                      borderBottomWidth: idx < 3 ? 1 : 0,
+                      borderBottomColor: C.line,
+                    }}
+                  >
+                    <View style={{
+                      width: 20,
+                      height: 20,
+                      borderRadius: 10,
+                      borderWidth: 2,
+                      borderColor: (appSettings.coverLibrary?.compressionLevel || "light") === opt.key ? C.primary : C.line,
+                      justifyContent: "center",
+                      alignItems: "center",
+                      marginRight: 12,
+                    }}>
+                      {(appSettings.coverLibrary?.compressionLevel || "light") === opt.key && (
+                        <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: C.primary }} />
+                      )}
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: C.text, fontWeight: "600" }}>{opt.label}</Text>
+                      <Text style={{ color: C.sub, fontSize: 11 }}>{opt.desc}</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
               </View>
             </Section>
 
@@ -23641,13 +24420,8 @@ async function importJSON() {
                 title="모든 RD를 350으로 리셋"
                 onPress={async () => {
                   setIsLoading(true);
-                  try {
-                    await exec("UPDATE novels SET rd=350;");
-                    await loadList();
-                  } catch (e) {
-                    console.warn("RD 리셋 오류:", e);
-                    Alert.alert("오류", "RD 리셋 중 오류가 발생했습니다.");
-                  }
+                  await exec("UPDATE novels SET rd=350;");
+                  await loadList();
                   setIsLoading(false);
                 }}
                 style={{ marginTop: 8 }}
@@ -23796,6 +24570,14 @@ async function importJSON() {
                   )}
                   <OutlineButton title="URL" onPress={() => openUrlModal(setEditCoverImage)} />
                   <OutlineButton title="갤러리" onPress={() => pickImageFromGallery(setEditCoverImage)} />
+                  <OutlineButton 
+                    title="DB" 
+                    onPress={() => {
+                      setCoverSelectTarget("edit");
+                      setCoverSelectModalOpen(true);
+                    }} 
+                    color={C.primary}
+                  />
                   {editCoverImage && <OutlineButton title="삭제" onPress={() => setEditCoverImage("")} color={C.warn} />}
                 </View>
 
@@ -23819,15 +24601,63 @@ async function importJSON() {
                 <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
                   <Input
                     value={editItem.tags || ""}
-                    onChangeText={(t) =>
-                      setEditItem({ ...editItem, tags: t })
-                    }
+                    onChangeText={(t) => {
+                      // 🔧 v3.4.4: 텍스트 변경 시 대장르/부장르 자동 동기화
+                      // 입력된 태그 문자열에서 대장르/부장르를 자동 감지하여 분리
+                      const inputTags = t.split(",").map(tag => tag.trim()).filter(Boolean);
+                      
+                      const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
+                      const allSub = [...SUB_GENRES, ...userSubGenres];
+                      
+                      const detectedMajor = inputTags.filter(tag => 
+                        allMajor.some(m => m.toLowerCase() === tag.toLowerCase())
+                      );
+                      const detectedSub = inputTags.filter(tag => 
+                        allSub.some(s => s.toLowerCase() === tag.toLowerCase())
+                      );
+                      
+                      // 정규화: 대소문자 맞추기
+                      const normalizedMajor = detectedMajor.map(tag => 
+                        allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag
+                      );
+                      const normalizedSub = detectedSub.map(tag => 
+                        allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag
+                      );
+                      
+                      setEditItem({ 
+                        ...editItem, 
+                        tags: t,
+                        major_genre: normalizedMajor.length > 0 ? JSON.stringify(normalizedMajor) : "",
+                        sub_genre: normalizedSub.length > 0 ? JSON.stringify(normalizedSub) : "",
+                      });
+                    }}
                     style={{ flex: 1 }}
                   />
                   <OutlineButton
                     title="🏷️ 고르기"
                     onPress={() => {
+                      // 🔧 v3.4.4: tags 문자열에서 대장르/부장르/일반태그를 분리하여 전달
                       const currentTags = (editItem.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+                      
+                      const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
+                      const allSub = [...SUB_GENRES, ...userSubGenres];
+                      
+                      // 대장르 감지
+                      const majorTags = currentTags.filter(tag => 
+                        allMajor.some(m => m.toLowerCase() === tag.toLowerCase())
+                      ).map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
+                      
+                      // 부장르 감지
+                      const subTags = currentTags.filter(tag => 
+                        allSub.some(s => s.toLowerCase() === tag.toLowerCase())
+                      ).map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
+                      
+                      // 일반 태그 (대장르/부장르 제외)
+                      const generalTags = currentTags.filter(tag => 
+                        !allMajor.some(m => m.toLowerCase() === tag.toLowerCase()) &&
+                        !allSub.some(s => s.toLowerCase() === tag.toLowerCase())
+                      );
+                      
                       // 🏷️ v5.0: tag_data 파싱
                       let tagData = [];
                       try {
@@ -23835,18 +24665,41 @@ async function importJSON() {
                           tagData = JSON.parse(editItem.tag_data);
                         }
                       } catch (e) {}
-                      openTagModal("edit", currentTags, editItem.major_genre || "", editItem.sub_genre || "", tagData);
+                      
+                      // 분리된 값으로 모달 열기
+                      openTagModal(
+                        "edit", 
+                        generalTags, 
+                        majorTags.length > 0 ? JSON.stringify(majorTags) : "",
+                        subTags.length > 0 ? JSON.stringify(subTags) : "",
+                        tagData
+                      );
                     }}
                     style={{ paddingHorizontal: 12 }}
                   />
                 </View>
-                {/* 선택된 대장르/부장르 표시 */}
-                {(parseGenreArray(editItem.major_genre).length > 0 || parseGenreArray(editItem.sub_genre).length > 0) && (
-                  <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 8 }}>
-                    {parseGenreArray(editItem.major_genre).map((g) => <GenreBadge key={g} genre={g} type="major" />)}
-                    {parseGenreArray(editItem.sub_genre).map((g) => <GenreBadge key={g} genre={g} type="sub" />)}
-                  </View>
-                )}
+                {/* 🔧 v3.4.4: 대장르/부장르 표시 - tags 문자열에서 자동 감지하여 표시 */}
+                {(() => {
+                  const currentTags = (editItem.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+                  const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
+                  const allSub = [...SUB_GENRES, ...userSubGenres];
+                  
+                  const majorTags = currentTags.filter(tag => 
+                    allMajor.some(m => m.toLowerCase() === tag.toLowerCase())
+                  );
+                  const subTags = currentTags.filter(tag => 
+                    allSub.some(s => s.toLowerCase() === tag.toLowerCase())
+                  );
+                  
+                  if (majorTags.length === 0 && subTags.length === 0) return null;
+                  
+                  return (
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 8 }}>
+                      {majorTags.map((g) => <GenreBadge key={g} genre={g} type="major" />)}
+                      {subTags.map((g) => <GenreBadge key={g} genre={g} type="sub" />)}
+                    </View>
+                  );
+                })()}
 
                 <Label style={{ marginTop: 10 }}>연재처</Label>
                 <PlatformChips
@@ -24809,6 +25662,7 @@ async function importJSON() {
         comboTags={comboTags}
         userMajorGenres={userMajorGenres}
         userSubGenres={userSubGenres}
+        pinnedTags={pinnedTags}
         hiddenTags={hiddenTags}
         tagUsageCounts={tagUsageCounts}
         tagCoOccurrences={tagCoOccurrences}
@@ -24821,6 +25675,7 @@ async function importJSON() {
         onAddUserMajorGenre={addUserMajorGenre}
         onAddUserSubGenre={addUserSubGenre}
         onSetTagSentiment={setTagSentiment}
+        onTogglePin={togglePinTag}
         theme={C}
       />
 
@@ -25443,11 +26298,22 @@ async function importJSON() {
                 </View>
                 
                 <Label style={{ marginTop: 10 }}>표지 이미지</Label>
-                <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
+                <View style={{ flexDirection: "row", gap: 8, marginBottom: 8, alignItems: "center" }}>
+                  {plannedEditItem.cover_image ? (
+                    <ExpoImage
+                      source={{ uri: plannedEditItem.cover_image }}
+                      style={{ width: 40, height: 56, borderRadius: 4 }}
+                      contentFit="cover"
+                    />
+                  ) : (
+                    <View style={{ width: 40, height: 56, borderRadius: 4, backgroundColor: C.line, justifyContent: "center", alignItems: "center" }}>
+                      <Text style={{ color: C.sub, fontSize: 8 }}>없음</Text>
+                    </View>
+                  )}
                   <Input
                     value={plannedEditItem.cover_image || ""}
                     onChangeText={(t) => setPlannedEditItem({ ...plannedEditItem, cover_image: t })}
-                    placeholder="URL 직접 입력 또는 갤러리 선택"
+                    placeholder="URL 직접 입력"
                     style={{ flex: 1 }}
                   />
                   <OutlineButton 
@@ -25455,7 +26321,16 @@ async function importJSON() {
                     onPress={() => pickImageFromGallery((uri) => {
                       setPlannedEditItem({ ...plannedEditItem, cover_image: uri });
                     })} 
-                    style={{ paddingHorizontal: 12 }}
+                    style={{ paddingHorizontal: 10 }}
+                  />
+                  <OutlineButton 
+                    title="DB" 
+                    onPress={() => {
+                      setCoverSelectTarget("plannedEdit");
+                      setCoverSelectModalOpen(true);
+                    }} 
+                    color={C.primary}
+                    style={{ paddingHorizontal: 10 }}
                   />
                 </View>
                 
@@ -25474,11 +26349,39 @@ async function importJSON() {
                   </View>
                   <TouchableOpacity
                     onPress={() => {
+                      // 🔧 v3.4.5: tags 문자열에서 대장르/부장르/일반태그를 분리하여 전달 (편집 모달과 일관성)
                       const currentTags = (plannedEditItem.tags || "")
                         .split(",")
                         .map(t => t.trim())
                         .filter(Boolean);
-                      openTagModal("planned", currentTags, plannedEditItem.major_genre || "", plannedEditItem.sub_genre || "", []);
+                      
+                      const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
+                      const allSub = [...SUB_GENRES, ...userSubGenres];
+                      
+                      // 대장르 감지
+                      const majorTags = currentTags.filter(tag => 
+                        allMajor.some(m => m.toLowerCase() === tag.toLowerCase())
+                      ).map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
+                      
+                      // 부장르 감지
+                      const subTags = currentTags.filter(tag => 
+                        allSub.some(s => s.toLowerCase() === tag.toLowerCase())
+                      ).map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
+                      
+                      // 일반 태그 (대장르/부장르 제외)
+                      const generalTags = currentTags.filter(tag => 
+                        !allMajor.some(m => m.toLowerCase() === tag.toLowerCase()) &&
+                        !allSub.some(s => s.toLowerCase() === tag.toLowerCase())
+                      );
+                      
+                      // 분리된 값으로 모달 열기 (JSON 문자열로 전달)
+                      openTagModal(
+                        "planned", 
+                        generalTags, 
+                        majorTags.length > 0 ? JSON.stringify(majorTags) : "",
+                        subTags.length > 0 ? JSON.stringify(subTags) : "",
+                        []
+                      );
                     }}
                     style={{
                       backgroundColor: C.primary,
@@ -25756,6 +26659,116 @@ async function importJSON() {
             )}
           </View>
         </View>
+      </Modal>
+
+      {/* 🖼️ 표지 선택 모달 (라이브러리에서 선택) - v3.4.5 */}
+      <Modal
+        visible={coverSelectModalOpen}
+        animationType="slide"
+        onRequestClose={() => setCoverSelectModalOpen(false)}
+        transparent
+      >
+        <TouchableOpacity
+          style={{ flex: 1, backgroundColor: C.modal }}
+          activeOpacity={1}
+          onPress={() => setCoverSelectModalOpen(false)}
+        >
+          <View style={{ flex: 1, justifyContent: "flex-end" }}>
+            <TouchableOpacity activeOpacity={1}>
+              <View style={{
+                backgroundColor: C.card,
+                borderTopLeftRadius: 20,
+                borderTopRightRadius: 20,
+                padding: 16,
+                maxHeight: "80%",
+              }}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>
+                    🖼️ 표지 라이브러리에서 선택
+                  </Text>
+                  <TouchableOpacity onPress={() => setCoverSelectModalOpen(false)}>
+                    <Text style={{ color: C.sub, fontSize: 24 }}>×</Text>
+                  </TouchableOpacity>
+                </View>
+                
+                <Text style={{ color: C.sub, marginBottom: 12 }}>
+                  미사용 표지 중에서 선택하세요. (사용 중인 표지는 회색으로 표시됩니다)
+                </Text>
+
+                {coverLibrary.length === 0 ? (
+                  <View style={{ padding: 40, alignItems: "center" }}>
+                    <Text style={{ color: C.sub, textAlign: "center" }}>
+                      표지 라이브러리가 비어있습니다.{"\n"}
+                      '표지' 탭에서 이미지를 추가해주세요.
+                    </Text>
+                  </View>
+                ) : (
+                  <FlatList
+                    data={coverLibrary}
+                    keyExtractor={(item) => item.id}
+                    numColumns={4}
+                    style={{ maxHeight: 400 }}
+                    columnWrapperStyle={{ gap: 6, marginBottom: 6 }}
+                    renderItem={({ item }) => {
+                      const isUsed = item.status === "used";
+                      
+                      return (
+                        <TouchableOpacity
+                          style={{
+                            flex: 1,
+                            aspectRatio: 0.7,
+                            maxWidth: "24%",
+                            borderRadius: 6,
+                            overflow: "hidden",
+                            borderWidth: 2,
+                            borderColor: isUsed ? C.line : C.primary,
+                            opacity: isUsed ? 0.5 : 1,
+                          }}
+                          onPress={() => {
+                            if (!isUsed) {
+                              selectCoverFromLibrary(item);
+                            } else {
+                              Alert.alert("알림", "이 표지는 이미 다른 작품에서 사용 중입니다.");
+                            }
+                          }}
+                          disabled={isUsed}
+                        >
+                          <ExpoImage
+                            source={{ uri: item.file_path }}
+                            style={{ width: "100%", height: "100%" }}
+                            contentFit="cover"
+                            cachePolicy="memory-disk"
+                          />
+                          {isUsed && (
+                            <View style={{
+                              position: "absolute",
+                              top: 0,
+                              left: 0,
+                              right: 0,
+                              bottom: 0,
+                              backgroundColor: "rgba(0,0,0,0.4)",
+                              justifyContent: "center",
+                              alignItems: "center",
+                            }}>
+                              <Text style={{ color: "#fff", fontSize: 10, fontWeight: "700" }}>사용중</Text>
+                            </View>
+                          )}
+                        </TouchableOpacity>
+                      );
+                    }}
+                    ListEmptyComponent={<Text style={{ color: C.sub, textAlign: "center" }}>표지가 없습니다.</Text>}
+                  />
+                )}
+                
+                <OutlineButton
+                  title="닫기"
+                  onPress={() => setCoverSelectModalOpen(false)}
+                  style={{ marginTop: 12 }}
+                />
+              </View>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
       </Modal>
 
       {/* 🏷️ 태그 매니저 모달 (풀스크린) */}
