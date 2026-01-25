@@ -1069,6 +1069,7 @@ import {
   ActivityIndicator,
   StatusBar,
   Platform,
+  AppState,
 } from "react-native";
 import { Image as ExpoImage } from "expo-image";
 import * as SQLite from "expo-sqlite";
@@ -1076,12 +1077,11 @@ import * as ImagePicker from "expo-image-picker";
 
 // 🔧 v3.4.6: 웹 빌드 호환성 - 네이티브 전용 모듈
 // ⚠️ 네이티브 빌드 시: npx expo install expo-navigation-bar expo-file-system
-// ⚠️ 웹 전용 빌드 시: 아래 코드 그대로 사용 (기능 비활성화)
 let NavigationBar = null;
 let FileSystem = null;
 
-// 네이티브 환경에서만 동적 로드 시도
-if (typeof window === "undefined" || Platform.OS !== "web") {
+// 🔧 v3.4.6 fix: Platform.OS만으로 조건 판단 (typeof window 조건 제거)
+if (Platform.OS !== "web") {
   try {
     // Android에서만 NavigationBar 사용
     if (Platform.OS === "android") {
@@ -1090,8 +1090,7 @@ if (typeof window === "undefined" || Platform.OS !== "web") {
     // 네이티브에서만 FileSystem 사용
     FileSystem = require("expo-file-system");
   } catch (e) {
-    // 패키지가 설치되지 않은 경우 무시
-    console.warn("Native modules not available (install with: npx expo install expo-navigation-bar expo-file-system)");
+    console.warn("Native modules not available:", e.message);
   }
 }
 
@@ -1099,116 +1098,130 @@ if (typeof window === "undefined" || Platform.OS !== "web") {
    SQLite (Expo SDK 54 호환)
    ========================================================= */
 let db = null;
-let dbPromise = null;
+let dbOpenPromise = null;
 
-// 데이터베이스 초기화 (재연결 지원, 동시 호출 방지)
+// 🔧 v3.4.6: 데이터베이스 초기화 (강화된 재연결 로직)
 async function openDb() {
+  // 이미 연결 시도 중이면 해당 Promise를 기다림
+  if (dbOpenPromise) {
+    try {
+      return await dbOpenPromise;
+    } catch (e) {
+      dbOpenPromise = null;
+      db = null;
+    }
+  }
+  
+  // 기존 연결이 있으면 테스트
   if (db) {
     try {
-      // 연결 테스트
+      // 간단한 쿼리로 연결 테스트
       await db.getAllAsync("SELECT 1;");
       return db;
     } catch (e) {
-      // 연결이 끊어졌으면 리셋
+      // 연결이 죽었으면 정리
+      console.warn("DB 연결 테스트 실패:", e.message);
       db = null;
-      dbPromise = null;
     }
   }
   
-  // 동시에 여러 번 열리는 것 방지
-  if (dbPromise) {
-    return dbPromise;
+  // 새 연결 생성
+  dbOpenPromise = SQLite.openDatabaseAsync("novel_tiers.db");
+  
+  try {
+    db = await dbOpenPromise;
+    console.log("DB 연결 성공");
+    return db;
+  } catch (e) {
+    console.error("DB 열기 실패:", e.message);
+    db = null;
+    throw e;
+  } finally {
+    dbOpenPromise = null;
   }
-  
-  dbPromise = (async () => {
-    try {
-      db = await SQLite.openDatabaseAsync("novel_tiers.db");
-      return db;
-    } catch (e) {
-      db = null;
-      dbPromise = null;
-      throw e;
-    }
-  })();
-  
-  const result = await dbPromise;
-  dbPromise = null;
-  return result;
 }
 
-// DB 연결 리셋 (에러 발생 시 호출)
+// DB 연결 강제 리셋
 function resetDbConnection() {
+  console.log("DB 연결 리셋");
   db = null;
-  dbPromise = null;
+  dbOpenPromise = null;
 }
 
-/** 단일 쿼리 실행 (재시도 포함) */
+// 🔧 v3.4.6: 안전한 DB 실행 래퍼 (자동 재연결)
+async function safeDbOperation(operation, operationName = "DB") {
+  const maxRetries = 3;
+  
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      // 매 시도마다 연결 확인
+      const database = await openDb();
+      if (!database) {
+        throw new Error("Database is null after openDb");
+      }
+      return await operation(database);
+    } catch (e) {
+      const isConnectionError = 
+        e.message?.includes("NullPointerException") ||
+        e.message?.includes("prepareAsync") ||
+        e.message?.includes("database") ||
+        e.message?.includes("null");
+      
+      console.warn(`${operationName} 오류 (시도 ${attempt + 1}/${maxRetries}):`, e.message);
+      
+      if (isConnectionError) {
+        // 연결 오류면 DB 리셋 후 재시도
+        resetDbConnection();
+      }
+      
+      if (attempt === maxRetries - 1) {
+        throw e;
+      }
+      
+      // 점진적 대기
+      await new Promise(r => setTimeout(r, 200 * (attempt + 1)));
+    }
+  }
+}
+
+/** 단일 쿼리 실행 */
 async function exec(sql, params = []) {
-  const maxRetries = 3;
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      const database = await openDb();
-      return await database.runAsync(sql, params);
-    } catch (e) {
-      console.warn(`exec 오류 (시도 ${i + 1}/${maxRetries}):`, e.message);
-      resetDbConnection();
-      if (i === maxRetries - 1) throw e;
-      // 잠시 대기 후 재시도
-      await new Promise(r => setTimeout(r, 100 * (i + 1)));
-    }
-  }
+  return safeDbOperation(
+    (database) => database.runAsync(sql, params),
+    "exec"
+  );
 }
 
-/** SELECT helper들 (재시도 포함) */
+/** SELECT 전체 */
 async function all(sql, params = []) {
-  const maxRetries = 3;
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      const database = await openDb();
-      return await database.getAllAsync(sql, params);
-    } catch (e) {
-      console.warn(`all 오류 (시도 ${i + 1}/${maxRetries}):`, e.message);
-      resetDbConnection();
-      if (i === maxRetries - 1) throw e;
-      await new Promise(r => setTimeout(r, 100 * (i + 1)));
-    }
-  }
+  return safeDbOperation(
+    (database) => database.getAllAsync(sql, params),
+    "all"
+  );
 }
 
+/** SELECT 첫 번째 */
 async function first(sql, params = []) {
-  const maxRetries = 3;
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      const database = await openDb();
-      return await database.getFirstAsync(sql, params);
-    } catch (e) {
-      console.warn(`first 오류 (시도 ${i + 1}/${maxRetries}):`, e.message);
-      resetDbConnection();
-      if (i === maxRetries - 1) throw e;
-      await new Promise(r => setTimeout(r, 100 * (i + 1)));
-    }
-  }
+  return safeDbOperation(
+    (database) => database.getFirstAsync(sql, params),
+    "first"
+  );
 }
 
-/** 여러 쿼리를 트랜잭션으로 실행 (재시도 포함) */
+/** 트랜잭션 실행 */
 async function execBatch(queries) {
-  const maxRetries = 3;
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      const database = await openDb();
+  if (!queries || queries.length === 0) return;
+  
+  return safeDbOperation(
+    async (database) => {
       await database.withTransactionAsync(async () => {
         for (const { sql, params } of queries) {
           await database.runAsync(sql, params || []);
         }
       });
-      return; // 성공하면 종료
-    } catch (e) {
-      console.warn(`execBatch 오류 (시도 ${i + 1}/${maxRetries}):`, e.message);
-      resetDbConnection();
-      if (i === maxRetries - 1) throw e;
-      await new Promise(r => setTimeout(r, 100 * (i + 1)));
-    }
-  }
+    },
+    "execBatch"
+  );
 }
 
 /* -------------------- Migration -------------------- */
@@ -13243,8 +13256,6 @@ function generateInsights(data) {
   }
   
   // 데이터 품질 점수
-// === Part 1 끝 ===
-// === Part 2 시작 (이전 파일과 이어붙이세요) ===
   const dataQualityScore = Math.round(
     (basicStats.highReliability / basicStats.total) * 100
   );
@@ -13449,6 +13460,8 @@ export default function App() {
   
   // 🆕 v3.4.1: 최근 편집 작품 (빠른 접근용)
   const [recentlyEditedIds, setRecentlyEditedIds] = useState([]); // 최대 5개 ID 저장
+// === Part 1 끝 ===
+// === Part 2 시작 (이전 파일과 이어붙이세요) ===
   
   // 📋 v3.3.0: 예정 탭 (가등록 작품 관리)
   const [plannedList, setPlannedList] = useState([]);
@@ -14025,6 +14038,31 @@ export default function App() {
     initialize();
     
     return () => { mounted = false; };
+  }, []);
+  
+  // 🔧 v3.4.6: 앱이 포그라운드로 돌아올 때 DB 연결 강제 리셋
+  useEffect(() => {
+    let lastState = AppState.currentState;
+    
+    const subscription = AppState.addEventListener("change", async (nextAppState) => {
+      // 백그라운드 → 포그라운드 전환 시
+      if (lastState.match(/inactive|background/) && nextAppState === "active") {
+        console.log("앱 포그라운드 전환 - DB 연결 리셋");
+        // 기존 연결을 강제로 끊고 새로 연결
+        resetDbConnection();
+        try {
+          await openDb();
+          console.log("DB 재연결 성공");
+        } catch (e) {
+          console.error("DB 재연결 실패:", e.message);
+        }
+      }
+      lastState = nextAppState;
+    });
+    
+    return () => {
+      subscription.remove();
+    };
   }, []);
   
   
