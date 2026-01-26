@@ -2,8 +2,8 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.4.7                                                                  ║
- * ║  최종 수정: 2025-01-25                                                        ║
+ * ║  버전: 3.5.0                                                                  ║
+ * ║  최종 수정: 2025-01-26                                                        ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -502,12 +502,14 @@
  * │                                                                             │
  * │50. 🔧 안정성 개선 (v3.4.6 → v3.4.7):                                        │
  * │    - DB 연결 관리 강화                                                      │
- * │      · safeDbOperation 래퍼 함수 도입 (자동 재연결 + 재시도)                │
+ * │      · safeDbOperation 래퍼 함수 도입 (자동 재연결 + 5회 재시도)            │
  * │      · 연결 오류 패턴 감지 (NullPointerException, prepareAsync 등)          │
  * │      · AppState 리스너로 백그라운드→포그라운드 전환 시 DB 리셋              │
- * │    - expo-file-system 새 API 마이그레이션 (SDK 54)                          │
- * │      · File, Directory, Paths 클래스 사용                                   │
- * │      · 표지 라이브러리 시스템 전면 재작성                                   │
+ * │      · dbLastSuccessTime으로 최근 성공 여부 추적                            │
+ * │    - expo-file-system 레거시 API 사용 (SDK 54 새 API 불안정)                │
+ * │      · 새 API (File, Directory) → 레거시 API로 롤백                        │
+ * │      · copyAsync, deleteAsync, makeDirectoryAsync 등 사용                  │
+ * │      · 표지 가져오기 첫 번째 이후 실패 문제 해결                            │
  * │    - 매칭 큐잉 시스템 실제 적용 (v3.4.7)                                    │
  * │      · decide() 함수를 enqueueMatchTask로 래핑                              │
  * │      · pendingMatchPairs Set으로 중복 매치 방지                             │
@@ -517,10 +519,56 @@
  * │    - uuid 중복 방지 강화 (타임스탬프 + 카운터)                              │
  * │    - 🚨 자동 승패 무한 루프 버그 수정                                       │
  * │      · isAutoMatching 플래그로 중복 실행 방지                               │
- * │      · 자동 승패 후 500ms 딜레이 (연속 실행 방지)                           │
+ * │      · 속도 옵션 추가 (터보/보통/느림)                                      │
+ * │      · 터보: 10ms (최대 속도), 보통: 100ms, 느림: 500ms                     │
+ * │    - UI 개선                                                                │
+ * │      · OutlineButton에 paddingHorizontal 추가                               │
+ * │      · 표지 버튼 "DB" → "라이브러리"로 명칭 변경                            │
+ * │      · 표지 버튼 간격 및 크기 개선 (gap: 12, minWidth)                      │
+ * │      · 표지 선택 모달 크기 증가 (minHeight: 60%, maxHeight: 90%)            │
  * │    - ⚠️ 웹 빌드 미지원 (Android 전용)                                       │
  * │      · app.json에 "platforms": ["android", "ios"] 설정 권장                 │
  * │      · 빌드 시: eas update --platform android                               │
+ * │                                                                             │
+ * └─────────────────────────────────────────────────────────────────────────────┘
+ * 
+ * ┌─────────────────────────────────────────────────────────────────────────────┐
+ * │ 📋 v3.5.0 신규 기능 - 취향 발견 시스템 (Preference Discovery System)        │
+ * ├─────────────────────────────────────────────────────────────────────────────┤
+ * │                                                                             │
+ * │52. 🧠 취향 발견 시스템 v3.5.0:                                               │
+ * │    - 목표: "아는 나 + 모르는 나"를 모두 찾아주는 AI 취향 분석               │
+ * │    - 4개 신규 테이블:                                                       │
+ * │      · choice_logs: 선택 기록 + 맥락 스냅샷 + 이상 탐지                     │
+ * │      · preference_patterns: 정적/동적 패턴 통합 저장                        │
+ * │      · insight_queue: 인사이트 대기열 + 사용자 응답                         │
+ * │      · weight_config: 예측 가중치 버전 관리                                 │
+ * │    - 12개 패턴 카테고리:                                                    │
+ * │      · 동적: genre_matchup, genre_affinity, tag_power, tag_combo,          │
+ * │              tag_aversion, author_loyalty, rating_behavior, read_preference│
+ * │      · 정적: static_genre_rating, static_tag_droprate, static_spectrum,    │
+ * │              static_author                                                  │
+ * │    - 윌슨 신뢰구간 기반 통계적 유의성 검증                                  │
+ * │    - 이상 탐지: 레이팅 역전, 장르 상성 역전, 태그 기피 역전                 │
+ * │    - 인사이트 유형:                                                         │
+ * │      · 확인형: 핵심 취향, 장르 강점, 태그 선호, 작가 충성                   │
+ * │      · 발견형: 숨겨진 패턴, 크로스 불일치, 레이팅 무시, 무의식 편향         │
+ * │    - 취향 기반 승부 예측 엔진 (generateEnhancedPrediction)                  │
+ * │    - 기존 매칭 데이터 자동 마이그레이션                                     │
+ * │    - 선택 로그 배치 저장 (성능 최적화)                                      │
+ * │    - 패턴 업데이트 스케줄러 (비동기 처리)                                   │
+ * │    [Phase 2 - UI 통합]                                                      │
+ * │    - 분석 탭에 인사이트 섹션 추가 (실시간 취향 발견 표시)                   │
+ * │    - 인사이트 응답 UI (동의/비동의/건너뛰기)                                │
+ * │    - 확인된 취향 패턴 상위 10개 요약 표시                                   │
+ * │    - 매칭 화면에 취향 기반 예측 패널 추가                                   │
+ * │    - 예측 요인 표시 (장르/태그/플랫폼/직접대결)                             │
+ * │    - 사용자 피드백 기반 가중치 자동 학습                                    │
+ * │    [백업/복원 주의사항]                                                     │
+ * │    - 취향 데이터(choice_logs, preference_patterns, insight_queue,          │
+ * │      weight_config)는 현재 백업에 포함되지 않음 (의도적 설계)              │
+ * │    - 복원 시 기존 매칭 데이터에서 자동 재생성됨                             │
+ * │    - 향후 Phase에서 선택적 백업 기능 추가 예정                              │
  * │                                                                             │
  * └─────────────────────────────────────────────────────────────────────────────┘
  * 
@@ -1059,6 +1107,60 @@
  * ║ - 해결: validateBackupData, importJSON에서 v9~v11 모두 지원하도록 수정      ║
  * ║ - 영향: 백업/복원 기능 완전 복구                                             ║
  * ║                                                                              ║
+ * ║ [취향 발견 시스템 스키마 불일치] (2025-01-26) v3.5.0 Phase 2                 ║
+ * ║ - 증상: 분석 탭 인사이트 로드 시 SQL 오류 발생 가능                         ║
+ * ║ - 원인:                                                                      ║
+ * ║   1. loadPreferencePatterns에서 sample_count 사용 (스키마: sample_size)     ║
+ * ║   2. recordInsightFeedback에서 user_confirmed 사용 (스키마에 미존재)        ║
+ * ║   3. handleInsightResponse에서 related_pattern_id 사용 (스키마: pattern_id) ║
+ * ║   4. insight_queue에 confidence, responded_at 컬럼 누락                     ║
+ * ║ - 해결:                                                                      ║
+ * ║   1. sample_count → sample_size로 수정                                      ║
+ * ║   2. preference_patterns에 user_confirmed 컬럼 추가 (스키마 + 마이그레이션) ║
+ * ║   3. related_pattern_id → pattern_id로 수정                                 ║
+ * ║   4. insight_queue에 confidence, content, responded_at 컬럼 추가            ║
+ * ║   5. UI에서 content 파싱 대신 description/evidence 직접 사용                ║
+ * ║ - 추가: 분석 탭 진입 시 인사이트 자동 로드 useEffect 추가                   ║
+ * ║                                                                              ║
+ * ║ [취향 발견 시스템 로직 버그] (2025-01-26) v3.5.0 Phase 2                     ║
+ * ║ - 증상: 가중치 학습 실패, 인사이트 타입 불일치로 UI 표시 오류               ║
+ * ║ - 원인:                                                                      ║
+ * ║   1. matchAnalysis.predicted?.id 참조 오류 (실제: predictedWinner="A"/"B")  ║
+ * ║   2. adjustWeightsFromFeedback에서 weights.genre 참조 (실제: w_genre_matchup)║
+ * ║   3. weight_config INSERT 쿼리에 존재하지 않는 'weights' 컬럼 사용          ║
+ * ║   4. insight_type으로 'deep'/'confirm' 저장 vs INSIGHT_META 타입 불일치     ║
+ * ║   5. queueInsight에서 confidence 컬럼 누락                                  ║
+ * ║ - 해결:                                                                      ║
+ * ║   1. predictedWinner 문자열에서 실제 ID 도출 로직 추가                      ║
+ * ║   2. adjustWeightsFromFeedback 전면 재작성 (올바른 필드명, 매핑 테이블)     ║
+ * ║   3. 개별 w_* 컬럼 사용하도록 INSERT 쿼리 수정                              ║
+ * ║   4. 인사이트 생성 함수들의 type을 category 기반으로 통일                   ║
+ * ║   5. INSIGHT_META를 실제 생성되는 타입과 일치하도록 수정                    ║
+ * ║   6. queueInsight에 confidence 필드 추가                                    ║
+ * ║ - 추가: AppState 리스너에 백그라운드 전환 시 큐 플러시 기능 추가            ║
+ * ║                                                                              ║
+ * ║ [매칭 화면 예측 UI 버그] (2025-01-26) v3.5.0 Phase 2                         ║
+ * ║ - 증상: 매칭 화면에서 취향 예측 패널이 표시되지 않거나 잘못된 값 표시       ║
+ * ║ - 원인:                                                                      ║
+ * ║   1. matchPrediction.factors가 객체인데 UI에서 배열(.length)로 체크          ║
+ * ║   2. matchPrediction.scores?.A/B 참조 (실제: predictedWinRateA)             ║
+ * ║   3. matchPrediction.predictedWinner 참조 (실제: predictedWinnerId)         ║
+ * ║ - 해결:                                                                      ║
+ * ║   1. factors → mainReasons로 변경 (배열)                                    ║
+ * ║   2. scores?.A → predictedWinRateA, scores?.B → 1-predictedWinRateA        ║
+ * ║   3. predictedWinner → predictedWinnerId로 변경                             ║
+ * ║ - 추가: 들여쓰기 오류 수정 (useEffect)                                       ║
+ * ║                                                                              ║
+ * ║ [상태 동기화 버그] (2025-01-26) v3.5.0 Phase 2                               ║
+ * ║ - 증상: 작품 삭제 후 매칭 화면에서 삭제된 작품 참조로 크래시 발생            ║
+ * ║ - 원인: 삭제/초기화 시 관련 상태(pair, editItem 등) 동기화 누락             ║
+ * ║ - 해결:                                                                      ║
+ * ║   1. removeNovel: pair, editItem, dailyReco, focusMatchNovel 초기화         ║
+ * ║   2. batchDelete: pair, editItem, dailyReco, focusMatchNovel 초기화         ║
+ * ║   3. resetAll: 모든 관련 상태 초기화 (8개 상태)                              ║
+ * ║   4. resetMatches: pair, matchAnalysis, matchPrediction 초기화              ║
+ * ║   5. importJSON: 모든 관련 상태 초기화 (데이터 교체 시)                      ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  */
 
@@ -1087,15 +1189,17 @@ import { Image as ExpoImage } from "expo-image";
 import * as SQLite from "expo-sqlite";
 import * as ImagePicker from "expo-image-picker";
 import * as NavigationBar from "expo-navigation-bar";
-import { File, Directory, Paths } from "expo-file-system";
+// 🔧 v3.4.7: 새 FileSystem API가 불안정하여 레거시 API 사용
+import * as FileSystem from "expo-file-system";
 
 /* =========================================================
    SQLite (Expo SDK 54 호환)
    ========================================================= */
 let db = null;
 let dbOpenPromise = null;
+let dbLastSuccessTime = 0; // 마지막 성공 시간
 
-// 🔧 v3.4.6: 데이터베이스 초기화 (강화된 재연결 로직)
+// 🔧 v3.4.7: 데이터베이스 초기화 (강화된 재연결 로직)
 async function openDb() {
   // 이미 연결 시도 중이면 해당 Promise를 기다림
   if (dbOpenPromise) {
@@ -1107,11 +1211,17 @@ async function openDb() {
     }
   }
   
+  // 기존 연결이 있고, 최근 성공했으면 재사용
+  if (db && Date.now() - dbLastSuccessTime < 5000) {
+    return db;
+  }
+  
   // 기존 연결이 있으면 테스트
   if (db) {
     try {
       // 간단한 쿼리로 연결 테스트
       await db.getAllAsync("SELECT 1;");
+      dbLastSuccessTime = Date.now();
       return db;
     } catch (e) {
       // 연결이 죽었으면 정리
@@ -1125,6 +1235,7 @@ async function openDb() {
   
   try {
     db = await dbOpenPromise;
+    dbLastSuccessTime = Date.now();
     console.log("DB 연결 성공");
     return db;
   } catch (e) {
@@ -1141,11 +1252,12 @@ function resetDbConnection() {
   console.log("DB 연결 리셋");
   db = null;
   dbOpenPromise = null;
+  dbLastSuccessTime = 0;
 }
 
-// 🔧 v3.4.6: 안전한 DB 실행 래퍼 (자동 재연결)
+// 🔧 v3.4.7: 안전한 DB 실행 래퍼 (자동 재연결 + 더 적극적인 재시도)
 async function safeDbOperation(operation, operationName = "DB") {
-  const maxRetries = 3;
+  const maxRetries = 5; // 3 → 5로 증가
   
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
@@ -1154,18 +1266,24 @@ async function safeDbOperation(operation, operationName = "DB") {
       if (!database) {
         throw new Error("Database is null after openDb");
       }
-      return await operation(database);
+      
+      const result = await operation(database);
+      dbLastSuccessTime = Date.now();
+      return result;
     } catch (e) {
+      const errorMsg = e.message || "";
       const isConnectionError = 
-        e.message?.includes("NullPointerException") ||
-        e.message?.includes("prepareAsync") ||
-        e.message?.includes("database") ||
-        e.message?.includes("null");
+        errorMsg.includes("NullPointerException") ||
+        errorMsg.includes("prepareAsync") ||
+        errorMsg.includes("rejected") ||
+        errorMsg.includes("database") ||
+        errorMsg.includes("null") ||
+        errorMsg.includes("closed");
       
-      console.warn(`${operationName} 오류 (시도 ${attempt + 1}/${maxRetries}):`, e.message);
+      console.warn(`${operationName} 오류 (시도 ${attempt + 1}/${maxRetries}):`, errorMsg);
       
-      if (isConnectionError) {
-        // 연결 오류면 DB 리셋 후 재시도
+      if (isConnectionError || attempt > 0) {
+        // 연결 오류거나 두 번째 시도부터는 항상 리셋
         resetDbConnection();
       }
       
@@ -1173,8 +1291,8 @@ async function safeDbOperation(operation, operationName = "DB") {
         throw e;
       }
       
-      // 점진적 대기
-      await new Promise(r => setTimeout(r, 200 * (attempt + 1)));
+      // 점진적 대기 (더 길게)
+      await new Promise(r => setTimeout(r, 300 * (attempt + 1)));
     }
   }
 }
@@ -1474,6 +1592,169 @@ async function initDb() {
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_novels_status ON novels(status);`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_novels_title ON novels(title COLLATE NOCASE);`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_matches_created ON matches(created_at ASC);`);
+  
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // 🧠 취향 발견 시스템 v3.5.0 - Preference Discovery System
+  // ═══════════════════════════════════════════════════════════════════════════════
+  
+  // 1️⃣ choice_logs: 선택 기록 + 맥락 스냅샷 + 이상 탐지
+  await database.runAsync(`CREATE TABLE IF NOT EXISTS choice_logs (
+    id TEXT PRIMARY KEY NOT NULL,
+    match_id TEXT NOT NULL,
+    
+    -- 선택 결과
+    winner_id TEXT NOT NULL,
+    loser_id TEXT NOT NULL,
+    
+    -- 예측 정보
+    predicted_winner_id TEXT,
+    prediction_confidence REAL,
+    prediction_factors TEXT,
+    was_correct INTEGER,
+    
+    -- 스냅샷 (JSON)
+    winner_snapshot TEXT,
+    loser_snapshot TEXT,
+    comparison TEXT,
+    
+    -- 이상 탐지
+    anomaly_score REAL DEFAULT 0,
+    anomaly_factors TEXT,
+    
+    -- 메타
+    match_type TEXT DEFAULT 'manual',
+    session_position INTEGER,
+    created_at INTEGER NOT NULL
+  );`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_cl_created ON choice_logs(created_at DESC);`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_cl_type ON choice_logs(match_type);`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_cl_winner ON choice_logs(winner_id);`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_cl_anomaly ON choice_logs(anomaly_score DESC);`);
+  
+  // 2️⃣ preference_patterns: 발견된 취향 패턴 (정적+동적 통합)
+  await database.runAsync(`CREATE TABLE IF NOT EXISTS preference_patterns (
+    id TEXT PRIMARY KEY NOT NULL,
+    
+    -- 패턴 정의
+    category TEXT NOT NULL,
+    pattern_key TEXT NOT NULL,
+    
+    -- 동적 통계 (선택 행동)
+    sample_size INTEGER DEFAULT 0,
+    win_count INTEGER DEFAULT 0,
+    win_rate REAL,
+    
+    -- 신뢰 구간 (윌슨)
+    confidence_lower REAL,
+    confidence_upper REAL,
+    significance REAL,
+    
+    -- 정적 분석 연계
+    static_metric TEXT,
+    static_value REAL,
+    static_deviation REAL,
+    
+    -- 상세 정보 (JSON)
+    details TEXT,
+    
+    -- 인사이트 상태
+    is_notable INTEGER DEFAULT 0,
+    insight_level TEXT,
+    insight_title TEXT,
+    insight_description TEXT,
+    
+    is_shown INTEGER DEFAULT 0,
+    shown_at INTEGER,
+    user_reaction TEXT,
+    user_confirmed INTEGER DEFAULT 0,
+    
+    -- 시간
+    first_seen_at INTEGER NOT NULL,
+    last_updated_at INTEGER NOT NULL
+  );`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_pp_category ON preference_patterns(category);`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_pp_notable ON preference_patterns(is_notable DESC, significance DESC);`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_pp_key ON preference_patterns(pattern_key);`);
+  await database.runAsync(`CREATE UNIQUE INDEX IF NOT EXISTS idx_pp_unique ON preference_patterns(category, pattern_key);`);
+  
+  // 3️⃣ insight_queue: 인사이트 대기열 + 사용자 응답
+  await database.runAsync(`CREATE TABLE IF NOT EXISTS insight_queue (
+    id TEXT PRIMARY KEY NOT NULL,
+    
+    -- 출처
+    source TEXT NOT NULL,
+    pattern_id TEXT,
+    
+    -- 인사이트 내용
+    insight_type TEXT NOT NULL,
+    priority INTEGER DEFAULT 50,
+    confidence REAL DEFAULT 0,
+    
+    title TEXT NOT NULL,
+    description TEXT NOT NULL,
+    evidence TEXT,
+    content TEXT,
+    
+    -- 상태
+    status TEXT DEFAULT 'pending',
+    shown_at INTEGER,
+    user_response TEXT,
+    responded_at INTEGER,
+    
+    created_at INTEGER NOT NULL
+  );`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_iq_status ON insight_queue(status, priority DESC);`);
+  
+  // 4️⃣ weight_config: 예측 가중치 버전 관리
+  await database.runAsync(`CREATE TABLE IF NOT EXISTS weight_config (
+    version INTEGER PRIMARY KEY AUTOINCREMENT,
+    
+    -- 기본 가중치
+    w_elo REAL DEFAULT 0.35,
+    w_h2h REAL DEFAULT 0.20,
+    w_overall_winrate REAL DEFAULT 0.10,
+    w_reliability REAL DEFAULT 0.05,
+    
+    -- 취향 기반 가중치
+    w_genre_matchup REAL DEFAULT 0.10,
+    w_tag_power REAL DEFAULT 0.10,
+    w_read_preference REAL DEFAULT 0.05,
+    w_author_affinity REAL DEFAULT 0.03,
+    w_coordinate_zone REAL DEFAULT 0.02,
+    
+    -- 변경 정보
+    change_source TEXT,
+    change_reason TEXT,
+    changed_weights TEXT,
+    
+    -- 성능 추적
+    accuracy_at_creation REAL,
+    accuracy_current REAL,
+    sample_size_for_accuracy INTEGER,
+    
+    -- 상태
+    is_active INTEGER DEFAULT 0,
+    created_at INTEGER NOT NULL
+  );`);
+  
+  // 기본 가중치 버전이 없으면 생성
+  const activeWeight = await database.getFirstAsync(
+    `SELECT version FROM weight_config WHERE is_active = 1`
+  );
+  if (!activeWeight) {
+    await database.runAsync(
+      `INSERT INTO weight_config (is_active, created_at) VALUES (1, ?)`,
+      [Date.now()]
+    );
+  }
+  
+  // 🧠 v3.5.0 Phase 2: preference_patterns 마이그레이션
+  await ensureColumn("preference_patterns", "user_confirmed", "INTEGER", "0");
+  
+  // 🧠 v3.5.0 Phase 2: insight_queue 마이그레이션
+  await ensureColumn("insight_queue", "confidence", "REAL", "0");
+  await ensureColumn("insight_queue", "content", "TEXT", "''");
+  await ensureColumn("insight_queue", "responded_at", "INTEGER", "0");
 }
 
 // -----------------------------------------
@@ -1703,6 +1984,1405 @@ async function syncNovelTags(novelId, tagData) {
     "UPDATE novels SET tags = ?, tag_data = ? WHERE id = ?",
     [tagsString, JSON.stringify(tagData), novelId]
   );
+}
+
+/* =========================================================================
+ * 🧠 취향 발견 시스템 (Preference Discovery System) v3.5.0
+ * =========================================================================
+ *
+ * 목표: "아는 나 + 모르는 나"를 모두 찾아주는 AI 취향 분석 시스템
+ *
+ * ┌─────────────────────────────────────────────────────────────────────┐
+ * │ 아키텍처                                                            │
+ * │                                                                     │
+ * │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                │
+ * │  │   수집층    │→ │   분석층    │→ │   발견층    │                │
+ * │  │  Collector  │  │  Analyzer   │  │  Discoverer │                │
+ * │  └─────────────┘  └─────────────┘  └─────────────┘                │
+ * │         ↓                ↓                ↓                        │
+ * │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                │
+ * │  │ choice_logs │  │  patterns   │  │  insights   │                │
+ * │  └─────────────┘  └─────────────┘  └─────────────┘                │
+ * └─────────────────────────────────────────────────────────────────────┘
+ *
+ * 패턴 카테고리 (12개):
+ * - 동적: genre_matchup, genre_affinity, tag_power, tag_combo, tag_aversion,
+ *         author_loyalty, rating_behavior, read_preference
+ * - 정적: static_genre_rating, static_tag_droprate, static_spectrum, static_author
+ *
+ * 인사이트 유형:
+ * - 확인형: CORE_PREFERENCE, GENRE_STRENGTH, TAG_AFFINITY, AUTHOR_LOYALTY
+ * - 발견형: HIDDEN_PATTERN, CROSS_MISMATCH, RATING_OVERRIDE, UNCONSCIOUS_BIAS
+ * - 질문형: ANOMALY_QUESTION, PREFERENCE_CHECK
+ * ========================================================================= */
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🔧 헬퍼 함수들
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * 안전한 JSON 파싱
+ */
+function safeParseJSON(str, defaultValue = null) {
+  if (!str) return defaultValue;
+  if (typeof str === 'object') return str;
+  try {
+    return JSON.parse(str);
+  } catch (e) {
+    return defaultValue;
+  }
+}
+
+/**
+ * 티어 순서 (높은 순)
+ */
+const TIER_ORDER = ["S", "A", "B+", "B", "B-", "C"];
+
+/**
+ * 티어 차이 계산 (양수면 A가 높음)
+ */
+function getTierDiff(tierA, tierB) {
+  const idxA = TIER_ORDER.indexOf(tierA);
+  const idxB = TIER_ORDER.indexOf(tierB);
+  if (idxA === -1 || idxB === -1) return 0;
+  return idxB - idxA;
+}
+
+/**
+ * 티어가 더 높은지 확인
+ */
+function isTierHigher(tierA, tierB) {
+  return getTierDiff(tierA, tierB) > 0;
+}
+
+/**
+ * 장르 매치업 키 생성 (알파벳 순 정렬로 일관성)
+ */
+function createGenreMatchupKey(genreA, genreB) {
+  if (!genreA || !genreB) return null;
+  if (genreA === genreB) return null;
+  const sorted = [genreA, genreB].sort();
+  return `${sorted[0]}_vs_${sorted[1]}`;
+}
+
+/**
+ * 공통 태그 찾기
+ */
+function findSharedTags(tagsA, tagsB) {
+  if (!tagsA || !tagsB) return [];
+  const setB = new Set(tagsB.map(t => t.toLowerCase()));
+  return tagsA.filter(t => setB.has(t.toLowerCase()));
+}
+
+/**
+ * 읽은 비율 계산
+ */
+function calculateReadRatio(novel) {
+  const read = Number(novel.read_count) || 0;
+  const total = Number(novel.total_episodes) || 0;
+  if (total <= 0) return 0.5;  // 모르면 중립
+  return Math.min(1, read / total);
+}
+
+/**
+ * 레이팅 갭 버킷 생성
+ */
+function getGapBucket(gap) {
+  if (gap < 50) return "tiny";      // 0-49
+  if (gap < 100) return "small";    // 50-99
+  if (gap < 200) return "medium";   // 100-199
+  if (gap < 300) return "large";    // 200-299
+  return "huge";                     // 300+
+}
+
+/**
+ * 윌슨 신뢰구간 계산 (통계적 유의성)
+ */
+function wilsonConfidenceInterval(successes, total, confidence = 0.95) {
+  if (total === 0) return { lower: 0, upper: 1 };
+  
+  const z = confidence === 0.95 ? 1.96 : 1.645;
+  const p = successes / total;
+  const n = total;
+  
+  const denominator = 1 + z * z / n;
+  const center = p + z * z / (2 * n);
+  const spread = z * Math.sqrt((p * (1 - p) + z * z / (4 * n)) / n);
+  
+  return {
+    lower: Math.max(0, (center - spread) / denominator),
+    upper: Math.min(1, (center + spread) / denominator),
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 📥 수집층: 선택 맥락 수집 및 저장
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * 작품 스냅샷 생성 (선택 시점의 상태 캡처)
+ */
+function createNovelSnapshot(novel) {
+  if (!novel) return null;
+  
+  // 태그 파싱
+  let tags = [];
+  try {
+    const tagData = JSON.parse(novel.tag_data || "[]");
+    if (Array.isArray(tagData)) {
+      tags = tagData.map(t => t.tag || t).filter(Boolean);
+    }
+  } catch {
+    tags = (novel.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+  }
+  
+  // 플랫폼 파싱
+  let platforms = [];
+  try {
+    platforms = JSON.parse(novel.platforms || "[]");
+  } catch {
+    platforms = [];
+  }
+  
+  // 대장르 파싱
+  let majorGenre = null;
+  try {
+    const mg = JSON.parse(novel.major_genre || "[]");
+    majorGenre = Array.isArray(mg) ? mg[0] : mg;
+  } catch {
+    majorGenre = novel.major_genre || null;
+  }
+  
+  // 레이팅에서 티어 계산
+  const rating = Number(novel.rating) || 1500;
+  let tier = "C";
+  if (rating >= 1950) tier = "S";
+  else if (rating >= 1850) tier = "A";
+  else if (rating >= 1700) tier = "B+";
+  else if (rating >= 1600) tier = "B";
+  else if (rating >= 1500) tier = "B-";
+  
+  return {
+    id: novel.id,
+    title: novel.title || "",
+    rating: rating,
+    tier: tier,
+    rd: Number(novel.rd) || 350,
+    wins: Number(novel.wins) || 0,
+    losses: Number(novel.losses) || 0,
+    match_count: Number(novel.match_count) || 0,
+    major_genre: majorGenre,
+    tags: tags,
+    author: novel.author || "",
+    read_count: Number(novel.read_count) || 0,
+    total_episodes: Number(novel.total_episodes) || 0,
+    read_ratio: calculateReadRatio(novel),
+    platforms: platforms,
+    status: novel.status || "reading",
+  };
+}
+
+/**
+ * 두 작품 간 비교 데이터 생성
+ */
+function createComparisonData(winnerSnap, loserSnap) {
+  if (!winnerSnap || !loserSnap) return {};
+  
+  const ratingGap = Math.abs(winnerSnap.rating - loserSnap.rating);
+  const ratingWinnerHigher = winnerSnap.rating >= loserSnap.rating;
+  
+  return {
+    ratingGap: ratingGap,
+    ratingWinnerHigher: ratingWinnerHigher,
+    tierDiff: getTierDiff(winnerSnap.tier, loserSnap.tier),
+    tierWinnerHigher: isTierHigher(winnerSnap.tier, loserSnap.tier),
+    genreMatchup: createGenreMatchupKey(winnerSnap.major_genre, loserSnap.major_genre),
+    winnerGenre: winnerSnap.major_genre,
+    loserGenre: loserSnap.major_genre,
+    sharedTags: findSharedTags(winnerSnap.tags, loserSnap.tags),
+    winnerOnlyTags: winnerSnap.tags.filter(t => !loserSnap.tags.map(x => x.toLowerCase()).includes(t.toLowerCase())),
+    loserOnlyTags: loserSnap.tags.filter(t => !winnerSnap.tags.map(x => x.toLowerCase()).includes(t.toLowerCase())),
+    readRatioDiff: winnerSnap.read_ratio - loserSnap.read_ratio,
+    sameAuthor: winnerSnap.author && winnerSnap.author === loserSnap.author,
+    winnerAuthor: winnerSnap.author,
+    loserAuthor: loserSnap.author,
+  };
+}
+
+/**
+ * 선택 맥락 전체 수집
+ */
+function collectChoiceContext(winner, loser) {
+  const winnerSnapshot = createNovelSnapshot(winner);
+  const loserSnapshot = createNovelSnapshot(loser);
+  
+  if (!winnerSnapshot || !loserSnapshot) {
+    console.warn("[collectChoiceContext] Invalid novel data");
+    return null;
+  }
+  
+  const comparison = createComparisonData(winnerSnapshot, loserSnapshot);
+  
+  return {
+    winnerSnapshot,
+    loserSnapshot,
+    comparison,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🔍 이상 탐지: 평소와 다른 선택 감지
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * 이상 선택 탐지 (패턴 기반)
+ */
+async function detectAnomaly(context, patterns) {
+  const factors = {};
+  const { winnerSnapshot, loserSnapshot, comparison } = context;
+  
+  // 1. 레이팅 역전 체크 (낮은 레이팅이 이김)
+  if (!comparison.ratingWinnerHigher && comparison.ratingGap >= 100) {
+    const severity = Math.min(1, comparison.ratingGap / 300);
+    factors.ratingReversal = {
+      type: "rating_underdog_win",
+      gap: comparison.ratingGap,
+      severity: severity,
+    };
+  }
+  
+  // 2. 장르 상성 역전 체크
+  if (comparison.genreMatchup && patterns && patterns.length > 0) {
+    const genrePattern = patterns.find(p => 
+      p.category === "genre_matchup" && 
+      p.pattern_key === comparison.genreMatchup
+    );
+    
+    if (genrePattern && genrePattern.sample_size >= 10) {
+      const [genreA, genreB] = comparison.genreMatchup.split("_vs_");
+      const expectedWinnerGenre = genrePattern.win_rate >= 0.5 ? genreA : genreB;
+      
+      if (winnerSnapshot.major_genre !== expectedWinnerGenre) {
+        const usualRate = genrePattern.win_rate >= 0.5 
+          ? genrePattern.win_rate 
+          : (1 - genrePattern.win_rate);
+        
+        if (usualRate >= 0.7) {
+          factors.genreReversal = {
+            type: "genre_upset",
+            expected: expectedWinnerGenre,
+            actual: winnerSnapshot.major_genre,
+            usualRate: usualRate,
+            severity: (usualRate - 0.5) * 2,
+          };
+        }
+      }
+    }
+  }
+  
+  // 3. 태그 기피 역전 체크
+  if (patterns && patterns.length > 0) {
+    const aversionPatterns = patterns.filter(p => 
+      p.category === "tag_aversion" && p.significance >= 0.7
+    );
+    
+    for (const ap of aversionPatterns) {
+      const aversedTag = ap.pattern_key.replace("tag:", "");
+      if (winnerSnapshot.tags.map(t => t.toLowerCase()).includes(aversedTag.toLowerCase())) {
+        factors.tagSurprise = factors.tagSurprise || { unexpected: [] };
+        factors.tagSurprise.unexpected.push({
+          tag: aversedTag,
+          usualAvoidRate: 1 - ap.win_rate,
+        });
+      }
+    }
+  }
+  
+  // 4. 이상 점수 계산
+  const severities = Object.values(factors).map(f => f.severity || 0.3);
+  const anomalyScore = severities.length > 0
+    ? Math.min(1, severities.reduce((a, b) => a + b, 0) / 2)
+    : 0;
+  
+  return {
+    anomalyScore,
+    factors: Object.keys(factors).length > 0 ? factors : null,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 💾 저장: 선택 로그 기록
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * 선택 로그 저장 (배치 큐 통합)
+ */
+const choiceLogQueue = {
+  pending: [],
+  maxSize: 20,
+  flushInterval: 5000,
+  timer: null,
+  
+  add(log) {
+    this.pending.push(log);
+    
+    if (this.pending.length >= this.maxSize) {
+      this.flush();
+    } else if (!this.timer) {
+      this.timer = setTimeout(() => this.flush(), this.flushInterval);
+    }
+  },
+  
+  async flush() {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    
+    if (this.pending.length === 0) return;
+    
+    const batch = this.pending.splice(0);
+    
+    try {
+      const queries = batch.map(log => ({
+        sql: `INSERT INTO choice_logs (
+          id, match_id, winner_id, loser_id,
+          predicted_winner_id, prediction_confidence, prediction_factors, was_correct,
+          winner_snapshot, loser_snapshot, comparison,
+          anomaly_score, anomaly_factors, match_type, session_position, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        params: [
+          log.id,
+          log.match_id,
+          log.winner_id,
+          log.loser_id,
+          log.predicted_winner_id || null,
+          log.prediction_confidence || null,
+          log.prediction_factors ? JSON.stringify(log.prediction_factors) : null,
+          log.was_correct,
+          JSON.stringify(log.winner_snapshot),
+          JSON.stringify(log.loser_snapshot),
+          JSON.stringify(log.comparison),
+          log.anomaly_score || 0,
+          log.anomaly_factors ? JSON.stringify(log.anomaly_factors) : null,
+          log.match_type || "manual",
+          log.session_position || null,
+          log.created_at || Date.now(),
+        ],
+      }));
+      
+      await execBatch(queries);
+      
+      // 패턴 업데이트 스케줄 (비동기)
+      schedulePatternUpdate(batch);
+      
+    } catch (e) {
+      console.error("[choiceLogQueue.flush] 저장 실패:", e);
+      // 실패한 로그는 다시 큐에 넣지 않음 (무한 루프 방지)
+    }
+  },
+};
+
+/**
+ * 선택 로그 생성 및 큐에 추가
+ */
+async function saveChoiceLog(matchId, winner, loser, matchType = "manual", prediction = null) {
+  try {
+    const context = collectChoiceContext(winner, loser);
+    if (!context) return null;
+    
+    // 패턴 조회 (이상 탐지용)
+    let patterns = [];
+    try {
+      patterns = await all(`SELECT * FROM preference_patterns WHERE sample_size >= 5`);
+    } catch (e) {
+      // 패턴 없어도 계속 진행
+    }
+    
+    // 이상 탐지
+    const anomaly = await detectAnomaly(context, patterns);
+    
+    // 예측 정확도 판단
+    let wasCorrect = null;
+    if (prediction && prediction.predictedWinnerId) {
+      wasCorrect = prediction.predictedWinnerId === winner.id ? 1 : 0;
+    }
+    
+    const log = {
+      id: uuid(),
+      match_id: matchId,
+      winner_id: winner.id,
+      loser_id: loser.id,
+      predicted_winner_id: prediction?.predictedWinnerId || null,
+      prediction_confidence: prediction?.confidence || null,
+      prediction_factors: prediction?.factors || null,
+      was_correct: wasCorrect,
+      winner_snapshot: context.winnerSnapshot,
+      loser_snapshot: context.loserSnapshot,
+      comparison: context.comparison,
+      anomaly_score: anomaly.anomalyScore,
+      anomaly_factors: anomaly.factors,
+      match_type: matchType,
+      session_position: null,
+      created_at: Date.now(),
+    };
+    
+    // 큐에 추가
+    choiceLogQueue.add(log);
+    
+    return log;
+    
+  } catch (e) {
+    console.error("[saveChoiceLog] 오류:", e);
+    return null;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 📊 분석층: 패턴 업데이트
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * 패턴 업데이트 스케줄러
+ */
+let patternUpdateScheduled = false;
+let patternUpdateBatch = [];
+
+function schedulePatternUpdate(logs) {
+  patternUpdateBatch.push(...logs);
+  
+  if (!patternUpdateScheduled) {
+    patternUpdateScheduled = true;
+    setTimeout(async () => {
+      const batch = patternUpdateBatch.splice(0);
+      patternUpdateScheduled = false;
+      
+      if (batch.length > 0) {
+        await processPatternUpdates(batch);
+      }
+    }, 1000);
+  }
+}
+
+/**
+ * 패턴 업데이트 처리
+ */
+async function processPatternUpdates(logs) {
+  try {
+    const updates = [];
+    
+    for (const log of logs) {
+      // 수동 매칭만 학습에 사용
+      if (log.match_type === "auto") continue;
+      
+      const ws = log.winner_snapshot;
+      const ls = log.loser_snapshot;
+      const comp = log.comparison;
+      
+      if (!ws || !ls || !comp) continue;
+      
+      // 1. 장르 상성 패턴
+      if (comp.genreMatchup) {
+        updates.push({
+          category: "genre_matchup",
+          patternKey: comp.genreMatchup,
+          didWin: comp.winnerGenre === comp.genreMatchup.split("_vs_")[0],
+        });
+      }
+      
+      // 2. 장르 선호도 패턴
+      if (ws.major_genre) {
+        updates.push({
+          category: "genre_affinity",
+          patternKey: `genre:${ws.major_genre}`,
+          didWin: true,
+        });
+      }
+      if (ls.major_genre) {
+        updates.push({
+          category: "genre_affinity",
+          patternKey: `genre:${ls.major_genre}`,
+          didWin: false,
+        });
+      }
+      
+      // 3. 태그 파워 패턴
+      for (const tag of ws.tags || []) {
+        updates.push({
+          category: "tag_power",
+          patternKey: `tag:${tag}`,
+          didWin: true,
+          context: {
+            wasUnderdog: !comp.ratingWinnerHigher,
+            ratingGap: comp.ratingGap,
+          },
+        });
+      }
+      for (const tag of ls.tags || []) {
+        updates.push({
+          category: "tag_power",
+          patternKey: `tag:${tag}`,
+          didWin: false,
+        });
+      }
+      
+      // 4. 작가 충성도 패턴
+      if (ws.author) {
+        updates.push({
+          category: "author_loyalty",
+          patternKey: `author:${ws.author}`,
+          didWin: true,
+        });
+      }
+      if (ls.author) {
+        updates.push({
+          category: "author_loyalty",
+          patternKey: `author:${ls.author}`,
+          didWin: false,
+        });
+      }
+      
+      // 5. 레이팅 역전 패턴 (언더독 승리 시)
+      if (!comp.ratingWinnerHigher && comp.ratingGap >= 50) {
+        const gapBucket = getGapBucket(comp.ratingGap);
+        updates.push({
+          category: "rating_behavior",
+          patternKey: `underdog_win:${gapBucket}`,
+          didWin: true,
+        });
+      }
+    }
+    
+    // DB 업데이트 (배치)
+    if (updates.length > 0) {
+      await batchUpdatePatternStats(updates);
+    }
+    
+  } catch (e) {
+    console.error("[processPatternUpdates] 오류:", e);
+  }
+}
+
+/**
+ * 패턴 통계 배치 업데이트
+ */
+async function batchUpdatePatternStats(updates) {
+  const now = Date.now();
+  
+  // 패턴별로 그룹화
+  const grouped = {};
+  for (const u of updates) {
+    const key = `${u.category}:${u.patternKey}`;
+    if (!grouped[key]) {
+      grouped[key] = {
+        category: u.category,
+        patternKey: u.patternKey,
+        wins: 0,
+        total: 0,
+        contexts: [],
+      };
+    }
+    grouped[key].total++;
+    if (u.didWin) grouped[key].wins++;
+    if (u.context) grouped[key].contexts.push(u.context);
+  }
+  
+  // 각 패턴 업데이트
+  const queries = [];
+  for (const [key, data] of Object.entries(grouped)) {
+    // 기존 패턴 조회 또는 생성
+    queries.push({
+      sql: `INSERT INTO preference_patterns (
+        id, category, pattern_key, sample_size, win_count, first_seen_at, last_updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(category, pattern_key) DO UPDATE SET
+        sample_size = sample_size + ?,
+        win_count = win_count + ?,
+        last_updated_at = ?`,
+      params: [
+        key,  // id
+        data.category,
+        data.patternKey,
+        data.total,  // 초기 sample_size
+        data.wins,   // 초기 win_count
+        now,         // first_seen_at
+        now,         // last_updated_at
+        data.total,  // 업데이트 시 sample_size 증가
+        data.wins,   // 업데이트 시 win_count 증가
+        now,         // 업데이트 시 last_updated_at
+      ],
+    });
+  }
+  
+  await execBatch(queries);
+  
+  // 통계 재계산 스케줄
+  schedulePatternStatsRefresh();
+}
+
+/**
+ * 패턴 통계 재계산 스케줄러
+ */
+let statsRefreshScheduled = false;
+
+function schedulePatternStatsRefresh() {
+  if (!statsRefreshScheduled) {
+    statsRefreshScheduled = true;
+    setTimeout(async () => {
+      statsRefreshScheduled = false;
+      await refreshPatternStats();
+    }, 2000);
+  }
+}
+
+/**
+ * 패턴 통계 재계산 (윌슨 신뢰구간)
+ */
+async function refreshPatternStats() {
+  try {
+    const patterns = await all(`SELECT * FROM preference_patterns`);
+    
+    const queries = [];
+    
+    for (const p of patterns) {
+      const n = p.sample_size || 0;
+      const wins = p.win_count || 0;
+      
+      if (n < 5) continue;  // 샘플 너무 적으면 스킵
+      
+      const winRate = wins / n;
+      const { lower, upper } = wilsonConfidenceInterval(wins, n, 0.95);
+      const significance = 1 - (upper - lower);  // 구간 좁을수록 확실
+      const deviation = winRate - 0.5;
+      
+      // 주목할 만한 패턴인지 판단
+      const isNotable = (
+        n >= 15 &&
+        significance >= 0.6 &&
+        Math.abs(deviation) >= 0.15
+      );
+      
+      // 인사이트 레벨 결정
+      let insightLevel = null;
+      if (isNotable) {
+        if (Math.abs(deviation) >= 0.35) {
+          insightLevel = "deep";
+        } else if (Math.abs(deviation) >= 0.25) {
+          insightLevel = "discover";
+        } else {
+          insightLevel = "confirm";
+        }
+      }
+      
+      queries.push({
+        sql: `UPDATE preference_patterns SET
+          win_rate = ?,
+          confidence_lower = ?,
+          confidence_upper = ?,
+          significance = ?,
+          is_notable = ?,
+          insight_level = ?
+        WHERE id = ?`,
+        params: [
+          winRate, lower, upper, significance,
+          isNotable ? 1 : 0, insightLevel,
+          p.id
+        ],
+      });
+    }
+    
+    if (queries.length > 0) {
+      await execBatch(queries);
+    }
+    
+    // 인사이트 발견 스케줄
+    scheduleInsightDiscovery();
+    
+  } catch (e) {
+    console.error("[refreshPatternStats] 오류:", e);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 💡 발견층: 인사이트 생성
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * 인사이트 발견 스케줄러
+ */
+let insightDiscoveryScheduled = false;
+
+function scheduleInsightDiscovery() {
+  if (!insightDiscoveryScheduled) {
+    insightDiscoveryScheduled = true;
+    setTimeout(async () => {
+      insightDiscoveryScheduled = false;
+      await discoverInsights();
+    }, 3000);
+  }
+}
+
+/**
+ * 인사이트 발견
+ */
+async function discoverInsights() {
+  try {
+    // 아직 안 보여준 주목할 패턴들
+    const notablePatterns = await all(`
+      SELECT * FROM preference_patterns 
+      WHERE is_notable = 1 AND is_shown = 0
+      ORDER BY significance DESC, sample_size DESC
+      LIMIT 10
+    `);
+    
+    for (const pattern of notablePatterns) {
+      const insight = generateInsightFromPattern(pattern);
+      if (insight) {
+        await queueInsight(insight);
+      }
+    }
+    
+  } catch (e) {
+    console.error("[discoverInsights] 오류:", e);
+  }
+}
+
+/**
+ * 패턴에서 인사이트 생성
+ */
+function generateInsightFromPattern(pattern) {
+  const generators = {
+    genre_matchup: generateGenreMatchupInsight,
+    genre_affinity: generateGenreAffinityInsight,
+    tag_power: generateTagPowerInsight,
+    author_loyalty: generateAuthorLoyaltyInsight,
+    rating_behavior: generateRatingBehaviorInsight,
+  };
+  
+  const generator = generators[pattern.category];
+  if (!generator) return null;
+  
+  return generator(pattern);
+}
+
+/**
+ * 장르 상성 인사이트 생성
+ */
+function generateGenreMatchupInsight(pattern) {
+  const parts = pattern.pattern_key.split("_vs_");
+  if (parts.length !== 2) return null;
+  
+  const [genreA, genreB] = parts;
+  const preferredGenre = pattern.win_rate >= 0.5 ? genreA : genreB;
+  const avoidedGenre = pattern.win_rate >= 0.5 ? genreB : genreA;
+  const rate = pattern.win_rate >= 0.5 ? pattern.win_rate : (1 - pattern.win_rate);
+  
+  if (rate < 0.65) return null;
+  
+  return {
+    patternId: pattern.id,
+    source: "dynamic",
+    type: "genre_matchup",  // category 기반 타입
+    priority: Math.round(rate * 100),
+    confidence: rate,
+    title: `${avoidedGenre} vs ${preferredGenre} 상성`,
+    description: `${genreA} vs ${genreB} 대결에서 ${preferredGenre}를 ${Math.round(rate * 100)}% 선택했어요.`,
+    evidence: {
+      sampleSize: pattern.sample_size,
+      winRate: rate,
+      preferredGenre,
+      avoidedGenre,
+    },
+  };
+}
+
+/**
+ * 장르 선호도 인사이트 생성
+ */
+function generateGenreAffinityInsight(pattern) {
+  const genre = pattern.pattern_key.replace("genre:", "");
+  const rate = pattern.win_rate;
+  
+  if (rate < 0.6 || pattern.sample_size < 20) return null;
+  
+  return {
+    patternId: pattern.id,
+    source: "dynamic",
+    type: "genre_affinity",  // category 기반 타입
+    priority: Math.round(rate * 80),
+    confidence: rate,
+    title: `${genre} 장르 선호`,
+    description: `${genre} 장르 작품의 선택률이 ${Math.round(rate * 100)}%예요.`,
+    evidence: {
+      genre,
+      winRate: rate,
+      sampleSize: pattern.sample_size,
+    },
+  };
+}
+
+/**
+ * 태그 파워 인사이트 생성
+ */
+function generateTagPowerInsight(pattern) {
+  const tag = pattern.pattern_key.replace("tag:", "");
+  const rate = pattern.win_rate;
+  
+  if (rate < 0.6 || pattern.sample_size < 15) return null;
+  
+  return {
+    patternId: pattern.id,
+    source: "dynamic",
+    type: "tag_power",  // category 기반 타입
+    priority: Math.round(rate * 90),
+    confidence: rate,
+    title: `"${tag}" 태그 파워`,
+    description: `"${tag}" 태그가 있는 작품 선택률이 ${Math.round(rate * 100)}%예요.`,
+    evidence: {
+      tag,
+      winRate: rate,
+      sampleSize: pattern.sample_size,
+    },
+  };
+}
+
+/**
+ * 작가 충성도 인사이트 생성
+ */
+function generateAuthorLoyaltyInsight(pattern) {
+  const author = pattern.pattern_key.replace("author:", "");
+  const rate = pattern.win_rate;
+  
+  if (rate < 0.7 || pattern.sample_size < 10) return null;
+  
+  return {
+    patternId: pattern.id,
+    source: "dynamic",
+    type: "author_loyalty",  // category 기반 타입
+    priority: Math.round(rate * 70),
+    confidence: rate,
+    title: `${author} 작가 충성`,
+    description: `${author} 작가 작품의 선택률이 ${Math.round(rate * 100)}%예요.`,
+    evidence: {
+      author,
+      winRate: rate,
+      sampleSize: pattern.sample_size,
+    },
+  };
+}
+
+/**
+ * 레이팅 역전 인사이트 생성
+ */
+function generateRatingBehaviorInsight(pattern) {
+  const key = pattern.pattern_key;
+  if (!key.startsWith("underdog_win:")) return null;
+  
+  const bucket = key.replace("underdog_win:", "");
+  const rate = pattern.win_rate;
+  
+  if (rate < 0.3 || pattern.sample_size < 10) return null;
+  
+  const bucketLabels = {
+    tiny: "50점 미만",
+    small: "50~100점",
+    medium: "100~200점",
+    large: "200~300점",
+    huge: "300점 이상",
+  };
+  
+  return {
+    patternId: pattern.id,
+    source: "dynamic",
+    type: "rating_behavior",  // category 기반 타입
+    priority: Math.round(rate * 100),
+    confidence: rate,
+    title: `레이팅 역전 성향`,
+    description: `레이팅이 ${bucketLabels[bucket] || bucket} 낮아도 ${Math.round(rate * 100)}% 확률로 선택해요. 점수보다 취향이 중요한 것 같아요.`,
+    evidence: {
+      bucket,
+      winRate: rate,
+      sampleSize: pattern.sample_size,
+    },
+  };
+}
+
+/**
+ * 인사이트 큐에 추가
+ */
+async function queueInsight(insight) {
+  try {
+    // 중복 체크
+    const existing = await first(`
+      SELECT id FROM insight_queue 
+      WHERE pattern_id = ? AND status IN ('pending', 'shown')
+    `, [insight.patternId]);
+    
+    if (existing) return;
+    
+    // confidence 계산: evidence.winRate 또는 패턴 신뢰도 사용
+    const confidence = insight.confidence || 
+                       (insight.evidence?.winRate) || 
+                       (insight.evidence?.confidence_lower) || 
+                       0.5;
+    
+    await exec(`
+      INSERT INTO insight_queue (
+        id, source, pattern_id, insight_type, priority, confidence,
+        title, description, evidence, status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+    `, [
+      uuid(),
+      insight.source,
+      insight.patternId,
+      insight.type,
+      insight.priority,
+      confidence,
+      insight.title,
+      insight.description,
+      JSON.stringify(insight.evidence),
+      Date.now(),
+    ]);
+    
+  } catch (e) {
+    console.error("[queueInsight] 오류:", e);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🎯 예측 엔진: 취향 기반 승부 예측
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * 현재 활성 가중치 조회
+ */
+async function getActiveWeights() {
+  try {
+    const row = await first(`SELECT * FROM weight_config WHERE is_active = 1`);
+    if (row) return row;
+    
+    // 기본값 반환
+    return {
+      w_elo: 0.35,
+      w_h2h: 0.20,
+      w_overall_winrate: 0.10,
+      w_reliability: 0.05,
+      w_genre_matchup: 0.10,
+      w_tag_power: 0.10,
+      w_read_preference: 0.05,
+      w_author_affinity: 0.03,
+      w_coordinate_zone: 0.02,
+    };
+  } catch (e) {
+    console.error("[getActiveWeights] 오류:", e);
+    return {
+      w_elo: 0.35,
+      w_h2h: 0.20,
+      w_overall_winrate: 0.10,
+      w_reliability: 0.05,
+      w_genre_matchup: 0.10,
+      w_tag_power: 0.10,
+      w_read_preference: 0.05,
+      w_author_affinity: 0.03,
+      w_coordinate_zone: 0.02,
+    };
+  }
+}
+
+/**
+ * 취향 기반 승부 예측 생성
+ */
+async function generateEnhancedPrediction(A, B) {
+  try {
+    const weights = await getActiveWeights();
+    const patterns = await all(`SELECT * FROM preference_patterns WHERE sample_size >= 5`);
+    
+    const factors = {};
+    
+    // 1. ELO 기반
+    const eloExpected = 1 / (1 + Math.pow(10, (B.rating - A.rating) / 400));
+    factors.elo = {
+      value: eloExpected,
+      weight: weights.w_elo,
+      contribution: eloExpected * weights.w_elo,
+    };
+    
+    // 2. 직접 대결
+    const h2h = await getH2HRecord(A.id, B.id);
+    if (h2h && h2h.total > 0) {
+      const h2hRate = h2h.aWins / h2h.total;
+      factors.h2h = {
+        value: h2hRate,
+        weight: weights.w_h2h,
+        contribution: h2hRate * weights.w_h2h,
+        detail: `${h2h.aWins}-${h2h.bWins}`,
+      };
+    } else {
+      factors.h2h = { value: 0.5, weight: weights.w_h2h, contribution: 0.5 * weights.w_h2h };
+    }
+    
+    // 3. 장르 상성 (패턴 기반)
+    let majorA = null, majorB = null;
+    try {
+      const mgA = JSON.parse(A.major_genre || "[]");
+      majorA = Array.isArray(mgA) ? mgA[0] : mgA;
+      const mgB = JSON.parse(B.major_genre || "[]");
+      majorB = Array.isArray(mgB) ? mgB[0] : mgB;
+    } catch {}
+    
+    const genreKey = createGenreMatchupKey(majorA, majorB);
+    if (genreKey) {
+      const genrePattern = patterns.find(p => 
+        p.category === "genre_matchup" && p.pattern_key === genreKey
+      );
+      
+      if (genrePattern && genrePattern.sample_size >= 10) {
+        const isAFirst = genreKey.startsWith(majorA);
+        const genreRate = isAFirst ? genrePattern.win_rate : (1 - genrePattern.win_rate);
+        
+        factors.genre = {
+          value: genreRate,
+          weight: weights.w_genre_matchup,
+          contribution: genreRate * weights.w_genre_matchup,
+          detail: `${genreKey} (${genrePattern.sample_size}회)`,
+        };
+      }
+    }
+    factors.genre = factors.genre || { value: 0.5, weight: weights.w_genre_matchup, contribution: 0.5 * weights.w_genre_matchup };
+    
+    // 4. 태그 파워 (패턴 기반)
+    let tagsA = [], tagsB = [];
+    try {
+      const tdA = JSON.parse(A.tag_data || "[]");
+      tagsA = Array.isArray(tdA) ? tdA.map(t => t.tag || t) : [];
+      const tdB = JSON.parse(B.tag_data || "[]");
+      tagsB = Array.isArray(tdB) ? tdB.map(t => t.tag || t) : [];
+    } catch {}
+    
+    if (tagsA.length === 0) {
+      tagsA = (A.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+    }
+    if (tagsB.length === 0) {
+      tagsB = (B.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+    }
+    
+    let tagPowerA = 0, tagPowerB = 0;
+    let tagCount = 0;
+    
+    for (const tag of [...new Set([...tagsA, ...tagsB])]) {
+      const tagPattern = patterns.find(p => 
+        p.category === "tag_power" && p.pattern_key === `tag:${tag}`
+      );
+      
+      if (tagPattern && tagPattern.sample_size >= 10) {
+        const power = tagPattern.win_rate - 0.5;
+        if (tagsA.map(t => t.toLowerCase()).includes(tag.toLowerCase())) tagPowerA += power;
+        if (tagsB.map(t => t.toLowerCase()).includes(tag.toLowerCase())) tagPowerB += power;
+        tagCount++;
+      }
+    }
+    
+    if (tagCount > 0) {
+      const tagAdvantage = 0.5 + (tagPowerA - tagPowerB) / 2;
+      factors.tagPower = {
+        value: Math.max(0.1, Math.min(0.9, tagAdvantage)),
+        weight: weights.w_tag_power,
+        contribution: tagAdvantage * weights.w_tag_power,
+      };
+    } else {
+      factors.tagPower = { value: 0.5, weight: weights.w_tag_power, contribution: 0.5 * weights.w_tag_power };
+    }
+    
+    // 5. 읽은 비율
+    const readRatioA = calculateReadRatio(A);
+    const readRatioB = calculateReadRatio(B);
+    const readAdvantage = 0.5 + (readRatioA - readRatioB) * 0.3;
+    
+    factors.readRatio = {
+      value: readAdvantage,
+      weight: weights.w_read_preference,
+      contribution: readAdvantage * weights.w_read_preference,
+    };
+    
+    // 종합 계산
+    let totalContribution = 0;
+    let totalWeight = 0;
+    
+    for (const f of Object.values(factors)) {
+      totalContribution += f.contribution;
+      totalWeight += f.weight;
+    }
+    
+    const predictedWinRateA = totalWeight > 0 ? totalContribution / totalWeight : 0.5;
+    const confidence = Math.abs(predictedWinRateA - 0.5) * 2;
+    
+    // 주요 요인 추출
+    const mainReasons = Object.entries(factors)
+      .map(([key, f]) => ({
+        key,
+        influence: f.value >= 0.5 ? "A 유리" : "B 유리",
+        strength: Math.abs(f.value - 0.5) * 2,
+        detail: f.detail,
+      }))
+      .filter(r => r.strength >= 0.1)
+      .sort((a, b) => b.strength - a.strength)
+      .slice(0, 3);
+    
+    return {
+      predictedWinnerId: predictedWinRateA >= 0.5 ? A.id : B.id,
+      predictedWinRateA,
+      confidence,
+      factors,
+      mainReasons,
+    };
+    
+  } catch (e) {
+    console.error("[generateEnhancedPrediction] 오류:", e);
+    
+    // 폴백: 단순 ELO
+    const eloExpected = 1 / (1 + Math.pow(10, (B.rating - A.rating) / 400));
+    return {
+      predictedWinnerId: eloExpected >= 0.5 ? A.id : B.id,
+      predictedWinRateA: eloExpected,
+      confidence: Math.abs(eloExpected - 0.5) * 2,
+      factors: { elo: { value: eloExpected, weight: 1, contribution: eloExpected } },
+      mainReasons: [],
+      isFallback: true,
+    };
+  }
+}
+
+/**
+ * 직접 대결 기록 조회
+ */
+async function getH2HRecord(aId, bId) {
+  try {
+    const rows = await all(`
+      SELECT winner_id FROM matches 
+      WHERE (a_id = ? AND b_id = ?) OR (a_id = ? AND b_id = ?)
+    `, [aId, bId, bId, aId]);
+    
+    let aWins = 0, bWins = 0;
+    for (const r of rows) {
+      if (r.winner_id === aId) aWins++;
+      else if (r.winner_id === bId) bWins++;
+    }
+    
+    return { aWins, bWins, total: aWins + bWins };
+    
+  } catch (e) {
+    return { aWins: 0, bWins: 0, total: 0 };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 📋 조회 API
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * 대기 중인 인사이트 조회
+ */
+async function getPendingInsights(limit = 5) {
+  try {
+    return await all(`
+      SELECT * FROM insight_queue 
+      WHERE status = 'pending'
+      ORDER BY priority DESC, created_at DESC
+      LIMIT ?
+    `, [limit]);
+  } catch (e) {
+    console.error("[getPendingInsights] 오류:", e);
+    return [];
+  }
+}
+
+/**
+ * 인사이트 응답 기록
+ */
+async function respondToInsight(insightId, response) {
+  try {
+    await exec(`
+      UPDATE insight_queue 
+      SET status = 'shown', shown_at = ?, user_response = ?
+      WHERE id = ?
+    `, [Date.now(), response, insightId]);
+    
+    // 패턴에도 반영
+    const insight = await first(`SELECT pattern_id FROM insight_queue WHERE id = ?`, [insightId]);
+    if (insight && insight.pattern_id) {
+      await exec(`
+        UPDATE preference_patterns 
+        SET is_shown = 1, shown_at = ?, user_reaction = ?
+        WHERE id = ?
+      `, [Date.now(), response, insight.pattern_id]);
+    }
+    
+  } catch (e) {
+    console.error("[respondToInsight] 오류:", e);
+  }
+}
+
+/**
+ * 주요 패턴 조회 (취향 분석용)
+ */
+async function getTopPatterns(category = null, limit = 10) {
+  try {
+    let sql = `
+      SELECT * FROM preference_patterns 
+      WHERE sample_size >= 10 AND significance >= 0.5
+    `;
+    const params = [];
+    
+    if (category) {
+      sql += ` AND category = ?`;
+      params.push(category);
+    }
+    
+    sql += ` ORDER BY is_notable DESC, significance DESC, sample_size DESC LIMIT ?`;
+    params.push(limit);
+    
+    return await all(sql, params);
+    
+  } catch (e) {
+    console.error("[getTopPatterns] 오류:", e);
+    return [];
+  }
+}
+
+/**
+ * 예측 정확도 계산
+ */
+async function calculatePredictionAccuracy(days = 30) {
+  try {
+    const since = Date.now() - (days * 24 * 60 * 60 * 1000);
+    
+    const rows = await all(`
+      SELECT was_correct FROM choice_logs 
+      WHERE match_type = 'manual' 
+        AND was_correct IS NOT NULL 
+        AND created_at >= ?
+    `, [since]);
+    
+    if (rows.length === 0) {
+      return { accuracy: 0, sampleSize: 0 };
+    }
+    
+    const correct = rows.filter(r => r.was_correct === 1).length;
+    return {
+      accuracy: correct / rows.length,
+      sampleSize: rows.length,
+    };
+    
+  } catch (e) {
+    console.error("[calculatePredictionAccuracy] 오류:", e);
+    return { accuracy: 0, sampleSize: 0 };
+  }
+}
+
+/**
+ * 기존 매칭 데이터에서 초기 패턴 추출 (마이그레이션)
+ */
+async function migrateExistingMatchesToPatterns() {
+  try {
+    const existing = await first(`SELECT COUNT(*) as c FROM choice_logs`);
+    if (existing && existing.c > 0) {
+      console.log("[migrateExistingMatchesToPatterns] 이미 마이그레이션됨, 스킵");
+      return;
+    }
+    
+    const matches = await all(`
+      SELECT m.*, a.title as a_title, a.rating as a_rating, a.tags as a_tags, 
+             a.major_genre as a_genre, a.author as a_author,
+             a.read_count as a_read, a.total_episodes as a_total,
+             b.title as b_title, b.rating as b_rating, b.tags as b_tags,
+             b.major_genre as b_genre, b.author as b_author,
+             b.read_count as b_read, b.total_episodes as b_total
+      FROM matches m
+      JOIN novels a ON a.id = m.a_id
+      JOIN novels b ON b.id = m.b_id
+      WHERE m.decided_by = 'user'
+      ORDER BY m.created_at ASC
+    `);
+    
+    console.log(`[migrateExistingMatchesToPatterns] ${matches.length}개 매칭 마이그레이션 시작`);
+    
+    const updates = [];
+    
+    for (const m of matches) {
+      const winnerId = m.winner_id;
+      const winnerIsA = winnerId === m.a_id;
+      
+      // 장르 상성
+      let majorA = null, majorB = null;
+      try {
+        const mga = JSON.parse(m.a_genre || "[]");
+        majorA = Array.isArray(mga) ? mga[0] : mga;
+        const mgb = JSON.parse(m.b_genre || "[]");
+        majorB = Array.isArray(mgb) ? mgb[0] : mgb;
+      } catch {}
+      
+      if (majorA && majorB && majorA !== majorB) {
+        const genreKey = createGenreMatchupKey(majorA, majorB);
+        if (genreKey) {
+          const winnerGenre = winnerIsA ? majorA : majorB;
+          const didFirstWin = genreKey.startsWith(winnerGenre);
+          
+          updates.push({
+            category: "genre_matchup",
+            patternKey: genreKey,
+            didWin: didFirstWin,
+          });
+        }
+      }
+      
+      // 장르 선호도
+      if (winnerIsA && majorA) {
+        updates.push({ category: "genre_affinity", patternKey: `genre:${majorA}`, didWin: true });
+      }
+      if (!winnerIsA && majorB) {
+        updates.push({ category: "genre_affinity", patternKey: `genre:${majorB}`, didWin: true });
+      }
+      if (winnerIsA && majorB) {
+        updates.push({ category: "genre_affinity", patternKey: `genre:${majorB}`, didWin: false });
+      }
+      if (!winnerIsA && majorA) {
+        updates.push({ category: "genre_affinity", patternKey: `genre:${majorA}`, didWin: false });
+      }
+      
+      // 태그 파워
+      const winnerTags = (winnerIsA ? m.a_tags : m.b_tags || "").split(",").map(t => t.trim()).filter(Boolean);
+      const loserTags = (winnerIsA ? m.b_tags : m.a_tags || "").split(",").map(t => t.trim()).filter(Boolean);
+      
+      for (const tag of winnerTags) {
+        updates.push({ category: "tag_power", patternKey: `tag:${tag}`, didWin: true });
+      }
+      for (const tag of loserTags) {
+        updates.push({ category: "tag_power", patternKey: `tag:${tag}`, didWin: false });
+      }
+      
+      // 작가 충성도
+      const winnerAuthor = winnerIsA ? m.a_author : m.b_author;
+      const loserAuthor = winnerIsA ? m.b_author : m.a_author;
+      
+      if (winnerAuthor) {
+        updates.push({ category: "author_loyalty", patternKey: `author:${winnerAuthor}`, didWin: true });
+      }
+      if (loserAuthor) {
+        updates.push({ category: "author_loyalty", patternKey: `author:${loserAuthor}`, didWin: false });
+      }
+    }
+    
+    // 배치 업데이트
+    if (updates.length > 0) {
+      await batchUpdatePatternStats(updates);
+      await refreshPatternStats();
+    }
+    
+    console.log(`[migrateExistingMatchesToPatterns] 완료: ${updates.length}개 패턴 업데이트`);
+    
+  } catch (e) {
+    console.error("[migrateExistingMatchesToPatterns] 오류:", e);
+  }
 }
 
 /* =========================================================
@@ -3229,11 +4909,11 @@ function getFirstGenre(value) {
 }
 
 /* =========================================================
-   🖼️ 표지 라이브러리 시스템 (v3.4.6 - 새 FileSystem API)
+   🖼️ 표지 라이브러리 시스템 (v3.4.7 - 레거시 FileSystem API)
    ========================================================= */
 
-// 표지 저장 디렉토리 (새 API: Directory 객체 사용)
-const COVER_DIR = new Directory(Paths.document, "covers");
+// 표지 저장 디렉토리 (레거시 API)
+const COVER_DIR = FileSystem.documentDirectory + "covers/";
 
 // 압축 설정 맵
 const COMPRESSION_PRESETS = {
@@ -3243,84 +4923,88 @@ const COMPRESSION_PRESETS = {
   heavy: { quality: 0.4, maxSize: 600 },            // 강한 압축
 };
 
-// 표지 디렉토리 초기화 (새 API)
+// 표지 디렉토리 초기화 (레거시 API)
 async function ensureCoverDir() {
   try {
-    if (!COVER_DIR.exists) {
-      COVER_DIR.create({ intermediates: true });
+    const dirInfo = await FileSystem.getInfoAsync(COVER_DIR);
+    if (!dirInfo.exists) {
+      await FileSystem.makeDirectoryAsync(COVER_DIR, { intermediates: true });
     }
   } catch (e) {
     console.warn("ensureCoverDir error:", e);
   }
 }
 
-// 이미지를 표지 라이브러리에 저장 (새 API)
+// 이미지를 표지 라이브러리에 저장 (레거시 API)
 async function saveCoverToLibrary(sourceUri, compressionLevel = "light") {
   try {
     await ensureCoverDir();
     
     const id = uuid();
     const fileName = `${id}.jpg`;
-    const destFile = new File(COVER_DIR, fileName);
-    
-    // 소스 파일 객체 생성 (URI 문자열 직접 전달)
-    // 새 FileSystem API는 file:// URI를 직접 받을 수 있음
-    const sourceFile = new File(sourceUri);
+    const destUri = COVER_DIR + fileName;
     
     // 소스 파일 존재 확인
-    if (!sourceFile.exists) {
+    const sourceInfo = await FileSystem.getInfoAsync(sourceUri);
+    if (!sourceInfo.exists) {
       console.warn("saveCoverToLibrary: 소스 파일이 존재하지 않음:", sourceUri);
       return null;
     }
     
-    // 파일 복사 (새 API - 동기 메서드)
-    sourceFile.copy(destFile);
+    // 파일 복사 (레거시 API)
+    await FileSystem.copyAsync({
+      from: sourceUri,
+      to: destUri,
+    });
     
-    // 복사 후 대상 파일 존재 확인
-    if (!destFile.exists) {
+    // 복사 후 대상 파일 정보 확인
+    const destInfo = await FileSystem.getInfoAsync(destUri);
+    if (!destInfo.exists) {
       console.warn("saveCoverToLibrary: 복사 후 대상 파일이 존재하지 않음");
       return null;
     }
     
-    // 파일 정보 (새 API: 속성으로 접근)
-    const fileSize = destFile.size || 0;
-    
     return {
       id,
-      file_path: destFile.uri,
-      file_size: fileSize,
+      file_path: destUri,
+      file_size: destInfo.size || 0,
     };
   } catch (e) {
     console.warn("saveCoverToLibrary error:", e.message);
-    // 🔧 v3.4.6: 디버깅용 상세 오류 (개발 중에만 활성화)
-    // Alert.alert("표지 저장 오류", `${e.message}\n\nsourceUri: ${sourceUri?.substring(0, 80)}...`);
     return null;
   }
 }
 
-// 표지 라이브러리에서 이미지 삭제 (새 API)
+// 표지 라이브러리에서 이미지 삭제 (레거시 API)
 async function deleteCoverFromLibrary(filePath) {
   try {
-    const file = new File(filePath);
-    if (file.exists) {
-      file.delete();
+    const fileInfo = await FileSystem.getInfoAsync(filePath);
+    if (fileInfo.exists) {
+      await FileSystem.deleteAsync(filePath, { idempotent: true });
     }
   } catch (e) {
     console.warn("deleteCoverFromLibrary error:", e);
   }
 }
 
-// 표지 라이브러리 전체 용량 계산 (새 API)
+// 표지 라이브러리 전체 용량 계산 (레거시 API)
 async function getCoverLibrarySize() {
   try {
     await ensureCoverDir();
-    if (!COVER_DIR.exists) return 0;
+    const dirInfo = await FileSystem.getInfoAsync(COVER_DIR);
+    if (!dirInfo.exists) return 0;
     
-    const contents = COVER_DIR.list();
+    const files = await FileSystem.readDirectoryAsync(COVER_DIR);
     let totalSize = 0;
-    for (const item of contents) {
-      if (item instanceof File) {
-        totalSize += item.size || 0;
+    
+    for (const fileName of files) {
+      try {
+        const fileInfo = await FileSystem.getInfoAsync(COVER_DIR + fileName);
+        if (fileInfo.exists && fileInfo.size) {
+          totalSize += fileInfo.size;
+        }
+      } catch (e) {
+        // 개별 파일 오류는 무시
       }
     }
     return totalSize;
@@ -3440,6 +5124,7 @@ const OutlineButton = memo(({ title, onPress, style, color = C.sub }) => (
       {
         borderRadius: 12,
         paddingVertical: 12,
+        paddingHorizontal: 16, // 🔧 v3.4.7: 가로 패딩 추가
         alignItems: "center",
         borderWidth: 1,
         borderColor: color,
@@ -13516,6 +15201,7 @@ export default function App() {
   // 🎯 v3.0.4: 확장된 자동승패 설정
   const [autoMatchSettings, setAutoMatchSettings] = useState({
     mode: "any",  // "any" = 하나라도 만족 | "all" = 모두 만족
+    speed: "fast", // 🔧 v3.4.7: "fast" = 즉시 | "normal" = 100ms | "slow" = 500ms
     criteria: {
       ratingGap: { enabled: true, threshold: 250, desc: "레이팅 격차" },
       predictionRate: { enabled: false, threshold: 75, desc: "예측 승률(%)" },
@@ -13545,8 +15231,6 @@ export default function App() {
   const [matchAnalysis, setMatchAnalysis] = useState(null); // 현재 매칭의 분석 결과
   const [matchInsights, setMatchInsights] = useState([]); // 누적된 매칭 인사이트 (취향분석용)
 
-// === Part 1 끝 (13547줄) ===
-// === Part 2 시작 (이전 파일과 이어붙이세요) ===
   // 🆕 비교 모드
   const [compareMode, setCompareMode] = useState(false);
   const [compareIds, setCompareIds] = useState([]);
@@ -13749,6 +15433,14 @@ export default function App() {
   const [urlModalOpen, setUrlModalOpen] = useState(false);
   const [urlInput, setUrlInput] = useState("");
   const [urlSetter, setUrlSetter] = useState(null);
+
+  // ============================================
+  // 🧠 취향 발견 시스템 Phase 2: UI 상태 (v3.5.0)
+  // ============================================
+  const [insightList, setInsightList] = useState([]); // 인사이트 대기열
+  const [preferencePatterns, setPreferencePatterns] = useState([]); // 상위 패턴 요약
+  const [insightLoading, setInsightLoading] = useState(false);
+  const [matchPrediction, setMatchPrediction] = useState(null); // 현재 매칭 예측 결과
 
   function openUrlModal(setter) {
     setUrlInput("");
@@ -14084,6 +15776,15 @@ export default function App() {
           // 🖼️ v3.4.5: 표지 라이브러리 로드
           await loadCoverLibrary();
           
+          // 🧠 v3.5.0: 취향 발견 시스템 마이그레이션 (기존 매칭 데이터에서 패턴 추출)
+          setTimeout(async () => {
+            try {
+              await migrateExistingMatchesToPatterns();
+            } catch (e) {
+              console.warn("취향 발견 시스템 마이그레이션 오류:", e);
+            }
+          }, 2000); // 초기 로딩 완료 후 실행
+          
           // 🏷️ 태그 자동 수집 (비동기 - UI 블로킹 없음)
           setTimeout(async () => {
             try {
@@ -14158,10 +15859,21 @@ export default function App() {
   }, []);
   
   // 🔧 v3.4.6: 앱이 포그라운드로 돌아올 때 DB 연결 강제 리셋
+  // 🧠 v3.5.0: 백그라운드 전환 시 큐 플러시 추가
   useEffect(() => {
     let lastState = AppState.currentState;
     
     const subscription = AppState.addEventListener("change", async (nextAppState) => {
+      // 포그라운드 → 백그라운드 전환 시: 큐 플러시
+      if (lastState === "active" && nextAppState.match(/inactive|background/)) {
+        console.log("앱 백그라운드 전환 - 큐 플러시");
+        try {
+          await choiceLogQueue.flush();
+        } catch (e) {
+          console.warn("백그라운드 전환 큐 플러시 실패:", e);
+        }
+      }
+      
       // 백그라운드 → 포그라운드 전환 시
       if (lastState.match(/inactive|background/) && nextAppState === "active") {
         console.log("앱 포그라운드 전환 - DB 연결 리셋");
@@ -16543,6 +18255,247 @@ export default function App() {
     }
   }
 
+  // ============================================
+  // 🧠 취향 발견 시스템 Phase 2: 데이터 로드 (v3.5.0)
+  // ============================================
+  
+  /** 인사이트 대기열 로드 (미표시 + 최근 표시된 것) */
+  async function loadInsights() {
+    try {
+      setInsightLoading(true);
+      const rows = await all(`
+        SELECT * FROM insight_queue 
+        WHERE status IN ('pending', 'shown', 'confirmed', 'rejected')
+        ORDER BY 
+          CASE status WHEN 'pending' THEN 0 WHEN 'shown' THEN 1 ELSE 2 END,
+          priority DESC,
+          created_at DESC
+        LIMIT 20;
+      `);
+      setInsightList(rows || []);
+    } catch (e) {
+      console.warn("loadInsights 오류:", e);
+      setInsightList([]);
+    } finally {
+      setInsightLoading(false);
+    }
+  }
+
+  /** 상위 패턴 요약 로드 (높은 신뢰도 순) */
+  async function loadPreferencePatterns() {
+    try {
+      const rows = await all(`
+        SELECT * FROM preference_patterns 
+        WHERE sample_size >= 3 AND confidence_lower > 0.1
+        ORDER BY win_rate DESC, sample_size DESC
+        LIMIT 30;
+      `);
+      setPreferencePatterns(rows || []);
+    } catch (e) {
+      console.warn("loadPreferencePatterns 오류:", e);
+      setPreferencePatterns([]);
+    }
+  }
+
+  /** 인사이트에 사용자 응답 기록 */
+  async function handleInsightResponse(insightId, response) {
+    // response: 'confirmed' | 'rejected' | 'skipped'
+    try {
+      const timestamp = Date.now();
+      await exec(`
+        UPDATE insight_queue 
+        SET status = ?, user_response = ?, responded_at = ?
+        WHERE id = ?
+      `, [response === 'skipped' ? 'dismissed' : response, response, timestamp, insightId]);
+      
+      // 확인/거부된 인사이트는 가중치 학습에 반영
+      if (response === 'confirmed' || response === 'rejected') {
+        await recordInsightFeedback(insightId, response);
+      }
+      
+      await loadInsights();
+    } catch (e) {
+      console.warn("handleInsightResponse 오류:", e);
+    }
+  }
+
+  /** 인사이트 피드백을 가중치 학습에 반영 */
+  async function recordInsightFeedback(insightId, response) {
+    try {
+      const insight = await first("SELECT * FROM insight_queue WHERE id = ?", [insightId]);
+      if (!insight) return;
+      
+      // 관련 패턴의 user_confirmed 업데이트
+      if (insight.pattern_id) {
+        const delta = response === 'confirmed' ? 1 : -1;
+        await exec(`
+          UPDATE preference_patterns 
+          SET user_confirmed = COALESCE(user_confirmed, 0) + ?
+          WHERE id = ?
+        `, [delta, insight.pattern_id]);
+      }
+      
+      // 가중치 조정 트리거 (5개 피드백마다)
+      const feedbackCount = await first(`
+        SELECT COUNT(*) as cnt FROM insight_queue 
+        WHERE status IN ('confirmed', 'rejected')
+      `);
+      if (feedbackCount && feedbackCount.cnt % 5 === 0) {
+        await adjustWeightsFromFeedback();
+      }
+    } catch (e) {
+      console.warn("recordInsightFeedback 오류:", e);
+    }
+  }
+
+  /** 피드백 기반 가중치 자동 조정 */
+  async function adjustWeightsFromFeedback() {
+    try {
+      // 확인된 인사이트의 패턴 유형 분석
+      const confirmed = await all(`
+        SELECT insight_type, COUNT(*) as cnt 
+        FROM insight_queue 
+        WHERE status = 'confirmed'
+        GROUP BY insight_type
+      `);
+      
+      const rejected = await all(`
+        SELECT insight_type, COUNT(*) as cnt 
+        FROM insight_queue 
+        WHERE status = 'rejected'
+        GROUP BY insight_type
+      `);
+      
+      // 확인/거부 비율로 가중치 미세 조정
+      const currentWeights = await getActiveWeights();
+      if (!currentWeights) return;
+      
+      // 가중치 필드만 복사 (버전, 메타데이터 제외)
+      const weightFields = [
+        'w_elo', 'w_h2h', 'w_overall_winrate', 'w_reliability',
+        'w_genre_matchup', 'w_tag_power', 'w_read_preference',
+        'w_author_affinity', 'w_coordinate_zone'
+      ];
+      
+      const weights = {};
+      for (const field of weightFields) {
+        weights[field] = Number(currentWeights[field]) || 0.1;
+      }
+      
+      const adjustmentRate = 0.02; // 2% 조정
+      
+      // insight_type → weight 필드 매핑
+      const typeToWeight = {
+        'genre_matchup': 'w_genre_matchup',
+        'genre_affinity': 'w_genre_matchup',
+        'tag_power': 'w_tag_power',
+        'author_loyalty': 'w_author_affinity',
+        'rating_behavior': 'w_reliability',
+        // 범용 타입들은 무시 (discover, confirm, deep)
+      };
+      
+      // 확인된 유형 가중치 상승
+      for (const row of confirmed) {
+        const weightField = typeToWeight[row.insight_type];
+        if (weightField && weights[weightField] !== undefined) {
+          weights[weightField] = Math.min(0.3, weights[weightField] * (1 + adjustmentRate));
+        }
+      }
+      
+      // 거부된 유형 가중치 하락
+      for (const row of rejected) {
+        const weightField = typeToWeight[row.insight_type];
+        if (weightField && weights[weightField] !== undefined) {
+          weights[weightField] = Math.max(0.01, weights[weightField] * (1 - adjustmentRate));
+        }
+      }
+      
+      // 정규화 (합이 1이 되도록)
+      const total = Object.values(weights).reduce((a, b) => a + b, 0);
+      if (total > 0 && total !== 1) {
+        for (const key of Object.keys(weights)) {
+          weights[key] = weights[key] / total;
+        }
+      }
+      
+      // 변경된 가중치 추적
+      const changedWeights = [];
+      for (const field of weightFields) {
+        if (Math.abs(weights[field] - (currentWeights[field] || 0)) > 0.001) {
+          changedWeights.push(field);
+        }
+      }
+      
+      // 변경사항이 없으면 저장 안 함
+      if (changedWeights.length === 0) return;
+      
+      // 기존 활성 가중치 비활성화
+      await exec(`UPDATE weight_config SET is_active = 0 WHERE is_active = 1`);
+      
+      // 새 버전으로 저장 (개별 컬럼 사용)
+      await exec(`
+        INSERT INTO weight_config (
+          w_elo, w_h2h, w_overall_winrate, w_reliability,
+          w_genre_matchup, w_tag_power, w_read_preference,
+          w_author_affinity, w_coordinate_zone,
+          change_source, change_reason, changed_weights,
+          is_active, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+      `, [
+        weights.w_elo,
+        weights.w_h2h,
+        weights.w_overall_winrate,
+        weights.w_reliability,
+        weights.w_genre_matchup,
+        weights.w_tag_power,
+        weights.w_read_preference,
+        weights.w_author_affinity,
+        weights.w_coordinate_zone,
+        'user_feedback',
+        '피드백 기반 자동 조정',
+        JSON.stringify(changedWeights),
+        Date.now(),
+      ]);
+      
+      console.log("[adjustWeightsFromFeedback] 가중치 조정 완료:", changedWeights);
+      
+    } catch (e) {
+      console.warn("adjustWeightsFromFeedback 오류:", e);
+    }
+  }
+
+  /** 현재 매칭에 대한 예측 생성 */
+  async function generateMatchPrediction(novelA, novelB) {
+    if (!novelA || !novelB) {
+      setMatchPrediction(null);
+      return;
+    }
+    
+    try {
+      const prediction = await generateEnhancedPrediction(novelA, novelB);
+      setMatchPrediction(prediction);
+    } catch (e) {
+      console.warn("generateMatchPrediction 오류:", e);
+      setMatchPrediction(null);
+    }
+  }
+
+  /** 인사이트 유형별 아이콘/색상 */
+  const INSIGHT_META = {
+    // 실제 생성되는 패턴 기반 타입
+    genre_matchup: { icon: "⚔️", label: "장르 상성", color: "#8b5cf6" },
+    genre_affinity: { icon: "📚", label: "장르 선호", color: "#6366f1" },
+    tag_power: { icon: "🏷️", label: "태그 파워", color: "#3b82f6" },
+    author_loyalty: { icon: "✍️", label: "작가 충성", color: "#06b6d4" },
+    rating_behavior: { icon: "📊", label: "레이팅 행동", color: "#10b981" },
+    // 향후 확장 타입
+    hidden_gem: { icon: "💎", label: "숨은 보석", color: "#f59e0b" },
+    cross_mismatch: { icon: "🔀", label: "교차 불일치", color: "#ef4444" },
+    tier_anomaly: { icon: "🏆", label: "티어 이상", color: "#ec4899" },
+    platform_bias: { icon: "🌐", label: "플랫폼 편향", color: "#14b8a6" },
+    completion_pattern: { icon: "✅", label: "완독 패턴", color: "#22c55e" },
+  };
+
   async function loadList(sortKey, sortDir) {
     try {
       const sk = sortKey ?? homeSortKey;
@@ -16752,6 +18705,21 @@ export default function App() {
           const novel = await first("SELECT cover_image FROM novels WHERE id=?", [id]);
           const coverPath = novel?.cover_image;
           
+          // 🔄 v3.5.0: 상태 동기화 - 삭제 대상과 관련된 모든 상태 초기화
+          if (pair && (pair.A?.id === id || pair.B?.id === id)) {
+            setPair(null);
+          }
+          if (editItem?.id === id) {
+            setEditItem(null);
+            setEditOpen(false);
+          }
+          if (dailyReco?.novel?.id === id) {
+            setDailyReco(null);
+          }
+          if (focusMatchNovel?.id === id) {
+            setFocusMatchNovel(null);
+          }
+          
           await execBatch([
             { sql: "DELETE FROM matches WHERE a_id=? OR b_id=?", params: [id, id] },
             { sql: "DELETE FROM novels WHERE id=?", params: [id] },
@@ -16800,8 +18768,17 @@ export default function App() {
                     await exec("UPDATE cover_library SET status='unused', novel_id=NULL");
                     await loadCoverLibrary();
                     
+                    // 🔄 v3.5.0: 모든 관련 상태 초기화
                     setLastMatchId(null);
                     setPair(null);
+                    setEditItem(null);
+                    setEditOpen(false);
+                    setDailyReco(null);
+                    setFocusMatchNovel(null);
+                    setMatchAnalysis(null);
+                    setMatchPrediction(null);
+                    setSelectedIds([]);
+                    
                     await loadList();
                     setIsLoading(false);
                     Alert.alert("완료", "모든 데이터가 삭제되었습니다.");
@@ -17138,20 +19115,34 @@ export default function App() {
     }
   }, [screen, pair]);
 
+  // 🧠 v3.5.0: 분석 탭 진입 시 인사이트 자동 로드
+  useEffect(() => {
+    if (screen === "analysis") {
+      loadInsights();
+      loadPreferencePatterns();
+    }
+  }, [screen]);
+
   // 🔮 v3.0.3: 매칭 생성 시 승부예측 분석 수행
+  // 🧠 v3.5.0: 취향 기반 예측 추가
   useEffect(() => {
     if (pair && pair.A && pair.B) {
       (async () => {
         try {
           const analysis = await analyzeMatchPrediction(pair.A, pair.B);
           setMatchAnalysis(analysis);
+          
+          // 🧠 취향 기반 예측 생성
+          await generateMatchPrediction(pair.A, pair.B);
         } catch (e) {
           console.warn("매칭 분석 오류:", e);
           setMatchAnalysis(null);
+          setMatchPrediction(null);
         }
       })();
     } else {
       setMatchAnalysis(null);
+      setMatchPrediction(null);
     }
   }, [pair]);
 
@@ -17257,6 +19248,22 @@ export default function App() {
       // 🔮 v3.0.3: 매치 결과 분석 및 인사이트 저장
       if (matchAnalysis) {
         await analyzeMatchResult(A, B, winnerId, matchAnalysis);
+      }
+      
+      // 🧠 v3.5.0: 취향 발견 시스템 - 선택 로그 기록
+      try {
+        const winner = aIsWinner ? A : B;
+        const loser = aIsWinner ? B : A;
+        // matchAnalysis.predictedWinner는 "A" 또는 "B" 문자열
+        const predictedWinnerId = matchAnalysis?.predictedWinner === "A" ? A.id : 
+                                  matchAnalysis?.predictedWinner === "B" ? B.id : null;
+        await saveChoiceLog(mid, winner, loser, decided_by, matchAnalysis ? {
+          predictedWinnerId,
+          confidence: matchAnalysis.confidence || 0,
+          factors: null, // analyzeMatchPrediction은 factors를 반환하지 않음
+        } : null);
+      } catch (e) {
+        console.warn("[decide] saveChoiceLog 오류:", e);
       }
       
       await loadList();
@@ -17449,7 +19456,7 @@ export default function App() {
   }, [autoMatchSettings]);
 
   // 자동 승패 (확장된 버전)
-  // 🔧 v3.4.6: 무한 루프 방지 - 처리 중 플래그 + 딜레이
+  // 🔧 v3.4.7: 속도 옵션 추가 (fast/normal/slow)
   useEffect(() => {
     // 이미 자동 승패 처리 중이면 무시
     if (isAutoMatching) return;
@@ -17466,8 +19473,13 @@ export default function App() {
         try {
           await decide(result.winner.id, "auto");
           
-          // 🔧 v3.4.6: 자동 승패 후 500ms 딜레이 (연속 실행 방지 + 결과 확인 시간)
-          await new Promise(r => setTimeout(r, 500));
+          // 🔧 v3.4.7: 속도 설정에 따른 딜레이
+          const speed = autoMatchSettings.speed || "fast";
+          const delayMs = speed === "fast" ? 10 : speed === "normal" ? 100 : 500;
+          
+          if (delayMs > 0) {
+            await new Promise(r => setTimeout(r, delayMs));
+          }
         } finally {
           setIsAutoMatching(false);
         }
@@ -17528,15 +19540,15 @@ export default function App() {
   }, []);
   
   // 추천 탭 진입 시, 작품 리스트 최신화 후 추천 생성
-useEffect(() => {
-  if (screen === "reco") {
-    (async () => {
-      await loadList();
-      await loadPlannedList(); // 📋 v3.3.0: 예정 작품도 로드
-      await refreshDailyRecommendation(false);
-    })();
-  }
-}, [screen]);
+  useEffect(() => {
+    if (screen === "reco") {
+      (async () => {
+        await loadList();
+        await loadPlannedList(); // 📋 v3.3.0: 예정 작품도 로드
+        await refreshDailyRecommendation(false);
+      })();
+    }
+  }, [screen]);
 
   // 예정 탭 진입 시 예정 목록 로드
   useEffect(() => {
@@ -18141,6 +20153,21 @@ useEffect(() => {
         text: "삭제",
         style: "destructive",
         onPress: async () => {
+          // 🔄 v3.5.0: 상태 동기화 - 삭제 대상과 관련된 모든 상태 초기화
+          if (pair && (selectedIds.includes(pair.A?.id) || selectedIds.includes(pair.B?.id))) {
+            setPair(null);
+          }
+          if (editItem && selectedIds.includes(editItem.id)) {
+            setEditItem(null);
+            setEditOpen(false);
+          }
+          if (dailyReco?.novel && selectedIds.includes(dailyReco.novel.id)) {
+            setDailyReco(null);
+          }
+          if (focusMatchNovel && selectedIds.includes(focusMatchNovel.id)) {
+            setFocusMatchNovel(null);
+          }
+          
           const queries = [];
           for (const id of selectedIds) {
             queries.push({
@@ -19096,6 +21123,18 @@ async function importJSON() {
 
               // v9는 Elo 데이터 포함 → 재계산 불필요!
               await loadList();
+              
+              // 🔄 v3.5.0: 관련 상태 초기화 (이전 데이터 참조 방지)
+              setPair(null);
+              setEditItem(null);
+              setEditOpen(false);
+              setDailyReco(null);
+              setFocusMatchNovel(null);
+              setMatchAnalysis(null);
+              setMatchPrediction(null);
+              setSelectedIds([]);
+              setLastMatchId(null);
+              
               setImportOpen(false);
               setImportText("");
               setImportValidation(null);
@@ -19136,7 +21175,13 @@ async function importJSON() {
           style: "destructive",
           onPress: async () => {
             await exec("DELETE FROM matches;");
+            
+            // 🔄 v3.5.0: 관련 상태 초기화
             setLastMatchId(null);
+            setPair(null);
+            setMatchAnalysis(null);
+            setMatchPrediction(null);
+            
             await rebuildAllFromMatches();
             await loadList();
             Alert.alert("완료", "대진 로그가 초기화되었습니다.");
@@ -19423,7 +21468,7 @@ async function importJSON() {
             <Section title="기본 정보">
               {/* 🆕 표지 이미지 */}
               <Label>표지 이미지</Label>
-              <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 12 }}>
                 {newCoverImage ? (
                   <ExpoImage source={{ uri: newCoverImage }} style={{ width: 50, height: 70, borderRadius: 6 }} contentFit="cover" cachePolicy="memory-disk" />
                 ) : (
@@ -19431,17 +21476,25 @@ async function importJSON() {
                     <Text style={{ color: C.sub, fontSize: 10 }}>없음</Text>
                   </View>
                 )}
-                <OutlineButton title="URL" onPress={() => openUrlModal(setNewCoverImage)} />
-                <OutlineButton title="갤러리" onPress={() => pickImageFromGallery(setNewCoverImage)} />
+                <OutlineButton title="URL" onPress={() => openUrlModal(setNewCoverImage)} style={{ minWidth: 60 }} />
+                <OutlineButton title="갤러리" onPress={() => pickImageFromGallery(setNewCoverImage)} style={{ minWidth: 70 }} />
                 <OutlineButton 
-                  title="DB" 
+                  title="라이브러리" 
                   onPress={() => {
                     setCoverSelectTarget("new");
                     setCoverSelectModalOpen(true);
                   }} 
                   color={C.primary}
+                  style={{ minWidth: 90 }}
                 />
-                {newCoverImage && <OutlineButton title="삭제" onPress={() => setNewCoverImage("")} color={C.warn} />}
+                {newCoverImage && (
+                  <OutlineButton 
+                    title="삭제" 
+                    onPress={() => setNewCoverImage("")} 
+                    color={C.warn} 
+                    style={{ minWidth: 60 }}
+                  />
+                )}
               </View>
 
               <Label>제목</Label>
@@ -20624,7 +22677,7 @@ async function importJSON() {
               />
               
               <Label style={{ marginTop: 10 }}>표지 이미지</Label>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                 {plannedCoverImage ? (
                   <ExpoImage
                     source={{ uri: plannedCoverImage }}
@@ -20636,17 +22689,25 @@ async function importJSON() {
                     <Text style={{ color: C.sub, fontSize: 10 }}>없음</Text>
                   </View>
                 )}
-                <OutlineButton title="URL" onPress={() => openUrlModal(setPlannedCoverImage)} />
-                <OutlineButton title="갤러리" onPress={() => pickImageFromGallery(setPlannedCoverImage)} />
+                <OutlineButton title="URL" onPress={() => openUrlModal(setPlannedCoverImage)} style={{ minWidth: 60 }} />
+                <OutlineButton title="갤러리" onPress={() => pickImageFromGallery(setPlannedCoverImage)} style={{ minWidth: 70 }} />
                 <OutlineButton 
-                  title="DB" 
+                  title="라이브러리" 
                   onPress={() => {
                     setCoverSelectTarget("planned");
                     setCoverSelectModalOpen(true);
                   }} 
                   color={C.primary}
+                  style={{ minWidth: 90 }}
                 />
-                {plannedCoverImage && <OutlineButton title="삭제" onPress={() => setPlannedCoverImage("")} color={C.warn} />}
+                {plannedCoverImage && (
+                  <OutlineButton 
+                    title="삭제" 
+                    onPress={() => setPlannedCoverImage("")} 
+                    color={C.warn}
+                    style={{ minWidth: 60 }}
+                  />
+                )}
               </View>
               
               <Label style={{ marginTop: 10 }}>메모</Label>
@@ -21386,6 +23447,35 @@ async function importJSON() {
                     </TouchableOpacity>
                   </View>
                   
+                  {/* 🔧 v3.4.7: 처리 속도 */}
+                  <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>처리 속도</Text>
+                  <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
+                    {[
+                      { key: "fast", label: "터보", desc: "최대 속도", color: "#ef4444", bgColor: "#fef2f2" },
+                      { key: "normal", label: "보통", desc: "100ms", color: "#f59e0b", bgColor: "#fffbeb" },
+                      { key: "slow", label: "느림", desc: "500ms", color: "#22c55e", bgColor: "#f0fdf4" },
+                    ].map(opt => (
+                      <TouchableOpacity
+                        key={opt.key}
+                        onPress={() => saveAutoMatchSettings({ speed: opt.key })}
+                        style={{
+                          flex: 1,
+                          backgroundColor: (autoMatchSettings.speed || "fast") === opt.key ? opt.bgColor : C.chip,
+                          padding: 10,
+                          borderRadius: 10,
+                          borderWidth: (autoMatchSettings.speed || "fast") === opt.key ? 2 : 1,
+                          borderColor: (autoMatchSettings.speed || "fast") === opt.key ? opt.color : C.line,
+                          alignItems: "center",
+                        }}
+                      >
+                        <Text style={{ fontWeight: "700", color: (autoMatchSettings.speed || "fast") === opt.key ? opt.color : C.text }}>
+                          {opt.label}
+                        </Text>
+                        <Text style={{ fontSize: 10, color: C.sub }}>{opt.desc}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  
                   {/* 세부 설정 토글 */}
                   <TouchableOpacity
                     onPress={() => setAutoSettingsExpanded(!autoSettingsExpanded)}
@@ -21736,6 +23826,90 @@ async function importJSON() {
                       <Text style={{ color: C.sub, fontSize: 12, textAlign: "center" }}>분석 중...</Text>
                     )}
                   </View>
+
+                  {/* 🧠 v3.5.0: 취향 기반 예측 패널 */}
+                  {matchPrediction && (
+                    <View style={{ 
+                      backgroundColor: isDark ? "#1e1b4b" : "#f5f3ff", 
+                      borderRadius: 12, 
+                      padding: 12, 
+                      marginBottom: 8,
+                      borderWidth: 1,
+                      borderColor: isDark ? "#3730a3" : "#c4b5fd",
+                    }}>
+                      <View style={{ alignItems: "center", marginBottom: 8 }}>
+                        <Text style={{ color: "#7c3aed", fontWeight: "800", fontSize: 14 }}>🧠 취향 예측</Text>
+                      </View>
+                      
+                      {/* 예측 결과 */}
+                      <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 8 }}>
+                        <View style={{ flex: 1, alignItems: "center" }}>
+                          <Text style={{ 
+                            color: matchPrediction.predictedWinnerId === pair.A.id ? "#7c3aed" : C.sub, 
+                            fontWeight: "800", 
+                            fontSize: matchPrediction.predictedWinnerId === pair.A.id ? 16 : 13 
+                          }}>
+                            {Math.round((matchPrediction.predictedWinRateA || 0.5) * 100)}%
+                          </Text>
+                          {matchPrediction.predictedWinnerId === pair.A.id && (
+                            <Text style={{ fontSize: 10, color: "#7c3aed" }}>예상 선택</Text>
+                          )}
+                        </View>
+                        <View style={{ 
+                          backgroundColor: "#7c3aed", 
+                          paddingHorizontal: 8, 
+                          paddingVertical: 2, 
+                          borderRadius: 8 
+                        }}>
+                          <Text style={{ color: "#fff", fontSize: 10, fontWeight: "600" }}>
+                            신뢰 {Math.round((matchPrediction.confidence || 0) * 100)}%
+                          </Text>
+                        </View>
+                        <View style={{ flex: 1, alignItems: "center" }}>
+                          <Text style={{ 
+                            color: matchPrediction.predictedWinnerId === pair.B.id ? "#7c3aed" : C.sub, 
+                            fontWeight: "800", 
+                            fontSize: matchPrediction.predictedWinnerId === pair.B.id ? 16 : 13 
+                          }}>
+                            {Math.round((1 - (matchPrediction.predictedWinRateA || 0.5)) * 100)}%
+                          </Text>
+                          {matchPrediction.predictedWinnerId === pair.B.id && (
+                            <Text style={{ fontSize: 10, color: "#7c3aed" }}>예상 선택</Text>
+                          )}
+                        </View>
+                      </View>
+                      
+                      {/* 주요 요인 */}
+                      {matchPrediction.mainReasons && matchPrediction.mainReasons.length > 0 && (
+                        <View style={{ 
+                          borderTopWidth: 1, 
+                          borderTopColor: isDark ? "#3730a3" : "#ddd6fe", 
+                          paddingTop: 8 
+                        }}>
+                          <Text style={{ fontSize: 10, color: C.sub, marginBottom: 4 }}>📊 주요 요인:</Text>
+                          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }}>
+                            {matchPrediction.mainReasons.slice(0, 3).map((reason, idx) => (
+                              <View key={idx} style={{ 
+                                backgroundColor: isDark ? "#312e81" : "#ede9fe", 
+                                paddingHorizontal: 6, 
+                                paddingVertical: 2, 
+                                borderRadius: 4 
+                              }}>
+                                <Text style={{ fontSize: 10, color: "#7c3aed" }}>
+                                  {reason.key === "genre" ? "장르" : 
+                                   reason.key === "tag" ? "태그" : 
+                                   reason.key === "h2h" ? "직접 대결" : 
+                                   reason.key === "elo" ? "Elo" :
+                                   reason.key === "reliability" ? "신뢰도" :
+                                   reason.key || "기타"}: {reason.influence}
+                                </Text>
+                              </View>
+                            ))}
+                          </View>
+                        </View>
+                      )}
+                    </View>
+                  )}
 
                   {/* 작품 B */}
                   <TouchableOpacity
@@ -22927,6 +25101,243 @@ async function importJSON() {
                 >
                   <Text style={{ color: "#92400e", fontWeight: "700" }}>🏆 검토 탭으로 이동</Text>
                 </TouchableOpacity>
+              )}
+            </Section>
+
+            {/* 🧠 v3.5.0: 취향 발견 시스템 - 인사이트 섹션 */}
+            <Section title="🧠 취향 발견">
+              <TouchableOpacity
+                onPress={async () => {
+                  await loadInsights();
+                  await loadPreferencePatterns();
+                }}
+                style={{ 
+                  backgroundColor: C.primary, 
+                  padding: 12, 
+                  borderRadius: 10, 
+                  alignItems: "center",
+                  marginBottom: 12 
+                }}
+              >
+                <Text style={{ color: "#fff", fontWeight: "700" }}>
+                  {insightLoading ? "로딩 중..." : "인사이트 새로고침"}
+                </Text>
+              </TouchableOpacity>
+
+              {/* 대기 중인 인사이트 */}
+              {insightList.filter(i => i.status === 'pending' || i.status === 'shown').length > 0 ? (
+                <View style={{ marginBottom: 16 }}>
+                  <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>
+                    💡 새로운 발견 ({insightList.filter(i => i.status === 'pending').length}개)
+                  </Text>
+                  {insightList
+                    .filter(i => i.status === 'pending' || i.status === 'shown')
+                    .slice(0, 5)
+                    .map((insight) => {
+                      const meta = INSIGHT_META[insight.insight_type] || { 
+                        icon: "💭", label: "알 수 없음", color: C.sub 
+                      };
+                      // evidence는 JSON으로 저장되어 있을 수 있음
+                      let evidenceText = "";
+                      try {
+                        const ev = JSON.parse(insight.evidence || "null");
+                        evidenceText = typeof ev === "string" ? ev : (ev?.text || "");
+                      } catch {
+                        evidenceText = insight.evidence || "";
+                      }
+                      
+                      return (
+                        <View
+                          key={insight.id}
+                          style={{
+                            backgroundColor: "#fff",
+                            borderLeftWidth: 4,
+                            borderLeftColor: meta.color,
+                            borderRadius: 12,
+                            padding: 14,
+                            marginBottom: 10,
+                            shadowColor: "#000",
+                            shadowOpacity: 0.05,
+                            shadowRadius: 4,
+                            elevation: 2,
+                          }}
+                        >
+                          <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 8 }}>
+                            <Text style={{ fontSize: 20, marginRight: 8 }}>{meta.icon}</Text>
+                            <Text style={{ fontWeight: "700", color: meta.color, flex: 1 }}>
+                              {insight.title || meta.label}
+                            </Text>
+                            <View style={{ 
+                              backgroundColor: meta.color + "20", 
+                              paddingHorizontal: 8, 
+                              paddingVertical: 2, 
+                              borderRadius: 8 
+                            }}>
+                              <Text style={{ fontSize: 11, color: meta.color, fontWeight: "600" }}>
+                                신뢰도 {Math.round((insight.confidence || 0) * 100)}%
+                              </Text>
+                            </View>
+                          </View>
+                          
+                          <Text style={{ color: C.text, marginBottom: 10, lineHeight: 20 }}>
+                            {insight.description || "상세 내용 없음"}
+                          </Text>
+                          
+                          {evidenceText && (
+                            <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
+                              📊 근거: {evidenceText}
+                            </Text>
+                          )}
+                          
+                          <View style={{ flexDirection: "row", gap: 8 }}>
+                            <TouchableOpacity
+                              onPress={() => handleInsightResponse(insight.id, 'confirmed')}
+                              style={{
+                                flex: 1,
+                                backgroundColor: "#dcfce7",
+                                padding: 10,
+                                borderRadius: 8,
+                                alignItems: "center",
+                              }}
+                            >
+                              <Text style={{ color: "#166534", fontWeight: "600" }}>✓ 맞아요</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              onPress={() => handleInsightResponse(insight.id, 'rejected')}
+                              style={{
+                                flex: 1,
+                                backgroundColor: "#fee2e2",
+                                padding: 10,
+                                borderRadius: 8,
+                                alignItems: "center",
+                              }}
+                            >
+                              <Text style={{ color: "#991b1b", fontWeight: "600" }}>✗ 아니에요</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              onPress={() => handleInsightResponse(insight.id, 'skipped')}
+                              style={{
+                                flex: 1,
+                                backgroundColor: C.chip,
+                                padding: 10,
+                                borderRadius: 8,
+                                alignItems: "center",
+                              }}
+                            >
+                              <Text style={{ color: C.sub, fontWeight: "600" }}>건너뛰기</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      );
+                    })}
+                </View>
+              ) : (
+                <View style={{ 
+                  backgroundColor: C.chip, 
+                  padding: 16, 
+                  borderRadius: 12, 
+                  alignItems: "center",
+                  marginBottom: 16 
+                }}>
+                  <Text style={{ color: C.sub, textAlign: "center" }}>
+                    아직 새로운 인사이트가 없습니다.{"\n"}
+                    매칭을 더 진행하면 취향 패턴이 발견됩니다!
+                  </Text>
+                </View>
+              )}
+
+              {/* 확인된 취향 패턴 요약 */}
+              {preferencePatterns.length > 0 && (
+                <View>
+                  <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>
+                    📈 확인된 취향 패턴 (상위 {Math.min(10, preferencePatterns.length)}개)
+                  </Text>
+                  {preferencePatterns.slice(0, 10).map((pattern, idx) => {
+                    const winRate = Math.round((pattern.win_rate || 0) * 100);
+                    const confidence = Math.round((pattern.confidence_lower || 0) * 100);
+                    const categoryColors = {
+                      genre: "#8b5cf6",
+                      tag: "#3b82f6",
+                      platform: "#14b8a6",
+                      author: "#ec4899",
+                      tier: "#f59e0b",
+                      episode: "#22c55e",
+                    };
+                    const color = categoryColors[pattern.category] || C.sub;
+                    
+                    return (
+                      <View
+                        key={pattern.id || idx}
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          paddingVertical: 10,
+                          borderBottomWidth: idx < 9 ? 1 : 0,
+                          borderBottomColor: C.line,
+                        }}
+                      >
+                        <View style={{ 
+                          width: 28, 
+                          height: 28, 
+                          borderRadius: 14, 
+                          backgroundColor: color + "20",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          marginRight: 10,
+                        }}>
+                          <Text style={{ color, fontWeight: "800", fontSize: 12 }}>
+                            {idx + 1}
+                          </Text>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontWeight: "600", color: C.text }} numberOfLines={1}>
+                            {pattern.pattern_key || "알 수 없음"}
+                          </Text>
+                          <Text style={{ fontSize: 12, color: C.sub }}>
+                            {pattern.category} · 샘플 {pattern.sample_size}개
+                          </Text>
+                        </View>
+                        <View style={{ alignItems: "flex-end" }}>
+                          <Text style={{ fontWeight: "700", color }}>
+                            {winRate}%
+                          </Text>
+                          <Text style={{ fontSize: 11, color: C.sub }}>
+                            ±{100 - confidence}%
+                          </Text>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+
+              {/* 응답한 인사이트 통계 */}
+              {insightList.filter(i => i.status === 'confirmed' || i.status === 'rejected').length > 0 && (
+                <View style={{ marginTop: 16, backgroundColor: C.bg, padding: 12, borderRadius: 10 }}>
+                  <Text style={{ fontWeight: "600", color: C.text, marginBottom: 6 }}>
+                    📊 인사이트 응답 현황
+                  </Text>
+                  <View style={{ flexDirection: "row", justifyContent: "space-around" }}>
+                    <View style={{ alignItems: "center" }}>
+                      <Text style={{ fontSize: 20, fontWeight: "800", color: "#16a34a" }}>
+                        {insightList.filter(i => i.status === 'confirmed').length}
+                      </Text>
+                      <Text style={{ fontSize: 12, color: C.sub }}>확인됨</Text>
+                    </View>
+                    <View style={{ alignItems: "center" }}>
+                      <Text style={{ fontSize: 20, fontWeight: "800", color: "#dc2626" }}>
+                        {insightList.filter(i => i.status === 'rejected').length}
+                      </Text>
+                      <Text style={{ fontSize: 12, color: C.sub }}>거부됨</Text>
+                    </View>
+                    <View style={{ alignItems: "center" }}>
+                      <Text style={{ fontSize: 20, fontWeight: "800", color: C.sub }}>
+                        {insightList.filter(i => i.status === 'dismissed').length}
+                      </Text>
+                      <Text style={{ fontSize: 12, color: C.sub }}>건너뜀</Text>
+                    </View>
+                  </View>
+                </View>
               )}
             </Section>
           </>
@@ -24801,7 +27212,7 @@ async function importJSON() {
               <ScrollView nestedScrollEnabled={true} showsVerticalScrollIndicator={true}>
                 {/* 🆕 표지 이미지 */}
                 <Label>표지 이미지</Label>
-                <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 12 }}>
                   {editCoverImage ? (
                     <ExpoImage source={{ uri: editCoverImage }} style={{ width: 50, height: 70, borderRadius: 6 }} contentFit="cover" cachePolicy="memory-disk" />
                   ) : (
@@ -24809,17 +27220,25 @@ async function importJSON() {
                       <Text style={{ color: C.sub, fontSize: 10 }}>없음</Text>
                     </View>
                   )}
-                  <OutlineButton title="URL" onPress={() => openUrlModal(setEditCoverImage)} />
-                  <OutlineButton title="갤러리" onPress={() => pickImageFromGallery(setEditCoverImage)} />
+                  <OutlineButton title="URL" onPress={() => openUrlModal(setEditCoverImage)} style={{ minWidth: 60 }} />
+                  <OutlineButton title="갤러리" onPress={() => pickImageFromGallery(setEditCoverImage)} style={{ minWidth: 70 }} />
                   <OutlineButton 
-                    title="DB" 
+                    title="라이브러리" 
                     onPress={() => {
                       setCoverSelectTarget("edit");
                       setCoverSelectModalOpen(true);
                     }} 
                     color={C.primary}
+                    style={{ minWidth: 90 }}
                   />
-                  {editCoverImage && <OutlineButton title="삭제" onPress={() => setEditCoverImage("")} color={C.warn} />}
+                  {editCoverImage && (
+                    <OutlineButton 
+                      title="삭제" 
+                      onPress={() => setEditCoverImage("")} 
+                      color={C.warn} 
+                      style={{ minWidth: 60 }}
+                    />
+                  )}
                 </View>
 
                 <Label>제목</Label>
@@ -26539,41 +28958,48 @@ async function importJSON() {
                 </View>
                 
                 <Label style={{ marginTop: 10 }}>표지 이미지</Label>
-                <View style={{ flexDirection: "row", gap: 8, marginBottom: 8, alignItems: "center" }}>
+                <View style={{ flexDirection: "row", gap: 12, marginBottom: 8, alignItems: "center", flexWrap: "wrap" }}>
                   {plannedEditItem.cover_image ? (
                     <ExpoImage
                       source={{ uri: plannedEditItem.cover_image }}
-                      style={{ width: 40, height: 56, borderRadius: 4 }}
+                      style={{ width: 50, height: 70, borderRadius: 6 }}
                       contentFit="cover"
                     />
                   ) : (
-                    <View style={{ width: 40, height: 56, borderRadius: 4, backgroundColor: C.line, justifyContent: "center", alignItems: "center" }}>
-                      <Text style={{ color: C.sub, fontSize: 8 }}>없음</Text>
+                    <View style={{ width: 50, height: 70, borderRadius: 6, backgroundColor: C.line, justifyContent: "center", alignItems: "center" }}>
+                      <Text style={{ color: C.sub, fontSize: 10 }}>없음</Text>
                     </View>
                   )}
-                  <Input
-                    value={plannedEditItem.cover_image || ""}
-                    onChangeText={(t) => setPlannedEditItem({ ...plannedEditItem, cover_image: t })}
-                    placeholder="URL 직접 입력"
-                    style={{ flex: 1 }}
-                  />
                   <OutlineButton 
                     title="갤러리" 
                     onPress={() => pickImageFromGallery((uri) => {
                       setPlannedEditItem({ ...plannedEditItem, cover_image: uri });
                     })} 
-                    style={{ paddingHorizontal: 10 }}
+                    style={{ minWidth: 70 }}
                   />
                   <OutlineButton 
-                    title="DB" 
+                    title="라이브러리" 
                     onPress={() => {
                       setCoverSelectTarget("plannedEdit");
                       setCoverSelectModalOpen(true);
                     }} 
                     color={C.primary}
-                    style={{ paddingHorizontal: 10 }}
+                    style={{ minWidth: 90 }}
                   />
+                  {plannedEditItem.cover_image && (
+                    <OutlineButton 
+                      title="삭제" 
+                      onPress={() => setPlannedEditItem({ ...plannedEditItem, cover_image: "" })} 
+                      color={C.warn}
+                      style={{ minWidth: 60 }}
+                    />
+                  )}
                 </View>
+                <Input
+                  value={plannedEditItem.cover_image || ""}
+                  onChangeText={(t) => setPlannedEditItem({ ...plannedEditItem, cover_image: t })}
+                  placeholder="URL 직접 입력"
+                />
                 
                 <Label style={{ marginTop: 10 }}>작품 링크</Label>
                 <Input
@@ -26921,14 +29347,15 @@ async function importJSON() {
                 borderTopLeftRadius: 20,
                 borderTopRightRadius: 20,
                 padding: 16,
-                maxHeight: "80%",
+                minHeight: "60%",
+                maxHeight: "90%",
               }}>
                 <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                   <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>
                     🖼️ 표지 라이브러리에서 선택
                   </Text>
-                  <TouchableOpacity onPress={() => setCoverSelectModalOpen(false)}>
-                    <Text style={{ color: C.sub, fontSize: 24 }}>×</Text>
+                  <TouchableOpacity onPress={() => setCoverSelectModalOpen(false)} style={{ padding: 8 }}>
+                    <Text style={{ color: C.sub, fontSize: 28, fontWeight: "300" }}>×</Text>
                   </TouchableOpacity>
                 </View>
                 
@@ -26948,8 +29375,8 @@ async function importJSON() {
                     data={coverLibrary}
                     keyExtractor={(item) => item.id}
                     numColumns={4}
-                    style={{ maxHeight: 400 }}
-                    columnWrapperStyle={{ gap: 6, marginBottom: 6 }}
+                    style={{ flex: 1 }}
+                    columnWrapperStyle={{ gap: 8, marginBottom: 8 }}
                     renderItem={({ item }) => {
                       const isUsed = item.status === "used";
                       
