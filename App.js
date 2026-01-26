@@ -14183,9 +14183,8 @@ function tierFromRating(r, thresholds = globalTierThresholds) {
   return "C";
 }
 
-const TIER_ORDER = ["S", "A", "B+", "B", "B-", "C"];
-
 // 티어 순위 비교용 (S=0, A=1, ... C=5)
+// ※ TIER_ORDER는 라인 2039에서 이미 정의됨
 function tierRank(tier) {
   const idx = TIER_ORDER.indexOf(tier);
   return idx === -1 ? 5 : idx;
@@ -14999,7 +14998,7 @@ function generateInsights(data) {
   const completedAvg = avg(readingPattern.completedVsOngoing.completed.map(n => n.rating));
   const ongoingAvg = avg(readingPattern.completedVsOngoing.ongoing.map(n => n.rating));
   if (Math.abs(completedAvg - ongoingAvg) > 30) {
-    if (completedAvg > ongoingAvg) {
+                                       if (completedAvg > ongoingAvg) {
       hiddenPatterns.push(`완결작을 연재중 작품보다 평균 +${(completedAvg - ongoingAvg).toFixed(0)}점 높게 평가`);
     } else {
       hiddenPatterns.push(`연재중 작품을 완결작보다 평균 +${(ongoingAvg - completedAvg).toFixed(0)}점 높게 평가`);
