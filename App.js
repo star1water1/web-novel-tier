@@ -14998,8 +14998,7 @@ function generateInsights(data) {
   // 숨겨진 패턴
   const hiddenPatterns = [];
   
-
-    // 작가 충성도
+  // 작가 충성도
   if (loyalAuthors.length > 0) {
     const topAuthor = loyalAuthors[0];
     hiddenPatterns.push(`'${topAuthor.author}' 작가의 작품을 ${topAuthor.count}개 읽으며 평균 ${topAuthor.avgRating.toFixed(0)}점`);
@@ -25380,7 +25379,7 @@ async function importJSON() {
         {/* BULK */}
         {screen === "bulk" && (
           <>
-            <H>대량 편집</H>
+            <H>🔧 대량 편집 모드</H>
             <Section title="선택 / 검색">
               <Input
                 value={query}
@@ -25389,6 +25388,10 @@ async function importJSON() {
               />
               <Text style={{ color: selectedIds.length > 0 ? C.primary : C.sub, marginTop: 6, fontWeight: selectedIds.length > 0 ? "800" : "400", fontSize: selectedIds.length > 0 ? 16 : 14 }}>
                 {selectedIds.length > 0 ? `✓ ${selectedIds.length}개 선택됨` : "선택된 작품 없음"} / 총 {bulkFiltered.length}
+              </Text>
+              {/* 🔧 v3.5.1 디버그: 실제 선택된 ID 표시 */}
+              <Text style={{ color: C.warn, fontSize: 11, marginTop: 4 }}>
+                [DEBUG] IDs: {selectedIds.length > 0 ? selectedIds.slice(0, 3).map(id => id.substring(0, 6)).join(", ") + (selectedIds.length > 3 ? "..." : "") : "(없음)"}
               </Text>
             </Section>
 
