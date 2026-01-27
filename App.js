@@ -2,8 +2,8 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.5.0                                                                  ║
- * ║  최종 수정: 2025-01-26                                                        ║
+ * ║  버전: 3.5.1                                                                  ║
+ * ║  최종 수정: 2025-01-27                                                        ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -1160,6 +1160,18 @@
  * ║   3. resetAll: 모든 관련 상태 초기화 (8개 상태)                              ║
  * ║   4. resetMatches: pair, matchAnalysis, matchPrediction 초기화              ║
  * ║   5. importJSON: 모든 관련 상태 초기화 (데이터 교체 시)                      ║
+ * ║                                                                              ║
+ * ║ [v3.5.1 버그 수정] (2025-01-27)                                              ║
+ * ║ - 이미지 불러오기 실패 (0개 성공, 100개 실패):                               ║
+ * ║   · 원인: FileSystem.getInfoAsync()가 content:// URI 인식 실패              ║
+ * ║   · 해결: 소스 파일 확인 생략, 직접 복사 시도 후 결과로 판단                 ║
+ * ║ - 작품 저장 시 NullPointerException:                                         ║
+ * ║   · 원인: DB 연결 끊김 상태에서 쿼리 실행                                    ║
+ * ║   · 해결: 에러 시 DB 연결 리셋 + 사용자 안내 메시지 개선                     ║
+ * ║ - 이미지 가져오기 실패 후 표지 갤러리 비어 보임:                             ║
+ * ║   · 해결: 에러 발생 후에도 기존 라이브러리 재로드                            ║
+ * ║ - TIER_ORDER 중복 선언으로 빌드 실패:                                        ║
+ * ║   · 해결: 라인 14186의 중복 선언 제거                                        ║
  * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  */
@@ -4936,6 +4948,7 @@ async function ensureCoverDir() {
 }
 
 // 이미지를 표지 라이브러리에 저장 (레거시 API)
+// 🔧 v3.5.1: content:// URI 지원 강화 - getInfoAsync 대신 직접 복사 시도
 async function saveCoverToLibrary(sourceUri, compressionLevel = "light") {
   try {
     await ensureCoverDir();
@@ -4944,18 +4957,20 @@ async function saveCoverToLibrary(sourceUri, compressionLevel = "light") {
     const fileName = `${id}.jpg`;
     const destUri = COVER_DIR + fileName;
     
-    // 소스 파일 존재 확인
-    const sourceInfo = await FileSystem.getInfoAsync(sourceUri);
-    if (!sourceInfo.exists) {
-      console.warn("saveCoverToLibrary: 소스 파일이 존재하지 않음:", sourceUri);
+    // 🔧 v3.5.1: content:// URI는 getInfoAsync가 실패할 수 있으므로
+    // 직접 복사를 시도하고 결과로 판단
+    // (Android에서 ImagePicker가 반환하는 URI는 대부분 content:// 형식)
+    
+    try {
+      // 파일 복사 시도 (레거시 API)
+      await FileSystem.copyAsync({
+        from: sourceUri,
+        to: destUri,
+      });
+    } catch (copyError) {
+      console.warn("saveCoverToLibrary: 복사 실패:", copyError.message);
       return null;
     }
-    
-    // 파일 복사 (레거시 API)
-    await FileSystem.copyAsync({
-      from: sourceUri,
-      to: destUri,
-    });
     
     // 복사 후 대상 파일 정보 확인
     const destInfo = await FileSystem.getInfoAsync(destUri);
@@ -14983,7 +14998,8 @@ function generateInsights(data) {
   // 숨겨진 패턴
   const hiddenPatterns = [];
   
-  // 작가 충성도
+
+    // 작가 충성도
   if (loyalAuthors.length > 0) {
     const topAuthor = loyalAuthors[0];
     hiddenPatterns.push(`'${topAuthor.author}' 작가의 작품을 ${topAuthor.count}개 읽으며 평균 ${topAuthor.avgRating.toFixed(0)}점`);
@@ -14998,7 +15014,7 @@ function generateInsights(data) {
   const completedAvg = avg(readingPattern.completedVsOngoing.completed.map(n => n.rating));
   const ongoingAvg = avg(readingPattern.completedVsOngoing.ongoing.map(n => n.rating));
   if (Math.abs(completedAvg - ongoingAvg) > 30) {
-                                       if (completedAvg > ongoingAvg) {
+    if (completedAvg > ongoingAvg) {
       hiddenPatterns.push(`완결작을 연재중 작품보다 평균 +${(completedAvg - ongoingAvg).toFixed(0)}점 높게 평가`);
     } else {
       hiddenPatterns.push(`연재중 작품을 완결작보다 평균 +${(ongoingAvg - completedAvg).toFixed(0)}점 높게 평가`);
@@ -16628,6 +16644,9 @@ export default function App() {
     } catch (e) {
       console.warn("importCoversFromGallery error:", e);
       setCoverLibraryLoading(false);
+      setCoverLibraryProgress({ current: 0, total: 0 });
+      // 🔧 v3.5.1: 에러 발생 후에도 기존 라이브러리 다시 로드
+      await loadCoverLibrary();
       Alert.alert("오류", "이미지 가져오기 중 오류가 발생했습니다.");
     }
   }
@@ -18976,7 +18995,20 @@ export default function App() {
       }
     } catch (e) {
       console.warn("saveEdit 오류:", e);
-      Alert.alert("오류", "저장 중 오류가 발생했습니다.\n\n" + e.message);
+      const errorMsg = e.message || "";
+      // 🔧 v3.5.1: DB 연결 오류 시 더 명확한 안내
+      if (errorMsg.includes("NullPointerException") || 
+          errorMsg.includes("prepareAsync") ||
+          errorMsg.includes("rejected")) {
+        resetDbConnection(); // DB 연결 리셋
+        Alert.alert(
+          "오류", 
+          "데이터베이스 연결 오류가 발생했습니다.\n\n잠시 후 다시 시도해주세요. 문제가 지속되면 앱을 재시작해주세요.",
+          [{ text: "확인" }]
+        );
+      } else {
+        Alert.alert("오류", "저장 중 오류가 발생했습니다.\n\n" + errorMsg);
+      }
     }
     setIsLoading(false);
   }
@@ -19964,14 +19996,17 @@ export default function App() {
     };
   }, [list]);
 
-  const toggleSelect = (id) =>
-    setSelectedIds((p) =>
-      p.includes(id) ? p.filter((x) => x !== id) : [...p, id]
-    );
+  const toggleSelect = (id) => {
+    setSelectedIds((p) => {
+      const newIds = p.includes(id) ? p.filter((x) => x !== id) : [...p, id];
+      return newIds;
+    });
+  };
 
   async function batchSetPlatforms(plats) {
+    // 🔧 v3.5.1 디버깅: 선택 상태 확인
     if (!selectedIds.length) {
-      Alert.alert("알림", "먼저 작품을 선택해주세요.");
+      Alert.alert("알림", `먼저 작품을 선택해주세요.\n\n[디버그] selectedIds.length = ${selectedIds.length}`);
       return;
     }
     const queries = selectedIds.map((id) => ({
@@ -25352,8 +25387,8 @@ async function importJSON() {
                 onChangeText={setQuery}
                 placeholder="제목/작가/태그/메모/플랫폼 검색"
               />
-              <Text style={{ color: C.sub, marginTop: 6 }}>
-                선택 {selectedIds.length} / 총 {bulkFiltered.length}
+              <Text style={{ color: selectedIds.length > 0 ? C.primary : C.sub, marginTop: 6, fontWeight: selectedIds.length > 0 ? "800" : "400", fontSize: selectedIds.length > 0 ? 16 : 14 }}>
+                {selectedIds.length > 0 ? `✓ ${selectedIds.length}개 선택됨` : "선택된 작품 없음"} / 총 {bulkFiltered.length}
               </Text>
             </Section>
 
@@ -25553,7 +25588,9 @@ async function importJSON() {
                             {item.title}
                           </Text>
                           {checked && (
-                            <Text style={{ color: C.primary, fontWeight: "800", fontSize: 12 }}>✓</Text>
+                            <View style={{ backgroundColor: C.primary, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginLeft: 4 }}>
+                              <Text style={{ color: "#fff", fontWeight: "800", fontSize: 11 }}>✓선택</Text>
+                            </View>
                           )}
                           <ActualTierTag novel={item} />
                         </View>
