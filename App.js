@@ -1162,14 +1162,20 @@
  * ║   5. importJSON: 모든 관련 상태 초기화 (데이터 교체 시)                      ║
  * ║                                                                              ║
  * ║ [v3.5.1 버그 수정] (2025-01-27)                                              ║
- * ║ - 이미지 불러오기 실패 (0개 성공, 100개 실패):                               ║
- * ║   · 원인: FileSystem.getInfoAsync()가 content:// URI 인식 실패              ║
- * ║   · 해결: 소스 파일 확인 생략, 직접 복사 시도 후 결과로 판단                 ║
+ * ║ - 이미지 불러오기 실패 (0개 성공, X개 실패):                                 ║
+ * ║   · 원인: FileSystem.copyAsync()가 content:// URI 처리 실패                 ║
+ * ║   · 해결: copyAsync 실패 시 downloadAsync 대안 시도                         ║
+ * ║ - ★ 핵심 문제: 이미지 불러오기 후 앱 전체 데이터 미출력                      ║
+ * ║   · 원인: ImagePicker로 갤러리 열면 앱이 백그라운드로 감                     ║
+ * ║   · 갤러리에서 돌아오면 DB 연결이 끊어지는데, 데이터 리로드 안 함            ║
+ * ║   · 해결: AppState 포그라운드 복귀 시 loadList() + loadCoverLibrary() 호출  ║
+ * ║   · 해결: importCoversFromGallery에서 갤러리 복귀 후 DB 연결 명시적 확인    ║
  * ║ - 작품 저장 시 NullPointerException:                                         ║
  * ║   · 원인: DB 연결 끊김 상태에서 쿼리 실행                                    ║
  * ║   · 해결: 에러 시 DB 연결 리셋 + 사용자 안내 메시지 개선                     ║
- * ║ - 이미지 가져오기 실패 후 표지 갤러리 비어 보임:                             ║
- * ║   · 해결: 에러 발생 후에도 기존 라이브러리 재로드                            ║
+ * ║ - 대량 편집 선택이 작동하지 않는 것처럼 보임:                                ║
+ * ║   · 원인: DB 연결 끊김으로 batch 함수 실행 시점에 selectedIds가 빈 배열     ║
+ * ║   · 해결: 위의 DB 연결 복구 로직으로 함께 해결됨                             ║
  * ║ - TIER_ORDER 중복 선언으로 빌드 실패:                                        ║
  * ║   · 해결: 라인 14186의 중복 선언 제거                                        ║
  * ║                                                                              ║
@@ -4948,7 +4954,7 @@ async function ensureCoverDir() {
 }
 
 // 이미지를 표지 라이브러리에 저장 (레거시 API)
-// 🔧 v3.5.1: content:// URI 지원 강화 - getInfoAsync 대신 직접 복사 시도
+// 🔧 v3.5.1: content:// URI 지원 강화 - 여러 방법 시도
 async function saveCoverToLibrary(sourceUri, compressionLevel = "light") {
   try {
     await ensureCoverDir();
@@ -4957,18 +4963,36 @@ async function saveCoverToLibrary(sourceUri, compressionLevel = "light") {
     const fileName = `${id}.jpg`;
     const destUri = COVER_DIR + fileName;
     
-    // 🔧 v3.5.1: content:// URI는 getInfoAsync가 실패할 수 있으므로
-    // 직접 복사를 시도하고 결과로 판단
-    // (Android에서 ImagePicker가 반환하는 URI는 대부분 content:// 형식)
+    // 🔧 v3.5.1: 여러 방법으로 시도
+    // 방법 1: copyAsync (file:// URI에서 잘 작동)
+    // 방법 2: downloadAsync (일부 content:// URI에서 작동)
     
+    let success = false;
+    
+    // 방법 1: copyAsync 시도
     try {
-      // 파일 복사 시도 (레거시 API)
       await FileSystem.copyAsync({
         from: sourceUri,
         to: destUri,
       });
+      success = true;
     } catch (copyError) {
-      console.warn("saveCoverToLibrary: 복사 실패:", copyError.message);
+      console.warn("saveCoverToLibrary: copyAsync 실패, downloadAsync 시도:", copyError.message);
+    }
+    
+    // 방법 2: downloadAsync 시도 (copyAsync 실패 시)
+    if (!success) {
+      try {
+        const downloadResult = await FileSystem.downloadAsync(sourceUri, destUri);
+        if (downloadResult.status === 200) {
+          success = true;
+        }
+      } catch (downloadError) {
+        console.warn("saveCoverToLibrary: downloadAsync도 실패:", downloadError.message);
+      }
+    }
+    
+    if (!success) {
       return null;
     }
     
@@ -14974,6 +14998,8 @@ function analyzePreferences(novels, matches) {
 }
 
 // 인사이트 생성
+
+
 function generateInsights(data) {
   const { basicStats, majorGenreAnalysis, subGenreAnalysis, tagAnalysis, 
           comboAnalysis, platformAnalysis, loyalAuthors, readingPattern,
@@ -15874,6 +15900,7 @@ export default function App() {
   
   // 🔧 v3.4.6: 앱이 포그라운드로 돌아올 때 DB 연결 강제 리셋
   // 🧠 v3.5.0: 백그라운드 전환 시 큐 플러시 추가
+  // 🔧 v3.5.1: 포그라운드 복귀 시 데이터 리로드 추가
   useEffect(() => {
     let lastState = AppState.currentState;
     
@@ -15890,14 +15917,18 @@ export default function App() {
       
       // 백그라운드 → 포그라운드 전환 시
       if (lastState.match(/inactive|background/) && nextAppState === "active") {
-        console.log("앱 포그라운드 전환 - DB 연결 리셋");
+        console.log("앱 포그라운드 전환 - DB 연결 리셋 및 데이터 리로드");
         // 기존 연결을 강제로 끊고 새로 연결
         resetDbConnection();
         try {
           await openDb();
           console.log("DB 재연결 성공");
+          // 🔧 v3.5.1: 데이터 리로드
+          await loadList();
+          await loadCoverLibrary();
+          console.log("데이터 리로드 성공");
         } catch (e) {
-          console.error("DB 재연결 실패:", e.message);
+          console.error("DB 재연결/리로드 실패:", e.message);
         }
       }
       lastState = nextAppState;
@@ -16588,6 +16619,16 @@ export default function App() {
         return;
       }
 
+      // 🔧 v3.5.1: 갤러리에서 돌아온 후 DB 연결 확인 및 복구
+      resetDbConnection();
+      try {
+        await openDb();
+      } catch (dbErr) {
+        console.error("갤러리 복귀 후 DB 연결 실패:", dbErr);
+        Alert.alert("오류", "데이터베이스 연결이 끊어졌습니다. 앱을 다시 시작해주세요.");
+        return;
+      }
+
       const assets = result.assets;
       const total = assets.length;
       
@@ -16644,9 +16685,18 @@ export default function App() {
       console.warn("importCoversFromGallery error:", e);
       setCoverLibraryLoading(false);
       setCoverLibraryProgress({ current: 0, total: 0 });
-      // 🔧 v3.5.1: 에러 발생 후에도 기존 라이브러리 다시 로드
-      await loadCoverLibrary();
-      Alert.alert("오류", "이미지 가져오기 중 오류가 발생했습니다.");
+      
+      // 🔧 v3.5.1: 에러 발생 시 DB 연결 복구 시도 후 데이터 리로드
+      resetDbConnection();
+      try {
+        await openDb();
+        await loadCoverLibrary();
+        await loadList();  // 전체 데이터도 리로드
+      } catch (recoveryErr) {
+        console.error("복구 실패:", recoveryErr);
+      }
+      
+      Alert.alert("오류", "이미지 가져오기 중 오류가 발생했습니다.\n\n데이터를 다시 불러왔습니다.");
     }
   }
 
@@ -20005,7 +20055,7 @@ export default function App() {
   async function batchSetPlatforms(plats) {
     // 🔧 v3.5.1 디버깅: 선택 상태 확인
     if (!selectedIds.length) {
-      Alert.alert("알림", `먼저 작품을 선택해주세요.\n\n[디버그] selectedIds.length = ${selectedIds.length}`);
+      Alert.alert("알림", `먼저 작품을 선택해주세요.\n\n[디버그-플랫폼] selectedIds.length = ${selectedIds.length}`);
       return;
     }
     const queries = selectedIds.map((id) => ({
@@ -20025,7 +20075,7 @@ export default function App() {
       return;
     }
     if (selectedIds.length === 0) {
-      Alert.alert("알림", "먼저 작품을 선택해주세요.");
+      Alert.alert("알림", `먼저 작품을 선택해주세요.\n\n[디버그-태그추가] selectedIds.length = ${selectedIds.length}`);
       return;
     }
 
@@ -20081,7 +20131,7 @@ export default function App() {
       return;
     }
     if (selectedIds.length === 0) {
-      Alert.alert("알림", "먼저 작품을 선택해주세요.");
+      Alert.alert("알림", `먼저 작품을 선택해주세요.\n\n[디버그-태그삭제] selectedIds.length = ${selectedIds.length}`);
       return;
     }
 
@@ -20130,7 +20180,7 @@ export default function App() {
       return;
     }
     if (selectedIds.length === 0) {
-      Alert.alert("알림", "먼저 작품을 선택해주세요.");
+      Alert.alert("알림", `먼저 작품을 선택해주세요.\n\n[디버그-회차증감] selectedIds.length = ${selectedIds.length}`);
       return;
     }
     const now = Date.now();
@@ -20146,7 +20196,7 @@ export default function App() {
   // 🆕 읽기 상태 일괄 변경
   async function batchSetStatus(status) {
     if (!selectedIds.length) {
-      Alert.alert("알림", "먼저 작품을 선택해주세요.");
+      Alert.alert("알림", `먼저 작품을 선택해주세요.\n\n[디버그-읽기상태] selectedIds.length = ${selectedIds.length}`);
       return;
     }
     if (!status) return;
@@ -20162,7 +20212,7 @@ export default function App() {
   // 🆕 작품 연재상태 일괄 변경
   async function batchSetWorkStatus(workStatus) {
     if (!selectedIds.length) {
-      Alert.alert("알림", "먼저 작품을 선택해주세요.");
+      Alert.alert("알림", `먼저 작품을 선택해주세요.\n\n[디버그-연재상태] selectedIds.length = ${selectedIds.length}`);
       return;
     }
     if (!workStatus) return;
@@ -20177,7 +20227,7 @@ export default function App() {
 
   async function batchDelete() {
     if (!selectedIds.length) {
-      Alert.alert("알림", "먼저 작품을 선택해주세요.");
+      Alert.alert("알림", `먼저 작품을 선택해주세요.\n\n[디버그-삭제] selectedIds.length = ${selectedIds.length}`);
       return;
     }
     Alert.alert("확인", `선택 ${selectedIds.length}개 삭제?`, [
