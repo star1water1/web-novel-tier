@@ -2,8 +2,56 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.5.1                                                                  ║
- * ║  최종 수정: 2025-01-27                                                        ║
+ * ║  버전: 3.5.2                                                                  ║
+ * ║  최종 수정: 2025-01-28                                                        ║
+ * ║  총 라인 수: 약 29,700줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ * 
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v3.5.2 수정 사항 - Stale Closure 버그 수정                                 ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [원인 분석] (Gemini 제공)                                                     ║
+ * ║ • UI 컴포넌트(Chip, PrimaryButton, OutlineButton)가 memo()로 감싸져 있음     ║
+ * ║ • batch 함수들이 일반 async function으로 정의되어 있었음                      ║
+ * ║ • memo된 컴포넌트는 props가 변경되지 않으면 리렌더링하지 않음                 ║
+ * ║ • 결과: onPress 콜백이 초기 렌더링 시점의 selectedIds(빈 배열)를 캡처       ║
+ * ║ • 이것이 전형적인 "Stale Closure" (오래된 클로저) 문제                        ║
+ * ║                                                                              ║
+ * ║ [해결책]                                                                      ║
+ * ║ • 모든 batch 함수를 useCallback으로 변경                                      ║
+ * ║ • 의존성 배열에 selectedIds 추가                                              ║
+ * ║ • selectedIds가 변경되면 함수가 새로 생성되어 최신 상태 참조                  ║
+ * ║                                                                              ║
+ * ║ [수정된 함수 목록] (7개)                                                      ║
+ * ║ • batchSetPlatforms (라인 ~20154)                                             ║
+ * ║ • batchAddTag (라인 ~20171)                                                   ║
+ * ║ • batchRemoveTag (라인 ~20228)                                                ║
+ * ║ • batchIncReadCount (라인 ~20278)                                             ║
+ * ║ • batchSetStatus (라인 ~20300)                                                ║
+ * ║ • batchSetWorkStatus (라인 ~20317)                                            ║
+ * ║ • batchDelete (라인 ~20333) - 추가로 pair, editItem 등도 의존성에 포함       ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ * 
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ ⚠️ 미해결 버그 (낮은 우선순위)                                                ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [버그 2] 이미지 불러오기 실패 + 앱 전체 데이터 미출력                         ║
+ * ║ ──────────────────────────────────────────────────────────────────────────── ║
+ * ║ • 증상:                                                                      ║
+ * ║   - 표지 탭 → "갤러리에서 추가" → 이미지 선택 → "0개 성공, 1개 실패"        ║
+ * ║   - 이후 홈 탭에서 "현재 순위 (0)", "작품이 없습니다" 표시                   ║
+ * ║   - 앱 재시작 전까지 모든 DB 관련 기능 마비                                  ║
+ * ║                                                                              ║
+ * ║ • 원인 추정:                                                                 ║
+ * ║   - ImagePicker 호출 시 앱이 백그라운드로 전환                               ║
+ * ║   - expo-sqlite 연결 끊김 (SDK 54 특성?)                                     ║
+ * ║   - FileSystem.copyAsync()가 Android content:// URI 처리 실패               ║
+ * ║                                                                              ║
+ * ║ • 근본 해결 필요: 파일 분리(모듈화) 검토                                     ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -31,20 +79,41 @@
  * └─────────────────────────────────────────────────────────────────────────────┘
  * 
  * ┌─────────────────────────────────────────────────────────────────────────────┐
- * │ 🛠️ 개발 환경                                                                │
+ * │ 🛠️ 개발 환경 (상세)                                                         │
  * ├─────────────────────────────────────────────────────────────────────────────┤
- * │ • 프레임워크: React Native (Expo SDK 54)                                     │
- * │ • 데이터베이스: SQLite (expo-sqlite) - 로컬 저장, 서버 불필요                │
- * │ • 이미지 처리: expo-image (고성능 캐싱), expo-image-picker                   │
- * │ • 상태관리: React Hooks (useState, useCallback, useMemo, memo)              │
- * │ • 스타일링: React Native StyleSheet (인라인) - 별도 CSS 파일 없음            │
- * │ • 테마: 다크/라이트 모드 자동 감지 (useColorScheme)                           │
  * │                                                                             │
- * │ [환경 선택 이유]                                                             │
- * │ - Expo: 빠른 개발, 간편한 빌드, OTA 업데이트 지원                            │
- * │ - SQLite: 오프라인 우선, 빠른 쿼리, 백업/복원 용이                           │
- * │ - 단일 파일 구조: 빠른 프로토타이핑, AI 어시스턴트와 협업 용이               │
- * │ - expo-image: 자동 메모리/디스크 캐싱, 크로스 플랫폼 지원                    │
+ * │ [기술 스택]                                                                  │
+ * │ • React Native: Expo SDK 54 (managed workflow)                              │
+ * │ • 데이터베이스: expo-sqlite (SQLite, 비동기 API)                             │
+ * │ • 이미지: expo-image (캐싱), expo-image-picker (갤러리)                      │
+ * │ • 파일시스템: expo-file-system (레거시 API 사용 중)                          │
+ * │ • 상태관리: React Hooks (useState 50개+, useCallback, useMemo, memo)        │
+ * │ • 빌드: EAS Build → GitHub Actions → APK 배포                               │
+ * │                                                                             │
+ * │ [파일 구조]                                                                  │
+ * │ • 단일 파일: App.jsx (29,600줄)                                             │
+ * │ • 단일 default export 컴포넌트: App()                                       │
+ * │ • 컴포넌트 외부: DB 함수, 유틸리티 함수, 상수                                │
+ * │ • 컴포넌트 내부: 50개+ useState, 200개+ 함수, 탭별 JSX 렌더링                │
+ * │                                                                             │
+ * │ [실행 환경]                                                                  │
+ * │ • 테스트 기기: 갤럭시 노트20 (Android 13)                                    │
+ * │ • 빌드 방식: EAS Build로 APK 생성 후 설치 (Expo Go 미사용)                  │
+ * │ • 디버깅 제약: console.log 확인 불가 → Alert로 디버깅                        │
+ * │                                                                             │
+ * │ [주요 의존성 버전] (package.json 기준)                                       │
+ * │ • expo: ~54.0.0                                                             │
+ * │ • expo-sqlite: ~15.1.0 (신규 비동기 API)                                    │
+ * │ • expo-image: ~2.0.4                                                        │
+ * │ • expo-image-picker: ~16.0.6                                                │
+ * │ • expo-file-system: ~18.0.10                                                │
+ * │ • react-native: 0.76.6                                                      │
+ * │                                                                             │
+ * │ [알려진 환경 이슈]                                                           │
+ * │ • expo-sqlite SDK 54: 백그라운드 전환 시 연결 끊김 현상                      │
+ * │ • expo-file-system: 신규 API 불안정 → 레거시 API 사용 중                    │
+ * │ • Android content:// URI: FileSystem.copyAsync 처리 실패                    │
+ * │                                                                             │
  * └─────────────────────────────────────────────────────────────────────────────┘
  * 
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -52,10 +121,10 @@
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║                                                                              ║
  * ║ [실행 환경]                                                                  ║
- * ║ • 개발 환경: 모바일 전용 (Expo Snack / 데스크탑 IDE 미사용)                  ║
- * ║ • 실행 기기: 갤럭시 노트20 (Android) + Expo Go 앱                           ║
- * ║ • 단일 파일 구조 유지 필수: App.jsx 하나로 전체 앱 구성                      ║
- * ║ • 모바일 개발 특성상 코드 분할/멀티파일 구조 불가                            ║
+ * ║ • 개발 환경: GitHub + EAS Build (Expo Snack 미사용)                         ║
+ * ║ • 실행 기기: 갤럭시 노트20 (Android) - APK 설치                             ║
+ * ║ • 단일 파일 구조 유지: App.jsx 하나로 전체 앱 구성                           ║
+ * ║ • 파일 분할 가능: GitHub 사용하므로 멀티파일 구조 전환 가능                  ║
  * ║                                                                              ║
  * ║ [앱 목적 및 철학]                                                            ║
  * ║ • 웹소설 작품들의 다방면 정보를 체계적으로 저장·관리·분석                    ║
@@ -1178,6 +1247,275 @@
  * ║   · 해결: 위의 DB 연결 복구 로직으로 함께 해결됨                             ║
  * ║ - TIER_ORDER 중복 선언으로 빌드 실패:                                        ║
  * ║   · 해결: 라인 14186의 중복 선언 제거                                        ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ * 
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🏗️ 컴포넌트 분리 설계 (v4.0 리팩토링 계획)                                    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [현재 상태 분석] - 총 29,686줄                                               ║
+ * ║ ──────────────────────────────────────────────────────────────────────────── ║
+ * ║                                                                              ║
+ * ║ 📦 대형 컴포넌트 (분리 필요)                                                  ║
+ * ║ ┌─────────────────────────┬────────┬───────────────────────────────────────┐ ║
+ * ║ │ 컴포넌트                │ 라인수 │ 설명                                  │ ║
+ * ║ ├─────────────────────────┼────────┼───────────────────────────────────────┤ ║
+ * ║ │ App (메인)              │ 14,516 │ 50+ useState, 탭별 렌더링             │ ║
+ * ║ │ TasteAnalysisScreen     │ 3,158  │ 취향 분석 탭 전체                     │ ║
+ * ║ │ AwardsScreen            │ 1,721  │ 수상 시스템 탭                        │ ║
+ * ║ │ TagManagerModal         │ 1,343  │ 설정 > 태그 관리                      │ ║
+ * ║ │ TagSelectModal          │ 1,337  │ 작품 등록/수정 시 태그 선택           │ ║
+ * ║ │ TagEditModal            │ 506    │ 개별 태그 수정 모달                   │ ║
+ * ║ │ SearchTagModal          │ 457    │ 고급 태그 검색                        │ ║
+ * ║ │ TagRelationModal        │ 387    │ 태그 관계 보기                        │ ║
+ * ║ │ CoordinateGridView      │ 278    │ 스펙트럼 좌표 뷰                      │ ║
+ * ║ └─────────────────────────┴────────┴───────────────────────────────────────┘ ║
+ * ║                                                                              ║
+ * ║ 📁 비-컴포넌트 영역                                                           ║
+ * ║ ┌─────────────────────────┬────────┬───────────────────────────────────────┐ ║
+ * ║ │ 영역                    │ 라인수 │ 분리 대상 파일                        │ ║
+ * ║ ├─────────────────────────┼────────┼───────────────────────────────────────┤ ║
+ * ║ │ DB 함수                 │ ~600   │ utils/database.js                     │ ║
+ * ║ │ 취향 분석 시스템        │ ~1,300 │ utils/tasteSystem.js                  │ ║
+ * ║ │ 태그 상수               │ ~1,400 │ constants/tags.js                     │ ║
+ * ║ │ 옵션 상수               │ ~200   │ constants/options.js                  │ ║
+ * ║ │ 색상/테마               │ ~100   │ constants/theme.js                    │ ║
+ * ║ │ 유틸리티 함수           │ ~300   │ utils/helpers.js                      │ ║
+ * ║ │ Elo 시스템              │ ~200   │ utils/elo.js                          │ ║
+ * ║ │ 백업/복원               │ ~500   │ utils/backup.js                       │ ║
+ * ║ └─────────────────────────┴────────┴───────────────────────────────────────┘ ║
+ * ║                                                                              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [목표 폴더 구조]                                                             ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║  web-novel-tier/                                                             ║
+ * ║  ├── App.js                    # 엔트리 포인트 (현재 index.js 역할)          ║
+ * ║  ├── src/                                                                    ║
+ * ║  │   ├── App.jsx               # 메인 App 컴포넌트 (분리 후 ~5,000줄 목표)   ║
+ * ║  │   │                                                                       ║
+ * ║  │   ├── constants/            # 상수 정의                                   ║
+ * ║  │   │   ├── index.js          # 모든 상수 re-export                         ║
+ * ║  │   │   ├── theme.js          # C (색상), 다크모드 테마                     ║
+ * ║  │   │   ├── options.js        # STATUS_OPTIONS, PLATFORM_OPTIONS 등        ║
+ * ║  │   │   └── tags.js           # MAJOR_GENRES, SUB_GENRES, GENERAL_TAGS     ║
+ * ║  │   │                                                                       ║
+ * ║  │   ├── utils/                # 유틸리티 함수                               ║
+ * ║  │   │   ├── index.js          # 모든 유틸 re-export                         ║
+ * ║  │   │   ├── database.js       # DB 함수 (openDb, exec, all, first...)      ║
+ * ║  │   │   ├── helpers.js        # uuid, csvEscape, tierFromRating 등         ║
+ * ║  │   │   ├── elo.js            # Elo 계산 관련                               ║
+ * ║  │   │   ├── backup.js         # JSON 백업/복원 v9                           ║
+ * ║  │   │   └── tasteSystem.js    # 취향 발견 시스템 전체                       ║
+ * ║  │   │                                                                       ║
+ * ║  │   ├── components/           # 재사용 UI 컴포넌트                          ║
+ * ║  │   │   ├── index.js          # 모든 컴포넌트 re-export                     ║
+ * ║  │   │   ├── ui/               # 기본 UI 요소                                ║
+ * ║  │   │   │   ├── Button.jsx    # PrimaryButton, OutlineButton               ║
+ * ║  │   │   │   ├── Input.jsx     # Input, Label                               ║
+ * ║  │   │   │   ├── Chip.jsx      # Chip                                       ║
+ * ║  │   │   │   └── Section.jsx   # Section, H                                 ║
+ * ║  │   │   │                                                                   ║
+ * ║  │   │   ├── novel/            # 작품 관련 컴포넌트                          ║
+ * ║  │   │   │   ├── NovelCard.jsx # 작품 카드                                   ║
+ * ║  │   │   │   ├── TierTag.jsx   # 티어 뱃지                                   ║
+ * ║  │   │   │   └── CoverImage.jsx# 표지 이미지                                 ║
+ * ║  │   │   │                                                                   ║
+ * ║  │   │   ├── tags/             # 태그 관련 컴포넌트                          ║
+ * ║  │   │   │   ├── TagSelectModal.jsx                                         ║
+ * ║  │   │   │   ├── TagEditModal.jsx                                           ║
+ * ║  │   │   │   ├── TagManagerModal.jsx                                        ║
+ * ║  │   │   │   ├── SearchTagModal.jsx                                         ║
+ * ║  │   │   │   └── TagRelationModal.jsx                                       ║
+ * ║  │   │   │                                                                   ║
+ * ║  │   │   └── charts/           # 차트 컴포넌트                               ║
+ * ║  │   │       ├── BarChart.jsx                                               ║
+ * ║  │   │       ├── RadarChart.jsx                                             ║
+ * ║  │   │       └── PieChart.jsx                                               ║
+ * ║  │   │                                                                       ║
+ * ║  │   └── screens/              # 탭별 화면 컴포넌트                          ║
+ * ║  │       ├── HomeScreen.jsx                                                  ║
+ * ║  │       ├── MatchScreen.jsx                                                 ║
+ * ║  │       ├── RankScreen.jsx                                                  ║
+ * ║  │       ├── BulkEditScreen.jsx                                              ║
+ * ║  │       ├── TasteAnalysisScreen.jsx                                         ║
+ * ║  │       ├── AwardsScreen.jsx                                                ║
+ * ║  │       ├── SettingsScreen.jsx                                              ║
+ * ║  │       └── ...                                                             ║
+ * ║  │                                                                           ║
+ * ║  ├── assets/                   # 이미지, 폰트 등 (현재와 동일)               ║
+ * ║  ├── app.json                                                                ║
+ * ║  ├── package.json                                                            ║
+ * ║  └── ...                                                                     ║
+ * ║                                                                              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [분리 단계 계획]                                                             ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ 🔷 Phase 1: 기반 구축 (위험도: 낮음)                                          ║
+ * ║ ──────────────────────────────────────────────────────────────────────────── ║
+ * ║ 목표: 의존성 없는 순수 함수/상수를 먼저 분리                                 ║
+ * ║                                                                              ║
+ * ║ Step 1-1: src 폴더 구조 생성                                                 ║
+ * ║   - src/constants/, src/utils/, src/components/ 폴더 생성                    ║
+ * ║   - 각 폴더에 index.js 생성 (re-export용)                                    ║
+ * ║                                                                              ║
+ * ║ Step 1-2: constants/theme.js 분리                                            ║
+ * ║   - C (색상 상수)                                                            ║
+ * ║   - 다크모드 색상                                                            ║
+ * ║   → App.jsx에서 import { C } from './src/constants'                          ║
+ * ║                                                                              ║
+ * ║ Step 1-3: constants/options.js 분리                                          ║
+ * ║   - PLATFORM_OPTIONS                                                         ║
+ * ║   - STATUS_OPTIONS, WORK_STATUS_OPTIONS, GAIDEN_STATUS_OPTIONS               ║
+ * ║   - GENRE_OPTIONS                                                            ║
+ * ║                                                                              ║
+ * ║ Step 1-4: utils/helpers.js 분리                                              ║
+ * ║   - uuid()                                                                   ║
+ * ║   - csvEscape()                                                              ║
+ * ║   - tierFromRating(), tierBadge()                                            ║
+ * ║   - pairKey()                                                                ║
+ * ║   - safeParseJSON()                                                          ║
+ * ║                                                                              ║
+ * ║ ✅ Phase 1 완료 기준: 빌드 성공 + 기존 기능 모두 정상 작동                    ║
+ * ║                                                                              ║
+ * ║ 🔷 Phase 2: DB 및 핵심 유틸 분리 (위험도: 중간)                               ║
+ * ║ ──────────────────────────────────────────────────────────────────────────── ║
+ * ║ 목표: 상태 접근이 필요 없는 독립 모듈 분리                                   ║
+ * ║                                                                              ║
+ * ║ Step 2-1: utils/database.js 분리                                             ║
+ * ║   - openDb(), resetDbConnection()                                            ║
+ * ║   - safeDbOperation()                                                        ║
+ * ║   - exec(), all(), first(), execBatch()                                      ║
+ * ║   - columnExists(), ensureColumn()                                           ║
+ * ║   - initDb() - 테이블 생성/마이그레이션                                      ║
+ * ║   - getAppMeta(), setAppMeta()                                               ║
+ * ║   ⚠️ 주의: db 변수는 모듈 레벨에서 관리                                       ║
+ * ║                                                                              ║
+ * ║ Step 2-2: utils/elo.js 분리                                                  ║
+ * ║   - expected()                                                               ║
+ * ║   - kFactor()                                                                ║
+ * ║   - applyElo()                                                               ║
+ * ║   - rebuildAllFromMatches()                                                  ║
+ * ║                                                                              ║
+ * ║ Step 2-3: constants/tags.js 분리 (~1,400줄)                                  ║
+ * ║   - MAJOR_GENRES                                                             ║
+ * ║   - SUB_GENRES                                                               ║
+ * ║   - ALL_GENERAL_TAGS (카테고리별)                                            ║
+ * ║   - TAG_ALIASES                                                              ║
+ * ║   - SPECTRUM_GROUPS                                                          ║
+ * ║                                                                              ║
+ * ║ ✅ Phase 2 완료 기준: DB 작업 정상 + 태그 시스템 정상                         ║
+ * ║                                                                              ║
+ * ║ 🔷 Phase 3: UI 컴포넌트 분리 (위험도: 중간)                                   ║
+ * ║ ──────────────────────────────────────────────────────────────────────────── ║
+ * ║ 목표: 재사용 가능한 UI 컴포넌트 독립                                         ║
+ * ║                                                                              ║
+ * ║ Step 3-1: components/ui/ 기본 컴포넌트                                       ║
+ * ║   - Button.jsx (PrimaryButton, OutlineButton)                                ║
+ * ║   - Input.jsx (Input, Label)                                                 ║
+ * ║   - Chip.jsx                                                                 ║
+ * ║   - Section.jsx (Section, H)                                                 ║
+ * ║   ⚠️ 주의: theme(C)를 props로 받거나 import                                  ║
+ * ║                                                                              ║
+ * ║ Step 3-2: components/novel/ 작품 관련                                        ║
+ * ║   - TierTag.jsx, ActualTierTag.jsx                                           ║
+ * ║   - GenreBadge.jsx, GenreRow.jsx                                             ║
+ * ║   - StatusIcon.jsx, WorkStatusIcon.jsx                                       ║
+ * ║   - CoverImage.jsx                                                           ║
+ * ║   - NovelCard.jsx (위 컴포넌트들 사용)                                        ║
+ * ║                                                                              ║
+ * ║ Step 3-3: components/charts/                                                 ║
+ * ║   - BarChart.jsx                                                             ║
+ * ║   - RadarChartSimple.jsx                                                     ║
+ * ║   - PieChartSimple.jsx                                                       ║
+ * ║   - HeatmapRow.jsx                                                           ║
+ * ║                                                                              ║
+ * ║ ✅ Phase 3 완료 기준: 모든 UI 정상 렌더링                                     ║
+ * ║                                                                              ║
+ * ║ 🔷 Phase 4: 대형 모달/스크린 분리 (위험도: 높음)                              ║
+ * ║ ──────────────────────────────────────────────────────────────────────────── ║
+ * ║ 목표: 큰 컴포넌트들을 개별 파일로 분리                                       ║
+ * ║ ⚠️ 주의: 상태 공유가 필요하므로 props drilling 또는 Context 필요             ║
+ * ║                                                                              ║
+ * ║ Step 4-1: components/tags/ 태그 모달들                                       ║
+ * ║   - TagSelectModal.jsx (1,337줄)                                             ║
+ * ║   - TagEditModal.jsx (506줄)                                                 ║
+ * ║   - TagManagerModal.jsx (1,343줄)                                            ║
+ * ║   - SearchTagModal.jsx (457줄)                                               ║
+ * ║   - TagRelationModal.jsx (387줄)                                             ║
+ * ║                                                                              ║
+ * ║ Step 4-2: screens/ 탭 화면들                                                 ║
+ * ║   - TasteAnalysisScreen.jsx (3,158줄)                                        ║
+ * ║   - AwardsScreen.jsx (1,721줄)                                               ║
+ * ║   → 나머지 탭들도 순차적으로                                                 ║
+ * ║                                                                              ║
+ * ║ ✅ Phase 4 완료 기준: App.jsx가 5,000줄 이하로 축소                           ║
+ * ║                                                                              ║
+ * ║ 🔷 Phase 5: 상태 관리 개선 (선택적)                                           ║
+ * ║ ──────────────────────────────────────────────────────────────────────────── ║
+ * ║ - React Context로 전역 상태 관리                                             ║
+ * ║ - 또는 Zustand 같은 경량 상태 관리 라이브러리                                ║
+ * ║ - 현재 50+ useState를 논리적 그룹으로 분리                                   ║
+ * ║                                                                              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [GitHub 작업 가이드]                                                         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ 🔹 새 파일 추가 방법 (GitHub 웹):                                             ║
+ * ║ 1. 저장소 페이지에서 "Add file" → "Create new file" 클릭                     ║
+ * ║ 2. 파일명에 "src/constants/theme.js" 입력 (폴더 자동 생성)                   ║
+ * ║ 3. 코드 붙여넣기                                                             ║
+ * ║ 4. "Commit new file" 클릭                                                    ║
+ * ║                                                                              ║
+ * ║ 🔹 기존 파일 수정 방법:                                                       ║
+ * ║ 1. 파일 클릭 → 연필 아이콘 (Edit) 클릭                                       ║
+ * ║ 2. 수정 후 "Commit changes" 클릭                                             ║
+ * ║                                                                              ║
+ * ║ 🔹 분리 작업 시 체크리스트:                                                   ║
+ * ║ □ 새 파일에 코드 복사                                                        ║
+ * ║ □ 필요한 import 문 추가                                                      ║
+ * ║ □ export 문 추가                                                             ║
+ * ║ □ App.jsx에서 import 문 추가                                                 ║
+ * ║ □ App.jsx에서 기존 코드 삭제                                                 ║
+ * ║ □ EAS Build로 테스트                                                         ║
+ * ║                                                                              ║
+ * ║ 🔹 롤백이 필요할 때:                                                          ║
+ * ║ - 커밋 히스토리에서 이전 버전으로 되돌리기 가능                              ║
+ * ║ - 또는 백업해둔 단일 파일 App.jsx로 복구                                     ║
+ * ║                                                                              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [현재 라인 번호 참조] (분리 작업 시 사용)                                    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ • import 문: 1254-1280                                                       ║
+ * ║ • DB 함수들: 1282-1869                                                       ║
+ * ║ • 매치 큐 시스템: 1427-1513                                                  ║
+ * ║ • 마이그레이션: 1514-1869                                                    ║
+ * ║ • 취향 분석 시스템: 2076-3479                                                ║
+ * ║ • MAJOR_GENRES: 3480-3491                                                    ║
+ * ║ • SUB_GENRES: 3492-3872                                                      ║
+ * ║ • ALL_GENERAL_TAGS: ~3873-4270                                               ║
+ * ║ • WORK_IDENTIFIERS: 4271-4921                                                ║
+ * ║ • STATUS_OPTIONS 등: 4922-4948                                               ║
+ * ║ • 색상 상수(C): 5097-5135                                                    ║
+ * ║ • PLATFORM_OPTIONS: 5136                                                     ║
+ * ║ • UI 기본 컴포넌트: 5146-5362                                                ║
+ * ║ • DEFAULT_AWARD_TEMPLATE: 5363-5455                                          ║
+ * ║ • NovelCard: 5598-7077                                                       ║
+ * ║ • TagSelectModal: 5741-7077 (NovelCard 내부)                                 ║
+ * ║ • SearchTagModal: 7078-7534                                                  ║
+ * ║ • TagEditModal: 7535-8040                                                    ║
+ * ║ • CoordinateGridView: 8041-8318                                              ║
+ * ║ • TagRelationModal: 8319-8705                                                ║
+ * ║ • TagManagerModal: 8797-10139                                                ║
+ * ║ • AwardsScreen: 10171-11891                                                  ║
+ * ║ • 차트 컴포넌트들: 11892-12011                                               ║
+ * ║ • TasteAnalysisScreen: 12012-15169                                           ║
+ * ║ • App 컴포넌트 시작: 15170                                                   ║
+ * ║ • batch 함수들: 20154-20376                                                  ║
+ * ║ • 백업 시스템: 20378-21500 (대략)                                            ║
  * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  */
@@ -14998,8 +15336,6 @@ function analyzePreferences(novels, matches) {
 }
 
 // 인사이트 생성
-
-
 function generateInsights(data) {
   const { basicStats, majorGenreAnalysis, subGenreAnalysis, tagAnalysis, 
           comboAnalysis, platformAnalysis, loyalAuthors, readingPattern,
@@ -20052,7 +20388,8 @@ export default function App() {
     });
   };
 
-  async function batchSetPlatforms(plats) {
+  // 🔧 v3.5.1: useCallback으로 변경 (stale closure 방지)
+  const batchSetPlatforms = useCallback(async (plats) => {
     // 🔧 v3.5.1 디버깅: 선택 상태 확인
     if (!selectedIds.length) {
       Alert.alert("알림", `먼저 작품을 선택해주세요.\n\n[디버그-플랫폼] selectedIds.length = ${selectedIds.length}`);
@@ -20065,10 +20402,11 @@ export default function App() {
     await execBatch(queries);
     await loadList();
     Alert.alert("완료", `${selectedIds.length}개 작품에 플랫폼을 적용했습니다.`);
-  }
+  }, [selectedIds]);
 
   // 🏷️ v3.1.2: 대량편집 농도 지원 - 기본 농도 3으로 태그 추가
-  async function batchAddTag(t, intensity = 3) {
+  // 🔧 v3.5.1: useCallback으로 변경 (stale closure 방지)
+  const batchAddTag = useCallback(async (t, intensity = 3) => {
     t = (t || "").trim();
     if (!t) {
       Alert.alert("알림", "태그를 입력해주세요.");
@@ -20121,10 +20459,11 @@ export default function App() {
     await execBatch(queries);
     await loadList();
     Alert.alert("완료", `${selectedIds.length}개 작품에 "${t}" 태그를 추가했습니다.`);
-  }
+  }, [selectedIds]);
 
   // 🏷️ v3.1.2: 대량편집 농도 지원 - tag_data에서도 제거
-  async function batchRemoveTag(t) {
+  // 🔧 v3.5.1: useCallback으로 변경 (stale closure 방지)
+  const batchRemoveTag = useCallback(async (t) => {
     t = (t || "").trim();
     if (!t) {
       Alert.alert("알림", "태그를 입력해주세요.");
@@ -20171,9 +20510,10 @@ export default function App() {
     await execBatch(queries);
     await loadList();
     Alert.alert("완료", `${selectedIds.length}개 작품에서 "${t}" 태그를 삭제했습니다.`);
-  }
+  }, [selectedIds]);
 
-  async function batchIncReadCount(delta) {
+  // 🔧 v3.5.1: useCallback으로 변경 (stale closure 방지)
+  const batchIncReadCount = useCallback(async (delta) => {
     const d = Number(delta) || 0;
     if (!d) {
       Alert.alert("알림", "증감할 숫자를 입력해주세요.");
@@ -20191,10 +20531,11 @@ export default function App() {
     await execBatch(queries);
     await loadList();
     Alert.alert("완료", `${selectedIds.length}개 작품에 읽은 회차 ${d > 0 ? '+' : ''}${d} 적용했습니다.`);
-  }
+  }, [selectedIds]);
 
   // 🆕 읽기 상태 일괄 변경
-  async function batchSetStatus(status) {
+  // 🔧 v3.5.1: useCallback으로 변경 (stale closure 방지)
+  const batchSetStatus = useCallback(async (status) => {
     if (!selectedIds.length) {
       Alert.alert("알림", `먼저 작품을 선택해주세요.\n\n[디버그-읽기상태] selectedIds.length = ${selectedIds.length}`);
       return;
@@ -20207,10 +20548,11 @@ export default function App() {
     await execBatch(queries);
     await loadList();
     Alert.alert("완료", `${selectedIds.length}개 작품의 읽기 상태를 변경했습니다.`);
-  }
+  }, [selectedIds]);
 
   // 🆕 작품 연재상태 일괄 변경
-  async function batchSetWorkStatus(workStatus) {
+  // 🔧 v3.5.1: useCallback으로 변경 (stale closure 방지)
+  const batchSetWorkStatus = useCallback(async (workStatus) => {
     if (!selectedIds.length) {
       Alert.alert("알림", `먼저 작품을 선택해주세요.\n\n[디버그-연재상태] selectedIds.length = ${selectedIds.length}`);
       return;
@@ -20223,9 +20565,10 @@ export default function App() {
     await execBatch(queries);
     await loadList();
     Alert.alert("완료", `${selectedIds.length}개 작품의 연재 상태를 변경했습니다.`);
-  }
+  }, [selectedIds]);
 
-  async function batchDelete() {
+  // 🔧 v3.5.1: useCallback으로 변경 (stale closure 방지)
+  const batchDelete = useCallback(async () => {
     if (!selectedIds.length) {
       Alert.alert("알림", `먼저 작품을 선택해주세요.\n\n[디버그-삭제] selectedIds.length = ${selectedIds.length}`);
       return;
@@ -20269,7 +20612,7 @@ export default function App() {
         },
       },
     ]);
-  }
+  }, [selectedIds, pair, editItem, dailyReco, focusMatchNovel]);
   
 // 🔧 초압축 백업 포맷(v5)
 // - 문자열 키는 최소화: v, T, P, N, M
