@@ -1487,6 +1487,7 @@
  * ║                                                                              ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ [현재 라인 번호 참조] (분리 작업 시 사용)                                    ║
+ * ║ ⚠️ 주의: 코드 수정 시 라인 번호가 밀림! 작업 전 별도 메모에 복사해두기        ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║                                                                              ║
  * ║ • import 문: 1254-1280                                                       ║
@@ -1516,6 +1517,31 @@
  * ║ • App 컴포넌트 시작: 15170                                                   ║
  * ║ • batch 함수들: 20154-20376                                                  ║
  * ║ • 백업 시스템: 20378-21500 (대략)                                            ║
+ * ║                                                                              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 🚀 [실행 큐] 리팩토링 순서 (의존성 고려됨) - Gemini 검토 반영                 ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ ⚠️ 핵심 원칙: "기초 자재"부터 밖으로 내보내야 함!                             ║
+ * ║   → 상수를 먼저 분리해야 다른 컴포넌트들이 import 가능                       ║
+ * ║   → UI를 먼저 떼어내면 MAJOR_GENRES, Colors 참조 못해서 에러                 ║
+ * ║                                                                              ║
+ * ║ ✅ Step 1: src/constants/theme.js (색상 C) - 완료 2025-01-28              ║
+ * ║ □ Step 2: src/constants/options.js (PLATFORM_OPTIONS, STATUS_OPTIONS 등)    ║
+ * ║ □ Step 3: src/constants/tags.js (MAJOR_GENRES, SUB_GENRES 등)               ║
+ * ║ □ Step 4: src/utils/helpers.js (uuid, tierFromRating 등)                    ║
+ * ║ □ Step 5: src/utils/database.js (DB 함수들)                                 ║
+ * ║ □ Step 6: src/utils/elo.js (Elo 계산)                                       ║
+ * ║ □ Step 7: src/components/ui/ (Button, Input, Chip 등)                       ║
+ * ║ □ Step 8: src/components/novel/ (NovelCard, TierTag 등)                     ║
+ * ║ □ Step 9: Zustand 도입 (Screen 분리 전 필수!)                               ║
+ * ║ □ Step 10: src/screens/ (TasteAnalysisScreen, AwardsScreen 등)              ║
+ * ║                                                                              ║
+ * ║ 🚨 Phase 5(상태관리)는 "선택"이 아니라 "필수"                                 ║
+ * ║ ──────────────────────────────────────────────────────────────────────────── ║
+ * ║ Screen 분리 시 Zustand 없이 하면 Props가 20개씩 달리는 지옥이 됨             ║
+ * ║ 예: <TasteAnalysisScreen novels={novels} tags={tags} settings={...} ... />  ║
+ * ║ → Zustand로 전역 상태 관리하면 Screen에서 직접 꺼내 쓸 수 있음               ║
  * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  */
@@ -1547,6 +1573,9 @@ import * as ImagePicker from "expo-image-picker";
 import * as NavigationBar from "expo-navigation-bar";
 // 🔧 v3.4.7: 새 FileSystem API가 불안정하여 레거시 API 사용
 import * as FileSystem from "expo-file-system";
+
+// 🔧 v4.0: 분리된 상수 import
+import { LightTheme, DarkTheme, PLATFORM_URLS } from './src/constants';
 
 /* =========================================================
    SQLite (Expo SDK 54 호환)
@@ -5163,31 +5192,10 @@ async function rebuildMatchInsightsFromHistory(novels) {
 }
 
 /* =========================================================
-   테마 (다크모드)
+   테마 (다크모드) - 🔧 v4.0: src/constants/theme.js로 분리됨
    ========================================================= */
-const LightTheme = {
-  bg: "#F5F7FB", card: "#fff", line: "#E7EEF6", text: "#0B1220", sub: "#6B7A90",
-  primary: "#2D6AE3", warn: "#E05252", ok: "#0AA06E", chip: "#EEF4FF",
-  s: "#8b5cf6", a: "#3b82f6", bp: "#22c55e", b: "#a3e635", bm: "#f59e0b", c: "#ef4444",
-  overlay: "rgba(255,255,255,0.85)", modal: "rgba(0,0,0,0.4)",
-};
-const DarkTheme = {
-  bg: "#0f172a", card: "#1e293b", line: "#334155", text: "#f1f5f9", sub: "#94a3b8",
-  primary: "#3b82f6", warn: "#ef4444", ok: "#22c55e", chip: "#334155",
-  s: "#a78bfa", a: "#60a5fa", bp: "#4ade80", b: "#bef264", bm: "#fbbf24", c: "#f87171",
-  overlay: "rgba(15,23,42,0.85)", modal: "rgba(0,0,0,0.6)",
-};
+// LightTheme, DarkTheme, PLATFORM_URLS는 ./src/constants에서 import
 
-/* =========================================================
-   상수
-   ========================================================= */
-const PLATFORM_URLS = {
-  "문피아": "https://www.munpia.com",
-  "리디": "https://ridibooks.com",
-  "카카페": "https://page.kakao.com",
-  "노벨피아": "https://novelpia.com",
-  "시리즈": "https://series.naver.com",
-};
 const STATUS_OPTIONS = [
   { key: "reading", label: "읽는 중", color: "#3b82f6" },  // 파랑
   { key: "completed", label: "완독", color: "#22c55e" },   // 초록
