@@ -1527,7 +1527,7 @@
  * ║   → UI를 먼저 떼어내면 MAJOR_GENRES, Colors 참조 못해서 에러                 ║
  * ║                                                                              ║
  * ║ ✅ Step 1: src/constants/theme.js (색상 C) - 완료 2025-01-28              ║
- * ║ □ Step 2: src/constants/options.js (PLATFORM_OPTIONS, STATUS_OPTIONS 등)    ║
+ * ║ ✅ Step 2: src/constants/options.js (PLATFORM_OPTIONS 등) - 완료 2025-01-28 ║
  * ║ □ Step 3: src/constants/tags.js (MAJOR_GENRES, SUB_GENRES 등)               ║
  * ║ □ Step 4: src/utils/helpers.js (uuid, tierFromRating 등)                    ║
  * ║ □ Step 5: src/utils/database.js (DB 함수들)                                 ║
@@ -1576,6 +1576,12 @@ import * as FileSystem from "expo-file-system";
 
 // 🔧 v4.0: 분리된 상수 import
 import { LightTheme, DarkTheme, PLATFORM_URLS } from './src/constants';
+import { 
+  STATUS_OPTIONS, STATUS_MAP, 
+  WORK_STATUS_OPTIONS, WORK_STATUS_MAP,
+  GAIDEN_STATUS_OPTIONS, GAIDEN_STATUS_MAP,
+  GENRE_OPTIONS, PLATFORM_OPTIONS 
+} from './src/constants';
 
 /* =========================================================
    SQLite (Expo SDK 54 호환)
@@ -5196,34 +5202,11 @@ async function rebuildMatchInsightsFromHistory(novels) {
    ========================================================= */
 // LightTheme, DarkTheme, PLATFORM_URLS는 ./src/constants에서 import
 
-const STATUS_OPTIONS = [
-  { key: "reading", label: "읽는 중", color: "#3b82f6" },  // 파랑
-  { key: "completed", label: "완독", color: "#22c55e" },   // 초록
-  { key: "dropped", label: "중단", color: "#ef4444" },     // 빨강
-  { key: "planned", label: "예정", color: "#a855f7" },     // 보라
-];
-const STATUS_MAP = Object.fromEntries(STATUS_OPTIONS.map(s => [s.key, s]));
-
-// 🆕 작품 상태 딱지 (서비스 종료, 연중 등)
-// 연재중=파란색, 완결=초록색으로 통일
-const WORK_STATUS_OPTIONS = [
-  { key: "ongoing", label: "연재중", color: "#3b82f6" },    // 파란색
-  { key: "completed", label: "완결", color: "#22c55e" },    // 초록색
-  { key: "hiatus", label: "휴재", color: "#f59e0b" },       // 주황색
-  { key: "dropped", label: "연중", color: "#ef4444" },      // 빨간색
-  { key: "discontinued", label: "서비스종료", color: "#6b7280" }, // 회색
-];
-const WORK_STATUS_MAP = Object.fromEntries(WORK_STATUS_OPTIONS.map(s => [s.key, s]));
-
-// 📖 외전 상태 옵션 (연재중=파란색, 완결=초록색 통일)
-const GAIDEN_STATUS_OPTIONS = [
-  { key: "none", label: "외전없음", color: "#9ca3af" },      // 회색
-  { key: "ongoing", label: "외전연재중", color: "#3b82f6" }, // 파란색
-  { key: "completed", label: "외전완결", color: "#22c55e" }, // 초록색
-];
-const GAIDEN_STATUS_MAP = Object.fromEntries(GAIDEN_STATUS_OPTIONS.map(s => [s.key, s]));
-
-const GENRE_OPTIONS = ["무협", "선협", "현판", "현대", "로판", "로맨스", "판타지", "SF"];
+/* =========================================================
+   옵션 상수 - 🔧 v4.0: src/constants/options.js로 분리됨
+   ========================================================= */
+// STATUS_OPTIONS, WORK_STATUS_OPTIONS, GAIDEN_STATUS_OPTIONS,
+// GENRE_OPTIONS, PLATFORM_OPTIONS는 ./src/constants에서 import
 
 /* =========================================================
    유틸리티 함수
@@ -5410,7 +5393,7 @@ function formatFileSize(bytes) {
 /* =========================================================
    UI helpers (테마 prop 받도록 수정)
    ========================================================= */
-const PLATFORM_OPTIONS = ["문피아", "리디", "카카페", "노벨피아", "시리즈"];
+// PLATFORM_OPTIONS는 ./src/constants에서 import (v4.0)
 
 // 모듈 스코프 테마 변수 (App에서 렌더링 시 업데이트됨)
 let C = {
