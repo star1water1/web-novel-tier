@@ -5,8 +5,9 @@
  * 
  * 사용법:
  * import { LightTheme, DarkTheme, PLATFORM_URLS } from './src/constants';
+ * import { STATUS_OPTIONS, PLATFORM_OPTIONS } from './src/constants';
  */
 
 export * from './theme';
-// export * from './options';  // Step 2에서 추가
+export * from './options';
 // export * from './tags';     // Step 3에서 추가
