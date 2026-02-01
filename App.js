@@ -1530,19 +1530,41 @@
  * ║ ✅ Step 2: src/constants/options.js (PLATFORM_OPTIONS 등) - 완료 2025-01-28 ║
  * ║ □ Step 3: src/constants/tags.js (MAJOR_GENRES, SUB_GENRES 등) - 보류      ║
  * ║ ✅ Step 4: src/utils/helpers.js (순수 함수들) - 완료 2025-01-28            ║
- * ║ □ Step 5: src/utils/database.js (DB 함수들)                                 ║
- * ║ □ Step 6: src/utils/elo.js (Elo 계산)                                       ║
- * ║ □ Step 7: src/components/ui/ (Button, Input, Chip 등)                       ║
- * ║ □ Step 8: src/components/novel/ (NovelCard, TierTag 등)                     ║
- * ║ □ Step 9: Zustand 도입 (Screen 분리 전 필수!)                               ║
- * ║ □ Step 10: src/screens/ (TasteAnalysisScreen, AwardsScreen 등)              ║
- * ║                                                                              ║
- * ║ 🚨 Phase 5(상태관리)는 "선택"이 아니라 "필수"                                 ║
+ * ║ □ Step 5: src/utils/database.js (DB 함수들) - 보류(상태 결합)              ║
+ * ║ ✅ Step 6: src/utils/elo.js (Elo 계산) - 완료 2025-01-28                   ║
+ * ║ ✅ Step 7: src/constants/awards.js (AWARD_META 등) - 완료 2025-01-28       ║
+ * ║ ✅ Step 8: src/constants/tier.js (TIER_ORDER 등) - 완료 2025-01-28         ║
+ * ║ ✅ Step 9: src/constants/settings.js (DEFAULT_SETTINGS) - 완료 2025-01-28  ║
+ * ║ ✅ Step 10: src/utils/genre.js (deriveMajorGenre 등) - 완료 2025-01-28     ║
+ * ║ ✅ Step 11: src/utils/analysis.js (취향분석 헬퍼) - 완료 2025-01-28        ║
+ * ║ ✅ Step 12: tier.js 확장 (tierRank, getTierColor 추가) - 완료 2025-01-28  ║
+ * ║ ✅ Step 13: analysis.js 확장 (통계 함수들) - 완료 2025-01-28              ║
+ * ║ ✅ Step 14: settings.js 확장 (COMPRESSION_PRESETS) - 완료 2025-01-28      ║
+ * ║ ✅ Step 15: tags.js (MAJOR_GENRES, SUB_GENRES) - 완료 2025-01-28          ║
+ * ║ ✅ Step 16: tags.js 확장 (CHARACTER_CATEGORIES 등) - 완료 2025-01-28     ║
+ * ║ ✅ Step 17: tags.js 확장 (ALIASES, SPECTRUM, WORK_ID) - 완료 2025-01-28  ║
+ * ║ ✅ Step 18: tags.js 확장 (COORDINATE_SYSTEMS) - 완료 2025-01-28          ║
+ * ║ ✅ Step 19: tags.js 확장 (GENERAL_TAGS) - 완료 2025-01-28                ║
+ * ║ ✅ Step 20: tags.js 확장 (SENTIMENT_COLORS, 헬퍼 함수들) - 완료 2025-01-28║
+ * ║ ✅ Step 21: tags.js 확장 (v5.0 헬퍼, 좌표계 헬퍼) - 완료 2025-01-29      ║
+ * ║ ✅ Step 22: tags.js 확장 (유틸리티, 장르 색상) - 완료 2025-01-29        ║
+ * ║ ✅ Step 23: tags.js 확장 (analyzeCoordinatePreference) - 완료 2025-01-29 ║
+ * ║ ✅ Step 24: database.js 분리 (DB 연결/쿼리/메타) - 완료 2025-01-29       ║
+ * ║ ✅ Step 25: matchQueue.js 분리 (매칭 큐 시스템) - 완료 2025-01-29        ║
+ * ║ ✅ Step 26: analysis.js 확장 (취향 발견 헬퍼) - 완료 2025-01-29          ║
+ * ║ ✅ Step 27: tierSystem.js (전역 상태 캡슐화) - 완료 2025-01-29           ║
+ * ║ ✅ Step 28: schedulerManager.js (비동기 스케줄러 중앙 관리) - 완료       ║
+ * ║ ✅ Step 29: 기존 스케줄러 schedulerManager로 마이그레이션 - 완료         ║
+ * ║ ✅ Step 30: backup.js (백업/복원 순수 함수) - 완료 2025-01-29             ║
+ * ║ ✅ Step 31: rebuildAllFromMatches → elo.js로 이동 - 완료 2025-01-29       ║
+ * ║ ✅ Step 32: 테마 시스템 인프라 구축 (ThemeContext, currentTheme, ui.js)    ║
+ * ║    - 점진적 마이그레이션 준비 완료, UI 컴포넌트 import는 추후 적용        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 📌 향후 작업 (선택적)                                                        ║
  * ║ ──────────────────────────────────────────────────────────────────────────── ║
- * ║ Screen 분리 시 Zustand 없이 하면 Props가 20개씩 달리는 지옥이 됨             ║
- * ║ 예: <TasteAnalysisScreen novels={novels} tags={tags} settings={...} ... />  ║
- * ║ → Zustand로 전역 상태 관리하면 Screen에서 직접 꺼내 쓸 수 있음               ║
- * ║                                                                              ║
+ * ║ □ UI 컴포넌트 실제 분리 (App.jsx에서 import로 대체)                         ║
+ * ║ □ Zustand 도입 (Screen 분리 시 필수)                                        ║
+ * ║ □ Screen 분리 (TasteAnalysisScreen 등)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  */
 
@@ -1580,263 +1602,77 @@ import {
   STATUS_OPTIONS, STATUS_MAP, 
   WORK_STATUS_OPTIONS, WORK_STATUS_MAP,
   GAIDEN_STATUS_OPTIONS, GAIDEN_STATUS_MAP,
-  GENRE_OPTIONS, PLATFORM_OPTIONS 
+  GENRE_OPTIONS, PLATFORM_OPTIONS,
+  AWARD_META, parseAwards, awardsToSearchText, awardsToShortText,
+  TIER_ORDER, getTierDiff, isTierHigher, tierRank, getTierColor,
+  DEFAULT_SETTINGS, DEFAULT_TIER_THRESHOLDS, COMPRESSION_PRESETS,
+  MAJOR_GENRES, SUB_GENRES,
+  CHARACTER_CATEGORIES, COMBO_TAG_TARGETS, COMBO_TAG_TRAITS, TAG_SENTIMENT,
+  TAG_ALIASES, TAG_REVERSE_ALIASES,
+  TAG_SPECTRUM_GROUPS, WORK_IDENTIFIERS, DEFAULT_COORDINATE_SYSTEMS,
+  GENERAL_TAGS, DEFAULT_TAG_SENTIMENTS, SENTIMENT_COLORS,
+  getTagSentiment, isTagMajor, isTagSub, getAllMajorTags, getAllSubTags,
+  isComboTag, parseComboTag, createComboTag, deduplicateTags, getAllDefaultTagsDeduped,
+  ALL_GENERAL_TAGS, ALL_DEFAULT_TAGS,
+  normalizeTag, expandTagForSearch, parseTagData, tagDataToString, tagsStringToTagData,
+  analyzeSpectrum, isWorkIdentifier, parseNovelAliases, calculateTagSimilarity,
+  categorizeRelation, getRelationLabel, getTagRelation, getTagFullInfo,
+  parseMajorSub, countTagUsage, sortTagsByUsage, detectGenres,
+  MAJOR_GENRE_COLORS, SUB_GENRE_COLORS, interpretCoordinate,
+  analyzeCoordinatePreference
 } from './src/constants';
+// 🔧 v4.0 Step 32: 테마 시스템
+import { setCurrentTheme } from './src/theme';
+// 🔧 v4.0 Step 32: UI 컴포넌트 (일부, 점진적 마이그레이션)
+// import { H, Label, Input, Chip, PrimaryButton, OutlineButton, Section, TierTag, ActualTierTag, tierBadge } from './src/components/ui';
 // 🔧 v4.0: 분리된 유틸 import
 import { 
   uuid, safeParseJSON, pairKey,
   parsePlatforms, formatPlatformShort, getWinRate,
-  isNewNovel, parseGenreArray, getFirstGenre
+  isNewNovel, parseGenreArray, getFirstGenre,
+  expected, kFactor, applyElo, rebuildAllFromMatches,
+  deriveMajorGenre, computeReliability,
+  createGenreMatchupKey, findSharedTags, calculateReadRatio,
+  getGapBucket, wilsonConfidenceInterval,
+  calcNovelReliabilityScore, avg, median, stdDev,
+  // 🔧 v4.0: database.js에서 분리된 DB 함수
+  // 🔧 v4.0 Step 33: execBatchChunked, setPendingOperation 등 DB 안정성 강화 함수 추가
+  openDb, resetDbConnection, exec, all, first, execBatch,
+  execBatchChunked, setPendingOperation, checkPendingOperation, checkDbHealth,
+  columnExists, ensureColumn, getAppMeta, setAppMeta,
+  // 🔧 v4.0: matchQueue.js에서 분리된 매칭 큐 함수
+  setMatchQueueCallback, matchPairKey, isMatchPending, 
+  enqueueMatchTask, getMatchQueueStatus, clearMatchQueue,
+  // 🔧 v4.0 Step 26: 취향 발견 헬퍼 함수
+  createNovelSnapshot, createComparisonData, collectChoiceContext,
+  // 🔧 v4.0 Step 27: tierSystem - 전역 티어 상태 캡슐화
+  // ⚠️ tierBadge는 테마 색상 의존으로 App.jsx 로컬 버전 사용
+  setTierThresholds, getTierThresholds, resetTierThresholds,
+  tierFromRating, getDisplayTier, getReviewStatus,
+  getDisplayTierBadge, countByTier, groupByTier, filterNeedsReview,
+  // 🔧 v4.0 Step 28: schedulerManager - 비동기 스케줄러 중앙 관리
+  registerScheduler, addToBatch, flushAllSchedulers, flushScheduler,
+  pauseAllSchedulers, resumeAllSchedulers, handleAppStateChange as schedulerHandleAppState,
+  getSchedulerStatus, getAllSchedulerStatus,
+  // 🔧 v4.0 Step 30: backup - 백업/복원 순수 함수
+  // ⚠️ BACKUP_*_REV는 복원 시 숫자→상태 변환용
+  encodeBase64, decodeBase64, 
+  BACKUP_STATUS_REV as STATUS_REV, BACKUP_WORK_STATUS_REV as WORK_STATUS_REV, 
+  BASE_TIMESTAMP,
+  getExportableImageUrl, collectCoverImageUrls,
+  buildUltraCompactBackup, buildExtendedBackup,
+  parseMatchesFromBackup, detectBackupVersion
 } from './src/utils';
 
-/* =========================================================
-   SQLite (Expo SDK 54 호환)
-   ========================================================= */
-let db = null;
-let dbOpenPromise = null;
-let dbLastSuccessTime = 0; // 마지막 성공 시간
 
-// 🔧 v3.4.7: 데이터베이스 초기화 (강화된 재연결 로직)
-async function openDb() {
-  // 이미 연결 시도 중이면 해당 Promise를 기다림
-  if (dbOpenPromise) {
-    try {
-      return await dbOpenPromise;
-    } catch (e) {
-      dbOpenPromise = null;
-      db = null;
-    }
-  }
-  
-  // 기존 연결이 있고, 최근 성공했으면 재사용
-  if (db && Date.now() - dbLastSuccessTime < 5000) {
-    return db;
-  }
-  
-  // 기존 연결이 있으면 테스트
-  if (db) {
-    try {
-      // 간단한 쿼리로 연결 테스트
-      await db.getAllAsync("SELECT 1;");
-      dbLastSuccessTime = Date.now();
-      return db;
-    } catch (e) {
-      // 연결이 죽었으면 정리
-      console.warn("DB 연결 테스트 실패:", e.message);
-      db = null;
-    }
-  }
-  
-  // 새 연결 생성
-  dbOpenPromise = SQLite.openDatabaseAsync("novel_tiers.db");
-  
-  try {
-    db = await dbOpenPromise;
-    dbLastSuccessTime = Date.now();
-    console.log("DB 연결 성공");
-    return db;
-  } catch (e) {
-    console.error("DB 열기 실패:", e.message);
-    db = null;
-    throw e;
-  } finally {
-    dbOpenPromise = null;
-  }
-}
+// 🔧 v4.0: SQLite 연결 관리 및 쿼리 헬퍼는 ./src/utils/database.js로 분리됨
+// openDb, resetDbConnection, safeDbOperation, exec, all, first, execBatch
 
-// DB 연결 강제 리셋
-function resetDbConnection() {
-  console.log("DB 연결 리셋");
-  db = null;
-  dbOpenPromise = null;
-  dbLastSuccessTime = 0;
-}
 
-// 🔧 v3.4.7: 안전한 DB 실행 래퍼 (자동 재연결 + 더 적극적인 재시도)
-async function safeDbOperation(operation, operationName = "DB") {
-  const maxRetries = 5; // 3 → 5로 증가
-  
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    try {
-      // 매 시도마다 연결 확인
-      const database = await openDb();
-      if (!database) {
-        throw new Error("Database is null after openDb");
-      }
-      
-      const result = await operation(database);
-      dbLastSuccessTime = Date.now();
-      return result;
-    } catch (e) {
-      const errorMsg = e.message || "";
-      const isConnectionError = 
-        errorMsg.includes("NullPointerException") ||
-        errorMsg.includes("prepareAsync") ||
-        errorMsg.includes("rejected") ||
-        errorMsg.includes("database") ||
-        errorMsg.includes("null") ||
-        errorMsg.includes("closed");
-      
-      console.warn(`${operationName} 오류 (시도 ${attempt + 1}/${maxRetries}):`, errorMsg);
-      
-      if (isConnectionError || attempt > 0) {
-        // 연결 오류거나 두 번째 시도부터는 항상 리셋
-        resetDbConnection();
-      }
-      
-      if (attempt === maxRetries - 1) {
-        throw e;
-      }
-      
-      // 점진적 대기 (더 길게)
-      await new Promise(r => setTimeout(r, 300 * (attempt + 1)));
-    }
-  }
-}
+// 🔧 v4.0: 매칭 큐잉 시스템은 ./src/utils/matchQueue.js로 분리됨
+// setMatchQueueCallback, matchPairKey, isMatchPending, enqueueMatchTask, getMatchQueueStatus, clearMatchQueue
 
-/** 단일 쿼리 실행 */
-async function exec(sql, params = []) {
-  return safeDbOperation(
-    (database) => database.runAsync(sql, params),
-    "exec"
-  );
-}
-
-/** SELECT 전체 */
-async function all(sql, params = []) {
-  return safeDbOperation(
-    (database) => database.getAllAsync(sql, params),
-    "all"
-  );
-}
-
-/** SELECT 첫 번째 */
-async function first(sql, params = []) {
-  return safeDbOperation(
-    (database) => database.getFirstAsync(sql, params),
-    "first"
-  );
-}
-
-/** 트랜잭션 실행 */
-async function execBatch(queries) {
-  if (!queries || queries.length === 0) return;
-  
-  return safeDbOperation(
-    async (database) => {
-      await database.withTransactionAsync(async () => {
-        for (const { sql, params } of queries) {
-          await database.runAsync(sql, params || []);
-        }
-      });
-    },
-    "execBatch"
-  );
-}
-
-/* =========================================================
-   🔄 매칭 큐잉 시스템 (v3.4.6)
-   - 빠른 연타에도 DB 트랜잭션 충돌 방지
-   - UI는 즉시 응답, DB는 순차 처리
-   - pending 매치 추적으로 중복 방지
-   ========================================================= */
-const matchQueue = [];
-let isProcessingMatchQueue = false;
-let matchQueueUpdateCallback = null; // 상태 업데이트용 콜백
-const pendingMatchPairs = new Set(); // 큐에서 처리 대기 중인 pair 키들
-
-// 큐 상태 업데이트 콜백 등록
-function setMatchQueueCallback(callback) {
-  matchQueueUpdateCallback = callback;
-}
-
-// 큐 상태 알림
-function notifyQueueStatus() {
-  if (matchQueueUpdateCallback) {
-    matchQueueUpdateCallback({
-      pending: matchQueue.length,
-      processing: isProcessingMatchQueue
-    });
-  }
-}
-
-// pair 키 생성 헬퍼 (중복 체크용)
-function matchPairKey(aId, bId) {
-  return aId < bId ? `${aId}|${bId}` : `${bId}|${aId}`;
-}
-
-// 매치가 이미 큐에 있는지 확인
-function isMatchPending(aId, bId) {
-  return pendingMatchPairs.has(matchPairKey(aId, bId));
-}
-
-// 매칭 작업을 큐에 추가 (pairKey도 함께 추적)
-function enqueueMatchTask(task, pairKey = null) {
-  return new Promise((resolve, reject) => {
-    // 중복 방지: 이미 큐에 있으면 무시
-    if (pairKey && pendingMatchPairs.has(pairKey)) {
-      console.log("매치 큐: 이미 대기 중인 조합, 무시:", pairKey);
-      resolve(null);
-      return;
-    }
-    
-    if (pairKey) {
-      pendingMatchPairs.add(pairKey);
-    }
-    
-    matchQueue.push({ task, resolve, reject, pairKey });
-    notifyQueueStatus();
-    processMatchQueue();
-  });
-}
-
-// 큐 순차 처리
-async function processMatchQueue() {
-  if (isProcessingMatchQueue) return;
-  isProcessingMatchQueue = true;
-  notifyQueueStatus();
-  
-  while (matchQueue.length > 0) {
-    const { task, resolve, reject, pairKey } = matchQueue.shift();
-    notifyQueueStatus();
-    
-    try {
-      const result = await task();
-      resolve(result);
-    } catch (e) {
-      console.warn("매칭 큐 처리 오류:", e.message);
-      reject(e);
-    } finally {
-      // 처리 완료 후 pending에서 제거
-      if (pairKey) {
-        pendingMatchPairs.delete(pairKey);
-      }
-    }
-    
-    // 각 작업 사이에 약간의 딜레이 (DB 안정성)
-    await new Promise(r => setTimeout(r, 50));
-  }
-  
-  isProcessingMatchQueue = false;
-  notifyQueueStatus();
-}
-
-/* -------------------- Migration -------------------- */
-async function columnExists(table, name) {
-  const rows = await all(`PRAGMA table_info(${table});`);
-  return rows.some((r) => r.name === name);
-}
-
-async function ensureColumn(table, name, type, defaultExpr) {
-  const exists = await columnExists(table, name);
-  if (!exists) {
-    await exec(
-      `ALTER TABLE ${table} ADD COLUMN ${name} ${type}${
-        defaultExpr ? " DEFAULT " + defaultExpr : ""
-      };`
-    );
-  }
-}
+// 🔧 v4.0: columnExists, ensureColumn은 ./src/utils/database.js로 분리됨
 
 // 🔧 v4.0: uuid()는 ./src/utils에서 import (helpers.js로 분리됨)
 
@@ -2143,33 +1979,7 @@ async function initDb() {
   await ensureColumn("insight_queue", "responded_at", "INTEGER", "0");
 }
 
-// -----------------------------------------
-// app_meta 헬퍼 (키-값 JSON 저장)
-// -----------------------------------------
-async function getAppMeta(key) {
-  try {
-    const row = await first("SELECT value FROM app_meta WHERE key=?", [key]);
-    if (!row || row.value == null) return null;
-    try {
-      return JSON.parse(row.value);
-    } catch {
-      return null;
-    }
-  } catch (e) {
-    console.warn("getAppMeta 오류:", e);
-    return null;
-  }
-}
-
-async function setAppMeta(key, value) {
-  try {
-    const json = JSON.stringify(value ?? null);
-    await exec("DELETE FROM app_meta WHERE key=?", [key]);
-    await exec("INSERT INTO app_meta (key,value) VALUES (?,?);", [key, json]);
-  } catch (e) {
-    console.warn("setAppMeta 오류:", e);
-  }
-}
+// 🔧 v4.0: getAppMeta, setAppMeta는 ./src/utils/database.js로 분리됨
 
 // ═══════════════════════════════════════════════════════════════
 // 🔄 태그 시스템 v5.0 마이그레이션
@@ -2406,203 +2216,12 @@ async function syncNovelTags(novelId, tagData) {
 // 🔧 헬퍼 함수들
 // ═══════════════════════════════════════════════════════════════════════════════
 // safeParseJSON은 ./src/utils에서 import (v4.0)
+// TIER_ORDER, getTierDiff, isTierHigher는 ./src/constants/tier.js로 분리됨 (v4.0)
+// createGenreMatchupKey, findSharedTags, calculateReadRatio, getGapBucket, wilsonConfidenceInterval는 
+// ./src/utils/analysis.js로 분리됨 (v4.0)
 
-/**
- * 티어 순서 (높은 순)
- */
-const TIER_ORDER = ["S", "A", "B+", "B", "B-", "C"];
-
-/**
- * 티어 차이 계산 (양수면 A가 높음)
- */
-function getTierDiff(tierA, tierB) {
-  const idxA = TIER_ORDER.indexOf(tierA);
-  const idxB = TIER_ORDER.indexOf(tierB);
-  if (idxA === -1 || idxB === -1) return 0;
-  return idxB - idxA;
-}
-
-/**
- * 티어가 더 높은지 확인
- */
-function isTierHigher(tierA, tierB) {
-  return getTierDiff(tierA, tierB) > 0;
-}
-
-/**
- * 장르 매치업 키 생성 (알파벳 순 정렬로 일관성)
- */
-function createGenreMatchupKey(genreA, genreB) {
-  if (!genreA || !genreB) return null;
-  if (genreA === genreB) return null;
-  const sorted = [genreA, genreB].sort();
-  return `${sorted[0]}_vs_${sorted[1]}`;
-}
-
-/**
- * 공통 태그 찾기
- */
-function findSharedTags(tagsA, tagsB) {
-  if (!tagsA || !tagsB) return [];
-  const setB = new Set(tagsB.map(t => t.toLowerCase()));
-  return tagsA.filter(t => setB.has(t.toLowerCase()));
-}
-
-/**
- * 읽은 비율 계산
- */
-function calculateReadRatio(novel) {
-  const read = Number(novel.read_count) || 0;
-  const total = Number(novel.total_episodes) || 0;
-  if (total <= 0) return 0.5;  // 모르면 중립
-  return Math.min(1, read / total);
-}
-
-/**
- * 레이팅 갭 버킷 생성
- */
-function getGapBucket(gap) {
-  if (gap < 50) return "tiny";      // 0-49
-  if (gap < 100) return "small";    // 50-99
-  if (gap < 200) return "medium";   // 100-199
-  if (gap < 300) return "large";    // 200-299
-  return "huge";                     // 300+
-}
-
-/**
- * 윌슨 신뢰구간 계산 (통계적 유의성)
- */
-function wilsonConfidenceInterval(successes, total, confidence = 0.95) {
-  if (total === 0) return { lower: 0, upper: 1 };
-  
-  const z = confidence === 0.95 ? 1.96 : 1.645;
-  const p = successes / total;
-  const n = total;
-  
-  const denominator = 1 + z * z / n;
-  const center = p + z * z / (2 * n);
-  const spread = z * Math.sqrt((p * (1 - p) + z * z / (4 * n)) / n);
-  
-  return {
-    lower: Math.max(0, (center - spread) / denominator),
-    upper: Math.min(1, (center + spread) / denominator),
-  };
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// 📥 수집층: 선택 맥락 수집 및 저장
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/**
- * 작품 스냅샷 생성 (선택 시점의 상태 캡처)
- */
-function createNovelSnapshot(novel) {
-  if (!novel) return null;
-  
-  // 태그 파싱
-  let tags = [];
-  try {
-    const tagData = JSON.parse(novel.tag_data || "[]");
-    if (Array.isArray(tagData)) {
-      tags = tagData.map(t => t.tag || t).filter(Boolean);
-    }
-  } catch {
-    tags = (novel.tags || "").split(",").map(t => t.trim()).filter(Boolean);
-  }
-  
-  // 플랫폼 파싱
-  let platforms = [];
-  try {
-    platforms = JSON.parse(novel.platforms || "[]");
-  } catch {
-    platforms = [];
-  }
-  
-  // 대장르 파싱
-  let majorGenre = null;
-  try {
-    const mg = JSON.parse(novel.major_genre || "[]");
-    majorGenre = Array.isArray(mg) ? mg[0] : mg;
-  } catch {
-    majorGenre = novel.major_genre || null;
-  }
-  
-  // 레이팅에서 티어 계산
-  const rating = Number(novel.rating) || 1500;
-  let tier = "C";
-  if (rating >= 1950) tier = "S";
-  else if (rating >= 1850) tier = "A";
-  else if (rating >= 1700) tier = "B+";
-  else if (rating >= 1600) tier = "B";
-  else if (rating >= 1500) tier = "B-";
-  
-  return {
-    id: novel.id,
-    title: novel.title || "",
-    rating: rating,
-    tier: tier,
-    rd: Number(novel.rd) || 350,
-    wins: Number(novel.wins) || 0,
-    losses: Number(novel.losses) || 0,
-    match_count: Number(novel.match_count) || 0,
-    major_genre: majorGenre,
-    tags: tags,
-    author: novel.author || "",
-    read_count: Number(novel.read_count) || 0,
-    total_episodes: Number(novel.total_episodes) || 0,
-    read_ratio: calculateReadRatio(novel),
-    platforms: platforms,
-    status: novel.status || "reading",
-  };
-}
-
-/**
- * 두 작품 간 비교 데이터 생성
- */
-function createComparisonData(winnerSnap, loserSnap) {
-  if (!winnerSnap || !loserSnap) return {};
-  
-  const ratingGap = Math.abs(winnerSnap.rating - loserSnap.rating);
-  const ratingWinnerHigher = winnerSnap.rating >= loserSnap.rating;
-  
-  return {
-    ratingGap: ratingGap,
-    ratingWinnerHigher: ratingWinnerHigher,
-    tierDiff: getTierDiff(winnerSnap.tier, loserSnap.tier),
-    tierWinnerHigher: isTierHigher(winnerSnap.tier, loserSnap.tier),
-    genreMatchup: createGenreMatchupKey(winnerSnap.major_genre, loserSnap.major_genre),
-    winnerGenre: winnerSnap.major_genre,
-    loserGenre: loserSnap.major_genre,
-    sharedTags: findSharedTags(winnerSnap.tags, loserSnap.tags),
-    winnerOnlyTags: winnerSnap.tags.filter(t => !loserSnap.tags.map(x => x.toLowerCase()).includes(t.toLowerCase())),
-    loserOnlyTags: loserSnap.tags.filter(t => !winnerSnap.tags.map(x => x.toLowerCase()).includes(t.toLowerCase())),
-    readRatioDiff: winnerSnap.read_ratio - loserSnap.read_ratio,
-    sameAuthor: winnerSnap.author && winnerSnap.author === loserSnap.author,
-    winnerAuthor: winnerSnap.author,
-    loserAuthor: loserSnap.author,
-  };
-}
-
-/**
- * 선택 맥락 전체 수집
- */
-function collectChoiceContext(winner, loser) {
-  const winnerSnapshot = createNovelSnapshot(winner);
-  const loserSnapshot = createNovelSnapshot(loser);
-  
-  if (!winnerSnapshot || !loserSnapshot) {
-    console.warn("[collectChoiceContext] Invalid novel data");
-    return null;
-  }
-  
-  const comparison = createComparisonData(winnerSnapshot, loserSnapshot);
-  
-  return {
-    winnerSnapshot,
-    loserSnapshot,
-    comparison,
-  };
-}
+// 🔧 v4.0 Step 26: createNovelSnapshot, createComparisonData, collectChoiceContext는
+// ./src/utils/analysis.js로 분리됨
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 🔍 이상 탐지: 평소와 다른 선택 감지
@@ -2688,72 +2307,95 @@ async function detectAnomaly(context, patterns) {
 // 💾 저장: 선택 로그 기록
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// 🔧 v4.0 Step 29: schedulerManager 기반으로 마이그레이션
+let schedulersInitialized = false;
+
 /**
- * 선택 로그 저장 (배치 큐 통합)
+ * 취향 발견 시스템 스케줄러 초기화
+ * - App 컴포넌트 마운트 시 1회 호출
+ */
+function initPreferenceSchedulers() {
+  if (schedulersInitialized) return;
+  schedulersInitialized = true;
+  
+  // 1. 선택 로그 스케줄러 (choiceLog)
+  registerScheduler('choiceLog', {
+    delay: 5000,
+    maxBatchSize: 20,
+    onFlush: async (batch) => {
+      try {
+        const queries = batch.map(log => ({
+          sql: `INSERT INTO choice_logs (
+            id, match_id, winner_id, loser_id,
+            predicted_winner_id, prediction_confidence, prediction_factors, was_correct,
+            winner_snapshot, loser_snapshot, comparison,
+            anomaly_score, anomaly_factors, match_type, session_position, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          params: [
+            log.id,
+            log.match_id,
+            log.winner_id,
+            log.loser_id,
+            log.predicted_winner_id || null,
+            log.prediction_confidence || null,
+            log.prediction_factors ? JSON.stringify(log.prediction_factors) : null,
+            log.was_correct,
+            JSON.stringify(log.winner_snapshot),
+            JSON.stringify(log.loser_snapshot),
+            JSON.stringify(log.comparison),
+            log.anomaly_score || 0,
+            log.anomaly_factors ? JSON.stringify(log.anomaly_factors) : null,
+            log.match_type || "manual",
+            log.session_position || null,
+            log.created_at || Date.now(),
+          ],
+        }));
+        
+        await execBatch(queries);
+        
+        // 패턴 업데이트 스케줄 (비동기)
+        schedulePatternUpdate(batch);
+        
+      } catch (e) {
+        console.error("[choiceLog.onFlush] 저장 실패:", e);
+      }
+    },
+  });
+  
+  // 2. 패턴 업데이트 스케줄러 (patternUpdate)
+  registerScheduler('patternUpdate', {
+    delay: 1000,
+    maxBatchSize: 100,
+    onFlush: processPatternUpdates,
+  });
+  
+  // 3. 통계 재계산 스케줄러 (statsRefresh)
+  registerScheduler('statsRefresh', {
+    delay: 2000,
+    maxBatchSize: 1,
+    onFlush: async () => { await refreshPatternStats(); },
+  });
+  
+  // 4. 인사이트 발견 스케줄러 (insightDiscovery)
+  registerScheduler('insightDiscovery', {
+    delay: 3000,
+    maxBatchSize: 1,
+    onFlush: async () => { await discoverInsights(); },
+  });
+  
+  console.log("[initPreferenceSchedulers] 취향 발견 스케줄러 초기화 완료");
+}
+
+/**
+ * 호환성 래퍼: choiceLogQueue
+ * 기존 코드와 호환성 유지하면서 schedulerManager 사용
  */
 const choiceLogQueue = {
-  pending: [],
-  maxSize: 20,
-  flushInterval: 5000,
-  timer: null,
-  
-  add(log) {
-    this.pending.push(log);
-    
-    if (this.pending.length >= this.maxSize) {
-      this.flush();
-    } else if (!this.timer) {
-      this.timer = setTimeout(() => this.flush(), this.flushInterval);
-    }
+  add(log) { 
+    addToBatch('choiceLog', log); 
   },
-  
-  async flush() {
-    if (this.timer) {
-      clearTimeout(this.timer);
-      this.timer = null;
-    }
-    
-    if (this.pending.length === 0) return;
-    
-    const batch = this.pending.splice(0);
-    
-    try {
-      const queries = batch.map(log => ({
-        sql: `INSERT INTO choice_logs (
-          id, match_id, winner_id, loser_id,
-          predicted_winner_id, prediction_confidence, prediction_factors, was_correct,
-          winner_snapshot, loser_snapshot, comparison,
-          anomaly_score, anomaly_factors, match_type, session_position, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        params: [
-          log.id,
-          log.match_id,
-          log.winner_id,
-          log.loser_id,
-          log.predicted_winner_id || null,
-          log.prediction_confidence || null,
-          log.prediction_factors ? JSON.stringify(log.prediction_factors) : null,
-          log.was_correct,
-          JSON.stringify(log.winner_snapshot),
-          JSON.stringify(log.loser_snapshot),
-          JSON.stringify(log.comparison),
-          log.anomaly_score || 0,
-          log.anomaly_factors ? JSON.stringify(log.anomaly_factors) : null,
-          log.match_type || "manual",
-          log.session_position || null,
-          log.created_at || Date.now(),
-        ],
-      }));
-      
-      await execBatch(queries);
-      
-      // 패턴 업데이트 스케줄 (비동기)
-      schedulePatternUpdate(batch);
-      
-    } catch (e) {
-      console.error("[choiceLogQueue.flush] 저장 실패:", e);
-      // 실패한 로그는 다시 큐에 넣지 않음 (무한 루프 방지)
-    }
+  async flush() { 
+    await flushScheduler('choiceLog'); 
   },
 };
 
@@ -2817,25 +2459,11 @@ async function saveChoiceLog(matchId, winner, loser, matchType = "manual", predi
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * 패턴 업데이트 스케줄러
+ * 호환성 래퍼: schedulePatternUpdate
+ * 🔧 v4.0 Step 29: schedulerManager 기반으로 변경
  */
-let patternUpdateScheduled = false;
-let patternUpdateBatch = [];
-
 function schedulePatternUpdate(logs) {
-  patternUpdateBatch.push(...logs);
-  
-  if (!patternUpdateScheduled) {
-    patternUpdateScheduled = true;
-    setTimeout(async () => {
-      const batch = patternUpdateBatch.splice(0);
-      patternUpdateScheduled = false;
-      
-      if (batch.length > 0) {
-        await processPatternUpdates(batch);
-      }
-    }, 1000);
-  }
+  addToBatch('patternUpdate', logs);
 }
 
 /**
@@ -2995,18 +2623,11 @@ async function batchUpdatePatternStats(updates) {
 }
 
 /**
- * 패턴 통계 재계산 스케줄러
+ * 호환성 래퍼: schedulePatternStatsRefresh
+ * 🔧 v4.0 Step 29: schedulerManager 기반으로 변경
  */
-let statsRefreshScheduled = false;
-
 function schedulePatternStatsRefresh() {
-  if (!statsRefreshScheduled) {
-    statsRefreshScheduled = true;
-    setTimeout(async () => {
-      statsRefreshScheduled = false;
-      await refreshPatternStats();
-    }, 2000);
-  }
+  addToBatch('statsRefresh', { trigger: true });
 }
 
 /**
@@ -3082,18 +2703,11 @@ async function refreshPatternStats() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * 인사이트 발견 스케줄러
+ * 호환성 래퍼: scheduleInsightDiscovery
+ * 🔧 v4.0 Step 29: schedulerManager 기반으로 변경
  */
-let insightDiscoveryScheduled = false;
-
 function scheduleInsightDiscovery() {
-  if (!insightDiscoveryScheduled) {
-    insightDiscoveryScheduled = true;
-    setTimeout(async () => {
-      insightDiscoveryScheduled = false;
-      await discoverInsights();
-    }, 3000);
-  }
+  addToBatch('insightDiscovery', { trigger: true });
 }
 
 /**
@@ -3763,583 +3377,12 @@ async function migrateExistingMatchesToPatterns() {
    🏷️ 태그 시스템 (v3.0 - 카테고리 세분화 + 조합식 태그)
    ========================================================= */
 
-// 대장르 (작품의 주 배경/세계관)
-const MAJOR_GENRES = [
-  "판타지", "현대판타지", "무협", "선협", "로맨스", "로맨스판타지", 
-  "게임판타지", "퓨전", "SF", "미스터리", "공포/스릴러", "호러",
-  "대체역사", "라이트노벨", "현대", "현대물", "사극", "시대물",
-  "BL", "GL", "백합", "하이판타지", "다크판타지", "스팀펑크",
-  "사이버펑크", "포스트아포칼립스", "밀리터리", "스포츠물", "일상물",
-  // 추가
-  "퓨전판타지", "퓨전펑크", "디젤펑크", "스페이스오페라", "동양판타지",
-  "한국식이세계물", "코즈믹호러", "피카레스크"
-];
+// 🔧 v4.0: MAJOR_GENRES, SUB_GENRES는 ./src/constants/tags.js로 분리됨
+// 🔧 v4.0: CHARACTER_CATEGORIES, COMBO_TAG_TARGETS, COMBO_TAG_TRAITS, TAG_SENTIMENT도 분리됨
 
-// 부장르 (핵심 소재/클리셰)
-const SUB_GENRES = [
-  // 시작 소재
-  "회귀", "환생", "빙의", "전생", "차원이동", "귀환", "타임슬립", "타임루프",
-  "평행세계", "리셋", "각성", "무한회귀", "무한환생", "기억상실",
-  // 세계관/배경
-  "헌터", "아카데미", "던전", "게이트", "탑", "길드", "영지경영", "내정",
-  "아포칼립스", "좀비", "가상현실", "이세계", "게임세계", "소설속세계",
-  "랜덤박스", "가챠", "클리어조건", "탑등반", "미궁", "영지물",
-  // 클리셰/소재
-  "성장", "먼치킨", "천재", "사이다", "복수", "하렘", "역하렘", "궁극기",
-  "성좌", "시스템", "스탯창", "레이드", "솔플", "착각물", "오해물",
-  "숨겨진실력", "약빨", "사기스킬", "유일무이", "최초", "전설급",
-  "생존", "모험", "지략싸움", "정치싸움", "경영",
-  // 직업/신분
-  "재벌", "연예계", "아이돌", "스포츠", "요리", "의사", "마법사",
-  "검사", "궁수", "힐러", "소환사", "넥서맨서", "천마", "망나니", "황녀/황자",
-  "공작/후작", "기사", "용사", "마왕", "마검사", "만능형", "서포터",
-  "탱커", "딜러", "암살자", "도적", "연금술사", "대장장이", "상인",
-  "사역마", "신의사도", "종교인", "전문가", "스승", "제자", "귀부인",
-  // 특수 소재
-  "육아", "메카", "특촬", "패러디", "오마쥬요소", "작중작", "괴이", "괴담",
-  "기믹", "암타"
-];
+// 🔧 v4.0: isComboTag, parseComboTag, createComboTag, deduplicateTags, getAllDefaultTagsDeduped, ALL_GENERAL_TAGS, ALL_DEFAULT_TAGS는 ./src/constants/tags.js로 분리됨
 
-// ═══════════════════════════════════════════════════════════════
-// 📁 인물 태그 카테고리 (조합 가능)
-// ═══════════════════════════════════════════════════════════════
-const CHARACTER_CATEGORIES = {
-  // 인물 대상 (조합 prefix)
-  "대상": [
-    "주인공", "히로인", "조연", "악역", "빌런", "엑스트라", "NPC", 
-    "여주인공", "더블주인공", "라이벌"
-  ],
-  // 인물 특성 (조합 suffix)
-  "성향/성격": [
-    "먼치킨", "천재", "둔재", "강캐", "약캐", "성장형", "사기캐", "만능캐",
-    "다정남", "츤데레", "냉철남", "쿨남", "상남자", "플레이보이", "하남자",
-    "얀데레", "메가데레", "쿨데레", "보이시", "청순", "도도", "상처녀",
-    "4차원", "천연", "완벽남", "차도남", "훈남",
-    "비련의주인공", "고뇌형", "낙천형", "복수귀", "광기", "이중인격",
-    "똑똑한", "묵직한", "가벼운", "약한"
-  ],
-  // 인물 상태/배경
-  "상태/배경": [
-    "병약", "시한부", "입양된", "입양한", "사생아", "재혼", "약혼", "계약"
-  ]
-};
-
-// 조합식 태그 생성 헬퍼 (v2.8: 공백으로 자연스럽게 연결)
-// 예: "먼치킨 주인공", "똑똑한 히로인"
-const COMBO_TAG_TARGETS = CHARACTER_CATEGORIES["대상"];
-const COMBO_TAG_TRAITS = CHARACTER_CATEGORIES["성향/성격"];
-
-// ═══════════════════════════════════════════════════════════════
-// 🎭 태그 속성 시스템 (긍정/부정/중립) - v2.8 NEW
-// 취향 분석 시 활용, 설정에서 개인화 가능
-// ═══════════════════════════════════════════════════════════════
-const TAG_SENTIMENT = {
-  POSITIVE: "positive",   // 👍 긍정적 (선호하는 요소)
-  NEGATIVE: "negative",   // 👎 부정적 (기피하는 요소)
-  NEUTRAL: "neutral",     // ⚖️ 중립 (판단 유보)
-};
-
-// 기본 태그 속성 분류 (사용자가 설정에서 변경 가능)
-const DEFAULT_TAG_SENTIMENTS = {
-  // ═══════════════════════════════════════════════════════════════
-  // 🎯 기준: 작품 완성도를 올리느냐/깎느냐만 판단
-  // - 분위기/톤/캐릭터 유형/로맨스 유형 등은 호불호일 뿐 → 중립
-  // - NTR, 느린전개, 다크, 시리어스 등은 취향 문제 → 중립
-  // ═══════════════════════════════════════════════════════════════
-  
-  // ═══ 긍정적 태그 (작품 완성도 UP) ═══
-  // 퀄리티/평가 - 좋은 평가
-  "명작": TAG_SENTIMENT.POSITIVE,
-  "수작": TAG_SENTIMENT.POSITIVE,
-  "가작": TAG_SENTIMENT.POSITIVE,
-  "레전드": TAG_SENTIMENT.POSITIVE,
-  "인생작": TAG_SENTIMENT.POSITIVE,
-  "정주행각": TAG_SENTIMENT.POSITIVE,
-  "대중적": TAG_SENTIMENT.POSITIVE,
-  
-  // 완성도 관련 - 잘 만든 요소
-  "문체좋음": TAG_SENTIMENT.POSITIVE,
-  "전개좋음": TAG_SENTIMENT.POSITIVE,
-  "캐릭터좋음": TAG_SENTIMENT.POSITIVE,
-  "설정좋음": TAG_SENTIMENT.POSITIVE,
-  "세계관좋음": TAG_SENTIMENT.POSITIVE,
-  "유려한문체": TAG_SENTIMENT.POSITIVE,
-  "깔끔한문체": TAG_SENTIMENT.POSITIVE,
-  "전투씬좋음": TAG_SENTIMENT.POSITIVE,
-  "재치있는서술": TAG_SENTIMENT.POSITIVE,
-  "방대한세계관": TAG_SENTIMENT.POSITIVE,
-  "몰입감": TAG_SENTIMENT.POSITIVE,
-  
-  // 구성 - 잘 짜인 스토리
-  "떡밥회수": TAG_SENTIMENT.POSITIVE,
-  "반전": TAG_SENTIMENT.POSITIVE,
-  "복선": TAG_SENTIMENT.POSITIVE,
-  "여운": TAG_SENTIMENT.POSITIVE,
-  "사두용미": TAG_SENTIMENT.POSITIVE,  // 시작 좋고 끝도 좋음
-  "용두용미": TAG_SENTIMENT.POSITIVE,  // 처음부터 끝까지 좋음
-  
-  // ═══ 부정적 태그 (작품 완성도 DOWN) ═══
-  // 퀄리티/평가 - 안 좋은 평가
-  "졸작": TAG_SENTIMENT.NEGATIVE,
-  "후반부붕괴": TAG_SENTIMENT.NEGATIVE,
-  "용두사미": TAG_SENTIMENT.NEGATIVE,
-  "떡밥미회수": TAG_SENTIMENT.NEGATIVE,
-  "결말아쉬움": TAG_SENTIMENT.NEGATIVE,
-  "표절의혹": TAG_SENTIMENT.NEGATIVE,
-  "재탕": TAG_SENTIMENT.NEGATIVE,
-  
-  // 완성도 이슈 - 구조적 문제
-  "설정오류잦음": TAG_SENTIMENT.NEGATIVE,
-  "개연성낮음": TAG_SENTIMENT.NEGATIVE,
-  "설정오류조금": TAG_SENTIMENT.NEGATIVE,
-  "개연성조금아쉬움": TAG_SENTIMENT.NEGATIVE,
-  "맥거핀다수": TAG_SENTIMENT.NEGATIVE,
-  "벽돌문장": TAG_SENTIMENT.NEGATIVE,
-  "인물매력부족": TAG_SENTIMENT.NEGATIVE,
-  "드리프트": TAG_SENTIMENT.NEGATIVE,  // 주제 이탈
-  "편의주의전개": TAG_SENTIMENT.NEGATIVE,
-  "작위적": TAG_SENTIMENT.NEGATIVE,
-  "억지전개": TAG_SENTIMENT.NEGATIVE,
-  "캐릭터붕괴": TAG_SENTIMENT.NEGATIVE,
-  "멍청한등장인물": TAG_SENTIMENT.NEGATIVE,
-  "난잡한시점전환": TAG_SENTIMENT.NEGATIVE,
-  "반복서술": TAG_SENTIMENT.NEGATIVE,
-  "자가복제": TAG_SENTIMENT.NEGATIVE,
-  "뇌절조금": TAG_SENTIMENT.NEGATIVE,
-  "뇌절많음": TAG_SENTIMENT.NEGATIVE,
-  "산으로가는에피조금존재": TAG_SENTIMENT.NEGATIVE,
-  "산으로가는에피다수존재": TAG_SENTIMENT.NEGATIVE,
-  
-  // 미흡 계열
-  "액션미흡": TAG_SENTIMENT.NEGATIVE,
-  "연애미흡": TAG_SENTIMENT.NEGATIVE,
-  "빌드업미흡": TAG_SENTIMENT.NEGATIVE,
-  "떡밥회수미흡": TAG_SENTIMENT.NEGATIVE,
-  
-  // 진입장벽/정보량 (완성도 문제)
-  "초반정보량과다": TAG_SENTIMENT.NEGATIVE,
-  "중후반정보량과다": TAG_SENTIMENT.NEGATIVE,
-  "작품전반정보량과다": TAG_SENTIMENT.NEGATIVE,
-  "설정집서술": TAG_SENTIMENT.NEGATIVE,
-  "초반진입장벽": TAG_SENTIMENT.NEGATIVE,
-  
-  // 연재 상태 (완결 가능성 낮음)
-  "연중": TAG_SENTIMENT.NEGATIVE,
-  
-  // ═══════════════════════════════════════════════════════════════
-  // 🔹 아래는 모두 중립 (기본값이므로 명시 불필요하나 참고용 주석)
-  // ═══════════════════════════════════════════════════════════════
-  // 분위기/톤: 힐링, 다크, 피폐, 시리어스, 코미디 등 → 중립 (취향)
-  // 전개 스타일: 슬로우번, 급전개, 느린템포 등 → 중립 (스타일)
-  // 캐릭터 유형: 먼치킨, 하남자, 얀데레, 천재 등 → 중립 (유형)
-  // 로맨스 유형: NTR주의, 불륜, 집착, 순애 등 → 중립 (취향)
-  // 특수 소재: TS, 오메가버스, 하렘, 근친 등 → 중립 (소재)
-  // 연재 상태: 완결, 휴재, 연재중 → 중립 (상태)
-  // 엔딩 유형: 해피엔딩, 새드엔딩, 열린결말 → 중립 (유형)
-};
-
-// 태그 속성 가져오기 (커스텀 설정 우선)
-function getTagSentiment(tag, customSentiments = {}) {
-  if (customSentiments[tag]) return customSentiments[tag];
-  if (DEFAULT_TAG_SENTIMENTS[tag]) return DEFAULT_TAG_SENTIMENTS[tag];
-  return TAG_SENTIMENT.NEUTRAL;
-}
-
-// 🆕 v3.4: 태그 대장르 속성 확인 (동등화)
-// - tagAttributes에 명시적 설정이 있으면 그것을 따름
-// - 없으면 MAJOR_GENRES 포함 여부로 기본값 결정
-function isTagMajor(tag, tagAttributes = {}, userMajorGenres = []) {
-  if (tagAttributes[tag]?.isMajor !== undefined) return tagAttributes[tag].isMajor;
-  // 기본값: MAJOR_GENRES나 사용자 대장르에 포함되면 true
-  return MAJOR_GENRES.includes(tag) || userMajorGenres.includes(tag);
-}
-
-// 🆕 v3.4: 태그 부장르 속성 확인 (동등화)
-function isTagSub(tag, tagAttributes = {}, userSubGenres = []) {
-  if (tagAttributes[tag]?.isSub !== undefined) return tagAttributes[tag].isSub;
-  // 기본값: SUB_GENRES나 사용자 부장르에 포함되면 true
-  return SUB_GENRES.includes(tag) || userSubGenres.includes(tag);
-}
-
-// 🆕 v3.4: 모든 대장르 속성 태그 가져오기
-function getAllMajorTags(tagAttributes = {}, userMajorGenres = []) {
-  const result = new Set();
-  // 기본 대장르
-  MAJOR_GENRES.forEach(t => result.add(t));
-  // 사용자 대장르
-  userMajorGenres.forEach(t => result.add(t));
-  // tagAttributes에서 isMajor=true인 것 추가, false인 것 제거
-  for (const [tag, attrs] of Object.entries(tagAttributes)) {
-    if (attrs.isMajor === true) result.add(tag);
-    else if (attrs.isMajor === false) result.delete(tag);
-  }
-  return Array.from(result);
-}
-
-// 🆕 v3.4: 모든 부장르 속성 태그 가져오기
-function getAllSubTags(tagAttributes = {}, userSubGenres = []) {
-  const result = new Set();
-  // 기본 부장르
-  SUB_GENRES.forEach(t => result.add(t));
-  // 사용자 부장르
-  userSubGenres.forEach(t => result.add(t));
-  // tagAttributes에서 isSub=true인 것 추가, false인 것 제거
-  for (const [tag, attrs] of Object.entries(tagAttributes)) {
-    if (attrs.isSub === true) result.add(tag);
-    else if (attrs.isSub === false) result.delete(tag);
-  }
-  return Array.from(result);
-}
-
-// 태그 속성별 색상/라벨
-const SENTIMENT_COLORS = {
-  [TAG_SENTIMENT.POSITIVE]: { bg: "#dcfce7", text: "#166534", border: "#22c55e", emoji: "👍", label: "긍정" },
-  [TAG_SENTIMENT.NEGATIVE]: { bg: "#fee2e2", text: "#991b1b", border: "#ef4444", emoji: "👎", label: "부정" },
-  [TAG_SENTIMENT.NEUTRAL]: { bg: "#f3f4f6", text: "#374151", border: "#9ca3af", emoji: "⚖️", label: "중립" },
-};
-
-// 조합식 태그 판별 (공백 포함 여부로 판단 - 기존 + 포함 태그도 호환)
-function isComboTag(tag) {
-  if (!tag) return false;
-  // 기존 "+" 또는 새로운 공백 형식 모두 지원
-  return tag.includes("+") || (tag.includes(" ") && COMBO_TAG_TRAITS.some(t => tag.startsWith(t)));
-}
-
-// ═══════════════════════════════════════════════════════════════
-// 📁 일반 태그 (카테고리별 정리) - 확장 버전
-// ═══════════════════════════════════════════════════════════════
-const GENERAL_TAGS = {
-  "📖 시점/인칭": [
-    "1인칭", "3인칭", "전지적시점", "제한적시점", "다중시점", "옴니버스시점",
-    "관찰자시점", "주인공시점", "조연시점", "회상형식", "주인공미등장에피있음"
-  ],
-  "🎭 분위기/톤": [
-    "힐링", "일상", "코미디", "진지", "다크", "피폐", "감동", "잔잔함",
-    "긴장감", "스릴", "웃김", "달달", "설렘", "애절", "우울", "공포",
-    "그로테스크", "잔인", "따뜻함", "훈훈", "시리어스", "라이트함",
-    "몰입감", "페이스빠름", "호쾌함", "통쾌함", "씁쓸함", "여운",
-    // 추가
-    "가벼운분위기", "무거운분위기", "무거운깊이감", "가벼운깊이감",
-    "철학적", "도파민", "고구마", "딸깍", "B급감성", "B급감성약간"
-  ],
-  "📝 문체/서술": [
-    "유려한문체", "깔끔한문체", "감성적인문체", "재치있는서술",
-    "전투씬좋음", "설정좋음", "연출", "주인공중심"
-  ],
-  "⚡ 전개/구성": [
-    "슬로우번", "속전속결", "장편", "단편", "옴니버스", "옴니버스식구성", "군상극", 
-    "회차많음", "완결", "연재중", "휴재", "드롭", "급전개", "안정전개",
-    "반전", "복선", "떡밥회수", "열린결말", "해피엔딩", "새드엔딩",
-    "트루엔딩", "멀티엔딩", "루트분기", "본편완결", "시즌제",
-    "외전有", "외전연재중", "외전완결", "장편외전", "단편외전", "에필로그",
-    // 추가
-    "느린템포", "루즈구간있음", "파워인플레이션",
-    "작은스케일", "큰스케일", "방대한세계관"
-  ],
-  "💕 로맨스": [
-    "순애", "삼각관계", "짝사랑", "계약결혼", "정략결혼", "재회",
-    "첫사랑", "연상", "연하", "밀당", "집착", "러브라인강함", "노맨스",
-    "소꿉친구", "원수커플", "주종관계", "선후배", "동료", "라이벌",
-    "츤데레공략", "냉미남공략", "흑화", "구원서사", "치유서사",
-    "비밀연애", "신분차이", "불륜", "NTR주의", "순정", "성인씬",
-    // 추가
-    "페어", "히로인유기", "히로인분양", "캣파이트", "후회", "오해",
-    "히로인2명이상", "히로인3명이상", "히로인4명이상", "히로인5명이상",
-    "하렘엔딩", "순애엔딩", "정실있음"
-  ],
-  "👤 캐릭터(기본)": [
-    "여주", "남주", "조연", "악역", "빌런", "엑스트라", "NPC",
-    "강캐", "약캐", "먼치킨", "성장형", "천재", "둔재", "사기캐",
-    "다정남", "츤데레", "냉철남", "쿨남", "상남자", "플레이보이",
-    "얀데레", "메가데레", "쿨데레", "보이시", "청순", "도도",
-    "4차원", "천연", "완벽남", "차도남", "훈남", "만능캐",
-    "비련의주인공", "고뇌형", "낙천형", "복수귀", "광기", "이중인격",
-    // 추가
-    "인외", "하남자", "상처녀", "똑똑한주인공", "똑똑한등장인물",
-    "약한주인공", "묵직한주인공", "가벼운주인공",
-    "여주인공", "더블주인공", "내면성장", "능력성장"
-  ],
-  "🌍 세계관": [
-    "중세", "근대", "현대", "미래", "동양풍", "서양풍", "한국배경",
-    "일본배경", "중국배경", "서양배경", "학교", "회사", "군대",
-    "왕국", "제국", "공화국", "무림", "강호", "마탑", "교회",
-    "우주", "행성", "함선", "지하도시", "폐허", "섬", "바다",
-    "하늘", "이계", "지옥", "천국", "신계", "마계", "요정계"
-  ],
-  "✨ 판타지요소": [
-    "마법", "검술", "무공", "내공", "기공", "오러", "마나",
-    "스킬", "능력", "초능력", "정령", "소환수", "드래곤", "엘프",
-    "드워프", "오크", "언데드", "뱀파이어", "수인", "신", "악마",
-    "요정", "인어", "거인", "고블린", "트롤", "늑대인간", "리치",
-    "골렘", "호문클루스", "키메라", "불사조", "유니콘", "그리폰",
-    "슬라임", "미믹", "보스몬스터", "레이드보스", "월드보스"
-  ],
-  "⚔️ 무협요소": [
-    "사파", "정파", "마교", "문파", "세가", "방파", "표국",
-    "협객", "검객", "도사", "비급", "내공", "경공", "암기",
-    "독공", "혈공", "기문둔갑", "의선", "협녀", "무당", "소림",
-    "화산", "개방", "천하제일", "무림맹", "흑도", "백도", "중원",
-    "강북", "강남", "관외", "마두", "교주", "장문인", "장로"
-  ],
-  "🏙️ 현대요소": [
-    "재벌", "대기업", "스타트업", "연예계", "방송", "유튜버", "스트리머",
-    "e스포츠", "축구", "야구", "농구", "격투기", "요리", "예술",
-    "음악", "밴드", "아이돌", "배우", "모델", "작가", "웹툰작가",
-    "프로게이머", "투자", "주식", "코인", "부동산", "도박", "카지노",
-    "조폭", "범죄", "형사", "검사", "변호사", "정치", "군인", "용병",
-    // 추가
-    "경영", "갤러리"
-  ],
-  "🔞 특수태그": [
-    "TS", "오메가버스", "하렘", "역하렘", "폴리아모리",
-    "성인", "15금", "전연령", "노로맨스", "브로맨스",
-    "ABO", "알파", "베타", "오메가", "페이크", "진성",
-    "동성애", "이성애", "무성애", "젠더리스", "논바이너리",
-    "수인화", "의인화", "인외", "로봇", "안드로이드", "AI", "클론",
-    // 추가
-    "남존여비", "여존남비", "근친"
-  ],
-  "⭐ 퀄리티/평가": [
-    "명작", "수작", "가작", "졸작", "호불호", "취향타는", "대중적",
-    "마니아", "컬트", "레전드", "인생작", "재탕", "표절의혹",
-    "문체좋음", "전개좋음", "캐릭터좋음", "설정좋음", "세계관좋음",
-    "후반부붕괴", "용두사미", "떡밥미회수", "결말아쉬움", "정주행각",
-    // 추가
-    "캐빨", "사두용미", "용두용미"
-  ],
-  "📅 연도/시기": [
-    "2024", "2025", "2026"
-  ]
-};
-
-// ═══════════════════════════════════════════════════════════════
-// 🔧 조합식 태그 관리
-// ═══════════════════════════════════════════════════════════════
-
-// 조합식 태그 파싱 (예: "먼치킨+히로인" → {trait: "먼치킨", target: "히로인"})
-function parseComboTag(tag) {
-  if (!tag || !tag.includes("+")) return null;
-  const parts = tag.split("+");
-  if (parts.length !== 2) return null;
-  return { trait: parts[0].trim(), target: parts[1].trim() };
-}
-
-// 조합식 태그 생성
-function createComboTag(trait, target) {
-  if (!trait || !target) return null;
-  return `${trait}+${target}`;
-}
-
-// 중복 태그 제거 (대소문자 무시, 공백 제거)
-function deduplicateTags(tags) {
-  const seen = new Set();
-  const result = [];
-  for (const tag of tags) {
-    const normalized = tag.trim().toLowerCase();
-    if (!seen.has(normalized) && tag.trim()) {
-      seen.add(normalized);
-      result.push(tag.trim());
-    }
-  }
-  return result;
-}
-
-// 모든 기본 태그 중복 제거 검사
-function getAllDefaultTagsDeduped() {
-  const all = [...MAJOR_GENRES, ...SUB_GENRES];
-  for (const categoryTags of Object.values(GENERAL_TAGS)) {
-    all.push(...categoryTags);
-  }
-  return deduplicateTags(all);
-}
-
-// 모든 일반 태그를 평탄화
-const ALL_GENERAL_TAGS = Object.values(GENERAL_TAGS).flat();
-
-// 전체 기본 태그 (대장르 + 부장르 + 일반)
-const ALL_DEFAULT_TAGS = [...MAJOR_GENRES, ...SUB_GENRES, ...ALL_GENERAL_TAGS];
-
-// JSON 배열 또는 단일 문자열을 배열로 파싱
-function parseMajorSub(value) {
-  if (!value) return [];
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [parsed];
-  } catch {
-    return value ? [value] : [];
-  }
-}
-
-// 태그 사용 빈도 계산 함수
-function countTagUsage(novels) {
-  const counts = {};
-  const coOccurrences = {}; // 🆕 v3.2.1: 공동 출현 통계
-  
-  for (const n of novels) {
-    const tags = (n.tags || "").split(",").map(t => t.trim()).filter(Boolean);
-    const majorTags = parseMajorSub(n.major_genre);
-    const subTags = parseMajorSub(n.sub_genre);
-    
-    // 이 작품의 모든 태그 (일반 + 대장르 + 부장르)
-    const allTagsInNovel = [...tags, ...majorTags, ...subTags];
-    
-    // 사용 빈도 카운트
-    for (const tag of allTagsInNovel) {
-      counts[tag] = (counts[tag] || 0) + 1;
-    }
-    
-    // 🆕 공동 출현 카운트 (같은 작품에 있는 태그들끼리)
-    for (let i = 0; i < allTagsInNovel.length; i++) {
-      const tagA = allTagsInNovel[i];
-      if (!coOccurrences[tagA]) coOccurrences[tagA] = {};
-      
-      for (let j = 0; j < allTagsInNovel.length; j++) {
-        if (i === j) continue;
-        const tagB = allTagsInNovel[j];
-        coOccurrences[tagA][tagB] = (coOccurrences[tagA][tagB] || 0) + 1;
-      }
-    }
-  }
-  
-  return { counts, coOccurrences };
-}
-
-// 자주 쓰는 태그 정렬 (사용빈도순)
-function sortTagsByUsage(tags, usageCounts) {
-  return [...tags].sort((a, b) => {
-    const countA = usageCounts[a] || 0;
-    const countB = usageCounts[b] || 0;
-    if (countB !== countA) return countB - countA;
-    return a.localeCompare(b);
-  });
-}
-
-// 작품의 대장르/부장르 추출 (태그 기반 자동 감지)
-function detectGenres(tagsStr) {
-  const tags = (tagsStr || "").split(",").map(t => t.trim().toLowerCase()).filter(Boolean);
-  
-  let majorGenre = null;
-  let subGenre = null;
-  
-  // 대장르 탐색
-  for (const tag of tags) {
-    const found = MAJOR_GENRES.find(g => g.toLowerCase() === tag || tag.includes(g.toLowerCase()));
-    if (found) {
-      majorGenre = found;
-      break;
-    }
-  }
-  
-  // 부장르 탐색
-  for (const tag of tags) {
-    const found = SUB_GENRES.find(g => g.toLowerCase() === tag || tag.includes(g.toLowerCase()));
-    if (found) {
-      subGenre = found;
-      break;
-    }
-  }
-  
-  return { majorGenre, subGenre };
-}
-
-// 대장르 색상
-const MAJOR_GENRE_COLORS = {
-  "판타지": "#6366f1",
-  "현대판타지": "#3b82f6", 
-  "무협": "#dc2626",
-  "선협": "#b91c1c",
-  "로맨스": "#ec4899",
-  "로맨스판타지": "#f472b6",
-  "게임판타지": "#10b981",
-  "퓨전": "#8b5cf6",
-  "SF": "#06b6d4",
-  "미스터리": "#6b7280",
-  "공포/스릴러": "#1f2937",
-  "호러": "#374151",
-  "대체역사": "#b45309",
-  "라이트노벨": "#f59e0b",
-  "현대": "#64748b",
-  "현대물": "#475569",
-  "사극": "#a16207",
-  "시대물": "#92400e",
-  "BL": "#7c3aed",
-  "GL": "#be185d",
-  "백합": "#db2777",
-  "하이판타지": "#4f46e5",
-  "다크판타지": "#1e1b4b",
-  "스팀펑크": "#78350f",
-  "사이버펑크": "#0891b2",
-  "포스트아포칼립스": "#57534e",
-  "밀리터리": "#4b5563",
-  "스포츠물": "#22c55e",
-  "일상물": "#34d399"
-};
-
-// 부장르 색상
-const SUB_GENRE_COLORS = {
-  "회귀": "#0ea5e9",
-  "환생": "#14b8a6",
-  "빙의": "#8b5cf6",
-  "전생": "#6366f1",
-  "차원이동": "#7c3aed",
-  "귀환": "#0891b2",
-  "타임슬립": "#0d9488",
-  "타임루프": "#059669",
-  "평행세계": "#4f46e5",
-  "리셋": "#7c3aed",
-  "각성": "#dc2626",
-  "헌터": "#ef4444",
-  "아카데미": "#f59e0b",
-  "던전": "#84cc16",
-  "게이트": "#22c55e",
-  "탑": "#eab308",
-  "길드": "#16a34a",
-  "영지경영": "#65a30d",
-  "내정": "#4d7c0f",
-  "아포칼립스": "#57534e",
-  "좀비": "#78716c",
-  "가상현실": "#06b6d4",
-  "이세계": "#8b5cf6",
-  "게임세계": "#10b981",
-  "소설속세계": "#d946ef",
-  "성장": "#10b981",
-  "먼치킨": "#f97316",
-  "천재": "#3b82f6",
-  "사이다": "#fbbf24",
-  "복수": "#dc2626",
-  "하렘": "#ec4899",
-  "역하렘": "#a855f7",
-  "성좌": "#6366f1",
-  "시스템": "#06b6d4",
-  "스탯창": "#0ea5e9",
-  "레이드": "#ef4444",
-  "솔플": "#f97316",
-  "착각물": "#f472b6",
-  "오해물": "#fb923c",
-  "숨겨진실력": "#eab308",
-  "사기스킬": "#f59e0b",
-  "재벌": "#ca8a04",
-  "연예계": "#d946ef",
-  "아이돌": "#ec4899",
-  "스포츠": "#22c55e",
-  "요리": "#f97316",
-  "의사": "#06b6d4",
-  "마법사": "#8b5cf6",
-  "검사": "#ef4444",
-  "궁수": "#84cc16",
-  "힐러": "#34d399",
-  "소환사": "#a855f7",
-  "넥서맨서": "#6b7280",
-  "천마": "#991b1b",
-  "망나니": "#b91c1c",
-  "황녀/황자": "#f59e0b",
-  "공작/후작": "#ca8a04",
-  "기사": "#64748b",
-  "용사": "#3b82f6",
-  "마왕": "#7c2d12",
-  "힐링": "#34d399",
-  "TS": "#f472b6"
-};
+// 🔧 v4.0: parseMajorSub, countTagUsage, sortTagsByUsage, detectGenres, MAJOR_GENRE_COLORS, SUB_GENRE_COLORS는 ./src/constants/tags.js로 분리됨
 
 /* =========================================================
    🏷️ 태그 시스템 v5.0 - 농도(intensity) + 스펙트럼 + alias
@@ -4365,90 +3408,8 @@ const SUB_GENRE_COLORS = {
  *    - "하늑", "전독시" 등 → novel.aliases 필드로 분리
  */
 
-// ═══════════════════════════════════════════════════════════════
-// 📚 태그 alias 맵핑 (약어 → 정식명)
-// ═══════════════════════════════════════════════════════════════
-const TAG_ALIASES = {
-  // 장르 약어
-  "현판": "현대판타지",
-  "로판": "로맨스판타지",
-  "무회": "무한회귀",
-  "정판": "판타지",        // 정통 판타지
-  "하판": "하이판타지",
-  "다판": "다크판타지",
-  "퓨판": "퓨전판타지",
-  "게판": "게임판타지",
-  
-  // 클리셰 약어  
-  "빙회": "빙의회귀",
-  "환회": "환생회귀",
-  "무한환생": "무한회귀",
-  
-  // 캐릭터 약어
-  "성장형주인공": "성장형 주인공",
-  "먼치킨주인공": "먼치킨 주인공",
-  
-  // 평가 약어
-  "갓작": "명작",
-  "인생작": "레전드",
-};
-
-// 역방향 alias 맵 생성 (정식명 → [약어들])
-const TAG_REVERSE_ALIASES = {};
-for (const [alias, canonical] of Object.entries(TAG_ALIASES)) {
-  if (!TAG_REVERSE_ALIASES[canonical]) {
-    TAG_REVERSE_ALIASES[canonical] = [];
-  }
-  TAG_REVERSE_ALIASES[canonical].push(alias);
-}
-
-// ═══════════════════════════════════════════════════════════════
-// 📊 스펙트럼 그룹 정의
-// ═══════════════════════════════════════════════════════════════
-const TAG_SPECTRUM_GROUPS = {
-  // 주인공 강함 스펙트럼
-  "protagonist_power": {
-    name: "주인공 강함",
-    description: "주인공의 능력 수준",
-    tags: ["약한주인공", "성장형", "천재", "먼치킨", "만능캐"],
-    // position: 1(약함) → 5(최강)
-  },
-  
-  // 분위기 스펙트럼
-  "mood_tone": {
-    name: "분위기",
-    description: "작품의 전반적인 톤",
-    tags: ["피폐", "무거운분위기", "시리어스", "가벼운분위기", "따뜻함", "라이트함"],
-  },
-  
-  // 로맨스 강도 스펙트럼
-  "romance_level": {
-    name: "로맨스 강도",
-    description: "로맨스 요소의 비중",
-    tags: ["노맨스", "순애", "러브라인강함", "하렘", "역하렘"],
-  },
-  
-  // 전개 속도 스펙트럼
-  "pacing": {
-    name: "전개 속도",
-    description: "스토리 진행 속도",
-    tags: ["느린템포", "슬로우번", "안정전개", "페이스빠름", "속전속결"],
-  },
-  
-  // 평가 스펙트럼
-  "quality": {
-    name: "평가",
-    description: "작품 완성도 평가",
-    tags: ["졸작", "가작", "수작", "명작", "레전드"],
-  },
-  
-  // 결말 만족도 스펙트럼
-  "ending_satisfaction": {
-    name: "결말 만족도",
-    description: "결말의 완성도",
-    tags: ["후반부붕괴", "사두용미", "용두용미", "결말아쉬움", "해피엔딩", "트루엔딩"],
-  },
-};
+// 🔧 v4.0: TAG_ALIASES, TAG_REVERSE_ALIASES는 ./src/constants/tags.js로 분리됨
+// 🔧 v4.0: TAG_SPECTRUM_GROUPS는 ./src/constants/tags.js로 분리됨
 
 // ═══════════════════════════════════════════════════════════════
 // 📐 태그 좌표계 시스템 (v3.2.0)
@@ -4457,111 +3418,9 @@ const TAG_SPECTRUM_GROUPS = {
 // - 농도(intensity)는 작품별로 별도 관리 (tag_data)
 // ═══════════════════════════════════════════════════════════════
 
-const DEFAULT_COORDINATE_SYSTEMS = {
-  // 주인공 강함 좌표계
-  "coord_strength": {
-    id: "coord_strength",
-    name: "주인공 강함",
-    xAxis: { negative: "약함", positive: "강함" },
-    yAxis: { negative: "순한 표현", positive: "강한 표현" },
-    tags: {
-      "약한주인공": { x: 0.0, y: 0.5 },
-      "약골": { x: 0.0, y: 0.7 },
-      "찐따": { x: 0.0, y: 0.9 },
-      "성장형": { x: 0.25, y: 0.5 },
-      "평범": { x: 0.3, y: 0.4 },
-      "유능": { x: 0.5, y: 0.5 },
-      "천재": { x: 0.6, y: 0.5 },
-      "능력자": { x: 0.65, y: 0.5 },
-      "강함": { x: 0.75, y: 0.5 },
-      "강캐": { x: 0.75, y: 0.6 },
-      "먼치킨": { x: 1.0, y: 0.5 },
-      "사기캐": { x: 1.0, y: 0.7 },
-      "치트키": { x: 1.0, y: 0.85 },
-      "만능캐": { x: 1.0, y: 0.9 },
-    },
-    isDefault: true,
-    createdAt: 0,
-  },
-  
-  // 분위기 좌표계
-  "coord_mood": {
-    id: "coord_mood",
-    name: "분위기",
-    xAxis: { negative: "어두움", positive: "밝음" },
-    yAxis: { negative: "순한 표현", positive: "강한 표현" },
-    tags: {
-      "피폐": { x: 0.0, y: 0.9 },
-      "암울": { x: 0.1, y: 0.7 },
-      "우울": { x: 0.15, y: 0.5 },
-      "무거운분위기": { x: 0.2, y: 0.6 },
-      "시리어스": { x: 0.35, y: 0.6 },
-      "잔잔": { x: 0.5, y: 0.3 },
-      "담백": { x: 0.5, y: 0.4 },
-      "가벼운분위기": { x: 0.65, y: 0.5 },
-      "따뜻함": { x: 0.75, y: 0.4 },
-      "밝음": { x: 0.8, y: 0.5 },
-      "라이트함": { x: 0.85, y: 0.5 },
-      "유쾌": { x: 0.9, y: 0.6 },
-      "개그": { x: 1.0, y: 0.8 },
-      "코믹": { x: 1.0, y: 0.7 },
-    },
-    isDefault: true,
-    createdAt: 0,
-  },
-  
-  // 로맨스 좌표계
-  "coord_romance": {
-    id: "coord_romance",
-    name: "로맨스",
-    xAxis: { negative: "없음/약함", positive: "강함/중심" },
-    yAxis: { negative: "순한 표현", positive: "강한 표현" },
-    tags: {
-      "노맨스": { x: 0.0, y: 0.5 },
-      "노로맨스": { x: 0.0, y: 0.5 },
-      "순애": { x: 0.4, y: 0.4 },
-      "서브로맨스": { x: 0.45, y: 0.5 },
-      "로맨스": { x: 0.6, y: 0.5 },
-      "러브라인강함": { x: 0.75, y: 0.6 },
-      "달달": { x: 0.7, y: 0.5 },
-      "역하렘": { x: 0.9, y: 0.7 },
-      "하렘": { x: 1.0, y: 0.7 },
-    },
-    isDefault: true,
-    createdAt: 0,
-  },
-  
-  // 전개 속도 좌표계
-  "coord_pacing": {
-    id: "coord_pacing",
-    name: "전개 속도",
-    xAxis: { negative: "느림", positive: "빠름" },
-    yAxis: { negative: "순한 표현", positive: "강한 표현" },
-    tags: {
-      "느린템포": { x: 0.1, y: 0.5 },
-      "슬로우번": { x: 0.15, y: 0.6 },
-      "안정전개": { x: 0.5, y: 0.5 },
-      "적당함": { x: 0.5, y: 0.4 },
-      "페이스빠름": { x: 0.8, y: 0.6 },
-      "빠른전개": { x: 0.85, y: 0.5 },
-      "속전속결": { x: 1.0, y: 0.75 },
-      "사이다": { x: 0.9, y: 0.7 },
-    },
-    isDefault: true,
-    createdAt: 0,
-  },
-};
+// 🔧 v4.0: DEFAULT_COORDINATE_SYSTEMS는 ./src/constants/tags.js로 분리됨
 
-// ═══════════════════════════════════════════════════════════════
-// 📛 작품 식별자 (태그가 아닌 별명) - 분리 대상
-// ═══════════════════════════════════════════════════════════════
-const WORK_IDENTIFIERS = [
-  // 유명 작품 축약어
-  "하늑", "전독시", "죽사헌", "배본블", "멸세사", "멸이세",
-  "회수선", "광마", "나혼렙", "템빨", "오메르", "소오강호",
-  "화무십", "삼검", "어바등", "무회썰", "변경검성", "회모장",
-  "시불", "말영회", "시하",
-];
+// 🔧 v4.0: WORK_IDENTIFIERS는 ./src/constants/tags.js로 분리됨
 
 // ═══════════════════════════════════════════════════════════════
 // 📐 좌표계 시스템 헬퍼 함수들 (v3.2.0)
@@ -4594,457 +3453,19 @@ async function getTagCoordinateSystems() {
 async function saveTagCoordinateSystems(systems) {
   await setAppMeta("tag_coordinate_systems", systems);
 }
+// 🔧 v4.0: categorizeRelation, getRelationLabel, getTagRelation, getTagFullInfo는 ./src/constants/tags.js로 분리됨
+// 🔧 v4.0: interpretCoordinate는 ./src/constants/tags.js로 분리됨
+// 🔧 v4.0: analyzeCoordinatePreference는 ./src/constants/tags.js로 분리됨
 
-/**
- * 관계 분류
- */
-function categorizeRelation(xDiff, yDiff) {
-  if (xDiff < 0.1 && yDiff < 0.15) return "synonym";      // 동의어
-  if (xDiff < 0.15) return "nuance";                       // 뉘앙스 차이 (x 거의 같음)
-  if (xDiff < 0.3) return "similar";                       // 유사
-  if (xDiff >= 0.7) return "opposite";                     // 상반
-  return "related";                                         // 관련 있음
-}
-
-/**
- * 관계 라벨 (한국어)
- */
-function getRelationLabel(relation) {
-  switch (relation) {
-    case "synonym": return "동의어";
-    case "nuance": return "뉘앙스";
-    case "similar": return "유사";
-    case "opposite": return "상반";
-    case "related": return "관련";
-    default: return "기타";
-  }
-}
-
-/**
- * 두 태그 간 관계 계산
- * - 같은 좌표계에 있는 경우에만 관계 반환
- */
-function getTagRelation(tagA, tagB, coordinateSystems) {
-  if (!coordinateSystems) return null;
-  
-  const normalizedA = normalizeTag(tagA);
-  const normalizedB = normalizeTag(tagB);
-  
-  for (const [sysId, sys] of Object.entries(coordinateSystems)) {
-    const posA = sys.tags?.[normalizedA] || sys.tags?.[tagA];
-    const posB = sys.tags?.[normalizedB] || sys.tags?.[tagB];
-    
-    if (!posA || !posB) continue;
-    
-    const xDiff = Math.abs(posA.x - posB.x);
-    const yDiff = Math.abs(posA.y - posB.y);
-    const distance = Math.sqrt(xDiff * xDiff + yDiff * yDiff);
-    
-    return {
-      systemId: sysId,
-      systemName: sys.name,
-      xDiff,
-      yDiff,
-      distance,
-      relation: categorizeRelation(xDiff, yDiff),
-      relationLabel: getRelationLabel(categorizeRelation(xDiff, yDiff)),
-    };
-  }
-  return null; // 같은 좌표계에 없음
-}
-
-/**
- * 태그 정보 통합 조회
- * - 좌표계 정보 + 농도 정보
- */
-function getTagFullInfo(tag, novel, coordinateSystems) {
-  const info = {
-    tag,
-    normalizedTag: normalizeTag(tag),
-    coordinates: [],      // 좌표계 정보들 (여러 좌표계에 속할 수 있음)
-    intensity: null,      // 작품 내 농도 (1~5)
-  };
-  
-  // 1. 좌표계에서 위치 찾기
-  if (coordinateSystems) {
-    for (const [sysId, sys] of Object.entries(coordinateSystems)) {
-      const pos = sys.tags?.[info.normalizedTag] || sys.tags?.[tag];
-      if (pos) {
-        const opposites = [];
-        const similars = [];
-        
-        // 상반/유사 태그 찾기
-        for (const [otherTag, otherPos] of Object.entries(sys.tags)) {
-          if (otherTag === tag || otherTag === info.normalizedTag) continue;
-          
-          const xDiff = Math.abs(otherPos.x - pos.x);
-          const yDiff = Math.abs(otherPos.y - pos.y);
-          const dist = Math.sqrt(xDiff * xDiff + yDiff * yDiff);
-          
-          if (xDiff >= 0.7) {
-            opposites.push(otherTag);
-          } else if (dist < 0.3) {
-            similars.push(otherTag);
-          }
-        }
-        
-        info.coordinates.push({
-          systemId: sysId,
-          systemName: sys.name,
-          x: pos.x,
-          y: pos.y,
-          xLabel: sys.xAxis ? (pos.x < 0.5 ? sys.xAxis.negative : sys.xAxis.positive) : "",
-          yLabel: sys.yAxis ? (pos.y < 0.5 ? sys.yAxis.negative : sys.yAxis.positive) : "",
-          opposites,
-          similars,
-        });
-      }
-    }
-  }
-  
-  // 2. 농도 (작품별)
-  if (novel?.tag_data) {
-    const tagData = parseTagData(novel.tag_data);
-    const found = tagData.find(t => 
-      t.tag === tag || t.tag === info.normalizedTag || 
-      normalizeTag(t.tag) === info.normalizedTag
-    );
-    info.intensity = found?.intensity || null;
-  }
-  
-  return info;
-}
-
-/**
- * 좌표계에서 태그 위치 자연어 해석
- */
-function interpretCoordinate(systemName, x, y) {
-  let xDesc;
-  if (x < 0.2) xDesc = "매우 낮은";
-  else if (x < 0.4) xDesc = "낮은";
-  else if (x < 0.6) xDesc = "중간";
-  else if (x < 0.8) xDesc = "높은";
-  else xDesc = "매우 높은";
-  
-  const yDesc = y > 0.65 ? " (강조)" : y < 0.35 ? " (순함)" : "";
-  
-  return `${xDesc} ${systemName}${yDesc}`;
-}
-
-/**
- * 좌표계 기반 취향 분석
- * - 각 좌표계별 평균 x좌표 (선호 위치)
- */
-function analyzeCoordinatePreference(novels, coordinateSystems) {
-  if (!novels || !coordinateSystems) return {};
-  
-  const result = {};
-  
-  for (const [sysId, sys] of Object.entries(coordinateSystems)) {
-    const dataPoints = [];
-    
-    for (const novel of novels) {
-      const tagData = parseTagData(novel.tag_data);
-      const rating = novel.rating || 1500;
-      
-      for (const td of tagData) {
-        const pos = sys.tags?.[td.tag] || sys.tags?.[normalizeTag(td.tag)];
-        if (pos) {
-          const weight = (td.intensity || 3) / 3;  // 농도 가중치
-          dataPoints.push({
-            x: pos.x,
-            y: pos.y,
-            rating,
-            weight,
-            intensity: td.intensity || 3,
-          });
-        }
-      }
-    }
-    
-    if (dataPoints.length > 0) {
-      // 가중 평균 계산
-      let sumX = 0, sumY = 0, sumWeight = 0;
-      let sumRatingWeight = 0, sumRating = 0;
-      
-      for (const dp of dataPoints) {
-        const w = dp.weight;
-        sumX += dp.x * w;
-        sumY += dp.y * w;
-        sumWeight += w;
-        
-        // 레이팅 기반 가중치도 계산
-        const rw = (dp.rating / 1500) * w;
-        sumRating += dp.x * rw;
-        sumRatingWeight += rw;
-      }
-      
-      result[sysId] = {
-        systemId: sysId,
-        systemName: sys.name,
-        avgX: sumWeight > 0 ? sumX / sumWeight : 0.5,
-        avgY: sumWeight > 0 ? sumY / sumWeight : 0.5,
-        ratingWeightedX: sumRatingWeight > 0 ? sumRating / sumRatingWeight : 0.5,
-        count: dataPoints.length,
-        interpretation: interpretCoordinate(
-          sys.name, 
-          sumWeight > 0 ? sumX / sumWeight : 0.5,
-          sumWeight > 0 ? sumY / sumWeight : 0.5
-        ),
-      };
-    }
-  }
-  
-  return result;
-}
-
-// ═══════════════════════════════════════════════════════════════
-// 🔧 태그 v5.0 헬퍼 함수들
-// ═══════════════════════════════════════════════════════════════
-
-/**
- * 태그 정규화 (alias → canonical)
- */
-function normalizeTag(tag) {
-  if (!tag) return "";
-  const trimmed = tag.trim();
-  return TAG_ALIASES[trimmed] || trimmed;
-}
-
-/**
- * 검색어 확장 (canonical + 모든 alias)
- */
-function expandTagForSearch(tag) {
-  if (!tag) return [];
-  const normalized = normalizeTag(tag);
-  const variants = [normalized, tag]; // 정규화 + 원본
-  
-  // 역방향 alias도 추가
-  const reverseAliases = TAG_REVERSE_ALIASES[normalized];
-  if (reverseAliases) {
-    variants.push(...reverseAliases);
-  }
-  
-  // 중복 제거
-  return [...new Set(variants.map(v => v.toLowerCase()))];
-}
-
-/**
- * tag_data JSON 파싱 (안전)
- */
-function parseTagData(tagDataStr) {
-  if (!tagDataStr) return [];
-  try {
-    const parsed = JSON.parse(tagDataStr);
-    if (Array.isArray(parsed)) return parsed;
-    return [];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * tag_data → tags 문자열 변환 (동기화용)
- */
-function tagDataToString(tagData) {
-  if (!Array.isArray(tagData)) return "";
-  return tagData.map(t => t.tag).join(", ");
-}
-
-/**
- * tags 문자열 → tag_data 변환 (마이그레이션용)
- * 기본 농도 3
- */
-function tagsStringToTagData(tagsStr, defaultIntensity = 3) {
-  if (!tagsStr) return [];
-  const tags = tagsStr.split(",").map(t => t.trim()).filter(Boolean);
-  return tags.map(tag => ({
-    tag: normalizeTag(tag),
-    intensity: defaultIntensity,
-  }));
-}
-
-/**
- * 스펙트럼 분석
- */
-function analyzeSpectrum(tagData, spectrumId) {
-  const spectrum = TAG_SPECTRUM_GROUPS[spectrumId];
-  if (!spectrum || !spectrum.tags || spectrum.tags.length === 0) return null;
-  
-  const matches = tagData.filter(t => 
-    spectrum.tags.includes(t.tag) || spectrum.tags.includes(normalizeTag(t.tag))
-  );
-  
-  if (matches.length === 0) return null;
-  
-  const spectrumLength = spectrum.tags.length;
-  
-  if (matches.length === 1) {
-    const tag = normalizeTag(matches[0].tag);
-    const pos = spectrum.tags.indexOf(tag) + 1;
-    const normalizedPos = pos / spectrumLength;
-    return {
-      type: "single",
-      score: normalizedPos * matches[0].intensity,
-      normalizedScore: normalizedPos * matches[0].intensity, // 0~5 범위
-      tag: matches[0].tag,
-      position: pos,
-      intensity: matches[0].intensity,
-      spectrumName: spectrum.name,
-    };
-  }
-  
-  // 복수 태그: 가중 평균
-  let sumScore = 0, sumWeight = 0;
-  const positions = [];
-  
-  for (const m of matches) {
-    const tag = normalizeTag(m.tag);
-    const pos = spectrum.tags.indexOf(tag) + 1;
-    if (pos > 0) {
-      const normalizedPos = pos / spectrumLength;
-      sumScore += normalizedPos * m.intensity;
-      sumWeight += m.intensity;
-      positions.push({ tag: m.tag, pos, normalizedPos, intensity: m.intensity });
-    }
-  }
-  
-  return {
-    type: "range",
-    avgScore: sumWeight > 0 ? sumScore / sumWeight : 0,
-    normalizedScore: sumWeight > 0 ? (sumScore / sumWeight) * (sumWeight / matches.length) : 0,
-    tags: positions,
-    spectrumName: spectrum.name,
-  };
-}
-
-/**
- * 작품 식별자 여부 확인
- */
-function isWorkIdentifier(tag) {
-  return WORK_IDENTIFIERS.includes(tag);
-}
-
-/**
- * novel.aliases JSON 파싱
- */
-function parseNovelAliases(aliasesStr) {
-  if (!aliasesStr) return [];
-  try {
-    const parsed = JSON.parse(aliasesStr);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * 태그 농도 가중 유사도 계산
- */
-function calculateTagSimilarity(tagDataA, tagDataB) {
-  if (!tagDataA.length || !tagDataB.length) return 0;
-  
-  const mapA = new Map(tagDataA.map(t => [normalizeTag(t.tag), t.intensity]));
-  const mapB = new Map(tagDataB.map(t => [normalizeTag(t.tag), t.intensity]));
-  
-  let intersection = 0;
-  let sumA = 0, sumB = 0;
-  
-  for (const [tag, intensityA] of mapA) {
-    sumA += intensityA;
-    if (mapB.has(tag)) {
-      const intensityB = mapB.get(tag);
-      intersection += Math.min(intensityA, intensityB);
-    }
-  }
-  
-  for (const [, intensityB] of mapB) {
-    sumB += intensityB;
-  }
-  
-  const union = sumA + sumB - intersection;
-  return union > 0 ? intersection / union : 0;
-}
+// 🔧 v4.0: normalizeTag, expandTagForSearch, parseTagData, tagDataToString, tagsStringToTagData, analyzeSpectrum, isWorkIdentifier, parseNovelAliases, calculateTagSimilarity는 ./src/constants/tags.js로 분리됨
 
 /* =========================================================
-   Elo
+   Elo - 🔧 v4.0: src/utils/elo.js로 분리됨
    ========================================================= */
-const expected = (ra, rb) => 1 / (1 + Math.pow(10, (rb - ra) / 400));
-const kFactor = (mc, rd) => {
-  const base = 24;
-  const mcAdj = Math.min(1.25, Math.max(0.75, 1.25 - mc / 80));
-  const rdAdj = Math.min(1.25, Math.max(0.75, (rd || 350) / 350));
-  return base * (mcAdj * 0.6 + rdAdj * 0.4);
-};
+// expected, kFactor, applyElo는 ./src/utils에서 import
 
-function applyElo(A, B, aWin) {
-  const Ea = expected(A.rating, B.rating),
-    Eb = expected(B.rating, A.rating);
-  const kA = kFactor(A.match_count || 0, A.rd || 350);
-  const kB = kFactor(B.match_count || 0, B.rd || 350);
-  const Sa = aWin ? 1 : 0,
-    Sb = aWin ? 0 : 1;
-  const newA = { ...A },
-    newB = { ...B };
+// 🔧 v4.0 Step 31: rebuildAllFromMatches는 ./src/utils/elo.js로 분리됨
 
-  newA.rating = A.rating + kA * (Sa - Ea);
-  newB.rating = B.rating + kB * (Sb - Eb);
-  newA.rd = Math.max(60, (A.rd || 350) * 0.98);
-  newB.rd = Math.max(60, (B.rd || 350) * 0.98);
-  newA.match_count = (A.match_count || 0) + 1;
-  newB.match_count = (B.match_count || 0) + 1;
-
-  if (aWin) {
-    newA.wins = (A.wins || 0) + 1;
-    newB.losses = (B.losses || 0) + 1;
-  } else {
-    newB.wins = (B.wins || 0) + 1;
-    newA.losses = (A.losses || 0) + 1;
-  }
-
-  return { newA, newB, kA, kB };
-}
-
-/** 🔧 매치 로그 기준 전체 재계산 (메모리 기반 최적화)
- * 
- * ⚠️ 중요: 이 함수는 Elo 관련 필드(rating, rd, wins, losses, match_count)만 초기화합니다.
- * manual_tier(수동 티어 지정)는 변경하지 않으며, 검토 시스템의 S/A 지정이 유지됩니다.
- */
-async function rebuildAllFromMatches() {
-  const logs = await all(`SELECT * FROM matches ORDER BY created_at ASC;`);
-
-  // 1) 모든 소설의 Elo 관련 필드만 초기화 (manual_tier는 건드리지 않음!)
-  await exec(
-    `UPDATE novels SET rating=1500, rd=350, wins=0, losses=0, match_count=0;`
-  );
-
-  // 2) 모든 소설 메모리에 로드
-  const novelMap = {};
-  const novels = await all(`SELECT * FROM novels;`);
-  for (const n of novels) {
-    novelMap[n.id] = { ...n };
-  }
-
-  // 3) 매치 로그를 순서대로 적용
-  for (const m of logs) {
-    const A = novelMap[m.a_id];
-    const B = novelMap[m.b_id];
-    if (!A || !B) continue;
-
-    const { newA, newB } = applyElo(A, B, m.winner_id === m.a_id);
-    novelMap[m.a_id] = { ...novelMap[m.a_id], ...newA };
-    novelMap[m.b_id] = { ...novelMap[m.b_id], ...newB };
-  }
-
-  // 4) 한 번의 트랜잭션으로 DB 갱신 (Elo 필드만)
-  const updateQueries = Object.values(novelMap).map((n) => ({
-    sql: `UPDATE novels SET rating=?, rd=?, wins=?, losses=?, match_count=? WHERE id=?`,
-    params: [n.rating, n.rd, n.wins, n.losses, n.match_count, n.id],
-  }));
-  if (updateQueries.length > 0) {
-    await execBatch(updateQueries);
-  }
-}
 
 /**
  * 🆕 v3.2.1: 기존 매칭 데이터에서 matchInsights 재생성 (근사치)
@@ -5204,13 +3625,7 @@ async function rebuildMatchInsightsFromHistory(novels) {
 // 표지 저장 디렉토리 (레거시 API)
 const COVER_DIR = FileSystem.documentDirectory + "covers/";
 
-// 압축 설정 맵
-const COMPRESSION_PRESETS = {
-  original: { quality: 1.0, maxSize: null },        // 원본 유지
-  light: { quality: 0.8, maxSize: 1200 },           // 가벼운 압축 (기본값)
-  medium: { quality: 0.6, maxSize: 800 },           // 중간 압축
-  heavy: { quality: 0.4, maxSize: 600 },            // 강한 압축
-};
+// 🔧 v4.0: COMPRESSION_PRESETS는 ./src/constants/settings.js로 분리됨
 
 // 표지 디렉토리 초기화 (레거시 API)
 async function ensureCoverDir() {
@@ -5615,44 +4030,7 @@ const buildAwardMetaMap = (awardSystemSettings) => {
   return map;
 };
 
-// 레거시 AWARD_META (하위 호환)
-const AWARD_META = {
-  grand: { label: "대상", color: "#f97316" },
-  best_fantasy: { label: "베스트 판타지", color: "#6366f1" },
-  best_modern: { label: "베스트 현대", color: "#0ea5e9" },
-  best_sf: { label: "베스트 SF", color: "#14b8a6" },
-  complete: { label: "완결작 상", color: "#22c55e" },
-  pick: { label: "내 취향 추천픽", color: "#ec4899" },
-  best_murim: { label: "베스트 무협", color: "#dc2626" },
-  best_romance: { label: "베스트 로맨스", color: "#ec4899" },
-  rising: { label: "신인상", color: "#8b5cf6" },
-};
-
-// 수상 파싱 (동적 상 지원)
-function parseAwards(json, awardSystemSettings = null) {
-  if (!json) return [];
-  try {
-    const arr = JSON.parse(json);
-    if (!Array.isArray(arr)) return [];
-    return arr
-      .map((a) => ({
-        year: a.year,
-        type: a.type,
-      }))
-      .filter((a) => {
-        if (!a.year || !a.type) return false;
-        // 동적 설정에서 찾기
-        if (awardSystemSettings?.yearlyAwards?.[a.year]) {
-          const found = awardSystemSettings.yearlyAwards[a.year].find(aw => aw.id === a.type);
-          if (found) return true;
-        }
-        // 레거시 AWARD_META에서 찾기
-        return !!AWARD_META[a.type];
-      });
-  } catch {
-    return [];
-  }
-}
+// 🔧 v4.0: AWARD_META, parseAwards는 ./src/constants/awards.js로 분리됨
 
 // 수상 뱃지 컴포넌트 (개선)
 const AwardsRow = memo(({ awardsJson, awardSystemSettings }) => {
@@ -14418,249 +12796,19 @@ const TasteAnalysisScreen = memo(({
   );
 });
 
-function awardsToSearchText(awardsJson) {
-  const items = parseAwards(awardsJson);
-  if (!items.length) return "";
-  const parts = [];
-  for (const a of items) {
-    const meta = AWARD_META[a.type];
-    if (!meta) continue;
-    parts.push(String(a.year));
-    parts.push(meta.label);
-  }
-  parts.push("수상");
-  return parts.join(" ");
-}
+// 🔧 v4.0: awardsToSearchText는 ./src/constants/awards.js로 분리됨
 
-// 점수 기반 권장 티어 계산
-// ⚙️ 전역 티어 임계값 (설정에서 변경 가능, 앱 시작 시 로드됨)
-let globalTierThresholds = { S: 1950, A: 1850, "B+": 1700, B: 1600, "B-": 1500 };
+// 🔧 v4.0 Step 27: globalTierThresholds, tierFromRating, getDisplayTier, getReviewStatus는
+// ./src/utils/tierSystem.js로 분리됨 (전역 상태 캡슐화)
 
-// ⚙️ 기본 설정값
-const DEFAULT_SETTINGS = {
-  tierThresholds: { S: 1950, A: 1850, "B+": 1700, B: 1600, "B-": 1500 },
-  autoApproveEnabled: false,        // 자동 승인 활성화
-  autoApproveMinWins: 10,           // 자동 승인 최소 승수
-  autoApproveMaxLosses: 3,          // 자동 승인 최대 패수
-  autoApproveMinMatches: 15,        // 자동 승인 최소 매칭 수
-  showReviewBanner: true,           // 홈 화면 검토 배너 표시
-  undoStackSize: 30,                // 되돌리기 스택 크기
-  fullscreenMode: false,            // 🆕 v3.4.4: 전체 화면 모드 (상태바 숨김)
-  // 📝 보충 탭 기준 (v2.8)
-  supplement: {
-    enabled: true,                   // 보충 탭 활성화
-    minTags: 5,                      // 최소 태그 수 (이하면 보충 대상)
-    requireAuthor: true,             // 작가 필수
-    requireTotalEpisodes: true,      // 전체 회차 필수
-    requireReadCount: true,          // 읽은 회차 필수
-    requireMajorGenre: true,         // 대장르 필수
-    requireSubGenre: false,          // 부장르 필수
-    requirePlatform: true,           // 플랫폼 필수
-    excludeNegativeTagCount: 2,      // 부정 태그 N개 이상이면 제외 (취향아님 포함)
-    excludeTags: ["취향아님"],        // 제외 기준에 반드시 포함되는 태그
-  },
-  // 📰 최신 탭 설정 (v3.0)
-  recentChanges: {
-    retentionDays: 30,               // 기록 유지 기간 (일)
-    showNewRegistration: true,       // 신규 등록 표시
-    showAward: true,                 // 수상 표시
-    showTierChange: true,            // 티어 변화 표시
-    showTierReview: true,            // 티어 심사 통과 표시
-    showReadCountIncrease: true,     // 읽은 회차 증가 표시
-  },
-  // 📋 예정탭 확장 필드 설정 (v3.4)
-  plannedFields: {
-    showExpectedRating: false,       // 예상 레이팅 (숫자 입력)
-    showScheduledStart: true,        // 읽기 시작 예정일
-    showSimilarNovels: false,        // 비슷한 작품 (고급)
-  },
-  // 🖼️ 표지 라이브러리 설정 (v3.4.5)
-  coverLibrary: {
-    compressionLevel: "light",       // "original" | "light" | "medium" | "heavy"
-    // original: 원본 유지 (1~5MB)
-    // light: 가벼운 압축 - 80% quality, 최대 1200px (기본값)
-    // medium: 중간 압축 - 60% quality, 최대 800px
-    // heavy: 강한 압축 - 40% quality, 최대 600px
-  },
-};
-
-function tierFromRating(r, thresholds = globalTierThresholds) {
-  if (r >= thresholds.S) return "S";
-  if (r >= thresholds.A) return "A";
-  if (r >= thresholds["B+"]) return "B+";
-  if (r >= thresholds.B) return "B";
-  if (r >= thresholds["B-"]) return "B-";
-  return "C";
-}
-
-// 티어 순위 비교용 (S=0, A=1, ... C=5)
-// ※ TIER_ORDER는 라인 2039에서 이미 정의됨
-function tierRank(tier) {
-  const idx = TIER_ORDER.indexOf(tier);
-  return idx === -1 ? 5 : idx;
-}
-
-// 실제 표시 티어 계산 (S/A는 수동, B+ 이하는 자동)
-function getDisplayTier(novel) {
-  const recommended = tierFromRating(novel.rating || 1500);
-  
-  // S/A 수동 지정이 있으면 그것 사용
-  if (novel.manual_tier === 'S' || novel.manual_tier === 'A') {
-    return novel.manual_tier;
-  }
-  
-  // 권장 티어가 S/A인데 수동 지정 없으면 B+ 이하 중 최고로 고정
-  // (검토를 통해서만 S/A 진입 가능)
-  if (recommended === 'S' || recommended === 'A') {
-    return 'B+';
-  }
-  
-  // B+ 이하는 점수 기반 자동
-  return recommended;
-}
-
-// 검토 상태 확인
-function getReviewStatus(novel) {
-  const recommended = tierFromRating(novel.rating || 1500);
-  const actual = getDisplayTier(novel);
-  
-  // 현재 S/A인데 권장이 더 낮음 → 강등 검토
-  if ((actual === 'S' || actual === 'A') && tierRank(recommended) > tierRank(actual)) {
-    return { type: 'demote', from: actual, to: recommended };
-  }
-  
-  // 권장이 S/A인데 현재가 더 낮음 → 승급 검토
-  if ((recommended === 'S' || recommended === 'A') && tierRank(actual) > tierRank(recommended)) {
-    return { type: 'promote', from: actual, to: recommended };
-  }
-  
-  return null; // 검토 불필요
-}
-
-// 티어 색상 가져오기
-function getTierColor(tier) {
-  const colors = {
-    S: "#8b5cf6",
-    A: "#3b82f6", 
-    "B+": "#22c55e",
-    B: "#a3e635",
-    "B-": "#f59e0b",
-    C: "#ef4444",
-  };
-  return colors[tier] || colors.C;
-}
-
-function deriveMajorGenre(tagsStr) {
-  const tags = (tagsStr || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (tags.length === 0) return "";
-  const MAP = [
-    ["무협", ["무협", "무림", "신무협", "패왕", "검술", "강호", "혈맹", "표국"]],
-    ["선협", ["선협", "선계", "수련", "비급", "도법", "장생"]],
-    ["현판", ["현판", "현대판타지", "헌터", "게이트", "던전", "각성", "레이드"]],
-    ["현대", ["현대", "일상", "학원", "회사", "재벌", "범죄", "스포츠", "연예계"]],
-    ["로판", ["로판", "로맨스판타지", "공작", "후작", "황자", "귀족", "궁정"]],
-    ["로맨스", ["로맨스", "현로", "연애", "캠퍼스", "BL", "GL"]],
-    ["판타지", ["판타지", "하이판타지", "마법", "용", "정령", "왕국", "모험"]],
-    ["SF", ["SF", "사이버펑크", "우주", "로봇", "AI", "타임루프", "디스토피아"]],
-  ];
-  const tset = tags.map((t) => t.toLowerCase());
-  for (const [label, keys] of MAP) {
-    const hit = tset.some((t) =>
-      keys.some((k) => t.includes(String(k).toLowerCase()))
-    );
-    if (hit) return label;
-  }
-  return "";
-}
-
-/** 📊 신뢰도 계산
- *  (읽은 회차수 / 전체 회차수) * (진행된 매칭수 / 해당 작품의 전체 가능 매칭수) * 100
- *  - 전체 가능 매칭수 = (전체 작품 수 - 1)
- */
-function computeReliability(novel, totalNovelCount) {
-  const totalEpisodes = Number(novel.total_episodes) || 0;
-  const readCount = Number(novel.read_count) || 0;
-  const matchCount = Number(novel.match_count) || 0;
-  const maxMatchForNovel = Math.max(0, totalNovelCount - 1);
-
-  if (totalEpisodes <= 0 || maxMatchForNovel <= 0) return 0;
-
-  const readRatio = Math.min(1, readCount / totalEpisodes);
-  const matchRatio = Math.min(1, matchCount / maxMatchForNovel);
-
-  return readRatio * matchRatio * 100;
-}
+// 🔧 v4.0: deriveMajorGenre, computeReliability는 ./src/utils/genre.js로 분리됨
 
 /* =========================================================
    🎯 취향 분석 시스템
    ========================================================= */
 
 // 작품별 신뢰도 점수 계산 (분석용 확장 버전)
-function calcNovelReliabilityScore(novel, totalCount) {
-  let score = 0;
-  const totalEp = Number(novel.total_episodes) || 0;
-  const readCnt = Number(novel.read_count) || 0;
-  const matchCnt = Number(novel.match_count) || 0;
-  const rereadCnt = Number(novel.reread_count) || 1;
-  const daysSinceCreated = (Date.now() - (novel.created_at || Date.now())) / (1000 * 60 * 60 * 24);
-  
-  // 1. 읽은 비율/양 (0-30점) - 연재작도 공정하게 평가
-  if (totalEp > 0) {
-    const readRatio = readCnt / totalEp;
-    score += Math.min(30, readRatio * 30);
-  } else {
-    // 전체 회차 모를 때: 절대 읽은 회차로 평가 (연재작 불리 해소)
-    if (readCnt >= 300) score += 30;
-    else if (readCnt >= 200) score += 27;
-    else if (readCnt >= 100) score += 24;
-    else if (readCnt >= 50) score += 20;
-    else if (readCnt >= 20) score += 15;
-    else if (readCnt >= 10) score += 10;
-    else if (readCnt >= 1) score += 5;
-  }
-  
-  // 2. 매칭 참여도 (0-30점)
-  const maxMatch = Math.max(1, totalCount - 1);
-  const matchRatio = matchCnt / maxMatch;
-  score += Math.min(30, matchRatio * 40);
-  
-  // 3. 등록 성숙도 (0-15점) - 약간 축소
-  if (daysSinceCreated >= 30) score += 15;
-  else if (daysSinceCreated >= 7) score += 12;
-  else if (daysSinceCreated >= 1) score += 5;
-  
-  // 4. 상태 기반 (0-15점) - 약간 축소
-  if (novel.status === "completed") score += 15;
-  else if (novel.status === "reading") score += 12;
-  else if (novel.status === "paused") score += 8;
-  else if (novel.status === "dropped") score += 5;
-  
-  // 5. 다회독 보너스 (0-10점) - 신규 추가
-  if (rereadCnt >= 5) score += 10;
-  else if (rereadCnt >= 3) score += 7;
-  else if (rereadCnt >= 2) score += 4;
-  
-  return Math.min(100, score);
-}
-
-// 헬퍼: 배열 평균
-const avg = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
-// 헬퍼: 배열 중앙값
-const median = (arr) => {
-  if (!arr.length) return 0;
-  const s = [...arr].sort((a, b) => a - b);
-  const mid = Math.floor(s.length / 2);
-  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
-};
-// 헬퍼: 표준편차
-const stdDev = (arr) => {
-  if (arr.length < 2) return 0;
-  const m = avg(arr);
-  return Math.sqrt(arr.reduce((sum, v) => sum + (v - m) ** 2, 0) / arr.length);
-};
+// 🔧 v4.0: calcNovelReliabilityScore, avg, median, stdDev는 ./src/utils/analysis.js로 분리됨
 
 // 메인 분석 함수
 function analyzePreferences(novels, matches) {
@@ -15376,6 +13524,8 @@ export default function App() {
   const isDark = darkMode === null ? systemColorScheme === "dark" : darkMode;
   // 모듈 스코프 C 업데이트 (외부 UI 컴포넌트들이 참조)
   C = isDark ? DarkTheme : LightTheme;
+  // 🔧 v4.0 Step 32: 분리된 UI 컴포넌트용 테마 업데이트
+  setCurrentTheme(isDark);
 
   // 설정 저장 함수
   const setDarkMode = async (value) => {
@@ -15858,6 +14008,29 @@ export default function App() {
         try {
           await initDb();
           
+          // 🔧 v4.0 Step 33: 중단된 작업 확인 (크래시 복구)
+          try {
+            const pendingOp = await checkPendingOperation();
+            if (pendingOp && pendingOp.type === "import") {
+              console.warn("[DB] 이전에 중단된 가져오기 작업 감지:", pendingOp);
+              // 중단된 작업 플래그 해제 (다음 시도 시 다시 시작)
+              await setPendingOperation(null);
+              // 사용자에게 알림
+              setTimeout(() => {
+                Alert.alert(
+                  "⚠️ 이전 작업 중단됨",
+                  "이전에 백업 복원이 완료되지 않았습니다.\n데이터가 불완전할 수 있으니 다시 복원해주세요.",
+                  [{ text: "확인" }]
+                );
+              }, 1500);
+            }
+          } catch (pendingError) {
+            console.warn("checkPendingOperation 실패:", pendingError.message);
+          }
+          
+          // 🔧 v4.0 Step 29: 취향 발견 스케줄러 초기화
+          initPreferenceSchedulers();
+          
           // 🏷️ v5.0 태그 시스템 마이그레이션
           await migrateTagSystem();
           
@@ -15938,7 +14111,7 @@ export default function App() {
             }
             setAppSettings(merged);
             if (merged.tierThresholds) {
-              globalTierThresholds = { ...DEFAULT_SETTINGS.tierThresholds, ...merged.tierThresholds };
+              setTierThresholds({ ...DEFAULT_SETTINGS.tierThresholds, ...merged.tierThresholds });
             }
             // 🆕 v3.4.4: 전체 화면 모드 적용
             // 🔧 v3.4.6: NavigationBar null 체크 추가
@@ -16170,23 +14343,28 @@ export default function App() {
   // 🔧 v3.4.6: 앱이 포그라운드로 돌아올 때 DB 연결 강제 리셋
   // 🧠 v3.5.0: 백그라운드 전환 시 큐 플러시 추가
   // 🔧 v3.5.1: 포그라운드 복귀 시 데이터 리로드 추가
+  // 🔧 v4.0 Step 28: schedulerManager 통합
   useEffect(() => {
     let lastState = AppState.currentState;
     
     const subscription = AppState.addEventListener("change", async (nextAppState) => {
-      // 포그라운드 → 백그라운드 전환 시: 큐 플러시
+      // 포그라운드 → 백그라운드 전환 시: 모든 스케줄러 플러시 & 일시정지
       if (lastState === "active" && nextAppState.match(/inactive|background/)) {
-        console.log("앱 백그라운드 전환 - 큐 플러시");
+        console.log("앱 백그라운드 전환 - 스케줄러 플러시 & 일시정지");
         try {
-          await choiceLogQueue.flush();
+          // 🔧 v4.0 Step 29: schedulerManager를 통한 중앙 관리
+          // - choiceLog, patternUpdate, statsRefresh, insightDiscovery 모두 자동 flush
+          await schedulerHandleAppState(nextAppState);
         } catch (e) {
-          console.warn("백그라운드 전환 큐 플러시 실패:", e);
+          console.warn("백그라운드 전환 스케줄러 플러시 실패:", e);
         }
       }
       
       // 백그라운드 → 포그라운드 전환 시
       if (lastState.match(/inactive|background/) && nextAppState === "active") {
-        console.log("앱 포그라운드 전환 - DB 연결 리셋 및 데이터 리로드");
+        console.log("앱 포그라운드 전환 - DB 연결 리셋 및 스케줄러 재개");
+        // 🔧 v4.0: schedulerManager 재개
+        schedulerHandleAppState(nextAppState);
         // 기존 연결을 강제로 끊고 새로 연결
         resetDbConnection();
         try {
@@ -18437,7 +16615,7 @@ export default function App() {
     
     // 티어 임계값이 변경되면 전역 변수도 업데이트
     if (newSettings.tierThresholds) {
-      globalTierThresholds = { ...globalTierThresholds, ...newSettings.tierThresholds };
+      setTierThresholds({ ...getTierThresholds(), ...newSettings.tierThresholds });
     }
   }
   
@@ -20556,320 +18734,10 @@ export default function App() {
    v9 극한 압축 백업 시스템
    ========================================================= */
 
-// 순수 JS Base64 인코더/디코더
-const B64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+// 🔧 v4.0 Step 30: Base64, STATUS_MAP, WORK_STATUS_MAP, BASE_TIMESTAMP,
+// buildUltraCompactBackup, buildExtendedBackup, getExportableImageUrl, collectCoverImageUrls는
+// ./src/utils/backup.js로 분리됨
 
-function encodeBase64(bytes) {
-  let result = "";
-  const len = bytes.length;
-  for (let i = 0; i < len; i += 3) {
-    const b1 = bytes[i];
-    const b2 = i + 1 < len ? bytes[i + 1] : 0;
-    const b3 = i + 2 < len ? bytes[i + 2] : 0;
-    result += B64_CHARS[b1 >> 2];
-    result += B64_CHARS[((b1 & 3) << 4) | (b2 >> 4)];
-    result += i + 1 < len ? B64_CHARS[((b2 & 15) << 2) | (b3 >> 6)] : "=";
-    result += i + 2 < len ? B64_CHARS[b3 & 63] : "=";
-  }
-  return result;
-}
-
-function decodeBase64(str) {
-  const bytes = [];
-  const len = str.length;
-  for (let i = 0; i < len; i += 4) {
-    const c1 = B64_CHARS.indexOf(str[i]);
-    const c2 = B64_CHARS.indexOf(str[i + 1]);
-    const c3 = str[i + 2] === "=" ? 0 : B64_CHARS.indexOf(str[i + 2]);
-    const c4 = str[i + 3] === "=" ? 0 : B64_CHARS.indexOf(str[i + 3]);
-    bytes.push((c1 << 2) | (c2 >> 4));
-    if (str[i + 2] !== "=") bytes.push(((c2 & 15) << 4) | (c3 >> 2));
-    if (str[i + 3] !== "=") bytes.push(((c3 & 3) << 6) | c4);
-  }
-  return bytes;
-}
-
-// 상태 매핑
-const STATUS_MAP = { reading: 0, completed: 1, dropped: 2, planned: 3, onhold: 4 };
-const STATUS_REV = ["reading", "completed", "dropped", "planned", "onhold"];
-const WORK_STATUS_MAP = { ongoing: 0, completed: 1, hiatus: 2, dropped: 3, discontinued: 4 };
-const WORK_STATUS_REV = ["ongoing", "completed", "hiatus", "dropped", "discontinued"];
-
-// 기준 타임스탬프: 2024-01-01 00:00:00 UTC (초 단위)
-const BASE_TIMESTAMP = 1704067200;
-
-function buildUltraCompactBackup(novels, matches, coverImages = null) {
-  // 사전 구축
-  const tagDict = [], tagIndex = new Map();
-  const platDict = [], platIndex = new Map();
-  const authorDict = [], authorIndex = new Map();
-
-  const getIdx = (dict, index, value) => {
-    if (!value) return -1;
-    if (index.has(value)) return index.get(value);
-    const idx = dict.length;
-    dict.push(value);
-    index.set(value, idx);
-    return idx;
-  };
-
-  // novels: 내부 id → 인덱스 매핑
-  const idToIdx = new Map();
-  const N = [];
-
-  for (let i = 0; i < novels.length; i++) {
-    const n = novels[i];
-    idToIdx.set(n.id, i);
-
-    // 작가 인덱스
-    const authorIdx = getIdx(authorDict, authorIndex, (n.author || "").trim());
-
-    // 태그 인덱스 배열
-    const tagTokens = (n.tags || "").split(",").map(s => s.trim()).filter(Boolean);
-    const tagIdxArr = tagTokens.map(t => getIdx(tagDict, tagIndex, t));
-
-    // 플랫폼 인덱스 배열
-    let plats = [];
-    try { plats = JSON.parse(n.platforms || "[]"); } catch { plats = []; }
-    if (!Array.isArray(plats)) plats = [];
-    const platIdxArr = plats.map(p => getIdx(platDict, platIndex, p));
-
-    // Elo 데이터 (정수화: rating*10)
-    const rating10 = Math.round((Number(n.rating) || 1500) * 10);
-    const rd = Math.round(Number(n.rd) || 350);
-    const wins = Number(n.wins) || 0;
-    const losses = Number(n.losses) || 0;
-    const matchCount = Number(n.match_count) || 0;
-
-    // 옵션 객체 (기본값 아닌 것만) - 이미지는 백업하지 않음
-    const opt = {};
-    const readCount = Number(n.read_count) || 0;
-    const totalEp = Number(n.total_episodes) || 0;
-    const statusNum = STATUS_MAP[n.status] ?? 0;
-    const pinnedNum = n.pinned ? 1 : 0;
-    const workStatusNum = WORK_STATUS_MAP[n.work_status] ?? 0;
-    const awards = n.awards || "";
-    const note = (n.note || "").trim();
-    const link = (n.link || "").trim();
-    const createdSec = Math.floor((n.created_at || Date.now()) / 1000) - BASE_TIMESTAMP;
-    const updatedSec = Math.floor((n.read_count_updated_at || Date.now()) / 1000) - BASE_TIMESTAMP;
-
-    if (readCount) opt.r = readCount;
-    if (totalEp) opt.e = totalEp;
-    if (statusNum) opt.s = statusNum;
-    if (pinnedNum) opt.p = 1;
-    if (workStatusNum) opt.w = workStatusNum;
-    if (awards && awards !== "[]") opt.a = awards;
-    if (note) opt.n = note;
-    if (link) opt.l = link;
-    if (createdSec > 0) opt.c = createdSec;
-    if (updatedSec > 0) opt.u = updatedSec;
-    // 대장르/부장르 (JSON 배열 문자열)
-    const majorGenre = (n.major_genre || "").trim();
-    const subGenre = (n.sub_genre || "").trim();
-    if (majorGenre) opt.mg = majorGenre;
-    if (subGenre) opt.sg = subGenre;
-    // 📖 외전 관련
-    const gaidenStatus = n.gaiden_status || "none";
-    const gaidenReadCount = Number(n.gaiden_read_count) || 0;
-    const gaidenTotalEp = Number(n.gaiden_total_episodes) || 0;
-    if (gaidenStatus !== "none") opt.gs = gaidenStatus === "ongoing" ? 1 : 2; // 1=ongoing, 2=completed
-    if (gaidenReadCount) opt.gr = gaidenReadCount;
-    if (gaidenTotalEp) opt.ge = gaidenTotalEp;
-    // 🏆 수동 티어 지정 (v2.5)
-    if (n.manual_tier === 'S') opt.mt = 1;
-    else if (n.manual_tier === 'A') opt.mt = 2;
-    
-    // 📚 v3.0.4: 다회독 카운트 (기본 1, 1보다 큰 경우에만 저장)
-    const rereadCount = Math.max(1, Number(n.reread_count) || 1);
-    if (rereadCount > 1) opt.rr = rereadCount;
-    
-    // 📷 표지 이미지 (v3.0.4) - includeCovers가 true이고 이미지가 있을 때만
-    // coverImages 맵에서 Base64 또는 URL을 가져옴
-    if (coverImages && coverImages[n.id]) {
-      opt.i = coverImages[n.id];
-    }
-    
-    // 🏷️ v5.0: tag_data (JSON) - 기본값이 아닌 경우만
-    const tagDataStr = (n.tag_data || "").trim();
-    if (tagDataStr && tagDataStr !== "[]" && tagDataStr !== "") {
-      opt.td = tagDataStr;
-    }
-    
-    // 🏷️ v5.0: aliases (JSON) - 있는 경우만
-    const aliasesStr = (n.aliases || "").trim();
-    if (aliasesStr && aliasesStr !== "[]" && aliasesStr !== "") {
-      opt.al = aliasesStr;
-    }
-    
-    // 💬 v3.2.2: 인상깊은 문장
-    const memorableQuote = (n.memorable_quote || "").trim();
-    if (memorableQuote) {
-      opt.mq = memorableQuote;
-    }
-
-    // [title, authorIdx, tagIdx[], platIdx[], rating*10, rd, W, L, MC, opt?]
-    const row = [n.title || "", authorIdx, tagIdxArr, platIdxArr, rating10, rd, wins, losses, matchCount];
-    if (Object.keys(opt).length > 0) row.push(opt);
-    N.push(row);
-  }
-
-  // 매칭 Base64 인코딩
-  // 작품 수에 따라 바이트 크기 결정
-  const novelCount = novels.length;
-  const use2Bytes = novelCount >= 256;
-  const matchBytes = [];
-
-  for (const m of matches) {
-    const idxA = idToIdx.has(m.a_id) ? idToIdx.get(m.a_id) : 65535;
-    const idxB = idToIdx.has(m.b_id) ? idToIdx.get(m.b_id) : 65535;
-    const idxW = m.winner_id && idToIdx.has(m.winner_id) ? idToIdx.get(m.winner_id) : -1;
-    
-    // f: 0=A승user, 1=B승user, 2=A승auto, 3=B승auto
-    const isAuto = m.decided_by === "auto" ? 2 : 0;
-    const isB = idxW === idxB ? 1 : 0;
-    const f = isAuto + isB;
-
-    if (use2Bytes) {
-      matchBytes.push((idxA >> 8) & 255, idxA & 255);
-      matchBytes.push((idxB >> 8) & 255, idxB & 255);
-    } else {
-      matchBytes.push(idxA & 255);
-      matchBytes.push(idxB & 255);
-    }
-    matchBytes.push(f);
-  }
-
-  return {
-    v: 11, // 📐 v3.2.0: tag_coordinate_systems 포함
-    b: BASE_TIMESTAMP,
-    T: tagDict,
-    P: platDict,
-    A: authorDict,
-    N,
-    M: encodeBase64(matchBytes),
-    m: use2Bytes ? 2 : 1, // 바이트 모드 표시
-  };
-}
-
-// ⚙️ 설정 및 히스토리를 포함한 확장 백업 (v2.6)
-function buildExtendedBackup(novels, matches, settings, tierHist, coverImages = null, analysisData = null) {
-  const base = buildUltraCompactBackup(novels, matches, coverImages);
-  
-  // 설정 추가 (기본값 아닌 것만)
-  const settingsDiff = {};
-  if (settings.tierThresholds) {
-    const th = settings.tierThresholds;
-    const def = DEFAULT_SETTINGS.tierThresholds;
-    if (th.S !== def.S || th.A !== def.A || th["B+"] !== def["B+"] || th.B !== def.B || th["B-"] !== def["B-"]) {
-      settingsDiff.th = th;
-    }
-  }
-  if (settings.autoApproveEnabled) settingsDiff.aa = 1;
-  if (settings.autoApproveMinWins !== DEFAULT_SETTINGS.autoApproveMinWins) settingsDiff.aw = settings.autoApproveMinWins;
-  if (settings.autoApproveMaxLosses !== DEFAULT_SETTINGS.autoApproveMaxLosses) settingsDiff.al = settings.autoApproveMaxLosses;
-  if (settings.autoApproveMinMatches !== DEFAULT_SETTINGS.autoApproveMinMatches) settingsDiff.am = settings.autoApproveMinMatches;
-  if (settings.showReviewBanner === false) settingsDiff.rb = 0;
-  if (settings.undoStackSize !== DEFAULT_SETTINGS.undoStackSize) settingsDiff.us = settings.undoStackSize;
-  
-  // 🆕 v3.4: 예정탭 확장 필드 설정
-  if (settings.plannedFields) {
-    const pf = settings.plannedFields;
-    const defPf = DEFAULT_SETTINGS.plannedFields;
-    const pfDiff = {};
-    if (pf.showExpectedRating !== defPf.showExpectedRating) pfDiff.er = pf.showExpectedRating ? 1 : 0;
-    if (pf.showScheduledStart !== defPf.showScheduledStart) pfDiff.ss = pf.showScheduledStart ? 1 : 0;
-    if (pf.showSimilarNovels !== defPf.showSimilarNovels) pfDiff.sn = pf.showSimilarNovels ? 1 : 0;
-    if (Object.keys(pfDiff).length > 0) settingsDiff.pf = pfDiff;
-  }
-  
-  if (Object.keys(settingsDiff).length > 0) {
-    base.S = settingsDiff;
-  }
-  
-  // S/A 관련 티어 히스토리 추가 (최대 30개)
-  if (tierHist && tierHist.length > 0) {
-    const saHist = tierHist.filter(h => 
-      h.from === 'S' || h.from === 'A' || h.to === 'S' || h.to === 'A'
-    ).slice(0, 30).map(h => ({
-      t: h.title,
-      f: h.from,
-      o: h.to,
-      a: Math.floor(h.at / 1000) - BASE_TIMESTAMP
-    }));
-    if (saHist.length > 0) {
-      base.H = saHist;
-    }
-  }
-  
-  // 🎯 v3.0.4: 분석 데이터 포함
-  if (analysisData) {
-    const AD = {};
-    
-    // 매칭 인사이트 (최근 100개만)
-    if (analysisData.matchInsights && analysisData.matchInsights.length > 0) {
-      AD.mi = analysisData.matchInsights.slice(-100);
-    }
-    
-    // 이변 요인
-    if (analysisData.upsetFactors && analysisData.upsetFactors.factors && analysisData.upsetFactors.factors.length > 0) {
-      AD.uf = analysisData.upsetFactors;
-    }
-    
-    // 태그 관계
-    if (analysisData.tagRelations && Object.keys(analysisData.tagRelations.groups || {}).length > 0) {
-      AD.tr = analysisData.tagRelations;
-    }
-    
-    // 자동승패 설정
-    if (analysisData.autoMatchSettings) {
-      AD.am = analysisData.autoMatchSettings;
-    }
-    
-    // 📐 v3.2.0: 태그 좌표계
-    if (analysisData.coordinateSystems && Object.keys(analysisData.coordinateSystems).length > 0) {
-      AD.cs = analysisData.coordinateSystems;
-    }
-    
-    if (Object.keys(AD).length > 0) {
-      base.AD = AD;
-    }
-  }
-  
-  return base;
-}
-
-/* ---------- JSON 백업/복원 ---------- */
-
-// 📷 URL 이미지만 백업용으로 반환 (로컬 이미지, Base64 제외)
-function getExportableImageUrl(uri) {
-  if (!uri) return null;
-  
-  // URL인 경우만 반환
-  if (uri.startsWith("http://") || uri.startsWith("https://")) {
-    return uri;
-  }
-  
-  // Base64는 용량이 커서 백업에서 제외
-  // 로컬 파일도 백업 불가 (Expo Snack에서 FileSystem 미지원)
-  return null;
-}
-
-// 📷 URL 표지 이미지들 수집 (백업용)
-function collectCoverImageUrls(novels) {
-  const coverImages = {};
-  
-  for (const n of novels) {
-    if (!n.cover_image) continue;
-    
-    const url = getExportableImageUrl(n.cover_image);
-    if (url) {
-      coverImages[n.id] = url;
-    }
-  }
-  
-  return coverImages;
-}
 
 async function exportJSON() {
   try {
@@ -21185,6 +19053,19 @@ async function importJSON() {
             text: "가져오기",
             onPress: async () => {
               setIsLoading(true);
+              
+              // 🔧 v4.0 Step 33: 크래시 복구용 작업 상태 저장
+              try {
+                await setPendingOperation({ 
+                  type: "import", 
+                  startedAt: Date.now(),
+                  totalNovels: lenN,
+                  totalMatches: lenM 
+                });
+              } catch (e) {
+                console.warn("setPendingOperation 실패:", e.message);
+              }
+              
               await doClearAll();
 
               const novelQueries = [];
@@ -21254,7 +19135,13 @@ async function importJSON() {
                 });
               }
 
-              if (novelQueries.length > 0) await execBatch(novelQueries);
+              // 🔧 v4.0 Step 33: 청크 단위 배치로 대량 INSERT (크래시 방지)
+              if (novelQueries.length > 0) {
+                const result = await execBatchChunked(novelQueries, 50, (done, total) => {
+                  console.log(`[Import] 작품 저장 중: ${done}/${total}`);
+                });
+                console.log(`[Import] 작품 저장 완료: ${result.success} 성공, ${result.failed} 실패`);
+              }
 
               // 매칭 복원
               const matchQueries = [];
@@ -21287,7 +19174,13 @@ async function importJSON() {
                 });
               }
 
-              if (matchQueries.length > 0) await execBatch(matchQueries);
+              // 🔧 v4.0 Step 33: 청크 단위 배치로 대량 INSERT (크래시 방지)
+              if (matchQueries.length > 0) {
+                const result = await execBatchChunked(matchQueries, 100, (done, total) => {
+                  console.log(`[Import] 매칭 저장 중: ${done}/${total}`);
+                });
+                console.log(`[Import] 매칭 저장 완료: ${result.success} 성공, ${result.failed} 실패`);
+              }
 
               // ⚙️ 설정 복원 (v2.6)
               if (data.S && typeof data.S === "object") {
@@ -21312,7 +19205,7 @@ async function importJSON() {
                 setAppSettings(restored);
                 await setAppMeta("app_settings", restored);
                 if (restored.tierThresholds) {
-                  globalTierThresholds = { ...globalTierThresholds, ...restored.tierThresholds };
+                  setTierThresholds({ ...getTierThresholds(), ...restored.tierThresholds });
                 }
               }
               
@@ -21498,6 +19391,13 @@ async function importJSON() {
               setImportText("");
               setImportValidation(null);
               setIsLoading(false);
+              
+              // 🔧 v4.0 Step 33: 크래시 복구 상태 해제
+              try {
+                await setPendingOperation(null);
+              } catch (e) {
+                console.warn("setPendingOperation(null) 실패:", e.message);
+              }
               
               const extraInfo = data.S ? "\n(설정 복원됨)" : "";
               const histInfo = data.H ? `\n(티어 히스토리 ${data.H.length}건 복원)` : "";
