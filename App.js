@@ -22,7 +22,7 @@
 
 import React from "react";
 import { View, StatusBar } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
 import { AllProviders, useApp, useData, useFilter } from "./contexts";
 import { Nav, LoadingOverlay } from "./components/navigation/Nav";
@@ -44,9 +44,9 @@ import {
 
 export default function App() {
   return (
-    <AllProviders>
+    <SafeAreaProvider><AllProviders>
       <AppShell />
-    </AllProviders>
+    </AllProviders></SafeAreaProvider>
   );
 }
 
