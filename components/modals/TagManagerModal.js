@@ -53,7 +53,7 @@ import React, { memo, useState, useMemo, useCallback } from "react";
 import { View, Text, TextInput, TouchableOpacity, ScrollView, Modal, Alert, SafeAreaView } from "react-native";
 
 // Constants
-import { MAJOR_GENRES, SUB_GENRES, GENERAL_TAGS, getTagSentiment } from "../../constants/tags";
+import { MAJOR_GENRES, SUB_GENRES, GENERAL_TAGS, getTagSentiment, TAG_SENTIMENT } from "../../constants/tags";
 
 // Database (for direct meta persist)
 import { setAppMeta } from "../../database";

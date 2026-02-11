@@ -29,7 +29,7 @@ import React, { memo } from "react";
 import { Text, TouchableOpacity } from "react-native";
 
 // Constants
-import { SENTIMENT_COLORS } from "../../constants/tags";
+import { SENTIMENT_COLORS, TAG_SENTIMENT } from "../../constants/tags";
 
 // ═══════════════════════════════════════════════════════════════
 // 📌 TagItem 컴포넌트
