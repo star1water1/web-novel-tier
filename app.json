@@ -10,7 +10,7 @@
       "backgroundColor": "#0B0F1A"
     },
     "assetBundlePatterns": ["**/*"],
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "android": {
       "package": "com.star1water.noveltier",
       "softwareKeyboardLayoutMode": "resize"
