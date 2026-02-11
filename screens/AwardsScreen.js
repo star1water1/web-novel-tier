@@ -19,7 +19,7 @@ import React, { memo, useState, useMemo, useCallback, useEffect } from "react";
 import { View, Text, TextInput, TouchableOpacity, ScrollView, Alert, Modal, FlatList } from "react-native";
 
 // Constants
-import { getAwardYears, AWARD_META, parseAwards, DEFAULT_AWARD_TEMPLATE } from "../constants/config";
+import { getAwardYears, AWARD_META, parseAwards, DEFAULT_AWARD_TEMPLATE, WORK_STATUS_MAP } from "../constants/config";
 
 // Utils
 import { tierFromRating, deriveMajorGenre, getWinRate, parsePlatforms } from "../utils/helpers";
