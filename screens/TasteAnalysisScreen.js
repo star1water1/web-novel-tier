@@ -57,7 +57,7 @@ import { analyzePreferences } from "../services/analysisService";
 import { PieChartSimple, HeatmapRow, RadarChartSimple } from "../components/charts";
 
 // Common UI
-import { H, Section } from "../components/common/ui";
+import { H, Section, PrimaryButton } from "../components/common/ui";
 
 // Constants
 import { parseMajorSub } from "../constants/tags";

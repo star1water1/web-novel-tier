@@ -50,7 +50,7 @@
  */
 
 import React, { memo, useState, useMemo, useCallback } from "react";
-import { View, Text, TextInput, TouchableOpacity, ScrollView, Modal, Alert, SafeAreaView } from "react-native";
+import { View, Text, TextInput, TouchableOpacity, ScrollView, Modal, Alert, SafeAreaView, FlatList } from "react-native";
 
 // Constants
 import { MAJOR_GENRES, SUB_GENRES, GENERAL_TAGS, getTagSentiment, TAG_SENTIMENT } from "../../constants/tags";
@@ -63,6 +63,7 @@ import { useApp } from "../../contexts/AppContext";
 import { useTag } from "../../contexts/TagContext";
 import { useData } from "../../contexts/DataContext";
 import { useModal } from "../../contexts/ModalContext";
+import TagItem from "./TagItem";
 
 // ═══════════════════════════════════════════════════════════════
 // 📌 TagManagerModal 컴포넌트

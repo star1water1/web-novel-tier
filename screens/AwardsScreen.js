@@ -34,6 +34,7 @@ import { updateNovelAwards } from "../handlers/novelHandlers";
 // Context
 import { useApp } from "../contexts/AppContext";
 import { useData } from "../contexts/DataContext";
+import { Image as ExpoImage } from "expo-image";
 
 // ═══════════════════════════════════════════════════════════════
 // 📌 AwardsScreen 컴포넌트

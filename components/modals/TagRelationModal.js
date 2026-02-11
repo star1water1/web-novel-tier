@@ -27,7 +27,7 @@
  * - theme: 테마 객체
  */
 
-import React, { memo, useState, useMemo, useCallback } from "react";
+import React, { memo, useState, useMemo, useCallback, useEffect } from "react";
 import { View, Text, TextInput, TouchableOpacity, ScrollView, Modal, Alert } from "react-native";
 
 // Constants
