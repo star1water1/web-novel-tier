@@ -29,7 +29,7 @@ import { View, Text, ScrollView, StatusBar } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
 import { AllProviders, useApp, useData, useFilter } from "./contexts";
-import { Nav, LoadingOverlay } from "./components/navigation/Nav";
+import Nav, { LoadingOverlay } from "./components/navigation/Nav";
 import {
   HomeScreen, RankScreen, MatchScreen, RecoScreen, BulkScreen,
   AnalysisScreen, TasteAnalysisScreen, AwardsScreen, SettingsScreen,
