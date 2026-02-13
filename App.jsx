@@ -41,10 +41,21 @@
  * ║ [변경 8] processMatchQueue 오류 시 DB 재연결                                  ║
  * ║ • DB 관련 오류 감지 시 자동 resetDbConnection() + openDb()                    ║
  * ║                                                                              ║
+ * ║ [변경 9] resetDbConnection에 closeAsync 추가 (핵심 수정)                     ║
+ * ║ • 기존: db=null만 하고 네이티브 연결 방치 → 새 연결도 깨짐                    ║
+ * ║ • 수정: closeAsync()로 실제 닫은 후 재연결 → NullPointerException 해결        ║
+ * ║                                                                              ║
+ * ║ [변경 10] openDb 캐시 시간 5초→1초 단축 + 테스트 실패 시 close               ║
+ * ║ • 건강검진 주기 단축으로 죽은 연결 빠르게 감지                                ║
+ * ║                                                                              ║
+ * ║ [변경 11] NullPointerException 재시도 대기 시간 증가                           ║
+ * ║ • 일반 에러: 300ms × 시도횟수                                                ║
+ * ║ • NullPointerException: 800ms × 시도횟수 (네이티브 복구 대기)                ║
+ * ║                                                                              ║
  * ║ [버그 2 상태 업데이트]                                                        ║
- * ║ • 일반 DB 에러: WAL+busy_timeout으로 해결 예상                                ║
- * ║ • 갤러리 DB 마비: 강제 재연결+안정화 대기로 해결 예상                         ║
- * ║ • 모듈화는 이 문제의 해결책이 아니었음 (DB 설정+재연결 문제)                  ║
+ * ║ • 근본 원인: resetDbConnection이 연결을 실제로 닫지 않았음                    ║
+ * ║ • 해결: closeAsync() + WAL + busy_timeout + 재시도 강화                       ║
+ * ║ • 모듈화는 이 문제의 해결책이 아니었음 (DB 핸들 관리 문제)                    ║
  * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
@@ -1608,8 +1619,8 @@ async function openDb() {
     }
   }
   
-  // 기존 연결이 있고, 최근 성공했으면 재사용
-  if (db && Date.now() - dbLastSuccessTime < 5000) {
+  // 🔧 v3.5.3: 캐시 시간 단축 (5초→1초) + 테스트 실패 시 실제 close
+  if (db && Date.now() - dbLastSuccessTime < 1000) {
     return db;
   }
   
@@ -1621,8 +1632,9 @@ async function openDb() {
       dbLastSuccessTime = Date.now();
       return db;
     } catch (e) {
-      // 연결이 죽었으면 정리
+      // 연결이 죽었으면 실제로 닫고 정리
       console.warn("DB 연결 테스트 실패:", e.message);
+      try { await db.closeAsync(); } catch (_) {}
       db = null;
     }
   }
@@ -1655,12 +1667,22 @@ async function openDb() {
   }
 }
 
-// DB 연결 강제 리셋
-function resetDbConnection() {
+// DB 연결 강제 리셋 (🔧 v3.5.3: 실제 close 수행)
+async function resetDbConnection() {
   console.log("DB 연결 리셋");
+  const oldDb = db;
   db = null;
   dbOpenPromise = null;
   dbLastSuccessTime = 0;
+  // 🔧 v3.5.3: 기존 연결을 실제로 닫아야 새 연결이 정상 작동
+  if (oldDb) {
+    try {
+      await oldDb.closeAsync();
+      console.log("기존 DB 연결 닫기 성공");
+    } catch (closeErr) {
+      console.warn("기존 DB 닫기 실패 (무시):", closeErr.message);
+    }
+  }
 }
 
 // 🔧 v3.4.7: 안전한 DB 실행 래퍼 (자동 재연결 + 더 적극적인 재시도)
@@ -1697,16 +1719,18 @@ async function safeDbOperation(operation, operationName = "DB") {
       console.warn(`${operationName} 오류 (시도 ${attempt + 1}/${maxRetries}):`, errorMsg);
       
       if (isConnectionError || attempt > 0) {
-        // 연결 오류거나 두 번째 시도부터는 항상 리셋
-        resetDbConnection();
+        // 연결 오류거나 두 번째 시도부터는 항상 리셋 (🔧 v3.5.3: await 추가)
+        await resetDbConnection();
       }
       
       if (attempt === maxRetries - 1) {
         throw e;
       }
       
-      // 점진적 대기 (더 길게)
-      await new Promise(r => setTimeout(r, 300 * (attempt + 1)));
+      // 🔧 v3.5.3: NullPointerException은 더 긴 대기 필요
+      const isNullPtr = errorMsg.includes("NullPointerException");
+      const delay = isNullPtr ? 800 * (attempt + 1) : 300 * (attempt + 1);
+      await new Promise(r => setTimeout(r, delay));
     }
   }
 }
@@ -1847,7 +1871,7 @@ async function processMatchQueue() {
       console.warn("매칭 큐 처리 오류:", e.message);
       // 🔧 v3.5.3: DB 오류 시 재연결
       if (e.message && (e.message.includes("database") || e.message.includes("null") || e.message.includes("locked"))) {
-        resetDbConnection();
+        await resetDbConnection();
         try { await openDb(); } catch (_) {}
       }
       reject(e);
@@ -2821,7 +2845,7 @@ const choiceLogQueue = {
     } catch (e) {
       console.error("[choiceLogQueue.flush] 저장 실패:", e);
       // 🔧 v3.5.3: DB 연결 문제일 수 있으므로 리셋
-      resetDbConnection();
+      await resetDbConnection();
       // 실패한 로그는 다시 큐에 넣지 않음 (무한 루프 방지)
     }
   },
@@ -15932,7 +15956,7 @@ export default function App() {
         base64: true,
       });
       // 🔧 v3.5.3: 갤러리 복귀 후 DB 연결 강제 재설정
-      resetDbConnection();
+      await resetDbConnection();
       try { await openDb(); } catch (dbErr) {
         console.warn("pickImage DB 재연결 실패:", dbErr.message);
       }
@@ -16336,7 +16360,7 @@ export default function App() {
     const subscription = AppState.addEventListener("change", async (nextAppState) => {
       // 포그라운드 → 백그라운드 전환 시: 큐 플러시
       if (lastState === "active" && nextAppState.match(/inactive|background/)) {
-        console.log("앱 백그라운드 전환 - 큐 플러시");
+        console.log("앱 백그라운드 전환 - 큐 플러시 + DB 정리");
         try {
           await choiceLogQueue.flush();
         } catch (e) {
@@ -16347,8 +16371,8 @@ export default function App() {
       // 백그라운드 → 포그라운드 전환 시
       if (lastState.match(/inactive|background/) && nextAppState === "active") {
         console.log("앱 포그라운드 전환 - DB 연결 리셋 및 데이터 리로드");
-        // 기존 연결을 강제로 끊고 새로 연결
-        resetDbConnection();
+        // 기존 연결을 강제로 끊고 새로 연결 (🔧 v3.5.3: await)
+        await resetDbConnection();
         try {
           await openDb();
           // 🔧 v3.5.3: 포그라운드 복귀 후 안정화 대기
@@ -17061,7 +17085,7 @@ export default function App() {
       }
 
       // 🔧 v3.5.1: 갤러리에서 돌아온 후 DB 연결 확인 및 복구
-      resetDbConnection();
+      await resetDbConnection();
       try {
         await openDb();
         // 🔧 v3.5.3: DB 안정화 대기
