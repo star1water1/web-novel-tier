@@ -45,6 +45,10 @@
  * ║ • 기존: db=null만 하고 네이티브 연결 방치 → 새 연결도 깨짐                    ║
  * ║ • 수정: closeAsync()로 실제 닫은 후 재연결 → NullPointerException 해결        ║
  * ║                                                                              ║
+ * ║ [변경 12] saveCoverToLibrary base64 fallback 추가                             ║
+ * ║ • Android content:// URI에서 copyAsync, downloadAsync 모두 실패              ║
+ * ║ • base64 read → write 방식 추가로 이미지 불러오기 해결                        ║
+ * ║                                                                              ║
  * ║ [변경 10] openDb 캐시 시간 5초→1초 단축 + 테스트 실패 시 close               ║
  * ║ • 건강검진 주기 단축으로 죽은 연결 빠르게 감지                                ║
  * ║                                                                              ║
@@ -5413,9 +5417,10 @@ async function saveCoverToLibrary(sourceUri, compressionLevel = "light") {
     const fileName = `${id}.jpg`;
     const destUri = COVER_DIR + fileName;
     
-    // 🔧 v3.5.1: 여러 방법으로 시도
+    // 🔧 v3.5.1: 여러 방법으로 시도 (v3.5.3: base64 fallback 추가)
     // 방법 1: copyAsync (file:// URI에서 잘 작동)
     // 방법 2: downloadAsync (일부 content:// URI에서 작동)
+    // 방법 3: base64 read/write (Android content:// URI 최종 대응)
     
     let success = false;
     
@@ -5442,7 +5447,25 @@ async function saveCoverToLibrary(sourceUri, compressionLevel = "light") {
       }
     }
     
+    // 🔧 v3.5.3: 방법 3 - base64 읽기/쓰기 (Android content:// URI 대응)
     if (!success) {
+      try {
+        const base64Data = await FileSystem.readAsStringAsync(sourceUri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        await FileSystem.writeAsStringAsync(destUri, base64Data, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        success = true;
+        console.log("saveCoverToLibrary: base64 방식으로 저장 성공");
+      } catch (base64Error) {
+        console.warn("saveCoverToLibrary: base64 read/write도 실패:", base64Error.message);
+      }
+    }
+    
+    if (!success) {
+      // 🔧 v3.5.3: 실패 원인 디버그
+      console.warn("saveCoverToLibrary: 모든 방법 실패, sourceUri:", sourceUri?.substring(0, 80));
       return null;
     }
     
@@ -15548,6 +15571,8 @@ function generateInsights(data) {
 /* =========================================================
    App
    ========================================================= */
+
+
 export default function App() {
   // 🎨 다크모드
   const systemColorScheme = useColorScheme();
@@ -15730,6 +15755,7 @@ export default function App() {
   // 검색/대량
   const [query, setQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState([]);
+  const selectedIdsRef = useRef(selectedIds); // 🔧 v3.5.3: stale closure 방지용 ref
 
 // 순위 탭
   const [rankQuery, setRankQuery] = useState("");
@@ -17073,6 +17099,7 @@ export default function App() {
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsMultipleSelection: true,
         quality: preset.quality,
+        base64: false, // 🔧 v3.5.3: 다중 선택에서는 base64 비활성 (메모리 문제)
         // 이미지 리사이즈 (expo-image-picker SDK 48+)
         ...(preset.maxSize && {
           exif: false,
@@ -17144,7 +17171,9 @@ export default function App() {
       // 🔧 v3.4.6: 실패 개수도 함께 표시
       const failCount = total - successCount;
       if (failCount > 0) {
-        Alert.alert("완료", `${successCount}개 성공, ${failCount}개 실패\n\n실패한 이미지는 형식이 지원되지 않거나 접근할 수 없습니다.`);
+        // 🔧 v3.5.3: 디버그 - 첫 번째 실패 URI 표시
+        const firstFailUri = assets.find((a, i) => i < 3)?.uri || "N/A";
+        Alert.alert("완료", `${successCount}개 성공, ${failCount}개 실패\n\n[디버그] 첫 URI: ${firstFailUri.substring(0, 60)}...\n\n실패한 이미지는 형식이 지원되지 않거나 접근할 수 없습니다.`);
       } else {
         Alert.alert("완료", `${successCount}개의 표지를 라이브러리에 추가했습니다.`);
       }
@@ -20512,6 +20541,11 @@ export default function App() {
     };
   }, [list]);
 
+  // 🔧 v3.5.3: selectedIds 변경 시 ref 동기화 (stale closure 완전 방지)
+  useEffect(() => {
+    selectedIdsRef.current = selectedIds;
+  }, [selectedIds]);
+
   const toggleSelect = (id) => {
     setSelectedIds((p) => {
       const newIds = p.includes(id) ? p.filter((x) => x !== id) : [...p, id];
@@ -20521,19 +20555,20 @@ export default function App() {
 
   // 🔧 v3.5.1: useCallback으로 변경 (stale closure 방지)
   const batchSetPlatforms = useCallback(async (plats) => {
-    // 🔧 v3.5.1 디버깅: 선택 상태 확인
-    if (!selectedIds.length) {
-      Alert.alert("알림", `먼저 작품을 선택해주세요.\n\n[디버그-플랫폼] selectedIds.length = ${selectedIds.length}`);
+    // 🔧 v3.5.3: ref로 최신 selectedIds 참조
+    const ids = selectedIdsRef.current;
+    if (!ids.length) {
+      Alert.alert("알림", "먼저 작품을 선택해주세요.");
       return;
     }
-    const queries = selectedIds.map((id) => ({
+    const queries = ids.map((id) => ({
       sql: "UPDATE novels SET platforms=? WHERE id=?",
       params: [JSON.stringify(plats), id],
     }));
     await execBatch(queries);
     await loadList();
-    Alert.alert("완료", `${selectedIds.length}개 작품에 플랫폼을 적용했습니다.`);
-  }, [selectedIds]);
+    Alert.alert("완료", `${ids.length}개 작품에 플랫폼을 적용했습니다.`);
+  }, []);
 
   // 🏷️ v3.1.2: 대량편집 농도 지원 - 기본 농도 3으로 태그 추가
   // 🔧 v3.5.1: useCallback으로 변경 (stale closure 방지)
@@ -20543,15 +20578,17 @@ export default function App() {
       Alert.alert("알림", "태그를 입력해주세요.");
       return;
     }
-    if (selectedIds.length === 0) {
-      Alert.alert("알림", `먼저 작품을 선택해주세요.\n\n[디버그-태그추가] selectedIds.length = ${selectedIds.length}`);
+    // 🔧 v3.5.3: ref로 최신 selectedIds 참조
+    const ids = selectedIdsRef.current;
+    if (ids.length === 0) {
+      Alert.alert("알림", "먼저 작품을 선택해주세요.");
       return;
     }
 
-    const placeholders = selectedIds.map(() => "?").join(",");
+    const placeholders = ids.map(() => "?").join(",");
     const rows = await all(
       `SELECT id, tags, tag_data FROM novels WHERE id IN (${placeholders})`,
-      selectedIds
+      ids
     );
 
     const queries = [];
@@ -20589,8 +20626,8 @@ export default function App() {
 
     await execBatch(queries);
     await loadList();
-    Alert.alert("완료", `${selectedIds.length}개 작품에 "${t}" 태그를 추가했습니다.`);
-  }, [selectedIds]);
+    Alert.alert("완료", `${ids.length}개 작품에 "${t}" 태그를 추가했습니다.`);
+  }, []);
 
   // 🏷️ v3.1.2: 대량편집 농도 지원 - tag_data에서도 제거
   // 🔧 v3.5.1: useCallback으로 변경 (stale closure 방지)
@@ -20600,15 +20637,17 @@ export default function App() {
       Alert.alert("알림", "태그를 입력해주세요.");
       return;
     }
-    if (selectedIds.length === 0) {
-      Alert.alert("알림", `먼저 작품을 선택해주세요.\n\n[디버그-태그삭제] selectedIds.length = ${selectedIds.length}`);
+    // 🔧 v3.5.3: ref로 최신 selectedIds 참조
+    const ids = selectedIdsRef.current;
+    if (ids.length === 0) {
+      Alert.alert("알림", "먼저 작품을 선택해주세요.");
       return;
     }
 
-    const placeholders = selectedIds.map(() => "?").join(",");
+    const placeholders = ids.map(() => "?").join(",");
     const rows = await all(
       `SELECT id, tags, tag_data FROM novels WHERE id IN (${placeholders})`,
-      selectedIds
+      ids
     );
 
     const queries = [];
@@ -20640,8 +20679,8 @@ export default function App() {
 
     await execBatch(queries);
     await loadList();
-    Alert.alert("완료", `${selectedIds.length}개 작품에서 "${t}" 태그를 삭제했습니다.`);
-  }, [selectedIds]);
+    Alert.alert("완료", `${ids.length}개 작품에서 "${t}" 태그를 삭제했습니다.`);
+  }, []);
 
   // 🔧 v3.5.1: useCallback으로 변경 (stale closure 방지)
   const batchIncReadCount = useCallback(async (delta) => {
@@ -20650,83 +20689,91 @@ export default function App() {
       Alert.alert("알림", "증감할 숫자를 입력해주세요.");
       return;
     }
-    if (selectedIds.length === 0) {
-      Alert.alert("알림", `먼저 작품을 선택해주세요.\n\n[디버그-회차증감] selectedIds.length = ${selectedIds.length}`);
+    // 🔧 v3.5.3: ref로 최신 selectedIds 참조
+    const ids = selectedIdsRef.current;
+    if (ids.length === 0) {
+      Alert.alert("알림", "먼저 작품을 선택해주세요.");
       return;
     }
     const now = Date.now();
-    const queries = selectedIds.map((id) => ({
+    const queries = ids.map((id) => ({
       sql: "UPDATE novels SET read_count = MAX(0, read_count + ?), read_count_updated_at = ? WHERE id=?",
       params: [d, now, id],
     }));
     await execBatch(queries);
     await loadList();
-    Alert.alert("완료", `${selectedIds.length}개 작품에 읽은 회차 ${d > 0 ? '+' : ''}${d} 적용했습니다.`);
-  }, [selectedIds]);
+    Alert.alert("완료", `${ids.length}개 작품에 읽은 회차 ${d > 0 ? '+' : ''}${d} 적용했습니다.`);
+  }, []);
 
   // 🆕 읽기 상태 일괄 변경
   // 🔧 v3.5.1: useCallback으로 변경 (stale closure 방지)
   const batchSetStatus = useCallback(async (status) => {
-    if (!selectedIds.length) {
-      Alert.alert("알림", `먼저 작품을 선택해주세요.\n\n[디버그-읽기상태] selectedIds.length = ${selectedIds.length}`);
+    // 🔧 v3.5.3: ref로 최신 selectedIds 참조
+    const ids = selectedIdsRef.current;
+    if (!ids.length) {
+      Alert.alert("알림", "먼저 작품을 선택해주세요.");
       return;
     }
     if (!status) return;
-    const queries = selectedIds.map((id) => ({
+    const queries = ids.map((id) => ({
       sql: "UPDATE novels SET status=? WHERE id=?",
       params: [status, id],
     }));
     await execBatch(queries);
     await loadList();
-    Alert.alert("완료", `${selectedIds.length}개 작품의 읽기 상태를 변경했습니다.`);
-  }, [selectedIds]);
+    Alert.alert("완료", `${ids.length}개 작품의 읽기 상태를 변경했습니다.`);
+  }, []);
 
   // 🆕 작품 연재상태 일괄 변경
   // 🔧 v3.5.1: useCallback으로 변경 (stale closure 방지)
   const batchSetWorkStatus = useCallback(async (workStatus) => {
-    if (!selectedIds.length) {
-      Alert.alert("알림", `먼저 작품을 선택해주세요.\n\n[디버그-연재상태] selectedIds.length = ${selectedIds.length}`);
+    // 🔧 v3.5.3: ref로 최신 selectedIds 참조
+    const ids = selectedIdsRef.current;
+    if (!ids.length) {
+      Alert.alert("알림", "먼저 작품을 선택해주세요.");
       return;
     }
     if (!workStatus) return;
-    const queries = selectedIds.map((id) => ({
+    const queries = ids.map((id) => ({
       sql: "UPDATE novels SET work_status=? WHERE id=?",
       params: [workStatus, id],
     }));
     await execBatch(queries);
     await loadList();
-    Alert.alert("완료", `${selectedIds.length}개 작품의 연재 상태를 변경했습니다.`);
-  }, [selectedIds]);
+    Alert.alert("완료", `${ids.length}개 작품의 연재 상태를 변경했습니다.`);
+  }, []);
 
   // 🔧 v3.5.1: useCallback으로 변경 (stale closure 방지)
   const batchDelete = useCallback(async () => {
-    if (!selectedIds.length) {
-      Alert.alert("알림", `먼저 작품을 선택해주세요.\n\n[디버그-삭제] selectedIds.length = ${selectedIds.length}`);
+    // 🔧 v3.5.3: ref로 최신 selectedIds 참조
+    const ids = selectedIdsRef.current;
+    if (!ids.length) {
+      Alert.alert("알림", "먼저 작품을 선택해주세요.");
       return;
     }
-    Alert.alert("확인", `선택 ${selectedIds.length}개 삭제?`, [
+    Alert.alert("확인", `선택 ${ids.length}개 삭제?`, [
       { text: "취소" },
       {
         text: "삭제",
         style: "destructive",
         onPress: async () => {
           // 🔄 v3.5.0: 상태 동기화 - 삭제 대상과 관련된 모든 상태 초기화
-          if (pair && (selectedIds.includes(pair.A?.id) || selectedIds.includes(pair.B?.id))) {
+          if (pair && (ids.includes(pair.A?.id) || ids.includes(pair.B?.id))) {
             setPair(null);
           }
-          if (editItem && selectedIds.includes(editItem.id)) {
+          if (editItem && ids.includes(editItem.id)) {
             setEditItem(null);
             setEditOpen(false);
           }
-          if (dailyReco?.novel && selectedIds.includes(dailyReco.novel.id)) {
+          if (dailyReco?.novel && ids.includes(dailyReco.novel.id)) {
             setDailyReco(null);
           }
-          if (focusMatchNovel && selectedIds.includes(focusMatchNovel.id)) {
+          if (focusMatchNovel && ids.includes(focusMatchNovel.id)) {
             setFocusMatchNovel(null);
           }
           
           const queries = [];
-          for (const id of selectedIds) {
+          for (const id of ids) {
             queries.push({
               sql: "DELETE FROM matches WHERE a_id=? OR b_id=?",
               params: [id, id],
