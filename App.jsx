@@ -5410,70 +5410,70 @@ async function ensureCoverDir() {
 // 이미지를 표지 라이브러리에 저장 (레거시 API)
 // 🔧 v3.5.1: content:// URI 지원 강화 - 여러 방법 시도
 async function saveCoverToLibrary(sourceUri, compressionLevel = "light") {
+  // 🔧 v3.5.3: 에러 수집 + 파일 존재 확인 + 진단 강화
+  const errors = [];
   try {
     await ensureCoverDir();
+    
+    // 소스 파일 존재 확인
+    try {
+      const srcInfo = await FileSystem.getInfoAsync(sourceUri);
+      if (!srcInfo.exists) {
+        return { error: "소스 파일 없음: " + sourceUri.substring(0, 60) };
+      }
+    } catch (infoErr) {
+      errors.push("존재확인실패: " + infoErr.message);
+      // 계속 진행 (content:// URI는 getInfoAsync가 실패할 수 있음)
+    }
     
     const id = uuid();
     const fileName = `${id}.jpg`;
     const destUri = COVER_DIR + fileName;
     
-    // 🔧 v3.5.1: 여러 방법으로 시도 (v3.5.3: base64 fallback 추가)
-    // 방법 1: copyAsync (file:// URI에서 잘 작동)
-    // 방법 2: downloadAsync (일부 content:// URI에서 작동)
-    // 방법 3: base64 read/write (Android content:// URI 최종 대응)
-    
     let success = false;
     
-    // 방법 1: copyAsync 시도
+    // 방법 1: copyAsync
     try {
-      await FileSystem.copyAsync({
-        from: sourceUri,
-        to: destUri,
-      });
+      await FileSystem.copyAsync({ from: sourceUri, to: destUri });
       success = true;
-    } catch (copyError) {
-      console.warn("saveCoverToLibrary: copyAsync 실패, downloadAsync 시도:", copyError.message);
+    } catch (e1) {
+      errors.push("copy: " + e1.message);
     }
     
-    // 방법 2: downloadAsync 시도 (copyAsync 실패 시)
+    // 방법 2: downloadAsync
     if (!success) {
       try {
-        const downloadResult = await FileSystem.downloadAsync(sourceUri, destUri);
-        if (downloadResult.status === 200) {
-          success = true;
-        }
-      } catch (downloadError) {
-        console.warn("saveCoverToLibrary: downloadAsync도 실패:", downloadError.message);
+        const r = await FileSystem.downloadAsync(sourceUri, destUri);
+        if (r.status === 200) success = true;
+        else errors.push("download: status=" + r.status);
+      } catch (e2) {
+        errors.push("download: " + e2.message);
       }
     }
     
-    // 🔧 v3.5.3: 방법 3 - base64 읽기/쓰기 (Android content:// URI 대응)
+    // 방법 3: base64 read/write
     if (!success) {
       try {
-        const base64Data = await FileSystem.readAsStringAsync(sourceUri, {
+        const b64 = await FileSystem.readAsStringAsync(sourceUri, {
           encoding: FileSystem.EncodingType.Base64,
         });
-        await FileSystem.writeAsStringAsync(destUri, base64Data, {
+        await FileSystem.writeAsStringAsync(destUri, b64, {
           encoding: FileSystem.EncodingType.Base64,
         });
         success = true;
-        console.log("saveCoverToLibrary: base64 방식으로 저장 성공");
-      } catch (base64Error) {
-        console.warn("saveCoverToLibrary: base64 read/write도 실패:", base64Error.message);
+      } catch (e3) {
+        errors.push("base64: " + e3.message);
       }
     }
     
     if (!success) {
-      // 🔧 v3.5.3: 실패 원인 디버그
-      console.warn("saveCoverToLibrary: 모든 방법 실패, sourceUri:", sourceUri?.substring(0, 80));
-      return null;
+      return { error: errors.join(" | ") };
     }
     
-    // 복사 후 대상 파일 정보 확인
+    // 복사 후 확인
     const destInfo = await FileSystem.getInfoAsync(destUri);
     if (!destInfo.exists) {
-      console.warn("saveCoverToLibrary: 복사 후 대상 파일이 존재하지 않음");
-      return null;
+      return { error: "복사 후 파일 없음" };
     }
     
     return {
@@ -5482,8 +5482,7 @@ async function saveCoverToLibrary(sourceUri, compressionLevel = "light") {
       file_size: destInfo.size || 0,
     };
   } catch (e) {
-    console.warn("saveCoverToLibrary error:", e.message);
-    return null;
+    return { error: "전체: " + e.message };
   }
 }
 
@@ -15571,8 +15570,6 @@ function generateInsights(data) {
 /* =========================================================
    App
    ========================================================= */
-
-
 export default function App() {
   // 🎨 다크모드
   const systemColorScheme = useColorScheme();
@@ -17132,13 +17129,14 @@ export default function App() {
       const insertQueries = [];
       let successCount = 0;
 
+      const failErrors = []; // 🔧 v3.5.3: 실패 원인 수집
       for (let i = 0; i < assets.length; i++) {
         const asset = assets[i];
         setCoverLibraryProgress({ current: i + 1, total });
         
         // 파일 저장
         const saved = await saveCoverToLibrary(asset.uri, compressionLevel);
-        if (saved) {
+        if (saved && saved.id && !saved.error) {
           const id = saved.id;
           insertQueries.push({
             sql: `INSERT INTO cover_library (id, file_path, status, novel_id, original_name, width, height, file_size, created_at)
@@ -17156,6 +17154,11 @@ export default function App() {
             ],
           });
           successCount++;
+        } else {
+          // 실패 원인 수집 (최대 3개)
+          if (failErrors.length < 3) {
+            failErrors.push(`#${i+1}: ${saved?.error || "null반환"} (URI: ${asset.uri?.substring(0, 50)})`);
+          }
         }
       }
 
@@ -17171,9 +17174,9 @@ export default function App() {
       // 🔧 v3.4.6: 실패 개수도 함께 표시
       const failCount = total - successCount;
       if (failCount > 0) {
-        // 🔧 v3.5.3: 디버그 - 첫 번째 실패 URI 표시
-        const firstFailUri = assets.find((a, i) => i < 3)?.uri || "N/A";
-        Alert.alert("완료", `${successCount}개 성공, ${failCount}개 실패\n\n[디버그] 첫 URI: ${firstFailUri.substring(0, 60)}...\n\n실패한 이미지는 형식이 지원되지 않거나 접근할 수 없습니다.`);
+        // 🔧 v3.5.3: 구체적 에러 원인 표시
+        const errorDetail = failErrors.length > 0 ? "\n\n[에러 상세]\n" + failErrors.join("\n") : "";
+        Alert.alert("완료", `${successCount}개 성공, ${failCount}개 실패${errorDetail}`);
       } else {
         Alert.alert("완료", `${successCount}개의 표지를 라이브러리에 추가했습니다.`);
       }
