@@ -1602,7 +1602,7 @@ import * as SQLite from "expo-sqlite";
 import * as ImagePicker from "expo-image-picker";
 import * as NavigationBar from "expo-navigation-bar";
 // 🔧 v3.4.7: 새 FileSystem API가 불안정하여 레거시 API 사용
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 
 /* =========================================================
    SQLite (Expo SDK 54 호환)
