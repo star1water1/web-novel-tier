@@ -2,9 +2,76 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.5.3                                                                  ║
- * ║  최종 수정: 2025-02-13                                                        ║
+ * ║  버전: 3.5.4                                                                  ║
+ * ║  최종 수정: 2025-02-15                                                        ║
  * ║  총 라인 수: 약 30,000줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ * 
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🧠 v3.5.4 수정 사항 - 명언 쇼츠 탭 + 매칭 행동 분석 + 다중 버그 수정        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [변경 1] 💬 명언 갤러리 (쇼츠) 탭 신설                                       ║
+ * ║ • 새 탭 "💬명언" 추가 (screen: "quotes")                                     ║
+ * ║ • 한 장씩 넘기는 쇼츠 UX (◀▶ 네비게이션 + 프로그레스 바)                    ║
+ * ║ • 셔플/원래순서 토글, 전체 목록에서 직접 점프                                ║
+ * ║ • 티어 색상 배경, 장르 태그, 작품 표지 연동                                  ║
+ * ║ • quotesCards useMemo 최적화 (list 의존)                                     ║
+ * ║                                                                              ║
+ * ║ [변경 2] 💬 인상깊은 문장 다중 지원                                          ║
+ * ║ • memorable_quote 필드: 단일 문자열 → JSON 배열 하위호환                     ║
+ * ║ • parseQuotes() / serializeQuotes() 유틸리티 추가                            ║
+ * ║ • 수정 모달: 문장 추가/삭제 UI (editQuotes 배열 상태)                        ║
+ * ║ • 상세뷰, 수상탭: parseQuotes() 기반 다중 문장 렌더링                        ║
+ * ║                                                                              ║
+ * ║ [변경 3] 🧠 preference_patterns ↔ 취향분석 연동 (에이전트 인사이트)           ║
+ * ║ • analyzePreferences() async 변환 → preference_patterns 테이블 조회          ║
+ * ║ • matchBehavior 필드: 장르상성/태그파워/작가충성도/예측정확도                 ║
+ * ║ • generateBehaviorInsights(): 정적(보유) vs 동적(매칭) 불일치 발견            ║
+ * ║ • 비서 톤 자연어 인사이트 카드 (취향탭 "🧠 매칭 행동 분석" 섹션)             ║
+ * ║ • calculateBehaviorPredictionAccuracy(): 중복 함수명 충돌 해소               ║
+ * ║                                                                              ║
+ * ║ [변경 4] 🖼️ 표지 선택 모달 — 사용중 이미지 숨기기 옵션                        ║
+ * ║ • coverSelectFilter 상태 추가 ("all" | "unused")                              ║
+ * ║                                                                              ║
+ * ║ [변경 5] 📐 모달 초기 높이 이슈 일괄 수정                                    ║
+ * ║ • 원인: maxHeight만 설정 → ScrollView 레이아웃 계산 전 작게 열림             ║
+ * ║ • 해결 전략:                                                                 ║
+ * ║   - 콘텐츠 항상 초과 → height 고정 (maxHeight 제거)                          ║
+ * ║   - 콘텐츠 가변적  → minHeight 추가 (maxHeight 유지)                         ║
+ * ║ • height 고정 적용 (6개):                                                    ║
+ * ║   - 작품 수정 모달 (85%), 예정 작품 수정 (85%)                               ║
+ * ║   - 고급 검색 필터 (85%), 수상 설정 (90%)                                    ║
+ * ║   - 대진 기록 (85%, 비동기 로딩으로 가장 위험)                               ║
+ * ║   - 작품 비교 (90%)                                                          ║
+ * ║ • minHeight 추가 적용 (1개):                                                 ║
+ * ║   - 좌표계 편집 (min 60%, max 90%)                                           ║
+ * ║                                                                              ║
+ * ║ [변경 6] 🔍 v3.5.4 코드 검토 수정 (4건)                                      ║
+ * ║ • BUG: quotesCards에서 majorGenre가 raw JSON 표시                             ║
+ * ║   - 원인: n.major_genre가 '["판타지"]' 형태인데 직접 렌더링                   ║
+ * ║   - 수정: JSON.parse로 첫 번째 요소 추출 후 저장                             ║
+ * ║ • BUG: quotesShuffled 상태 동기화 누락 (과거 버그 #1329 동일 패턴)           ║
+ * ║   - 원인: 작품 삭제/수정 후 셔플 배열이 stale 데이터 유지                    ║
+ * ║   - 수정: useEffect로 quotesCards 변경 시 셔플 자동 초기화                   ║
+ * ║ • PERF: 상세뷰 parseQuotes 3회 반복 호출 → 1회로 최적화                      ║
+ * ║ • PERF: 수상탭 parseQuotes 2회 반복 호출 → 1회로 최적화                      ║
+ * ║ • UX: 수정 모달 상단 '빠른 저장' 버튼 추가 (표지 영역 바로 아래)             ║
+ * ║                                                                              ║
+ * ║ [변경 6] 📊 순위 탭 크래시 + 📷 플랫폼표지 크래시 + 🚪 모달 닫기 누락       ║
+ * ║ • keyExtractor null safety, platformCoversRef stale closure 수정             ║
+ * ║ • 수상/보충/비교 모달 × 버튼 추가                                            ║
+ * ║                                                                              ║
+ * ║ [버그 수정] calculateBehaviorPredictionAccuracy 컬럼명 오류                   ║
+ * ║ • predicted_winner → predicted_winner_id (choice_logs 스키마 일치)            ║
+ * ║                                                                              ║
+ * ║ [변경 7] 🚀 성능 최적화 (기능 무변경, 5건)                                   ║
+ * ║ • rankedEntries: screen !== "rank" 시 빈 배열 반환 (불필요한 정렬 방지)       ║
+ * ║ • analysisStats: screen !== "analysis" 시 계산 스킵                           ║
+ * ║ • quotesCards: getDisplayTier 2회→1회 캐시, majorGenre 사전 계산              ║
+ * ║ • 표지 선택 모달 FlatList: initialNumToRender/maxToRenderPerBatch 추가        ║
+ * ║ • 검토탭 S/A 카운트: list.filter 2회→단일 루프 1회                            ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -1596,13 +1663,14 @@ import {
   StatusBar,
   Platform,
   AppState,
+  Dimensions,
 } from "react-native";
 import { Image as ExpoImage } from "expo-image";
 import * as SQLite from "expo-sqlite";
 import * as ImagePicker from "expo-image-picker";
 import * as NavigationBar from "expo-navigation-bar";
 // 🔧 v3.4.7: 새 FileSystem API가 불안정하여 레거시 API 사용
-import * as FileSystem from "expo-file-system/legacy";
+import * as FileSystem from "expo-file-system/legacy"; // 🔧 v3.5.3: SDK 54 신규 API 불안정 → 레거시 API 사용
 
 /* =========================================================
    SQLite (Expo SDK 54 호환)
@@ -5381,6 +5449,32 @@ function getFirstGenre(value) {
 }
 
 /* =========================================================
+   💬 v3.5.4: 인상깊은 문장 다중 지원 유틸리티
+   - 하위 호환: 기존 단일 문자열 → ["문자열"] 변환
+   - 새 형식: JSON 배열 '["quote1","quote2"]'
+   ========================================================= */
+function parseQuotes(val) {
+  if (!val || typeof val !== "string" || !val.trim()) return [];
+  const trimmed = val.trim();
+  if (trimmed.startsWith("[")) {
+    try {
+      const arr = JSON.parse(trimmed);
+      if (Array.isArray(arr)) return arr.filter(q => typeof q === "string" && q.trim());
+      return [];
+    } catch { return [trimmed]; }
+  }
+  return [trimmed];
+}
+
+function serializeQuotes(arr) {
+  if (!arr || arr.length === 0) return "";
+  const cleaned = arr.filter(q => typeof q === "string" && q.trim()).map(q => q.trim());
+  if (cleaned.length === 0) return "";
+  if (cleaned.length === 1) return cleaned[0]; // 하위 호환: 1개면 단일 문자열
+  return JSON.stringify(cleaned);
+}
+
+/* =========================================================
    🖼️ 표지 라이브러리 시스템 (v3.4.7 - 레거시 FileSystem API)
    ========================================================= */
 
@@ -5610,15 +5704,17 @@ const Chip = memo(
   ),
   (prev, next) => prev.label === next.label && prev.active === next.active
 );
-const PrimaryButton = memo(({ title, onPress, style }) => (
+const PrimaryButton = memo(({ title, onPress, style, disabled }) => (
   <TouchableOpacity
     onPress={onPress}
+    disabled={disabled}
     style={[
       {
-        backgroundColor: C.primary,
+        backgroundColor: disabled ? "#9ca3af" : C.primary,
         borderRadius: 14,
         paddingVertical: 14,
         alignItems: "center",
+        opacity: disabled ? 0.6 : 1,
       },
       style,
     ]}
@@ -6725,6 +6821,7 @@ const TagSelectModal = memo(({
             borderTopLeftRadius: 16, 
             borderTopRightRadius: 16, 
             padding: 16, 
+            minHeight: "70%",
             maxHeight: "90%" 
           }}
         >
@@ -7581,7 +7678,7 @@ const SearchTagModal = memo(({
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} transparent>
       <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" }}>
         <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={onClose} />
-        <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: "85%", padding: 16 }}>
+        <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, height: "85%", padding: 16 }}>
           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>🔍 고급 검색 필터</Text>
             <TouchableOpacity onPress={onClose}>
@@ -10244,6 +10341,13 @@ const TagManagerModal = memo(({
               onPress={() => setActionModalOpen(false)}
             />
             <View style={{ backgroundColor: C.card, borderRadius: 20, padding: 20, width: "85%", maxWidth: 400 }}>
+              {/* 🔧 v3.5.4: 항상 보이는 닫기 버튼 */}
+              <TouchableOpacity 
+                onPress={() => setActionModalOpen(false)}
+                style={{ position: "absolute", top: 12, right: 12, padding: 8, zIndex: 10 }}
+              >
+                <Text style={{ fontSize: 22, color: C.sub, fontWeight: "300" }}>×</Text>
+              </TouchableOpacity>
               {selectedTag && (
                 <ScrollView style={{ maxHeight: 500 }} nestedScrollEnabled showsVerticalScrollIndicator={true}>
                   <Text style={{ fontSize: 18, fontWeight: "800", color: C.text, marginBottom: 4 }}>
@@ -11576,7 +11680,9 @@ const AwardsScreen = memo(({
                         </View>
                         
                         {/* 💬 인상깊은 문장 */}
-                        {novel.memorable_quote && novel.memorable_quote.trim() && (
+                        {(() => {
+                          const awardQuotes = parseQuotes(novel.memorable_quote);
+                          return awardQuotes.length > 0 ? (
                           <View style={{ 
                             marginTop: 14,
                             padding: 14, 
@@ -11591,10 +11697,11 @@ const AwardsScreen = memo(({
                               color: isDark ? "#fef3c7" : "#78350f",
                               lineHeight: 22,
                             }}>
-                              {`"${novel.memorable_quote.trim()}"`}
+                              {`"${awardQuotes[0]}"`}
                             </Text>
                           </View>
-                        )}
+                        ) : null;
+                        })()}
                       </View>
                     );
                   })
@@ -11944,11 +12051,17 @@ const AwardsScreen = memo(({
             borderTopLeftRadius: 20, 
             borderTopRightRadius: 20, 
             padding: 20, 
-            maxHeight: "90%" 
+            height: "90%" 
           }}>
             <Text style={{ fontSize: 20, fontWeight: "900", color: C.text, marginBottom: 16 }}>
               ⚙️ {awardSelectedYear}년 상 설정
             </Text>
+            <TouchableOpacity 
+              onPress={() => setSettingsModalOpen(false)} 
+              style={{ position: "absolute", top: 20, right: 20, padding: 8, zIndex: 10 }}
+            >
+              <Text style={{ fontSize: 24, color: C.sub }}>×</Text>
+            </TouchableOpacity>
             
             <ScrollView nestedScrollEnabled={true} showsVerticalScrollIndicator={true}>
               {/* 현재 상 목록 */}
@@ -12452,7 +12565,8 @@ const TasteAnalysisScreen = memo(({
       "basicStats", "majorGenre", "subGenre", "tagAnalysis", "comboAnalysis",
       "spectrum", "oppositeTag", "coOccurrence", "coordPref", "matchConsist",
       "simGroupConsist", "platform", "readPattern", "author", "matchAnalysis",
-      "trend", "hiddenPattern", "avoid", "recommend", "anomalies", "upsets", "factors"
+      "trend", "hiddenPattern", "avoid", "recommend", "anomalies", "upsets", "factors",
+      "matchBehavior"
     ];
     setExpandedSections(new Set(allKeys));
   }, []);
@@ -12577,7 +12691,7 @@ const TasteAnalysisScreen = memo(({
       console.log("Starting analysis, list length:", list?.length);
       const matches = await all("SELECT * FROM matches ORDER BY created_at ASC;");
       console.log("Matches loaded:", matches?.length);
-      const result = analyzePreferences(list, matches);
+      const result = await analyzePreferences(list, matches);
       console.log("Analysis complete:", result?.basicStats?.total);
       setAnalysis(result);
     } catch (e) {
@@ -14615,6 +14729,121 @@ const TasteAnalysisScreen = memo(({
           </Section>
         </TouchableOpacity>
       )}
+
+      {/* 🧠 v3.5.4: 매칭 행동 분석 — preference_patterns 기반 에이전트 인사이트 */}
+      {analysis?.matchBehavior && (
+        <TouchableOpacity onPress={() => toggleSection("matchBehavior")} activeOpacity={0.7}>
+          <Section title={`🧠 매칭 행동 분석 (${analysis.matchBehavior.totalPatterns}개 패턴)`}>
+            {isExpanded("matchBehavior") ? (
+              <>
+                {/* 인사이트 카드 */}
+                {analysis.matchBehavior.insights.map((ins, idx) => {
+                  const severityColors = {
+                    high: { bg: isDark ? "#312e81" : "#eef2ff", border: "#6366f1", text: isDark ? "#a5b4fc" : "#4338ca" },
+                    medium: { bg: isDark ? "#1e3a5f" : "#eff6ff", border: "#3b82f6", text: isDark ? "#93c5fd" : "#1d4ed8" },
+                    low: { bg: isDark ? "#374151" : "#f3f4f6", border: "#9ca3af", text: isDark ? "#d1d5db" : "#4b5563" },
+                  };
+                  const sc = severityColors[ins.severity] || severityColors.low;
+                  return (
+                    <View key={idx} style={{
+                      backgroundColor: sc.bg,
+                      borderLeftWidth: 4,
+                      borderLeftColor: sc.border,
+                      borderRadius: 12,
+                      padding: 14,
+                      marginBottom: 10,
+                    }}>
+                      <Text style={{ fontSize: 15, fontWeight: "800", color: sc.text, marginBottom: 4 }}>
+                        {ins.icon} {ins.title}
+                      </Text>
+                      <Text style={{ fontSize: 13, color: sc.text, lineHeight: 20 }}>
+                        {ins.body}
+                      </Text>
+                    </View>
+                  );
+                })}
+
+                {/* 장르 상성 TOP */}
+                {analysis.matchBehavior.genreMatchups.length > 0 && (
+                  <View style={{ marginTop: 8, marginBottom: 12 }}>
+                    <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>🆚 장르 상성 (매칭 기반)</Text>
+                    {analysis.matchBehavior.genreMatchups.map((m, i) => {
+                      const parts = m.matchup.split(" vs ");
+                      const isAWin = m.winRate >= 0.5;
+                      return (
+                        <View key={i} style={{ flexDirection: "row", alignItems: "center", marginBottom: 6 }}>
+                          <Text style={{ fontSize: 13, color: isAWin ? "#22c55e" : "#ef4444", fontWeight: "700", width: 45, textAlign: "right" }}>
+                            {(m.winRate * 100).toFixed(0)}%
+                          </Text>
+                          <View style={{ flex: 1, marginLeft: 8 }}>
+                            <View style={{ height: 6, backgroundColor: isDark ? "#374151" : "#e5e7eb", borderRadius: 3, overflow: "hidden" }}>
+                              <View style={{ width: `${m.winRate * 100}%`, height: "100%", backgroundColor: isAWin ? "#22c55e" : "#ef4444", borderRadius: 3 }} />
+                            </View>
+                          </View>
+                          <Text style={{ fontSize: 11, color: C.sub, marginLeft: 8, width: 100 }} numberOfLines={1}>
+                            {m.matchup}
+                          </Text>
+                          <Text style={{ fontSize: 10, color: C.sub, marginLeft: 4 }}>({m.sample}전)</Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+
+                {/* 태그 파워 TOP */}
+                {analysis.matchBehavior.tagPower.length > 0 && (
+                  <View style={{ marginBottom: 12 }}>
+                    <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>⚡ 태그별 매칭 승률</Text>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                      {analysis.matchBehavior.tagPower.map((t, i) => {
+                        const hue = t.winRate >= 0.6 ? "#22c55e" : t.winRate >= 0.5 ? "#3b82f6" : "#ef4444";
+                        return (
+                          <View key={i} style={{
+                            backgroundColor: isDark ? "#1f2937" : "#f9fafb",
+                            borderWidth: 1,
+                            borderColor: hue,
+                            borderRadius: 999,
+                            paddingHorizontal: 10,
+                            paddingVertical: 5,
+                            flexDirection: "row",
+                            alignItems: "center",
+                          }}>
+                            <Text style={{ fontSize: 12, fontWeight: "700", color: hue }}>
+                              {(t.winRate * 100).toFixed(0)}%
+                            </Text>
+                            <Text style={{ fontSize: 12, color: C.text, marginLeft: 4 }}>{t.tag}</Text>
+                            <Text style={{ fontSize: 10, color: C.sub, marginLeft: 2 }}>({t.sample})</Text>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  </View>
+                )}
+
+                {/* 작가 충성도 */}
+                {analysis.matchBehavior.authorLoyalty.length > 0 && (
+                  <View style={{ marginBottom: 8 }}>
+                    <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>✍️ 작가별 매칭 선택률</Text>
+                    {analysis.matchBehavior.authorLoyalty.map((a, i) => (
+                      <View key={i} style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
+                        <Text style={{ fontSize: 13, color: C.text, flex: 1 }} numberOfLines={1}>{a.author}</Text>
+                        <Text style={{ fontSize: 13, fontWeight: "700", color: a.winRate >= 0.6 ? "#22c55e" : C.text }}>
+                          {(a.winRate * 100).toFixed(0)}%
+                        </Text>
+                        <Text style={{ fontSize: 10, color: C.sub, marginLeft: 4, width: 30 }}>({a.sample}전)</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </>
+            ) : (
+              <Text style={{ color: C.sub, fontSize: 12 }}>
+                {analysis.matchBehavior.insights.length}개 인사이트 발견 (터치해서 상세 보기)
+              </Text>
+            )}
+          </Section>
+        </TouchableOpacity>
+      )}
     </>
   );
 });
@@ -14864,7 +15093,7 @@ const stdDev = (arr) => {
 };
 
 // 메인 분석 함수
-function analyzePreferences(novels, matches) {
+async function analyzePreferences(novels, matches) {
   try {
     if (!novels || novels.length === 0) {
       return { error: "분석할 작품이 없습니다.", novels: 0 };
@@ -15447,6 +15676,79 @@ function analyzePreferences(novels, matches) {
     matchAnalysis, trendAnalysis, anomalies, reliable
   });
 
+  // 15. 🧠 v3.5.4: 매칭 행동 분석 (preference_patterns 연동)
+  let matchBehavior = null;
+  try {
+    const patterns = await all(`SELECT * FROM preference_patterns WHERE sample_size >= 5 ORDER BY significance DESC`);
+    
+    if (patterns && patterns.length > 0) {
+      // 장르 상성 TOP 5
+      const genreMatchups = patterns
+        .filter(p => p.category === "genre_matchup" && p.sample_size >= 8)
+        .sort((a, b) => Math.abs((b.win_rate || 0.5) - 0.5) - Math.abs((a.win_rate || 0.5) - 0.5))
+        .slice(0, 5)
+        .map(p => ({
+          matchup: p.pattern_key,
+          winRate: p.win_rate || 0.5,
+          sample: p.sample_size,
+          significance: p.significance || 0,
+        }));
+
+      // 장르 선호도 (동적)
+      const genreAffinity = patterns
+        .filter(p => p.category === "genre_affinity" && p.sample_size >= 5)
+        .sort((a, b) => (b.win_rate || 0) - (a.win_rate || 0))
+        .slice(0, 8)
+        .map(p => ({
+          genre: p.pattern_key.replace("genre:", ""),
+          winRate: p.win_rate || 0.5,
+          sample: p.sample_size,
+        }));
+
+      // 태그 파워 TOP 10
+      const tagPower = patterns
+        .filter(p => p.category === "tag_power" && p.sample_size >= 8)
+        .sort((a, b) => (b.win_rate || 0) - (a.win_rate || 0))
+        .slice(0, 10)
+        .map(p => ({
+          tag: p.pattern_key.replace("tag:", ""),
+          winRate: p.win_rate || 0.5,
+          sample: p.sample_size,
+        }));
+
+      // 작가 충성도 TOP 5
+      const authorLoyalty = patterns
+        .filter(p => p.category === "author_loyalty" && p.sample_size >= 5)
+        .sort((a, b) => (b.win_rate || 0) - (a.win_rate || 0))
+        .slice(0, 5)
+        .map(p => ({
+          author: p.pattern_key.replace("author:", ""),
+          winRate: p.win_rate || 0.5,
+          sample: p.sample_size,
+        }));
+
+      // 예측 정확도
+      const predAcc = await calculateBehaviorPredictionAccuracy(30);
+
+      // 🧠 핵심: 정적 vs 동적 불일치 인사이트 생성
+      const behaviorInsights = generateBehaviorInsights(
+        majorGenreAnalysis, genreAffinity, tagAnalysis, tagPower, loyalAuthors, authorLoyalty, predAcc
+      );
+
+      matchBehavior = {
+        genreMatchups,
+        genreAffinity,
+        tagPower,
+        authorLoyalty,
+        predictionAccuracy: predAcc,
+        insights: behaviorInsights,
+        totalPatterns: patterns.length,
+      };
+    }
+  } catch (mbErr) {
+    console.warn("[analyzePreferences] matchBehavior 분석 오류:", mbErr.message);
+  }
+
   return {
     timestamp: now,
     basicStats,
@@ -15461,12 +15763,143 @@ function analyzePreferences(novels, matches) {
     trendAnalysis,
     anomalies,
     spectrumAnalysis, // 🎯 v3.1.2: 스펙트럼 분석
+    matchBehavior, // 🧠 v3.5.4: 매칭 행동 분석
     insights,
   };
   } catch (e) {
     console.warn("analyzePreferences error:", e);
     return { error: "분석 처리 중 오류: " + (e.message || e.toString()), novels: novels?.length || 0 };
   }
+}
+
+/* ================================================================
+   🧠 v3.5.4: 매칭 행동 인사이트 생성 (preference_patterns → 자연어)
+   - 정적 분석(보유 작품)과 동적 분석(매칭 선택)의 불일치를 발견
+   - 비서 톤으로 자연어 인사이트 카드 생성
+   ================================================================ */
+async function calculateBehaviorPredictionAccuracy(recentN = 30) {
+  try {
+    const logs = await all(
+      `SELECT predicted_winner_id, winner_id, was_correct FROM choice_logs 
+       WHERE predicted_winner_id IS NOT NULL AND was_correct IS NOT NULL 
+       ORDER BY created_at DESC LIMIT ?;`, [recentN]
+    );
+    if (!logs || logs.length < 10) return null;
+    const correct = logs.filter(l => l.was_correct === 1).length;
+    return { accuracy: correct / logs.length, sample: logs.length };
+  } catch { return null; }
+}
+
+function generateBehaviorInsights(staticGenres, dynamicGenres, staticTags, dynamicTags, staticAuthors, dynamicAuthors, predAcc) {
+  const insights = [];
+
+  // 1) 장르: 정적 TOP3 vs 동적 TOP3 비교
+  if (staticGenres.length >= 2 && dynamicGenres.length >= 2) {
+    const staticTop = staticGenres[0]?.genre;
+    const dynamicTop = dynamicGenres[0]?.genre;
+    const dynamicWinRate = dynamicGenres[0]?.winRate;
+    
+    if (staticTop && dynamicTop && staticTop !== dynamicTop && dynamicWinRate > 0.55) {
+      insights.push({
+        type: "genre_gap",
+        icon: "🔄",
+        title: "보유 장르와 선택 장르가 다릅니다",
+        body: `보유 작품 수 기준으로는 '${staticTop}'이 가장 많지만, 매칭에서는 '${dynamicTop}'을 ${(dynamicWinRate * 100).toFixed(0)}% 확률로 선택하고 있습니다.`,
+        severity: "high",
+      });
+    }
+    
+    // 동적에서 높은데 정적에서 낮은 장르 (숨겨진 선호)
+    for (const dg of dynamicGenres.slice(0, 5)) {
+      if (dg.winRate < 0.58) continue;
+      const staticMatch = staticGenres.find(sg => sg.genre === dg.genre);
+      const staticRank = staticMatch ? staticGenres.indexOf(staticMatch) : 999;
+      if (staticRank > 4 && dg.sample >= 8) {
+        insights.push({
+          type: "hidden_genre",
+          icon: "💎",
+          title: `'${dg.genre}' — 숨겨진 선호 장르`,
+          body: `보유량은 적지만, 매칭에서 ${(dg.winRate * 100).toFixed(0)}% 승률(${dg.sample}전)로 꾸준히 선택하는 장르입니다.`,
+          severity: "medium",
+        });
+        break; // 1개만
+      }
+    }
+  }
+
+  // 2) 태그 파워: 동적 TOP 태그 인사이트
+  if (dynamicTags.length >= 3) {
+    const topTag = dynamicTags[0];
+    if (topTag.winRate >= 0.65 && topTag.sample >= 10) {
+      insights.push({
+        type: "power_tag",
+        icon: "⚡",
+        title: `'${topTag.tag}' 태그가 압도적 선호입니다`,
+        body: `이 태그가 있는 작품을 매칭에서 ${(topTag.winRate * 100).toFixed(0)}% 확률로 선택합니다(${topTag.sample}전). 작품 선택의 핵심 요인으로 보입니다.`,
+        severity: "high",
+      });
+    }
+    
+    // 정적 빈도 높은데 동적 승률 낮은 태그 (과대평가)
+    for (const st of staticTags.slice(0, 8)) {
+      const dynMatch = dynamicTags.find(dt => dt.tag === (st.tag || st.genre));
+      if (dynMatch && dynMatch.winRate < 0.40 && dynMatch.sample >= 8) {
+        insights.push({
+          type: "overrated_tag",
+          icon: "📉",
+          title: `'${st.tag || st.genre}' — 생각보다 덜 선호`,
+          body: `많은 작품에 달려 있지만, 매칭에서의 선택률은 ${(dynMatch.winRate * 100).toFixed(0)}%에 불과합니다.`,
+          severity: "medium",
+        });
+        break;
+      }
+    }
+  }
+
+  // 3) 작가 충성도
+  if (dynamicAuthors.length >= 1 && dynamicAuthors[0].winRate >= 0.70 && dynamicAuthors[0].sample >= 5) {
+    const topAuthor = dynamicAuthors[0];
+    insights.push({
+      type: "loyal_author",
+      icon: "✍️",
+      title: `'${topAuthor.author}' 작가에 대한 충성도가 매우 높습니다`,
+      body: `이 작가의 작품이 매칭에 등장하면 ${(topAuthor.winRate * 100).toFixed(0)}% 확률로 선택합니다(${topAuthor.sample}전).`,
+      severity: "medium",
+    });
+  }
+
+  // 4) 예측 정확도
+  if (predAcc && predAcc.accuracy > 0) {
+    const accPct = (predAcc.accuracy * 100).toFixed(1);
+    let accMsg;
+    if (predAcc.accuracy >= 0.70) {
+      accMsg = `시스템 예측 정확도가 ${accPct}%로 높은 수준입니다. 취향 패턴이 일관적입니다.`;
+    } else if (predAcc.accuracy >= 0.55) {
+      accMsg = `시스템 예측 정확도가 ${accPct}%입니다. 취향이 다양하거나 상황에 따라 달라지는 경향이 있습니다.`;
+    } else {
+      accMsg = `시스템 예측 정확도가 ${accPct}%로 낮습니다. 예측하기 어려운 독특한 취향을 가지고 계십니다.`;
+    }
+    insights.push({
+      type: "prediction",
+      icon: "🎯",
+      title: `예측 정확도: ${accPct}%`,
+      body: accMsg + ` (최근 ${predAcc.sample}전 기준)`,
+      severity: predAcc.accuracy >= 0.65 ? "low" : "medium",
+    });
+  }
+
+  // 5) 패턴 부족 시
+  if (insights.length === 0) {
+    insights.push({
+      type: "insufficient",
+      icon: "📊",
+      title: "아직 충분한 매칭 데이터가 없습니다",
+      body: "매칭을 더 진행하면 '보유 작품 취향'과 '실제 선택 취향'의 차이를 분석해드립니다.",
+      severity: "low",
+    });
+  }
+
+  return insights;
 }
 
 // 인사이트 생성
@@ -15588,6 +16021,10 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
 
   const [screen, setScreen] = useState("home");
+  
+  // 💬 v3.5.4: 명언 쇼츠 상태
+  const [quotesIdx, setQuotesIdx] = useState(0);
+  const [quotesShuffled, setQuotesShuffled] = useState(null); // null=원본순, array=셔플순
   const [settingsSubTab, setSettingsSubTab] = useState("app"); // 🆕 Phase 2: 설정 서브탭 ("app" | "tags" | "analysis" | "backup")
   const [list, setList] = useState([]);
 
@@ -15687,7 +16124,7 @@ export default function App() {
   // 📚 v3.0.4: 다회독 카운트 (편집)
   const [editRereadCount, setEditRereadCount] = useState("1");
   // 💬 인상깊은 문장 (편집)
-  const [editMemorableQuote, setEditMemorableQuote] = useState("");
+  const [editQuotes, setEditQuotes] = useState([]); // 💬 v3.5.4: 다중 인상깊은 문장
 
   // ★ 수상 편집용 상태
   const [editAwards, setEditAwards] = useState([]); // [{year: "2024", type: "grand"}, ...]
@@ -15871,6 +16308,7 @@ export default function App() {
   const [coverLibraryLoading, setCoverLibraryLoading] = useState(false); // 로딩 상태 (대량 처리용)
   const [coverLibraryProgress, setCoverLibraryProgress] = useState({ current: 0, total: 0 }); // 진행률
   const [coverSelectModalOpen, setCoverSelectModalOpen] = useState(false); // 표지 선택 모달 (인앱 DB에서 선택)
+  const [coverSelectFilter, setCoverSelectFilter] = useState("all"); // 🖼️ v3.5.4: "all" | "unused" (사용중 숨기기)
   const [coverSelectTarget, setCoverSelectTarget] = useState(null); // "new" | "edit" | "planned" | "plannedEdit"
   const [coverLibrarySize, setCoverLibrarySize] = useState(0); // 전체 용량
 
@@ -15924,9 +16362,11 @@ export default function App() {
 
   // 🆕 플랫폼별 기본 표지 (메인 초기화에서 로드됨)
   const [platformCovers, setPlatformCovers] = useState({});
+  const platformCoversRef = useRef(platformCovers); // 🔧 v3.5.4: stale closure 방지
 
   const savePlatformCovers = async (covers) => {
     setPlatformCovers(covers);
+    platformCoversRef.current = covers; // 🔧 v3.5.4: ref 동기화
     await setAppMeta("platform_covers", covers);
   };
 
@@ -16032,7 +16472,52 @@ export default function App() {
       return [...prev, id];
     });
   }, []);
-  const compareNovels = useMemo(() => compareIds.map(id => list.find(n => n.id === id)).filter(Boolean), [compareIds, list]);
+  // 🚀 v3.5.4 최적화: id→novel O(1) 조회 맵 (list.find 11곳 → Map.get 교체)
+  const listMap = useMemo(() => {
+    const map = new Map();
+    for (const n of list) map.set(n.id, n);
+    return map;
+  }, [list]);
+  
+  const compareNovels = useMemo(() => compareIds.map(id => listMap.get(id)).filter(Boolean), [compareIds, listMap]);
+  
+  // 💬 v3.5.4: 명언 카드 데이터 (list 변경 시 재계산)
+  const quotesCards = useMemo(() => {
+    const cards = [];
+    for (const n of (list || [])) {
+      const quotes = parseQuotes(n.memorable_quote);
+      if (quotes.length === 0) continue; // 🚀 빈 명언 작품 스킵
+      const t = getDisplayTier(n); // 🚀 v3.5.4: 1회 계산 캐시
+      const tc = getTierColor(t);
+      const mg = (() => { try { const mg = JSON.parse(n.major_genre || "[]"); return Array.isArray(mg) ? mg[0] || "" : mg || ""; } catch { return n.major_genre || ""; } })();
+      for (let qi = 0; qi < quotes.length; qi++) {
+        cards.push({
+          id: `${n.id}-q${qi}`,
+          novelId: n.id,
+          quote: quotes[qi],
+          title: n.title,
+          author: n.author || "작가 미상",
+          tier: t,
+          tierColor: tc,
+          rating: Number(n.rating) || 1500,
+          coverImage: n.cover_image || null,
+          platforms: n.platforms,
+          rereadCount: n.reread_count || 1,
+          majorGenre: mg,
+        });
+      }
+    }
+    return cards;
+  }, [list]);
+
+  // 💬 v3.5.4: quotesShuffled stale 방지 (작품 삭제/수정 시 셔플 초기화)
+  // 과거 버그 [상태 동기화 버그] v3.5.0과 동일 패턴
+  useEffect(() => {
+    if (quotesShuffled) {
+      setQuotesShuffled(null);
+      setQuotesIdx(0);
+    }
+  }, [quotesCards]);
 
   /* =========================================================
      🆕 고급 필터 함수
@@ -16692,7 +17177,7 @@ export default function App() {
                   const similarIds = JSON.parse(planned.similar_novels);
                   if (Array.isArray(similarIds) && similarIds.length > 0) {
                     const similarTitles = similarIds
-                      .map(sid => list.find(n => n.id === sid)?.title)
+                      .map(sid => listMap.get(sid)?.title)
                       .filter(Boolean);
                     if (similarTitles.length > 0) {
                       noteAdditions.push(`[비슷한 작품] ${similarTitles.join(", ")}`);
@@ -19400,7 +19885,7 @@ export default function App() {
     setEditRereadCount(String(n.reread_count || 1));
     
     // 💬 인상깊은 문장 로드
-    setEditMemorableQuote(n.memorable_quote || "");
+    setEditQuotes(parseQuotes(n.memorable_quote)); // 💬 v3.5.4: 다중 문장 파싱
 
     // ★ awards JSON → 편집용 배열로 파싱
     let parsed = [];
@@ -19511,7 +19996,7 @@ export default function App() {
           newCreatedAt,
           Math.max(1, Number(editRereadCount) || 1), // 📚 다회독 카운트
           n.tag_data || "", // 🏷️ v5.0
-          editMemorableQuote.trim(), // 💬 인상깊은 문장
+          serializeQuotes(editQuotes), // 💬 v3.5.4: 인상깊은 문장 (다중 지원)
           n.aliases || "", // 🏷️ 작품 별명 유지
           n.id,
         ]
@@ -20268,10 +20753,10 @@ export default function App() {
   // 🆕 v3.4.1 #12: 최근 편집한 작품 목록
   const recentlyEditedNovels = useMemo(() => {
     return recentlyEditedIds
-      .map(id => list.find(n => n.id === id))
+      .map(id => listMap.get(id))
       .filter(Boolean)
       .slice(0, 5);
-  }, [recentlyEditedIds, list]);
+  }, [recentlyEditedIds, listMap]);
 
   const homeFiltered = useMemo(() => {
     const q = homeQuery.toLowerCase().trim();
@@ -20400,6 +20885,7 @@ export default function App() {
 
   // 🔹 순위 탭용: 전역 순위 + 검색 + 티어 필터
   const rankedEntries = useMemo(() => {
+    if (screen !== "rank") return []; // 🚀 v3.5.4: 순위탭 아니면 스킵
     if (!list || list.length === 0) return [];
 
     // 1) 실제 티어 우선 → 같은 티어 내에서 레이팅 내림차순 → 등록 순 → 제목 순
@@ -20460,13 +20946,14 @@ export default function App() {
     }
 
     return result;
-  }, [list, rankQuery, rankTier]);
+  }, [list, rankQuery, rankTier, screen]);
 
   // 🆕 분석 통계 (useMemo로 캐싱)
+  // 🚀 v3.5.4: 분석 탭에서만 계산 (다른 탭에서 불필요한 전체 순회 방지)
   const analysisStats = useMemo(() => {
-    if (!list || list.length === 0) {
+    if (screen !== "analysis" || !list || list.length === 0) {
       return {
-        total: 0,
+        total: list?.length || 0,
         avg: 0,
         byTier: { S: 0, A: 0, "B+": 0, B: 0, "B-": 0, C: 0 },
         byPlat: {},
@@ -20542,7 +21029,7 @@ export default function App() {
       sRatio: total > 0 ? (byTier.S / total * 100).toFixed(1) : 0,
       aRatio: total > 0 ? (byTier.A / total * 100).toFixed(1) : 0,
     };
-  }, [list]);
+  }, [list, screen]);
 
   // 🔧 v3.5.3: selectedIds 변경 시 ref 동기화 (stale closure 완전 방지)
   useEffect(() => {
@@ -21958,6 +22445,7 @@ async function importJSON() {
         ["분석", "analysis"],
         ["대량", "bulk"],
         ["🖼️표지", "covers"], // 🆕 v3.4.5
+        ["💬명언", "quotes"], // 🆕 v3.5.4
         ["설정", "settings"],
       ].map(([label, key]) => {
         // 뱃지 표시 여부 계산
@@ -21965,17 +22453,20 @@ async function importJSON() {
           (key === "review" && reviewCount > 0) || 
           (key === "supplement" && supplementCount > 0) ||
           (key === "recent" && recentChangesCount > 0) ||
-          (key === "planned" && plannedCount > 0);
+          (key === "planned" && plannedCount > 0) ||
+          (key === "quotes" && quotesCards.length > 0);
         const badgeCount = 
           key === "review" ? reviewCount : 
           key === "supplement" ? supplementCount : 
           key === "recent" ? recentChangesCount : 
-          key === "planned" ? plannedCount : 0;
+          key === "planned" ? plannedCount : 
+          key === "quotes" ? quotesCards.length : 0;
         const badgeColor = 
           key === "review" ? "#f59e0b" : 
           key === "supplement" ? "#3b82f6" :
           key === "recent" ? "#10b981" : 
-          key === "planned" ? "#8b5cf6" : "#3b82f6";
+          key === "planned" ? "#8b5cf6" : 
+          key === "quotes" ? "#f59e0b" : "#3b82f6";
         
         return (
         <TouchableOpacity
@@ -22786,26 +23277,33 @@ async function importJSON() {
                 </View>
               )}
 
-              {/* 💬 인상깊은 문장 (본목록만) */}
-              {!isPlanned && n.memorable_quote && n.memorable_quote.trim() && (
-                <View style={{ 
-                  backgroundColor: isDark ? "#1e293b" : "#fef3c7", 
-                  padding: 14, 
-                  borderRadius: 12, 
-                  marginBottom: 12,
-                  borderLeftWidth: 4,
-                  borderLeftColor: isDark ? "#fbbf24" : "#f59e0b",
-                }}>
-                  <Text style={{ 
-                    fontStyle: "italic", 
-                    fontSize: 15, 
-                    color: isDark ? "#fef3c7" : "#78350f",
-                    lineHeight: 22,
-                  }}>
-                    {`"${n.memorable_quote.trim()}"`}
-                  </Text>
+              {/* 💬 인상깊은 문장 (본목록만, 다중 지원) */}
+              {!isPlanned && (() => {
+                const parsedQuotes = parseQuotes(n.memorable_quote);
+                return parsedQuotes.length > 0 ? (
+                <View style={{ marginBottom: 12 }}>
+                  {parsedQuotes.map((quote, qi) => (
+                    <View key={`q-${qi}`} style={{ 
+                      backgroundColor: isDark ? "#1e293b" : "#fef3c7", 
+                      padding: 14, 
+                      borderRadius: 12, 
+                      marginBottom: qi < parsedQuotes.length - 1 ? 8 : 0,
+                      borderLeftWidth: 4,
+                      borderLeftColor: isDark ? "#fbbf24" : "#f59e0b",
+                    }}>
+                      <Text style={{ 
+                        fontStyle: "italic", 
+                        fontSize: 15, 
+                        color: isDark ? "#fef3c7" : "#78350f",
+                        lineHeight: 22,
+                      }}>
+                        {`"${quote}"`}
+                      </Text>
+                    </View>
+                  ))}
                 </View>
-              )}
+              ) : null;
+              })()}
 
               {/* 상세 정보 박스 */}
               <View style={{ backgroundColor: isDark ? "#1e293b" : "#f1f5f9", padding: 12, borderRadius: 10, marginBottom: 10 }}>
@@ -22901,7 +23399,7 @@ async function importJSON() {
         </Text>
         <View style={{ gap: 4 }}>
           {recoHistory.slice(0, 5).map((h, idx) => {
-            const novel = list.find(n => n.id === h.novelId) || (plannedList || []).find(p => p.id === h.novelId);
+            const novel = listMap.get(h.novelId) || (plannedList || []).find(p => p.id === h.novelId);
             const dateLabel = (() => {
               try {
                 const d = new Date(h.pickedAt);
@@ -22973,14 +23471,15 @@ async function importJSON() {
             <Section title={`순위 목록 (총 ${rankedEntries.length}작)`}>
               <FlatList
                 data={rankedEntries}
-                keyExtractor={({ item }) => item.id}
+                keyExtractor={(entry, index) => String(entry?.item?.id || `rank-${index}`)}
                 initialNumToRender={8}
                 maxToRenderPerBatch={5}
                 windowSize={3}
                 removeClippedSubviews={true}
                 scrollEnabled={false}
                 renderItem={({ item: entry }) => {
-                  const { item, rank } = entry;
+                  const { item, rank } = entry || {};
+                  if (!item) return null;
                   const actualTier = getDisplayTier(item);
                   const c = getTierColor(actualTier);
                   const winRate = getWinRate(item.wins, item.losses);
@@ -23034,7 +23533,7 @@ async function importJSON() {
                           <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 6 }}>
                             <ActualTierTag novel={item} />
                             <Text style={{ marginLeft: 8, fontWeight: "800", color: c, fontSize: 16 }}>
-                              {item.rating.toFixed(1)}
+                              {(Number(item.rating) || 1500).toFixed(1)}
                             </Text>
                             <Text style={{ marginLeft: 8, color: C.sub, fontSize: 13 }}>
                               승률 <Text style={{ fontWeight: "700", color: C.text }}>{winRate}%</Text>
@@ -23753,7 +24252,7 @@ async function importJSON() {
                             {/* 🔧 v3.4.4: 표지 이미지 추가 */}
                             {(() => {
                               const novel = novelGroup.novelId 
-                                ? list.find(n => n.id === novelGroup.novelId) 
+                                ? listMap.get(novelGroup.novelId) 
                                 : null;
                               return novel ? (
                                 <CoverImage
@@ -23901,7 +24400,7 @@ async function importJSON() {
             theme={C}
             onGiveAward={async (novelId, awardId, year) => {
               // 수상 부여
-              const novel = list.find(n => n.id === novelId);
+              const novel = listMap.get(novelId);
               if (!novel) return;
               
               let currentAwards = [];
@@ -23936,7 +24435,7 @@ async function importJSON() {
             }}
             onRemoveAward={async (novelId, awardId, year) => {
               // 수상 제거
-              const novel = list.find(n => n.id === novelId);
+              const novel = listMap.get(novelId);
               if (!novel) return;
               
               let currentAwards = [];
@@ -24891,8 +25390,13 @@ async function importJSON() {
             {/* 현황 요약 */}
             <Section title="현황">
               {(() => {
-                const sCount = list.filter(n => getDisplayTier(n) === 'S').length;
-                const aCount = list.filter(n => getDisplayTier(n) === 'A').length;
+                // 🚀 v3.5.4: 2회 전체 순회 → 1회 단일 루프
+                let sCount = 0, aCount = 0;
+                for (const n of list) {
+                  const t = getDisplayTier(n);
+                  if (t === 'S') sCount++;
+                  else if (t === 'A') aCount++;
+                }
                 const total = list.length;
                 const sPercent = total > 0 ? ((sCount / total) * 100).toFixed(1) : 0;
                 const aPercent = total > 0 ? ((aCount / total) * 100).toFixed(1) : 0;
@@ -25338,8 +25842,15 @@ async function importJSON() {
             {/* 현재 S/A 작품 목록 */}
             <Section title="현재 S/A 작품">
               {(() => {
-                const sTier = list.filter(n => getDisplayTier(n) === 'S').sort((a, b) => b.rating - a.rating);
-                const aTier = list.filter(n => getDisplayTier(n) === 'A').sort((a, b) => b.rating - a.rating);
+                // 🚀 v3.5.4: 2회 전체 순회 → 1회 단일 루프 후 정렬
+                const sTier = [], aTier = [];
+                for (const n of list) {
+                  const t = getDisplayTier(n);
+                  if (t === 'S') sTier.push(n);
+                  else if (t === 'A') aTier.push(n);
+                }
+                sTier.sort((a, b) => b.rating - a.rating);
+                aTier.sort((a, b) => b.rating - a.rating);
                 
                 return (
                   <View>
@@ -26285,7 +26796,7 @@ async function importJSON() {
                     columnWrapperStyle={{ gap: 8, marginBottom: 8 }}
                     renderItem={({ item }) => {
                       const isUsed = item.status === "used";
-                      const novel = isUsed ? list.find(n => n.id === item.novel_id) : null;
+                      const novel = isUsed ? listMap.get(item.novel_id) : null;
                       
                       return (
                         <TouchableOpacity
@@ -26356,6 +26867,316 @@ async function importJSON() {
             </Section>
           </>
         )}
+
+        {/* 💬 QUOTES - v3.5.4 명언 쇼츠 */}
+        {screen === "quotes" && (() => {
+          const displayCards = quotesShuffled || quotesCards;
+          const total = displayCards.length;
+          const safeIdx = Math.min(quotesIdx, Math.max(0, total - 1));
+          const card = total > 0 ? displayCards[safeIdx] : null;
+          
+          const goPrev = () => setQuotesIdx(i => Math.max(0, i - 1));
+          const goNext = () => setQuotesIdx(i => Math.min(total - 1, i + 1));
+          const doShuffle = () => {
+            const arr = [...quotesCards];
+            for (let i = arr.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [arr[i], arr[j]] = [arr[j], arr[i]];
+            }
+            setQuotesShuffled(arr);
+            setQuotesIdx(0);
+          };
+          const resetOrder = () => {
+            setQuotesShuffled(null);
+            setQuotesIdx(0);
+          };
+          
+          const CARD_H = Math.max(Dimensions.get("window").height * 0.62, 420);
+          
+          return (
+          <>
+            <H>💬 명언 갤러리</H>
+            
+            {total === 0 ? (
+              <View style={{ 
+                padding: 40, 
+                alignItems: "center",
+                backgroundColor: C.card,
+                borderRadius: 16,
+              }}>
+                <Text style={{ fontSize: 48, marginBottom: 16 }}>💬</Text>
+                <Text style={{ color: C.text, fontWeight: "700", fontSize: 16, textAlign: "center", marginBottom: 8 }}>
+                  아직 등록된 명언이 없습니다
+                </Text>
+                <Text style={{ color: C.sub, fontSize: 13, textAlign: "center", lineHeight: 20 }}>
+                  작품 수정에서 "인상깊은 문장"을 추가하면{"\n"}
+                  이곳에서 쇼츠처럼 넘기며 감상할 수 있습니다.
+                </Text>
+              </View>
+            ) : (
+              <>
+                {/* 상단 컨트롤 바 */}
+                <View style={{ 
+                  flexDirection: "row", 
+                  justifyContent: "space-between", 
+                  alignItems: "center", 
+                  marginBottom: 14,
+                  backgroundColor: C.card,
+                  padding: 12,
+                  borderRadius: 12,
+                }}>
+                  <Text style={{ color: C.sub, fontSize: 13 }}>
+                    총 {total}개 · {new Set(quotesCards.map(q => q.novelId)).size}작품
+                  </Text>
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    <TouchableOpacity
+                      onPress={quotesShuffled ? resetOrder : doShuffle}
+                      style={{ 
+                        backgroundColor: quotesShuffled ? C.primary : C.chip, 
+                        paddingHorizontal: 12, 
+                        paddingVertical: 6, 
+                        borderRadius: 8,
+                        flexDirection: "row",
+                        alignItems: "center",
+                      }}
+                    >
+                      <Text style={{ color: quotesShuffled ? "#fff" : C.text, fontWeight: "700", fontSize: 13 }}>
+                        🔀 {quotesShuffled ? "원래순서" : "셔플"}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+                
+                {/* ═══ 메인 카드 (쇼츠) ═══ */}
+                {card && (() => {
+                  const tierBg = card.tierColor + "15";
+                  const isLong = card.quote.length > 100;
+                  const isMedium = card.quote.length > 50;
+                  
+                  return (
+                    <View style={{
+                      height: CARD_H,
+                      backgroundColor: C.card,
+                      borderRadius: 24,
+                      overflow: "hidden",
+                      borderWidth: 2,
+                      borderColor: card.tierColor + "40",
+                      marginBottom: 14,
+                    }}>
+                      {/* 배경 장식 */}
+                      <View style={{
+                        position: "absolute",
+                        top: 0, left: 0, right: 0,
+                        height: "45%",
+                        backgroundColor: tierBg,
+                        borderBottomLeftRadius: 120,
+                        borderBottomRightRadius: 120,
+                      }} />
+                      
+                      {/* 상단: 카운터 + 티어 + 장르 */}
+                      <View style={{ 
+                        flexDirection: "row", 
+                        justifyContent: "space-between", 
+                        alignItems: "center",
+                        padding: 18,
+                        paddingBottom: 8,
+                      }}>
+                        <Text style={{ color: C.sub, fontSize: 13, fontWeight: "600" }}>
+                          {safeIdx + 1} / {total}
+                        </Text>
+                        <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
+                          {card.majorGenre ? (
+                            <View style={{
+                              backgroundColor: C.chip,
+                              paddingHorizontal: 10,
+                              paddingVertical: 4,
+                              borderRadius: 999,
+                            }}>
+                              <Text style={{ color: C.text, fontSize: 11, fontWeight: "600" }}>
+                                {card.majorGenre}
+                              </Text>
+                            </View>
+                          ) : null}
+                          <View style={{
+                            backgroundColor: card.tierColor,
+                            paddingHorizontal: 12,
+                            paddingVertical: 5,
+                            borderRadius: 999,
+                          }}>
+                            <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>
+                              {card.tier}
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+                      
+                      {/* 중앙: 인용구 */}
+                      <View style={{ 
+                        flex: 1, 
+                        justifyContent: "center", 
+                        alignItems: "center",
+                        paddingHorizontal: 28,
+                      }}>
+                        <Text style={{ fontSize: 36, color: card.tierColor, marginBottom: 12, opacity: 0.3 }}>❝</Text>
+                        <Text style={{ 
+                          fontSize: isLong ? 16 : isMedium ? 19 : 22,
+                          fontStyle: "italic",
+                          color: C.text,
+                          textAlign: "center",
+                          lineHeight: isLong ? 26 : isMedium ? 30 : 36,
+                          fontWeight: "500",
+                          letterSpacing: 0.3,
+                        }}>
+                          {card.quote}
+                        </Text>
+                        <Text style={{ fontSize: 36, color: card.tierColor, marginTop: 12, opacity: 0.3 }}>❞</Text>
+                      </View>
+                      
+                      {/* 하단: 작품 정보 */}
+                      <View style={{ 
+                        padding: 18,
+                        paddingTop: 14,
+                        borderTopWidth: 1,
+                        borderTopColor: C.line,
+                        flexDirection: "row",
+                        alignItems: "center",
+                      }}>
+                        <CoverImage 
+                          uri={card.coverImage} 
+                          platforms={card.platforms} 
+                          platformCovers={platformCovers} 
+                          size={46} 
+                          theme={C} 
+                        />
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ 
+                            fontSize: 15, 
+                            fontWeight: "800", 
+                            color: C.text,
+                          }} numberOfLines={1}>
+                            {card.title}
+                          </Text>
+                          <Text style={{ 
+                            fontSize: 13, 
+                            color: C.sub, 
+                            marginTop: 2,
+                          }}>
+                            {card.author} · {card.rating.toFixed(0)}점
+                            {card.rereadCount > 1 ? ` · ${card.rereadCount}회독` : ""}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })()}
+                
+                {/* ═══ 네비게이션 바 ═══ */}
+                <View style={{ 
+                  flexDirection: "row", 
+                  justifyContent: "center",
+                  alignItems: "center", 
+                  gap: 12,
+                  marginBottom: 16,
+                }}>
+                  {/* ◀ 이전 */}
+                  <TouchableOpacity
+                    onPress={goPrev}
+                    disabled={safeIdx === 0}
+                    style={{
+                      backgroundColor: safeIdx === 0 ? C.chip : C.card,
+                      width: 52,
+                      height: 52,
+                      borderRadius: 26,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      borderWidth: 1,
+                      borderColor: C.line,
+                      opacity: safeIdx === 0 ? 0.4 : 1,
+                    }}
+                  >
+                    <Text style={{ fontSize: 22, color: C.text }}>◀</Text>
+                  </TouchableOpacity>
+                  
+                  {/* 프로그레스 바 */}
+                  <View style={{ flex: 1, maxWidth: 180 }}>
+                    <View style={{ 
+                      height: 6, 
+                      backgroundColor: C.chip, 
+                      borderRadius: 3,
+                      overflow: "hidden",
+                    }}>
+                      <View style={{ 
+                        height: "100%", 
+                        width: `${((safeIdx + 1) / total) * 100}%`,
+                        backgroundColor: card?.tierColor || C.primary,
+                        borderRadius: 3,
+                      }} />
+                    </View>
+                  </View>
+                  
+                  {/* ▶ 다음 */}
+                  <TouchableOpacity
+                    onPress={goNext}
+                    disabled={safeIdx >= total - 1}
+                    style={{
+                      backgroundColor: safeIdx >= total - 1 ? C.chip : C.card,
+                      width: 52,
+                      height: 52,
+                      borderRadius: 26,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      borderWidth: 1,
+                      borderColor: C.line,
+                      opacity: safeIdx >= total - 1 ? 0.4 : 1,
+                    }}
+                  >
+                    <Text style={{ fontSize: 22, color: C.text }}>▶</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* ═══ 전체 목록 (접기 가능) ═══ */}
+                <Section title={`📋 전체 명언 목록 (${total})`}>
+                  {displayCards.map((c, i) => (
+                    <TouchableOpacity
+                      key={c.id}
+                      onPress={() => setQuotesIdx(i)}
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        padding: 12,
+                        backgroundColor: i === safeIdx ? (card?.tierColor || C.primary) + "18" : "transparent",
+                        borderRadius: 10,
+                        borderLeftWidth: i === safeIdx ? 3 : 0,
+                        borderLeftColor: card?.tierColor || C.primary,
+                        marginBottom: 4,
+                      }}
+                    >
+                      <CoverImage uri={c.coverImage} platforms={c.platforms} platformCovers={platformCovers} size={32} theme={C} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 13, fontWeight: "700", color: C.text }} numberOfLines={1}>
+                          {c.title}
+                        </Text>
+                        <Text style={{ fontSize: 12, color: C.sub, fontStyle: "italic" }} numberOfLines={1}>
+                          "{c.quote}"
+                        </Text>
+                      </View>
+                      <View style={{
+                        backgroundColor: c.tierColor,
+                        paddingHorizontal: 7,
+                        paddingVertical: 2,
+                        borderRadius: 6,
+                        marginLeft: 6,
+                      }}>
+                        <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>{c.tier}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </Section>
+              </>
+            )}
+          </>
+          );
+        })()}
 
         {/* 🆕 SETTINGS */}
         {screen === "settings" && (
@@ -27609,7 +28430,7 @@ async function importJSON() {
                   <View style={{ flexDirection: "row", gap: 4 }}>
                     <TouchableOpacity
                       onPress={() => openUrlModal((url) => {
-                        savePlatformCovers({ ...platformCovers, [p]: url });
+                        savePlatformCovers({ ...platformCoversRef.current, [p]: url });
                       })}
                       style={{ padding: 6, backgroundColor: C.primary, borderRadius: 6 }}
                     >
@@ -27617,7 +28438,7 @@ async function importJSON() {
                     </TouchableOpacity>
                     <TouchableOpacity
                       onPress={() => pickImageFromGallery((uri) => {
-                        savePlatformCovers({ ...platformCovers, [p]: uri });
+                        savePlatformCovers({ ...platformCoversRef.current, [p]: uri });
                       })}
                       style={{ padding: 6, backgroundColor: C.ok, borderRadius: 6 }}
                     >
@@ -27626,7 +28447,7 @@ async function importJSON() {
                     {platformCovers[p] && (
                       <TouchableOpacity
                         onPress={() => {
-                          const updated = { ...platformCovers };
+                          const updated = { ...platformCoversRef.current };
                           delete updated[p];
                           savePlatformCovers(updated);
                         }}
@@ -27802,13 +28623,14 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              maxHeight: "85%",
+              height: "85%",
             }}
           >
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
               <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>
                 작품 수정
               </Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
               {editItem && (
                 <TouchableOpacity
                   onPress={() => {
@@ -27820,6 +28642,10 @@ async function importJSON() {
                   <Text style={{ color: C.warn, fontSize: 13 }}>🗑 삭제</Text>
                 </TouchableOpacity>
               )}
+              <TouchableOpacity onPress={() => setEditOpen(false)} style={{ padding: 6 }}>
+                <Text style={{ fontSize: 22, color: C.sub }}>×</Text>
+              </TouchableOpacity>
+              </View>
             </View>
             {editItem && (
               <ScrollView nestedScrollEnabled={true} showsVerticalScrollIndicator={true}>
@@ -27853,6 +28679,20 @@ async function importJSON() {
                     />
                   )}
                 </View>
+
+                {/* 💾 v3.5.4: 빠른 저장 버튼 (상단) */}
+                <TouchableOpacity
+                  onPress={saveEdit}
+                  style={{
+                    backgroundColor: C.primary,
+                    paddingVertical: 10,
+                    borderRadius: 10,
+                    alignItems: "center",
+                    marginBottom: 6,
+                  }}
+                >
+                  <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>💾 빠른 저장</Text>
+                </TouchableOpacity>
 
                 <Label>제목</Label>
                 <Input
@@ -28190,30 +29030,65 @@ async function importJSON() {
                   multiline
                 />
 
-                {/* 💬 인상깊은 문장 */}
+                {/* 💬 v3.5.4: 인상깊은 문장 (다중 지원) */}
                 <View style={{ marginTop: 16, padding: 12, backgroundColor: C.bg, borderRadius: 12, borderLeftWidth: 3, borderLeftColor: C.primary }}>
-                  <Label style={{ marginBottom: 6 }}>💬 인상깊은 문장</Label>
-                  <TextInput
-                    value={editMemorableQuote}
-                    onChangeText={setEditMemorableQuote}
-                    placeholder={'"이 작품에서 가장 기억에 남는 문장..."'}
-                    placeholderTextColor={C.sub}
-                    multiline
-                    style={{
-                      backgroundColor: C.card,
-                      borderWidth: 1,
-                      borderColor: C.line,
-                      borderRadius: 10,
-                      padding: 12,
-                      fontSize: 15,
-                      fontStyle: "italic",
-                      color: C.text,
-                      minHeight: 80,
-                      textAlignVertical: "top",
-                    }}
-                  />
-                  <Text style={{ color: C.sub, fontSize: 11, marginTop: 6 }}>
-                    📌 추천, 수상 등에서 인용구처럼 표시됩니다
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                    <Label>💬 인상깊은 문장 ({editQuotes.length})</Label>
+                    <TouchableOpacity
+                      onPress={() => setEditQuotes([...editQuotes, ""])}
+                      style={{ backgroundColor: C.primary, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}
+                    >
+                      <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>+ 추가</Text>
+                    </TouchableOpacity>
+                  </View>
+                  
+                  {editQuotes.length === 0 ? (
+                    <TouchableOpacity
+                      onPress={() => setEditQuotes([""])}
+                      style={{ padding: 20, borderWidth: 1, borderColor: C.line, borderRadius: 10, borderStyle: "dashed", alignItems: "center" }}
+                    >
+                      <Text style={{ color: C.sub, fontSize: 14 }}>터치하여 첫 문장 추가</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    editQuotes.map((q, qi) => (
+                      <View key={`quote-${qi}`} style={{ marginBottom: 10 }}>
+                        <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
+                          <Text style={{ color: C.sub, fontSize: 11, flex: 1 }}>#{qi + 1}</Text>
+                          <TouchableOpacity
+                            onPress={() => setEditQuotes(editQuotes.filter((_, i) => i !== qi))}
+                            style={{ padding: 4 }}
+                          >
+                            <Text style={{ color: C.warn, fontSize: 12, fontWeight: "700" }}>삭제</Text>
+                          </TouchableOpacity>
+                        </View>
+                        <TextInput
+                          value={q}
+                          onChangeText={(t) => {
+                            const updated = [...editQuotes];
+                            updated[qi] = t;
+                            setEditQuotes(updated);
+                          }}
+                          placeholder={`"기억에 남는 문장 ${qi + 1}..."`}
+                          placeholderTextColor={C.sub}
+                          multiline
+                          style={{
+                            backgroundColor: C.card,
+                            borderWidth: 1,
+                            borderColor: C.line,
+                            borderRadius: 10,
+                            padding: 12,
+                            fontSize: 15,
+                            fontStyle: "italic",
+                            color: C.text,
+                            minHeight: 60,
+                            textAlignVertical: "top",
+                          }}
+                        />
+                      </View>
+                    ))
+                  )}
+                  <Text style={{ color: C.sub, fontSize: 11, marginTop: 4 }}>
+                    📌 추천, 수상, 💬명언 탭에서 인용구로 표시됩니다
                   </Text>
                 </View>
 
@@ -28304,14 +29179,17 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              maxHeight: "85%",
+              height: "85%",
             }}
           >
-            <Text
-              style={{ fontSize: 18, fontWeight: "800", marginBottom: 8 }}
-            >
-              대진 기록
-            </Text>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>
+                대진 기록
+              </Text>
+              <TouchableOpacity onPress={() => setLogOpen(false)} style={{ padding: 8 }}>
+                <Text style={{ fontSize: 22, color: C.sub }}>×</Text>
+              </TouchableOpacity>
+            </View>
             {logTarget && (
               <>
                 <Text
@@ -28451,6 +29329,12 @@ async function importJSON() {
             <Text style={{ fontSize: 18, fontWeight: "800", marginBottom: 8, color: C.text }}>
               📝 보충 기준 설정
             </Text>
+            <TouchableOpacity 
+              onPress={() => setSupplementSettingsOpen(false)} 
+              style={{ position: "absolute", top: 16, right: 16, padding: 8, zIndex: 10 }}
+            >
+              <Text style={{ fontSize: 24, color: C.sub }}>×</Text>
+            </TouchableOpacity>
             <Text style={{ color: C.sub, marginBottom: 16 }}>
               어떤 작품을 보충 대상으로 표시할지 설정합니다.
             </Text>
@@ -28865,12 +29749,17 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              maxHeight: "90%",
+              height: "90%",
             }}
           >
-            <Text style={{ fontSize: 18, fontWeight: "800", marginBottom: 12, color: C.text }}>
-              작품 비교
-            </Text>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>
+                작품 비교
+              </Text>
+              <TouchableOpacity onPress={() => setCompareOpen(false)} style={{ padding: 8 }}>
+                <Text style={{ fontSize: 24, color: C.sub }}>×</Text>
+              </TouchableOpacity>
+            </View>
             {compareNovels.length === 2 && (
               <ScrollView nestedScrollEnabled={true} showsVerticalScrollIndicator={true}>
                 <View style={{ flexDirection: "row", gap: 10 }}>
@@ -29070,7 +29959,7 @@ async function importJSON() {
         transparent
       >
         <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" }}>
-          <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: "90%", padding: 16 }}>
+          <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, minHeight: "60%", maxHeight: "90%", padding: 16 }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>
                 📐 좌표계 편집
@@ -29484,7 +30373,7 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              maxHeight: "85%",
+              height: "85%",
             }}
           >
             <Text style={{ fontSize: 18, fontWeight: "800", marginBottom: 8, color: C.text }}>
@@ -29846,7 +30735,7 @@ async function importJSON() {
                           const ids = JSON.parse(plannedEditItem.similar_novels || "[]");
                           if (!Array.isArray(ids) || ids.length === 0) return "선택된 작품 없음";
                           return ids.map(id => {
-                            const found = list.find(n => n.id === id);
+                            const found = listMap.get(id);
                             return found ? found.title : "";
                           }).filter(Boolean).join(", ") || "선택된 작품 없음";
                         } catch { return "선택된 작품 없음"; }
@@ -29976,6 +30865,26 @@ async function importJSON() {
                   미사용 표지 중에서 선택하세요. (사용 중인 표지는 회색으로 표시됩니다)
                 </Text>
 
+                {/* 🖼️ v3.5.4: 필터 칩 (전체 / 미사용만) */}
+                <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
+                  {[["전체", "all"], ["미사용만", "unused"]].map(([label, key]) => (
+                    <TouchableOpacity
+                      key={key}
+                      onPress={() => setCoverSelectFilter(key)}
+                      style={{
+                        paddingHorizontal: 14,
+                        paddingVertical: 7,
+                        borderRadius: 999,
+                        backgroundColor: coverSelectFilter === key ? C.primary : C.chip,
+                      }}
+                    >
+                      <Text style={{ color: coverSelectFilter === key ? "#fff" : C.text, fontWeight: "600", fontSize: 13 }}>
+                        {label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
                 {coverLibrary.length === 0 ? (
                   <View style={{ padding: 40, alignItems: "center" }}>
                     <Text style={{ color: C.sub, textAlign: "center" }}>
@@ -29985,11 +30894,14 @@ async function importJSON() {
                   </View>
                 ) : (
                   <FlatList
-                    data={coverLibrary}
+                    data={coverSelectFilter === "unused" ? coverLibrary.filter(c => c.status !== "used") : coverLibrary}
                     keyExtractor={(item) => item.id}
                     numColumns={4}
                     style={{ flex: 1 }}
                     columnWrapperStyle={{ gap: 8, marginBottom: 8 }}
+                    initialNumToRender={12}
+                    maxToRenderPerBatch={8}
+                    windowSize={3}
                     renderItem={({ item }) => {
                       const isUsed = item.status === "used";
                       
