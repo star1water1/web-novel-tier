@@ -72,6 +72,31 @@
  * ║ • 표지 선택 모달 FlatList: initialNumToRender/maxToRenderPerBatch 추가        ║
  * ║ • 검토탭 S/A 카운트: list.filter 2회→단일 루프 1회                            ║
  * ║                                                                              ║
+ * ║ [변경 8] 🧠 추천탭 취향 데이터 통합 강화                                      ║
+ * ║ • preference_patterns(매칭 학습) 데이터를 추천 알고리즘에 통합                ║
+ * ║ • computeTasteScore(): 장르(40) + 태그(35) + 작가(25) = 100점 체계            ║
+ * ║   - genre_affinity 승률 기반 장르 점수                                        ║
+ * ║   - tag_power 상위 3개 태그 평균 승률 기반 태그 점수                           ║
+ * ║   - author_loyalty 승률 기반 작가 점수                                        ║
+ * ║ • 폴백: 패턴 데이터 부족 시 기존 고티어 기반 방식 자동 적용                   ║
+ * ║ • buildTasteReason(): 구체적 취향 요인 자연어 이유 생성                       ║
+ * ║ • UI: 취향 적합도 게이지 바 (총점 + 장르/태그/작가 세부 바)                   ║
+ * ║ • tasteScore를 dailyReco에 저장/복원 (캐시 지원)                              ║
+ * ║                                                                              ║
+ * ║ [변경 9] 🧠 추천탭 UI 강화 (취향 팩터 시각화)                                ║
+ * ║ • user_confirmed 패턴 보너스: 장르+8, 태그 승률+5%, 작가+6                   ║
+ * ║ • 취향 팩터 칩 UI: 장르/태그/작가 칩 + confirmed ✅ 표시                      ║
+ * ║ • 데이터 출처 구분: "매칭 학습 기반" vs "레이팅 기반 (매칭 데이터 부족)"      ║
+ * ║ • 추천 히스토리 강화: 카테고리 아이콘 + 취향 점수 + 날짜 표시                ║
+ * ║                                                                              ║
+ * ║ [변경 10] 🔀 명언 쇼츠 기본 랜덤 + 🧹 커스텀 초기화 시스템                  ║
+ * ║ • 명언 탭 진입 시 자동 셔플 (기본 랜덤 순서)                                ║
+ * ║ • quotesCards 변경 시 재셔플 (기존: null로 초기화 → 원본순 복귀)             ║
+ * ║ • 커스텀 초기화 모달: 6개 그룹 24개 항목 체크박스 선택                       ║
+ * ║   - 핵심 데이터 / 학습 데이터 / 추천&히스토리 / 태그 / 표지&수상 / 설정     ║
+ * ║   - 그룹 선택, 전체 선택/해제, 학습만 단축 버튼                              ║
+ * ║   - 위험 항목(novels/matches/planned) 별도 경고 + 시각적 구분                ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -16019,6 +16044,8 @@ export default function App() {
 
   // 🔄 로딩 상태
   const [isLoading, setIsLoading] = useState(false);
+  const [customResetOpen, setCustomResetOpen] = useState(false); // 🧹 v3.5.5: 커스텀 초기화 모달
+  const [resetSelections, setResetSelections] = useState({}); // { key: boolean }
 
   const [screen, setScreen] = useState("home");
   
@@ -16510,14 +16537,36 @@ export default function App() {
     return cards;
   }, [list]);
 
-  // 💬 v3.5.4: quotesShuffled stale 방지 (작품 삭제/수정 시 셔플 초기화)
+  // 💬 v3.5.4: quotesShuffled stale 방지 (작품 삭제/수정 시 셔플 재생성)
   // 과거 버그 [상태 동기화 버그] v3.5.0과 동일 패턴
+  // 🔀 v3.5.5: null 대신 재셔플 (기본 랜덤 유지)
   useEffect(() => {
-    if (quotesShuffled) {
+    if (quotesShuffled && quotesCards.length > 0) {
+      const arr = [...quotesCards];
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      setQuotesShuffled(arr);
+      setQuotesIdx(0);
+    } else if (quotesShuffled && quotesCards.length === 0) {
       setQuotesShuffled(null);
       setQuotesIdx(0);
     }
   }, [quotesCards]);
+
+  // 🔀 v3.5.5: 명언 탭 진입 시 자동 셔플 (기본 랜덤 순서)
+  useEffect(() => {
+    if (screen === "quotes" && !quotesShuffled && quotesCards.length > 0) {
+      const arr = [...quotesCards];
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      setQuotesShuffled(arr);
+      setQuotesIdx(0);
+    }
+  }, [screen]);
 
   /* =========================================================
      🆕 고급 필터 함수
@@ -17328,6 +17377,7 @@ export default function App() {
               reason: saved.reason || "이전 추천",
               category: saved.category || "other",
               isPlanned: false,
+              tasteScore: saved.tasteScore || null,
             });
             return;
           } else if (existingPlanned) {
@@ -17337,6 +17387,7 @@ export default function App() {
               reason: saved.reason || "읽고 싶었던 예정작",
               category: saved.category || "planned_unread",
               isPlanned: true,
+              tasteScore: saved.tasteScore || null,
             });
             return;
           }
@@ -17347,54 +17398,204 @@ export default function App() {
       const candidates = [];
       const totalNovelCount = novels?.length || 0;
       
-      // 취향 분석 데이터 (간략화)
+      // 🧠 v3.5.4: preference_patterns 기반 취향 데이터 로드
       const avgRating = totalNovelCount > 0 
         ? novels.reduce((sum, n) => sum + (Number(n.rating) || 1500), 0) / totalNovelCount 
         : 1500;
       
-      // 선호 장르 추출 (상위 티어 작품 기준)
+      // 매칭 학습 데이터에서 취향 맵 구축
+      const genreScores = {};   // genre → { winRate, sampleSize, significance }
+      const tagScores = {};     // tag → { winRate, sampleSize }
+      const authorScores = {};  // author → { winRate, sampleSize }
+      let hasPatterns = false;
+      
+      try {
+        const patterns = await all(`
+          SELECT category, pattern_key, win_rate, sample_size, significance, confidence_lower, user_confirmed
+          FROM preference_patterns 
+          WHERE sample_size >= 3
+        `);
+        if (patterns && patterns.length > 0) {
+          hasPatterns = true;
+          for (const p of patterns) {
+            const key = p.pattern_key;
+            const confirmed = (p.user_confirmed || 0) > 0; // 🧠 v3.5.5: 사용자 확인 여부
+            if (p.category === "genre_affinity" && key.startsWith("genre:")) {
+              genreScores[key.slice(6)] = { winRate: p.win_rate, sampleSize: p.sample_size, significance: p.significance || 0, confirmed };
+            } else if (p.category === "tag_power" && key.startsWith("tag:")) {
+              tagScores[key.slice(4)] = { winRate: p.win_rate, sampleSize: p.sample_size, confirmed };
+            } else if (p.category === "author_loyalty" && key.startsWith("author:")) {
+              authorScores[key.slice(7)] = { winRate: p.win_rate, sampleSize: p.sample_size, confirmed };
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("추천 패턴 로드 실패, 폴백 사용:", e);
+      }
+      
+      // 폴백: 패턴 데이터가 부족하면 기존 방식(고티어 기반) 보완
       const highTierNovels = (novels || []).filter(n => (Number(n.rating) || 1500) >= 1700);
-      const preferredGenres = new Set();
-      const preferredTags = new Set();
-      for (const n of highTierNovels) {
-        if (n.major_genre) {
-          try { JSON.parse(n.major_genre).forEach(g => preferredGenres.add(g)); } catch {}
+      const fallbackGenres = new Set();
+      const fallbackTags = new Set();
+      for (const fn of highTierNovels) {
+        if (fn.major_genre) {
+          try { JSON.parse(fn.major_genre).forEach(g => fallbackGenres.add(g)); } catch {}
         }
-        if (n.tags) {
-          n.tags.split(",").map(t => t.trim()).filter(Boolean).forEach(t => preferredTags.add(t));
+        if (fn.tags) {
+          fn.tags.split(",").map(t => t.trim()).filter(Boolean).forEach(t => fallbackTags.add(t));
         }
+      }
+      
+      /**
+       * 🧠 통합 취향 점수 계산 (0~100)
+       * preference_patterns 데이터가 있으면 매칭 학습 기반,
+       * 없으면 고티어 작품 기반 폴백
+       * 🧠 v3.5.5: user_confirmed 보너스, 팩터 칩용 chips[], source 필드 추가
+       * @returns {{ score, factors, chips, breakdown: { genre, tag, author }, source }}
+       */
+      function computeTasteScore(novel) {
+        let genreScore = 0, tagScore = 0, authorScore = 0;
+        const factors = []; // 추천 이유 텍스트
+        const chips = [];   // 🧠 v3.5.5: UI 팩터 칩 [{ label, value, type, confirmed }]
+        let source = "fallback"; // "pattern" | "fallback"
+        
+        // — 장르 점수 (최대 40점) —
+        const novelGenres = [];
+        if (novel.major_genre) {
+          try { 
+            const mg = JSON.parse(novel.major_genre);
+            if (Array.isArray(mg)) novelGenres.push(...mg);
+            else if (typeof mg === "string") novelGenres.push(mg);
+          } catch { if (novel.major_genre.trim()) novelGenres.push(novel.major_genre.trim()); }
+        }
+        
+        if (hasPatterns && Object.keys(genreScores).length > 0) {
+          source = "pattern";
+          for (const g of novelGenres) {
+            const gs = genreScores[g];
+            if (gs && gs.sampleSize >= 3) {
+              // 승률 50% 초과분을 점수화 (70% → +20, 80% → +30)
+              let bonus = Math.max(0, (gs.winRate - 0.5) * 100);
+              // 🧠 v3.5.5: 사용자 확인 패턴은 +8 보너스
+              if (gs.confirmed) bonus = Math.min(40, bonus + 8);
+              genreScore = Math.max(genreScore, Math.min(40, bonus));
+              if (gs.winRate >= 0.55) {
+                const pct = Math.round(gs.winRate * 100);
+                factors.push(`${g} 장르 선호도 ${pct}%`);
+                chips.push({ label: g, value: `${pct}%`, type: "genre", confirmed: !!gs.confirmed });
+              }
+            }
+          }
+        } else {
+          // 폴백: 고티어 작품과 장르 일치
+          if (novelGenres.some(g => fallbackGenres.has(g))) {
+            genreScore = 25;
+            const matched = novelGenres.filter(g => fallbackGenres.has(g));
+            if (matched.length > 0) chips.push({ label: matched[0], value: "고티어", type: "genre", confirmed: false });
+          }
+        }
+        
+        // — 태그 점수 (최대 35점) —
+        const novelTags = (novel.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+        
+        if (hasPatterns && Object.keys(tagScores).length > 0) {
+          source = "pattern";
+          const tagHits = [];
+          for (const tag of novelTags) {
+            const ts = tagScores[tag];
+            if (ts && ts.sampleSize >= 3 && ts.winRate >= 0.55) {
+              // 🧠 v3.5.5: confirmed 태그 승률 보정
+              const effectiveWr = ts.confirmed ? Math.min(1, ts.winRate + 0.05) : ts.winRate;
+              tagHits.push({ tag, winRate: effectiveWr, confirmed: !!ts.confirmed });
+            }
+          }
+          // 상위 3개 태그 평균
+          tagHits.sort((a, b) => b.winRate - a.winRate);
+          const topTags = tagHits.slice(0, 3);
+          if (topTags.length > 0) {
+            const avgWr = topTags.reduce((s, t) => s + t.winRate, 0) / topTags.length;
+            tagScore = Math.min(35, Math.max(0, (avgWr - 0.5) * 100) + topTags.length * 5);
+            for (const tt of topTags) {
+              chips.push({ label: tt.tag, value: `${Math.round(tt.winRate * 100)}%`, type: "tag", confirmed: tt.confirmed });
+            }
+            if (topTags.length >= 2) {
+              factors.push(`선호 태그 ${topTags.length}개 일치 (${topTags.map(t => t.tag).join(", ")})`);
+            } else if (topTags.length === 1) {
+              factors.push(`'${topTags[0].tag}' 태그 선호 ${Math.round(topTags[0].winRate * 100)}%`);
+            }
+          }
+        } else {
+          // 폴백
+          const matchCount = novelTags.filter(t => fallbackTags.has(t)).length;
+          tagScore = Math.min(25, matchCount * 8);
+          if (matchCount > 0) {
+            const matched = novelTags.filter(t => fallbackTags.has(t)).slice(0, 2);
+            for (const mt of matched) chips.push({ label: mt, value: "고티어", type: "tag", confirmed: false });
+          }
+        }
+        
+        // — 작가 점수 (최대 25점) —
+        const author = (novel.author || "").trim();
+        if (author && hasPatterns) {
+          const as = authorScores[author];
+          if (as && as.sampleSize >= 3) {
+            let aBonus = Math.max(0, (as.winRate - 0.5) * 80) + (as.sampleSize >= 10 ? 10 : 0);
+            // 🧠 v3.5.5: confirmed 작가 보너스
+            if (as.confirmed) aBonus = Math.min(25, aBonus + 6);
+            authorScore = Math.min(25, aBonus);
+            if (as.winRate >= 0.55) {
+              const pct = Math.round(as.winRate * 100);
+              factors.push(`${author} 작가 선호도 ${pct}%`);
+              chips.push({ label: author, value: `${pct}%`, type: "author", confirmed: !!as.confirmed });
+            }
+          }
+        }
+        
+        const total = Math.round(genreScore + tagScore + authorScore);
+        return {
+          score: Math.min(100, total),
+          factors,
+          chips, // 🧠 v3.5.5: UI 팩터 칩
+          breakdown: {
+            genre: Math.round(genreScore),
+            tag: Math.round(tagScore),
+            author: Math.round(authorScore),
+          },
+          source, // 🧠 v3.5.5: "pattern" | "fallback"
+        };
+      }
+      
+      /**
+       * 취향 점수 기반 추천 이유 생성
+       */
+      function buildTasteReason(baseReason, taste) {
+        if (taste.factors.length === 0) return baseReason;
+        const tasteNote = taste.factors.slice(0, 2).join(", ");
+        return `${baseReason}\n🧠 취향 분석: ${tasteNote}`;
       }
 
       // 1) 읽지 않은 예정작 (가중치 100)
       for (const p of (planned || [])) {
         if (recentIds.has(p.id)) continue;
         
-        // 취향 일치도 계산
-        let tasteMatch = 50; // 기본값
-        if (p.major_genre) {
-          try {
-            const genres = JSON.parse(p.major_genre);
-            if (genres.some(g => preferredGenres.has(g))) tasteMatch += 30;
-          } catch {}
-        }
-        if (p.tags) {
-          const tags = p.tags.split(",").map(t => t.trim()).filter(Boolean);
-          if (tags.some(t => preferredTags.has(t))) tasteMatch += 20;
-        }
-        
+        const taste = computeTasteScore(p);
         candidates.push({
           novel: p,
-          weight: 100 + tasteMatch, // 기본 100 + 취향 보너스
+          weight: 100 + taste.score,
           category: "planned_unread",
-          reason: `📋 아직 읽지 않은 예정작입니다. ${tasteMatch > 50 ? "취향과도 잘 맞을 것 같습니다!" : ""}`,
+          reason: buildTasteReason(
+            `📋 아직 읽지 않은 예정작입니다.${taste.score >= 30 ? " 취향과도 잘 맞을 것 같습니다!" : ""}`,
+            taste
+          ),
           isPlanned: true,
+          tasteScore: taste,
         });
       }
 
       // 본 목록 작품 분류
       for (const n of (novels || [])) {
         if (recentIds.has(n.id)) continue;
-        if (n.status === "dropped") continue; // 하차 제외
+        if (n.status === "dropped") continue;
         
         const totalEp = Number(n.total_episodes) || 0;
         const readCount = Number(n.read_count) || 0;
@@ -17404,40 +17605,30 @@ export default function App() {
         const isCompleted = n.work_status === "completed";
         const readRatio = totalEp > 0 ? readCount / totalEp : 0;
         
-        // 취향 일치도 계산
-        let tasteMatch = 0;
-        if (n.major_genre) {
-          try {
-            const genres = JSON.parse(n.major_genre);
-            if (genres.some(g => preferredGenres.has(g))) tasteMatch += 30;
-          } catch {}
-        }
-        if (n.tags) {
-          const tags = n.tags.split(",").map(t => t.trim()).filter(Boolean);
-          const matchCount = tags.filter(t => preferredTags.has(t)).length;
-          tasteMatch += Math.min(30, matchCount * 10);
-        }
+        const taste = computeTasteScore(n);
         
         // 2) 거의 다 읽었고 끝을 남겨둔 작품 (90%+)
         if (totalEp > 0 && readRatio >= 0.9 && readRatio < 1.0 && n.status === "reading") {
           candidates.push({
             novel: n,
-            weight: 90 + tasteMatch,
+            weight: 90 + taste.score,
             category: "almost_done",
-            reason: `📖 거의 다 읽었습니다! (${Math.round(readRatio * 100)}%) 마지막까지 읽어보세요.`,
+            reason: buildTasteReason(`📖 거의 다 읽었습니다! (${Math.round(readRatio * 100)}%) 마지막까지 읽어보세요.`, taste),
             isPlanned: false,
+            tasteScore: taste,
           });
           continue;
         }
         
-        // 3) 취향에 맞는데 안 읽고 있는 작품 (보류 상태이면서 취향 일치)
-        if (n.status === "paused" && tasteMatch >= 30 && rating >= avgRating) {
+        // 3) 취향에 맞는데 안 읽고 있는 작품 (보류 + 취향 일치)
+        if (n.status === "paused" && taste.score >= 30 && rating >= avgRating) {
           candidates.push({
             novel: n,
-            weight: 80 + tasteMatch,
+            weight: 80 + taste.score,
             category: "taste_match_paused",
-            reason: `⏸️ 보류 중이지만 취향에 맞는 작품입니다. 다시 읽어보시는 건 어떨까요?`,
+            reason: buildTasteReason(`⏸️ 보류 중이지만 취향에 맞는 작품입니다. 다시 읽어보시는 건 어떨까요?`, taste),
             isPlanned: false,
+            tasteScore: taste,
           });
           continue;
         }
@@ -17446,22 +17637,24 @@ export default function App() {
         if (reliability > 0 && reliability < 40 && n.status !== "dropped") {
           candidates.push({
             novel: n,
-            weight: 70 + tasteMatch / 2,
+            weight: 70 + taste.score / 2,
             category: "low_data",
-            reason: `📊 아직 데이터가 부족합니다. (신뢰도 ${Math.round(reliability)}%) 더 읽거나 매칭해보세요!`,
+            reason: buildTasteReason(`📊 아직 데이터가 부족합니다. (신뢰도 ${Math.round(reliability)}%) 더 읽거나 매칭해보세요!`, taste),
             isPlanned: false,
+            tasteScore: taste,
           });
           continue;
         }
         
-        // 5) 여러 관점에서 취향에 맞을만한 작품 (티어 높고 취향 일치)
-        if (rating >= 1700 && tasteMatch >= 40 && n.status === "reading") {
+        // 5) 취향 분석 고점수 작품 (패턴 데이터 기반)
+        if (taste.score >= 40 && n.status === "reading") {
           candidates.push({
             novel: n,
-            weight: 60 + tasteMatch,
+            weight: 60 + taste.score,
             category: "taste_high_tier",
-            reason: `⭐ 높은 티어 + 취향 일치! 이 작품을 더 읽어보세요.`,
+            reason: buildTasteReason(`⭐ 매칭 분석 결과 취향 적합도가 높습니다!`, taste),
             isPlanned: false,
+            tasteScore: taste,
           });
           continue;
         }
@@ -17471,34 +17664,37 @@ export default function App() {
         if (["S", "A", "B+"].includes(tier) && (totalEp === 0 || readRatio < 0.5)) {
           candidates.push({
             novel: n,
-            weight: 50 + (rating - 1500) / 20,
+            weight: 50 + (rating - 1500) / 20 + taste.score / 4,
             category: "high_tier_less_read",
-            reason: `🏆 ${tier} 티어 작품인데 아직 ${totalEp > 0 ? Math.round(readRatio * 100) + '%' : '조금'}밖에 안 읽었습니다.`,
+            reason: buildTasteReason(`🏆 ${tier} 티어 작품인데 아직 ${totalEp > 0 ? Math.round(readRatio * 100) + '%' : '조금'}밖에 안 읽었습니다.`, taste),
             isPlanned: false,
+            tasteScore: taste,
           });
           continue;
         }
         
-        // 8) 완결까지 다 읽었는데 다회독 추천 (취향 일치 + 고평점)
-        if (isCompleted && totalEp > 0 && readRatio >= 1.0 && rating >= 1800 && tasteMatch >= 30) {
+        // 7) 완결까지 다 읽었는데 다회독 추천 (취향 일치 + 고평점)
+        if (isCompleted && totalEp > 0 && readRatio >= 1.0 && rating >= 1800 && taste.score >= 25) {
           candidates.push({
             novel: n,
-            weight: 30 + tasteMatch,
+            weight: 30 + taste.score,
             category: "reread_recommend",
-            reason: `🔄 완독한 고평점 작품! ${rereadCount > 1 ? `이미 ${rereadCount}회독 했지만 ` : ''}다시 읽어보세요.`,
+            reason: buildTasteReason(`🔄 완독한 고평점 작품! ${rereadCount > 1 ? `이미 ${rereadCount}회독 했지만 ` : ''}다시 읽어보세요.`, taste),
             isPlanned: false,
+            tasteScore: taste,
           });
           continue;
         }
         
-        // 7) 기타 작품 (낮은 가중치)
+        // 8) 기타 작품 (낮은 가중치)
         if (n.status === "reading" || n.status === "finished") {
           candidates.push({
             novel: n,
-            weight: 20 + tasteMatch / 3,
+            weight: 20 + taste.score / 3,
             category: "other",
-            reason: `📚 목록에 있는 작품입니다.`,
+            reason: buildTasteReason(`📚 목록에 있는 작품입니다.`, taste),
             isPlanned: false,
+            tasteScore: taste,
           });
         }
       }
@@ -17523,7 +17719,13 @@ export default function App() {
 
       // 추천 히스토리 업데이트
       const newHistory = [
-        { novelId: pick.novel.id, pickedAt: now },
+        { 
+          novelId: pick.novel.id, 
+          pickedAt: now, 
+          category: pick.category,                                    // 🧠 v3.5.5
+          tasteScore: pick.tasteScore ? pick.tasteScore.score : 0,    // 🧠 v3.5.5
+          source: pick.tasteScore ? pick.tasteScore.source : "fallback", // 🧠 v3.5.5
+        },
         ...history.slice(0, 9), // 최대 10개 유지
       ];
       await setAppMeta("reco_history", newHistory);
@@ -17536,6 +17738,7 @@ export default function App() {
         reason: pick.reason,
         category: pick.category,
         isPlanned: pick.isPlanned,
+        tasteScore: pick.tasteScore || null, // 🧠 v3.5.4: 취향 점수 breakdown
       };
       await setAppMeta("daily_reco", meta);
 
@@ -17545,6 +17748,7 @@ export default function App() {
         reason: pick.reason,
         category: pick.category,
         isPlanned: pick.isPlanned,
+        tasteScore: pick.tasteScore || null,
       });
     } catch (e) {
       console.warn("refreshDailyRecommendation 오류:", e);
@@ -19787,6 +19991,251 @@ export default function App() {
         },
       },
     ]);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 🧹 v3.5.5: 커스텀 초기화 시스템
+  // ═══════════════════════════════════════════════════════════════════
+  
+  const RESET_CATEGORIES = [
+    { 
+      group: "🎯 핵심 데이터", 
+      warn: true,
+      items: [
+        { key: "novels", label: "본 목록 작품", desc: "모든 등록 작품 삭제", danger: true },
+        { key: "matches", label: "대진 기록", desc: "매칭 로그 삭제 + ELO 재계산", danger: true },
+        { key: "planned", label: "예정 작품", desc: "예정 목록 전체 삭제", danger: true },
+      ],
+    },
+    {
+      group: "📊 학습 데이터",
+      items: [
+        { key: "patterns", label: "취향 학습 패턴", desc: "매칭에서 학습된 취향 데이터" },
+        { key: "insights_queue", label: "인사이트 대기열", desc: "미확인 인사이트 카드" },
+        { key: "match_insights", label: "매칭 인사이트", desc: "예측 적중/이변 기록" },
+        { key: "upset_factors", label: "이변 요인", desc: "학습된 이변 패턴" },
+        { key: "choice_logs", label: "선택 행동 로그", desc: "매칭 선택 기록 큐" },
+      ],
+    },
+    {
+      group: "📋 추천 & 히스토리",
+      items: [
+        { key: "reco", label: "추천 데이터", desc: "오늘의 추천 + 추천 히스토리" },
+        { key: "tier_history", label: "티어 변동 기록", desc: "S/A 티어 변동 히스토리" },
+        { key: "recent_changes", label: "최근 변경 기록", desc: "최근 변경사항 목록" },
+      ],
+    },
+    {
+      group: "🏷️ 태그 시스템",
+      items: [
+        { key: "tag_sentiments", label: "태그 감성", desc: "태그 긍정/부정 설정" },
+        { key: "tag_relations", label: "태그 관계도", desc: "태그 그룹 및 관계" },
+        { key: "tag_coordinates", label: "태그 좌표계", desc: "스펙트럼 좌표계 설정" },
+        { key: "tag_attributes", label: "태그 속성", desc: "농도, 호불호 등 태그 속성" },
+        { key: "combo_tags", label: "조합식 태그", desc: "조합 태그 요소 및 대상" },
+        { key: "custom_tags", label: "커스텀 태그 목록", desc: "사용자 추가 태그" },
+        { key: "tag_pins", label: "태그 고정/숨김", desc: "고정 및 숨김 태그" },
+      ],
+    },
+    {
+      group: "🖼️ 표지 & 수상",
+      items: [
+        { key: "covers", label: "표지 라이브러리", desc: "저장된 표지 이미지 전체" },
+        { key: "platform_covers", label: "플랫폼 기본 표지", desc: "플랫폼별 기본 표지 설정" },
+        { key: "awards", label: "수상 시스템 설정", desc: "수상 기준 및 커스텀 설정" },
+      ],
+    },
+    {
+      group: "⚙️ 앱 설정",
+      items: [
+        { key: "auto_match", label: "자동승패 설정", desc: "자동승패 기준값" },
+        { key: "app_settings", label: "앱 설정", desc: "보충탭 설정, 예정탭 설정 등" },
+        { key: "genres", label: "사용자 장르 목록", desc: "커스텀 대장르/부장르" },
+      ],
+    },
+  ];
+
+  async function executeCustomReset() {
+    const sel = resetSelections;
+    const selectedCount = Object.values(sel).filter(Boolean).length;
+    if (selectedCount === 0) return;
+
+    const hasDanger = sel.novels || sel.matches || sel.planned;
+    
+    Alert.alert(
+      hasDanger ? "🚨 최종 확인" : "⚠️ 초기화 확인",
+      `선택된 ${selectedCount}개 항목을 초기화합니다.\n이 작업은 되돌릴 수 없습니다.`,
+      [
+        { text: "취소", style: "cancel" },
+        {
+          text: "초기화 진행",
+          style: "destructive",
+          onPress: async () => {
+            setIsLoading(true);
+            setCustomResetOpen(false);
+            try {
+              const batch = [];
+
+              // === 핵심 데이터 ===
+              if (sel.novels) {
+                batch.push({ sql: "DELETE FROM novels;" });
+                // 표지 상태도 리셋
+                batch.push({ sql: "UPDATE cover_library SET status='unused', novel_id=NULL" });
+              }
+              if (sel.matches) {
+                batch.push({ sql: "DELETE FROM matches;" });
+              }
+              if (sel.planned) {
+                batch.push({ sql: "DELETE FROM planned_novels;" });
+              }
+
+              // === 학습 데이터 ===
+              if (sel.patterns) {
+                batch.push({ sql: "DELETE FROM preference_patterns;" });
+              }
+              if (sel.insights_queue) {
+                batch.push({ sql: "DELETE FROM insight_queue;" });
+              }
+              if (sel.choice_logs) {
+                batch.push({ sql: "DELETE FROM choice_logs;" });
+              }
+
+              if (batch.length > 0) await execBatch(batch);
+
+              // 🧹 v3.5.5: choice_logs 초기화 시 메모리 큐도 클리어 (재삽입 방지)
+              if (sel.choice_logs) {
+                if (choiceLogQueue.timer) { clearTimeout(choiceLogQueue.timer); choiceLogQueue.timer = null; }
+                choiceLogQueue.pending = [];
+              }
+              // 🧹 v3.5.5: patterns 초기화 시 대기 중 업데이트 취소 (재생성 방지)
+              if (sel.patterns) {
+                patternUpdateBatch.length = 0;
+                patternUpdateScheduled = false;
+              }
+
+              // === AppMeta 기반 ===
+              if (sel.match_insights) {
+                setMatchInsights([]);
+                await setAppMeta("match_insights", []);
+              }
+              if (sel.upset_factors) {
+                setUpsetFactors({ factors: [], lastUpdated: 0 });
+                await setAppMeta("upset_factors", { factors: [], lastUpdated: 0 });
+              }
+              if (sel.reco) {
+                setDailyReco(null);
+                setRecoHistory([]);
+                await setAppMeta("daily_reco", null);
+                await setAppMeta("reco_history", []);
+              }
+              if (sel.tier_history) {
+                await setAppMeta("tier_history", []);
+              }
+              if (sel.recent_changes) {
+                await setAppMeta("recent_changes", []);
+              }
+              if (sel.tag_sentiments) {
+                setTagSentiments({});
+                await setAppMeta("tag_sentiments", {});
+              }
+              if (sel.tag_relations) {
+                setTagRelations({ groups: {}, tagToGroup: {} });
+                await setAppMeta("tag_relations", { groups: {}, tagToGroup: {} });
+              }
+              if (sel.tag_coordinates) {
+                setCoordinateSystems({});
+                await setAppMeta("tag_coordinate_systems", {});
+              }
+              if (sel.tag_attributes) {
+                await setAppMeta("tag_attributes", {});
+              }
+              if (sel.combo_tags) {
+                await setAppMeta("combo_tags", []);
+                await setAppMeta("custom_combo_targets", []);
+                await setAppMeta("custom_combo_traits", []);
+              }
+              if (sel.custom_tags) {
+                await setAppMeta("custom_tags", []);
+              }
+              if (sel.tag_pins) {
+                await setAppMeta("pinned_tags", []);
+                await setAppMeta("hidden_tags", []);
+              }
+              if (sel.covers) {
+                await exec("DELETE FROM cover_library;");
+                await loadCoverLibrary();
+              }
+              if (sel.platform_covers) {
+                setPlatformCovers({});
+                await setAppMeta("platform_covers", {});
+              }
+              if (sel.awards) {
+                setAwardSystemSettings(null);
+                await setAppMeta("award_system_settings", null);
+              }
+              if (sel.auto_match) {
+                const defaultAuto = {
+                  mode: "any",
+                  criteria: {
+                    ratingGap: { enabled: true, threshold: 250, desc: "레이팅 격차" },
+                    predictionRate: { enabled: false, threshold: 75, desc: "예측 승률(%)" },
+                    h2hStreak: { enabled: false, threshold: 3, desc: "직접대결 연승" },
+                    tierDiff: { enabled: false, threshold: 2, desc: "티어 차이 (단계)" },
+                    winRateDiff: { enabled: false, threshold: 30, desc: "승률 차이(%)" },
+                    readRatioDiff: { enabled: false, threshold: 50, desc: "읽은 비율 차이(%)" },
+                    matchCountDiff: { enabled: false, threshold: 20, desc: "매칭 수 차이" },
+                  },
+                };
+                setAutoMatchSettings(defaultAuto);
+                await setAppMeta("auto_match_settings", defaultAuto);
+              }
+              if (sel.app_settings) {
+                setAppSettings(DEFAULT_SETTINGS);
+                await setAppMeta("app_settings", DEFAULT_SETTINGS);
+              }
+              if (sel.genres) {
+                await setAppMeta("user_major_genres", null);
+                await setAppMeta("user_sub_genres", null);
+              }
+
+              // === 상태 정리 ===
+              if (sel.novels || sel.matches) {
+                setLastMatchId(null);
+                setPair(null);
+                setEditItem(null);
+                setEditOpen(false);
+                setFocusMatchNovel(null);
+                setMatchAnalysis(null);
+                setMatchPrediction(null);
+                setSelectedIds([]);
+              }
+              if (sel.matches) {
+                await rebuildAllFromMatches();
+              }
+              if (sel.patterns) {
+                setPreferencePatterns([]);
+              }
+              if (sel.insights_queue) {
+                setInsightList([]);
+              }
+
+              await loadList();
+              if (sel.planned) {
+                setPlannedList([]);
+              }
+
+              setResetSelections({});
+              Alert.alert("✅ 완료", `${selectedCount}개 항목이 초기화되었습니다.`);
+            } catch (e) {
+              console.warn("커스텀 초기화 오류:", e);
+              Alert.alert("오류", "초기화 중 문제가 발생했습니다: " + (e.message || e));
+            } finally {
+              setIsLoading(false);
+            }
+          },
+        },
+      ]
+    );
   }
 
   async function resetAll() {
@@ -23234,6 +23683,84 @@ async function importJSON() {
                 </Text>
               </View>
 
+              {/* 🧠 v3.5.4: 취향 적합도 게이지 */}
+              {dailyReco.tasteScore && dailyReco.tasteScore.score > 0 && (() => {
+                const ts = dailyReco.tasteScore;
+                const scoreColor = ts.score >= 60 ? "#22c55e" : ts.score >= 35 ? "#f59e0b" : "#94a3b8";
+                const bd = ts.breakdown || {};
+                const maxBar = Math.max(bd.genre || 0, bd.tag || 0, bd.author || 0, 1);
+                return (
+                  <View style={{
+                    backgroundColor: isDark ? "#1e293b" : "#f8fafc",
+                    padding: 12,
+                    borderRadius: 10,
+                    marginBottom: 12,
+                    borderWidth: 1,
+                    borderColor: isDark ? "#334155" : "#e2e8f0",
+                  }}>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <Text style={{ color: C.text, fontWeight: "700", fontSize: 13 }}>🧠 취향 적합도</Text>
+                      <View style={{ flexDirection: "row", alignItems: "baseline" }}>
+                        <Text style={{ color: scoreColor, fontWeight: "800", fontSize: 20 }}>{ts.score}</Text>
+                        <Text style={{ color: C.sub, fontSize: 12 }}>/100</Text>
+                      </View>
+                    </View>
+                    {/* 전체 게이지 바 */}
+                    <View style={{ height: 6, backgroundColor: isDark ? "#334155" : "#e2e8f0", borderRadius: 3, marginBottom: 10 }}>
+                      <View style={{ height: 6, width: `${Math.min(100, ts.score)}%`, backgroundColor: scoreColor, borderRadius: 3 }} />
+                    </View>
+                    {/* 세부 항목 */}
+                    <View style={{ gap: 6 }}>
+                      {[
+                        { label: "장르", value: bd.genre || 0, max: 40, icon: "📚" },
+                        { label: "태그", value: bd.tag || 0, max: 35, icon: "🏷️" },
+                        { label: "작가", value: bd.author || 0, max: 25, icon: "✍️" },
+                      ].filter(item => item.value > 0).map((item) => (
+                        <View key={item.label} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                          <Text style={{ color: C.sub, fontSize: 11, width: 50 }}>{item.icon} {item.label}</Text>
+                          <View style={{ flex: 1, height: 4, backgroundColor: isDark ? "#334155" : "#e2e8f0", borderRadius: 2 }}>
+                            <View style={{
+                              height: 4,
+                              width: `${Math.min(100, (item.value / item.max) * 100)}%`,
+                              backgroundColor: item.value >= item.max * 0.6 ? "#3b82f6" : "#94a3b8",
+                              borderRadius: 2,
+                            }} />
+                          </View>
+                          <Text style={{ color: C.sub, fontSize: 11, width: 32, textAlign: "right" }}>{item.value}/{item.max}</Text>
+                        </View>
+                      ))}
+                    </View>
+                    {/* 🧠 v3.5.5: 취향 팩터 칩 */}
+                    {ts.chips && ts.chips.length > 0 && (
+                      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                        {ts.chips.slice(0, 5).map((chip, ci) => (
+                          <View key={`tc-${ci}`} style={{
+                            flexDirection: "row", alignItems: "center",
+                            backgroundColor: chip.type === "genre" ? (isDark ? "#312e81" : "#eef2ff")
+                              : chip.type === "tag" ? (isDark ? "#1e3a5f" : "#eff6ff")
+                              : (isDark ? "#3f3f46" : "#f5f5f4"),
+                            paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8,
+                            borderWidth: chip.confirmed ? 1.5 : 0,
+                            borderColor: chip.confirmed ? "#f59e0b" : "transparent",
+                          }}>
+                            <Text style={{ fontSize: 11, color: C.text, fontWeight: "600" }}>
+                              {chip.type === "genre" ? "📚" : chip.type === "tag" ? "🏷️" : "✍️"}{" "}
+                              {chip.label}
+                            </Text>
+                            <Text style={{ fontSize: 10, color: C.sub, marginLeft: 4 }}>{chip.value}</Text>
+                            {chip.confirmed && <Text style={{ fontSize: 9, marginLeft: 2 }}>✅</Text>}
+                          </View>
+                        ))}
+                      </View>
+                    )}
+                    {/* 데이터 출처 표시 */}
+                    <Text style={{ color: C.sub, fontSize: 10, marginTop: 6, textAlign: "right" }}>
+                      {ts.source === "pattern" ? "🧠 매칭 학습 데이터 기반" : "📊 레이팅 기반 (매칭 데이터 부족)"}
+                    </Text>
+                  </View>
+                );
+              })()}
+
               {/* 상단: 표지 + 기본 정보 */}
               <View style={{ flexDirection: "row", marginBottom: 12 }}>
                 <CoverImage uri={n.cover_image} platforms={n.platforms} platformCovers={platformCovers} size={90} theme={C} />
@@ -23397,7 +23924,7 @@ async function importJSON() {
         <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
           최근 5회 내 추천된 작품은 다시 추천되지 않습니다.
         </Text>
-        <View style={{ gap: 4 }}>
+        <View style={{ gap: 6 }}>
           {recoHistory.slice(0, 5).map((h, idx) => {
             const novel = listMap.get(h.novelId) || (plannedList || []).find(p => p.id === h.novelId);
             const dateLabel = (() => {
@@ -23406,10 +23933,25 @@ async function importJSON() {
                 return isNaN(d.getTime()) ? "-" : d.toLocaleDateString();
               } catch { return "-"; }
             })();
+            // 🧠 v3.5.5: 카테고리 아이콘 & 취향 점수
+            const catIcon = {
+              planned_unread: "📋", almost_done: "🏁", taste_match_paused: "⏸️",
+              low_data: "📊", taste_high_tier: "⭐", high_tier_less_read: "🏆",
+              reread_recommend: "🔄", other: "📚",
+            }[h.category] || "📚";
+            const ts = h.tasteScore || 0;
+            const tsColor = ts >= 60 ? "#22c55e" : ts >= 35 ? "#f59e0b" : C.sub;
             return (
-              <Text key={idx} style={{ color: C.sub, fontSize: 12 }}>
-                {idx + 1}. {novel?.title || "(삭제됨)"} - {dateLabel}
-              </Text>
+              <View key={idx} style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Text style={{ color: C.sub, fontSize: 12, width: 16 }}>{catIcon}</Text>
+                <Text style={{ color: C.text, fontSize: 12, flex: 1 }} numberOfLines={1}>
+                  {novel?.title || "(삭제됨)"}
+                </Text>
+                {ts > 0 && (
+                  <Text style={{ color: tsColor, fontSize: 11, fontWeight: "700" }}>{ts}점</Text>
+                )}
+                <Text style={{ color: C.sub, fontSize: 11 }}>{dateLabel}</Text>
+              </View>
             );
           })}
         </View>
@@ -28581,9 +29123,18 @@ async function importJSON() {
                 아래 작업은 되돌릴 수 없습니다. 신중하게 사용하세요.
               </Text>
               <OutlineButton
+                title="🧹 커스텀 초기화 (항목 선택)"
+                color={C.primary}
+                onPress={() => {
+                  setResetSelections({});
+                  setCustomResetOpen(true);
+                }}
+              />
+              <OutlineButton
                 title="대진 로그 전체 삭제"
                 color={C.warn}
                 onPress={resetMatches}
+                style={{ marginTop: 8 }}
               />
               <OutlineButton
                 title="전체 초기화 (모든 데이터 삭제)"
@@ -31043,6 +31594,157 @@ async function importJSON() {
         findUnusedTags={findUnusedTags}
         theme={C}
       />
+
+      {/* 🧹 v3.5.5: 커스텀 초기화 모달 */}
+      <Modal
+        visible={customResetOpen}
+        animationType="slide"
+        onRequestClose={() => setCustomResetOpen(false)}
+        transparent
+      >
+        <View style={{ flex: 1, backgroundColor: C.modal, justifyContent: "flex-end" }}>
+          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setCustomResetOpen(false)} />
+          <View style={{
+            backgroundColor: C.card,
+            borderTopLeftRadius: 16,
+            borderTopRightRadius: 16,
+            padding: 16,
+            height: "85%",
+          }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>🧹 커스텀 초기화</Text>
+              <TouchableOpacity onPress={() => setCustomResetOpen(false)} style={{ padding: 6 }}>
+                <Text style={{ fontSize: 22, color: C.sub }}>×</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={{ color: C.warn, fontSize: 12, marginBottom: 12 }}>
+              초기화할 항목을 선택하세요. 선택한 데이터만 삭제됩니다.
+            </Text>
+            
+            {/* 전체 선택/해제 */}
+            <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
+              <TouchableOpacity
+                onPress={() => {
+                  const allKeys = {};
+                  RESET_CATEGORIES.forEach(cat => cat.items.forEach(it => { allKeys[it.key] = true; }));
+                  setResetSelections(allKeys);
+                }}
+                style={{ backgroundColor: C.warn, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}
+              >
+                <Text style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}>전체 선택</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setResetSelections({})}
+                style={{ backgroundColor: C.chip, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}
+              >
+                <Text style={{ color: C.text, fontWeight: "700", fontSize: 12 }}>전체 해제</Text>
+              </TouchableOpacity>
+              {/* 그룹 단축: 학습 데이터만 */}
+              <TouchableOpacity
+                onPress={() => {
+                  const lKeys = {};
+                  RESET_CATEGORIES.filter(c => c.group.includes("학습")).forEach(cat => 
+                    cat.items.forEach(it => { lKeys[it.key] = true; })
+                  );
+                  setResetSelections(prev => ({ ...prev, ...lKeys }));
+                }}
+                style={{ backgroundColor: isDark ? "#312e81" : "#eef2ff", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
+              >
+                <Text style={{ color: isDark ? "#a5b4fc" : "#4338ca", fontWeight: "700", fontSize: 12 }}>📊 학습만</Text>
+              </TouchableOpacity>
+            </View>
+            
+            <ScrollView showsVerticalScrollIndicator={true} style={{ flex: 1 }}>
+              {RESET_CATEGORIES.map((cat) => (
+                <View key={cat.group} style={{ marginBottom: 16 }}>
+                  {/* 그룹 헤더 */}
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <Text style={{ fontWeight: "800", color: cat.warn ? C.warn : C.text, fontSize: 14 }}>{cat.group}</Text>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const groupKeys = {};
+                        const allSelected = cat.items.every(it => resetSelections[it.key]);
+                        cat.items.forEach(it => { groupKeys[it.key] = !allSelected; });
+                        setResetSelections(prev => ({ ...prev, ...groupKeys }));
+                      }}
+                    >
+                      <Text style={{ color: C.primary, fontSize: 11, fontWeight: "600" }}>
+                        {cat.items.every(it => resetSelections[it.key]) ? "그룹 해제" : "그룹 선택"}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  
+                  {/* 아이템 체크박스 */}
+                  {cat.items.map((item) => {
+                    const checked = !!resetSelections[item.key];
+                    return (
+                      <TouchableOpacity
+                        key={item.key}
+                        onPress={() => setResetSelections(prev => ({ ...prev, [item.key]: !prev[item.key] }))}
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          paddingVertical: 8,
+                          paddingHorizontal: 10,
+                          borderRadius: 8,
+                          marginBottom: 4,
+                          backgroundColor: checked 
+                            ? (item.danger ? (isDark ? "#451a1a" : "#fef2f2") : (isDark ? "#1e293b" : "#f0f9ff"))
+                            : "transparent",
+                          borderWidth: checked ? 1 : 0,
+                          borderColor: item.danger ? C.warn : C.primary,
+                        }}
+                      >
+                        <View style={{
+                          width: 22, height: 22, borderRadius: 4,
+                          borderWidth: 2,
+                          borderColor: checked ? (item.danger ? C.warn : C.primary) : C.sub,
+                          backgroundColor: checked ? (item.danger ? C.warn : C.primary) : "transparent",
+                          justifyContent: "center", alignItems: "center",
+                          marginRight: 10,
+                        }}>
+                          {checked && <Text style={{ color: "#fff", fontSize: 14, fontWeight: "800" }}>✓</Text>}
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ color: C.text, fontWeight: "600", fontSize: 13 }}>
+                            {item.label}
+                            {item.danger && <Text style={{ color: C.warn }}> ⚠</Text>}
+                          </Text>
+                          <Text style={{ color: C.sub, fontSize: 11 }}>{item.desc}</Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              ))}
+              <View style={{ height: 20 }} />
+            </ScrollView>
+            
+            {/* 하단 실행 버튼 */}
+            {(() => {
+              const cnt = Object.values(resetSelections).filter(Boolean).length;
+              const hasDanger = resetSelections.novels || resetSelections.matches || resetSelections.planned;
+              return (
+                <View style={{ paddingTop: 12, borderTopWidth: 1, borderTopColor: C.line }}>
+                  <TouchableOpacity
+                    onPress={cnt > 0 ? executeCustomReset : null}
+                    style={{
+                      backgroundColor: cnt > 0 ? (hasDanger ? C.warn : C.primary) : C.chip,
+                      padding: 14,
+                      borderRadius: 12,
+                      alignItems: "center",
+                    }}
+                  >
+                    <Text style={{ color: cnt > 0 ? "#fff" : C.sub, fontWeight: "800", fontSize: 15 }}>
+                      {cnt > 0 ? `🧹 ${cnt}개 항목 초기화` : "초기화할 항목을 선택하세요"}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })()}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
