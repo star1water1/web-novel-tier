@@ -2,13 +2,13 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.5.4                                                                  ║
+ * ║  버전: 3.5.5                                                                  ║
  * ║  최종 수정: 2025-02-15                                                        ║
- * ║  총 라인 수: 약 30,000줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 31,700줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
  * ╔══════════════════════════════════════════════════════════════════════════════╗
- * ║ 🧠 v3.5.4 수정 사항 - 명언 쇼츠 탭 + 매칭 행동 분석 + 다중 버그 수정        ║
+ * ║ 🧠 v3.5.4~v3.5.5 수정 사항 - 명언 쇼츠 탭 + 매칭 행동 분석 + 다중 버그 수정        ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║                                                                              ║
  * ║ [변경 1] 💬 명언 갤러리 (쇼츠) 탭 신설                                       ║
@@ -96,6 +96,13 @@
  * ║   - 핵심 데이터 / 학습 데이터 / 추천&히스토리 / 태그 / 표지&수상 / 설정     ║
  * ║   - 그룹 선택, 전체 선택/해제, 학습만 단축 버튼                              ║
  * ║   - 위험 항목(novels/matches/planned) 별도 경고 + 시각적 구분                ║
+ * ║                                                                              ║
+ * ║ [변경 11] 🐛 크래시 수정 + 📐 모달 높이 2차 수정                             ║
+ * ║ • 순위탭: removeClippedSubviews=false (ScrollView 중첩 FlatList 크래시)      ║
+ * ║ • 기본표지: URL/갤러리/삭제 콜백 try-catch + Alert 에러 핸들링               ║
+ * ║ • 모달 높이 maxHeight→height 전환 (4개 추가):                                ║
+ * ║   - 보충 기준(85%), JSON 입력(80%), 백업 내보내기(85%)                       ║
+ * ║   - 표지 선택: 중첩 TouchableOpacity 제거 + height 80% 고정                  ║
  * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
@@ -15877,8 +15884,7 @@ function generateBehaviorInsights(staticGenres, dynamicGenres, staticTags, dynam
           severity: "medium",
         });
         break;
-      }
-    }
+      }    }
   }
 
   // 3) 작가 충성도
@@ -24017,7 +24023,7 @@ async function importJSON() {
                 initialNumToRender={8}
                 maxToRenderPerBatch={5}
                 windowSize={3}
-                removeClippedSubviews={true}
+                removeClippedSubviews={false}
                 scrollEnabled={false}
                 renderItem={({ item: entry }) => {
                   const { item, rank } = entry || {};
@@ -28971,16 +28977,26 @@ async function importJSON() {
                   <Text style={{ color: C.text, fontWeight: "600", flex: 1 }}>{p}</Text>
                   <View style={{ flexDirection: "row", gap: 4 }}>
                     <TouchableOpacity
-                      onPress={() => openUrlModal((url) => {
-                        savePlatformCovers({ ...platformCoversRef.current, [p]: url });
+                      onPress={() => openUrlModal(async (url) => {
+                        try {
+                          await savePlatformCovers({ ...platformCoversRef.current, [p]: url });
+                        } catch (err) {
+                          console.warn("플랫폼 표지 URL 저장 실패:", err);
+                          Alert.alert("오류", "표지 저장에 실패했습니다.");
+                        }
                       })}
                       style={{ padding: 6, backgroundColor: C.primary, borderRadius: 6 }}
                     >
                       <Text style={{ color: "#fff", fontSize: 12 }}>URL</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      onPress={() => pickImageFromGallery((uri) => {
-                        savePlatformCovers({ ...platformCoversRef.current, [p]: uri });
+                      onPress={() => pickImageFromGallery(async (uri) => {
+                        try {
+                          await savePlatformCovers({ ...platformCoversRef.current, [p]: uri });
+                        } catch (err) {
+                          console.warn("플랫폼 표지 저장 실패:", err);
+                          Alert.alert("오류", "표지 저장에 실패했습니다. 다시 시도해주세요.");
+                        }
                       })}
                       style={{ padding: 6, backgroundColor: C.ok, borderRadius: 6 }}
                     >
@@ -28988,10 +29004,14 @@ async function importJSON() {
                     </TouchableOpacity>
                     {platformCovers[p] && (
                       <TouchableOpacity
-                        onPress={() => {
-                          const updated = { ...platformCoversRef.current };
-                          delete updated[p];
-                          savePlatformCovers(updated);
+                        onPress={async () => {
+                          try {
+                            const updated = { ...platformCoversRef.current };
+                            delete updated[p];
+                            await savePlatformCovers(updated);
+                          } catch (err) {
+                            console.warn("플랫폼 표지 삭제 실패:", err);
+                          }
                         }}
                         style={{ padding: 6, backgroundColor: C.warn, borderRadius: 6 }}
                       >
@@ -29874,7 +29894,7 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              maxHeight: "85%",
+              height: "85%",
             }}
           >
             <Text style={{ fontSize: 18, fontWeight: "800", marginBottom: 8, color: C.text }}>
@@ -30054,7 +30074,7 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              maxHeight: "85%",
+              height: "80%",
             }}
           >
             <Text
@@ -30209,7 +30229,7 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              maxHeight: "90%",
+              height: "85%",
             }}
           >
             <Text
@@ -31388,21 +31408,25 @@ async function importJSON() {
         onRequestClose={() => setCoverSelectModalOpen(false)}
         transparent
       >
-        <TouchableOpacity
-          style={{ flex: 1, backgroundColor: C.modal }}
-          activeOpacity={1}
-          onPress={() => setCoverSelectModalOpen(false)}
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: C.modal,
+            justifyContent: "flex-end",
+          }}
         >
-          <View style={{ flex: 1, justifyContent: "flex-end" }}>
-            <TouchableOpacity activeOpacity={1}>
-              <View style={{
-                backgroundColor: C.card,
-                borderTopLeftRadius: 20,
-                borderTopRightRadius: 20,
-                padding: 16,
-                minHeight: "60%",
-                maxHeight: "90%",
-              }}>
+          <TouchableOpacity 
+            style={{ flex: 1 }} 
+            activeOpacity={1} 
+            onPress={() => setCoverSelectModalOpen(false)} 
+          />
+          <View style={{
+            backgroundColor: C.card,
+            borderTopLeftRadius: 20,
+            borderTopRightRadius: 20,
+            padding: 16,
+            height: "80%",
+          }}>
                 <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                   <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>
                     🖼️ 표지 라이브러리에서 선택
@@ -31509,10 +31533,8 @@ async function importJSON() {
                   onPress={() => setCoverSelectModalOpen(false)}
                   style={{ marginTop: 12 }}
                 />
-              </View>
-            </TouchableOpacity>
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
 
       {/* 🏷️ 태그 매니저 모달 (풀스크린) */}
