@@ -2,9 +2,9 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.5.5                                                                  ║
- * ║  최종 수정: 2025-02-15                                                        ║
- * ║  총 라인 수: 약 31,700줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 3.5.6                                                                  ║
+ * ║  최종 수정: 2025-02-17                                                        ║
+ * ║  총 라인 수: 약 32,100줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -103,6 +103,90 @@
  * ║ • 모달 높이 maxHeight→height 전환 (4개 추가):                                ║
  * ║   - 보충 기준(85%), JSON 입력(80%), 백업 내보내기(85%)                       ║
  * ║   - 표지 선택: 중첩 TouchableOpacity 제거 + height 80% 고정                  ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ * 
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v3.5.6 수정 사항 - 전면 크래시 방어 + 모달/명언 수정                     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [변경 1] 📐 작품 수정 모달 / 예정작 수정 모달 높이 3차 수정                  ║
+ * ║ • 원인: height 85% 고정은 되어있으나 ScrollView에 flex:1 누락               ║
+ * ║   → ScrollView가 부모 컨테이너의 남은 공간을 채우지 못하는 문제             ║
+ * ║ • 수정: 두 모달의 ScrollView에 style={{ flex: 1 }} 추가                     ║
+ * ║                                                                              ║
+ * ║ [변경 2] 💬 인상깊은 문장 표시 개선                                          ║
+ * ║ • 큰따옴표 제거: "문장" → 문장 (수상탭, 상세뷰, 명언목록)                   ║
+ * ║ • 구분자 변경: JSON배열 → @ 구분자 (쉼표 충돌 방지)                         ║
+ * ║   - 기존 JSON배열도 하위호환 파싱 지원                                       ║
+ * ║                                                                              ║
+ * ║ [변경 3] 🛡️ ErrorBoundary + 글로벌 에러 핸들러 (NEW)                         ║
+ * ║ • AppErrorBoundary 클래스 컴포넌트 추가                                      ║
+ * ║   - 렌더링 중 에러 발생 시 복구 UI 표시 (white screen 방지)                 ║
+ * ║   - "다시 시도" 버튼으로 앱 복구 가능                                       ║
+ * ║ • App() = <AppErrorBoundary><AppContent /></AppErrorBoundary> 래핑           ║
+ * ║ • global.ErrorUtils.setGlobalHandler 설정                                    ║
+ * ║   - 치명적 오류: 기본 핸들러 위임                                           ║
+ * ║   - 비치명적 오류: 로그만 남기고 무시 (무조건 crash 방지)                   ║
+ * ║                                                                              ║
+ * ║ [변경 4] 🔧 resetDbConnection() await 누락 수정 (4곳)                        ║
+ * ║ • 원인: async 함수를 await 없이 호출 → DB 연결 정리 완료 전 재연결 시도     ║
+ * ║   → NullPointerException, "database is closed" 등 크래시 유발               ║
+ * ║ • 수정 위치:                                                                 ║
+ * ║   - 앱 초기화 오류 핸들러 (initialize retry loop)                            ║
+ * ║   - AppState 포그라운드 복귀 2차 재연결                                      ║
+ * ║   - importCoversFromGallery 에러 복구                                        ║
+ * ║   - saveEdit DB 연결 오류 복구                                               ║
+ * ║                                                                              ║
+ * ║ [변경 5] 🛡️ normalizeNovel() 전면 적용                                       ║
+ * ║ • rating/rd/wins/losses/match_count 등 8개 숫자 필드 정규화                  ║
+ * ║ • 적용 위치:                                                                 ║
+ * ║   - loadList → list 전체 정규화 (모든 탭)                                   ║
+ * ║   - pickRandomUnseenPair → pair 상태 정규화                                 ║
+ * ║   - decide → Elo 계산용 A/B 정규화                                          ║
+ * ║ • 개별 렌더링 이중 방어: NovelCard, 매칭 화면, openEdit                      ║
+ * ║                                                                              ║
+ * ║ [변경 6] 🛡️ FlatList keyExtractor null safety (5곳)                          ║
+ * ║ • (item) => item.id → (item, index) => item?.id || `fb-${index}`            ║
+ * ║ • 홈/대량관리/예정/표지선택 등 5개 FlatList                                 ║
+ * ║                                                                              ║
+ * ║ [변경 7] 🛡️ safeOpenURL() 유틸리티 추가                                      ║
+ * ║ • Linking.openURL(빈/잘못된 URL) → crash 방지                               ║
+ * ║ • URL 검증 + canOpenURL 체크 + https:// 자동 보완                           ║
+ * ║ • 3곳 적용: 홈 링크, 랭크 링크, 대량관리 링크                               ║
+ * ║                                                                              ║
+ * ║ [변경 8] 🚀 표지 갤러리 렌더링 전면 최적화                                  ║
+ * ║ • CoverGalleryItem / CoverSelectItem memo 컴포넌트 분리                      ║
+ * ║   - props 변경 없으면 재렌더 스킵 + recyclingKey 플리커 방지                ║
+ * ║ • coverStats / filteredCovers / filteredSelectCovers useMemo 캐싱            ║
+ * ║   - 기존: 렌더마다 .filter() 5~7회 반복 → 1회로 축소                       ║
+ * ║ • 표지 탭 FlatList 가상화 복원 (scrollEnabled=true)                         ║
+ * ║   - 기존: scrollEnabled=false → 전체 이미지 한번에 렌더 (100장=100셀)       ║
+ * ║   - 변경: 고정 높이 뷰포트 + 내부 스크롤 → 9장만 렌더 (3×3)               ║
+ * ║ • getItemLayout 제거 (numColumns + getItemLayout RN 버전별 동작 불일치)     ║
+ * ║   - scrollToIndex 미사용이므로 안전하게 제거, 가상화는 유지                 ║
+ * ║ • useCallback 핸들러 + useRef 패턴 (스테일 클로저 방지)                     ║
+ * ║   - ref.current에 항상 최신 함수 저장 → useCallback([])에서도 최신 상태    ║
+ * ║ • loadCoverLibrary 용량 계산 분리 (getCoverLibrarySize)                     ║
+ * ║   - 기존: 매 호출마다 FileSystem stat 전체 순회 (앱 시작/포그라운드)        ║
+ * ║   - 변경: 표지 탭 진입 시에만 실행 (I/O 절약)                              ║
+ * ║ • FlatList key={filter} 추가 → 필터 전환 시 강제 리마운트 (레이아웃 보호) ║
+ * ║ • removeClippedSubviews: Android만 (iOS 이미지 재표시 이슈 회피)           ║
+ * ║                                                                              ║
+ * ║ [변경 9] 🛡️ all() 반환값 null 방어 (DB 쿼리 전면 강화)                     ║
+ * ║ • all() → safeDbOperation이 throw 하지만, 방어적으로 (|| []) 추가          ║
+ * ║ • 수정 위치: columnExists, rebuildAllFromMatches, migrateTagSystem(4곳),    ║
+ * ║   getHeadToHead, analyzeGenreMatchup(3곳), batchAddTag, batchRemoveTag,     ║
+ * ║   태그 삭제(19560) 등 총 14곳                                               ║
+ * ║                                                                              ║
+ * ║ [변경 10] 🛡️ useEffect async try-catch 누락 수정 (3곳)                     ║
+ * ║ • pinned_tags / hidden_tags 로드 useEffect: 미보호 await → try-catch 추가  ║
+ * ║ • reco 탭 진입 useEffect: loadList/refreshDaily 등 미보호 → try-catch 추가 ║
+ * ║                                                                              ║
+ * ║ [변경 11] 🛡️ 좌표계 .toFixed() 크래시 방어 (4곳)                           ║
+ * ║ • p.x.toFixed(2) → (Number(p.x) || 0).toFixed(2) 변환                     ║
+ * ║ • 위치: TagDetailModal(1곳), 좌표계 태그목록(1곳), 태그편집(2곳)           ║
+ * ║ • 원인: 좌표값이 문자열이면 .toFixed is not a function TypeError            ║
  * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
@@ -1675,7 +1759,7 @@
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  */
 
-import React, { useEffect, useMemo, useState, useRef, useCallback, memo } from "react";
+import React, { useEffect, useMemo, useState, useRef, useCallback, memo, Component } from "react";
 import {
   Alert,
   FlatList,
@@ -1696,6 +1780,7 @@ import {
   Platform,
   AppState,
   Dimensions,
+  LogBox,
 } from "react-native";
 import { Image as ExpoImage } from "expo-image";
 import * as SQLite from "expo-sqlite";
@@ -1703,6 +1788,75 @@ import * as ImagePicker from "expo-image-picker";
 import * as NavigationBar from "expo-navigation-bar";
 // 🔧 v3.4.7: 새 FileSystem API가 불안정하여 레거시 API 사용
 import * as FileSystem from "expo-file-system/legacy"; // 🔧 v3.5.3: SDK 54 신규 API 불안정 → 레거시 API 사용
+
+/* =========================================================
+   🛡️ v3.5.6: 글로벌 에러 핸들러 + ErrorBoundary
+   - 미처리 Promise rejection → 무시 (crash 방지)
+   - 렌더링 에러 → 복구 UI 표시 (white screen 방지)
+   ========================================================= */
+
+// 🛡️ 글로벌 미처리 Promise Rejection 핸들러
+// React Native에서 unhandled rejection은 앱을 종료시킬 수 있음
+if (global.ErrorUtils) {
+  const originalHandler = global.ErrorUtils.getGlobalHandler();
+  global.ErrorUtils.setGlobalHandler((error, isFatal) => {
+    if (isFatal) {
+      console.error("🔴 치명적 오류:", error?.message || error);
+      // 치명적 오류는 기본 핸들러에 위임
+      if (originalHandler) originalHandler(error, isFatal);
+    } else {
+      console.warn("🟡 비치명적 오류:", error?.message || error);
+      // 비치명적 오류는 로그만 남기고 무시 (crash 방지)
+    }
+  });
+}
+
+// 🛡️ ErrorBoundary: 렌더링 중 발생하는 에러를 잡아 white screen 방지
+class AppErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, errorMsg: "" };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, errorMsg: error?.message || "알 수 없는 오류" };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("🔴 렌더링 크래시:", error?.message, errorInfo?.componentStack?.slice(0, 500));
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <SafeAreaView style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#0f172a", padding: 32 }}>
+          <Text style={{ fontSize: 48, marginBottom: 16 }}>⚠️</Text>
+          <Text style={{ fontSize: 20, fontWeight: "800", color: "#f8fafc", marginBottom: 12, textAlign: "center" }}>
+            앱에 오류가 발생했습니다
+          </Text>
+          <Text style={{ fontSize: 14, color: "#94a3b8", marginBottom: 24, textAlign: "center", lineHeight: 22 }}>
+            {this.state.errorMsg}
+          </Text>
+          <TouchableOpacity
+            onPress={() => this.setState({ hasError: false, errorMsg: "" })}
+            style={{
+              backgroundColor: "#3b82f6",
+              paddingHorizontal: 32,
+              paddingVertical: 14,
+              borderRadius: 12,
+            }}
+          >
+            <Text style={{ color: "#fff", fontWeight: "700", fontSize: 16 }}>다시 시도</Text>
+          </TouchableOpacity>
+          <Text style={{ fontSize: 12, color: "#475569", marginTop: 16, textAlign: "center" }}>
+            문제가 지속되면 앱을 재시작해주세요
+          </Text>
+        </SafeAreaView>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 /* =========================================================
    SQLite (Expo SDK 54 호환)
@@ -1997,7 +2151,7 @@ async function processMatchQueue() {
 /* -------------------- Migration -------------------- */
 async function columnExists(table, name) {
   const rows = await all(`PRAGMA table_info(${table});`);
-  return rows.some((r) => r.name === name);
+  return (rows || []).some((r) => r.name === name);
 }
 
 async function ensureColumn(table, name, type, defaultExpr) {
@@ -2059,7 +2213,7 @@ async function initDb() {
 
   // 🚀 v2.8.1: 마이그레이션 최적화 - PRAGMA 한 번만 호출
   const existingColumns = await all(`PRAGMA table_info(novels);`);
-  const existingNames = new Set(existingColumns.map(r => r.name));
+  const existingNames = new Set((existingColumns || []).map(r => r.name));
   
   const migrations = [
     ["author", "TEXT", "''"],
@@ -2376,7 +2530,7 @@ async function migrateTagSystem() {
         "SELECT id, tags, tag_data FROM novels WHERE tag_data = '' OR tag_data IS NULL"
       );
       
-      for (const novel of novels) {
+      for (const novel of (novels || [])) {
         if (novel.tags) {
           const tagData = tagsStringToTagData(novel.tags, 3);
           await exec(
@@ -2397,7 +2551,7 @@ async function migrateTagSystem() {
       const novels = await all("SELECT id, tag_data, aliases FROM novels");
       let migratedCount = 0;
       
-      for (const novel of novels) {
+      for (const novel of (novels || [])) {
         const tagData = parseTagData(novel.tag_data);
         const existingAliases = parseNovelAliases(novel.aliases);
         
@@ -2436,7 +2590,7 @@ async function migrateTagSystem() {
       const novels = await all("SELECT id, tags, major_genre, sub_genre FROM novels");
       let syncedCount = 0;
       
-      for (const novel of novels) {
+      for (const novel of (novels || [])) {
         // 현재 tags 파싱
         const currentTags = (novel.tags || "")
           .split(",")
@@ -2488,7 +2642,7 @@ async function migrateTagSystem() {
       const plannedNovels = await all("SELECT id, tags, major_genre, sub_genre FROM planned_novels");
       let plannedSyncedCount = 0;
       
-      for (const novel of plannedNovels) {
+      for (const novel of (plannedNovels || [])) {
         const currentTags = (novel.tags || "")
           .split(",")
           .map(t => t.trim())
@@ -3216,7 +3370,7 @@ async function refreshPatternStats() {
     
     const queries = [];
     
-    for (const p of patterns) {
+    for (const p of (patterns || [])) {
       const n = p.sample_size || 0;
       const wins = p.win_count || 0;
       
@@ -3307,7 +3461,7 @@ async function discoverInsights() {
       LIMIT 10
     `);
     
-    for (const pattern of notablePatterns) {
+    for (const pattern of (notablePatterns || [])) {
       const insight = generateInsightFromPattern(pattern);
       if (insight) {
         await queueInsight(insight);
@@ -3735,7 +3889,7 @@ async function getH2HRecord(aId, bId) {
     `, [aId, bId, bId, aId]);
     
     let aWins = 0, bWins = 0;
-    for (const r of rows) {
+    for (const r of (rows || [])) {
       if (r.winner_id === aId) aWins++;
       else if (r.winner_id === bId) bWins++;
     }
@@ -5219,12 +5373,12 @@ async function rebuildAllFromMatches() {
   // 2) 모든 소설 메모리에 로드
   const novelMap = {};
   const novels = await all(`SELECT * FROM novels;`);
-  for (const n of novels) {
+  for (const n of (novels || [])) {
     novelMap[n.id] = { ...n };
   }
 
   // 3) 매치 로그를 순서대로 적용
-  for (const m of logs) {
+  for (const m of (logs || [])) {
     const A = novelMap[m.a_id];
     const B = novelMap[m.b_id];
     if (!A || !B) continue;
@@ -5454,6 +5608,32 @@ function getWinRate(wins, losses) {
   return total > 0 ? ((wins || 0) / total * 100).toFixed(1) : "-";
 }
 
+/**
+ * 🛡️ v3.5.6: 안전한 URL 오픈 (빈/잘못된 URL → crash 방지)
+ */
+function safeOpenURL(url) {
+  if (!url || typeof url !== "string" || !url.trim()) {
+    Alert.alert("알림", "링크가 등록되지 않았습니다.");
+    return;
+  }
+  const trimmed = url.trim();
+  Linking.canOpenURL(trimmed).then(supported => {
+    if (supported) {
+      Linking.openURL(trimmed);
+    } else {
+      // 스킴이 없으면 https:// 붙여서 시도
+      const withScheme = trimmed.startsWith("http") ? trimmed : `https://${trimmed}`;
+      Linking.openURL(withScheme).catch(() => {
+        Alert.alert("오류", "링크를 열 수 없습니다: " + trimmed);
+      });
+    }
+  }).catch(() => {
+    Linking.openURL(trimmed).catch(() => {
+      Alert.alert("오류", "링크를 열 수 없습니다.");
+    });
+  });
+}
+
 // 🆕 등록 후 한달 이내인지 확인
 function isNewNovel(createdAt) {
   if (!createdAt) return false;
@@ -5481,19 +5661,25 @@ function getFirstGenre(value) {
 }
 
 /* =========================================================
-   💬 v3.5.4: 인상깊은 문장 다중 지원 유틸리티
+   💬 v3.5.4~v3.5.6: 인상깊은 문장 다중 지원 유틸리티
    - 하위 호환: 기존 단일 문자열 → ["문자열"] 변환
-   - 새 형식: JSON 배열 '["quote1","quote2"]'
+   - 하위 호환: 기존 JSON 배열 '["quote1","quote2"]' 파싱 지원
+   - v3.5.6: 새 형식 @ 구분자 '문장1 @ 문장2' (쉼표 충돌 방지)
    ========================================================= */
 function parseQuotes(val) {
   if (!val || typeof val !== "string" || !val.trim()) return [];
   const trimmed = val.trim();
+  // 하위호환: 기존 JSON 배열 형식 지원
   if (trimmed.startsWith("[")) {
     try {
       const arr = JSON.parse(trimmed);
       if (Array.isArray(arr)) return arr.filter(q => typeof q === "string" && q.trim());
       return [];
-    } catch { return [trimmed]; }
+    } catch { /* JSON 파싱 실패 시 아래로 계속 */ }
+  }
+  // 🔧 v3.5.6: @ 구분자 기반 다중 문장 파싱
+  if (trimmed.includes("@")) {
+    return trimmed.split("@").map(q => q.trim()).filter(Boolean);
   }
   return [trimmed];
 }
@@ -5503,7 +5689,28 @@ function serializeQuotes(arr) {
   const cleaned = arr.filter(q => typeof q === "string" && q.trim()).map(q => q.trim());
   if (cleaned.length === 0) return "";
   if (cleaned.length === 1) return cleaned[0]; // 하위 호환: 1개면 단일 문자열
-  return JSON.stringify(cleaned);
+  // 🔧 v3.5.6: @ 구분자로 저장 (문장 내 쉼표 충돌 방지)
+  return cleaned.join(" @ ");
+}
+
+/**
+ * 🛡️ v3.5.6: 소설 객체 숫자 필드 정규화
+ * DB에서 직접 조회한 row의 null/undefined 필드를 안전한 기본값으로 변환
+ * → .toFixed(), Math.round() 등에서 크래시 방지
+ */
+function normalizeNovel(r) {
+  if (!r) return r;
+  return {
+    ...r,
+    rating: Number(r.rating) || 1500,
+    rd: Number(r.rd) || 350,
+    wins: Number(r.wins) || 0,
+    losses: Number(r.losses) || 0,
+    match_count: Number(r.match_count) || 0,
+    read_count: Number(r.read_count) || 0,
+    reread_count: Number(r.reread_count) || 1,
+    pinned: Number(r.pinned) || 0,
+  };
 }
 
 /* =========================================================
@@ -6125,6 +6332,119 @@ const CoverImage = memo(({ uri, platforms, platformCovers = {}, size = 50, theme
   );
 });
 
+/**
+ * 🖼️ v3.5.6: 표지 갤러리 아이템 (memo 최적화)
+ * - 표지 탭 갤러리에서 사용
+ * - props 변경 없으면 재렌더 스킵 (이미지 무한 리렌더 방지)
+ */
+const CoverGalleryItem = memo(({ item, isUsed, novelTitle, onPressDelete, onPressInfo, theme }) => (
+  <TouchableOpacity
+    style={{
+      flex: 1,
+      aspectRatio: 0.7,
+      maxWidth: "32%",
+      borderRadius: 8,
+      overflow: "hidden",
+      borderWidth: 2,
+      borderColor: isUsed ? theme.ok : theme.line,
+      position: "relative",
+    }}
+    onPress={() => {
+      if (!isUsed) {
+        onPressDelete(item.id);
+      } else {
+        onPressInfo(novelTitle || "알 수 없음");
+      }
+    }}
+  >
+    <ExpoImage
+      source={{ uri: item.file_path }}
+      style={{ width: "100%", height: "100%" }}
+      contentFit="cover"
+      cachePolicy="memory-disk"
+      recyclingKey={item.id}
+    />
+    {/* 상태 뱃지 */}
+    <View style={{
+      position: "absolute",
+      top: 4,
+      right: 4,
+      backgroundColor: isUsed ? theme.ok : theme.sub,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 4,
+    }}>
+      <Text style={{ color: "#fff", fontSize: 9, fontWeight: "700" }}>
+        {isUsed ? "사용 중" : "미사용"}
+      </Text>
+    </View>
+    {/* 연결된 작품명 */}
+    {isUsed && novelTitle ? (
+      <View style={{
+        position: "absolute",
+        bottom: 0,
+        left: 0,
+        right: 0,
+        backgroundColor: "rgba(0,0,0,0.7)",
+        padding: 4,
+      }}>
+        <Text style={{ color: "#fff", fontSize: 9, fontWeight: "600" }} numberOfLines={1}>
+          {novelTitle}
+        </Text>
+      </View>
+    ) : null}
+  </TouchableOpacity>
+));
+
+/**
+ * 🖼️ v3.5.6: 표지 선택 모달 아이템 (memo 최적화)
+ * - 표지 선택 모달에서 사용
+ */
+const CoverSelectItem = memo(({ item, isUsed, onSelect, onAlertUsed, theme }) => (
+  <TouchableOpacity
+    style={{
+      flex: 1,
+      aspectRatio: 0.7,
+      maxWidth: "24%",
+      borderRadius: 6,
+      overflow: "hidden",
+      borderWidth: 2,
+      borderColor: isUsed ? theme.line : theme.primary,
+      opacity: isUsed ? 0.5 : 1,
+    }}
+    onPress={() => {
+      if (!isUsed) {
+        onSelect(item);
+      } else {
+        onAlertUsed();
+      }
+    }}
+    disabled={isUsed}
+  >
+    <ExpoImage
+      source={{ uri: item.file_path }}
+      style={{ width: "100%", height: "100%" }}
+      contentFit="cover"
+      cachePolicy="memory-disk"
+      recyclingKey={item.id}
+    />
+    {isUsed ? (
+      <View style={{
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: "rgba(0,0,0,0.4)",
+        justifyContent: "center",
+        alignItems: "center",
+      }}>
+        <Text style={{ color: "#fff", fontSize: 10, fontWeight: "700" }}>사용중</Text>
+      </View>
+    ) : null}
+  </TouchableOpacity>
+));
+
 // 📱 NovelCard: 홈 화면 작품 카드 컴포넌트 (메모이제이션으로 성능 최적화)
 const NovelCard = memo(({ 
   item, 
@@ -6218,10 +6538,10 @@ const NovelCard = memo(({
           {/* 3줄: 레이팅 정보 */}
           <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
             <Text style={{ color: theme.sub, fontSize: 12 }}>
-              <Text style={{ fontWeight: "700", color: theme.text }}>{item.rating.toFixed(1)}</Text>
-              <Text> · W{item.wins}/L{item.losses} · 승률 </Text>
+              <Text style={{ fontWeight: "700", color: theme.text }}>{(Number(item.rating) || 1500).toFixed(1)}</Text>
+              <Text> · W{item.wins || 0}/L{item.losses || 0} · 승률 </Text>
               <Text style={{ fontWeight: "600" }}>{winRate}%</Text>
-              <Text> · RD {Math.round(item.rd)}</Text>
+              <Text> · RD {Math.round(item.rd || 350)}</Text>
             </Text>
           </View>
           
@@ -8305,7 +8625,7 @@ const TagEditModal = memo(({
                       <View>
                         <Text style={{ fontWeight: "600", color: C.text }}>{p.systemName}</Text>
                         <Text style={{ fontSize: 11, color: C.sub, marginTop: 2 }}>
-                          X: {p.x.toFixed(2)} ({p.xLabel}) • Y: {p.y.toFixed(2)} ({p.yLabel})
+                          X: {(Number(p.x) || 0).toFixed(2)} ({p.xLabel}) • Y: {(Number(p.y) || 0).toFixed(2)} ({p.yLabel})
                         </Text>
                       </View>
                       <Text style={{ color: C.primary, fontWeight: "600" }}>편집 →</Text>
@@ -11729,7 +12049,7 @@ const AwardsScreen = memo(({
                               color: isDark ? "#fef3c7" : "#78350f",
                               lineHeight: 22,
                             }}>
-                              {`"${awardQuotes[0]}"`}
+                              {awardQuotes[0]}
                             </Text>
                           </View>
                         ) : null;
@@ -16031,10 +16351,8 @@ function generateInsights(data) {
   };
 }
 
-/* =========================================================
-   App
-   ========================================================= */
-export default function App() {
+/* ========= App ========= */
+function AppContent() {
   // 🎨 다크모드
   const systemColorScheme = useColorScheme();
   const [darkMode, setDarkModeState] = useState(null); // null=시스템, true=다크, false=라이트
@@ -16344,6 +16662,28 @@ export default function App() {
   const [coverSelectFilter, setCoverSelectFilter] = useState("all"); // 🖼️ v3.5.4: "all" | "unused" (사용중 숨기기)
   const [coverSelectTarget, setCoverSelectTarget] = useState(null); // "new" | "edit" | "planned" | "plannedEdit"
   const [coverLibrarySize, setCoverLibrarySize] = useState(0); // 전체 용량
+
+  // 🖼️ v3.5.6: 표지 라이브러리 통계 캐싱 (렌더링마다 .filter() 반복 방지)
+  const coverStats = useMemo(() => {
+    let used = 0, unused = 0;
+    for (const c of coverLibrary) {
+      if (c.status === "used") used++; else unused++;
+    }
+    return { total: coverLibrary.length, used, unused };
+  }, [coverLibrary]);
+
+  // 🖼️ v3.5.6: 표지 탭 필터 결과 캐싱
+  const filteredCovers = useMemo(() => {
+    if (coverLibraryFilter === "unused") return coverLibrary.filter(c => c.status === "unused");
+    if (coverLibraryFilter === "used") return coverLibrary.filter(c => c.status === "used");
+    return coverLibrary;
+  }, [coverLibrary, coverLibraryFilter]);
+
+  // 🖼️ v3.5.6: 표지 선택 모달 필터 결과 캐싱
+  const filteredSelectCovers = useMemo(() => {
+    if (coverSelectFilter === "unused") return coverLibrary.filter(c => c.status !== "used");
+    return coverLibrary;
+  }, [coverLibrary, coverSelectFilter]);
 
   /** JSON 검증 실행 */
   const runImportValidation = () => {
@@ -16887,7 +17227,7 @@ export default function App() {
           
         } catch (e) {
           console.warn(`앱 초기화 오류 (시도 ${attempt + 1}/${maxRetries}):`, e);
-          resetDbConnection();
+          await resetDbConnection();
           
           if (attempt === maxRetries - 1) {
             if (mounted) {
@@ -16949,7 +17289,7 @@ export default function App() {
           console.error("DB 재연결/리로드 실패:", e.message);
           // 🔧 v3.5.3: 재연결 실패 시 한 번 더 시도
           try {
-            resetDbConnection();
+            await resetDbConnection();
             await new Promise(r => setTimeout(r, 500));
             await openDb();
             await loadList();
@@ -17767,14 +18107,11 @@ export default function App() {
   // ═══════════════════════════════════════════════════════════════════
 
   // 표지 라이브러리 로드
+  // 🚀 v3.5.6: 용량 계산 분리 (FileSystem stat 비용이 크므로 표지 탭에서만 실행)
   async function loadCoverLibrary() {
     try {
       const rows = await all(`SELECT * FROM cover_library ORDER BY created_at DESC;`);
       setCoverLibrary(rows || []);
-      
-      // 용량 계산
-      const size = await getCoverLibrarySize();
-      setCoverLibrarySize(size);
     } catch (e) {
       console.warn("loadCoverLibrary error:", e);
       setCoverLibrary([]);
@@ -17881,7 +18218,7 @@ export default function App() {
       setCoverLibraryProgress({ current: 0, total: 0 });
       
       // 🔧 v3.5.1: 에러 발생 시 DB 연결 복구 시도 후 데이터 리로드
-      resetDbConnection();
+      await resetDbConnection();
       try {
         await openDb();
         await loadCoverLibrary();
@@ -18015,6 +18352,38 @@ export default function App() {
     }
   }
 
+  // 🖼️ v3.5.6: 표지 갤러리 최적화 - useRef + useCallback (스테일 클로저 방지)
+  // ⚠️ 일반 useCallback([])은 첫 렌더의 함수를 영구 캡처 → 상태 변경 후 동작 안 함
+  // → ref.current에 항상 최신 함수 저장, useCallback은 ref를 통해 호출
+  const removeCoverRef = useRef(removeCoverFromLibrary);
+  removeCoverRef.current = removeCoverFromLibrary;
+  const selectCoverRef = useRef(selectCoverFromLibrary);
+  selectCoverRef.current = selectCoverFromLibrary;
+
+  const coverGalleryDeleteHandler = useCallback((coverId) => {
+    removeCoverRef.current(coverId);
+  }, []);
+
+  const coverGalleryInfoHandler = useCallback((novelTitle) => {
+    Alert.alert("사용 중", `이 표지는 "${novelTitle}"에서 사용 중입니다.`, [{ text: "확인" }]);
+  }, []);
+
+  const coverSelectHandler = useCallback((cover) => {
+    selectCoverRef.current(cover);
+  }, []);
+
+  const coverSelectAlertUsed = useCallback(() => {
+    Alert.alert("알림", "이 표지는 이미 다른 작품에서 사용 중입니다.");
+  }, []);
+
+  // 🖼️ v3.5.6: 갤러리 아이템 레이아웃 계산 (뷰포트 높이용)
+  const { width: screenWidth } = Dimensions.get("window");
+  // 표지 탭 (3열): ScrollView padding 32 + Section padding 32 + gap 8×2=16
+  const GALLERY_COL3_ITEM_W = (screenWidth - 64 - 16) / 3;
+  const GALLERY_COL3_ITEM_H = GALLERY_COL3_ITEM_W / 0.7 + 8; // aspectRatio 0.7 + marginBottom 8
+  // 갤러리 뷰포트 높이 (5행 표시)
+  const GALLERY_VIEWPORT_HEIGHT = GALLERY_COL3_ITEM_H * 5;
+
   async function loadMatchStats() {
     try {
       const novels = await all(`SELECT id FROM novels;`);
@@ -18044,11 +18413,11 @@ export default function App() {
       [aId, bId, bId, aId]
     );
     let aWins = 0, bWins = 0;
-    for (const m of matches) {
+    for (const m of (matches || [])) {
       if (m.winner_id === aId) aWins++;
       else if (m.winner_id === bId) bWins++;
     }
-    return { aWins, bWins, total: matches.length };
+    return { aWins, bWins, total: (matches || []).length };
   }
 
   // 장르 상성 분석 (같은 장르 간 전적 집계)
@@ -18062,7 +18431,7 @@ export default function App() {
     const novelsA = await all(`SELECT id FROM novels WHERE major_genre LIKE ?`, [`%${genreA}%`]);
     const novelsB = await all(`SELECT id FROM novels WHERE major_genre LIKE ?`, [`%${genreB}%`]);
     
-    if (novelsA.length === 0 || novelsB.length === 0) return null;
+    if (!novelsA || novelsA.length === 0 || !novelsB || novelsB.length === 0) return null;
     
     const idsA = new Set(novelsA.map(n => n.id));
     const idsB = new Set(novelsB.map(n => n.id));
@@ -18071,7 +18440,7 @@ export default function App() {
     const matches = await all(`SELECT a_id, b_id, winner_id FROM matches`);
     
     let genreAWins = 0, genreBWins = 0;
-    for (const m of matches) {
+    for (const m of (matches || [])) {
       const aIsGenreA = idsA.has(m.a_id) && !idsA.has(m.b_id);
       const bIsGenreA = idsA.has(m.b_id) && !idsA.has(m.a_id);
       const aIsGenreB = idsB.has(m.a_id) && !idsB.has(m.b_id);
@@ -18799,8 +19168,12 @@ export default function App() {
   // 상단 고정 태그 로드/저장
   useEffect(() => {
     (async () => {
-      const saved = await getAppMeta("pinned_tags");
-      if (Array.isArray(saved)) setPinnedTags(saved);
+      try {
+        const saved = await getAppMeta("pinned_tags");
+        if (Array.isArray(saved)) setPinnedTags(saved);
+      } catch (e) {
+        console.warn("pinned_tags load error:", e);
+      }
     })();
   }, []);
 
@@ -18812,8 +19185,12 @@ export default function App() {
   // 숨김 태그 로드/저장
   useEffect(() => {
     (async () => {
-      const saved = await getAppMeta("hidden_tags");
-      if (Array.isArray(saved)) setHiddenTags(saved);
+      try {
+        const saved = await getAppMeta("hidden_tags");
+        if (Array.isArray(saved)) setHiddenTags(saved);
+      } catch (e) {
+        console.warn("hidden_tags load error:", e);
+      }
     })();
   }, []);
 
@@ -19197,7 +19574,7 @@ export default function App() {
             // 2. 모든 작품에서 해당 태그 제거
             const novels = await all("SELECT id, tags, major_genre, sub_genre FROM novels;");
             const updates = [];
-            for (const n of novels) {
+            for (const n of (novels || [])) {
               let changed = false;
               // 일반 태그에서 제거
               const tags = (n.tags || "").split(",").map(t => t.trim()).filter(Boolean);
@@ -19770,8 +20147,10 @@ export default function App() {
         orderBy = `pinned DESC, read_count ${sd}, rating DESC`;
       }
       const rows = await all(`SELECT * FROM novels ORDER BY ${orderBy};`);
-      setList(rows || []);
-      updateTagUsageCounts(rows || []); // 🏷️ 태그 사용 빈도 업데이트
+      // 🛡️ v3.5.6: 숫자 필드 정규화 (null → 기본값, 하위 렌더링 크래시 방지)
+      const safeRows = (rows || []).map(normalizeNovel);
+      setList(safeRows);
+      updateTagUsageCounts(safeRows); // 🏷️ 태그 사용 빈도 업데이트
       await loadMatchStats();
     } catch (e) {
       console.warn("loadList 오류:", e);
@@ -20303,7 +20682,7 @@ export default function App() {
     setEditItem(n);
     setEditOriginalReadCount(Number(n.read_count) || 0); // 🆕 원본 저장
     setEditOriginalTitle(n.title || ""); // 🔧 v3.0.2: 원본 제목 저장
-    setEditRating(String(n.rating.toFixed(1)));
+    setEditRating(String((Number(n.rating) || 1500).toFixed(1)));
     
     // 🆕 v3.4.1 #12: 최근 편집 기록에 추가
     setRecentlyEditedIds(prev => {
@@ -20488,7 +20867,7 @@ export default function App() {
       if (errorMsg.includes("NullPointerException") || 
           errorMsg.includes("prepareAsync") ||
           errorMsg.includes("rejected")) {
-        resetDbConnection(); // DB 연결 리셋
+        await resetDbConnection(); // DB 연결 리셋
         Alert.alert(
           "오류", 
           "데이터베이스 연결 오류가 발생했습니다.\n\n잠시 후 다시 시도해주세요. 문제가 지속되면 앱을 재시작해주세요.",
@@ -20549,7 +20928,9 @@ export default function App() {
   /* ---------- Matching ---------- */
   const pickRandomUnseenPair = async () => {
     try {
-      const allNovels = await all("SELECT * FROM novels ORDER BY rating DESC;");
+      const rawNovels = await all("SELECT * FROM novels ORDER BY rating DESC;");
+      // 🛡️ v3.5.6: 숫자 필드 정규화 (pair 렌더링 크래시 방지)
+      const allNovels = (rawNovels || []).map(normalizeNovel);
       if (!allNovels || allNovels.length < 2) {
         Alert.alert("알림", "작품을 2개 이상 추가하세요.");
         setPair(null);
@@ -20683,11 +21064,14 @@ export default function App() {
     
     // 🔄 v3.4.6: 매칭 큐잉 시스템 사용 (빠른 연타 대응, pairKey로 중복 방지)
     return enqueueMatchTask(async () => {
-      const A = await first("SELECT * FROM novels WHERE id=?", [currentPair.A.id]);
-      const B = await first("SELECT * FROM novels WHERE id=?", [currentPair.B.id]);
-      if (!A || !B) {
+      const rawA = await first("SELECT * FROM novels WHERE id=?", [currentPair.A.id]);
+      const rawB = await first("SELECT * FROM novels WHERE id=?", [currentPair.B.id]);
+      if (!rawA || !rawB) {
         return;
       }
+      // 🛡️ v3.5.6: 숫자 필드 정규화
+      const A = normalizeNovel(rawA);
+      const B = normalizeNovel(rawB);
       
       // 📰 v3.0.2: 매칭 전 티어 저장 (자동 티어 변동 추적용)
       const tierBeforeA = A.manual_tier || tierFromRating(A.rating);
@@ -21062,9 +21446,13 @@ export default function App() {
   useEffect(() => {
     if (screen === "reco") {
       (async () => {
-        await loadList();
-        await loadPlannedList(); // 📋 v3.3.0: 예정 작품도 로드
-        await refreshDailyRecommendation(false);
+        try {
+          await loadList();
+          await loadPlannedList(); // 📋 v3.3.0: 예정 작품도 로드
+          await refreshDailyRecommendation(false);
+        } catch (e) {
+          console.warn("reco screen init error:", e);
+        }
       })();
     }
   }, [screen]);
@@ -21075,6 +21463,20 @@ export default function App() {
       loadPlannedList();
     }
   }, [screen]);
+
+  // 🚀 v3.5.6: 표지 탭 진입 시에만 용량 계산 (FileSystem stat I/O 절약)
+  useEffect(() => {
+    if (screen === "covers") {
+      (async () => {
+        try {
+          const size = await getCoverLibrarySize();
+          setCoverLibrarySize(size);
+        } catch (e) {
+          console.warn("getCoverLibrarySize error:", e);
+        }
+      })();
+    }
+  }, [screen, coverLibrary.length]);
 
   // 마지막 매칭 언두
   async function undoLastMatch() {
@@ -21537,7 +21939,7 @@ export default function App() {
     );
 
     const queries = [];
-    for (const row of rows) {
+    for (const row of (rows || [])) {
       // 1. tags 필드 업데이트
       const tagSet = new Set(
         (row.tags || "")
@@ -21596,7 +21998,7 @@ export default function App() {
     );
 
     const queries = [];
-    for (const row of rows) {
+    for (const row of (rows || [])) {
       // 1. tags 필드 업데이트
       const tagSet = new Set(
         (row.tags || "")
@@ -23287,7 +23689,7 @@ async function importJSON() {
   <TextInput
     value={memorableQuote}
     onChangeText={setMemorableQuote}
-    placeholder={'"이 작품에서 가장 기억에 남는 문장..."'}
+    placeholder={'인상깊은 문장... (여러 개는 @ 로 구분)'}
     placeholderTextColor={C.sub}
     multiline
     style={{
@@ -23569,7 +23971,7 @@ async function importJSON() {
             <Section title={`현재 순위 (${homeFiltered.length})`}>
               <FlatList
                 data={homeFiltered}
-                keyExtractor={(item) => item.id}
+                keyExtractor={(item, index) => item?.id || `fb-${index}`}
                 initialNumToRender={8}
                 maxToRenderPerBatch={5}
                 windowSize={3}
@@ -23582,7 +23984,7 @@ async function importJSON() {
                     onPress={compareMode ? () => toggleCompare(item.id) : () => openEdit({ ...item })}
                     onLongPress={() => Alert.alert(item.title, `작가: ${item.author || "-"}\n\n${item.note || "(메모 없음)"}`)}
                     onTogglePin={(e) => { e?.stopPropagation?.(); togglePin(item.id, item.pinned); }}
-                    onLinkPress={(e) => { e?.stopPropagation?.(); Linking.openURL(item.link); }}
+                    onLinkPress={(e) => { e?.stopPropagation?.(); safeOpenURL(item.link); }}
                     compareMode={compareMode}
                     isComparing={compareIds.includes(item.id)}
                     platformCovers={platformCovers}
@@ -23830,7 +24232,7 @@ async function importJSON() {
                         color: isDark ? "#fef3c7" : "#78350f",
                         lineHeight: 22,
                       }}>
-                        {`"${quote}"`}
+                        {quote}
                       </Text>
                     </View>
                   ))}
@@ -23905,7 +24307,7 @@ async function importJSON() {
               {n.link && (
                 <PrimaryButton 
                   title="🔗 작품 바로가기" 
-                  onPress={() => Linking.openURL(n.link)} 
+                  onPress={() => safeOpenURL(n.link)} 
                   style={{ marginBottom: 8 }}
                 />
               )}
@@ -24495,7 +24897,7 @@ async function importJSON() {
                 return (
                   <FlatList
                     data={sorted}
-                    keyExtractor={(item) => item.id}
+                    keyExtractor={(item, index) => item?.id || `fb-${index}`}
                     scrollEnabled={false}
                     initialNumToRender={10}
                     maxToRenderPerBatch={5}
@@ -24538,7 +24940,7 @@ async function importJSON() {
                                   {/* 🆕 v3.4.2: 링크 바로가기 */}
                                   {item.link && (
                                     <TouchableOpacity
-                                      onPress={() => Linking.openURL(item.link)}
+                                      onPress={() => safeOpenURL(item.link)}
                                       style={{ marginRight: 6, padding: 2 }}
                                     >
                                       <Text style={{ fontSize: 14 }}>🔗</Text>
@@ -25384,10 +25786,10 @@ async function importJSON() {
                         {/* 스탯 */}
                         <View style={{ flexDirection: "row", alignItems: "center" }}>
                           <Text style={{ color: C.ok, fontWeight: "800", fontSize: 15 }}>
-                            {pair.A.rating.toFixed(1)}
+                            {(Number(pair.A.rating) || 1500).toFixed(1)}
                           </Text>
                           <Text style={{ color: C.sub, fontSize: 12, marginLeft: 8 }}>
-                            RD {Math.round(pair.A.rd)} · {pair.A.wins}W/{pair.A.losses}L · {getWinRate(pair.A.wins, pair.A.losses)}%
+                            RD {Math.round(pair.A.rd || 350)} · {pair.A.wins || 0}W/{pair.A.losses || 0}L · {getWinRate(pair.A.wins, pair.A.losses)}%
                           </Text>
                         </View>
                         
@@ -25603,10 +26005,10 @@ async function importJSON() {
                         {/* 스탯 */}
                         <View style={{ flexDirection: "row", alignItems: "center" }}>
                           <Text style={{ color: C.warn, fontWeight: "800", fontSize: 15 }}>
-                            {pair.B.rating.toFixed(1)}
+                            {(Number(pair.B.rating) || 1500).toFixed(1)}
                           </Text>
                           <Text style={{ color: C.sub, fontSize: 12, marginLeft: 8 }}>
-                            RD {Math.round(pair.B.rd)} · {pair.B.wins}W/{pair.B.losses}L · {getWinRate(pair.B.wins, pair.B.losses)}%
+                            RD {Math.round(pair.B.rd || 350)} · {pair.B.wins || 0}W/{pair.B.losses || 0}L · {getWinRate(pair.B.wins, pair.B.losses)}%
                           </Text>
                         </View>
                         
@@ -27195,7 +27597,7 @@ async function importJSON() {
             <Section title="목록(스크롤)">
               <FlatList
                 data={bulkFiltered}
-                keyExtractor={(item) => item.id}
+                keyExtractor={(item, index) => item?.id || `fb-${index}`}
                 extraData={selectedIds}
                 initialNumToRender={15}
                 maxToRenderPerBatch={10}
@@ -27246,21 +27648,21 @@ async function importJSON() {
           </>
         )}
 
-        {/* 🖼️ COVERS - 표지 라이브러리 (v3.4.5) */}
+        {/* 🖼️ COVERS - 표지 라이브러리 (v3.4.5, 🚀v3.5.6 렌더링 최적화) */}
         {screen === "covers" && (
           <>
             <H>표지 라이브러리</H>
 
-            {/* 통계 및 로딩 */}
+            {/* 통계 및 로딩 - 🚀 v3.5.6: coverStats useMemo 사용 */}
             <Section title="📊 라이브러리 현황">
               <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
                 <View>
                   <Text style={{ color: C.text, fontWeight: "700" }}>
-                    총 {coverLibrary.length}장
+                    총 {coverStats.total}장
                   </Text>
                   <Text style={{ color: C.sub, fontSize: 12 }}>
-                    사용 중: {coverLibrary.filter(c => c.status === "used").length}장 · 
-                    미사용: {coverLibrary.filter(c => c.status === "unused").length}장
+                    사용 중: {coverStats.used}장 · 
+                    미사용: {coverStats.unused}장
                   </Text>
                   <Text style={{ color: C.sub, fontSize: 12 }}>
                     용량: {formatFileSize(coverLibrarySize)}
@@ -27289,13 +27691,13 @@ async function importJSON() {
               )}
             </Section>
 
-            {/* 필터 */}
+            {/* 필터 - 🚀 v3.5.6: coverStats useMemo 사용 */}
             <Section title="🔍 필터">
               <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
                 {[
-                  { key: "all", label: `전체 (${coverLibrary.length})` },
-                  { key: "unused", label: `미사용 (${coverLibrary.filter(c => c.status === "unused").length})` },
-                  { key: "used", label: `사용 중 (${coverLibrary.filter(c => c.status === "used").length})` },
+                  { key: "all", label: `전체 (${coverStats.total})` },
+                  { key: "unused", label: `미사용 (${coverStats.unused})` },
+                  { key: "used", label: `사용 중 (${coverStats.used})` },
                 ].map(opt => (
                   <Chip
                     key={opt.key}
@@ -27316,102 +27718,42 @@ async function importJSON() {
               />
             </Section>
 
-            {/* 갤러리 */}
-            <Section title="🖼️ 표지 갤러리">
-              {(() => {
-                const filtered = coverLibrary.filter(c => {
-                  if (coverLibraryFilter === "unused") return c.status === "unused";
-                  if (coverLibraryFilter === "used") return c.status === "used";
-                  return true;
-                });
-                
-                if (filtered.length === 0) {
-                  return (
-                    <Text style={{ color: C.sub, textAlign: "center", padding: 40 }}>
-                      {coverLibrary.length === 0 
-                        ? "표지가 없습니다.\n갤러리에서 이미지를 추가해보세요!"
-                        : "해당하는 표지가 없습니다."}
-                    </Text>
-                  );
-                }
-                
-                return (
+            {/* 🖼️ 갤러리 - 🚀 v3.5.6: 가상화 복원 + memo 컴포넌트 */}
+            <Section title={`🖼️ 표지 갤러리 (${filteredCovers.length}장)`}>
+              {filteredCovers.length === 0 ? (
+                <Text style={{ color: C.sub, textAlign: "center", padding: 40 }}>
+                  {coverLibrary.length === 0 
+                    ? "표지가 없습니다.\n갤러리에서 이미지를 추가해보세요!"
+                    : "해당하는 표지가 없습니다."}
+                </Text>
+              ) : (
+                <View style={{ height: Math.min(GALLERY_VIEWPORT_HEIGHT, Math.ceil(filteredCovers.length / 3) * GALLERY_COL3_ITEM_H) }}>
                   <FlatList
-                    data={filtered}
-                    keyExtractor={(item) => item.id}
+                    key={coverLibraryFilter}
+                    data={filteredCovers}
+                    keyExtractor={(item, index) => item?.id || `cv-${index}`}
                     numColumns={3}
-                    scrollEnabled={false}
+                    scrollEnabled={true}
+                    nestedScrollEnabled={true}
                     columnWrapperStyle={{ gap: 8, marginBottom: 8 }}
-                    renderItem={({ item }) => {
-                      const isUsed = item.status === "used";
-                      const novel = isUsed ? listMap.get(item.novel_id) : null;
-                      
-                      return (
-                        <TouchableOpacity
-                          style={{
-                            flex: 1,
-                            aspectRatio: 0.7,
-                            maxWidth: "32%",
-                            borderRadius: 8,
-                            overflow: "hidden",
-                            borderWidth: 2,
-                            borderColor: isUsed ? C.ok : C.line,
-                            position: "relative",
-                          }}
-                          onPress={() => {
-                            if (!isUsed) {
-                              removeCoverFromLibrary(item.id);
-                            } else {
-                              Alert.alert(
-                                "사용 중",
-                                `이 표지는 "${novel?.title || "알 수 없음"}"에서 사용 중입니다.`,
-                                [{ text: "확인" }]
-                              );
-                            }
-                          }}
-                        >
-                          <ExpoImage
-                            source={{ uri: item.file_path }}
-                            style={{ width: "100%", height: "100%" }}
-                            contentFit="cover"
-                            cachePolicy="memory-disk"
-                          />
-                          {/* 상태 뱃지 */}
-                          <View style={{
-                            position: "absolute",
-                            top: 4,
-                            right: 4,
-                            backgroundColor: isUsed ? C.ok : C.sub,
-                            paddingHorizontal: 6,
-                            paddingVertical: 2,
-                            borderRadius: 4,
-                          }}>
-                            <Text style={{ color: "#fff", fontSize: 9, fontWeight: "700" }}>
-                              {isUsed ? "사용 중" : "미사용"}
-                            </Text>
-                          </View>
-                          {/* 연결된 작품명 */}
-                          {isUsed && novel && (
-                            <View style={{
-                              position: "absolute",
-                              bottom: 0,
-                              left: 0,
-                              right: 0,
-                              backgroundColor: "rgba(0,0,0,0.7)",
-                              padding: 4,
-                            }}>
-                              <Text style={{ color: "#fff", fontSize: 9, fontWeight: "600" }} numberOfLines={1}>
-                                {novel.title}
-                              </Text>
-                            </View>
-                          )}
-                        </TouchableOpacity>
-                      );
-                    }}
+                    initialNumToRender={9}
+                    maxToRenderPerBatch={6}
+                    windowSize={3}
+                    removeClippedSubviews={Platform.OS === "android"}
+                    renderItem={({ item }) => (
+                      <CoverGalleryItem
+                        item={item}
+                        isUsed={item.status === "used"}
+                        novelTitle={item.status === "used" ? (listMap.get(item.novel_id)?.title || null) : null}
+                        onPressDelete={coverGalleryDeleteHandler}
+                        onPressInfo={coverGalleryInfoHandler}
+                        theme={C}
+                      />
+                    )}
                     ListEmptyComponent={<Text style={{ color: C.sub, textAlign: "center" }}>표지가 없습니다.</Text>}
                   />
-                );
-              })()}
+                </View>
+              )}
             </Section>
           </>
         )}
@@ -27705,7 +28047,7 @@ async function importJSON() {
                           {c.title}
                         </Text>
                         <Text style={{ fontSize: 12, color: C.sub, fontStyle: "italic" }} numberOfLines={1}>
-                          "{c.quote}"
+                          {c.quote}
                         </Text>
                       </View>
                       <View style={{
@@ -29219,7 +29561,7 @@ async function importJSON() {
               </View>
             </View>
             {editItem && (
-              <ScrollView nestedScrollEnabled={true} showsVerticalScrollIndicator={true}>
+              <ScrollView nestedScrollEnabled={true} showsVerticalScrollIndicator={true} style={{ flex: 1 }}>
                 {/* 🆕 표지 이미지 */}
                 <Label>표지 이미지</Label>
                 <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 12 }}>
@@ -29639,7 +29981,7 @@ async function importJSON() {
                             updated[qi] = t;
                             setEditQuotes(updated);
                           }}
-                          placeholder={`"기억에 남는 문장 ${qi + 1}..."`}
+                          placeholder={`기억에 남는 문장 ${qi + 1}...`}
                           placeholderTextColor={C.sub}
                           multiline
                           style={{
@@ -30674,8 +31016,8 @@ async function importJSON() {
                     <View>
                       <Text style={{ fontWeight: "600", color: C.text }}>{tagName}</Text>
                       <Text style={{ fontSize: 11, color: C.sub, marginTop: 2 }}>
-                        X: {pos.x.toFixed(2)} ({pos.x < 0.5 ? editingCoordSystem.xAxis?.negative : editingCoordSystem.xAxis?.positive}) • 
-                        Y: {pos.y.toFixed(2)} ({pos.y < 0.5 ? editingCoordSystem.yAxis?.negative : editingCoordSystem.yAxis?.positive})
+                        X: {(Number(pos.x) || 0).toFixed(2)} ({pos.x < 0.5 ? editingCoordSystem.xAxis?.negative : editingCoordSystem.xAxis?.positive}) • 
+                        Y: {(Number(pos.y) || 0).toFixed(2)} ({pos.y < 0.5 ? editingCoordSystem.yAxis?.negative : editingCoordSystem.yAxis?.positive})
                       </Text>
                     </View>
                     <Text style={{ color: C.primary }}>편집 →</Text>
@@ -30768,7 +31110,7 @@ async function importJSON() {
                   
                   {/* X 좌표 */}
                   <Text style={{ fontWeight: "700", color: C.text, marginBottom: 6 }}>
-                    X 좌표: {editingCoordTag.x.toFixed(2)} ({editingCoordTag.x < 0.5 ? editingCoordSystem?.xAxis?.negative : editingCoordSystem?.xAxis?.positive})
+                    X 좌표: {(Number(editingCoordTag.x) || 0).toFixed(2)} ({editingCoordTag.x < 0.5 ? editingCoordSystem?.xAxis?.negative : editingCoordSystem?.xAxis?.positive})
                   </Text>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 16 }}>
                     <Text style={{ fontSize: 12, color: C.sub }}>{editingCoordSystem?.xAxis?.negative}</Text>
@@ -30802,7 +31144,7 @@ async function importJSON() {
                   
                   {/* Y 좌표 */}
                   <Text style={{ fontWeight: "700", color: C.text, marginBottom: 6 }}>
-                    Y 좌표: {editingCoordTag.y.toFixed(2)} ({editingCoordTag.y < 0.5 ? editingCoordSystem?.yAxis?.negative : editingCoordSystem?.yAxis?.positive})
+                    Y 좌표: {(Number(editingCoordTag.y) || 0).toFixed(2)} ({editingCoordTag.y < 0.5 ? editingCoordSystem?.yAxis?.negative : editingCoordSystem?.yAxis?.positive})
                   </Text>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 16 }}>
                     <Text style={{ fontSize: 12, color: C.sub }}>{editingCoordSystem?.yAxis?.negative}</Text>
@@ -30951,7 +31293,7 @@ async function importJSON() {
               📋 예정 작품 수정
             </Text>
             {plannedEditItem && (
-              <ScrollView showsVerticalScrollIndicator={true}>
+              <ScrollView showsVerticalScrollIndicator={true} style={{ flex: 1 }}>
                 <Label>제목 *</Label>
                 <Input
                   value={plannedEditItem.title || ""}
@@ -31460,6 +31802,7 @@ async function importJSON() {
                   ))}
                 </View>
 
+                {/* 🚀 v3.5.6: filteredSelectCovers useMemo + CoverSelectItem memo */}
                 {coverLibrary.length === 0 ? (
                   <View style={{ padding: 40, alignItems: "center" }}>
                     <Text style={{ color: C.sub, textAlign: "center" }}>
@@ -31469,61 +31812,25 @@ async function importJSON() {
                   </View>
                 ) : (
                   <FlatList
-                    data={coverSelectFilter === "unused" ? coverLibrary.filter(c => c.status !== "used") : coverLibrary}
-                    keyExtractor={(item) => item.id}
+                    key={coverSelectFilter}
+                    data={filteredSelectCovers}
+                    keyExtractor={(item, index) => item?.id || `cs-${index}`}
                     numColumns={4}
                     style={{ flex: 1 }}
                     columnWrapperStyle={{ gap: 8, marginBottom: 8 }}
                     initialNumToRender={12}
                     maxToRenderPerBatch={8}
                     windowSize={3}
-                    renderItem={({ item }) => {
-                      const isUsed = item.status === "used";
-                      
-                      return (
-                        <TouchableOpacity
-                          style={{
-                            flex: 1,
-                            aspectRatio: 0.7,
-                            maxWidth: "24%",
-                            borderRadius: 6,
-                            overflow: "hidden",
-                            borderWidth: 2,
-                            borderColor: isUsed ? C.line : C.primary,
-                            opacity: isUsed ? 0.5 : 1,
-                          }}
-                          onPress={() => {
-                            if (!isUsed) {
-                              selectCoverFromLibrary(item);
-                            } else {
-                              Alert.alert("알림", "이 표지는 이미 다른 작품에서 사용 중입니다.");
-                            }
-                          }}
-                          disabled={isUsed}
-                        >
-                          <ExpoImage
-                            source={{ uri: item.file_path }}
-                            style={{ width: "100%", height: "100%" }}
-                            contentFit="cover"
-                            cachePolicy="memory-disk"
-                          />
-                          {isUsed && (
-                            <View style={{
-                              position: "absolute",
-                              top: 0,
-                              left: 0,
-                              right: 0,
-                              bottom: 0,
-                              backgroundColor: "rgba(0,0,0,0.4)",
-                              justifyContent: "center",
-                              alignItems: "center",
-                            }}>
-                              <Text style={{ color: "#fff", fontSize: 10, fontWeight: "700" }}>사용중</Text>
-                            </View>
-                          )}
-                        </TouchableOpacity>
-                      );
-                    }}
+                    removeClippedSubviews={Platform.OS === "android"}
+                    renderItem={({ item }) => (
+                      <CoverSelectItem
+                        item={item}
+                        isUsed={item.status === "used"}
+                        onSelect={coverSelectHandler}
+                        onAlertUsed={coverSelectAlertUsed}
+                        theme={C}
+                      />
+                    )}
                     ListEmptyComponent={<Text style={{ color: C.sub, textAlign: "center" }}>표지가 없습니다.</Text>}
                   />
                 )}
@@ -31768,5 +32075,17 @@ async function importJSON() {
         </View>
       </Modal>
     </SafeAreaView>
+  );
+}
+/* =========================================================
+   🛡️ v3.5.6: ErrorBoundary 래핑 App 컴포넌트
+   - 렌더링 크래시 발생 시 복구 UI 표시
+   - AppContent의 모든 에러를 ErrorBoundary가 잡음
+   ========================================================= */
+export default function App() {
+  return (
+    <AppErrorBoundary>
+      <AppContent />
+    </AppErrorBoundary>
   );
 }
