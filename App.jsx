@@ -188,6 +188,41 @@
  * ║ • 위치: TagDetailModal(1곳), 좌표계 태그목록(1곳), 태그편집(2곳)           ║
  * ║ • 원인: 좌표값이 문자열이면 .toFixed is not a function TypeError            ║
  * ║                                                                              ║
+ * ║ [변경 12] 🐛 순위탭 크래시 수정 (Text strings must be rendered)             ║
+ * ║ • 원인: {item.pinned && <Text>★</Text>} 에서 pinned=0(정수)일 때           ║
+ * ║   {0 && <Text>} → bare "0"이 View 안에 렌더 → React Native 크래시          ║
+ * ║ • 수정: {!!item.pinned && <Text>★</Text>} (boolean 변환)                   ║
+ * ║                                                                              ║
+ * ║ [변경 13] 📐 모달 높이 4차 수정 — flex ratio 전환 (13개 모달 전면)          ║
+ * ║ • 원인: height:"85%" + justifyContent:"flex-end" 조합이                     ║
+ * ║   일부 Android에서 모달이 화면 하단에 박히는 레이아웃 오류 유발             ║
+ * ║ • 수정: flex 비율 방식으로 전면 전환 (상단 터치영역 + 모달 본체)            ║
+ * ║ • justifyContent:"flex-end" 제거 → flex 자동 배치                          ║
+ * ║ • 적용: 편집/예정편집/로그/보충설정/백업/고급검색/커스텀초기화              ║
+ * ║   /태그선택/태그관계/상설정/가져오기/비교/좌표계/표지선택 총 13개 모달      ║
+ * ║                                                                              ║
+ * ║ [변경 14] 🐛 수정 모달 저장 누락 버그 수정 (stale closure 근본 해결)        ║
+ * ║ • 원인: setEditItem({...editItem, tags: t}) 패턴이 React 배칭으로 인해      ║
+ * ║   saveEdit() 실행 시점에 이전 렌더의 editItem(구 값)을 참조                  ║
+ * ║ • 증상: 태그가 없는 작품에 태그 입력 후 저장 → 빈 태그로 저장됨             ║
+ * ║ • 수정: updateEditItem 래퍼 도입 (함수형 업데이트 + ref 동기 갱신)           ║
+ * ║   - 모든 setEditItem → updateEditItem 전환 (27개소)                         ║
+ * ║   - saveEdit: editItemRef.current에서 최신값 읽기                            ║
+ * ║   - handleTagModalConfirm: deps에서 editItem 제거, 함수형 업데이트           ║
+ * ║ • 영향 범위: 수정 모달, 보충 화면, 표지 선택, 태그 모달 콜백 전체           ║
+ * ║                                                                              ║
+ * ║ [변경 15] 📝 보충 탭 전면 강화 — 필터/정렬/진행률/완료기록/버그수정         ║
+ * ║ ① 이슈별 필터: all/태그/작가/대장르/부장르/회차/플랫폼 — 집중 작업 가능     ║
+ * ║ ② 정렬 옵션: 티어순/이슈수순/레이팅순/이름순 — 우선순위 기반 보충           ║
+ * ║ ③ 진행률 바 + 세션 카운터: 보충 완료율 시각화, 세션 내 완료 수 표시         ║
+ * ║ ④ 최근 완료 목록: 이번 세션 완료 작품 목록 + 되돌아가기 수정 버튼           ║
+ * ║ ⑤ 스마트 필드 강조: 미흡 필드에 노란 테두리+배경, 완료 필드는 일반 표시     ║
+ * ║ ⑥ 태그 모달 초기값 버그 수정: openTagModal() 정상 호출로 기존 태그 전달     ║
+ * ║ ⑦ 저장 stale closure 수정: editItemRef.current에서 최신값 읽기              ║
+ * ║ ⑧ 저장 시 tag_data 필드 추가 (기존 누락)                                    ║
+ * ║ ⑨ 목록 정렬 반영: 랜덤→정렬순 다음 작품, 현재 위치 표시, 전체 목록 표시    ║
+ * ║ ⑩ 필터 결과 없음 상태: 빈 필터 시 안내 + 전체보기 버튼                      ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -7161,9 +7196,9 @@ const TagSelectModal = memo(({
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: C.modal, justifyContent: "flex-end" }}>
+      <View style={{ flex: 1, backgroundColor: C.modal }}>
         <TouchableOpacity 
-          style={{ flex: 1 }} 
+          style={{ flex: 0.08 }} 
           activeOpacity={1} 
           onPress={onClose}
         />
@@ -7173,8 +7208,7 @@ const TagSelectModal = memo(({
             borderTopLeftRadius: 16, 
             borderTopRightRadius: 16, 
             padding: 16, 
-            minHeight: "70%",
-            maxHeight: "90%" 
+            flex: 0.92,
           }}
         >
           {/* 헤더 */}
@@ -8028,9 +8062,9 @@ const SearchTagModal = memo(({
   
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} transparent>
-      <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" }}>
-        <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={onClose} />
-        <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, height: "85%", padding: 16 }}>
+      <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)" }}>
+        <TouchableOpacity style={{ flex: 0.12 }} activeOpacity={1} onPress={onClose} />
+        <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, flex: 0.88, padding: 16 }}>
           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>🔍 고급 검색 필터</Text>
             <TouchableOpacity onPress={onClose}>
@@ -9276,13 +9310,14 @@ const TagRelationModal = memo(({
   
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} transparent>
-      <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" }}>
+      <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)" }}>
+        <TouchableOpacity style={{ flex: 0.15 }} activeOpacity={1} onPress={onClose} />
         <View style={{ 
           backgroundColor: C.card, 
           borderTopLeftRadius: 20, 
           borderTopRightRadius: 20, 
           padding: 20, 
-          maxHeight: "80%" 
+          flex: 0.85,
         }}>
           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
             <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>
@@ -12392,9 +12427,9 @@ const AwardsScreen = memo(({
         onRequestClose={() => setSettingsModalOpen(false)}
         transparent
       >
-        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" }}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)" }}>
           <TouchableOpacity 
-            style={{ flex: 1 }} 
+            style={{ flex: 0.08 }} 
             activeOpacity={1} 
             onPress={() => setSettingsModalOpen(false)} 
           />
@@ -12403,7 +12438,7 @@ const AwardsScreen = memo(({
             borderTopLeftRadius: 20, 
             borderTopRightRadius: 20, 
             padding: 20, 
-            height: "90%" 
+            flex: 0.92,
           }}>
             <Text style={{ fontSize: 20, fontWeight: "900", color: C.text, marginBottom: 16 }}>
               ⚙️ {awardSelectedYear}년 상 설정
@@ -16456,6 +16491,16 @@ function AppContent() {
 // 편집
   const [editOpen, setEditOpen] = useState(false);
   const [editItem, setEditItem] = useState(null);
+  const editItemRef = useRef(null); // 🔧 v3.5.6: saveEdit이 항상 최신값 읽도록
+  // 🔧 v3.5.6: editItem 업데이트 래퍼 — 함수형 업데이트 + ref 동기 갱신
+  // React 배칭으로 상태 반영이 지연되어도, ref는 즉시 갱신되어 saveEdit이 최신값을 읽음
+  const updateEditItem = useCallback((updater) => {
+    setEditItem(prev => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      editItemRef.current = next;
+      return next;
+    });
+  }, []);
   const [editOriginalReadCount, setEditOriginalReadCount] = useState(0); // 원본 읽은회차 (변동일 비교용)
   const [editOriginalTitle, setEditOriginalTitle] = useState(""); // 🔧 v3.0.2: 원본 제목 (변경 추적용)
   const [editOriginalCoverImage, setEditOriginalCoverImage] = useState(""); // 🖼️ v3.4.5: 원본 표지 (표지 상태 추적용)
@@ -16610,6 +16655,12 @@ function AppContent() {
   const [supplementCurrentNovel, setSupplementCurrentNovel] = useState(null); // 현재 보충 중인 작품
   const [supplementSettingsOpen, setSupplementSettingsOpen] = useState(false); // 보충 설정 모달
   const [savedSupplementId, setSavedSupplementId] = useState(null); // 🔧 v3.0.2: 저장 후 이동용 ID
+  // 🔧 v3.5.6: 보충 탭 강화
+  const [supplementFilter, setSupplementFilter] = useState("all"); // "all"|"tags"|"author"|"totalEpisodes"|"readCount"|"majorGenre"|"subGenre"|"platform"
+  const [supplementSort, setSupplementSort] = useState("tier"); // "tier"|"issues"|"title"|"rating"
+  const [supplementSessionCount, setSupplementSessionCount] = useState(0); // 세션 내 보충 완료 수
+  const [supplementRecentDone, setSupplementRecentDone] = useState([]); // 최근 완료 [{id, title, issues, timestamp}]
+  const [supplementShowDone, setSupplementShowDone] = useState(false); // 완료 목록 표시 토글
 
   // 🏷️ 태그 선택 모달
   const [tagModalOpen, setTagModalOpen] = useState(false);
@@ -16882,6 +16933,10 @@ function AppContent() {
     }
     return cards;
   }, [list]);
+
+  // 🔧 v3.5.6: editItemRef를 렌더 시점마다 동기화 (기본 동기화)
+  // 핵심: 함수형 업데이트 내에서도 ref를 갱신하여 saveEdit이 최신값을 읽도록 함
+  editItemRef.current = editItem;
 
   // 💬 v3.5.4: quotesShuffled stale 방지 (작품 삭제/수정 시 셔플 재생성)
   // 과거 버그 [상태 동기화 버그] v3.5.0과 동일 패턴
@@ -18335,11 +18390,10 @@ function AppContent() {
       
       if (coverSelectTarget === "new") {
         setNewCoverImage(filePath);
-      } else if (coverSelectTarget === "edit" && editItem) {
-        const oldCover = editItem.cover_image;
+      } else if (coverSelectTarget === "edit") {
         setEditCoverImage(filePath);
-        // 편집 중인 아이템의 표지도 업데이트
-        setEditItem({ ...editItem, cover_image: filePath });
+        // 🔧 v3.5.6: 함수형 업데이트로 stale closure 방지
+        updateEditItem(prev => prev ? { ...prev, cover_image: filePath } : null);
       } else if (coverSelectTarget === "planned") {
         setPlannedCoverImage(filePath);
       } else if (coverSelectTarget === "plannedEdit" && plannedEditItem) {
@@ -19000,15 +19054,15 @@ function AppContent() {
       setNewMajorGenre(selectedMajor);
       setNewSubGenre(selectedSub);
       setNewTagData(tagData); // 🏷️ v5.0
-    } else if ((tagModalTarget === "edit" || tagModalTarget === "supplement") && editItem) {
-      // edit과 supplement 모두 editItem 업데이트
-      setEditItem({
-        ...editItem,
+    } else if (tagModalTarget === "edit" || tagModalTarget === "supplement") {
+      // 🔧 v3.5.6: 함수형 업데이트로 stale closure 방지
+      updateEditItem(prev => prev ? {
+        ...prev,
         tags: allTagsString, // 🔧 v3.4.4: 모든 태그 포함
         major_genre: majorJson,
         sub_genre: subJson,
         tag_data: tagDataJson, // 🏷️ v5.0
-      });
+      } : null);
     } else if (tagModalTarget === "planned" && plannedEditItem) {
       // 🆕 v3.4.3: 예정탭 편집에서 태그 선택
       setPlannedEditItem({
@@ -19024,7 +19078,7 @@ function AppContent() {
       setPlannedSubGenre(selectedSub);
     }
     setTagModalOpen(false);
-  }, [tagModalTarget, editItem, plannedEditItem]);
+  }, [tagModalTarget, plannedEditItem]);
 
   // (이전 toggleMajorGenre, toggleSubGenre, toggleTagInModal은 TagSelectModal 내부로 이동됨)
 
@@ -20350,7 +20404,7 @@ function AppContent() {
             setPair(null);
           }
           if (editItem?.id === id) {
-            setEditItem(null);
+            updateEditItem(null);
             setEditOpen(false);
           }
           if (dailyReco?.novel?.id === id) {
@@ -20587,7 +20641,7 @@ function AppContent() {
               if (sel.novels || sel.matches) {
                 setLastMatchId(null);
                 setPair(null);
-                setEditItem(null);
+                updateEditItem(null);
                 setEditOpen(false);
                 setFocusMatchNovel(null);
                 setMatchAnalysis(null);
@@ -20656,7 +20710,7 @@ function AppContent() {
                     // 🔄 v3.5.0: 모든 관련 상태 초기화
                     setLastMatchId(null);
                     setPair(null);
-                    setEditItem(null);
+                    updateEditItem(null);
                     setEditOpen(false);
                     setDailyReco(null);
                     setFocusMatchNovel(null);
@@ -20679,7 +20733,7 @@ function AppContent() {
 
   /* ---------- Edit modal ---------- */
   const openEdit = useCallback((n) => {
-    setEditItem(n);
+    updateEditItem(n);
     setEditOriginalReadCount(Number(n.read_count) || 0); // 🆕 원본 저장
     setEditOriginalTitle(n.title || ""); // 🔧 v3.0.2: 원본 제목 저장
     setEditRating(String((Number(n.rating) || 1500).toFixed(1)));
@@ -20747,7 +20801,8 @@ function AppContent() {
   }, []);
 
   async function saveEdit() {
-    const n = editItem;
+    // 🔧 v3.5.6: editItemRef.current에서 읽어 React 배칭 지연과 무관하게 최신값 사용
+    const n = editItemRef.current;
     if (!n) return;
 
     const newTitle = (n.title || "").trim();
@@ -20771,7 +20826,7 @@ function AppContent() {
 
       // 먼저 모달 닫기
       setEditOpen(false);
-      setEditItem(null);
+      updateEditItem(null);
 
       // 레이팅 직접 수정 (확인 없이 바로 적용)
       const ratingNum = Number(editRating);
@@ -22109,7 +22164,7 @@ function AppContent() {
             setPair(null);
           }
           if (editItem && ids.includes(editItem.id)) {
-            setEditItem(null);
+            updateEditItem(null);
             setEditOpen(false);
           }
           if (dailyReco?.novel && ids.includes(dailyReco.novel.id)) {
@@ -23077,7 +23132,7 @@ async function importJSON() {
               
               // 🔄 v3.5.0: 관련 상태 초기화 (이전 데이터 참조 방지)
               setPair(null);
-              setEditItem(null);
+              updateEditItem(null);
               setEditOpen(false);
               setDailyReco(null);
               setFocusMatchNovel(null);
@@ -23214,18 +23269,85 @@ async function importJSON() {
       }
     }
     
+    // 🔧 v3.5.6: 표지 체크
+    if (settings.requireCover && !novel.cover_image?.trim()) {
+      issues.push("cover");
+    }
+    
+    // 🔧 v3.5.6: 작품 링크 체크
+    if (settings.requireLink && !novel.link?.trim()) {
+      issues.push("link");
+    }
+    
+    // 🔧 v3.5.6: 메모 체크
+    if (settings.requireNote && !novel.note?.trim()) {
+      issues.push("note");
+    }
+    
+    // 🔧 v3.5.6: 인상깊은 문장 체크
+    if (settings.requireQuote && !novel.memorable_quote?.trim()) {
+      issues.push("quote");
+    }
+    
+    // 🔧 v3.5.6: 읽기 상태 체크 (기본값 reading이면 미확인으로 판단)
+    if (settings.requireStatusNotDefault && (!novel.status || novel.status === "reading")) {
+      issues.push("status");
+    }
+    
+    // 🔧 v3.5.6: 연재 상태 체크 (기본값 ongoing이면 미확인으로 판단)
+    if (settings.requireWorkStatus && (!novel.work_status || novel.work_status === "ongoing")) {
+      issues.push("workStatus");
+    }
+    
     return issues.length > 0 ? issues : false;
   }, [appSettings.supplement, tagSentiments]);
 
-  // 📝 보충 대상 목록 계산
-  const supplementList = useMemo(() => {
+  // 📝 보충 대상 목록 계산 (전체)
+  const supplementListAll = useMemo(() => {
     return list
       .map(n => ({ novel: n, issues: isSupplementTarget(n) }))
       .filter(item => item.issues !== false);
   }, [list, isSupplementTarget]);
 
+  // 🔧 v3.5.6: 필터링된 보충 목록
+  const supplementList = useMemo(() => {
+    let filtered = supplementListAll;
+    if (supplementFilter !== "all") {
+      filtered = filtered.filter(item => item.issues.includes(supplementFilter));
+    }
+    // 정렬
+    const tierOrder = { S: 0, A: 1, B: 2, C: 3, D: 4, E: 5, F: 6 };
+    filtered.sort((a, b) => {
+      if (supplementSort === "tier") {
+        const ta = tierOrder[getDisplayTier(a.novel)] ?? 9;
+        const tb = tierOrder[getDisplayTier(b.novel)] ?? 9;
+        return ta - tb || (b.novel.rating - a.novel.rating);
+      } else if (supplementSort === "issues") {
+        return b.issues.length - a.issues.length;
+      } else if (supplementSort === "title") {
+        return (a.novel.title || "").localeCompare(b.novel.title || "");
+      } else if (supplementSort === "rating") {
+        return (b.novel.rating || 0) - (a.novel.rating || 0);
+      }
+      return 0;
+    });
+    return filtered;
+  }, [supplementListAll, supplementFilter, supplementSort]);
+
   // 📝 보충 대상 건수
   const supplementCount = supplementList.length;
+  const supplementTotalCount = supplementListAll.length; // 필터 전 전체 수
+
+  // 🔧 v3.5.6: 이슈별 집계 (필터 칩용)
+  const supplementIssueCounts = useMemo(() => {
+    const counts = { tags: 0, author: 0, totalEpisodes: 0, readCount: 0, majorGenre: 0, subGenre: 0, platform: 0, cover: 0, link: 0, note: 0, quote: 0, status: 0, workStatus: 0 };
+    for (const item of supplementListAll) {
+      for (const issue of item.issues) {
+        if (counts[issue] !== undefined) counts[issue]++;
+      }
+    }
+    return counts;
+  }, [supplementListAll]);
 
   // 🔧 v3.0.2: 저장 후 다음 작품으로 자동 이동 (supplementList 변경 시 트리거)
   useEffect(() => {
@@ -23233,20 +23355,18 @@ async function importJSON() {
       // 저장된 ID가 있으면, 해당 작품 제외하고 다음 작품 선택
       const remaining = supplementList.filter(item => item.novel.id !== savedSupplementId);
       if (remaining.length > 0) {
-        const picked = remaining[Math.floor(Math.random() * remaining.length)];
-        setSupplementCurrentNovel(picked);
-        setEditItem({ ...picked.novel });
+        // 🔧 v3.5.6: 정렬 순서 기반 다음 작품 선택 (첫 번째 = 가장 우선)
+        setSupplementCurrentNovel(remaining[0]);
+        updateEditItem({ ...remaining[0].novel });
       } else if (supplementList.length > 0) {
-        // 저장한 작품이 여전히 보충 대상이면 (모든 항목 보충 안됨)
         const picked = supplementList[0];
         setSupplementCurrentNovel(picked);
-        setEditItem({ ...picked.novel });
+        updateEditItem({ ...picked.novel });
       } else {
-        // 보충 대상 없음
         setSupplementCurrentNovel(null);
-        setEditItem(null);
+        updateEditItem(null);
       }
-      setSavedSupplementId(null); // 플래그 리셋
+      setSavedSupplementId(null);
     }
   }, [supplementList, savedSupplementId]);
 
@@ -23254,24 +23374,18 @@ async function importJSON() {
   const pickNextSupplementNovel = useCallback(() => {
     if (supplementList.length === 0) {
       setSupplementCurrentNovel(null);
-      setEditItem(null);
+      updateEditItem(null);
       return null;
     }
-    // 현재 작품 제외하고 랜덤 선택 (없으면 첫 번째)
+    // 🔧 v3.5.6: 정렬 순서 기반으로 다음 작품 선택
     const currentId = supplementCurrentNovel?.novel?.id;
-    const candidates = supplementList.filter(item => item.novel.id !== currentId);
-    
-    let picked;
-    if (candidates.length === 0) {
-      // 하나뿐이면 그거라도
-      picked = supplementList[0];
-    } else {
-      picked = candidates[Math.floor(Math.random() * candidates.length)];
-    }
+    const currentIdx = supplementList.findIndex(item => item.novel.id === currentId);
+    // 다음 인덱스 (끝이면 처음으로)
+    const nextIdx = currentIdx >= 0 && currentIdx < supplementList.length - 1 ? currentIdx + 1 : 0;
+    const picked = supplementList[nextIdx];
     
     setSupplementCurrentNovel(picked);
-    // 🔧 v3.0.1: editItem도 함께 업데이트하여 UI 동기화
-    setEditItem(picked ? { ...picked.novel } : null);
+    updateEditItem(picked ? { ...picked.novel } : null);
     return picked;
   }, [supplementList, supplementCurrentNovel]);
 
@@ -23308,13 +23422,13 @@ async function importJSON() {
         // 뱃지 표시 여부 계산
         const hasBadge = 
           (key === "review" && reviewCount > 0) || 
-          (key === "supplement" && supplementCount > 0) ||
+          (key === "supplement" && supplementTotalCount > 0) ||
           (key === "recent" && recentChangesCount > 0) ||
           (key === "planned" && plannedCount > 0) ||
           (key === "quotes" && quotesCards.length > 0);
         const badgeCount = 
           key === "review" ? reviewCount : 
-          key === "supplement" ? supplementCount : 
+          key === "supplement" ? supplementTotalCount : 
           key === "recent" ? recentChangesCount : 
           key === "planned" ? plannedCount : 
           key === "quotes" ? quotesCards.length : 0;
@@ -24468,7 +24582,7 @@ async function importJSON() {
                         <View style={{ flex: 1 }}>
                           {/* 1줄: 순위 + 제목 */}
                           <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
-                            {item.pinned && <Text style={{ color: "#fbbf24", marginRight: 4, fontSize: 14 }}>★</Text>}
+                            {!!item.pinned && <Text style={{ color: "#fbbf24", marginRight: 4, fontSize: 14 }}>★</Text>}
                             {isNew && (
                               <View style={{ backgroundColor: "#fbbf24", paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4, marginRight: 5 }}>
                                 <Text style={{ color: "#000", fontSize: 9, fontWeight: "800" }}>NEW</Text>
@@ -26043,22 +26157,49 @@ async function importJSON() {
           <>
             <H>📝 정보 보충</H>
             
-            {/* 현황 요약 */}
-            <Section title="보충 대상 현황">
-              <Text style={{ color: C.sub, marginBottom: 12 }}>
+            {/* 현황 요약 + 진행률 */}
+            <Section title="보충 현황">
+              <Text style={{ color: C.sub, marginBottom: 8 }}>
                 정보 입력이 미흡한 작품을 찾아 보충합니다.
-                부정 태그가 {appSettings.supplement?.excludeNegativeTagCount || 2}개 이상인 작품은 제외됩니다.
               </Text>
               
-              <View style={{ flexDirection: "row", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
-                <View style={{ backgroundColor: "#3b82f6", paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12 }}>
-                  <Text style={{ color: "#fff", fontWeight: "800", fontSize: 18 }}>{supplementCount}작품</Text>
-                  <Text style={{ color: "rgba(255,255,255,0.8)", fontSize: 12 }}>보충 대상</Text>
+              {/* 통계 카드 */}
+              <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+                <View style={{ backgroundColor: "#3b82f6", paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, minWidth: 90 }}>
+                  <Text style={{ color: "#fff", fontWeight: "800", fontSize: 18 }}>{supplementTotalCount}</Text>
+                  <Text style={{ color: "rgba(255,255,255,0.8)", fontSize: 11 }}>보충 대상</Text>
                 </View>
-                <View style={{ backgroundColor: C.chip, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12 }}>
-                  <Text style={{ color: C.text, fontWeight: "700" }}>전체 {list.length}작품</Text>
+                <View style={{ backgroundColor: C.chip, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, minWidth: 90 }}>
+                  <Text style={{ color: C.text, fontWeight: "700", fontSize: 18 }}>{list.length}</Text>
+                  <Text style={{ color: C.sub, fontSize: 11 }}>전체 작품</Text>
                 </View>
+                {supplementSessionCount > 0 && (
+                  <View style={{ backgroundColor: "#22c55e", paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, minWidth: 90 }}>
+                    <Text style={{ color: "#fff", fontWeight: "800", fontSize: 18 }}>{supplementSessionCount}</Text>
+                    <Text style={{ color: "rgba(255,255,255,0.8)", fontSize: 11 }}>이번 세션</Text>
+                  </View>
+                )}
               </View>
+              
+              {/* 진행률 바 */}
+              {list.length > 0 && (
+                <View style={{ marginBottom: 12 }}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
+                    <Text style={{ color: C.sub, fontSize: 12 }}>보충 완료율</Text>
+                    <Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>
+                      {((1 - supplementTotalCount / list.length) * 100).toFixed(0)}% ({list.length - supplementTotalCount}/{list.length})
+                    </Text>
+                  </View>
+                  <View style={{ height: 8, backgroundColor: C.chip, borderRadius: 4, overflow: "hidden" }}>
+                    <View style={{ 
+                      height: "100%", 
+                      width: `${Math.max(2, (1 - supplementTotalCount / list.length) * 100)}%`,
+                      backgroundColor: supplementTotalCount === 0 ? "#22c55e" : "#3b82f6",
+                      borderRadius: 4,
+                    }} />
+                  </View>
+                </View>
+              )}
               
               <OutlineButton
                 title="⚙️ 보충 기준 설정"
@@ -26066,7 +26207,93 @@ async function importJSON() {
               />
             </Section>
 
-            {supplementCount === 0 ? (
+            {/* 🔧 v3.5.6: 이슈별 필터 칩 */}
+            {supplementTotalCount > 0 && (
+              <Section title="필터 / 정렬">
+                <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>이슈별 필터</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+                  <View style={{ flexDirection: "row", gap: 6 }}>
+                    <Chip label={`전체 (${supplementTotalCount})`} active={supplementFilter === "all"} onPress={() => setSupplementFilter("all")} />
+                    {supplementIssueCounts.tags > 0 && <Chip label={`🏷️ 태그 (${supplementIssueCounts.tags})`} active={supplementFilter === "tags"} onPress={() => setSupplementFilter("tags")} />}
+                    {supplementIssueCounts.author > 0 && <Chip label={`✍️ 작가 (${supplementIssueCounts.author})`} active={supplementFilter === "author"} onPress={() => setSupplementFilter("author")} />}
+                    {supplementIssueCounts.majorGenre > 0 && <Chip label={`📚 대장르 (${supplementIssueCounts.majorGenre})`} active={supplementFilter === "majorGenre"} onPress={() => setSupplementFilter("majorGenre")} />}
+                    {supplementIssueCounts.subGenre > 0 && <Chip label={`📖 부장르 (${supplementIssueCounts.subGenre})`} active={supplementFilter === "subGenre"} onPress={() => setSupplementFilter("subGenre")} />}
+                    {supplementIssueCounts.totalEpisodes > 0 && <Chip label={`📊 전체회차 (${supplementIssueCounts.totalEpisodes})`} active={supplementFilter === "totalEpisodes"} onPress={() => setSupplementFilter("totalEpisodes")} />}
+                    {supplementIssueCounts.readCount > 0 && <Chip label={`📖 읽은회차 (${supplementIssueCounts.readCount})`} active={supplementFilter === "readCount"} onPress={() => setSupplementFilter("readCount")} />}
+                    {supplementIssueCounts.platform > 0 && <Chip label={`📱 플랫폼 (${supplementIssueCounts.platform})`} active={supplementFilter === "platform"} onPress={() => setSupplementFilter("platform")} />}
+                    {supplementIssueCounts.cover > 0 && <Chip label={`🖼️ 표지 (${supplementIssueCounts.cover})`} active={supplementFilter === "cover"} onPress={() => setSupplementFilter("cover")} />}
+                    {supplementIssueCounts.link > 0 && <Chip label={`🔗 링크 (${supplementIssueCounts.link})`} active={supplementFilter === "link"} onPress={() => setSupplementFilter("link")} />}
+                    {supplementIssueCounts.note > 0 && <Chip label={`📝 메모 (${supplementIssueCounts.note})`} active={supplementFilter === "note"} onPress={() => setSupplementFilter("note")} />}
+                    {supplementIssueCounts.quote > 0 && <Chip label={`💬 문장 (${supplementIssueCounts.quote})`} active={supplementFilter === "quote"} onPress={() => setSupplementFilter("quote")} />}
+                    {supplementIssueCounts.status > 0 && <Chip label={`📋 읽기상태 (${supplementIssueCounts.status})`} active={supplementFilter === "status"} onPress={() => setSupplementFilter("status")} />}
+                    {supplementIssueCounts.workStatus > 0 && <Chip label={`📡 연재상태 (${supplementIssueCounts.workStatus})`} active={supplementFilter === "workStatus"} onPress={() => setSupplementFilter("workStatus")} />}
+                  </View>
+                </ScrollView>
+                
+                <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>정렬</Text>
+                <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+                  <Chip label="🏆 티어순" active={supplementSort === "tier"} onPress={() => setSupplementSort("tier")} />
+                  <Chip label="⚠️ 이슈 많은 순" active={supplementSort === "issues"} onPress={() => setSupplementSort("issues")} />
+                  <Chip label="⭐ 레이팅순" active={supplementSort === "rating"} onPress={() => setSupplementSort("rating")} />
+                  <Chip label="🔤 이름순" active={supplementSort === "title"} onPress={() => setSupplementSort("title")} />
+                </View>
+
+                {supplementFilter !== "all" && (
+                  <Text style={{ color: C.primary, fontSize: 12, marginTop: 6 }}>
+                    필터 적용: {supplementCount}개 / 전체 {supplementTotalCount}개
+                  </Text>
+                )}
+              </Section>
+            )}
+
+            {/* 🔧 v3.5.6: 최근 완료 목록 */}
+            {supplementRecentDone.length > 0 && (
+              <Section title={`✅ 이번 세션 완료 (${supplementRecentDone.length}개)`}>
+                <TouchableOpacity 
+                  onPress={() => setSupplementShowDone(prev => !prev)}
+                  style={{ flexDirection: "row", alignItems: "center", marginBottom: supplementShowDone ? 8 : 0 }}
+                >
+                  <Text style={{ color: C.primary, fontWeight: "600", fontSize: 13 }}>
+                    {supplementShowDone ? "▼ 접기" : "▶ 펼치기"}
+                  </Text>
+                </TouchableOpacity>
+                {supplementShowDone && supplementRecentDone.map((done, idx) => (
+                  <View key={done.id + idx} style={{ 
+                    flexDirection: "row", alignItems: "center", paddingVertical: 6,
+                    borderBottomWidth: idx < supplementRecentDone.length - 1 ? 1 : 0, borderBottomColor: C.line,
+                  }}>
+                    <Text style={{ color: "#22c55e", marginRight: 8 }}>✓</Text>
+                    <Text style={{ flex: 1, color: C.text, fontSize: 13 }} numberOfLines={1}>{done.title}</Text>
+                    <Text style={{ color: C.sub, fontSize: 11 }}>
+                      {done.issues.length}항목 보충
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => {
+                        // 되돌아가기: 해당 작품을 다시 편집
+                        const found = list.find(n => n.id === done.id);
+                        if (found) {
+                          const issues = isSupplementTarget(found);
+                          if (issues) {
+                            setSupplementCurrentNovel({ novel: found, issues });
+                          } else {
+                            // 이미 보충 완료 → 그래도 편집 모달로 열기
+                            setSupplementCurrentNovel({ novel: found, issues: done.issues });
+                          }
+                          updateEditItem({ ...found });
+                        } else {
+                          Alert.alert("알림", "해당 작품을 찾을 수 없습니다.");
+                        }
+                      }}
+                      style={{ marginLeft: 8, paddingHorizontal: 8, paddingVertical: 4, backgroundColor: C.chip, borderRadius: 6 }}
+                    >
+                      <Text style={{ color: C.primary, fontSize: 11, fontWeight: "600" }}>수정</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </Section>
+            )}
+
+            {supplementCount === 0 && supplementTotalCount === 0 ? (
               <Section title="✅ 완료">
                 <View style={{ alignItems: "center", paddingVertical: 40 }}>
                   <Text style={{ fontSize: 48, marginBottom: 12 }}>🎉</Text>
@@ -26079,9 +26306,34 @@ async function importJSON() {
                   </Text>
                 </View>
               </Section>
+            ) : supplementCount === 0 && supplementFilter !== "all" ? (
+              <Section title="필터 결과 없음">
+                <View style={{ alignItems: "center", paddingVertical: 30 }}>
+                  <Text style={{ fontSize: 36, marginBottom: 8 }}>🔍</Text>
+                  <Text style={{ color: C.sub, textAlign: "center" }}>
+                    현재 필터 조건에 해당하는 작품이 없습니다.{"\n"}
+                    다른 필터를 선택해 보세요.
+                  </Text>
+                  <OutlineButton
+                    title="전체 보기"
+                    onPress={() => setSupplementFilter("all")}
+                    style={{ marginTop: 12 }}
+                  />
+                </View>
+              </Section>
             ) : supplementCurrentNovel ? (
               <>
-                {/* 미흡 항목 표시 */}
+                {/* 현재 위치 표시 */}
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 4, marginBottom: 4 }}>
+                  <Text style={{ color: C.sub, fontSize: 12 }}>
+                    {(() => {
+                      const idx = supplementList.findIndex(item => item.novel.id === supplementCurrentNovel.novel.id);
+                      return idx >= 0 ? `${idx + 1} / ${supplementCount}` : "";
+                    })()}
+                  </Text>
+                </View>
+
+                {/* 미흡 항목 뱃지 */}
                 <Section title="미흡 항목">
                   <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
                     {supplementCurrentNovel.issues.map(issue => {
@@ -26093,6 +26345,12 @@ async function importJSON() {
                         majorGenre: "대장르 미선택",
                         subGenre: "부장르 미선택",
                         platform: "플랫폼 미선택",
+                        cover: "표지 미등록",
+                        link: "작품 링크 미입력",
+                        note: "메모 미입력",
+                        quote: "인상깊은 문장 미입력",
+                        status: "읽기 상태 미확인",
+                        workStatus: "연재 상태 미확인",
                       };
                       return (
                         <View key={issue} style={{ backgroundColor: "#fef3c7", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
@@ -26103,9 +26361,9 @@ async function importJSON() {
                   </View>
                 </Section>
 
-                {/* 작품 편집 양식 */}
+                {/* 작품 편집 양식 — 미흡 필드 강조 */}
                 <Section title={`📖 ${supplementCurrentNovel.novel.title}`}>
-                  {/* 기본 정보 */}
+                  {/* 기본 정보 헤더 */}
                   <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 12 }}>
                     <CoverImage 
                       uri={supplementCurrentNovel.novel.cover_image} 
@@ -26127,30 +26385,54 @@ async function importJSON() {
                     </View>
                   </View>
 
+                  {/* 🔧 v3.5.6: 스마트 필드 — 미흡 필드에 강조 테두리, 완료 필드는 축소 */}
                   {/* 작가 */}
-                  <Label>작가</Label>
-                  <Input
-                    value={editItem?.author || ""}
-                    onChangeText={(t) => setEditItem(prev => prev ? { ...prev, author: t } : null)}
-                    placeholder="작가명 입력"
-                  />
+                  <View style={supplementCurrentNovel.issues.includes("author") ? { 
+                    borderWidth: 2, borderColor: "#f59e0b", borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: "#fffbeb" 
+                  } : { marginBottom: 8 }}>
+                    {supplementCurrentNovel.issues.includes("author") && (
+                      <Text style={{ color: "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 필수 입력</Text>
+                    )}
+                    <Label>작가</Label>
+                    <Input
+                      value={editItem?.author || ""}
+                      onChangeText={(t) => updateEditItem(prev => prev ? { ...prev, author: t } : null)}
+                      placeholder="작가명 입력"
+                    />
+                  </View>
 
                   {/* 전체 회차 / 읽은 회차 */}
-                  <View style={{ flexDirection: "row", gap: 12, marginTop: 10 }}>
-                    <View style={{ flex: 1 }}>
+                  <View style={{ flexDirection: "row", gap: 12, marginBottom: 8 }}>
+                    <View style={[
+                      { flex: 1 },
+                      supplementCurrentNovel.issues.includes("totalEpisodes") && { 
+                        borderWidth: 2, borderColor: "#f59e0b", borderRadius: 12, padding: 10, backgroundColor: "#fffbeb" 
+                      }
+                    ]}>
+                      {supplementCurrentNovel.issues.includes("totalEpisodes") && (
+                        <Text style={{ color: "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 필수</Text>
+                      )}
                       <Label>전체 회차</Label>
                       <Input
                         value={String(editItem?.total_episodes || "")}
-                        onChangeText={(t) => setEditItem(prev => prev ? { ...prev, total_episodes: t } : null)}
+                        onChangeText={(t) => updateEditItem(prev => prev ? { ...prev, total_episodes: t } : null)}
                         placeholder="예: 150"
                         keyboardType="number-pad"
                       />
                     </View>
-                    <View style={{ flex: 1 }}>
+                    <View style={[
+                      { flex: 1 },
+                      supplementCurrentNovel.issues.includes("readCount") && { 
+                        borderWidth: 2, borderColor: "#f59e0b", borderRadius: 12, padding: 10, backgroundColor: "#fffbeb" 
+                      }
+                    ]}>
+                      {supplementCurrentNovel.issues.includes("readCount") && (
+                        <Text style={{ color: "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 필수</Text>
+                      )}
                       <Label>읽은 회차</Label>
                       <Input
                         value={String(editItem?.read_count || "")}
-                        onChangeText={(t) => setEditItem(prev => prev ? { ...prev, read_count: t } : null)}
+                        onChangeText={(t) => updateEditItem(prev => prev ? { ...prev, read_count: t } : null)}
                         placeholder="예: 80"
                         keyboardType="number-pad"
                       />
@@ -26158,97 +26440,314 @@ async function importJSON() {
                   </View>
 
                   {/* 플랫폼 */}
-                  <Label style={{ marginTop: 10 }}>플랫폼</Label>
-                  <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
-                    {PLATFORM_OPTIONS.map((p) => {
-                      const cur = parsePlatforms(editItem?.platforms);
-                      const on = cur.includes(p);
-                      return (
+                  <View style={supplementCurrentNovel.issues.includes("platform") ? { 
+                    borderWidth: 2, borderColor: "#f59e0b", borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: "#fffbeb" 
+                  } : { marginBottom: 8 }}>
+                    {supplementCurrentNovel.issues.includes("platform") && (
+                      <Text style={{ color: "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 필수 선택</Text>
+                    )}
+                    <Label>플랫폼</Label>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+                      {PLATFORM_OPTIONS.map((p) => {
+                        const cur = parsePlatforms(editItem?.platforms);
+                        const on = cur.includes(p);
+                        return (
+                          <Chip
+                            key={p}
+                            label={p}
+                            active={on}
+                            onPress={() => {
+                              const next = on ? cur.filter((x) => x !== p) : [...cur, p];
+                              updateEditItem(prev => prev ? { ...prev, platforms: JSON.stringify(next) } : null);
+                            }}
+                          />
+                        );
+                      })}
+                    </View>
+                  </View>
+
+                  {/* 대장르/부장르/태그 */}
+                  <View style={(supplementCurrentNovel.issues.includes("tags") || supplementCurrentNovel.issues.includes("majorGenre") || supplementCurrentNovel.issues.includes("subGenre")) ? { 
+                    borderWidth: 2, borderColor: "#f59e0b", borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: "#fffbeb" 
+                  } : { marginBottom: 8 }}>
+                    {(supplementCurrentNovel.issues.includes("tags") || supplementCurrentNovel.issues.includes("majorGenre") || supplementCurrentNovel.issues.includes("subGenre")) && (
+                      <Text style={{ color: "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>
+                        ⚠️ {[
+                          supplementCurrentNovel.issues.includes("tags") && "태그 부족",
+                          supplementCurrentNovel.issues.includes("majorGenre") && "대장르 미선택",
+                          supplementCurrentNovel.issues.includes("subGenre") && "부장르 미선택",
+                        ].filter(Boolean).join(" / ")}
+                      </Text>
+                    )}
+                    <Label>대장르 / 부장르 / 태그</Label>
+                    <View style={{ backgroundColor: C.bg, padding: 12, borderRadius: 12, marginBottom: 8 }}>
+                      {editItem?.major_genre && (
+                        <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 4 }}>
+                          <Text style={{ color: C.sub, fontSize: 12, marginRight: 6 }}>대장르:</Text>
+                          {parseMajorSub(editItem.major_genre).map(g => (
+                            <GenreBadge key={g} genre={g} type="major" />
+                          ))}
+                        </View>
+                      )}
+                      {editItem?.sub_genre && (
+                        <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 4 }}>
+                          <Text style={{ color: C.sub, fontSize: 12, marginRight: 6 }}>부장르:</Text>
+                          {parseMajorSub(editItem.sub_genre).map(g => (
+                            <GenreBadge key={g} genre={g} type="sub" />
+                          ))}
+                        </View>
+                      )}
+                      <Text style={{ color: C.sub, fontSize: 12 }}>
+                        태그: {editItem?.tags || "(없음)"} ({(editItem?.tags || "").split(",").filter(t=>t.trim()).length}개)
+                      </Text>
+                    </View>
+                    <OutlineButton
+                      title="🏷️ 태그 선택 모달 열기"
+                      onPress={() => {
+                        // 🔧 v3.5.6: openTagModal 사용하여 초기값 정상 전달
+                        const currentTags = (editItem?.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+                        const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
+                        const allSub = [...SUB_GENRES, ...userSubGenres];
+                        const majorTags = currentTags.filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
+                          .map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
+                        const subTags = currentTags.filter(tag => allSub.some(s => s.toLowerCase() === tag.toLowerCase()))
+                          .map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
+                        const generalTags = currentTags.filter(tag => 
+                          !allMajor.some(m => m.toLowerCase() === tag.toLowerCase()) &&
+                          !allSub.some(s => s.toLowerCase() === tag.toLowerCase())
+                        );
+                        let tagData = [];
+                        try { if (editItem?.tag_data) tagData = JSON.parse(editItem.tag_data); } catch (e) {}
+                        openTagModal("supplement", generalTags, 
+                          majorTags.length > 0 ? JSON.stringify(majorTags) : "",
+                          subTags.length > 0 ? JSON.stringify(subTags) : "",
+                          tagData
+                        );
+                      }}
+                    />
+                  </View>
+
+                  {/* 🔧 v3.5.6: 작품 링크 */}
+                  <View style={supplementCurrentNovel.issues.includes("link") ? { 
+                    borderWidth: 2, borderColor: "#f59e0b", borderRadius: 12, padding: 10, marginTop: 8, marginBottom: 8, backgroundColor: "#fffbeb" 
+                  } : { marginTop: 8, marginBottom: 8 }}>
+                    {supplementCurrentNovel.issues.includes("link") && (
+                      <Text style={{ color: "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 필수 입력</Text>
+                    )}
+                    <Label>작품 링크</Label>
+                    <Input
+                      value={editItem?.link || ""}
+                      onChangeText={(t) => updateEditItem(prev => prev ? { ...prev, link: t } : null)}
+                      placeholder="https://novelpia.com/novel/..."
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                    />
+                  </View>
+
+                  {/* 🔧 v3.5.6: 읽기 상태 */}
+                  <View style={supplementCurrentNovel.issues.includes("status") ? { 
+                    borderWidth: 2, borderColor: "#f59e0b", borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: "#fffbeb" 
+                  } : { marginBottom: 8 }}>
+                    {supplementCurrentNovel.issues.includes("status") && (
+                      <Text style={{ color: "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 상태를 확인해주세요</Text>
+                    )}
+                    <Label>읽기 상태</Label>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+                      {STATUS_OPTIONS.map((s) => (
                         <Chip
-                          key={p}
-                          label={p}
-                          active={on}
-                          onPress={() => {
-                            const next = on ? cur.filter((x) => x !== p) : [...cur, p];
-                            setEditItem(prev => prev ? { ...prev, platforms: JSON.stringify(next) } : null);
-                          }}
+                          key={s.key}
+                          label={s.label}
+                          active={(editItem?.status || "reading") === s.key}
+                          onPress={() => updateEditItem(prev => prev ? { ...prev, status: s.key } : null)}
                         />
-                      );
-                    })}
+                      ))}
+                    </View>
                   </View>
 
-                  {/* 대장르/부장르/태그 - 태그 모달 연동 */}
-                  <Label style={{ marginTop: 10 }}>대장르 / 부장르 / 태그</Label>
-                  <View style={{ backgroundColor: C.bg, padding: 12, borderRadius: 12, marginBottom: 8 }}>
-                    {editItem?.major_genre && (
-                      <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 4 }}>
-                        <Text style={{ color: C.sub, fontSize: 12, marginRight: 6 }}>대장르:</Text>
-                        {parseMajorSub(editItem.major_genre).map(g => (
-                          <GenreBadge key={g} genre={g} type="major" />
-                        ))}
-                      </View>
+                  {/* 🔧 v3.5.6: 연재 상태 */}
+                  <View style={supplementCurrentNovel.issues.includes("workStatus") ? { 
+                    borderWidth: 2, borderColor: "#f59e0b", borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: "#fffbeb" 
+                  } : { marginBottom: 8 }}>
+                    {supplementCurrentNovel.issues.includes("workStatus") && (
+                      <Text style={{ color: "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 연재 상태를 확인해주세요</Text>
                     )}
-                    {editItem?.sub_genre && (
-                      <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 4 }}>
-                        <Text style={{ color: C.sub, fontSize: 12, marginRight: 6 }}>부장르:</Text>
-                        {parseMajorSub(editItem.sub_genre).map(g => (
-                          <GenreBadge key={g} genre={g} type="sub" />
-                        ))}
-                      </View>
-                    )}
-                    <Text style={{ color: C.sub, fontSize: 12 }}>
-                      태그: {editItem?.tags || "(없음)"} ({(editItem?.tags || "").split(",").filter(t=>t.trim()).length}개)
-                    </Text>
+                    <Label>연재 상태</Label>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+                      {WORK_STATUS_OPTIONS.map((s) => (
+                        <Chip
+                          key={s.key}
+                          label={s.label}
+                          active={(editItem?.work_status || "ongoing") === s.key}
+                          onPress={() => updateEditItem(prev => prev ? { ...prev, work_status: s.key } : null)}
+                        />
+                      ))}
+                    </View>
                   </View>
-                  <OutlineButton
-                    title="🏷️ 태그 선택 모달 열기"
-                    onPress={() => {
-                      setTagModalTarget('supplement');
-                      setTagModalOpen(true);
-                    }}
-                  />
 
-                  {/* 메모 */}
-                  <Label style={{ marginTop: 10 }}>메모</Label>
-                  <Input
-                    value={editItem?.note || ""}
-                    onChangeText={(t) => setEditItem(prev => prev ? { ...prev, note: t } : null)}
-                    placeholder="메모 입력"
-                    multiline
-                    style={{ minHeight: 60 }}
-                  />
+                  {/* 🔧 v3.5.6: 인상깊은 문장 */}
+                  <View style={supplementCurrentNovel.issues.includes("quote") ? { 
+                    borderWidth: 2, borderColor: "#f59e0b", borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: "#fffbeb" 
+                  } : { marginBottom: 8 }}>
+                    {supplementCurrentNovel.issues.includes("quote") && (
+                      <Text style={{ color: "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 필수 입력</Text>
+                    )}
+                    <Label>💬 인상깊은 문장</Label>
+                    <Input
+                      value={editItem?.memorable_quote || ""}
+                      onChangeText={(t) => updateEditItem(prev => prev ? { ...prev, memorable_quote: t } : null)}
+                      placeholder="작품에서 인상깊었던 문장이나 대사"
+                      multiline
+                      style={{ minHeight: 50 }}
+                    />
+                  </View>
+
+                  {/* 🔧 v3.5.6: 표지 */}
+                  <View style={supplementCurrentNovel.issues.includes("cover") ? { 
+                    borderWidth: 2, borderColor: "#f59e0b", borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: "#fffbeb" 
+                  } : { marginBottom: 8 }}>
+                    {supplementCurrentNovel.issues.includes("cover") && (
+                      <Text style={{ color: "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 표지 미등록</Text>
+                    )}
+                    <Label>표지</Label>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                      <CoverImage 
+                        uri={editItem?.cover_image} 
+                        platforms={editItem?.platforms} 
+                        platformCovers={platformCovers} 
+                        size={50} 
+                        theme={C} 
+                      />
+                      <OutlineButton
+                        title={editItem?.cover_image ? "🖼️ 표지 변경" : "🖼️ 표지 등록"}
+                        onPress={() => {
+                          setCoverSelectTarget("edit");
+                          setCoverSelectModalOpen(true);
+                        }}
+                      />
+                      {editItem?.cover_image ? (
+                        <TouchableOpacity onPress={() => updateEditItem(prev => prev ? { ...prev, cover_image: "" } : null)}>
+                          <Text style={{ color: "#ef4444", fontSize: 12 }}>삭제</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                  </View>
+
+                  {/* 🔧 v3.5.6: 다회독 + 외전 (접이식) */}
+                  <View style={{ marginBottom: 8 }}>
+                    <Label>다회독 횟수</Label>
+                    <Input
+                      value={String(editItem?.reread_count || 1)}
+                      onChangeText={(t) => updateEditItem(prev => prev ? { ...prev, reread_count: t } : null)}
+                      keyboardType="number-pad"
+                      placeholder="기본 1회"
+                      style={{ width: 100 }}
+                    />
+                  </View>
+
+                  <View style={{ marginBottom: 8 }}>
+                    <Label>외전 상태</Label>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+                      {GAIDEN_STATUS_OPTIONS.map((s) => (
+                        <Chip
+                          key={s.key}
+                          label={s.label}
+                          active={(editItem?.gaiden_status || "none") === s.key}
+                          onPress={() => updateEditItem(prev => prev ? { ...prev, gaiden_status: s.key } : null)}
+                        />
+                      ))}
+                    </View>
+                    {editItem?.gaiden_status && editItem.gaiden_status !== "none" && (
+                      <View style={{ flexDirection: "row", gap: 12, marginTop: 8 }}>
+                        <View style={{ flex: 1 }}>
+                          <Label>외전 읽은 회차</Label>
+                          <Input
+                            value={String(editItem?.gaiden_read_count || "")}
+                            onChangeText={(t) => updateEditItem(prev => prev ? { ...prev, gaiden_read_count: t } : null)}
+                            keyboardType="number-pad"
+                            placeholder="예: 10"
+                          />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Label>외전 전체 회차</Label>
+                          <Input
+                            value={String(editItem?.gaiden_total_episodes || "")}
+                            onChangeText={(t) => updateEditItem(prev => prev ? { ...prev, gaiden_total_episodes: t } : null)}
+                            keyboardType="number-pad"
+                            placeholder="예: 50"
+                          />
+                        </View>
+                      </View>
+                    )}
+                  </View>
+
+                  {/* 🔧 v3.5.6: 메모 */}
+                  <View style={supplementCurrentNovel.issues.includes("note") ? { 
+                    borderWidth: 2, borderColor: "#f59e0b", borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: "#fffbeb" 
+                  } : { marginBottom: 8 }}>
+                    {supplementCurrentNovel.issues.includes("note") && (
+                      <Text style={{ color: "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 필수 입력</Text>
+                    )}
+                    <Label>메모</Label>
+                    <Input
+                      value={editItem?.note || ""}
+                      onChangeText={(t) => updateEditItem(prev => prev ? { ...prev, note: t } : null)}
+                      placeholder="메모 입력"
+                      multiline
+                      style={{ minHeight: 60 }}
+                    />
+                  </View>
 
                   {/* 버튼 */}
                   <View style={{ flexDirection: "row", gap: 8, marginTop: 16 }}>
                     <PrimaryButton
-                      title="저장 & 다음"
+                      title="💾 저장 & 다음"
                       onPress={async () => {
-                        if (!editItem) return;
+                        // 🔧 v3.5.6: editItemRef에서 최신값 읽기 (stale closure 방지)
+                        const current = editItemRef.current;
+                        if (!current) return;
                         try {
-                          // 🔧 v3.0.2: 저장 후 이동할 ID 설정 (useEffect에서 처리)
-                          const savedId = editItem.id;
+                          const savedId = current.id;
+                          const savedTitle = current.title;
+                          const savedIssues = supplementCurrentNovel?.issues || [];
                           setSavedSupplementId(savedId);
                           
-                          // 저장
                           let plats = [];
-                          try { plats = JSON.parse(editItem.platforms || "[]"); } catch { plats = []; }
+                          try { plats = JSON.parse(current.platforms || "[]"); } catch { plats = []; }
                           
                           await exec(
-                            `UPDATE novels SET author=?, total_episodes=?, read_count=?, platforms=?, tags=?, major_genre=?, sub_genre=?, note=? WHERE id=?`,
+                            `UPDATE novels SET author=?, total_episodes=?, read_count=?, platforms=?, tags=?, major_genre=?, sub_genre=?, note=?, tag_data=?, cover_image=?, link=?, status=?, work_status=?, gaiden_status=?, gaiden_read_count=?, gaiden_total_episodes=?, reread_count=?, memorable_quote=? WHERE id=?`,
                             [
-                              editItem.author?.trim() || "",
-                              Number(editItem.total_episodes) || 0,
-                              Number(editItem.read_count) || 0,
+                              current.author?.trim() || "",
+                              Number(current.total_episodes) || 0,
+                              Number(current.read_count) || 0,
                               JSON.stringify(plats),
-                              editItem.tags?.trim() || "",
-                              editItem.major_genre || "",
-                              editItem.sub_genre || "",
-                              editItem.note?.trim() || "",
-                              editItem.id,
+                              current.tags?.trim() || "",
+                              current.major_genre || "",
+                              current.sub_genre || "",
+                              current.note?.trim() || "",
+                              current.tag_data || "",
+                              current.cover_image || "",
+                              current.link?.trim() || "",
+                              current.status || "reading",
+                              current.work_status || "ongoing",
+                              current.gaiden_status || "none",
+                              Number(current.gaiden_read_count) || 0,
+                              Number(current.gaiden_total_episodes) || 0,
+                              Math.max(1, Number(current.reread_count) || 1),
+                              current.memorable_quote?.trim() || "",
+                              current.id,
                             ]
                           );
                           
-                          // loadList() 후 supplementList가 재계산되면 useEffect에서 다음 작품으로 이동
+                          // 🔧 v3.5.6: 세션 카운터 + 완료 기록
+                          setSupplementSessionCount(prev => prev + 1);
+                          setSupplementRecentDone(prev => [{
+                            id: savedId,
+                            title: savedTitle,
+                            issues: savedIssues,
+                            timestamp: Date.now(),
+                          }, ...prev].slice(0, 20));
+                          
                           await loadList();
                         } catch (e) {
                           setSavedSupplementId(null);
@@ -26258,58 +26757,60 @@ async function importJSON() {
                       style={{ flex: 2 }}
                     />
                     <OutlineButton
-                      title="건너뛰기"
+                      title="건너뛰기 ▶"
                       onPress={pickNextSupplementNovel}
                       style={{ flex: 1 }}
                     />
                   </View>
                 </Section>
 
-                {/* 다른 보충 대상 목록 */}
-                <Section title={`📋 다른 보충 대상 (${supplementCount - 1}개)`}>
-                  <ScrollView style={{ maxHeight: 200 }} nestedScrollEnabled>
+                {/* 보충 대상 목록 (정렬 반영) */}
+                <Section title={`📋 보충 대상 목록 (${supplementCount}개)`}>
+                  <ScrollView style={{ maxHeight: 300 }} nestedScrollEnabled>
                     {supplementList
-                      .filter(item => item.novel.id !== supplementCurrentNovel.novel.id)
-                      .slice(0, 10)
-                      .map(item => (
-                        <TouchableOpacity
-                          key={item.novel.id}
-                          onPress={() => {
-                            setSupplementCurrentNovel(item);
-                            setEditItem({ ...item.novel });
-                          }}
-                          style={{
-                            flexDirection: "row",
-                            alignItems: "center",
-                            padding: 10,
-                            backgroundColor: C.bg,
-                            borderRadius: 10,
-                            marginBottom: 6,
-                          }}
-                        >
-                          <CoverImage 
-                            uri={item.novel.cover_image} 
-                            platforms={item.novel.platforms} 
-                            platformCovers={platformCovers} 
-                            size={35} 
-                            theme={C} 
-                          />
-                          <View style={{ flex: 1 }}>
-                            <Text style={{ fontWeight: "700", color: C.text }} numberOfLines={1}>
-                              {item.novel.title}
-                            </Text>
-                            <Text style={{ color: C.sub, fontSize: 11 }}>
-                              미흡: {item.issues.length}항목
-                            </Text>
-                          </View>
-                          <ActualTierTag novel={item.novel} />
-                        </TouchableOpacity>
-                      ))}
-                    {supplementList.length > 11 && (
-                      <Text style={{ color: C.sub, textAlign: "center", marginTop: 8 }}>
-                        ...외 {supplementList.length - 11}개
-                      </Text>
-                    )}
+                      .map((item, idx) => {
+                        const isCurrent = item.novel.id === supplementCurrentNovel.novel.id;
+                        return (
+                          <TouchableOpacity
+                            key={item.novel.id}
+                            onPress={() => {
+                              setSupplementCurrentNovel(item);
+                              updateEditItem({ ...item.novel });
+                            }}
+                            style={{
+                              flexDirection: "row",
+                              alignItems: "center",
+                              padding: 10,
+                              backgroundColor: isCurrent ? (C.primary + "20") : C.bg,
+                              borderRadius: 10,
+                              marginBottom: 4,
+                              borderWidth: isCurrent ? 2 : 0,
+                              borderColor: isCurrent ? C.primary : "transparent",
+                            }}
+                          >
+                            <Text style={{ color: C.sub, fontSize: 11, width: 24, textAlign: "center" }}>{idx + 1}</Text>
+                            <CoverImage 
+                              uri={item.novel.cover_image} 
+                              platforms={item.novel.platforms} 
+                              platformCovers={platformCovers} 
+                              size={35} 
+                              theme={C} 
+                            />
+                            <View style={{ flex: 1 }}>
+                              <Text style={{ fontWeight: isCurrent ? "800" : "700", color: C.text, fontSize: 13 }} numberOfLines={1}>
+                                {item.novel.title}
+                              </Text>
+                              <Text style={{ color: C.sub, fontSize: 11 }}>
+                                미흡: {item.issues.map(i => {
+                                  const short = { tags: "태그", author: "작가", totalEpisodes: "회차", readCount: "읽은수", majorGenre: "대장르", subGenre: "부장르", platform: "플랫폼", cover: "표지", link: "링크", note: "메모", quote: "문장", status: "읽기상태", workStatus: "연재상태" };
+                                  return short[i] || i;
+                                }).join(", ")}
+                              </Text>
+                            </View>
+                            <ActualTierTag novel={item.novel} />
+                          </TouchableOpacity>
+                        );
+                      })}
                   </ScrollView>
                 </Section>
               </>
@@ -26321,9 +26822,9 @@ async function importJSON() {
                 <PrimaryButton
                   title="📝 보충 시작하기"
                   onPress={() => {
-                    const picked = pickNextSupplementNovel();
-                    if (picked) {
-                      setEditItem({ ...picked.novel });
+                    if (supplementList.length > 0) {
+                      setSupplementCurrentNovel(supplementList[0]);
+                      updateEditItem({ ...supplementList[0].novel });
                     }
                   }}
                 />
@@ -29522,11 +30023,10 @@ async function importJSON() {
           style={{
             flex: 1,
             backgroundColor: C.modal,
-            justifyContent: "flex-end",
           }}
         >
           <TouchableOpacity 
-            style={{ flex: 1 }} 
+            style={{ flex: 0.12 }} 
             activeOpacity={1} 
             onPress={() => setEditOpen(false)} 
           />
@@ -29536,7 +30036,7 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              height: "85%",
+              flex: 0.88,
             }}
           >
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -29611,7 +30111,7 @@ async function importJSON() {
                 <Input
                   value={editItem.title}
                   onChangeText={(t) =>
-                    setEditItem({ ...editItem, title: t })
+                    updateEditItem(prev => prev ? { ...prev, title: t } : null)
                   }
                 />
 
@@ -29619,7 +30119,7 @@ async function importJSON() {
                 <Input
                   value={editItem.author || ""}
                   onChangeText={(t) =>
-                    setEditItem({ ...editItem, author: t })
+                    updateEditItem(prev => prev ? { ...prev, author: t } : null)
                   }
                 />
 
@@ -29650,12 +30150,12 @@ async function importJSON() {
                         allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag
                       );
                       
-                      setEditItem({ 
-                        ...editItem, 
+                      updateEditItem(prev => prev ? { 
+                        ...prev, 
                         tags: t,
                         major_genre: normalizedMajor.length > 0 ? JSON.stringify(normalizedMajor) : "",
                         sub_genre: normalizedSub.length > 0 ? JSON.stringify(normalizedSub) : "",
-                      });
+                      } : null);
                     }}
                     style={{ flex: 1 }}
                   />
@@ -29765,7 +30265,7 @@ async function importJSON() {
 <Input
   value={String(editItem.read_count || 0)}
   onChangeText={(t) =>
-    setEditItem({ ...editItem, read_count: t })
+    updateEditItem(prev => prev ? { ...prev, read_count: t } : null)
   }
   keyboardType="number-pad"
 />
@@ -29774,7 +30274,7 @@ async function importJSON() {
 <Input
   value={String(editItem.total_episodes || 0)}
   onChangeText={(t) =>
-    setEditItem({ ...editItem, total_episodes: t })
+    updateEditItem(prev => prev ? { ...prev, total_episodes: t } : null)
   }
   keyboardType="number-pad"
 />
@@ -29938,7 +30438,7 @@ async function importJSON() {
                 <Input
                   value={editItem.note || ""}
                   onChangeText={(t) =>
-                    setEditItem({ ...editItem, note: t })
+                    updateEditItem(prev => prev ? { ...prev, note: t } : null)
                   }
                   multiline
                 />
@@ -30078,11 +30578,10 @@ async function importJSON() {
           style={{
             flex: 1,
             backgroundColor: "rgba(0,0,0,0.4)",
-            justifyContent: "flex-end",
           }}
         >
           <TouchableOpacity 
-            style={{ flex: 1 }} 
+            style={{ flex: 0.12 }} 
             activeOpacity={1} 
             onPress={() => setLogOpen(false)} 
           />
@@ -30092,7 +30591,7 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              height: "85%",
+              flex: 0.88,
             }}
           >
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -30222,11 +30721,10 @@ async function importJSON() {
           style={{
             flex: 1,
             backgroundColor: "rgba(0,0,0,0.4)",
-            justifyContent: "flex-end",
           }}
         >
           <TouchableOpacity 
-            style={{ flex: 1 }} 
+            style={{ flex: 0.12 }} 
             activeOpacity={1} 
             onPress={() => setSupplementSettingsOpen(false)} 
           />
@@ -30236,7 +30734,7 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              height: "85%",
+              flex: 0.88,
             }}
           >
             <Text style={{ fontSize: 18, fontWeight: "800", marginBottom: 8, color: C.text }}>
@@ -30337,6 +30835,12 @@ async function importJSON() {
                 { key: "requireMajorGenre", label: "대장르", desc: "대장르가 없으면 보충 대상" },
                 { key: "requireSubGenre", label: "부장르", desc: "부장르가 없으면 보충 대상" },
                 { key: "requirePlatform", label: "플랫폼", desc: "플랫폼이 없으면 보충 대상" },
+                { key: "requireCover", label: "표지 이미지", desc: "표지가 없으면 보충 대상" },
+                { key: "requireLink", label: "작품 링크", desc: "링크가 없으면 보충 대상" },
+                { key: "requireNote", label: "메모", desc: "메모가 비어있으면 보충 대상" },
+                { key: "requireQuote", label: "인상깊은 문장", desc: "문장이 없으면 보충 대상" },
+                { key: "requireStatusNotDefault", label: "읽기 상태 확인", desc: "읽기 상태가 기본(읽는중)이면 보충 대상" },
+                { key: "requireWorkStatus", label: "연재 상태 확인", desc: "연재 상태가 기본(연재중)이면 보충 대상" },
               ].map(item => (
                 <View key={item.key} style={{ 
                   flexDirection: "row", 
@@ -30399,11 +30903,10 @@ async function importJSON() {
           style={{
             flex: 1,
             backgroundColor: "rgba(0,0,0,0.4)",
-            justifyContent: "flex-end",
           }}
         >
           <TouchableOpacity 
-            style={{ flex: 1 }} 
+            style={{ flex: 0.15 }} 
             activeOpacity={1} 
             onPress={() => {
               setImportOpen(false);
@@ -30416,7 +30919,7 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              height: "80%",
+              flex: 0.85,
             }}
           >
             <Text
@@ -30554,11 +31057,10 @@ async function importJSON() {
           style={{
             flex: 1,
             backgroundColor: C.modal,
-            justifyContent: "flex-end",
           }}
         >
           <TouchableOpacity 
-            style={{ flex: 1 }} 
+            style={{ flex: 0.12 }} 
             activeOpacity={1} 
             onPress={() => {
               setExportOpen(false);
@@ -30571,7 +31073,7 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              height: "85%",
+              flex: 0.88,
             }}
           >
             <Text
@@ -30648,11 +31150,10 @@ async function importJSON() {
           style={{
             flex: 1,
             backgroundColor: C.modal,
-            justifyContent: "flex-end",
           }}
         >
           <TouchableOpacity 
-            style={{ flex: 1 }} 
+            style={{ flex: 0.08 }} 
             activeOpacity={1} 
             onPress={() => setCompareOpen(false)} 
           />
@@ -30662,7 +31163,7 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              height: "90%",
+              flex: 0.92,
             }}
           >
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
@@ -30871,8 +31372,9 @@ async function importJSON() {
         }}
         transparent
       >
-        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" }}>
-          <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, minHeight: "60%", maxHeight: "90%", padding: 16 }}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)" }}>
+          <TouchableOpacity style={{ flex: 0.08 }} activeOpacity={1} onPress={() => { setCoordManageOpen(false); setEditingCoordSystem(null); setEditingCoordTag(null); }} />
+          <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, flex: 0.92, padding: 16 }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>
                 📐 좌표계 편집
@@ -31272,11 +31774,10 @@ async function importJSON() {
           style={{
             flex: 1,
             backgroundColor: C.modal,
-            justifyContent: "flex-end",
           }}
         >
           <TouchableOpacity 
-            style={{ flex: 1 }} 
+            style={{ flex: 0.12 }} 
             activeOpacity={1} 
             onPress={() => setPlannedEditOpen(false)} 
           />
@@ -31286,7 +31787,7 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              height: "85%",
+              flex: 0.88,
             }}
           >
             <Text style={{ fontSize: 18, fontWeight: "800", marginBottom: 8, color: C.text }}>
@@ -31754,11 +32255,10 @@ async function importJSON() {
           style={{
             flex: 1,
             backgroundColor: C.modal,
-            justifyContent: "flex-end",
           }}
         >
           <TouchableOpacity 
-            style={{ flex: 1 }} 
+            style={{ flex: 0.15 }} 
             activeOpacity={1} 
             onPress={() => setCoverSelectModalOpen(false)} 
           />
@@ -31767,7 +32267,7 @@ async function importJSON() {
             borderTopLeftRadius: 20,
             borderTopRightRadius: 20,
             padding: 16,
-            height: "80%",
+            flex: 0.85,
           }}>
                 <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                   <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>
@@ -31931,14 +32431,14 @@ async function importJSON() {
         onRequestClose={() => setCustomResetOpen(false)}
         transparent
       >
-        <View style={{ flex: 1, backgroundColor: C.modal, justifyContent: "flex-end" }}>
-          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setCustomResetOpen(false)} />
+        <View style={{ flex: 1, backgroundColor: C.modal }}>
+          <TouchableOpacity style={{ flex: 0.12 }} activeOpacity={1} onPress={() => setCustomResetOpen(false)} />
           <View style={{
             backgroundColor: C.card,
             borderTopLeftRadius: 16,
             borderTopRightRadius: 16,
             padding: 16,
-            height: "85%",
+            flex: 0.88,
           }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>🧹 커스텀 초기화</Text>
