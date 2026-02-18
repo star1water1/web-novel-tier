@@ -8202,8 +8202,8 @@ const SearchTagModal = memo(({
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} transparent>
       <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)" }}>
-        <TouchableOpacity style={{ flex: 0.12 }} activeOpacity={1} onPress={onClose} />
-        <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, flex: 0.88, padding: 16 }}>
+        <TouchableOpacity style={{ height: Math.round(Dimensions.get("window").height * 0.12) }} activeOpacity={1} onPress={onClose} />
+        <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, height: Math.round(Dimensions.get("window").height * 0.88), padding: 16 }}>
           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>🔍 고급 검색 필터</Text>
             <TouchableOpacity onPress={onClose}>
@@ -9377,9 +9377,9 @@ const TagRelationModal = memo(({
     }
   }, [visible, existingGroup]);
   
-  if (!visible) return null;
+  if (!visible || !targetTag) return null;
   
-  const currentTags = existingGroup?.tags || (targetTag ? [targetTag] : []);
+  const currentTags = existingGroup?.tags || [targetTag];
   const otherSimilarGroups = Object.values(allGroups || {}).filter(g => 
     g.type === "similar" && g.id !== existingGroup?.id
   );
@@ -9389,21 +9389,16 @@ const TagRelationModal = memo(({
       // 기존 그룹 업데이트
       onUpdateGroup(existingGroup.id, {
         ...existingGroup,
-        name: groupName.trim() || (targetTag ? `${targetTag} 그룹` : "새 그룹"),
+        name: groupName.trim() || `${targetTag} 그룹`,
         type: groupType,
         relatedGroupId: groupType === "opposite" ? selectedOppositeGroup : null,
       });
     } else {
       // 새 그룹 생성
-      const initialTags = targetTag ? [targetTag] : [];
-      if (initialTags.length === 0 && !newTagInput.trim()) {
-        Alert.alert("알림", "태그를 최소 1개 추가해주세요.");
-        return;
-      }
       onCreateGroup(
-        groupName.trim() || (targetTag ? `${targetTag} 그룹` : "새 그룹"),
+        groupName.trim() || `${targetTag} 그룹`,
         groupType,
-        initialTags,
+        [targetTag],
         groupType === "opposite" ? selectedOppositeGroup : null
       );
     }
@@ -9424,12 +9419,8 @@ const TagRelationModal = memo(({
   };
   
   const handleRemoveTag = (tag) => {
-    if (targetTag && tag === targetTag && currentTags.length <= 1) {
+    if (tag === targetTag && currentTags.length <= 1) {
       Alert.alert("알림", "마지막 태그는 삭제할 수 없습니다. 그룹을 삭제하세요.");
-      return;
-    }
-    if (!targetTag && currentTags.length <= 1) {
-      Alert.alert("알림", "마지막 태그는 삭제할 수 없습니다.");
       return;
     }
     if (existingGroup) {
@@ -9460,13 +9451,13 @@ const TagRelationModal = memo(({
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} transparent>
       <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)" }}>
-        <TouchableOpacity style={{ flex: 0.15 }} activeOpacity={1} onPress={onClose} />
+        <TouchableOpacity style={{ height: Math.round(Dimensions.get("window").height * 0.15) }} activeOpacity={1} onPress={onClose} />
         <View style={{ 
           backgroundColor: C.card, 
           borderTopLeftRadius: 20, 
           borderTopRightRadius: 20, 
           padding: 20, 
-          flex: 0.85,
+          height: Math.round(Dimensions.get("window").height * 0.85),
         }}>
           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
             <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>
@@ -9479,7 +9470,6 @@ const TagRelationModal = memo(({
           
           <ScrollView showsVerticalScrollIndicator={false}>
             {/* 대상 태그 */}
-            {targetTag && (
             <View style={{ marginBottom: 16 }}>
               <Text style={{ fontSize: 14, fontWeight: "700", color: C.text, marginBottom: 6 }}>
                 대상 태그
@@ -9494,7 +9484,6 @@ const TagRelationModal = memo(({
                 <Text style={{ color: "#fff", fontWeight: "700" }}>{targetTag}</Text>
               </View>
             </View>
-            )}
             
             {/* 그룹 이름 */}
             <View style={{ marginBottom: 16 }}>
@@ -9504,7 +9493,7 @@ const TagRelationModal = memo(({
               <TextInput
                 value={groupName}
                 onChangeText={setGroupName}
-                placeholder={targetTag ? `예: ${targetTag} 계열` : "예: 판타지 계열"}
+                placeholder={`예: ${targetTag} 계열`}
                 placeholderTextColor="#9ca3af"
                 style={{
                   backgroundColor: C.bg,
@@ -10418,8 +10407,10 @@ const TagManagerModal = memo(({
             {onEditRelations && (
               <TouchableOpacity 
                 onPress={() => { 
-                  onClose(); 
-                  setTimeout(() => onEditRelations && onEditRelations(null), 400);
+                  Alert.alert(
+                    "🔗 태그 관계도",
+                    "태그를 길게 눌러 → '유사/상반 태그 설정'으로 관계를 편집하세요.\n\n설정 > 분석 탭에서 전체 관계도를 확인할 수 있습니다."
+                  );
                 }}
                 style={{ backgroundColor: isDark ? "#1e3a5f" : "#e0e7ff", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
               >
@@ -16579,6 +16570,7 @@ function generateInsights(data) {
     suspiciousCount: basicStats.lowReliability,
   };
 }
+
 /* ========= App ========= */
 function AppContent() {
   // 🎨 다크모드
@@ -30202,14 +30194,30 @@ async function importJSON() {
                       <Text style={{ color: "#fff", fontSize: 12 }}>URL</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      onPress={() => pickImageFromGallery(async (uri) => {
+                      onPress={async () => {
                         try {
-                          await savePlatformCovers({ ...platformCoversRef.current, [p]: uri });
+                          const result = await ImagePicker.launchImageLibraryAsync({
+                            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                            allowsEditing: true,
+                            aspect: [3, 4],
+                            quality: 0.5,
+                          });
+                          // 🔧 v3.5.7: 갤러리 복귀 후 DB 재연결
+                          await resetDbConnection();
+                          try { await openDb(); } catch {}
+                          if (!result.canceled && result.assets[0]?.uri) {
+                            const saved = await saveCoverToLibrary(result.assets[0].uri);
+                            if (saved.error) {
+                              Alert.alert("오류", "이미지 저장 실패: " + saved.error);
+                              return;
+                            }
+                            await savePlatformCovers({ ...platformCoversRef.current, [p]: saved.file_path });
+                          }
                         } catch (err) {
                           console.warn("플랫폼 표지 저장 실패:", err);
-                          Alert.alert("오류", "표지 저장에 실패했습니다. 다시 시도해주세요.");
+                          Alert.alert("오류", "표지 저장에 실패했습니다.");
                         }
-                      })}
+                      }}
                       style={{ padding: 6, backgroundColor: C.ok, borderRadius: 6 }}
                     >
                       <Text style={{ color: "#fff", fontSize: 12 }}>갤러리</Text>
@@ -30395,7 +30403,7 @@ async function importJSON() {
           }}
         >
           <TouchableOpacity 
-            style={{ height: Math.round(Dimensions.get("window").height * 0.05) }} 
+            style={{ height: Math.round(Dimensions.get("window").height * 0.12) }} 
             activeOpacity={1} 
             onPress={() => setEditOpen(false)} 
           />
@@ -30405,7 +30413,7 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              height: Math.round(Dimensions.get("window").height * 0.95),
+              height: Math.round(Dimensions.get("window").height * 0.88),
             }}
           >
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -30958,7 +30966,7 @@ async function importJSON() {
           }}
         >
           <TouchableOpacity 
-            style={{ flex: 0.12 }} 
+            style={{ height: Math.round(Dimensions.get("window").height * 0.12) }} 
             activeOpacity={1} 
             onPress={() => setLogOpen(false)} 
           />
@@ -30968,7 +30976,7 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              flex: 0.88,
+              height: Math.round(Dimensions.get("window").height * 0.88),
             }}
           >
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -31101,7 +31109,7 @@ async function importJSON() {
           }}
         >
           <TouchableOpacity 
-            style={{ flex: 0.12 }} 
+            style={{ height: Math.round(Dimensions.get("window").height * 0.12) }} 
             activeOpacity={1} 
             onPress={() => setSupplementSettingsOpen(false)} 
           />
@@ -31111,7 +31119,7 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              flex: 0.88,
+              height: Math.round(Dimensions.get("window").height * 0.88),
             }}
           >
             <Text style={{ fontSize: 18, fontWeight: "800", marginBottom: 8, color: C.text }}>
@@ -31283,7 +31291,7 @@ async function importJSON() {
           }}
         >
           <TouchableOpacity 
-            style={{ flex: 0.15 }} 
+            style={{ height: Math.round(Dimensions.get("window").height * 0.15) }} 
             activeOpacity={1} 
             onPress={() => {
               setImportOpen(false);
@@ -31296,7 +31304,7 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              flex: 0.85,
+              height: Math.round(Dimensions.get("window").height * 0.85),
             }}
           >
             <Text
@@ -31437,7 +31445,7 @@ async function importJSON() {
           }}
         >
           <TouchableOpacity 
-            style={{ flex: 0.12 }} 
+            style={{ height: Math.round(Dimensions.get("window").height * 0.12) }} 
             activeOpacity={1} 
             onPress={() => {
               setExportOpen(false);
@@ -31450,7 +31458,7 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              flex: 0.88,
+              height: Math.round(Dimensions.get("window").height * 0.88),
             }}
           >
             <Text
@@ -32154,7 +32162,7 @@ async function importJSON() {
           }}
         >
           <TouchableOpacity 
-            style={{ flex: 0.12 }} 
+            style={{ height: Math.round(Dimensions.get("window").height * 0.12) }} 
             activeOpacity={1} 
             onPress={() => setPlannedEditOpen(false)} 
           />
@@ -32164,7 +32172,7 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              flex: 0.88,
+              height: Math.round(Dimensions.get("window").height * 0.88),
             }}
           >
             <Text style={{ fontSize: 18, fontWeight: "800", marginBottom: 8, color: C.text }}>
@@ -32635,7 +32643,7 @@ async function importJSON() {
           }}
         >
           <TouchableOpacity 
-            style={{ flex: 0.15 }} 
+            style={{ height: Math.round(Dimensions.get("window").height * 0.15) }} 
             activeOpacity={1} 
             onPress={() => setCoverSelectModalOpen(false)} 
           />
@@ -32644,7 +32652,7 @@ async function importJSON() {
             borderTopLeftRadius: 20,
             borderTopRightRadius: 20,
             padding: 16,
-            flex: 0.85,
+            height: Math.round(Dimensions.get("window").height * 0.85),
           }}>
                 <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                   <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>
@@ -32810,13 +32818,13 @@ async function importJSON() {
         transparent
       >
         <View style={{ flex: 1, backgroundColor: C.modal }}>
-          <TouchableOpacity style={{ flex: 0.12 }} activeOpacity={1} onPress={() => setCustomResetOpen(false)} />
+          <TouchableOpacity style={{ height: Math.round(Dimensions.get("window").height * 0.12) }} activeOpacity={1} onPress={() => setCustomResetOpen(false)} />
           <View style={{
             backgroundColor: C.card,
             borderTopLeftRadius: 16,
             borderTopRightRadius: 16,
             padding: 16,
-            flex: 0.88,
+            height: Math.round(Dimensions.get("window").height * 0.88),
           }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>🧹 커스텀 초기화</Text>
@@ -32967,4 +32975,3 @@ export default function App() {
     </AppErrorBoundary>
   );
 }
-
