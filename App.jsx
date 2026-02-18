@@ -15461,6 +15461,12 @@ const DEFAULT_SETTINGS = {
     requireMajorGenre: true,         // 대장르 필수
     requireSubGenre: false,          // 부장르 필수
     requirePlatform: true,           // 플랫폼 필수
+    requireCover: false,             // 🔧 v3.5.6: 표지 필수
+    requireLink: false,              // 🔧 v3.5.6: 작품 링크 필수
+    requireNote: false,              // 🔧 v3.5.6: 메모 필수
+    requireQuote: false,             // 🔧 v3.5.6: 인상깊은 문장 필수
+    requireStatusNotDefault: false,  // 🔧 v3.5.6: 읽기 상태가 기본(reading) 아닌지
+    requireWorkStatus: false,        // 🔧 v3.5.6: 연재 상태 확인
     excludeNegativeTagCount: 2,      // 부정 태그 N개 이상이면 제외 (취향아님 포함)
     excludeTags: ["취향아님"],        // 제외 기준에 반드시 포함되는 태그
   },
