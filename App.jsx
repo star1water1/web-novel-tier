@@ -7739,7 +7739,7 @@ const TagSelectModal = memo(({
                           <View 
                             key={groupId} 
                             style={{ 
-                              backgroundColor: "#dbeafe", 
+                              backgroundColor: isDark ? "rgba(59,130,246,0.12)" : "#dbeafe", 
                               padding: 10, 
                               borderRadius: 10, 
                               marginBottom: 8,
@@ -7747,7 +7747,7 @@ const TagSelectModal = memo(({
                               borderLeftColor: "#3b82f6",
                             }}
                           >
-                            <Text style={{ fontSize: 12, fontWeight: "600", color: "#1d4ed8", marginBottom: 6 }}>
+                            <Text style={{ fontSize: 12, fontWeight: "600", color: isDark ? "#93c5fd" : "#1d4ed8", marginBottom: 6 }}>
                               {group.name || "유사 태그"}
                             </Text>
                             <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
@@ -8686,8 +8686,8 @@ const TagEditModal = memo(({
                 </Text>
               </View>
               {hasChanges && (
-                <View style={{ backgroundColor: "#fef3c7", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
-                  <Text style={{ fontSize: 10, color: "#92400e", fontWeight: "600" }}>변경됨</Text>
+                <View style={{ backgroundColor: isDark ? "rgba(245,158,11,0.15)" : "#fef3c7", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
+                  <Text style={{ fontSize: 10, color: isDark ? "#fcd34d" : "#92400e", fontWeight: "600" }}>변경됨</Text>
                 </View>
               )}
             </View>
@@ -9355,6 +9355,7 @@ const TagRelationModal = memo(({
   theme,
 }) => {
   const C = theme;
+  const isDk = C.bg !== "#F5F7FB"; // 다크모드 감지
   const [groupName, setGroupName] = useState("");
   const [groupType, setGroupType] = useState("similar"); // similar | opposite
   const [newTagInput, setNewTagInput] = useState("");
@@ -9517,7 +9518,7 @@ const TagRelationModal = memo(({
                   onPress={() => setGroupType("similar")}
                   style={{
                     flex: 1,
-                    backgroundColor: groupType === "similar" ? "#dbeafe" : C.chip,
+                    backgroundColor: groupType === "similar" ? (isDk ? "rgba(59,130,246,0.15)" : "#dbeafe") : C.chip,
                     padding: 14,
                     borderRadius: 12,
                     borderWidth: 2,
@@ -9526,7 +9527,7 @@ const TagRelationModal = memo(({
                   }}
                 >
                   <Text style={{ fontSize: 20, marginBottom: 4 }}>🔗</Text>
-                  <Text style={{ fontWeight: "700", color: groupType === "similar" ? "#1d4ed8" : C.text }}>
+                  <Text style={{ fontWeight: "700", color: groupType === "similar" ? (isDk ? "#93c5fd" : "#1d4ed8") : C.text }}>
                     유사
                   </Text>
                   <Text style={{ fontSize: 10, color: C.sub, textAlign: "center" }}>
@@ -9538,7 +9539,7 @@ const TagRelationModal = memo(({
                   onPress={() => setGroupType("opposite")}
                   style={{
                     flex: 1,
-                    backgroundColor: groupType === "opposite" ? "#fef3c7" : C.chip,
+                    backgroundColor: groupType === "opposite" ? (isDk ? "rgba(245,158,11,0.15)" : "#fef3c7") : C.chip,
                     padding: 14,
                     borderRadius: 12,
                     borderWidth: 2,
@@ -9547,7 +9548,7 @@ const TagRelationModal = memo(({
                   }}
                 >
                   <Text style={{ fontSize: 20, marginBottom: 4 }}>⚡</Text>
-                  <Text style={{ fontWeight: "700", color: groupType === "opposite" ? "#92400e" : C.text }}>
+                  <Text style={{ fontWeight: "700", color: groupType === "opposite" ? (isDk ? "#fcd34d" : "#92400e") : C.text }}>
                     상반
                   </Text>
                   <Text style={{ fontSize: 10, color: C.sub, textAlign: "center" }}>
@@ -9569,7 +9570,7 @@ const TagRelationModal = memo(({
                       key={g.id}
                       onPress={() => setSelectedOppositeGroup(g.id === selectedOppositeGroup ? null : g.id)}
                       style={{
-                        backgroundColor: selectedOppositeGroup === g.id ? "#fee2e2" : C.chip,
+                        backgroundColor: selectedOppositeGroup === g.id ? (isDk ? "rgba(239,68,68,0.15)" : "#fee2e2") : C.chip,
                         paddingHorizontal: 12,
                         paddingVertical: 8,
                         borderRadius: 999,
@@ -9579,7 +9580,7 @@ const TagRelationModal = memo(({
                       }}
                     >
                       <Text style={{ 
-                        color: selectedOppositeGroup === g.id ? "#991b1b" : C.text, 
+                        color: selectedOppositeGroup === g.id ? (isDk ? "#fca5a5" : "#991b1b") : C.text, 
                         fontWeight: "600",
                         fontSize: 13,
                       }}>
@@ -9604,7 +9605,7 @@ const TagRelationModal = memo(({
                       style={{
                         flexDirection: "row",
                         alignItems: "center",
-                        backgroundColor: tag === targetTag ? "#dbeafe" : C.chip,
+                        backgroundColor: tag === targetTag ? (isDk ? "rgba(59,130,246,0.15)" : "#dbeafe") : C.chip,
                         paddingLeft: 12,
                         paddingRight: 6,
                         paddingVertical: 6,
@@ -10402,9 +10403,19 @@ const TagManagerModal = memo(({
           backgroundColor: C.card,
         }}>
           <Text style={{ fontSize: 20, fontWeight: "800", color: C.text }}>🏷️ 태그 관리 v3.0</Text>
-          <TouchableOpacity onPress={onClose}>
-            <Text style={{ fontSize: 28, color: C.sub }}>×</Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            {onEditRelations && (
+              <TouchableOpacity 
+                onPress={() => { onEditRelations(null); onClose(); }}
+                style={{ backgroundColor: isDark ? "#1e3a5f" : "#e0e7ff", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
+              >
+                <Text style={{ fontSize: 13, fontWeight: "700", color: isDark ? "#93c5fd" : "#3730a3" }}>🔗 관계도</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity onPress={onClose}>
+              <Text style={{ fontSize: 28, color: C.sub }}>×</Text>
+            </TouchableOpacity>
+          </View>
         </View>
         
         {/* 🆕 대량 선택 모드 바 */}
@@ -16548,7 +16559,6 @@ function generateInsights(data) {
     suspiciousCount: basicStats.lowReliability,
   };
 }
-
 /* ========= App ========= */
 function AppContent() {
   // 🎨 다크모드
@@ -29755,17 +29765,17 @@ async function importJSON() {
               
               {/* 관계 통계 */}
               <View style={{ flexDirection: "row", gap: 8, marginBottom: 16 }}>
-                <View style={{ flex: 1, backgroundColor: "#dbeafe", padding: 12, borderRadius: 10, alignItems: "center" }}>
-                  <Text style={{ fontSize: 20, fontWeight: "800", color: "#1d4ed8" }}>
+                <View style={{ flex: 1, backgroundColor: isDark ? "rgba(59,130,246,0.15)" : "#dbeafe", padding: 12, borderRadius: 10, alignItems: "center" }}>
+                  <Text style={{ fontSize: 20, fontWeight: "800", color: isDark ? "#60a5fa" : "#1d4ed8" }}>
                     {Object.values(tagRelations.groups).filter(g => g.type === "similar").length}
                   </Text>
-                  <Text style={{ fontSize: 11, color: "#1d4ed8" }}>유사 그룹</Text>
+                  <Text style={{ fontSize: 11, color: isDark ? "#93c5fd" : "#1d4ed8" }}>유사 그룹</Text>
                 </View>
-                <View style={{ flex: 1, backgroundColor: "#fef3c7", padding: 12, borderRadius: 10, alignItems: "center" }}>
-                  <Text style={{ fontSize: 20, fontWeight: "800", color: "#92400e" }}>
+                <View style={{ flex: 1, backgroundColor: isDark ? "rgba(245,158,11,0.15)" : "#fef3c7", padding: 12, borderRadius: 10, alignItems: "center" }}>
+                  <Text style={{ fontSize: 20, fontWeight: "800", color: isDark ? "#fbbf24" : "#92400e" }}>
                     {Object.values(tagRelations.groups).filter(g => g.type === "opposite").length}
                   </Text>
-                  <Text style={{ fontSize: 11, color: "#92400e" }}>상반 관계</Text>
+                  <Text style={{ fontSize: 11, color: isDark ? "#fcd34d" : "#92400e" }}>상반 관계</Text>
                 </View>
                 <View style={{ flex: 1, backgroundColor: C.chip, padding: 12, borderRadius: 10, alignItems: "center" }}>
                   <Text style={{ fontSize: 20, fontWeight: "800", color: C.text }}>
@@ -29788,19 +29798,23 @@ async function importJSON() {
                         setTagRelationModalOpen(true);
                       }}
                       style={{
-                        backgroundColor: group.type === "similar" ? "#dbeafe" : "#fef3c7",
+                        backgroundColor: group.type === "similar" 
+                          ? (isDark ? "rgba(59,130,246,0.12)" : "#dbeafe")
+                          : (isDark ? "rgba(245,158,11,0.12)" : "#fef3c7"),
                         padding: 12,
                         borderRadius: 10,
                         marginBottom: 8,
                         borderWidth: 1,
-                        borderColor: group.type === "similar" ? "#93c5fd" : "#fcd34d",
+                        borderColor: group.type === "similar" 
+                          ? (isDark ? "rgba(59,130,246,0.3)" : "#93c5fd") 
+                          : (isDark ? "rgba(252,211,77,0.3)" : "#fcd34d"),
                       }}
                     >
                       <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 6 }}>
                         <Text style={{ fontSize: 14, marginRight: 6 }}>
                           {group.type === "similar" ? "🔗" : "⚡"}
                         </Text>
-                        <Text style={{ fontWeight: "700", color: group.type === "similar" ? "#1d4ed8" : "#92400e", flex: 1 }}>
+                        <Text style={{ fontWeight: "700", color: group.type === "similar" ? (isDark ? "#93c5fd" : "#1d4ed8") : (isDark ? "#fcd34d" : "#92400e"), flex: 1 }}>
                           {group.name || `${group.tags[0]} 그룹`}
                         </Text>
                         <Text style={{ fontSize: 12, color: C.sub }}>
@@ -29810,7 +29824,7 @@ async function importJSON() {
                       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }}>
                         {group.tags.slice(0, 6).map(tag => (
                           <View key={tag} style={{ 
-                            backgroundColor: "rgba(255,255,255,0.7)", 
+                            backgroundColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.7)", 
                             paddingHorizontal: 8, 
                             paddingVertical: 3, 
                             borderRadius: 6 
@@ -29837,8 +29851,8 @@ async function importJSON() {
               )}
               
               {/* 안내 */}
-              <View style={{ backgroundColor: "#f0f9ff", padding: 12, borderRadius: 10 }}>
-                <Text style={{ color: "#0369a1", fontSize: 12, lineHeight: 18 }}>
+              <View style={{ backgroundColor: isDark ? "rgba(3,105,161,0.1)" : "#f0f9ff", padding: 12, borderRadius: 10 }}>
+                <Text style={{ color: isDark ? "#7dd3fc" : "#0369a1", fontSize: 12, lineHeight: 18 }}>
                   💡 <Text style={{ fontWeight: "600" }}>사용법</Text>{"\n"}
                   • 전체 태그 관리에서 태그를 길게 눌러 관계 편집{"\n"}
                   • 유사 태그: "먼치킨"과 "사기캐"처럼 비슷한 의미{"\n"}
@@ -30390,8 +30404,15 @@ async function importJSON() {
               </TouchableOpacity>
               </View>
             </View>
+            <ScrollView 
+              nestedScrollEnabled={true} 
+              showsVerticalScrollIndicator={true} 
+              style={{ flex: 1 }}
+              contentContainerStyle={{ paddingBottom: 40 }}
+              keyboardShouldPersistTaps="handled"
+            >
             {editItem && (
-              <ScrollView nestedScrollEnabled={true} showsVerticalScrollIndicator={true} style={{ flex: 1 }}>
+              <>
                 {/* 🆕 표지 이미지 */}
                 <Label>표지 이미지</Label>
                 <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 12 }}>
@@ -30891,8 +30912,9 @@ async function importJSON() {
                     style={{ flex: 1 }}
                   />
                 </View>
-              </ScrollView>
+              </>
             )}
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -32920,3 +32942,4 @@ export default function App() {
     </AppErrorBoundary>
   );
 }
+
