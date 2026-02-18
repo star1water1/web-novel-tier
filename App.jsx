@@ -9377,9 +9377,9 @@ const TagRelationModal = memo(({
     }
   }, [visible, existingGroup]);
   
-  if (!visible || !targetTag) return null;
+  if (!visible) return null;
   
-  const currentTags = existingGroup?.tags || [targetTag];
+  const currentTags = existingGroup?.tags || (targetTag ? [targetTag] : []);
   const otherSimilarGroups = Object.values(allGroups || {}).filter(g => 
     g.type === "similar" && g.id !== existingGroup?.id
   );
@@ -9389,16 +9389,21 @@ const TagRelationModal = memo(({
       // 기존 그룹 업데이트
       onUpdateGroup(existingGroup.id, {
         ...existingGroup,
-        name: groupName.trim() || `${targetTag} 그룹`,
+        name: groupName.trim() || (targetTag ? `${targetTag} 그룹` : "새 그룹"),
         type: groupType,
         relatedGroupId: groupType === "opposite" ? selectedOppositeGroup : null,
       });
     } else {
       // 새 그룹 생성
+      const initialTags = targetTag ? [targetTag] : [];
+      if (initialTags.length === 0 && !newTagInput.trim()) {
+        Alert.alert("알림", "태그를 최소 1개 추가해주세요.");
+        return;
+      }
       onCreateGroup(
-        groupName.trim() || `${targetTag} 그룹`,
+        groupName.trim() || (targetTag ? `${targetTag} 그룹` : "새 그룹"),
         groupType,
-        [targetTag],
+        initialTags,
         groupType === "opposite" ? selectedOppositeGroup : null
       );
     }
@@ -9419,8 +9424,12 @@ const TagRelationModal = memo(({
   };
   
   const handleRemoveTag = (tag) => {
-    if (tag === targetTag && currentTags.length <= 1) {
+    if (targetTag && tag === targetTag && currentTags.length <= 1) {
       Alert.alert("알림", "마지막 태그는 삭제할 수 없습니다. 그룹을 삭제하세요.");
+      return;
+    }
+    if (!targetTag && currentTags.length <= 1) {
+      Alert.alert("알림", "마지막 태그는 삭제할 수 없습니다.");
       return;
     }
     if (existingGroup) {
@@ -9470,6 +9479,7 @@ const TagRelationModal = memo(({
           
           <ScrollView showsVerticalScrollIndicator={false}>
             {/* 대상 태그 */}
+            {targetTag && (
             <View style={{ marginBottom: 16 }}>
               <Text style={{ fontSize: 14, fontWeight: "700", color: C.text, marginBottom: 6 }}>
                 대상 태그
@@ -9484,6 +9494,7 @@ const TagRelationModal = memo(({
                 <Text style={{ color: "#fff", fontWeight: "700" }}>{targetTag}</Text>
               </View>
             </View>
+            )}
             
             {/* 그룹 이름 */}
             <View style={{ marginBottom: 16 }}>
@@ -9493,7 +9504,7 @@ const TagRelationModal = memo(({
               <TextInput
                 value={groupName}
                 onChangeText={setGroupName}
-                placeholder={`예: ${targetTag} 계열`}
+                placeholder={targetTag ? `예: ${targetTag} 계열` : "예: 판타지 계열"}
                 placeholderTextColor="#9ca3af"
                 style={{
                   backgroundColor: C.bg,
@@ -10406,7 +10417,10 @@ const TagManagerModal = memo(({
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
             {onEditRelations && (
               <TouchableOpacity 
-                onPress={() => { onEditRelations(null); onClose(); }}
+                onPress={() => { 
+                  onClose(); 
+                  setTimeout(() => onEditRelations && onEditRelations(null), 400);
+                }}
                 style={{ backgroundColor: isDark ? "#1e3a5f" : "#e0e7ff", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
               >
                 <Text style={{ fontSize: 13, fontWeight: "700", color: isDark ? "#93c5fd" : "#3730a3" }}>🔗 관계도</Text>
@@ -21023,7 +21037,12 @@ function AppContent() {
     const firstType = Object.keys(AWARD_META)[0] || "";
     setAwardTypeInput(firstType);
 
-    setEditOpen(true);
+    // 🔧 v3.5.7: Android transparent Modal ScrollView 버그 대응
+    // 21개 상태 세팅 후 1프레임 지연하여 Modal 열기
+    // → 데이터가 먼저 커밋된 후 Modal이 열려 ScrollView 높이 계산 정상화
+    requestAnimationFrame(() => {
+      setEditOpen(true);
+    });
   }, []);
 
   async function saveEdit() {
@@ -30370,7 +30389,7 @@ async function importJSON() {
           }}
         >
           <TouchableOpacity 
-            style={{ flex: 0.12 }} 
+            style={{ height: Math.round(Dimensions.get("window").height * 0.05) }} 
             activeOpacity={1} 
             onPress={() => setEditOpen(false)} 
           />
@@ -30380,7 +30399,7 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              flex: 0.88,
+              height: Math.round(Dimensions.get("window").height * 0.95),
             }}
           >
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
