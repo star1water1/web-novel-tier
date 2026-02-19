@@ -8203,7 +8203,7 @@ const SearchTagModal = memo(({
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} transparent>
       <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)" }}>
         <TouchableOpacity style={{ height: Math.round(Dimensions.get("window").height * 0.12) }} activeOpacity={1} onPress={onClose} />
-        <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, height: Math.round(Dimensions.get("window").height * 0.88), padding: 16 }}>
+        <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, flex: 1, padding: 16 }}>
           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>🔍 고급 검색 필터</Text>
             <TouchableOpacity onPress={onClose}>
@@ -8583,8 +8583,7 @@ const TagEditModal = memo(({
   theme,
 }) => {
   const C = theme;
-  
-  // 🆕 내부 상태 (변경사항 추적)
+  const isDark = C.bg !== "#F5F7FB"; // 🔧 v3.5.7: 다크모드 감지
   const [localPinned, setLocalPinned] = useState(isPinned);
   const [localHidden, setLocalHidden] = useState(isHidden);
   const [localSentiment, setLocalSentiment] = useState(sentiment);
@@ -8734,7 +8733,7 @@ const TagEditModal = memo(({
                   onPress={() => handleLocalChange(setLocalPinned, !localPinned)}
                   style={{
                     flex: 1,
-                    backgroundColor: localPinned ? "#fef3c7" : C.bg,
+                    backgroundColor: localPinned ? (isDark ? "rgba(245,158,11,0.15)" : "#fef3c7") : C.bg,
                     borderWidth: 2,
                     borderColor: localPinned ? "#fcd34d" : C.line,
                     borderRadius: 10,
@@ -8746,7 +8745,7 @@ const TagEditModal = memo(({
                   }}
                 >
                   <Text style={{ fontSize: 16 }}>📌</Text>
-                  <Text style={{ fontWeight: "700", color: localPinned ? "#92400e" : C.sub }}>
+                  <Text style={{ fontWeight: "700", color: localPinned ? (isDark ? "#fcd34d" : "#92400e") : C.sub }}>
                     {localPinned ? "고정됨" : "고정"}
                   </Text>
                 </TouchableOpacity>
@@ -8815,13 +8814,13 @@ const TagEditModal = memo(({
                 onPress={() => onEditCoordinate?.(tag, null)}
                 style={{
                   marginTop: 8,
-                  backgroundColor: "#dbeafe",
+                  backgroundColor: isDark ? "rgba(59,130,246,0.15)" : "#dbeafe",
                   padding: 10,
                   borderRadius: 10,
                   alignItems: "center",
                 }}
               >
-                <Text style={{ color: "#1d4ed8", fontWeight: "600" }}>+ 좌표계에 추가</Text>
+                <Text style={{ color: isDark ? "#93c5fd" : "#1d4ed8", fontWeight: "600" }}>+ 좌표계에 추가</Text>
               </TouchableOpacity>
             </View>
             
@@ -8834,7 +8833,7 @@ const TagEditModal = memo(({
                 <TouchableOpacity
                   onPress={() => { onEditRelations?.(tag); onClose(); }}
                   style={{ 
-                    backgroundColor: relationInfo.type === "similar" ? "#dbeafe" : "#fef3c7",
+                    backgroundColor: relationInfo.type === "similar" ? (isDark ? "rgba(59,130,246,0.15)" : "#dbeafe") : (isDark ? "rgba(245,158,11,0.15)" : "#fef3c7"),
                     padding: 12, 
                     borderRadius: 10,
                   }}
@@ -8888,7 +8887,7 @@ const TagEditModal = memo(({
                   <TouchableOpacity
                     onPress={() => { onEditRelations?.(tag); onClose(); }}
                     style={{
-                      backgroundColor: "#e0e7ff",
+                      backgroundColor: isDark ? "rgba(99,102,241,0.15)" : "#e0e7ff",
                       padding: 12,
                       borderRadius: 10,
                       flexDirection: "row",
@@ -8896,7 +8895,7 @@ const TagEditModal = memo(({
                     }}
                   >
                     <Text style={{ fontSize: 16, marginRight: 10 }}>🔗</Text>
-                    <Text style={{ fontWeight: "600", color: "#3730a3" }}>유사/상반 태그 설정</Text>
+                    <Text style={{ fontWeight: "600", color: isDark ? "#a5b4fc" : "#3730a3" }}>유사/상반 태그 설정</Text>
                   </TouchableOpacity>
                 )}
                 
@@ -8905,7 +8904,7 @@ const TagEditModal = memo(({
                   <TouchableOpacity
                     onPress={() => { onPromoteToMajor?.(tag); onClose(); }}
                     style={{
-                      backgroundColor: "#fef3c7",
+                      backgroundColor: isDark ? "rgba(245,158,11,0.15)" : "#fef3c7",
                       padding: 12,
                       borderRadius: 10,
                       flexDirection: "row",
@@ -8913,7 +8912,7 @@ const TagEditModal = memo(({
                     }}
                   >
                     <Text style={{ fontSize: 16, marginRight: 10 }}>🏷️</Text>
-                    <Text style={{ fontWeight: "600", color: "#92400e" }}>대장르 속성 추가</Text>
+                    <Text style={{ fontWeight: "600", color: isDark ? "#fcd34d" : "#92400e" }}>대장르 속성 추가</Text>
                   </TouchableOpacity>
                 )}
                 
@@ -8922,7 +8921,7 @@ const TagEditModal = memo(({
                   <TouchableOpacity
                     onPress={() => { onPromoteToSub?.(tag); onClose(); }}
                     style={{
-                      backgroundColor: "#e0e7ff",
+                      backgroundColor: isDark ? "rgba(99,102,241,0.15)" : "#e0e7ff",
                       padding: 12,
                       borderRadius: 10,
                       flexDirection: "row",
@@ -8930,7 +8929,7 @@ const TagEditModal = memo(({
                     }}
                   >
                     <Text style={{ fontSize: 16, marginRight: 10 }}>🔖</Text>
-                    <Text style={{ fontWeight: "600", color: "#3730a3" }}>부장르 속성 추가</Text>
+                    <Text style={{ fontWeight: "600", color: isDark ? "#a5b4fc" : "#3730a3" }}>부장르 속성 추가</Text>
                   </TouchableOpacity>
                 )}
                 
@@ -9360,6 +9359,9 @@ const TagRelationModal = memo(({
   const [groupType, setGroupType] = useState("similar"); // similar | opposite
   const [newTagInput, setNewTagInput] = useState("");
   const [selectedOppositeGroup, setSelectedOppositeGroup] = useState(null);
+  // 🔧 v3.5.7: 관리 모드 (targetTag=null) 지원
+  const [manageSelectedGroup, setManageSelectedGroup] = useState(null); // 관리 모드에서 선택한 그룹
+  const [newGroupTags, setNewGroupTags] = useState([]); // 새 그룹에 추가할 태그들
   
   // 모달 열릴 때 초기화
   useEffect(() => {
@@ -9374,11 +9376,331 @@ const TagRelationModal = memo(({
         setSelectedOppositeGroup(null);
       }
       setNewTagInput("");
+      setManageSelectedGroup(null);
+      setNewGroupTags([]);
     }
   }, [visible, existingGroup]);
   
-  if (!visible || !targetTag) return null;
+  if (!visible) return null;
   
+  // ─── 관리 모드 (targetTag === null) ───
+  const isManageMode = !targetTag;
+  const groupList = Object.values(allGroups || {});
+  const similarGroups = groupList.filter(g => g.type === "similar");
+  const oppositeGroups = groupList.filter(g => g.type === "opposite");
+  
+  // 관리 모드: 새 그룹 생성
+  const handleCreateNewGroup = () => {
+    if (newGroupTags.length === 0) {
+      Alert.alert("알림", "태그를 최소 1개 추가해주세요.");
+      return;
+    }
+    onCreateGroup(
+      groupName.trim() || `${newGroupTags[0]} 그룹`,
+      groupType,
+      newGroupTags,
+      groupType === "opposite" ? selectedOppositeGroup : null
+    );
+    setGroupName("");
+    setNewGroupTags([]);
+    setGroupType("similar");
+    setNewTagInput("");
+    setSelectedOppositeGroup(null);
+  };
+  
+  const handleAddNewGroupTag = () => {
+    const tags = newTagInput.split(",").map(t => t.trim()).filter(Boolean);
+    if (tags.length === 0) return;
+    const added = tags.filter(t => !newGroupTags.includes(t));
+    if (added.length === 0) {
+      Alert.alert("알림", "이미 추가된 태그입니다.");
+      return;
+    }
+    setNewGroupTags(prev => [...prev, ...added]);
+    setNewTagInput("");
+  };
+  
+  if (isManageMode) {
+    return (
+      <Modal visible={visible} animationType="slide" onRequestClose={onClose} transparent>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)" }}>
+          <TouchableOpacity style={{ height: Math.round(Dimensions.get("window").height * 0.10) }} activeOpacity={1} onPress={onClose} />
+          <View style={{ 
+            backgroundColor: C.card, 
+            borderTopLeftRadius: 20, 
+            borderTopRightRadius: 20, 
+            padding: 20, 
+            flex: 1,
+          }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>
+                🔗 태그 관계도 관리
+              </Text>
+              <TouchableOpacity onPress={onClose}>
+                <Text style={{ fontSize: 24, color: C.sub }}>×</Text>
+              </TouchableOpacity>
+            </View>
+            
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
+              {/* 기존 그룹 목록 */}
+              {groupList.length > 0 && (
+                <View style={{ marginBottom: 20 }}>
+                  <Text style={{ fontSize: 15, fontWeight: "700", color: C.text, marginBottom: 10 }}>
+                    📋 기존 관계 그룹 ({groupList.length}개)
+                  </Text>
+                  
+                  {similarGroups.length > 0 && (
+                    <View style={{ marginBottom: 12 }}>
+                      <Text style={{ fontSize: 12, fontWeight: "600", color: isDk ? "#93c5fd" : "#1d4ed8", marginBottom: 6 }}>
+                        🔗 유사 그룹 ({similarGroups.length})
+                      </Text>
+                      {similarGroups.map(g => (
+                        <View key={g.id} style={{
+                          backgroundColor: isDk ? "rgba(59,130,246,0.08)" : "#f0f9ff",
+                          padding: 12,
+                          borderRadius: 10,
+                          marginBottom: 6,
+                          borderLeftWidth: 3,
+                          borderLeftColor: "#3b82f6",
+                        }}>
+                          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                            <Text style={{ fontWeight: "700", color: C.text, fontSize: 14 }}>
+                              {g.name || g.tags?.[0] || "이름 없음"}
+                            </Text>
+                            <TouchableOpacity
+                              onPress={() => {
+                                Alert.alert("그룹 삭제", `"${g.name || g.tags?.[0]}" 그룹을 삭제할까요?`, [
+                                  { text: "취소" },
+                                  { text: "삭제", style: "destructive", onPress: () => onDeleteGroup(g.id) }
+                                ]);
+                              }}
+                              style={{ padding: 4 }}
+                            >
+                              <Text style={{ color: C.warn, fontSize: 12 }}>삭제</Text>
+                            </TouchableOpacity>
+                          </View>
+                          <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 6 }}>
+                            {(g.tags || []).map(t => (
+                              <View key={t} style={{
+                                backgroundColor: isDk ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)",
+                                paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, marginRight: 4, marginBottom: 4,
+                              }}>
+                                <Text style={{ color: C.text, fontSize: 12 }}>{t}</Text>
+                              </View>
+                            ))}
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                  
+                  {oppositeGroups.length > 0 && (
+                    <View style={{ marginBottom: 12 }}>
+                      <Text style={{ fontSize: 12, fontWeight: "600", color: isDk ? "#fcd34d" : "#92400e", marginBottom: 6 }}>
+                        ⚡ 상반 그룹 ({oppositeGroups.length})
+                      </Text>
+                      {oppositeGroups.map(g => (
+                        <View key={g.id} style={{
+                          backgroundColor: isDk ? "rgba(245,158,11,0.08)" : "#fffbeb",
+                          padding: 12,
+                          borderRadius: 10,
+                          marginBottom: 6,
+                          borderLeftWidth: 3,
+                          borderLeftColor: "#f59e0b",
+                        }}>
+                          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                            <Text style={{ fontWeight: "700", color: C.text, fontSize: 14 }}>
+                              {g.name || g.tags?.[0] || "이름 없음"}
+                            </Text>
+                            <TouchableOpacity
+                              onPress={() => {
+                                Alert.alert("그룹 삭제", `"${g.name || g.tags?.[0]}" 그룹을 삭제할까요?`, [
+                                  { text: "취소" },
+                                  { text: "삭제", style: "destructive", onPress: () => onDeleteGroup(g.id) }
+                                ]);
+                              }}
+                              style={{ padding: 4 }}
+                            >
+                              <Text style={{ color: C.warn, fontSize: 12 }}>삭제</Text>
+                            </TouchableOpacity>
+                          </View>
+                          <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 6 }}>
+                            {(g.tags || []).map(t => (
+                              <View key={t} style={{
+                                backgroundColor: isDk ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)",
+                                paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, marginRight: 4, marginBottom: 4,
+                              }}>
+                                <Text style={{ color: C.text, fontSize: 12 }}>{t}</Text>
+                              </View>
+                            ))}
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              )}
+              
+              {groupList.length === 0 && (
+                <View style={{ padding: 20, alignItems: "center", marginBottom: 16 }}>
+                  <Text style={{ fontSize: 40, marginBottom: 8 }}>🔗</Text>
+                  <Text style={{ color: C.sub, textAlign: "center", lineHeight: 20 }}>
+                    아직 설정된 관계가 없습니다.{"\n"}아래에서 새 그룹을 만들어보세요!
+                  </Text>
+                </View>
+              )}
+              
+              {/* 구분선 */}
+              <View style={{ height: 1, backgroundColor: C.line, marginBottom: 16 }} />
+              
+              {/* 새 그룹 추가 */}
+              <Text style={{ fontSize: 15, fontWeight: "700", color: C.text, marginBottom: 10 }}>
+                ➕ 새 그룹 추가
+              </Text>
+              
+              {/* 태그 입력 */}
+              <View style={{ marginBottom: 12 }}>
+                <Text style={{ fontSize: 13, fontWeight: "600", color: C.sub, marginBottom: 6 }}>태그 추가 (쉼표로 여러 개)</Text>
+                <View style={{ flexDirection: "row" }}>
+                  <TextInput
+                    value={newTagInput}
+                    onChangeText={setNewTagInput}
+                    placeholder="예: 먼치킨, 사기캐, 최강"
+                    placeholderTextColor="#9ca3af"
+                    style={{
+                      flex: 1,
+                      backgroundColor: C.bg,
+                      borderWidth: 1,
+                      borderColor: C.line,
+                      borderRadius: 12,
+                      paddingHorizontal: 12,
+                      paddingVertical: 10,
+                      fontSize: 14,
+                      color: C.text,
+                      marginRight: 8,
+                    }}
+                    onSubmitEditing={handleAddNewGroupTag}
+                  />
+                  <TouchableOpacity
+                    onPress={handleAddNewGroupTag}
+                    style={{ backgroundColor: C.primary, paddingHorizontal: 16, borderRadius: 12, justifyContent: "center" }}
+                  >
+                    <Text style={{ color: "#fff", fontWeight: "700" }}>추가</Text>
+                  </TouchableOpacity>
+                </View>
+                {newGroupTags.length > 0 && (
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 8 }}>
+                    {newGroupTags.map(t => (
+                      <View key={t} style={{
+                        flexDirection: "row", alignItems: "center",
+                        backgroundColor: C.primary + "20", paddingLeft: 10, paddingRight: 4, paddingVertical: 5,
+                        borderRadius: 999, marginRight: 6, marginBottom: 6,
+                      }}>
+                        <Text style={{ color: C.text, fontSize: 13, fontWeight: "600" }}>{t}</Text>
+                        <TouchableOpacity onPress={() => setNewGroupTags(prev => prev.filter(x => x !== t))} style={{ padding: 4 }}>
+                          <Text style={{ color: C.warn, fontSize: 11 }}>✕</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+              
+              {/* 그룹 이름 */}
+              <View style={{ marginBottom: 12 }}>
+                <Text style={{ fontSize: 13, fontWeight: "600", color: C.sub, marginBottom: 6 }}>그룹 이름 (선택)</Text>
+                <TextInput
+                  value={groupName}
+                  onChangeText={setGroupName}
+                  placeholder="예: 먼치킨 계열"
+                  placeholderTextColor="#9ca3af"
+                  style={{
+                    backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 12,
+                    paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: C.text,
+                  }}
+                />
+              </View>
+              
+              {/* 관계 유형 */}
+              <View style={{ marginBottom: 12 }}>
+                <Text style={{ fontSize: 13, fontWeight: "600", color: C.sub, marginBottom: 6 }}>관계 유형</Text>
+                <View style={{ flexDirection: "row", gap: 10 }}>
+                  <TouchableOpacity
+                    onPress={() => setGroupType("similar")}
+                    style={{
+                      flex: 1, backgroundColor: groupType === "similar" ? (isDk ? "rgba(59,130,246,0.15)" : "#dbeafe") : C.chip,
+                      padding: 12, borderRadius: 12, borderWidth: 2,
+                      borderColor: groupType === "similar" ? "#3b82f6" : "transparent", alignItems: "center",
+                    }}
+                  >
+                    <Text style={{ fontSize: 16 }}>🔗</Text>
+                    <Text style={{ fontWeight: "700", fontSize: 13, color: groupType === "similar" ? (isDk ? "#93c5fd" : "#1d4ed8") : C.text }}>유사</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => setGroupType("opposite")}
+                    style={{
+                      flex: 1, backgroundColor: groupType === "opposite" ? (isDk ? "rgba(245,158,11,0.15)" : "#fef3c7") : C.chip,
+                      padding: 12, borderRadius: 12, borderWidth: 2,
+                      borderColor: groupType === "opposite" ? "#f59e0b" : "transparent", alignItems: "center",
+                    }}
+                  >
+                    <Text style={{ fontSize: 16 }}>⚡</Text>
+                    <Text style={{ fontWeight: "700", fontSize: 13, color: groupType === "opposite" ? (isDk ? "#fcd34d" : "#92400e") : C.text }}>상반</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+              
+              {/* 상반 시 대상 그룹 선택 */}
+              {groupType === "opposite" && similarGroups.length > 0 && (
+                <View style={{ marginBottom: 12 }}>
+                  <Text style={{ fontSize: 13, fontWeight: "600", color: C.sub, marginBottom: 6 }}>상반 대상 그룹</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    {similarGroups.map(g => (
+                      <TouchableOpacity
+                        key={g.id}
+                        onPress={() => setSelectedOppositeGroup(g.id === selectedOppositeGroup ? null : g.id)}
+                        style={{
+                          backgroundColor: selectedOppositeGroup === g.id ? (isDk ? "rgba(239,68,68,0.15)" : "#fee2e2") : C.chip,
+                          paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, marginRight: 8,
+                          borderWidth: selectedOppositeGroup === g.id ? 2 : 1,
+                          borderColor: selectedOppositeGroup === g.id ? "#ef4444" : C.line,
+                        }}
+                      >
+                        <Text style={{ color: selectedOppositeGroup === g.id ? (isDk ? "#fca5a5" : "#991b1b") : C.text, fontWeight: "600", fontSize: 13 }}>
+                          {g.name || g.tags?.[0]}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
+            </ScrollView>
+            
+            {/* 하단 버튼 */}
+            <View style={{ flexDirection: "row", gap: 10, marginTop: 8 }}>
+              <TouchableOpacity
+                onPress={onClose}
+                style={{ flex: 1, paddingVertical: 14, borderRadius: 12, borderWidth: 1, borderColor: C.line, alignItems: "center" }}
+              >
+                <Text style={{ color: C.sub, fontWeight: "700" }}>닫기</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleCreateNewGroup}
+                style={{
+                  flex: 1, backgroundColor: newGroupTags.length > 0 ? C.primary : C.chip,
+                  paddingVertical: 14, borderRadius: 12, alignItems: "center",
+                }}
+              >
+                <Text style={{ color: newGroupTags.length > 0 ? "#fff" : C.sub, fontWeight: "700" }}>그룹 생성</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    );
+  }
+  
+  // ─── 편집 모드 (targetTag 존재) ───
   const currentTags = existingGroup?.tags || [targetTag];
   const otherSimilarGroups = Object.values(allGroups || {}).filter(g => 
     g.type === "similar" && g.id !== existingGroup?.id
@@ -9457,7 +9779,7 @@ const TagRelationModal = memo(({
           borderTopLeftRadius: 20, 
           borderTopRightRadius: 20, 
           padding: 20, 
-          height: Math.round(Dimensions.get("window").height * 0.85),
+          flex: 1,
         }}>
           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
             <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>
@@ -10407,10 +10729,8 @@ const TagManagerModal = memo(({
             {onEditRelations && (
               <TouchableOpacity 
                 onPress={() => { 
-                  Alert.alert(
-                    "🔗 태그 관계도",
-                    "태그를 길게 눌러 → '유사/상반 태그 설정'으로 관계를 편집하세요.\n\n설정 > 분석 탭에서 전체 관계도를 확인할 수 있습니다."
-                  );
+                  onClose(); 
+                  setTimeout(() => onEditRelations(null), 400);
                 }}
                 style={{ backgroundColor: isDark ? "#1e3a5f" : "#e0e7ff", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
               >
@@ -19183,6 +19503,13 @@ function AppContent() {
   
   // 태그 관계 모달 열기
   const openTagRelationModal = useCallback((tag) => {
+    if (!tag) {
+      // 🔧 v3.5.7: 관리 모드 (태그 없이 열기)
+      setTagRelationTarget(null);
+      setTagRelationEditGroup(null);
+      setTagRelationModalOpen(true);
+      return;
+    }
     setTagRelationTarget(tag);
     const groupInfo = getTagGroupInfo(tag);
     setTagRelationEditGroup(groupInfo);
@@ -30413,7 +30740,7 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              height: Math.round(Dimensions.get("window").height * 0.88),
+              flex: 1,
             }}
           >
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -30976,7 +31303,7 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              height: Math.round(Dimensions.get("window").height * 0.88),
+              flex: 1,
             }}
           >
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -31119,7 +31446,7 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              height: Math.round(Dimensions.get("window").height * 0.88),
+              flex: 1,
             }}
           >
             <Text style={{ fontSize: 18, fontWeight: "800", marginBottom: 8, color: C.text }}>
@@ -31304,7 +31631,7 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              height: Math.round(Dimensions.get("window").height * 0.85),
+              flex: 1,
             }}
           >
             <Text
@@ -31458,7 +31785,7 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              height: Math.round(Dimensions.get("window").height * 0.88),
+              flex: 1,
             }}
           >
             <Text
@@ -32172,7 +32499,7 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              height: Math.round(Dimensions.get("window").height * 0.88),
+              flex: 1,
             }}
           >
             <Text style={{ fontSize: 18, fontWeight: "800", marginBottom: 8, color: C.text }}>
@@ -32652,7 +32979,7 @@ async function importJSON() {
             borderTopLeftRadius: 20,
             borderTopRightRadius: 20,
             padding: 16,
-            height: Math.round(Dimensions.get("window").height * 0.85),
+            flex: 1,
           }}>
                 <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                   <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>
@@ -32824,7 +33151,7 @@ async function importJSON() {
             borderTopLeftRadius: 16,
             borderTopRightRadius: 16,
             padding: 16,
-            height: Math.round(Dimensions.get("window").height * 0.88),
+            flex: 1,
           }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>🧹 커스텀 초기화</Text>
