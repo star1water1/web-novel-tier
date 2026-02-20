@@ -2,9 +2,9 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.5.8                                                                  ║
- * ║  최종 수정: 2025-02-19                                                        ║
- * ║  총 라인 수: 약 33,400줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 3.5.9                                                                  ║
+ * ║  최종 수정: 2025-02-20                                                        ║
+ * ║  총 라인 수: 약 34,400줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -147,6 +147,40 @@
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v3.5.9 수정 사항 - saveEdit 안전성 + 편집 미저장 확인 + 복원 재시도     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [변경 1] 🔴 saveEdit 모달 닫기 순서 수정 (데이터 유실 방지)                  ║
+ * ║ • 이전: 모달 먼저 닫고(setEditOpen(false)) → DB 저장 시도                   ║
+ * ║   → DB 오류 시 편집 데이터 소실, 복구 불가능                                 ║
+ * ║ • 수정: DB 저장 성공 후 모달 닫기 (savePlannedEdit 패턴과 통일)             ║
+ * ║   → 실패 시 모달이 열린 상태로 유지되어 재시도 가능                          ║
+ * ║ • catch 메시지도 "편집 내용은 유지됩니다" 안내 추가                          ║
+ * ║ • 저장 버튼에 disabled={isLoading} 추가 (더블탭 방지)                       ║
+ * ║                                                                              ║
+ * ║ [변경 2] 🟠 편집 모달 미저장 변경사항 확인 (closeEditModal)                  ║
+ * ║ • openEdit 시 editOriginalSnapshotRef에 원본 스냅샷 저장                    ║
+ * ║   - editItem 경유 필드: title, author, tags, note, read_count,               ║
+ * ║     total_episodes, cover_image, tag_data (8개)                              ║
+ * ║   - 별도 state 필드: rating, platforms, status, work_status, link,           ║
+ * ║     reread_count, gaiden_status/read_count/total_episodes,                   ║
+ * ║     created_at, read_count_updated_at, quotes, awards (13개)                 ║
+ * ║ • closeEditModal을 일반 함수로 선언 (useCallback 아님)                      ║
+ * ║   → 별도 state 13개에 항상 최신 closure 접근 (stale closure 방지)           ║
+ * ║   → 사용자 인터랙션 시에만 호출되므로 재생성 비용 무시 가능                  ║
+ * ║ • 뒤로가기/×버튼/상단터치/닫기버튼 → closeEditModal() 호출                 ║
+ * ║ • 변경 감지 시 "저장하지 않은 변경사항이 있습니다" Alert 표시               ║
+ * ║ • saveEdit 성공/removeNovel/batchDelete 시 스냅샷 자동 정리                 ║
+ * ║                                                                              ║
+ * ║ [변경 3] 🔴 importJSON 복원 실패 시 자동 재시도 지원                         ║
+ * ║ • importBackupRef에 원본 JSON 사전 저장                                      ║
+ * ║ • DELETE 성공 → INSERT 실패 시 "자동 재시도" 버튼 제공                      ║
+ * ║   → 입력란에 원본 JSON 자동 복원, 재검증 후 재시도 유도                      ║
+ * ║ • 성공 시 importBackupRef 자동 해제 (메모리 누수 방지)                       ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ * 
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔧 v3.5.8 수정 사항 - 모달 스크롤 근본 수정 + 태그 관계 stale 수정         ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║                                                                              ║
@@ -243,6 +277,39 @@
  * ║   INSERT 후 카운트 검증, 실패 시 상세 안내, 메모리 큐 정리                    ║
  * ║ • executeCustomReset: novels 선택 시 matches+choice_logs 강제 포함           ║
  * ║   (고아 매치/선택로그 방지), effectiveSel 패턴 적용                           ║
+ * ║                                                                              ║
+ * ║ [변경 12] 📱 편집 모달 스크롤 근본 수정 (build 8)                             ║
+ * ║ • 근본원인: transparent+slide Modal 슬라이드 애니메이션(~300ms) 완료 전       ║
+ * ║   ScrollView가 높이 0으로 레이아웃 → requestAnimationFrame(1프레임)으로 부족  ║
+ * ║ • 해결: Modal onShow 콜백(애니메이션 완료 후 발동)에서 modalScrollKey++       ║
+ * ║   → ScrollView key 변경 → 리마운트로 정확한 높이 재계산                      ║
+ * ║ • 적용 범위: transparent+slide+ScrollView 모달 전체 11개                      ║
+ * ║   인라인(8개): edit, settings, log, supplement, compare, coord, planned,      ║
+ * ║                customReset — 공유 modalScrollKey + onModalShow 콜백           ║
+ * ║   컴포넌트(3개): SearchTagModal, TagRelationModal(관리/편집)                  ║
+ * ║                 — 각자 내부 scrollKey state + setScrollKey                    ║
+ * ║                                                                              ║
+ * ║ [변경 13] 🎯 좌표계 슬라이더 드래그 지원 (build 8)                            ║
+ * ║ • CoordSlider 컴포넌트 신규: Responder API 기반 드래그 + 프리셋 탭           ║
+ * ║ • measure()로 트랙 pageX/width 캐싱 → pageX 기반 정밀 좌표 변환             ║
+ * ║ • 기존 5개 프리셋 버튼만 있던 정적 슬라이더를 완전 교체                       ║
+ * ║ • touchStartRef/isDraggingRef로 수평 드래그 감지:                            ║
+ * ║   - 수평 5px 이상 이동 시 드래그 확정, ScrollView 양보 거부                  ║
+ * ║   - 미확정 시 ScrollView에 제스처 양보 (onResponderTerminationRequest)        ║
+ * ║ • 웹 fallback: getBoundingClientRect()로 pageX/width 획득                    ║
+ * ║                                                                              ║
+ * ║ [변경 14] 📖 작품명 태그 속성 (build 8) — 검색 전용, 분석 완전 제외          ║
+ * ║ • tagAttributes에 isTitle 플래그 추가 (app_meta 저장)                        ║
+ * ║ • isTagTitle() / getAnalysisTags() 헬퍼 함수                                ║
+ * ║ • 분석 제외 적용 지점:                                                       ║
+ * ║   - createNovelSnapshot → choice_log 태그에서 제외                           ║
+ * ║   - computeTasteScore → 추천 점수 계산에서 제외                              ║
+ * ║   - migrateExistingMatchesToPatterns → 패턴 추출에서 제외                    ║
+ * ║   - analyzeMatchPrediction → 매칭 예측 태그 파워에서 제외                    ║
+ * ║   - rebuildAllFromMatches → 이변 요인 분석에서 제외                          ║
+ * ║   - 공동출현 분석 (coOccurrenceInsights) → 태그 쌍 계산에서 제외            ║
+ * ║ • TagChipView: 앰버(#f59e0b) 칩으로 시각적 구분                             ║
+ * ║ • TagEditModal: 📖 작품명 토글 + 안내 메시지                                ║
  * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
@@ -3269,7 +3336,7 @@ function wilsonConfidenceInterval(successes, total, confidence = 0.95) {
 /**
  * 작품 스냅샷 생성 (선택 시점의 상태 캡처)
  */
-function createNovelSnapshot(novel) {
+function createNovelSnapshot(novel, tagAttributes = {}) {
   if (!novel) return null;
   
   // 태그 파싱
@@ -3282,6 +3349,8 @@ function createNovelSnapshot(novel) {
   } catch {
     tags = (novel.tags || "").split(",").map(t => t.trim()).filter(Boolean);
   }
+  // 🆕 v3.5.8: 작품명 태그 제외 (분석 교란 방지)
+  tags = tags.filter(t => !isTagTitle(t, tagAttributes));
   
   // 플랫폼 파싱
   let platforms = [];
@@ -3359,9 +3428,9 @@ function createComparisonData(winnerSnap, loserSnap) {
 /**
  * 선택 맥락 전체 수집
  */
-function collectChoiceContext(winner, loser) {
-  const winnerSnapshot = createNovelSnapshot(winner);
-  const loserSnapshot = createNovelSnapshot(loser);
+function collectChoiceContext(winner, loser, tagAttributes = {}) {
+  const winnerSnapshot = createNovelSnapshot(winner, tagAttributes);
+  const loserSnapshot = createNovelSnapshot(loser, tagAttributes);
   
   if (!winnerSnapshot || !loserSnapshot) {
     console.warn("[collectChoiceContext] Invalid novel data");
@@ -3535,9 +3604,9 @@ const choiceLogQueue = {
 /**
  * 선택 로그 생성 및 큐에 추가
  */
-async function saveChoiceLog(matchId, winner, loser, matchType = "manual", prediction = null) {
+async function saveChoiceLog(matchId, winner, loser, matchType = "manual", prediction = null, tagAttributes = {}) {
   try {
-    const context = collectChoiceContext(winner, loser);
+    const context = collectChoiceContext(winner, loser, tagAttributes);
     if (!context) return null;
     
     // 패턴 조회 (이상 탐지용)
@@ -4218,6 +4287,9 @@ async function generateEnhancedPrediction(A, B) {
     if (tagsB.length === 0) {
       tagsB = (B.tags || "").split(",").map(t => t.trim()).filter(Boolean);
     }
+    // 🆕 v3.5.8: 작품명 태그 제외 (매칭 예측 교란 방지)
+    tagsA = tagsA.filter(t => !isTagTitle(t, tagAttributes));
+    tagsB = tagsB.filter(t => !isTagTitle(t, tagAttributes));
     
     // 🔗 v3.5.5: 태그를 그룹 대표로 해석
     const resolvedTagsA = tagsA.map(t => resolveTagToGroup(t, savedRelations));
@@ -4453,7 +4525,7 @@ async function calculatePredictionAccuracy(days = 30) {
 /**
  * 기존 매칭 데이터에서 초기 패턴 추출 (마이그레이션)
  */
-async function migrateExistingMatchesToPatterns() {
+async function migrateExistingMatchesToPatterns(tagAttrs = {}) {
   try {
     const existing = await first(`SELECT COUNT(*) as c FROM choice_logs`);
     if (existing && existing.c > 0) {
@@ -4521,8 +4593,9 @@ async function migrateExistingMatchesToPatterns() {
       }
       
       // 태그 파워
-      const winnerTags = (winnerIsA ? m.a_tags : m.b_tags || "").split(",").map(t => t.trim()).filter(Boolean);
-      const loserTags = (winnerIsA ? m.b_tags : m.a_tags || "").split(",").map(t => t.trim()).filter(Boolean);
+      // 🆕 v3.5.8: 작품명 태그 제외 (분석 교란 방지)
+      const winnerTags = (winnerIsA ? m.a_tags : m.b_tags || "").split(",").map(t => t.trim()).filter(t => t && !isTagTitle(t, tagAttrs));
+      const loserTags = (winnerIsA ? m.b_tags : m.a_tags || "").split(",").map(t => t.trim()).filter(t => t && !isTagTitle(t, tagAttrs));
       
       for (const tag of winnerTags) {
         updates.push({ category: "tag_power", patternKey: `tag:${tag}`, didWin: true });
@@ -4756,6 +4829,17 @@ function isTagSub(tag, tagAttributes = {}, userSubGenres = []) {
   if (tagAttributes[tag]?.isSub !== undefined) return tagAttributes[tag].isSub;
   // 기본값: SUB_GENRES나 사용자 부장르에 포함되면 true
   return SUB_GENRES.includes(tag) || userSubGenres.includes(tag);
+}
+
+// 🆕 v3.5.8: 작품명 태그 확인 — 검색 편의용이며 모든 분석에서 제외
+function isTagTitle(tag, tagAttributes = {}) {
+  return !!tagAttributes[tag]?.isTitle;
+}
+
+// 🆕 v3.5.8: 분석용 태그 필터 — 작품명 태그 제외
+// 매칭 점수, 취향 분석, 인사이트 등 모든 분석 함수에서 사용
+function getAnalysisTags(tagsStr, tagAttributes = {}) {
+  return (tagsStr || "").split(",").map(t => t.trim()).filter(t => t && !isTagTitle(t, tagAttributes));
 }
 
 // 🆕 v3.5.8: 태그 제거 + 대장르/부장르 자동 동기화 헬퍼
@@ -5923,7 +6007,7 @@ function applyElo(A, B, aWin) {
  * ⚠️ 중요: 이 함수는 Elo 관련 필드(rating, rd, wins, losses, match_count)만 초기화합니다.
  * manual_tier(수동 티어 지정)는 변경하지 않으며, 검토 시스템의 S/A 지정이 유지됩니다.
  */
-async function rebuildAllFromMatches() {
+async function rebuildAllFromMatches(savedTagAttrs = {}) {
   const logs = await all(`SELECT * FROM matches ORDER BY created_at ASC;`);
 
   // 1) 모든 소설의 Elo 관련 필드만 초기화 (manual_tier는 건드리지 않음!)
@@ -6029,8 +6113,9 @@ async function rebuildMatchInsightsFromHistory(novels) {
     // 이변 요인 분석 (근사치)
     if (isUpset) {
       // 승자(이변을 일으킨 작품)의 태그 분석
-      const winnerTags = (winner.tags || "").split(",").map(t => t.trim()).filter(Boolean);
-      const loserTags = (loser.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+      // 🆕 v3.5.8: 작품명 태그 제외
+      const winnerTags = (winner.tags || "").split(",").map(t => t.trim()).filter(t => t && !isTagTitle(t, savedTagAttrs));
+      const loserTags = (loser.tags || "").split(",").map(t => t.trim()).filter(t => t && !isTagTitle(t, savedTagAttrs));
       
       // 승자에게만 있는 태그 = 긍정 요인
       const winnerOnlyTags = winnerTags.filter(t => !loserTags.includes(t));
@@ -6665,6 +6750,7 @@ const TAG_CHIP_COLORS = {
   combo: { bg: "#a855f7", text: "#fff" },    // 조합식: 보라
   positive: { bg: "#10b981", text: "#fff" }, // 긍정 감정: 에메랄드
   negative: { bg: "#ef4444", text: "#fff" }, // 부정 감정: 빨강
+  title: { bg: "#f59e0b", text: "#fff" },    // 🆕 v3.5.8: 작품명: 앰버 (분석 제외 표시)
 };
 
 const TagChipView = memo(({
@@ -6692,6 +6778,8 @@ const TagChipView = memo(({
   const allSub = useMemo(() => [...SUB_GENRES, ...(userSubGenres || [])], [userSubGenres]);
 
   const getChipStyle = useCallback((tag) => {
+    // 🆕 v3.5.8: 작품명 태그는 최우선 식별 (분석 제외 시각적 표시)
+    if (isTagTitle(tag, tagAttributes || {})) return TAG_CHIP_COLORS.title;
     // 🔧 v3.5.8: tagAttributes 우선 참조 (사용자가 속성 변경한 경우)
     if (isTagMajor(tag, tagAttributes || {}, userMajorGenres || [])) return TAG_CHIP_COLORS.major;
     if (isTagSub(tag, tagAttributes || {}, userSubGenres || [])) return TAG_CHIP_COLORS.sub;
@@ -7675,11 +7763,11 @@ const TagSelectModal = memo(({
     }
     
     return {
-      positive: filterBySearch(sortTagsByUsage(positive, tagUsageCounts)),
-      neutral: filterBySearch(sortTagsByUsage(neutral, tagUsageCounts)),
-      negative: filterBySearch(sortTagsByUsage(negative, tagUsageCounts)),
+      positive: sortWithPinnedFirst(filterBySearch(sortTagsByUsage(positive, tagUsageCounts))),
+      neutral: sortWithPinnedFirst(filterBySearch(sortTagsByUsage(neutral, tagUsageCounts))),
+      negative: sortWithPinnedFirst(filterBySearch(sortTagsByUsage(negative, tagUsageCounts))),
     };
-  }, [customTags, comboTags, hiddenTags, tagUsageCounts, getTagSentimentLocal, filterBySearch]);
+  }, [customTags, comboTags, hiddenTags, tagUsageCounts, getTagSentimentLocal, filterBySearch, sortWithPinnedFirst]);
 
   // 🆕 v3.2.1: 공동 출현 기반 태그 추천 (마지막 추가 태그 우선)
   const coOccurringRecommendations = useMemo(() => {
@@ -7776,23 +7864,20 @@ const TagSelectModal = memo(({
 
   // 🎭 태그 감정 변경 (길게 누르기)
   const handleLongPressTag = (tag) => {
-    if (!onSetTagSentiment) return;
-    
     const current = getTagSentimentLocal(tag);
-    const options = [
-      { text: "👍 긍정", value: TAG_SENTIMENT.POSITIVE },
-      { text: "⚖️ 중립", value: TAG_SENTIMENT.NEUTRAL },
-      { text: "👎 부정", value: TAG_SENTIMENT.NEGATIVE },
-    ];
+    const isPinned = pinnedTags.includes(tag);
+    const sentimentOptions = onSetTagSentiment ? [
+      { text: "👍 긍정" + (current === TAG_SENTIMENT.POSITIVE ? " ✓" : ""), onPress: () => onSetTagSentiment(tag, TAG_SENTIMENT.POSITIVE) },
+      { text: "⚖️ 중립" + (current === TAG_SENTIMENT.NEUTRAL ? " ✓" : ""), onPress: () => onSetTagSentiment(tag, TAG_SENTIMENT.NEUTRAL) },
+      { text: "👎 부정" + (current === TAG_SENTIMENT.NEGATIVE ? " ✓" : ""), onPress: () => onSetTagSentiment(tag, TAG_SENTIMENT.NEGATIVE) },
+    ] : [];
     
     Alert.alert(
-      `태그 감정: ${tag}`,
-      `현재: ${SENTIMENT_COLORS[current]?.label || "중립"}`,
+      `🏷️ ${tag}`,
+      `감정: ${SENTIMENT_COLORS[current]?.label || "중립"} · ${isPinned ? "📌 고정됨" : "고정 안 됨"}`,
       [
-        ...options.map(opt => ({
-          text: opt.text + (current === opt.value ? " ✓" : ""),
-          onPress: () => onSetTagSentiment(tag, opt.value),
-        })),
+        ...sentimentOptions,
+        { text: isPinned ? "📌 고정 해제" : "📌 상단 고정", onPress: () => { if (onTogglePin) onTogglePin(tag); } },
         { text: "취소", style: "cancel" },
       ]
     );
@@ -7801,6 +7886,7 @@ const TagSelectModal = memo(({
   // 🎭 감정 태그 칩 (색상 표시)
   const SentimentChip = ({ tag, active, onPress }) => {
     const sentiment = getTagSentimentLocal(tag);
+    const isPinned = pinnedTags.includes(tag);
     const baseColors = SENTIMENT_COLORS[sentiment] || SENTIMENT_COLORS[TAG_SENTIMENT.NEUTRAL];
     
     // 다크모드용 색상 조정
@@ -7834,6 +7920,9 @@ const TagSelectModal = memo(({
           <Text style={{ marginRight: 4 }}>
             {bulkSelectedTags.includes(tag) ? "☑️" : "☐"}
           </Text>
+        )}
+        {!bulkMode && isPinned && (
+          <Text style={{ fontSize: 10, marginRight: 3 }}>📌</Text>
         )}
         <Text style={{ 
           color: active ? "#fff" : colors.text, 
@@ -7870,7 +7959,7 @@ const TagSelectModal = memo(({
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: C.modal }}>
         <TouchableOpacity 
-          style={{ flex: 0.08 }} 
+          style={{ height: Math.round(Dimensions.get("window").height * 0.08) }} 
           activeOpacity={1} 
           onPress={onClose}
         />
@@ -7880,7 +7969,7 @@ const TagSelectModal = memo(({
             borderTopLeftRadius: 16, 
             borderTopRightRadius: 16, 
             padding: 16, 
-            flex: 0.92,
+            flex: 1,
           }}
         >
           {/* 헤더 */}
@@ -8027,7 +8116,7 @@ const TagSelectModal = memo(({
           </View>
           
           <ScrollView 
-            style={{ maxHeight: "60%" }}
+            style={{ flex: 1 }}
             nestedScrollEnabled={true}
             showsVerticalScrollIndicator={true}
           >
@@ -8222,7 +8311,7 @@ const TagSelectModal = memo(({
                       내 커스텀 태그
                     </Text>
                     <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
-                      {customTags.filter(t => !hiddenTags.includes(t)).map((tag) => (
+                      {sortWithPinnedFirst(sortTagsByUsage(customTags.filter(t => !hiddenTags.includes(t)), tagUsageCounts)).map((tag) => (
                         <SentimentChip 
                           key={tag} 
                           tag={tag} 
@@ -8241,7 +8330,7 @@ const TagSelectModal = memo(({
                       🔗 조합식 태그
                     </Text>
                     <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
-                      {comboTags.filter(t => !hiddenTags.includes(t)).map((tag) => (
+                      {sortWithPinnedFirst(sortTagsByUsage(comboTags.filter(t => !hiddenTags.includes(t)), tagUsageCounts)).map((tag) => (
                         <SentimentChip 
                           key={tag} 
                           tag={tag} 
@@ -8655,6 +8744,7 @@ const SearchTagModal = memo(({
   const C = theme;
   const [activeTab, setActiveTab] = useState("include"); // "include" | "exclude" | "status"
   const [searchQ, setSearchQ] = useState("");
+  const [scrollKey, setScrollKey] = useState(0); // 🔧 v3.5.8: onShow 리마운트
   
   // 모든 태그 합치기 (숨김 태그 제외)
   const allTags = useMemo(() => {
@@ -8733,7 +8823,7 @@ const SearchTagModal = memo(({
   if (!visible) return null;
   
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose} transparent>
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose} onShow={() => setScrollKey(k => k+1)} transparent>
       <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)" }}>
         <TouchableOpacity style={{ height: Math.round(Dimensions.get("window").height * 0.12) }} activeOpacity={1} onPress={onClose} />
         <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, flex: 1, padding: 16 }}>
@@ -8773,7 +8863,7 @@ const SearchTagModal = memo(({
             ))}
           </View>
           
-          <ScrollView style={{ maxHeight: 400 }} nestedScrollEnabled={true} showsVerticalScrollIndicator={true}>
+          <ScrollView key={`search-scroll-${scrollKey}`} style={{ flex: 1 }} nestedScrollEnabled={true} showsVerticalScrollIndicator={true}>
             {/* 포함 태그 탭 */}
             {activeTab === "include" && (
               <View>
@@ -9097,6 +9187,7 @@ const TagEditModal = memo(({
   tagType, // "custom" | "combo" | "major" | "sub" | "defaultMajor" | "defaultSub" | "defaultTag" | "userMajor" | "userSub"
   isPinned,
   isHidden, // 🆕 v3.2.0
+  isTitle,  // 🆕 v3.5.8: 작품명 태그 여부
   sentiment, // 🆕 v3.2.0: "positive" | "neutral" | "negative" | null
   coordinateSystems, // 🆕 v3.2.0: 좌표계 목록
   tagUsageStats, // 🆕 v3.2.0: { count, avgIntensity, avgRating }
@@ -9120,6 +9211,7 @@ const TagEditModal = memo(({
   const [localPinned, setLocalPinned] = useState(isPinned);
   const [localHidden, setLocalHidden] = useState(isHidden);
   const [localSentiment, setLocalSentiment] = useState(sentiment);
+  const [localIsTitle, setLocalIsTitle] = useState(isTitle);
   const [hasChanges, setHasChanges] = useState(false);
   
   // 모달 열릴 때 상태 초기화
@@ -9128,9 +9220,10 @@ const TagEditModal = memo(({
       setLocalPinned(isPinned);
       setLocalHidden(isHidden);
       setLocalSentiment(sentiment);
+      setLocalIsTitle(isTitle);
       setHasChanges(false);
     }
-  }, [visible, isPinned, isHidden, sentiment]);
+  }, [visible, isPinned, isHidden, sentiment, isTitle]);
   
   if (!visible || !tag) return null;
   
@@ -9194,6 +9287,7 @@ const TagEditModal = memo(({
         pinned: localPinned,
         hidden: localHidden,
         sentiment: localSentiment,
+        isTitle: localIsTitle, // 🆕 v3.5.8
       });
     }
     onClose();
@@ -9304,7 +9398,36 @@ const TagEditModal = memo(({
                     {localHidden ? "숨겨짐" : "표시"}
                   </Text>
                 </TouchableOpacity>
+                
+                {/* 🆕 v3.5.8: 작품명 태그 */}
+                <TouchableOpacity
+                  onPress={() => handleLocalChange(setLocalIsTitle, !localIsTitle)}
+                  style={{
+                    flex: 1,
+                    backgroundColor: localIsTitle ? (isDark ? "rgba(245,158,11,0.15)" : "#fef9c3") : C.bg,
+                    borderWidth: 2,
+                    borderColor: localIsTitle ? "#f59e0b" : C.line,
+                    borderRadius: 10,
+                    paddingVertical: 12,
+                    alignItems: "center",
+                    flexDirection: "row",
+                    justifyContent: "center",
+                    gap: 6,
+                  }}
+                >
+                  <Text style={{ fontSize: 16 }}>📖</Text>
+                  <Text style={{ fontWeight: "700", color: localIsTitle ? (isDark ? "#fcd34d" : "#92400e") : C.sub }}>
+                    {localIsTitle ? "작품명" : "일반"}
+                  </Text>
+                </TouchableOpacity>
               </View>
+              {localIsTitle && (
+                <View style={{ marginTop: 8, padding: 10, backgroundColor: isDark ? "rgba(245,158,11,0.08)" : "#fffbeb", borderRadius: 8, borderWidth: 1, borderColor: isDark ? "rgba(245,158,11,0.2)" : "#fde68a" }}>
+                  <Text style={{ fontSize: 11, color: isDark ? "#fcd34d" : "#92400e", lineHeight: 16 }}>
+                    📖 작품명 태그는 검색에만 사용되며, 취향 분석·매칭 인사이트·추천 점수에서 제외됩니다.
+                  </Text>
+                </View>
+              )}
             </View>
             
             {/* ═══════════════════════════════════════════════════════════════ */}
@@ -9595,6 +9718,114 @@ const TagEditModal = memo(({
  * - X축: 0.0 (왼쪽) ~ 1.0 (오른쪽)
  * - Y축: 0.0 (아래쪽) ~ 1.0 (위쪽) ← 화면 좌표와 반대!
  */
+// 🔧 v3.5.8: 드래그 가능한 좌표 슬라이더 컴포넌트
+const CoordSlider = memo(({ value, onValueChange, color, negLabel, posLabel, presets, theme }) => {
+  const C = theme;
+  const trackRef = useRef({ x: 0, width: 0 });
+  const viewRef = useRef(null);
+  const touchStartRef = useRef({ x: 0, y: 0 });
+  const isDraggingRef = useRef(false);
+  
+  const updateValue = (pageX) => {
+    const { x, width } = trackRef.current;
+    if (width <= 0) return;
+    const raw = (pageX - x) / width;
+    const clamped = Math.max(0, Math.min(1, raw));
+    onValueChange(Math.round(clamped * 100) / 100);
+  };
+  
+  // 🔧 v3.5.8: grant 시점에 measure로 최신 위치 확보 후 업데이트
+  const measureAndUpdate = (pageX) => {
+    const node = viewRef.current;
+    if (node && typeof node.measure === "function") {
+      node.measure((rx, ry, w, h, px, py) => {
+        if (w > 0) trackRef.current = { x: px, width: w };
+        updateValue(pageX);
+      });
+    } else if (node && typeof node.getBoundingClientRect === "function") {
+      // 🔧 웹 fallback: getBoundingClientRect로 위치 획득
+      const rect = node.getBoundingClientRect();
+      trackRef.current = { x: rect.left + (window.scrollX || 0), width: rect.width };
+      updateValue(pageX);
+    } else {
+      updateValue(pageX);
+    }
+  };
+  
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 16 }}>
+      <Text style={{ fontSize: 12, color: C.sub }}>{negLabel}</Text>
+      <View style={{ flex: 1 }}>
+        <View
+          ref={viewRef}
+          style={{ height: 44, justifyContent: "center" }}
+          onLayout={(e) => {
+            const { width } = e.nativeEvent.layout;
+            if (e.target && typeof e.target.measure === "function") {
+              e.target.measure((rx, ry, w, h, px, py) => {
+                trackRef.current = { x: px, width: w || width };
+              });
+            } else if (viewRef.current && typeof viewRef.current.getBoundingClientRect === "function") {
+              const rect = viewRef.current.getBoundingClientRect();
+              trackRef.current = { x: rect.left + (window.scrollX || 0), width: rect.width || width };
+            } else {
+              trackRef.current = { ...trackRef.current, width };
+            }
+          }}
+          onStartShouldSetResponder={() => true}
+          onMoveShouldSetResponder={() => isDraggingRef.current}
+          onResponderGrant={(e) => {
+            touchStartRef.current = { x: e.nativeEvent.pageX, y: e.nativeEvent.pageY };
+            isDraggingRef.current = false;
+            measureAndUpdate(e.nativeEvent.pageX);
+          }}
+          onResponderMove={(e) => {
+            const dx = Math.abs(e.nativeEvent.pageX - touchStartRef.current.x);
+            const dy = Math.abs(e.nativeEvent.pageY - touchStartRef.current.y);
+            // 수평 이동 > 수직이면 드래그 확정
+            if (!isDraggingRef.current && dx > 5) {
+              isDraggingRef.current = true;
+            }
+            if (isDraggingRef.current) {
+              updateValue(e.nativeEvent.pageX);
+            }
+          }}
+          onResponderRelease={() => { isDraggingRef.current = false; }}
+          onResponderTerminationRequest={() => {
+            // 🔧 드래그 중이면 양보 거부, 아니면 ScrollView에 양보
+            return !isDraggingRef.current;
+          }}
+        >
+          <View style={{ height: 4, backgroundColor: C.line, borderRadius: 2 }} />
+          {/* 채워진 트랙 */}
+          <View style={{ 
+            position: "absolute", left: 0, height: 4, borderRadius: 2,
+            width: `${value * 100}%`, backgroundColor: color || C.primary, opacity: 0.3,
+          }} />
+          {/* 썸 */}
+          <View style={{ 
+            position: "absolute",
+            left: `${value * 100}%`,
+            width: 26, height: 26,
+            backgroundColor: color || C.primary,
+            borderRadius: 13, marginLeft: -13,
+            elevation: 3,
+            shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.3, shadowRadius: 2,
+          }} />
+        </View>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 2 }}>
+          {(presets || [0, 0.25, 0.5, 0.75, 1]).map(v => (
+            <TouchableOpacity key={v} onPress={() => onValueChange(v)} style={{ padding: 4 }}>
+              <Text style={{ fontSize: 10, color: value === v ? (color || C.primary) : C.sub, fontWeight: value === v ? "700" : "400" }}>{v}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+      <Text style={{ fontSize: 12, color: C.sub }}>{posLabel}</Text>
+    </View>
+  );
+});
+
 const CoordinateGridView = memo(({
   system, // { name, xAxis, yAxis, tags: { tagName: { x, y } } }
   selectedTag, // 현재 선택된 태그
@@ -9895,6 +10126,7 @@ const TagRelationModal = memo(({
   // 🔧 v3.5.7: 관리 모드 (targetTag=null) 지원
   const [manageSelectedGroup, setManageSelectedGroup] = useState(null); // 관리 모드에서 선택한 그룹
   const [newGroupTags, setNewGroupTags] = useState([]); // 새 그룹에 추가할 태그들
+  const [scrollKey, setScrollKey] = useState(0); // 🔧 v3.5.8: onShow 리마운트
   
   // 모달 열릴 때 초기화
   useEffect(() => {
@@ -9955,7 +10187,7 @@ const TagRelationModal = memo(({
   
   if (isManageMode) {
     return (
-      <Modal visible={visible} animationType="slide" onRequestClose={onClose} transparent>
+      <Modal visible={visible} animationType="slide" onRequestClose={onClose} onShow={() => setScrollKey(k => k+1)} transparent>
         <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)" }}>
           <TouchableOpacity style={{ height: Math.round(Dimensions.get("window").height * 0.10) }} activeOpacity={1} onPress={onClose} />
           <View style={{ 
@@ -9974,7 +10206,7 @@ const TagRelationModal = memo(({
               </TouchableOpacity>
             </View>
             
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
+            <ScrollView key={`trmgr-scroll-${scrollKey}`} style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
               {/* 기존 그룹 목록 */}
               {groupList.length > 0 && (
                 <View style={{ marginBottom: 20 }}>
@@ -10306,7 +10538,7 @@ const TagRelationModal = memo(({
   };
   
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose} transparent>
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose} onShow={() => setScrollKey(k => k+1)} transparent>
       <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)" }}>
         <TouchableOpacity style={{ height: Math.round(Dimensions.get("window").height * 0.15) }} activeOpacity={1} onPress={onClose} />
         <View style={{ 
@@ -10325,7 +10557,7 @@ const TagRelationModal = memo(({
             </TouchableOpacity>
           </View>
           
-          <ScrollView showsVerticalScrollIndicator={false}>
+          <ScrollView key={`tredit-scroll-${scrollKey}`} style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
             {/* 대상 태그 */}
             <View style={{ marginBottom: 16 }}>
               <Text style={{ fontSize: 14, fontWeight: "700", color: C.text, marginBottom: 6 }}>
@@ -10700,6 +10932,7 @@ const TagManagerModal = memo(({
   onAddCustomTag,
   onChangeSentiment,  // 🆕 속성 변경 콜백
   onBatchChangeSentiment,  // 🆕 일괄 속성 변경 콜백
+  onBatchChangeTitle,      // 🆕 v3.5.8: 일괄 작품명 토글 콜백
   onToggleMajorAttr, // 🆕 v3.4: 대장르 속성 토글
   onToggleSubAttr,   // 🆕 v3.4: 부장르 속성 토글
   checkIsMajor,      // 🆕 v3.4: 대장르 여부 확인
@@ -11180,6 +11413,32 @@ const TagManagerModal = memo(({
     );
   };
   
+  // 🆕 v3.5.8: 일괄 작품명 토글
+  const handleBatchToggleTitle = () => {
+    if (selectedTags.size === 0) return;
+    if (!onBatchChangeTitle) return;
+    const tags = Array.from(selectedTags);
+    const anyNotTitle = tags.some(t => !isTagTitle(t, tagAttributes));
+    
+    Alert.alert(
+      anyNotTitle ? "📖 작품명 태그 설정" : "📖 작품명 해제",
+      anyNotTitle
+        ? `선택한 ${tags.length}개 태그를 작품명으로 설정할까요?\n\n작품명 태그는 검색에만 사용되며 취향 분석·매칭에서 제외됩니다.`
+        : `선택한 ${tags.length}개 태그의 작품명 속성을 해제할까요?`,
+      [
+        { text: "취소", style: "cancel" },
+        {
+          text: anyNotTitle ? "설정" : "해제",
+          onPress: () => {
+            onBatchChangeTitle(tags, anyNotTitle);
+            setSelectedTags(new Set());
+            setSelectMode(false);
+          }
+        }
+      ]
+    );
+  };
+  
   // 🆕 일괄 삭제
   const handleBatchDelete = () => {
     if (selectedTags.size === 0) return;
@@ -11363,6 +11622,12 @@ const TagManagerModal = memo(({
                 style={{ flex: 1, backgroundColor: isDark ? "#1e3a8a" : "#dbeafe", padding: 10, borderRadius: 8, alignItems: "center" }}
               >
                 <Text style={{ color: isDark ? "#93c5fd" : "#1e3a8a", fontWeight: "700", fontSize: 11 }}>🔖 부장르</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleBatchToggleTitle}
+                style={{ flex: 1, backgroundColor: isDark ? "#78350f" : "#fef3c7", padding: 10, borderRadius: 8, alignItems: "center" }}
+              >
+                <Text style={{ color: isDark ? "#fbbf24" : "#92400e", fontWeight: "700", fontSize: 11 }}>📖 작품명</Text>
               </TouchableOpacity>
             </View>
             
@@ -12116,6 +12381,7 @@ const AwardsScreen = memo(({
   const [newAwardName, setNewAwardName] = useState("");
   const [newTagInput, setNewTagInput] = useState("");
   const [editingAwardId, setEditingAwardId] = useState(null);
+  const [settingsScrollKey, setSettingsScrollKey] = useState(0); // 🔧 v3.5.8: onShow 리마운트
   
   // 🆕 v3.2.1: 후보작 목록 접힘 상태 (수상별)
   const [expandedCandidates, setExpandedCandidates] = useState({});
@@ -13459,11 +13725,12 @@ const AwardsScreen = memo(({
         visible={settingsModalOpen}
         animationType="slide"
         onRequestClose={() => setSettingsModalOpen(false)}
+        onShow={() => onModalShow('settings')}
         transparent
       >
         <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)" }}>
           <TouchableOpacity 
-            style={{ flex: 0.08 }} 
+            style={{ height: Math.round(Dimensions.get("window").height * 0.08) }} 
             activeOpacity={1} 
             onPress={() => setSettingsModalOpen(false)} 
           />
@@ -13472,7 +13739,7 @@ const AwardsScreen = memo(({
             borderTopLeftRadius: 20, 
             borderTopRightRadius: 20, 
             padding: 20, 
-            flex: 0.92,
+            flex: 1,
           }}>
             <Text style={{ fontSize: 20, fontWeight: "900", color: C.text, marginBottom: 16 }}>
               ⚙️ {awardSelectedYear}년 상 설정
@@ -13484,7 +13751,7 @@ const AwardsScreen = memo(({
               <Text style={{ fontSize: 24, color: C.sub }}>×</Text>
             </TouchableOpacity>
             
-            <ScrollView nestedScrollEnabled={true} showsVerticalScrollIndicator={true}>
+            <ScrollView key={`settings-scroll-${modalScrollKey.settings || 0}`} style={{ flex: 1 }} nestedScrollEnabled={true} showsVerticalScrollIndicator={true}>
               {/* 현재 상 목록 */}
               <Text style={{ fontWeight: "800", color: C.text, marginBottom: 12, fontSize: 16 }}>
                 📋 현재 상 목록 ({currentYearAwards.length}개)
@@ -14224,7 +14491,8 @@ const TasteAnalysisScreen = memo(({
     const pairCounts = {};
     
     for (const novel of highRatedNovels) {
-      const tags = (novel.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+      // 🆕 v3.5.8: 작품명 태그 제외
+      const tags = getAnalysisTags(novel.tags, tagAttributes);
       const majorGenres = parseMajorSub(novel.major_genre);
       const subGenres = parseMajorSub(novel.sub_genre);
       const allTags = [...new Set([...tags, ...majorGenres, ...subGenres])];
@@ -14247,7 +14515,7 @@ const TasteAnalysisScreen = memo(({
     const allPairCounts = {};
     
     for (const novel of allNovels) {
-      const tags = (novel.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+      const tags = getAnalysisTags(novel.tags, tagAttributes);
       const majorGenres = parseMajorSub(novel.major_genre);
       const subGenres = parseMajorSub(novel.sub_genre);
       const allTags = [...new Set([...tags, ...majorGenres, ...subGenres])];
@@ -17531,6 +17799,13 @@ function AppContent() {
 
 // 편집
   const [editOpen, setEditOpen] = useState(false);
+  // 🔧 v3.5.8: Android transparent+slide Modal ScrollView 근본 수정
+  // onShow(애니메이션 완료 후 발동)에서 key 변경 → ScrollView 리마운트로 높이 재계산
+  // 모든 transparent+slide+ScrollView 모달에 공유 적용
+  const [modalScrollKey, setModalScrollKey] = useState({});
+  const onModalShow = useCallback((id) => {
+    setModalScrollKey(prev => ({ ...prev, [id]: (prev[id] || 0) + 1 }));
+  }, []);
   const [editItem, setEditItem] = useState(null);
   const editItemRef = useRef(null); // 🔧 v3.5.6: saveEdit이 항상 최신값 읽도록
   // 🔧 v3.5.6: editItem 업데이트 래퍼 — 함수형 업데이트 + ref 동기 갱신
@@ -17553,6 +17828,9 @@ function AppContent() {
   const [editOriginalReadCount, setEditOriginalReadCount] = useState(0); // 원본 읽은회차 (변동일 비교용)
   const [editOriginalTitle, setEditOriginalTitle] = useState(""); // 🔧 v3.0.2: 원본 제목 (변경 추적용)
   const [editOriginalCoverImage, setEditOriginalCoverImage] = useState(""); // 🖼️ v3.4.5: 원본 표지 (표지 상태 추적용)
+  // 🔧 v3.5.9: 편집 모달 미저장 변경사항 감지용 스냅샷
+  // openEdit 시 전체 편집 상태를 스냅샷으로 저장 → 닫기 시 비교하여 변경 여부 확인
+  const editOriginalSnapshotRef = useRef(null);
   const [editRating, setEditRating] = useState("");
   const [editPlatforms, setEditPlatforms] = useState([]); // 🆕 편집용 플랫폼
   const [editStatus, setEditStatus] = useState("reading"); // 🆕 편집용 상태
@@ -17714,6 +17992,8 @@ function AppContent() {
   const [exportText, setExportText] = useState(""); // 미리보기용 (일부)
   const [exportInfo, setExportInfo] = useState(""); // 요약 정보
   const exportFullJsonRef = useRef(""); // 전체 JSON (공유용)
+  // 🔧 v3.5.9: 복원 실패 시 자동 재시도를 위한 백업 저장
+  const importBackupRef = useRef("");
 
   // 📝 보충 탭 (v2.8)
   const [supplementCurrentNovel, setSupplementCurrentNovel] = useState(null); // 현재 보충 중인 작품
@@ -18315,9 +18595,11 @@ function AppContent() {
           await loadCoverLibrary();
           
           // 🧠 v3.5.0: 취향 발견 시스템 마이그레이션 (기존 매칭 데이터에서 패턴 추출)
+          // 🆕 v3.5.8: savedTagAttributes 전달 (작품명 태그 제외)
+          const migrateTagAttrs = savedTagAttributes || {};
           setTimeout(async () => {
             try {
-              await migrateExistingMatchesToPatterns();
+              await migrateExistingMatchesToPatterns(migrateTagAttrs);
             } catch (e) {
               console.warn("취향 발견 시스템 마이그레이션 오류:", e);
             }
@@ -18957,7 +19239,8 @@ function AppContent() {
           try { JSON.parse(fn.major_genre).forEach(g => fallbackGenres.add(g)); } catch {}
         }
         if (fn.tags) {
-          fn.tags.split(",").map(t => t.trim()).filter(Boolean).forEach(t => fallbackTags.add(t));
+          // 🆕 v3.5.8: 작품명 태그 제외
+          fn.tags.split(",").map(t => t.trim()).filter(t => t && !isTagTitle(t, tagAttributes)).forEach(t => fallbackTags.add(t));
         }
       }
       
@@ -19011,7 +19294,8 @@ function AppContent() {
         }
         
         // — 태그 점수 (최대 35점) —
-        const novelTags = (novel.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+        // 🆕 v3.5.8: 작품명 태그 제외 (검색 편의용 → 분석 교란 방지)
+        const novelTags = getAnalysisTags(novel.tags, tagAttributes);
         
         if (hasPatterns && Object.keys(tagScores).length > 0) {
           source = "pattern";
@@ -19795,8 +20079,9 @@ function AppContent() {
     const causes = [];
     
     // 1. 태그 차이 분석 (🏷️ v3.1.2: 농도 포함)
-    const winnerTags = new Set((winner.tags || "").split(",").map(t => t.trim()).filter(Boolean));
-    const loserTags = new Set((loser.tags || "").split(",").map(t => t.trim()).filter(Boolean));
+    // 🆕 v3.5.8: 작품명 태그 제외
+    const winnerTags = new Set((winner.tags || "").split(",").map(t => t.trim()).filter(t => t && !isTagTitle(t, tagAttributes)));
+    const loserTags = new Set((loser.tags || "").split(",").map(t => t.trim()).filter(t => t && !isTagTitle(t, tagAttributes)));
     
     // tag_data에서 농도 맵 생성
     let winnerIntensity = {};
@@ -20444,20 +20729,22 @@ function AppContent() {
 
   // 태그 숨김 토글
   async function toggleHideTag(tag) {
-    if (hiddenTags.includes(tag)) {
-      await saveHiddenTags(hiddenTags.filter(t => t !== tag));
-    } else {
-      await saveHiddenTags([...hiddenTags, tag]);
-    }
+    // 🔧 v3.5.8: 함수형 업데이트로 stale closure 방지
+    setHiddenTags(prev => {
+      const next = prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag];
+      setAppMeta("hidden_tags", next);
+      return next;
+    });
   }
 
   // 태그 상단 고정 토글
   async function togglePinTag(tag) {
-    if (pinnedTags.includes(tag)) {
-      await savePinnedTags(pinnedTags.filter(t => t !== tag));
-    } else {
-      await savePinnedTags([...pinnedTags, tag]);
-    }
+    // 🔧 v3.5.8: 함수형 업데이트로 stale closure 방지
+    setPinnedTags(prev => {
+      const next = prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag];
+      setAppMeta("pinned_tags", next);
+      return next;
+    });
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -20558,6 +20845,22 @@ function AppContent() {
             await setTagSentiment(tag, newSentiment);
           }
         }
+      }
+      
+      // 🆕 v3.5.8: 작품명 태그 속성 변경
+      if (changes.isTitle !== undefined) {
+        const attrs = { ...tagAttributes };
+        if (changes.isTitle) {
+          attrs[tag] = { ...(attrs[tag] || {}), isTitle: true };
+        } else {
+          if (attrs[tag]) {
+            delete attrs[tag].isTitle;
+            // 빈 객체면 제거
+            if (Object.keys(attrs[tag]).length === 0) delete attrs[tag];
+          }
+        }
+        setTagAttributes(attrs);
+        await setAppMeta("tag_attributes", attrs);
       }
     } catch (e) {
       console.warn("handleTagEditModalSave error:", e);
@@ -21011,7 +21314,7 @@ function AppContent() {
             `INSERT INTO matches (id,a_id,b_id,winner_id,decided_by,gap_when_matched,k_factor_used,created_at) VALUES (?,?,?,?,?,?,?,?);`,
             [m.id, m.a_id, m.b_id, m.winner_id, m.decided_by, m.gap_when_matched, m.k_factor_used, m.created_at]
           );
-          await rebuildAllFromMatches();
+          await rebuildAllFromMatches(tagAttributes);
           break;
           
         default:
@@ -21531,6 +21834,7 @@ function AppContent() {
               setPair(null);
             }
             if (editItem?.id === id) {
+              editOriginalSnapshotRef.current = null; // 🔧 v3.5.9: 삭제 시 스냅샷 정리
               updateEditItem(null);
               setEditOpen(false);
             }
@@ -21558,7 +21862,7 @@ function AppContent() {
               await loadCoverLibrary();
             }
             
-            await rebuildAllFromMatches();
+            await rebuildAllFromMatches(tagAttributes);
             await loadList();
           } catch (e) {
             console.warn("removeNovel 오류:", e);
@@ -21794,7 +22098,7 @@ function AppContent() {
                 setSelectedIds([]);
               }
               if (effectiveSel.matches) {
-                await rebuildAllFromMatches();
+                await rebuildAllFromMatches(tagAttributes);
               }
               if (sel.patterns) {
                 setPreferencePatterns([]);
@@ -21892,6 +22196,70 @@ function AppContent() {
   }
 
   /* ---------- Edit modal ---------- */
+  // 🔧 v3.5.9: 편집 모달 닫기 — 미저장 변경사항 확인
+  // 뒤로가기/상단 터치로 닫을 때 변경사항이 있으면 확인 후 닫기
+  // ※ 일반 함수로 선언 (useCallback 아님) — 별도 state 접근을 위해 항상 최신 closure 필요
+  //    closeEditModal은 사용자 인터랙션(버튼/뒤로가기) 시에만 호출되므로 재생성 비용 무시 가능
+  function closeEditModal() {
+    const snap = editOriginalSnapshotRef.current;
+    const curr = editItemRef.current;
+    
+    // 스냅샷 없거나 editItem 없으면 바로 닫기
+    if (!snap || !curr) {
+      setEditOpen(false);
+      updateEditItem(null);
+      return;
+    }
+    
+    // ── editItem 경유 필드 비교 ──
+    const itemChanged = (
+      (curr.title || "") !== snap.title ||
+      (curr.author || "") !== snap.author ||
+      (curr.tags || "") !== snap.tags ||
+      (curr.note || "") !== snap.note ||
+      String(curr.read_count || 0) !== snap.read_count ||
+      String(curr.total_episodes || 0) !== snap.total_episodes ||
+      (curr.cover_image || "") !== snap.cover_image ||
+      (curr.tag_data || "") !== snap.tag_data
+    );
+    
+    // ── 별도 state 필드 비교 (일반 함수이므로 최신 state 접근 가능) ──
+    const stateChanged = (
+      editRating !== snap.rating ||
+      JSON.stringify(editPlatforms) !== snap.platforms ||
+      editStatus !== snap.status ||
+      editWorkStatus !== snap.work_status ||
+      editLink !== snap.link ||
+      editRereadCount !== snap.reread_count ||
+      editGaidenStatus !== snap.gaiden_status ||
+      editGaidenReadCount !== snap.gaiden_read_count ||
+      editGaidenTotalEpisodes !== snap.gaiden_total_episodes ||
+      editCreatedAt !== snap.created_at ||
+      editReadCountUpdatedAt !== snap.read_count_updated_at ||
+      JSON.stringify(editQuotes) !== snap.quotes ||
+      JSON.stringify(editAwards) !== snap.awards
+    );
+    
+    if (itemChanged || stateChanged) {
+      Alert.alert(
+        "변경사항이 있습니다",
+        "저장하지 않은 변경사항이 있습니다.\n정말 닫으시겠습니까?",
+        [
+          { text: "계속 편집", style: "cancel" },
+          { text: "저장하지 않고 닫기", style: "destructive", onPress: () => {
+            editOriginalSnapshotRef.current = null;
+            setEditOpen(false);
+            updateEditItem(null);
+          }},
+        ]
+      );
+    } else {
+      editOriginalSnapshotRef.current = null;
+      setEditOpen(false);
+      updateEditItem(null);
+    }
+  }
+
   const openEdit = useCallback((n) => {
     updateEditItem(n);
     setEditOriginalReadCount(Number(n.read_count) || 0); // 🆕 원본 저장
@@ -21957,6 +22325,39 @@ function AppContent() {
     const firstType = Object.keys(AWARD_META)[0] || "";
     setAwardTypeInput(firstType);
 
+    // 🔧 v3.5.9: 편집 시작 시점의 원본 스냅샷 저장 (미저장 변경 감지용)
+    // editItem 경유 필드 + 별도 state 필드 모두 포함
+    const formatDateLocal = (ts) => {
+      if (!ts) return "";
+      const d = new Date(ts);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    };
+    editOriginalSnapshotRef.current = {
+      // ── editItem 경유 필드 ──
+      title: n.title || "",
+      author: n.author || "",
+      tags: n.tags || "",
+      note: n.note || "",
+      read_count: String(n.read_count || 0),
+      total_episodes: String(n.total_episodes || 0),
+      cover_image: n.cover_image || "",
+      tag_data: n.tag_data || "",
+      // ── 별도 state 필드 (JSON.stringify로 비교) ──
+      rating: String((Number(n.rating) || 1500).toFixed(1)),
+      platforms: JSON.stringify(parsePlatforms(n.platforms)),
+      status: n.status || "reading",
+      work_status: n.work_status || "ongoing",
+      link: n.link || "",
+      reread_count: String(n.reread_count || 1),
+      gaiden_status: n.gaiden_status || "none",
+      gaiden_read_count: String(n.gaiden_read_count || 0),
+      gaiden_total_episodes: String(n.gaiden_total_episodes || 0),
+      created_at: formatDateLocal(n.created_at),
+      read_count_updated_at: formatDateLocal(n.read_count_updated_at),
+      quotes: JSON.stringify(parseQuotes(n.memorable_quote)),
+      awards: JSON.stringify(parsed), // parsed는 바로 위에서 생성된 editAwards 초기값
+    };
+
     // 🔧 v3.5.7: Android transparent Modal ScrollView 버그 대응
     // 21개 상태 세팅 후 1프레임 지연하여 Modal 열기
     // → 데이터가 먼저 커밋된 후 Modal이 열려 ScrollView 높이 계산 정상화
@@ -21989,9 +22390,10 @@ function AppContent() {
         return;
       }
 
-      // 먼저 모달 닫기
-      setEditOpen(false);
-      updateEditItem(null);
+      // 🔧 v3.5.9: 모달 닫기를 DB 저장 성공 후로 이동
+      // 이전: 먼저 모달 닫고 DB 저장 → 실패 시 편집 데이터 소실 (복구 불가)
+      // 수정: DB 저장 성공 확인 후 모달 닫기 → 실패 시 모달에서 재시도 가능
+      // (editItemRef.current + 별도 state 참조이므로 모달 열린 상태에서 저장해도 안전)
 
       // 레이팅 직접 수정 (확인 없이 바로 적용)
       const ratingNum = Number(editRating);
@@ -22055,6 +22457,12 @@ function AppContent() {
           n.id,
         ]
       );
+      
+      // 🔧 v3.5.9: DB 저장 성공 후 모달 닫기 (savePlannedEdit 패턴과 통일)
+      editOriginalSnapshotRef.current = null; // 스냅샷 정리 (closeEditModal 오작동 방지)
+      setEditOpen(false);
+      updateEditItem(null);
+      
       await loadList();
       
       // 📰 v3.0.2: 제목 변경 기록
@@ -22083,18 +22491,18 @@ function AppContent() {
     } catch (e) {
       console.warn("saveEdit 오류:", e);
       const errorMsg = e.message || "";
-      // 🔧 v3.5.1: DB 연결 오류 시 더 명확한 안내
+      // 🔧 v3.5.9: 모달이 아직 열려 있으므로 사용자가 재시도 가능
       if (errorMsg.includes("NullPointerException") || 
           errorMsg.includes("prepareAsync") ||
           errorMsg.includes("rejected")) {
         await resetDbConnection(); // DB 연결 리셋
         Alert.alert(
-          "오류", 
-          "데이터베이스 연결 오류가 발생했습니다.\n\n잠시 후 다시 시도해주세요. 문제가 지속되면 앱을 재시작해주세요.",
+          "저장 실패", 
+          "데이터베이스 연결 오류가 발생했습니다.\n\n편집 내용은 유지됩니다. '저장' 버튼을 다시 눌러주세요.\n문제가 지속되면 앱을 재시작해주세요.",
           [{ text: "확인" }]
         );
       } else {
-        Alert.alert("오류", "저장 중 오류가 발생했습니다.\n\n" + errorMsg);
+        Alert.alert("저장 실패", "저장 중 오류가 발생했습니다.\n편집 내용은 유지됩니다.\n\n" + errorMsg);
       }
     }
     setIsLoading(false);
@@ -22127,7 +22535,7 @@ function AppContent() {
         style: "destructive",
         onPress: async () => {
           await exec("DELETE FROM matches WHERE id=?", [mid]);
-          await rebuildAllFromMatches();
+          await rebuildAllFromMatches(tagAttributes);
           await loadList();
           if (logTarget) await openLogs(logTarget);
         },
@@ -22140,7 +22548,7 @@ function AppContent() {
     if (!m) return;
     const newWinner = m.winner_id === m.a_id ? m.b_id : m.a_id;
     await exec("UPDATE matches SET winner_id=? WHERE id=?", [newWinner, mid]);
-    await rebuildAllFromMatches();
+    await rebuildAllFromMatches(tagAttributes);
     await loadList();
     if (logTarget) await openLogs(logTarget);
   }
@@ -22384,7 +22792,7 @@ function AppContent() {
           predictedWinnerId,
           confidence: matchAnalysis.confidence || 0,
           factors: null, // analyzeMatchPrediction은 factors를 반환하지 않음
-        } : null);
+        } : null, tagAttributes);
       } catch (e) {
         console.warn("[decide] saveChoiceLog 오류:", e);
       }
@@ -22713,7 +23121,7 @@ function AppContent() {
           await exec("DELETE FROM matches WHERE id=?", [lastMatchId]);
           setLastMatchId(null);
           setPair(null);
-          await rebuildAllFromMatches();
+          await rebuildAllFromMatches(tagAttributes);
           await loadList();
           Alert.alert("완료", "마지막 매칭을 되돌렸습니다.");
         },
@@ -23377,6 +23785,7 @@ function AppContent() {
               setPair(null);
             }
             if (editItem && ids.includes(editItem.id)) {
+              editOriginalSnapshotRef.current = null; // 🔧 v3.5.9
               updateEditItem(null);
               setEditOpen(false);
             }
@@ -23422,7 +23831,7 @@ function AppContent() {
               await loadCoverLibrary();
             }
             
-            await rebuildAllFromMatches();
+            await rebuildAllFromMatches(tagAttributes);
             setSelectedIds([]);
             await loadList();
           } catch (e) {
@@ -24118,6 +24527,8 @@ async function importJSON() {
             text: "가져오기",
             onPress: async () => {
               setIsLoading(true);
+              // 🔧 v3.5.9: DELETE 전 원본 JSON 백업 (실패 시 재시도용)
+              importBackupRef.current = text;
               // 🔧 v3.5.8: 전체 복원 플로우를 try-catch로 보호
               // DELETE 후 INSERT 실패 시 데이터 소실 방지를 위한 안전장치
               let deleteCompleted = false;
@@ -24490,18 +24901,38 @@ async function importJSON() {
               const pcInfo = platformCoversRestored ? "\n(플랫폼 표지 복원됨)" : "";
               // 🔧 v3.5.8: 복원 검증 결과 포함
               const verifyInfo = insertedCount < lenN ? `\n⚠️ 주의: ${lenN}개 중 ${insertedCount}개만 복원됨` : "";
+              importBackupRef.current = ""; // 🔧 v3.5.9: 성공 시 메모리 해제
               Alert.alert("완료", `데이터를 성공적으로 가져왔습니다!\n(Elo 데이터 완전 복원)${verifyInfo}${extraInfo}${histInfo}${analysisInfo}${comboInfo}${tagMetaInfo}${plannedInfo}${patternInfo}${pcInfo}`);
               } catch (restoreErr) {
-                // 🔧 v3.5.8: 복원 실패 시 명확한 안내
+                // 🔧 v3.5.9: 복원 실패 시 자동 재시도 옵션 제공
                 console.warn("복원 오류:", restoreErr);
                 if (deleteCompleted) {
                   // DELETE 성공 후 INSERT 실패 = 가장 위험한 상태
+                  // importBackupRef에 저장된 원본으로 재시도 가능
                   Alert.alert(
                     "⚠️ 복원 중 오류",
                     "기존 데이터 삭제 후 복원 도중 오류가 발생했습니다.\n\n" +
-                    "일부 데이터만 복원되었을 수 있습니다.\n" +
-                    "같은 백업 데이터로 다시 '가져오기'를 시도해주세요.\n\n" +
-                    "오류: " + (restoreErr.message || restoreErr)
+                    "일부 데이터만 복원되었을 수 있습니다.\n\n" +
+                    "오류: " + (restoreErr.message || restoreErr),
+                    [
+                      { text: "확인" },
+                      { 
+                        text: "🔄 자동 재시도", 
+                        onPress: () => {
+                          // 원본 JSON이 보존되어 있으면 입력란에 복원 후 재시도 유도
+                          if (importBackupRef.current) {
+                            setImportText(importBackupRef.current);
+                            setImportValidation(null);
+                            Alert.alert(
+                              "재시도 준비",
+                              "백업 데이터가 입력란에 복원되었습니다.\n'데이터 검증' → '가져오기' 순서로 다시 시도해주세요."
+                            );
+                          } else {
+                            Alert.alert("오류", "백업 데이터를 찾을 수 없습니다.\n원본 백업 JSON을 다시 붙여넣어 주세요.");
+                          }
+                        }
+                      },
+                    ]
                   );
                 } else {
                   Alert.alert("오류", "복원 준비 중 오류가 발생했습니다.\n기존 데이터는 유지됩니다.\n\n" + (restoreErr.message || restoreErr));
@@ -24556,7 +24987,7 @@ async function importJSON() {
               setMatchAnalysis(null);
               setMatchPrediction(null);
               
-              await rebuildAllFromMatches();
+              await rebuildAllFromMatches(tagAttributes);
               await loadList();
               Alert.alert("완료", "대진 로그가 초기화되었습니다.");
             } catch (e) {
@@ -31263,7 +31694,7 @@ async function importJSON() {
                 title="매치 로그 기준 Elo 재계산"
                 onPress={async () => {
                   setIsLoading(true);
-                  await rebuildAllFromMatches();
+                  await rebuildAllFromMatches(tagAttributes);
                   await loadList();
                   setIsLoading(false);
                   Alert.alert("완료", "재계산 완료");
@@ -31439,7 +31870,8 @@ async function importJSON() {
       <Modal
         visible={editOpen}
         animationType="slide"
-        onRequestClose={() => { setEditOpen(false); updateEditItem(null); }}
+        onRequestClose={closeEditModal}
+        onShow={() => onModalShow('edit')}
         transparent
       >
         <View
@@ -31451,7 +31883,7 @@ async function importJSON() {
           <TouchableOpacity 
             style={{ height: Math.round(Dimensions.get("window").height * 0.12) }} 
             activeOpacity={1} 
-            onPress={() => setEditOpen(false)} 
+            onPress={closeEditModal} 
           />
           <View
             style={{
@@ -31478,12 +31910,13 @@ async function importJSON() {
                   <Text style={{ color: C.warn, fontSize: 13 }}>🗑 삭제</Text>
                 </TouchableOpacity>
               )}
-              <TouchableOpacity onPress={() => setEditOpen(false)} style={{ padding: 6 }}>
+              <TouchableOpacity onPress={closeEditModal} style={{ padding: 6 }}>
                 <Text style={{ fontSize: 22, color: C.sub }}>×</Text>
               </TouchableOpacity>
               </View>
             </View>
             <ScrollView 
+              key={`edit-scroll-${modalScrollKey.edit || 0}`}
               nestedScrollEnabled={true} 
               showsVerticalScrollIndicator={true} 
               style={{ flex: 1 }}
@@ -31933,6 +32366,8 @@ async function importJSON() {
                   <OutlineButton
                     title="📊 대진 기록 보기"
                     onPress={() => {
+                      // 🔧 v3.5.9: 대진 기록은 편집 내용 유실 가능 → 강제 닫기 허용
+                      // (대진 기록 열람은 빠른 전환 목적이므로 확인 불필요)
                       setEditOpen(false);
                       openLogs(editItem);
                     }}
@@ -31945,11 +32380,12 @@ async function importJSON() {
                   <PrimaryButton
                     title="저장"
                     onPress={saveEdit}
+                    disabled={isLoading}
                     style={{ flex: 1 }}
                   />
                   <OutlineButton
                     title="닫기"
-                    onPress={() => setEditOpen(false)}
+                    onPress={closeEditModal}
                     style={{ flex: 1 }}
                   />
                 </View>
@@ -31965,6 +32401,7 @@ async function importJSON() {
         visible={logOpen}
         animationType="slide"
         onRequestClose={() => setLogOpen(false)}
+        onShow={() => onModalShow('log')}
         transparent
       >
         <View
@@ -32002,7 +32439,7 @@ async function importJSON() {
                 >
                   {logTarget.title}
                 </Text>
-              <ScrollView nestedScrollEnabled={true} showsVerticalScrollIndicator={true}>
+              <ScrollView key={`log-scroll-${modalScrollKey.log || 0}`} style={{ flex: 1 }} nestedScrollEnabled={true} showsVerticalScrollIndicator={true}>
                   {logs.length === 0 ? (
                     <Text style={{ color: C.sub }}>
                       기록이 없습니다.
@@ -32108,6 +32545,7 @@ async function importJSON() {
         visible={supplementSettingsOpen}
         animationType="slide"
         onRequestClose={() => setSupplementSettingsOpen(false)}
+        onShow={() => onModalShow('supplement')}
         transparent
       >
         <View
@@ -32143,7 +32581,7 @@ async function importJSON() {
               어떤 작품을 보충 대상으로 표시할지 설정합니다.
             </Text>
             
-            <ScrollView style={{ maxHeight: 500 }} nestedScrollEnabled={true} showsVerticalScrollIndicator={true}>
+            <ScrollView key={`supplement-scroll-${modalScrollKey.supplement || 0}`} style={{ flex: 1 }} nestedScrollEnabled={true} showsVerticalScrollIndicator={true}>
               {/* 활성화 토글 */}
               <View style={{ 
                 flexDirection: "row", 
@@ -32537,6 +32975,7 @@ async function importJSON() {
         visible={compareOpen}
         animationType="slide"
         onRequestClose={() => setCompareOpen(false)}
+        onShow={() => onModalShow('compare')}
         transparent
       >
         <View
@@ -32546,7 +32985,7 @@ async function importJSON() {
           }}
         >
           <TouchableOpacity 
-            style={{ flex: 0.08 }} 
+            style={{ height: Math.round(Dimensions.get("window").height * 0.08) }} 
             activeOpacity={1} 
             onPress={() => setCompareOpen(false)} 
           />
@@ -32556,7 +32995,7 @@ async function importJSON() {
               borderTopLeftRadius: 16,
               borderTopRightRadius: 16,
               padding: 16,
-              flex: 0.92,
+              flex: 1,
             }}
           >
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
@@ -32568,7 +33007,7 @@ async function importJSON() {
               </TouchableOpacity>
             </View>
             {compareNovels.length === 2 && (
-              <ScrollView nestedScrollEnabled={true} showsVerticalScrollIndicator={true}>
+              <ScrollView key={`compare-scroll-${modalScrollKey.compare || 0}`} style={{ flex: 1 }} nestedScrollEnabled={true} showsVerticalScrollIndicator={true}>
                 <View style={{ flexDirection: "row", gap: 10 }}>
                   {compareNovels.map((n) => {
                     const plats = parsePlatforms(n.platforms);
@@ -32744,6 +33183,7 @@ async function importJSON() {
         relationInfo={editingTag ? getTagGroupInfo(editingTag.tag) : null}
         // 🆕 v3.2.1 확장 props
         isHidden={editingTag ? hiddenTags.includes(editingTag.tag) : false}
+        isTitle={editingTag ? isTagTitle(editingTag.tag, tagAttributes) : false}
         sentiment={editingTag ? getTagSentiment(editingTag.tag, tagSentiments) : null}
         coordinateSystems={coordinateSystems}
         tagUsageStats={editingTag ? getTagUsageStats(editingTag.tag) : null}
@@ -32763,11 +33203,12 @@ async function importJSON() {
           setEditingCoordSystem(null);
           setEditingCoordTag(null);
         }}
+        onShow={() => onModalShow('coord')}
         transparent
       >
         <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)" }}>
-          <TouchableOpacity style={{ flex: 0.08 }} activeOpacity={1} onPress={() => { setCoordManageOpen(false); setEditingCoordSystem(null); setEditingCoordTag(null); }} />
-          <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, flex: 0.92, padding: 16 }}>
+          <TouchableOpacity style={{ height: Math.round(Dimensions.get("window").height * 0.08) }} activeOpacity={1} onPress={() => { setCoordManageOpen(false); setEditingCoordSystem(null); setEditingCoordTag(null); }} />
+          <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, flex: 1, padding: 16 }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>
                 📐 좌표계 편집
@@ -32778,7 +33219,7 @@ async function importJSON() {
             </View>
             
             {editingCoordSystem && (
-              <ScrollView style={{ maxHeight: 500 }}>
+              <ScrollView key={`coord-scroll-${modalScrollKey.coord || 0}`} style={{ flex: 1 }} showsVerticalScrollIndicator={true} contentContainerStyle={{ paddingBottom: 20 }}>
                 {/* 좌표계 이름 */}
                 <Text style={{ fontWeight: "700", color: C.text, marginBottom: 6 }}>좌표계 이름</Text>
                 <TextInput
@@ -33007,69 +33448,27 @@ async function importJSON() {
                   <Text style={{ fontWeight: "700", color: C.text, marginBottom: 6 }}>
                     X 좌표: {(Number(editingCoordTag.x) || 0).toFixed(2)} ({editingCoordTag.x < 0.5 ? editingCoordSystem?.xAxis?.negative : editingCoordSystem?.xAxis?.positive})
                   </Text>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 16 }}>
-                    <Text style={{ fontSize: 12, color: C.sub }}>{editingCoordSystem?.xAxis?.negative}</Text>
-                    <View style={{ flex: 1 }}>
-                      <View style={{ height: 40, justifyContent: "center" }}>
-                        <View style={{ height: 4, backgroundColor: C.line, borderRadius: 2 }} />
-                        <View style={{ 
-                          position: "absolute",
-                          left: `${editingCoordTag.x * 100}%`,
-                          width: 24,
-                          height: 24,
-                          backgroundColor: C.primary,
-                          borderRadius: 12,
-                          marginLeft: -12,
-                        }} />
-                      </View>
-                      <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 4 }}>
-                        {[0, 0.25, 0.5, 0.75, 1].map(v => (
-                          <TouchableOpacity 
-                            key={v} 
-                            onPress={() => setEditingCoordTag({ ...editingCoordTag, x: v })}
-                            style={{ padding: 4 }}
-                          >
-                            <Text style={{ fontSize: 10, color: editingCoordTag.x === v ? C.primary : C.sub, fontWeight: editingCoordTag.x === v ? "700" : "400" }}>{v}</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    </View>
-                    <Text style={{ fontSize: 12, color: C.sub }}>{editingCoordSystem?.xAxis?.positive}</Text>
-                  </View>
+                  <CoordSlider
+                    value={editingCoordTag.x}
+                    onValueChange={(v) => setEditingCoordTag(prev => prev ? { ...prev, x: v } : null)}
+                    color={C.primary}
+                    negLabel={editingCoordSystem?.xAxis?.negative}
+                    posLabel={editingCoordSystem?.xAxis?.positive}
+                    theme={C}
+                  />
                   
                   {/* Y 좌표 */}
                   <Text style={{ fontWeight: "700", color: C.text, marginBottom: 6 }}>
                     Y 좌표: {(Number(editingCoordTag.y) || 0).toFixed(2)} ({editingCoordTag.y < 0.5 ? editingCoordSystem?.yAxis?.negative : editingCoordSystem?.yAxis?.positive})
                   </Text>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 16 }}>
-                    <Text style={{ fontSize: 12, color: C.sub }}>{editingCoordSystem?.yAxis?.negative}</Text>
-                    <View style={{ flex: 1 }}>
-                      <View style={{ height: 40, justifyContent: "center" }}>
-                        <View style={{ height: 4, backgroundColor: C.line, borderRadius: 2 }} />
-                        <View style={{ 
-                          position: "absolute",
-                          left: `${editingCoordTag.y * 100}%`,
-                          width: 24,
-                          height: 24,
-                          backgroundColor: "#22c55e",
-                          borderRadius: 12,
-                          marginLeft: -12,
-                        }} />
-                      </View>
-                      <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 4 }}>
-                        {[0, 0.25, 0.5, 0.75, 1].map(v => (
-                          <TouchableOpacity 
-                            key={v} 
-                            onPress={() => setEditingCoordTag({ ...editingCoordTag, y: v })}
-                            style={{ padding: 4 }}
-                          >
-                            <Text style={{ fontSize: 10, color: editingCoordTag.y === v ? "#22c55e" : C.sub, fontWeight: editingCoordTag.y === v ? "700" : "400" }}>{v}</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    </View>
-                    <Text style={{ fontSize: 12, color: C.sub }}>{editingCoordSystem?.yAxis?.positive}</Text>
-                  </View>
+                  <CoordSlider
+                    value={editingCoordTag.y}
+                    onValueChange={(v) => setEditingCoordTag(prev => prev ? { ...prev, y: v } : null)}
+                    color="#22c55e"
+                    negLabel={editingCoordSystem?.yAxis?.negative}
+                    posLabel={editingCoordSystem?.yAxis?.positive}
+                    theme={C}
+                  />
                   
                   {/* 버튼들 */}
                   <View style={{ flexDirection: "row", gap: 8 }}>
@@ -33161,6 +33560,7 @@ async function importJSON() {
         visible={plannedEditOpen}
         animationType="slide"
         onRequestClose={() => setPlannedEditOpen(false)}
+        onShow={() => onModalShow('planned')}
         transparent
       >
         <View
@@ -33187,7 +33587,7 @@ async function importJSON() {
               📋 예정 작품 수정
             </Text>
             {plannedEditItem && (
-              <ScrollView showsVerticalScrollIndicator={true} style={{ flex: 1 }}>
+              <ScrollView key={`planned-scroll-${modalScrollKey.planned || 0}`} showsVerticalScrollIndicator={true} style={{ flex: 1 }}>
                 <Label>제목 *</Label>
                 <Input
                   value={plannedEditItem.title || ""}
@@ -33794,6 +34194,21 @@ async function importJSON() {
           setTagSentiments(updated);
           await setAppMeta("tag_sentiments", updated);
         }}
+        onBatchChangeTitle={async (tags, setAsTitle) => {
+          const updated = { ...tagAttributes };
+          for (const tag of tags) {
+            if (!updated[tag]) updated[tag] = {};
+            if (setAsTitle) {
+              updated[tag].isTitle = true;
+            } else {
+              delete updated[tag].isTitle;
+              // 빈 객체면 키 자체 삭제
+              if (Object.keys(updated[tag]).length === 0) delete updated[tag];
+            }
+          }
+          setTagAttributes(updated);
+          await setAppMeta("tag_attributes", updated);
+        }}
         onCleanupDuplicates={cleanupDuplicateTags}
         onCleanupUnused={cleanupUnusedTags}
         findUnusedTags={findUnusedTags}
@@ -33806,6 +34221,7 @@ async function importJSON() {
         visible={customResetOpen}
         animationType="slide"
         onRequestClose={() => setCustomResetOpen(false)}
+        onShow={() => onModalShow('customReset')}
         transparent
       >
         <View style={{ flex: 1, backgroundColor: C.modal }}>
@@ -33860,7 +34276,7 @@ async function importJSON() {
               </TouchableOpacity>
             </View>
             
-            <ScrollView showsVerticalScrollIndicator={true} style={{ flex: 1 }}>
+            <ScrollView key={`customReset-scroll-${modalScrollKey.customReset || 0}`} showsVerticalScrollIndicator={true} style={{ flex: 1 }}>
               {RESET_CATEGORIES.map((cat) => (
                 <View key={cat.group} style={{ marginBottom: 16 }}>
                   {/* 그룹 헤더 */}
