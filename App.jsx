@@ -2,9 +2,9 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.5.7                                                                  ║
- * ║  최종 수정: 2025-02-18                                                        ║
- * ║  총 라인 수: 약 32,900줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 3.5.8                                                                  ║
+ * ║  최종 수정: 2025-02-19                                                        ║
+ * ║  총 라인 수: 약 33,400줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -147,7 +147,106 @@
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
  * ╔══════════════════════════════════════════════════════════════════════════════╗
- * ║ 🔧 v3.5.6 수정 사항 - 전면 크래시 방어 + 모달/명언 수정                     ║
+ * ║ 🔧 v3.5.8 수정 사항 - 모달 스크롤 근본 수정 + 태그 관계 stale 수정         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [변경 1] 🔧 Android transparent Modal ScrollView 스크롤 불가 근본 수정       ║
+ * ║ • 원인: 상태 세팅 + setXxxOpen(true)가 같은 프레임 → ScrollView 높이=0       ║
+ * ║ • v3.5.7은 openEdit만 requestAnimationFrame 적용 (1곳)                      ║
+ * ║ • v3.5.8: deferOpen() 헬퍼 생성 → 모든 AppContent 모달 open에 적용          ║
+ * ║ • 적용 대상: coverSelect(5곳), tagRelation(3곳), searchTag, compare,         ║
+ * ║   supplementSettings, import, customReset, tagManager, coordManage,          ║
+ * ║   plannedEdit, urlModal, logOpen, exportOpen 등 20+곳                        ║
+ * ║ • AwardsScreen 내부 settingsModalOpen도 별도 deferOpen 적용                  ║
+ * ║                                                                              ║
+ * ║ [변경 2] 🔗 태그 관계 편집 stale data 근본 수정                              ║
+ * ║ • 원인: existingGroup prop = 모달 열 때 스냅샷, 태그 추가/삭제와 동기화 안됨 ║
+ * ║ • handleSave에서 ...existingGroup 스프레드 → stale tags 덮어쓰기             ║
+ * ║ • 수정: allGroups[existingGroup.id]에서 실시간 데이터 참조 (liveGroup)        ║
+ * ║ • handleSave: name/type/relatedGroupId만 전달 (tags 스프레드 제거)           ║
+ * ║                                                                              ║
+ * ║ [변경 3] 🔧 editOpen onRequestClose에서 editItem 정리 추가                   ║
+ * ║ • Android 뒤로가기로 닫을 시 editItem 잔류 → 다음 편집 시 깜빡임 방지       ║
+ * ║                                                                              ║
+ * ║ [변경 4] 📋 plannedEditItem 함수형 업데이트 전환 (20+곳)                      ║
+ * ║ • editItem은 v3.5.6에서 함수형 전환됨, plannedEditItem은 미적용이었음        ║
+ * ║ • 빠른 연속 입력 시 이전 필드 값 유실 방지                                    ║
+ * ║                                                                              ║
+ * ║ [변경 5] 🖼️ 보충탭 저장 시 cover_library 상태 업데이트 누락 수정             ║
+ * ║ • 원인: 보충탭 "저장&다음"에서 applyNovelCover 미호출                        ║
+ * ║   → novels.cover_image는 정상 갱신되나 cover_library.status가 "unused" 잔류  ║
+ * ║   → "미사용 일괄삭제" 시 실사용 표지까지 삭제되는 데이터 손실 위험           ║
+ * ║ • 수정: 저장 시 원본 cover_image 조회 → 변경분 있으면 applyNovelCover 호출   ║
+ * ║                                                                              ║
+ * ║ [변경 6] 🖼️ 편집모달 표지 삭제/URL/갤러리 시 editItem 동기화 추가           ║
+ * ║ • 원인: setEditCoverImage만 호출하고 editItem.cover_image는 미갱신           ║
+ * ║   → 라이브러리 선택만 v3.5.6에서 양쪽 동기화됨, 나머지 3경로 누락           ║
+ * ║ • 수정: 삭제/URL/갤러리 경로에서도 updateEditItem 동기화 추가                ║
+ * ║                                                                              ║
+ * ║ [변경 7] 🏷️ 태그 칩 뷰 (TagChipView) - 태그 시각화/편집 UX 대폭 개선       ║
+ * ║ • 문제: 쉼표 구분 텍스트 한 줄에 태그 15개+ → 가독성 제로, 수정 번거로움     ║
+ * ║ • 해결: 유형별 색상 칩으로 시각화 + ✕ 버튼으로 개별 제거                      ║
+ * ║   - 대장르(파랑), 부장르(초록), 조합식(보라), 긍정(에메랄드), 부정(빨강)      ║
+ * ║   - "✏️ 텍스트" 토글로 기존 텍스트 입력 모드도 유지 (파워유저용)              ║
+ * ║   - "🏷️ 추가" 버튼으로 기존 TagSelectModal 열기                              ║
+ * ║ • 적용 범위: 편집모달, 신규등록, 보충탭, 예정작 등록/수정 (5곳)               ║
+ * ║ • 신규 헬퍼: removeTagAndSyncGenres() - 태그 제거 시 장르 필드 자동 재계산    ║
+ * ║ • 기존 대장르/부장르 뱃지 표시 제거 (칩 색상으로 통합)                        ║
+ * ║                                                                              ║
+ * ║ [변경 8] 🏷️ 태그 시스템 전면 검토 - 6건 수정 (build 4)                       ║
+ * ║ • Bug#1 🔴 칩 ✕ 제거 시 tag_data 미동기화                                    ║
+ * ║   - removeTagAndSyncGenres()에 tag_data 파라미터 추가                        ║
+ * ║   - 5개 호출사이트 모두 tag_data 전달 (매칭점수/선호도분석 정합성 보장)       ║
+ * ║ • Bug#2 🔴 countTagUsage() 대장르/부장르 이중 집계                            ║
+ * ║   - v3.4.4에서 tags에 장르 병합 후 Set 미적용 → 사용빈도 2배 계산            ║
+ * ║   - Set으로 중복 제거하여 정확한 빈도/공동출현 통계 보장                      ║
+ * ║ • Issue#3 🟡 TAG_ALIASES "인생작"→"레전드" 충돌                               ║
+ * ║   - 인생작은 독립 태그 (DEFAULT_TAG_SENTIMENTS에 별도 등록) → alias 제거      ║
+ * ║ • Issue#4 🟡 TagChipView가 tagAttributes 무시                                ║
+ * ║   - isTagMajor()/isTagSub() 사용으로 속성 오버라이드 반영                     ║
+ * ║   - 5개 호출사이트에 tagAttributes prop 추가                                 ║
+ * ║ • Issue#5 🟡 검색 필터가 tagRelations 유사그룹 미사용                         ║
+ * ║   - matchTagWithAlias()에 resolveTagToGroup + getGroupTags 통합              ║
+ * ║   - "전생" 검색 시 유사그룹의 "환생" 태그 작품도 매칭                        ║
+ * ║ • Issue#6 🟢 GENERAL_TAGS와 MAJOR/SUB 중복 표시                              ║
+ * ║   - TagSelectModal 일반탭에서 장르 목록 중복 태그 필터링                      ║
+ * ║                                                                              ║
+ * ║ [변경 9] 🔄 상태 업데이트 연계 점검 - 3건 수정 (build 5)                     ║
+ * ║ • BugA 🔴 텍스트모드 tag_data 미동기화                                       ║
+ * ║   - 편집모달/신규등록 onTagsTextChange에서 tag_data 필터링 추가              ║
+ * ║   - 텍스트로 태그 삭제 시 tag_data에서도 동기 제거                           ║
+ * ║ • BugB 🔴 batchAddTag/batchRemoveTag 장르 미동기화                           ║
+ * ║   - 대량편집 시 tags+tag_data만 갱신, major_genre/sub_genre 방치 수정         ║
+ * ║   - 태그 변경 후 장르 필드 자동 재계산 로직 추가                             ║
+ * ║ • IssueC 🟡 savePlannedEdit stale closure 위험                               ║
+ * ║   - plannedEditItemRef + updatePlannedEditItem 래퍼 추가                     ║
+ * ║   - editItemRef 패턴과 동일하게 통일 (20+곳 일괄 전환)                       ║
+ * ║                                                                              ║
+ * ║ [변경 10] 🔍 데이터 무결성 검증 시스템 (build 6)                              ║
+ * ║ • verifyDataIntegrity() 함수 신규 (~200줄)                                   ║
+ * ║   - tags 문자열을 Single Source of Truth로 파생 필드 재계산                   ║
+ * ║   - tag_data 고아 항목 제거 (tags에 없는 태그)                               ║
+ * ║   - major_genre/sub_genre tags 기준 재계산                                   ║
+ * ║   - JSON 필드 파싱 실패 → 빈값 초기화                                       ║
+ * ║   - 숫자 필드 NaN/null → 기본값 정규화                                      ║
+ * ║   - 고아 매치/choice_log 정리 (삭제된 작품 참조)                             ║
+ * ║   - cover_library used/unused 실제 참조 기준 재계산                          ║
+ * ║ • 자동 실행: 앱 시작 시 1회 (integrity_check_version으로 관리)               ║
+ * ║ • 수동 실행: 설정 > 유틸리티 > "🔍 데이터 무결성 검증" 버튼                  ║
+ * ║                                                                              ║
+ * ║ [변경 11] 🛡️ 초기화/삭제/복원 안전성 일괄 강화 (build 7)                     ║
+ * ║ • removeNovel: try-catch 추가, choice_logs 고아 삭제, selectedIds 정리       ║
+ * ║ • batchDelete: try-catch 추가, choice_logs 삭제, cover_library 상태 복구     ║
+ * ║ • resetAll: try-catch 추가, choiceLogQueue/patternUpdateBatch 메모리 정리    ║
+ * ║ • resetMatches: try-catch + 개별 exec→execBatch 원자적 전환, 큐 정리        ║
+ * ║ • importJSON 복원: onPress 전체 try-catch, deleteCompleted 플래그,           ║
+ * ║   INSERT 후 카운트 검증, 실패 시 상세 안내, 메모리 큐 정리                    ║
+ * ║ • executeCustomReset: novels 선택 시 matches+choice_logs 강제 포함           ║
+ * ║   (고아 매치/선택로그 방지), effectiveSel 패턴 적용                           ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ * 
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║                                                                              ║
  * ║ [변경 1] 📐 작품 수정 모달 / 예정작 수정 모달 높이 3차 수정                  ║
@@ -2777,6 +2876,255 @@ async function migrateTagSystem() {
  * 단일 작품의 태그 동기화
  * tag_data를 마스터로, tags를 자동 갱신
  */
+
+// ═══════════════════════════════════════════════════════════════
+// 🔧 v3.5.8: 데이터 무결성 검증 및 자동 수정
+// ═══════════════════════════════════════════════════════════════
+// tags 문자열을 Single Source of Truth로 취급하여 파생 필드를 재계산
+// 결정론적 복구만 수행 (원본 데이터 손상 위험 없음)
+//
+// 검증 항목:
+// 1. tag_data ↔ tags 동기화 (tags에 없는 tag_data 항목 제거)
+// 2. major_genre/sub_genre ↔ tags 동기화 (tags에서 재계산)
+// 3. JSON 필드 파싱 검증 (깨진 JSON → 빈값 초기화)
+// 4. 숫자 필드 NaN/null 정규화 (기본값 적용)
+// 5. 고아 매치 정리 (삭제된 작품 참조 매치 제거)
+// 6. cover_library 상태 검증 (used/unused 실제 참조 기준 재계산)
+// ═══════════════════════════════════════════════════════════════
+
+async function verifyDataIntegrity(options = {}) {
+  const { silent = false, forceRun = false } = options;
+  const INTEGRITY_VERSION = 1; // 버전 올리면 자동 재실행
+  
+  try {
+    if (!forceRun) {
+      const currentVersion = Number(await getAppMeta("integrity_check_version")) || 0;
+      if (currentVersion >= INTEGRITY_VERSION) {
+        return { skipped: true, message: "이미 최신 무결성 검증 완료" };
+      }
+    }
+    
+    const log = { fixed: 0, details: [] };
+    const addLog = (category, msg) => {
+      log.details.push(`[${category}] ${msg}`);
+      if (!silent) console.log(`[무결성] ${category}: ${msg}`);
+    };
+    
+    // ─── 1. novels 전체 로드 ───
+    const novels = await all(
+      "SELECT id, title, tags, tag_data, major_genre, sub_genre, " +
+      "rating, rd, wins, losses, match_count, read_count, reread_count, " +
+      "awards, platforms, aliases, cover_image FROM novels"
+    );
+    
+    const novelIds = new Set((novels || []).map(n => n.id));
+    const queries = [];
+    
+    for (const novel of (novels || [])) {
+      const fixes = {};
+      let needsUpdate = false;
+      
+      // ── 1a. JSON 필드 파싱 검증 ──
+      const jsonFields = [
+        ["major_genre", ""],
+        ["sub_genre", ""],
+        ["tag_data", ""],
+        ["awards", ""],
+        ["platforms", "[]"],
+        ["aliases", ""],
+      ];
+      for (const [field, fallback] of jsonFields) {
+        const val = novel[field];
+        if (val && val !== "") {
+          try { JSON.parse(val); } catch {
+            fixes[field] = fallback;
+            needsUpdate = true;
+            addLog("JSON수정", `${novel.title}: ${field} 파싱 실패 → 초기화`);
+          }
+        }
+      }
+      
+      // ── 1b. 숫자 필드 NaN/null 정규화 ──
+      const numFields = [
+        ["rating", 1500], ["rd", 350],
+        ["wins", 0], ["losses", 0], ["match_count", 0],
+        ["read_count", 0], ["reread_count", 1],
+      ];
+      for (const [field, defaultVal] of numFields) {
+        const val = novel[field];
+        if (val === null || val === undefined || isNaN(Number(val))) {
+          fixes[field] = defaultVal;
+          needsUpdate = true;
+          addLog("숫자수정", `${novel.title}: ${field}=${val} → ${defaultVal}`);
+        }
+      }
+      
+      // ── 1c. tags → tag_data 동기화 (삭제된 태그의 tag_data 잔존 제거) ──
+      const currentTags = (novel.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+      const currentTagsLc = new Set(currentTags.map(t => t.toLowerCase()));
+      
+      const tagDataStr = fixes.tag_data !== undefined ? fixes.tag_data : (novel.tag_data || "");
+      if (tagDataStr) {
+        try {
+          const parsed = JSON.parse(tagDataStr);
+          if (Array.isArray(parsed)) {
+            const filtered = parsed.filter(td => currentTagsLc.has((td.tag || "").toLowerCase()));
+            if (filtered.length !== parsed.length) {
+              const removed = parsed.length - filtered.length;
+              fixes.tag_data = filtered.length > 0 ? JSON.stringify(filtered) : "";
+              needsUpdate = true;
+              addLog("태그동기", `${novel.title}: tag_data에서 고아 항목 ${removed}개 제거`);
+            }
+          }
+        } catch {} // JSON 파싱 실패는 1a에서 이미 처리
+      }
+      
+      // ── 1d. tags → major_genre/sub_genre 재계산 ──
+      const allMajor = MAJOR_GENRES; // userMajorGenres는 런타임 상태라 기본만 사용
+      const allSub = SUB_GENRES;
+      
+      const detectedMajor = currentTags
+        .filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
+        .map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
+      const detectedSub = currentTags
+        .filter(tag => allSub.some(s => s.toLowerCase() === tag.toLowerCase()))
+        .map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
+      
+      const expectedMajor = detectedMajor.length > 0 ? JSON.stringify(detectedMajor) : "";
+      const expectedSub = detectedSub.length > 0 ? JSON.stringify(detectedSub) : "";
+      
+      // JSON 수정 대상이 아닌 경우에만 비교 (1a에서 이미 초기화된 경우 스킵)
+      if (fixes.major_genre === undefined) {
+        const currentMajor = novel.major_genre || "";
+        // 실제 내용 비교 (JSON 포맷 차이 무시)
+        try {
+          const curParsed = currentMajor ? JSON.stringify(JSON.parse(currentMajor)) : "";
+          if (curParsed !== expectedMajor) {
+            fixes.major_genre = expectedMajor;
+            needsUpdate = true;
+            addLog("장르동기", `${novel.title}: major_genre 불일치 → 재계산`);
+          }
+        } catch {
+          fixes.major_genre = expectedMajor;
+          needsUpdate = true;
+        }
+      }
+      if (fixes.sub_genre === undefined) {
+        const currentSub = novel.sub_genre || "";
+        try {
+          const curParsed = currentSub ? JSON.stringify(JSON.parse(currentSub)) : "";
+          if (curParsed !== expectedSub) {
+            fixes.sub_genre = expectedSub;
+            needsUpdate = true;
+            addLog("장르동기", `${novel.title}: sub_genre 불일치 → 재계산`);
+          }
+        } catch {
+          fixes.sub_genre = expectedSub;
+          needsUpdate = true;
+        }
+      }
+      
+      // ── 수정 쿼리 생성 ──
+      if (needsUpdate) {
+        const setClauses = [];
+        const params = [];
+        for (const [field, value] of Object.entries(fixes)) {
+          setClauses.push(`${field}=?`);
+          params.push(value);
+        }
+        params.push(novel.id);
+        queries.push({
+          sql: `UPDATE novels SET ${setClauses.join(", ")} WHERE id=?`,
+          params,
+        });
+        log.fixed++;
+      }
+    }
+    
+    // ─── 2. 고아 매치 정리 (삭제된 작품 참조) ───
+    const orphanMatches = await all(
+      "SELECT id, a_id, b_id FROM matches WHERE a_id NOT IN (SELECT id FROM novels) OR b_id NOT IN (SELECT id FROM novels)"
+    );
+    if (orphanMatches && orphanMatches.length > 0) {
+      for (const m of orphanMatches) {
+        queries.push({
+          sql: "DELETE FROM matches WHERE id=?",
+          params: [m.id],
+        });
+      }
+      addLog("고아매치", `삭제된 작품 참조 매치 ${orphanMatches.length}건 정리`);
+    }
+    
+    // ─── 3. cover_library 상태 검증 ───
+    const covers = await all("SELECT id, file_path, status, novel_id FROM cover_library");
+    const plannedNovelsForCover = await all("SELECT id, cover_image FROM planned_novels WHERE cover_image IS NOT NULL AND cover_image != ''");
+    const novelCovers = new Set((novels || []).filter(n => n.cover_image).map(n => n.cover_image));
+    // 예정작 표지도 "사용 중"으로 취급
+    for (const pn of (plannedNovelsForCover || [])) {
+      if (pn.cover_image) novelCovers.add(pn.cover_image);
+    }
+    
+    for (const cover of (covers || [])) {
+      const isActuallyUsed = novelCovers.has(cover.file_path);
+      const markedUsed = cover.status === "used";
+      
+      if (isActuallyUsed && !markedUsed) {
+        // 실제 사용 중인데 unused로 표시된 경우
+        const usingNovel = (novels || []).find(n => n.cover_image === cover.file_path);
+        queries.push({
+          sql: "UPDATE cover_library SET status='used', novel_id=? WHERE id=?",
+          params: [usingNovel?.id || null, cover.id],
+        });
+        addLog("표지동기", `${cover.file_path}: unused → used 수정`);
+      } else if (!isActuallyUsed && markedUsed) {
+        // 실제 미사용인데 used로 표시된 경우
+        queries.push({
+          sql: "UPDATE cover_library SET status='unused', novel_id=NULL WHERE id=?",
+          params: [cover.id],
+        });
+        addLog("표지동기", `${cover.file_path}: used → unused 수정`);
+      }
+    }
+    
+    // ─── 4. 고아 choice_logs 정리 ───
+    const orphanLogs = await all(
+      "SELECT id FROM choice_logs WHERE winner_id NOT IN (SELECT id FROM novels) OR loser_id NOT IN (SELECT id FROM novels)"
+    );
+    if (orphanLogs && orphanLogs.length > 0) {
+      for (const cl of orphanLogs) {
+        queries.push({
+          sql: "DELETE FROM choice_logs WHERE id=?",
+          params: [cl.id],
+        });
+      }
+      addLog("고아로그", `삭제된 작품 참조 choice_log ${orphanLogs.length}건 정리`);
+    }
+    
+    // ─── 실행 ───
+    if (queries.length > 0) {
+      await execBatch(queries);
+      addLog("완료", `총 ${queries.length}건 쿼리 실행, ${log.fixed}개 작품 수정`);
+    } else {
+      addLog("완료", "불일치 없음 — 데이터 정합성 양호");
+    }
+    
+    // 버전 기록 (자동 실행 시)
+    if (!forceRun) {
+      await setAppMeta("integrity_check_version", INTEGRITY_VERSION);
+    }
+    
+    return {
+      skipped: false,
+      queriesExecuted: queries.length,
+      novelsFixed: log.fixed,
+      orphanMatchesRemoved: orphanMatches?.length || 0,
+      details: log.details,
+    };
+  } catch (e) {
+    console.warn("데이터 무결성 검증 오류:", e);
+    return { error: e.message };
+  }
+}
 async function syncNovelTags(novelId, tagData) {
   const tagsString = tagDataToString(tagData);
   await exec(
@@ -4410,6 +4758,43 @@ function isTagSub(tag, tagAttributes = {}, userSubGenres = []) {
   return SUB_GENRES.includes(tag) || userSubGenres.includes(tag);
 }
 
+// 🆕 v3.5.8: 태그 제거 + 대장르/부장르 자동 동기화 헬퍼
+// 칩 뷰에서 ✕ 클릭 시, 태그 문자열에서 제거하고 장르 필드를 재계산
+function removeTagAndSyncGenres(tags, tagToRemove, userMajorGenres = [], userSubGenres = [], tagDataStr = "") {
+  const currentTags = (tags || "").split(",").map(t => t.trim()).filter(Boolean);
+  const newTags = currentTags.filter(t => t.toLowerCase() !== tagToRemove.toLowerCase());
+  const newTagStr = newTags.join(", ");
+  
+  const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
+  const allSub = [...SUB_GENRES, ...userSubGenres];
+  const detectedMajor = newTags.filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
+    .map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
+  const detectedSub = newTags.filter(tag => allSub.some(m => m.toLowerCase() === tag.toLowerCase()))
+    .map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
+  
+  // 🔧 v3.5.8: tag_data에서도 동기 제거 (매칭 점수/선호도 분석 정합성)
+  let newTagData = tagDataStr;
+  if (tagDataStr) {
+    try {
+      const parsed = JSON.parse(tagDataStr);
+      if (Array.isArray(parsed)) {
+        const lc = tagToRemove.toLowerCase();
+        const filtered = parsed.filter(t => 
+          (t.tag || "").toLowerCase() !== lc && normalizeTag(t.tag || "").toLowerCase() !== lc
+        );
+        newTagData = filtered.length > 0 ? JSON.stringify(filtered) : "";
+      }
+    } catch {}
+  }
+  
+  return {
+    tags: newTagStr,
+    major_genre: detectedMajor.length > 0 ? JSON.stringify(detectedMajor) : "",
+    sub_genre: detectedSub.length > 0 ? JSON.stringify(detectedSub) : "",
+    tag_data: newTagData,
+  };
+}
+
 // 🆕 v3.4: 모든 대장르 속성 태그 가져오기
 function getAllMajorTags(tagAttributes = {}, userMajorGenres = []) {
   const result = new Set();
@@ -4625,12 +5010,14 @@ function countTagUsage(novels) {
   const coOccurrences = {}; // 🆕 v3.2.1: 공동 출현 통계
   
   for (const n of novels) {
+    // 🔧 v3.5.8: tags 문자열이 이미 대장르/부장르를 포함 (v3.4.4~)
+    // Set으로 중복 제거하여 이중 집계 방지
     const tags = (n.tags || "").split(",").map(t => t.trim()).filter(Boolean);
     const majorTags = parseMajorSub(n.major_genre);
     const subTags = parseMajorSub(n.sub_genre);
     
-    // 이 작품의 모든 태그 (일반 + 대장르 + 부장르)
-    const allTagsInNovel = [...tags, ...majorTags, ...subTags];
+    // Set으로 중복 제거 (tags에 이미 major/sub 포함 시 1회만 집계)
+    const allTagsInNovel = [...new Set([...tags, ...majorTags, ...subTags])];
     
     // 사용 빈도 카운트
     for (const tag of allTagsInNovel) {
@@ -4839,7 +5226,7 @@ const TAG_ALIASES = {
   
   // 평가 약어
   "갓작": "명작",
-  "인생작": "레전드",
+  // 🔧 v3.5.8: "인생작"→"레전드" alias 제거 (인생작은 독립 태그로 DEFAULT_TAG_SENTIMENTS에 등록됨)
 };
 
 // 역방향 alias 맵 생성 (정식명 → [약어들])
@@ -6269,6 +6656,150 @@ const GenreRow = memo(({ majorGenre, subGenre }) => {
   );
 });
 
+// 🆕 v3.5.8: 태그 칩 뷰 컴포넌트
+// 쉼표 구분 태그 문자열을 유형별 색상 칩으로 시각화
+// ✕ 버튼으로 개별 태그 제거, 텍스트 모드 토글, 태그 모달 열기 지원
+const TAG_CHIP_COLORS = {
+  major: { bg: "#3b82f6", text: "#fff" },   // 대장르: 파랑
+  sub: { bg: "#22c55e", text: "#fff" },      // 부장르: 초록
+  combo: { bg: "#a855f7", text: "#fff" },    // 조합식: 보라
+  positive: { bg: "#10b981", text: "#fff" }, // 긍정 감정: 에메랄드
+  negative: { bg: "#ef4444", text: "#fff" }, // 부정 감정: 빨강
+};
+
+const TagChipView = memo(({
+  tags,              // 쉼표 구분 태그 문자열
+  tagSentiments,     // {tag: sentiment} 커스텀 감정
+  comboTags,         // 조합식 태그 배열
+  userMajorGenres,   // 사용자 추가 대장르
+  userSubGenres,     // 사용자 추가 부장르
+  tagAttributes,     // 🔧 v3.5.8: {tag: {isMajor, isSub}} 속성 오버라이드
+  onRemoveTag,       // (tag) => void  — 없으면 ✕ 숨김 (읽기전용)
+  onOpenTagModal,    // () => void  — 태그 선택 모달 열기
+  onTagsTextChange,  // (newText) => void  — 있으면 텍스트모드 토글 가능
+  placeholder,       // 비었을 때 표시할 문구
+  textPlaceholder,   // 텍스트모드 placeholder
+  theme,             // C 객체
+}) => {
+  const [textMode, setTextMode] = useState(false);
+  const C = theme;
+
+  const tagList = useMemo(() => {
+    return (tags || "").split(",").map(t => t.trim()).filter(Boolean);
+  }, [tags]);
+
+  const allMajor = useMemo(() => [...MAJOR_GENRES, ...(userMajorGenres || [])], [userMajorGenres]);
+  const allSub = useMemo(() => [...SUB_GENRES, ...(userSubGenres || [])], [userSubGenres]);
+
+  const getChipStyle = useCallback((tag) => {
+    // 🔧 v3.5.8: tagAttributes 우선 참조 (사용자가 속성 변경한 경우)
+    if (isTagMajor(tag, tagAttributes || {}, userMajorGenres || [])) return TAG_CHIP_COLORS.major;
+    if (isTagSub(tag, tagAttributes || {}, userSubGenres || [])) return TAG_CHIP_COLORS.sub;
+    if ((comboTags || []).some(c => c.toLowerCase() === tag.toLowerCase())) return TAG_CHIP_COLORS.combo;
+    const sentiment = getTagSentiment(tag, tagSentiments || {});
+    if (sentiment === TAG_SENTIMENT.POSITIVE) return TAG_CHIP_COLORS.positive;
+    if (sentiment === TAG_SENTIMENT.NEGATIVE) return TAG_CHIP_COLORS.negative;
+    return { bg: C.chip, text: C.text };
+  }, [allMajor, allSub, comboTags, tagSentiments, tagAttributes, C]);
+
+  // 텍스트 모드
+  if (textMode && onTagsTextChange) {
+    return (
+      <View>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+          <Text style={{ color: C.text, fontWeight: "700", fontSize: 14 }}>
+            태그 ({tagList.length}개)
+          </Text>
+          <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+            <TouchableOpacity onPress={() => setTextMode(false)} style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, backgroundColor: C.primary }}>
+              <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>🏷️ 칩뷰</Text>
+            </TouchableOpacity>
+            {onOpenTagModal && (
+              <TouchableOpacity onPress={onOpenTagModal} style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, backgroundColor: C.chip }}>
+                <Text style={{ color: C.primary, fontSize: 12, fontWeight: "700" }}>고르기</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+        <TextInput
+          value={tags || ""}
+          onChangeText={onTagsTextChange}
+          placeholder={textPlaceholder || "쉼표로 구분: 판타지, 먼치킨, 성장물"}
+          placeholderTextColor={C.sub}
+          style={{
+            backgroundColor: C.bg,
+            color: C.text,
+            padding: 12,
+            borderRadius: 10,
+            fontSize: 14,
+            minHeight: 44,
+          }}
+          multiline
+        />
+      </View>
+    );
+  }
+
+  // 칩 뷰 (기본)
+  return (
+    <View>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+        <Text style={{ color: C.text, fontWeight: "700", fontSize: 14 }}>
+          태그 ({tagList.length}개)
+        </Text>
+        <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+          {onTagsTextChange && (
+            <TouchableOpacity onPress={() => setTextMode(true)} style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, backgroundColor: C.chip }}>
+              <Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>✏️ 텍스트</Text>
+            </TouchableOpacity>
+          )}
+          {onOpenTagModal && (
+            <TouchableOpacity onPress={onOpenTagModal} style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, backgroundColor: C.primary }}>
+              <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>🏷️ 추가</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+      {tagList.length > 0 ? (
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+          {tagList.map((tag) => {
+            const cs = getChipStyle(tag);
+            return (
+              <View
+                key={tag}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  backgroundColor: cs.bg,
+                  borderRadius: 999,
+                  paddingLeft: 10,
+                  paddingRight: onRemoveTag ? 4 : 10,
+                  paddingVertical: 5,
+                }}
+              >
+                <Text style={{ color: cs.text, fontSize: 12, fontWeight: "600" }}>{tag}</Text>
+                {onRemoveTag && (
+                  <TouchableOpacity
+                    onPress={() => onRemoveTag(tag)}
+                    hitSlop={{ top: 8, bottom: 8, left: 4, right: 8 }}
+                    style={{ marginLeft: 4, paddingHorizontal: 4, paddingVertical: 2 }}
+                  >
+                    <Text style={{ color: cs.text, fontSize: 11, opacity: 0.75, fontWeight: "800" }}>✕</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            );
+          })}
+        </View>
+      ) : (
+        <View style={{ backgroundColor: C.bg, padding: 12, borderRadius: 10, alignItems: "center" }}>
+          <Text style={{ color: C.sub, fontSize: 13 }}>{placeholder || "태그가 없습니다"}</Text>
+        </View>
+      )}
+    </View>
+  );
+});
+
 /* ---------------- 수상(awards) 시스템 v2.9 ---------------- */
 
 // 기본 상 템플릿 (새 연도 생성 시 복사)
@@ -7108,15 +7639,17 @@ const TagSelectModal = memo(({
   }, [userSubGenres, tagUsageCounts, hiddenTags, filterBySearch, sortWithPinnedFirst]);
 
   const sortedGeneralTags = useMemo(() => {
+    // 🔧 v3.5.8: MAJOR/SUB와 중복되는 태그는 일반 탭에서 제외 (이중 표시 방지)
+    const genreSet = new Set([...MAJOR_GENRES, ...SUB_GENRES, ...(userMajorGenres || []), ...(userSubGenres || [])]);
     const result = {};
     for (const [category, tagList] of Object.entries(GENERAL_TAGS)) {
-      const filtered = tagList.filter(t => !hiddenTags.includes(t));
+      const filtered = tagList.filter(t => !hiddenTags.includes(t) && !genreSet.has(t));
       const sorted = sortTagsByUsage(filtered, tagUsageCounts);
       const searched = filterBySearch(sorted);
       result[category] = sortWithPinnedFirst(searched); // 🔧 v3.4.4: 고정 태그 상단
     }
     return result;
-  }, [tagUsageCounts, hiddenTags, filterBySearch, sortWithPinnedFirst]);
+  }, [tagUsageCounts, hiddenTags, filterBySearch, sortWithPinnedFirst, userMajorGenres, userSubGenres]);
 
   // 🎭 v2.8.1: 감정별 태그 분류
   const sentimentTags = useMemo(() => {
@@ -9701,16 +10234,18 @@ const TagRelationModal = memo(({
   }
   
   // ─── 편집 모드 (targetTag 존재) ───
-  const currentTags = existingGroup?.tags || [targetTag];
+  // 🔧 v3.5.8: allGroups에서 실시간 그룹 데이터 참조 (existingGroup은 모달 열 때의 스냅샷)
+  const liveGroup = existingGroup?.id ? allGroups[existingGroup.id] : null;
+  const currentTags = liveGroup?.tags || existingGroup?.tags || [targetTag];
   const otherSimilarGroups = Object.values(allGroups || {}).filter(g => 
     g.type === "similar" && g.id !== existingGroup?.id
   );
   
   const handleSave = () => {
     if (existingGroup) {
-      // 기존 그룹 업데이트
+      // 🔧 v3.5.8: 변경된 필드만 전달 (stale existingGroup 스프레드 제거)
+      // tags는 onAddTagToGroup/onRemoveTagFromGroup으로 이미 라이브 반영됨
       onUpdateGroup(existingGroup.id, {
-        ...existingGroup,
         name: groupName.trim() || `${targetTag} 그룹`,
         type: groupType,
         relatedGroupId: groupType === "opposite" ? selectedOppositeGroup : null,
@@ -12010,7 +12545,7 @@ const AwardsScreen = memo(({
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          onPress={() => setSettingsModalOpen(true)}
+          onPress={() => requestAnimationFrame(() => setSettingsModalOpen(true))}
           style={{
             paddingVertical: 14,
             paddingHorizontal: 18,
@@ -17007,6 +17542,14 @@ function AppContent() {
       return next;
     });
   }, []);
+
+  // 🔧 v3.5.8: Android transparent Modal ScrollView 스크롤 불가 근본 수정
+  // 상태 세팅과 모달 열기가 같은 프레임이면 ScrollView 높이 계산 실패
+  // requestAnimationFrame으로 1프레임 지연하여 데이터 커밋 후 모달 열기
+  const deferOpen = useCallback((setter) => {
+    requestAnimationFrame(() => setter(true));
+  }, []);
+
   const [editOriginalReadCount, setEditOriginalReadCount] = useState(0); // 원본 읽은회차 (변동일 비교용)
   const [editOriginalTitle, setEditOriginalTitle] = useState(""); // 🔧 v3.0.2: 원본 제목 (변경 추적용)
   const [editOriginalCoverImage, setEditOriginalCoverImage] = useState(""); // 🖼️ v3.4.5: 원본 표지 (표지 상태 추적용)
@@ -17015,6 +17558,12 @@ function AppContent() {
   const [editStatus, setEditStatus] = useState("reading"); // 🆕 편집용 상태
   const [editWorkStatus, setEditWorkStatus] = useState("ongoing"); // 🆕 편집용 작품 연재 상태
   const [editCoverImage, setEditCoverImage] = useState(""); // 🆕 편집용 표지
+  // 🔧 v3.5.8: editCoverImage + editItem.cover_image 양쪽 동기화 setter
+  // v3.5.6에서 라이브러리 선택만 양쪽 동기화됨 → URL/갤러리/삭제 경로 누락 수정
+  const setEditCoverImageSync = useCallback((uri) => {
+    setEditCoverImage(uri);
+    updateEditItem(prev => prev ? { ...prev, cover_image: uri } : null);
+  }, []);
   const [editLink, setEditLink] = useState(""); // 🔗 편집용 링크
   // 📅 v3.0.3: 날짜 편집
   const [editCreatedAt, setEditCreatedAt] = useState(""); // 등록일 (YYYY-MM-DD)
@@ -17135,6 +17684,15 @@ function AppContent() {
   // 예정 작품 편집 모달
   const [plannedEditOpen, setPlannedEditOpen] = useState(false);
   const [plannedEditItem, setPlannedEditItem] = useState(null);
+  // 🔧 v3.5.8: editItemRef 패턴 적용 (stale closure 방지)
+  const plannedEditItemRef = useRef(null);
+  const updatePlannedEditItem = useCallback((updater) => {
+    setPlannedEditItem(prev => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      plannedEditItemRef.current = next;
+      return next;
+    });
+  }, []);
 
   // 특정 작품 고정 매칭용
   const [focusMatchNovel, setFocusMatchNovel] = useState(null);
@@ -17328,7 +17886,7 @@ function AppContent() {
   function openUrlModal(setter) {
     setUrlInput("");
     setUrlSetter(() => setter);
-    setUrlModalOpen(true);
+    deferOpen(setUrlModalOpen); // 🔧 v3.5.8
   }
 
   function confirmUrlInput() {
@@ -17510,6 +18068,9 @@ function AppContent() {
           
           // 🏷️ v5.0 태그 시스템 마이그레이션
           await migrateTagSystem();
+          
+          // 🔧 v3.5.8: 데이터 무결성 자동 검증 (앱 시작 시 1회)
+          await verifyDataIntegrity({ silent: true });
           
           if (!mounted) return;
           
@@ -18031,7 +18592,8 @@ function AppContent() {
   }
   
   async function savePlannedEdit() {
-    const n = plannedEditItem;
+    // 🔧 v3.5.8: plannedEditItemRef에서 읽어 React 배칭 지연과 무관하게 최신값 사용
+    const n = plannedEditItemRef.current;
     if (!n) return;
     
     const newTitle = (n.title || "").trim();
@@ -18096,7 +18658,7 @@ function AppContent() {
       }
       
       setPlannedEditOpen(false);
-      setPlannedEditItem(null);
+      updatePlannedEditItem(null);
       await loadPlannedList();
     } catch (e) {
       console.warn("savePlannedEdit 오류:", e);
@@ -18950,8 +19512,9 @@ function AppContent() {
         updateEditItem(prev => prev ? { ...prev, cover_image: filePath } : null);
       } else if (coverSelectTarget === "planned") {
         setPlannedCoverImage(filePath);
-      } else if (coverSelectTarget === "plannedEdit" && plannedEditItem) {
-        setPlannedEditItem({ ...plannedEditItem, cover_image: filePath });
+      } else if (coverSelectTarget === "plannedEdit") {
+        // 🔧 v3.5.8: 함수형 업데이트 (plannedEditItem 직접 참조 제거)
+        updatePlannedEditItem(prev => prev ? { ...prev, cover_image: filePath } : null);
       }
       
       setCoverSelectModalOpen(false);
@@ -19507,13 +20070,13 @@ function AppContent() {
       // 🔧 v3.5.7: 관리 모드 (태그 없이 열기)
       setTagRelationTarget(null);
       setTagRelationEditGroup(null);
-      setTagRelationModalOpen(true);
+      deferOpen(setTagRelationModalOpen); // 🔧 v3.5.8
       return;
     }
     setTagRelationTarget(tag);
     const groupInfo = getTagGroupInfo(tag);
     setTagRelationEditGroup(groupInfo);
-    setTagRelationModalOpen(true);
+    deferOpen(setTagRelationModalOpen); // 🔧 v3.5.8
   }, [getTagGroupInfo]);
 
   // 🔮 이변 요인 업데이트
@@ -19588,7 +20151,7 @@ function AppContent() {
     setTagModalInitialMajor(parseGenreArray(majorGenre));
     setTagModalInitialSub(parseGenreArray(subGenre));
     setTagModalInitialTagData(tagData); // 🏷️ v5.0
-    setTagModalOpen(true);
+    deferOpen(setTagModalOpen); // 🔧 v3.5.8
   }
 
   // 🏷️ 태그 선택 모달 확인 콜백
@@ -19624,14 +20187,15 @@ function AppContent() {
         sub_genre: subJson,
         tag_data: tagDataJson, // 🏷️ v5.0
       } : null);
-    } else if (tagModalTarget === "planned" && plannedEditItem) {
+    } else if (tagModalTarget === "planned") {
       // 🆕 v3.4.3: 예정탭 편집에서 태그 선택
-      setPlannedEditItem({
-        ...plannedEditItem,
+      // 🔧 v3.5.8: 함수형 업데이트로 stale closure 방지
+      updatePlannedEditItem(prev => prev ? {
+        ...prev,
         tags: allTagsString, // 🔧 v3.4.4: 모든 태그 포함
         major_genre: majorJson,
         sub_genre: subJson,
-      });
+      } : null);
     } else if (tagModalTarget === "plannedNew") {
       // 🔧 v3.4.5: 예정탭 신규 등록에서 태그 선택
       setPlannedTags(allTagsString);
@@ -19639,7 +20203,7 @@ function AppContent() {
       setPlannedSubGenre(selectedSub);
     }
     setTagModalOpen(false);
-  }, [tagModalTarget, plannedEditItem]);
+  }, [tagModalTarget]); // 🔧 v3.5.8: plannedEditItem 제거 (함수형 업데이트로 직접 참조 불필요)
 
   // (이전 toggleMajorGenre, toggleSubGenre, toggleTagInModal은 TagSelectModal 내부로 이동됨)
 
@@ -20023,7 +20587,7 @@ function AppContent() {
         setEditingCoordTag(tag);
       }
     }
-    setCoordManageOpen(true);
+    deferOpen(setCoordManageOpen); // 🔧 v3.5.8
   }
 
   // 태그에 대장르 속성 추가 (기존 위치에서 제거하지 않음)
@@ -20956,38 +21520,51 @@ function AppContent() {
         text: "삭제",
         style: "destructive",
         onPress: async () => {
-          // 🖼️ v3.4.5: 삭제 전에 해당 작품의 표지 가져오기
-          const novel = await first("SELECT cover_image FROM novels WHERE id=?", [id]);
-          const coverPath = novel?.cover_image;
-          
-          // 🔄 v3.5.0: 상태 동기화 - 삭제 대상과 관련된 모든 상태 초기화
-          if (pair && (pair.A?.id === id || pair.B?.id === id)) {
-            setPair(null);
+          setIsLoading(true);
+          try {
+            // 🖼️ v3.4.5: 삭제 전에 해당 작품의 표지 가져오기
+            const novel = await first("SELECT cover_image FROM novels WHERE id=?", [id]);
+            const coverPath = novel?.cover_image;
+            
+            // 🔄 v3.5.0: 상태 동기화 - 삭제 대상과 관련된 모든 상태 초기화
+            if (pair && (pair.A?.id === id || pair.B?.id === id)) {
+              setPair(null);
+            }
+            if (editItem?.id === id) {
+              updateEditItem(null);
+              setEditOpen(false);
+            }
+            if (dailyReco?.novel?.id === id) {
+              setDailyReco(null);
+            }
+            if (focusMatchNovel?.id === id) {
+              setFocusMatchNovel(null);
+            }
+            // 🔧 v3.5.8: selectedIds에서도 제거
+            if (selectedIdsRef.current.includes(id)) {
+              setSelectedIds(prev => prev.filter(x => x !== id));
+            }
+            
+            // 🔧 v3.5.8: choice_logs도 함께 삭제 (고아 방지)
+            await execBatch([
+              { sql: "DELETE FROM choice_logs WHERE winner_id=? OR loser_id=?", params: [id, id] },
+              { sql: "DELETE FROM matches WHERE a_id=? OR b_id=?", params: [id, id] },
+              { sql: "DELETE FROM novels WHERE id=?", params: [id] },
+            ]);
+            
+            // 🖼️ v3.4.5: 표지가 있었으면 상태를 미사용으로 변경
+            if (coverPath) {
+              await updateCoverStatus(coverPath, null, "unused");
+              await loadCoverLibrary();
+            }
+            
+            await rebuildAllFromMatches();
+            await loadList();
+          } catch (e) {
+            console.warn("removeNovel 오류:", e);
+            Alert.alert("오류", "삭제 중 문제가 발생했습니다: " + (e.message || e));
           }
-          if (editItem?.id === id) {
-            updateEditItem(null);
-            setEditOpen(false);
-          }
-          if (dailyReco?.novel?.id === id) {
-            setDailyReco(null);
-          }
-          if (focusMatchNovel?.id === id) {
-            setFocusMatchNovel(null);
-          }
-          
-          await execBatch([
-            { sql: "DELETE FROM matches WHERE a_id=? OR b_id=?", params: [id, id] },
-            { sql: "DELETE FROM novels WHERE id=?", params: [id] },
-          ]);
-          
-          // 🖼️ v3.4.5: 표지가 있었으면 상태를 미사용으로 변경
-          if (coverPath) {
-            await updateCoverStatus(coverPath, null, "unused");
-            await loadCoverLibrary();
-          }
-          
-          await rebuildAllFromMatches();
-          await loadList();
+          setIsLoading(false);
         },
       },
     ]);
@@ -21076,34 +21653,41 @@ function AppContent() {
             try {
               const batch = [];
 
+              // 🔧 v3.5.8: 의존성 강제 — novels 삭제 시 matches/choice_logs도 함께 삭제 (고아 방지)
+              const effectiveSel = { ...sel };
+              if (effectiveSel.novels) {
+                effectiveSel.matches = true;
+                effectiveSel.choice_logs = true;
+              }
+
               // === 핵심 데이터 ===
-              if (sel.novels) {
+              if (effectiveSel.novels) {
                 batch.push({ sql: "DELETE FROM novels;" });
                 // 표지 상태도 리셋
                 batch.push({ sql: "UPDATE cover_library SET status='unused', novel_id=NULL" });
               }
-              if (sel.matches) {
+              if (effectiveSel.matches) {
                 batch.push({ sql: "DELETE FROM matches;" });
               }
-              if (sel.planned) {
+              if (effectiveSel.planned) {
                 batch.push({ sql: "DELETE FROM planned_novels;" });
               }
 
               // === 학습 데이터 ===
-              if (sel.patterns) {
+              if (effectiveSel.patterns) {
                 batch.push({ sql: "DELETE FROM preference_patterns;" });
               }
               if (sel.insights_queue) {
                 batch.push({ sql: "DELETE FROM insight_queue;" });
               }
-              if (sel.choice_logs) {
+              if (effectiveSel.choice_logs) {
                 batch.push({ sql: "DELETE FROM choice_logs;" });
               }
 
               if (batch.length > 0) await execBatch(batch);
 
               // 🧹 v3.5.5: choice_logs 초기화 시 메모리 큐도 클리어 (재삽입 방지)
-              if (sel.choice_logs) {
+              if (effectiveSel.choice_logs) {
                 if (choiceLogQueue.timer) { clearTimeout(choiceLogQueue.timer); choiceLogQueue.timer = null; }
                 choiceLogQueue.pending = [];
               }
@@ -21199,7 +21783,7 @@ function AppContent() {
               }
 
               // === 상태 정리 ===
-              if (sel.novels || sel.matches) {
+              if (effectiveSel.novels || effectiveSel.matches) {
                 setLastMatchId(null);
                 setPair(null);
                 updateEditItem(null);
@@ -21209,7 +21793,7 @@ function AppContent() {
                 setMatchPrediction(null);
                 setSelectedIds([]);
               }
-              if (sel.matches) {
+              if (effectiveSel.matches) {
                 await rebuildAllFromMatches();
               }
               if (sel.patterns) {
@@ -21259,33 +21843,44 @@ function AppContent() {
                   style: "destructive",
                   onPress: async () => {
                     setIsLoading(true);
-                    await execBatch([
-                      { sql: "DELETE FROM matches;" },
-                      { sql: "DELETE FROM novels;" },
-                      // 🔧 v3.5.5: 학습 데이터도 함께 초기화
-                      { sql: "DELETE FROM choice_logs;" },
-                      { sql: "DELETE FROM preference_patterns;" },
-                      { sql: "DELETE FROM insight_queue;" },
-                    ]);
-                    
-                    // 🖼️ v3.4.5: 모든 표지를 미사용 상태로 변경
-                    await exec("UPDATE cover_library SET status='unused', novel_id=NULL");
-                    await loadCoverLibrary();
-                    
-                    // 🔄 v3.5.0: 모든 관련 상태 초기화
-                    setLastMatchId(null);
-                    setPair(null);
-                    updateEditItem(null);
-                    setEditOpen(false);
-                    setDailyReco(null);
-                    setFocusMatchNovel(null);
-                    setMatchAnalysis(null);
-                    setMatchPrediction(null);
-                    setSelectedIds([]);
-                    
-                    await loadList();
+                    try {
+                      await execBatch([
+                        { sql: "DELETE FROM matches;" },
+                        { sql: "DELETE FROM novels;" },
+                        // 🔧 v3.5.5: 학습 데이터도 함께 초기화
+                        { sql: "DELETE FROM choice_logs;" },
+                        { sql: "DELETE FROM preference_patterns;" },
+                        { sql: "DELETE FROM insight_queue;" },
+                      ]);
+                      
+                      // 🖼️ v3.4.5: 모든 표지를 미사용 상태로 변경
+                      await exec("UPDATE cover_library SET status='unused', novel_id=NULL");
+                      await loadCoverLibrary();
+                      
+                      // 🔧 v3.5.8: 메모리 큐 정리 (재삽입/재생성 방지)
+                      if (choiceLogQueue.timer) { clearTimeout(choiceLogQueue.timer); choiceLogQueue.timer = null; }
+                      choiceLogQueue.pending = [];
+                      patternUpdateBatch.length = 0;
+                      patternUpdateScheduled = false;
+                      
+                      // 🔄 v3.5.0: 모든 관련 상태 초기화
+                      setLastMatchId(null);
+                      setPair(null);
+                      updateEditItem(null);
+                      setEditOpen(false);
+                      setDailyReco(null);
+                      setFocusMatchNovel(null);
+                      setMatchAnalysis(null);
+                      setMatchPrediction(null);
+                      setSelectedIds([]);
+                      
+                      await loadList();
+                      Alert.alert("완료", "모든 데이터가 삭제되었습니다.");
+                    } catch (e) {
+                      console.warn("resetAll 오류:", e);
+                      Alert.alert("오류", "초기화 중 문제가 발생했습니다: " + (e.message || e));
+                    }
                     setIsLoading(false);
-                    Alert.alert("완료", "모든 데이터가 삭제되었습니다.");
                   },
                 },
               ]
@@ -21508,7 +22103,7 @@ function AppContent() {
   /* ---------- Logs modal ---------- */
   async function openLogs(n) {
     setLogTarget(n);
-    setLogOpen(true);
+    deferOpen(setLogOpen); // 🔧 v3.5.8
     // v2.8: 상대 작품의 rating, manual_tier도 가져와서 티어 표시
     const rows = await all(
       `SELECT m.*, 
@@ -22165,10 +22760,24 @@ function AppContent() {
     return tags;
   };
   
-  /** 검색어에 대해 alias 확장 후 매칭 여부 확인 */
+  /** 검색어에 대해 alias + tagRelations 유사그룹 확장 후 매칭 여부 확인 */
   const matchTagWithAlias = (novelTags, searchTag) => {
     // 검색어 확장 (정규화 + alias들)
     const variants = expandTagForSearch(searchTag);
+    
+    // 🔧 v3.5.8: tagRelations 유사 그룹 확장
+    // "전생"으로 검색 시 같은 유사 그룹의 "환생"도 매칭
+    const resolved = resolveTagToGroup(searchTag, tagRelations);
+    if (resolved) {
+      const groupVariants = getGroupTags(resolved, tagRelations);
+      for (const gv of groupVariants) {
+        const expanded = expandTagForSearch(gv);
+        for (const e of expanded) {
+          if (!variants.includes(e)) variants.push(e);
+        }
+      }
+    }
+    
     return variants.some(v => novelTags.has(v) || 
       Array.from(novelTags).some(t => t.toLowerCase().includes(v))
     );
@@ -22559,9 +23168,13 @@ function AppContent() {
 
     const placeholders = ids.map(() => "?").join(",");
     const rows = await all(
-      `SELECT id, tags, tag_data FROM novels WHERE id IN (${placeholders})`,
+      `SELECT id, tags, tag_data, major_genre, sub_genre FROM novels WHERE id IN (${placeholders})`,
       ids
     );
+
+    // 🔧 v3.5.8: 장르 재계산에 사용할 전체 장르 목록
+    const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
+    const allSub = [...SUB_GENRES, ...userSubGenres];
 
     const queries = [];
     for (const row of (rows || [])) {
@@ -22573,7 +23186,8 @@ function AppContent() {
           .filter(Boolean)
       );
       tagSet.add(t);
-      const newTags = Array.from(tagSet).join(", ");
+      const newTagsArr = Array.from(tagSet);
+      const newTags = newTagsArr.join(", ");
       
       // 2. tag_data 필드 업데이트 (농도 포함)
       let tagData = [];
@@ -22590,16 +23204,27 @@ function AppContent() {
         tagData.push({ tag: t, intensity });
       }
       
+      // 🔧 v3.5.8: 3. major_genre/sub_genre 재계산
+      const detectedMajor = newTagsArr.filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
+        .map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
+      const detectedSub = newTagsArr.filter(tag => allSub.some(s => s.toLowerCase() === tag.toLowerCase()))
+        .map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
+      
       queries.push({
-        sql: "UPDATE novels SET tags=?, tag_data=? WHERE id=?",
-        params: [newTags, JSON.stringify(tagData), row.id],
+        sql: "UPDATE novels SET tags=?, tag_data=?, major_genre=?, sub_genre=? WHERE id=?",
+        params: [
+          newTags, JSON.stringify(tagData),
+          detectedMajor.length > 0 ? JSON.stringify(detectedMajor) : "",
+          detectedSub.length > 0 ? JSON.stringify(detectedSub) : "",
+          row.id,
+        ],
       });
     }
 
     await execBatch(queries);
     await loadList();
     Alert.alert("완료", `${ids.length}개 작품에 "${t}" 태그를 추가했습니다.`);
-  }, []);
+  }, [userMajorGenres, userSubGenres]);
 
   // 🏷️ v3.1.2: 대량편집 농도 지원 - tag_data에서도 제거
   // 🔧 v3.5.1: useCallback으로 변경 (stale closure 방지)
@@ -22618,9 +23243,13 @@ function AppContent() {
 
     const placeholders = ids.map(() => "?").join(",");
     const rows = await all(
-      `SELECT id, tags, tag_data FROM novels WHERE id IN (${placeholders})`,
+      `SELECT id, tags, tag_data, major_genre, sub_genre FROM novels WHERE id IN (${placeholders})`,
       ids
     );
+
+    // 🔧 v3.5.8: 장르 재계산에 사용할 전체 장르 목록
+    const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
+    const allSub = [...SUB_GENRES, ...userSubGenres];
 
     const queries = [];
     for (const row of (rows || [])) {
@@ -22632,7 +23261,8 @@ function AppContent() {
           .filter(Boolean)
       );
       tagSet.delete(t);
-      const newTags = Array.from(tagSet).join(", ");
+      const newTagsArr = Array.from(tagSet);
+      const newTags = newTagsArr.join(", ");
       
       // 2. tag_data 필드 업데이트 (해당 태그 제거)
       let tagData = [];
@@ -22643,16 +23273,27 @@ function AppContent() {
       
       tagData = tagData.filter(td => td.tag !== t);
       
+      // 🔧 v3.5.8: 3. major_genre/sub_genre 재계산
+      const detectedMajor = newTagsArr.filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
+        .map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
+      const detectedSub = newTagsArr.filter(tag => allSub.some(s => s.toLowerCase() === tag.toLowerCase()))
+        .map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
+      
       queries.push({
-        sql: "UPDATE novels SET tags=?, tag_data=? WHERE id=?",
-        params: [newTags, JSON.stringify(tagData), row.id],
+        sql: "UPDATE novels SET tags=?, tag_data=?, major_genre=?, sub_genre=? WHERE id=?",
+        params: [
+          newTags, JSON.stringify(tagData),
+          detectedMajor.length > 0 ? JSON.stringify(detectedMajor) : "",
+          detectedSub.length > 0 ? JSON.stringify(detectedSub) : "",
+          row.id,
+        ],
       });
     }
 
     await execBatch(queries);
     await loadList();
     Alert.alert("완료", `${ids.length}개 작품에서 "${t}" 태그를 삭제했습니다.`);
-  }, []);
+  }, [userMajorGenres, userSubGenres]);
 
   // 🔧 v3.5.1: useCallback으로 변경 (stale closure 방지)
   const batchIncReadCount = useCallback(async (delta) => {
@@ -22729,36 +23370,66 @@ function AppContent() {
         text: "삭제",
         style: "destructive",
         onPress: async () => {
-          // 🔄 v3.5.0: 상태 동기화 - 삭제 대상과 관련된 모든 상태 초기화
-          if (pair && (ids.includes(pair.A?.id) || ids.includes(pair.B?.id))) {
-            setPair(null);
+          setIsLoading(true);
+          try {
+            // 🔄 v3.5.0: 상태 동기화 - 삭제 대상과 관련된 모든 상태 초기화
+            if (pair && (ids.includes(pair.A?.id) || ids.includes(pair.B?.id))) {
+              setPair(null);
+            }
+            if (editItem && ids.includes(editItem.id)) {
+              updateEditItem(null);
+              setEditOpen(false);
+            }
+            if (dailyReco?.novel && ids.includes(dailyReco.novel.id)) {
+              setDailyReco(null);
+            }
+            if (focusMatchNovel && ids.includes(focusMatchNovel.id)) {
+              setFocusMatchNovel(null);
+            }
+            
+            // 🔧 v3.5.8: 삭제 전 표지 정보 수집
+            const placeholders = ids.map(() => "?").join(",");
+            const coverNovels = await all(
+              `SELECT id, cover_image FROM novels WHERE id IN (${placeholders}) AND cover_image IS NOT NULL AND cover_image != ''`,
+              ids
+            );
+            
+            const queries = [];
+            for (const id of ids) {
+              // 🔧 v3.5.8: choice_logs도 함께 삭제 (고아 방지)
+              queries.push({
+                sql: "DELETE FROM choice_logs WHERE winner_id=? OR loser_id=?",
+                params: [id, id],
+              });
+              queries.push({
+                sql: "DELETE FROM matches WHERE a_id=? OR b_id=?",
+                params: [id, id],
+              });
+              queries.push({
+                sql: "DELETE FROM novels WHERE id=?",
+                params: [id],
+              });
+            }
+            await execBatch(queries);
+            
+            // 🔧 v3.5.8: 표지 상태 일괄 업데이트
+            if (coverNovels && coverNovels.length > 0) {
+              const coverQueries = coverNovels.map(cn => ({
+                sql: "UPDATE cover_library SET status='unused', novel_id=NULL WHERE file_path=?",
+                params: [cn.cover_image],
+              }));
+              await execBatch(coverQueries);
+              await loadCoverLibrary();
+            }
+            
+            await rebuildAllFromMatches();
+            setSelectedIds([]);
+            await loadList();
+          } catch (e) {
+            console.warn("batchDelete 오류:", e);
+            Alert.alert("오류", "삭제 중 문제가 발생했습니다: " + (e.message || e));
           }
-          if (editItem && ids.includes(editItem.id)) {
-            updateEditItem(null);
-            setEditOpen(false);
-          }
-          if (dailyReco?.novel && ids.includes(dailyReco.novel.id)) {
-            setDailyReco(null);
-          }
-          if (focusMatchNovel && ids.includes(focusMatchNovel.id)) {
-            setFocusMatchNovel(null);
-          }
-          
-          const queries = [];
-          for (const id of ids) {
-            queries.push({
-              sql: "DELETE FROM matches WHERE a_id=? OR b_id=?",
-              params: [id, id],
-            });
-            queries.push({
-              sql: "DELETE FROM novels WHERE id=?",
-              params: [id],
-            });
-          }
-          await execBatch(queries);
-          await rebuildAllFromMatches();
-          setSelectedIds([]);
-          await loadList();
+          setIsLoading(false);
         },
       },
     ]);
@@ -23237,14 +23908,14 @@ async function exportJSON() {
         // 공유 실패시 모달로 표시
         setExportText(json.length > 30000 ? json.substring(0, 30000) + "\n\n... (일부만 표시)" : json);
         setExportInfo(summary);
-        setExportOpen(true);
+        deferOpen(setExportOpen); // 🔧 v3.5.8
       }
     } else {
       // 500KB 이상: 모달로 표시 (일부만)
       const preview = json.substring(0, 30000) + "\n\n... (데이터가 너무 커서 일부만 표시됨)";
       setExportText(preview);
       setExportInfo(summary + "\n\n⚠️ 데이터가 커서 일부만 표시됩니다.\n공유 버튼으로 전체 데이터를 내보내세요.");
-      setExportOpen(true);
+      deferOpen(setExportOpen); // 🔧 v3.5.8
     }
     
   } catch (e) {
@@ -23447,7 +24118,12 @@ async function importJSON() {
             text: "가져오기",
             onPress: async () => {
               setIsLoading(true);
+              // 🔧 v3.5.8: 전체 복원 플로우를 try-catch로 보호
+              // DELETE 후 INSERT 실패 시 데이터 소실 방지를 위한 안전장치
+              let deleteCompleted = false;
+              try {
               await doClearAll();
+              deleteCompleted = true;
 
               const novelQueries = [];
               const idList = [];
@@ -23517,6 +24193,13 @@ async function importJSON() {
               }
 
               if (novelQueries.length > 0) await execBatch(novelQueries);
+              
+              // 🔧 v3.5.8: 복원 직후 삽입 검증
+              const insertedCheck = await first("SELECT COUNT(*) as cnt FROM novels");
+              const insertedCount = insertedCheck?.cnt || 0;
+              if (insertedCount < lenN) {
+                console.warn(`복원 검증 경고: 예상 ${lenN}개 중 ${insertedCount}개만 삽입됨`);
+              }
 
               // 매칭 복원
               const matchQueries = [];
@@ -23786,6 +24469,12 @@ async function importJSON() {
               setSelectedIds([]);
               setLastMatchId(null);
               
+              // 🔧 v3.5.8: 메모리 큐 정리
+              if (choiceLogQueue.timer) { clearTimeout(choiceLogQueue.timer); choiceLogQueue.timer = null; }
+              choiceLogQueue.pending = [];
+              patternUpdateBatch.length = 0;
+              patternUpdateScheduled = false;
+              
               setImportOpen(false);
               setImportText("");
               setImportValidation(null);
@@ -23799,7 +24488,26 @@ async function importJSON() {
               const plannedInfo = plannedRestored ? `\n(예정 작품 ${data.PL.length}개 복원)` : "";
               const patternInfo = patternsRestored ? `\n(학습 패턴 ${data.PP.length}개 복원)` : "";
               const pcInfo = platformCoversRestored ? "\n(플랫폼 표지 복원됨)" : "";
-              Alert.alert("완료", `데이터를 성공적으로 가져왔습니다!\n(Elo 데이터 완전 복원)${extraInfo}${histInfo}${analysisInfo}${comboInfo}${tagMetaInfo}${plannedInfo}${patternInfo}${pcInfo}`);
+              // 🔧 v3.5.8: 복원 검증 결과 포함
+              const verifyInfo = insertedCount < lenN ? `\n⚠️ 주의: ${lenN}개 중 ${insertedCount}개만 복원됨` : "";
+              Alert.alert("완료", `데이터를 성공적으로 가져왔습니다!\n(Elo 데이터 완전 복원)${verifyInfo}${extraInfo}${histInfo}${analysisInfo}${comboInfo}${tagMetaInfo}${plannedInfo}${patternInfo}${pcInfo}`);
+              } catch (restoreErr) {
+                // 🔧 v3.5.8: 복원 실패 시 명확한 안내
+                console.warn("복원 오류:", restoreErr);
+                if (deleteCompleted) {
+                  // DELETE 성공 후 INSERT 실패 = 가장 위험한 상태
+                  Alert.alert(
+                    "⚠️ 복원 중 오류",
+                    "기존 데이터 삭제 후 복원 도중 오류가 발생했습니다.\n\n" +
+                    "일부 데이터만 복원되었을 수 있습니다.\n" +
+                    "같은 백업 데이터로 다시 '가져오기'를 시도해주세요.\n\n" +
+                    "오류: " + (restoreErr.message || restoreErr)
+                  );
+                } else {
+                  Alert.alert("오류", "복원 준비 중 오류가 발생했습니다.\n기존 데이터는 유지됩니다.\n\n" + (restoreErr.message || restoreErr));
+                }
+                setIsLoading(false);
+              }
             },
           },
         ]
@@ -23827,19 +24535,35 @@ async function importJSON() {
           text: "초기화",
           style: "destructive",
           onPress: async () => {
-            await exec("DELETE FROM matches;");
-            // 🔧 v3.5.5: 학습 데이터도 함께 초기화
-            await exec("DELETE FROM choice_logs;");
-            await exec("DELETE FROM preference_patterns;");
-            await exec("DELETE FROM insight_queue;");
-            setLastMatchId(null);
-            setPair(null);
-            setMatchAnalysis(null);
-            setMatchPrediction(null);
-            
-            await rebuildAllFromMatches();
-            await loadList();
-            Alert.alert("완료", "대진 로그가 초기화되었습니다.");
+            setIsLoading(true);
+            try {
+              // 🔧 v3.5.8: 일괄 배치로 원자적 실행
+              await execBatch([
+                { sql: "DELETE FROM matches;" },
+                { sql: "DELETE FROM choice_logs;" },
+                { sql: "DELETE FROM preference_patterns;" },
+                { sql: "DELETE FROM insight_queue;" },
+              ]);
+              
+              // 🔧 v3.5.8: 메모리 큐 정리 (재삽입/재생성 방지)
+              if (choiceLogQueue.timer) { clearTimeout(choiceLogQueue.timer); choiceLogQueue.timer = null; }
+              choiceLogQueue.pending = [];
+              patternUpdateBatch.length = 0;
+              patternUpdateScheduled = false;
+              
+              setLastMatchId(null);
+              setPair(null);
+              setMatchAnalysis(null);
+              setMatchPrediction(null);
+              
+              await rebuildAllFromMatches();
+              await loadList();
+              Alert.alert("완료", "대진 로그가 초기화되었습니다.");
+            } catch (e) {
+              console.warn("resetMatches 오류:", e);
+              Alert.alert("오류", "초기화 중 문제가 발생했습니다: " + (e.message || e));
+            }
+            setIsLoading(false);
           },
         },
       ]
@@ -24200,7 +24924,7 @@ async function importJSON() {
                   title="라이브러리" 
                   onPress={() => {
                     setCoverSelectTarget("new");
-                    setCoverSelectModalOpen(true);
+                    deferOpen(setCoverSelectModalOpen); // 🔧 v3.5.8
                   }} 
                   color={C.primary}
                   style={{ minWidth: 90 }}
@@ -24252,91 +24976,61 @@ async function importJSON() {
                 onChangeText={setAuthor}
                 placeholder="작가"
               />
-              <Label style={{ marginTop: 10 }}>태그</Label>
-              <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
-                <Input
-                  value={tags}
-                  onChangeText={(t) => {
-                    // 🔧 v3.4.5: 텍스트 변경 시 대장르/부장르 자동 동기화 (편집 모달과 일관성)
-                    const inputTags = t.split(",").map(tag => tag.trim()).filter(Boolean);
-                    
-                    const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
-                    const allSub = [...SUB_GENRES, ...userSubGenres];
-                    
-                    const detectedMajor = inputTags.filter(tag => 
-                      allMajor.some(m => m.toLowerCase() === tag.toLowerCase())
-                    ).map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
-                    
-                    const detectedSub = inputTags.filter(tag => 
-                      allSub.some(s => s.toLowerCase() === tag.toLowerCase())
-                    ).map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
-                    
-                    setTags(t);
-                    setNewMajorGenre(detectedMajor);
-                    setNewSubGenre(detectedSub);
+              {/* 🆕 v3.5.8: 태그 칩 뷰 (신규 등록) */}
+              <View style={{ marginTop: 10, marginBottom: 8 }}>
+                <TagChipView
+                  tags={tags}
+                  tagSentiments={tagSentiments}
+                  comboTags={comboTags}
+                  userMajorGenres={userMajorGenres}
+                  userSubGenres={userSubGenres}
+                  tagAttributes={tagAttributes}
+                  onRemoveTag={(tag) => {
+                    const tdStr = newTagData?.length > 0 ? JSON.stringify(newTagData) : "";
+                    const result = removeTagAndSyncGenres(tags, tag, userMajorGenres, userSubGenres, tdStr);
+                    setTags(result.tags);
+                    try { setNewMajorGenre(JSON.parse(result.major_genre || "[]")); } catch { setNewMajorGenre([]); }
+                    try { setNewSubGenre(JSON.parse(result.sub_genre || "[]")); } catch { setNewSubGenre([]); }
+                    try { setNewTagData(result.tag_data ? JSON.parse(result.tag_data) : []); } catch { setNewTagData([]); }
                   }}
-                  placeholder="예: 무협, 현판, 헌터"
-                  style={{ flex: 1 }}
-                />
-                <OutlineButton
-                  title="🏷️ 고르기"
-                  onPress={() => {
-                    // 🔧 v3.4.5: tags 문자열에서 대장르/부장르/일반태그를 분리하여 전달 (편집 모달과 일관성)
+                  onOpenTagModal={() => {
                     const currentTags = tags.split(",").map(t => t.trim()).filter(Boolean);
-                    
                     const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
                     const allSub = [...SUB_GENRES, ...userSubGenres];
-                    
-                    // 대장르 감지
-                    const majorTags = currentTags.filter(tag => 
-                      allMajor.some(m => m.toLowerCase() === tag.toLowerCase())
-                    ).map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
-                    
-                    // 부장르 감지
-                    const subTags = currentTags.filter(tag => 
-                      allSub.some(s => s.toLowerCase() === tag.toLowerCase())
-                    ).map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
-                    
-                    // 일반 태그 (대장르/부장르 제외)
-                    const generalTags = currentTags.filter(tag => 
+                    const majorTags = currentTags.filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
+                      .map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
+                    const subTags = currentTags.filter(tag => allSub.some(s => s.toLowerCase() === tag.toLowerCase()))
+                      .map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
+                    const generalTags = currentTags.filter(tag =>
                       !allMajor.some(m => m.toLowerCase() === tag.toLowerCase()) &&
                       !allSub.some(s => s.toLowerCase() === tag.toLowerCase())
                     );
-                    
-                    // 분리된 값으로 모달 열기 (JSON 문자열로 전달)
-                    openTagModal(
-                      "new", 
-                      generalTags, 
+                    openTagModal("new", generalTags,
                       majorTags.length > 0 ? JSON.stringify(majorTags) : "",
                       subTags.length > 0 ? JSON.stringify(subTags) : "",
                       newTagData
                     );
                   }}
-                  style={{ paddingHorizontal: 12 }}
+                  onTagsTextChange={(t) => {
+                    const inputTags = t.split(",").map(tag => tag.trim()).filter(Boolean);
+                    const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
+                    const allSub = [...SUB_GENRES, ...userSubGenres];
+                    const detectedMajor = inputTags.filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
+                      .map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
+                    const detectedSub = inputTags.filter(tag => allSub.some(s => s.toLowerCase() === tag.toLowerCase()))
+                      .map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
+                    setTags(t);
+                    setNewMajorGenre(detectedMajor);
+                    setNewSubGenre(detectedSub);
+                    // 🔧 v3.5.8: tag_data에서 제거된 태그 동기 삭제
+                    const inputTagsLc = new Set(inputTags.map(x => x.toLowerCase()));
+                    setNewTagData(prev => (prev || []).filter(td => inputTagsLc.has((td.tag || "").toLowerCase())));
+                  }}
+                  placeholder="태그가 없습니다. 🏷️ 추가를 눌러 태그를 선택하세요."
+                  textPlaceholder="예: 무협, 현판, 헌터"
+                  theme={C}
                 />
               </View>
-              {/* 선택된 대장르/부장르 표시 - 🔧 v3.4.5: tags 문자열에서 자동 감지하여 표시 */}
-              {(() => {
-                const currentTags = (tags || "").split(",").map(t => t.trim()).filter(Boolean);
-                const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
-                const allSub = [...SUB_GENRES, ...userSubGenres];
-                
-                const majorTags = currentTags.filter(tag => 
-                  allMajor.some(m => m.toLowerCase() === tag.toLowerCase())
-                );
-                const subTags = currentTags.filter(tag => 
-                  allSub.some(s => s.toLowerCase() === tag.toLowerCase())
-                );
-                
-                if (majorTags.length === 0 && subTags.length === 0) return null;
-                
-                return (
-                  <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 8 }}>
-                    {majorTags.map((g) => <GenreBadge key={g} genre={g} type="major" />)}
-                    {subTags.map((g) => <GenreBadge key={g} genre={g} type="sub" />)}
-                  </View>
-                );
-              })()}
               <Label style={{ marginTop: 10 }}>연재처(복수 선택 가능)</Label>
               <PlatformChips
                 platforms={platforms}
@@ -24558,7 +25252,7 @@ async function importJSON() {
                 />
                 {/* 🔍 고급 검색 버튼 */}
                 <TouchableOpacity
-                  onPress={() => setSearchTagModalOpen(true)}
+                  onPress={() => deferOpen(setSearchTagModalOpen)}
                   style={{
                     backgroundColor: (searchIncludeTags.length > 0 || searchExcludeTags.length > 0 || searchExcludeStatus.length > 0 || searchExcludeWorkStatus.length > 0) 
                       ? C.primary : C.chip,
@@ -24726,7 +25420,7 @@ async function importJSON() {
                   }} 
                 />
                 {compareMode && compareIds.length === 2 && (
-                  <OutlineButton title="비교하기" onPress={() => setCompareOpen(true)} style={{ marginLeft: 12 }} />
+                  <OutlineButton title="비교하기" onPress={() => deferOpen(setCompareOpen)} style={{ marginLeft: 12 }} />
                 )}
               </View>
             </Section>
@@ -25376,91 +26070,56 @@ async function importJSON() {
               </View>
               
               {/* 🔧 v3.4.5: 예정탭 신규 등록에 태그 기능 추가 */}
-              <Label style={{ marginTop: 10 }}>태그</Label>
-              <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
-                <Input
-                  value={plannedTags}
-                  onChangeText={(t) => {
-                    // 텍스트 변경 시 대장르/부장르 자동 감지
-                    const inputTags = t.split(",").map(tag => tag.trim()).filter(Boolean);
-                    
-                    const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
-                    const allSub = [...SUB_GENRES, ...userSubGenres];
-                    
-                    const detectedMajor = inputTags.filter(tag => 
-                      allMajor.some(m => m.toLowerCase() === tag.toLowerCase())
-                    ).map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
-                    
-                    const detectedSub = inputTags.filter(tag => 
-                      allSub.some(s => s.toLowerCase() === tag.toLowerCase())
-                    ).map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
-                    
-                    setPlannedTags(t);
-                    setPlannedMajorGenre(detectedMajor);
-                    setPlannedSubGenre(detectedSub);
+              {/* 🆕 v3.5.8: 태그 칩 뷰 (예정작 신규) */}
+              <View style={{ marginTop: 10, marginBottom: 8 }}>
+                <TagChipView
+                  tags={plannedTags}
+                  tagSentiments={tagSentiments}
+                  comboTags={comboTags}
+                  userMajorGenres={userMajorGenres}
+                  userSubGenres={userSubGenres}
+                  tagAttributes={tagAttributes}
+                  onRemoveTag={(tag) => {
+                    const result = removeTagAndSyncGenres(plannedTags, tag, userMajorGenres, userSubGenres);
+                    setPlannedTags(result.tags);
+                    try { setPlannedMajorGenre(JSON.parse(result.major_genre || "[]")); } catch { setPlannedMajorGenre([]); }
+                    try { setPlannedSubGenre(JSON.parse(result.sub_genre || "[]")); } catch { setPlannedSubGenre([]); }
                   }}
-                  placeholder="예: 무협, 현판, 헌터"
-                  style={{ flex: 1 }}
-                />
-                <OutlineButton
-                  title="🏷️ 고르기"
-                  onPress={() => {
-                    // tags 문자열에서 대장르/부장르/일반태그를 분리하여 전달
+                  onOpenTagModal={() => {
                     const currentTags = plannedTags.split(",").map(t => t.trim()).filter(Boolean);
-                    
                     const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
                     const allSub = [...SUB_GENRES, ...userSubGenres];
-                    
-                    // 대장르 감지
-                    const majorTags = currentTags.filter(tag => 
-                      allMajor.some(m => m.toLowerCase() === tag.toLowerCase())
-                    ).map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
-                    
-                    // 부장르 감지
-                    const subTags = currentTags.filter(tag => 
-                      allSub.some(s => s.toLowerCase() === tag.toLowerCase())
-                    ).map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
-                    
-                    // 일반 태그 (대장르/부장르 제외)
-                    const generalTags = currentTags.filter(tag => 
+                    const majorTags = currentTags.filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
+                      .map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
+                    const subTags = currentTags.filter(tag => allSub.some(s => s.toLowerCase() === tag.toLowerCase()))
+                      .map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
+                    const generalTags = currentTags.filter(tag =>
                       !allMajor.some(m => m.toLowerCase() === tag.toLowerCase()) &&
                       !allSub.some(s => s.toLowerCase() === tag.toLowerCase())
                     );
-                    
-                    // 분리된 값으로 모달 열기
-                    openTagModal(
-                      "plannedNew", 
-                      generalTags, 
+                    openTagModal("plannedNew", generalTags,
                       majorTags.length > 0 ? JSON.stringify(majorTags) : "",
                       subTags.length > 0 ? JSON.stringify(subTags) : "",
                       []
                     );
                   }}
-                  style={{ paddingHorizontal: 12 }}
+                  onTagsTextChange={(t) => {
+                    const inputTags = t.split(",").map(tag => tag.trim()).filter(Boolean);
+                    const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
+                    const allSub = [...SUB_GENRES, ...userSubGenres];
+                    const detectedMajor = inputTags.filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
+                      .map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
+                    const detectedSub = inputTags.filter(tag => allSub.some(s => s.toLowerCase() === tag.toLowerCase()))
+                      .map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
+                    setPlannedTags(t);
+                    setPlannedMajorGenre(detectedMajor);
+                    setPlannedSubGenre(detectedSub);
+                  }}
+                  placeholder="태그가 없습니다. 🏷️ 추가를 눌러 태그를 선택하세요."
+                  textPlaceholder="예: 무협, 현판, 헌터"
+                  theme={C}
                 />
               </View>
-              {/* 선택된 대장르/부장르 배지 표시 */}
-              {(() => {
-                const currentTags = (plannedTags || "").split(",").map(t => t.trim()).filter(Boolean);
-                const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
-                const allSub = [...SUB_GENRES, ...userSubGenres];
-                
-                const majorTags = currentTags.filter(tag => 
-                  allMajor.some(m => m.toLowerCase() === tag.toLowerCase())
-                );
-                const subTags = currentTags.filter(tag => 
-                  allSub.some(s => s.toLowerCase() === tag.toLowerCase())
-                );
-                
-                if (majorTags.length === 0 && subTags.length === 0) return null;
-                
-                return (
-                  <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 8 }}>
-                    {majorTags.map((g) => <GenreBadge key={g} genre={g} type="major" />)}
-                    {subTags.map((g) => <GenreBadge key={g} genre={g} type="sub" />)}
-                  </View>
-                );
-              })()}
               
               <Label style={{ marginTop: 10 }}>우선순위</Label>
               <View style={{ flexDirection: "row", gap: 8 }}>
@@ -25514,7 +26173,7 @@ async function importJSON() {
                   title="라이브러리" 
                   onPress={() => {
                     setCoverSelectTarget("planned");
-                    setCoverSelectModalOpen(true);
+                    deferOpen(setCoverSelectModalOpen); // 🔧 v3.5.8
                   }} 
                   color={C.primary}
                   style={{ minWidth: 90 }}
@@ -25671,8 +26330,8 @@ async function importJSON() {
                       return (
                         <TouchableOpacity
                           onPress={() => {
-                            setPlannedEditItem({ ...item });
-                            setPlannedEditOpen(true);
+                            updatePlannedEditItem({ ...item });
+                            deferOpen(setPlannedEditOpen); // 🔧 v3.5.8
                           }}
                           onLongPress={() => Alert.alert(item.title, item.note || "(메모 없음)")}
                           style={{
@@ -26870,7 +27529,7 @@ async function importJSON() {
               
               <OutlineButton
                 title="⚙️ 보충 기준 설정"
-                onPress={() => setSupplementSettingsOpen(true)}
+                onPress={() => deferOpen(setSupplementSettingsOpen)}
               />
             </Section>
 
@@ -27146,32 +27805,19 @@ async function importJSON() {
                         ].filter(Boolean).join(" / ")}
                       </Text>
                     )}
-                    <Label>대장르 / 부장르 / 태그</Label>
-                    <View style={{ backgroundColor: C.bg, padding: 12, borderRadius: 12, marginBottom: 8 }}>
-                      {editItem?.major_genre && (
-                        <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 4 }}>
-                          <Text style={{ color: C.sub, fontSize: 12, marginRight: 6 }}>대장르:</Text>
-                          {parseMajorSub(editItem.major_genre).map(g => (
-                            <GenreBadge key={g} genre={g} type="major" />
-                          ))}
-                        </View>
-                      )}
-                      {editItem?.sub_genre && (
-                        <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 4 }}>
-                          <Text style={{ color: C.sub, fontSize: 12, marginRight: 6 }}>부장르:</Text>
-                          {parseMajorSub(editItem.sub_genre).map(g => (
-                            <GenreBadge key={g} genre={g} type="sub" />
-                          ))}
-                        </View>
-                      )}
-                      <Text style={{ color: C.sub, fontSize: 12 }}>
-                        태그: {editItem?.tags || "(없음)"} ({(editItem?.tags || "").split(",").filter(t=>t.trim()).length}개)
-                      </Text>
-                    </View>
-                    <OutlineButton
-                      title="🏷️ 태그 선택 모달 열기"
-                      onPress={() => {
-                        // 🔧 v3.5.6: openTagModal 사용하여 초기값 정상 전달
+                    {/* 🆕 v3.5.8: 태그 칩 뷰 (보충탭) */}
+                    <TagChipView
+                      tags={editItem?.tags}
+                      tagSentiments={tagSentiments}
+                      comboTags={comboTags}
+                      userMajorGenres={userMajorGenres}
+                      userSubGenres={userSubGenres}
+                      tagAttributes={tagAttributes}
+                      onRemoveTag={(tag) => {
+                        const result = removeTagAndSyncGenres(editItem?.tags, tag, userMajorGenres, userSubGenres, editItem?.tag_data);
+                        updateEditItem(prev => prev ? { ...prev, ...result } : null);
+                      }}
+                      onOpenTagModal={() => {
                         const currentTags = (editItem?.tags || "").split(",").map(t => t.trim()).filter(Boolean);
                         const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
                         const allSub = [...SUB_GENRES, ...userSubGenres];
@@ -27179,18 +27825,20 @@ async function importJSON() {
                           .map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
                         const subTags = currentTags.filter(tag => allSub.some(s => s.toLowerCase() === tag.toLowerCase()))
                           .map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
-                        const generalTags = currentTags.filter(tag => 
+                        const generalTags = currentTags.filter(tag =>
                           !allMajor.some(m => m.toLowerCase() === tag.toLowerCase()) &&
                           !allSub.some(s => s.toLowerCase() === tag.toLowerCase())
                         );
                         let tagData = [];
                         try { if (editItem?.tag_data) tagData = JSON.parse(editItem.tag_data); } catch (e) {}
-                        openTagModal("supplement", generalTags, 
+                        openTagModal("supplement", generalTags,
                           majorTags.length > 0 ? JSON.stringify(majorTags) : "",
                           subTags.length > 0 ? JSON.stringify(subTags) : "",
                           tagData
                         );
                       }}
+                      placeholder="태그가 없습니다"
+                      theme={C}
                     />
                   </View>
 
@@ -27288,7 +27936,7 @@ async function importJSON() {
                         title={editItem?.cover_image ? "🖼️ 표지 변경" : "🖼️ 표지 등록"}
                         onPress={() => {
                           setCoverSelectTarget("edit");
-                          setCoverSelectModalOpen(true);
+                          deferOpen(setCoverSelectModalOpen); // 🔧 v3.5.8
                         }}
                       />
                       {editItem?.cover_image ? (
@@ -27378,6 +28026,11 @@ async function importJSON() {
                           const savedIssues = supplementCurrentNovel?.issues || [];
                           setSavedSupplementId(savedId);
                           
+                          // 🔧 v3.5.8: 저장 전 원본 표지 조회 (cover_library 상태 추적용)
+                          const originalNovel = await first("SELECT cover_image FROM novels WHERE id=?", [current.id]);
+                          const originalCover = originalNovel?.cover_image || "";
+                          const newCover = current.cover_image || "";
+                          
                           let plats = [];
                           try { plats = JSON.parse(current.platforms || "[]"); } catch { plats = []; }
                           
@@ -27393,7 +28046,7 @@ async function importJSON() {
                               current.sub_genre || "",
                               current.note?.trim() || "",
                               current.tag_data || "",
-                              current.cover_image || "",
+                              newCover,
                               current.link?.trim() || "",
                               current.status || "reading",
                               current.work_status || "ongoing",
@@ -27405,6 +28058,12 @@ async function importJSON() {
                               current.id,
                             ]
                           );
+                          
+                          // 🔧 v3.5.8: 표지 변경 시 cover_library 상태 업데이트
+                          if (newCover !== originalCover) {
+                            await applyNovelCover(current.id, newCover, originalCover);
+                            await loadCoverLibrary();
+                          }
                           
                           // 🔧 v3.5.6: 세션 카운터 + 완료 기록
                           setSupplementSessionCount(prev => prev + 1);
@@ -29634,7 +30293,7 @@ async function importJSON() {
               
               {/* 메인 버튼 */}
               <TouchableOpacity
-                onPress={() => setTagManagerModalOpen(true)}
+                onPress={() => deferOpen(setTagManagerModalOpen)}
                 style={{
                   backgroundColor: C.primary,
                   padding: 16,
@@ -30021,7 +30680,7 @@ async function importJSON() {
                       key={sysId}
                       onPress={() => {
                         setEditingCoordSystem(sys);
-                        setCoordManageOpen(true);
+                        deferOpen(setCoordManageOpen); // 🔧 v3.5.8
                       }}
                       style={{
                         backgroundColor: isDark ? "#334155" : "#fff",
@@ -30067,7 +30726,7 @@ async function importJSON() {
                     createdAt: Date.now(),
                   };
                   setEditingCoordSystem(newSystem);
-                  setCoordManageOpen(true);
+                  deferOpen(setCoordManageOpen); // 🔧 v3.5.8
                 }}
               />
               
@@ -30139,7 +30798,7 @@ async function importJSON() {
                       onPress={() => {
                         setTagRelationTarget(group.tags[0]);
                         setTagRelationEditGroup(group);
-                        setTagRelationModalOpen(true);
+                        deferOpen(setTagRelationModalOpen); // 🔧 v3.5.8
                       }}
                       style={{
                         backgroundColor: group.type === "similar" 
@@ -30589,7 +31248,7 @@ async function importJSON() {
               />
               <OutlineButton
                 title="JSON 가져오기 (복원)"
-                onPress={() => setImportOpen(true)}
+                onPress={() => deferOpen(setImportOpen)}
                 style={{ marginTop: 8 }}
               />
               <OutlineButton
@@ -30683,6 +31342,66 @@ async function importJSON() {
               <Text style={{ color: C.sub, fontSize: 11, marginTop: 4, marginLeft: 4 }}>
                 💡 v3.2.1 이전 사용자: 한 번 실행하면 과거 매칭도 분석에 활용됩니다
               </Text>
+              
+              {/* 🔧 v3.5.8: 데이터 무결성 검증 */}
+              <OutlineButton
+                title="🔍 데이터 무결성 검증"
+                onPress={async () => {
+                  Alert.alert(
+                    "데이터 무결성 검증",
+                    "모든 작품의 데이터 정합성을 검사하고 자동 수정합니다.\n\n" +
+                    "• 태그 ↔ tag_data/장르 필드 동기화\n" +
+                    "• JSON/숫자 필드 유효성 검사\n" +
+                    "• 고아 매치/선택로그 정리\n" +
+                    "• 표지 라이브러리 상태 검증\n\n" +
+                    "원본 데이터 손상 위험 없이 파생 데이터만 재계산합니다.",
+                    [
+                      { text: "취소", style: "cancel" },
+                      {
+                        text: "검증 실행",
+                        onPress: async () => {
+                          setIsLoading(true);
+                          try {
+                            const result = await verifyDataIntegrity({ silent: false, forceRun: true });
+                            if (result.error) {
+                              Alert.alert("오류", result.error);
+                            } else {
+                              await loadList();
+                              await loadCoverLibrary();
+                              const lines = [
+                                `✅ 검증 완료`,
+                                ``,
+                                `• 수정된 작품: ${result.novelsFixed || 0}개`,
+                                `• 실행 쿼리: ${result.queriesExecuted || 0}건`,
+                                `• 고아 매치 제거: ${result.orphanMatchesRemoved || 0}건`,
+                              ];
+                              if (result.details && result.details.length > 0) {
+                                lines.push(``);
+                                lines.push(`📋 상세:`);
+                                for (const d of result.details.slice(-10)) {
+                                  lines.push(d);
+                                }
+                                if (result.details.length > 10) {
+                                  lines.push(`... 외 ${result.details.length - 10}건`);
+                                }
+                              }
+                              Alert.alert("무결성 검증 결과", lines.join("\n"));
+                            }
+                          } catch (e) {
+                            Alert.alert("오류", "검증 중 오류: " + (e.message || e));
+                          }
+                          setIsLoading(false);
+                        }
+                      }
+                    ]
+                  );
+                }}
+                style={{ marginTop: 8 }}
+                disabled={isLoading}
+              />
+              <Text style={{ color: C.sub, fontSize: 11, marginTop: 4, marginLeft: 4 }}>
+                💡 데이터 이상이 의심될 때 실행하세요. 앱 시작 시 자동으로도 실행됩니다.
+              </Text>
             </Section>
 
             <Section title="⚠️ 위험">
@@ -30694,7 +31413,7 @@ async function importJSON() {
                 color={C.primary}
                 onPress={() => {
                   setResetSelections({});
-                  setCustomResetOpen(true);
+                  deferOpen(setCustomResetOpen); // 🔧 v3.5.8
                 }}
               />
               <OutlineButton
@@ -30720,7 +31439,7 @@ async function importJSON() {
       <Modal
         visible={editOpen}
         animationType="slide"
-        onRequestClose={() => setEditOpen(false)}
+        onRequestClose={() => { setEditOpen(false); updateEditItem(null); }}
         transparent
       >
         <View
@@ -30783,13 +31502,13 @@ async function importJSON() {
                       <Text style={{ color: C.sub, fontSize: 10 }}>없음</Text>
                     </View>
                   )}
-                  <OutlineButton title="URL" onPress={() => openUrlModal(setEditCoverImage)} style={{ minWidth: 60 }} />
-                  <OutlineButton title="갤러리" onPress={() => pickImageFromGallery(setEditCoverImage)} style={{ minWidth: 70 }} />
+                  <OutlineButton title="URL" onPress={() => openUrlModal(setEditCoverImageSync)} style={{ minWidth: 60 }} />
+                  <OutlineButton title="갤러리" onPress={() => pickImageFromGallery(setEditCoverImageSync)} style={{ minWidth: 70 }} />
                   <OutlineButton 
                     title="라이브러리" 
                     onPress={() => {
                       setCoverSelectTarget("edit");
-                      setCoverSelectModalOpen(true);
+                      deferOpen(setCoverSelectModalOpen); // 🔧 v3.5.8
                     }} 
                     color={C.primary}
                     style={{ minWidth: 90 }}
@@ -30797,7 +31516,7 @@ async function importJSON() {
                   {editCoverImage && (
                     <OutlineButton 
                       title="삭제" 
-                      onPress={() => setEditCoverImage("")} 
+                      onPress={() => setEditCoverImageSync("")} 
                       color={C.warn} 
                       style={{ minWidth: 60 }}
                     />
@@ -30834,109 +31553,71 @@ async function importJSON() {
                   }
                 />
 
-                <Label style={{ marginTop: 10 }}>태그</Label>
-                <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
-                  <Input
-                    value={editItem.tags || ""}
-                    onChangeText={(t) => {
-                      // 🔧 v3.4.4: 텍스트 변경 시 대장르/부장르 자동 동기화
-                      // 입력된 태그 문자열에서 대장르/부장르를 자동 감지하여 분리
-                      const inputTags = t.split(",").map(tag => tag.trim()).filter(Boolean);
-                      
-                      const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
-                      const allSub = [...SUB_GENRES, ...userSubGenres];
-                      
-                      const detectedMajor = inputTags.filter(tag => 
-                        allMajor.some(m => m.toLowerCase() === tag.toLowerCase())
-                      );
-                      const detectedSub = inputTags.filter(tag => 
-                        allSub.some(s => s.toLowerCase() === tag.toLowerCase())
-                      );
-                      
-                      // 정규화: 대소문자 맞추기
-                      const normalizedMajor = detectedMajor.map(tag => 
-                        allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag
-                      );
-                      const normalizedSub = detectedSub.map(tag => 
-                        allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag
-                      );
-                      
-                      updateEditItem(prev => prev ? { 
-                        ...prev, 
-                        tags: t,
-                        major_genre: normalizedMajor.length > 0 ? JSON.stringify(normalizedMajor) : "",
-                        sub_genre: normalizedSub.length > 0 ? JSON.stringify(normalizedSub) : "",
-                      } : null);
+                {/* 🆕 v3.5.8: 태그 칩 뷰 (편집 모달) */}
+                <View style={{ marginTop: 10, marginBottom: 8 }}>
+                  <TagChipView
+                    tags={editItem.tags}
+                    tagSentiments={tagSentiments}
+                    comboTags={comboTags}
+                    userMajorGenres={userMajorGenres}
+                    userSubGenres={userSubGenres}
+                    tagAttributes={tagAttributes}
+                    onRemoveTag={(tag) => {
+                      const result = removeTagAndSyncGenres(editItem?.tags, tag, userMajorGenres, userSubGenres, editItem?.tag_data);
+                      updateEditItem(prev => prev ? { ...prev, ...result } : null);
                     }}
-                    style={{ flex: 1 }}
-                  />
-                  <OutlineButton
-                    title="🏷️ 고르기"
-                    onPress={() => {
-                      // 🔧 v3.4.4: tags 문자열에서 대장르/부장르/일반태그를 분리하여 전달
+                    onOpenTagModal={() => {
                       const currentTags = (editItem.tags || "").split(",").map(t => t.trim()).filter(Boolean);
-                      
                       const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
                       const allSub = [...SUB_GENRES, ...userSubGenres];
-                      
-                      // 대장르 감지
-                      const majorTags = currentTags.filter(tag => 
-                        allMajor.some(m => m.toLowerCase() === tag.toLowerCase())
-                      ).map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
-                      
-                      // 부장르 감지
-                      const subTags = currentTags.filter(tag => 
-                        allSub.some(s => s.toLowerCase() === tag.toLowerCase())
-                      ).map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
-                      
-                      // 일반 태그 (대장르/부장르 제외)
-                      const generalTags = currentTags.filter(tag => 
+                      const majorTags = currentTags.filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
+                        .map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
+                      const subTags = currentTags.filter(tag => allSub.some(s => s.toLowerCase() === tag.toLowerCase()))
+                        .map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
+                      const generalTags = currentTags.filter(tag =>
                         !allMajor.some(m => m.toLowerCase() === tag.toLowerCase()) &&
                         !allSub.some(s => s.toLowerCase() === tag.toLowerCase())
                       );
-                      
-                      // 🏷️ v5.0: tag_data 파싱
                       let tagData = [];
-                      try {
-                        if (editItem.tag_data) {
-                          tagData = JSON.parse(editItem.tag_data);
-                        }
-                      } catch (e) {}
-                      
-                      // 분리된 값으로 모달 열기
-                      openTagModal(
-                        "edit", 
-                        generalTags, 
+                      try { if (editItem.tag_data) tagData = JSON.parse(editItem.tag_data); } catch (e) {}
+                      openTagModal("edit", generalTags,
                         majorTags.length > 0 ? JSON.stringify(majorTags) : "",
                         subTags.length > 0 ? JSON.stringify(subTags) : "",
                         tagData
                       );
                     }}
-                    style={{ paddingHorizontal: 12 }}
+                    onTagsTextChange={(t) => {
+                      const inputTags = t.split(",").map(tag => tag.trim()).filter(Boolean);
+                      const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
+                      const allSub = [...SUB_GENRES, ...userSubGenres];
+                      const normalizedMajor = inputTags.filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
+                        .map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
+                      const normalizedSub = inputTags.filter(tag => allSub.some(m => m.toLowerCase() === tag.toLowerCase()))
+                        .map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
+                      // 🔧 v3.5.8: tag_data에서 제거된 태그 동기 삭제
+                      const inputTagsLc = new Set(inputTags.map(x => x.toLowerCase()));
+                      updateEditItem(prev => {
+                        if (!prev) return null;
+                        let syncedTagData = prev.tag_data || "";
+                        try {
+                          const parsed = JSON.parse(syncedTagData || "[]");
+                          if (Array.isArray(parsed)) {
+                            const filtered = parsed.filter(td => inputTagsLc.has((td.tag || "").toLowerCase()));
+                            syncedTagData = filtered.length > 0 ? JSON.stringify(filtered) : "";
+                          }
+                        } catch {}
+                        return {
+                          ...prev, tags: t,
+                          major_genre: normalizedMajor.length > 0 ? JSON.stringify(normalizedMajor) : "",
+                          sub_genre: normalizedSub.length > 0 ? JSON.stringify(normalizedSub) : "",
+                          tag_data: syncedTagData,
+                        };
+                      });
+                    }}
+                    placeholder="태그가 없습니다. 🏷️ 추가를 눌러 태그를 선택하세요."
+                    theme={C}
                   />
                 </View>
-                {/* 🔧 v3.4.4: 대장르/부장르 표시 - tags 문자열에서 자동 감지하여 표시 */}
-                {(() => {
-                  const currentTags = (editItem.tags || "").split(",").map(t => t.trim()).filter(Boolean);
-                  const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
-                  const allSub = [...SUB_GENRES, ...userSubGenres];
-                  
-                  const majorTags = currentTags.filter(tag => 
-                    allMajor.some(m => m.toLowerCase() === tag.toLowerCase())
-                  );
-                  const subTags = currentTags.filter(tag => 
-                    allSub.some(s => s.toLowerCase() === tag.toLowerCase())
-                  );
-                  
-                  if (majorTags.length === 0 && subTags.length === 0) return null;
-                  
-                  return (
-                    <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 8 }}>
-                      {majorTags.map((g) => <GenreBadge key={g} genre={g} type="major" />)}
-                      {subTags.map((g) => <GenreBadge key={g} genre={g} type="sub" />)}
-                    </View>
-                  );
-                })()}
 
                 <Label style={{ marginTop: 10 }}>연재처</Label>
                 <PlatformChips
@@ -32510,13 +33191,13 @@ async function importJSON() {
                 <Label>제목 *</Label>
                 <Input
                   value={plannedEditItem.title || ""}
-                  onChangeText={(t) => setPlannedEditItem({ ...plannedEditItem, title: t })}
+                  onChangeText={(t) => updatePlannedEditItem(prev => prev ? { ...prev, title: t } : null)}
                 />
                 
                 <Label style={{ marginTop: 10 }}>작가</Label>
                 <Input
                   value={plannedEditItem.author || ""}
-                  onChangeText={(t) => setPlannedEditItem({ ...plannedEditItem, author: t })}
+                  onChangeText={(t) => updatePlannedEditItem(prev => prev ? { ...prev, author: t } : null)}
                 />
                 
                 <Label style={{ marginTop: 10 }}>연재처</Label>
@@ -32530,10 +33211,12 @@ async function importJSON() {
                         label={p}
                         active={on}
                         onPress={() => {
-                          const next = on ? cur.filter((x) => x !== p) : [...cur, p];
-                          setPlannedEditItem({
-                            ...plannedEditItem,
-                            platforms: JSON.stringify(next),
+                          // 🔧 v3.5.8: 함수형 업데이트
+                          updatePlannedEditItem(prev => {
+                            if (!prev) return null;
+                            const curP = parsePlatforms(prev.platforms);
+                            const next = on ? curP.filter((x) => x !== p) : [...curP, p];
+                            return { ...prev, platforms: JSON.stringify(next) };
                           });
                         }}
                       />
@@ -32548,7 +33231,7 @@ async function importJSON() {
                       key={opt.key}
                       label={opt.label}
                       active={plannedEditItem.work_status === opt.key}
-                      onPress={() => setPlannedEditItem({ ...plannedEditItem, work_status: opt.key })}
+                      onPress={() => updatePlannedEditItem(prev => prev ? { ...prev, work_status: opt.key } : null)}
                     />
                   ))}
                 </View>
@@ -32556,7 +33239,7 @@ async function importJSON() {
                 <Label style={{ marginTop: 10 }}>전체 회차 수</Label>
                 <Input
                   value={String(plannedEditItem.total_episodes || "")}
-                  onChangeText={(t) => setPlannedEditItem({ ...plannedEditItem, total_episodes: t })}
+                  onChangeText={(t) => updatePlannedEditItem(prev => prev ? { ...prev, total_episodes: t } : null)}
                   keyboardType="number-pad"
                 />
                 
@@ -32565,7 +33248,7 @@ async function importJSON() {
                   {[1, 2, 3, 4, 5].map((p) => (
                     <TouchableOpacity
                       key={p}
-                      onPress={() => setPlannedEditItem({ ...plannedEditItem, priority: p })}
+                      onPress={() => updatePlannedEditItem(prev => prev ? { ...prev, priority: p } : null)}
                       style={{
                         flex: 1,
                         paddingVertical: 10,
@@ -32601,7 +33284,7 @@ async function importJSON() {
                   <OutlineButton 
                     title="갤러리" 
                     onPress={() => pickImageFromGallery((uri) => {
-                      setPlannedEditItem({ ...plannedEditItem, cover_image: uri });
+                      updatePlannedEditItem(prev => prev ? { ...prev, cover_image: uri } : null);
                     })} 
                     style={{ minWidth: 70 }}
                   />
@@ -32609,7 +33292,7 @@ async function importJSON() {
                     title="라이브러리" 
                     onPress={() => {
                       setCoverSelectTarget("plannedEdit");
-                      setCoverSelectModalOpen(true);
+                      deferOpen(setCoverSelectModalOpen); // 🔧 v3.5.8
                     }} 
                     color={C.primary}
                     style={{ minWidth: 90 }}
@@ -32617,7 +33300,7 @@ async function importJSON() {
                   {plannedEditItem.cover_image && (
                     <OutlineButton 
                       title="삭제" 
-                      onPress={() => setPlannedEditItem({ ...plannedEditItem, cover_image: "" })} 
+                      onPress={() => updatePlannedEditItem(prev => prev ? { ...prev, cover_image: "" } : null)} 
                       color={C.warn}
                       style={{ minWidth: 60 }}
                     />
@@ -32625,68 +33308,50 @@ async function importJSON() {
                 </View>
                 <Input
                   value={plannedEditItem.cover_image || ""}
-                  onChangeText={(t) => setPlannedEditItem({ ...plannedEditItem, cover_image: t })}
+                  onChangeText={(t) => updatePlannedEditItem(prev => prev ? { ...prev, cover_image: t } : null)}
                   placeholder="URL 직접 입력"
                 />
                 
                 <Label style={{ marginTop: 10 }}>작품 링크</Label>
                 <Input
                   value={plannedEditItem.link || ""}
-                  onChangeText={(t) => setPlannedEditItem({ ...plannedEditItem, link: t })}
+                  onChangeText={(t) => updatePlannedEditItem(prev => prev ? { ...prev, link: t } : null)}
                 />
                 
-                <Label style={{ marginTop: 10 }}>태그</Label>
-                <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-                  <View style={{ flex: 1, backgroundColor: C.bg, padding: 10, borderRadius: 10, minHeight: 40 }}>
-                    <Text style={{ color: plannedEditItem.tags ? C.text : C.sub, fontSize: 14 }} numberOfLines={2}>
-                      {plannedEditItem.tags || "태그를 선택하세요..."}
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    onPress={() => {
-                      // 🔧 v3.4.5: tags 문자열에서 대장르/부장르/일반태그를 분리하여 전달 (편집 모달과 일관성)
-                      const currentTags = (plannedEditItem.tags || "")
-                        .split(",")
-                        .map(t => t.trim())
-                        .filter(Boolean);
-                      
+                {/* 🆕 v3.5.8: 태그 칩 뷰 (예정작 수정) */}
+                <View style={{ marginTop: 10, marginBottom: 8 }}>
+                  <TagChipView
+                    tags={plannedEditItem.tags}
+                    tagSentiments={tagSentiments}
+                    comboTags={comboTags}
+                    userMajorGenres={userMajorGenres}
+                    userSubGenres={userSubGenres}
+                    tagAttributes={tagAttributes}
+                    onRemoveTag={(tag) => {
+                      const result = removeTagAndSyncGenres(plannedEditItem?.tags, tag, userMajorGenres, userSubGenres);
+                      updatePlannedEditItem(prev => prev ? { ...prev, ...result } : null);
+                    }}
+                    onOpenTagModal={() => {
+                      const currentTags = (plannedEditItem.tags || "").split(",").map(t => t.trim()).filter(Boolean);
                       const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
                       const allSub = [...SUB_GENRES, ...userSubGenres];
-                      
-                      // 대장르 감지
-                      const majorTags = currentTags.filter(tag => 
-                        allMajor.some(m => m.toLowerCase() === tag.toLowerCase())
-                      ).map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
-                      
-                      // 부장르 감지
-                      const subTags = currentTags.filter(tag => 
-                        allSub.some(s => s.toLowerCase() === tag.toLowerCase())
-                      ).map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
-                      
-                      // 일반 태그 (대장르/부장르 제외)
-                      const generalTags = currentTags.filter(tag => 
+                      const majorTags = currentTags.filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
+                        .map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
+                      const subTags = currentTags.filter(tag => allSub.some(s => s.toLowerCase() === tag.toLowerCase()))
+                        .map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
+                      const generalTags = currentTags.filter(tag =>
                         !allMajor.some(m => m.toLowerCase() === tag.toLowerCase()) &&
                         !allSub.some(s => s.toLowerCase() === tag.toLowerCase())
                       );
-                      
-                      // 분리된 값으로 모달 열기 (JSON 문자열로 전달)
-                      openTagModal(
-                        "planned", 
-                        generalTags, 
+                      openTagModal("planned", generalTags,
                         majorTags.length > 0 ? JSON.stringify(majorTags) : "",
                         subTags.length > 0 ? JSON.stringify(subTags) : "",
                         []
                       );
                     }}
-                    style={{
-                      backgroundColor: C.primary,
-                      paddingHorizontal: 14,
-                      paddingVertical: 10,
-                      borderRadius: 10,
-                    }}
-                  >
-                    <Text style={{ color: "#fff", fontWeight: "700" }}>🏷️ 선택</Text>
-                  </TouchableOpacity>
+                    placeholder="태그를 선택하세요"
+                    theme={C}
+                  />
                 </View>
                 
                 {/* 🆕 v3.4: 확장 필드들 */}
@@ -32695,7 +33360,7 @@ async function importJSON() {
                   {[1, 2, 3, 4, 5].map((p) => (
                     <TouchableOpacity
                       key={p}
-                      onPress={() => setPlannedEditItem({ ...plannedEditItem, interest_level: p })}
+                      onPress={() => updatePlannedEditItem(prev => prev ? { ...prev, interest_level: p } : null)}
                       style={{
                         flex: 1,
                         paddingVertical: 10,
@@ -32720,7 +33385,7 @@ async function importJSON() {
                   {["", "S", "A", "B+", "B", "B-", "C"].map((tier) => (
                     <TouchableOpacity
                       key={tier || "none"}
-                      onPress={() => setPlannedEditItem({ ...plannedEditItem, expected_tier: tier })}
+                      onPress={() => updatePlannedEditItem(prev => prev ? { ...prev, expected_tier: tier } : null)}
                       style={{
                         paddingVertical: 8,
                         paddingHorizontal: 14,
@@ -32746,7 +33411,7 @@ async function importJSON() {
                   {["", "추천", "검색", "광고", "랭킹", "친구", "커뮤니티", "SNS", "기타"].map((src) => (
                     <TouchableOpacity
                       key={src || "none"}
-                      onPress={() => setPlannedEditItem({ ...plannedEditItem, discovery_source: src })}
+                      onPress={() => updatePlannedEditItem(prev => prev ? { ...prev, discovery_source: src } : null)}
                       style={{
                         paddingVertical: 6,
                         paddingHorizontal: 10,
@@ -32768,7 +33433,7 @@ async function importJSON() {
                 <Label style={{ marginTop: 10 }}>1화 읽음 여부</Label>
                 <View style={{ flexDirection: "row", gap: 12 }}>
                   <TouchableOpacity
-                    onPress={() => setPlannedEditItem({ ...plannedEditItem, first_chapter_read: 0 })}
+                    onPress={() => updatePlannedEditItem(prev => prev ? { ...prev, first_chapter_read: 0 } : null)}
                     style={{
                       flex: 1,
                       paddingVertical: 10,
@@ -32785,7 +33450,7 @@ async function importJSON() {
                     </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    onPress={() => setPlannedEditItem({ ...plannedEditItem, first_chapter_read: 1 })}
+                    onPress={() => updatePlannedEditItem(prev => prev ? { ...prev, first_chapter_read: 1 } : null)}
                     style={{
                       flex: 1,
                       paddingVertical: 10,
@@ -32825,10 +33490,10 @@ async function importJSON() {
                             }
                           } catch {}
                         }
-                        setPlannedEditItem({ 
-                          ...plannedEditItem, 
+                        updatePlannedEditItem(prev => prev ? { 
+                          ...prev, 
                           scheduled_start_date: timestamp 
-                        });
+                        } : null);
                       }}
                       placeholder="예: 2025-02-01 (선택사항)"
                     />
@@ -32841,10 +33506,10 @@ async function importJSON() {
                     <Label style={{ marginTop: 10 }}>예상 레이팅 (숫자)</Label>
                     <Input
                       value={String(plannedEditItem.expected_rating || 1500)}
-                      onChangeText={(t) => setPlannedEditItem({ 
-                        ...plannedEditItem, 
+                      onChangeText={(t) => updatePlannedEditItem(prev => prev ? { 
+                        ...prev, 
                         expected_rating: Number(t) || 1500 
-                      })}
+                      } : null)}
                       placeholder="예: 1700"
                       keyboardType="number-pad"
                     />
@@ -32879,26 +33544,25 @@ async function importJSON() {
                           [
                             { 
                               text: "취소 (초기화)", 
-                              onPress: () => setPlannedEditItem({ ...plannedEditItem, similar_novels: "[]" })
+                              onPress: () => updatePlannedEditItem(prev => prev ? { ...prev, similar_novels: "[]" } : null)
                             },
                             ...topNovels.map(n => ({
                               text: n.title?.substring(0, 20) || "?",
                               onPress: () => {
-                                try {
-                                  const current = JSON.parse(plannedEditItem.similar_novels || "[]");
-                                  if (!current.includes(n.id)) {
-                                    const updated = [...current, n.id].slice(0, 3);
-                                    setPlannedEditItem({ 
-                                      ...plannedEditItem, 
-                                      similar_novels: JSON.stringify(updated) 
-                                    });
+                                // 🔧 v3.5.8: 함수형 업데이트
+                                updatePlannedEditItem(prev => {
+                                  if (!prev) return null;
+                                  try {
+                                    const current = JSON.parse(prev.similar_novels || "[]");
+                                    if (!current.includes(n.id)) {
+                                      const updated = [...current, n.id].slice(0, 3);
+                                      return { ...prev, similar_novels: JSON.stringify(updated) };
+                                    }
+                                    return prev;
+                                  } catch {
+                                    return { ...prev, similar_novels: JSON.stringify([n.id]) };
                                   }
-                                } catch {
-                                  setPlannedEditItem({ 
-                                    ...plannedEditItem, 
-                                    similar_novels: JSON.stringify([n.id]) 
-                                  });
-                                }
+                                });
                               }
                             })),
                           ]
@@ -32923,7 +33587,7 @@ async function importJSON() {
                 <Label style={{ marginTop: 10 }}>왜 관심 갖게 되었나요?</Label>
                 <Input
                   value={plannedEditItem.why_interested || ""}
-                  onChangeText={(t) => setPlannedEditItem({ ...plannedEditItem, why_interested: t })}
+                  onChangeText={(t) => updatePlannedEditItem(prev => prev ? { ...prev, why_interested: t } : null)}
                   placeholder="예: 설정이 참신해서, 추천 많이 받아서..."
                   multiline
                 />
@@ -32931,7 +33595,7 @@ async function importJSON() {
                 <Label style={{ marginTop: 10 }}>메모</Label>
                 <Input
                   value={plannedEditItem.note || ""}
-                  onChangeText={(t) => setPlannedEditItem({ ...plannedEditItem, note: t })}
+                  onChangeText={(t) => updatePlannedEditItem(prev => prev ? { ...prev, note: t } : null)}
                   multiline
                 />
                 
@@ -32945,7 +33609,7 @@ async function importJSON() {
                     title="닫기"
                     onPress={() => {
                       setPlannedEditOpen(false);
-                      setPlannedEditItem(null);
+                      updatePlannedEditItem(null);
                     }}
                     style={{ flex: 1 }}
                   />
