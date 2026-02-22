@@ -18955,6 +18955,9 @@ function AppContent() {
         ]
       );
       
+      // 🔧 v3.5.9: 텍스트 입력 태그 → customTags 동기화 (태그 관리 모달 연동)
+      syncTagsToCustom(plannedTags.trim());
+      
       // 폼 초기화
       setPlannedTitle("");
       setPlannedAuthor("");
@@ -19085,6 +19088,7 @@ function AppContent() {
         await loadCoverLibrary();
       }
       
+      syncTagsToCustom(n.tags?.trim() || ""); // 🔧 v3.5.9: 태그 동기화
       setPlannedEditOpen(false);
       updatePlannedEditItem(null);
       await loadPlannedList();
@@ -19215,6 +19219,7 @@ function AppContent() {
               // 예정 목록에서 삭제
               await exec("DELETE FROM planned_novels WHERE id=?", [planned.id]);
               
+              syncTagsToCustom(planned.tags || ""); // 🔧 v3.5.9: 태그 동기화
               await loadPlannedList();
               await loadList();
               
@@ -20682,6 +20687,39 @@ function AppContent() {
     });
   }
 
+  // 🔧 v3.5.9: 작품 저장 시 텍스트 입력 태그 → customTags 자동 동기화
+  // 태그 관리 모달에서 보이지 않는 문제 근본 해결
+  function syncTagsToCustom(tagsString) {
+    if (!tagsString || !tagsString.trim()) return;
+    const inputTags = tagsString.split(",").map(t => t.trim()).filter(Boolean);
+    const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
+    const allSub = [...SUB_GENRES, ...userSubGenres];
+    
+    const newTags = [];
+    for (const tag of inputTags) {
+      const lc = tag.toLowerCase();
+      // 이미 어딘가에 존재하면 스킵
+      if (ALL_DEFAULT_TAGS.some(t => t.toLowerCase() === lc)) continue;
+      if (customTags.some(t => t.toLowerCase() === lc)) continue;
+      if (comboTags.some(t => t.toLowerCase() === lc)) continue;
+      if (allMajor.some(t => t.toLowerCase() === lc)) continue;
+      if (allSub.some(t => t.toLowerCase() === lc)) continue;
+      newTags.push(tag);
+    }
+    
+    if (newTags.length > 0) {
+      setCustomTags(prev => {
+        // 함수형 setState로 중복 방지
+        const existing = new Set(prev.map(t => t.toLowerCase()));
+        const toAdd = newTags.filter(t => !existing.has(t.toLowerCase()));
+        if (toAdd.length === 0) return prev;
+        const next = [...prev, ...toAdd];
+        setTimeout(() => setAppMeta("custom_tags", next), 0);
+        return next;
+      });
+    }
+  }
+
   async function removeCustomTag(tag) {
     const newList = customTags.filter(t => t !== tag);
     setCustomTags(newList);
@@ -21990,6 +22028,8 @@ function AppContent() {
           null, // manual_tier (null)
         ]
       );
+      // 🔧 v3.5.9: 텍스트 입력 태그 → customTags 동기화 (태그 관리 모달 연동)
+      syncTagsToCustom(tags.trim());
       setTitle("");
       setAuthor("");
       setTags("");
@@ -22688,6 +22728,7 @@ function AppContent() {
       );
       
       // 🔧 v3.5.9: DB 저장 성공 후 모달 닫기 (savePlannedEdit 패턴과 통일)
+      syncTagsToCustom(n.tags?.trim() || ""); // 🔧 v3.5.9: 태그 동기화
       editOriginalSnapshotRef.current = null; // 스냅샷 정리 (closeEditModal 오작동 방지)
       setEditOpen(false);
       updateEditItem(null);
