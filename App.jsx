@@ -211,6 +211,27 @@
  * ║ • 분석 모달 유사그룹 태그: isTagTitle prefix 적용                            ║
  * ║   → 총 12개 렌더링 포인트에서 작품명 태그 시각 구분 완전 적용               ║
  * ║                                                                              ║
+ * ║ [변경 13] 🐛 보충탭 + 편집 태그 버그 전수 수정 (11건 + 추가 4건)             ║
+ * ║ • BUG 1 (치명): editItem 공유 desync — 보충탭↔편집모달 화면 전환 시         ║
+ * ║   editItem=null/다른 작품 데이터 혼입 → useEffect로 supplementList 최신 복원 ║
+ * ║   + prevScreenRef/prevEditOpenRef로 화면진입/모달닫기 정확 감지              ║
+ * ║   + 필터 변경 시 editItem 보존 (else 분기 분리)                             ║
+ * ║ • BUG 2,6: onRemoveTag stale closure — 5곳(보충/편집/예정/신규/예정신규)    ║
+ * ║   prev.tags/ref.current 패턴 전환, tagsRef/plannedTagsRef/newTagDataRef 도입 ║
+ * ║ • BUG 3,5: onTagsTextChange 누락 — 보충탭+예정작수정 TagChipView 추가      ║
+ * ║   (5/5 TagChipView 전부 장착 완료)                                           ║
+ * ║ • BUG 4,7: syncTagsToCustom 누락 — 보충탭 저장+batchAddTag 추가            ║
+ * ║   (7개 태그 저장 경로 전부 동기화 완료)                                      ║
+ * ║ • BUG 8: 보충탭 저장 isLoading 가드 없음 → disabled + try/finally           ║
+ * ║ • BUG 9: 보충탭 저장 read_count_updated_at 미갱신 → SQL 필드 추가           ║
+ * ║ • BUG 10: 보충탭 플랫폼 칩 stale closure → prev.platforms 함수형 업데이트   ║
+ * ║ • BUG 11: supplementCurrentNovel stale → supplementList에서 최신 갱신       ║
+ * ║ • BUG 12: 보충탭 catch에서 loadList 미호출 → 부분 성공 시 UI 불일치 수정    ║
+ * ║ • BUG 13: 예정작 tag_data 완전 누락 → handleTagModalConfirm/savePlannedEdit ║
+ * ║   /export/import 4곳에 tag_data 필드 추가                                   ║
+ * ║ • BUG 14: 필터 변경 시 편집 데이터 소실 회귀 → prevScreenRef 분기 분리      ║
+ * ║ • BUG 15: 편집 모달 닫기 후 editItem 미복원 → closingEditModal 감지 추가    ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -2202,6 +2223,7 @@ async function openDb() {
 // DB 연결 강제 리셋 (🔧 v3.5.3: 실제 close 수행)
 async function resetDbConnection() {
   console.log("DB 연결 리셋");
+  PerfMonitor.trackDbReconnect("resetDbConnection"); // 🔬
   const oldDb = db;
   db = null;
   dbOpenPromise = null;
@@ -2215,6 +2237,232 @@ async function resetDbConnection() {
       console.warn("기존 DB 닫기 실패 (무시):", closeErr.message);
     }
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🔬 v3.5.9: 인앱 성능 진단 시스템 (Performance Monitor)
+// - SQL 쿼리 추적 (횟수, 총 시간, 느린 쿼리 감지)
+// - 주요 함수 실행 시간 측정
+// - 에러/경고 로그 수집
+// - 렌더 카운트 추적
+// - 설정 탭 진단 대시보드에서 확인
+// ═══════════════════════════════════════════════════════════════════════════
+const PerfMonitor = {
+  enabled: false,
+  startTime: Date.now(),
+  
+  // SQL 통계
+  sql: { totalCount: 0, totalTime: 0, slowCount: 0, errorCount: 0 },
+  sqlLog: [],          // 최근 느린 쿼리 (>100ms) - 최대 30개
+  SQL_SLOW_THRESHOLD: 100, // ms
+  
+  // 함수 실행 통계
+  functions: {},       // { name: { count, totalTime, maxTime, lastTime, avgTime } }
+  funcLog: [],         // 최근 느린 함수 호출 (>200ms) - 최대 30개
+  FUNC_SLOW_THRESHOLD: 200, // ms
+  
+  // 에러 로그
+  errors: [],          // 최대 50개
+  warnings: [],        // 최대 50개
+  
+  // 렌더 카운트
+  renders: {},         // { componentName: count }
+  
+  // 🆕 DB 연결 안정성
+  db: { retryCount: 0, reconnectCount: 0, lastError: null, lastErrorTime: 0, consecutiveErrors: 0, maxConsecutiveErrors: 0 },
+  dbEvents: [],        // 최대 30개 - 리트라이/재연결 이벤트
+  
+  // 🆕 화면 전환 추적
+  navigation: [],      // 최대 30개 - { from, to, time }
+  lastScreen: "home",
+  
+  // 🆕 이미지 로드 추적
+  images: { loadCount: 0, errorCount: 0, cachedCount: 0 },
+  imageErrors: [],     // 최대 20개
+  
+  // 🆕 앱 라이프사이클
+  lifecycle: [],       // 최대 20개 - { event, time }
+  backgroundCount: 0,
+  foregroundCount: 0,
+  
+  // 🆕 상태 크기 스냅샷 (주기적)
+  stateSnapshots: [],  // 최대 10개
+  
+  // === SQL 추적 ===
+  trackSQL(opName, sql, durationMs, error = null) {
+    if (!this.enabled) return;
+    this.sql.totalCount++;
+    this.sql.totalTime += durationMs;
+    if (error) {
+      this.sql.errorCount++;
+      this.errors = [{ type: "SQL", op: opName, sql: sql?.substring(0, 80), error: String(error).substring(0, 120), time: Date.now(), duration: durationMs }, ...this.errors].slice(0, 50);
+    }
+    if (durationMs > this.SQL_SLOW_THRESHOLD) {
+      this.sql.slowCount++;
+      this.sqlLog = [{ op: opName, sql: sql?.substring(0, 100), duration: durationMs, time: Date.now() }, ...this.sqlLog].slice(0, 30);
+    }
+  },
+  
+  // === 함수 실행 추적 ===
+  trackFunc(name, durationMs) {
+    if (!this.enabled) return;
+    if (!this.functions[name]) {
+      this.functions[name] = { count: 0, totalTime: 0, maxTime: 0, lastTime: 0, minTime: Infinity };
+    }
+    const f = this.functions[name];
+    f.count++;
+    f.totalTime += durationMs;
+    f.lastTime = durationMs;
+    if (durationMs > f.maxTime) f.maxTime = durationMs;
+    if (durationMs < f.minTime) f.minTime = durationMs;
+    
+    if (durationMs > this.FUNC_SLOW_THRESHOLD) {
+      this.funcLog = [{ name, duration: durationMs, time: Date.now() }, ...this.funcLog].slice(0, 30);
+    }
+  },
+  
+  // === 에러/경고 기록 ===
+  logError(context, error) {
+    if (!this.enabled) return;
+    this.errors = [{ type: "Error", context, error: String(error).substring(0, 200), time: Date.now() }, ...this.errors].slice(0, 50);
+  },
+  logWarning(context, msg) {
+    if (!this.enabled) return;
+    this.warnings = [{ context, msg: String(msg).substring(0, 200), time: Date.now() }, ...this.warnings].slice(0, 50);
+  },
+  
+  // === 렌더 추적 ===
+  trackRender(componentName) {
+    if (!this.enabled) return;
+    this.renders[componentName] = (this.renders[componentName] || 0) + 1;
+  },
+  
+  // === DB 안정성 추적 ===
+  trackDbRetry(opName, attempt, errorMsg) {
+    if (!this.enabled) return;
+    this.db.retryCount++;
+    this.db.consecutiveErrors++;
+    if (this.db.consecutiveErrors > this.db.maxConsecutiveErrors) {
+      this.db.maxConsecutiveErrors = this.db.consecutiveErrors;
+    }
+    this.db.lastError = errorMsg?.substring(0, 100);
+    this.db.lastErrorTime = Date.now();
+    this.dbEvents = [{ type: "retry", op: opName, attempt, error: errorMsg?.substring(0, 80), time: Date.now() }, ...this.dbEvents].slice(0, 30);
+  },
+  trackDbReconnect(reason) {
+    if (!this.enabled) return;
+    this.db.reconnectCount++;
+    this.dbEvents = [{ type: "reconnect", reason: reason?.substring(0, 60), time: Date.now() }, ...this.dbEvents].slice(0, 30);
+  },
+  trackDbSuccess() {
+    if (!this.enabled) return;
+    this.db.consecutiveErrors = 0; // 성공 시 연속 에러 리셋
+  },
+  
+  // === 화면 전환 추적 ===
+  trackNavigation(from, to) {
+    if (!this.enabled) return;
+    this.navigation = [{ from, to, time: Date.now() }, ...this.navigation].slice(0, 30);
+    this.lastScreen = to;
+  },
+  
+  // === 이미지 로드 추적 ===
+  trackImageLoad(success, uri) {
+    if (!this.enabled) return;
+    if (success) {
+      this.images.loadCount++;
+    } else {
+      this.images.errorCount++;
+      this.imageErrors = [{ uri: uri?.substring(0, 80), time: Date.now() }, ...this.imageErrors].slice(0, 20);
+    }
+  },
+  
+  // === 라이프사이클 추적 ===
+  trackLifecycle(event) {
+    if (!this.enabled) return;
+    this.lifecycle = [{ event, time: Date.now() }, ...this.lifecycle].slice(0, 20);
+    if (event === "background") this.backgroundCount++;
+    if (event === "foreground") this.foregroundCount++;
+  },
+  
+  // === 상태 크기 스냅샷 ===
+  snapshotState(sizes) {
+    if (!this.enabled) return;
+    this.stateSnapshots = [{ ...sizes, time: Date.now() }, ...this.stateSnapshots].slice(0, 10);
+  },
+  
+  // === 전체 리셋 ===
+  reset() {
+    this.sql = { totalCount: 0, totalTime: 0, slowCount: 0, errorCount: 0 };
+    this.sqlLog = [];
+    this.functions = {};
+    this.funcLog = [];
+    this.errors = [];
+    this.warnings = [];
+    this.renders = {};
+    this.db = { retryCount: 0, reconnectCount: 0, lastError: null, lastErrorTime: 0, consecutiveErrors: 0, maxConsecutiveErrors: 0 };
+    this.dbEvents = [];
+    this.navigation = [];
+    this.images = { loadCount: 0, errorCount: 0, cachedCount: 0 };
+    this.imageErrors = [];
+    this.lifecycle = [];
+    this.backgroundCount = 0;
+    this.foregroundCount = 0;
+    this.stateSnapshots = [];
+    this.startTime = Date.now();
+  },
+  
+  // === 요약 스냅샷 생성 ===
+  getSummary() {
+    const uptime = Date.now() - this.startTime;
+    const funcEntries = Object.entries(this.functions)
+      .map(([name, s]) => ({ name, ...s, avgTime: s.count > 0 ? Math.round(s.totalTime / s.count) : 0 }))
+      .sort((a, b) => b.totalTime - a.totalTime);
+    
+    return {
+      uptime,
+      sql: { ...this.sql, avgTime: this.sql.totalCount > 0 ? Math.round(this.sql.totalTime / this.sql.totalCount) : 0 },
+      sqlLog: [...this.sqlLog],
+      functions: funcEntries,
+      funcLog: [...this.funcLog],
+      errors: [...this.errors],
+      warnings: [...this.warnings],
+      renders: Object.entries(this.renders).sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count })),
+      totalErrors: this.errors.length,
+      totalWarnings: this.warnings.length,
+      // 🆕 DB 안정성
+      db: { ...this.db },
+      dbEvents: [...this.dbEvents],
+      // 🆕 화면 전환
+      navigation: [...this.navigation],
+      // 🆕 이미지
+      images: { ...this.images },
+      imageErrors: [...this.imageErrors],
+      // 🆕 라이프사이클
+      lifecycle: [...this.lifecycle],
+      backgroundCount: this.backgroundCount,
+      foregroundCount: this.foregroundCount,
+      // 🆕 상태 크기
+      stateSnapshots: [...this.stateSnapshots],
+    };
+  },
+};
+
+// 🔬 비동기 함수 래핑 헬퍼 — 실행 시간 자동 측정
+function perfWrap(name, fn) {
+  return async function(...args) {
+    if (!PerfMonitor.enabled) return fn.apply(this, args);
+    const t0 = Date.now();
+    try {
+      const result = await fn.apply(this, args);
+      PerfMonitor.trackFunc(name, Date.now() - t0);
+      return result;
+    } catch (e) {
+      PerfMonitor.trackFunc(name, Date.now() - t0);
+      PerfMonitor.logError(name, e);
+      throw e;
+    }
+  };
 }
 
 // 🔧 v3.4.7: 안전한 DB 실행 래퍼 (자동 재연결 + 더 적극적인 재시도)
@@ -2231,6 +2479,7 @@ async function safeDbOperation(operation, operationName = "DB") {
       
       const result = await operation(database);
       dbLastSuccessTime = Date.now();
+      PerfMonitor.trackDbSuccess(); // 🔬
       return result;
     } catch (e) {
       const errorMsg = e.message || "";
@@ -2249,6 +2498,7 @@ async function safeDbOperation(operation, operationName = "DB") {
         errorMsg.includes("no such table");
       
       console.warn(`${operationName} 오류 (시도 ${attempt + 1}/${maxRetries}):`, errorMsg);
+      PerfMonitor.trackDbRetry(operationName, attempt + 1, errorMsg); // 🔬
       
       if (isConnectionError || attempt > 0) {
         // 연결 오류거나 두 번째 시도부터는 항상 리셋 (🔧 v3.5.3: await 추가)
@@ -2267,28 +2517,52 @@ async function safeDbOperation(operation, operationName = "DB") {
   }
 }
 
-/** 단일 쿼리 실행 */
+/** 단일 쿼리 실행 — 🔬 v3.5.9: 성능 추적 */
 async function exec(sql, params = []) {
-  return safeDbOperation(
-    (database) => database.runAsync(sql, params),
-    "exec"
-  );
+  const t0 = PerfMonitor.enabled ? Date.now() : 0;
+  try {
+    const result = await safeDbOperation(
+      (database) => database.runAsync(sql, params),
+      "exec"
+    );
+    if (PerfMonitor.enabled) PerfMonitor.trackSQL("exec", sql, Date.now() - t0);
+    return result;
+  } catch (e) {
+    if (PerfMonitor.enabled) PerfMonitor.trackSQL("exec", sql, Date.now() - t0, e);
+    throw e;
+  }
 }
 
-/** SELECT 전체 */
+/** SELECT 전체 — 🔬 v3.5.9: 성능 추적 */
 async function all(sql, params = []) {
-  return safeDbOperation(
-    (database) => database.getAllAsync(sql, params),
-    "all"
-  );
+  const t0 = PerfMonitor.enabled ? Date.now() : 0;
+  try {
+    const result = await safeDbOperation(
+      (database) => database.getAllAsync(sql, params),
+      "all"
+    );
+    if (PerfMonitor.enabled) PerfMonitor.trackSQL("all", sql, Date.now() - t0);
+    return result;
+  } catch (e) {
+    if (PerfMonitor.enabled) PerfMonitor.trackSQL("all", sql, Date.now() - t0, e);
+    throw e;
+  }
 }
 
-/** SELECT 첫 번째 */
+/** SELECT 첫 번째 — 🔬 v3.5.9: 성능 추적 */
 async function first(sql, params = []) {
-  return safeDbOperation(
-    (database) => database.getFirstAsync(sql, params),
-    "first"
-  );
+  const t0 = PerfMonitor.enabled ? Date.now() : 0;
+  try {
+    const result = await safeDbOperation(
+      (database) => database.getFirstAsync(sql, params),
+      "first"
+    );
+    if (PerfMonitor.enabled) PerfMonitor.trackSQL("first", sql, Date.now() - t0);
+    return result;
+  } catch (e) {
+    if (PerfMonitor.enabled) PerfMonitor.trackSQL("first", sql, Date.now() - t0, e);
+    throw e;
+  }
 }
 
 /** 트랜잭션 실행 (🔧 v3.5.3: 대량 배치 청크 처리) */
@@ -7117,6 +7391,7 @@ const GaidenStatusIcon = memo(({ gaidenStatus }) => {
 
 // 📷 표지 이미지 컴포넌트 (expo-image 사용, 메모이제이션)
 const CoverImage = memo(({ uri, platforms, platformCovers = {}, size = 50, theme, onPress }) => {
+  PerfMonitor.trackRender("CoverImage"); // 🔬
   // 최종 URI 계산 (동기적으로 즉시)
   const finalUri = useMemo(() => {
     if (uri) return uri;
@@ -7154,6 +7429,8 @@ const CoverImage = memo(({ uri, platforms, platformCovers = {}, size = 50, theme
       cachePolicy="memory-disk"
       transition={150}
       placeholder={{ blurhash: 'L6PZfSi_.AyE_3t7t7R**0o#DgR4' }}
+      onError={() => PerfMonitor.trackImageLoad(false, finalUri)}
+      onLoad={() => PerfMonitor.trackImageLoad(true, finalUri)}
     />
   );
   
@@ -7297,6 +7574,7 @@ const NovelCard = memo(({
   theme, 
   isDark 
 }) => {
+  PerfMonitor.trackRender("NovelCard"); // 🔬
   // 메모이제이션된 계산들
   const winRate = useMemo(() => getWinRate(item.wins, item.losses), [item.wins, item.losses]);
   const isNew = useMemo(() => isNewNovel(item.created_at), [item.created_at]);
@@ -7458,6 +7736,7 @@ const TagSelectModal = memo(({
   enableIntensity = false, // 🏷️ v5.0: 농도 모드 기본 활성화 여부
   theme, // C 객체
 }) => {
+  PerfMonitor.trackRender("TagSelectModal"); // 🔬
   // 내부 상태 (App과 격리됨)
   const [selectedTags, setSelectedTags] = useState(initialTags);
   const [selectedMajor, setSelectedMajor] = useState(initialMajor);
@@ -11037,6 +11316,7 @@ const TagManagerModal = memo(({
   onEditRelations, // 🆕 v3.5.5: 유사/상반 태그 관계 편집
   theme,
 }) => {
+  PerfMonitor.trackRender("TagManagerModal"); // 🔬
   const C = theme;
   const isDark = C.bg !== "#F5F7FB"; // 다크모드 감지
   const [activeTab, setActiveTab] = useState("all");
@@ -12521,6 +12801,7 @@ const AwardsScreen = memo(({
   onRemoveAward,
   onSaveSettings,
 }) => {
+  PerfMonitor.trackRender("AwardsScreen"); // 🔬
   const C = theme;
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [newAwardName, setNewAwardName] = useState("");
@@ -14370,6 +14651,7 @@ const TasteAnalysisScreen = memo(({
   tagCoOccurrences = {},  // 🆕 v3.2.1: 공동 출현 통계
   coordinateSystems = null,  // 🆕 v3.2.1: 사용자 정의 좌표계
 }) => {
+  PerfMonitor.trackRender("TasteAnalysisScreen"); // 🔬
   const [analysis, setAnalysis] = useState(null);
   const [loading, setLoading] = useState(false);
   // 🆕 v3.4: 여러 섹션 동시 펼침 가능 (Set 사용)
@@ -17629,7 +17911,6 @@ async function calculateBehaviorPredictionAccuracy(recentN = 30) {
     return { accuracy: correct / logs.length, sample: logs.length };
   } catch { return null; }
 }
-
 function generateBehaviorInsights(staticGenres, dynamicGenres, staticTags, dynamicTags, staticAuthors, dynamicAuthors, predAcc) {
   const insights = [];
 
@@ -17841,6 +18122,9 @@ function generateInsights(data) {
 
 /* ========= App ========= */
 function AppContent() {
+  // 🔬 v3.5.9: 렌더 추적
+  PerfMonitor.trackRender("AppContent");
+  
   // 🎨 다크모드
   const systemColorScheme = useColorScheme();
   const [darkMode, setDarkModeState] = useState(null); // null=시스템, true=다크, false=라이트
@@ -17859,13 +18143,21 @@ function AppContent() {
   const [customResetOpen, setCustomResetOpen] = useState(false); // 🧹 v3.5.5: 커스텀 초기화 모달
   const [resetSelections, setResetSelections] = useState({}); // { key: boolean }
 
-  const [screen, setScreen] = useState("home");
+  const [screen, setScreenRaw] = useState("home");
+  // 🔬 v3.5.9: 화면 전환 추적 래퍼
+  const setScreen = useCallback((next) => {
+    setScreenRaw(prev => {
+      if (prev !== next) PerfMonitor.trackNavigation(prev, next);
+      return next;
+    });
+  }, []);
   
   // 💬 v3.5.4: 명언 쇼츠 상태
   const [quotesIdx, setQuotesIdx] = useState(0);
   const [quotesShuffled, setQuotesShuffled] = useState(null); // null=원본순, array=셔플순
   const quotesSwipeRef = useRef({ startX: 0, startY: 0 }); // 🔀 v3.5.5: 스와이프 감지
-  const [settingsSubTab, setSettingsSubTab] = useState("app"); // 🆕 Phase 2: 설정 서브탭 ("app" | "tags" | "analysis" | "backup")
+  const [settingsSubTab, setSettingsSubTab] = useState("app"); // 🆕 Phase 2: 설정 서브탭 ("app" | "tags" | "analysis" | "backup" | "diag")
+  const [refreshKey, setRefreshKey] = useState(0); // 🔬 v3.5.9: 진단 대시보드 새로고침 키
   const [list, setList] = useState([]);
 
   // 홈 검색/정렬
@@ -17926,7 +18218,14 @@ function AppContent() {
   // 등록 입력
   const [title, setTitle] = useState("");
   const [author, setAuthor] = useState("");
-  const [tags, setTags] = useState("");
+  const [tags, setTagsRaw] = useState("");
+  // 🔧 v3.5.9: ref 동기화로 stale closure 방지 (연속 태그 삭제 시)
+  const tagsRef = useRef("");
+  const setTags = useCallback((v) => {
+    const val = typeof v === "function" ? v(tagsRef.current) : v;
+    tagsRef.current = val;
+    setTagsRaw(val);
+  }, []);
   const [note, setNote] = useState("");
   const [memorableQuote, setMemorableQuote] = useState(""); // 💬 인상깊은 문장
   const [readCount, setReadCount] = useState("");
@@ -18085,7 +18384,14 @@ function AppContent() {
   // 예정 작품 등록 폼
   const [plannedTitle, setPlannedTitle] = useState("");
   const [plannedAuthor, setPlannedAuthor] = useState("");
-  const [plannedTags, setPlannedTags] = useState("");
+  const [plannedTags, setPlannedTagsRaw] = useState("");
+  // 🔧 v3.5.9: ref 동기화로 stale closure 방지
+  const plannedTagsRef = useRef("");
+  const setPlannedTags = useCallback((v) => {
+    const val = typeof v === "function" ? v(plannedTagsRef.current) : v;
+    plannedTagsRef.current = val;
+    setPlannedTagsRaw(val);
+  }, []);
   const [plannedNote, setPlannedNote] = useState("");
   const [plannedTotalEpisodes, setPlannedTotalEpisodes] = useState("");
   const [plannedPlatforms, setPlannedPlatforms] = useState([]);
@@ -18181,7 +18487,14 @@ function AppContent() {
   const [userSubGenres, setUserSubGenres] = useState([]); // 사용자 추가 부장르
   const [newMajorGenre, setNewMajorGenre] = useState([]);
   const [newSubGenre, setNewSubGenre] = useState([]);
-  const [newTagData, setNewTagData] = useState([]); // 🏷️ v5.0: [{tag, intensity}, ...]
+  const [newTagData, setNewTagDataRaw] = useState([]); // 🏷️ v5.0: [{tag, intensity}, ...]
+  // 🔧 v3.5.9: ref 동기화
+  const newTagDataRef = useRef([]);
+  const setNewTagData = useCallback((v) => {
+    const val = typeof v === "function" ? v(newTagDataRef.current) : v;
+    newTagDataRef.current = val;
+    setNewTagDataRaw(val);
+  }, []);
   const [newUserMajorGenre, setNewUserMajorGenre] = useState(""); // 태그 모달에서 대장르 추가용
   const [newUserSubGenre, setNewUserSubGenre] = useState(""); // 태그 모달에서 부장르 추가용
   // 🔗 v3.0.4: 조합 요소 입력용
@@ -18831,6 +19144,7 @@ function AppContent() {
     let lastState = AppState.currentState;
     
     const subscription = AppState.addEventListener("change", async (nextAppState) => {
+      PerfMonitor.trackLifecycle(nextAppState === "active" ? "foreground" : "background"); // 🔬
       // 포그라운드 → 백그라운드 전환 시: 큐 플러시
       if (lastState === "active" && nextAppState.match(/inactive|background/)) {
         console.log("앱 백그라운드 전환 - 큐 플러시 + DB 정리");
@@ -18883,6 +19197,7 @@ function AppContent() {
   // -----------------------------------------
   
   async function loadPlannedList() {
+    const _pt = PerfMonitor.enabled ? Date.now() : 0; // 🔬
     try {
       let orderBy = `created_at ${plannedSortDir}`;
       if (plannedSortKey === "title") {
@@ -18892,13 +19207,16 @@ function AppContent() {
       }
       const rows = await all(`SELECT * FROM planned_novels ORDER BY ${orderBy};`);
       setPlannedList(rows || []);
+      if (_pt) PerfMonitor.trackFunc("loadPlannedList", Date.now() - _pt); // 🔬
     } catch (e) {
       console.warn("loadPlannedList 오류:", e);
+      if (_pt) PerfMonitor.logError("loadPlannedList", e); // 🔬
       setPlannedList([]);
     }
   }
   
   async function addPlannedNovel() {
+    const _pt = PerfMonitor.enabled ? Date.now() : 0; // 🔬
     const t = (plannedTitle || "").trim();
     if (!t) {
       Alert.alert("알림", "제목은 필수입니다.");
@@ -18989,8 +19307,10 @@ function AppContent() {
         await loadCoverLibrary();
       }
       
+      if (_pt) PerfMonitor.trackFunc("addPlannedNovel", Date.now() - _pt); // 🔬
       Alert.alert("완료", "예정 작품이 추가되었습니다.");
     } catch (e) {
+      if (_pt) PerfMonitor.logError("addPlannedNovel", e); // 🔬
       console.warn("addPlannedNovel 오류:", e);
       Alert.alert("오류", "예정 작품 추가 중 오류가 발생했습니다.\n\n" + e.message);
     }
@@ -19023,6 +19343,7 @@ function AppContent() {
   }
   
   async function savePlannedEdit() {
+    const _pt = PerfMonitor.enabled ? Date.now() : 0; // 🔬
     // 🔧 v3.5.8: plannedEditItemRef에서 읽어 React 배칭 지연과 무관하게 최신값 사용
     const n = plannedEditItemRef.current;
     if (!n) return;
@@ -19050,7 +19371,7 @@ function AppContent() {
       const newCover = n.cover_image || "";
       
       await exec(
-        `UPDATE planned_novels SET title=?, author=?, tags=?, platforms=?, note=?, total_episodes=?, cover_image=?, link=?, work_status=?, major_genre=?, sub_genre=?, priority=?, expected_rating=?, expected_tier=?, interest_level=?, discovery_source=?, first_chapter_read=?, scheduled_start_date=?, similar_novels=?, why_interested=? WHERE id=?;`,
+        `UPDATE planned_novels SET title=?, author=?, tags=?, platforms=?, note=?, total_episodes=?, cover_image=?, link=?, work_status=?, major_genre=?, sub_genre=?, priority=?, expected_rating=?, expected_tier=?, interest_level=?, discovery_source=?, first_chapter_read=?, scheduled_start_date=?, similar_novels=?, why_interested=?, tag_data=? WHERE id=?;`,
         [
           newTitle,
           n.author?.trim() || "",
@@ -19073,6 +19394,7 @@ function AppContent() {
           n.scheduled_start_date || 0,
           n.similar_novels || "",
           n.why_interested || "",
+          n.tag_data || "", // 🔧 v3.5.9: tag_data 저장 누락 수정
           n.id,
         ]
       );
@@ -19089,10 +19411,12 @@ function AppContent() {
       }
       
       syncTagsToCustom(n.tags?.trim() || ""); // 🔧 v3.5.9: 태그 동기화
+      if (_pt) PerfMonitor.trackFunc("savePlannedEdit", Date.now() - _pt); // 🔬
       setPlannedEditOpen(false);
       updatePlannedEditItem(null);
       await loadPlannedList();
     } catch (e) {
+      if (_pt) PerfMonitor.logError("savePlannedEdit", e); // 🔬
       console.warn("savePlannedEdit 오류:", e);
       Alert.alert("오류", "저장 중 오류가 발생했습니다.\n\n" + e.message);
     }
@@ -19274,6 +19598,7 @@ function AppContent() {
   // - 최근 5회 추천 내 재추천 방지
   // -----------------------------------------
   async function refreshDailyRecommendation(forceNew = false) {
+    const _pt = PerfMonitor.enabled ? Date.now() : 0; // 🔬
     try {
       const novels = await all("SELECT * FROM novels;");
       const planned = await all("SELECT * FROM planned_novels;");
@@ -19710,7 +20035,9 @@ function AppContent() {
         isPlanned: pick.isPlanned,
         tasteScore: pick.tasteScore || null,
       });
+      if (_pt) PerfMonitor.trackFunc("refreshDailyRecommendation", Date.now() - _pt); // 🔬
     } catch (e) {
+      if (_pt) PerfMonitor.logError("refreshDailyRecommendation", e); // 🔬
       console.warn("refreshDailyRecommendation 오류:", e);
       setDailyReco(null);
     }
@@ -19723,10 +20050,13 @@ function AppContent() {
   // 표지 라이브러리 로드
   // 🚀 v3.5.6: 용량 계산 분리 (FileSystem stat 비용이 크므로 표지 탭에서만 실행)
   async function loadCoverLibrary() {
+    const _pt = PerfMonitor.enabled ? Date.now() : 0; // 🔬
     try {
       const rows = await all(`SELECT * FROM cover_library ORDER BY created_at DESC;`);
       setCoverLibrary(rows || []);
+      if (_pt) PerfMonitor.trackFunc("loadCoverLibrary", Date.now() - _pt); // 🔬
     } catch (e) {
+      if (_pt) PerfMonitor.logError("loadCoverLibrary", e); // 🔬
       console.warn("loadCoverLibrary error:", e);
       setCoverLibrary([]);
     }
@@ -20639,6 +20969,7 @@ function AppContent() {
         tags: allTagsString, // 🔧 v3.4.4: 모든 태그 포함
         major_genre: majorJson,
         sub_genre: subJson,
+        tag_data: tagDataJson, // 🔧 v3.5.9: 예정작에도 tag_data 저장
       } : null);
     } else if (tagModalTarget === "plannedNew") {
       // 🔧 v3.4.5: 예정탭 신규 등록에서 태그 선택
@@ -21877,6 +22208,7 @@ function AppContent() {
   };
 
   async function loadList(sortKey, sortDir) {
+    const _pt = PerfMonitor.enabled ? Date.now() : 0; // 🔬
     try {
       const sk = sortKey ?? homeSortKey;
       const sd = sortDir ?? homeSortDir;
@@ -21893,9 +22225,20 @@ function AppContent() {
       const safeRows = (rows || []).map(normalizeNovel);
       setList(safeRows);
       updateTagUsageCounts(safeRows); // 🏷️ 태그 사용 빈도 업데이트
+      // 🔬 v3.5.9: 상태 크기 스냅샷
+      if (PerfMonitor.enabled) {
+        PerfMonitor.snapshotState({
+          novels: safeRows.length,
+          customTags: customTags.length,
+          comboTags: comboTags.length,
+          coverImages: coverLibrary?.length || 0,
+        });
+      }
       await loadMatchStats();
+      if (_pt) PerfMonitor.trackFunc("loadList", Date.now() - _pt); // 🔬
     } catch (e) {
       console.warn("loadList 오류:", e);
+      if (_pt) PerfMonitor.logError("loadList", e); // 🔬
       setList([]);
     }
   }
@@ -21954,6 +22297,7 @@ function AppContent() {
   }, []);
 
   async function addNovel() {
+    const _pt = PerfMonitor.enabled ? Date.now() : 0; // 🔬
     const t = (title || "").trim();
     if (!t) {
       Alert.alert("알림", "제목은 필수입니다.");
@@ -22071,8 +22415,10 @@ function AppContent() {
         majorGenre: majorGenreText
       });
       
+      if (_pt) PerfMonitor.trackFunc("addNovel", Date.now() - _pt); // 🔬
       Alert.alert("완료", "작품이 추가되었습니다.");
     } catch (e) {
+      if (_pt) PerfMonitor.logError("addNovel", e); // 🔬
       console.warn("addNovel 오류:", e);
       Alert.alert("오류", "작품 추가 중 오류가 발생했습니다.\n\n" + e.message);
     }
@@ -22631,6 +22977,7 @@ function AppContent() {
   }, []);
 
   async function saveEdit() {
+    const _pt = PerfMonitor.enabled ? Date.now() : 0; // 🔬
     // 🔧 v3.5.6: editItemRef.current에서 읽어 React 배칭 지연과 무관하게 최신값 사용
     const n = editItemRef.current;
     if (!n) return;
@@ -22729,6 +23076,7 @@ function AppContent() {
       
       // 🔧 v3.5.9: DB 저장 성공 후 모달 닫기 (savePlannedEdit 패턴과 통일)
       syncTagsToCustom(n.tags?.trim() || ""); // 🔧 v3.5.9: 태그 동기화
+      if (_pt) PerfMonitor.trackFunc("saveEdit", Date.now() - _pt); // 🔬
       editOriginalSnapshotRef.current = null; // 스냅샷 정리 (closeEditModal 오작동 방지)
       setEditOpen(false);
       updateEditItem(null);
@@ -22759,6 +23107,7 @@ function AppContent() {
         await loadCoverLibrary();
       }
     } catch (e) {
+      if (_pt) PerfMonitor.logError("saveEdit", e); // 🔬
       console.warn("saveEdit 오류:", e);
       const errorMsg = e.message || "";
       // 🔧 v3.5.9: 모달이 아직 열려 있으므로 사용자가 재시도 가능
@@ -22945,6 +23294,7 @@ function AppContent() {
   }, [pair]);
 
   const decide = async (winnerId, decided_by = "user") => {
+    const _pt = PerfMonitor.enabled ? Date.now() : 0; // 🔬
     if (!pair) return;
     
     // 🔄 v3.4.6: pair를 로컬에 캡처 (큐 처리 중 상태 변경 대비)
@@ -23067,8 +23417,10 @@ function AppContent() {
         console.warn("[decide] saveChoiceLog 오류:", e);
       }
       
+      if (_pt) PerfMonitor.trackFunc("decide", Date.now() - _pt); // 🔬
       await loadList();
     }, pairKey).catch((e) => {
+      if (_pt) PerfMonitor.logError("decide", e); // 🔬
       console.warn("decide 오류:", e);
       Alert.alert("오류", "매칭 결과 저장 중 오류가 발생했습니다.\n\n" + e.message);
     });
@@ -23911,6 +24263,7 @@ function AppContent() {
     }
 
     await execBatch(queries);
+    syncTagsToCustom(t); // 🔧 v3.5.9: 일괄 추가 태그도 customTags 동기화
     await loadList();
     Alert.alert("완료", `${ids.length}개 작품에 "${t}" 태그를 추가했습니다.`);
   }, [userMajorGenres, userSubGenres]);
@@ -24450,6 +24803,7 @@ function collectCoverImageUrls(novels) {
 }
 
 async function exportJSON() {
+  const _pt = PerfMonitor.enabled ? Date.now() : 0; // 🔬
   try {
     setIsLoading(true);
     
@@ -24563,6 +24917,7 @@ async function exportJSON() {
         ss: p.scheduled_start_date ? Math.floor(p.scheduled_start_date / 1000) - BASE_TIMESTAMP : 0,
         sn: p.similar_novels || "",
         wi: p.why_interested || "",
+        td: p.tag_data || "", // 🔧 v3.5.9: tag_data 백업
       }));
     }
     
@@ -24581,6 +24936,7 @@ async function exportJSON() {
     const patternInfo = payload.PP ? `, 학습 패턴 ${payload.PP.length}개` : "";
     const summary = `${novels.length}작품, ${matches.length}매치${plannedInfo}${coverInfo}${analysisInfo}${tagMetaInfo}${patternInfo}\n크기: ${sizeText}`;
     
+    if (_pt) PerfMonitor.trackFunc("exportJSON", Date.now() - _pt); // 🔬
     setIsLoading(false);
     
     // 🔧 v3.0.6: 크기에 따라 처리 방식 결정
@@ -24610,6 +24966,7 @@ async function exportJSON() {
     
   } catch (e) {
     setIsLoading(false);
+    if (_pt) PerfMonitor.logError("exportJSON", e); // 🔬
     console.warn("exportJSON error:", e);
     Alert.alert("오류", "백업 중 오류가 발생했습니다.\n\n" + e.message);
   }
@@ -24756,6 +25113,7 @@ function validateImportData(text) {
 }
 
 async function importJSON() {
+  const _pt = PerfMonitor.enabled ? Date.now() : 0; // 🔬
   try {
     const text = importText.trim();
     if (!text) {
@@ -25083,8 +25441,8 @@ async function importJSON() {
                 
                 const plannedQueries = data.PL.map(p => ({
                   sql: `INSERT INTO planned_novels 
-                    (id, title, author, tags, platforms, note, total_episodes, cover_image, link, work_status, major_genre, sub_genre, priority, created_at, expected_rating, expected_tier, interest_level, discovery_source, first_chapter_read, scheduled_start_date, similar_novels, why_interested)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                    (id, title, author, tags, platforms, note, total_episodes, cover_image, link, work_status, major_genre, sub_genre, priority, created_at, expected_rating, expected_tier, interest_level, discovery_source, first_chapter_read, scheduled_start_date, similar_novels, why_interested, tag_data)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
                   params: [
                     uuid(),
                     p.t || "",
@@ -25109,6 +25467,7 @@ async function importJSON() {
                     p.ss ? (baseTs + p.ss) * 1000 : 0,
                     p.sn || "",
                     p.wi || "",
+                    p.td || "", // 🔧 v3.5.9: tag_data 복원
                   ],
                 }));
                 
@@ -25182,10 +25541,12 @@ async function importJSON() {
               const pcInfo = platformCoversRestored ? "\n(플랫폼 표지 복원됨)" : "";
               // 🔧 v3.5.8: 복원 검증 결과 포함
               const verifyInfo = insertedCount < lenN ? `\n⚠️ 주의: ${lenN}개 중 ${insertedCount}개만 복원됨` : "";
+              if (_pt) PerfMonitor.trackFunc("importJSON", Date.now() - _pt); // 🔬
               importBackupRef.current = ""; // 🔧 v3.5.9: 성공 시 메모리 해제
               Alert.alert("완료", `데이터를 성공적으로 가져왔습니다!\n(Elo 데이터 완전 복원)${verifyInfo}${extraInfo}${histInfo}${analysisInfo}${comboInfo}${tagMetaInfo}${plannedInfo}${patternInfo}${pcInfo}`);
               } catch (restoreErr) {
                 // 🔧 v3.5.9: 복원 실패 시 자동 재시도 옵션 제공
+                if (_pt) PerfMonitor.logError("importJSON", restoreErr); // 🔬
                 console.warn("복원 오류:", restoreErr);
                 if (deleteCompleted) {
                   // DELETE 성공 후 INSERT 실패 = 가장 위험한 상태
@@ -25474,6 +25835,48 @@ async function importJSON() {
     return picked;
   }, [supplementList, supplementCurrentNovel]);
 
+  // 🔧 v3.5.9 BUG FIX: 보충탭 ↔ 다른 화면 전환 시 editItem desync 방지
+  // 편집 모달이 editItem을 공유하므로, 보충탭 복귀 시 supplementCurrentNovel로 복원
+  // 또한 다른 화면에서 작품 데이터 변경 후 복귀 시 최신 데이터로 갱신
+  const prevScreenRef = useRef(screen);
+  const prevEditOpenRef = useRef(editOpen);
+  useEffect(() => {
+    const enteringSupplement = screen === "supplement" && prevScreenRef.current !== "supplement";
+    const closingEditModal = !editOpen && prevEditOpenRef.current;
+    prevScreenRef.current = screen;
+    prevEditOpenRef.current = editOpen;
+    
+    if (screen !== "supplement" || editOpen || savedSupplementId) return;
+    if (!supplementCurrentNovel) return;
+    
+    const supplementId = supplementCurrentNovel.novel?.id;
+    const fresh = supplementList.find(item => item.novel.id === supplementId);
+    
+    if (enteringSupplement || closingEditModal) {
+      // 화면 전환 또는 편집 모달 닫기: editItem이 다른 작품이면 복원
+      if (fresh) {
+        setSupplementCurrentNovel(fresh);
+        const currentEditId = editItemRef.current?.id;
+        if (!currentEditId || currentEditId !== supplementId) {
+          updateEditItem({ ...fresh.novel });
+        }
+      } else if (supplementList.length > 0) {
+        setSupplementCurrentNovel(supplementList[0]);
+        updateEditItem({ ...supplementList[0].novel });
+      } else {
+        setSupplementCurrentNovel(null);
+        updateEditItem(null);
+      }
+    } else {
+      // 보충탭 내에서 supplementList 변경 (필터/데이터 갱신):
+      // 현재 작품의 이슈 목록만 갱신, editItem은 건드리지 않음
+      if (fresh) {
+        setSupplementCurrentNovel(fresh);
+      }
+      // fresh 없으면 (필터에서 빠짐) → 현재 작품 유지 (데이터 소실 방지)
+    }
+  }, [screen, editOpen, supplementList]);
+
   const Nav = () => {
     // 📰 최신 변화 개수 (설정 기간 내)
     const recentChangesCount = useMemo(() => {
@@ -25700,8 +26103,9 @@ async function importJSON() {
                   userSubGenres={userSubGenres}
                   tagAttributes={tagAttributes}
                   onRemoveTag={(tag) => {
-                    const tdStr = newTagData?.length > 0 ? JSON.stringify(newTagData) : "";
-                    const result = removeTagAndSyncGenres(tags, tag, userMajorGenres, userSubGenres, tdStr);
+                    // 🔧 v3.5.9: ref에서 최신값 읽기 (stale closure 방지)
+                    const tdStr = newTagDataRef.current?.length > 0 ? JSON.stringify(newTagDataRef.current) : "";
+                    const result = removeTagAndSyncGenres(tagsRef.current, tag, userMajorGenres, userSubGenres, tdStr);
                     setTags(result.tags);
                     try { setNewMajorGenre(JSON.parse(result.major_genre || "[]")); } catch { setNewMajorGenre([]); }
                     try { setNewSubGenre(JSON.parse(result.sub_genre || "[]")); } catch { setNewSubGenre([]); }
@@ -26795,7 +27199,8 @@ async function importJSON() {
                   userSubGenres={userSubGenres}
                   tagAttributes={tagAttributes}
                   onRemoveTag={(tag) => {
-                    const result = removeTagAndSyncGenres(plannedTags, tag, userMajorGenres, userSubGenres);
+                    // 🔧 v3.5.9: ref에서 최신값 읽기 (stale closure 방지)
+                    const result = removeTagAndSyncGenres(plannedTagsRef.current, tag, userMajorGenres, userSubGenres);
                     setPlannedTags(result.tags);
                     try { setPlannedMajorGenre(JSON.parse(result.major_genre || "[]")); } catch { setPlannedMajorGenre([]); }
                     try { setPlannedSubGenre(JSON.parse(result.sub_genre || "[]")); } catch { setPlannedSubGenre([]); }
@@ -28501,8 +28906,13 @@ async function importJSON() {
                             label={p}
                             active={on}
                             onPress={() => {
-                              const next = on ? cur.filter((x) => x !== p) : [...cur, p];
-                              updateEditItem(prev => prev ? { ...prev, platforms: JSON.stringify(next) } : null);
+                              // 🔧 v3.5.9 BUG FIX: 함수형 업데이트로 prev.platforms 사용 (stale closure 방지)
+                              updateEditItem(prev => {
+                                if (!prev) return null;
+                                const curP = parsePlatforms(prev.platforms);
+                                const next = curP.includes(p) ? curP.filter((x) => x !== p) : [...curP, p];
+                                return { ...prev, platforms: JSON.stringify(next) };
+                              });
                             }}
                           />
                         );
@@ -28532,8 +28942,12 @@ async function importJSON() {
                       userSubGenres={userSubGenres}
                       tagAttributes={tagAttributes}
                       onRemoveTag={(tag) => {
-                        const result = removeTagAndSyncGenres(editItem?.tags, tag, userMajorGenres, userSubGenres, editItem?.tag_data);
-                        updateEditItem(prev => prev ? { ...prev, ...result } : null);
+                        // 🔧 v3.5.9 BUG FIX: 함수형 업데이트로 prev.tags 사용 (stale closure 방지)
+                        updateEditItem(prev => {
+                          if (!prev) return null;
+                          const result = removeTagAndSyncGenres(prev.tags, tag, userMajorGenres, userSubGenres, prev.tag_data);
+                          return { ...prev, ...result };
+                        });
                       }}
                       onOpenTagModal={() => {
                         const currentTags = (editItem?.tags || "").split(",").map(t => t.trim()).filter(Boolean);
@@ -28554,6 +28968,34 @@ async function importJSON() {
                           subTags.length > 0 ? JSON.stringify(subTags) : "",
                           tagData
                         );
+                      }}
+                      onTagsTextChange={(t) => {
+                        // 🔧 v3.5.9 BUG FIX: 보충탭 텍스트 모드 태그 편집 시 장르 동기화
+                        const inputTags = t.split(",").map(tag => tag.trim()).filter(Boolean);
+                        const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
+                        const allSub = [...SUB_GENRES, ...userSubGenres];
+                        const normalizedMajor = inputTags.filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
+                          .map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
+                        const normalizedSub = inputTags.filter(tag => allSub.some(m => m.toLowerCase() === tag.toLowerCase()))
+                          .map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
+                        const inputTagsLc = new Set(inputTags.map(x => x.toLowerCase()));
+                        updateEditItem(prev => {
+                          if (!prev) return null;
+                          let syncedTagData = prev.tag_data || "";
+                          try {
+                            const parsed = JSON.parse(syncedTagData || "[]");
+                            if (Array.isArray(parsed)) {
+                              const filtered = parsed.filter(td => inputTagsLc.has((td.tag || "").toLowerCase()));
+                              syncedTagData = filtered.length > 0 ? JSON.stringify(filtered) : "";
+                            }
+                          } catch {}
+                          return {
+                            ...prev, tags: t,
+                            major_genre: normalizedMajor.length > 0 ? JSON.stringify(normalizedMajor) : "",
+                            sub_genre: normalizedSub.length > 0 ? JSON.stringify(normalizedSub) : "",
+                            tag_data: syncedTagData,
+                          };
+                        });
                       }}
                       placeholder="태그가 없습니다"
                       theme={C}
@@ -28734,30 +29176,39 @@ async function importJSON() {
                   <View style={{ flexDirection: "row", gap: 8, marginTop: 16 }}>
                     <PrimaryButton
                       title="💾 저장 & 다음"
+                      disabled={isLoading}
                       onPress={async () => {
                         // 🔧 v3.5.6: editItemRef에서 최신값 읽기 (stale closure 방지)
                         const current = editItemRef.current;
                         if (!current) return;
+                        setIsLoading(true); // 🔧 v3.5.9: 중복 저장 방지
                         try {
                           const savedId = current.id;
                           const savedTitle = current.title;
                           const savedIssues = supplementCurrentNovel?.issues || [];
                           setSavedSupplementId(savedId);
                           
-                          // 🔧 v3.5.8: 저장 전 원본 표지 조회 (cover_library 상태 추적용)
-                          const originalNovel = await first("SELECT cover_image FROM novels WHERE id=?", [current.id]);
+                          // 🔧 v3.5.8: 저장 전 원본 조회 (cover_library + read_count_updated_at 추적용)
+                          const originalNovel = await first("SELECT cover_image, read_count, read_count_updated_at FROM novels WHERE id=?", [current.id]);
                           const originalCover = originalNovel?.cover_image || "";
                           const newCover = current.cover_image || "";
+                          
+                          // 🔧 v3.5.9: read_count 변경 시 read_count_updated_at 갱신
+                          const originalReadCount = Number(originalNovel?.read_count) || 0;
+                          const newReadCount = Number(current.read_count) || 0;
+                          const readCountChanged = originalReadCount !== newReadCount;
+                          const newReadCountUpdatedAt = readCountChanged ? Date.now() : (originalNovel?.read_count_updated_at || Date.now());
                           
                           let plats = [];
                           try { plats = JSON.parse(current.platforms || "[]"); } catch { plats = []; }
                           
                           await exec(
-                            `UPDATE novels SET author=?, total_episodes=?, read_count=?, platforms=?, tags=?, major_genre=?, sub_genre=?, note=?, tag_data=?, cover_image=?, link=?, status=?, work_status=?, gaiden_status=?, gaiden_read_count=?, gaiden_total_episodes=?, reread_count=?, memorable_quote=? WHERE id=?`,
+                            `UPDATE novels SET author=?, total_episodes=?, read_count=?, read_count_updated_at=?, platforms=?, tags=?, major_genre=?, sub_genre=?, note=?, tag_data=?, cover_image=?, link=?, status=?, work_status=?, gaiden_status=?, gaiden_read_count=?, gaiden_total_episodes=?, reread_count=?, memorable_quote=? WHERE id=?`,
                             [
                               current.author?.trim() || "",
                               Number(current.total_episodes) || 0,
-                              Number(current.read_count) || 0,
+                              newReadCount,
+                              newReadCountUpdatedAt,
                               JSON.stringify(plats),
                               current.tags?.trim() || "",
                               current.major_genre || "",
@@ -28792,10 +29243,15 @@ async function importJSON() {
                             timestamp: Date.now(),
                           }, ...prev].slice(0, 20));
                           
+                          syncTagsToCustom(current.tags?.trim() || ""); // 🔧 v3.5.9: 태그 동기화
                           await loadList();
                         } catch (e) {
                           setSavedSupplementId(null);
+                          // 🔧 v3.5.9: 부분 성공 시에도 UI 반영 (exec 성공 후 후속 작업 실패 대비)
+                          try { await loadList(); } catch {}
                           Alert.alert("오류", "저장 중 오류: " + e.message);
+                        } finally {
+                          setIsLoading(false); // 🔧 v3.5.9: 중복 저장 방지 해제
                         }
                       }}
                       style={{ flex: 2 }}
@@ -30648,10 +31104,11 @@ async function importJSON() {
               borderColor: C.line,
             }}>
               {[
-                { key: "app", label: "🎯 앱 설정" },
+                { key: "app", label: "🎯 앱" },
                 { key: "tags", label: "🏷️ 태그" },
                 { key: "analysis", label: "📊 분석" },
                 { key: "backup", label: "💾 백업" },
+                { key: "diag", label: "🔬 진단" },
               ].map((tab) => (
                 <TouchableOpacity
                   key={tab.key}
@@ -32149,6 +32606,335 @@ async function importJSON() {
             </Section>
               </>
             )}
+
+            {/* ═══════════════════════════════════════════════════════════════ */}
+            {/* 🔬 성능 진단 서브탭 (v3.5.9) */}
+            {/* ═══════════════════════════════════════════════════════════════ */}
+            {settingsSubTab === "diag" && (() => {
+              const summary = PerfMonitor.getSummary();
+              const isDark = darkMode;
+              const fmt = (ms) => ms >= 1000 ? `${(ms/1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
+              const fmtUptime = (ms) => {
+                const s = Math.floor(ms/1000);
+                if (s < 60) return `${s}초`;
+                if (s < 3600) return `${Math.floor(s/60)}분 ${s%60}초`;
+                return `${Math.floor(s/3600)}시간 ${Math.floor((s%3600)/60)}분`;
+              };
+              const riskColor = (ms, warn, danger) => ms >= danger ? "#ef4444" : ms >= warn ? "#f59e0b" : "#22c55e";
+              
+              return (
+              <>
+            <Section title="🔬 성능 모니터">
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <Text style={{ color: C.text, fontWeight: "700" }}>실시간 추적</Text>
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  <TouchableOpacity
+                    onPress={() => { PerfMonitor.enabled = !PerfMonitor.enabled; if (PerfMonitor.enabled) PerfMonitor.startTime = Date.now(); setRefreshKey(k => k + 1); }}
+                    style={{ backgroundColor: PerfMonitor.enabled ? "#22c55e" : C.line, paddingHorizontal: 14, paddingVertical: 6, borderRadius: 8 }}
+                  >
+                    <Text style={{ color: PerfMonitor.enabled ? "#fff" : C.sub, fontWeight: "700", fontSize: 13 }}>
+                      {PerfMonitor.enabled ? "● ON" : "○ OFF"}
+                    </Text>
+                  </TouchableOpacity>
+                  {PerfMonitor.enabled && (
+                    <TouchableOpacity
+                      onPress={() => { PerfMonitor.reset(); setRefreshKey(k => k + 1); }}
+                      style={{ backgroundColor: C.line, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}
+                    >
+                      <Text style={{ color: C.sub, fontWeight: "700", fontSize: 13 }}>리셋</Text>
+                    </TouchableOpacity>
+                  )}
+                  {PerfMonitor.enabled && (
+                    <TouchableOpacity
+                      onPress={() => setRefreshKey(k => k + 1)}
+                      style={{ backgroundColor: C.line, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}
+                    >
+                      <Text style={{ color: C.sub, fontWeight: "700", fontSize: 13 }}>새로고침</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+              
+              {!PerfMonitor.enabled ? (
+                <Text style={{ color: C.sub, fontSize: 13, textAlign: "center", paddingVertical: 20 }}>
+                  ON 버튼을 눌러 성능 추적을 시작하세요.{"\n"}추적 중 앱을 사용하면 데이터가 수집됩니다.
+                </Text>
+              ) : (
+                <View>
+                  {/* 요약 카드 */}
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+                    {[
+                      { label: "가동시간", value: fmtUptime(summary.uptime), color: C.primary },
+                      { label: "SQL 쿼리", value: `${summary.sql.totalCount}회`, color: "#3b82f6" },
+                      { label: "SQL 평균", value: fmt(summary.sql.avgTime), color: riskColor(summary.sql.avgTime, 30, 80) },
+                      { label: "느린 쿼리", value: `${summary.sql.slowCount}`, color: riskColor(summary.sql.slowCount, 5, 15) },
+                      { label: "SQL 에러", value: `${summary.sql.errorCount}`, color: summary.sql.errorCount > 0 ? "#ef4444" : "#22c55e" },
+                      { label: "에러", value: `${summary.totalErrors}`, color: summary.totalErrors > 0 ? "#ef4444" : "#22c55e" },
+                      { label: "경고", value: `${summary.totalWarnings}`, color: summary.totalWarnings > 0 ? "#f59e0b" : "#22c55e" },
+                      { label: "DB 리트라이", value: `${summary.db.retryCount}`, color: summary.db.retryCount > 0 ? "#f59e0b" : "#22c55e" },
+                      { label: "DB 재연결", value: `${summary.db.reconnectCount}`, color: summary.db.reconnectCount > 0 ? "#ef4444" : "#22c55e" },
+                      { label: "이미지 로드", value: `${summary.images.loadCount}`, color: "#3b82f6" },
+                      { label: "이미지 에러", value: `${summary.images.errorCount}`, color: summary.images.errorCount > 0 ? "#ef4444" : "#22c55e" },
+                      { label: "BG/FG", value: `${summary.backgroundCount}/${summary.foregroundCount}`, color: "#8b5cf6" },
+                    ].map((card, i) => (
+                      <View key={i} style={{ backgroundColor: isDark ? "#1a1a2e" : "#f0f0f5", borderRadius: 10, padding: 10, minWidth: "30%", flex: 1, borderLeftWidth: 3, borderLeftColor: card.color }}>
+                        <Text style={{ color: C.sub, fontSize: 10 }}>{card.label}</Text>
+                        <Text style={{ color: card.color, fontSize: 16, fontWeight: "800" }}>{card.value}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              )}
+            </Section>
+
+            {PerfMonitor.enabled && summary.functions.length > 0 && (
+            <Section title="⏱️ 함수 실행 통계">
+              <View style={{ marginBottom: 4 }}>
+                <View style={{ flexDirection: "row", paddingVertical: 4, borderBottomWidth: 1, borderColor: C.line }}>
+                  <Text style={{ flex: 3, color: C.sub, fontSize: 11, fontWeight: "700" }}>함수</Text>
+                  <Text style={{ flex: 1, color: C.sub, fontSize: 11, fontWeight: "700", textAlign: "right" }}>호출</Text>
+                  <Text style={{ flex: 1.5, color: C.sub, fontSize: 11, fontWeight: "700", textAlign: "right" }}>평균</Text>
+                  <Text style={{ flex: 1.5, color: C.sub, fontSize: 11, fontWeight: "700", textAlign: "right" }}>최대</Text>
+                  <Text style={{ flex: 1.5, color: C.sub, fontSize: 11, fontWeight: "700", textAlign: "right" }}>총합</Text>
+                </View>
+                {summary.functions.slice(0, 15).map((f, i) => (
+                  <View key={i} style={{ flexDirection: "row", paddingVertical: 5, borderBottomWidth: 0.5, borderColor: C.line + "40" }}>
+                    <Text style={{ flex: 3, color: C.text, fontSize: 11 }} numberOfLines={1}>{f.name}</Text>
+                    <Text style={{ flex: 1, color: C.sub, fontSize: 11, textAlign: "right" }}>{f.count}</Text>
+                    <Text style={{ flex: 1.5, color: riskColor(f.avgTime, 200, 500), fontSize: 11, fontWeight: "600", textAlign: "right" }}>{fmt(f.avgTime)}</Text>
+                    <Text style={{ flex: 1.5, color: riskColor(f.maxTime, 500, 1000), fontSize: 11, fontWeight: "600", textAlign: "right" }}>{fmt(f.maxTime)}</Text>
+                    <Text style={{ flex: 1.5, color: C.sub, fontSize: 11, textAlign: "right" }}>{fmt(f.totalTime)}</Text>
+                  </View>
+                ))}
+              </View>
+              <Text style={{ color: C.sub, fontSize: 10, marginTop: 4 }}>
+                🟢 정상  🟡 주의(200ms+)  🔴 위험(500ms+)
+              </Text>
+            </Section>
+            )}
+
+            {PerfMonitor.enabled && summary.sqlLog.length > 0 && (
+            <Section title="🐌 느린 SQL 쿼리 (100ms+)">
+              {summary.sqlLog.slice(0, 10).map((q, i) => (
+                <View key={i} style={{ marginBottom: 8, padding: 8, backgroundColor: isDark ? "#1a1a2e" : "#fff8f0", borderRadius: 8, borderLeftWidth: 3, borderLeftColor: riskColor(q.duration, 200, 500) }}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                    <Text style={{ color: riskColor(q.duration, 200, 500), fontWeight: "800", fontSize: 13 }}>{fmt(q.duration)}</Text>
+                    <Text style={{ color: C.sub, fontSize: 10 }}>{q.op} · {new Date(q.time).toLocaleTimeString()}</Text>
+                  </View>
+                  <Text style={{ color: C.sub, fontSize: 10, marginTop: 2 }} numberOfLines={2}>{q.sql}</Text>
+                </View>
+              ))}
+            </Section>
+            )}
+
+            {PerfMonitor.enabled && summary.funcLog.length > 0 && (
+            <Section title="🔥 느린 함수 호출 (200ms+)">
+              {summary.funcLog.slice(0, 10).map((f, i) => (
+                <View key={i} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 4, borderBottomWidth: 0.5, borderColor: C.line + "40" }}>
+                  <Text style={{ color: C.text, fontSize: 12 }}>{f.name}</Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                    <Text style={{ color: riskColor(f.duration, 300, 800), fontWeight: "700", fontSize: 12 }}>{fmt(f.duration)}</Text>
+                    <Text style={{ color: C.sub, fontSize: 10 }}>{new Date(f.time).toLocaleTimeString()}</Text>
+                  </View>
+                </View>
+              ))}
+            </Section>
+            )}
+
+            {PerfMonitor.enabled && summary.errors.length > 0 && (
+            <Section title="❌ 에러 로그">
+              {summary.errors.slice(0, 15).map((e, i) => (
+                <View key={i} style={{ marginBottom: 6, padding: 8, backgroundColor: isDark ? "#2d1215" : "#fef2f2", borderRadius: 8, borderLeftWidth: 3, borderLeftColor: "#ef4444" }}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                    <Text style={{ color: "#ef4444", fontWeight: "700", fontSize: 11 }}>{e.type}: {e.context || e.op}</Text>
+                    <Text style={{ color: C.sub, fontSize: 10 }}>{new Date(e.time).toLocaleTimeString()}</Text>
+                  </View>
+                  <Text style={{ color: C.sub, fontSize: 10, marginTop: 2 }} numberOfLines={2}>{e.error || e.sql}</Text>
+                </View>
+              ))}
+            </Section>
+            )}
+
+            {PerfMonitor.enabled && (summary.db.retryCount > 0 || summary.db.reconnectCount > 0) && (
+            <Section title="🔌 DB 연결 안정성">
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+                {[
+                  { label: "리트라이", value: summary.db.retryCount, color: summary.db.retryCount > 5 ? "#ef4444" : summary.db.retryCount > 0 ? "#f59e0b" : "#22c55e" },
+                  { label: "재연결", value: summary.db.reconnectCount, color: summary.db.reconnectCount > 3 ? "#ef4444" : summary.db.reconnectCount > 0 ? "#f59e0b" : "#22c55e" },
+                  { label: "연속에러 최대", value: summary.db.maxConsecutiveErrors, color: summary.db.maxConsecutiveErrors > 3 ? "#ef4444" : "#22c55e" },
+                  { label: "현재 연속에러", value: summary.db.consecutiveErrors, color: summary.db.consecutiveErrors > 0 ? "#ef4444" : "#22c55e" },
+                ].map((card, i) => (
+                  <View key={i} style={{ backgroundColor: isDark ? "#1a1a2e" : "#f0f0f5", borderRadius: 8, padding: 8, minWidth: "45%", flex: 1, borderLeftWidth: 3, borderLeftColor: card.color }}>
+                    <Text style={{ color: C.sub, fontSize: 10 }}>{card.label}</Text>
+                    <Text style={{ color: card.color, fontSize: 15, fontWeight: "800" }}>{card.value}</Text>
+                  </View>
+                ))}
+              </View>
+              {summary.db.lastError && (
+                <View style={{ padding: 8, backgroundColor: isDark ? "#2d1215" : "#fef2f2", borderRadius: 8, marginBottom: 6 }}>
+                  <Text style={{ color: "#ef4444", fontSize: 10, fontWeight: "700" }}>마지막 에러:</Text>
+                  <Text style={{ color: C.sub, fontSize: 10 }} numberOfLines={2}>{summary.db.lastError}</Text>
+                  <Text style={{ color: C.sub, fontSize: 9 }}>{summary.db.lastErrorTime ? new Date(summary.db.lastErrorTime).toLocaleTimeString() : ""}</Text>
+                </View>
+              )}
+              {summary.dbEvents.length > 0 && (
+                <View>
+                  <Text style={{ color: C.sub, fontSize: 11, fontWeight: "700", marginBottom: 4 }}>최근 이벤트:</Text>
+                  {summary.dbEvents.slice(0, 8).map((ev, i) => (
+                    <View key={i} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 2 }}>
+                      <Text style={{ color: ev.type === "reconnect" ? "#ef4444" : "#f59e0b", fontSize: 10, fontWeight: "600" }}>
+                        {ev.type === "reconnect" ? "🔄 재연결" : `⚠️ 리트라이 #${ev.attempt}`} {ev.op || ""}
+                      </Text>
+                      <Text style={{ color: C.sub, fontSize: 9 }}>{new Date(ev.time).toLocaleTimeString()}</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+              <Text style={{ color: C.sub, fontSize: 10, marginTop: 6 }}>
+                🟢 안정  🟡 간헐적 불안정(리트라이 1~5)  🔴 위험(리트라이 5+, 재연결 3+)
+              </Text>
+            </Section>
+            )}
+
+            {PerfMonitor.enabled && summary.imageErrors.length > 0 && (
+            <Section title="🖼️ 이미지 로드 실패">
+              <Text style={{ color: C.sub, fontSize: 11, marginBottom: 6 }}>
+                성공 {summary.images.loadCount} / 실패 {summary.images.errorCount}
+                {summary.images.loadCount > 0 ? ` (실패율 ${((summary.images.errorCount / (summary.images.loadCount + summary.images.errorCount)) * 100).toFixed(1)}%)` : ""}
+              </Text>
+              {summary.imageErrors.slice(0, 8).map((e, i) => (
+                <View key={i} style={{ padding: 6, backgroundColor: isDark ? "#2d1215" : "#fef2f2", borderRadius: 6, marginBottom: 4 }}>
+                  <Text style={{ color: C.sub, fontSize: 9 }} numberOfLines={1}>{e.uri}</Text>
+                  <Text style={{ color: C.sub, fontSize: 9 }}>{new Date(e.time).toLocaleTimeString()}</Text>
+                </View>
+              ))}
+            </Section>
+            )}
+
+            {PerfMonitor.enabled && summary.navigation.length > 0 && (
+            <Section title="🧭 화면 전환 로그">
+              {summary.navigation.slice(0, 12).map((nav, i) => (
+                <View key={i} style={{ flexDirection: "row", alignItems: "center", paddingVertical: 3, borderBottomWidth: 0.5, borderColor: C.line + "30" }}>
+                  <Text style={{ color: C.sub, fontSize: 11, flex: 2 }}>{nav.from}</Text>
+                  <Text style={{ color: C.primary, fontSize: 11 }}> → </Text>
+                  <Text style={{ color: C.text, fontSize: 11, flex: 2, fontWeight: "600" }}>{nav.to}</Text>
+                  <Text style={{ color: C.sub, fontSize: 9, flex: 1.5, textAlign: "right" }}>{new Date(nav.time).toLocaleTimeString()}</Text>
+                </View>
+              ))}
+            </Section>
+            )}
+
+            {PerfMonitor.enabled && summary.lifecycle.length > 0 && (
+            <Section title="📱 앱 라이프사이클">
+              <Text style={{ color: C.sub, fontSize: 11, marginBottom: 6 }}>
+                백그라운드 {summary.backgroundCount}회 / 포그라운드 {summary.foregroundCount}회
+              </Text>
+              {summary.lifecycle.slice(0, 10).map((lc, i) => (
+                <View key={i} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 2 }}>
+                  <Text style={{ color: lc.event === "foreground" ? "#22c55e" : "#f59e0b", fontSize: 11, fontWeight: "600" }}>
+                    {lc.event === "foreground" ? "🟢 포그라운드" : "🟡 백그라운드"}
+                  </Text>
+                  <Text style={{ color: C.sub, fontSize: 10 }}>{new Date(lc.time).toLocaleTimeString()}</Text>
+                </View>
+              ))}
+            </Section>
+            )}
+
+            {PerfMonitor.enabled && summary.stateSnapshots.length > 0 && (
+            <Section title="📦 데이터 규모">
+              {(() => {
+                const latest = summary.stateSnapshots[0];
+                return (
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                    {[
+                      { label: "작품 수", value: latest.novels || 0 },
+                      { label: "커스텀 태그", value: latest.customTags || 0 },
+                      { label: "조합 태그", value: latest.comboTags || 0 },
+                      { label: "표지 이미지", value: latest.coverImages || 0 },
+                    ].map((item, i) => (
+                      <View key={i} style={{ backgroundColor: isDark ? "#1a1a2e" : "#f0f0f5", borderRadius: 8, padding: 8, minWidth: "45%", flex: 1 }}>
+                        <Text style={{ color: C.sub, fontSize: 10 }}>{item.label}</Text>
+                        <Text style={{ color: C.text, fontSize: 15, fontWeight: "700" }}>{item.value}</Text>
+                      </View>
+                    ))}
+                  </View>
+                );
+              })()}
+            </Section>
+            )}
+
+            {PerfMonitor.enabled && summary.renders.length > 0 && (
+            <Section title="🔄 렌더 횟수">
+              <View style={{ marginBottom: 4 }}>
+                {summary.renders.slice(0, 10).map((r, i) => (
+                  <View key={i} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 4, borderBottomWidth: 0.5, borderColor: C.line + "40" }}>
+                    <Text style={{ color: C.text, fontSize: 12 }}>{r.name}</Text>
+                    <Text style={{ color: r.count > 100 ? "#ef4444" : r.count > 30 ? "#f59e0b" : "#22c55e", fontWeight: "700", fontSize: 12 }}>{r.count}회</Text>
+                  </View>
+                ))}
+              </View>
+              <Text style={{ color: C.sub, fontSize: 10, marginTop: 4 }}>
+                🟢 ~30회  🟡 30~100회  🔴 100회+ (과도한 리렌더)
+              </Text>
+            </Section>
+            )}
+
+            {PerfMonitor.enabled && (
+            <Section title="📋 진단 내보내기">
+              <PrimaryButton
+                title="📋 진단 리포트 공유"
+                onPress={async () => {
+                  const s = PerfMonitor.getSummary();
+                  const lines = [
+                    `=== 성능 진단 리포트 ===`,
+                    `가동시간: ${fmtUptime(s.uptime)}`,
+                    `SQL: ${s.sql.totalCount}회, 평균 ${fmt(s.sql.avgTime)}, 느린쿼리 ${s.sql.slowCount}, 에러 ${s.sql.errorCount}`,
+                    ``,
+                    `[함수별 통계]`,
+                    ...s.functions.map(f => `  ${f.name}: ${f.count}회, avg=${fmt(f.avgTime)}, max=${fmt(f.maxTime)}, total=${fmt(f.totalTime)}`),
+                    ``,
+                    `[느린 SQL (${s.sqlLog.length}건)]`,
+                    ...s.sqlLog.slice(0,10).map(q => `  ${fmt(q.duration)} ${q.op}: ${q.sql}`),
+                    ``,
+                    `[느린 함수 (${s.funcLog.length}건)]`,
+                    ...s.funcLog.slice(0,10).map(f => `  ${fmt(f.duration)} ${f.name}`),
+                    ``,
+                    `[에러 (${s.errors.length}건)]`,
+                    ...s.errors.slice(0,10).map(e => `  [${e.context||e.op}] ${e.error||e.sql}`),
+                    ``,
+                    `[렌더 횟수 (상위 10)]`,
+                    ...s.renders.slice(0,10).map(r => `  ${r.name}: ${r.count}회`),
+                    ``,
+                    `[DB 안정성]`,
+                    `  리트라이: ${s.db.retryCount}, 재연결: ${s.db.reconnectCount}, 연속에러최대: ${s.db.maxConsecutiveErrors}`,
+                    ...(s.db.lastError ? [`  마지막에러: ${s.db.lastError}`] : []),
+                    ``,
+                    `[이미지]`,
+                    `  로드: ${s.images.loadCount}, 실패: ${s.images.errorCount}`,
+                    ...(s.imageErrors.length > 0 ? [`  실패URI:`, ...s.imageErrors.slice(0,5).map(e => `    ${e.uri}`)] : []),
+                    ``,
+                    `[라이프사이클] BG: ${s.backgroundCount}, FG: ${s.foregroundCount}`,
+                    ``,
+                    `[화면 전환 (최근 10)]`,
+                    ...s.navigation.slice(0,10).map(n => `  ${n.from} → ${n.to} (${new Date(n.time).toLocaleTimeString()})`),
+                    ...(s.stateSnapshots.length > 0 ? [``, `[데이터 규모]`, `  작품: ${s.stateSnapshots[0].novels}, 커스텀태그: ${s.stateSnapshots[0].customTags}, 조합태그: ${s.stateSnapshots[0].comboTags}, 표지: ${s.stateSnapshots[0].coverImages}`] : []),
+                  ];
+                  const report = lines.join("\n");
+                  try {
+                    await Share.share({ title: "성능 진단 리포트", message: report });
+                  } catch (shareErr) {
+                    Alert.alert("진단 리포트", report.substring(0, 3000));
+                  }
+                }}
+              />
+              <Text style={{ color: C.sub, fontSize: 10, marginTop: 6, textAlign: "center" }}>
+                진단 데이터는 앱 종료 시 초기화됩니다.
+              </Text>
+            </Section>
+            )}
+              </>
+              );
+            })()}
           </>
         )}
       </ScrollView>
@@ -32285,8 +33071,12 @@ async function importJSON() {
                     userSubGenres={userSubGenres}
                     tagAttributes={tagAttributes}
                     onRemoveTag={(tag) => {
-                      const result = removeTagAndSyncGenres(editItem?.tags, tag, userMajorGenres, userSubGenres, editItem?.tag_data);
-                      updateEditItem(prev => prev ? { ...prev, ...result } : null);
+                      // 🔧 v3.5.9 BUG FIX: 함수형 업데이트로 prev.tags 사용 (stale closure 방지)
+                      updateEditItem(prev => {
+                        if (!prev) return null;
+                        const result = removeTagAndSyncGenres(prev.tags, tag, userMajorGenres, userSubGenres, prev.tag_data);
+                        return { ...prev, ...result };
+                      });
                     }}
                     onOpenTagModal={() => {
                       const currentTags = (editItem.tags || "").split(",").map(t => t.trim()).filter(Boolean);
@@ -34019,8 +34809,12 @@ async function importJSON() {
                     userSubGenres={userSubGenres}
                     tagAttributes={tagAttributes}
                     onRemoveTag={(tag) => {
-                      const result = removeTagAndSyncGenres(plannedEditItem?.tags, tag, userMajorGenres, userSubGenres);
-                      updatePlannedEditItem(prev => prev ? { ...prev, ...result } : null);
+                      // 🔧 v3.5.9 BUG FIX: 함수형 업데이트로 prev.tags 사용
+                      updatePlannedEditItem(prev => {
+                        if (!prev) return null;
+                        const result = removeTagAndSyncGenres(prev.tags, tag, userMajorGenres, userSubGenres, prev.tag_data);
+                        return { ...prev, ...result };
+                      });
                     }}
                     onOpenTagModal={() => {
                       const currentTags = (plannedEditItem.tags || "").split(",").map(t => t.trim()).filter(Boolean);
@@ -34037,8 +34831,36 @@ async function importJSON() {
                       openTagModal("planned", generalTags,
                         majorTags.length > 0 ? JSON.stringify(majorTags) : "",
                         subTags.length > 0 ? JSON.stringify(subTags) : "",
-                        []
+                        (() => { try { return plannedEditItem.tag_data ? JSON.parse(plannedEditItem.tag_data) : []; } catch { return []; } })()
                       );
+                    }}
+                    onTagsTextChange={(t) => {
+                      // 🔧 v3.5.9 BUG FIX: 예정작 수정 텍스트 모드 태그 편집 시 장르 동기화
+                      const inputTags = t.split(",").map(tag => tag.trim()).filter(Boolean);
+                      const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
+                      const allSub = [...SUB_GENRES, ...userSubGenres];
+                      const normalizedMajor = inputTags.filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
+                        .map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
+                      const normalizedSub = inputTags.filter(tag => allSub.some(m => m.toLowerCase() === tag.toLowerCase()))
+                        .map(tag => allSub.find(s => s.toLowerCase() === tag.toLowerCase()) || tag);
+                      const inputTagsLc = new Set(inputTags.map(x => x.toLowerCase()));
+                      updatePlannedEditItem(prev => {
+                        if (!prev) return null;
+                        let syncedTagData = prev.tag_data || "";
+                        try {
+                          const parsed = JSON.parse(syncedTagData || "[]");
+                          if (Array.isArray(parsed)) {
+                            const filtered = parsed.filter(td => inputTagsLc.has((td.tag || "").toLowerCase()));
+                            syncedTagData = filtered.length > 0 ? JSON.stringify(filtered) : "";
+                          }
+                        } catch {}
+                        return {
+                          ...prev, tags: t,
+                          major_genre: normalizedMajor.length > 0 ? JSON.stringify(normalizedMajor) : "",
+                          sub_genre: normalizedSub.length > 0 ? JSON.stringify(normalizedSub) : "",
+                          tag_data: syncedTagData, // 🔧 v3.5.9: 제거된 태그의 tag_data 동기 삭제
+                        };
+                      });
                     }}
                     placeholder="태그를 선택하세요"
                     theme={C}
@@ -34721,3 +35543,4 @@ export default function App() {
     </AppErrorBoundary>
   );
 }
+
