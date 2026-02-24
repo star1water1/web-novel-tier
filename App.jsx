@@ -232,6 +232,11 @@
  * ║ • BUG 14: 필터 변경 시 편집 데이터 소실 회귀 → prevScreenRef 분기 분리      ║
  * ║ • BUG 15: 편집 모달 닫기 후 editItem 미복원 → closingEditModal 감지 추가    ║
  * ║                                                                              ║
+ * ║ [변경 14] 🔍 태그 입력 + 실시간 검색 통합                                    ║
+ * ║ • 빠른 입력과 검색을 단일 입력칸으로 통합 (별도 검색칸 제거)                 ║
+ * ║ • 마지막 쉼표 이후 텍스트가 실시간 필터 검색어로 작동                        ║
+ * ║ • 기존 useMemo 체인 활용으로 추가 성능 비용 없음                             ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -7745,8 +7750,13 @@ const TagSelectModal = memo(({
   const [newMajorInput, setNewMajorInput] = useState("");
   const [newSubInput, setNewSubInput] = useState("");
   
-  // 🆕 v3.4: 태그 검색
-  const [tagSearchQuery, setTagSearchQuery] = useState("");
+  // 🆕 v3.4: 태그 검색 → v3.5.9: 빠른 입력과 통합 (마지막 쉼표 이후 텍스트가 실시간 검색어)
+  const liveSearchQuery = useMemo(() => {
+    if (!quickInput) return "";
+    const lastComma = quickInput.lastIndexOf(",");
+    const segment = lastComma >= 0 ? quickInput.slice(lastComma + 1) : quickInput;
+    return segment.trim();
+  }, [quickInput]);
   
   // 🆕 v3.4.3: 빠른 입력 (쉼표 구분 다중 태그)
   const [quickInput, setQuickInput] = useState("");
@@ -7802,8 +7812,7 @@ const TagSelectModal = memo(({
       setBulkSelectedTags([]);
       setDetailMode(enableIntensity);
       setLastAddedTag(null); // 🆕 마지막 추가 태그 리셋
-      setTagSearchQuery(""); // 🆕 v3.4: 검색어 리셋
-      setQuickInput(""); // 🆕 v3.4.3: 빠른 입력 리셋
+      setQuickInput(""); // 🆕 v3.4.3: 빠른 입력 리셋 (검색도 자동 초기화)
       
       // 🏷️ v5.0: 농도 정보 초기화 (대장르/부장르 포함)
       const intensities = {};
@@ -8030,11 +8039,12 @@ const TagSelectModal = memo(({
 
   // 정렬된 목록 (내부에서 계산) + 숨김 태그 필터링
   // 🆕 v3.4: 검색어 기반 필터링 함수
+  // 🔧 v3.5.9: 빠른 입력 기반 실시간 필터링 (쉼표 이후 텍스트로 태그 검색)
   const filterBySearch = useCallback((tags) => {
-    if (!tagSearchQuery.trim()) return tags;
-    const q = tagSearchQuery.toLowerCase().trim();
+    if (!liveSearchQuery) return tags;
+    const q = liveSearchQuery.toLowerCase();
     return tags.filter(t => t.toLowerCase().includes(q));
-  }, [tagSearchQuery]);
+  }, [liveSearchQuery]);
 
   // 🔧 v3.4.4: 고정 태그를 상단에 배치하는 정렬 헬퍼
   const sortWithPinnedFirst = useCallback((tags) => {
@@ -8384,22 +8394,22 @@ const TagSelectModal = memo(({
             )}
           </View>
           
-          {/* 🆕 v3.4.3: 빠른 입력 (쉼표 구분 다중 태그) */}
+          {/* 🆕 v3.4.3: 빠른 입력 (쉼표 구분 다중 태그) + v3.5.9: 실시간 검색 겸용 */}
           <View style={{ marginBottom: 12, backgroundColor: isDark ? "#1e3a5f" : "#eff6ff", padding: 10, borderRadius: 10, borderWidth: 1, borderColor: isDark ? "#3b82f6" : "#93c5fd" }}>
             <Text style={{ color: isDark ? "#93c5fd" : "#1d4ed8", fontSize: 11, fontWeight: "600", marginBottom: 6 }}>
-              ⚡ 빠른 입력 (쉼표로 구분)
+              ⚡ 태그 입력 / 검색 (쉼표로 구분)
             </Text>
             <View style={{ flexDirection: "row", gap: 8 }}>
               <TextInput
                 value={quickInput}
                 onChangeText={setQuickInput}
-                placeholder="무한회귀, 탑등반, 판타지..."
+                placeholder="태그 입력 시 아래 목록이 실시간 필터됩니다"
                 placeholderTextColor={C.sub}
                 style={{
                   flex: 1,
                   backgroundColor: C.card,
                   borderWidth: 1,
-                  borderColor: C.line,
+                  borderColor: liveSearchQuery ? (isDark ? "#3b82f6" : "#60a5fa") : C.line,
                   borderRadius: 10,
                   paddingHorizontal: 12,
                   paddingVertical: 8,
@@ -8421,36 +8431,10 @@ const TagSelectModal = memo(({
               </TouchableOpacity>
             </View>
             <Text style={{ color: isDark ? "#60a5fa" : "#3b82f6", fontSize: 10, marginTop: 4 }}>
-              기존 태그는 자동 선택, 없는 태그는 새로 추가됩니다
+              {liveSearchQuery
+                ? `🔍 "${liveSearchQuery}" 검색 중 · 추가 버튼으로 새 태그 등록`
+                : "기존 태그는 자동 선택, 없는 태그는 새로 추가됩니다"}
             </Text>
-          </View>
-          
-          {/* 🆕 v3.4: 태그 검색 */}
-          <View style={{ marginBottom: 12 }}>
-            <TextInput
-              value={tagSearchQuery}
-              onChangeText={setTagSearchQuery}
-              placeholder="태그 검색..."
-              placeholderTextColor={C.sub}
-              style={{
-                backgroundColor: C.bg,
-                borderWidth: 1,
-                borderColor: C.line,
-                borderRadius: 12,
-                paddingHorizontal: 14,
-                paddingVertical: 10,
-                fontSize: 14,
-                color: C.text,
-              }}
-            />
-            {tagSearchQuery.trim() && (
-              <TouchableOpacity 
-                onPress={() => setTagSearchQuery("")}
-                style={{ position: "absolute", right: 12, top: 10 }}
-              >
-                <Text style={{ color: C.sub, fontSize: 16 }}>✕</Text>
-              </TouchableOpacity>
-            )}
           </View>
           
           {/* 탭 선택 */}
