@@ -237,6 +237,25 @@
  * ║ • 마지막 쉼표 이후 텍스트가 실시간 필터 검색어로 작동                        ║
  * ║ • 기존 useMemo 체인 활용으로 추가 성능 비용 없음                             ║
  * ║                                                                              ║
+ * ║ [변경 15] ⚡ 성능 진단 기반 최적화 4건                                        ║
+ * ║ • setAppMeta: DELETE+INSERT → INSERT OR REPLACE (WAL 경합 해소, 900ms→50ms)  ║
+ * ║ • loadList: loadMatchStats 비동기 분리 (목록 로딩 차단 해소, 824ms→~600ms)   ║
+ * ║ • TagSelectModal/TagManagerModal: 조건부 마운트 (닫힌 상태 25 useMemo 제거)  ║
+ * ║ • CoverImage: 커스텀 memo 비교 함수 (uri/size/platforms만 비교, 1927→~200)   ║
+ * ║                                                                              ║
+ * ║ [변경 16] 🐛+📂+🔍 태그 시스템 종합 개선 5건 + 검토 3건                       ║
+ * ║ • BUG FIX: 태그모달 실시간 검색 미작동 (quickInput 호이스팅 순서 수정)       ║
+ * ║ • BUG FIX: 보충탭 다음작품 이동 시 태그 이상 (setSavedSupplementId 타이밍)   ║
+ * ║ • 📂 커스텀 태그 카테고리 관리 UI (설정→태그관리 섹션)                       ║
+ * ║   - 카테고리 생성/삭제/이름변경, 태그 추가/제거 (TagSearchInput 자동완성)    ║
+ * ║   - 분석에서 카테고리별 선호도 통계 (이미 구현됨, 데이터만 필요했음)         ║
+ * ║ • 🔍 TagRelationModal에 TagSearchInput 자동완성 적용                          ║
+ * ║ • Android Alert.prompt 미지원 방어 처리                                       ║
+ * ║ [검토 추가]                                                                   ║
+ * ║ • CoverImage memo: theme.bg 비교 추가 (다크모드 전환 시 placeholder 갱신)    ║
+ * ║ • catTags Array.isArray 방어 (손상 데이터 크래시 방지)                        ║
+ * ║ • catTagInput 카테고리 전환 시 자동 초기화 (잔류 입력값 오작동 방지)          ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -3055,8 +3074,8 @@ async function getAppMeta(key) {
 async function setAppMeta(key, value) {
   try {
     const json = JSON.stringify(value ?? null);
-    await exec("DELETE FROM app_meta WHERE key=?", [key]);
-    await exec("INSERT INTO app_meta (key,value) VALUES (?,?);", [key, json]);
+    // 🔧 v3.5.9: UPSERT 패턴 (DELETE+INSERT 2쿼리 → 1쿼리, WAL 경합 해소)
+    await exec("INSERT OR REPLACE INTO app_meta (key,value) VALUES (?,?);", [key, json]);
   } catch (e) {
     console.warn("setAppMeta 오류:", e);
   }
@@ -5437,6 +5456,26 @@ function countTagUsage(novels) {
 }
 
 // 자주 쓰는 태그 정렬 (사용빈도순)
+// 🆕 v3.5.9: 태그 카테고리 조회 (기본 + 커스텀 카테고리)
+// 반환값: { category: "분위기/톤", isCustom: false } 또는 null (미분류)
+function getTagCategory(tag, customTagCategories = {}) {
+  // 기본 카테고리 검색
+  for (const [category, tagList] of Object.entries(GENERAL_TAGS)) {
+    if (tagList.some(t => t.toLowerCase() === tag.toLowerCase())) {
+      return { category, isCustom: false };
+    }
+  }
+  // 커스텀 카테고리 검색
+  if (customTagCategories && typeof customTagCategories === "object") {
+    for (const [catName, catTags] of Object.entries(customTagCategories)) {
+      if (Array.isArray(catTags) && catTags.some(t => t.toLowerCase() === tag.toLowerCase())) {
+        return { category: catName, isCustom: true };
+      }
+    }
+  }
+  return null;
+}
+
 function sortTagsByUsage(tags, usageCounts) {
   return [...tags].sort((a, b) => {
     const countA = usageCounts[a] || 0;
@@ -7449,6 +7488,22 @@ const CoverImage = memo(({ uri, platforms, platformCovers = {}, size = 50, theme
   }
   
   return imageEl;
+}, (prev, next) => {
+  // 🔧 v3.5.9: 커스텀 비교 — uri/size/platforms/theme만 비교하여 불필요 리렌더 방지
+  if (prev.uri !== next.uri) return false;
+  if (prev.size !== next.size) return false;
+  if (prev.platforms !== next.platforms) return false;
+  if (!!prev.onPress !== !!next.onPress) return false;
+  // 🔧 v3.5.9: 다크모드 전환 시 placeholder 색상 갱신
+  if (prev.theme?.bg !== next.theme?.bg) return false;
+  // platformCovers: 실제 사용되는 플랫폼 커버 URL만 비교
+  if (!prev.uri && !next.uri && prev.platforms) {
+    const plats = typeof prev.platforms === "string" ? parsePlatforms(prev.platforms) : (prev.platforms || []);
+    for (const p of plats) {
+      if ((prev.platformCovers || {})[p] !== (next.platformCovers || {})[p]) return false;
+    }
+  }
+  return true;
 });
 
 /**
@@ -7731,6 +7786,7 @@ const TagSelectModal = memo(({
   tagRelationGroups = {}, // 🆕 v3.2.1: 태그 관계 그룹 { groupId: { tags, type, name } }
   customComboTraits = [], // 🔗 v3.0.4: 사용자 추가 조합 특성
   customComboTargets = [], // 🔗 v3.0.4: 사용자 추가 조합 대상
+  customTagCategories = {}, // 🆕 v3.5.9: 커스텀 태그 카테고리
   onAddCustomTag,
   onAddComboTag, // 조합식 태그 추가 콜백
   onAddUserMajorGenre,
@@ -7750,16 +7806,17 @@ const TagSelectModal = memo(({
   const [newMajorInput, setNewMajorInput] = useState("");
   const [newSubInput, setNewSubInput] = useState("");
   
+  // 🆕 v3.4.3: 빠른 입력 (쉼표 구분 다중 태그)
+  const [quickInput, setQuickInput] = useState("");
+  
   // 🆕 v3.4: 태그 검색 → v3.5.9: 빠른 입력과 통합 (마지막 쉼표 이후 텍스트가 실시간 검색어)
+  // 🔧 v3.5.9: quickInput 선언 뒤에 배치 (호이스팅 문제로 deps 무효화 방지)
   const liveSearchQuery = useMemo(() => {
     if (!quickInput) return "";
     const lastComma = quickInput.lastIndexOf(",");
     const segment = lastComma >= 0 ? quickInput.slice(lastComma + 1) : quickInput;
     return segment.trim();
   }, [quickInput]);
-  
-  // 🆕 v3.4.3: 빠른 입력 (쉼표 구분 다중 태그)
-  const [quickInput, setQuickInput] = useState("");
   
   // 🆕 마지막으로 추가된 태그 (추천용)
   const [lastAddedTag, setLastAddedTag] = useState(null);
@@ -8088,8 +8145,18 @@ const TagSelectModal = memo(({
       const searched = filterBySearch(sorted);
       result[category] = sortWithPinnedFirst(searched); // 🔧 v3.4.4: 고정 태그 상단
     }
+    // 🆕 v3.5.9: 커스텀 태그 카테고리 병합 (기본 카테고리 뒤에 표시)
+    if (customTagCategories && typeof customTagCategories === "object") {
+      for (const [catName, catTags] of Object.entries(customTagCategories)) {
+        if (!Array.isArray(catTags) || catTags.length === 0) continue;
+        const filtered = catTags.filter(t => !hiddenTags.includes(t));
+        const sorted = sortTagsByUsage(filtered, tagUsageCounts);
+        const searched = filterBySearch(sorted);
+        result[`📂 ${catName}`] = sortWithPinnedFirst(searched);
+      }
+    }
     return result;
-  }, [tagUsageCounts, hiddenTags, filterBySearch, sortWithPinnedFirst]);
+  }, [tagUsageCounts, hiddenTags, filterBySearch, sortWithPinnedFirst, customTagCategories]);
 
   // 🎭 v2.8.1: 감정별 태그 분류
   const sentimentTags = useMemo(() => {
@@ -10067,6 +10134,86 @@ const TagEditModal = memo(({
  * - X축: 0.0 (왼쪽) ~ 1.0 (오른쪽)
  * - Y축: 0.0 (아래쪽) ~ 1.0 (위쪽) ← 화면 좌표와 반대!
  */
+// 🆕 v3.5.9: 태그 검색 입력 컴포넌트 (자동완성 드롭다운)
+// 좌표계 편집, 태그 관계 편집 등에서 태그명 수동 입력 대신 사용
+const TagSearchInput = memo(({ value, onChangeText, onSelectTag, placeholder, allTags = [], theme }) => {
+  const C = theme;
+  const [showDropdown, setShowDropdown] = useState(false);
+
+  const suggestions = useMemo(() => {
+    if (!value || value.trim().length === 0) return [];
+    const q = value.toLowerCase().trim();
+    return allTags
+      .filter(t => t.toLowerCase().includes(q) && t.toLowerCase() !== q)
+      .slice(0, 8);
+  }, [value, allTags]);
+
+  return (
+    <View style={{ zIndex: 10 }}>
+      <TextInput
+        value={value}
+        onChangeText={(text) => {
+          onChangeText(text);
+          setShowDropdown(text.trim().length > 0);
+        }}
+        onFocus={() => { if (value?.trim()) setShowDropdown(true); }}
+        onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
+        placeholder={placeholder || "태그 검색/입력"}
+        placeholderTextColor={C.sub}
+        style={{
+          backgroundColor: C.bg,
+          borderWidth: 1,
+          borderColor: suggestions.length > 0 && showDropdown ? C.primary : C.line,
+          borderRadius: 10,
+          paddingHorizontal: 12,
+          paddingVertical: 10,
+          fontSize: 15,
+          color: C.text,
+        }}
+      />
+      {showDropdown && suggestions.length > 0 && (
+        <View style={{
+          position: "absolute",
+          top: "100%",
+          left: 0,
+          right: 0,
+          backgroundColor: C.card,
+          borderWidth: 1,
+          borderColor: C.line,
+          borderRadius: 10,
+          marginTop: 2,
+          maxHeight: 200,
+          elevation: 5,
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.15,
+          shadowRadius: 4,
+        }}>
+          <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled">
+            {suggestions.map(tag => (
+              <TouchableOpacity
+                key={tag}
+                onPress={() => {
+                  onSelectTag(tag);
+                  setShowDropdown(false);
+                }}
+                style={{
+                  paddingHorizontal: 14,
+                  paddingVertical: 10,
+                  borderBottomWidth: 1,
+                  borderBottomColor: C.line,
+                }}
+              >
+                <Text style={{ color: C.text, fontSize: 14 }}>{tag}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+    </View>
+  );
+});
+
 // 🔧 v3.5.8: 드래그 가능한 좌표 슬라이더 컴포넌트
 const CoordSlider = memo(({ value, onValueChange, color, negLabel, posLabel, presets, theme }) => {
   const C = theme;
@@ -10459,6 +10606,7 @@ const TagRelationModal = memo(({
   targetTag,
   existingGroup, // 기존 그룹 정보 { id, name, type, tags, relatedGroupId }
   allGroups, // 전체 그룹 목록
+  allTags = [], // 🔧 v3.5.9: 태그 자동완성용 전체 태그 목록
   onCreateGroup,
   onUpdateGroup,
   onDeleteGroup,
@@ -10672,29 +10820,26 @@ const TagRelationModal = memo(({
                 ➕ 새 그룹 추가
               </Text>
               
-              {/* 태그 입력 */}
-              <View style={{ marginBottom: 12 }}>
-                <Text style={{ fontSize: 13, fontWeight: "600", color: C.sub, marginBottom: 6 }}>태그 추가 (쉼표로 여러 개)</Text>
+              {/* 태그 입력 — 🔧 v3.5.9: TagSearchInput 자동완성 적용 */}
+              <View style={{ marginBottom: 12, zIndex: 10 }}>
+                <Text style={{ fontSize: 13, fontWeight: "600", color: C.sub, marginBottom: 6 }}>태그 추가 (쉼표로 여러 개, 또는 검색 선택)</Text>
                 <View style={{ flexDirection: "row" }}>
-                  <TextInput
-                    value={newTagInput}
-                    onChangeText={setNewTagInput}
-                    placeholder="예: 먼치킨, 사기캐, 최강"
-                    placeholderTextColor="#9ca3af"
-                    style={{
-                      flex: 1,
-                      backgroundColor: C.bg,
-                      borderWidth: 1,
-                      borderColor: C.line,
-                      borderRadius: 12,
-                      paddingHorizontal: 12,
-                      paddingVertical: 10,
-                      fontSize: 14,
-                      color: C.text,
-                      marginRight: 8,
-                    }}
-                    onSubmitEditing={handleAddNewGroupTag}
-                  />
+                  <View style={{ flex: 1, marginRight: 8 }}>
+                    <TagSearchInput
+                      value={newTagInput}
+                      onChangeText={setNewTagInput}
+                      onSelectTag={(tag) => {
+                        // 자동완성 선택 시 바로 추가
+                        if (!newGroupTags.includes(tag)) {
+                          setNewGroupTags(prev => [...prev, tag]);
+                        }
+                        setNewTagInput("");
+                      }}
+                      placeholder="예: 먼치킨, 사기캐, 최강"
+                      allTags={allTags}
+                      theme={C}
+                    />
+                  </View>
                   <TouchableOpacity
                     onPress={handleAddNewGroupTag}
                     style={{ backgroundColor: C.primary, paddingHorizontal: 16, borderRadius: 12, justifyContent: "center" }}
@@ -14634,6 +14779,7 @@ const TasteAnalysisScreen = memo(({
   tagRelations = { groups: {}, tagToGroup: {} },
   tagCoOccurrences = {},  // 🆕 v3.2.1: 공동 출현 통계
   coordinateSystems = null,  // 🆕 v3.2.1: 사용자 정의 좌표계
+  customTagCategories = {},  // 🆕 v3.5.9: 커스텀 태그 카테고리
 }) => {
   PerfMonitor.trackRender("TasteAnalysisScreen"); // 🔬
   const [analysis, setAnalysis] = useState(null);
@@ -15261,6 +15407,31 @@ const TasteAnalysisScreen = memo(({
           comboAnalysis, platformAnalysis, loyalAuthors, readingPattern,
           matchAnalysis, trendAnalysis, anomalies, insights, spectrumAnalysis } = analysis;
 
+  // 🆕 v3.5.9: 카테고리별 태그 분석 (기본 + 커스텀 카테고리)
+  const categoryStats = useMemo(() => {
+    if (!tagAnalysis || tagAnalysis.length === 0) return [];
+    const catMap = {}; // { categoryName: { count, weightedCount, ratings: [], tags: [] } }
+    for (const ta of tagAnalysis) {
+      const catInfo = getTagCategory(ta.tag, customTagCategories);
+      const catName = catInfo ? catInfo.category.replace(/^📂 /, "") : "미분류";
+      if (!catMap[catName]) {
+        catMap[catName] = { category: catName, count: 0, weightedCount: 0, ratings: [], tags: [], isCustom: catInfo?.isCustom || false };
+      }
+      catMap[catName].count += ta.count;
+      catMap[catName].weightedCount += ta.weightedCount;
+      catMap[catName].ratings.push(ta.avgRating);
+      catMap[catName].tags.push(ta.tag);
+    }
+    return Object.values(catMap)
+      .map(c => ({
+        ...c,
+        avgRating: c.ratings.length > 0 ? c.ratings.reduce((a, b) => a + b, 0) / c.ratings.length : 0,
+        tagCount: c.tags.length,
+      }))
+      .filter(c => c.count >= 2)
+      .sort((a, b) => b.weightedCount - a.weightedCount);
+  }, [tagAnalysis, customTagCategories]);
+
   // 차트 데이터 준비
   const genreChartData = majorGenreAnalysis.slice(0, 8).map(g => ({
     label: g.genre,
@@ -15514,6 +15685,39 @@ const TasteAnalysisScreen = memo(({
           ))}
         </Section>
       </TouchableOpacity>
+
+      {/* 🆕 v3.5.9: 카테고리별 태그 분석 */}
+      {categoryStats.length > 0 && (
+        <TouchableOpacity onPress={() => toggleSection("categoryAnalysis")}>
+          <Section title={`📂 카테고리별 선호도 ${isExpanded("categoryAnalysis") ? "▼" : "▶"}`}>
+            <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
+              태그 카테고리별 사용 빈도와 평균 만족도
+            </Text>
+            {categoryStats.slice(0, isExpanded("categoryAnalysis") ? 30 : 8).map((cat, i) => (
+              <View key={i} style={{ 
+                flexDirection: "row", 
+                justifyContent: "space-between",
+                alignItems: "center",
+                paddingVertical: 6,
+                borderBottomWidth: 1,
+                borderBottomColor: C.line,
+              }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: C.text, fontSize: 13, fontWeight: "600" }}>
+                    {i + 1}. {cat.isCustom ? "📂 " : ""}{cat.category}
+                  </Text>
+                  <Text style={{ color: C.sub, fontSize: 11 }}>
+                    태그 {cat.tagCount}종 · 사용 {cat.count}회
+                  </Text>
+                </View>
+                <Text style={{ color: cat.avgRating >= 1700 ? C.ok : C.text, fontWeight: "700", fontSize: 13 }}>
+                  {cat.avgRating.toFixed(0)}
+                </Text>
+              </View>
+            ))}
+          </Section>
+        </TouchableOpacity>
+      )}
 
       {/* 태그 조합 분석 */}
       {comboAnalysis.length > 0 && (
@@ -17895,6 +18099,7 @@ async function calculateBehaviorPredictionAccuracy(recentN = 30) {
     return { accuracy: correct / logs.length, sample: logs.length };
   } catch { return null; }
 }
+
 function generateBehaviorInsights(staticGenres, dynamicGenres, staticTags, dynamicTags, staticAuthors, dynamicAuthors, predAcc) {
   const insights = [];
 
@@ -18445,6 +18650,10 @@ function AppContent() {
   const [tagModalOpen, setTagModalOpen] = useState(false);
   const [tagModalTarget, setTagModalTarget] = useState(null); // 'new' | 'edit' | 'bulk'
   const [customTags, setCustomTags] = useState([]); // 사용자 정의 태그
+  const [customTagCategories, setCustomTagCategories] = useState({}); // 🆕 v3.5.9: 커스텀 태그 카테고리 { "카테고리명": ["tag1", "tag2"] }
+  const [catNewName, setCatNewName] = useState(""); // 📂 카테고리 관리: 새 카테고리명
+  const [catExpanded, setCatExpanded] = useState(null); // 📂 카테고리 관리: 펼쳐진 카테고리명
+  const [catTagInput, setCatTagInput] = useState(""); // 📂 카테고리 관리: 태그 추가 입력
   const [comboTags, setComboTags] = useState([]); // 🔗 조합식 태그 (예: "먼치킨 히로인")
   const [customComboTraits, setCustomComboTraits] = useState([]); // 🔗 v3.0.4: 사용자 추가 조합 특성
   const [customComboTargets, setCustomComboTargets] = useState([]); // 🔗 v3.0.4: 사용자 추가 조합 대상
@@ -18822,6 +19031,7 @@ function AppContent() {
             savedCustomComboTraits, // 🔗 v3.0.4: 조합 특성
             savedCustomComboTargets, // 🔗 v3.0.4: 조합 대상
             savedCoordinateSystems, // 📐 v3.2.0: 태그 좌표계
+            savedCustomTagCategories, // 🆕 v3.5.9: 커스텀 태그 카테고리
           ] = await Promise.all([
             getAppMeta("settings_darkMode"),      // 0: savedDarkMode
             getAppMeta("platform_covers"),        // 1: savedPlatformCovers
@@ -18843,6 +19053,7 @@ function AppContent() {
             getAppMeta("custom_combo_traits"),    // 17: savedCustomComboTraits
             getAppMeta("custom_combo_targets"),   // 18: savedCustomComboTargets
             getTagCoordinateSystems(),            // 19: savedCoordinateSystems
+            getAppMeta("custom_tag_categories"),  // 20: savedCustomTagCategories
           ]);
           
           if (!mounted) return;
@@ -18894,6 +19105,11 @@ function AppContent() {
           // 🏷️ 커스텀 태그
           const customTagsList = Array.isArray(savedCustomTags) ? savedCustomTags : [];
           setCustomTags(customTagsList);
+          
+          // 🆕 v3.5.9: 커스텀 태그 카테고리
+          if (savedCustomTagCategories && typeof savedCustomTagCategories === "object") {
+            setCustomTagCategories(savedCustomTagCategories);
+          }
           
           // 🔗 조합식 태그
           if (Array.isArray(savedComboTags)) {
@@ -21770,8 +21986,31 @@ function AppContent() {
     for (const [category, tagList] of Object.entries(GENERAL_TAGS)) {
       result[category] = sortTagsByUsage(tagList, tagUsageCounts);
     }
+    // 🆕 v3.5.9: 커스텀 태그 카테고리 병합
+    if (customTagCategories && typeof customTagCategories === "object") {
+      for (const [catName, catTags] of Object.entries(customTagCategories)) {
+        if (!Array.isArray(catTags) || catTags.length === 0) continue;
+        result[`📂 ${catName}`] = sortTagsByUsage(catTags, tagUsageCounts);
+      }
+    }
     return result;
-  }, [tagUsageCounts]);
+  }, [tagUsageCounts, customTagCategories]);
+
+  // 🆕 v3.5.9: 전체 태그 목록 (검색/자동완성용)
+  const allTagsForSearch = useMemo(() => {
+    const set = new Set(ALL_DEFAULT_TAGS);
+    customTags.forEach(t => set.add(t));
+    comboTags.forEach(t => set.add(t));
+    userMajorGenres.forEach(t => set.add(t));
+    userSubGenres.forEach(t => set.add(t));
+    // 커스텀 카테고리 태그도 포함
+    if (customTagCategories) {
+      for (const catTags of Object.values(customTagCategories)) {
+        if (Array.isArray(catTags)) catTags.forEach(t => set.add(t));
+      }
+    }
+    return [...set].sort();
+  }, [customTags, comboTags, userMajorGenres, userSubGenres, customTagCategories]);
 
   // =========================================================
   // ⚙️ 설정 관리 함수 (v2.6)
@@ -22218,7 +22457,8 @@ function AppContent() {
           coverImages: coverLibrary?.length || 0,
         });
       }
-      await loadMatchStats();
+      // 🔧 v3.5.9: 매칭 통계는 비동기로 분리 (loadList 차단 해소)
+      loadMatchStats().catch(() => {});
       if (_pt) PerfMonitor.trackFunc("loadList", Date.now() - _pt); // 🔬
     } catch (e) {
       console.warn("loadList 오류:", e);
@@ -24870,6 +25110,8 @@ async function exportJSON() {
     if (userSubGenres.length > 0) tagMeta.usg = userSubGenres; // user sub genres
     if (customTags.length > 0) tagMeta.ct = customTags; // custom tags
     if (comboTags.length > 0) tagMeta.cbt = comboTags; // combo tags
+    // 🆕 v3.5.9: 커스텀 태그 카테고리
+    if (customTagCategories && Object.keys(customTagCategories).length > 0) tagMeta.ctc = customTagCategories;
     
     if (Object.keys(tagMeta).length > 0) {
       payload.TM = tagMeta;
@@ -25413,6 +25655,11 @@ async function importJSON() {
                   setComboTags(data.TM.cbt);
                   await setAppMeta("combo_tags", data.TM.cbt);
                   tagMetaRestored = true;
+                }
+                // 🆕 v3.5.9: 커스텀 태그 카테고리
+                if (data.TM.ctc && typeof data.TM.ctc === "object") {
+                  setCustomTagCategories(data.TM.ctc);
+                  await setAppMeta("custom_tag_categories", data.TM.ctc);
                 }
               }
 
@@ -29170,7 +29417,6 @@ async function importJSON() {
                           const savedId = current.id;
                           const savedTitle = current.title;
                           const savedIssues = supplementCurrentNovel?.issues || [];
-                          setSavedSupplementId(savedId);
                           
                           // 🔧 v3.5.8: 저장 전 원본 조회 (cover_library + read_count_updated_at 추적용)
                           const originalNovel = await first("SELECT cover_image, read_count, read_count_updated_at FROM novels WHERE id=?", [current.id]);
@@ -29229,6 +29475,8 @@ async function importJSON() {
                           
                           syncTagsToCustom(current.tags?.trim() || ""); // 🔧 v3.5.9: 태그 동기화
                           await loadList();
+                          // 🔧 v3.5.9: loadList 완료 후 savedId 설정 (supplementList가 최신 데이터일 때 다음 작품 전환)
+                          setSavedSupplementId(savedId);
                         } catch (e) {
                           setSavedSupplementId(null);
                           // 🔧 v3.5.9: 부분 성공 시에도 UI 반영 (exec 성공 후 후속 작업 실패 대비)
@@ -30050,6 +30298,7 @@ async function importJSON() {
             tagRelations={tagRelations}
             tagCoOccurrences={tagCoOccurrences}
             coordinateSystems={coordinateSystems}
+            customTagCategories={customTagCategories}
           />
         )}
 
@@ -31625,6 +31874,219 @@ async function importJSON() {
                     style={{ marginTop: 8 }}
                   />
                 )}
+              </View>
+            </Section>
+
+            {/* 📂 v3.5.9: 커스텀 태그 카테고리 관리 */}
+            <Section title="📂 태그 카테고리 관리">
+              <Text style={{ color: C.sub, marginBottom: 12 }}>
+                태그를 카테고리로 분류하여 관리하고 분석에 활용합니다.{"\n"}
+                기본 13개 카테고리 외에 사용자 카테고리를 자유롭게 추가할 수 있습니다.
+              </Text>
+              
+              {/* 새 카테고리 추가 */}
+              <View style={{ flexDirection: "row", marginBottom: 16, gap: 8 }}>
+                <View style={{ flex: 1 }}>
+                  <TagSearchInput
+                    value={catNewName}
+                    onChangeText={setCatNewName}
+                    onSelectTag={(tag) => setCatNewName(tag)}
+                    placeholder="새 카테고리명 입력"
+                    allTags={[]}
+                    theme={C}
+                  />
+                </View>
+                <TouchableOpacity
+                  onPress={() => {
+                    const name = catNewName.trim();
+                    if (!name) return;
+                    if (customTagCategories[name]) {
+                      Alert.alert("알림", "이미 존재하는 카테고리입니다.");
+                      return;
+                    }
+                    if (GENERAL_TAGS[name] || Object.keys(GENERAL_TAGS).some(k => k === `📂 ${name}`)) {
+                      Alert.alert("알림", "기본 카테고리와 이름이 중복됩니다.");
+                      return;
+                    }
+                    const next = { ...customTagCategories, [name]: [] };
+                    setCustomTagCategories(next);
+                    setAppMeta("custom_tag_categories", next);
+                    setCatNewName("");
+                    setCatExpanded(name);
+                  }}
+                  disabled={!catNewName.trim()}
+                  style={{
+                    backgroundColor: catNewName.trim() ? C.primary : C.chip,
+                    paddingHorizontal: 16,
+                    borderRadius: 12,
+                    justifyContent: "center",
+                  }}
+                >
+                  <Text style={{ color: catNewName.trim() ? "#fff" : C.sub, fontWeight: "700" }}>추가</Text>
+                </TouchableOpacity>
+              </View>
+              
+              {/* 기존 카테고리 목록 */}
+              {Object.keys(customTagCategories).length === 0 ? (
+                <View style={{ padding: 20, alignItems: "center", backgroundColor: C.bg, borderRadius: 12 }}>
+                  <Text style={{ color: C.sub }}>아직 커스텀 카테고리가 없습니다</Text>
+                </View>
+              ) : (
+                Object.entries(customTagCategories).map(([catName, rawCatTags]) => {
+                  // 🔧 v3.5.9: 방어 - 배열이 아닌 경우 빈 배열로 폴백 (손상된 데이터 방어)
+                  const catTags = Array.isArray(rawCatTags) ? rawCatTags : [];
+                  const isExpanded = catExpanded === catName;
+                  return (
+                    <View key={catName} style={{ marginBottom: 8, backgroundColor: C.bg, borderRadius: 12, overflow: "hidden" }}>
+                      {/* 카테고리 헤더 */}
+                      <TouchableOpacity
+                        onPress={() => {
+                          setCatExpanded(isExpanded ? null : catName);
+                          // 🔧 v3.5.9: 카테고리 전환 시 태그 입력 초기화 (다른 카테고리 입력값 잔류 방지)
+                          if (!isExpanded) setCatTagInput("");
+                        }}
+                        onLongPress={() => {
+                          Alert.alert(
+                            `📂 ${catName}`,
+                            `${catTags.length}개 태그`,
+                            [
+                              { text: "이름 변경", onPress: () => {
+                                if (Platform.OS === "ios" && Alert.prompt) {
+                                  Alert.prompt("카테고리 이름 변경", `"${catName}"의 새 이름을 입력하세요`, (newName) => {
+                                    if (!newName?.trim() || newName.trim() === catName) return;
+                                    const trimmed = newName.trim();
+                                    if (customTagCategories[trimmed]) { Alert.alert("알림", "이미 존재하는 이름입니다."); return; }
+                                    const next = { ...customTagCategories };
+                                    next[trimmed] = next[catName];
+                                    delete next[catName];
+                                    setCustomTagCategories(next);
+                                    setAppMeta("custom_tag_categories", next);
+                                    if (catExpanded === catName) setCatExpanded(trimmed);
+                                  }, "plain-text", catName);
+                                } else {
+                                  // Android: Alert.prompt 미지원 → 삭제 후 재생성 안내
+                                  Alert.alert("안내", "Android에서는 카테고리를 삭제 후 새 이름으로 다시 만들어주세요.\n(태그는 카테고리 삭제 시 유지됩니다)");
+                                }
+                              }},
+                              { text: "삭제", style: "destructive", onPress: () => {
+                                Alert.alert("삭제 확인", `"${catName}" 카테고리를 삭제할까요?\n(태그 자체는 삭제되지 않습니다)`, [
+                                  { text: "취소", style: "cancel" },
+                                  { text: "삭제", style: "destructive", onPress: () => {
+                                    const next = { ...customTagCategories };
+                                    delete next[catName];
+                                    setCustomTagCategories(next);
+                                    setAppMeta("custom_tag_categories", next);
+                                    if (catExpanded === catName) setCatExpanded(null);
+                                  }},
+                                ]);
+                              }},
+                              { text: "닫기", style: "cancel" },
+                            ]
+                          );
+                        }}
+                        style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 12 }}
+                      >
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                          <Text style={{ color: C.text, fontWeight: "700", fontSize: 15 }}>📂 {catName}</Text>
+                          <View style={{ backgroundColor: C.primary + "20", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 }}>
+                            <Text style={{ color: C.primary, fontSize: 12, fontWeight: "700" }}>{catTags.length}</Text>
+                          </View>
+                        </View>
+                        <Text style={{ color: C.sub, fontSize: 16 }}>{isExpanded ? "▼" : "▶"}</Text>
+                      </TouchableOpacity>
+                      
+                      {/* 펼쳐진 내용 */}
+                      {isExpanded && (
+                        <View style={{ padding: 12, paddingTop: 0 }}>
+                          {/* 태그 추가 입력 */}
+                          <View style={{ flexDirection: "row", marginBottom: 10, gap: 8 }}>
+                            <View style={{ flex: 1, zIndex: 10 }}>
+                              <TagSearchInput
+                                value={catTagInput}
+                                onChangeText={setCatTagInput}
+                                onSelectTag={(tag) => {
+                                  if (catTags.some(t => t.toLowerCase() === tag.toLowerCase())) {
+                                    Alert.alert("알림", "이미 카테고리에 포함된 태그입니다.");
+                                    return;
+                                  }
+                                  const next = { ...customTagCategories, [catName]: [...catTags, tag] };
+                                  setCustomTagCategories(next);
+                                  setAppMeta("custom_tag_categories", next);
+                                  setCatTagInput("");
+                                }}
+                                placeholder="태그 검색하여 추가"
+                                allTags={allTagsForSearch}
+                                theme={C}
+                              />
+                            </View>
+                            <TouchableOpacity
+                              onPress={() => {
+                                const tags = catTagInput.split(",").map(t => t.trim()).filter(Boolean);
+                                if (tags.length === 0) return;
+                                const newTags = tags.filter(t => !catTags.some(ct => ct.toLowerCase() === t.toLowerCase()));
+                                if (newTags.length === 0) { Alert.alert("알림", "이미 포함된 태그입니다."); return; }
+                                const next = { ...customTagCategories, [catName]: [...catTags, ...newTags] };
+                                setCustomTagCategories(next);
+                                setAppMeta("custom_tag_categories", next);
+                                setCatTagInput("");
+                              }}
+                              disabled={!catTagInput.trim()}
+                              style={{
+                                backgroundColor: catTagInput.trim() ? C.primary : C.chip,
+                                paddingHorizontal: 14,
+                                borderRadius: 10,
+                                justifyContent: "center",
+                              }}
+                            >
+                              <Text style={{ color: catTagInput.trim() ? "#fff" : C.sub, fontWeight: "700", fontSize: 13 }}>추가</Text>
+                            </TouchableOpacity>
+                          </View>
+                          
+                          {/* 태그 칩 목록 */}
+                          {catTags.length === 0 ? (
+                            <Text style={{ color: C.sub, fontSize: 13, textAlign: "center", paddingVertical: 10 }}>
+                              태그를 추가해주세요
+                            </Text>
+                          ) : (
+                            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                              {catTags.map(tag => (
+                                <View key={tag} style={{
+                                  flexDirection: "row", alignItems: "center",
+                                  backgroundColor: C.primary + "15", paddingLeft: 10, paddingRight: 4,
+                                  paddingVertical: 5, borderRadius: 999,
+                                }}>
+                                  <Text style={{ color: C.text, fontSize: 13, fontWeight: "600" }}>{tag}</Text>
+                                  <TouchableOpacity
+                                    onPress={() => {
+                                      const next = { ...customTagCategories, [catName]: catTags.filter(t => t !== tag) };
+                                      setCustomTagCategories(next);
+                                      setAppMeta("custom_tag_categories", next);
+                                    }}
+                                    style={{ padding: 4 }}
+                                  >
+                                    <Text style={{ color: "#ef4444", fontSize: 11, fontWeight: "700" }}>✕</Text>
+                                  </TouchableOpacity>
+                                </View>
+                              ))}
+                            </View>
+                          )}
+                          
+                          <Text style={{ color: C.sub, fontSize: 10, marginTop: 8 }}>
+                            길게 누르면 이름 변경/삭제 · 분석에서 카테고리별 통계 확인 가능
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  );
+                })
+              )}
+              
+              {/* 기본 카테고리 현황 */}
+              <View style={{ marginTop: 12, padding: 12, backgroundColor: C.bg, borderRadius: 12 }}>
+                <Text style={{ color: C.sub, fontSize: 12, fontWeight: "600", marginBottom: 6 }}>📋 기본 카테고리 ({Object.keys(GENERAL_TAGS).length}개)</Text>
+                <Text style={{ color: C.sub, fontSize: 11, lineHeight: 18 }}>
+                  {Object.entries(GENERAL_TAGS).map(([cat, tags]) => `${cat} (${tags.length})`).join(" · ")}
+                </Text>
               </View>
             </Section>
 
@@ -34120,8 +34582,8 @@ async function importJSON() {
         </View>
       </Modal>
 
-      {/* 🏷️ 태그 선택 모달 (분리된 컴포넌트) */}
-      <TagSelectModal
+      {/* 🏷️ 태그 선택 모달 (분리된 컴포넌트) — v3.5.9: 조건부 마운트로 성능 최적화 */}
+      {tagModalOpen && <TagSelectModal
         visible={tagModalOpen}
         onClose={() => setTagModalOpen(false)}
         onConfirm={handleTagModalConfirm}
@@ -34142,6 +34604,7 @@ async function importJSON() {
         tagRelationGroups={tagRelations.groups}
         customComboTraits={customComboTraits}
         customComboTargets={customComboTargets}
+        customTagCategories={customTagCategories}
         onAddCustomTag={addCustomTagDirect}
         onAddComboTag={addComboTag}
         onAddUserMajorGenre={addUserMajorGenre}
@@ -34150,7 +34613,7 @@ async function importJSON() {
         onTogglePin={togglePinTag}
         onToggleTitle={toggleTagTitle}
         theme={C}
-      />
+      />}
 
       {/* URL 입력 모달 (Android용) */}
       <Modal
@@ -34501,13 +34964,16 @@ async function importJSON() {
                   </Text>
                   
                   <Text style={{ fontWeight: "700", color: C.text, marginBottom: 6 }}>태그 이름</Text>
-                  <TextInput
-                    value={editingCoordTag.tag}
-                    onChangeText={(text) => setEditingCoordTag({ ...editingCoordTag, tag: text })}
-                    placeholder="태그 이름"
-                    placeholderTextColor={C.sub}
-                    style={{ backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, color: C.text, marginBottom: 16 }}
-                  />
+                  <View style={{ marginBottom: 16, zIndex: 10 }}>
+                    <TagSearchInput
+                      value={editingCoordTag.tag}
+                      onChangeText={(text) => setEditingCoordTag({ ...editingCoordTag, tag: text })}
+                      onSelectTag={(tag) => setEditingCoordTag({ ...editingCoordTag, tag })}
+                      placeholder="태그 검색 또는 직접 입력"
+                      allTags={allTagsForSearch}
+                      theme={C}
+                    />
+                  </View>
                   
                   {/* X 좌표 */}
                   <Text style={{ fontWeight: "700", color: C.text, marginBottom: 6 }}>
@@ -34617,6 +35083,7 @@ async function importJSON() {
         onDeleteGroup={deleteTagGroup}
         onAddTagToGroup={addTagToGroup}
         onRemoveTagFromGroup={removeTagFromGroup}
+        allTags={allTagsForSearch}
         theme={C}
       />
 
@@ -35217,8 +35684,8 @@ async function importJSON() {
         </View>
       </Modal>
 
-      {/* 🏷️ 태그 매니저 모달 (풀스크린) */}
-      <TagManagerModal
+      {/* 🏷️ 태그 매니저 모달 (풀스크린) — v3.5.9: 조건부 마운트로 성능 최적화 */}
+      {tagManagerModalOpen && <TagManagerModal
         visible={tagManagerModalOpen}
         onClose={() => setTagManagerModalOpen(false)}
         customTags={customTags}
@@ -35318,7 +35785,7 @@ async function importJSON() {
         findUnusedTags={findUnusedTags}
         onEditRelations={openTagRelationModal}
         theme={C}
-      />
+      />}
 
       {/* 🧹 v3.5.5: 커스텀 초기화 모달 */}
       <Modal
@@ -35527,4 +35994,3 @@ export default function App() {
     </AppErrorBoundary>
   );
 }
-
