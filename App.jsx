@@ -2,9 +2,9 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.5.9                                                                  ║
- * ║  최종 수정: 2025-02-20                                                        ║
- * ║  총 라인 수: 약 34,400줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 3.5.11                                                                 ║
+ * ║  최종 수정: 2025-02-25                                                        ║
+ * ║  총 라인 수: 약 36,100줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -147,6 +147,63 @@
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v3.5.11 수정 사항 - tagAttributes 데이터 흐름 근본 수정 (2025-02-25)    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [근본 원인] tagAttributes 기반 대장르/부장르가 "표시"만 되고 "데이터 처리"에  ║
+ * ║   반영되지 않아 태그 관련 기능 대부분이 정상 작동하지 않았음                  ║
+ * ║   getAllMajorTags/getAllSubTags 헬퍼가 존재하나 한 곳도 사용되지 않았음       ║
+ * ║                                                                              ║
+ * ║ [버그 1-2] 🔴 onTagsTextChange + onOpenTagModal: tagAttributes 미반영 (12곳) ║
+ * ║ • 증상: tagAttributes로 대장르 지정한 태그가 텍스트 편집/모달 열기 시        ║
+ * ║   일반 태그로 잘못 분류됨                                                    ║
+ * ║ • 원인: [...MAJOR_GENRES, ...userMajorGenres] 직접 사용                      ║
+ * ║ • 수정: getAllMajorTags(tagAttributes, userMajorGenres) 사용                  ║
+ * ║ • 적용 위치: 신규등록, 수정모달, 보충탭, 예정탭 신규/수정 (각 2곳씩 총 12곳) ║
+ * ║ • 추가: allMajorGenres/allSubGenres/sortedMajor/sortedSub useMemo도 통일     ║
+ * ║ • 추가: 일괄삭제(deleteTagGlobally) 장르 재계산에도 적용 (2곳)               ║
+ * ║ • 추가: syncTagsToCustom + handleQuickAdd + coOccurringRecommendations        ║
+ * ║ • 추가: 위 useCallback/useMemo deps에 tagAttributes 추가                     ║
+ * ║                                                                              ║
+ * ║ [버그 3] 🔴 removeTagAndSyncGenres: tagAttributes 파라미터 누락              ║
+ * ║ • 증상: 칩 뷰 ✕ 클릭 시 tagAttributes 기반 장르가 재계산되지 않음           ║
+ * ║ • 원인: 함수가 App 외부에 정의되어 tagAttributes 접근 불가                   ║
+ * ║ • 수정: tagAttributes 파라미터 추가 + 내부에서 getAllMajorTags 사용           ║
+ * ║ • 호출부 5곳 모두 tagAttributes 전달                                         ║
+ * ║                                                                              ║
+ * ║ [버그 4] 🟡 handleTagEditModalSave: pinnedTags/hiddenTags stale closure      ║
+ * ║ • 증상: TagEditModal 저장 시 고정/숨김 변경이 가끔 유실됨                    ║
+ * ║ • 원인: closure 값 직접 참조 (savePinnedTags([...pinnedTags, tag]))          ║
+ * ║ • 수정: setPinnedTags(prev => ...) 함수형 업데이트 패턴                      ║
+ * ║                                                                              ║
+ * ║ [버그 5] 🟡 TagSelectModal: 커스텀/조합 태그 검색 누락 (3곳)                ║
+ * ║ • 증상: 빠른 입력란 검색 시 기본 태그만 필터링, 커스텀/조합은 항상 전체 표시 ║
+ * ║ • 수정: filterBySearch() 적용 + 결과 0개 시 섹션 헤더 자동 숨김              ║
+ * ║ • 적용: 일반탭 커스텀/조합 + 조합탭 조합 목록                               ║
+ * ║ • 추가: sortedMajor/sortedSub를 getAllMajorTags로 통일 (isMajor:false 반영)  ║
+ * ║                                                                              ║
+ * ║ [버그 7] 🟡 자동매칭 세부 설정 접근성 (구조적 문제)                          ║
+ * ║ • 증상: 자동매칭 OFF 상태에서 세부 설정(모드/속도/기준) 변경 불가            ║
+ * ║ • 원인: {autoEnabled && (...)} 로 전체 설정 UI가 감싸져 토글 OFF시 숨김      ║
+ * ║ • 수정: 세부 설정 항상 표시 + OFF시 opacity:0.55 시각적 구분                 ║
+ * ║ •       미리보기만 autoEnabled && pair 조건 유지                              ║
+ * ║                                                                              ║
+ * ║ [기능 추가] 🆕 매치 필터링 시스템                                            ║
+ * ║ • 정보 충실도 높은 작품끼리만 우선 매칭하는 토글 기능                        ║
+ * ║ • 조건: 읽은 회차 + 총 회차 + 작가 기입 + 태그 N개 이상 (커스텀 설정)       ║
+ * ║ • 최소 태그 수 5/10/15/20/25 중 선택 가능 (기본값 15)                       ║
+ * ║ • 현황 실시간 표시 (조건 충족 작품 수 / 전체 / 매칭 조합 수)                ║
+ * ║ • 고정매칭(focusMatch)과 병용 가능 — 고정 작품도 조건 미충족 시 차단        ║
+ * ║ • 백업/복원 지원 (AD.mf 필드)                                               ║
+ * ║ • OFF 상태에서도 설정 가능, 매칭 화면에 필터 활성 배너 표시                  ║
+ * ║                                                                              ║
+ * ║ [버그 6] 🟡 Android 커스텀 카테고리 이름 변경 불가                           ║
+ * ║ • 증상: Alert.prompt iOS 전용 → Android에서 이름 변경 기능 없음              ║
+ * ║ • 수정: 인라인 TextInput UI 추가 (펼쳐진 카테고리 내부에 표시)               ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ * 
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔧 v3.5.9 수정 사항 - saveEdit 안전성 + 편집 미저장 확인 + 복원 재시도     ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║                                                                              ║
@@ -255,6 +312,14 @@
  * ║ • CoverImage memo: theme.bg 비교 추가 (다크모드 전환 시 placeholder 갱신)    ║
  * ║ • catTags Array.isArray 방어 (손상 데이터 크래시 방지)                        ║
  * ║ • catTagInput 카테고리 전환 시 자동 초기화 (잔류 입력값 오작동 방지)          ║
+ * ║                                                                              ║
+ * ║ [변경 17] 🔬 진단 시스템 v2 업그레이드                                       ║
+ * ║ • loadList 서브스텝 분해: SQL → normalize → tagCount 개별 측정               ║
+ * ║ • 함수 호출 trigger 라벨링: init/fg-recovery/pin/register/match 등 46곳     ║
+ * ║ • BG→FG 직후 호출 판별 (⚡FG직후 마커, 3초 이내)                             ║
+ * ║ • SQL row count 추적 (all() 쿼리 결과 행 수)                                 ║
+ * ║ • 리포트 출력 강화: 서브스텝 분해, trigger, afterFG, DB이벤트 타임라인        ║
+ * ║ • 라이프사이클 이벤트 타임스탬프 출력 추가                                    ║
  * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
@@ -2285,6 +2350,10 @@ const PerfMonitor = {
   funcLog: [],         // 최근 느린 함수 호출 (>200ms) - 최대 30개
   FUNC_SLOW_THRESHOLD: 200, // ms
   
+  // 🆕 v3.5.9b: 함수 서브스텝 타이밍 (loadList 내부 분해용)
+  _activeSteps: {},    // { funcName: { startTime, steps: [{name, duration}], trigger } }
+  subStepLog: [],      // 최근 서브스텝 기록 - 최대 20개
+  
   // 에러 로그
   errors: [],          // 최대 50개
   warnings: [],        // 최대 50개
@@ -2308,12 +2377,13 @@ const PerfMonitor = {
   lifecycle: [],       // 최대 20개 - { event, time }
   backgroundCount: 0,
   foregroundCount: 0,
+  _lastForegroundTime: 0, // 🆕 v3.5.9b: 마지막 포그라운드 전환 시각
   
   // 🆕 상태 크기 스냅샷 (주기적)
   stateSnapshots: [],  // 최대 10개
   
   // === SQL 추적 ===
-  trackSQL(opName, sql, durationMs, error = null) {
+  trackSQL(opName, sql, durationMs, error = null, rowCount = null) {
     if (!this.enabled) return;
     this.sql.totalCount++;
     this.sql.totalTime += durationMs;
@@ -2323,12 +2393,12 @@ const PerfMonitor = {
     }
     if (durationMs > this.SQL_SLOW_THRESHOLD) {
       this.sql.slowCount++;
-      this.sqlLog = [{ op: opName, sql: sql?.substring(0, 100), duration: durationMs, time: Date.now() }, ...this.sqlLog].slice(0, 30);
+      this.sqlLog = [{ op: opName, sql: sql?.substring(0, 100), duration: durationMs, time: Date.now(), rows: rowCount }, ...this.sqlLog].slice(0, 30);
     }
   },
   
   // === 함수 실행 추적 ===
-  trackFunc(name, durationMs) {
+  trackFunc(name, durationMs, trigger = null) {
     if (!this.enabled) return;
     if (!this.functions[name]) {
       this.functions[name] = { count: 0, totalTime: 0, maxTime: 0, lastTime: 0, minTime: Infinity };
@@ -2340,9 +2410,45 @@ const PerfMonitor = {
     if (durationMs > f.maxTime) f.maxTime = durationMs;
     if (durationMs < f.minTime) f.minTime = durationMs;
     
+    // 🆕 v3.5.9b: BG→FG 직후 호출 여부 판별 (3초 이내)
+    const afterFG = this._lastForegroundTime > 0 && (Date.now() - this._lastForegroundTime) < 3000;
+    
     if (durationMs > this.FUNC_SLOW_THRESHOLD) {
-      this.funcLog = [{ name, duration: durationMs, time: Date.now() }, ...this.funcLog].slice(0, 30);
+      this.funcLog = [{ name, duration: durationMs, time: Date.now(), trigger, afterFG }, ...this.funcLog].slice(0, 30);
     }
+  },
+  
+  // 🆕 v3.5.9b: 서브스텝 타이밍 (loadList 내부 분해)
+  beginFunc(funcName, trigger) {
+    if (!this.enabled) return;
+    this._activeSteps[funcName] = { startTime: Date.now(), steps: [], trigger: trigger || null };
+  },
+  stepFunc(funcName, stepName) {
+    if (!this.enabled) return;
+    const active = this._activeSteps[funcName];
+    if (!active) return;
+    const now = Date.now();
+    const prev = active.steps.length > 0 ? active.steps[active.steps.length - 1] : null;
+    const stepStart = prev ? prev._endTime : active.startTime;
+    active.steps.push({ name: stepName, duration: now - stepStart, _endTime: now });
+  },
+  endFunc(funcName) {
+    if (!this.enabled) return;
+    const active = this._activeSteps[funcName];
+    if (!active) return;
+    const totalDuration = Date.now() - active.startTime;
+    const afterFG = this._lastForegroundTime > 0 && (Date.now() - this._lastForegroundTime) < 3000;
+    
+    // 함수 통계 기록
+    this.trackFunc(funcName, totalDuration, active.trigger);
+    
+    // 서브스텝 로그 (느린 호출만)
+    if (totalDuration > this.FUNC_SLOW_THRESHOLD) {
+      const steps = active.steps.map(s => ({ name: s.name, duration: s.duration }));
+      this.subStepLog = [{ func: funcName, total: totalDuration, steps, trigger: active.trigger, afterFG, time: Date.now() }, ...this.subStepLog].slice(0, 20);
+    }
+    
+    delete this._activeSteps[funcName];
   },
   
   // === 에러/경고 기록 ===
@@ -2406,7 +2512,10 @@ const PerfMonitor = {
     if (!this.enabled) return;
     this.lifecycle = [{ event, time: Date.now() }, ...this.lifecycle].slice(0, 20);
     if (event === "background") this.backgroundCount++;
-    if (event === "foreground") this.foregroundCount++;
+    if (event === "foreground") {
+      this.foregroundCount++;
+      this._lastForegroundTime = Date.now(); // 🆕 v3.5.9b
+    }
   },
   
   // === 상태 크기 스냅샷 ===
@@ -2421,6 +2530,8 @@ const PerfMonitor = {
     this.sqlLog = [];
     this.functions = {};
     this.funcLog = [];
+    this._activeSteps = {};
+    this.subStepLog = [];
     this.errors = [];
     this.warnings = [];
     this.renders = {};
@@ -2432,6 +2543,7 @@ const PerfMonitor = {
     this.lifecycle = [];
     this.backgroundCount = 0;
     this.foregroundCount = 0;
+    this._lastForegroundTime = 0;
     this.stateSnapshots = [];
     this.startTime = Date.now();
   },
@@ -2468,6 +2580,8 @@ const PerfMonitor = {
       foregroundCount: this.foregroundCount,
       // 🆕 상태 크기
       stateSnapshots: [...this.stateSnapshots],
+      // 🆕 v3.5.9b: 서브스텝 타이밍
+      subStepLog: [...this.subStepLog],
     };
   },
 };
@@ -2565,7 +2679,8 @@ async function all(sql, params = []) {
       (database) => database.getAllAsync(sql, params),
       "all"
     );
-    if (PerfMonitor.enabled) PerfMonitor.trackSQL("all", sql, Date.now() - t0);
+    // 🔬 v3.5.9b: row count 추가
+    if (PerfMonitor.enabled) PerfMonitor.trackSQL("all", sql, Date.now() - t0, null, Array.isArray(result) ? result.length : null);
     return result;
   } catch (e) {
     if (PerfMonitor.enabled) PerfMonitor.trackSQL("all", sql, Date.now() - t0, e);
@@ -5175,13 +5290,15 @@ function getAnalysisTags(tagsStr, tagAttributes = {}) {
 
 // 🆕 v3.5.8: 태그 제거 + 대장르/부장르 자동 동기화 헬퍼
 // 칩 뷰에서 ✕ 클릭 시, 태그 문자열에서 제거하고 장르 필드를 재계산
-function removeTagAndSyncGenres(tags, tagToRemove, userMajorGenres = [], userSubGenres = [], tagDataStr = "") {
+// 🔧 v3.5.11: tagAttributes 파라미터 추가 — tagAttributes 기반 대장르/부장르도 정확히 감지
+function removeTagAndSyncGenres(tags, tagToRemove, userMajorGenres = [], userSubGenres = [], tagDataStr = "", tagAttributes = {}) {
   const currentTags = (tags || "").split(",").map(t => t.trim()).filter(Boolean);
   const newTags = currentTags.filter(t => t.toLowerCase() !== tagToRemove.toLowerCase());
   const newTagStr = newTags.join(", ");
   
-  const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
-  const allSub = [...SUB_GENRES, ...userSubGenres];
+  // 🔧 v3.5.11: getAllMajorTags/getAllSubTags 사용하여 tagAttributes 기반 장르도 반영
+  const allMajor = getAllMajorTags(tagAttributes, userMajorGenres);
+  const allSub = getAllSubTags(tagAttributes, userSubGenres);
   const detectedMajor = newTags.filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
     .map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
   const detectedSub = newTags.filter(tag => allSub.some(m => m.toLowerCase() === tag.toLowerCase()))
@@ -7979,8 +8096,9 @@ const TagSelectModal = memo(({
     if (inputTags.length === 0) return;
     
     // 모든 기존 태그 목록 (대장르, 부장르, 일반, 커스텀, 조합)
-    const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
-    const allSub = [...SUB_GENRES, ...userSubGenres];
+    // 🔧 v3.5.11: tagAttributes 기반 장르도 포함
+    const allMajor = getAllMajorTags(tagAttributes, userMajorGenres);
+    const allSub = getAllSubTags(tagAttributes, userSubGenres);
     const allGeneral = Object.values(GENERAL_TAGS).flat();
     const allCombo = comboTags || [];
     const allCustom = customTags || [];
@@ -8092,7 +8210,7 @@ const TagSelectModal = memo(({
         : `${addedCount}개 태그 선택됨`;
       Alert.alert("완료", msg);
     }
-  }, [quickInput, selectedMajor, selectedSub, selectedTags, userMajorGenres, userSubGenres, comboTags, customTags, onAddCustomTag]);
+  }, [quickInput, selectedMajor, selectedSub, selectedTags, userMajorGenres, userSubGenres, comboTags, customTags, onAddCustomTag, tagAttributes]);
 
   // 정렬된 목록 (내부에서 계산) + 숨김 태그 필터링
   // 🆕 v3.4: 검색어 기반 필터링 함수
@@ -8111,27 +8229,21 @@ const TagSelectModal = memo(({
   }, [pinnedTags]);
 
   const sortedMajor = useMemo(() => {
-    // 🔧 v3.5.9: tagAttributes 기반 대장르도 포함
-    const attrMajors = Object.entries(tagAttributes)
-      .filter(([_, attr]) => attr?.isMajor)
-      .map(([tag]) => tag);
-    const all = [...new Set([...MAJOR_GENRES, ...userMajorGenres, ...attrMajors])]
+    // 🔧 v3.5.11: getAllMajorTags 사용으로 통일 (isMajor:false 제거도 반영)
+    const all = getAllMajorTags(tagAttributes, userMajorGenres)
       .filter(t => !hiddenTags.includes(t));
     const sorted = sortTagsByUsage(all, tagUsageCounts);
     const filtered = filterBySearch(sorted);
-    return sortWithPinnedFirst(filtered); // 🔧 v3.4.4: 고정 태그 상단
+    return sortWithPinnedFirst(filtered);
   }, [userMajorGenres, tagUsageCounts, hiddenTags, filterBySearch, sortWithPinnedFirst, tagAttributes]);
   
   const sortedSub = useMemo(() => {
-    // 🔧 v3.5.9: tagAttributes 기반 부장르도 포함
-    const attrSubs = Object.entries(tagAttributes)
-      .filter(([_, attr]) => attr?.isSub)
-      .map(([tag]) => tag);
-    const all = [...new Set([...SUB_GENRES, ...userSubGenres, ...attrSubs])]
+    // 🔧 v3.5.11: getAllSubTags 사용으로 통일 (isSub:false 제거도 반영)
+    const all = getAllSubTags(tagAttributes, userSubGenres)
       .filter(t => !hiddenTags.includes(t));
     const sorted = sortTagsByUsage(all, tagUsageCounts);
     const filtered = filterBySearch(sorted);
-    return sortWithPinnedFirst(filtered); // 🔧 v3.4.4: 고정 태그 상단
+    return sortWithPinnedFirst(filtered);
   }, [userSubGenres, tagUsageCounts, hiddenTags, filterBySearch, sortWithPinnedFirst, tagAttributes]);
 
   const sortedGeneralTags = useMemo(() => {
@@ -8239,8 +8351,8 @@ const TagSelectModal = memo(({
       Object.values(GENERAL_TAGS).flat().forEach(t => allAvailableTags.add(t));
       customTags.forEach(t => allAvailableTags.add(t));
       comboTags.forEach(t => allAvailableTags.add(t));
-      [...MAJOR_GENRES, ...userMajorGenres].forEach(t => allAvailableTags.add(t));
-      [...SUB_GENRES, ...userSubGenres].forEach(t => allAvailableTags.add(t));
+      [...MAJOR_GENRES, ...userMajorGenres, ...getAllMajorTags(tagAttributes, userMajorGenres)].forEach(t => allAvailableTags.add(t));
+      [...SUB_GENRES, ...userSubGenres, ...getAllSubTags(tagAttributes, userSubGenres)].forEach(t => allAvailableTags.add(t));
       
       for (const tag of allAvailableTags) {
         if (allSelected.has(tag)) continue;
@@ -8258,7 +8370,7 @@ const TagSelectModal = memo(({
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5)
       .map(([tag]) => tag);
-  }, [selectedMajor, selectedSub, selectedTags, lastAddedTag, tagCoOccurrences, tagUsageCounts, customTags, comboTags, userMajorGenres, userSubGenres, hiddenTags]);
+  }, [selectedMajor, selectedSub, selectedTags, lastAddedTag, tagCoOccurrences, tagUsageCounts, customTags, comboTags, userMajorGenres, userSubGenres, hiddenTags, tagAttributes]);
 
   // 조합식 태그 생성 (v2.8: 공백으로 자연스럽게 연결)
   const handleCreateComboTag = () => {
@@ -8721,13 +8833,15 @@ const TagSelectModal = memo(({
                 ))}
                 
                 {/* 커스텀 태그 */}
-                {customTags.length > 0 && (
+                {customTags.length > 0 && (() => {
+                  const filtered = sortWithPinnedFirst(filterBySearch(sortTagsByUsage(customTags.filter(t => !hiddenTags.includes(t)), tagUsageCounts)));
+                  return filtered.length > 0 ? (
                   <View>
                     <Text style={{ fontWeight: "700", color: C.text, marginTop: 12, marginBottom: 6 }}>
                       내 커스텀 태그
                     </Text>
                     <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
-                      {sortWithPinnedFirst(sortTagsByUsage(customTags.filter(t => !hiddenTags.includes(t)), tagUsageCounts)).map((tag) => (
+                      {filtered.map((tag) => (
                         <SentimentChip 
                           key={tag} 
                           tag={tag} 
@@ -8737,16 +8851,19 @@ const TagSelectModal = memo(({
                       ))}
                     </View>
                   </View>
-                )}
+                  ) : null;
+                })()}
                 
                 {/* 조합식 태그 표시 */}
-                {comboTags.length > 0 && (
+                {comboTags.length > 0 && (() => {
+                  const filtered = sortWithPinnedFirst(filterBySearch(sortTagsByUsage(comboTags.filter(t => !hiddenTags.includes(t)), tagUsageCounts)));
+                  return filtered.length > 0 ? (
                   <View>
                     <Text style={{ fontWeight: "700", color: C.text, marginTop: 12, marginBottom: 6 }}>
                       🔗 조합식 태그
                     </Text>
                     <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
-                      {sortWithPinnedFirst(sortTagsByUsage(comboTags.filter(t => !hiddenTags.includes(t)), tagUsageCounts)).map((tag) => (
+                      {filtered.map((tag) => (
                         <SentimentChip 
                           key={tag} 
                           tag={tag} 
@@ -8756,7 +8873,8 @@ const TagSelectModal = memo(({
                       ))}
                     </View>
                   </View>
-                )}
+                  ) : null;
+                })()}
                 
                 {/* 🆕 v3.2.1: 유사 태그 그룹 (설정에서 지정한 그룹) */}
                 {tagRelationGroups && Object.keys(tagRelationGroups).length > 0 && (
@@ -8961,13 +9079,15 @@ const TagSelectModal = memo(({
                 </View>
                 
                 {/* 기존 조합식 태그 */}
-                {comboTags.length > 0 && (
+                {comboTags.length > 0 && (() => {
+                  const filtered = sortWithPinnedFirst(filterBySearch(sortTagsByUsage(comboTags.filter(t => !hiddenTags.includes(t)), tagUsageCounts)));
+                  return filtered.length > 0 ? (
                   <View>
                     <Text style={{ fontWeight: "700", color: C.text, marginBottom: 6 }}>
                       내 조합식 태그 ({comboTags.length}개)
                     </Text>
                     <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
-                      {comboTags.filter(t => !hiddenTags.includes(t)).map((tag) => (
+                      {filtered.map((tag) => (
                         <SentimentChip 
                           key={tag} 
                           tag={tag} 
@@ -8977,7 +9097,8 @@ const TagSelectModal = memo(({
                       ))}
                     </View>
                   </View>
-                )}
+                  ) : null;
+                })()}
               </>
             )}
             
@@ -18616,6 +18737,10 @@ function AppContent() {
   const [focusMatchNovel, setFocusMatchNovel] = useState(null);
   const [focusMatchQuery, setFocusMatchQuery] = useState("");
 
+  // 🆕 v3.5.11: 매치 필터링 — 정보 충실도 높은 작품 우선 매칭
+  const [matchFilterEnabled, setMatchFilterEnabled] = useState(false);
+  const [matchFilterMinTags, setMatchFilterMinTags] = useState(15);
+
   // 대량 편집용 상태
   const [bulkTag, setBulkTag] = useState("");
   const [bulkTagIntensity, setBulkTagIntensity] = useState(3); // 🏷️ v3.1.2: 태그 농도 (1~5, 기본 3)
@@ -18654,6 +18779,8 @@ function AppContent() {
   const [catNewName, setCatNewName] = useState(""); // 📂 카테고리 관리: 새 카테고리명
   const [catExpanded, setCatExpanded] = useState(null); // 📂 카테고리 관리: 펼쳐진 카테고리명
   const [catTagInput, setCatTagInput] = useState(""); // 📂 카테고리 관리: 태그 추가 입력
+  const [catRenamingName, setCatRenamingName] = useState(null); // 🔧 v3.5.11: Android 이름 변경 대상 카테고리
+  const [catRenameInput, setCatRenameInput] = useState(""); // 🔧 v3.5.11: Android 이름 변경 입력값
   const [comboTags, setComboTags] = useState([]); // 🔗 조합식 태그 (예: "먼치킨 히로인")
   const [customComboTraits, setCustomComboTraits] = useState([]); // 🔗 v3.0.4: 사용자 추가 조합 특성
   const [customComboTargets, setCustomComboTargets] = useState([]); // 🔗 v3.0.4: 사용자 추가 조합 대상
@@ -19032,6 +19159,7 @@ function AppContent() {
             savedCustomComboTargets, // 🔗 v3.0.4: 조합 대상
             savedCoordinateSystems, // 📐 v3.2.0: 태그 좌표계
             savedCustomTagCategories, // 🆕 v3.5.9: 커스텀 태그 카테고리
+            savedMatchFilterSettings, // 🆕 v3.5.11: 매치 필터링 설정
           ] = await Promise.all([
             getAppMeta("settings_darkMode"),      // 0: savedDarkMode
             getAppMeta("platform_covers"),        // 1: savedPlatformCovers
@@ -19054,6 +19182,7 @@ function AppContent() {
             getAppMeta("custom_combo_targets"),   // 18: savedCustomComboTargets
             getTagCoordinateSystems(),            // 19: savedCoordinateSystems
             getAppMeta("custom_tag_categories"),  // 20: savedCustomTagCategories
+            getAppMeta("match_filter_settings"),  // 21: savedMatchFilterSettings
           ]);
           
           if (!mounted) return;
@@ -19109,6 +19238,12 @@ function AppContent() {
           // 🆕 v3.5.9: 커스텀 태그 카테고리
           if (savedCustomTagCategories && typeof savedCustomTagCategories === "object") {
             setCustomTagCategories(savedCustomTagCategories);
+          }
+          
+          // 🆕 v3.5.11: 매치 필터링 설정
+          if (savedMatchFilterSettings && typeof savedMatchFilterSettings === "object") {
+            if (savedMatchFilterSettings.enabled !== undefined) setMatchFilterEnabled(savedMatchFilterSettings.enabled);
+            if (savedMatchFilterSettings.minTags !== undefined) setMatchFilterMinTags(savedMatchFilterSettings.minTags);
           }
           
           // 🔗 조합식 태그
@@ -19245,7 +19380,7 @@ function AppContent() {
             setCoordinateSystems(savedCoordinateSystems);
           }
           
-          await loadList();
+          await loadList(undefined, undefined, "init");
           
           // 📋 v3.3.0: 예정 작품 목록 로드
           await loadPlannedList();
@@ -19366,7 +19501,7 @@ function AppContent() {
           await new Promise(r => setTimeout(r, 200));
           console.log("DB 재연결 성공 (WAL mode)");
           // 🔧 v3.5.1: 데이터 리로드
-          await loadList();
+          await loadList(undefined, undefined, "fg-recovery");
           await loadCoverLibrary();
           console.log("데이터 리로드 성공");
         } catch (e) {
@@ -19376,7 +19511,7 @@ function AppContent() {
             await resetDbConnection();
             await new Promise(r => setTimeout(r, 500));
             await openDb();
-            await loadList();
+            await loadList(undefined, undefined, "fg-retry");
             console.log("DB 2차 재연결 성공");
           } catch (e2) {
             console.error("DB 2차 재연결도 실패:", e2.message);
@@ -19745,7 +19880,7 @@ function AppContent() {
               
               syncTagsToCustom(planned.tags || ""); // 🔧 v3.5.9: 태그 동기화
               await loadPlannedList();
-              await loadList();
+              await loadList(undefined, undefined, "supplement");
               
               // 🖼️ v3.4.5: 표지가 있으면 라이브러리 상태 업데이트
               if (planned.cover_image) {
@@ -20366,7 +20501,7 @@ function AppContent() {
       try {
         await openDb();
         await loadCoverLibrary();
-        await loadList();  // 전체 데이터도 리로드
+        await loadList(undefined, undefined, "cover-reload");  // 전체 데이터도 리로드
       } catch (recoveryErr) {
         console.error("복구 실패:", recoveryErr);
       }
@@ -21223,8 +21358,9 @@ function AppContent() {
   function syncTagsToCustom(tagsString) {
     if (!tagsString || !tagsString.trim()) return;
     const inputTags = tagsString.split(",").map(t => t.trim()).filter(Boolean);
-    const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
-    const allSub = [...SUB_GENRES, ...userSubGenres];
+    // 🔧 v3.5.11: tagAttributes 기반 장르도 포함 (이전엔 tagAttributes 대장르가 customTags에 중복 추가됨)
+    const allMajor = getAllMajorTags(tagAttributes, userMajorGenres);
+    const allSub = getAllSubTags(tagAttributes, userSubGenres);
     
     const newTags = [];
     for (const tag of inputTags) {
@@ -21581,23 +21717,39 @@ function AppContent() {
   async function handleTagEditModalSave(tag, changes) {
     try {
       // 고정 상태 변경
+      // 🔧 v3.5.11: 함수형 업데이트로 stale closure 방지
       if (changes.pinned !== undefined) {
-        const isPinned = pinnedTags.includes(tag);
-        if (changes.pinned && !isPinned) {
-          await savePinnedTags([...pinnedTags, tag]);
-        } else if (!changes.pinned && isPinned) {
-          await savePinnedTags(pinnedTags.filter(t => t !== tag));
-        }
+        setPinnedTags(prev => {
+          const isPinned = prev.includes(tag);
+          if (changes.pinned && !isPinned) {
+            const next = [...prev, tag];
+            setAppMeta("pinned_tags", next);
+            return next;
+          } else if (!changes.pinned && isPinned) {
+            const next = prev.filter(t => t !== tag);
+            setAppMeta("pinned_tags", next);
+            return next;
+          }
+          return prev;
+        });
       }
       
       // 숨김 상태 변경
+      // 🔧 v3.5.11: 함수형 업데이트로 stale closure 방지
       if (changes.hidden !== undefined) {
-        const isHidden = hiddenTags.includes(tag);
-        if (changes.hidden && !isHidden) {
-          await saveHiddenTags([...hiddenTags, tag]);
-        } else if (!changes.hidden && isHidden) {
-          await saveHiddenTags(hiddenTags.filter(t => t !== tag));
-        }
+        setHiddenTags(prev => {
+          const isHidden = prev.includes(tag);
+          if (changes.hidden && !isHidden) {
+            const next = [...prev, tag];
+            setAppMeta("hidden_tags", next);
+            return next;
+          } else if (!changes.hidden && isHidden) {
+            const next = prev.filter(t => t !== tag);
+            setAppMeta("hidden_tags", next);
+            return next;
+          }
+          return prev;
+        });
       }
       
       // 속성(감정) 변경
@@ -21877,7 +22029,7 @@ function AppContent() {
             }
             // 🔧 v3.5.9: 연관 메타데이터 일괄 정리 (고정/숨김/감정/속성)
             await cleanupTagMetadata(tag);
-            await loadList();
+            await loadList(undefined, undefined, "batch");
             Alert.alert("완료", `"${tag}" 태그를 전체에서 삭제했습니다. (${updates.length}개 작품 수정)`);
           }
         }
@@ -21954,15 +22106,16 @@ function AppContent() {
     await setAppMeta("user_sub_genres", newList);
   }
 
-  // 🏷️ 전체 대장르 목록 (기본 + 사용자)
+  // 🏷️ 전체 대장르 목록 (기본 + 사용자 + tagAttributes)
+  // 🔧 v3.5.11: getAllMajorTags 사용하여 tagAttributes 기반 대장르도 포함
   const allMajorGenres = useMemo(() => {
-    return [...MAJOR_GENRES, ...userMajorGenres];
-  }, [userMajorGenres]);
+    return getAllMajorTags(tagAttributes, userMajorGenres);
+  }, [userMajorGenres, tagAttributes]);
 
-  // 🏷️ 전체 부장르 목록 (기본 + 사용자)
+  // 🏷️ 전체 부장르 목록 (기본 + 사용자 + tagAttributes)
   const allSubGenres = useMemo(() => {
-    return [...SUB_GENRES, ...userSubGenres];
-  }, [userSubGenres]);
+    return getAllSubTags(tagAttributes, userSubGenres);
+  }, [userSubGenres, tagAttributes]);
 
   // 🏷️ 전체 태그 목록 (기본 + 커스텀, 사용빈도순 정렬)
   const allTagsSorted = useMemo(() => {
@@ -21971,14 +22124,15 @@ function AppContent() {
   }, [customTags, tagUsageCounts]);
 
   // 🏷️ 정렬된 대장르 목록 (사용빈도순)
+  // 🔧 v3.5.11: tagAttributes 반영
   const sortedMajorGenres = useMemo(() => {
-    return sortTagsByUsage([...MAJOR_GENRES, ...userMajorGenres], tagUsageCounts);
-  }, [userMajorGenres, tagUsageCounts]);
+    return sortTagsByUsage(getAllMajorTags(tagAttributes, userMajorGenres), tagUsageCounts);
+  }, [userMajorGenres, tagUsageCounts, tagAttributes]);
 
   // 🏷️ 정렬된 부장르 목록 (사용빈도순)
   const sortedSubGenres = useMemo(() => {
-    return sortTagsByUsage([...SUB_GENRES, ...userSubGenres], tagUsageCounts);
-  }, [userSubGenres, tagUsageCounts]);
+    return sortTagsByUsage(getAllSubTags(tagAttributes, userSubGenres), tagUsageCounts);
+  }, [userSubGenres, tagUsageCounts, tagAttributes]);
 
   // 🏷️ 일반 태그 카테고리별 정렬 목록
   const sortedGeneralTags = useMemo(() => {
@@ -22137,7 +22291,7 @@ function AppContent() {
       }
       
       setUndoStack(prev => prev.slice(1));
-      await loadList();
+      await loadList(undefined, undefined, "op");
       Alert.alert("완료", `"${item.description}" 작업을 되돌렸습니다.`);
       
     } catch (e) {
@@ -22430,8 +22584,8 @@ function AppContent() {
     completion_pattern: { icon: "✅", label: "완독 패턴", color: "#22c55e" },
   };
 
-  async function loadList(sortKey, sortDir) {
-    const _pt = PerfMonitor.enabled ? Date.now() : 0; // 🔬
+  async function loadList(sortKey, sortDir, _trigger) {
+    PerfMonitor.beginFunc("loadList", _trigger || "unknown"); // 🔬 v3.5.9b
     try {
       const sk = sortKey ?? homeSortKey;
       const sd = sortDir ?? homeSortDir;
@@ -22444,10 +22598,13 @@ function AppContent() {
         orderBy = `pinned DESC, read_count ${sd}, rating DESC`;
       }
       const rows = await all(`SELECT * FROM novels ORDER BY ${orderBy};`);
+      PerfMonitor.stepFunc("loadList", "SQL"); // 🔬 v3.5.9b
       // 🛡️ v3.5.6: 숫자 필드 정규화 (null → 기본값, 하위 렌더링 크래시 방지)
       const safeRows = (rows || []).map(normalizeNovel);
+      PerfMonitor.stepFunc("loadList", "normalize"); // 🔬 v3.5.9b
       setList(safeRows);
       updateTagUsageCounts(safeRows); // 🏷️ 태그 사용 빈도 업데이트
+      PerfMonitor.stepFunc("loadList", "tagCount"); // 🔬 v3.5.9b
       // 🔬 v3.5.9: 상태 크기 스냅샷
       if (PerfMonitor.enabled) {
         PerfMonitor.snapshotState({
@@ -22459,10 +22616,11 @@ function AppContent() {
       }
       // 🔧 v3.5.9: 매칭 통계는 비동기로 분리 (loadList 차단 해소)
       loadMatchStats().catch(() => {});
-      if (_pt) PerfMonitor.trackFunc("loadList", Date.now() - _pt); // 🔬
+      PerfMonitor.endFunc("loadList"); // 🔬 v3.5.9b
     } catch (e) {
       console.warn("loadList 오류:", e);
-      if (_pt) PerfMonitor.logError("loadList", e); // 🔬
+      PerfMonitor.logError("loadList", e); // 🔬
+      PerfMonitor.endFunc("loadList"); // 🔬 v3.5.9b
       setList([]);
     }
   }
@@ -22470,7 +22628,7 @@ function AppContent() {
   // 🆕 핀 토글
   const togglePin = useCallback(async (id, currentPinned) => {
     await exec("UPDATE novels SET pinned=? WHERE id=?", [currentPinned ? 0 : 1, id]);
-    await loadList();
+    await loadList(undefined, undefined, "pin");
   }, []);
 
   // 📰 v3.0: 최신 변화 기록 추가 헬퍼
@@ -22617,7 +22775,7 @@ function AppContent() {
       setNewGaidenStatus("none");
       setNewGaidenReadCount("");
       setNewGaidenTotalEpisodes("");
-      await loadList();
+      await loadList(undefined, undefined, "register");
       await refreshDailyRecommendation(false);
       
       // 🖼️ v3.4.5: 표지 라이브러리 상태 업데이트
@@ -22697,7 +22855,7 @@ function AppContent() {
             }
             
             await rebuildAllFromMatches(tagAttributes);
-            await loadList();
+            await loadList(undefined, undefined, "rebuild");
           } catch (e) {
             console.warn("removeNovel 오류:", e);
             Alert.alert("오류", "삭제 중 문제가 발생했습니다: " + (e.message || e));
@@ -22764,6 +22922,7 @@ function AppContent() {
       group: "⚙️ 앱 설정",
       items: [
         { key: "auto_match", label: "자동승패 설정", desc: "자동승패 기준값" },
+        { key: "match_filter", label: "매치 필터링 설정", desc: "정보 충실도 필터 기준" },
         { key: "app_settings", label: "앱 설정", desc: "보충탭 설정, 예정탭 설정 등" },
         { key: "genres", label: "사용자 장르 목록", desc: "커스텀 대장르/부장르" },
       ],
@@ -22911,6 +23070,12 @@ function AppContent() {
                 setAutoMatchSettings(defaultAuto);
                 await setAppMeta("auto_match_settings", defaultAuto);
               }
+              // 🆕 v3.5.11: 매치 필터링 초기화
+              if (sel.match_filter) {
+                setMatchFilterEnabled(false);
+                setMatchFilterMinTags(15);
+                await setAppMeta("match_filter_settings", { enabled: false, minTags: 15 });
+              }
               if (sel.app_settings) {
                 setAppSettings(DEFAULT_SETTINGS);
                 await setAppMeta("app_settings", DEFAULT_SETTINGS);
@@ -22941,7 +23106,7 @@ function AppContent() {
                 setInsightList([]);
               }
 
-              await loadList();
+              await loadList(undefined, undefined, "clear");
               if (sel.planned) {
                 setPlannedList([]);
               }
@@ -23012,7 +23177,7 @@ function AppContent() {
                       setMatchPrediction(null);
                       setSelectedIds([]);
                       
-                      await loadList();
+                      await loadList(undefined, undefined, "op");
                       Alert.alert("완료", "모든 데이터가 삭제되었습니다.");
                     } catch (e) {
                       console.warn("resetAll 오류:", e);
@@ -23305,7 +23470,7 @@ function AppContent() {
       setEditOpen(false);
       updateEditItem(null);
       
-      await loadList();
+      await loadList(undefined, undefined, "supplement");
       
       // 📰 v3.0.2: 제목 변경 기록
       if (editOriginalTitle && editOriginalTitle !== newTitle) {
@@ -23379,7 +23544,7 @@ function AppContent() {
         onPress: async () => {
           await exec("DELETE FROM matches WHERE id=?", [mid]);
           await rebuildAllFromMatches(tagAttributes);
-          await loadList();
+          await loadList(undefined, undefined, "rebuild");
           if (logTarget) await openLogs(logTarget);
         },
       },
@@ -23392,16 +23557,49 @@ function AppContent() {
     const newWinner = m.winner_id === m.a_id ? m.b_id : m.a_id;
     await exec("UPDATE matches SET winner_id=? WHERE id=?", [newWinner, mid]);
     await rebuildAllFromMatches(tagAttributes);
-    await loadList();
+    await loadList(undefined, undefined, "rebuild");
     if (logTarget) await openLogs(logTarget);
   }
 
   /* ---------- Matching ---------- */
+  // 🆕 v3.5.11: 매치 필터링 — 정보 충실도 판정
+  const isDataRichNovel = useCallback((novel) => {
+    if (!novel) return false;
+    // 읽은 회차 기입
+    if (!novel.read_count || Number(novel.read_count) <= 0) return false;
+    // 총 회차 기입
+    if (!novel.total_episodes || Number(novel.total_episodes) <= 0) return false;
+    // 작가 기입
+    if (!novel.author || !novel.author.trim()) return false;
+    // 태그 수 (작품명 태그 제외)
+    const tags = (novel.tags || "").split(",").map(t => t.trim()).filter(t => t && !isTagTitle(t, tagAttributes));
+    if (tags.length < matchFilterMinTags) return false;
+    return true;
+  }, [tagAttributes, matchFilterMinTags]);
+
   const pickRandomUnseenPair = async () => {
     try {
       const rawNovels = await all("SELECT * FROM novels ORDER BY rating DESC;");
       // 🛡️ v3.5.6: 숫자 필드 정규화 (pair 렌더링 크래시 방지)
-      const allNovels = (rawNovels || []).map(normalizeNovel);
+      const normalizedNovels = (rawNovels || []).map(normalizeNovel);
+      let allNovels = normalizedNovels;
+      
+      // 🆕 v3.5.11: 매치 필터링 적용
+      if (matchFilterEnabled) {
+        const filtered = allNovels.filter(isDataRichNovel);
+        if (filtered.length < 2) {
+          Alert.alert(
+            "매치 필터링",
+            `조건을 충족하는 작품이 ${filtered.length}개뿐입니다 (2개 이상 필요).\n\n` +
+            `조건: 읽은 회차, 총 회차, 작가 기입 + 태그 ${matchFilterMinTags}개 이상\n\n` +
+            "필터를 해제하거나 작품 정보를 보충하세요."
+          );
+          setPair(null);
+          return;
+        }
+        allNovels = filtered;
+      }
+      
       if (!allNovels || allNovels.length < 2) {
         Alert.alert("알림", "작품을 2개 이상 추가하세요.");
         setPair(null);
@@ -23425,6 +23623,15 @@ function AppContent() {
         // ✅ 특정 작품이 선택된 경우: 해당 작품이 포함된 미대전 조합만 후보에 넣기
         const focus = allNovels.find((n) => n.id === focusId);
         if (!focus) {
+          // 🔧 v3.5.11: 매치 필터에 의해 제외된 건지 구분
+          if (matchFilterEnabled) {
+            const rawFocus = normalizedNovels.find(n => n.id === focusId);
+            if (rawFocus) {
+              Alert.alert("매치 필터링", "고정 매칭 작품이 필터 조건을 충족하지 않습니다.\n\n필터를 해제하거나 작품 정보를 보충하세요.");
+              setPair(null);
+              return;
+            }
+          }
           // 리스트에서 사라진 경우 선택 해제 후 전체 매칭으로 전환
           setFocusMatchNovel(null);
           Alert.alert("알림", "선택한 작품을 찾을 수 없어 전체 매칭으로 전환합니다.");
@@ -23642,7 +23849,7 @@ function AppContent() {
       }
       
       if (_pt) PerfMonitor.trackFunc("decide", Date.now() - _pt); // 🔬
-      await loadList();
+      await loadList(undefined, undefined, "op");
     }, pairKey).catch((e) => {
       if (_pt) PerfMonitor.logError("decide", e); // 🔬
       console.warn("decide 오류:", e);
@@ -23916,12 +24123,20 @@ function AppContent() {
     });
   }, []);
   
+  // 🆕 v3.5.11: 매치 필터링 설정 저장
+  const saveMatchFilterSettings = useCallback((enabled, minTags) => {
+    const settings = { enabled, minTags };
+    setMatchFilterEnabled(enabled);
+    setMatchFilterMinTags(minTags);
+    setTimeout(() => setAppMeta("match_filter_settings", settings), 0);
+  }, []);
+  
   // 추천 탭 진입 시, 작품 리스트 최신화 후 추천 생성
   useEffect(() => {
     if (screen === "reco") {
       (async () => {
         try {
-          await loadList();
+          await loadList(undefined, undefined, "op");
           await loadPlannedList(); // 📋 v3.3.0: 예정 작품도 로드
           await refreshDailyRecommendation(false);
         } catch (e) {
@@ -23968,7 +24183,7 @@ function AppContent() {
           setLastMatchId(null);
           setPair(null);
           await rebuildAllFromMatches(tagAttributes);
-          await loadList();
+          await loadList(undefined, undefined, "rebuild");
           Alert.alert("완료", "마지막 매칭을 되돌렸습니다.");
         },
       },
@@ -24412,7 +24627,7 @@ function AppContent() {
       params: [JSON.stringify(plats), id],
     }));
     await execBatch(queries);
-    await loadList();
+    await loadList(undefined, undefined, "batch");
     Alert.alert("완료", `${ids.length}개 작품에 플랫폼을 적용했습니다.`);
   }, []);
 
@@ -24438,8 +24653,8 @@ function AppContent() {
     );
 
     // 🔧 v3.5.8: 장르 재계산에 사용할 전체 장르 목록
-    const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
-    const allSub = [...SUB_GENRES, ...userSubGenres];
+    const allMajor = getAllMajorTags(tagAttributes, userMajorGenres); // 🔧 v3.5.11: tagAttributes 반영
+    const allSub = getAllSubTags(tagAttributes, userSubGenres); // 🔧 v3.5.11: tagAttributes 반영
 
     const queries = [];
     for (const row of (rows || [])) {
@@ -24488,7 +24703,7 @@ function AppContent() {
 
     await execBatch(queries);
     syncTagsToCustom(t); // 🔧 v3.5.9: 일괄 추가 태그도 customTags 동기화
-    await loadList();
+    await loadList(undefined, undefined, "supplement");
     Alert.alert("완료", `${ids.length}개 작품에 "${t}" 태그를 추가했습니다.`);
   }, [userMajorGenres, userSubGenres]);
 
@@ -24514,8 +24729,8 @@ function AppContent() {
     );
 
     // 🔧 v3.5.8: 장르 재계산에 사용할 전체 장르 목록
-    const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
-    const allSub = [...SUB_GENRES, ...userSubGenres];
+    const allMajor = getAllMajorTags(tagAttributes, userMajorGenres); // 🔧 v3.5.11: tagAttributes 반영
+    const allSub = getAllSubTags(tagAttributes, userSubGenres); // 🔧 v3.5.11: tagAttributes 반영
 
     const queries = [];
     for (const row of (rows || [])) {
@@ -24557,7 +24772,7 @@ function AppContent() {
     }
 
     await execBatch(queries);
-    await loadList();
+    await loadList(undefined, undefined, "batch");
     Alert.alert("완료", `${ids.length}개 작품에서 "${t}" 태그를 삭제했습니다.`);
   }, [userMajorGenres, userSubGenres]);
 
@@ -24580,7 +24795,7 @@ function AppContent() {
       params: [d, now, id],
     }));
     await execBatch(queries);
-    await loadList();
+    await loadList(undefined, undefined, "batch");
     Alert.alert("완료", `${ids.length}개 작품에 읽은 회차 ${d > 0 ? '+' : ''}${d} 적용했습니다.`);
   }, []);
 
@@ -24599,7 +24814,7 @@ function AppContent() {
       params: [status, id],
     }));
     await execBatch(queries);
-    await loadList();
+    await loadList(undefined, undefined, "batch");
     Alert.alert("완료", `${ids.length}개 작품의 읽기 상태를 변경했습니다.`);
   }, []);
 
@@ -24618,7 +24833,7 @@ function AppContent() {
       params: [workStatus, id],
     }));
     await execBatch(queries);
-    await loadList();
+    await loadList(undefined, undefined, "batch");
     Alert.alert("완료", `${ids.length}개 작품의 연재 상태를 변경했습니다.`);
   }, []);
 
@@ -24691,7 +24906,7 @@ function AppContent() {
             
             await rebuildAllFromMatches(tagAttributes);
             setSelectedIds([]);
-            await loadList();
+            await loadList(undefined, undefined, "rebuild");
           } catch (e) {
             console.warn("batchDelete 오류:", e);
             Alert.alert("오류", "삭제 중 문제가 발생했습니다: " + (e.message || e));
@@ -24986,6 +25201,11 @@ function buildExtendedBackup(novels, matches, settings, tierHist, coverImages = 
       AD.cs = analysisData.coordinateSystems;
     }
     
+    // 🆕 v3.5.11: 매치 필터링 설정
+    if (analysisData.matchFilterSettings) {
+      AD.mf = analysisData.matchFilterSettings;
+    }
+    
     if (Object.keys(AD).length > 0) {
       base.AD = AD;
     }
@@ -25053,6 +25273,7 @@ async function exportJSON() {
       tagRelations,
       autoMatchSettings,
       coordinateSystems, // 📐 v3.2.0: 태그 좌표계
+      matchFilterSettings: { enabled: matchFilterEnabled, minTags: matchFilterMinTags }, // 🆕 v3.5.11
     };
 
     // ⚙️ 확장 백업: 설정 + 히스토리 + 표지 + 분석데이터 포함 (v3.0.4)
@@ -25588,6 +25809,13 @@ async function importJSON() {
                   await setAppMeta("tag_coordinate_systems", data.AD.cs);
                   analysisRestored = true;
                 }
+                // 🆕 v3.5.11: 매치 필터링 설정 복원
+                if (data.AD.mf && typeof data.AD.mf === "object") {
+                  if (data.AD.mf.enabled !== undefined) setMatchFilterEnabled(data.AD.mf.enabled);
+                  if (data.AD.mf.minTags !== undefined) setMatchFilterMinTags(data.AD.mf.minTags);
+                  await setAppMeta("match_filter_settings", data.AD.mf);
+                  analysisRestored = true;
+                }
               }
               
               // 🔗 v3.0.4: 커스텀 조합 요소 복원
@@ -25738,7 +25966,7 @@ async function importJSON() {
                 platformCoversRestored = true;
               }
               
-              await loadList();
+              await loadList(undefined, undefined, "op");
               
               // 🔄 v3.5.0: 관련 상태 초기화 (이전 데이터 참조 방지)
               setPair(null);
@@ -25861,7 +26089,7 @@ async function importJSON() {
               setMatchPrediction(null);
               
               await rebuildAllFromMatches(tagAttributes);
-              await loadList();
+              await loadList(undefined, undefined, "rebuild");
               Alert.alert("완료", "대진 로그가 초기화되었습니다.");
             } catch (e) {
               console.warn("resetMatches 오류:", e);
@@ -26336,7 +26564,7 @@ async function importJSON() {
                   onRemoveTag={(tag) => {
                     // 🔧 v3.5.9: ref에서 최신값 읽기 (stale closure 방지)
                     const tdStr = newTagDataRef.current?.length > 0 ? JSON.stringify(newTagDataRef.current) : "";
-                    const result = removeTagAndSyncGenres(tagsRef.current, tag, userMajorGenres, userSubGenres, tdStr);
+                    const result = removeTagAndSyncGenres(tagsRef.current, tag, userMajorGenres, userSubGenres, tdStr, tagAttributes);
                     setTags(result.tags);
                     try { setNewMajorGenre(JSON.parse(result.major_genre || "[]")); } catch { setNewMajorGenre([]); }
                     try { setNewSubGenre(JSON.parse(result.sub_genre || "[]")); } catch { setNewSubGenre([]); }
@@ -26344,8 +26572,8 @@ async function importJSON() {
                   }}
                   onOpenTagModal={() => {
                     const currentTags = tags.split(",").map(t => t.trim()).filter(Boolean);
-                    const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
-                    const allSub = [...SUB_GENRES, ...userSubGenres];
+                    const allMajor = getAllMajorTags(tagAttributes, userMajorGenres); // 🔧 v3.5.11: tagAttributes 반영
+                    const allSub = getAllSubTags(tagAttributes, userSubGenres); // 🔧 v3.5.11: tagAttributes 반영
                     const majorTags = currentTags.filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
                       .map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
                     const subTags = currentTags.filter(tag => allSub.some(s => s.toLowerCase() === tag.toLowerCase()))
@@ -26362,8 +26590,8 @@ async function importJSON() {
                   }}
                   onTagsTextChange={(t) => {
                     const inputTags = t.split(",").map(tag => tag.trim()).filter(Boolean);
-                    const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
-                    const allSub = [...SUB_GENRES, ...userSubGenres];
+                    const allMajor = getAllMajorTags(tagAttributes, userMajorGenres); // 🔧 v3.5.11: tagAttributes 반영
+                    const allSub = getAllSubTags(tagAttributes, userSubGenres); // 🔧 v3.5.11: tagAttributes 반영
                     const detectedMajor = inputTags.filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
                       .map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
                     const detectedSub = inputTags.filter(tag => allSub.some(s => s.toLowerCase() === tag.toLowerCase()))
@@ -27431,15 +27659,15 @@ async function importJSON() {
                   tagAttributes={tagAttributes}
                   onRemoveTag={(tag) => {
                     // 🔧 v3.5.9: ref에서 최신값 읽기 (stale closure 방지)
-                    const result = removeTagAndSyncGenres(plannedTagsRef.current, tag, userMajorGenres, userSubGenres);
+                    const result = removeTagAndSyncGenres(plannedTagsRef.current, tag, userMajorGenres, userSubGenres, "", tagAttributes);
                     setPlannedTags(result.tags);
                     try { setPlannedMajorGenre(JSON.parse(result.major_genre || "[]")); } catch { setPlannedMajorGenre([]); }
                     try { setPlannedSubGenre(JSON.parse(result.sub_genre || "[]")); } catch { setPlannedSubGenre([]); }
                   }}
                   onOpenTagModal={() => {
                     const currentTags = plannedTags.split(",").map(t => t.trim()).filter(Boolean);
-                    const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
-                    const allSub = [...SUB_GENRES, ...userSubGenres];
+                    const allMajor = getAllMajorTags(tagAttributes, userMajorGenres); // 🔧 v3.5.11: tagAttributes 반영
+                    const allSub = getAllSubTags(tagAttributes, userSubGenres); // 🔧 v3.5.11: tagAttributes 반영
                     const majorTags = currentTags.filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
                       .map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
                     const subTags = currentTags.filter(tag => allSub.some(s => s.toLowerCase() === tag.toLowerCase()))
@@ -27456,8 +27684,8 @@ async function importJSON() {
                   }}
                   onTagsTextChange={(t) => {
                     const inputTags = t.split(",").map(tag => tag.trim()).filter(Boolean);
-                    const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
-                    const allSub = [...SUB_GENRES, ...userSubGenres];
+                    const allMajor = getAllMajorTags(tagAttributes, userMajorGenres); // 🔧 v3.5.11: tagAttributes 반영
+                    const allSub = getAllSubTags(tagAttributes, userSubGenres); // 🔧 v3.5.11: tagAttributes 반영
                     const detectedMajor = inputTags.filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
                       .map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
                     const detectedSub = inputTags.filter(tag => allSub.some(s => s.toLowerCase() === tag.toLowerCase()))
@@ -28162,7 +28390,7 @@ async function importJSON() {
               const newAwardsJson = JSON.stringify(currentAwards);
               
               await exec("UPDATE novels SET awards=? WHERE id=?", [newAwardsJson, novelId]);
-              await loadList();
+              await loadList(undefined, undefined, "update");
               
               // 📰 v3.0: 수상 기록
               const yearAwards = awardSystemSettings.yearlyAwards?.[year] || [];
@@ -28190,7 +28418,7 @@ async function importJSON() {
               const newAwardsJson = JSON.stringify(newAwards);
               
               await exec("UPDATE novels SET awards=? WHERE id=?", [newAwardsJson, novelId]);
-              await loadList();
+              await loadList(undefined, undefined, "update");
             }}
             onSaveSettings={async (settings) => {
               setAwardSystemSettings(settings);
@@ -28228,6 +28456,13 @@ async function importJSON() {
                 />
               </View>
               
+              {/* 🔧 v3.5.11: 매치 필터링 ON일 때 보조 안내 */}
+              {matchFilterEnabled && matchStats.total > 0 && (
+                <Text style={{ color: "#6366f1", fontSize: 11, marginTop: 6 }}>
+                  📊 매치 필터링 ON — 위 진행도는 전체 기준이며, 실제 매칭은 조건 충족 작품끼리만 진행됩니다
+                </Text>
+              )}
+              
               {/* 🔄 v3.4.7: 매칭 큐 처리 중 표시 */}
               {(matchQueueStatus.processing || matchQueueStatus.pending > 0) && (
                 <View style={{ 
@@ -28256,8 +28491,8 @@ async function importJSON() {
                 <Switch value={autoEnabled} onValueChange={setAutoEnabled} />
               </View>
               
-              {autoEnabled && (
-                <>
+              {/* 🔧 v3.5.11: 세부 설정은 항상 표시 — 자동매칭 OFF 상태에서도 미리 설정 가능 */}
+              <View style={{ opacity: autoEnabled ? 1 : 0.55 }}>
                   {/* 판정 모드 */}
                   <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
                     <TouchableOpacity
@@ -28421,9 +28656,10 @@ async function importJSON() {
                       </View>
                     </View>
                   )}
+              </View>
                   
-                  {/* 현재 매칭 자동판정 미리보기 */}
-                  {pair && (
+              {/* 현재 매칭 자동판정 미리보기 — 자동매칭 ON일 때만 */}
+              {autoEnabled && pair && (
                     <View style={{ backgroundColor: "#fef3c7", padding: 10, borderRadius: 10, marginTop: 4 }}>
                       <Text style={{ fontWeight: "700", color: "#92400e", marginBottom: 4 }}>
                         🔍 현재 매칭 자동판정 미리보기
@@ -28445,8 +28681,6 @@ async function importJSON() {
                         );
                       })()}
                     </View>
-                  )}
-                </>
               )}
               
               <OutlineButton
@@ -28454,6 +28688,80 @@ async function importJSON() {
                 onPress={undoLastMatch}
                 style={{ marginTop: 12 }}
               />
+            </Section>
+
+            {/* 🆕 v3.5.11: 매치 필터링 */}
+            <Section title="📊 매치 필터링">
+              <Text style={{ color: C.sub, marginBottom: 8, fontSize: 12 }}>
+                정보가 충실한 작품끼리만 매칭합니다. 조건: 읽은 회차, 총 회차, 작가 기입 완료 + 태그 기준 이상
+              </Text>
+              
+              {/* 메인 토글 */}
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: "700", color: C.text }}>매치 필터링 활성화</Text>
+                  <Text style={{ color: C.sub, fontSize: 11 }}>조건 미달 작품은 매칭에서 제외</Text>
+                </View>
+                <Switch
+                  value={matchFilterEnabled}
+                  onValueChange={(v) => saveMatchFilterSettings(v, matchFilterMinTags)}
+                />
+              </View>
+              
+              {/* 태그 수 기준 */}
+              <View style={{ marginBottom: 12 }}>
+                <Text style={{ fontWeight: "600", color: C.text, marginBottom: 6 }}>
+                  최소 태그 수: {matchFilterMinTags}개
+                </Text>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  {[5, 10, 15, 20, 25].map(n => (
+                    <TouchableOpacity
+                      key={n}
+                      onPress={() => saveMatchFilterSettings(matchFilterEnabled, n)}
+                      style={{
+                        flex: 1,
+                        paddingVertical: 8,
+                        borderRadius: 8,
+                        backgroundColor: matchFilterMinTags === n ? "#dbeafe" : C.chip,
+                        borderWidth: matchFilterMinTags === n ? 2 : 1,
+                        borderColor: matchFilterMinTags === n ? "#3b82f6" : C.line,
+                        alignItems: "center",
+                      }}
+                    >
+                      <Text style={{ fontWeight: "700", fontSize: 13, color: matchFilterMinTags === n ? "#1d4ed8" : C.text }}>
+                        {n}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+              
+              {/* 현황 표시 */}
+              {(() => {
+                const total = list.length;
+                const qualified = list.filter(isDataRichNovel).length;
+                const pairCount = qualified >= 2 ? (qualified * (qualified - 1)) / 2 : 0;
+                return (
+                  <View style={{
+                    padding: 10, borderRadius: 10, marginTop: 4,
+                    backgroundColor: matchFilterEnabled 
+                      ? (qualified >= 2 ? "#dcfce7" : "#fee2e2")
+                      : C.chip,
+                  }}>
+                    <Text style={{ fontWeight: "700", color: matchFilterEnabled ? (qualified >= 2 ? "#166534" : "#991b1b") : C.text, marginBottom: 4 }}>
+                      {matchFilterEnabled ? "📊 필터 현황" : "📊 현황 (미적용)"}
+                    </Text>
+                    <Text style={{ color: matchFilterEnabled ? (qualified >= 2 ? "#166534" : "#991b1b") : C.sub, fontSize: 12 }}>
+                      조건 충족: {qualified}개 / 전체 {total}개 작품{pairCount > 0 ? ` (${pairCount.toLocaleString()} 매칭 조합)` : ""}
+                    </Text>
+                    {matchFilterEnabled && qualified < 2 && (
+                      <Text style={{ color: "#991b1b", fontSize: 11, marginTop: 4 }}>
+                        ⚠️ 최소 2개 이상 충족해야 매칭 가능합니다
+                      </Text>
+                    )}
+                  </View>
+                );
+              })()}
             </Section>
 
             <Section title="특정 작품 고정 매칭 (선택)">
@@ -28532,6 +28840,12 @@ async function importJSON() {
             </Section>
 
             <Section title="매칭">
+              {/* 🆕 v3.5.11: 매치 필터링 활성 표시 */}
+              {matchFilterEnabled && (
+                <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#eff6ff", padding: 6, borderRadius: 8, marginBottom: 8 }}>
+                  <Text style={{ fontSize: 11, color: "#1d4ed8" }}>📊 매치 필터링 ON — 정보 충실 작품만 매칭</Text>
+                </View>
+              )}
               {!pair ? (
                 <PrimaryButton
                   title="다음 매칭"
@@ -29176,14 +29490,14 @@ async function importJSON() {
                         // 🔧 v3.5.9 BUG FIX: 함수형 업데이트로 prev.tags 사용 (stale closure 방지)
                         updateEditItem(prev => {
                           if (!prev) return null;
-                          const result = removeTagAndSyncGenres(prev.tags, tag, userMajorGenres, userSubGenres, prev.tag_data);
+                          const result = removeTagAndSyncGenres(prev.tags, tag, userMajorGenres, userSubGenres, prev.tag_data, tagAttributes);
                           return { ...prev, ...result };
                         });
                       }}
                       onOpenTagModal={() => {
                         const currentTags = (editItem?.tags || "").split(",").map(t => t.trim()).filter(Boolean);
-                        const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
-                        const allSub = [...SUB_GENRES, ...userSubGenres];
+                        const allMajor = getAllMajorTags(tagAttributes, userMajorGenres); // 🔧 v3.5.11: tagAttributes 반영
+                        const allSub = getAllSubTags(tagAttributes, userSubGenres); // 🔧 v3.5.11: tagAttributes 반영
                         const majorTags = currentTags.filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
                           .map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
                         const subTags = currentTags.filter(tag => allSub.some(s => s.toLowerCase() === tag.toLowerCase()))
@@ -29203,8 +29517,8 @@ async function importJSON() {
                       onTagsTextChange={(t) => {
                         // 🔧 v3.5.9 BUG FIX: 보충탭 텍스트 모드 태그 편집 시 장르 동기화
                         const inputTags = t.split(",").map(tag => tag.trim()).filter(Boolean);
-                        const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
-                        const allSub = [...SUB_GENRES, ...userSubGenres];
+                        const allMajor = getAllMajorTags(tagAttributes, userMajorGenres); // 🔧 v3.5.11: tagAttributes 반영
+                        const allSub = getAllSubTags(tagAttributes, userSubGenres); // 🔧 v3.5.11: tagAttributes 반영
                         const normalizedMajor = inputTags.filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
                           .map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
                         const normalizedSub = inputTags.filter(tag => allSub.some(m => m.toLowerCase() === tag.toLowerCase()))
@@ -29474,13 +29788,13 @@ async function importJSON() {
                           }, ...prev].slice(0, 20));
                           
                           syncTagsToCustom(current.tags?.trim() || ""); // 🔧 v3.5.9: 태그 동기화
-                          await loadList();
+                          await loadList(undefined, undefined, "supplement");
                           // 🔧 v3.5.9: loadList 완료 후 savedId 설정 (supplementList가 최신 데이터일 때 다음 작품 전환)
                           setSavedSupplementId(savedId);
                         } catch (e) {
                           setSavedSupplementId(null);
                           // 🔧 v3.5.9: 부분 성공 시에도 UI 반영 (exec 성공 후 후속 작업 실패 대비)
-                          try { await loadList(); } catch {}
+                          try { await loadList(undefined, undefined, "supplement-err"); } catch {}
                           Alert.alert("오류", "저장 중 오류: " + e.message);
                         } finally {
                           setIsLoading(false); // 🔧 v3.5.9: 중복 저장 방지 해제
@@ -29629,7 +29943,7 @@ async function importJSON() {
                         await execBatch(queries);
                         setTierHistory(prev => [...historyItems, ...prev].slice(0, 20));
                         setReviewSelectedIds([]);
-                        await loadList();
+                        await loadList(undefined, undefined, "batch");
                         Alert.alert("완료", `${reviews.length}건 적용됨`);
                       }},
                     ]);
@@ -29665,7 +29979,7 @@ async function importJSON() {
                           await execBatch(queries);
                           setTierHistory(prev => [...historyItems, ...prev].slice(0, 20));
                           setReviewSelectedIds([]);
-                          await loadList();
+                          await loadList(undefined, undefined, "batch");
                           Alert.alert("완료", `${selected.length}건 적용됨`);
                         }},
                       ]);
@@ -29702,7 +30016,7 @@ async function importJSON() {
                         await execBatch(queries);
                         setTierHistory(prev => [...historyItems, ...prev].slice(0, 20));
                         setReviewSelectedIds([]);
-                        await loadList();
+                        await loadList(undefined, undefined, "batch");
                         
                         // 📰 v3.0: 티어 심사 통과 기록
                         for (const item of historyItems) {
@@ -29749,7 +30063,7 @@ async function importJSON() {
                         await execBatch(queries);
                         setTierHistory(prev => [...historyItems, ...prev].slice(0, 20));
                         setReviewSelectedIds([]);
-                        await loadList();
+                        await loadList(undefined, undefined, "batch");
                         
                         // 📰 v3.0: 티어 심사 통과 기록 (강등)
                         for (const item of historyItems) {
@@ -29780,7 +30094,7 @@ async function importJSON() {
                           await exec("UPDATE novels SET manual_tier=NULL");
                           setTierHistory([]);
                           setReviewSelectedIds([]);
-                          await loadList();
+                          await loadList(undefined, undefined, "update");
                           Alert.alert("완료", "전체 리셋됨");
                         }},
                       ]
@@ -29894,7 +30208,7 @@ async function importJSON() {
                                 onPress={async () => {
                                   setTierHistory(prev => [{ id: n.id, title: n.title, from: current, to: 'S', at: Date.now() }, ...prev].slice(0, 20));
                                   await exec("UPDATE novels SET manual_tier='S' WHERE id=?", [n.id]);
-                                  await loadList();
+                                  await loadList(undefined, undefined, "update");
                                 }}
                                 style={{ backgroundColor: "#8b5cf6", paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10 }}
                               >
@@ -29905,7 +30219,7 @@ async function importJSON() {
                               onPress={async () => {
                                 setTierHistory(prev => [{ id: n.id, title: n.title, from: current, to: 'A', at: Date.now() }, ...prev].slice(0, 20));
                                 await exec("UPDATE novels SET manual_tier='A' WHERE id=?", [n.id]);
-                                await loadList();
+                                await loadList(undefined, undefined, "update");
                               }}
                               style={{ backgroundColor: "#3b82f6", paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10 }}
                             >
@@ -29985,7 +30299,7 @@ async function importJSON() {
                                 const newTier = (recommended === 'S' || recommended === 'A') ? recommended : null;
                                 setTierHistory(prev => [{ id: n.id, title: n.title, from: current, to: newTier || recommended, at: Date.now() }, ...prev].slice(0, 20));
                                 await exec("UPDATE novels SET manual_tier=? WHERE id=?", [newTier, n.id]);
-                                await loadList();
+                                await loadList(undefined, undefined, "update");
                               }}
                               style={{ backgroundColor: C.warn, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10 }}
                             >
@@ -30060,14 +30374,14 @@ async function importJSON() {
                                       { text: "A로 강등", onPress: async () => {
                                         setTierHistory(prev => [{ id: n.id, title: n.title, from: 'S', to: 'A', at: Date.now() }, ...prev].slice(0, 20));
                                         await exec("UPDATE novels SET manual_tier='A' WHERE id=?", [n.id]);
-                                        await loadList();
+                                        await loadList(undefined, undefined, "update");
                                       }},
                                       { text: "S 해제", style: "destructive", onPress: async () => {
                                         const recommended = tierFromRating(n.rating);
                                         const newTier = (recommended === 'S' || recommended === 'A') ? recommended : null;
                                         setTierHistory(prev => [{ id: n.id, title: n.title, from: 'S', to: newTier || recommended, at: Date.now() }, ...prev].slice(0, 20));
                                         await exec("UPDATE novels SET manual_tier=? WHERE id=?", [newTier, n.id]);
-                                        await loadList();
+                                        await loadList(undefined, undefined, "update");
                                       }},
                                     ]
                                   );
@@ -30114,14 +30428,14 @@ async function importJSON() {
                                       { text: "S로 승급", onPress: async () => {
                                         setTierHistory(prev => [{ id: n.id, title: n.title, from: 'A', to: 'S', at: Date.now() }, ...prev].slice(0, 20));
                                         await exec("UPDATE novels SET manual_tier='S' WHERE id=?", [n.id]);
-                                        await loadList();
+                                        await loadList(undefined, undefined, "update");
                                       }},
                                       { text: "A 해제", style: "destructive", onPress: async () => {
                                         const recommended = tierFromRating(n.rating);
                                         const newTier = (recommended === 'S' || recommended === 'A') ? recommended : null;
                                         setTierHistory(prev => [{ id: n.id, title: n.title, from: 'A', to: newTier || recommended, at: Date.now() }, ...prev].slice(0, 20));
                                         await exec("UPDATE novels SET manual_tier=? WHERE id=?", [newTier, n.id]);
-                                        await loadList();
+                                        await loadList(undefined, undefined, "update");
                                       }},
                                     ]
                                   );
@@ -30193,7 +30507,7 @@ async function importJSON() {
                               const current = getDisplayTier(n);
                               setTierHistory(prev => [{ id: n.id, title: n.title, from: current, to: 'S', at: Date.now() }, ...prev].slice(0, 20));
                               await exec("UPDATE novels SET manual_tier='S' WHERE id=?", [n.id]);
-                              await loadList();
+                              await loadList(undefined, undefined, "update");
                               setReviewSearchQuery("");
                               Alert.alert("완료", `${n.title}을(를) S티어로 지정했습니다.`);
                             }}
@@ -30206,7 +30520,7 @@ async function importJSON() {
                               const current = getDisplayTier(n);
                               setTierHistory(prev => [{ id: n.id, title: n.title, from: current, to: 'A', at: Date.now() }, ...prev].slice(0, 20));
                               await exec("UPDATE novels SET manual_tier='A' WHERE id=?", [n.id]);
-                              await loadList();
+                              await loadList(undefined, undefined, "update");
                               setReviewSearchQuery("");
                               Alert.alert("완료", `${n.title}을(를) A티어로 지정했습니다.`);
                             }}
@@ -30263,7 +30577,7 @@ async function importJSON() {
                               { text: "복원", onPress: async () => {
                                 await exec("UPDATE novels SET manual_tier=? WHERE id=?", [restoreTier, h.id]);
                                 setTierHistory(prev => prev.filter((_, i) => i !== idx));
-                                await loadList();
+                                await loadList(undefined, undefined, "update");
                               }},
                             ]);
                           }}
@@ -31964,8 +32278,10 @@ async function importJSON() {
                                     if (catExpanded === catName) setCatExpanded(trimmed);
                                   }, "plain-text", catName);
                                 } else {
-                                  // Android: Alert.prompt 미지원 → 삭제 후 재생성 안내
-                                  Alert.alert("안내", "Android에서는 카테고리를 삭제 후 새 이름으로 다시 만들어주세요.\n(태그는 카테고리 삭제 시 유지됩니다)");
+                                  // 🔧 v3.5.11: Android 인라인 이름 변경 모드 진입
+                                  setCatRenamingName(catName);
+                                  setCatRenameInput(catName);
+                                  setCatExpanded(catName); // 해당 카테고리 펼치기
                                 }
                               }},
                               { text: "삭제", style: "destructive", onPress: () => {
@@ -31998,6 +32314,43 @@ async function importJSON() {
                       {/* 펼쳐진 내용 */}
                       {isExpanded && (
                         <View style={{ padding: 12, paddingTop: 0 }}>
+                          {/* 🔧 v3.5.11: Android 인라인 이름 변경 UI */}
+                          {catRenamingName === catName && (
+                            <View style={{ flexDirection: "row", marginBottom: 10, gap: 8, backgroundColor: C.card, padding: 8, borderRadius: 10, borderWidth: 1, borderColor: C.primary }}>
+                              <TextInput
+                                value={catRenameInput}
+                                onChangeText={setCatRenameInput}
+                                placeholder="새 카테고리 이름"
+                                placeholderTextColor={C.sub}
+                                autoFocus
+                                style={{ flex: 1, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, fontSize: 14, color: C.text }}
+                              />
+                              <TouchableOpacity
+                                onPress={() => {
+                                  const trimmed = catRenameInput.trim();
+                                  if (!trimmed || trimmed === catName) { setCatRenamingName(null); return; }
+                                  if (customTagCategories[trimmed]) { Alert.alert("알림", "이미 존재하는 이름입니다."); return; }
+                                  const next = { ...customTagCategories };
+                                  next[trimmed] = next[catName];
+                                  delete next[catName];
+                                  setCustomTagCategories(next);
+                                  setAppMeta("custom_tag_categories", next);
+                                  setCatExpanded(trimmed);
+                                  setCatRenamingName(null);
+                                }}
+                                disabled={!catRenameInput.trim() || catRenameInput.trim() === catName}
+                                style={{ backgroundColor: catRenameInput.trim() && catRenameInput.trim() !== catName ? C.primary : C.chip, paddingHorizontal: 12, borderRadius: 8, justifyContent: "center" }}
+                              >
+                                <Text style={{ color: catRenameInput.trim() && catRenameInput.trim() !== catName ? "#fff" : C.sub, fontWeight: "700", fontSize: 13 }}>변경</Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                onPress={() => setCatRenamingName(null)}
+                                style={{ paddingHorizontal: 8, justifyContent: "center" }}
+                              >
+                                <Text style={{ color: C.sub, fontWeight: "700", fontSize: 13 }}>취소</Text>
+                              </TouchableOpacity>
+                            </View>
+                          )}
                           {/* 태그 추가 입력 */}
                           <View style={{ flexDirection: "row", marginBottom: 10, gap: 8 }}>
                             <View style={{ flex: 1, zIndex: 10 }}>
@@ -32885,7 +33238,7 @@ async function importJSON() {
                 onPress={async () => {
                   setIsLoading(true);
                   await rebuildAllFromMatches(tagAttributes);
-                  await loadList();
+                  await loadList(undefined, undefined, "rebuild");
                   setIsLoading(false);
                   Alert.alert("완료", "재계산 완료");
                 }}
@@ -32896,7 +33249,7 @@ async function importJSON() {
                 onPress={async () => {
                   setIsLoading(true);
                   await exec("UPDATE novels SET rd=350;");
-                  await loadList();
+                  await loadList(undefined, undefined, "update");
                   setIsLoading(false);
                 }}
                 style={{ marginTop: 8 }}
@@ -32987,7 +33340,7 @@ async function importJSON() {
                             if (result.error) {
                               Alert.alert("오류", result.error);
                             } else {
-                              await loadList();
+                              await loadList(undefined, undefined, "op");
                               await loadCoverLibrary();
                               const lines = [
                                 `✅ 검증 완료`,
@@ -33337,14 +33690,21 @@ async function importJSON() {
                     `SQL: ${s.sql.totalCount}회, 평균 ${fmt(s.sql.avgTime)}, 느린쿼리 ${s.sql.slowCount}, 에러 ${s.sql.errorCount}`,
                     ``,
                     `[함수별 통계]`,
-                    ...s.functions.map(f => `  ${f.name}: ${f.count}회, avg=${fmt(f.avgTime)}, max=${fmt(f.maxTime)}, total=${fmt(f.totalTime)}`),
+                    ...s.functions.map(f => `  ${f.name}: ${f.count}회, avg=${fmt(f.avgTime)}, max=${fmt(f.maxTime)}, min=${fmt(f.minTime)}, total=${fmt(f.totalTime)}`),
                     ``,
                     `[느린 SQL (${s.sqlLog.length}건)]`,
-                    ...s.sqlLog.slice(0,10).map(q => `  ${fmt(q.duration)} ${q.op}: ${q.sql}`),
+                    ...s.sqlLog.slice(0,15).map(q => `  ${fmt(q.duration)} ${q.op}${q.rows != null ? `(${q.rows}rows)` : ""}: ${q.sql}`),
                     ``,
                     `[느린 함수 (${s.funcLog.length}건)]`,
-                    ...s.funcLog.slice(0,10).map(f => `  ${fmt(f.duration)} ${f.name}`),
+                    ...s.funcLog.slice(0,15).map(f => `  ${fmt(f.duration)} ${f.name}${f.trigger ? ` [${f.trigger}]` : ""}${f.afterFG ? " ⚡FG직후" : ""}`),
                     ``,
+                    ...(s.subStepLog.length > 0 ? [
+                      `[서브스텝 분해 (${s.subStepLog.length}건)]`,
+                      ...s.subStepLog.slice(0,10).map(ss => 
+                        `  ${fmt(ss.total)} ${ss.func}${ss.trigger ? ` [${ss.trigger}]` : ""}${ss.afterFG ? " ⚡FG" : ""}: ${ss.steps.map(st => `${st.name}=${fmt(st.duration)}`).join(", ")}`
+                      ),
+                      ``,
+                    ] : []),
                     `[에러 (${s.errors.length}건)]`,
                     ...s.errors.slice(0,10).map(e => `  [${e.context||e.op}] ${e.error||e.sql}`),
                     ``,
@@ -33354,12 +33714,14 @@ async function importJSON() {
                     `[DB 안정성]`,
                     `  리트라이: ${s.db.retryCount}, 재연결: ${s.db.reconnectCount}, 연속에러최대: ${s.db.maxConsecutiveErrors}`,
                     ...(s.db.lastError ? [`  마지막에러: ${s.db.lastError}`] : []),
+                    ...(s.dbEvents.length > 0 ? [`  이벤트:`, ...s.dbEvents.slice(0,5).map(ev => `    ${ev.type} ${ev.op||""} ${ev.reason||""} (${new Date(ev.time).toLocaleTimeString()})`)] : []),
                     ``,
                     `[이미지]`,
                     `  로드: ${s.images.loadCount}, 실패: ${s.images.errorCount}`,
                     ...(s.imageErrors.length > 0 ? [`  실패URI:`, ...s.imageErrors.slice(0,5).map(e => `    ${e.uri}`)] : []),
                     ``,
                     `[라이프사이클] BG: ${s.backgroundCount}, FG: ${s.foregroundCount}`,
+                    ...s.lifecycle.slice(0,10).map(l => `  ${l.event} (${new Date(l.time).toLocaleTimeString()})`),
                     ``,
                     `[화면 전환 (최근 10)]`,
                     ...s.navigation.slice(0,10).map(n => `  ${n.from} → ${n.to} (${new Date(n.time).toLocaleTimeString()})`),
@@ -33520,14 +33882,14 @@ async function importJSON() {
                       // 🔧 v3.5.9 BUG FIX: 함수형 업데이트로 prev.tags 사용 (stale closure 방지)
                       updateEditItem(prev => {
                         if (!prev) return null;
-                        const result = removeTagAndSyncGenres(prev.tags, tag, userMajorGenres, userSubGenres, prev.tag_data);
+                        const result = removeTagAndSyncGenres(prev.tags, tag, userMajorGenres, userSubGenres, prev.tag_data, tagAttributes);
                         return { ...prev, ...result };
                       });
                     }}
                     onOpenTagModal={() => {
                       const currentTags = (editItem.tags || "").split(",").map(t => t.trim()).filter(Boolean);
-                      const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
-                      const allSub = [...SUB_GENRES, ...userSubGenres];
+                      const allMajor = getAllMajorTags(tagAttributes, userMajorGenres); // 🔧 v3.5.11: tagAttributes 반영
+                      const allSub = getAllSubTags(tagAttributes, userSubGenres); // 🔧 v3.5.11: tagAttributes 반영
                       const majorTags = currentTags.filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
                         .map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
                       const subTags = currentTags.filter(tag => allSub.some(s => s.toLowerCase() === tag.toLowerCase()))
@@ -33546,8 +33908,8 @@ async function importJSON() {
                     }}
                     onTagsTextChange={(t) => {
                       const inputTags = t.split(",").map(tag => tag.trim()).filter(Boolean);
-                      const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
-                      const allSub = [...SUB_GENRES, ...userSubGenres];
+                      const allMajor = getAllMajorTags(tagAttributes, userMajorGenres); // 🔧 v3.5.11: tagAttributes 반영
+                      const allSub = getAllSubTags(tagAttributes, userSubGenres); // 🔧 v3.5.11: tagAttributes 반영
                       const normalizedMajor = inputTags.filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
                         .map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
                       const normalizedSub = inputTags.filter(tag => allSub.some(m => m.toLowerCase() === tag.toLowerCase()))
@@ -35263,14 +35625,14 @@ async function importJSON() {
                       // 🔧 v3.5.9 BUG FIX: 함수형 업데이트로 prev.tags 사용
                       updatePlannedEditItem(prev => {
                         if (!prev) return null;
-                        const result = removeTagAndSyncGenres(prev.tags, tag, userMajorGenres, userSubGenres, prev.tag_data);
+                        const result = removeTagAndSyncGenres(prev.tags, tag, userMajorGenres, userSubGenres, prev.tag_data, tagAttributes);
                         return { ...prev, ...result };
                       });
                     }}
                     onOpenTagModal={() => {
                       const currentTags = (plannedEditItem.tags || "").split(",").map(t => t.trim()).filter(Boolean);
-                      const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
-                      const allSub = [...SUB_GENRES, ...userSubGenres];
+                      const allMajor = getAllMajorTags(tagAttributes, userMajorGenres); // 🔧 v3.5.11: tagAttributes 반영
+                      const allSub = getAllSubTags(tagAttributes, userSubGenres); // 🔧 v3.5.11: tagAttributes 반영
                       const majorTags = currentTags.filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
                         .map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
                       const subTags = currentTags.filter(tag => allSub.some(s => s.toLowerCase() === tag.toLowerCase()))
@@ -35288,8 +35650,8 @@ async function importJSON() {
                     onTagsTextChange={(t) => {
                       // 🔧 v3.5.9 BUG FIX: 예정작 수정 텍스트 모드 태그 편집 시 장르 동기화
                       const inputTags = t.split(",").map(tag => tag.trim()).filter(Boolean);
-                      const allMajor = [...MAJOR_GENRES, ...userMajorGenres];
-                      const allSub = [...SUB_GENRES, ...userSubGenres];
+                      const allMajor = getAllMajorTags(tagAttributes, userMajorGenres); // 🔧 v3.5.11: tagAttributes 반영
+                      const allSub = getAllSubTags(tagAttributes, userSubGenres); // 🔧 v3.5.11: tagAttributes 반영
                       const normalizedMajor = inputTags.filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
                         .map(tag => allMajor.find(m => m.toLowerCase() === tag.toLowerCase()) || tag);
                       const normalizedSub = inputTags.filter(tag => allSub.some(m => m.toLowerCase() === tag.toLowerCase()))
