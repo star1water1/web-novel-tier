@@ -2,9 +2,9 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.5.14                                                                 ║
- * ║  최종 수정: 2025-02-26                                                        ║
- * ║  총 라인 수: 약 36,850줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 3.5.15                                                                 ║
+ * ║  최종 수정: 2025-02-27                                                        ║
+ * ║  총 라인 수: 약 37,400줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -298,6 +298,94 @@
  * ║       설정 추가 + 감지 코드 연결                                            ║
  * ║   (2) requireIntensityTuning(기본:off) 감지 코드 연결 (기존 설정 활용)     ║
  * ║   (3) 설정 UI에 "질적 완성도 가이드" 섹션 추가, 3개 토글 제공              ║
+ * ║                                                                              ║
+ * ║ [기능 추가 1] 작품 내 태그 중복 자동 제거                                    ║
+ * ║ • 문제: 대장르+일반태그에서 동일 태그 선택 시 DB에 중복 저장                ║
+ * ║   → TagChipView key 충돌로 렌더링 오류 (칩 누락/경고)                       ║
+ * ║ • 수정:                                                                      ║
+ * ║   (1) handleTagModalConfirm: deduplicateTags()로 병합 전 중복 제거          ║
+ * ║   (2) addNovel: deduplicateTagString()으로 INSERT 전 중복 제거              ║
+ * ║   (3) saveEdit: deduplicateTagString()으로 UPDATE 전 중복 제거              ║
+ * ║   (4) TagChipView: key={tag} → key={tag-idx} (잔여 중복 안전 처리)         ║
+ * ║   (5) deduplicateTagString() 유틸 함수 추가 (쉼표 구분 문자열용)           ║
+ * ║                                                                              ║
+ * ║ [버그 수정 15] 보충탭 다크모드 하드코딩 색상 (#fffbeb/#f59e0b/#d97706)      ║
+ * ║ • 이슈 하이라이트 박스 12개소 + 라벨 칩에 isDark 분기 적용                 ║
+ * ║                                                                              ║
+ * ║ [버그 수정 16] TagManagerModal 복수 결함                                     ║
+ * ║ • FlatList + flexWrap 조합 → 가상화 무력화 + 레이아웃 깨짐                 ║
+ * ║   → ScrollView + map으로 교체 (태그 목록은 가상화 불필요)                   ║
+ * ║ • 액션 모달 감정 버튼 3개 + 속성 버튼 5개 + 삭제 버튼 2개                  ║
+ * ║   다크모드 하드코딩 → isDark 분기 추가 (총 10개소)                          ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v3.5.15 매칭 크래시 근본 수정 (2025-02-27)                              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [근본 원인] 매칭 1회당 15-20 DB쿼리 × 절반이 동시 실행                     ║
+ * ║ • pickRandomUnseenPair: SELECT * FROM novels + SELECT FROM matches 매번     ║
+ * ║ • useEffect[pair]: analyzeMatchPrediction(4쿼리) +                          ║
+ * ║   generateEnhancedPrediction(5+쿼리) 동시 실행                              ║
+ * ║ • 자동매칭 100ms마다 전체 사이클 반복 → DB 경합 + JS 포화 → ANR            ║
+ * ║                                                                              ║
+ * ║ [수정 1] matchCache 시스템 (App_Part1)                                      ║
+ * ║ • novels + playedSet 캐시 (15초 TTL)                                        ║
+ * ║ • pickRandomUnseenPair: DB 2쿼리 → 캐시 히트 시 0쿼리                      ║
+ * ║ • decide: 캐시 증분 업데이트 (레이팅/played 즉시 반영)                     ║
+ * ║ • invalidateMatchCache: loadList/화면 진입 시 무효화                        ║
+ * ║                                                                              ║
+ * ║ [수정 2] useEffect[pair] 안정화                                              ║
+ * ║ • abort 플래그로 stale 분석 작업 취소 (pair 변경 시 cleanup)               ║
+ * ║ • 자동매칭 시 generateEnhancedPrediction 스킵 (5+ 쿼리 절감)              ║
+ * ║ • matchAnalysisPairRef로 분석 결과-pair 일치 추적                          ║
+ * ║                                                                              ║
+ * ║ [수정 3] 자동매칭 useEffect 재설계                                           ║
+ * ║ • pair freshness 검증 (stale matchAnalysis로 판정 방지)                     ║
+ * ║ • isAutoMatching deps 제거 (불필요 재트리거 방지)                           ║
+ * ║ • loadList 지연 실행 (자동매칭 종료 후 1회만)                              ║
+ * ║                                                                              ║
+ * ║ [수정 4] analyzeGenreMatchup 캐시 (30초 TTL)                                ║
+ * ║ • SELECT * FROM matches 매번 로드 → 캐시 히트 시 즉시 반환                 ║
+ * ║                                                                              ║
+ * ║ [성능 효과] 자동매칭 기준                                                    ║
+ * ║ • DB 쿼리: ~18회/매칭 → ~4회/매칭 (캐시 히트 시)                           ║
+ * ║ • 동시 DB 접근: 3-4개 동시 → 큐 직렬 처리                                  ║
+ * ║ • loadList: 매 매칭 → 자동매칭 종료 후 1회                                 ║
+ * ║                                                                              ║
+ * ║ [버그 수정 17] 태그 비교 .includes() → listHasTag() 전환 (64개소)           ║
+ * ║ • 문제: .includes()는 정확한 문자열 비교 — 공백/대소문자 차이 시 불일치    ║
+ * ║   예: "현대 판타지" vs "현대판타지" → .includes() false, listHasTag true    ║
+ * ║ • TagManagerModal: 29개소 (고정/숨김/속성/장르 분류 전체)                   ║
+ * ║ • TagChipView: 12개소 (pinned/hidden 필터링)                                ║
+ * ║ • 태그 편집/분류 함수: 12개소 (isMajor/isSub/복원 로직)                    ║
+ * ║ • DetailModal: 2개소 (editingTag 고정/숨김 표시)                            ║
+ * ║ • 기타: 9개소 (커스텀태그 필터, 장르 복원 등)                               ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v3.5.15b 버그 수정 (2025-02-27)                                        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [버그 수정 18] 🔴 analyzeGenreMatchup 캐시 advantage 부호 반전 오류        ║
+ * ║ • 증상: 캐시된 장르 상성이 호출 순서에 따라 부호 반전 누락                ║
+ * ║ • 원인: cacheKey.startsWith(genreA) — 알파벳순 키라 원래 순서와 무관       ║
+ * ║ • 수정: cached.genreA === genreA 기준 비교 + 역순 시 모든 필드 반전       ║
+ * ║ • 추가: per-entry timestamp (전역 ts → 엔트리별 ts)                        ║
+ * ║                                                                              ║
+ * ║ [버그 수정 19] 🔴 matchCache playedSet 경합 — DB 미기록 엔트리 유실        ║
+ * ║ • 증상: 연속 수동 매칭 시 동일 쌍 재출현 가능                             ║
+ * ║ • 원인: getMatchCacheData dirty refresh가 기존 Set을 덮어씀               ║
+ * ║   → addToMatchCachePlayed로 추가한 미기록 엔트리 유실                     ║
+ * ║ • 수정: 새 Set 생성 후 기존 Set 엔트리 병합 (보존)                        ║
+ * ║                                                                              ║
+ * ║ [버그 수정 20] 🟡 isSameTag 미적용 인메모리 상태 업데이트 (13개소)        ║
+ * ║ • 증상: 공백 변형 태그("현대 판타지" vs "현대판타지") 토글/삭제 실패      ║
+ * ║ • 적용: toggleHideTag, togglePinTag, handleTagEditModalSave (pin/hide),   ║
+ * ║   removeCustomTag, deleteTagGlobally (3곳), onDeleteTag (4곳),            ║
+ * ║   getTagUsageStats, 미사용 태그 일괄삭제 (3곳)                            ║
  * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
@@ -3068,6 +3156,79 @@ async function processMatchQueue() {
   notifyQueueStatus();
 }
 
+/* =========================================================
+   🔧 v3.5.15: 매칭 캐시 시스템
+   - pickRandomUnseenPair의 SELECT * FROM novels + SELECT FROM matches 반복 제거
+   - 매칭 1회당 2개 중쿼리 → 캐시 히트 시 0개
+   - 캐시 무효화: loadList 완료, 작품 추가/삭제, 매칭 화면 진입 시
+   ========================================================= */
+const matchCache = {
+  novels: null,         // normalizeNovel'd 배열
+  playedSet: null,      // Set<pairKey>
+  novelsTs: 0,          // novels 캐시 타임스탬프
+  matchesTs: 0,         // matches 캐시 타임스탬프
+  dirty: true,          // 무효화 플래그
+  TTL: 15000,           // 15초 유효기간
+};
+
+function invalidateMatchCache() {
+  matchCache.dirty = true;
+}
+
+// 캐시에서 played set에 새 매치 추가 (DB 재조회 불필요)
+function addToMatchCachePlayed(aId, bId) {
+  if (matchCache.playedSet) {
+    const key = aId < bId ? `${aId}|${bId}` : `${bId}|${aId}`;
+    matchCache.playedSet.add(key);
+  }
+}
+
+// 캐시된 novels 목록에서 특정 작품의 rating/wins/losses 등을 업데이트
+function updateMatchCacheNovel(id, updates) {
+  if (!matchCache.novels) return;
+  const idx = matchCache.novels.findIndex(n => n.id === id);
+  if (idx >= 0) {
+    matchCache.novels[idx] = { ...matchCache.novels[idx], ...updates };
+  }
+}
+
+async function getMatchCacheData(forceRefresh = false) {
+  const now = Date.now();
+  const novelsStale = !matchCache.novels || matchCache.dirty || (now - matchCache.novelsTs > matchCache.TTL);
+  const matchesStale = !matchCache.playedSet || matchCache.dirty || (now - matchCache.matchesTs > matchCache.TTL);
+  
+  if (!novelsStale && !matchesStale && !forceRefresh) {
+    return { novels: matchCache.novels, playedSet: matchCache.playedSet };
+  }
+  
+  // 갱신 필요
+  if (novelsStale || forceRefresh) {
+    const rawNovels = await all("SELECT * FROM novels ORDER BY rating DESC;");
+    matchCache.novels = (rawNovels || []).map(normalizeNovel);
+    matchCache.novelsTs = now;
+  }
+  
+  if (matchesStale || forceRefresh) {
+    const matchRows = await all("SELECT a_id,b_id FROM matches;");
+    const newSet = new Set(
+      (matchRows || []).map((r) => {
+        const a = r.a_id, b = r.b_id;
+        return a < b ? `${a}|${b}` : `${b}|${a}`;
+      })
+    );
+    // 🔧 v3.5.15b: 기존 played에 있지만 아직 DB 미기록인 엔트리 보존
+    // (decide에서 addToMatchCachePlayed 후 enqueueMatchTask INSERT 전 경합 방지)
+    if (matchCache.playedSet) {
+      for (const key of matchCache.playedSet) newSet.add(key);
+    }
+    matchCache.playedSet = newSet;
+    matchCache.matchesTs = now;
+  }
+  
+  matchCache.dirty = false;
+  return { novels: matchCache.novels, playedSet: matchCache.playedSet };
+}
+
 /* -------------------- Migration -------------------- */
 async function columnExists(table, name) {
   const rows = await all(`PRAGMA table_info(${table});`);
@@ -5586,14 +5747,14 @@ function getTagSentiment(tag, customSentiments = {}) {
 function isTagMajor(tag, tagAttributes = {}, userMajorGenres = []) {
   if (tagAttributes[tag]?.isMajor !== undefined) return tagAttributes[tag].isMajor;
   // 기본값: MAJOR_GENRES나 사용자 대장르에 포함되면 true
-  return MAJOR_GENRES.includes(tag) || userMajorGenres.includes(tag);
+  return listHasTag(MAJOR_GENRES, tag) || listHasTag(userMajorGenres, tag);
 }
 
 // 🆕 v3.4: 태그 부장르 속성 확인 (동등화)
 function isTagSub(tag, tagAttributes = {}, userSubGenres = []) {
   if (tagAttributes[tag]?.isSub !== undefined) return tagAttributes[tag].isSub;
   // 기본값: SUB_GENRES나 사용자 부장르에 포함되면 true
-  return SUB_GENRES.includes(tag) || userSubGenres.includes(tag);
+  return listHasTag(SUB_GENRES, tag) || listHasTag(userSubGenres, tag);
 }
 
 // 🆕 v3.5.8: 작품명 태그 확인 — 검색 편의용이며 모든 분석에서 제외
@@ -5827,6 +5988,14 @@ function deduplicateTags(tags) {
     }
   }
   return result;
+}
+
+// 🔧 v3.5.14: 쉼표 구분 태그 문자열 내 중복 제거
+// "판타지, 먼치킨, 판타지" → "판타지, 먼치킨"
+function deduplicateTagString(tagStr) {
+  if (!tagStr) return tagStr;
+  const arr = tagStr.split(",").map(t => t.trim()).filter(Boolean);
+  return deduplicateTags(arr).join(", ");
 }
 
 // 모든 기본 태그 중복 제거 검사
@@ -6631,6 +6800,15 @@ function isSameTag(a, b) {
 function findSameTag(tagList, target) {
   if (!target || !Array.isArray(tagList)) return null;
   return tagList.find(t => isSameTag(t, target)) || null;
+}
+
+/**
+ * 🔧 v3.5.15: 태그 목록에 대상 태그가 있는지 확인 (공백/대소문자 무시)
+ * list.includes(tag) 대체용 — TagManagerModal 등에서 사용
+ */
+function listHasTag(tagList, target) {
+  if (!target || !Array.isArray(tagList)) return false;
+  return tagList.some(t => isSameTag(t, target));
 }
 
 /**
@@ -7676,11 +7854,11 @@ const TagChipView = memo(({
       </View>
       {tagList.length > 0 ? (
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-          {tagList.map((tag) => {
+          {tagList.map((tag, idx) => {
             const cs = getChipStyle(tag);
             return (
               <View
-                key={tag}
+                key={`${tag}-${idx}`}
                 style={{
                   flexDirection: "row",
                   alignItems: "center",
@@ -8593,15 +8771,15 @@ const TagSelectModal = memo(({
 
   // 🔧 v3.4.4: 고정 태그를 상단에 배치하는 정렬 헬퍼
   const sortWithPinnedFirst = useCallback((tags) => {
-    const pinned = tags.filter(t => pinnedTags.includes(t));
-    const others = tags.filter(t => !pinnedTags.includes(t));
+    const pinned = tags.filter(t => listHasTag(pinnedTags, t));
+    const others = tags.filter(t => !listHasTag(pinnedTags, t));
     return [...pinned, ...others];
   }, [pinnedTags]);
 
   const sortedMajor = useMemo(() => {
     // 🔧 v3.5.11: getAllMajorTags 사용으로 통일 (isMajor:false 제거도 반영)
     const all = getAllMajorTags(tagAttributes, userMajorGenres)
-      .filter(t => !hiddenTags.includes(t));
+      .filter(t => !listHasTag(hiddenTags, t));
     const sorted = sortTagsByUsage(all, tagUsageCounts);
     const filtered = filterBySearch(sorted);
     return sortWithPinnedFirst(filtered);
@@ -8610,7 +8788,7 @@ const TagSelectModal = memo(({
   const sortedSub = useMemo(() => {
     // 🔧 v3.5.11: getAllSubTags 사용으로 통일 (isSub:false 제거도 반영)
     const all = getAllSubTags(tagAttributes, userSubGenres)
-      .filter(t => !hiddenTags.includes(t));
+      .filter(t => !listHasTag(hiddenTags, t));
     const sorted = sortTagsByUsage(all, tagUsageCounts);
     const filtered = filterBySearch(sorted);
     return sortWithPinnedFirst(filtered);
@@ -8622,7 +8800,7 @@ const TagSelectModal = memo(({
     // ("먼치킨", "천재", "재벌" 등 11개 태그가 카테고리에서 사라지던 문제 해결)
     const result = {};
     for (const [category, tagList] of Object.entries(GENERAL_TAGS)) {
-      const filtered = tagList.filter(t => !hiddenTags.includes(t));
+      const filtered = tagList.filter(t => !listHasTag(hiddenTags, t));
       const sorted = sortTagsByUsage(filtered, tagUsageCounts);
       const searched = filterBySearch(sorted);
       result[category] = sortWithPinnedFirst(searched); // 🔧 v3.4.4: 고정 태그 상단
@@ -8631,7 +8809,7 @@ const TagSelectModal = memo(({
     if (customTagCategories && typeof customTagCategories === "object") {
       for (const [catName, catTags] of Object.entries(customTagCategories)) {
         if (!Array.isArray(catTags) || catTags.length === 0) continue;
-        const filtered = catTags.filter(t => !hiddenTags.includes(t));
+        const filtered = catTags.filter(t => !listHasTag(hiddenTags, t));
         const sorted = sortTagsByUsage(filtered, tagUsageCounts);
         const searched = filterBySearch(sorted);
         result[`📂 ${catName}`] = sortWithPinnedFirst(searched);
@@ -8652,7 +8830,7 @@ const TagSelectModal = memo(({
     customTags.forEach(t => allTags.add(t));
     
     // 숨김 태그 제외
-    const visibleTags = Array.from(allTags).filter(t => !hiddenTags.includes(t));
+    const visibleTags = Array.from(allTags).filter(t => !listHasTag(hiddenTags, t));
     
     // 감정별 분류
     const positive = [];
@@ -8692,7 +8870,7 @@ const TagSelectModal = memo(({
         if (coTags) {
           for (const [otherTag, count] of Object.entries(coTags)) {
             if (allSelected.has(otherTag)) continue;
-            if (hiddenTags.includes(otherTag)) continue;
+            if (listHasTag(hiddenTags, otherTag)) continue;
             candidates.set(otherTag, count);
           }
         }
@@ -8707,7 +8885,7 @@ const TagSelectModal = memo(({
           
           for (const [otherTag, count] of Object.entries(coTags)) {
             if (allSelected.has(otherTag)) continue;
-            if (hiddenTags.includes(otherTag)) continue;
+            if (listHasTag(hiddenTags, otherTag)) continue;
             if (candidates.has(otherTag)) continue; // 이미 추가됨
             
             candidates.set(otherTag, count * 0.5); // 가중치 낮춤
@@ -8725,7 +8903,7 @@ const TagSelectModal = memo(({
       
       for (const tag of allAvailableTags) {
         if (allSelected.has(tag)) continue;
-        if (hiddenTags.includes(tag)) continue;
+        if (listHasTag(hiddenTags, tag)) continue;
         
         const usage = tagUsageCounts[tag] || 0;
         if (usage > 0) {
@@ -8768,7 +8946,7 @@ const TagSelectModal = memo(({
   // 🎭 태그 감정 변경 (길게 누르기)
   const handleLongPressTag = (tag) => {
     const current = getTagSentimentLocal(tag);
-    const isPinned = pinnedTags.includes(tag);
+    const isPinned = listHasTag(pinnedTags, tag);
     // 🔧 v3.5.9: 작품명 태그 상태 표시
     const isTitleTag = tagAttributes && tagAttributes[tag]?.isTitle;
     const sentimentOptions = onSetTagSentiment ? [
@@ -8796,7 +8974,7 @@ const TagSelectModal = memo(({
   // 🎭 감정 태그 칩 (색상 표시)
   const SentimentChip = ({ tag, active, onPress }) => {
     const sentiment = getTagSentimentLocal(tag);
-    const isPinned = pinnedTags.includes(tag);
+    const isPinned = listHasTag(pinnedTags, tag);
     // 🔧 v3.5.9: 작품명 태그 시각 구분 (tagAttributes 참조)
     const isTitleTag = tagAttributes && tagAttributes[tag]?.isTitle;
     const baseColors = SENTIMENT_COLORS[sentiment] || SENTIMENT_COLORS[TAG_SENTIMENT.NEUTRAL];
@@ -9205,7 +9383,7 @@ const TagSelectModal = memo(({
                 
                 {/* 커스텀 태그 */}
                 {customTags.length > 0 && (() => {
-                  const filtered = sortWithPinnedFirst(filterBySearch(sortTagsByUsage(customTags.filter(t => !hiddenTags.includes(t)), tagUsageCounts)));
+                  const filtered = sortWithPinnedFirst(filterBySearch(sortTagsByUsage(customTags.filter(t => !listHasTag(hiddenTags, t)), tagUsageCounts)));
                   return filtered.length > 0 ? (
                   <View>
                     <Text style={{ fontWeight: "700", color: C.text, marginTop: 12, marginBottom: 6 }}>
@@ -9239,7 +9417,7 @@ const TagSelectModal = memo(({
                     {Object.entries(tagRelationGroups)
                       .filter(([_, group]) => group.type === "similar")
                       .map(([groupId, group]) => {
-                        const visibleTags = (group.tags || []).filter(t => !hiddenTags.includes(t));
+                        const visibleTags = (group.tags || []).filter(t => !listHasTag(hiddenTags, t));
                         if (visibleTags.length === 0) return null;
                         
                         return (
@@ -9433,7 +9611,7 @@ const TagSelectModal = memo(({
                 {(() => {
                   // 조합 형식 태그 필터 (공백 포함 + COMBO_TAG_TRAITS 시작)
                   const comboLikeTags = customTags.filter(t => t.includes(" ") && COMBO_TAG_TRAITS.some(tr => t.startsWith(tr)));
-                  const filtered = sortWithPinnedFirst(filterBySearch(sortTagsByUsage(comboLikeTags.filter(t => !hiddenTags.includes(t)), tagUsageCounts)));
+                  const filtered = sortWithPinnedFirst(filterBySearch(sortTagsByUsage(comboLikeTags.filter(t => !listHasTag(hiddenTags, t)), tagUsageCounts)));
                   return filtered.length > 0 ? (
                   <View>
                     <Text style={{ fontWeight: "700", color: C.text, marginBottom: 6 }}>
@@ -9646,7 +9824,7 @@ const SearchTagModal = memo(({
       ...ALL_DEFAULT_TAGS,
       ...customTags,
     ]);
-    return Array.from(tags).filter(t => !hiddenTags.includes(t));
+    return Array.from(tags).filter(t => !listHasTag(hiddenTags, t));
   }, [customTags, userMajorGenres, userSubGenres, hiddenTags]);
   
   // 검색 필터링
@@ -9657,8 +9835,8 @@ const SearchTagModal = memo(({
       result = result.filter(t => t.toLowerCase().includes(q));
     }
     // 고정 태그를 앞으로
-    const pinned = result.filter(t => pinnedTags.includes(t));
-    const others = result.filter(t => !pinnedTags.includes(t));
+    const pinned = result.filter(t => listHasTag(pinnedTags, t));
+    const others = result.filter(t => !listHasTag(pinnedTags, t));
     return [...pinned, ...others];
   }, [allTags, searchQ, pinnedTags]);
   
@@ -9804,7 +9982,7 @@ const SearchTagModal = memo(({
                 <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
                   {filteredTags.slice(0, 100).map(tag => {
                     const isSelected = includeTags.includes(tag);
-                    const isPinned = pinnedTags.includes(tag);
+                    const isPinned = listHasTag(pinnedTags, tag);
                     return (
                       <TouchableOpacity
                         key={tag}
@@ -9886,7 +10064,7 @@ const SearchTagModal = memo(({
                 <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
                   {filteredTags.slice(0, 100).map(tag => {
                     const isSelected = excludeTags.includes(tag);
-                    const isPinned = pinnedTags.includes(tag);
+                    const isPinned = listHasTag(pinnedTags, tag);
                     return (
                       <TouchableOpacity
                         key={tag}
@@ -12195,13 +12373,13 @@ const TagManagerModal = memo(({
   // 🆕 v3.4: 태그가 대장르인지 확인
   const isTagMajorLocal = useCallback((tag) => {
     if (checkIsMajor) return checkIsMajor(tag);
-    return MAJOR_GENRES.includes(tag) || userMajorGenres.includes(tag);
+    return listHasTag(MAJOR_GENRES, tag) || listHasTag(userMajorGenres, tag);
   }, [checkIsMajor, userMajorGenres]);
   
   // 🆕 v3.4: 태그가 부장르인지 확인  
   const isTagSubLocal = useCallback((tag) => {
     if (checkIsSub) return checkIsSub(tag);
-    return SUB_GENRES.includes(tag) || userSubGenres.includes(tag);
+    return listHasTag(SUB_GENRES, tag) || listHasTag(userSubGenres, tag);
   }, [checkIsSub, userSubGenres]);
   
   // 🆕 태그의 실제 sentiment 가져오기
@@ -12264,9 +12442,9 @@ const TagManagerModal = memo(({
       // 🆕 v3.4: 속성 정보 추가
       const isMajor = isTagMajorLocal(item.tag);
       const isSub = isTagSubLocal(item.tag);
-      const isCustom = customTags.includes(item.tag);
-      const isPinned = pinnedTags.includes(item.tag);
-      const isHidden = hiddenTags.includes(item.tag);
+      const isCustom = listHasTag(customTags, item.tag);
+      const isPinned = listHasTag(pinnedTags, item.tag);
+      const isHidden = listHasTag(hiddenTags, item.tag);
       // 🔧 v3.5.9: 작품명 태그 여부 (tagAttributes 참조)
       const isTitleTag = !!(tagAttributes && tagAttributes[item.tag]?.isTitle);
       
@@ -12380,10 +12558,10 @@ const TagManagerModal = memo(({
         tags: pinnedTags.map(t => {
           // 🔧 v3.5.12: comboTags 판별 제거
           let type = "custom";
-          if (userMajorGenres.includes(t)) type = "userMajor";
-          else if (userSubGenres.includes(t)) type = "userSub";
-          else if (MAJOR_GENRES.includes(t)) type = "defaultMajor";
-          else if (SUB_GENRES.includes(t)) type = "defaultSub";
+          if (listHasTag(userMajorGenres, t)) type = "userMajor";
+          else if (listHasTag(userSubGenres, t)) type = "userSub";
+          else if (listHasTag(MAJOR_GENRES, t)) type = "defaultMajor";
+          else if (listHasTag(SUB_GENRES, t)) type = "defaultSub";
           return { tag: t, type, sentiment: getTagSentimentValue(t), isTitle: !!(tagAttributes && tagAttributes[t]?.isTitle) };
         }),
       },
@@ -12450,9 +12628,9 @@ const TagManagerModal = memo(({
           ...item, 
           isMajor: isTagMajorLocal(item.tag),
           isSub: isTagSubLocal(item.tag),
-          isCustom: customTags.includes(item.tag),
-          isPinned: pinnedTags.includes(item.tag),
-          isHidden: hiddenTags.includes(item.tag),
+          isCustom: listHasTag(customTags, item.tag),
+          isPinned: listHasTag(pinnedTags, item.tag),
+          isHidden: listHasTag(hiddenTags, item.tag),
           isTitle: !!(tagAttributes && tagAttributes[item.tag]?.isTitle), // 🔧 v3.5.9
         };
       });
@@ -12536,9 +12714,9 @@ const TagManagerModal = memo(({
     // 현재 속성 상태 확인
     const checkHasAttr = (tag) => {
       if (attrType === "major") {
-        return userMajorGenres.includes(tag) || MAJOR_GENRES.includes(tag);
+        return listHasTag(userMajorGenres, tag) || listHasTag(MAJOR_GENRES, tag);
       } else if (attrType === "sub") {
-        return userSubGenres.includes(tag) || SUB_GENRES.includes(tag);
+        return listHasTag(userSubGenres, tag) || listHasTag(SUB_GENRES, tag);
       }
       return false;
     };
@@ -12567,9 +12745,9 @@ const TagManagerModal = memo(({
                 }
               } else if (!anyWithoutAttr && hasAttr) {
                 // 속성 제거 (사용자 정의 장르만 제거 가능)
-                if (attrType === "major" && userMajorGenres.includes(tag) && onDemoteToCustom) {
+                if (attrType === "major" && listHasTag(userMajorGenres, tag) && onDemoteToCustom) {
                   onDemoteToCustom(tag, "userMajor");
-                } else if (attrType === "sub" && userSubGenres.includes(tag) && onDemoteToCustom) {
+                } else if (attrType === "sub" && listHasTag(userSubGenres, tag) && onDemoteToCustom) {
                   onDemoteToCustom(tag, "userSub");
                 }
               }
@@ -12587,7 +12765,7 @@ const TagManagerModal = memo(({
     if (selectedTags.size === 0) return;
     const tags = Array.from(selectedTags);
     // 하나라도 고정 안 된 게 있으면 전부 고정, 전부 고정되어 있으면 전부 해제
-    const anyNotPinned = tags.some(t => !pinnedTags.includes(t));
+    const anyNotPinned = tags.some(t => !listHasTag(pinnedTags, t));
     
     Alert.alert(
       anyNotPinned ? "태그 고정" : "고정 해제",
@@ -12598,7 +12776,7 @@ const TagManagerModal = memo(({
           text: anyNotPinned ? "고정" : "해제",
           onPress: () => {
             for (const tag of tags) {
-              const isPinned = pinnedTags.includes(tag);
+              const isPinned = listHasTag(pinnedTags, tag);
               // 전부 고정하려면: 고정 안 된 것만 고정
               // 전부 해제하려면: 고정된 것만 해제
               if (anyNotPinned && !isPinned) {
@@ -12619,7 +12797,7 @@ const TagManagerModal = memo(({
   const handleBatchToggleHide = () => {
     if (selectedTags.size === 0) return;
     const tags = Array.from(selectedTags);
-    const anyNotHidden = tags.some(t => !hiddenTags.includes(t));
+    const anyNotHidden = tags.some(t => !listHasTag(hiddenTags, t));
     
     Alert.alert(
       anyNotHidden ? "태그 숨김" : "숨김 해제",
@@ -12630,7 +12808,7 @@ const TagManagerModal = memo(({
           text: anyNotHidden ? "숨김" : "해제",
           onPress: () => {
             for (const tag of tags) {
-              const isHidden = hiddenTags.includes(tag);
+              const isHidden = listHasTag(hiddenTags, tag);
               // 전부 숨기려면: 숨겨지지 않은 것만 숨김
               // 전부 해제하려면: 숨겨진 것만 해제
               if (anyNotHidden && !isHidden) {
@@ -12689,12 +12867,12 @@ const TagManagerModal = memo(({
           onPress: () => {
             for (const tag of tags) {
               // 커스텀/조합/사용자 장르만 삭제 가능 - type 전달 필수!
-              if (customTags.includes(tag)) {
+              if (listHasTag(customTags, tag)) {
                 if (onDeleteTag) onDeleteTag(tag, "custom");
               // 🔧 v3.5.12: comboTags 판별 제거
-              } else if (userMajorGenres.includes(tag)) {
+              } else if (listHasTag(userMajorGenres, tag)) {
                 if (onDeleteTag) onDeleteTag(tag, "userMajor");
-              } else if (userSubGenres.includes(tag)) {
+              } else if (listHasTag(userSubGenres, tag)) {
                 if (onDeleteTag) onDeleteTag(tag, "userSub");
               }
             }
@@ -12721,21 +12899,7 @@ const TagManagerModal = memo(({
     }
   };
   
-  const renderTagItem = useCallback(({ item }) => (
-    <TagItem
-      tag={item.tag}
-      type={item.type}
-      types={item.types} // 🆕 복수 타입
-      isPinned={pinnedTags.includes(item.tag)}
-      isHidden={hiddenTags.includes(item.tag)}
-      isTitle={item.isTitle || false}
-      sentiment={item.sentiment}
-      isSelected={selectedTags.has(item.tag)}
-      onPress={handleTagPress}
-      onLongPress={handleTagLongPress}
-      theme={C}
-    />
-  ), [pinnedTags, hiddenTags, selectedTags, C, selectMode]);
+  // 🔧 v3.5.14: renderTagItem 제거 (FlatList → ScrollView + inline map으로 교체)
   
   if (!visible) return null;
   
@@ -13152,9 +13316,9 @@ const TagManagerModal = memo(({
             </TouchableOpacity>
             <TouchableOpacity
               onPress={onCleanupUnused}
-              style={{ flex: 1, backgroundColor: "#fee2e2", padding: 10, borderRadius: 10, alignItems: "center" }}
+              style={{ flex: 1, backgroundColor: isDark ? "#7f1d1d" : "#fee2e2", padding: 10, borderRadius: 10, alignItems: "center" }}
             >
-              <Text style={{ color: "#dc2626", fontWeight: "600", fontSize: 12 }}>🗑️ 미사용 정리</Text>
+              <Text style={{ color: isDark ? "#fca5a5" : "#dc2626", fontWeight: "600", fontSize: 12 }}>🗑️ 미사용 정리</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -13204,15 +13368,28 @@ const TagManagerModal = memo(({
               </Text>
             </View>
           ) : (
-            <FlatList
-              data={currentTags}
-              renderItem={renderTagItem}
-              keyExtractor={(item, index) => `${item.tag}-${index}`}
-              numColumns={1}
-              contentContainerStyle={{ flexDirection: "row", flexWrap: "wrap" }}
+            <ScrollView
               showsVerticalScrollIndicator={true}
               nestedScrollEnabled={true}
-            />
+              contentContainerStyle={{ flexDirection: "row", flexWrap: "wrap", paddingBottom: 20 }}
+            >
+              {currentTags.map((item, idx) => (
+                <TagItem
+                  key={`${item.tag}-${idx}`}
+                  tag={item.tag}
+                  type={item.type}
+                  types={item.types}
+                  isPinned={listHasTag(pinnedTags, item.tag)}
+                  isHidden={listHasTag(hiddenTags, item.tag)}
+                  isTitle={item.isTitle || false}
+                  sentiment={item.sentiment}
+                  isSelected={selectedTags.has(item.tag)}
+                  onPress={handleTagPress}
+                  onLongPress={handleTagLongPress}
+                  theme={C}
+                />
+              ))}
+            </ScrollView>
           )}
         </View>
         
@@ -13276,7 +13453,8 @@ const TagManagerModal = memo(({
                         }}
                         style={{
                           flex: 1,
-                          backgroundColor: getTagSentimentValue(selectedTag.tag) === TAG_SENTIMENT.POSITIVE ? "#86efac" : "#dcfce7",
+                          backgroundColor: getTagSentimentValue(selectedTag.tag) === TAG_SENTIMENT.POSITIVE 
+                            ? (isDark ? "#166534" : "#86efac") : (isDark ? "#14532d" : "#dcfce7"),
                           padding: 12,
                           borderRadius: 10,
                           alignItems: "center",
@@ -13284,7 +13462,7 @@ const TagManagerModal = memo(({
                           borderColor: "#22c55e",
                         }}
                       >
-                        <Text style={{ color: "#166534", fontWeight: "700" }}>👍 긍정</Text>
+                        <Text style={{ color: isDark ? "#86efac" : "#166534", fontWeight: "700" }}>👍 긍정</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
                         onPress={() => {
@@ -13293,7 +13471,8 @@ const TagManagerModal = memo(({
                         }}
                         style={{
                           flex: 1,
-                          backgroundColor: getTagSentimentValue(selectedTag.tag) === TAG_SENTIMENT.NEGATIVE ? "#fca5a5" : "#fee2e2",
+                          backgroundColor: getTagSentimentValue(selectedTag.tag) === TAG_SENTIMENT.NEGATIVE 
+                            ? (isDark ? "#991b1b" : "#fca5a5") : (isDark ? "#7f1d1d" : "#fee2e2"),
                           padding: 12,
                           borderRadius: 10,
                           alignItems: "center",
@@ -13301,7 +13480,7 @@ const TagManagerModal = memo(({
                           borderColor: "#ef4444",
                         }}
                       >
-                        <Text style={{ color: "#991b1b", fontWeight: "700" }}>👎 부정</Text>
+                        <Text style={{ color: isDark ? "#fca5a5" : "#991b1b", fontWeight: "700" }}>👎 부정</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
                         onPress={() => {
@@ -13310,7 +13489,8 @@ const TagManagerModal = memo(({
                         }}
                         style={{
                           flex: 1,
-                          backgroundColor: getTagSentimentValue(selectedTag.tag) === TAG_SENTIMENT.NEUTRAL ? "#d1d5db" : "#f3f4f6",
+                          backgroundColor: getTagSentimentValue(selectedTag.tag) === TAG_SENTIMENT.NEUTRAL 
+                            ? (isDark ? "#4b5563" : "#d1d5db") : (isDark ? "#374151" : "#f3f4f6"),
                           padding: 12,
                           borderRadius: 10,
                           alignItems: "center",
@@ -13318,7 +13498,7 @@ const TagManagerModal = memo(({
                           borderColor: "#9ca3af",
                         }}
                       >
-                        <Text style={{ color: "#374151", fontWeight: "700" }}>⚖️ 중립</Text>
+                        <Text style={{ color: isDark ? "#d1d5db" : "#374151", fontWeight: "700" }}>⚖️ 중립</Text>
                       </TouchableOpacity>
                     </View>
                     
@@ -13355,7 +13535,7 @@ const TagManagerModal = memo(({
                         setActionModalOpen(false);
                       }}
                       style={{
-                        backgroundColor: pinnedTags.includes(selectedTag.tag) ? "#fef3c7" : C.chip,
+                        backgroundColor: listHasTag(pinnedTags, selectedTag.tag) ? (isDark ? "#78350f" : "#fef3c7") : C.chip,
                         padding: 14,
                         borderRadius: 12,
                         flexDirection: "row",
@@ -13364,7 +13544,7 @@ const TagManagerModal = memo(({
                     >
                       <Text style={{ fontSize: 18, marginRight: 10 }}>📌</Text>
                       <Text style={{ fontWeight: "700", color: C.text }}>
-                        {pinnedTags.includes(selectedTag.tag) ? "고정 해제" : "상단 고정"}
+                        {listHasTag(pinnedTags, selectedTag.tag) ? "고정 해제" : "상단 고정"}
                       </Text>
                     </TouchableOpacity>
                     
@@ -13376,7 +13556,7 @@ const TagManagerModal = memo(({
                           setActionModalOpen(false);
                         }}
                         style={{
-                          backgroundColor: hiddenTags.includes(selectedTag.tag) ? "#fee2e2" : C.chip,
+                          backgroundColor: listHasTag(hiddenTags, selectedTag.tag) ? (isDark ? "#7f1d1d" : "#fee2e2") : C.chip,
                           padding: 14,
                           borderRadius: 12,
                           flexDirection: "row",
@@ -13386,7 +13566,7 @@ const TagManagerModal = memo(({
                         <Text style={{ fontSize: 18, marginRight: 10 }}>🚫</Text>
                         <View>
                           <Text style={{ fontWeight: "700", color: C.text }}>
-                            {hiddenTags.includes(selectedTag.tag) ? "숨김 해제" : "목록에서 숨기기"}
+                            {listHasTag(hiddenTags, selectedTag.tag) ? "숨김 해제" : "목록에서 숨기기"}
                           </Text>
                           <Text style={{ fontSize: 11, color: C.sub }}>태그 선택 모달에서 숨김</Text>
                         </View>
@@ -13401,7 +13581,7 @@ const TagManagerModal = memo(({
                           setActionModalOpen(false);
                         }}
                         style={{
-                          backgroundColor: checkIsMajor(selectedTag.tag) ? "#fef3c7" : (isDark ? "#374151" : "#f3f4f6"),
+                          backgroundColor: checkIsMajor(selectedTag.tag) ? (isDark ? "#78350f" : "#fef3c7") : (isDark ? "#374151" : "#f3f4f6"),
                           padding: 14,
                           borderRadius: 12,
                           flexDirection: "row",
@@ -13412,7 +13592,7 @@ const TagManagerModal = memo(({
                           {checkIsMajor(selectedTag.tag) ? "🏷️" : "➕"}
                         </Text>
                         <View>
-                          <Text style={{ fontWeight: "700", color: checkIsMajor(selectedTag.tag) ? "#92400e" : C.text }}>
+                          <Text style={{ fontWeight: "700", color: checkIsMajor(selectedTag.tag) ? (isDark ? "#fcd34d" : "#92400e") : C.text }}>
                             {checkIsMajor(selectedTag.tag) ? "대장르 속성 제거" : "대장르 속성 추가"}
                           </Text>
                           <Text style={{ fontSize: 11, color: C.sub }}>
@@ -13430,7 +13610,7 @@ const TagManagerModal = memo(({
                           setActionModalOpen(false);
                         }}
                         style={{
-                          backgroundColor: checkIsSub(selectedTag.tag) ? "#e0e7ff" : (isDark ? "#374151" : "#f3f4f6"),
+                          backgroundColor: checkIsSub(selectedTag.tag) ? (isDark ? "#1e3a8a" : "#e0e7ff") : (isDark ? "#374151" : "#f3f4f6"),
                           padding: 14,
                           borderRadius: 12,
                           flexDirection: "row",
@@ -13441,7 +13621,7 @@ const TagManagerModal = memo(({
                           {checkIsSub(selectedTag.tag) ? "🔖" : "➕"}
                         </Text>
                         <View>
-                          <Text style={{ fontWeight: "700", color: checkIsSub(selectedTag.tag) ? "#3730a3" : C.text }}>
+                          <Text style={{ fontWeight: "700", color: checkIsSub(selectedTag.tag) ? (isDark ? "#93c5fd" : "#3730a3") : C.text }}>
                             {checkIsSub(selectedTag.tag) ? "부장르 속성 제거" : "부장르 속성 추가"}
                           </Text>
                           <Text style={{ fontSize: 11, color: C.sub }}>
@@ -13467,7 +13647,7 @@ const TagManagerModal = memo(({
                           setActionModalOpen(false);
                         }}
                         style={{
-                          backgroundColor: tagAttributes[selectedTag.tag]?.isTitle ? "#fef3c7" : (isDark ? "#374151" : "#f3f4f6"),
+                          backgroundColor: tagAttributes[selectedTag.tag]?.isTitle ? (isDark ? "#78350f" : "#fef3c7") : (isDark ? "#374151" : "#f3f4f6"),
                           padding: 14,
                           borderRadius: 12,
                           flexDirection: "row",
@@ -13476,7 +13656,7 @@ const TagManagerModal = memo(({
                       >
                         <Text style={{ fontSize: 18, marginRight: 10 }}>📖</Text>
                         <View>
-                          <Text style={{ fontWeight: "700", color: tagAttributes[selectedTag.tag]?.isTitle ? "#92400e" : C.text }}>
+                          <Text style={{ fontWeight: "700", color: tagAttributes[selectedTag.tag]?.isTitle ? (isDark ? "#fcd34d" : "#92400e") : C.text }}>
                             {tagAttributes[selectedTag.tag]?.isTitle ? "작품명 속성 제거" : "작품명으로 설정"}
                           </Text>
                           <Text style={{ fontSize: 11, color: C.sub }}>
@@ -13516,7 +13696,7 @@ const TagManagerModal = memo(({
                           setActionModalOpen(false);
                         }}
                         style={{
-                          backgroundColor: "#fef2f2",
+                          backgroundColor: isDark ? "#7f1d1d" : "#fef2f2",
                           padding: 14,
                           borderRadius: 12,
                           flexDirection: "row",
@@ -13524,7 +13704,7 @@ const TagManagerModal = memo(({
                         }}
                       >
                         <Text style={{ fontSize: 18, marginRight: 10 }}>🗑️</Text>
-                        <Text style={{ fontWeight: "700", color: "#dc2626" }}>태그 삭제</Text>
+                        <Text style={{ fontWeight: "700", color: isDark ? "#fca5a5" : "#dc2626" }}>태그 삭제</Text>
                       </TouchableOpacity>
                     )}
                     
@@ -13537,7 +13717,7 @@ const TagManagerModal = memo(({
                           setActionModalOpen(false);
                         }}
                         style={{
-                          backgroundColor: "#fee2e2",
+                          backgroundColor: isDark ? "#7f1d1d" : "#fee2e2",
                           padding: 14,
                           borderRadius: 12,
                           flexDirection: "row",
@@ -13546,7 +13726,7 @@ const TagManagerModal = memo(({
                       >
                         <Text style={{ fontSize: 18, marginRight: 10 }}>💥</Text>
                         <View>
-                          <Text style={{ fontWeight: "700", color: "#dc2626" }}>전체에서 삭제</Text>
+                          <Text style={{ fontWeight: "700", color: isDark ? "#fca5a5" : "#dc2626" }}>전체에서 삭제</Text>
                           <Text style={{ fontSize: 11, color: C.sub }}>모든 작품에서도 제거</Text>
                         </View>
                       </TouchableOpacity>
@@ -18799,7 +18979,6 @@ async function calculateBehaviorPredictionAccuracy(recentN = 30) {
     return { accuracy: correct / logs.length, sample: logs.length };
   } catch { return null; }
 }
-
 function generateBehaviorInsights(staticGenres, dynamicGenres, staticTags, dynamicTags, staticAuthors, dynamicAuthors, predAcc) {
   const insights = [];
 
@@ -19207,6 +19386,7 @@ function AppContent() {
   const [lastMatchId, setLastMatchId] = useState(null); // 언두용
   const [isAutoMatching, setIsAutoMatching] = useState(false); // 🔧 v3.4.6: 자동 승패 처리 중 플래그
   const isAutoMatchingRef = useRef(false); // 🔧 v3.5.14: ref 기반 동기 guard (state 배칭 우회 방지)
+  const needsListRefreshRef = useRef(false); // 🔧 v3.5.15: 자동매칭 종료 후 loadList 지연 실행 플래그
   
   // 🎯 v3.0.4: 확장된 자동승패 설정
   const [autoMatchSettings, setAutoMatchSettings] = useState({
@@ -20017,13 +20197,13 @@ function AppContent() {
                 }
                 const majors = parseMajorSub(n.major_genre);
                 for (const g of majors) {
-                  if (!MAJOR_GENRES.includes(g) && !allDefaultSet.has(g) && !currentCustomSet.has(g)) {
+                  if (!listHasTag(MAJOR_GENRES, g) && !allDefaultSet.has(g) && !currentCustomSet.has(g)) {
                     newTags.add(g);
                   }
                 }
                 const subs = parseMajorSub(n.sub_genre);
                 for (const g of subs) {
-                  if (!SUB_GENRES.includes(g) && !allDefaultSet.has(g) && !currentCustomSet.has(g)) {
+                  if (!listHasTag(SUB_GENRES, g) && !allDefaultSet.has(g) && !currentCustomSet.has(g)) {
                     newTags.add(g);
                   }
                 }
@@ -21299,13 +21479,27 @@ function AppContent() {
   }
 
   // 장르 상성 분석 (같은 장르 간 전적 집계)
+  // 🔧 v3.5.15: 결과 캐시 추가 (30초 TTL) — 매 매칭마다 SELECT * FROM matches 방지
+  const genreMatchupCacheRef = useRef({ data: {}, ts: 0, TTL: 30000 });
+  
   async function analyzeGenreMatchup(genreA, genreB) {
     if (!genreA || !genreB) return null;
-    
-    // 같은 장르면 분석 불필요
     if (genreA === genreB) return { type: "same", advantage: 0 };
     
-    // 해당 장르의 작품들 가져오기
+    // 🔧 v3.5.15: 캐시 확인 (동일 장르 조합에 대해 30초간 재사용)
+    const cacheKey = genreA < genreB ? `${genreA}|${genreB}` : `${genreB}|${genreA}`;
+    const cache = genreMatchupCacheRef.current;
+    if (cache.data[cacheKey] && cache.data[cacheKey].ts && (Date.now() - cache.data[cacheKey].ts < cache.TTL)) {
+      const cached = cache.data[cacheKey];
+      // genreA/genreB 순서에 따라 advantage 부호 조정
+      // 🔧 v3.5.15b: cached.genreA 기준 비교 (cacheKey.startsWith는 알파벳순이라 원래 순서와 무관)
+      if (cached.type === "cross") {
+        const isOriginalOrder = cached.genreA === genreA;
+        return isOriginalOrder ? { ...cached } : { ...cached, advantage: -cached.advantage, genreA: genreB, genreB: genreA, genreAWins: cached.genreBWins, genreBWins: cached.genreAWins };
+      }
+      return cached;
+    }
+    
     const novelsA = await all(`SELECT id FROM novels WHERE major_genre LIKE ?`, [`%${genreA}%`]);
     const novelsB = await all(`SELECT id FROM novels WHERE major_genre LIKE ?`, [`%${genreB}%`]);
     
@@ -21314,7 +21508,6 @@ function AppContent() {
     const idsA = new Set(novelsA.map(n => n.id));
     const idsB = new Set(novelsB.map(n => n.id));
     
-    // 두 장르 간 대결 기록 조회
     const matches = await all(`SELECT a_id, b_id, winner_id FROM matches`);
     
     let genreAWins = 0, genreBWins = 0;
@@ -21324,7 +21517,6 @@ function AppContent() {
       const aIsGenreB = idsB.has(m.a_id) && !idsB.has(m.b_id);
       const bIsGenreB = idsB.has(m.b_id) && !idsB.has(m.a_id);
       
-      // A장르 vs B장르 대결인 경우만
       if ((aIsGenreA && bIsGenreB) || (aIsGenreB && bIsGenreA)) {
         if (idsA.has(m.winner_id)) genreAWins++;
         else if (idsB.has(m.winner_id)) genreBWins++;
@@ -21334,8 +21526,13 @@ function AppContent() {
     const total = genreAWins + genreBWins;
     if (total === 0) return null;
     
-    const advantage = (genreAWins - genreBWins) / total; // -1 ~ 1
-    return { type: "cross", genreAWins, genreBWins, total, advantage };
+    const advantage = (genreAWins - genreBWins) / total;
+    const result = { type: "cross", genreA, genreB, genreAWins, genreBWins, total, advantage, ts: Date.now() };
+    
+    // 캐시 저장 (per-entry timestamp)
+    cache.data[cacheKey] = result;
+    
+    return result;
   }
 
   // 종합 승부예측 분석
@@ -21902,7 +22099,8 @@ function AppContent() {
     
     // 🔧 v3.4.4: 모든 태그를 하나의 문자열로 합침 (대장르, 부장르, 일반 태그 순)
     // 이렇게 하면 텍스트 입력창에서 모든 태그를 볼 수 있고 편집할 수 있음
-    const allTagsArray = [...selectedMajor, ...selectedSub, ...selectedTags];
+    // 🔧 v3.5.14: isSameTag 기반 중복 제거 (대장르+일반에 같은 태그 선택 시 방지)
+    const allTagsArray = deduplicateTags([...selectedMajor, ...selectedSub, ...selectedTags]);
     const allTagsString = allTagsArray.join(", ");
     
     // 🏷️ v5.0: tagData JSON 문자열
@@ -22016,7 +22214,8 @@ function AppContent() {
   }
 
   async function removeCustomTag(tag) {
-    const newList = customTags.filter(t => t !== tag);
+    // 🔧 v3.5.15b: isSameTag로 공백/alias 변형도 정확히 제거
+    const newList = customTags.filter(t => !isSameTag(t, tag));
     setCustomTags(newList);
     await setAppMeta("custom_tags", newList);
     await cleanupTagMetadata(tag); // 🔧 v3.5.9
@@ -22260,8 +22459,9 @@ function AppContent() {
   // 태그 숨김 토글
   async function toggleHideTag(tag) {
     // 🔧 v3.5.8: 함수형 업데이트로 stale closure 방지
+    // 🔧 v3.5.15b: isSameTag로 공백/alias 변형 일관 비교
     setHiddenTags(prev => {
-      const next = prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag];
+      const next = prev.some(t => isSameTag(t, tag)) ? prev.filter(t => !isSameTag(t, tag)) : [...prev, tag];
       setAppMeta("hidden_tags", next);
       return next;
     });
@@ -22270,8 +22470,9 @@ function AppContent() {
   // 태그 상단 고정 토글
   async function togglePinTag(tag) {
     // 🔧 v3.5.8: 함수형 업데이트로 stale closure 방지
+    // 🔧 v3.5.15b: isSameTag로 공백/alias 변형 일관 비교
     setPinnedTags(prev => {
-      const next = prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag];
+      const next = prev.some(t => isSameTag(t, tag)) ? prev.filter(t => !isSameTag(t, tag)) : [...prev, tag];
       setAppMeta("pinned_tags", next);
       return next;
     });
@@ -22316,9 +22517,10 @@ function AppContent() {
       }
       
       // 기존 tags 필드에서 찾기
+      // 🔧 v3.5.15b: isSameTag로 공백/alias 변형 일관 비교
       if (novel.tags) {
-        const tags = novel.tags.split(",").map(t => normalizeTag(t.trim()));
-        if (tags.includes(normalizedTag)) {
+        const tags = novel.tags.split(",").map(t => t.trim()).filter(Boolean);
+        if (tags.some(t => isSameTag(t, tag))) {
           count++;
           totalRating += novel.rating || 1500;
         }
@@ -22341,15 +22543,16 @@ function AppContent() {
     try {
       // 고정 상태 변경
       // 🔧 v3.5.11: 함수형 업데이트로 stale closure 방지
+      // 🔧 v3.5.15b: isSameTag로 공백/alias 변형 일관 비교
       if (changes.pinned !== undefined) {
         setPinnedTags(prev => {
-          const isPinned = prev.includes(tag);
+          const isPinned = prev.some(t => isSameTag(t, tag));
           if (changes.pinned && !isPinned) {
             const next = [...prev, tag];
             setAppMeta("pinned_tags", next);
             return next;
           } else if (!changes.pinned && isPinned) {
-            const next = prev.filter(t => t !== tag);
+            const next = prev.filter(t => !isSameTag(t, tag));
             setAppMeta("pinned_tags", next);
             return next;
           }
@@ -22359,15 +22562,16 @@ function AppContent() {
       
       // 숨김 상태 변경
       // 🔧 v3.5.11: 함수형 업데이트로 stale closure 방지
+      // 🔧 v3.5.15b: isSameTag로 공백/alias 변형 일관 비교
       if (changes.hidden !== undefined) {
         setHiddenTags(prev => {
-          const isHidden = prev.includes(tag);
+          const isHidden = prev.some(t => isSameTag(t, tag));
           if (changes.hidden && !isHidden) {
             const next = [...prev, tag];
             setAppMeta("hidden_tags", next);
             return next;
           } else if (!changes.hidden && isHidden) {
-            const next = prev.filter(t => t !== tag);
+            const next = prev.filter(t => !isSameTag(t, tag));
             setAppMeta("hidden_tags", next);
             return next;
           }
@@ -22441,7 +22645,7 @@ function AppContent() {
 
   // 태그에 대장르 속성 추가 (기존 위치에서 제거하지 않음)
   async function promoteToMajorGenre(tag) {
-    if (MAJOR_GENRES.includes(tag) || userMajorGenres.includes(tag)) {
+    if (listHasTag(MAJOR_GENRES, tag) || listHasTag(userMajorGenres, tag)) {
       Alert.alert("알림", "이미 대장르 속성이 있습니다.");
       return;
     }
@@ -22454,7 +22658,7 @@ function AppContent() {
 
   // 태그에 부장르 속성 추가 (기존 위치에서 제거하지 않음)
   async function promoteToSubGenre(tag) {
-    if (SUB_GENRES.includes(tag) || userSubGenres.includes(tag)) {
+    if (listHasTag(SUB_GENRES, tag) || listHasTag(userSubGenres, tag)) {
       Alert.alert("알림", "이미 부장르 속성이 있습니다.");
       return;
     }
@@ -22474,7 +22678,7 @@ function AppContent() {
   // 대장르 속성 제거
   async function demoteMajorToCustom(genre) {
     // 기본 대장르는 제거 불가
-    if (MAJOR_GENRES.includes(genre)) {
+    if (listHasTag(MAJOR_GENRES, genre)) {
       Alert.alert("알림", "기본 제공 대장르는 속성을 제거할 수 없습니다.");
       return;
     }
@@ -22496,7 +22700,7 @@ function AppContent() {
   // 부장르 속성 제거
   async function demoteSubToCustom(genre) {
     // 기본 부장르는 제거 불가
-    if (SUB_GENRES.includes(genre)) {
+    if (listHasTag(SUB_GENRES, genre)) {
       Alert.alert("알림", "기본 제공 부장르는 속성을 제거할 수 없습니다.");
       return;
     }
@@ -22556,18 +22760,19 @@ function AppContent() {
           text: "삭제",
           style: "destructive",
           onPress: async () => {
+            // 🔧 v3.5.15b: listHasTag로 공백/alias 일관성 비교
             if (unusedCustom.length > 0) {
-              const newCustom = customTags.filter(t => !unusedCustom.includes(t));
+              const newCustom = customTags.filter(t => !listHasTag(unusedCustom, t));
               setCustomTags(newCustom);
               await setAppMeta("custom_tags", newCustom);
             }
             if (unusedMajor.length > 0) {
-              const newMajor = userMajorGenres.filter(g => !unusedMajor.includes(g));
+              const newMajor = userMajorGenres.filter(g => !listHasTag(unusedMajor, g));
               setUserMajorGenres(newMajor);
               await setAppMeta("user_major_genres", newMajor);
             }
             if (unusedSub.length > 0) {
-              const newSub = userSubGenres.filter(g => !unusedSub.includes(g));
+              const newSub = userSubGenres.filter(g => !listHasTag(unusedSub, g));
               setUserSubGenres(newSub);
               await setAppMeta("user_sub_genres", newSub);
             }
@@ -22591,9 +22796,10 @@ function AppContent() {
           onPress: async () => {
             // 1. 커스텀/대장르/부장르에서 제거
             // 🔧 v3.5.12: comboTags 제거 (customTags로 통합)
-            const newCustom = customTags.filter(t => t !== tag);
-            const newMajor = userMajorGenres.filter(g => g !== tag);
-            const newSub = userSubGenres.filter(g => g !== tag);
+            // 🔧 v3.5.15b: isSameTag로 공백/alias 변형도 인메모리에서 정확히 제거
+            const newCustom = customTags.filter(t => !isSameTag(t, tag));
+            const newMajor = userMajorGenres.filter(g => !isSameTag(g, tag));
+            const newSub = userSubGenres.filter(g => !isSameTag(g, tag));
             setCustomTags(newCustom);
             setUserMajorGenres(newMajor);
             setUserSubGenres(newSub);
@@ -22674,7 +22880,7 @@ function AppContent() {
       // 대장르
       const majors = parseMajorSub(n.major_genre);
       for (const g of majors) {
-        if (!MAJOR_GENRES.includes(g) && !userMajorGenres.includes(g) && !currentCustomSet.has(g)) {
+        if (!listHasTag(MAJOR_GENRES, g) && !listHasTag(userMajorGenres, g) && !currentCustomSet.has(g)) {
           // 대장르는 userMajorGenres에 추가하지 않고, 일단 커스텀 태그로
           if (!allDefaultSet.has(g)) newTags.add(g);
         }
@@ -22682,7 +22888,7 @@ function AppContent() {
       // 부장르
       const subs = parseMajorSub(n.sub_genre);
       for (const g of subs) {
-        if (!SUB_GENRES.includes(g) && !userSubGenres.includes(g) && !currentCustomSet.has(g)) {
+        if (!listHasTag(SUB_GENRES, g) && !listHasTag(userSubGenres, g) && !currentCustomSet.has(g)) {
           if (!allDefaultSet.has(g)) newTags.add(g);
         }
       }
@@ -22700,7 +22906,7 @@ function AppContent() {
   async function addUserMajorGenre(genreInput) {
     const genre = (genreInput || "").trim();
     if (!genre) return;
-    if (MAJOR_GENRES.includes(genre) || userMajorGenres.includes(genre)) {
+    if (listHasTag(MAJOR_GENRES, genre) || listHasTag(userMajorGenres, genre)) {
       Alert.alert("알림", "이미 존재하는 대장르입니다.");
       return;
     }
@@ -22713,7 +22919,7 @@ function AppContent() {
   async function addUserSubGenre(genreInput) {
     const genre = (genreInput || "").trim();
     if (!genre) return;
-    if (SUB_GENRES.includes(genre) || userSubGenres.includes(genre)) {
+    if (listHasTag(SUB_GENRES, genre) || listHasTag(userSubGenres, genre)) {
       Alert.alert("알림", "이미 존재하는 부장르입니다.");
       return;
     }
@@ -23234,6 +23440,8 @@ function AppContent() {
       setList(safeRows);
       updateTagUsageCounts(safeRows); // 🏷️ 태그 사용 빈도 업데이트
       PerfMonitor.stepFunc("loadList", "tagCount"); // 🔬 v3.5.9b
+      // 🔧 v3.5.15: 매칭 캐시 무효화 (loadList는 작품 추가/삭제/편집 후 호출되므로)
+      invalidateMatchCache();
       // 🔬 v3.5.9: 상태 크기 스냅샷
       if (PerfMonitor.enabled) {
         PerfMonitor.snapshotState({
@@ -23357,7 +23565,7 @@ function AppContent() {
           id,
           t,
           author.trim(),
-          tags.trim(),
+          deduplicateTagString(tags) || "", // 🔧 v3.5.14: 작품 내 태그 중복 제거
           JSON.stringify(platforms),
           note.trim(),
           Number(readCount) || 0,
@@ -24084,7 +24292,7 @@ function AppContent() {
         [
           newTitle,
           n.author?.trim() || "",
-          n.tags?.trim() || "",
+          deduplicateTagString(n.tags) || "", // 🔧 v3.5.14: 작품 내 태그 중복 제거
           n.note?.trim() || "",
           JSON.stringify(editPlatforms),
           newReadCount,
@@ -24224,12 +24432,14 @@ function AppContent() {
     return true;
   }
 
+  // 🔧 v3.5.15: 매칭 분석이 어떤 pair에 대한 것인지 추적
+  const matchAnalysisPairRef = useRef(null); // { aId, bId }
+
   const pickRandomUnseenPair = async () => {
     try {
-      const rawNovels = await all("SELECT * FROM novels ORDER BY rating DESC;");
-      // 🛡️ v3.5.6: 숫자 필드 정규화 (pair 렌더링 크래시 방지)
-      const normalizedNovels = (rawNovels || []).map(normalizeNovel);
-      let allNovels = normalizedNovels;
+      // 🔧 v3.5.15: 캐시 사용 (매번 SELECT * FROM novels + SELECT FROM matches 제거)
+      const { novels: cachedNovels, playedSet } = await getMatchCacheData();
+      let allNovels = cachedNovels;
       
       // 🆕 v3.5.11: 매치 필터링 적용
       if (matchFilterEnabled) {
@@ -24253,12 +24463,8 @@ function AppContent() {
         return;
       }
 
-      const matchRows = await all("SELECT a_id,b_id FROM matches;");
-      const played = new Set(
-        (matchRows || []).map((r) => pairKey(r.a_id, r.b_id))
-      );
-      
-      // 🔄 v3.4.6: 큐에서 처리 대기 중인 매치도 제외
+      // 🔧 v3.5.15: played set = 캐시 + 큐 pending (DB 재조회 불필요)
+      const played = new Set(playedSet);
       for (const pendingKey of pendingMatchPairs) {
         played.add(pendingKey);
       }
@@ -24267,19 +24473,16 @@ function AppContent() {
       const focusId = focusMatchNovel?.id || null;
 
       if (focusId) {
-        // ✅ 특정 작품이 선택된 경우: 해당 작품이 포함된 미대전 조합만 후보에 넣기
         const focus = allNovels.find((n) => n.id === focusId);
         if (!focus) {
-          // 🔧 v3.5.11: 매치 필터에 의해 제외된 건지 구분
           if (matchFilterEnabled) {
-            const rawFocus = normalizedNovels.find(n => n.id === focusId);
+            const rawFocus = cachedNovels.find(n => n.id === focusId);
             if (rawFocus) {
               Alert.alert("매치 필터링", "고정 매칭 작품이 필터 조건을 충족하지 않습니다.\n\n필터를 해제하거나 작품 정보를 보충하세요.");
               setPair(null);
               return;
             }
           }
-          // 리스트에서 사라진 경우 선택 해제 후 전체 매칭으로 전환
           setFocusMatchNovel(null);
           Alert.alert("알림", "선택한 작품을 찾을 수 없어 전체 매칭으로 전환합니다.");
           for (let i = 0; i < allNovels.length; i++) {
@@ -24301,7 +24504,6 @@ function AppContent() {
           }
         }
       } else {
-        // ✅ 평소처럼 전역 미대전 조합 전체에서 후보 생성
         for (let i = 0; i < allNovels.length; i++) {
           for (let j = i + 1; j < allNovels.length; j++) {
             const A = allNovels[i],
@@ -24336,6 +24538,7 @@ function AppContent() {
   // 매칭 화면 진입 시 자동 매칭 1개 생성
   useEffect(() => {
     if (screen === "match" && !pair) {
+      invalidateMatchCache(); // 🔧 v3.5.15: 매칭 화면 진입 시 캐시 갱신
       pickRandomUnseenPair();
     }
   }, [screen, pair]);
@@ -24350,25 +24553,42 @@ function AppContent() {
 
   // 🔮 v3.0.3: 매칭 생성 시 승부예측 분석 수행
   // 🧠 v3.5.0: 취향 기반 예측 추가
+  // 🔧 v3.5.15: abort로 stale 분석 취소 + 자동매칭 시 heavy 분석 스킵
   useEffect(() => {
+    let aborted = false;
+    
     if (pair && pair.A && pair.B) {
+      // 🔧 v3.5.15: pair ID 추적 (auto-match에서 stale analysis 방지)
+      matchAnalysisPairRef.current = { aId: pair.A.id, bId: pair.B.id };
+      
       (async () => {
         try {
           const analysis = await analyzeMatchPrediction(pair.A, pair.B);
+          if (aborted) return; // 이미 다음 pair로 넘어감
           setMatchAnalysis(analysis);
           
-          // 🧠 취향 기반 예측 생성
-          await generateMatchPrediction(pair.A, pair.B);
+          // 🔧 v3.5.15: 자동매칭 진행 중에는 generateEnhancedPrediction 스킵
+          // 이유: 5+ DB 쿼리를 사용하지만 UI에 보여줄 시간이 없음 (즉시 결정됨)
+          if (!isAutoMatchingRef.current && !autoEnabled) {
+            await generateMatchPrediction(pair.A, pair.B);
+          } else {
+            setMatchPrediction(null);
+          }
         } catch (e) {
+          if (aborted) return;
           console.warn("매칭 분석 오류:", e);
           setMatchAnalysis(null);
           setMatchPrediction(null);
         }
       })();
     } else {
+      matchAnalysisPairRef.current = null;
       setMatchAnalysis(null);
       setMatchPrediction(null);
     }
+    
+    // 🔧 v3.5.15: cleanup — pair 변경 시 이전 분석 작업 취소
+    return () => { aborted = true; };
   }, [pair]);
 
   const decide = async (winnerId, decided_by = "user") => {
@@ -24385,7 +24605,10 @@ function AppContent() {
       return;
     }
     
-    // 다음 매칭을 먼저 생성 (UI 반응성)
+    // 🔧 v3.5.15: 캐시에 즉시 반영 (다음 pickRandomUnseenPair에서 중복 방지)
+    addToMatchCachePlayed(currentPair.A.id, currentPair.B.id);
+    
+    // 다음 매칭을 먼저 생성 (UI 반응성) — 이제 캐시 사용으로 DB 쿼리 없음
     pickRandomUnseenPair();
     
     // 🔄 v3.4.6: 매칭 큐잉 시스템 사용 (빠른 연타 대응, pairKey로 중복 방지)
@@ -24448,8 +24671,11 @@ function AppContent() {
       ]);
       setLastMatchId(mid);
       
+      // 🔧 v3.5.15: 캐시 내 novels 레이팅 증분 업데이트 (다음 매칭 시 최신 데이터 반영)
+      updateMatchCacheNovel(newA.id, { rating: newA.rating, rd: newA.rd, wins: newA.wins, losses: newA.losses, match_count: newA.match_count });
+      updateMatchCacheNovel(newB.id, { rating: newB.rating, rd: newB.rd, wins: newB.wins, losses: newB.losses, match_count: newB.match_count });
+      
       // 📰 v3.0.2: 자동 티어 변동 추적 (manual_tier가 없는 경우만)
-      // A의 티어 변동 체크
       if (!A.manual_tier) {
         const tierAfterA = tierFromRating(newA.rating);
         if (tierBeforeA !== tierAfterA) {
@@ -24461,7 +24687,6 @@ function AppContent() {
           });
         }
       }
-      // B의 티어 변동 체크
       if (!B.manual_tier) {
         const tierAfterB = tierFromRating(newB.rating);
         if (tierBeforeB !== tierAfterB) {
@@ -24483,20 +24708,27 @@ function AppContent() {
       try {
         const winner = aIsWinner ? A : B;
         const loser = aIsWinner ? B : A;
-        // matchAnalysis.predictedWinner는 "A" 또는 "B" 문자열
         const predictedWinnerId = matchAnalysis?.predictedWinner === "A" ? A.id : 
                                   matchAnalysis?.predictedWinner === "B" ? B.id : null;
         await saveChoiceLog(mid, winner, loser, decided_by, matchAnalysis ? {
           predictedWinnerId,
           confidence: matchAnalysis.confidence || 0,
-          factors: null, // analyzeMatchPrediction은 factors를 반환하지 않음
+          factors: null,
         } : null, tagAttributes);
       } catch (e) {
         console.warn("[decide] saveChoiceLog 오류:", e);
       }
       
       if (_pt) PerfMonitor.trackFunc("decide", Date.now() - _pt); // 🔬
-      await loadList(undefined, undefined, "op");
+      
+      // 🔧 v3.5.15: 자동매칭 진행 중에는 loadList 지연 (연속 매칭 시 불필요한 전체 리로드 방지)
+      // 자동매칭 종료 후 또는 수동 매칭 시에만 즉시 loadList
+      if (!isAutoMatchingRef.current) {
+        await loadList(undefined, undefined, "op");
+      } else {
+        // 자동매칭: loadList는 마지막에 1회만 (needsListRefreshRef로 추적)
+        needsListRefreshRef.current = true;
+      }
     }, pairKey).catch((e) => {
       if (_pt) PerfMonitor.logError("decide", e); // 🔬
       console.warn("decide 오류:", e);
@@ -24687,46 +24919,61 @@ function AppContent() {
   }, [autoMatchSettings]);
 
   // 자동 승패 (확장된 버전)
-  // 🔧 v3.4.7: 속도 옵션 추가 (fast/normal/slow)
-  // 🔧 v3.5.14: ref 기반 guard + 큐 드레인 대기 + 최소 딜레이 보장
-  //   문제: isAutoMatching이 React state라 배칭 타이밍에 따라 guard 우회 가능
-  //   문제: fast 10ms 딜레이가 큐 처리(~200ms)보다 빨라 미완료 작업 누적 → ANR
-  //   수정: (1) ref로 동기 guard (2) 큐 드레인 대기 (3) 최소 100ms 보장
+  // 🔧 v3.5.15: 근본적 재설계
+  //   문제1: deps에 pair+matchAnalysis → pair 변경 시 stale matchAnalysis로 판정 시도
+  //   문제2: deps에 isAutoMatching → finally에서 false 설정 시 불필요한 재트리거
+  //   문제3: loadList가 매 매칭마다 실행 → 자동매칭 시 DB 폭주
+  //   문제4: pickRandomUnseenPair이 매번 전체 SELECT → 자동매칭 시 100ms마다 중쿼리
+  //   수정:
+  //     (1) matchAnalysisPairRef로 분석 결과가 현재 pair에 대한 것인지 검증
+  //     (2) isAutoMatching deps 제거 (ref guard가 충분)
+  //     (3) loadList는 자동매칭 종료 후 1회만 (needsListRefreshRef)
+  //     (4) pickRandomUnseenPair는 matchCache 사용 (DB 쿼리 제거)
   useEffect(() => {
-    // 🔧 v3.5.14: ref 기반 동기 guard (state 배칭 타이밍 무관하게 즉시 차단)
+    // ref 기반 동기 guard
     if (isAutoMatchingRef.current) return;
+    if (!autoEnabled || !pair || !matchAnalysis) return;
+    
+    // 🔧 v3.5.15: pair 일치 검증 — matchAnalysis가 현재 pair에 대한 것인지 확인
+    // 이전: pair 변경 → stale matchAnalysis로 판정 → 잘못된 결정 or 크래시
+    const pairIds = matchAnalysisPairRef.current;
+    if (!pairIds || pairIds.aId !== pair.A.id || pairIds.bId !== pair.B.id) {
+      // matchAnalysis가 아직 이전 pair에 대한 것 → 스킵 (분석 완료되면 재트리거됨)
+      return;
+    }
+    
+    // 판정 (동기)
+    const result = evaluateAutoMatch(pair.A, pair.B, matchAnalysis);
+    if (!result || !result.winner) return;
+    
+    // 잠금 (동기 — 다음 렌더 전에 설정)
+    isAutoMatchingRef.current = true;
+    setIsAutoMatching(true);
     
     (async () => {
-      if (!autoEnabled || !pair) return;
-      
-      // 확장된 자동승패 판정
-      const result = evaluateAutoMatch(pair.A, pair.B, matchAnalysis);
-      
-      if (result && result.winner) {
-        // 🔧 v3.5.14: ref 먼저 설정 (동기적 즉시 잠금)
-        isAutoMatchingRef.current = true;
-        setIsAutoMatching(true);
+      try {
+        await decide(result.winner.id, "auto");
         
-        try {
-          await decide(result.winner.id, "auto");
-          
-          // 🔧 v3.5.14: 큐 드레인 대기 (이전 매칭의 DB 작업 완료까지)
-          // fast 모드에서도 최소한 큐가 비어야 다음 매칭 시작
-          await waitForMatchQueueDrain(2000);
-          
-          // 🔧 v3.5.14: 속도 설정에 따른 딜레이 (최소 100ms 보장)
-          // 이전: fast=10ms → 큐 드레인 전 다음 매칭 시작 → 작업 중첩 → ANR
-          // 수정: fast=100ms, normal=300ms, slow=700ms
-          const speed = autoMatchSettings.speed || "fast";
-          const delayMs = speed === "fast" ? 100 : speed === "normal" ? 300 : 700;
-          await new Promise(r => setTimeout(r, delayMs));
-        } finally {
-          isAutoMatchingRef.current = false;
-          setIsAutoMatching(false);
+        // 큐 드레인 대기
+        await waitForMatchQueueDrain(2000);
+        
+        // 속도 설정에 따른 딜레이
+        const speed = autoMatchSettings.speed || "fast";
+        const delayMs = speed === "fast" ? 100 : speed === "normal" ? 300 : 700;
+        await new Promise(r => setTimeout(r, delayMs));
+      } finally {
+        isAutoMatchingRef.current = false;
+        setIsAutoMatching(false);
+        
+        // 🔧 v3.5.15: 자동매칭 종료 후 지연된 loadList 실행
+        if (needsListRefreshRef.current) {
+          needsListRefreshRef.current = false;
+          loadList(undefined, undefined, "auto-batch").catch(() => {});
+          invalidateMatchCache(); // 다음 매칭 세션을 위해 캐시도 갱신
         }
       }
     })();
-  }, [pair, autoEnabled, autoMatchSettings, matchAnalysis, evaluateAutoMatch, isAutoMatching]);
+  }, [pair, autoEnabled, autoMatchSettings, matchAnalysis, evaluateAutoMatch]);
   
   // 자동승패 설정 저장
   const saveAutoMatchSettings = useCallback((updates) => {
@@ -30076,8 +30323,8 @@ async function importJSON() {
                         no_sub_genre: "🟡 태그는 있지만 부장르 미설정",
                       };
                       return (
-                        <View key={issue} style={{ backgroundColor: "#fef3c7", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
-                          <Text style={{ color: "#92400e", fontSize: 12, fontWeight: "600" }}>⚠️ {labels[issue] || issue}</Text>
+                        <View key={issue} style={{ backgroundColor: isDark ? "#422006" : "#fef3c7", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
+                          <Text style={{ color: isDark ? "#fbbf24" : "#92400e", fontSize: 12, fontWeight: "600" }}>⚠️ {labels[issue] || issue}</Text>
                         </View>
                       );
                     })}
@@ -30112,10 +30359,10 @@ async function importJSON() {
                   {/* 🔧 v3.5.6: 스마트 필드 — 미흡 필드에 강조 테두리, 완료 필드는 축소 */}
                   {/* 작가 */}
                   <View style={supplementCurrentNovel.issues.includes("author") ? { 
-                    borderWidth: 2, borderColor: "#f59e0b", borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: "#fffbeb" 
+                    borderWidth: 2, borderColor: isDark ? "#b45309" : "#f59e0b", borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: isDark ? "#422006" : "#fffbeb" 
                   } : { marginBottom: 8 }}>
                     {supplementCurrentNovel.issues.includes("author") && (
-                      <Text style={{ color: "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 필수 입력</Text>
+                      <Text style={{ color: isDark ? "#fbbf24" : "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 필수 입력</Text>
                     )}
                     <Label>작가</Label>
                     <Input
@@ -30130,11 +30377,11 @@ async function importJSON() {
                     <View style={[
                       { flex: 1 },
                       supplementCurrentNovel.issues.includes("totalEpisodes") && { 
-                        borderWidth: 2, borderColor: "#f59e0b", borderRadius: 12, padding: 10, backgroundColor: "#fffbeb" 
+                        borderWidth: 2, borderColor: isDark ? "#b45309" : "#f59e0b", borderRadius: 12, padding: 10, backgroundColor: isDark ? "#422006" : "#fffbeb" 
                       }
                     ]}>
                       {supplementCurrentNovel.issues.includes("totalEpisodes") && (
-                        <Text style={{ color: "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 필수</Text>
+                        <Text style={{ color: isDark ? "#fbbf24" : "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 필수</Text>
                       )}
                       <Label>전체 회차</Label>
                       <Input
@@ -30147,11 +30394,11 @@ async function importJSON() {
                     <View style={[
                       { flex: 1 },
                       supplementCurrentNovel.issues.includes("readCount") && { 
-                        borderWidth: 2, borderColor: "#f59e0b", borderRadius: 12, padding: 10, backgroundColor: "#fffbeb" 
+                        borderWidth: 2, borderColor: isDark ? "#b45309" : "#f59e0b", borderRadius: 12, padding: 10, backgroundColor: isDark ? "#422006" : "#fffbeb" 
                       }
                     ]}>
                       {supplementCurrentNovel.issues.includes("readCount") && (
-                        <Text style={{ color: "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 필수</Text>
+                        <Text style={{ color: isDark ? "#fbbf24" : "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 필수</Text>
                       )}
                       <Label>읽은 회차</Label>
                       <Input
@@ -30165,10 +30412,10 @@ async function importJSON() {
 
                   {/* 플랫폼 */}
                   <View style={supplementCurrentNovel.issues.includes("platform") ? { 
-                    borderWidth: 2, borderColor: "#f59e0b", borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: "#fffbeb" 
+                    borderWidth: 2, borderColor: isDark ? "#b45309" : "#f59e0b", borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: isDark ? "#422006" : "#fffbeb" 
                   } : { marginBottom: 8 }}>
                     {supplementCurrentNovel.issues.includes("platform") && (
-                      <Text style={{ color: "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 필수 선택</Text>
+                      <Text style={{ color: isDark ? "#fbbf24" : "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 필수 선택</Text>
                     )}
                     <Label>플랫폼</Label>
                     <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
@@ -30197,10 +30444,10 @@ async function importJSON() {
 
                   {/* 대장르/부장르/태그 */}
                   <View style={(supplementCurrentNovel.issues.includes("tags") || supplementCurrentNovel.issues.includes("majorGenre") || supplementCurrentNovel.issues.includes("subGenre") || supplementCurrentNovel.issues.includes("no_major_genre") || supplementCurrentNovel.issues.includes("no_sub_genre") || supplementCurrentNovel.issues.includes("allDefaultIntensity")) ? { 
-                    borderWidth: 2, borderColor: "#f59e0b", borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: "#fffbeb" 
+                    borderWidth: 2, borderColor: isDark ? "#b45309" : "#f59e0b", borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: isDark ? "#422006" : "#fffbeb" 
                   } : { marginBottom: 8 }}>
                     {(supplementCurrentNovel.issues.includes("tags") || supplementCurrentNovel.issues.includes("majorGenre") || supplementCurrentNovel.issues.includes("subGenre") || supplementCurrentNovel.issues.includes("no_major_genre") || supplementCurrentNovel.issues.includes("no_sub_genre") || supplementCurrentNovel.issues.includes("allDefaultIntensity")) && (
-                      <Text style={{ color: "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>
+                      <Text style={{ color: isDark ? "#fbbf24" : "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>
                         ⚠️ {[
                           supplementCurrentNovel.issues.includes("tags") && "태그 부족",
                           supplementCurrentNovel.issues.includes("majorGenre") && "대장르 미선택",
@@ -30312,10 +30559,10 @@ async function importJSON() {
 
                   {/* 🔧 v3.5.6: 작품 링크 */}
                   <View style={supplementCurrentNovel.issues.includes("link") ? { 
-                    borderWidth: 2, borderColor: "#f59e0b", borderRadius: 12, padding: 10, marginTop: 8, marginBottom: 8, backgroundColor: "#fffbeb" 
+                    borderWidth: 2, borderColor: isDark ? "#b45309" : "#f59e0b", borderRadius: 12, padding: 10, marginTop: 8, marginBottom: 8, backgroundColor: isDark ? "#422006" : "#fffbeb" 
                   } : { marginTop: 8, marginBottom: 8 }}>
                     {supplementCurrentNovel.issues.includes("link") && (
-                      <Text style={{ color: "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 필수 입력</Text>
+                      <Text style={{ color: isDark ? "#fbbf24" : "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 필수 입력</Text>
                     )}
                     <Label>작품 링크</Label>
                     <Input
@@ -30329,10 +30576,10 @@ async function importJSON() {
 
                   {/* 🔧 v3.5.6: 읽기 상태 */}
                   <View style={supplementCurrentNovel.issues.includes("status") ? { 
-                    borderWidth: 2, borderColor: "#f59e0b", borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: "#fffbeb" 
+                    borderWidth: 2, borderColor: isDark ? "#b45309" : "#f59e0b", borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: isDark ? "#422006" : "#fffbeb" 
                   } : { marginBottom: 8 }}>
                     {supplementCurrentNovel.issues.includes("status") && (
-                      <Text style={{ color: "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 상태를 확인해주세요</Text>
+                      <Text style={{ color: isDark ? "#fbbf24" : "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 상태를 확인해주세요</Text>
                     )}
                     <Label>읽기 상태</Label>
                     <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
@@ -30349,10 +30596,10 @@ async function importJSON() {
 
                   {/* 🔧 v3.5.6: 연재 상태 */}
                   <View style={supplementCurrentNovel.issues.includes("workStatus") ? { 
-                    borderWidth: 2, borderColor: "#f59e0b", borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: "#fffbeb" 
+                    borderWidth: 2, borderColor: isDark ? "#b45309" : "#f59e0b", borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: isDark ? "#422006" : "#fffbeb" 
                   } : { marginBottom: 8 }}>
                     {supplementCurrentNovel.issues.includes("workStatus") && (
-                      <Text style={{ color: "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 연재 상태를 확인해주세요</Text>
+                      <Text style={{ color: isDark ? "#fbbf24" : "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 연재 상태를 확인해주세요</Text>
                     )}
                     <Label>연재 상태</Label>
                     <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
@@ -30369,10 +30616,10 @@ async function importJSON() {
 
                   {/* 🔧 v3.5.6: 인상깊은 문장 */}
                   <View style={supplementCurrentNovel.issues.includes("quote") ? { 
-                    borderWidth: 2, borderColor: "#f59e0b", borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: "#fffbeb" 
+                    borderWidth: 2, borderColor: isDark ? "#b45309" : "#f59e0b", borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: isDark ? "#422006" : "#fffbeb" 
                   } : { marginBottom: 8 }}>
                     {supplementCurrentNovel.issues.includes("quote") && (
-                      <Text style={{ color: "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 필수 입력</Text>
+                      <Text style={{ color: isDark ? "#fbbf24" : "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 필수 입력</Text>
                     )}
                     <Label>💬 인상깊은 문장</Label>
                     <Input
@@ -30386,10 +30633,10 @@ async function importJSON() {
 
                   {/* 🔧 v3.5.6: 표지 */}
                   <View style={supplementCurrentNovel.issues.includes("cover") ? { 
-                    borderWidth: 2, borderColor: "#f59e0b", borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: "#fffbeb" 
+                    borderWidth: 2, borderColor: isDark ? "#b45309" : "#f59e0b", borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: isDark ? "#422006" : "#fffbeb" 
                   } : { marginBottom: 8 }}>
                     {supplementCurrentNovel.issues.includes("cover") && (
-                      <Text style={{ color: "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 표지 미등록</Text>
+                      <Text style={{ color: isDark ? "#fbbf24" : "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 표지 미등록</Text>
                     )}
                     <Label>표지</Label>
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
@@ -30465,10 +30712,10 @@ async function importJSON() {
 
                   {/* 🔧 v3.5.6: 메모 */}
                   <View style={supplementCurrentNovel.issues.includes("note") ? { 
-                    borderWidth: 2, borderColor: "#f59e0b", borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: "#fffbeb" 
+                    borderWidth: 2, borderColor: isDark ? "#b45309" : "#f59e0b", borderRadius: 12, padding: 10, marginBottom: 8, backgroundColor: isDark ? "#422006" : "#fffbeb" 
                   } : { marginBottom: 8 }}>
                     {supplementCurrentNovel.issues.includes("note") && (
-                      <Text style={{ color: "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 필수 입력</Text>
+                      <Text style={{ color: isDark ? "#fbbf24" : "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 필수 입력</Text>
                     )}
                     <Label>메모</Label>
                     <Input
@@ -35878,7 +36125,7 @@ async function importJSON() {
         tag={editingTag?.tag}
         tagType={editingTag?.type}
         // 기존 props
-        isPinned={editingTag ? pinnedTags.includes(editingTag.tag) : false}
+        isPinned={editingTag ? listHasTag(pinnedTags, editingTag.tag) : false}
         onPin={togglePinTag}
         onPromoteToMajor={promoteToMajorGenre}
         onPromoteToSub={promoteToSubGenre}
@@ -35893,7 +36140,7 @@ async function importJSON() {
         onEditRelations={openTagRelationModal}
         relationInfo={editingTag ? getTagGroupInfo(editingTag.tag) : null}
         // 🆕 v3.2.1 확장 props
-        isHidden={editingTag ? hiddenTags.includes(editingTag.tag) : false}
+        isHidden={editingTag ? listHasTag(hiddenTags, editingTag.tag) : false}
         isTitle={editingTag ? isTagTitle(editingTag.tag, tagAttributes) : false}
         sentiment={editingTag ? getTagSentiment(editingTag.tag, tagSentiments) : null}
         coordinateSystems={coordinateSystems}
@@ -36934,28 +37181,29 @@ async function importJSON() {
         // 🔧 v3.5.12: onComboToCustom 제거
         onDeleteTag={async (tag, type) => {
           // 🔧 v3.5.9: 함수형 setState로 stale closure 방지 (일괄 삭제 시 안전)
+          // 🔧 v3.5.15b: isSameTag로 공백/alias 변형도 정확히 제거
           if (type === "custom") {
             setCustomTags(prev => {
-              const next = prev.filter(t => t !== tag);
+              const next = prev.filter(t => !isSameTag(t, tag));
               deferSetAppMeta("custom_tags", next);
               return next;
             });
           } else if (type === "combo") {
             // 🔧 v3.5.12: combo → customTags로 통합됨
             setCustomTags(prev => {
-              const next = prev.filter(t => t !== tag);
+              const next = prev.filter(t => !isSameTag(t, tag));
               deferSetAppMeta("custom_tags", next);
               return next;
             });
           } else if (type === "userMajor") {
             setUserMajorGenres(prev => {
-              const next = prev.filter(t => t !== tag);
+              const next = prev.filter(t => !isSameTag(t, tag));
               deferSetAppMeta("user_major_genres", next);
               return next;
             });
           } else if (type === "userSub") {
             setUserSubGenres(prev => {
-              const next = prev.filter(t => t !== tag);
+              const next = prev.filter(t => !isSameTag(t, tag));
               deferSetAppMeta("user_sub_genres", next);
               return next;
             });
@@ -37218,3 +37466,4 @@ export default function App() {
     </AppErrorBoundary>
   );
 }
+
