@@ -2,7 +2,7 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.5.13                                                                 ║
+ * ║  버전: 3.5.14                                                                 ║
  * ║  최종 수정: 2025-02-26                                                        ║
  * ║  총 라인 수: 약 36,850줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -235,6 +235,69 @@
  * ║ • 원인: undoLastMatch가 matches만 DELETE, choice_logs 미처리               ║
  * ║ • 수정: execBatch로 choice_logs + matches 원자적 삭제                       ║
  * ║   + choiceLogQueue.pending에서도 해당 매치 로그 필터링                      ║
+ * ║                                                                              ║
+ * ║ [버그 수정 12] 🔴 매칭 중 표지가 갑자기 안 보이는 현상                     ║
+ * ║ • 증상: 매칭 진행 중 일부 작품의 표지가 갑자기 표시되지 않음               ║
+ * ║ • 원인 1: ExpoImage recyclingKey 미설정 → 같은 뷰에서 URI만 교체 시       ║
+ * ║   Android Glide 엔진이 이전 로드 취소/새 로드 시작 과정에서 실패           ║
+ * ║ • 원인 2: match card에 key prop 미설정 → pair 전환 시 React가              ║
+ * ║   동일 컴포넌트 인스턴스 재사용 → ExpoImage 내부 상태 오염                 ║
+ * ║ • 수정:                                                                      ║
+ * ║   (1) CoverImage 내 ExpoImage에 recyclingKey={finalUri} 추가               ║
+ * ║       → 소스 변경 시 이미지 로딩 상태 완전 리셋                            ║
+ * ║   (2) 매칭 카드 A/B TouchableOpacity에 key={pair.A/B.id} 추가             ║
+ * ║       → pair 전환 시 React가 새 컴포넌트 트리 생성 (리마운트)             ║
+ * ║                                                                              ║
+ * ║ [버그 수정 13] 🔴 매칭 중 간헐적 크래시 (ANR)                              ║
+ * ║ • 증상: 수동 매칭 진행 중 앱이 갑자기 크래시                               ║
+ * ║ • 진단: 매칭 1회당 7개 비동기 체인 동시 발동, DB 쿼리 15~20회 경합        ║
+ * ║   성능 진단 리포트로 확인된 3대 병목:                                       ║
+ * ║   ① tagHash가 ORDER BY 순서에 의존 → rating 변경마다 해시 불일치          ║
+ * ║     → 매칭마다 불필요한 242ms 동기 재계산 (JS 스레드 블로킹)              ║
+ * ║   ② loadMatchStats(900ms)가 매 매칭마다 즉시 fire-and-forget 실행         ║
+ * ║     → 연속 매칭 시 900ms 쿼리가 중첩되어 DB 경합 극대화                   ║
+ * ║   ③ preference_patterns(269ms) 동일 쿼리를 매칭당 2회 실행 (캐시 없음)    ║
+ * ║   누적: 매칭 5~6회 시 미완료 DB 작업 중첩 → JS 스레드 포화 → Android ANR ║
+ * ║ • 수정:                                                                      ║
+ * ║   (1) tagHash 순서 무관화: id 포함 후 sort() → 태그 미변경 시 즉시 스킵   ║
+ * ║       → 매칭당 242ms 절감 (사실상 0ms)                                     ║
+ * ║   (2) loadMatchStats 디바운스: 매칭("op") 시 3초 지연, 연속 매칭 시       ║
+ * ║       마지막 1회만 실행 → 매칭당 900ms 쿼리 제거                           ║
+ * ║   (3) preference_patterns 10초 TTL 캐시: 2회 → 1회로 감소                 ║
+ * ║       → 매칭당 269ms 절감 + 패턴 업데이트 시 자동 무효화                   ║
+ * ║   총 절감: 매칭당 ~1.4초 DB 부하 + 242ms JS 블로킹 해소                   ║
+ * ║                                                                              ║
+ * ║ [버그 수정 14] 🔴 자동매칭 fast 모드 크래시 위험                            ║
+ * ║ • 증상: 자동매칭 터보 모드에서 연속 실행 시 크래시 (매칭 크래시와 동일 원리)║
+ * ║ • 원인 1: isAutoMatching이 React state → 배칭 타이밍에 따라 guard 우회      ║
+ * ║   setPair + setIsAutoMatching(false)가 동시 배칭 → useEffect 즉시 재발동    ║
+ * ║ • 원인 2: fast=10ms 딜레이가 큐 처리(~200ms)보다 빠름                       ║
+ * ║   → 미완료 DB 작업이 매 매칭마다 누적 → JS 스레드 포화 → ANR              ║
+ * ║ • 수정:                                                                      ║
+ * ║   (1) isAutoMatchingRef (useRef) 추가 — 동기적 즉시 잠금, state 배칭 무관   ║
+ * ║   (2) waitForMatchQueueDrain() — 이전 매칭 큐 완료까지 대기 (최대 2초)     ║
+ * ║   (3) 최소 딜레이 보장: fast=100ms, normal=300ms, slow=700ms               ║
+ * ║       (이전: 10ms/100ms/500ms → 큐 드레인 전 다음 매칭 시작 문제)         ║
+ * ║                                                                              ║
+ * ║ [성능 개선 5] getActiveWeights 캐시 (30초 TTL)                              ║
+ * ║ • 진단: weight_config SELECT = 158ms/회, 매칭마다 호출                      ║
+ * ║ • 가중치 변경은 adjustWeightsFromFeedback에서만 (인사이트 확인 시 극히 드묾)║
+ * ║ • 30초 TTL 캐시 + 변경 시 invalidateWeightsCache() 자동 무효화             ║
+ * ║ • 효과: 매칭당 158ms DB 쿼리 추가 절감                                      ║
+ * ║                                                                              ║
+ * ║ [기능 수정 1] 보충탭 질적 완성도 가이드 옵션화                              ║
+ * ║ • v3.5.12에서 "설정 무관" 하드코딩으로 추가된 3개 감지 항목:               ║
+ * ║   - no_major_genre: 태그 3+인데 대장르 미분류                               ║
+ * ║   - no_sub_genre: 태그 3+인데 부장르 미분류                                 ║
+ * ║   - allDefaultIntensity: 모든 태그 농도가 기본값(3)                         ║
+ * ║ • 문제: requireIntensityTuning이 DEFAULT_SETTINGS에 있지만                  ║
+ * ║   감지 코드에서 미참조 + 설정 UI 토글도 의도적 제거됨                       ║
+ * ║   → 사용자가 끌 수 없어 불필요한 작품이 보충탭에 계속 표시                 ║
+ * ║ • 수정:                                                                      ║
+ * ║   (1) requireQualityMajorGenre(기본:on), requireQualitySubGenre(기본:off)   ║
+ * ║       설정 추가 + 감지 코드 연결                                            ║
+ * ║   (2) requireIntensityTuning(기본:off) 감지 코드 연결 (기존 설정 활용)     ║
+ * ║   (3) 설정 UI에 "질적 완성도 가이드" 섹션 추가, 3개 토글 제공              ║
  * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
@@ -2928,6 +2991,27 @@ function isMatchPending(aId, bId) {
   return pendingMatchPairs.has(matchPairKey(aId, bId));
 }
 
+// 🔧 v3.5.14: 매칭 큐가 비어있는지 확인 (자동매칭 큐 드레인 대기용)
+function isMatchQueueIdle() {
+  return matchQueue.length === 0 && !isProcessingMatchQueue;
+}
+
+// 🔧 v3.5.14: 매칭 큐 드레인 대기 (최대 timeout ms)
+function waitForMatchQueueDrain(timeout = 2000) {
+  return new Promise((resolve) => {
+    if (isMatchQueueIdle()) { resolve(true); return; }
+    const start = Date.now();
+    const check = () => {
+      if (isMatchQueueIdle() || (Date.now() - start) > timeout) {
+        resolve(isMatchQueueIdle());
+        return;
+      }
+      setTimeout(check, 50);
+    };
+    check();
+  });
+}
+
 // 매칭 작업을 큐에 추가 (pairKey도 함께 추적)
 function enqueueMatchTask(task, pairKey = null) {
   return new Promise((resolve, reject) => {
@@ -4089,6 +4173,31 @@ function collectChoiceContext(winner, loser, tagAttributes = {}) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
+ * 🔧 v3.5.14: preference_patterns 캐시 (매칭당 DB 쿼리 269ms×2 → 269ms×1 절감)
+ * 매칭 중 generateEnhancedPrediction + detectAnomaly가 동일 쿼리를 반복 실행하는 문제 해결
+ * TTL 10초: 패턴 업데이트 주기(1초 디바운스)보다 충분히 길어 최신 데이터 보장
+ */
+let _patternCache = null;
+let _patternCacheTime = 0;
+const PATTERN_CACHE_TTL = 10000;
+
+async function getCachedPatterns(minSampleSize = 5) {
+  const now = Date.now();
+  if (_patternCache && _patternCache.minSize === minSampleSize && (now - _patternCacheTime) < PATTERN_CACHE_TTL) {
+    return _patternCache.data;
+  }
+  const data = await all(`SELECT * FROM preference_patterns WHERE sample_size >= ?`, [minSampleSize]);
+  _patternCache = { minSize: minSampleSize, data: data || [] };
+  _patternCacheTime = now;
+  return _patternCache.data;
+}
+
+function invalidatePatternCache() {
+  _patternCache = null;
+  _patternCacheTime = 0;
+}
+
+/**
  * 이상 선택 탐지 (패턴 기반)
  */
 async function detectAnomaly(context, patterns) {
@@ -4247,10 +4356,10 @@ async function saveChoiceLog(matchId, winner, loser, matchType = "manual", predi
     const context = collectChoiceContext(winner, loser, tagAttributes);
     if (!context) return null;
     
-    // 패턴 조회 (이상 탐지용)
+    // 패턴 조회 (이상 탐지용) — 🔧 v3.5.14: 캐시 사용
     let patterns = [];
     try {
-      patterns = await all(`SELECT * FROM preference_patterns WHERE sample_size >= 5`);
+      patterns = await getCachedPatterns(5);
     } catch (e) {
       // 패턴 없어도 계속 진행
     }
@@ -4412,6 +4521,7 @@ async function processPatternUpdates(logs) {
     // DB 업데이트 (배치)
     if (updates.length > 0) {
       await batchUpdatePatternStats(updates);
+      invalidatePatternCache(); // 🔧 v3.5.14: 패턴 변경 시 캐시 무효화
     }
     
   } catch (e) {
@@ -4812,13 +4922,27 @@ async function queueInsight(insight) {
 /**
  * 현재 활성 가중치 조회
  */
+/**
+ * 🔧 v3.5.14: weight_config 캐시 (변경 극히 드묾 — adjustWeightsFromFeedback에서만)
+ * 진단 데이터: SELECT * FROM weight_config = 158ms/회, 매칭마다 호출
+ */
+let _weightsCache = null;
+let _weightsCacheTime = 0;
+const WEIGHTS_CACHE_TTL = 30000; // 30초 (변경 빈도 극히 낮음)
+
+function invalidateWeightsCache() {
+  _weightsCache = null;
+  _weightsCacheTime = 0;
+}
+
 async function getActiveWeights() {
+  const now = Date.now();
+  if (_weightsCache && (now - _weightsCacheTime) < WEIGHTS_CACHE_TTL) {
+    return _weightsCache;
+  }
   try {
     const row = await first(`SELECT * FROM weight_config WHERE is_active = 1`);
-    if (row) return row;
-    
-    // 기본값 반환
-    return {
+    const result = row || {
       w_elo: 0.35,
       w_h2h: 0.20,
       w_overall_winrate: 0.10,
@@ -4829,6 +4953,9 @@ async function getActiveWeights() {
       w_author_affinity: 0.03,
       w_coordinate_zone: 0.02,
     };
+    _weightsCache = result;
+    _weightsCacheTime = now;
+    return result;
   } catch (e) {
     console.error("[getActiveWeights] 오류:", e);
     return {
@@ -4851,7 +4978,7 @@ async function getActiveWeights() {
 async function generateEnhancedPrediction(A, B) {
   try {
     const weights = await getActiveWeights();
-    const patterns = await all(`SELECT * FROM preference_patterns WHERE sample_size >= 5`);
+    const patterns = await getCachedPatterns(5); // 🔧 v3.5.14: 캐시 사용
     
     const factors = {};
     
@@ -7823,6 +7950,10 @@ const CoverImage = memo(({ uri, platforms, platformCovers = {}, size = 50, theme
   const imageEl = (
     <ExpoImage
       source={{ uri: finalUri }}
+      // 🔧 v3.5.13: recyclingKey로 소스 변경 시 내부 상태 완전 리셋
+      // Android Glide 엔진이 같은 뷰에서 URI만 교체할 때 이전 로드가
+      // 취소/새 로드 시작 과정에서 실패하여 표지가 안 보이는 현상 방지
+      recyclingKey={finalUri}
       style={{ width: size, height: size * 1.4, borderRadius: 6, marginRight: 10 }}
       contentFit="cover"
       cachePolicy="memory-disk"
@@ -17762,7 +17893,9 @@ const DEFAULT_SETTINGS = {
     requireQuote: false,             // 🔧 v3.5.6: 인상깊은 문장 필수
     requireStatusNotDefault: false,  // 🔧 v3.5.6: 읽기 상태가 기본(reading) 아닌지
     requireWorkStatus: false,        // 🔧 v3.5.6: 연재 상태 확인
-    requireIntensityTuning: false,   // 🆕 v3.5.12: 태그 농도 조절 여부 (모두 기본값 3이면 이슈)
+    requireIntensityTuning: false,   // 🆕 v3.5.12→v3.5.14: 태그 농도 조절 여부 (모두 기본값 3이면 이슈)
+    requireQualityMajorGenre: true,  // 🆕 v3.5.14: 태그 3+인데 대장르 미분류시 이슈
+    requireQualitySubGenre: false,   // 🆕 v3.5.14: 태그 3+인데 부장르 미분류시 이슈
     excludeNegativeTagCount: 2,      // 부정 태그 N개 이상이면 제외 (취향아님 포함)
     excludeTags: ["취향아님"],        // 제외 기준에 반드시 포함되는 태그
   },
@@ -18666,6 +18799,7 @@ async function calculateBehaviorPredictionAccuracy(recentN = 30) {
     return { accuracy: correct / logs.length, sample: logs.length };
   } catch { return null; }
 }
+
 function generateBehaviorInsights(staticGenres, dynamicGenres, staticTags, dynamicTags, staticAuthors, dynamicAuthors, predAcc) {
   const insights = [];
 
@@ -19072,11 +19206,12 @@ function AppContent() {
   const [autoGap, setAutoGap] = useState("250"); // 레거시 (하위호환)
   const [lastMatchId, setLastMatchId] = useState(null); // 언두용
   const [isAutoMatching, setIsAutoMatching] = useState(false); // 🔧 v3.4.6: 자동 승패 처리 중 플래그
+  const isAutoMatchingRef = useRef(false); // 🔧 v3.5.14: ref 기반 동기 guard (state 배칭 우회 방지)
   
   // 🎯 v3.0.4: 확장된 자동승패 설정
   const [autoMatchSettings, setAutoMatchSettings] = useState({
     mode: "any",  // "any" = 하나라도 만족 | "all" = 모두 만족
-    speed: "fast", // 🔧 v3.4.7: "fast" = 즉시 | "normal" = 100ms | "slow" = 500ms
+    speed: "fast", // 🔧 v3.5.14: "fast" = 100ms + 큐드레인 | "normal" = 300ms | "slow" = 700ms
     criteria: {
       ratingGap: { enabled: true, threshold: 250, desc: "레이팅 격차" },
       predictionRate: { enabled: false, threshold: 75, desc: "예측 승률(%)" },
@@ -21710,11 +21845,14 @@ function AppContent() {
   // + 태그 해시 비교로 데이터 미변경 시 재계산 스킵
   const tagHashRef = useRef("");
   const coOccTimerRef = useRef(null);
+  const matchStatsTimerRef = useRef(null); // 🔧 v3.5.14: loadMatchStats 디바운스
   
   function updateTagUsageCounts(novels) {
     // P2: 태그 해시 비교 — 데이터 미변경 시 스킵
-    // 🔧 v3.5.13: major_genre/sub_genre도 해시에 포함 (장르만 변경 시 카운트 미갱신 방지)
-    const tagHash = novels.map(n => `${n.tags || ""}|${n.major_genre || ""}|${n.sub_genre || ""}`).join("||");
+    // 🔧 v3.5.14: 순서 무관 해시 — id 포함 후 sort하여 ORDER BY 변경에 무관하게 비교
+    // 이전: rating 변경 → ORDER BY 순서 변경 → 해시 불일치 → 매칭마다 242ms 재계산 (불필요)
+    // 수정: id:tags 조합을 정렬하여 태그가 실제 변경될 때만 재계산
+    const tagHash = novels.map(n => `${n.id}:${n.tags || ""}|${n.major_genre || ""}|${n.sub_genre || ""}`).sort().join("||");
     if (tagHash === tagHashRef.current) return;
     tagHashRef.current = tagHash;
     
@@ -23024,6 +23162,7 @@ function AppContent() {
       ]);
       
       console.log("[adjustWeightsFromFeedback] 가중치 조정 완료:", changedWeights);
+      invalidateWeightsCache(); // 🔧 v3.5.14: 캐시 무효화
       
     } catch (e) {
       console.warn("adjustWeightsFromFeedback 오류:", e);
@@ -23103,8 +23242,14 @@ function AppContent() {
           coverImages: coverLibrary?.length || 0,
         });
       }
-      // 🔧 v3.5.9: 매칭 통계는 비동기로 분리 (loadList 차단 해소)
-      loadMatchStats().catch(() => {});
+      // 🔧 v3.5.14: 매칭 중 loadMatchStats 디바운스 (900ms 쿼리 중복 방지)
+      // "op"(매칭 결과) 시 3초 지연 — 연속 매칭 시 마지막 1회만 실행
+      // 기타 트리거는 500ms 지연 (UI 응답성 유지하면서 동시 DB 부하 감소)
+      if (matchStatsTimerRef.current) clearTimeout(matchStatsTimerRef.current);
+      matchStatsTimerRef.current = setTimeout(() => {
+        loadMatchStats().catch(() => {});
+        matchStatsTimerRef.current = null;
+      }, _trigger === "op" ? 3000 : 500);
       PerfMonitor.endFunc("loadList"); // 🔬 v3.5.9b
     } catch (e) {
       console.warn("loadList 오류:", e);
@@ -23480,6 +23625,7 @@ function AppContent() {
               if (sel.patterns) {
                 patternUpdateBatch.length = 0;
                 patternUpdateScheduled = false;
+                invalidatePatternCache(); // 🔧 v3.5.14
               }
 
               // === AppMeta 기반 ===
@@ -23663,6 +23809,8 @@ function AppContent() {
                       choiceLogQueue.pending = [];
                       patternUpdateBatch.length = 0;
                       patternUpdateScheduled = false;
+                      invalidatePatternCache(); // 🔧 v3.5.14
+                      invalidateWeightsCache(); // 🔧 v3.5.14
                       
                       // 🔄 v3.5.0: 모든 관련 상태 초기화
                       setLastMatchId(null);
@@ -24540,9 +24688,13 @@ function AppContent() {
 
   // 자동 승패 (확장된 버전)
   // 🔧 v3.4.7: 속도 옵션 추가 (fast/normal/slow)
+  // 🔧 v3.5.14: ref 기반 guard + 큐 드레인 대기 + 최소 딜레이 보장
+  //   문제: isAutoMatching이 React state라 배칭 타이밍에 따라 guard 우회 가능
+  //   문제: fast 10ms 딜레이가 큐 처리(~200ms)보다 빨라 미완료 작업 누적 → ANR
+  //   수정: (1) ref로 동기 guard (2) 큐 드레인 대기 (3) 최소 100ms 보장
   useEffect(() => {
-    // 이미 자동 승패 처리 중이면 무시
-    if (isAutoMatching) return;
+    // 🔧 v3.5.14: ref 기반 동기 guard (state 배칭 타이밍 무관하게 즉시 차단)
+    if (isAutoMatchingRef.current) return;
     
     (async () => {
       if (!autoEnabled || !pair) return;
@@ -24551,19 +24703,25 @@ function AppContent() {
       const result = evaluateAutoMatch(pair.A, pair.B, matchAnalysis);
       
       if (result && result.winner) {
+        // 🔧 v3.5.14: ref 먼저 설정 (동기적 즉시 잠금)
+        isAutoMatchingRef.current = true;
         setIsAutoMatching(true);
         
         try {
           await decide(result.winner.id, "auto");
           
-          // 🔧 v3.4.7: 속도 설정에 따른 딜레이
-          const speed = autoMatchSettings.speed || "fast";
-          const delayMs = speed === "fast" ? 10 : speed === "normal" ? 100 : 500;
+          // 🔧 v3.5.14: 큐 드레인 대기 (이전 매칭의 DB 작업 완료까지)
+          // fast 모드에서도 최소한 큐가 비어야 다음 매칭 시작
+          await waitForMatchQueueDrain(2000);
           
-          if (delayMs > 0) {
-            await new Promise(r => setTimeout(r, delayMs));
-          }
+          // 🔧 v3.5.14: 속도 설정에 따른 딜레이 (최소 100ms 보장)
+          // 이전: fast=10ms → 큐 드레인 전 다음 매칭 시작 → 작업 중첩 → ANR
+          // 수정: fast=100ms, normal=300ms, slow=700ms
+          const speed = autoMatchSettings.speed || "fast";
+          const delayMs = speed === "fast" ? 100 : speed === "normal" ? 300 : 700;
+          await new Promise(r => setTimeout(r, delayMs));
         } finally {
+          isAutoMatchingRef.current = false;
           setIsAutoMatching(false);
         }
       }
@@ -26088,6 +26246,8 @@ async function importJSON() {
         { sql: "DELETE FROM preference_patterns;", params: [] },
         { sql: "DELETE FROM insight_queue;", params: [] },
       ]);
+      invalidatePatternCache(); // 🔧 v3.5.14
+      invalidateWeightsCache(); // 🔧 v3.5.14
     };
 
     // -------------------------------
@@ -26498,6 +26658,8 @@ async function importJSON() {
               choiceLogQueue.pending = [];
               patternUpdateBatch.length = 0;
               patternUpdateScheduled = false;
+              invalidatePatternCache(); // 🔧 v3.5.14
+              invalidateWeightsCache(); // 🔧 v3.5.14
               
               setImportOpen(false);
               setImportText("");
@@ -26595,7 +26757,10 @@ async function importJSON() {
               if (choiceLogQueue.timer) { clearTimeout(choiceLogQueue.timer); choiceLogQueue.timer = null; }
               choiceLogQueue.pending = [];
               patternUpdateBatch.length = 0;
+              patternUpdateBatch.length = 0;
               patternUpdateScheduled = false;
+              invalidatePatternCache(); // 🔧 v3.5.14
+              invalidateWeightsCache(); // 🔧 v3.5.14
               
               setLastMatchId(null);
               setPair(null);
@@ -26718,20 +26883,22 @@ async function importJSON() {
       issues.push("workStatus");
     }
     
-    // 🆕 v3.5.12: 질적 완성도 가이드 (설정 무관, 태그 3개 이상일 때 자동 체크)
+    // 🆕 v3.5.12→v3.5.14: 질적 완성도 가이드 (설정 기반, 태그 3개 이상일 때)
     if (novelTags.length >= 3) {
-      // 대장르 미설정
-      if (!novel.major_genre?.trim()) {
+      // 대장르 미설정 (requireMajorGenre와 별개: "태그는 충분한데 분류 안 함")
+      if (settings.requireQualityMajorGenre && !novel.major_genre?.trim()) {
         issues.push("no_major_genre");
       }
       // 부장르 미설정
-      if (!novel.sub_genre?.trim()) {
+      if (settings.requireQualitySubGenre && !novel.sub_genre?.trim()) {
         issues.push("no_sub_genre");
       }
       // 모든 농도가 기본값(3)
-      const tagData = parseTagData(novel.tag_data);
-      if (tagData.length >= 3 && tagData.every(t => t.intensity === 3 || t.intensity === undefined)) {
-        issues.push("allDefaultIntensity");
+      if (settings.requireIntensityTuning) {
+        const tagData = parseTagData(novel.tag_data);
+        if (tagData.length >= 3 && tagData.every(t => t.intensity === 3 || t.intensity === undefined)) {
+          issues.push("allDefaultIntensity");
+        }
       }
     }
     
@@ -26773,6 +26940,14 @@ async function importJSON() {
   // 📝 보충 대상 건수
   const supplementCount = supplementList.length;
   const supplementTotalCount = supplementListAll.length; // 필터 전 전체 수
+
+  // 🔧 v3.5.14: 필터가 0건인데 전체는 있으면 자동 리셋 (필터 고착 방지)
+  // 설정에서 특정 이슈 감지를 끄면 해당 필터칩이 사라지지만 state는 남아서 0건 표시
+  useEffect(() => {
+    if (supplementFilter !== "all" && supplementCount === 0 && supplementTotalCount > 0) {
+      setSupplementFilter("all");
+    }
+  }, [supplementFilter, supplementCount, supplementTotalCount]);
 
   // 🔧 v3.5.6: 이슈별 집계 (필터 칩용)
   const supplementIssueCounts = useMemo(() => {
@@ -29082,9 +29257,9 @@ async function importJSON() {
                   <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>처리 속도</Text>
                   <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
                     {[
-                      { key: "fast", label: "터보", desc: "최대 속도", color: "#ef4444", bgColor: "#fef2f2" },
-                      { key: "normal", label: "보통", desc: "100ms", color: "#f59e0b", bgColor: "#fffbeb" },
-                      { key: "slow", label: "느림", desc: "500ms", color: "#22c55e", bgColor: "#f0fdf4" },
+                      { key: "fast", label: "터보", desc: "빠름", color: "#ef4444", bgColor: "#fef2f2" },
+                      { key: "normal", label: "보통", desc: "300ms", color: "#f59e0b", bgColor: "#fffbeb" },
+                      { key: "slow", label: "느림", desc: "700ms", color: "#22c55e", bgColor: "#f0fdf4" },
                     ].map(opt => (
                       <TouchableOpacity
                         key={opt.key}
@@ -29402,6 +29577,7 @@ async function importJSON() {
                 <>
                   {/* 작품 A */}
                   <TouchableOpacity
+                    key={pair.A.id}
                     onPress={() => decide(pair.A.id, "user")}
                     style={{
                       borderWidth: 3,
@@ -29623,6 +29799,7 @@ async function importJSON() {
 
                   {/* 작품 B */}
                   <TouchableOpacity
+                    key={pair.B.id}
                     onPress={() => decide(pair.B.id, "user")}
                     style={{
                       borderWidth: 3,
@@ -35169,7 +35346,42 @@ async function importJSON() {
                 { key: "requireQuote", label: "인상깊은 문장", desc: "문장이 없으면 보충 대상" },
                 { key: "requireStatusNotDefault", label: "읽기 상태 확인", desc: "읽기 상태가 기본(읽는중)이면 보충 대상" },
                 { key: "requireWorkStatus", label: "연재 상태 확인", desc: "연재 상태가 기본(연재중)이면 보충 대상" },
-                // 🔧 v3.5.12: requireIntensityTuning 토글 제거 — 태그 3개 이상이면 자동 체크 (질적 가이드)
+              ].map(item => (
+                <View key={item.key} style={{ 
+                  flexDirection: "row", 
+                  alignItems: "center", 
+                  justifyContent: "space-between",
+                  paddingVertical: 10,
+                  borderBottomWidth: 1,
+                  borderBottomColor: C.line,
+                }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontWeight: "600", color: C.text }}>{item.label}</Text>
+                    <Text style={{ color: C.sub, fontSize: 11 }}>{item.desc}</Text>
+                  </View>
+                  <Switch
+                    value={appSettings.supplement?.[item.key] ?? DEFAULT_SETTINGS.supplement[item.key]}
+                    onValueChange={(v) => {
+                      saveAppSettings({
+                        supplement: { ...DEFAULT_SETTINGS.supplement, ...appSettings.supplement, [item.key]: v }
+                      });
+                    }}
+                  />
+                </View>
+              ))}
+
+              {/* 🆕 v3.5.14: 질적 완성도 가이드 */}
+              <Text style={{ fontWeight: "800", color: C.text, marginTop: 16, marginBottom: 4 }}>
+                질적 완성도 가이드
+              </Text>
+              <Text style={{ color: C.sub, fontSize: 11, marginBottom: 8 }}>
+                태그 3개 이상인 작품에 적용되는 추가 검사
+              </Text>
+
+              {[
+                { key: "requireQualityMajorGenre", label: "대장르 미분류 감지", desc: "태그는 충분하지만 대장르가 미설정이면 이슈" },
+                { key: "requireQualitySubGenre", label: "부장르 미분류 감지", desc: "태그는 충분하지만 부장르가 미설정이면 이슈" },
+                { key: "requireIntensityTuning", label: "태그 농도 미조절 감지", desc: "모든 태그 농도가 기본값(3)이면 이슈" },
               ].map(item => (
                 <View key={item.key} style={{ 
                   flexDirection: "row", 
@@ -37006,4 +37218,3 @@ export default function App() {
     </AppErrorBoundary>
   );
 }
-
