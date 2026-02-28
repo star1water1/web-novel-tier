@@ -4,7 +4,7 @@
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║  버전: 3.5.15                                                                 ║
  * ║  최종 수정: 2025-02-27                                                        ║
- * ║  총 라인 수: 약 37,600줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 37,700줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -394,6 +394,16 @@
  * ║   - 50개 청크 배치 업데이트                                               ║
  * ║ • 앱 시작 시 1회 자동 실행 (tag_dedup_v1 플래그로 중복 방지)             ║
  * ║ • 설정 "🔄 중복 정리" 버튼: 수동 재실행 + 결과 알림 표시                 ║
+ * ║                                                                              ║
+ * ║ [성능 수정] 🔴 TagManagerModal 마운트 시 앱 멈춤 (ANR)                    ║
+ * ║ • 원인: allTagsWithSentiment useMemo에서 549개 태그 × listHasTag 7회     ║
+ * ║   × isSameTag(normalizeTag regex 15회) = ~3.18M regex 연산               ║
+ * ║ • 해결: normalizeTagKey() + buildTagKeySet() → Set.has() O(1) 전환       ║
+ * ║   - tagKeySets useMemo: pinned/hidden/custom/major/sub/title 6개 Set     ║
+ * ║   - allTagsWithSentiment: 549 × 7 Set.has = ~4K ops (750배 감소)         ║
+ * ║   - categories.pinned: Set 룩업으로 전환                                  ║
+ * ║   - currentTags enrichment: Set 룩업으로 전환                             ║
+ * ║   - 렌더링: pre-computed isPinned/isHidden 사용                           ║
  * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
@@ -6913,6 +6923,26 @@ function normalizeTag(tag) {
 }
 
 /**
+ * 🔧 v3.5.15b: 정규화된 태그 키 (Set 룩업용)
+ * normalizeTag → 공백 제거 → 소문자 변환
+ * TagManagerModal 등에서 O(1) 비교에 사용
+ */
+function normalizeTagKey(tag) {
+  return normalizeTag(tag).replace(/\s+/g, "").toLowerCase();
+}
+
+/**
+ * 🔧 v3.5.15b: 태그 배열을 정규화 키 Set으로 변환 (O(1) 룩업용)
+ * listHasTag O(n×m) → Set.has O(1) 전환 시 사용
+ */
+function buildTagKeySet(tagList) {
+  const set = new Set();
+  if (!Array.isArray(tagList)) return set;
+  for (const t of tagList) set.add(normalizeTagKey(t));
+  return set;
+}
+
+/**
  * 🆕 v3.5.12: 두 태그가 같은 태그인지 판정 (공백 무시 + alias 통합)
  * - "현대 판타지" === "현대판타지" → true
  * - "현판" === "현대판타지" → true (alias)
@@ -12502,17 +12532,31 @@ const TagManagerModal = memo(({
     excludeAttrs: [], // 제외할 속성
   });
   
-  // 🆕 v3.4: 태그가 대장르인지 확인
-  const isTagMajorLocal = useCallback((tag) => {
-    if (checkIsMajor) return checkIsMajor(tag);
-    return listHasTag(MAJOR_GENRES, tag) || listHasTag(userMajorGenres, tag);
-  }, [checkIsMajor, userMajorGenres]);
+  // 🔧 v3.5.15b: O(1) 룩업용 정규화 Set 사전 구축 (컴포넌트 전체 공유)
+  // 기존 listHasTag O(n×m) → Set.has O(1) 전환
+  // TagManagerModal 마운트 시 ~3M regex ops → ~4K ops으로 감소
+  const tagKeySets = useMemo(() => ({
+    pinned: buildTagKeySet(pinnedTags),
+    hidden: buildTagKeySet(hiddenTags),
+    custom: buildTagKeySet(customTags),
+    major: buildTagKeySet([...MAJOR_GENRES, ...userMajorGenres]),
+    sub: buildTagKeySet([...SUB_GENRES, ...userSubGenres]),
+    title: (() => {
+      const s = new Set();
+      if (tagAttributes) {
+        for (const [k, v] of Object.entries(tagAttributes)) {
+          if (v?.isTitle) s.add(normalizeTagKey(k));
+        }
+      }
+      return s;
+    })(),
+  }), [pinnedTags, hiddenTags, customTags, userMajorGenres, userSubGenres, tagAttributes]);
   
-  // 🆕 v3.4: 태그가 부장르인지 확인  
-  const isTagSubLocal = useCallback((tag) => {
-    if (checkIsSub) return checkIsSub(tag);
-    return listHasTag(SUB_GENRES, tag) || listHasTag(userSubGenres, tag);
-  }, [checkIsSub, userSubGenres]);
+  // 🔧 v3.5.15b: Set 기반 빠른 룩업 헬퍼
+  const hasTagKey = useCallback((setName, tag) => {
+    const set = tagKeySets[setName];
+    return set ? set.has(normalizeTagKey(tag)) : false;
+  }, [tagKeySets]);
   
   // 🆕 태그의 실제 sentiment 가져오기
   const getTagSentimentValue = useCallback((tag) => {
@@ -12571,14 +12615,14 @@ const TagManagerModal = memo(({
         }
       }
       
-      // 🆕 v3.4: 속성 정보 추가
-      const isMajor = isTagMajorLocal(item.tag);
-      const isSub = isTagSubLocal(item.tag);
-      const isCustom = listHasTag(customTags, item.tag);
-      const isPinned = listHasTag(pinnedTags, item.tag);
-      const isHidden = listHasTag(hiddenTags, item.tag);
-      // 🔧 v3.5.9: 작품명 태그 여부 (tagAttributes 참조)
-      const isTitleTag = !!(tagAttributes && tagAttributes[item.tag]?.isTitle);
+      // 🔧 v3.5.15b: Set.has O(1) 룩업으로 속성 판정
+      const nk = normalizeTagKey(item.tag);
+      const isMajor = tagKeySets.major.has(nk);
+      const isSub = tagKeySets.sub.has(nk);
+      const isCustom = tagKeySets.custom.has(nk);
+      const isPinned = tagKeySets.pinned.has(nk);
+      const isHidden = tagKeySets.hidden.has(nk);
+      const isTitleTag = tagKeySets.title.has(nk);
       
       return {
         tag: item.tag,
@@ -12595,7 +12639,7 @@ const TagManagerModal = memo(({
         isTitle: isTitleTag, // 🔧 v3.5.9
       };
     });
-  }, [customTags, userMajorGenres, userSubGenres, pinnedTags, hiddenTags, getTagSentimentValue, isTagMajorLocal, isTagSubLocal, tagAttributes]);
+  }, [customTags, userMajorGenres, userSubGenres, getTagSentimentValue, tagKeySets]);
   
   // 🆕 v3.4: 필터 적용 함수
   const applyFilters = useCallback((tags) => {
@@ -12689,12 +12733,16 @@ const TagManagerModal = memo(({
         count: pinnedTags.length,
         tags: pinnedTags.map(t => {
           // 🔧 v3.5.12: comboTags 판별 제거
+          // 🔧 v3.5.15b: Set O(1) 룩업
+          const nk = normalizeTagKey(t);
           let type = "custom";
-          if (listHasTag(userMajorGenres, t)) type = "userMajor";
-          else if (listHasTag(userSubGenres, t)) type = "userSub";
-          else if (listHasTag(MAJOR_GENRES, t)) type = "defaultMajor";
-          else if (listHasTag(SUB_GENRES, t)) type = "defaultSub";
-          return { tag: t, type, sentiment: getTagSentimentValue(t), isTitle: !!(tagAttributes && tagAttributes[t]?.isTitle) };
+          if (tagKeySets.major.has(nk)) {
+            // userMajor vs defaultMajor 구분
+            type = buildTagKeySet(userMajorGenres).has(nk) ? "userMajor" : "defaultMajor";
+          } else if (tagKeySets.sub.has(nk)) {
+            type = buildTagKeySet(userSubGenres).has(nk) ? "userSub" : "defaultSub";
+          }
+          return { tag: t, type, sentiment: getTagSentimentValue(t), isPinned: true, isHidden: tagKeySets.hidden.has(nk), isTitle: tagKeySets.title.has(nk) };
         }),
       },
       // 🔧 v3.5.9: 작품명 태그 탭 추가
@@ -12730,7 +12778,7 @@ const TagManagerModal = memo(({
         return acc;
       }, {}),
     };
-  }, [customTags, userMajorGenres, userSubGenres, pinnedTags, allTagsWithSentiment, getTagSentimentValue, tagAttributes]);
+  }, [customTags, userMajorGenres, userSubGenres, pinnedTags, allTagsWithSentiment, getTagSentimentValue, tagKeySets]);
   
   // 현재 탭의 태그들 (검색 + 고급 필터 적용)
   const currentTags = useMemo(() => {
@@ -12754,23 +12802,26 @@ const TagManagerModal = memo(({
     
     if (hasFilters) {
       // 기존 tags에 속성 정보 보강
+      // 🔧 v3.5.15b: Set O(1) 룩업
       const enrichedTags = tags.map(item => {
         const fullInfo = allTagsWithSentiment.find(t => t.tag === item.tag);
-        return fullInfo || { 
+        if (fullInfo) return fullInfo;
+        const nk = normalizeTagKey(item.tag);
+        return { 
           ...item, 
-          isMajor: isTagMajorLocal(item.tag),
-          isSub: isTagSubLocal(item.tag),
-          isCustom: listHasTag(customTags, item.tag),
-          isPinned: listHasTag(pinnedTags, item.tag),
-          isHidden: listHasTag(hiddenTags, item.tag),
-          isTitle: !!(tagAttributes && tagAttributes[item.tag]?.isTitle), // 🔧 v3.5.9
+          isMajor: tagKeySets.major.has(nk),
+          isSub: tagKeySets.sub.has(nk),
+          isCustom: tagKeySets.custom.has(nk),
+          isPinned: tagKeySets.pinned.has(nk),
+          isHidden: tagKeySets.hidden.has(nk),
+          isTitle: tagKeySets.title.has(nk),
         };
       });
       tags = applyFilters(enrichedTags);
     }
     
     return tags;
-  }, [activeTab, categories, searchQ, filters, allTagsWithSentiment, applyFilters, isTagMajorLocal, isTagSubLocal, customTags, pinnedTags, hiddenTags]);
+  }, [activeTab, categories, searchQ, filters, allTagsWithSentiment, applyFilters, tagKeySets]);
   
   // 탭 목록
   const tabs = useMemo(() => {
@@ -12844,11 +12895,12 @@ const TagManagerModal = memo(({
     const tags = Array.from(selectedTags);
     
     // 현재 속성 상태 확인
+    // 🔧 v3.5.15b: Set O(1) 룩업
     const checkHasAttr = (tag) => {
       if (attrType === "major") {
-        return listHasTag(userMajorGenres, tag) || listHasTag(MAJOR_GENRES, tag);
+        return hasTagKey("major", tag);
       } else if (attrType === "sub") {
-        return listHasTag(userSubGenres, tag) || listHasTag(SUB_GENRES, tag);
+        return hasTagKey("sub", tag);
       }
       return false;
     };
@@ -13511,8 +13563,8 @@ const TagManagerModal = memo(({
                   tag={item.tag}
                   type={item.type}
                   types={item.types}
-                  isPinned={listHasTag(pinnedTags, item.tag)}
-                  isHidden={listHasTag(hiddenTags, item.tag)}
+                  isPinned={item.isPinned !== undefined ? item.isPinned : hasTagKey("pinned", item.tag)}
+                  isHidden={item.isHidden !== undefined ? item.isHidden : hasTagKey("hidden", item.tag)}
                   isTitle={item.isTitle || false}
                   sentiment={item.sentiment}
                   isSelected={selectedTags.has(item.tag)}
