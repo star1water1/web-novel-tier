@@ -330,7 +330,7 @@
  * ║   generateEnhancedPrediction(5+쿼리) 동시 실행                              ║
  * ║ • 자동매칭 100ms마다 전체 사이클 반복 → DB 경합 + JS 포화 → ANR            ║
  * ║                                                                              ║
- * ║ [수정 1] matchCache 시스템 (App_Part1)                                      ║
+ * ║ [수정 1] matchCache 시스템                                                  ║
  * ║ • novels + playedSet 캐시 (15초 TTL)                                        ║
  * ║ • pickRandomUnseenPair: DB 2쿼리 → 캐시 히트 시 0쿼리                      ║
  * ║ • decide: 캐시 증분 업데이트 (레이팅/played 즉시 반영)                     ║
