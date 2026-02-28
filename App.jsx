@@ -4,7 +4,7 @@
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║  버전: 3.5.15                                                                 ║
  * ║  최종 수정: 2025-02-27                                                        ║
- * ║  총 라인 수: 약 37,400줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 37,600줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -330,7 +330,7 @@
  * ║   generateEnhancedPrediction(5+쿼리) 동시 실행                              ║
  * ║ • 자동매칭 100ms마다 전체 사이클 반복 → DB 경합 + JS 포화 → ANR            ║
  * ║                                                                              ║
- * ║ [수정 1] matchCache 시스템                                                  ║
+ * ║ [수정 1] matchCache 시스템 (App_Part1)                                      ║
  * ║ • novels + playedSet 캐시 (15초 TTL)                                        ║
  * ║ • pickRandomUnseenPair: DB 2쿼리 → 캐시 히트 시 0쿼리                      ║
  * ║ • decide: 캐시 증분 업데이트 (레이팅/played 즉시 반영)                     ║
@@ -386,6 +386,14 @@
  * ║ • 적용: toggleHideTag, togglePinTag, handleTagEditModalSave (pin/hide),   ║
  * ║   removeCustomTag, deleteTagGlobally (3곳), onDeleteTag (4곳),            ║
  * ║   getTagUsageStats, 미사용 태그 일괄삭제 (3곳)                            ║
+ * ║                                                                              ║
+ * ║ [기능 추가] 🔧 기존 작품 중복 태그 일괄 정리                              ║
+ * ║ • deduplicateExistingNovelTags(): 전체 DB 스캔 후 중복 태그 일괄 제거    ║
+ * ║   - tags(쉼표), tag_data(JSON), major_genre(JSON), sub_genre(JSON) 처리  ║
+ * ║   - isSameTag 기반으로 공백/alias 변형 중복까지 포함                      ║
+ * ║   - 50개 청크 배치 업데이트                                               ║
+ * ║ • 앱 시작 시 1회 자동 실행 (tag_dedup_v1 플래그로 중복 방지)             ║
+ * ║ • 설정 "🔄 중복 정리" 버튼: 수동 재실행 + 결과 알림 표시                 ║
  * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
@@ -5996,6 +6004,130 @@ function deduplicateTagString(tagStr) {
   if (!tagStr) return tagStr;
   const arr = tagStr.split(",").map(t => t.trim()).filter(Boolean);
   return deduplicateTags(arr).join(", ");
+}
+
+/**
+ * 🔧 v3.5.15b: 기존 DB 작품의 중복 태그 일괄 정리
+ * - tags (쉼표 구분), tag_data (JSON 배열), major_genre (JSON), sub_genre (JSON) 모두 처리
+ * - isSameTag 기반으로 공백/alias 변형 중복까지 제거
+ * - 첫 번째 등장 태그만 유지 (원본 표기 보존)
+ * @returns {{ fixed: number, total: number }} 수정된 작품 수
+ */
+async function deduplicateExistingNovelTags() {
+  try {
+    const novels = await all("SELECT id, tags, tag_data, major_genre, sub_genre FROM novels;");
+    if (!novels || novels.length === 0) return { fixed: 0, total: 0 };
+    
+    const updates = [];
+    
+    for (const n of novels) {
+      let changed = false;
+      
+      // 1. tags (쉼표 구분 문자열) 중복 제거
+      let newTagsStr = n.tags || "";
+      if (n.tags) {
+        const tagArr = n.tags.split(",").map(t => t.trim()).filter(Boolean);
+        const seen = [];
+        const deduped = [];
+        for (const tag of tagArr) {
+          if (!seen.some(s => isSameTag(s, tag))) {
+            seen.push(tag);
+            deduped.push(tag);
+          }
+        }
+        if (deduped.length !== tagArr.length) {
+          newTagsStr = deduped.join(", ");
+          changed = true;
+        }
+      }
+      
+      // 2. tag_data (JSON 배열) 중복 제거
+      let newTagData = n.tag_data || "";
+      if (n.tag_data) {
+        try {
+          const tdArr = JSON.parse(n.tag_data);
+          if (Array.isArray(tdArr) && tdArr.length > 0) {
+            const seenTd = [];
+            const dedupedTd = [];
+            for (const td of tdArr) {
+              const tagName = td.tag || "";
+              if (!seenTd.some(s => isSameTag(s, tagName))) {
+                seenTd.push(tagName);
+                dedupedTd.push(td);
+              }
+            }
+            if (dedupedTd.length !== tdArr.length) {
+              newTagData = JSON.stringify(dedupedTd);
+              changed = true;
+            }
+          }
+        } catch {}
+      }
+      
+      // 3. major_genre (JSON 배열) 중복 제거
+      let newMajor = n.major_genre || "";
+      if (n.major_genre) {
+        try {
+          const arr = JSON.parse(n.major_genre);
+          if (Array.isArray(arr) && arr.length > 0) {
+            const seenM = [];
+            const dedupedM = [];
+            for (const g of arr) {
+              if (!seenM.some(s => isSameTag(s, g))) {
+                seenM.push(g);
+                dedupedM.push(g);
+              }
+            }
+            if (dedupedM.length !== arr.length) {
+              newMajor = JSON.stringify(dedupedM);
+              changed = true;
+            }
+          }
+        } catch {}
+      }
+      
+      // 4. sub_genre (JSON 배열) 중복 제거
+      let newSub = n.sub_genre || "";
+      if (n.sub_genre) {
+        try {
+          const arr = JSON.parse(n.sub_genre);
+          if (Array.isArray(arr) && arr.length > 0) {
+            const seenS = [];
+            const dedupedS = [];
+            for (const g of arr) {
+              if (!seenS.some(s => isSameTag(s, g))) {
+                seenS.push(g);
+                dedupedS.push(g);
+              }
+            }
+            if (dedupedS.length !== arr.length) {
+              newSub = JSON.stringify(dedupedS);
+              changed = true;
+            }
+          }
+        } catch {}
+      }
+      
+      if (changed) {
+        updates.push({
+          sql: "UPDATE novels SET tags=?, tag_data=?, major_genre=?, sub_genre=? WHERE id=?",
+          params: [newTagsStr, newTagData, newMajor, newSub, n.id]
+        });
+      }
+    }
+    
+    if (updates.length > 0) {
+      // 청크 단위 배치 (50개씩)
+      for (let i = 0; i < updates.length; i += 50) {
+        await execBatch(updates.slice(i, i + 50));
+      }
+    }
+    
+    return { fixed: updates.length, total: novels.length };
+  } catch (e) {
+    console.warn("[deduplicateExistingNovelTags] 오류:", e);
+    return { fixed: 0, total: 0, error: e.message };
+  }
 }
 
 // 모든 기본 태그 중복 제거 검사
@@ -18979,6 +19111,7 @@ async function calculateBehaviorPredictionAccuracy(recentN = 30) {
     return { accuracy: correct / logs.length, sample: logs.length };
   } catch { return null; }
 }
+
 function generateBehaviorInsights(staticGenres, dynamicGenres, staticTags, dynamicTags, staticAuthors, dynamicAuthors, predAcc) {
   const insights = [];
 
@@ -19890,6 +20023,16 @@ function AppContent() {
           
           // 🏷️ v5.0 태그 시스템 마이그레이션
           await migrateTagSystem();
+          
+          // 🔧 v3.5.15b: 기존 작품 중복 태그 일괄 정리 (1회 자동 실행)
+          const dedupDone = await getAppMeta("tag_dedup_v1");
+          if (!dedupDone) {
+            const dedupResult = await deduplicateExistingNovelTags();
+            await setAppMeta("tag_dedup_v1", { done: true, fixed: dedupResult.fixed, total: dedupResult.total, ts: Date.now() });
+            if (dedupResult.fixed > 0) {
+              console.log(`[tag_dedup_v1] ${dedupResult.total}개 작품 중 ${dedupResult.fixed}개 중복 태그 정리 완료`);
+            }
+          }
           
           // 🔧 v3.5.8: 데이터 무결성 자동 검증 (앱 시작 시 1회)
           await verifyDataIntegrity({ silent: true });
@@ -22316,32 +22459,57 @@ function AppContent() {
   }
 
   // 🏷️ 중복 태그 정리 (전체 태그에서 중복 제거)
+  // 🔧 v3.5.15b: 작품별 DB 데이터 중복도 일괄 정리 추가
   async function cleanupDuplicateTags() {
-    // 커스텀 태그 중복 제거
-    const cleanedCustom = deduplicateTags(customTags);
-    if (cleanedCustom.length !== customTags.length) {
-      setCustomTags(cleanedCustom);
-      await setAppMeta("custom_tags", cleanedCustom);
+    setIsLoading(true);
+    try {
+      let metaFixed = 0;
+      
+      // 커스텀 태그 중복 제거
+      const cleanedCustom = deduplicateTags(customTags);
+      if (cleanedCustom.length !== customTags.length) {
+        metaFixed += customTags.length - cleanedCustom.length;
+        setCustomTags(cleanedCustom);
+        await setAppMeta("custom_tags", cleanedCustom);
+      }
+      
+      // 🔧 v3.5.12: comboTags 중복 제거 제거 (항상 빈 배열)
+      
+      // 사용자 대장르 중복 제거
+      const cleanedMajor = deduplicateTags(userMajorGenres);
+      if (cleanedMajor.length !== userMajorGenres.length) {
+        metaFixed += userMajorGenres.length - cleanedMajor.length;
+        setUserMajorGenres(cleanedMajor);
+        await setAppMeta("user_major_genres", cleanedMajor);
+      }
+      
+      // 사용자 부장르 중복 제거
+      const cleanedSub = deduplicateTags(userSubGenres);
+      if (cleanedSub.length !== userSubGenres.length) {
+        metaFixed += userSubGenres.length - cleanedSub.length;
+        setUserSubGenres(cleanedSub);
+        await setAppMeta("user_sub_genres", cleanedSub);
+      }
+      
+      // 🔧 v3.5.15b: 작품별 tags/tag_data/major_genre/sub_genre 중복 일괄 정리
+      const novelResult = await deduplicateExistingNovelTags();
+      
+      if (novelResult.fixed > 0) {
+        await loadList(undefined, undefined, "dedup");
+      }
+      
+      const msgs = [];
+      if (metaFixed > 0) msgs.push(`태그 목록에서 ${metaFixed}개 중복 제거`);
+      if (novelResult.fixed > 0) msgs.push(`${novelResult.fixed}개 작품의 중복 태그 정리`);
+      
+      Alert.alert("완료", msgs.length > 0 
+        ? `중복 태그 정리 완료!\n${msgs.join("\n")}` 
+        : "중복 태그가 없습니다.");
+    } catch (e) {
+      console.warn("cleanupDuplicateTags 오류:", e);
+      Alert.alert("오류", "중복 태그 정리 중 오류가 발생했습니다.\n" + (e.message || e));
     }
-    
-    // 조합식 태그 중복 제거
-    // 🔧 v3.5.12: comboTags 중복 제거 제거 (항상 빈 배열)
-    
-    // 사용자 대장르 중복 제거
-    const cleanedMajor = deduplicateTags(userMajorGenres);
-    if (cleanedMajor.length !== userMajorGenres.length) {
-      setUserMajorGenres(cleanedMajor);
-      await setAppMeta("user_major_genres", cleanedMajor);
-    }
-    
-    // 사용자 부장르 중복 제거
-    const cleanedSub = deduplicateTags(userSubGenres);
-    if (cleanedSub.length !== userSubGenres.length) {
-      setUserSubGenres(cleanedSub);
-      await setAppMeta("user_sub_genres", cleanedSub);
-    }
-    
-    Alert.alert("완료", "중복 태그 정리가 완료되었습니다.");
+    setIsLoading(false);
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -37466,4 +37634,3 @@ export default function App() {
     </AppErrorBoundary>
   );
 }
-
