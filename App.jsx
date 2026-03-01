@@ -2,8 +2,8 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.5.15                                                                 ║
- * ║  최종 수정: 2025-02-27                                                        ║
+ * ║  버전: 3.5.15c                                                                ║
+ * ║  최종 수정: 2025-03-01                                                        ║
  * ║  총 라인 수: 약 37,700줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
@@ -143,6 +143,81 @@
  * ║ • 카드 디자인: 좌측 타입 컬러 보더 + 컴팩트 레이아웃                          ║
  * ║ • 날짜 헤더: 뱃지 스타일 + 구분선 디자인                                      ║
  * ║ • 빈 상태: 필터별 맞춤 메시지 + "전체 보기" 버튼                              ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ * 
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v3.5.15d 매칭 크래시 잔존 원인 수정 (2025-03-01)                      ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [버그 수정 1] 🔴 decide() matchAnalysis stale closure 수정                  ║
+ * ║ • 근본 원인: 큐 작업 실행 시점에 matchAnalysis가 이미 다음 pair의 것으로    ║
+ * ║   교체됨 → 잘못된 분석 데이터로 analyzeMatchResult/saveChoiceLog 실행       ║
+ * ║ • 수정: decide() 호출 시점에 capturedAnalysis로 스냅샷 캡처                 ║
+ * ║   → 큐 작업 내부에서 capturedAnalysis 사용                                  ║
+ * ║                                                                              ║
+ * ║ [버그 수정 2] 🔴 자동매칭 Alert 스태킹 → ANR 방지                          ║
+ * ║ • 근본 원인: 자동매칭 중 pickRandomUnseenPair/decide에서 Alert.alert 호출   ║
+ * ║   → 네이티브 모달이 연속 스태킹 → Android ANR / iOS 입력 불가               ║
+ * ║ • 수정: isAutoMatchingRef.current 체크 후 Alert 억제                        ║
+ * ║   - pickRandomUnseenPair: 8개 Alert 지점 모두 guard 추가                    ║
+ * ║   - decide .catch: 자동매칭 중 에러 Alert 억제                              ║
+ * ║                                                                              ║
+ * ║ [버그 수정 3] 🔴 자동매칭 IIFE unhandled rejection 수정                     ║
+ * ║ • 근본 원인: try/finally만 있고 catch 없음 → decide() 예외 시               ║
+ * ║   unhandled promise rejection → 프로세스 크래시 가능                        ║
+ * ║ • 수정: catch 블록 추가, 에러 시 조용히 자동매칭 중단                       ║
+ * ║                                                                              ║
+ * ║ [버그 수정 4] 🟡 deferSetAppMeta 동시 DB 쓰기 경합                         ║
+ * ║ • 근본 원인: 50ms 타이머가 큐 작업 실행 중 발동 → execBatch 동시 실행      ║
+ * ║   → SQLITE_BUSY (WAL 모드에서도 writer 1개 제한)                            ║
+ * ║ • 수정: 타이머 50ms→300ms, flush 전 waitForMatchQueueDrain 대기             ║
+ * ║                                                                              ║
+ * ║ [버그 수정 5] 🟡 choiceLogQueue/schedulePatternUpdate 동시 쓰기 경합       ║
+ * ║ • flush/processPatternUpdates 전에 waitForMatchQueueDrain 대기 추가         ║
+ * ║ • 큐 작업의 DB 쓰기 완료 후에만 로그/패턴 DB 쓰기 실행                     ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ * 
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v3.5.15c 코드 리뷰 + 매칭 크래시 근본 수정 (2025-03-01)              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [성능 수정] 🟡 TagPickerModal allTags useMemo 내 Set 반복 생성              ║
+ * ║ • buildTagKeySet(hiddenTags)가 filter 콜백 내에서 매 요소마다 호출           ║
+ * ║ • Set을 filter 외부에서 1회 생성 후 재사용 → O(n×m) → O(n+m)               ║
+ * ║                                                                              ║
+ * ║ [버그 수정 1] 🔴 safeDbOperation 경합→연쇄 크래시 근본 수정                ║
+ * ║ • 근본 원인: SQLITE_BUSY/LOCKED(경합)를 연결 오류로 잘못 분류하여           ║
+ * ║   resetDbConnection 호출 → 동시 실행 중인 모든 DB 작업의 연결 파괴          ║
+ * ║   → 연쇄 NullPointerException/크래시 발생                                   ║
+ * ║ • 수정: 경합(contention)과 연결(connection) 오류를 완전 분리                 ║
+ * ║   - 경합(BUSY/LOCKED): resetDbConnection 금지, 랜덤 jitter 대기 후 재시도   ║
+ * ║   - 연결(NullPointerException/closed/etc): resetDbConnection 수행            ║
+ * ║   - 기타 오류: 3번째 시도부터만 보수적으로 리셋                              ║
+ * ║                                                                              ║
+ * ║ [버그 수정 2] 🔴 batchSetAppMeta 수동 트랜잭션 → 원자적 실행               ║
+ * ║ • 근본 원인: exec("BEGIN")→exec("INSERT")→exec("COMMIT")이 각각             ║
+ * ║   safeDbOperation을 거침 → 중간에 resetDbConnection 발생 시                  ║
+ * ║   트랜잭션 상태 유실 → COMMIT 실패 → 고아 트랜잭션 DB 잠금                  ║
+ * ║ • 수정: execBatch(withTransactionAsync) 사용 → 단일 safeDbOperation          ║
+ * ║   내에서 원자적 실행, 중간 리셋 불가능                                       ║
+ * ║                                                                              ║
+ * ║ [버그 수정 3] 🔴 processMatchQueue/choiceLogQueue resetDbConnection 제거     ║
+ * ║ • 에러 핸들러에서 resetDbConnection 호출이 동시 DB 작업 파괴                 ║
+ * ║ • safeDbOperation이 이미 내부적으로 연결 복구를 수행하므로 불필요             ║
+ * ║                                                                              ║
+ * ║ [버그 수정 4] 🟡 useEffect[pair] 분석 DB경합 방지                           ║
+ * ║ • 50ms 디바운스 + 매칭 큐 드레인 대기 후 분석 시작                          ║
+ * ║ • 큐의 DB 쓰기와 분석의 DB 읽기 동시 실행 방지                              ║
+ * ║                                                                              ║
+ * ║ [버그 수정 5] 🟡 loadList 동시 실행 방지                                    ║
+ * ║ • loadListRunningRef guard 추가                                              ║
+ * ║ • 매칭/타이머/화면전환에서 중복 SELECT * FROM novels 방지                    ║
+ * ║                                                                              ║
+ * ║ [버그 수정 6] 🟡 포그라운드 전환 시 매칭 큐 드레인 대기                     ║
+ * ║ • resetDbConnection 전에 매칭 큐 완료 대기 (최대 3초)                       ║
+ * ║ • 진행 중인 매칭 DB 작업의 연결 파괴 방지                                   ║
  * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
@@ -404,6 +479,17 @@
  * ║   - categories.pinned: Set 룩업으로 전환                                  ║
  * ║   - currentTags enrichment: Set 룩업으로 전환                             ║
  * ║   - 렌더링: pre-computed isPinned/isHidden 사용                           ║
+ * ║                                                                              ║
+ * ║ [성능 수정] 🔴 TagSelectModal 키 입력 시 렉 (ANR)                        ║
+ * ║ • 원인: quickInput 변경 → filterBySearch 참조 갱신 → 4개 useMemo         ║
+ * ║   캐스케이드 재계산 (sortedMajor/Sub/General/Sentiment)                   ║
+ * ║   → 각각 listHasTag(hidden) × listHasTag(pinned) = ~160K regex/keystroke ║
+ * ║ • 해결: 2레이어 분리 아키텍처                                             ║
+ * ║   - Layer 1 (base): 데이터 변경 시만 → Set O(1) hidden/pinned + 정렬    ║
+ * ║   - Layer 2 (search): 키입력시 → string.includes (regex 0회)             ║
+ * ║   - filterBySearch useCallback 제거                                       ║
+ * ║   - coOccurringRecommendations: listHasTag → Set O(1)                    ║
+ * ║   - SearchTagModal: listHasTag → buildTagKeySet O(1)                     ║
  * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
@@ -2923,7 +3009,7 @@ function perfWrap(name, fn) {
 
 // 🔧 v3.4.7: 안전한 DB 실행 래퍼 (자동 재연결 + 더 적극적인 재시도)
 async function safeDbOperation(operation, operationName = "DB") {
-  const maxRetries = 5; // 3 → 5로 증가
+  const maxRetries = 5;
   
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
@@ -2939,35 +3025,57 @@ async function safeDbOperation(operation, operationName = "DB") {
       return result;
     } catch (e) {
       const errorMsg = e.message || "";
-      const isConnectionError = 
+      
+      // 🔧 v3.5.15c: 경합 오류와 연결 오류를 분리
+      // BUSY/LOCKED는 WAL 모드에서 정상적인 경합 — resetDbConnection 금지
+      // resetDbConnection은 다른 동시 작업의 DB 연결도 파괴하여 연쇄 크래시 유발
+      const isContentionError = 
+        errorMsg.includes("locked") ||
+        errorMsg.includes("busy") ||
+        errorMsg.includes("SQLITE_BUSY") ||
+        errorMsg.includes("SQLITE_LOCKED");
+      
+      const isConnectionError = !isContentionError && (
         errorMsg.includes("NullPointerException") ||
         errorMsg.includes("prepareAsync") ||
         errorMsg.includes("rejected") ||
         errorMsg.includes("database") ||
         errorMsg.includes("null") ||
         errorMsg.includes("closed") ||
-        errorMsg.includes("locked") ||
-        errorMsg.includes("busy") ||
-        errorMsg.includes("SQLITE_BUSY") ||
-        errorMsg.includes("SQLITE_LOCKED") ||
         errorMsg.includes("disk I/O") ||
-        errorMsg.includes("no such table");
+        errorMsg.includes("no such table")
+      );
       
-      console.warn(`${operationName} 오류 (시도 ${attempt + 1}/${maxRetries}):`, errorMsg);
+      console.warn(`${operationName} 오류 (시도 ${attempt + 1}/${maxRetries}):`, errorMsg,
+        isContentionError ? "[경합-대기]" : isConnectionError ? "[연결-리셋]" : "[기타]");
       PerfMonitor.trackDbRetry(operationName, attempt + 1, errorMsg); // 🔬
       
-      if (isConnectionError || attempt > 0) {
-        // 연결 오류거나 두 번째 시도부터는 항상 리셋 (🔧 v3.5.3: await 추가)
+      // 🔧 v3.5.15c: 연결 오류만 resetDbConnection (경합 오류는 대기만)
+      // 경합: busy_timeout=5000 내에서 자동 재시도, 그래도 실패 시 직접 retry
+      // 연결: DB가 죽었거나 null이므로 리셋 필요
+      if (isConnectionError) {
+        await resetDbConnection();
+      } else if (!isContentionError && attempt > 1) {
+        // 기타 오류: 3번째 시도부터 리셋 (보수적)
         await resetDbConnection();
       }
+      // 경합 오류: resetDbConnection 절대 하지 않음 (대기 후 재시도만)
       
       if (attempt === maxRetries - 1) {
         throw e;
       }
       
-      // 🔧 v3.5.3: NullPointerException은 더 긴 대기 필요
+      // 🔧 v3.5.15c: 경합은 짧은 랜덤 대기 (jitter), 연결은 긴 대기
       const isNullPtr = errorMsg.includes("NullPointerException");
-      const delay = isNullPtr ? 800 * (attempt + 1) : 300 * (attempt + 1);
+      let delay;
+      if (isContentionError) {
+        // 경합: 100~300ms 랜덤 대기 (thundering herd 방지)
+        delay = 100 + Math.random() * 200 + attempt * 100;
+      } else if (isNullPtr) {
+        delay = 800 * (attempt + 1);
+      } else {
+        delay = 300 * (attempt + 1);
+      }
       await new Promise(r => setTimeout(r, delay));
     }
   }
@@ -3153,11 +3261,11 @@ async function processMatchQueue() {
       resolve(result);
     } catch (e) {
       console.warn("매칭 큐 처리 오류:", e.message);
-      // 🔧 v3.5.3: DB 오류 시 재연결
-      if (e.message && (e.message.includes("database") || e.message.includes("null") || e.message.includes("locked"))) {
-        await resetDbConnection();
-        try { await openDb(); } catch (_) {}
-      }
+      // 🔧 v3.5.15c: resetDbConnection 제거
+      // 이유: safeDbOperation이 내부적으로 연결 오류를 구분하여 처리함
+      // 여기서 resetDbConnection을 호출하면 동시 실행 중인 다른 DB 작업
+      // (분석, choiceLog flush, deferSetAppMeta 등)의 연결도 함께 파괴됨
+      // → 연쇄 크래시의 근본 원인이었음
       reject(e);
     } finally {
       // 처리 완료 후 pending에서 제거
@@ -3609,7 +3717,10 @@ async function setAppMeta(key, value) {
 }
 
 // 🔧 v3.5.11 성능: 여러 setAppMeta를 1트랜잭션에 묶어 실행 (fsync 1회)
-// 사용: await batchSetAppMeta({ key1: val1, key2: val2, ... })
+// 🔧 v3.5.15c: 수동 BEGIN/COMMIT → execBatch(withTransactionAsync)로 교체
+//   문제: 개별 exec("BEGIN")→exec("INSERT")→exec("COMMIT")은 각각 safeDbOperation을
+//   거치므로, 중간에 resetDbConnection이 발생하면 트랜잭션 상태가 유실됨 → 연쇄 크래시
+//   해결: execBatch는 withTransactionAsync로 단일 safeDbOperation 내에서 원자적 실행
 async function batchSetAppMeta(entries) {
   if (!entries || typeof entries !== "object") return;
   const keys = Object.keys(entries);
@@ -3619,20 +3730,19 @@ async function batchSetAppMeta(entries) {
     return;
   }
   try {
-    await exec("BEGIN TRANSACTION;");
-    for (const [key, value] of Object.entries(entries)) {
-      const json = JSON.stringify(value ?? null);
-      await exec("INSERT OR REPLACE INTO app_meta (key,value) VALUES (?,?);", [key, json]);
-    }
-    await exec("COMMIT;");
+    const queries = keys.map(key => ({
+      sql: "INSERT OR REPLACE INTO app_meta (key,value) VALUES (?,?)",
+      params: [key, JSON.stringify(entries[key] ?? null)],
+    }));
+    await execBatch(queries);
   } catch (e) {
-    try { await exec("ROLLBACK;"); } catch {}
     console.warn("batchSetAppMeta 오류:", e);
   }
 }
 
-// 🔧 v3.5.11 성능: 지연 쓰기 코어레싱 — setTimeout(..., 0) 대체
-// 50ms 윈도우 내 호출을 모아 1트랜잭션으로 실행
+// 🔧 v3.5.15d: 지연 쓰기 코어레싱 — 큐 처리 중 동시 DB 쓰기 방지
+// 기존 50ms → 300ms 윈도우: 큐 작업 내 deferSetAppMeta 호출이 작업 완료 후 flush되도록
+// 큐 처리 중이면 추가 대기 (매칭 큐 DB 쓰기와 경합 방지)
 const _pendingMetaWrites = {};
 let _metaBatchTimer = null;
 
@@ -3641,6 +3751,13 @@ function deferSetAppMeta(key, value) {
   if (_metaBatchTimer) return; // 이미 타이머 대기 중
   _metaBatchTimer = setTimeout(async () => {
     _metaBatchTimer = null;
+    // 🔧 v3.5.15d: 매칭 큐가 처리 중이면 드레인 대기 후 flush
+    // 큐 작업의 execBatch와 이 flush의 execBatch가 동시 실행되면 SQLITE_BUSY 경합
+    if (!isMatchQueueIdle()) {
+      try {
+        await waitForMatchQueueDrain(3000);
+      } catch {}
+    }
     const snapshot = { ..._pendingMetaWrites };
     for (const k of Object.keys(_pendingMetaWrites)) delete _pendingMetaWrites[k];
     try {
@@ -3648,7 +3765,7 @@ function deferSetAppMeta(key, value) {
     } catch (e) {
       console.warn("deferSetAppMeta flush 오류:", e);
     }
-  }, 50);
+  }, 300);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -4483,6 +4600,15 @@ const choiceLogQueue = {
     
     if (this.pending.length === 0) return;
     
+    // 🔧 v3.5.15d: 매칭 큐 처리 중이면 드레인 대기 후 flush
+    // choiceLogQueue.flush는 타이머(5초) 또는 배치(20개)로 비동기 발동
+    // 큐 작업의 DB 쓰기와 동시 실행 시 SQLITE_BUSY 경합
+    if (!isMatchQueueIdle()) {
+      try {
+        await waitForMatchQueueDrain(3000);
+      } catch {}
+    }
+    
     const batch = this.pending.splice(0);
     
     try {
@@ -4520,8 +4646,11 @@ const choiceLogQueue = {
       
     } catch (e) {
       console.error("[choiceLogQueue.flush] 저장 실패:", e);
-      // 🔧 v3.5.3: DB 연결 문제일 수 있으므로 리셋
-      await resetDbConnection();
+      // 🔧 v3.5.15c: resetDbConnection 제거
+      // 이유: choiceLogQueue.flush는 타이머(5초) 또는 배치(20개)로 비동기 발동
+      // 매칭 중 다른 DB 작업(execBatch, loadList, 분석 등)과 동시 실행 가능
+      // 여기서 resetDbConnection 호출 시 그 작업들의 DB 연결도 파괴됨
+      // safeDbOperation이 execBatch 내부에서 이미 재연결 로직을 수행하므로 불필요
       // 실패한 로그는 다시 큐에 넣지 않음 (무한 루프 방지)
     }
   },
@@ -4602,6 +4731,10 @@ function schedulePatternUpdate(logs) {
       patternUpdateScheduled = false;
       
       if (batch.length > 0) {
+        // 🔧 v3.5.15d: 매칭 큐 드레인 대기 후 패턴 업데이트
+        if (!isMatchQueueIdle()) {
+          try { await waitForMatchQueueDrain(3000); } catch {}
+        }
         await processPatternUpdates(batch);
       }
     }, 1000);
@@ -8732,6 +8865,12 @@ const TagSelectModal = memo(({
     return TAG_SENTIMENT.NEUTRAL;
   }, [tagSentiments]);
 
+  // 🔧 v3.5.15b: O(1) 룩업용 정규화 Set (키 입력마다 재계산 방지)
+  const tagKeySetsLocal = useMemo(() => ({
+    pinned: buildTagKeySet(pinnedTags),
+    hidden: buildTagKeySet(hiddenTags),
+  }), [pinnedTags, hiddenTags]);
+
   // 토글 함수들 - 🆕 추가 시 lastAddedTag 업데이트
   const toggleMajor = useCallback((g) => {
     setSelectedMajor(prev => {
@@ -8925,64 +9064,56 @@ const TagSelectModal = memo(({
   // 정렬된 목록 (내부에서 계산) + 숨김 태그 필터링
   // 🆕 v3.4: 검색어 기반 필터링 함수
   // 🔧 v3.5.9: 빠른 입력 기반 실시간 필터링 (쉼표 이후 텍스트로 태그 검색)
-  const filterBySearch = useCallback((tags) => {
-    if (!liveSearchQuery) return tags;
-    const q = liveSearchQuery.toLowerCase();
-    return tags.filter(t => t.toLowerCase().includes(q));
-  }, [liveSearchQuery]);
+  // ═══════════════════════════════════════════════════════════════
+  // 🔧 v3.5.15b: 2레이어 분리 — base(데이터변경시만) + search(키입력시)
+  // 기존: 키입력 → filterBySearch 참조 변경 → 4개 useMemo 캐스케이드
+  //   → ~160,000 regex ops/keystroke (listHasTag × normalizeTag × TAG_ALIASES)
+  // 개선: base 레이어에서 Set O(1) 숨김/고정 처리, search 레이어는 string.includes만
+  // ═══════════════════════════════════════════════════════════════
 
-  // 🔧 v3.4.4: 고정 태그를 상단에 배치하는 정렬 헬퍼
+  // 🔧 v3.5.15b: Set 기반 고정 태그 상단 정렬
   const sortWithPinnedFirst = useCallback((tags) => {
-    const pinned = tags.filter(t => listHasTag(pinnedTags, t));
-    const others = tags.filter(t => !listHasTag(pinnedTags, t));
+    const pSet = tagKeySetsLocal.pinned;
+    if (pSet.size === 0) return tags;
+    const pinned = tags.filter(t => pSet.has(normalizeTagKey(t)));
+    const others = tags.filter(t => !pSet.has(normalizeTagKey(t)));
     return [...pinned, ...others];
-  }, [pinnedTags]);
+  }, [tagKeySetsLocal]);
 
-  const sortedMajor = useMemo(() => {
-    // 🔧 v3.5.11: getAllMajorTags 사용으로 통일 (isMajor:false 제거도 반영)
+  // Layer 1: 기반 데이터 (데이터 변경 시에만 재계산, 키입력 무관)
+  const baseSortedMajor = useMemo(() => {
+    const hSet = tagKeySetsLocal.hidden;
     const all = getAllMajorTags(tagAttributes, userMajorGenres)
-      .filter(t => !listHasTag(hiddenTags, t));
-    const sorted = sortTagsByUsage(all, tagUsageCounts);
-    const filtered = filterBySearch(sorted);
-    return sortWithPinnedFirst(filtered);
-  }, [userMajorGenres, tagUsageCounts, hiddenTags, filterBySearch, sortWithPinnedFirst, tagAttributes]);
+      .filter(t => !hSet.has(normalizeTagKey(t)));
+    return sortWithPinnedFirst(sortTagsByUsage(all, tagUsageCounts));
+  }, [userMajorGenres, tagUsageCounts, tagKeySetsLocal, sortWithPinnedFirst, tagAttributes]);
   
-  const sortedSub = useMemo(() => {
-    // 🔧 v3.5.11: getAllSubTags 사용으로 통일 (isSub:false 제거도 반영)
+  const baseSortedSub = useMemo(() => {
+    const hSet = tagKeySetsLocal.hidden;
     const all = getAllSubTags(tagAttributes, userSubGenres)
-      .filter(t => !listHasTag(hiddenTags, t));
-    const sorted = sortTagsByUsage(all, tagUsageCounts);
-    const filtered = filterBySearch(sorted);
-    return sortWithPinnedFirst(filtered);
-  }, [userSubGenres, tagUsageCounts, hiddenTags, filterBySearch, sortWithPinnedFirst, tagAttributes]);
+      .filter(t => !hSet.has(normalizeTagKey(t)));
+    return sortWithPinnedFirst(sortTagsByUsage(all, tagUsageCounts));
+  }, [userSubGenres, tagUsageCounts, tagKeySetsLocal, sortWithPinnedFirst, tagAttributes]);
 
-  const sortedGeneralTags = useMemo(() => {
-    // 🔧 v3.5.9: genreSet 제외 로직 제거 (v3.5.8의 이중표시 방지 → 태그 발견 불가 부작용)
-    // 장르 탭과 일반 탭에 동시 노출 허용: 장르 탭=빠른 선택, 일반 탭=카테고리 탐색 용도 분리
-    // ("먼치킨", "천재", "재벌" 등 11개 태그가 카테고리에서 사라지던 문제 해결)
+  const baseSortedGeneralTags = useMemo(() => {
+    const hSet = tagKeySetsLocal.hidden;
     const result = {};
     for (const [category, tagList] of Object.entries(GENERAL_TAGS)) {
-      const filtered = tagList.filter(t => !listHasTag(hiddenTags, t));
-      const sorted = sortTagsByUsage(filtered, tagUsageCounts);
-      const searched = filterBySearch(sorted);
-      result[category] = sortWithPinnedFirst(searched); // 🔧 v3.4.4: 고정 태그 상단
+      const filtered = tagList.filter(t => !hSet.has(normalizeTagKey(t)));
+      result[category] = sortWithPinnedFirst(sortTagsByUsage(filtered, tagUsageCounts));
     }
-    // 🆕 v3.5.9: 커스텀 태그 카테고리 병합 (기본 카테고리 뒤에 표시)
     if (customTagCategories && typeof customTagCategories === "object") {
       for (const [catName, catTags] of Object.entries(customTagCategories)) {
         if (!Array.isArray(catTags) || catTags.length === 0) continue;
-        const filtered = catTags.filter(t => !listHasTag(hiddenTags, t));
-        const sorted = sortTagsByUsage(filtered, tagUsageCounts);
-        const searched = filterBySearch(sorted);
-        result[`📂 ${catName}`] = sortWithPinnedFirst(searched);
+        const filtered = catTags.filter(t => !hSet.has(normalizeTagKey(t)));
+        result[`📂 ${catName}`] = sortWithPinnedFirst(sortTagsByUsage(filtered, tagUsageCounts));
       }
     }
     return result;
-  }, [tagUsageCounts, hiddenTags, filterBySearch, sortWithPinnedFirst, customTagCategories]);
+  }, [tagUsageCounts, tagKeySetsLocal, sortWithPinnedFirst, customTagCategories]);
 
-  // 🎭 v2.8.1: 감정별 태그 분류
-  const sentimentTags = useMemo(() => {
-    // 🔧 v3.5.12: comboTags 제거 (customTags로 통합됨)
+  const baseSentimentTags = useMemo(() => {
+    const hSet = tagKeySetsLocal.hidden;
     const allTags = new Set();
     MAJOR_GENRES.forEach(t => allTags.add(t));
     SUB_GENRES.forEach(t => allTags.add(t));
@@ -8991,27 +9122,53 @@ const TagSelectModal = memo(({
     Object.values(GENERAL_TAGS).flat().forEach(t => allTags.add(t));
     customTags.forEach(t => allTags.add(t));
     
-    // 숨김 태그 제외
-    const visibleTags = Array.from(allTags).filter(t => !listHasTag(hiddenTags, t));
-    
-    // 감정별 분류
-    const positive = [];
-    const neutral = [];
-    const negative = [];
-    
+    const visibleTags = Array.from(allTags).filter(t => !hSet.has(normalizeTagKey(t)));
+    const positive = [], neutral = [], negative = [];
     for (const tag of visibleTags) {
       const sentiment = getTagSentimentLocal(tag);
       if (sentiment === TAG_SENTIMENT.POSITIVE) positive.push(tag);
       else if (sentiment === TAG_SENTIMENT.NEGATIVE) negative.push(tag);
       else neutral.push(tag);
     }
-    
     return {
-      positive: sortWithPinnedFirst(filterBySearch(sortTagsByUsage(positive, tagUsageCounts))),
-      neutral: sortWithPinnedFirst(filterBySearch(sortTagsByUsage(neutral, tagUsageCounts))),
-      negative: sortWithPinnedFirst(filterBySearch(sortTagsByUsage(negative, tagUsageCounts))),
+      positive: sortWithPinnedFirst(sortTagsByUsage(positive, tagUsageCounts)),
+      neutral: sortWithPinnedFirst(sortTagsByUsage(neutral, tagUsageCounts)),
+      negative: sortWithPinnedFirst(sortTagsByUsage(negative, tagUsageCounts)),
     };
-  }, [customTags, hiddenTags, tagUsageCounts, getTagSentimentLocal, filterBySearch, sortWithPinnedFirst, userMajorGenres, userSubGenres]);
+  }, [customTags, tagKeySetsLocal, tagUsageCounts, getTagSentimentLocal, sortWithPinnedFirst, userMajorGenres, userSubGenres]);
+
+  // Layer 2: 검색 필터 (키입력마다 — 단순 string.includes, regex 0회)
+  const sortedMajor = useMemo(() => {
+    if (!liveSearchQuery) return baseSortedMajor;
+    const q = liveSearchQuery.toLowerCase();
+    return baseSortedMajor.filter(t => t.toLowerCase().includes(q));
+  }, [baseSortedMajor, liveSearchQuery]);
+  
+  const sortedSub = useMemo(() => {
+    if (!liveSearchQuery) return baseSortedSub;
+    const q = liveSearchQuery.toLowerCase();
+    return baseSortedSub.filter(t => t.toLowerCase().includes(q));
+  }, [baseSortedSub, liveSearchQuery]);
+
+  const sortedGeneralTags = useMemo(() => {
+    if (!liveSearchQuery) return baseSortedGeneralTags;
+    const q = liveSearchQuery.toLowerCase();
+    const result = {};
+    for (const [cat, tags] of Object.entries(baseSortedGeneralTags)) {
+      result[cat] = tags.filter(t => t.toLowerCase().includes(q));
+    }
+    return result;
+  }, [baseSortedGeneralTags, liveSearchQuery]);
+
+  const sentimentTags = useMemo(() => {
+    if (!liveSearchQuery) return baseSentimentTags;
+    const q = liveSearchQuery.toLowerCase();
+    return {
+      positive: baseSentimentTags.positive.filter(t => t.toLowerCase().includes(q)),
+      neutral: baseSentimentTags.neutral.filter(t => t.toLowerCase().includes(q)),
+      negative: baseSentimentTags.negative.filter(t => t.toLowerCase().includes(q)),
+    };
+  }, [baseSentimentTags, liveSearchQuery]);
 
   // 🆕 v3.2.1: 공동 출현 기반 태그 추천 (마지막 추가 태그 우선)
   const coOccurringRecommendations = useMemo(() => {
@@ -9020,6 +9177,7 @@ const TagSelectModal = memo(({
     if (allSelected.size === 0) return [];
     
     const candidates = new Map(); // tag -> score
+    const hSet = tagKeySetsLocal.hidden; // 🔧 v3.5.15b: Set O(1) 룩업
     
     // 🆕 마지막 추가 태그가 있으면 그 태그 기준으로 추천
     const focusTag = lastAddedTag && allSelected.has(lastAddedTag) ? lastAddedTag : null;
@@ -9032,7 +9190,7 @@ const TagSelectModal = memo(({
         if (coTags) {
           for (const [otherTag, count] of Object.entries(coTags)) {
             if (allSelected.has(otherTag)) continue;
-            if (listHasTag(hiddenTags, otherTag)) continue;
+            if (hSet.has(normalizeTagKey(otherTag))) continue;
             candidates.set(otherTag, count);
           }
         }
@@ -9047,7 +9205,7 @@ const TagSelectModal = memo(({
           
           for (const [otherTag, count] of Object.entries(coTags)) {
             if (allSelected.has(otherTag)) continue;
-            if (listHasTag(hiddenTags, otherTag)) continue;
+            if (hSet.has(normalizeTagKey(otherTag))) continue;
             if (candidates.has(otherTag)) continue; // 이미 추가됨
             
             candidates.set(otherTag, count * 0.5); // 가중치 낮춤
@@ -9065,7 +9223,7 @@ const TagSelectModal = memo(({
       
       for (const tag of allAvailableTags) {
         if (allSelected.has(tag)) continue;
-        if (listHasTag(hiddenTags, tag)) continue;
+        if (hSet.has(normalizeTagKey(tag))) continue;
         
         const usage = tagUsageCounts[tag] || 0;
         if (usage > 0) {
@@ -9079,7 +9237,7 @@ const TagSelectModal = memo(({
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5)
       .map(([tag]) => tag);
-  }, [selectedMajor, selectedSub, selectedTags, lastAddedTag, tagCoOccurrences, tagUsageCounts, customTags, userMajorGenres, userSubGenres, hiddenTags, tagAttributes]);
+  }, [selectedMajor, selectedSub, selectedTags, lastAddedTag, tagCoOccurrences, tagUsageCounts, customTags, userMajorGenres, userSubGenres, tagKeySetsLocal, tagAttributes]);
 
   // 조합식 태그 생성 (v2.8: 공백으로 자연스럽게 연결)
   const handleCreateComboTag = () => {
@@ -9545,7 +9703,9 @@ const TagSelectModal = memo(({
                 
                 {/* 커스텀 태그 */}
                 {customTags.length > 0 && (() => {
-                  const filtered = sortWithPinnedFirst(filterBySearch(sortTagsByUsage(customTags.filter(t => !listHasTag(hiddenTags, t)), tagUsageCounts)));
+                  const hSet = tagKeySetsLocal.hidden;
+                  const base = sortWithPinnedFirst(sortTagsByUsage(customTags.filter(t => !hSet.has(normalizeTagKey(t))), tagUsageCounts));
+                  const filtered = liveSearchQuery ? base.filter(t => t.toLowerCase().includes(liveSearchQuery.toLowerCase())) : base;
                   return filtered.length > 0 ? (
                   <View>
                     <Text style={{ fontWeight: "700", color: C.text, marginTop: 12, marginBottom: 6 }}>
@@ -9773,7 +9933,9 @@ const TagSelectModal = memo(({
                 {(() => {
                   // 조합 형식 태그 필터 (공백 포함 + COMBO_TAG_TRAITS 시작)
                   const comboLikeTags = customTags.filter(t => t.includes(" ") && COMBO_TAG_TRAITS.some(tr => t.startsWith(tr)));
-                  const filtered = sortWithPinnedFirst(filterBySearch(sortTagsByUsage(comboLikeTags.filter(t => !listHasTag(hiddenTags, t)), tagUsageCounts)));
+                  const hSet = tagKeySetsLocal.hidden;
+                  const base = sortWithPinnedFirst(sortTagsByUsage(comboLikeTags.filter(t => !hSet.has(normalizeTagKey(t))), tagUsageCounts));
+                  const filtered = liveSearchQuery ? base.filter(t => t.toLowerCase().includes(liveSearchQuery.toLowerCase())) : base;
                   return filtered.length > 0 ? (
                   <View>
                     <Text style={{ fontWeight: "700", color: C.text, marginBottom: 6 }}>
@@ -9986,10 +10148,13 @@ const SearchTagModal = memo(({
       ...ALL_DEFAULT_TAGS,
       ...customTags,
     ]);
-    return Array.from(tags).filter(t => !listHasTag(hiddenTags, t));
+    // 🔧 v3.5.15c: Set을 filter 외부에서 1회 생성 (기존: 요소마다 Set 재생성 O(n×m) → O(n+m))
+    const hSetLocal = buildTagKeySet(hiddenTags);
+    return Array.from(tags).filter(t => !hSetLocal.has(normalizeTagKey(t)));
   }, [customTags, userMajorGenres, userSubGenres, hiddenTags]);
   
   // 검색 필터링
+  // 🔧 v3.5.15b: Set 기반 고정 태그 정렬
   const filteredTags = useMemo(() => {
     const q = searchQ.toLowerCase().trim();
     let result = allTags;
@@ -9997,8 +10162,9 @@ const SearchTagModal = memo(({
       result = result.filter(t => t.toLowerCase().includes(q));
     }
     // 고정 태그를 앞으로
-    const pinned = result.filter(t => listHasTag(pinnedTags, t));
-    const others = result.filter(t => !listHasTag(pinnedTags, t));
+    const pSet = buildTagKeySet(pinnedTags);
+    const pinned = result.filter(t => pSet.has(normalizeTagKey(t)));
+    const others = result.filter(t => !pSet.has(normalizeTagKey(t)));
     return [...pinned, ...others];
   }, [allTags, searchQ, pinnedTags]);
   
@@ -19163,7 +19329,6 @@ async function calculateBehaviorPredictionAccuracy(recentN = 30) {
     return { accuracy: correct / logs.length, sample: logs.length };
   } catch { return null; }
 }
-
 function generateBehaviorInsights(staticGenres, dynamicGenres, staticTags, dynamicTags, staticAuthors, dynamicAuthors, predAcc) {
   const insights = [];
 
@@ -20467,6 +20632,13 @@ function AppContent() {
       // 백그라운드 → 포그라운드 전환 시
       if (lastState.match(/inactive|background/) && nextAppState === "active") {
         console.log("앱 포그라운드 전환 - DB 연결 리셋 및 데이터 리로드");
+        // 🔧 v3.5.15c: 매칭 큐가 처리 중이면 먼저 드레인 대기
+        // 이유: resetDbConnection이 진행 중인 매칭 DB 작업의 연결을 파괴하면 크래시
+        // 큐 드레인 후 안전하게 연결 리셋 수행
+        if (!isMatchQueueIdle()) {
+          console.log("포그라운드 전환: 매칭 큐 드레인 대기...");
+          await waitForMatchQueueDrain(3000);
+        }
         // 기존 연결을 강제로 끊고 새로 연결 (🔧 v3.5.3: await)
         await resetDbConnection();
         try {
@@ -22238,6 +22410,7 @@ function AppContent() {
   const tagHashRef = useRef("");
   const coOccTimerRef = useRef(null);
   const matchStatsTimerRef = useRef(null); // 🔧 v3.5.14: loadMatchStats 디바운스
+  const loadListRunningRef = useRef(false); // 🔧 v3.5.15c: loadList 동시 실행 방지
   
   function updateTagUsageCounts(novels) {
     // P2: 태그 해시 비교 — 데이터 미변경 시 스킵
@@ -23640,6 +23813,15 @@ function AppContent() {
       }
       initLoadedRef.current = true;
     }
+    // 🔧 v3.5.15c: 동시 실행 방지 — 이전 loadList가 아직 DB 읽기 중이면 스킵
+    // 매칭 중 decide()→loadList + deferSetAppMeta→loadList + 화면전환→loadList 등
+    // 여러 소스에서 동시 호출될 수 있음. 중복 SELECT * FROM novels는 DB 부하만 증가시킴
+    if (loadListRunningRef.current) {
+      PerfMonitor.beginFunc("loadList", (_trigger || "unknown") + "-concurrent-skip"); // 🔬
+      PerfMonitor.endFunc("loadList"); // 🔬
+      return;
+    }
+    loadListRunningRef.current = true;
     PerfMonitor.beginFunc("loadList", _trigger || "unknown"); // 🔬 v3.5.9b
     try {
       const sk = sortKey ?? homeSortKey;
@@ -23679,10 +23861,12 @@ function AppContent() {
         matchStatsTimerRef.current = null;
       }, _trigger === "op" ? 3000 : 500);
       PerfMonitor.endFunc("loadList"); // 🔬 v3.5.9b
+      loadListRunningRef.current = false; // 🔧 v3.5.15c
     } catch (e) {
       console.warn("loadList 오류:", e);
       PerfMonitor.logError("loadList", e); // 🔬
       PerfMonitor.endFunc("loadList"); // 🔬 v3.5.9b
+      loadListRunningRef.current = false; // 🔧 v3.5.15c
       setList([]);
     }
   }
@@ -24665,12 +24849,15 @@ function AppContent() {
       if (matchFilterEnabled) {
         const filtered = allNovels.filter(isDataRichNovel);
         if (filtered.length < 2) {
-          Alert.alert(
-            "매치 필터링",
-            `조건을 충족하는 작품이 ${filtered.length}개뿐입니다 (2개 이상 필요).\n\n` +
-            `조건: 읽은 회차, 총 회차, 작가 기입 + 태그 ${matchFilterMinTags}개 이상\n\n` +
-            "필터를 해제하거나 작품 정보를 보충하세요."
-          );
+          // 🔧 v3.5.15d: 자동매칭 중 Alert 억제
+          if (!isAutoMatchingRef.current) {
+            Alert.alert(
+              "매치 필터링",
+              `조건을 충족하는 작품이 ${filtered.length}개뿐입니다 (2개 이상 필요).\n\n` +
+              `조건: 읽은 회차, 총 회차, 작가 기입 + 태그 ${matchFilterMinTags}개 이상\n\n` +
+              "필터를 해제하거나 작품 정보를 보충하세요."
+            );
+          }
           setPair(null);
           return;
         }
@@ -24678,7 +24865,9 @@ function AppContent() {
       }
       
       if (!allNovels || allNovels.length < 2) {
-        Alert.alert("알림", "작품을 2개 이상 추가하세요.");
+        if (!isAutoMatchingRef.current) {
+          Alert.alert("알림", "작품을 2개 이상 추가하세요.");
+        }
         setPair(null);
         return;
       }
@@ -24698,13 +24887,17 @@ function AppContent() {
           if (matchFilterEnabled) {
             const rawFocus = cachedNovels.find(n => n.id === focusId);
             if (rawFocus) {
-              Alert.alert("매치 필터링", "고정 매칭 작품이 필터 조건을 충족하지 않습니다.\n\n필터를 해제하거나 작품 정보를 보충하세요.");
+              if (!isAutoMatchingRef.current) {
+                Alert.alert("매치 필터링", "고정 매칭 작품이 필터 조건을 충족하지 않습니다.\n\n필터를 해제하거나 작품 정보를 보충하세요.");
+              }
               setPair(null);
               return;
             }
           }
           setFocusMatchNovel(null);
-          Alert.alert("알림", "선택한 작품을 찾을 수 없어 전체 매칭으로 전환합니다.");
+          if (!isAutoMatchingRef.current) {
+            Alert.alert("알림", "선택한 작품을 찾을 수 없어 전체 매칭으로 전환합니다.");
+          }
           for (let i = 0; i < allNovels.length; i++) {
             for (let j = i + 1; j < allNovels.length; j++) {
               const A = allNovels[i],
@@ -24735,13 +24928,16 @@ function AppContent() {
       }
 
       if (candidates.length === 0) {
-        if (focusId) {
-          Alert.alert(
-            "알림",
-            "선택한 작품이 포함된 새로운(미대전) 매칭이 없습니다. 다른 작품을 선택하거나 전체 매칭으로 사용해 주세요."
-          );
-        } else {
-          Alert.alert("알림", "새로운(미대전) 매칭이 없습니다.");
+        // 🔧 v3.5.15d: 자동매칭 중 Alert 억제
+        if (!isAutoMatchingRef.current) {
+          if (focusId) {
+            Alert.alert(
+              "알림",
+              "선택한 작품이 포함된 새로운(미대전) 매칭이 없습니다. 다른 작품을 선택하거나 전체 매칭으로 사용해 주세요."
+            );
+          } else {
+            Alert.alert("알림", "새로운(미대전) 매칭이 없습니다.");
+          }
         }
         setPair(null);
         return;
@@ -24751,7 +24947,10 @@ function AppContent() {
     } catch (e) {
       console.warn("pickRandomUnseenPair 오류:", e);
       setPair(null);
-      Alert.alert("오류", "매칭 생성 중 오류가 발생했습니다.\n\n" + e.message);
+      // 🔧 v3.5.15d: 자동매칭 중 Alert 억제
+      if (!isAutoMatchingRef.current) {
+        Alert.alert("오류", "매칭 생성 중 오류가 발생했습니다.\n\n" + e.message);
+      }
     }
   };
 
@@ -24774,22 +24973,40 @@ function AppContent() {
   // 🔮 v3.0.3: 매칭 생성 시 승부예측 분석 수행
   // 🧠 v3.5.0: 취향 기반 예측 추가
   // 🔧 v3.5.15: abort로 stale 분석 취소 + 자동매칭 시 heavy 분석 스킵
+  // 🔧 v3.5.15c: 디바운스 + 큐 처리 중 분석 지연 (DB 경합 근본 방지)
+  const pairAnalysisTimerRef = useRef(null);
   useEffect(() => {
     let aborted = false;
+    
+    // 이전 타이머 취소
+    if (pairAnalysisTimerRef.current) {
+      clearTimeout(pairAnalysisTimerRef.current);
+      pairAnalysisTimerRef.current = null;
+    }
     
     if (pair && pair.A && pair.B) {
       // 🔧 v3.5.15: pair ID 추적 (auto-match에서 stale analysis 방지)
       matchAnalysisPairRef.current = { aId: pair.A.id, bId: pair.B.id };
       
-      (async () => {
+      // 🔧 v3.5.15c: 매칭 큐 처리 중이면 분석을 지연
+      // 큐 작업의 DB 쓰기와 분석의 DB 읽기가 동시에 실행되면 SQLITE_BUSY 경합 발생
+      const startAnalysis = async () => {
+        if (aborted) return;
+        
+        // 큐가 처리 중이면 드레인 대기 (최대 3초)
+        if (!isMatchQueueIdle()) {
+          await waitForMatchQueueDrain(3000);
+          if (aborted) return;
+        }
+        
         try {
           const analysis = await analyzeMatchPrediction(pair.A, pair.B);
           if (aborted) return; // 이미 다음 pair로 넘어감
           setMatchAnalysis(analysis);
           
           // 🔧 v3.5.15: 자동매칭 진행 중에는 generateEnhancedPrediction 스킵
-          // 이유: 5+ DB 쿼리를 사용하지만 UI에 보여줄 시간이 없음 (즉시 결정됨)
           if (!isAutoMatchingRef.current && !autoEnabled) {
+            if (aborted) return;
             await generateMatchPrediction(pair.A, pair.B);
           } else {
             setMatchPrediction(null);
@@ -24800,7 +25017,16 @@ function AppContent() {
           setMatchAnalysis(null);
           setMatchPrediction(null);
         }
-      })();
+      };
+      
+      // 🔧 v3.5.15c: 50ms 디바운스 — 빠른 연타 시 이전 분석을 취소하고 마지막 pair만 분석
+      // 자동매칭은 즉시 실행 (evaluateAutoMatch가 matchAnalysis 대기)
+      const debounceMs = isAutoMatchingRef.current ? 0 : 50;
+      if (debounceMs > 0) {
+        pairAnalysisTimerRef.current = setTimeout(startAnalysis, debounceMs);
+      } else {
+        startAnalysis();
+      }
     } else {
       matchAnalysisPairRef.current = null;
       setMatchAnalysis(null);
@@ -24808,7 +25034,13 @@ function AppContent() {
     }
     
     // 🔧 v3.5.15: cleanup — pair 변경 시 이전 분석 작업 취소
-    return () => { aborted = true; };
+    return () => { 
+      aborted = true;
+      if (pairAnalysisTimerRef.current) {
+        clearTimeout(pairAnalysisTimerRef.current);
+        pairAnalysisTimerRef.current = null;
+      }
+    };
   }, [pair]);
 
   const decide = async (winnerId, decided_by = "user") => {
@@ -24818,6 +25050,10 @@ function AppContent() {
     // 🔄 v3.4.6: pair를 로컬에 캡처 (큐 처리 중 상태 변경 대비)
     const currentPair = { A: { ...pair.A }, B: { ...pair.B } };
     const pairKey = matchPairKey(currentPair.A.id, currentPair.B.id);
+    
+    // 🔧 v3.5.15d: matchAnalysis도 호출 시점에 캡처
+    // 큐 작업이 실행될 때는 이미 다음 pair의 분석으로 바뀌어 있을 수 있음 (stale closure)
+    const capturedAnalysis = matchAnalysis;
     
     // 🔄 v3.4.6: 이미 큐에서 처리 중인 조합이면 무시
     if (isMatchPending(currentPair.A.id, currentPair.B.id)) {
@@ -24920,19 +25156,20 @@ function AppContent() {
       }
       
       // 🔮 v3.0.3: 매치 결과 분석 및 인사이트 저장
-      if (matchAnalysis) {
-        await analyzeMatchResult(A, B, winnerId, matchAnalysis);
+      // 🔧 v3.5.15d: capturedAnalysis 사용 (호출 시점 스냅샷)
+      if (capturedAnalysis) {
+        await analyzeMatchResult(A, B, winnerId, capturedAnalysis);
       }
       
       // 🧠 v3.5.0: 취향 발견 시스템 - 선택 로그 기록
       try {
         const winner = aIsWinner ? A : B;
         const loser = aIsWinner ? B : A;
-        const predictedWinnerId = matchAnalysis?.predictedWinner === "A" ? A.id : 
-                                  matchAnalysis?.predictedWinner === "B" ? B.id : null;
-        await saveChoiceLog(mid, winner, loser, decided_by, matchAnalysis ? {
+        const predictedWinnerId = capturedAnalysis?.predictedWinner === "A" ? A.id : 
+                                  capturedAnalysis?.predictedWinner === "B" ? B.id : null;
+        await saveChoiceLog(mid, winner, loser, decided_by, capturedAnalysis ? {
           predictedWinnerId,
-          confidence: matchAnalysis.confidence || 0,
+          confidence: capturedAnalysis.confidence || 0,
           factors: null,
         } : null, tagAttributes);
       } catch (e) {
@@ -24952,7 +25189,10 @@ function AppContent() {
     }, pairKey).catch((e) => {
       if (_pt) PerfMonitor.logError("decide", e); // 🔬
       console.warn("decide 오류:", e);
-      Alert.alert("오류", "매칭 결과 저장 중 오류가 발생했습니다.\n\n" + e.message);
+      // 🔧 v3.5.15d: 자동매칭 중에는 Alert 억제 (연속 Alert 스태킹 → ANR 방지)
+      if (!isAutoMatchingRef.current) {
+        Alert.alert("오류", "매칭 결과 저장 중 오류가 발생했습니다.\n\n" + e.message);
+      }
     });
   };
 
@@ -25181,6 +25421,10 @@ function AppContent() {
         const speed = autoMatchSettings.speed || "fast";
         const delayMs = speed === "fast" ? 100 : speed === "normal" ? 300 : 700;
         await new Promise(r => setTimeout(r, delayMs));
+      } catch (e) {
+        // 🔧 v3.5.15d: 자동매칭 에러 시 조용히 중단 (Alert 스태킹 방지)
+        console.warn("[자동매칭] 오류 발생, 중단:", e.message || e);
+        // 자동매칭 중단 (finally에서 플래그 리셋됨)
       } finally {
         isAutoMatchingRef.current = false;
         setIsAutoMatching(false);
@@ -37686,3 +37930,4 @@ export default function App() {
     </AppErrorBoundary>
   );
 }
+
