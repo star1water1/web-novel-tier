@@ -2,9 +2,44 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.5.15c                                                                ║
- * ║  최종 수정: 2025-03-01                                                        ║
- * ║  총 라인 수: 약 37,700줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 3.5.15e                                                                ║
+ * ║  최종 수정: 2025-03-08                                                        ║
+ * ║  총 라인 수: 약 38,700줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ * 
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ ⚠️ 매칭 시스템 불변조건 (v3.5.15c~d에서 확립, 절대 위반 금지)              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║  아래 5개 규칙은 매칭 중 크래시/ANR/데이터 오염을 방지하는 구조적 방어선      ║
+ * ║  입니다. 기능 추가·리팩토링 시 이 조건이 깨지면 회귀 크래시가 발생합니다.     ║
+ * ║                                                                              ║
+ * ║  1. 자동매칭 중 사용자 Alert 호출 금지                                       ║
+ * ║     - isAutoMatchingRef.current === true 일 때 Alert.alert() 호출 금지       ║
+ * ║     - 이유: 네이티브 모달이 연속 스태킹 → Android ANR / iOS 입력 불가        ║
+ * ║     - 적용: pickRandomUnseenPair(8곳), decide .catch(1곳)                    ║
+ * ║                                                                              ║
+ * ║  2. 매칭 큐 내부에서 React state 직접 참조 금지, 스냅샷만 사용               ║
+ * ║     - enqueueMatchTask 콜백 안에서 matchAnalysis, pair 등 state 금지         ║
+ * ║     - 이유: 큐 실행 시점에 이미 다른 pair의 값으로 교체됨 (stale closure)    ║
+ * ║     - 방법: decide() 진입 시 const capturedX = stateX 로 스냅샷 캡처        ║
+ * ║                                                                              ║
+ * ║  3. 큐 외부 write 타이머는 flush 전 반드시 queue drain 대기                  ║
+ * ║     - deferSetAppMeta, choiceLogQueue.flush, schedulePatternUpdate           ║
+ * ║     - DB write 전 waitForMatchQueueDrain(3000) 호출 필수                     ║
+ * ║     - 이유: 큐의 execBatch와 타이머의 execBatch 동시 실행 → SQLITE_BUSY     ║
+ * ║     - WAL 모드에서도 writer는 1개만 허용 (reader는 동시 가능)                ║
+ * ║                                                                              ║
+ * ║  4. SQLITE_BUSY / SQLITE_LOCKED 발생 시 resetDbConnection 금지              ║
+ * ║     - safeDbOperation에서 경합(contention)과 연결(connection) 오류 분리 필수 ║
+ * ║     - 경합: jitter 대기 후 재시도만 (resetDbConnection 절대 금지)            ║
+ * ║     - 이유: resetDb는 전역 db 변수를 null로 → 동시 작업 전부 연쇄 크래시    ║
+ * ║                                                                              ║
+ * ║  5. 자동매칭 루프는 모든 비동기 경로에 catch/finally 강제                    ║
+ * ║     - IIFE, decide(), pickRandomUnseenPair 등 모든 async 경로               ║
+ * ║     - catch 누락 → unhandled promise rejection → 프로세스 크래시            ║
+ * ║     - finally에서 isAutoMatchingRef/setIsAutoMatching 리셋 보장              ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -176,6 +211,81 @@
  * ║ [버그 수정 5] 🟡 choiceLogQueue/schedulePatternUpdate 동시 쓰기 경합       ║
  * ║ • flush/processPatternUpdates 전에 waitForMatchQueueDrain 대기 추가         ║
  * ║ • 큐 작업의 DB 쓰기 완료 후에만 로그/패턴 DB 쓰기 실행                     ║
+ * ║                                                                              ║
+ * ║ [신규 기능] 📁 슬롯 시스템 (다중 데이터셋 관리)                             ║
+ * ║ • 최대 10개 독립 데이터셋 생성/전환/삭제/이름변경                           ║
+ * ║ • 슬롯 0 = novel_tiers.db (기존 데이터 하위호환)                            ║
+ * ║ • 슬롯 1~9 = novel_tiers_slotN.db (새 데이터셋)                            ║
+ * ║ • 슬롯 메타: JSON 파일로 DB 독립 관리 (slot_meta.json)                     ║
+ * ║ • 전환 시 안전장치: flushAllPendingWrites → 큐 드레인 → DB close → open    ║
+ * ║ • 전환 시 전체 state 초기값 리셋 후 새 DB에서 재로드                        ║
+ * ║ • 설정 탭에 "📁 슬롯" 서브탭 추가                                          ║
+ * ║                                                                              ║
+ * ║ [버그 수정 6] 🟡 TasteAnalysisScreen tagAttributes prop 누락               ║
+ * ║ • 유사그룹 일관성 펼침 시 "Property 'tagAttributes' doesn't exist" 크래시   ║
+ * ║ • props 선언 + 렌더링 전달 양쪽 추가                                       ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ * 
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v3.5.15e 슬롯 전환 상태 복원 누락 수정 (2025-03-08)                    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [버그 수정 1] 🔴 performSlotSwitch appSettings 리셋 누락                    ║
+ * ║ • 리셋 블록에 setAppSettings(DEFAULT_SETTINGS) 없음                         ║
+ * ║ • 빈 슬롯 전환 시 이전 슬롯의 보충/티어임계값/최신변화 설정 잔류            ║
+ * ║ • globalTierThresholds 모듈 변수도 함께 리셋                                ║
+ * ║                                                                              ║
+ * ║ [버그 수정 2] 🔴 performSlotSwitch pinnedTags 미로드                        ║
+ * ║ • Promise.all에 getAppMeta("pinned_tags") 누락                              ║
+ * ║ • useEffect([], [])는 마운트 1회 → 슬롯 전환 후 재실행 안 됨              ║
+ * ║ • 수정: Promise.all에 추가 + 복원 블록에 setPinnedTags 추가                ║
+ * ║                                                                              ║
+ * ║ [버그 수정 3] 🟡 performSlotSwitch comboTags 복원 누락                      ║
+ * ║ • savedComboTags 로드만 하고 setComboTags 미호출                            ║
+ * ║ • 옛 데이터 슬롯의 comboTags→customTags 마이그레이션 경로 없음             ║
+ * ║ • 수정: 초기화 코드와 동일한 마이그레이션 로직 추가                         ║
+ * ║                                                                              ║
+ * ║ [버그 수정 4] 🟢 loadListRunningRef 슬롯 전환 시 미리셋                    ║
+ * ║ • 이전 loadList 비정상 종료 → ref true 잔류 → 새 슬롯 loadList 스킵       ║
+ * ║ • refs 리셋 블록에 loadListRunningRef.current = false 추가                  ║
+ * ║                                                                              ║
+ * ║ [개선] 🟢 슬롯 전환 후 인사이트/패턴 재로드                                ║
+ * ║ • loadInsights() + loadPreferencePatterns() 비동기 호출 추가                ║
+ * ║ • 분석 탭 진입 전에도 새 DB의 데이터가 즉시 로드됨                          ║
+ * ║                                                                              ║
+ * ║ [버그 수정 5] 🟡 calculateBehaviorPredictionAccuracy 자동매칭 포함 오류     ║
+ * ║ • match_type 필터 없음 → 자동매칭(쉬운 케이스)이 정확도에 포함되어 부풀림  ║
+ * ║ • 수정: AND match_type = 'user' 필터 추가                                  ║
+ * ║                                                                              ║
+ * ║ [버그 수정 6] 🟢 calculatePredictionAccuracy match_type 'manual' 불일치     ║
+ * ║ • DB에는 'user'/'auto'로 저장되는데 'manual'로 조회 → 항상 0건 반환        ║
+ * ║ • 수정: match_type = 'user' 로 변경 (현재 데드 코드, 미래 사용 대비)       ║
+ * ║                                                                              ║
+ * ║ [버그 수정 7] 🔴 resetMatches 상태 정리 누락 (6건)                          ║
+ * ║ • matchInsights/upsetFactors: state + app_meta 모두 미클리어                ║
+ * ║   → 앱 재시작 시 삭제된 매치를 참조하는 stale 인사이트 재로드               ║
+ * ║ • insightList/preferencePatterns: DB 삭제했으나 state 잔류                   ║
+ * ║ • undoStack: 삭제된 매치 참조 undo 항목 무효화 안됨                         ║
+ * ║ • patternUpdateBatch.length = 0 중복 줄 제거                                ║
+ * ║                                                                              ║
+ * ║ [버그 수정 8] 🔴 resetAll 상태 정리 누락 (5건)                              ║
+ * ║ • resetMatches와 동일 패턴: matchInsights/upsetFactors/undoStack 등 미클리어║
+ * ║                                                                              ║
+ * ║ [버그 수정 9] 🟡 importJSON 상태 정리 누락 (3건)                            ║
+ * ║ • undoStack: 이전 데이터 참조 undo 항목 잔류                                ║
+ * ║ • insightList/preferencePatterns: DB 교체됐으나 state 미갱신                ║
+ * ║ • AD(분석데이터) 없는 백업 import 시 matchInsights/upsetFactors 미클리어   ║
+ * ║                                                                              ║
+ * ║ [버그 수정 10] 🟡 removeNovel/batchDelete choiceLogQueue 고아 재삽입        ║
+ * ║ • 삭제 후 미플러시 pending 로그가 flush 시 고아 choice_logs 재생성          ║
+ * ║ • choiceLogQueue.pending에서 삭제 대상 winner_id/loser_id 필터링 추가       ║
+ * ║                                                                              ║
+ * ║ [버그 수정 11] 🔴 importJSON/resetAll/resetMatches 지연 쓰기 경합          ║
+ * ║ • doClearAll→INSERT 루프 사이에 deferSetAppMeta 타이머 발동 시               ║
+ * ║   old 상태값이 새 DB에 기록되어 import 복원 데이터를 덮어씀                 ║
+ * ║ • 수정: DB 삭제 전 _metaBatchTimer + _pendingMetaWrites + choiceLogQueue    ║
+ * ║   + patternUpdateBatch 일괄 정리 (3개 함수 모두 적용)                       ║
  * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
@@ -2647,6 +2757,222 @@ class AppErrorBoundary extends Component {
 }
 
 /* =========================================================
+   📁 v3.5.15d: 슬롯 시스템 (다중 데이터셋 관리)
+   - 최대 10개 독립 데이터셋 (슬롯 0~9)
+   - 슬롯 0 = novel_tiers.db (기존 데이터 하위호환)
+   - 슬롯 1~9 = novel_tiers_slotN.db (새 데이터셋)
+   - 메타데이터는 JSON 파일로 별도 관리 (DB 독립)
+   ========================================================= */
+const SLOT_META_PATH = FileSystem.documentDirectory + "slot_meta.json";
+const MAX_SLOTS = 10;
+
+function getSlotDbFilename(slotId) {
+  if (slotId === 0) return "novel_tiers.db"; // 하위호환
+  return `novel_tiers_slot${slotId}.db`;
+}
+
+// 현재 활성 슬롯 ID (모듈 레벨 — openDb에서 참조)
+let activeSlotId = 0;
+
+async function loadSlotMeta() {
+  try {
+    const info = await FileSystem.getInfoAsync(SLOT_META_PATH);
+    if (!info.exists) {
+      // 최초 실행: 기본 슬롯 1개 생성
+      const defaultMeta = {
+        activeSlotId: 0,
+        slots: [{ id: 0, name: "기본 데이터", createdAt: Date.now(), novelCount: 0, lastAccessed: Date.now() }],
+      };
+      await FileSystem.writeAsStringAsync(SLOT_META_PATH, JSON.stringify(defaultMeta));
+      return defaultMeta;
+    }
+    const raw = await FileSystem.readAsStringAsync(SLOT_META_PATH);
+    const meta = JSON.parse(raw);
+    // 안전 검증
+    if (!meta || !Array.isArray(meta.slots)) {
+      throw new Error("Invalid slot meta");
+    }
+    return meta;
+  } catch (e) {
+    console.warn("슬롯 메타 로드 실패:", e);
+    // 복구: 기본 슬롯 반환
+    return {
+      activeSlotId: 0,
+      slots: [{ id: 0, name: "기본 데이터", createdAt: Date.now(), novelCount: 0, lastAccessed: Date.now() }],
+    };
+  }
+}
+
+async function saveSlotMeta(meta) {
+  try {
+    await FileSystem.writeAsStringAsync(SLOT_META_PATH, JSON.stringify(meta));
+  } catch (e) {
+    console.warn("슬롯 메타 저장 실패:", e);
+  }
+}
+
+// 슬롯 생성 (이름 지정, 다음 빈 ID 자동 할당)
+async function createSlot(name) {
+  const meta = await loadSlotMeta();
+  if (meta.slots.length >= MAX_SLOTS) {
+    return { success: false, error: `최대 ${MAX_SLOTS}개 슬롯까지 생성 가능합니다.` };
+  }
+  // 사용 중인 ID 집합
+  const usedIds = new Set(meta.slots.map(s => s.id));
+  let newId = -1;
+  for (let i = 0; i < MAX_SLOTS; i++) {
+    if (!usedIds.has(i)) { newId = i; break; }
+  }
+  if (newId === -1) {
+    return { success: false, error: "사용 가능한 슬롯 ID가 없습니다." };
+  }
+  
+  const newSlot = {
+    id: newId,
+    name: name || `슬롯 ${newId + 1}`,
+    createdAt: Date.now(),
+    novelCount: 0,
+    lastAccessed: 0,
+  };
+  meta.slots.push(newSlot);
+  // ID 순 정렬
+  meta.slots.sort((a, b) => a.id - b.id);
+  await saveSlotMeta(meta);
+  return { success: true, slot: newSlot };
+}
+
+// 슬롯 삭제 (활성 슬롯은 삭제 불가, DB 파일도 삭제)
+async function deleteSlot(slotId) {
+  if (slotId === activeSlotId) {
+    return { success: false, error: "현재 사용 중인 슬롯은 삭제할 수 없습니다." };
+  }
+  const meta = await loadSlotMeta();
+  const idx = meta.slots.findIndex(s => s.id === slotId);
+  if (idx === -1) {
+    return { success: false, error: "슬롯을 찾을 수 없습니다." };
+  }
+  
+  // DB 파일 삭제
+  const dbFilename = getSlotDbFilename(slotId);
+  const dbPath = FileSystem.documentDirectory + "SQLite/" + dbFilename;
+  try {
+    const info = await FileSystem.getInfoAsync(dbPath);
+    if (info.exists) {
+      await FileSystem.deleteAsync(dbPath, { idempotent: true });
+      // WAL/SHM 파일도 삭제
+      try { await FileSystem.deleteAsync(dbPath + "-wal", { idempotent: true }); } catch {}
+      try { await FileSystem.deleteAsync(dbPath + "-shm", { idempotent: true }); } catch {}
+    }
+  } catch (e) {
+    console.warn("슬롯 DB 파일 삭제 실패:", e);
+  }
+  
+  meta.slots.splice(idx, 1);
+  await saveSlotMeta(meta);
+  return { success: true };
+}
+
+// 슬롯 이름 변경
+async function renameSlot(slotId, newName) {
+  const meta = await loadSlotMeta();
+  const slot = meta.slots.find(s => s.id === slotId);
+  if (!slot) return { success: false, error: "슬롯을 찾을 수 없습니다." };
+  slot.name = newName;
+  await saveSlotMeta(meta);
+  return { success: true };
+}
+
+// 슬롯 작품 수 업데이트
+async function updateSlotNovelCount(slotId, count) {
+  try {
+    const meta = await loadSlotMeta();
+    const slot = meta.slots.find(s => s.id === slotId);
+    if (slot) {
+      slot.novelCount = count;
+      slot.lastAccessed = Date.now();
+      await saveSlotMeta(meta);
+    }
+  } catch {}
+}
+
+// 모든 지연 쓰기 강제 flush (슬롯 전환 전 필수)
+async function flushAllPendingWrites() {
+  // 1. deferSetAppMeta 강제 flush
+  if (_metaBatchTimer) {
+    clearTimeout(_metaBatchTimer);
+    _metaBatchTimer = null;
+  }
+  const metaSnapshot = { ..._pendingMetaWrites };
+  for (const k of Object.keys(_pendingMetaWrites)) delete _pendingMetaWrites[k];
+  if (Object.keys(metaSnapshot).length > 0) {
+    try { await batchSetAppMeta(metaSnapshot); } catch (e) {
+      console.warn("슬롯 전환 전 메타 flush 실패:", e);
+    }
+  }
+  
+  // 2. choiceLogQueue 강제 flush
+  try { await choiceLogQueue.flush(); } catch (e) {
+    console.warn("슬롯 전환 전 choiceLog flush 실패:", e);
+  }
+  
+  // 3. patternUpdate 강제 flush
+  if (patternUpdateScheduled) {
+    patternUpdateScheduled = false;
+    const batch = patternUpdateBatch.splice(0);
+    if (batch.length > 0) {
+      try { await processPatternUpdates(batch); } catch (e) {
+        console.warn("슬롯 전환 전 패턴 flush 실패:", e);
+      }
+    }
+  }
+  
+  // 4. 매칭 큐 드레인 대기
+  if (!isMatchQueueIdle()) {
+    await waitForMatchQueueDrain(5000);
+  }
+}
+
+// DB 레벨 슬롯 전환 (flush → close → open new)
+async function switchSlotDb(newSlotId) {
+  console.log(`[슬롯] 전환 시작: ${activeSlotId} → ${newSlotId}`);
+  
+  // 1. 모든 지연 쓰기 flush
+  await flushAllPendingWrites();
+  
+  // 2. 현재 슬롯 작품 수 업데이트
+  try {
+    const novels = await all("SELECT COUNT(*) as c FROM novels;");
+    await updateSlotNovelCount(activeSlotId, novels?.[0]?.c || 0);
+  } catch {}
+  
+  // 3. 현재 DB 연결 닫기
+  await resetDbConnection();
+  
+  // 4. 활성 슬롯 변경
+  activeSlotId = newSlotId;
+  
+  // 5. 슬롯 메타 업데이트
+  const meta = await loadSlotMeta();
+  meta.activeSlotId = newSlotId;
+  const slot = meta.slots.find(s => s.id === newSlotId);
+  if (slot) slot.lastAccessed = Date.now();
+  await saveSlotMeta(meta);
+  
+  // 6. 캐시 전부 무효화
+  invalidateMatchCache();
+  invalidatePatternCache();
+  invalidateWeightsCache();
+  if (typeof genreMatchupCacheRef !== "undefined") {
+    // genreMatchupCacheRef는 컴포넌트 스코프라 여기서 접근 불가 — 컴포넌트에서 처리
+  }
+  
+  // 7. 새 DB 열기
+  await openDb();
+  
+  console.log(`[슬롯] 전환 완료: 슬롯 ${newSlotId} (${getSlotDbFilename(newSlotId)})`);
+}
+
+/* =========================================================
    SQLite (Expo SDK 54 호환)
    ========================================================= */
 let db = null;
@@ -2686,7 +3012,9 @@ async function openDb() {
   }
   
   // 새 연결 생성
-  dbOpenPromise = SQLite.openDatabaseAsync("novel_tiers.db");
+  // 🔧 v3.5.15d: 슬롯 시스템 — activeSlotId에 따른 DB 파일명
+  const dbFilename = getSlotDbFilename(activeSlotId);
+  dbOpenPromise = SQLite.openDatabaseAsync(dbFilename);
   
   try {
     db = await dbOpenPromise;
@@ -3553,7 +3881,7 @@ async function initDb() {
     anomaly_factors TEXT,
     
     -- 메타
-    match_type TEXT DEFAULT 'manual',
+    match_type TEXT DEFAULT 'user',
     session_position INTEGER,
     created_at INTEGER NOT NULL
   );`);
@@ -4633,7 +4961,7 @@ const choiceLogQueue = {
           JSON.stringify(log.comparison),
           log.anomaly_score || 0,
           log.anomaly_factors ? JSON.stringify(log.anomaly_factors) : null,
-          log.match_type || "manual",
+          log.match_type || "user",
           log.session_position || null,
           log.created_at || Date.now(),
         ],
@@ -4659,7 +4987,7 @@ const choiceLogQueue = {
 /**
  * 선택 로그 생성 및 큐에 추가
  */
-async function saveChoiceLog(matchId, winner, loser, matchType = "manual", prediction = null, tagAttributes = {}) {
+async function saveChoiceLog(matchId, winner, loser, matchType = "user", prediction = null, tagAttributes = {}) {
   try {
     const context = collectChoiceContext(winner, loser, tagAttributes);
     if (!context) return null;
@@ -5578,7 +5906,7 @@ async function calculatePredictionAccuracy(days = 30) {
     
     const rows = await all(`
       SELECT was_correct FROM choice_logs 
-      WHERE match_type = 'manual' 
+      WHERE match_type = 'user' 
         AND was_correct IS NOT NULL 
         AND created_at >= ?
     `, [since]);
@@ -16005,6 +16333,7 @@ const TasteAnalysisScreen = memo(({
   tagCoOccurrences = {},  // 🆕 v3.2.1: 공동 출현 통계
   coordinateSystems = null,  // 🆕 v3.2.1: 사용자 정의 좌표계
   customTagCategories = {},  // 🆕 v3.5.9: 커스텀 태그 카테고리
+  tagAttributes = {},  // 🔧 v3.5.15d: 유사그룹 일관성 등에서 isTagTitle 사용
 }) => {
   PerfMonitor.trackRender("TasteAnalysisScreen"); // 🔬
   const [analysis, setAnalysis] = useState(null);
@@ -19322,6 +19651,7 @@ async function calculateBehaviorPredictionAccuracy(recentN = 30) {
     const logs = await all(
       `SELECT predicted_winner_id, winner_id, was_correct FROM choice_logs 
        WHERE predicted_winner_id IS NOT NULL AND was_correct IS NOT NULL 
+         AND match_type = 'user'
        ORDER BY created_at DESC LIMIT ?;`, [recentN]
     );
     if (!logs || logs.length < 10) return null;
@@ -19329,6 +19659,7 @@ async function calculateBehaviorPredictionAccuracy(recentN = 30) {
     return { accuracy: correct / logs.length, sample: logs.length };
   } catch { return null; }
 }
+
 function generateBehaviorInsights(staticGenres, dynamicGenres, staticTags, dynamicTags, staticAuthors, dynamicAuthors, predAcc) {
   const insights = [];
 
@@ -20055,6 +20386,12 @@ function AppContent() {
   const [insightLoading, setInsightLoading] = useState(false);
   const [matchPrediction, setMatchPrediction] = useState(null); // 현재 매칭 예측 결과
 
+  // 📁 v3.5.15d: 슬롯 시스템 상태
+  const [slotMeta, setSlotMeta] = useState(null); // { activeSlotId, slots: [...] }
+  const [slotSwitching, setSlotSwitching] = useState(false); // 전환 중 로딩
+  const [slotRenameTarget, setSlotRenameTarget] = useState(null); // 이름변경 대상 슬롯 id
+  const [slotRenameInput, setSlotRenameInput] = useState(""); // 이름변경 입력
+
   function openUrlModal(setter) {
     setUrlInput("");
     setUrlSetter(() => setter);
@@ -20232,6 +20569,17 @@ function AppContent() {
     
     const initialize = async () => {
       setIsLoading(true);
+      
+      // 📁 v3.5.15d: 슬롯 메타 먼저 로드 → 활성 슬롯 DB로 연결
+      try {
+        const meta = await loadSlotMeta();
+        activeSlotId = meta.activeSlotId || 0;
+        if (mounted) setSlotMeta(meta);
+      } catch (e) {
+        console.warn("슬롯 메타 로드 실패, 기본 슬롯 사용:", e);
+        activeSlotId = 0;
+      }
+      
       const maxRetries = 3;
       
       for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -20610,6 +20958,247 @@ function AppContent() {
       setMatchQueueCallback(null); // 🔄 v3.4.6: 콜백 정리
     };
   }, []);
+
+  // 📁 v3.5.15d: 슬롯 전환 함수 (전체 state 리셋 + 새 DB 초기화 + 재로드)
+  const performSlotSwitch = async (newSlotId) => {
+    if (newSlotId === activeSlotId || slotSwitching) return;
+    
+    const previousSlotId = activeSlotId; // 🔧 롤백용 백업
+    setSlotSwitching(true);
+    setIsLoading(true);
+    
+    try {
+      // 1. DB 레벨 전환 (flush → close → open new)
+      await switchSlotDb(newSlotId);
+      
+      // 2. 새 DB 초기화 (테이블 생성 등)
+      await initDb();
+      await migrateTagSystem();
+      
+      // 3. 모든 데이터 state 초기값으로 리셋
+      setList([]);
+      setPair(null);
+      setMatchAnalysis(null);
+      setMatchPrediction(null);
+      setLastMatchId(null);
+      setFocusMatchNovel(null);
+      setSelectedIds([]);
+      setEditOpen(false);
+      updateEditItem(null);
+      setDailyReco(null);
+      setUndoStack([]);
+      setMatchInsights([]);
+      setUpsetFactors({ factors: [], lastUpdated: 0 });
+      setTagRelations({ groups: {}, tagToGroup: {} });
+      setTagCoOccurrences({});
+      setCustomTags([]);
+      setComboTags([]);
+      setTagSentiments({});
+      setTagAttributes({});
+      setHiddenTags([]);
+      setPinnedTags([]);
+      setUserMajorGenres([]);
+      setUserSubGenres([]);
+      setCustomComboTraits([]);
+      setCustomComboTargets([]);
+      setCoordinateSystems(null);
+      setCustomTagCategories({});
+      setRecentChanges([]);
+      setTierHistory([]);
+      setCoverLibrary([]);
+      setCoverLibrarySize(0);
+      setPlatformCovers({});
+      setInsightList([]);
+      setPreferencePatterns([]);
+      setAutoEnabled(false);
+      // 🔧 v3.5.15e: appSettings + globalTierThresholds 리셋 (이전 슬롯 설정 잔류 방지)
+      setAppSettings(DEFAULT_SETTINGS);
+      globalTierThresholds = { ...DEFAULT_SETTINGS.tierThresholds };
+      // 🔧 누락 리셋 보완
+      setMatchStats({ total: 0, done: 0, percent: 0 });
+      setIsAutoMatching(false);
+      setMatchFilterEnabled(false);
+      setMatchFilterMinTags(15);
+      setAutoMatchSettings({
+        mode: "any",
+        speed: "fast",
+        criteria: {
+          ratingGap: { enabled: true, threshold: 250 },
+          predictionRate: { enabled: false, threshold: 75 },
+          winStreakGap: { enabled: false, threshold: 5 },
+        },
+      });
+      setAwardSystemSettings(DEFAULT_AWARD_SYSTEM_SETTINGS);
+      setSupplementSessionCount(0);
+      setSupplementRecentDone([]);
+      setSupplementCurrentNovel(null);
+      setTagUsageCounts({});
+      setQuotesIdx(0);
+      setQuotesShuffled(null);
+      // refs
+      isAutoMatchingRef.current = false;
+      needsListRefreshRef.current = false;
+      loadListRunningRef.current = false; // 🔧 v3.5.15e: 이전 loadList 비정상 종료 시 잔류 방지
+      if (matchStatsTimerRef.current) { clearTimeout(matchStatsTimerRef.current); matchStatsTimerRef.current = null; }
+      // 캐시 무효화
+      invalidateMatchCache();
+      invalidatePatternCache();
+      invalidateWeightsCache();
+      genreMatchupCacheRef.current = { data: {}, ts: 0, TTL: 30000 };
+      // 메모리 큐 정리
+      choiceLogQueue.pending = [];
+      if (choiceLogQueue.timer) { clearTimeout(choiceLogQueue.timer); choiceLogQueue.timer = null; }
+      patternUpdateBatch.length = 0;
+      patternUpdateScheduled = false;
+      
+      // 4. 새 DB에서 app_meta 로드
+      const [
+        savedPlatformCovers, savedSettings, savedTierHistory,
+        savedCustomTags, savedComboTags, savedTagSentiments,
+        savedTagAttributes, savedUserMajorGenres, savedUserSubGenres,
+        savedHiddenTags, savedAwardSystemSettings, savedRecentChanges,
+        savedMatchInsights, savedTagRelations, savedUpsetFactors,
+        savedAutoMatchSettings, savedCustomComboTraits, savedCustomComboTargets,
+        savedCoordinateSystems, savedCustomTagCategories, savedMatchFilterSettings,
+        savedPinnedTags, // 🔧 v3.5.15e: 슬롯 전환 시 pinnedTags 복원
+      ] = await Promise.all([
+        getAppMeta("platform_covers"),
+        getAppMeta("app_settings"),
+        getAppMeta("tier_history"),
+        getAppMeta("custom_tags"),
+        getAppMeta("combo_tags"),
+        getAppMeta("tag_sentiments"),
+        getAppMeta("tag_attributes"),
+        getAppMeta("user_major_genres"),
+        getAppMeta("user_sub_genres"),
+        getAppMeta("hidden_tags"),
+        getAppMeta("award_system_settings"),
+        getAppMeta("recent_changes"),
+        getAppMeta("match_insights"),
+        getAppMeta("tag_relations"),
+        getAppMeta("upset_factors"),
+        getAppMeta("auto_match_settings"),
+        getAppMeta("custom_combo_traits"),
+        getAppMeta("custom_combo_targets"),
+        getTagCoordinateSystems(),
+        getAppMeta("custom_tag_categories"),
+        getAppMeta("match_filter_settings"),
+        getAppMeta("pinned_tags"), // 🔧 v3.5.15e
+      ]);
+      
+      // 5. state 복원 (간소화 — 핵심 데이터만)
+      if (savedPlatformCovers && typeof savedPlatformCovers === "object") setPlatformCovers(savedPlatformCovers);
+      if (savedSettings && typeof savedSettings === "object") {
+        const merged = { ...DEFAULT_SETTINGS, ...savedSettings };
+        if (savedSettings.supplement) merged.supplement = { ...DEFAULT_SETTINGS.supplement, ...savedSettings.supplement };
+        if (savedSettings.recentChanges) merged.recentChanges = { ...DEFAULT_SETTINGS.recentChanges, ...savedSettings.recentChanges };
+        if (savedSettings.plannedFields) merged.plannedFields = { ...DEFAULT_SETTINGS.plannedFields, ...savedSettings.plannedFields };
+        setAppSettings(merged);
+        if (merged.tierThresholds) globalTierThresholds = { ...DEFAULT_SETTINGS.tierThresholds, ...merged.tierThresholds };
+      }
+      if (Array.isArray(savedTierHistory)) setTierHistory(savedTierHistory.slice(0, 50));
+      if (Array.isArray(savedCustomTags)) setCustomTags(savedCustomTags);
+      if (savedCustomTagCategories && typeof savedCustomTagCategories === "object") setCustomTagCategories(savedCustomTagCategories);
+      if (savedMatchFilterSettings && typeof savedMatchFilterSettings === "object") {
+        if (savedMatchFilterSettings.enabled !== undefined) setMatchFilterEnabled(savedMatchFilterSettings.enabled);
+        if (savedMatchFilterSettings.minTags !== undefined) setMatchFilterMinTags(savedMatchFilterSettings.minTags);
+      }
+      if (savedTagSentiments && typeof savedTagSentiments === "object") setTagSentiments(savedTagSentiments);
+      if (savedTagAttributes && typeof savedTagAttributes === "object") setTagAttributes(savedTagAttributes);
+      if (Array.isArray(savedUserMajorGenres)) setUserMajorGenres(savedUserMajorGenres);
+      if (Array.isArray(savedUserSubGenres)) setUserSubGenres(savedUserSubGenres);
+      if (Array.isArray(savedHiddenTags)) setHiddenTags(savedHiddenTags);
+      if (savedAwardSystemSettings && typeof savedAwardSystemSettings === "object") {
+        const merged = { ...DEFAULT_AWARD_SYSTEM_SETTINGS };
+        if (savedAwardSystemSettings.yearlyAwards) merged.yearlyAwards = { ...savedAwardSystemSettings.yearlyAwards };
+        setAwardSystemSettings(merged);
+      }
+      if (Array.isArray(savedRecentChanges)) setRecentChanges(savedRecentChanges);
+      if (Array.isArray(savedMatchInsights)) setMatchInsights(savedMatchInsights);
+      if (savedTagRelations && typeof savedTagRelations === "object") {
+        setTagRelations({ groups: savedTagRelations.groups || {}, tagToGroup: savedTagRelations.tagToGroup || {} });
+      }
+      if (savedUpsetFactors && typeof savedUpsetFactors === "object") {
+        setUpsetFactors({ factors: Array.isArray(savedUpsetFactors.factors) ? savedUpsetFactors.factors : [], lastUpdated: savedUpsetFactors.lastUpdated || 0 });
+      }
+      if (savedAutoMatchSettings && typeof savedAutoMatchSettings === "object") {
+        // 🔧 리셋 후 복원이므로 prev 스프레드 불필요 — 새 값으로 직접 설정
+        const defaultCriteria = { ratingGap: { enabled: true, threshold: 250 }, predictionRate: { enabled: false, threshold: 75 }, winStreakGap: { enabled: false, threshold: 5 } };
+        setAutoMatchSettings({
+          mode: savedAutoMatchSettings.mode || "any",
+          speed: savedAutoMatchSettings.speed || "fast",
+          criteria: { ...defaultCriteria, ...(savedAutoMatchSettings.criteria || {}) },
+        });
+      }
+      if (Array.isArray(savedCustomComboTraits)) setCustomComboTraits(savedCustomComboTraits);
+      if (Array.isArray(savedCustomComboTargets)) setCustomComboTargets(savedCustomComboTargets);
+      if (savedCoordinateSystems && typeof savedCoordinateSystems === "object") setCoordinateSystems(savedCoordinateSystems);
+      
+      // 🔧 v3.5.15e: pinnedTags 복원 (useEffect([]) 는 마운트 시 1회만이므로 슬롯 전환 시 별도 로드 필수)
+      if (Array.isArray(savedPinnedTags)) setPinnedTags(savedPinnedTags);
+      
+      // 🔧 v3.5.15e: comboTags → customTags 마이그레이션 (초기화 코드와 동일한 로직)
+      // 옛 데이터가 있는 슬롯으로 전환 시 마이그레이션 누락 방지
+      if (Array.isArray(savedComboTags) && savedComboTags.length > 0) {
+        const currentCustom = Array.isArray(savedCustomTags) ? savedCustomTags : [];
+        const mergedCustom = [...currentCustom];
+        let migrated = 0;
+        for (const ct of savedComboTags) {
+          if (!mergedCustom.some(t => isSameTag(t, ct))) {
+            mergedCustom.push(ct);
+            migrated++;
+          }
+        }
+        if (migrated > 0) {
+          setCustomTags(mergedCustom);
+          await setAppMeta("custom_tags", mergedCustom);
+          console.log(`[슬롯 전환 태그 마이그레이션] 조합식 ${migrated}개 → 커스텀 태그로 통합`);
+        }
+        setComboTags([]);
+        await setAppMeta("combo_tags", []);
+      }
+      
+      // 6. 목록 로드
+      initLoadedRef.current = false; // loadList init guard 리셋
+      await loadList(undefined, undefined, "slot-switch");
+      await loadPlannedList();
+      await loadCoverLibrary();
+      
+      // 🔧 v3.5.15e: 인사이트/패턴도 새 DB에서 재로드 (분석 탭 진입 전 일관성 보장)
+      loadInsights().catch(() => {});
+      loadPreferencePatterns().catch(() => {});
+      
+      // 7. 슬롯 메타 갱신
+      const meta = await loadSlotMeta();
+      setSlotMeta(meta);
+      
+      // 화면을 홈으로 이동
+      setScreenRaw("home");
+      
+      Alert.alert("슬롯 전환 완료", `"${meta.slots.find(s => s.id === newSlotId)?.name || "슬롯"}"으로 전환되었습니다.`);
+      
+    } catch (e) {
+      console.warn("슬롯 전환 오류:", e);
+      // 🔧 롤백: 이전 슬롯으로 되돌리기 시도
+      try {
+        activeSlotId = previousSlotId;
+        await resetDbConnection();
+        await openDb();
+        await loadList(undefined, undefined, "slot-rollback");
+        const meta = await loadSlotMeta();
+        meta.activeSlotId = previousSlotId;
+        await saveSlotMeta(meta);
+        setSlotMeta(meta);
+        Alert.alert("슬롯 전환 실패", "이전 슬롯으로 복원되었습니다.\n\n" + e.message);
+      } catch (rollbackErr) {
+        console.error("슬롯 롤백도 실패:", rollbackErr);
+        Alert.alert("심각한 오류", "슬롯 전환 및 복원에 모두 실패했습니다.\n앱을 재시작해주세요.\n\n" + e.message);
+      }
+    } finally {
+      setSlotSwitching(false);
+      setIsLoading(false);
+    }
+  };
   
   // 🔧 v3.4.6: 앱이 포그라운드로 돌아올 때 DB 연결 강제 리셋
   // 🧠 v3.5.0: 백그라운드 전환 시 큐 플러시 추가
@@ -24093,6 +24682,8 @@ function AppContent() {
               { sql: "DELETE FROM matches WHERE a_id=? OR b_id=?", params: [id, id] },
               { sql: "DELETE FROM novels WHERE id=?", params: [id] },
             ]);
+            // 🔧 v3.5.15e: 미플러시 choiceLog에서도 삭제 대상 제거 (고아 재삽입 방지)
+            choiceLogQueue.pending = choiceLogQueue.pending.filter(l => l.winner_id !== id && l.loser_id !== id);
             
             // 🖼️ v3.4.5: 표지가 있었으면 상태를 미사용으로 변경
             if (coverPath) {
@@ -24403,6 +24994,9 @@ function AppContent() {
                   onPress: async () => {
                     setIsLoading(true);
                     try {
+                      // 🔧 v3.5.15e: DB 삭제 전 지연 쓰기 타이머 정리 (stale 데이터 쓰기 방지)
+                      if (_metaBatchTimer) { clearTimeout(_metaBatchTimer); _metaBatchTimer = null; }
+                      for (const k of Object.keys(_pendingMetaWrites)) delete _pendingMetaWrites[k];
                       await execBatch([
                         { sql: "DELETE FROM matches;" },
                         { sql: "DELETE FROM novels;" },
@@ -24434,6 +25028,14 @@ function AppContent() {
                       setMatchAnalysis(null);
                       setMatchPrediction(null);
                       setSelectedIds([]);
+                      // 🔧 v3.5.15e: DB 삭제와 함께 연관 state + app_meta도 정리
+                      setMatchInsights([]);
+                      deferSetAppMeta("match_insights", []);
+                      setUpsetFactors({ factors: [], lastUpdated: 0 });
+                      deferSetAppMeta("upset_factors", { factors: [], lastUpdated: 0 });
+                      setUndoStack([]);
+                      setInsightList([]);
+                      setPreferencePatterns([]);
                       
                       await loadList(undefined, undefined, "op");
                       Alert.alert("완료", "모든 데이터가 삭제되었습니다.");
@@ -26264,7 +26866,9 @@ function AppContent() {
               });
             }
             await execBatch(queries);
-            
+            // 🔧 v3.5.15e: 미플러시 choiceLog에서도 삭제 대상 제거 (고아 재삽입 방지)
+            const deletedSet = new Set(ids);
+            choiceLogQueue.pending = choiceLogQueue.pending.filter(l => !deletedSet.has(l.winner_id) && !deletedSet.has(l.loser_id));
             // 🔧 v3.5.8: 표지 상태 일괄 업데이트
             if (coverNovels && coverNovels.length > 0) {
               const coverQueries = coverNovels.map(cn => ({
@@ -26989,6 +27593,16 @@ async function importJSON() {
               setIsLoading(true);
               // 🔧 v3.5.9: DELETE 전 원본 JSON 백업 (실패 시 재시도용)
               importBackupRef.current = text;
+              // 🔧 v3.5.15e: doClearAll 전에 모든 지연 쓰기 큐 정리
+              // 이유: import는 doClearAll→INSERT 루프→설정복원→큐정리 순서인데
+              // doClearAll~큐정리 사이에 timer가 발동하면 stale 데이터가 새 DB에 기록됨
+              // 특히 deferSetAppMeta는 import가 복원한 app_meta를 old 값으로 덮어씀
+              if (_metaBatchTimer) { clearTimeout(_metaBatchTimer); _metaBatchTimer = null; }
+              for (const k of Object.keys(_pendingMetaWrites)) delete _pendingMetaWrites[k];
+              if (choiceLogQueue.timer) { clearTimeout(choiceLogQueue.timer); choiceLogQueue.timer = null; }
+              choiceLogQueue.pending = [];
+              patternUpdateBatch.length = 0;
+              patternUpdateScheduled = false;
               // 🔧 v3.5.8: 전체 복원 플로우를 try-catch로 보호
               // DELETE 후 INSERT 실패 시 데이터 소실 방지를 위한 안전장치
               let deleteCompleted = false;
@@ -27363,6 +27977,20 @@ async function importJSON() {
               setMatchPrediction(null);
               setSelectedIds([]);
               setLastMatchId(null);
+              // 🔧 v3.5.15e: doClearAll로 DB 삭제된 테이블의 state 정리
+              setUndoStack([]); // 이전 데이터 참조하는 undo 무효화
+              setInsightList([]); // insight_queue 삭제 반영
+              // matchInsights/upsetFactors: import AD가 복원하지 않은 경우만 클리어
+              if (!analysisRestored) {
+                setMatchInsights([]);
+                deferSetAppMeta("match_insights", []);
+                setUpsetFactors({ factors: [], lastUpdated: 0 });
+                deferSetAppMeta("upset_factors", { factors: [], lastUpdated: 0 });
+              }
+              // preferencePatterns: import PP가 복원하지 않은 경우 클리어
+              if (!patternsRestored) {
+                setPreferencePatterns([]);
+              }
               
               // 🔧 v3.5.8: 메모리 큐 정리
               if (choiceLogQueue.timer) { clearTimeout(choiceLogQueue.timer); choiceLogQueue.timer = null; }
@@ -27456,6 +28084,9 @@ async function importJSON() {
           onPress: async () => {
             setIsLoading(true);
             try {
+              // 🔧 v3.5.15e: DB 삭제 전 지연 쓰기 타이머 정리 (stale 데이터 쓰기 방지)
+              if (_metaBatchTimer) { clearTimeout(_metaBatchTimer); _metaBatchTimer = null; }
+              for (const k of Object.keys(_pendingMetaWrites)) delete _pendingMetaWrites[k];
               // 🔧 v3.5.8: 일괄 배치로 원자적 실행
               await execBatch([
                 { sql: "DELETE FROM matches;" },
@@ -27468,7 +28099,6 @@ async function importJSON() {
               if (choiceLogQueue.timer) { clearTimeout(choiceLogQueue.timer); choiceLogQueue.timer = null; }
               choiceLogQueue.pending = [];
               patternUpdateBatch.length = 0;
-              patternUpdateBatch.length = 0;
               patternUpdateScheduled = false;
               invalidatePatternCache(); // 🔧 v3.5.14
               invalidateWeightsCache(); // 🔧 v3.5.14
@@ -27477,6 +28107,15 @@ async function importJSON() {
               setPair(null);
               setMatchAnalysis(null);
               setMatchPrediction(null);
+              // 🔧 v3.5.15e: DB 삭제와 함께 연관 state + app_meta도 정리
+              // matchInsights/upsetFactors는 app_meta에도 저장되므로 양쪽 모두 클리어 필수
+              setMatchInsights([]);
+              deferSetAppMeta("match_insights", []);
+              setUpsetFactors({ factors: [], lastUpdated: 0 });
+              deferSetAppMeta("upset_factors", { factors: [], lastUpdated: 0 });
+              setUndoStack([]); // 삭제된 매치 참조하는 undo 항목 무효화
+              setInsightList([]); // insight_queue 테이블 삭제 반영
+              setPreferencePatterns([]); // preference_patterns 테이블 삭제 반영
               
               await rebuildAllFromMatches(tagAttributes);
               await loadList(undefined, undefined, "rebuild");
@@ -32087,6 +32726,7 @@ async function importJSON() {
             tagCoOccurrences={tagCoOccurrences}
             coordinateSystems={coordinateSystems}
             customTagCategories={customTagCategories}
+            tagAttributes={tagAttributes}
           />
         )}
 
@@ -33128,6 +33768,7 @@ async function importJSON() {
                 { key: "app", label: "🎯 앱" },
                 { key: "tags", label: "🏷️ 태그" },
                 { key: "analysis", label: "📊 분석" },
+                { key: "slot", label: "📁 슬롯" },
                 { key: "backup", label: "💾 백업" },
                 { key: "diag", label: "🔬 진단" },
               ].map((tab) => (
@@ -34671,6 +35312,200 @@ async function importJSON() {
                 </View>
               ))}
             </Section>
+              </>
+            )}
+            
+            {/* ═══════════════════════════════════════════════════════════════ */}
+            {/* 📁 슬롯 관리 서브탭 */}
+            {/* ═══════════════════════════════════════════════════════════════ */}
+            {settingsSubTab === "slot" && (
+              <>
+            <Section title="📁 데이터 슬롯">
+              <Text style={{ color: C.sub, fontSize: 12, marginBottom: 12, lineHeight: 18 }}>
+                독립적인 데이터셋을 최대 10개까지 관리할 수 있습니다.{"\n"}
+                각 슬롯은 별도의 작품 목록, 매칭 기록, 설정을 가집니다.
+              </Text>
+              
+              {/* 슬롯 목록 */}
+              {slotMeta && slotMeta.slots.map((slot) => {
+                const isActive = slot.id === activeSlotId;
+                return (
+                  <View key={slot.id} style={{
+                    backgroundColor: isActive ? (isDark ? "#1e3a5f" : "#dbeafe") : C.card,
+                    borderRadius: 12,
+                    padding: 14,
+                    marginBottom: 8,
+                    borderWidth: 2,
+                    borderColor: isActive ? "#3b82f6" : C.line,
+                  }}>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                          <Text style={{ color: C.text, fontWeight: "800", fontSize: 15 }}>
+                            {slot.name}
+                          </Text>
+                          {isActive && (
+                            <View style={{ backgroundColor: "#3b82f6", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+                              <Text style={{ color: "#fff", fontSize: 10, fontWeight: "700" }}>사용 중</Text>
+                            </View>
+                          )}
+                        </View>
+                        <Text style={{ color: C.sub, fontSize: 11, marginTop: 4 }}>
+                          {slot.novelCount || 0}작품 · 생성: {new Date(slot.createdAt).toLocaleDateString("ko-KR")}
+                          {slot.lastAccessed > 0 ? ` · 최근: ${new Date(slot.lastAccessed).toLocaleDateString("ko-KR")}` : ""}
+                        </Text>
+                      </View>
+                      
+                      {/* 액션 버튼 */}
+                      <View style={{ flexDirection: "row", gap: 6 }}>
+                        {!isActive && (
+                          <TouchableOpacity
+                            onPress={() => {
+                              Alert.alert(
+                                "슬롯 전환",
+                                `"${slot.name}"으로 전환하시겠습니까?\n\n현재 데이터는 자동 저장됩니다.`,
+                                [
+                                  { text: "취소" },
+                                  { text: "전환", onPress: () => performSlotSwitch(slot.id) },
+                                ]
+                              );
+                            }}
+                            style={{ backgroundColor: "#3b82f6", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}
+                          >
+                            <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>전환</Text>
+                          </TouchableOpacity>
+                        )}
+                        <TouchableOpacity
+                          onPress={() => { setSlotRenameTarget(slot.id); setSlotRenameInput(slot.name); }}
+                          style={{ backgroundColor: isDark ? "#374151" : "#e5e7eb", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
+                        >
+                          <Text style={{ color: C.text, fontSize: 12 }}>이름</Text>
+                        </TouchableOpacity>
+                        {!isActive && (
+                          <TouchableOpacity
+                            onPress={() => {
+                              Alert.alert(
+                                "슬롯 삭제",
+                                `"${slot.name}"을 삭제하시겠습니까?\n\n이 슬롯의 모든 데이터가 영구 삭제됩니다.`,
+                                [
+                                  { text: "취소" },
+                                  { text: "삭제", style: "destructive", onPress: async () => {
+                                    const result = await deleteSlot(slot.id);
+                                    if (result.success) {
+                                      const meta = await loadSlotMeta();
+                                      setSlotMeta(meta);
+                                      Alert.alert("완료", "슬롯이 삭제되었습니다.");
+                                    } else {
+                                      Alert.alert("오류", result.error);
+                                    }
+                                  }},
+                                ]
+                              );
+                            }}
+                            style={{ backgroundColor: isDark ? "#7f1d1d" : "#fee2e2", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
+                          >
+                            <Text style={{ color: "#ef4444", fontSize: 12 }}>삭제</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    </View>
+                    
+                    {/* 이름 변경 인라인 UI */}
+                    {slotRenameTarget === slot.id && (
+                      <View style={{ flexDirection: "row", marginTop: 10, gap: 8, alignItems: "center" }}>
+                        <TextInput
+                          value={slotRenameInput}
+                          onChangeText={setSlotRenameInput}
+                          style={{
+                            flex: 1,
+                            backgroundColor: isDark ? "#1f2937" : "#f9fafb",
+                            color: C.text,
+                            borderWidth: 1,
+                            borderColor: C.line,
+                            borderRadius: 8,
+                            paddingHorizontal: 10,
+                            paddingVertical: 6,
+                            fontSize: 14,
+                          }}
+                          maxLength={30}
+                          autoFocus
+                        />
+                        <TouchableOpacity
+                          onPress={async () => {
+                            if (slotRenameInput.trim()) {
+                              await renameSlot(slot.id, slotRenameInput.trim());
+                              const meta = await loadSlotMeta();
+                              setSlotMeta(meta);
+                            }
+                            setSlotRenameTarget(null);
+                          }}
+                          style={{ backgroundColor: "#3b82f6", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}
+                        >
+                          <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>확인</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => setSlotRenameTarget(null)}>
+                          <Text style={{ color: C.sub, fontSize: 12 }}>취소</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+              
+              {/* 새 슬롯 생성 */}
+              {(!slotMeta || slotMeta.slots.length < MAX_SLOTS) && (
+                <TouchableOpacity
+                  onPress={async () => {
+                    Alert.alert(
+                      "새 슬롯 생성",
+                      "새 데이터 슬롯을 만드시겠습니까?\n\n빈 데이터셋이 생성됩니다.",
+                      [
+                        { text: "취소" },
+                        { text: "생성", onPress: async () => {
+                          const result = await createSlot(null);
+                          if (result.success) {
+                            const meta = await loadSlotMeta();
+                            setSlotMeta(meta);
+                            Alert.alert("완료", `"${result.slot.name}" 슬롯이 생성되었습니다.`);
+                          } else {
+                            Alert.alert("오류", result.error);
+                          }
+                        }},
+                      ]
+                    );
+                  }}
+                  style={{
+                    backgroundColor: isDark ? "#1f2937" : "#f0f9ff",
+                    borderRadius: 12,
+                    padding: 14,
+                    borderWidth: 2,
+                    borderColor: isDark ? "#374151" : "#bfdbfe",
+                    borderStyle: "dashed",
+                    alignItems: "center",
+                  }}
+                >
+                  <Text style={{ color: "#3b82f6", fontWeight: "700", fontSize: 14 }}>
+                    + 새 슬롯 생성 ({slotMeta ? slotMeta.slots.length : 1}/{MAX_SLOTS})
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </Section>
+            
+            {/* 슬롯 전환 중 오버레이 */}
+            {slotSwitching && (
+              <View style={{
+                position: "absolute", top: 0, left: 0, right: 0, bottom: 0,
+                backgroundColor: "rgba(0,0,0,0.5)",
+                justifyContent: "center", alignItems: "center",
+                zIndex: 999,
+              }}>
+                <View style={{ backgroundColor: C.card, padding: 24, borderRadius: 16, alignItems: "center" }}>
+                  <ActivityIndicator size="large" color="#3b82f6" />
+                  <Text style={{ color: C.text, marginTop: 12, fontWeight: "700" }}>슬롯 전환 중...</Text>
+                  <Text style={{ color: C.sub, fontSize: 12, marginTop: 4 }}>데이터를 저장하고 새 슬롯을 불러오는 중</Text>
+                </View>
+              </View>
+            )}
               </>
             )}
             
@@ -37930,4 +38765,3 @@ export default function App() {
     </AppErrorBoundary>
   );
 }
-
