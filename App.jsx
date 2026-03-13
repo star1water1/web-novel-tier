@@ -25652,6 +25652,16 @@ function AppContent() {
     // 🔄 v3.4.6: pair를 로컬에 캡처 (큐 처리 중 상태 변경 대비)
     const currentPair = { A: { ...pair.A }, B: { ...pair.B } };
     const pairKey = matchPairKey(currentPair.A.id, currentPair.B.id);
+
+    // 🛡️ winnerId 무결성 검증 (stale onPress/중복 탭 방어)
+    if (winnerId !== currentPair.A.id && winnerId !== currentPair.B.id) {
+      console.warn("decide: invalid winnerId for current pair", {
+        winnerId,
+        aId: currentPair.A.id,
+        bId: currentPair.B.id,
+      });
+      return;
+    }
     
     // 🔧 v3.5.15d: matchAnalysis도 호출 시점에 캡처
     // 큐 작업이 실행될 때는 이미 다음 pair의 분석으로 바뀌어 있을 수 있음 (stale closure)
@@ -25758,25 +25768,38 @@ function AppContent() {
       }
       
       // 🔮 v3.0.3: 매치 결과 분석 및 인사이트 저장
-      // 🔧 v3.5.15d: capturedAnalysis 사용 (호출 시점 스냅샷)
-      if (capturedAnalysis) {
-        await analyzeMatchResult(A, B, winnerId, capturedAnalysis);
-      }
-      
-      // 🧠 v3.5.0: 취향 발견 시스템 - 선택 로그 기록
-      try {
-        const winner = aIsWinner ? A : B;
-        const loser = aIsWinner ? B : A;
-        const predictedWinnerId = capturedAnalysis?.predictedWinner === "A" ? A.id : 
-                                  capturedAnalysis?.predictedWinner === "B" ? B.id : null;
-        await saveChoiceLog(mid, winner, loser, decided_by, capturedAnalysis ? {
-          predictedWinnerId,
-          confidence: capturedAnalysis.confidence || 0,
-          factors: null,
-        } : null, tagAttributes);
-      } catch (e) {
-        console.warn("[decide] saveChoiceLog 오류:", e);
-      }
+      // 🔧 v3.5.15f: 분석/로그 저장을 큐 본체에서 분리
+      // - 매칭 핵심 경로(DB 반영 + 다음 pair UI) 지연 최소화
+      // - 분석 실패가 매칭 큐 실패로 전파되지 않도록 격리
+      setTimeout(() => {
+        (async () => {
+          // 🔧 v3.5.15d: capturedAnalysis 사용 (호출 시점 스냅샷)
+          if (capturedAnalysis) {
+            try {
+              await analyzeMatchResult(A, B, winnerId, capturedAnalysis);
+            } catch (e) {
+              console.warn("[decide] analyzeMatchResult 오류:", e);
+            }
+          }
+
+          // 🧠 v3.5.0: 취향 발견 시스템 - 선택 로그 기록
+          try {
+            const winner = aIsWinner ? A : B;
+            const loser = aIsWinner ? B : A;
+            const predictedWinnerId = capturedAnalysis?.predictedWinner === "A" ? A.id :
+                                      capturedAnalysis?.predictedWinner === "B" ? B.id : null;
+            await saveChoiceLog(mid, winner, loser, decided_by, capturedAnalysis ? {
+              predictedWinnerId,
+              confidence: capturedAnalysis.confidence || 0,
+              factors: null,
+            } : null, tagAttributes);
+          } catch (e) {
+            console.warn("[decide] saveChoiceLog 오류:", e);
+          }
+        })().catch((e) => {
+          console.warn("[decide] post-match async 오류:", e);
+        });
+      }, 0);
       
       if (_pt) PerfMonitor.trackFunc("decide", Date.now() - _pt); // 🔬
       
