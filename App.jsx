@@ -9202,6 +9202,8 @@ const TagSelectModal = memo(({
   onTogglePin, // 🔧 v3.4.4: 태그 고정 토글 콜백
   onToggleTitle, // 🔧 v3.5.9: 작품명 태그 토글 콜백
   enableIntensity = false, // 🏷️ v5.0: 농도 모드 기본 활성화 여부
+  tagSortMode = "usage", // 🔧 v3.5.16: 태그 정렬 모드 ("usage" | "name" | "registered")
+  onChangeSortMode, // 🔧 v3.5.16: 정렬 모드 변경 콜백
   theme, // C 객체
 }) => {
   PerfMonitor.trackRender("TagSelectModal"); // 🔬
@@ -9519,6 +9521,21 @@ const TagSelectModal = memo(({
   // 개선: base 레이어에서 Set O(1) 숨김/고정 처리, search 레이어는 string.includes만
   // ═══════════════════════════════════════════════════════════════
 
+  // 🔧 v3.5.16: 정렬 모드별 태그 정렬 함수
+  // - "usage": 사용빈도순 (기존 동작)
+  // - "name": 이름순 (가나다 고정 — 항상 동일 위치)
+  // - "registered": 등록순 (원본 배열 순서 유지 — 커스텀 태그에 유용)
+  const sortTagsByMode = useCallback((tags, mode) => {
+    if (mode === "name") {
+      return [...tags].sort((a, b) => a.localeCompare(b, "ko"));
+    }
+    if (mode === "registered") {
+      return tags; // 원본 순서 유지
+    }
+    // "usage" (기본값)
+    return sortTagsByUsage(tags, tagUsageCounts);
+  }, [tagUsageCounts]);
+
   // 🔧 v3.5.15b: Set 기반 고정 태그 상단 정렬
   const sortWithPinnedFirst = useCallback((tags) => {
     const pSet = tagKeySetsLocal.pinned;
@@ -9529,36 +9546,37 @@ const TagSelectModal = memo(({
   }, [tagKeySetsLocal]);
 
   // Layer 1: 기반 데이터 (데이터 변경 시에만 재계산, 키입력 무관)
+  // 🔧 v3.5.16: tagSortMode에 따라 정렬 전략 분기
   const baseSortedMajor = useMemo(() => {
     const hSet = tagKeySetsLocal.hidden;
     const all = getAllMajorTags(tagAttributes, userMajorGenres)
       .filter(t => !hSet.has(normalizeTagKey(t)));
-    return sortWithPinnedFirst(sortTagsByUsage(all, tagUsageCounts));
-  }, [userMajorGenres, tagUsageCounts, tagKeySetsLocal, sortWithPinnedFirst, tagAttributes]);
-  
+    return sortWithPinnedFirst(sortTagsByMode(all, tagSortMode));
+  }, [userMajorGenres, tagUsageCounts, tagKeySetsLocal, sortWithPinnedFirst, tagAttributes, tagSortMode, sortTagsByMode]);
+
   const baseSortedSub = useMemo(() => {
     const hSet = tagKeySetsLocal.hidden;
     const all = getAllSubTags(tagAttributes, userSubGenres)
       .filter(t => !hSet.has(normalizeTagKey(t)));
-    return sortWithPinnedFirst(sortTagsByUsage(all, tagUsageCounts));
-  }, [userSubGenres, tagUsageCounts, tagKeySetsLocal, sortWithPinnedFirst, tagAttributes]);
+    return sortWithPinnedFirst(sortTagsByMode(all, tagSortMode));
+  }, [userSubGenres, tagUsageCounts, tagKeySetsLocal, sortWithPinnedFirst, tagAttributes, tagSortMode, sortTagsByMode]);
 
   const baseSortedGeneralTags = useMemo(() => {
     const hSet = tagKeySetsLocal.hidden;
     const result = {};
     for (const [category, tagList] of Object.entries(GENERAL_TAGS)) {
       const filtered = tagList.filter(t => !hSet.has(normalizeTagKey(t)));
-      result[category] = sortWithPinnedFirst(sortTagsByUsage(filtered, tagUsageCounts));
+      result[category] = sortWithPinnedFirst(sortTagsByMode(filtered, tagSortMode));
     }
     if (customTagCategories && typeof customTagCategories === "object") {
       for (const [catName, catTags] of Object.entries(customTagCategories)) {
         if (!Array.isArray(catTags) || catTags.length === 0) continue;
         const filtered = catTags.filter(t => !hSet.has(normalizeTagKey(t)));
-        result[`📂 ${catName}`] = sortWithPinnedFirst(sortTagsByUsage(filtered, tagUsageCounts));
+        result[`📂 ${catName}`] = sortWithPinnedFirst(sortTagsByMode(filtered, tagSortMode));
       }
     }
     return result;
-  }, [tagUsageCounts, tagKeySetsLocal, sortWithPinnedFirst, customTagCategories]);
+  }, [tagUsageCounts, tagKeySetsLocal, sortWithPinnedFirst, customTagCategories, tagSortMode, sortTagsByMode]);
 
   const baseSentimentTags = useMemo(() => {
     const hSet = tagKeySetsLocal.hidden;
@@ -9579,11 +9597,11 @@ const TagSelectModal = memo(({
       else neutral.push(tag);
     }
     return {
-      positive: sortWithPinnedFirst(sortTagsByUsage(positive, tagUsageCounts)),
-      neutral: sortWithPinnedFirst(sortTagsByUsage(neutral, tagUsageCounts)),
-      negative: sortWithPinnedFirst(sortTagsByUsage(negative, tagUsageCounts)),
+      positive: sortWithPinnedFirst(sortTagsByMode(positive, tagSortMode)),
+      neutral: sortWithPinnedFirst(sortTagsByMode(neutral, tagSortMode)),
+      negative: sortWithPinnedFirst(sortTagsByMode(negative, tagSortMode)),
     };
-  }, [customTags, tagKeySetsLocal, tagUsageCounts, getTagSentimentLocal, sortWithPinnedFirst, userMajorGenres, userSubGenres]);
+  }, [customTags, tagKeySetsLocal, tagUsageCounts, getTagSentimentLocal, sortWithPinnedFirst, userMajorGenres, userSubGenres, tagSortMode, sortTagsByMode]);
 
   // Layer 2: 검색 필터 (키입력마다 — 단순 string.includes, regex 0회)
   const sortedMajor = useMemo(() => {
@@ -9958,7 +9976,38 @@ const TagSelectModal = memo(({
             ))}
           </View>
           
-          <ScrollView 
+          {/* 🔧 v3.5.16: 태그 정렬 모드 토글 */}
+          <View style={{ flexDirection: "row", marginBottom: 8, gap: 4, alignItems: "center" }}>
+            <Text style={{ color: C.sub, fontSize: 11, marginRight: 4 }}>정렬:</Text>
+            {[
+              { key: "usage", label: "빈도순" },
+              { key: "name", label: "이름순" },
+              { key: "registered", label: "등록순" },
+            ].map(mode => (
+              <TouchableOpacity
+                key={mode.key}
+                onPress={() => onChangeSortMode && onChangeSortMode(mode.key)}
+                style={{
+                  paddingHorizontal: 10,
+                  paddingVertical: 5,
+                  borderRadius: 8,
+                  backgroundColor: tagSortMode === mode.key ? (isDark ? "#1e40af" : "#dbeafe") : C.chip,
+                  borderWidth: 1,
+                  borderColor: tagSortMode === mode.key ? "#3b82f6" : C.line,
+                }}
+              >
+                <Text style={{
+                  fontSize: 11,
+                  fontWeight: tagSortMode === mode.key ? "700" : "500",
+                  color: tagSortMode === mode.key ? (isDark ? "#93c5fd" : "#1e40af") : C.sub,
+                }}>
+                  {mode.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <ScrollView
             style={{ flex: 1 }}
             nestedScrollEnabled={true}
             showsVerticalScrollIndicator={true}
@@ -10152,7 +10201,7 @@ const TagSelectModal = memo(({
                 {/* 커스텀 태그 */}
                 {customTags.length > 0 && (() => {
                   const hSet = tagKeySetsLocal.hidden;
-                  const base = sortWithPinnedFirst(sortTagsByUsage(customTags.filter(t => !hSet.has(normalizeTagKey(t))), tagUsageCounts));
+                  const base = sortWithPinnedFirst(sortTagsByMode(customTags.filter(t => !hSet.has(normalizeTagKey(t))), tagSortMode));
                   const filtered = liveSearchQuery ? base.filter(t => t.toLowerCase().includes(liveSearchQuery.toLowerCase())) : base;
                   return filtered.length > 0 ? (
                   <View>
@@ -20351,7 +20400,8 @@ function AppContent() {
   const [tagCoOccurrences, setTagCoOccurrences] = useState({}); // 🆕 v3.2.1: 태그 공동 출현 통계 { tag: { otherTag: count } }
   const [tagSentiments, setTagSentiments] = useState({}); // 🎭 v2.8 태그 속성 (긍정/부정/중립)
   const [tagAttributes, setTagAttributes] = useState({}); // 🆕 v3.4: 태그 속성 { [tag]: { isMajor: bool, isSub: bool } }
-  
+  const [tagSortMode, setTagSortMode] = useState("usage"); // 🔧 v3.5.16: 태그 정렬 모드 ("usage" | "name" | "registered")
+
   // 🏆 v2.9: 수상 시스템
   const [awardSystemSettings, setAwardSystemSettings] = useState(DEFAULT_AWARD_SYSTEM_SETTINGS);
   const [awardSelectedYear, setAwardSelectedYear] = useState(String(new Date().getFullYear())); // 선택된 연도
@@ -23489,6 +23539,23 @@ function AppContent() {
   async function saveHiddenTags(tags) {
     setHiddenTags(tags);
     await setAppMeta("hidden_tags", tags);
+  }
+
+  // 🔧 v3.5.16: 태그 정렬 모드 로드/저장
+  useEffect(() => {
+    (async () => {
+      try {
+        const saved = await getAppMeta("tag_sort_mode");
+        if (saved && ["usage", "name", "registered"].includes(saved)) setTagSortMode(saved);
+      } catch (e) {
+        console.warn("tag_sort_mode load error:", e);
+      }
+    })();
+  }, []);
+
+  function handleChangeTagSortMode(mode) {
+    setTagSortMode(mode);
+    setAppMeta("tag_sort_mode", mode);
   }
 
   // 🎭 v2.8: 태그 속성 저장
@@ -37485,6 +37552,8 @@ async function importJSON() {
         onSetTagSentiment={setTagSentiment}
         onTogglePin={togglePinTag}
         onToggleTitle={toggleTagTitle}
+        tagSortMode={tagSortMode}
+        onChangeSortMode={handleChangeTagSortMode}
         theme={C}
       />}
 
