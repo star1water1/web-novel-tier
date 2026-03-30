@@ -4277,7 +4277,123 @@ async function migrateTagSystem() {
       await setAppMeta("tag_system_version", 3);
       console.log(`태그 시스템 Phase 3 완료: 본 목록 ${syncedCount}개, 예정 목록 ${plannedSyncedCount}개 동기화`);
     }
-    
+
+    // ═══════════════════════════════════════════════════════════
+    // Phase 4: 대장르 통합 + 유사 태그 정리 (v3.5.16)
+    // - 호러→공포/스릴러, 현대물→현대, 시대물→사극, 노로맨스→노맨스
+    // - novels, planned_novels, preference_patterns 일괄 치환
+    // ═══════════════════════════════════════════════════════════
+    if (version < 4) {
+      const TAG_RENAMES = {
+        "호러": "공포/스릴러",
+        "현대물": "현대",
+        "시대물": "사극",
+        "노로맨스": "노맨스",
+      };
+
+      // 테이블별 태그 필드 치환 헬퍼
+      async function migrateTagRenamesInTable(tableName) {
+        const rows = await all(`SELECT id, tags, tag_data, major_genre, sub_genre FROM ${tableName}`);
+        if (!rows || rows.length === 0) return 0;
+
+        const updates = [];
+        for (const row of rows) {
+          let changed = false;
+          let { tags, tag_data, major_genre, sub_genre } = row;
+
+          for (const [oldName, newName] of Object.entries(TAG_RENAMES)) {
+            // tags 문자열: 쉼표 구분 배열에서 정확한 태그만 치환
+            if (tags && tags.includes(oldName)) {
+              const tagArr = tags.split(",").map(t => t.trim());
+              const replaced = tagArr.map(t => isSameTag(t, oldName) ? newName : t);
+              const newStr = replaced.join(", ");
+              if (newStr !== tags) { tags = newStr; changed = true; }
+            }
+            // tag_data JSON 배열
+            if (tag_data) {
+              try {
+                const parsed = JSON.parse(tag_data);
+                if (Array.isArray(parsed)) {
+                  let tdChanged = false;
+                  for (const td of parsed) {
+                    if (isSameTag(td.tag, oldName)) { td.tag = newName; tdChanged = true; }
+                  }
+                  if (tdChanged) { tag_data = JSON.stringify(parsed); changed = true; }
+                }
+              } catch {}
+            }
+            // major_genre JSON 배열
+            if (major_genre) {
+              try {
+                const arr = JSON.parse(major_genre);
+                if (Array.isArray(arr)) {
+                  let mgChanged = false;
+                  const newArr = arr.map(g => {
+                    if (isSameTag(g, oldName)) { mgChanged = true; return newName; }
+                    return g;
+                  });
+                  if (mgChanged) { major_genre = JSON.stringify(newArr); changed = true; }
+                }
+              } catch {}
+            }
+            // sub_genre JSON 배열
+            if (sub_genre) {
+              try {
+                const arr = JSON.parse(sub_genre);
+                if (Array.isArray(arr)) {
+                  let sgChanged = false;
+                  const newArr = arr.map(g => {
+                    if (isSameTag(g, oldName)) { sgChanged = true; return newName; }
+                    return g;
+                  });
+                  if (sgChanged) { sub_genre = JSON.stringify(newArr); changed = true; }
+                }
+              } catch {}
+            }
+          }
+
+          if (changed) {
+            updates.push({
+              sql: `UPDATE ${tableName} SET tags=?, tag_data=?, major_genre=?, sub_genre=? WHERE id=?`,
+              params: [tags, tag_data, major_genre, sub_genre, row.id]
+            });
+          }
+        }
+
+        if (updates.length > 0) {
+          for (let i = 0; i < updates.length; i += 50) {
+            await execBatch(updates.slice(i, i + 50));
+          }
+        }
+        return updates.length;
+      }
+
+      const novelFixed = await migrateTagRenamesInTable("novels");
+      const plannedFixed = await migrateTagRenamesInTable("planned_novels");
+
+      // preference_patterns: pattern_key 치환 (tag_power, genre_affinity 먼저 → genre_matchup 나중에)
+      for (const [oldName, newName] of Object.entries(TAG_RENAMES)) {
+        // tag_power: "tag:호러" → "tag:공포/스릴러"
+        await exec(
+          `UPDATE preference_patterns SET pattern_key = REPLACE(pattern_key, ?, ?) WHERE category = 'tag_power' AND pattern_key LIKE ?`,
+          [`tag:${oldName}`, `tag:${newName}`, `%tag:${oldName}%`]
+        );
+        // genre_affinity: "genre:호러" → "genre:공포/스릴러"
+        await exec(
+          `UPDATE preference_patterns SET pattern_key = REPLACE(pattern_key, ?, ?) WHERE category = 'genre_affinity' AND pattern_key LIKE ?`,
+          [`genre:${oldName}`, `genre:${newName}`, `%genre:${oldName}%`]
+        );
+        // genre_matchup: "판타지_vs_호러" → "판타지_vs_공포/스릴러" (가장 마지막)
+        await exec(
+          `UPDATE preference_patterns SET pattern_key = REPLACE(pattern_key, ?, ?) WHERE category = 'genre_matchup' AND pattern_key LIKE ?`,
+          [oldName, newName, `%${oldName}%`]
+        );
+      }
+
+      await setAppMeta("tag_system_version", 4);
+      console.log(`태그 시스템 Phase 4 완료: 본 목록 ${novelFixed}개, 예정 목록 ${plannedFixed}개 태그 통합`);
+    }
+
     return true;
   } catch (e) {
     console.warn("태그 시스템 마이그레이션 오류:", e);
@@ -6041,8 +6157,8 @@ async function migrateExistingMatchesToPatterns(tagAttrs = {}) {
 // 대장르 (작품의 주 배경/세계관)
 const MAJOR_GENRES = [
   "판타지", "현대판타지", "무협", "선협", "로맨스", "로맨스판타지", 
-  "게임판타지", "퓨전", "SF", "미스터리", "공포/스릴러", "호러",
-  "대체역사", "라이트노벨", "현대", "현대물", "사극", "시대물",
+  "게임판타지", "퓨전", "SF", "미스터리", "공포/스릴러",
+  "대체역사", "라이트노벨", "현대", "사극",
   "BL", "GL", "백합", "하이판타지", "다크판타지", "스팀펑크",
   "사이버펑크", "포스트아포칼립스", "밀리터리", "스포츠물", "일상물",
   // 추가
@@ -6126,11 +6242,11 @@ const DEFAULT_TAG_SENTIMENTS = {
   // 퀄리티/평가 - 좋은 평가
   "명작": TAG_SENTIMENT.POSITIVE,
   "수작": TAG_SENTIMENT.POSITIVE,
-  "가작": TAG_SENTIMENT.POSITIVE,
   "레전드": TAG_SENTIMENT.POSITIVE,
   "인생작": TAG_SENTIMENT.POSITIVE,
   "정주행각": TAG_SENTIMENT.POSITIVE,
-  "대중적": TAG_SENTIMENT.POSITIVE,
+  // 🔧 v3.5.16: "대중적"은 접근성/범용성이지 완성도 지표가 아님 → NEUTRAL (기본값)
+  // 🔧 v3.5.16: "가작"은 quality 스펙트럼 2/5 위치, 호불호 영역 → NEUTRAL (기본값)
   
   // 완성도 관련 - 잘 만든 요소
   "문체좋음": TAG_SENTIMENT.POSITIVE,
@@ -6363,7 +6479,7 @@ const GENERAL_TAGS = {
   ],
   "💕 로맨스": [
     "순애", "삼각관계", "짝사랑", "계약결혼", "정략결혼", "재회",
-    "첫사랑", "연상", "연하", "밀당", "집착", "러브라인강함", "노맨스",
+    "첫사랑", "연상", "연하", "밀당", "집착", "러브라인강함", "노맨스", "서브로맨스",
     "소꿉친구", "원수커플", "주종관계", "선후배", "동료", "라이벌",
     "츤데레공략", "냉미남공략", "흑화", "구원서사", "치유서사",
     "비밀연애", "신분차이", "불륜", "NTR주의", "순정", "성인씬",
@@ -6417,7 +6533,7 @@ const GENERAL_TAGS = {
   ],
   "🔞 특수태그": [
     "TS", "오메가버스", "하렘", "역하렘", "폴리아모리",
-    "성인", "15금", "전연령", "노로맨스", "브로맨스",
+    "성인", "15금", "전연령", "브로맨스",
     "ABO", "알파", "베타", "오메가", "페이크", "진성",
     "동성애", "이성애", "무성애", "젠더리스", "논바이너리",
     "수인화", "의인화", "인외", "로봇", "안드로이드", "AI", "클론",
@@ -6742,13 +6858,10 @@ const MAJOR_GENRE_COLORS = {
   "SF": "#06b6d4",
   "미스터리": "#6b7280",
   "공포/스릴러": "#1f2937",
-  "호러": "#374151",
   "대체역사": "#b45309",
   "라이트노벨": "#f59e0b",
   "현대": "#64748b",
-  "현대물": "#475569",
   "사극": "#a16207",
-  "시대물": "#92400e",
   "BL": "#7c3aed",
   "GL": "#be185d",
   "백합": "#db2777",
@@ -6878,6 +6991,14 @@ const TAG_ALIASES = {
   // 평가 약어
   "갓작": "명작",
   // 🔧 v3.5.8: "인생작"→"레전드" alias 제거 (인생작은 독립 태그로 DEFAULT_TAG_SENTIMENTS에 등록됨)
+
+  // 🔧 v3.5.16: 대장르 통합 (유사 중복 해소)
+  "호러": "공포/스릴러",
+  "현대물": "현대",
+  "시대물": "사극",
+
+  // 🔧 v3.5.16: 태그 통합
+  "노로맨스": "노맨스",
 };
 
 // 역방향 alias 맵 생성 (정식명 → [약어들])
@@ -6985,11 +7106,11 @@ const TAG_SPECTRUM_GROUPS = {
     tags: ["피폐", "무거운분위기", "시리어스", "가벼운분위기", "따뜻함", "라이트함"],
   },
   
-  // 로맨스 강도 스펙트럼
+  // 로맨스 비중 스펙트럼
   "romance_level": {
-    name: "로맨스 강도",
-    description: "로맨스 요소의 비중",
-    tags: ["노맨스", "순애", "러브라인강함", "하렘", "역하렘"],
+    name: "로맨스 비중",
+    description: "작품 내 로맨스 요소의 비중",
+    tags: ["노맨스", "서브로맨스", "순애", "러브라인강함"],
   },
   
   // 전개 속도 스펙트럼
@@ -7010,7 +7131,7 @@ const TAG_SPECTRUM_GROUPS = {
   "ending_satisfaction": {
     name: "결말 만족도",
     description: "결말의 완성도",
-    tags: ["후반부붕괴", "사두용미", "용두용미", "결말아쉬움", "해피엔딩", "트루엔딩"],
+    tags: ["후반부붕괴", "결말아쉬움", "사두용미", "용두용미", "해피엔딩", "트루엔딩"],
   },
 };
 
@@ -7082,7 +7203,6 @@ const DEFAULT_COORDINATE_SYSTEMS = {
     yAxis: { negative: "순한 표현", positive: "강한 표현" },
     tags: {
       "노맨스": { x: 0.0, y: 0.5 },
-      "노로맨스": { x: 0.0, y: 0.5 },
       "순애": { x: 0.4, y: 0.4 },
       "서브로맨스": { x: 0.45, y: 0.5 },
       "로맨스": { x: 0.6, y: 0.5 },
