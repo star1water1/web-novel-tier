@@ -9204,6 +9204,8 @@ const TagSelectModal = memo(({
   enableIntensity = false, // 🏷️ v5.0: 농도 모드 기본 활성화 여부
   tagSortMode = "usage", // 🔧 v3.5.16: 태그 정렬 모드 ("usage" | "name" | "registered")
   onChangeSortMode, // 🔧 v3.5.16: 정렬 모드 변경 콜백
+  initialTab = "general", // 🔧 v3.5.16: 기본 탭 (마지막 사용 탭 기억)
+  onChangeTab, // 🔧 v3.5.16: 탭 변경 시 콜백 (App에서 저장)
   theme, // C 객체
 }) => {
   PerfMonitor.trackRender("TagSelectModal"); // 🔬
@@ -9234,7 +9236,10 @@ const TagSelectModal = memo(({
   const [tagIntensities, setTagIntensities] = useState({});
   // 🏷️ v5.0: 상세 모드 (농도 설정 UI 표시)
   const [detailMode, setDetailMode] = useState(enableIntensity);
-  
+
+  // 🔧 v3.5.16: 선택된 태그 프리뷰 접이식 상태
+  const [showSelectedPreview, setShowSelectedPreview] = useState(false);
+
   // 🔧 v3.5.9: 작품명 태그 표시 헬퍼 (📖 prefix)
   const titleLabel = useCallback((tag) => {
     return (tagAttributes && tagAttributes[tag]?.isTitle) ? `📖 ${tag}` : tag;
@@ -9254,7 +9259,8 @@ const TagSelectModal = memo(({
   }, [customComboTargets]);
   
   // 🆕 v2.8.1: 5탭 구조 (장르 / 일반 / 평가 / 조합 / 농도)
-  const [activeTab, setActiveTab] = useState("genre");
+  // 🔧 v3.5.16: 기본 탭을 initialTab prop으로 결정 (마지막 사용 탭 기억)
+  const [activeTab, setActiveTab] = useState(initialTab);
   
   // 🎭 v2.8.1: 평가 탭 서브탭 (긍정/중립/부정)
   const [sentimentSubTab, setSentimentSubTab] = useState("positive");
@@ -9882,11 +9888,60 @@ const TagSelectModal = memo(({
             </View>
           </View>
           
-          {/* 현재 선택된 태그 요약 */}
+          {/* 🔧 v3.5.16: 선택된 태그 요약 + 접이식 칩 프리뷰 */}
           <View style={{ backgroundColor: C.bg, padding: 10, borderRadius: 10, marginBottom: 12 }}>
-            <Text style={{ color: C.sub, fontSize: 12 }}>
-              대장르: {selectedMajor.length}개 | 부장르: {selectedSub.length}개 | 태그: {selectedTags.length}개
-            </Text>
+            <TouchableOpacity
+              onPress={() => setShowSelectedPreview(!showSelectedPreview)}
+              activeOpacity={0.7}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                <Text style={{ color: C.sub, fontSize: 12 }}>
+                  🏷️ {selectedMajor.length + selectedSub.length + selectedTags.length}개 선택됨 (대장르 {selectedMajor.length} · 부장르 {selectedSub.length} · 일반 {selectedTags.length})
+                </Text>
+                <Text style={{ color: C.sub, fontSize: 10 }}>{showSelectedPreview ? "▲" : "▼"}</Text>
+              </View>
+            </TouchableOpacity>
+            {showSelectedPreview && (selectedMajor.length + selectedSub.length + selectedTags.length) > 0 && (
+              <View style={{ maxHeight: 120, marginTop: 8 }}>
+                <ScrollView nestedScrollEnabled showsVerticalScrollIndicator>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }}>
+                    {selectedMajor.map(t => (
+                      <TouchableOpacity
+                        key={`m_${t}`}
+                        onPress={() => toggleMajor(t)}
+                        style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#dbeafe", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: "#3b82f6" }}
+                      >
+                        <Text style={{ fontSize: 11, color: "#1e40af", fontWeight: "600" }}>{titleLabel(t)}</Text>
+                        <Text style={{ fontSize: 9, color: "#3b82f6", marginLeft: 4 }}>✕</Text>
+                      </TouchableOpacity>
+                    ))}
+                    {selectedSub.map(t => (
+                      <TouchableOpacity
+                        key={`s_${t}`}
+                        onPress={() => toggleSub(t)}
+                        style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#dcfce7", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: "#22c55e" }}
+                      >
+                        <Text style={{ fontSize: 11, color: "#166534", fontWeight: "600" }}>{titleLabel(t)}</Text>
+                        <Text style={{ fontSize: 9, color: "#22c55e", marginLeft: 4 }}>✕</Text>
+                      </TouchableOpacity>
+                    ))}
+                    {selectedTags.map(t => (
+                      <TouchableOpacity
+                        key={`t_${t}`}
+                        onPress={() => toggleTag(t)}
+                        style={{ flexDirection: "row", alignItems: "center", backgroundColor: isDark ? "#374151" : "#f3f4f6", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: isDark ? "#6b7280" : "#d1d5db" }}
+                      >
+                        <Text style={{ fontSize: 11, color: C.text, fontWeight: "500" }}>{titleLabel(t)}</Text>
+                        <Text style={{ fontSize: 9, color: C.sub, marginLeft: 4 }}>✕</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </ScrollView>
+              </View>
+            )}
+            {showSelectedPreview && (selectedMajor.length + selectedSub.length + selectedTags.length) === 0 && (
+              <Text style={{ color: C.sub, fontSize: 11, marginTop: 6, fontStyle: "italic" }}>선택된 태그가 없습니다</Text>
+            )}
             {bulkMode && bulkSelectedTags.length > 0 && (
               <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
                 <TouchableOpacity
@@ -9956,7 +10011,7 @@ const TagSelectModal = memo(({
             {TABS.map(tab => (
               <TouchableOpacity
                 key={tab.key}
-                onPress={() => setActiveTab(tab.key)}
+                onPress={() => { setActiveTab(tab.key); onChangeTab && onChangeTab(tab.key); }}
                 style={{
                   flex: 1,
                   paddingVertical: 10,
@@ -20401,6 +20456,7 @@ function AppContent() {
   const [tagSentiments, setTagSentiments] = useState({}); // 🎭 v2.8 태그 속성 (긍정/부정/중립)
   const [tagAttributes, setTagAttributes] = useState({}); // 🆕 v3.4: 태그 속성 { [tag]: { isMajor: bool, isSub: bool } }
   const [tagSortMode, setTagSortMode] = useState("usage"); // 🔧 v3.5.16: 태그 정렬 모드 ("usage" | "name" | "registered")
+  const [tagLastTab, setTagLastTab] = useState("general"); // 🔧 v3.5.16: 마지막 사용 탭 기억
 
   // 🏆 v2.9: 수상 시스템
   const [awardSystemSettings, setAwardSystemSettings] = useState(DEFAULT_AWARD_SYSTEM_SETTINGS);
@@ -23556,6 +23612,24 @@ function AppContent() {
   function handleChangeTagSortMode(mode) {
     setTagSortMode(mode);
     setAppMeta("tag_sort_mode", mode);
+  }
+
+  // 🔧 v3.5.16: 마지막 사용 탭 로드/저장
+  useEffect(() => {
+    (async () => {
+      try {
+        const saved = await getAppMeta("tag_last_tab");
+        const VALID_TAB_KEYS = ["genre", "general", "sentiment", "combo", "intensity"];
+        if (saved && VALID_TAB_KEYS.includes(saved)) setTagLastTab(saved);
+      } catch (e) {
+        console.warn("tag_last_tab load error:", e);
+      }
+    })();
+  }, []);
+
+  function handleChangeTagLastTab(tab) {
+    setTagLastTab(tab);
+    setAppMeta("tag_last_tab", tab);
   }
 
   // 🎭 v2.8: 태그 속성 저장
@@ -37554,6 +37628,8 @@ async function importJSON() {
         onToggleTitle={toggleTagTitle}
         tagSortMode={tagSortMode}
         onChangeSortMode={handleChangeTagSortMode}
+        initialTab={tagLastTab}
+        onChangeTab={handleChangeTagLastTab}
         theme={C}
       />}
 
