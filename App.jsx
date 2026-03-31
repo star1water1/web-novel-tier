@@ -38899,18 +38899,8 @@ async function importJSON() {
         }}
         // 🔧 v3.5.12: onComboToCustom 제거
         onDeleteTag={async (tag, type) => {
-          // 🔧 v3.5.9: 함수형 setState로 stale closure 방지 (일괄 삭제 시 안전)
-          // 🔧 v3.5.15b: isSameTag로 공백/alias 변형도 정확히 제거
-          if (type === "custom" || type === "combo") {
-            removeTagFromRegistry(tag);
-          } else if (type === "userMajor") {
-            if (tagRegistry) updateTagRegistry({...tagRegistry, majorGenres: (tagRegistry.majorGenres || []).filter(t => !isSameTag(t, tag))});
-          } else if (type === "userSub") {
-            if (tagRegistry) updateTagRegistry({...tagRegistry, subGenres: (tagRegistry.subGenres || []).filter(t => !isSameTag(t, tag))});
-          }
-          // 🔧 v3.6.0: Tag Registry에서도 동시 제거
+          // 🔧 v3.6.1: removeTagFromRegistry가 majorGenres/subGenres/generalTags 전부 처리
           removeTagFromRegistry(tag);
-          // 🔧 v3.5.9: 연관 메타데이터 일괄 정리 (고정/숨김/감정/속성)
           await cleanupTagMetadata(tag);
           Alert.alert("완료", `"${tag}" 태그를 삭제했습니다.`);
         }}
