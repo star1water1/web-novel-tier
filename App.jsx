@@ -24055,6 +24055,10 @@ function AppContent() {
     const newMajor = [...userMajorGenres, tag];
     setUserMajorGenres(newMajor);
     await setAppMeta("user_major_genres", newMajor);
+    // 🔧 v3.6.0: Tag Registry에도 동시 추가
+    if (tagRegistry && !tagRegistry.majorGenres.some(t => isSameTag(t, tag))) {
+      updateTagRegistry({ ...tagRegistry, majorGenres: [...tagRegistry.majorGenres, tag] });
+    }
     Alert.alert("완료", `"${tag}"에 대장르 속성을 추가했습니다.`);
   }
 
@@ -24068,6 +24072,10 @@ function AppContent() {
     const newSub = [...userSubGenres, tag];
     setUserSubGenres(newSub);
     await setAppMeta("user_sub_genres", newSub);
+    // 🔧 v3.6.0: Tag Registry에도 동시 추가
+    if (tagRegistry && !tagRegistry.subGenres.some(t => isSameTag(t, tag))) {
+      updateTagRegistry({ ...tagRegistry, subGenres: [...tagRegistry.subGenres, tag] });
+    }
     Alert.alert("완료", `"${tag}"에 부장르 속성을 추가했습니다.`);
   }
 
@@ -24079,14 +24087,21 @@ function AppContent() {
 
   // 대장르 속성 제거
   async function demoteMajorToCustom(genre) {
-    // 기본 대장르는 제거 불가
-    if (listHasTag(MAJOR_GENRES, genre)) {
+    // 기본 대장르는 제거 불가 — 단, 레지스트리 전환 후에는 모든 장르가 편집 가능
+    if (listHasTag(MAJOR_GENRES, genre) && !(tagRegistry && tagRegistry.majorGenres.some(t => isSameTag(t, genre)))) {
       Alert.alert("알림", "기본 제공 대장르는 속성을 제거할 수 없습니다.");
       return;
     }
     const newMajor = userMajorGenres.filter(g => g !== genre);
     setUserMajorGenres(newMajor);
     await setAppMeta("user_major_genres", newMajor);
+    // 🔧 v3.6.0: Tag Registry에서도 제거
+    if (tagRegistry) {
+      updateTagRegistry({
+        ...tagRegistry,
+        majorGenres: tagRegistry.majorGenres.filter(t => !isSameTag(t, genre)),
+      });
+    }
     // 🔧 v3.5.9: tagAttributes.isMajor도 함께 제거 (잔존 방지, 함수형 setState)
     setTagAttributes(prev => {
       if (!prev[genre]?.isMajor) return prev;
@@ -24101,14 +24116,21 @@ function AppContent() {
 
   // 부장르 속성 제거
   async function demoteSubToCustom(genre) {
-    // 기본 부장르는 제거 불가
-    if (listHasTag(SUB_GENRES, genre)) {
+    // 기본 부장르는 제거 불가 — 단, 레지스트리 전환 후에는 모든 장르가 편집 가능
+    if (listHasTag(SUB_GENRES, genre) && !(tagRegistry && tagRegistry.subGenres.some(t => isSameTag(t, genre)))) {
       Alert.alert("알림", "기본 제공 부장르는 속성을 제거할 수 없습니다.");
       return;
     }
     const newSub = userSubGenres.filter(g => g !== genre);
     setUserSubGenres(newSub);
     await setAppMeta("user_sub_genres", newSub);
+    // 🔧 v3.6.0: Tag Registry에서도 제거
+    if (tagRegistry) {
+      updateTagRegistry({
+        ...tagRegistry,
+        subGenres: tagRegistry.subGenres.filter(t => !isSameTag(t, genre)),
+      });
+    }
     // 🔧 v3.5.9: tagAttributes.isSub도 함께 제거 (잔존 방지, 함수형 setState)
     setTagAttributes(prev => {
       if (!prev[genre]?.isSub) return prev;
@@ -24177,6 +24199,11 @@ function AppContent() {
               const newSub = userSubGenres.filter(g => !listHasTag(unusedSub, g));
               setUserSubGenres(newSub);
               await setAppMeta("user_sub_genres", newSub);
+            }
+            // 🔧 v3.6.0: Tag Registry에서도 동시 제거
+            const allUnused = [...unusedCustom, ...unusedMajor, ...unusedSub];
+            for (const tag of allUnused) {
+              removeTagFromRegistry(tag);
             }
             Alert.alert("완료", `미사용 태그 ${total}개를 삭제했습니다.`);
           }
@@ -24317,6 +24344,13 @@ function AppContent() {
     const newList = [...userMajorGenres, genre];
     setUserMajorGenres(newList);
     await setAppMeta("user_major_genres", newList);
+    // 🔧 v3.6.0: Tag Registry에도 동시 추가
+    if (tagRegistry) {
+      updateTagRegistry({
+        ...tagRegistry,
+        majorGenres: [...new Set([...tagRegistry.majorGenres, genre])],
+      });
+    }
   }
 
   // 🏷️ 사용자 부장르 추가
@@ -24330,6 +24364,13 @@ function AppContent() {
     const newList = [...userSubGenres, genre];
     setUserSubGenres(newList);
     await setAppMeta("user_sub_genres", newList);
+    // 🔧 v3.6.0: Tag Registry에도 동시 추가
+    if (tagRegistry) {
+      updateTagRegistry({
+        ...tagRegistry,
+        subGenres: [...new Set([...tagRegistry.subGenres, genre])],
+      });
+    }
   }
 
   // 🏷️ 전체 대장르 목록 (기본 + 사용자 + tagAttributes)
@@ -38970,6 +39011,8 @@ async function importJSON() {
               return next;
             });
           }
+          // 🔧 v3.6.0: Tag Registry에서도 동시 제거
+          removeTagFromRegistry(tag);
           // 🔧 v3.5.9: 연관 메타데이터 일괄 정리 (고정/숨김/감정/속성)
           await cleanupTagMetadata(tag);
           Alert.alert("완료", `"${tag}" 태그를 삭제했습니다.`);
@@ -38984,6 +39027,8 @@ async function importJSON() {
           const newCustom = [...customTags, tag];
           setCustomTags(newCustom);
           await setAppMeta("custom_tags", newCustom);
+          // 🔧 v3.6.0: Tag Registry에도 동시 추가
+          addTagToRegistry(tag);
           Alert.alert("완료", `"${tag}" 태그를 추가했습니다.`);
         }}
         onChangeSentiment={async (tag, sentiment) => {
