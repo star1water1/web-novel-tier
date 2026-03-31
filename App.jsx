@@ -408,10 +408,10 @@
  * ║ • 원인: setAppMeta만 호출하고 setState 미호출                               ║
  * ║ • 수정: 7개 항목에 인메모리 setState 추가                                    ║
  * ║   - tag_attributes: setTagAttributes({})                                    ║
- * ║   - custom_tags: setCustomTags([])                                          ║
+ * ║   - custom_tags: via updateTagRegistry (generalTags reset)                  ║
  * ║   - combo_tags: setCustomComboTraits/Targets([])                            ║
  * ║   - tag_pins: setPinnedTags/setHiddenTags([])                              ║
- * ║   - genres: setUserMajorGenres/setUserSubGenres([])                        ║
+ * ║   - genres: via updateTagRegistry (majorGenres/subGenres reset)            ║
  * ║   - tier_history: setTierHistory([])                                        ║
  * ║   - recent_changes: setRecentChanges([])                                    ║
  * ║                                                                              ║
@@ -7180,6 +7180,42 @@ function applyTagRegistry(registry) {
   ALL_DEFAULT_TAGS = [...MAJOR_GENRES, ...SUB_GENRES, ...ALL_GENERAL_TAGS];
   TAG_REVERSE_ALIASES = buildReverseAliases(TAG_ALIASES);
   TAG_PICKER_CATEGORIES = Object.entries(GENERAL_TAGS).map(([cat, tags]) => ({ label: cat, tags }));
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 🔧 v3.6.1: Registry → 구 state 파생 함수 (useMemo에서 사용)
+// registry가 유일한 쓰기 대상이고, 아래 함수들이 자동으로 구 state를 재계산
+// ═══════════════════════════════════════════════════════════════
+
+/** registry.majorGenres에서 FACTORY 태그를 빼면 사용자 추가 대장르 */
+function deriveUserMajorGenres(registry) {
+  if (!registry) return [];
+  return (registry.majorGenres || []).filter(
+    t => !FACTORY_MAJOR_GENRES.some(f => isSameTag(f, t))
+  );
+}
+
+/** registry.subGenres에서 FACTORY 태그를 빼면 사용자 추가 부장르 */
+function deriveUserSubGenres(registry) {
+  if (!registry) return [];
+  return (registry.subGenres || []).filter(
+    t => !FACTORY_SUB_GENRES.some(f => isSameTag(f, t))
+  );
+}
+
+/** registry.generalTags에서 FACTORY 태그를 빼면 사용자 커스텀 태그 */
+function deriveCustomTags(registry) {
+  if (!registry) return [];
+  const factorySet = new Set(
+    Object.values(FACTORY_GENERAL_TAGS).flat().map(t => normalizeTagKey(t))
+  );
+  const result = [];
+  for (const tags of Object.values(registry.generalTags || {})) {
+    for (const tag of (tags || [])) {
+      if (!factorySet.has(normalizeTagKey(tag))) result.push(tag);
+    }
+  }
+  return result;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -20486,7 +20522,8 @@ function AppContent() {
   // 🏷️ 태그 선택 모달
   const [tagModalOpen, setTagModalOpen] = useState(false);
   const [tagModalTarget, setTagModalTarget] = useState(null); // 'new' | 'edit' | 'bulk'
-  const [customTags, setCustomTags] = useState([]); // 사용자 정의 태그
+  // 🔧 v3.6.1: tagRegistry에서 자동 파생 (setter 제거 → 이중 저장소 원천 차단)
+  const customTags = useMemo(() => deriveCustomTags(tagRegistry), [tagRegistry]);
   const [customTagCategories, setCustomTagCategories] = useState({}); // 🆕 v3.5.9: 커스텀 태그 카테고리 { "카테고리명": ["tag1", "tag2"] }
   const [catNewName, setCatNewName] = useState(""); // 📂 카테고리 관리: 새 카테고리명
   const [catExpanded, setCatExpanded] = useState(null); // 📂 카테고리 관리: 펼쳐진 카테고리명
@@ -20520,8 +20557,9 @@ function AppContent() {
   
   // 🏷️ 태그 관리 모달
   const [tagManageOpen, setTagManageOpen] = useState(false);
-  const [userMajorGenres, setUserMajorGenres] = useState([]); // 사용자 추가 대장르
-  const [userSubGenres, setUserSubGenres] = useState([]); // 사용자 추가 부장르
+  // 🔧 v3.6.1: tagRegistry에서 자동 파생
+  const userMajorGenres = useMemo(() => deriveUserMajorGenres(tagRegistry), [tagRegistry]);
+  const userSubGenres = useMemo(() => deriveUserSubGenres(tagRegistry), [tagRegistry]);
   const [newMajorGenre, setNewMajorGenre] = useState([]);
   const [newSubGenre, setNewSubGenre] = useState([]);
   const [newTagData, setNewTagDataRaw] = useState([]); // 🏷️ v5.0: [{tag, intensity}, ...]
@@ -20981,7 +21019,6 @@ function AppContent() {
           
           // 🏷️ 커스텀 태그
           const customTagsList = Array.isArray(savedCustomTags) ? savedCustomTags : [];
-          setCustomTags(customTagsList);
           
           // 🆕 v3.5.9: 커스텀 태그 카테고리
           if (savedCustomTagCategories && typeof savedCustomTagCategories === "object") {
@@ -20997,17 +21034,14 @@ function AppContent() {
           // 🔧 v3.5.12: 조합식 태그 → 커스텀 태그로 통합 마이그레이션
           // comboTags에 남아있는 항목을 customTags로 머지 후 comboTags 비움
           if (Array.isArray(savedComboTags) && savedComboTags.length > 0) {
-            const mergedCustom = [...customTagsList];
             let migrated = 0;
             for (const ct of savedComboTags) {
-              if (!mergedCustom.some(t => isSameTag(t, ct))) {
-                mergedCustom.push(ct);
+              if (!customTags.some(t => isSameTag(t, ct)) && !ALL_DEFAULT_TAGS.some(t => isSameTag(t, ct))) {
+                addTagToRegistry(ct);
                 migrated++;
               }
             }
             if (migrated > 0) {
-              setCustomTags(mergedCustom);
-              await setAppMeta("custom_tags", mergedCustom);
               console.log(`[태그 마이그레이션] 조합식 ${migrated}개 → 커스텀 태그로 통합`);
             }
             // comboTags 비움 (UI에서 빈 배열로 표시)
@@ -21025,13 +21059,7 @@ function AppContent() {
             setTagAttributes(savedTagAttributes);
           }
           
-          // 🏷️ 사용자 대장르/부장르
-          if (Array.isArray(savedUserMajorGenres)) {
-            setUserMajorGenres(savedUserMajorGenres);
-          }
-          if (Array.isArray(savedUserSubGenres)) {
-            setUserSubGenres(savedUserSubGenres);
-          }
+          // 🏷️ 사용자 대장르/부장르 — useMemo derives from tagRegistry, no setState needed
           
           // 🙈 숨김 태그
           if (Array.isArray(savedHiddenTags)) {
@@ -21195,9 +21223,9 @@ function AppContent() {
               }
               
               if (newTags.size > 0) {
-                const updatedCustomTags = [...customTagsList, ...Array.from(newTags)];
-                setCustomTags(updatedCustomTags);
-                await setAppMeta("custom_tags", updatedCustomTags);
+                for (const t of newTags) {
+                  addTagToRegistry(t);
+                }
               }
             } catch (e) {
               console.warn("태그 자동 수집 실패:", e);
@@ -21269,14 +21297,12 @@ function AppContent() {
       setUpsetFactors({ factors: [], lastUpdated: 0 });
       setTagRelations({ groups: {}, tagToGroup: {} });
       setTagCoOccurrences({});
-      setCustomTags([]);
+      if (tagRegistry) updateTagRegistry({...tagRegistry, generalTags: {...FACTORY_GENERAL_TAGS}, majorGenres: [...FACTORY_MAJOR_GENRES], subGenres: [...FACTORY_SUB_GENRES]});
       setComboTags([]);
       setTagSentiments({});
       setTagAttributes({});
       setHiddenTags([]);
       setPinnedTags([]);
-      setUserMajorGenres([]);
-      setUserSubGenres([]);
       setCustomComboTraits([]);
       setCustomComboTargets([]);
       setCoordinateSystems(null);
@@ -21375,7 +21401,6 @@ function AppContent() {
         if (merged.tierThresholds) globalTierThresholds = { ...DEFAULT_SETTINGS.tierThresholds, ...merged.tierThresholds };
       }
       if (Array.isArray(savedTierHistory)) setTierHistory(savedTierHistory.slice(0, 50));
-      if (Array.isArray(savedCustomTags)) setCustomTags(savedCustomTags);
       if (savedCustomTagCategories && typeof savedCustomTagCategories === "object") setCustomTagCategories(savedCustomTagCategories);
       if (savedMatchFilterSettings && typeof savedMatchFilterSettings === "object") {
         if (savedMatchFilterSettings.enabled !== undefined) setMatchFilterEnabled(savedMatchFilterSettings.enabled);
@@ -21383,8 +21408,6 @@ function AppContent() {
       }
       if (savedTagSentiments && typeof savedTagSentiments === "object") setTagSentiments(savedTagSentiments);
       if (savedTagAttributes && typeof savedTagAttributes === "object") setTagAttributes(savedTagAttributes);
-      if (Array.isArray(savedUserMajorGenres)) setUserMajorGenres(savedUserMajorGenres);
-      if (Array.isArray(savedUserSubGenres)) setUserSubGenres(savedUserSubGenres);
       if (Array.isArray(savedHiddenTags)) setHiddenTags(savedHiddenTags);
       if (savedAwardSystemSettings && typeof savedAwardSystemSettings === "object") {
         const merged = { ...DEFAULT_AWARD_SYSTEM_SETTINGS };
@@ -21418,18 +21441,14 @@ function AppContent() {
       // 🔧 v3.5.15e: comboTags → customTags 마이그레이션 (초기화 코드와 동일한 로직)
       // 옛 데이터가 있는 슬롯으로 전환 시 마이그레이션 누락 방지
       if (Array.isArray(savedComboTags) && savedComboTags.length > 0) {
-        const currentCustom = Array.isArray(savedCustomTags) ? savedCustomTags : [];
-        const mergedCustom = [...currentCustom];
         let migrated = 0;
         for (const ct of savedComboTags) {
-          if (!mergedCustom.some(t => isSameTag(t, ct))) {
-            mergedCustom.push(ct);
+          if (!customTags.some(t => isSameTag(t, ct)) && !ALL_DEFAULT_TAGS.some(t => isSameTag(t, ct))) {
+            addTagToRegistry(ct);
             migrated++;
           }
         }
         if (migrated > 0) {
-          setCustomTags(mergedCustom);
-          await setAppMeta("custom_tags", mergedCustom);
           console.log(`[슬롯 전환 태그 마이그레이션] 조합식 ${migrated}개 → 커스텀 태그로 통합`);
         }
         setComboTags([]);
@@ -23418,46 +23437,31 @@ function AppContent() {
   // 🔧 v3.5.9: 작품 저장 시 텍스트 입력 태그 → customTags 자동 동기화
   // 태그 관리 모달에서 보이지 않는 문제 근본 해결
   function syncTagsToCustom(tagsString) {
-    if (!tagsString || !tagsString.trim()) return;
+    if (!tagsString || !tagsString.trim() || !tagRegistry) return;
     const inputTags = tagsString.split(",").map(t => t.trim()).filter(Boolean);
-    // 🔧 v3.5.11: tagAttributes 기반 장르도 포함 (이전엔 tagAttributes 대장르가 customTags에 중복 추가됨)
     const allMajor = getAllMajorTags(tagAttributes, userMajorGenres);
     const allSub = getAllSubTags(tagAttributes, userSubGenres);
-    
-    const newTags = [];
-    for (const tag of inputTags) {
-      // 🔧 v3.5.12: isSameTag로 공백 무시 + alias 통합 중복 판정
-      // 이미 어딘가에 존재하면 스킵
-      if (ALL_DEFAULT_TAGS.some(t => isSameTag(t, tag))) continue;
-      if (customTags.some(t => isSameTag(t, tag))) continue;
-      // 🔧 v3.5.12: comboTags 별도 체크 제거 (커스텀으로 통합됨)
-      if (allMajor.some(t => isSameTag(t, tag))) continue;
-      if (allSub.some(t => isSameTag(t, tag))) continue;
-      newTags.push(tag);
-    }
-    
-    if (newTags.length > 0) {
-      setCustomTags(prev => {
-        // 함수형 setState로 중복 방지
-        const toAdd = newTags.filter(t => !prev.some(p => isSameTag(p, t)));
-        if (toAdd.length === 0) return prev;
-        const next = [...prev, ...toAdd];
-        deferSetAppMeta("custom_tags", next);
-        // 🔧 v3.6.0: Tag Registry에도 동시 추가 (이중 저장소 동기화)
-        for (const t of toAdd) addTagToRegistry(t);
-        return next;
-      });
-    }
+    const toAdd = inputTags.filter(tag => {
+      if (ALL_DEFAULT_TAGS.some(t => isSameTag(t, tag))) return false;
+      if (customTags.some(t => isSameTag(t, tag))) return false;
+      if (allMajor.some(t => isSameTag(t, tag))) return false;
+      if (allSub.some(t => isSameTag(t, tag))) return false;
+      return true;
+    });
+    if (toAdd.length === 0) return;
+    const cat = "📁 사용자 태그";
+    const newGeneralTags = { ...tagRegistry.generalTags };
+    if (!newGeneralTags[cat]) newGeneralTags[cat] = [];
+    const existing = newGeneralTags[cat];
+    const reallyNew = toAdd.filter(t => !existing.some(e => isSameTag(e, t)));
+    if (reallyNew.length === 0) return;
+    newGeneralTags[cat] = [...existing, ...reallyNew];
+    updateTagRegistry({ ...tagRegistry, generalTags: newGeneralTags });
   }
 
   async function removeCustomTag(tag) {
-    // 🔧 v3.5.15b: isSameTag로 공백/alias 변형도 정확히 제거
-    const newList = customTags.filter(t => !isSameTag(t, tag));
-    setCustomTags(newList);
-    await setAppMeta("custom_tags", newList);
-    await cleanupTagMetadata(tag); // 🔧 v3.5.9
-    // 🔧 v3.6.0: Tag Registry에서도 동시 제거
     removeTagFromRegistry(tag);
+    await cleanupTagMetadata(tag); // 🔧 v3.5.9
   }
 
   // 🏷️ 커스텀 태그 직접 추가 (TagSelectModal에서 사용)
@@ -23468,10 +23472,6 @@ function AppContent() {
       Alert.alert("알림", "이미 존재하는 태그입니다.");
       return;
     }
-    const newList = [...customTags, tag];
-    setCustomTags(newList);
-    await setAppMeta("custom_tags", newList);
-    // 🔧 v3.6.0: Tag Registry에도 동시 추가 (이중 저장소 동기화)
     addTagToRegistry(tag);
   }
 
@@ -23484,10 +23484,6 @@ function AppContent() {
       Alert.alert("알림", "이미 존재하는 태그입니다.");
       return;
     }
-    const newList = [...customTags, comboTag];
-    setCustomTags(newList);
-    await setAppMeta("custom_tags", newList);
-    // 🔧 v3.6.0: Tag Registry에도 동시 추가 (이중 저장소 동기화)
     addTagToRegistry(comboTag);
   }
 
@@ -23546,20 +23542,16 @@ function AppContent() {
 
   // 🏷️ 사용자 대장르 삭제
   async function removeUserMajorGenre(genre) {
-    const newList = userMajorGenres.filter(g => g !== genre);
-    setUserMajorGenres(newList);
-    await setAppMeta("user_major_genres", newList);
-    // 🔧 v3.6.0: Tag Registry에서도 동시 제거
-    removeTagFromRegistry(genre);
+    if (tagRegistry) {
+      updateTagRegistry({...tagRegistry, majorGenres: (tagRegistry.majorGenres || []).filter(t => !isSameTag(t, genre))});
+    }
   }
 
   // 🏷️ 사용자 부장르 삭제
   async function removeUserSubGenre(genre) {
-    const newList = userSubGenres.filter(g => g !== genre);
-    setUserSubGenres(newList);
-    await setAppMeta("user_sub_genres", newList);
-    // 🔧 v3.6.0: Tag Registry에서도 동시 제거
-    removeTagFromRegistry(genre);
+    if (tagRegistry) {
+      updateTagRegistry({...tagRegistry, subGenres: (tagRegistry.subGenres || []).filter(t => !isSameTag(t, genre))});
+    }
   }
 
   // 🏷️ 중복 태그 정리 (전체 태그에서 중복 제거)
@@ -23568,42 +23560,9 @@ function AppContent() {
     setIsLoading(true);
     try {
       let metaFixed = 0;
-      
-      // 커스텀 태그 중복 제거
-      const cleanedCustom = deduplicateTags(customTags);
-      if (cleanedCustom.length !== customTags.length) {
-        metaFixed += customTags.length - cleanedCustom.length;
-        setCustomTags(cleanedCustom);
-        await setAppMeta("custom_tags", cleanedCustom);
-      }
-      
-      // 🔧 v3.5.12: comboTags 중복 제거 제거 (항상 빈 배열)
-      
-      // 사용자 대장르 중복 제거
-      const cleanedMajor = deduplicateTags(userMajorGenres);
-      if (cleanedMajor.length !== userMajorGenres.length) {
-        metaFixed += userMajorGenres.length - cleanedMajor.length;
-        setUserMajorGenres(cleanedMajor);
-        await setAppMeta("user_major_genres", cleanedMajor);
-      }
-      
-      // 사용자 부장르 중복 제거
-      const cleanedSub = deduplicateTags(userSubGenres);
-      if (cleanedSub.length !== userSubGenres.length) {
-        metaFixed += userSubGenres.length - cleanedSub.length;
-        setUserSubGenres(cleanedSub);
-        await setAppMeta("user_sub_genres", cleanedSub);
-      }
-      
-      // 🔧 v3.5.15b: 작품별 tags/tag_data/major_genre/sub_genre 중복 일괄 정리
-      const novelResult = await deduplicateExistingNovelTags();
-      
-      if (novelResult.fixed > 0) {
-        await loadList(undefined, undefined, "dedup");
-      }
-      
-      // 🔧 v3.6.0: Tag Registry도 중복 제거 동기화
-      if (tagRegistry && metaFixed > 0) {
+
+      // 🔧 v3.6.1: registry 단일 중복 제거 (구 state는 자동 파생)
+      if (tagRegistry) {
         const newRegistry = { ...tagRegistry };
         newRegistry.majorGenres = deduplicateTags(newRegistry.majorGenres || []);
         newRegistry.subGenres = deduplicateTags(newRegistry.subGenres || []);
@@ -23613,7 +23572,18 @@ function AppContent() {
           if (deduped.length > 0) newGeneral[cat] = deduped;
         }
         newRegistry.generalTags = newGeneral;
-        updateTagRegistry(newRegistry);
+        // Count how many were removed
+        const oldTotal = (tagRegistry.majorGenres || []).length + (tagRegistry.subGenres || []).length + Object.values(tagRegistry.generalTags || {}).flat().length;
+        const newTotal = newRegistry.majorGenres.length + newRegistry.subGenres.length + Object.values(newRegistry.generalTags).flat().length;
+        metaFixed = oldTotal - newTotal;
+        if (metaFixed > 0) updateTagRegistry(newRegistry);
+      }
+
+      // 🔧 v3.5.15b: 작품별 DB 데이터 중복도 일괄 정리
+      const novelResult = await deduplicateExistingNovelTags();
+
+      if (novelResult.fixed > 0) {
+        await loadList(undefined, undefined, "dedup");
       }
 
       const msgs = [];
@@ -23733,8 +23703,7 @@ function AppContent() {
       await setAppMeta("user_sub_genres", null);
       await setAppMeta("custom_tag_categories", null);
     }
-    applyTagRegistry(registry);
-    setTagRegistry(registry);
+    updateTagRegistry(registry);
   }
 
   /** 첫 실행 시드: FACTORY + 기존 사용자 데이터 병합 */
@@ -24073,11 +24042,7 @@ function AppContent() {
       Alert.alert("알림", "이미 대장르 속성이 있습니다.");
       return;
     }
-    // 대장르 속성 추가 (커스텀/조합 유지 - 속성은 중첩 가능)
-    const newMajor = [...userMajorGenres, tag];
-    setUserMajorGenres(newMajor);
-    await setAppMeta("user_major_genres", newMajor);
-    // 🔧 v3.6.0: Tag Registry에도 동시 추가
+    // 대장르 속성 추가 — registry 단일 경로
     if (tagRegistry && !tagRegistry.majorGenres.some(t => isSameTag(t, tag))) {
       updateTagRegistry({ ...tagRegistry, majorGenres: [...tagRegistry.majorGenres, tag] });
     }
@@ -24090,11 +24055,7 @@ function AppContent() {
       Alert.alert("알림", "이미 부장르 속성이 있습니다.");
       return;
     }
-    // 부장르 속성 추가 (커스텀/조합 유지 - 속성은 중첩 가능)
-    const newSub = [...userSubGenres, tag];
-    setUserSubGenres(newSub);
-    await setAppMeta("user_sub_genres", newSub);
-    // 🔧 v3.6.0: Tag Registry에도 동시 추가
+    // 부장르 속성 추가 — registry 단일 경로
     if (tagRegistry && !tagRegistry.subGenres.some(t => isSameTag(t, tag))) {
       updateTagRegistry({ ...tagRegistry, subGenres: [...tagRegistry.subGenres, tag] });
     }
@@ -24114,10 +24075,7 @@ function AppContent() {
       Alert.alert("알림", "기본 제공 대장르는 속성을 제거할 수 없습니다.");
       return;
     }
-    const newMajor = userMajorGenres.filter(g => g !== genre);
-    setUserMajorGenres(newMajor);
-    await setAppMeta("user_major_genres", newMajor);
-    // 🔧 v3.6.0: Tag Registry에서도 제거
+    // registry 단일 경로로 대장르 제거
     if (tagRegistry) {
       updateTagRegistry({
         ...tagRegistry,
@@ -24143,10 +24101,7 @@ function AppContent() {
       Alert.alert("알림", "기본 제공 부장르는 속성을 제거할 수 없습니다.");
       return;
     }
-    const newSub = userSubGenres.filter(g => g !== genre);
-    setUserSubGenres(newSub);
-    await setAppMeta("user_sub_genres", newSub);
-    // 🔧 v3.6.0: Tag Registry에서도 제거
+    // registry 단일 경로로 부장르 제거
     if (tagRegistry) {
       updateTagRegistry({
         ...tagRegistry,
@@ -24206,23 +24161,7 @@ function AppContent() {
           text: "삭제",
           style: "destructive",
           onPress: async () => {
-            // 🔧 v3.5.15b: listHasTag로 공백/alias 일관성 비교
-            if (unusedCustom.length > 0) {
-              const newCustom = customTags.filter(t => !listHasTag(unusedCustom, t));
-              setCustomTags(newCustom);
-              await setAppMeta("custom_tags", newCustom);
-            }
-            if (unusedMajor.length > 0) {
-              const newMajor = userMajorGenres.filter(g => !listHasTag(unusedMajor, g));
-              setUserMajorGenres(newMajor);
-              await setAppMeta("user_major_genres", newMajor);
-            }
-            if (unusedSub.length > 0) {
-              const newSub = userSubGenres.filter(g => !listHasTag(unusedSub, g));
-              setUserSubGenres(newSub);
-              await setAppMeta("user_sub_genres", newSub);
-            }
-            // 🔧 v3.6.0: Tag Registry에서도 동시 제거
+            // 🔧 v3.6.1: registry 단일 경로로 제거 (구 state 자동 파생)
             const allUnused = [...unusedCustom, ...unusedMajor, ...unusedSub];
             for (const tag of allUnused) {
               removeTagFromRegistry(tag);
@@ -24245,20 +24184,8 @@ function AppContent() {
           text: "삭제",
           style: "destructive",
           onPress: async () => {
-            // 1. 커스텀/대장르/부장르에서 제거
-            // 🔧 v3.5.12: comboTags 제거 (customTags로 통합)
-            // 🔧 v3.5.15b: isSameTag로 공백/alias 변형도 인메모리에서 정확히 제거
-            const newCustom = customTags.filter(t => !isSameTag(t, tag));
-            const newMajor = userMajorGenres.filter(g => !isSameTag(g, tag));
-            const newSub = userSubGenres.filter(g => !isSameTag(g, tag));
-            setCustomTags(newCustom);
-            setUserMajorGenres(newMajor);
-            setUserSubGenres(newSub);
-            await setAppMeta("custom_tags", newCustom);
-            // 🔧 v3.6.0: Tag Registry에서도 제거
+            // 1. registry에서 태그 제거 (구 state 자동 파생)
             removeTagFromRegistry(tag);
-            await setAppMeta("user_major_genres", newMajor);
-            await setAppMeta("user_sub_genres", newSub);
             
             // 2. 모든 작품에서 해당 태그 제거
             // 🔧 v3.5.13: tag_data도 함께 정리 (batchRemoveTag와 동일 수준)
@@ -24348,9 +24275,7 @@ function AppContent() {
     }
 
     if (newTags.size > 0) {
-      const updatedCustomTags = [...currentCustomTags, ...Array.from(newTags)];
-      setCustomTags(updatedCustomTags);
-      await setAppMeta("custom_tags", updatedCustomTags);
+      for (const t of newTags) addTagToRegistry(t);
       console.log(`자동 수집된 커스텀 태그 ${newTags.size}개:`, Array.from(newTags));
     }
   }
@@ -24363,10 +24288,7 @@ function AppContent() {
       Alert.alert("알림", "이미 존재하는 대장르입니다.");
       return;
     }
-    const newList = [...userMajorGenres, genre];
-    setUserMajorGenres(newList);
-    await setAppMeta("user_major_genres", newList);
-    // 🔧 v3.6.0: Tag Registry에도 동시 추가
+    // 🔧 v3.6.1: registry 단일 경로
     if (tagRegistry) {
       updateTagRegistry({
         ...tagRegistry,
@@ -24383,10 +24305,7 @@ function AppContent() {
       Alert.alert("알림", "이미 존재하는 부장르입니다.");
       return;
     }
-    const newList = [...userSubGenres, genre];
-    setUserSubGenres(newList);
-    await setAppMeta("user_sub_genres", newList);
-    // 🔧 v3.6.0: Tag Registry에도 동시 추가
+    // 🔧 v3.6.1: registry 단일 경로
     if (tagRegistry) {
       updateTagRegistry({
         ...tagRegistry,
@@ -25363,8 +25282,7 @@ function AppContent() {
                 await setAppMeta("custom_combo_traits", []);
               }
               if (sel.custom_tags) {
-                setCustomTags([]);
-                await setAppMeta("custom_tags", []);
+                if (tagRegistry) updateTagRegistry({...tagRegistry, generalTags: {...FACTORY_GENERAL_TAGS}});
               }
               if (sel.tag_pins) {
                 setPinnedTags([]);
@@ -25411,10 +25329,7 @@ function AppContent() {
                 await setAppMeta("app_settings", DEFAULT_SETTINGS);
               }
               if (sel.genres) {
-                setUserMajorGenres([]);
-                setUserSubGenres([]);
-                await setAppMeta("user_major_genres", null);
-                await setAppMeta("user_sub_genres", null);
+                if (tagRegistry) updateTagRegistry({...tagRegistry, majorGenres: [...FACTORY_MAJOR_GENRES], subGenres: [...FACTORY_SUB_GENRES]});
               }
 
               // === 상태 정리 ===
@@ -28362,39 +28277,7 @@ async function importJSON() {
                   await setAppMeta("pinned_tags", data.TM.pt);
                   tagMetaRestored = true;
                 }
-                // 사용자 대장르
-                if (Array.isArray(data.TM.umg)) {
-                  setUserMajorGenres(data.TM.umg);
-                  await setAppMeta("user_major_genres", data.TM.umg);
-                  tagMetaRestored = true;
-                }
-                // 사용자 부장르
-                if (Array.isArray(data.TM.usg)) {
-                  setUserSubGenres(data.TM.usg);
-                  await setAppMeta("user_sub_genres", data.TM.usg);
-                  tagMetaRestored = true;
-                }
-                // 커스텀 태그
-                if (Array.isArray(data.TM.ct)) {
-                  let mergedCt = [...data.TM.ct];
-                  // 🔧 v3.5.12: 구 버전 백업의 cbt(조합태그)를 ct에 머지
-                  if (Array.isArray(data.TM.cbt) && data.TM.cbt.length > 0) {
-                    for (const ct of data.TM.cbt) {
-                      if (!mergedCt.some(t => isSameTag(t, ct))) {
-                        mergedCt.push(ct);
-                      }
-                    }
-                  }
-                  setCustomTags(mergedCt);
-                  await setAppMeta("custom_tags", mergedCt);
-                  tagMetaRestored = true;
-                } else if (Array.isArray(data.TM.cbt) && data.TM.cbt.length > 0) {
-                  // ct가 없고 cbt만 있는 아주 오래된 백업
-                  setCustomTags(data.TM.cbt);
-                  await setAppMeta("custom_tags", data.TM.cbt);
-                  tagMetaRestored = true;
-                }
-                // 🔧 v3.5.12: comboTags 분류 폐지 — 빈 배열로 설정
+                // 🔧 v3.5.12: comboTags 분류 폐지
                 setComboTags([]);
                 await setAppMeta("combo_tags", []);
                 // 🆕 v3.5.9: 커스텀 태그 카테고리
@@ -28402,13 +28285,27 @@ async function importJSON() {
                   setCustomTagCategories(data.TM.ctc);
                   await setAppMeta("custom_tag_categories", data.TM.ctc);
                 }
+                tagMetaRestored = true;
               }
 
-              // 🔧 v3.6.0: Tag Registry 복원
+              // 🔧 v3.6.1: Tag Registry 복원 (단일 경로)
               if (data.TR && typeof data.TR === "object") {
-                applyTagRegistry(data.TR);
-                setTagRegistry(data.TR);
-                await setAppMeta("tag_registry", data.TR);
+                updateTagRegistry(data.TR);
+              } else if (data.TM) {
+                // TR 없는 구 백업: TM에서 registry 재구성
+                const newRegistry = { ...(tagRegistry || { majorGenres: [...FACTORY_MAJOR_GENRES], subGenres: [...FACTORY_SUB_GENRES], generalTags: {...FACTORY_GENERAL_TAGS} }) };
+                if (Array.isArray(data.TM.umg))
+                  newRegistry.majorGenres = deduplicateTags([...FACTORY_MAJOR_GENRES, ...data.TM.umg]);
+                if (Array.isArray(data.TM.usg))
+                  newRegistry.subGenres = deduplicateTags([...FACTORY_SUB_GENRES, ...data.TM.usg]);
+                if (Array.isArray(data.TM.ct)) {
+                  let merged = [...data.TM.ct];
+                  if (Array.isArray(data.TM.cbt))
+                    for (const ct of data.TM.cbt)
+                      if (!merged.some(t => isSameTag(t, ct))) merged.push(ct);
+                  newRegistry.generalTags = { ...(newRegistry.generalTags || FACTORY_GENERAL_TAGS), "📁 사용자 태그": merged };
+                }
+                updateTagRegistry(newRegistry);
               }
 
               // 📋 v3.3.0: 예정 작품 복원
@@ -39004,31 +38901,12 @@ async function importJSON() {
         onDeleteTag={async (tag, type) => {
           // 🔧 v3.5.9: 함수형 setState로 stale closure 방지 (일괄 삭제 시 안전)
           // 🔧 v3.5.15b: isSameTag로 공백/alias 변형도 정확히 제거
-          if (type === "custom") {
-            setCustomTags(prev => {
-              const next = prev.filter(t => !isSameTag(t, tag));
-              deferSetAppMeta("custom_tags", next);
-              return next;
-            });
-          } else if (type === "combo") {
-            // 🔧 v3.5.12: combo → customTags로 통합됨
-            setCustomTags(prev => {
-              const next = prev.filter(t => !isSameTag(t, tag));
-              deferSetAppMeta("custom_tags", next);
-              return next;
-            });
+          if (type === "custom" || type === "combo") {
+            removeTagFromRegistry(tag);
           } else if (type === "userMajor") {
-            setUserMajorGenres(prev => {
-              const next = prev.filter(t => !isSameTag(t, tag));
-              deferSetAppMeta("user_major_genres", next);
-              return next;
-            });
+            if (tagRegistry) updateTagRegistry({...tagRegistry, majorGenres: (tagRegistry.majorGenres || []).filter(t => !isSameTag(t, tag))});
           } else if (type === "userSub") {
-            setUserSubGenres(prev => {
-              const next = prev.filter(t => !isSameTag(t, tag));
-              deferSetAppMeta("user_sub_genres", next);
-              return next;
-            });
+            if (tagRegistry) updateTagRegistry({...tagRegistry, subGenres: (tagRegistry.subGenres || []).filter(t => !isSameTag(t, tag))});
           }
           // 🔧 v3.6.0: Tag Registry에서도 동시 제거
           removeTagFromRegistry(tag);
@@ -39043,10 +38921,6 @@ async function importJSON() {
             Alert.alert("알림", "이미 존재하는 태그입니다.");
             return;
           }
-          const newCustom = [...customTags, tag];
-          setCustomTags(newCustom);
-          await setAppMeta("custom_tags", newCustom);
-          // 🔧 v3.6.0: Tag Registry에도 동시 추가
           addTagToRegistry(tag);
           Alert.alert("완료", `"${tag}" 태그를 추가했습니다.`);
         }}
