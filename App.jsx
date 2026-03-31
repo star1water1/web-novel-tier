@@ -12995,7 +12995,7 @@ const TagRelationModal = memo(({
                         fontWeight: "600",
                         fontSize: 13,
                       }}>
-                        {g.name || g.tags[0]}
+                        {g.name || g.tags?.[0]}
                       </Text>
                     </TouchableOpacity>
                   ))}
@@ -31679,9 +31679,10 @@ async function importJSON() {
                           <View style={{ flexDirection: "row", alignItems: "center", marginLeft: 8 }}>
                             <StatusIcon status={pair.B.status} />
                             <WorkStatusIcon workStatus={pair.B.work_status} />
+                            <GaidenStatusIcon gaidenStatus={pair.B.gaiden_status} />
                           </View>
                         </View>
-                        
+
                         {/* 스탯 */}
                         <View style={{ flexDirection: "row", alignItems: "center" }}>
                           <Text style={{ color: C.warn, fontWeight: "800", fontSize: 15 }}>
@@ -33584,10 +33585,6 @@ async function importJSON() {
               />
               <Text style={{ color: selectedIds.length > 0 ? C.primary : C.sub, marginTop: 6, fontWeight: selectedIds.length > 0 ? "800" : "400", fontSize: selectedIds.length > 0 ? 16 : 14 }}>
                 {selectedIds.length > 0 ? `✓ ${selectedIds.length}개 선택됨` : "선택된 작품 없음"} / 총 {bulkFiltered.length}
-              </Text>
-              {/* 🔧 v3.5.1 디버그: 실제 선택된 ID 표시 */}
-              <Text style={{ color: C.warn, fontSize: 11, marginTop: 4 }}>
-                [DEBUG] IDs: {selectedIds.length > 0 ? selectedIds.slice(0, 3).map(id => id.substring(0, 6)).join(", ") + (selectedIds.length > 3 ? "..." : "") : "(없음)"}
               </Text>
             </Section>
 
@@ -37796,8 +37793,8 @@ async function importJSON() {
                   </Text>
                   <Text style={{ color: C.sub }}>
                     승률: {Math.abs(
-                      parseFloat(getWinRate(compareNovels[0].wins, compareNovels[0].losses) || 0) -
-                      parseFloat(getWinRate(compareNovels[1].wins, compareNovels[1].losses) || 0)
+                      (parseFloat(getWinRate(compareNovels[0].wins, compareNovels[0].losses)) || 0) -
+                      (parseFloat(getWinRate(compareNovels[1].wins, compareNovels[1].losses)) || 0)
                     ).toFixed(1)}%
                   </Text>
                 </View>
