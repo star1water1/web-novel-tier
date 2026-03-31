@@ -23443,6 +23443,8 @@ function AppContent() {
         if (toAdd.length === 0) return prev;
         const next = [...prev, ...toAdd];
         deferSetAppMeta("custom_tags", next);
+        // 🔧 v3.6.0: Tag Registry에도 동시 추가 (이중 저장소 동기화)
+        for (const t of toAdd) addTagToRegistry(t);
         return next;
       });
     }
@@ -23485,6 +23487,8 @@ function AppContent() {
     const newList = [...customTags, comboTag];
     setCustomTags(newList);
     await setAppMeta("custom_tags", newList);
+    // 🔧 v3.6.0: Tag Registry에도 동시 추가 (이중 저장소 동기화)
+    addTagToRegistry(comboTag);
   }
 
   // 🔧 v3.5.12: 조합식 분류 폐지 — removeComboTag은 removeCustomTag으로 위임
@@ -23545,6 +23549,8 @@ function AppContent() {
     const newList = userMajorGenres.filter(g => g !== genre);
     setUserMajorGenres(newList);
     await setAppMeta("user_major_genres", newList);
+    // 🔧 v3.6.0: Tag Registry에서도 동시 제거
+    removeTagFromRegistry(genre);
   }
 
   // 🏷️ 사용자 부장르 삭제
@@ -23552,6 +23558,8 @@ function AppContent() {
     const newList = userSubGenres.filter(g => g !== genre);
     setUserSubGenres(newList);
     await setAppMeta("user_sub_genres", newList);
+    // 🔧 v3.6.0: Tag Registry에서도 동시 제거
+    removeTagFromRegistry(genre);
   }
 
   // 🏷️ 중복 태그 정리 (전체 태그에서 중복 제거)
@@ -23594,12 +23602,26 @@ function AppContent() {
         await loadList(undefined, undefined, "dedup");
       }
       
+      // 🔧 v3.6.0: Tag Registry도 중복 제거 동기화
+      if (tagRegistry && metaFixed > 0) {
+        const newRegistry = { ...tagRegistry };
+        newRegistry.majorGenres = deduplicateTags(newRegistry.majorGenres || []);
+        newRegistry.subGenres = deduplicateTags(newRegistry.subGenres || []);
+        const newGeneral = {};
+        for (const [cat, tags] of Object.entries(newRegistry.generalTags || {})) {
+          const deduped = deduplicateTags(tags);
+          if (deduped.length > 0) newGeneral[cat] = deduped;
+        }
+        newRegistry.generalTags = newGeneral;
+        updateTagRegistry(newRegistry);
+      }
+
       const msgs = [];
       if (metaFixed > 0) msgs.push(`태그 목록에서 ${metaFixed}개 중복 제거`);
       if (novelResult.fixed > 0) msgs.push(`${novelResult.fixed}개 작품의 중복 태그 정리`);
-      
-      Alert.alert("완료", msgs.length > 0 
-        ? `중복 태그 정리 완료!\n${msgs.join("\n")}` 
+
+      Alert.alert("완료", msgs.length > 0
+        ? `중복 태그 정리 완료!\n${msgs.join("\n")}`
         : "중복 태그가 없습니다.");
     } catch (e) {
       console.warn("cleanupDuplicateTags 오류:", e);
