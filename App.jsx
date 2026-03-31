@@ -6154,8 +6154,12 @@ async function migrateExistingMatchesToPatterns(tagAttrs = {}) {
    🏷️ 태그 시스템 (v3.0 - 카테고리 세분화 + 조합식 태그)
    ========================================================= */
 
-// 대장르 (작품의 주 배경/세계관)
-const MAJOR_GENRES = [
+// ═══════════════════════════════════════════════════════════════
+// 🏭 공장 기본값 (FACTORY_) — 프리셋 시드/리셋용, 불변
+// ═══════════════════════════════════════════════════════════════
+
+// 대장르 (작품의 주 배경/세계관) — 공장 기본값
+const FACTORY_MAJOR_GENRES = [
   "판타지", "현대판타지", "무협", "선협", "로맨스", "로맨스판타지", 
   "게임판타지", "퓨전", "SF", "미스터리", "공포/스릴러",
   "대체역사", "라이트노벨", "현대", "사극",
@@ -6166,8 +6170,8 @@ const MAJOR_GENRES = [
   "한국식이세계물", "코즈믹호러", "피카레스크"
 ];
 
-// 부장르 (핵심 소재/클리셰)
-const SUB_GENRES = [
+// 부장르 (핵심 소재/클리셰) — 공장 기본값
+const FACTORY_SUB_GENRES = [
   // 시작 소재
   "회귀", "환생", "빙의", "전생", "차원이동", "귀환", "타임슬립", "타임루프",
   "평행세계", "리셋", "각성", "무한회귀", "무한환생", "기억상실",
@@ -6192,9 +6196,9 @@ const SUB_GENRES = [
 ];
 
 // ═══════════════════════════════════════════════════════════════
-// 📁 인물 태그 카테고리 (조합 가능)
+// 📁 인물 태그 카테고리 (조합 가능) — 공장 기본값
 // ═══════════════════════════════════════════════════════════════
-const CHARACTER_CATEGORIES = {
+const FACTORY_CHARACTER_CATEGORIES = {
   // 인물 대상 (조합 prefix)
   "대상": [
     "주인공", "히로인", "조연", "악역", "빌런", "엑스트라", "NPC", 
@@ -6217,8 +6221,7 @@ const CHARACTER_CATEGORIES = {
 
 // 조합식 태그 생성 헬퍼 (v2.8: 공백으로 자연스럽게 연결)
 // 예: "먼치킨 주인공", "똑똑한 히로인"
-const COMBO_TAG_TARGETS = CHARACTER_CATEGORIES["대상"];
-const COMBO_TAG_TRAITS = CHARACTER_CATEGORIES["성향/성격"];
+// → let 파생값, applyTagRegistry에서 재계산
 
 // ═══════════════════════════════════════════════════════════════
 // 🎭 태그 속성 시스템 (긍정/부정/중립) - v2.8 NEW
@@ -6447,9 +6450,9 @@ function isComboTag(tag) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 📁 일반 태그 (카테고리별 정리) - 확장 버전
+// 📁 일반 태그 (카테고리별 정리) — 공장 기본값
 // ═══════════════════════════════════════════════════════════════
-const GENERAL_TAGS = {
+const FACTORY_GENERAL_TAGS = {
   "📖 시점/인칭": [
     "1인칭", "3인칭", "전지적시점", "제한적시점", "다중시점", "옴니버스시점",
     "관찰자시점", "주인공시점", "조연시점", "회상형식", "주인공미등장에피있음"
@@ -6726,11 +6729,7 @@ function getAllDefaultTagsDeduped() {
   return deduplicateTags(all);
 }
 
-// 모든 일반 태그를 평탄화
-const ALL_GENERAL_TAGS = Object.values(GENERAL_TAGS).flat();
-
-// 전체 기본 태그 (대장르 + 부장르 + 일반)
-const ALL_DEFAULT_TAGS = [...MAJOR_GENRES, ...SUB_GENRES, ...ALL_GENERAL_TAGS];
+// 모든 일반 태그 / 전체 기본 태그 → 런타임 let 블록으로 이동 (applyTagRegistry에서 재계산)
 
 // JSON 배열 또는 단일 문자열을 배열로 파싱
 function parseMajorSub(value) {
@@ -6966,9 +6965,9 @@ const SUB_GENRE_COLORS = {
  */
 
 // ═══════════════════════════════════════════════════════════════
-// 📚 태그 alias 맵핑 (약어 → 정식명)
+// 📚 태그 alias 맵핑 (약어 → 정식명) — 공장 기본값
 // ═══════════════════════════════════════════════════════════════
-const TAG_ALIASES = {
+const FACTORY_TAG_ALIASES = {
   // 장르 약어
   "현판": "현대판타지",
   "로판": "로맨스판타지",
@@ -7001,13 +7000,14 @@ const TAG_ALIASES = {
   "노로맨스": "노맨스",
 };
 
-// 역방향 alias 맵 생성 (정식명 → [약어들])
-const TAG_REVERSE_ALIASES = {};
-for (const [alias, canonical] of Object.entries(TAG_ALIASES)) {
-  if (!TAG_REVERSE_ALIASES[canonical]) {
-    TAG_REVERSE_ALIASES[canonical] = [];
+// 역방향 alias 맵 빌더
+function buildReverseAliases(aliases) {
+  const result = {};
+  for (const [alias, canonical] of Object.entries(aliases)) {
+    if (!result[canonical]) result[canonical] = [];
+    result[canonical].push(alias);
   }
-  TAG_REVERSE_ALIASES[canonical].push(alias);
+  return result;
 }
 
 /**
@@ -7088,9 +7088,9 @@ function migrateAliasesToRelations(currentRelations) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 📊 스펙트럼 그룹 정의
+// 📊 스펙트럼 그룹 정의 — 공장 기본값
 // ═══════════════════════════════════════════════════════════════
-const TAG_SPECTRUM_GROUPS = {
+const FACTORY_TAG_SPECTRUM_GROUPS = {
   // 주인공 강함 스펙트럼
   "protagonist_power": {
     name: "주인공 강함",
@@ -7134,6 +7134,53 @@ const TAG_SPECTRUM_GROUPS = {
     tags: ["후반부붕괴", "결말아쉬움", "사두용미", "용두용미", "해피엔딩", "트루엔딩"],
   },
 };
+
+// ═══════════════════════════════════════════════════════════════
+// 🔄 런타임 태그 변수 (let) — Tag Registry에서 교체됨
+// 초기값은 공장 기본값과 동일. applyTagRegistry() 호출 시 사용자 레지스트리로 덮어쓰기.
+// 모듈 스코프 let 변수는 함수 호출 시점의 최신 값을 읽으므로,
+// 기존 145+곳의 참조 코드를 변경하지 않아도 자동으로 레지스트리 값을 사용.
+// ═══════════════════════════════════════════════════════════════
+let MAJOR_GENRES = [...FACTORY_MAJOR_GENRES];
+let SUB_GENRES = [...FACTORY_SUB_GENRES];
+let GENERAL_TAGS = { ...FACTORY_GENERAL_TAGS };
+let CHARACTER_CATEGORIES = { ...FACTORY_CHARACTER_CATEGORIES };
+let TAG_ALIASES = { ...FACTORY_TAG_ALIASES };
+let TAG_SPECTRUM_GROUPS = { ...FACTORY_TAG_SPECTRUM_GROUPS };
+
+// 파생 값 (let, applyTagRegistry에서 재계산)
+let COMBO_TAG_TARGETS = CHARACTER_CATEGORIES["대상"];
+let COMBO_TAG_TRAITS = CHARACTER_CATEGORIES["성향/성격"];
+let ALL_GENERAL_TAGS = Object.values(GENERAL_TAGS).flat();
+let ALL_DEFAULT_TAGS = [...MAJOR_GENRES, ...SUB_GENRES, ...ALL_GENERAL_TAGS];
+let TAG_REVERSE_ALIASES = buildReverseAliases(TAG_ALIASES);
+
+/**
+ * 🔄 Tag Registry → 모듈 레벨 변수 적용
+ * updateTagRegistry() 내부에서 setTagRegistry() 직전에 호출.
+ * React re-render 시 모든 함수가 최신 값을 읽도록 보장.
+ */
+function applyTagRegistry(registry) {
+  if (!registry) return;
+  // 타입 검증 + FACTORY fallback (app_meta 손상 방어)
+  MAJOR_GENRES = Array.isArray(registry.majorGenres) ? registry.majorGenres : [...FACTORY_MAJOR_GENRES];
+  SUB_GENRES = Array.isArray(registry.subGenres) ? registry.subGenres : [...FACTORY_SUB_GENRES];
+  GENERAL_TAGS = (registry.generalTags && typeof registry.generalTags === "object" && !Array.isArray(registry.generalTags))
+    ? registry.generalTags : { ...FACTORY_GENERAL_TAGS };
+  CHARACTER_CATEGORIES = (registry.characterCategories && typeof registry.characterCategories === "object" && !Array.isArray(registry.characterCategories))
+    ? registry.characterCategories : { ...FACTORY_CHARACTER_CATEGORIES };
+  TAG_ALIASES = (registry.aliases && typeof registry.aliases === "object" && !Array.isArray(registry.aliases))
+    ? registry.aliases : { ...FACTORY_TAG_ALIASES };
+  TAG_SPECTRUM_GROUPS = (registry.spectrumGroups && typeof registry.spectrumGroups === "object" && !Array.isArray(registry.spectrumGroups))
+    ? registry.spectrumGroups : { ...FACTORY_TAG_SPECTRUM_GROUPS };
+  // 파생 값 재계산 (키 누락 방어)
+  COMBO_TAG_TARGETS = Array.isArray(CHARACTER_CATEGORIES["대상"]) ? CHARACTER_CATEGORIES["대상"] : FACTORY_CHARACTER_CATEGORIES["대상"];
+  COMBO_TAG_TRAITS = Array.isArray(CHARACTER_CATEGORIES["성향/성격"]) ? CHARACTER_CATEGORIES["성향/성격"] : FACTORY_CHARACTER_CATEGORIES["성향/성격"];
+  ALL_GENERAL_TAGS = Object.values(GENERAL_TAGS).flat();
+  ALL_DEFAULT_TAGS = [...MAJOR_GENRES, ...SUB_GENRES, ...ALL_GENERAL_TAGS];
+  TAG_REVERSE_ALIASES = buildReverseAliases(TAG_ALIASES);
+  TAG_PICKER_CATEGORIES = Object.entries(GENERAL_TAGS).map(([cat, tags]) => ({ label: cat, tags }));
+}
 
 // ═══════════════════════════════════════════════════════════════
 // 📐 태그 좌표계 시스템 (v3.2.0)
@@ -11735,7 +11782,7 @@ const TagSearchInput = memo(({ value, onChangeText, onSelectTag, placeholder, al
 // ═══════════════════════════════════════════════════════════════
 // 용도: TagRelationModal, 카테고리 태그 추가, 좌표계 일괄 추가
 // TagSelectModal(무거운 전체 편집)과 달리 순수 피커 — 검색 + 카테고리 브라우징 + 멀티셀렉트
-const TAG_PICKER_CATEGORIES = Object.entries(GENERAL_TAGS).map(([cat, tags]) => ({ label: cat, tags }));
+let TAG_PICKER_CATEGORIES = Object.entries(GENERAL_TAGS).map(([cat, tags]) => ({ label: cat, tags }));
 
 const TagPickerModal = memo(({
   visible,
@@ -20457,6 +20504,7 @@ function AppContent() {
   const [tagAttributes, setTagAttributes] = useState({}); // 🆕 v3.4: 태그 속성 { [tag]: { isMajor: bool, isSub: bool } }
   const [tagSortMode, setTagSortMode] = useState("usage"); // 🔧 v3.5.16: 태그 정렬 모드 ("usage" | "name" | "registered")
   const [tagLastTab, setTagLastTab] = useState("general"); // 🔧 v3.5.16: 마지막 사용 탭 기억
+  const [tagRegistry, setTagRegistry] = useState(null); // 🔧 v3.6.0: Tag Registry (모든 태그의 유일한 저장소)
 
   // 🏆 v2.9: 수상 시스템
   const [awardSystemSettings, setAwardSystemSettings] = useState(DEFAULT_AWARD_SYSTEM_SETTINGS);
@@ -20814,7 +20862,10 @@ function AppContent() {
           
           // 🏷️ v5.0 태그 시스템 마이그레이션
           await migrateTagSystem();
-          
+
+          // 🔧 v3.6.0: Tag Registry 로드 (없으면 FACTORY에서 시드 + 기존 사용자 데이터 병합)
+          await loadTagRegistry();
+
           // 🔧 v3.5.15b: 기존 작품 중복 태그 일괄 정리 (1회 자동 실행)
           const dedupDone = await getAppMeta("tag_dedup_v1");
           if (!dedupDone) {
@@ -21200,7 +21251,8 @@ function AppContent() {
       // 2. 새 DB 초기화 (테이블 생성 등)
       await initDb();
       await migrateTagSystem();
-      
+      await loadTagRegistry(); // 🔧 v3.6.0: 슬롯별 레지스트리 로드
+
       // 3. 모든 데이터 state 초기값으로 리셋
       setList([]);
       setPair(null);
@@ -23632,6 +23684,109 @@ function AppContent() {
     setAppMeta("tag_last_tab", tab);
   }
 
+  // ═══════════════════════════════════════════════════════════════
+  // 🔧 v3.6.0: Tag Registry — 모든 태그의 유일한 저장소
+  // ═══════════════════════════════════════════════════════════════
+
+  /** 단일 진입점: 모듈 변수 + React state + 영구 저장을 항상 함께 수행 */
+  function updateTagRegistry(registry) {
+    applyTagRegistry(registry);
+    setTagRegistry(registry);
+    setAppMeta("tag_registry", registry);
+  }
+
+  /** 앱 시작 시 레지스트리 로드 (없으면 시드) */
+  async function loadTagRegistry() {
+    let registry = await getAppMeta("tag_registry");
+    if (!registry) {
+      registry = await seedTagRegistry();
+      await setAppMeta("tag_registry", registry);
+      // 시드 완료 후 deprecated 키 정리
+      await setAppMeta("custom_tags", null);
+      await setAppMeta("user_major_genres", null);
+      await setAppMeta("user_sub_genres", null);
+      await setAppMeta("custom_tag_categories", null);
+    }
+    applyTagRegistry(registry);
+    setTagRegistry(registry);
+  }
+
+  /** 첫 실행 시드: FACTORY + 기존 사용자 데이터 병합 */
+  async function seedTagRegistry() {
+    // React state가 아닌 app_meta에서 직접 로드 (로딩 순서 의존성 제거)
+    const existingMajor = (await getAppMeta("user_major_genres")) || [];
+    const existingSub = (await getAppMeta("user_sub_genres")) || [];
+    const existingCats = (await getAppMeta("custom_tag_categories")) || {};
+    const existingCustom = (await getAppMeta("custom_tags")) || [];
+
+    // 기존 커스텀 카테고리 + 미분류 커스텀 태그를 generalTags에 통합
+    const mergedGeneral = { ...FACTORY_GENERAL_TAGS };
+    // 기존 커스텀 카테고리 병합
+    if (existingCats && typeof existingCats === "object") {
+      for (const [catName, catTags] of Object.entries(existingCats)) {
+        if (Array.isArray(catTags) && catTags.length > 0) {
+          mergedGeneral[`📂 ${catName}`] = deduplicateTags(catTags);
+        }
+      }
+    }
+    // 기존 커스텀 태그 → "📁 사용자 태그" 카테고리
+    if (existingCustom.length > 0) {
+      mergedGeneral["📁 사용자 태그"] = deduplicateTags(existingCustom);
+    }
+
+    return {
+      version: 1,
+      majorGenres: deduplicateTags([...FACTORY_MAJOR_GENRES, ...existingMajor]),
+      subGenres: deduplicateTags([...FACTORY_SUB_GENRES, ...existingSub]),
+      generalTags: mergedGeneral,
+      characterCategories: { ...FACTORY_CHARACTER_CATEGORIES },
+      aliases: { ...FACTORY_TAG_ALIASES },
+      spectrumGroups: { ...FACTORY_TAG_SPECTRUM_GROUPS },
+    };
+  }
+
+  /** 프리셋 초기화: FACTORY 기본값으로 전체 교체 */
+  function resetTagRegistryToFactory() {
+    updateTagRegistry({
+      version: 1,
+      majorGenres: [...FACTORY_MAJOR_GENRES],
+      subGenres: [...FACTORY_SUB_GENRES],
+      generalTags: { ...FACTORY_GENERAL_TAGS },
+      characterCategories: { ...FACTORY_CHARACTER_CATEGORIES },
+      aliases: { ...FACTORY_TAG_ALIASES },
+      spectrumGroups: { ...FACTORY_TAG_SPECTRUM_GROUPS },
+    });
+  }
+
+  /** 레지스트리에 태그 추가 (카테고리 미지정 시 "📁 사용자 태그") */
+  function addTagToRegistry(tag, category = "📁 사용자 태그") {
+    if (!tag || !tagRegistry) return;
+    if (ALL_DEFAULT_TAGS.some(t => isSameTag(t, tag))) return; // 전체 레지스트리 중복 체크
+    const newGeneralTags = { ...tagRegistry.generalTags };
+    if (!newGeneralTags[category]) newGeneralTags[category] = [];
+    newGeneralTags[category] = [...newGeneralTags[category], tag];
+    updateTagRegistry({ ...tagRegistry, generalTags: newGeneralTags });
+  }
+
+  /** 레지스트리에서 태그 제거 (모든 카테고리에서 검색하여 제거) */
+  function removeTagFromRegistry(tag) {
+    if (!tag || !tagRegistry) return;
+    const newRegistry = { ...tagRegistry };
+    // majorGenres에서 제거
+    newRegistry.majorGenres = newRegistry.majorGenres.filter(t => !isSameTag(t, tag));
+    // subGenres에서 제거
+    newRegistry.subGenres = newRegistry.subGenres.filter(t => !isSameTag(t, tag));
+    // generalTags 각 카테고리에서 제거
+    const newGeneral = {};
+    for (const [cat, tags] of Object.entries(newRegistry.generalTags)) {
+      const filtered = tags.filter(t => !isSameTag(t, tag));
+      if (filtered.length > 0) newGeneral[cat] = filtered;
+      // 빈 카테고리는 자동 삭제
+    }
+    newRegistry.generalTags = newGeneral;
+    updateTagRegistry(newRegistry);
+  }
+
   // 🎭 v2.8: 태그 속성 저장
   async function saveTagSentiments(sentiments) {
     setTagSentiments(sentiments);
@@ -24175,18 +24330,18 @@ function AppContent() {
   // 🔧 v3.5.11: getAllMajorTags 사용하여 tagAttributes 기반 대장르도 포함
   const allMajorGenres = useMemo(() => {
     return getAllMajorTags(tagAttributes, userMajorGenres);
-  }, [userMajorGenres, tagAttributes]);
+  }, [userMajorGenres, tagAttributes, tagRegistry]);
 
   // 🏷️ 전체 부장르 목록 (기본 + 사용자 + tagAttributes)
   const allSubGenres = useMemo(() => {
     return getAllSubTags(tagAttributes, userSubGenres);
-  }, [userSubGenres, tagAttributes]);
+  }, [userSubGenres, tagAttributes, tagRegistry]);
 
   // 🏷️ 전체 태그 목록 (기본 + 커스텀, 사용빈도순 정렬)
   const allTagsSorted = useMemo(() => {
     const allTags = [...ALL_GENERAL_TAGS, ...customTags];
     return sortTagsByUsage(allTags, tagUsageCounts);
-  }, [customTags, tagUsageCounts]);
+  }, [customTags, tagUsageCounts, tagRegistry]);
 
   // 🏷️ 정렬된 대장르 목록 (사용빈도순)
   // 🔧 v3.5.11: tagAttributes 반영
@@ -24213,7 +24368,7 @@ function AppContent() {
       }
     }
     return result;
-  }, [tagUsageCounts, customTagCategories]);
+  }, [tagUsageCounts, customTagCategories, tagRegistry]);
 
   // 🆕 v3.5.9: 전체 태그 목록 (검색/자동완성용)
   // 🔧 v3.5.12: comboTags 제거 (customTags로 통합)
@@ -24229,7 +24384,7 @@ function AppContent() {
       }
     }
     return [...set].sort();
-  }, [customTags, userMajorGenres, userSubGenres, customTagCategories]);
+  }, [customTags, userMajorGenres, userSubGenres, customTagCategories, tagRegistry]);
 
   // =========================================================
   // ⚙️ 설정 관리 함수 (v2.6)
@@ -27597,7 +27752,12 @@ async function exportJSON() {
     if (Object.keys(tagMeta).length > 0) {
       payload.TM = tagMeta;
     }
-    
+
+    // 🔧 v3.6.0: Tag Registry 백업 (TR = Tag Registry)
+    if (tagRegistry) {
+      payload.TR = tagRegistry;
+    }
+
     // 📋 v3.3.0: 예정 작품 백업 (PL = Planned List)
     // 🆕 v3.4: 확장 필드 추가
     if (plannedNovels && plannedNovels.length > 0) {
@@ -27639,9 +27799,10 @@ async function exportJSON() {
     const coverInfo = coverCount > 0 ? `, 표지 ${coverCount}개` : "";
     const analysisInfo = payload.AD ? ", 분석 데이터" : "";
     const tagMetaInfo = payload.TM ? ", 태그 설정" : "";
+    const tagRegistryInfo = payload.TR ? ", 태그 체계" : "";
     const plannedInfo = payload.PL ? `, 예정 ${payload.PL.length}개` : "";
     const patternInfo = payload.PP ? `, 학습 패턴 ${payload.PP.length}개` : "";
-    const summary = `${novels.length}작품, ${matches.length}매치${plannedInfo}${coverInfo}${analysisInfo}${tagMetaInfo}${patternInfo}\n크기: ${sizeText}`;
+    const summary = `${novels.length}작품, ${matches.length}매치${plannedInfo}${coverInfo}${analysisInfo}${tagMetaInfo}${tagRegistryInfo}${patternInfo}\n크기: ${sizeText}`;
     
     if (_pt) PerfMonitor.trackFunc("exportJSON", Date.now() - _pt); // 🔬
     setIsLoading(false);
@@ -28172,6 +28333,13 @@ async function importJSON() {
                   setCustomTagCategories(data.TM.ctc);
                   await setAppMeta("custom_tag_categories", data.TM.ctc);
                 }
+              }
+
+              // 🔧 v3.6.0: Tag Registry 복원
+              if (data.TR && typeof data.TR === "object") {
+                applyTagRegistry(data.TR);
+                setTagRegistry(data.TR);
+                await setAppMeta("tag_registry", data.TR);
               }
 
               // 📋 v3.3.0: 예정 작품 복원
@@ -37630,6 +37798,7 @@ async function importJSON() {
         onChangeSortMode={handleChangeTagSortMode}
         initialTab={tagLastTab}
         onChangeTab={handleChangeTagLastTab}
+        tagRegistry={tagRegistry}
         theme={C}
       />}
 
@@ -38843,6 +39012,7 @@ async function importJSON() {
         onCleanupUnused={cleanupUnusedTags}
         findUnusedTags={findUnusedTags}
         onEditRelations={openTagRelationModal}
+        tagRegistry={tagRegistry}
         theme={C}
       />}
 
