@@ -23454,6 +23454,8 @@ function AppContent() {
     setCustomTags(newList);
     await setAppMeta("custom_tags", newList);
     await cleanupTagMetadata(tag); // 🔧 v3.5.9
+    // 🔧 v3.6.0: Tag Registry에서도 동시 제거
+    removeTagFromRegistry(tag);
   }
 
   // 🏷️ 커스텀 태그 직접 추가 (TagSelectModal에서 사용)
@@ -23467,6 +23469,8 @@ function AppContent() {
     const newList = [...customTags, tag];
     setCustomTags(newList);
     await setAppMeta("custom_tags", newList);
+    // 🔧 v3.6.0: Tag Registry에도 동시 추가 (이중 저장소 동기화)
+    addTagToRegistry(tag);
   }
 
   // 🔗 조합식 태그 추가
@@ -24202,6 +24206,8 @@ function AppContent() {
             setUserMajorGenres(newMajor);
             setUserSubGenres(newSub);
             await setAppMeta("custom_tags", newCustom);
+            // 🔧 v3.6.0: Tag Registry에서도 제거
+            removeTagFromRegistry(tag);
             await setAppMeta("user_major_genres", newMajor);
             await setAppMeta("user_sub_genres", newSub);
             
