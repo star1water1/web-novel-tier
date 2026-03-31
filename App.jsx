@@ -20923,6 +20923,7 @@ function AppContent() {
           // 🔧 v3.4.4: Promise.all 인덱스 매칭 버그 수정
           // ⚠️ 이전에 getAppMeta("tag_sentiments")가 중복 호출되어 인덱스가 밀려
           //    savedRecentChanges에 award_system_settings가 들어가는 버그 발생했음
+          // 🔧 v3.6.1: user_major_genres, user_sub_genres 제거 (tagRegistry에서 파생)
           const [
             savedDarkMode,
             savedPlatformCovers,
@@ -20932,8 +20933,6 @@ function AppContent() {
             savedComboTags,
             savedTagSentiments,
             savedTagAttributes, // 🆕 v3.4: 태그 속성
-            savedUserMajorGenres,
-            savedUserSubGenres,
             savedHiddenTags,
             savedAwardSystemSettings, // 🏆 v2.9
             savedRecentChanges, // 📰 v3.0
@@ -20951,24 +20950,22 @@ function AppContent() {
             getAppMeta("platform_covers"),        // 1: savedPlatformCovers
             getAppMeta("app_settings"),           // 2: savedSettings
             getAppMeta("tier_history"),           // 3: savedTierHistory
-            getAppMeta("custom_tags"),            // 4: savedCustomTags
-            getAppMeta("combo_tags"),             // 5: savedComboTags
+            getAppMeta("custom_tags"),            // 4: savedCustomTags (auto-collection 최적화용)
+            getAppMeta("combo_tags"),             // 5: savedComboTags (마이그레이션용)
             getAppMeta("tag_sentiments"),         // 6: savedTagSentiments
             getAppMeta("tag_attributes"),         // 7: savedTagAttributes
-            getAppMeta("user_major_genres"),      // 8: savedUserMajorGenres
-            getAppMeta("user_sub_genres"),        // 9: savedUserSubGenres
-            getAppMeta("hidden_tags"),            // 10: savedHiddenTags
-            getAppMeta("award_system_settings"),  // 11: savedAwardSystemSettings
-            getAppMeta("recent_changes"),         // 12: savedRecentChanges
-            getAppMeta("match_insights"),         // 13: savedMatchInsights
-            getAppMeta("tag_relations"),          // 14: savedTagRelations
-            getAppMeta("upset_factors"),          // 15: savedUpsetFactors
-            getAppMeta("auto_match_settings"),    // 16: savedAutoMatchSettings
-            getAppMeta("custom_combo_traits"),    // 17: savedCustomComboTraits
-            getAppMeta("custom_combo_targets"),   // 18: savedCustomComboTargets
-            getTagCoordinateSystems(),            // 19: savedCoordinateSystems
-            getAppMeta("custom_tag_categories"),  // 20: savedCustomTagCategories
-            getAppMeta("match_filter_settings"),  // 21: savedMatchFilterSettings
+            getAppMeta("hidden_tags"),            // 8: savedHiddenTags
+            getAppMeta("award_system_settings"),  // 9: savedAwardSystemSettings
+            getAppMeta("recent_changes"),         // 10: savedRecentChanges
+            getAppMeta("match_insights"),         // 11: savedMatchInsights
+            getAppMeta("tag_relations"),          // 12: savedTagRelations
+            getAppMeta("upset_factors"),          // 13: savedUpsetFactors
+            getAppMeta("auto_match_settings"),    // 14: savedAutoMatchSettings
+            getAppMeta("custom_combo_traits"),    // 15: savedCustomComboTraits
+            getAppMeta("custom_combo_targets"),   // 16: savedCustomComboTargets
+            getTagCoordinateSystems(),            // 17: savedCoordinateSystems
+            getAppMeta("custom_tag_categories"),  // 18: savedCustomTagCategories
+            getAppMeta("match_filter_settings"),  // 19: savedMatchFilterSettings
           ]);
           
           if (!mounted) return;
@@ -21356,38 +21353,36 @@ function AppContent() {
       patternUpdateScheduled = false;
       
       // 4. 새 DB에서 app_meta 로드
+      // 🔧 v3.6.1: custom_tags, user_major_genres, user_sub_genres 제거 (tagRegistry에서 파생)
       const [
         savedPlatformCovers, savedSettings, savedTierHistory,
-        savedCustomTags, savedComboTags, savedTagSentiments,
-        savedTagAttributes, savedUserMajorGenres, savedUserSubGenres,
+        savedComboTags, savedTagSentiments,
+        savedTagAttributes,
         savedHiddenTags, savedAwardSystemSettings, savedRecentChanges,
         savedMatchInsights, savedTagRelations, savedUpsetFactors,
         savedAutoMatchSettings, savedCustomComboTraits, savedCustomComboTargets,
         savedCoordinateSystems, savedCustomTagCategories, savedMatchFilterSettings,
-        savedPinnedTags, // 🔧 v3.5.15e: 슬롯 전환 시 pinnedTags 복원
+        savedPinnedTags,
       ] = await Promise.all([
-        getAppMeta("platform_covers"),
-        getAppMeta("app_settings"),
-        getAppMeta("tier_history"),
-        getAppMeta("custom_tags"),
-        getAppMeta("combo_tags"),
-        getAppMeta("tag_sentiments"),
-        getAppMeta("tag_attributes"),
-        getAppMeta("user_major_genres"),
-        getAppMeta("user_sub_genres"),
-        getAppMeta("hidden_tags"),
-        getAppMeta("award_system_settings"),
-        getAppMeta("recent_changes"),
-        getAppMeta("match_insights"),
-        getAppMeta("tag_relations"),
-        getAppMeta("upset_factors"),
-        getAppMeta("auto_match_settings"),
-        getAppMeta("custom_combo_traits"),
-        getAppMeta("custom_combo_targets"),
-        getTagCoordinateSystems(),
-        getAppMeta("custom_tag_categories"),
-        getAppMeta("match_filter_settings"),
-        getAppMeta("pinned_tags"), // 🔧 v3.5.15e
+        getAppMeta("platform_covers"),         // 0
+        getAppMeta("app_settings"),            // 1
+        getAppMeta("tier_history"),            // 2
+        getAppMeta("combo_tags"),              // 3 (마이그레이션용)
+        getAppMeta("tag_sentiments"),          // 4
+        getAppMeta("tag_attributes"),          // 5
+        getAppMeta("hidden_tags"),             // 6
+        getAppMeta("award_system_settings"),   // 7
+        getAppMeta("recent_changes"),          // 8
+        getAppMeta("match_insights"),          // 9
+        getAppMeta("tag_relations"),           // 10
+        getAppMeta("upset_factors"),           // 11
+        getAppMeta("auto_match_settings"),     // 12
+        getAppMeta("custom_combo_traits"),     // 13
+        getAppMeta("custom_combo_targets"),    // 14
+        getTagCoordinateSystems(),             // 15
+        getAppMeta("custom_tag_categories"),   // 16
+        getAppMeta("match_filter_settings"),   // 17
+        getAppMeta("pinned_tags"),             // 18
       ]);
       
       // 5. state 복원 (간소화 — 핵심 데이터만)
