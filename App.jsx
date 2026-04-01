@@ -8207,6 +8207,22 @@ const COMPRESSION_PRESETS = {
   heavy: { quality: 0.4, maxSize: 600 },            // 강한 압축
 };
 
+/**
+ * 이미지 포맷 감지 (expo-image-picker asset 기반)
+ * asset.mimeType → fileName → uri 순서로 폴백
+ */
+function getImageFormat(asset) {
+  const mime = asset?.mimeType || "";
+  if (mime.includes("webp")) return { mime: "image/webp", ext: "webp" };
+  if (mime.includes("png"))  return { mime: "image/png", ext: "png" };
+  if (mime.includes("gif"))  return { mime: "image/gif", ext: "gif" };
+  const name = (asset?.fileName || asset?.uri || "").toLowerCase();
+  if (name.endsWith(".webp")) return { mime: "image/webp", ext: "webp" };
+  if (name.endsWith(".png"))  return { mime: "image/png", ext: "png" };
+  if (name.endsWith(".gif"))  return { mime: "image/gif", ext: "gif" };
+  return { mime: "image/jpeg", ext: "jpg" };
+}
+
 // 표지 디렉토리 초기화 (레거시 API)
 async function ensureCoverDir() {
   try {
@@ -8221,7 +8237,7 @@ async function ensureCoverDir() {
 
 // 이미지를 표지 라이브러리에 저장 (레거시 API)
 // 🔧 v3.5.1: content:// URI 지원 강화 - 여러 방법 시도
-async function saveCoverToLibrary(sourceUri, compressionLevel = "light") {
+async function saveCoverToLibrary(sourceUri, compressionLevel = "light", ext = "jpg") {
   // 🔧 v3.5.3: 에러 수집 + 파일 존재 확인 + 진단 강화
   const errors = [];
   try {
@@ -8239,7 +8255,7 @@ async function saveCoverToLibrary(sourceUri, compressionLevel = "light") {
     }
     
     const id = uuid();
-    const fileName = `${id}.jpg`;
+    const fileName = `${id}.${ext}`;
     const destUri = COVER_DIR + fileName;
     
     let success = false;
@@ -20735,7 +20751,8 @@ function AppContent() {
         console.warn("pickImage DB 재연결 실패:", dbErr.message);
       }
       if (!result.canceled && result.assets[0]?.base64) {
-        setter("data:image/jpeg;base64," + result.assets[0].base64);
+        const { mime } = getImageFormat(result.assets[0]);
+        setter(`data:${mime};base64,` + result.assets[0].base64);
       }
     } catch (e) {
       Alert.alert("오류", "이미지 선택 실패: " + e.message);
@@ -22497,7 +22514,8 @@ function AppContent() {
         setCoverLibraryProgress({ current: i + 1, total });
         
         // 파일 저장
-        const saved = await saveCoverToLibrary(asset.uri, compressionLevel);
+        const { ext } = getImageFormat(asset);
+        const saved = await saveCoverToLibrary(asset.uri, compressionLevel, ext);
         if (saved && saved.id && !saved.error) {
           const id = saved.id;
           insertQueries.push({
@@ -22508,7 +22526,7 @@ function AppContent() {
               saved.file_path,
               "unused",
               null,
-              asset.fileName || `cover_${id}.jpg`,
+              asset.fileName || `cover_${id}.${ext}`,
               asset.width || 0,
               asset.height || 0,
               saved.file_size,
@@ -35711,7 +35729,8 @@ async function importJSON() {
                           await resetDbConnection();
                           try { await openDb(); } catch {}
                           if (!result.canceled && result.assets[0]?.uri) {
-                            const saved = await saveCoverToLibrary(result.assets[0].uri);
+                            const { ext } = getImageFormat(result.assets[0]);
+                            const saved = await saveCoverToLibrary(result.assets[0].uri, "light", ext);
                             if (saved.error) {
                               Alert.alert("오류", "이미지 저장 실패: " + saved.error);
                               return;
