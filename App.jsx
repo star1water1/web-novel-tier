@@ -25588,6 +25588,7 @@ function AppContent() {
     
     // 스냅샷 없거나 editItem 없으면 바로 닫기
     if (!snap || !curr) {
+      removedQuoteImagesRef.current = []; // 📷 v3.6.2: 방어적 정리
       setEditOpen(false);
       updateEditItem(null);
       return;
