@@ -19125,6 +19125,7 @@ const DEFAULT_SETTINGS = {
   // 🖼️ 표지 라이브러리 설정 (v3.4.5)
   coverLibrary: {
     compressionLevel: "light",       // "original" | "light" | "medium" | "heavy"
+    autoRegister: false,             // 🆕 v3.6.2: 갤러리 직접 선택 시 라이브러리 자동 등록
     // original: 원본 유지 (1~5MB)
     // light: 가벼운 압축 - 80% quality, 최대 1200px (기본값)
     // medium: 중간 압축 - 60% quality, 최대 800px
@@ -20764,23 +20765,57 @@ function AppContent() {
   }
 
   // 🆕 갤러리에서 이미지 선택
+  // 🔧 v3.6.2: autoRegister 옵션 — ON이면 라이브러리에 자동 등록 + file_path 반환
   async function pickImageFromGallery(setter) {
     try {
+      const autoRegister = appSettings.coverLibrary?.autoRegister === true;
+      const compressionLevel = appSettings.coverLibrary?.compressionLevel || "light";
+      const preset = COMPRESSION_PRESETS[compressionLevel] || COMPRESSION_PRESETS.light;
+
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         aspect: [3, 4],
-        quality: 0.5,
-        base64: true,
+        quality: autoRegister ? preset.quality : 0.5,
+        base64: !autoRegister,
       });
       // 🔧 v3.5.3: 갤러리 복귀 후 DB 연결 강제 재설정
       await resetDbConnection();
       try { await openDb(); } catch (dbErr) {
         console.warn("pickImage DB 재연결 실패:", dbErr.message);
       }
-      if (!result.canceled && result.assets[0]?.base64) {
-        const { mime } = getImageFormat(result.assets[0]);
-        setter(`data:${mime};base64,` + result.assets[0].base64);
+
+      if (result.canceled || !result.assets?.[0]) return;
+      const asset = result.assets[0];
+
+      if (autoRegister) {
+        // 🆕 v3.6.2: 파일 저장 + 라이브러리 DB 등록 + file_path 반환
+        const { ext } = getImageFormat(asset);
+        const saved = await saveCoverToLibrary(asset.uri, compressionLevel, ext);
+        if (saved && saved.id && !saved.error) {
+          await exec(
+            `INSERT INTO cover_library (id, file_path, status, novel_id, original_name, width, height, file_size, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+            [saved.id, saved.file_path, "unused", null, asset.fileName || `cover_${saved.id}.${ext}`, asset.width || 0, asset.height || 0, saved.file_size, Date.now()]
+          );
+          await loadCoverLibrary();
+          setter(saved.file_path);
+        } else {
+          // 폴백: 라이브러리 등록 실패 시 base64로 전환
+          try {
+            const b64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 });
+            const { mime } = getImageFormat(asset);
+            setter(`data:${mime};base64,` + b64);
+          } catch {
+            Alert.alert("오류", "이미지 저장에 실패했습니다.");
+          }
+        }
+      } else {
+        // 기존 동작: base64 data URI
+        if (asset.base64) {
+          const { mime } = getImageFormat(asset);
+          setter(`data:${mime};base64,` + asset.base64);
+        }
       }
     } catch (e) {
       Alert.alert("오류", "이미지 선택 실패: " + e.message);
@@ -21041,6 +21076,9 @@ function AppContent() {
             }
             if (savedSettings.plannedFields) {
               merged.plannedFields = { ...DEFAULT_SETTINGS.plannedFields, ...savedSettings.plannedFields };
+            }
+            if (savedSettings.coverLibrary) {
+              merged.coverLibrary = { ...DEFAULT_SETTINGS.coverLibrary, ...savedSettings.coverLibrary };
             }
             setAppSettings(merged);
             if (merged.tierThresholds) {
@@ -21460,6 +21498,7 @@ function AppContent() {
         if (savedSettings.supplement) merged.supplement = { ...DEFAULT_SETTINGS.supplement, ...savedSettings.supplement };
         if (savedSettings.recentChanges) merged.recentChanges = { ...DEFAULT_SETTINGS.recentChanges, ...savedSettings.recentChanges };
         if (savedSettings.plannedFields) merged.plannedFields = { ...DEFAULT_SETTINGS.plannedFields, ...savedSettings.plannedFields };
+        if (savedSettings.coverLibrary) merged.coverLibrary = { ...DEFAULT_SETTINGS.coverLibrary, ...savedSettings.coverLibrary };
         setAppSettings(merged);
         if (merged.tierThresholds) globalTierThresholds = { ...DEFAULT_SETTINGS.tierThresholds, ...merged.tierThresholds };
       }
@@ -24454,7 +24493,7 @@ function AppContent() {
     const merged = { ...appSettings };
     
     for (const key of Object.keys(newSettings)) {
-      if (key === 'plannedFields' || key === 'supplement' || key === 'recentChanges') {
+      if (key === 'plannedFields' || key === 'supplement' || key === 'recentChanges' || key === 'coverLibrary') {
         // nested object는 deep merge
         merged[key] = { ...appSettings[key], ...newSettings[key] };
       } else {
@@ -34055,6 +34094,33 @@ async function importJSON() {
                 onPress={removeAllUnusedCovers}
                 color={C.warn}
               />
+            </Section>
+
+            {/* ⚙️ v3.6.2: 갤러리 선택 시 자동 등록 설정 */}
+            <Section title="⚙️ 설정">
+              <TouchableOpacity
+                onPress={() => {
+                  saveAppSettings({ coverLibrary: { autoRegister: !appSettings.coverLibrary?.autoRegister } });
+                }}
+                style={{ flexDirection: "row", alignItems: "center", backgroundColor: C.bg, padding: 12, borderRadius: 12 }}
+              >
+                <View style={{
+                  width: 44, height: 24, borderRadius: 12,
+                  backgroundColor: appSettings.coverLibrary?.autoRegister ? C.primary : C.line,
+                  justifyContent: "center", paddingHorizontal: 2,
+                }}>
+                  <View style={{
+                    width: 20, height: 20, borderRadius: 10, backgroundColor: "#fff",
+                    alignSelf: appSettings.coverLibrary?.autoRegister ? "flex-end" : "flex-start",
+                  }} />
+                </View>
+                <View style={{ marginLeft: 12, flex: 1 }}>
+                  <Text style={{ color: C.text, fontWeight: "600" }}>갤러리 선택 시 라이브러리 자동 등록</Text>
+                  <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>
+                    표지를 직접 선택할 때 라이브러리에도 등록하고, 사용 상태를 추적합니다.
+                  </Text>
+                </View>
+              </TouchableOpacity>
             </Section>
 
             {/* 🖼️ 갤러리 - 🚀 v3.5.6: 가상화 복원 + memo 컴포넌트 */}
