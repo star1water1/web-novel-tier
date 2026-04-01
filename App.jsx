@@ -4710,16 +4710,172 @@ function safeParseJSON(str, defaultValue = null) {
 }
 
 /**
- * 티어 순서 (높은 순)
+ * 티어 순서 (높은 순) - 레거시 폴백용
  */
 const TIER_ORDER = ["S", "A", "B+", "B", "B-", "C"];
 
 /**
+ * 🆕 v6.0: 기본 티어 시스템 설정 (constants/config.js와 동일)
+ */
+const DEFAULT_TIER_SYSTEM_CONFIG = {
+  mode: "match",
+  tiers: [
+    { key: "S",  label: "S",  color: "#8b5cf6", threshold: 1950, gated: true  },
+    { key: "A",  label: "A",  color: "#3b82f6", threshold: 1850, gated: true  },
+    { key: "B+", label: "B+", color: "#22c55e", threshold: 1700, gated: false },
+    { key: "B",  label: "B",  color: "#a3e635", threshold: 1600, gated: false },
+    { key: "B-", label: "B-", color: "#f59e0b", threshold: 1500, gated: false },
+    { key: "C",  label: "C",  color: "#ef4444", threshold: 0,    gated: false },
+  ],
+  defaultTier: "C",
+  defaultRating: 1500,
+  allowRegistrationTier: false,
+};
+
+/**
+ * 🆕 v6.0: 색상 프리셋 팔레트
+ */
+const TIER_COLOR_PALETTE = [
+  "#8b5cf6", "#7c3aed", "#6d28d9",
+  "#3b82f6", "#2563eb", "#1d4ed8",
+  "#06b6d4", "#0891b2",
+  "#22c55e", "#16a34a",
+  "#a3e635", "#84cc16",
+  "#f59e0b", "#d97706",
+  "#f97316", "#ea580c",
+  "#ef4444", "#dc2626",
+  "#ec4899", "#db2777",
+  "#6b7280", "#374151",
+];
+
+/**
+ * 🆕 v6.0: 내장 프리셋 목록
+ */
+const TIER_PRESETS = [
+  {
+    id: "default_6", name: "기본 (6티어)", description: "S/A/B+/B/B-/C 매칭 기반 시스템",
+    config: { ...DEFAULT_TIER_SYSTEM_CONFIG },
+  },
+  {
+    id: "simple_3", name: "간단 (3티어)", description: "상/중/하 3단계 시스템",
+    config: {
+      mode: "match",
+      tiers: [
+        { key: "상", label: "상", color: "#8b5cf6", threshold: 1700, gated: true },
+        { key: "중", label: "중", color: "#3b82f6", threshold: 1500, gated: false },
+        { key: "하", label: "하", color: "#ef4444", threshold: 0, gated: false },
+      ],
+      defaultTier: "하", defaultRating: 1500, allowRegistrationTier: false,
+    },
+  },
+  {
+    id: "detailed_9", name: "상세 (9티어)", description: "S+/S/A+/A/B+/B/B-/C/D 세분화",
+    config: {
+      mode: "match",
+      tiers: [
+        { key: "S+", label: "S+", color: "#7c3aed", threshold: 2100, gated: true },
+        { key: "S",  label: "S",  color: "#8b5cf6", threshold: 1950, gated: true },
+        { key: "A+", label: "A+", color: "#2563eb", threshold: 1850, gated: true },
+        { key: "A",  label: "A",  color: "#3b82f6", threshold: 1750, gated: false },
+        { key: "B+", label: "B+", color: "#22c55e", threshold: 1650, gated: false },
+        { key: "B",  label: "B",  color: "#a3e635", threshold: 1550, gated: false },
+        { key: "B-", label: "B-", color: "#f59e0b", threshold: 1450, gated: false },
+        { key: "C",  label: "C",  color: "#ef4444", threshold: 1350, gated: false },
+        { key: "D",  label: "D",  color: "#dc2626", threshold: 0, gated: false },
+      ],
+      defaultTier: "D", defaultRating: 1500, allowRegistrationTier: false,
+    },
+  },
+  {
+    id: "letter_5", name: "알파벳 (5티어)", description: "A/B/C/D/F 학점형",
+    config: {
+      mode: "match",
+      tiers: [
+        { key: "A", label: "A", color: "#8b5cf6", threshold: 1800, gated: true },
+        { key: "B", label: "B", color: "#3b82f6", threshold: 1650, gated: false },
+        { key: "C", label: "C", color: "#22c55e", threshold: 1500, gated: false },
+        { key: "D", label: "D", color: "#f59e0b", threshold: 1350, gated: false },
+        { key: "F", label: "F", color: "#ef4444", threshold: 0, gated: false },
+      ],
+      defaultTier: "F", defaultRating: 1500, allowRegistrationTier: false,
+    },
+  },
+  {
+    id: "score_10", name: "점수형 (10티어)", description: "10점~1점 점수형",
+    config: {
+      mode: "match",
+      tiers: [
+        { key: "10", label: "10", color: "#7c3aed", threshold: 2100, gated: true },
+        { key: "9",  label: "9",  color: "#8b5cf6", threshold: 1950, gated: true },
+        { key: "8",  label: "8",  color: "#3b82f6", threshold: 1800, gated: false },
+        { key: "7",  label: "7",  color: "#06b6d4", threshold: 1700, gated: false },
+        { key: "6",  label: "6",  color: "#22c55e", threshold: 1600, gated: false },
+        { key: "5",  label: "5",  color: "#a3e635", threshold: 1500, gated: false },
+        { key: "4",  label: "4",  color: "#f59e0b", threshold: 1400, gated: false },
+        { key: "3",  label: "3",  color: "#f97316", threshold: 1300, gated: false },
+        { key: "2",  label: "2",  color: "#ef4444", threshold: 1200, gated: false },
+        { key: "1",  label: "1",  color: "#dc2626", threshold: 0, gated: false },
+      ],
+      defaultTier: "1", defaultRating: 1500, allowRegistrationTier: false,
+    },
+  },
+  {
+    id: "manual_simple", name: "직접 배정 (3티어)", description: "추천/보통/비추천 직접 배정",
+    config: {
+      mode: "manual",
+      tiers: [
+        { key: "추천", label: "추천", color: "#22c55e", threshold: 0, gated: false },
+        { key: "보통", label: "보통", color: "#3b82f6", threshold: 0, gated: false },
+        { key: "비추천", label: "비추천", color: "#ef4444", threshold: 0, gated: false },
+      ],
+      defaultTier: "보통", defaultRating: 1500, allowRegistrationTier: true,
+    },
+  },
+];
+
+/** 커스텀 프리셋 최대 개수 */
+const MAX_CUSTOM_PRESETS = 5;
+
+// 🆕 v6.0: 유연한 티어 시스템 헬퍼 함수들 (인라인)
+function getActiveTierOrder(config) {
+  if (!config || !config.tiers || config.tiers.length === 0) return TIER_ORDER;
+  return config.tiers.map(t => t.key);
+}
+
+function isGatedTier(tier, config) {
+  if (!config || !config.tiers) return tier === "S" || tier === "A";
+  const found = config.tiers.find(t => t.key === tier);
+  return found ? found.gated : false;
+}
+
+function getGatedTiers(config) {
+  if (!config || !config.tiers) return ["S", "A"];
+  return config.tiers.filter(t => t.gated).map(t => t.key);
+}
+
+function getHighestNonGatedTier(config) {
+  if (!config || !config.tiers) return "B+";
+  const nonGated = config.tiers.filter(t => !t.gated);
+  return nonGated.length > 0 ? nonGated[0].key : config.tiers[config.tiers.length - 1].key;
+}
+
+function migrateTierKey(oldKey, oldConfig, newConfig) {
+  const oldOrder = getActiveTierOrder(oldConfig);
+  const newOrder = getActiveTierOrder(newConfig);
+  const oldIdx = oldOrder.indexOf(oldKey);
+  if (oldIdx === -1) return newConfig.defaultTier || newOrder[newOrder.length - 1];
+  const ratio = oldOrder.length > 1 ? oldIdx / (oldOrder.length - 1) : 0;
+  const newIdx = Math.round(ratio * (newOrder.length - 1));
+  return newOrder[Math.min(newIdx, newOrder.length - 1)];
+}
+
+/**
  * 티어 차이 계산 (양수면 A가 높음)
  */
-function getTierDiff(tierA, tierB) {
-  const idxA = TIER_ORDER.indexOf(tierA);
-  const idxB = TIER_ORDER.indexOf(tierB);
+function getTierDiff(tierA, tierB, config) {
+  const order = config ? getActiveTierOrder(config) : TIER_ORDER;
+  const idxA = order.indexOf(tierA);
+  const idxB = order.indexOf(tierB);
   if (idxA === -1 || idxB === -1) return 0;
   return idxB - idxA;
 }
@@ -4727,8 +4883,8 @@ function getTierDiff(tierA, tierB) {
 /**
  * 티어가 더 높은지 확인
  */
-function isTierHigher(tierA, tierB) {
-  return getTierDiff(tierA, tierB) > 0;
+function isTierHigher(tierA, tierB, config) {
+  return getTierDiff(tierA, tierB, config) > 0;
 }
 
 /**
@@ -8540,13 +8696,18 @@ const TierTag = memo(({ rating }) => {
 // 실제 티어 표시 (manual_tier 고려)
 const ActualTierTag = memo(({ novel, showDiff = false }) => {
   if (!novel) return null;
-  
-  const actual = getDisplayTier(novel);
-  const recommended = tierFromRating(novel.rating || 1500);
-  const color = getTierColor(actual);
-  const isForced = novel.manual_tier && tierRank(tierFromRating(novel.rating)) > tierRank(novel.manual_tier);
+
+  const cfg = globalTierConfig;
+  const actual = getDisplayTier(novel, cfg);
+  const label = getTierLabel(actual, cfg);
+  const color = getTierColor(actual, cfg);
+
+  // match/hybrid 모드에서만 권장 티어 비교 의미 있음
+  const isMatchMode = cfg.mode === "match" || cfg.mode === "hybrid";
+  const recommended = isMatchMode ? tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg) : actual;
+  const isForced = isMatchMode && novel.manual_tier && tierRank(tierFromRating(novel.rating || 1500, cfg), cfg) > tierRank(novel.manual_tier, cfg);
   const hasDiff = actual !== recommended;
-  
+
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
       <View
@@ -8560,12 +8721,12 @@ const ActualTierTag = memo(({ novel, showDiff = false }) => {
         }}
       >
         <Text style={{ color: "#fff", fontWeight: "800" }}>
-          {isForced ? "⚠️" : ""}{actual}
+          {isForced ? "⚠️" : ""}{label}
         </Text>
       </View>
       {showDiff && hasDiff && (
         <Text style={{ color: "#6b7280", fontSize: 11 }}>
-          ({recommended} 권장)
+          ({getTierLabel(recommended, cfg)} 권장)
         </Text>
       )}
     </View>
@@ -19073,12 +19234,21 @@ function awardsToSearchText(awardsJson) {
 }
 
 // 점수 기반 권장 티어 계산
-// ⚙️ 전역 티어 임계값 (설정에서 변경 가능, 앱 시작 시 로드됨)
+// ⚙️ 전역 티어 설정 (설정에서 변경 가능, 앱 시작 시 로드됨)
 let globalTierThresholds = { S: 1950, A: 1850, "B+": 1700, B: 1600, "B-": 1500 };
+// 🆕 v6.0: 유연한 티어 시스템 - 전역 config (tierSystemConfig)
+let globalTierConfig = { ...DEFAULT_TIER_SYSTEM_CONFIG };
+// 🆕 v6.0: 티어 key→객체 룩업 테이블 (O(1) 성능 유지)
+let globalTierLookup = new Map(DEFAULT_TIER_SYSTEM_CONFIG.tiers.map(t => [t.key, t]));
+function rebuildTierLookup(config) {
+  globalTierLookup = new Map((config && config.tiers || []).map(t => [t.key, t]));
+}
 
 // ⚙️ 기본 설정값
 const DEFAULT_SETTINGS = {
   tierThresholds: { S: 1950, A: 1850, "B+": 1700, B: 1600, "B-": 1500 },
+  // 🆕 v6.0: 유연한 티어 시스템 설정
+  tierSystemConfig: { ...DEFAULT_TIER_SYSTEM_CONFIG },
   autoApproveEnabled: false,        // 자동 승인 활성화
   autoApproveMinWins: 10,           // 자동 승인 최소 승수
   autoApproveMaxLosses: 3,          // 자동 승인 최대 패수
@@ -19134,70 +19304,114 @@ const DEFAULT_SETTINGS = {
   },
 };
 
-function tierFromRating(r, thresholds = globalTierThresholds) {
-  if (r >= thresholds.S) return "S";
-  if (r >= thresholds.A) return "A";
-  if (r >= thresholds["B+"]) return "B+";
-  if (r >= thresholds.B) return "B";
-  if (r >= thresholds["B-"]) return "B-";
+// 🆕 v6.0: config-aware 티어 함수들
+function tierFromRating(r, configOrThresholds) {
+  // globalTierConfig 기본 사용
+  const cfg = configOrThresholds || globalTierConfig;
+  // tierSystemConfig 형태 (tiers 배열 보유)
+  if (cfg && cfg.tiers && Array.isArray(cfg.tiers)) {
+    for (const t of cfg.tiers) {
+      if (r >= t.threshold) return t.key;
+    }
+    return cfg.tiers[cfg.tiers.length - 1].key;
+  }
+  // 레거시 thresholds 객체 폴백
+  const th = cfg || globalTierThresholds;
+  if (r >= (th.S || 1950)) return "S";
+  if (r >= (th.A || 1850)) return "A";
+  if (r >= (th["B+"] || 1700)) return "B+";
+  if (r >= (th.B || 1600)) return "B";
+  if (r >= (th["B-"] || 1500)) return "B-";
   return "C";
 }
 
-// 티어 순위 비교용 (S=0, A=1, ... C=5)
-// ※ TIER_ORDER는 라인 2039에서 이미 정의됨
-function tierRank(tier) {
-  const idx = TIER_ORDER.indexOf(tier);
-  return idx === -1 ? 5 : idx;
+function tierRank(tier, config) {
+  const order = config ? getActiveTierOrder(config) : getActiveTierOrder(globalTierConfig);
+  const idx = order.indexOf(tier);
+  return idx === -1 ? order.length : idx;
 }
 
-// 실제 표시 티어 계산 (S/A는 수동, B+ 이하는 자동)
-function getDisplayTier(novel) {
-  const recommended = tierFromRating(novel.rating || 1500);
-  
-  // S/A 수동 지정이 있으면 그것 사용
-  if (novel.manual_tier === 'S' || novel.manual_tier === 'A') {
+// 🆕 v6.0: 모드별 표시 티어 계산
+function getDisplayTier(novel, config) {
+  const cfg = config || globalTierConfig;
+  if (!cfg || !cfg.tiers) return "C";
+
+  const mode = cfg.mode || "match";
+  const tierOrder = getActiveTierOrder(cfg);
+
+  // manual 모드
+  if (mode === "manual") {
+    const mt = novel.manual_tier;
+    if (mt && tierOrder.includes(mt)) return mt;
+    return cfg.defaultTier || tierOrder[tierOrder.length - 1];
+  }
+
+  // hybrid 모드
+  if (mode === "hybrid") {
+    const mt = novel.manual_tier;
+    if (mt && tierOrder.includes(mt)) return mt;
+    return tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg);
+  }
+
+  // match 모드
+  const recommended = tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg);
+
+  if (novel.manual_tier && tierOrder.includes(novel.manual_tier)) {
     return novel.manual_tier;
   }
-  
-  // 권장 티어가 S/A인데 수동 지정 없으면 B+ 이하 중 최고로 고정
-  // (검토를 통해서만 S/A 진입 가능)
-  if (recommended === 'S' || recommended === 'A') {
-    return 'B+';
+
+  if (isGatedTier(recommended, cfg)) {
+    return getHighestNonGatedTier(cfg);
   }
-  
-  // B+ 이하는 점수 기반 자동
+
   return recommended;
 }
 
-// 검토 상태 확인
-function getReviewStatus(novel) {
-  const recommended = tierFromRating(novel.rating || 1500);
-  const actual = getDisplayTier(novel);
-  
-  // 현재 S/A인데 권장이 더 낮음 → 강등 검토
-  if ((actual === 'S' || actual === 'A') && tierRank(recommended) > tierRank(actual)) {
+// 🆕 v6.0: 모드별 검토 상태 (match 모드에서만)
+function getReviewStatus(novel, config) {
+  const cfg = config || globalTierConfig;
+  if (!cfg || !cfg.tiers) return null;
+  if (cfg.mode !== "match") return null;
+
+  const recommended = tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg);
+  const actual = getDisplayTier(novel, cfg);
+
+  if (isGatedTier(actual, cfg) && tierRank(recommended, cfg) > tierRank(actual, cfg)) {
     return { type: 'demote', from: actual, to: recommended };
   }
-  
-  // 권장이 S/A인데 현재가 더 낮음 → 승급 검토
-  if ((recommended === 'S' || recommended === 'A') && tierRank(actual) > tierRank(recommended)) {
+
+  if (isGatedTier(recommended, cfg) && tierRank(actual, cfg) > tierRank(recommended, cfg)) {
     return { type: 'promote', from: actual, to: recommended };
   }
-  
-  return null; // 검토 불필요
+
+  return null;
 }
 
-// 티어 색상 가져오기
-function getTierColor(tier) {
-  const colors = {
-    S: "#8b5cf6",
-    A: "#3b82f6", 
-    "B+": "#22c55e",
-    B: "#a3e635",
-    "B-": "#f59e0b",
-    C: "#ef4444",
-  };
-  return colors[tier] || colors.C;
+// 🆕 v6.0: config 기반 색상 조회
+function getTierColor(tier, config) {
+  const cfg = config || globalTierConfig;
+  if (cfg && cfg.tiers) {
+    // O(1) 룩업 테이블 사용
+    const found = globalTierLookup.get(tier);
+    if (found) return found.color;
+    // 폴백: 배열 검색
+    const t = cfg.tiers.find(t => t.key === tier);
+    if (t) return t.color;
+  }
+  const legacyColors = { S: "#8b5cf6", A: "#3b82f6", "B+": "#22c55e", B: "#a3e635", "B-": "#f59e0b", C: "#ef4444" };
+  return legacyColors[tier] || "#6b7280";
+}
+
+// 🆕 v6.0: config 기반 라벨 조회
+function getTierLabel(tier, config) {
+  const cfg = config || globalTierConfig;
+  if (cfg && cfg.tiers) {
+    const found = globalTierLookup.get(tier);
+    if (found) return found.label;
+    const t = cfg.tiers.find(t => t.key === tier);
+    if (t) return t.label;
+  }
+  return tier || "?";
 }
 
 function deriveMajorGenre(tagsStr) {
@@ -21081,9 +21295,34 @@ function AppContent() {
             if (savedSettings.coverLibrary) {
               merged.coverLibrary = { ...DEFAULT_SETTINGS.coverLibrary, ...savedSettings.coverLibrary };
             }
+            // 🆕 v6.0: tierSystemConfig 마이그레이션 (레거시 → 새 구조)
+            if (!savedSettings.tierSystemConfig && merged.tierThresholds) {
+              // 레거시 tierThresholds에서 tierSystemConfig 자동 생성
+              const legacyTh = merged.tierThresholds;
+              merged.tierSystemConfig = {
+                ...DEFAULT_TIER_SYSTEM_CONFIG,
+                tiers: DEFAULT_TIER_SYSTEM_CONFIG.tiers.map(t => ({
+                  ...t,
+                  threshold: legacyTh[t.key] !== undefined ? legacyTh[t.key] : t.threshold,
+                })),
+              };
+            }
+            if (savedSettings.tierSystemConfig) {
+              // tiers 배열은 교체 (deep merge에서 배열은 덮어쓰기)
+              merged.tierSystemConfig = { ...DEFAULT_TIER_SYSTEM_CONFIG, ...savedSettings.tierSystemConfig };
+              if (savedSettings.tierSystemConfig.tiers) {
+                merged.tierSystemConfig.tiers = savedSettings.tierSystemConfig.tiers;
+              }
+            }
+
             setAppSettings(merged);
             if (merged.tierThresholds) {
               globalTierThresholds = { ...DEFAULT_SETTINGS.tierThresholds, ...merged.tierThresholds };
+            }
+            // 🆕 v6.0: globalTierConfig 초기화
+            if (merged.tierSystemConfig) {
+              globalTierConfig = { ...merged.tierSystemConfig };
+              rebuildTierLookup(globalTierConfig);
             }
             // 🆕 v3.4.4: 전체 화면 모드 적용
             // 🔧 v3.4.6: NavigationBar null 체크 추가
@@ -21500,8 +21739,30 @@ function AppContent() {
         if (savedSettings.recentChanges) merged.recentChanges = { ...DEFAULT_SETTINGS.recentChanges, ...savedSettings.recentChanges };
         if (savedSettings.plannedFields) merged.plannedFields = { ...DEFAULT_SETTINGS.plannedFields, ...savedSettings.plannedFields };
         if (savedSettings.coverLibrary) merged.coverLibrary = { ...DEFAULT_SETTINGS.coverLibrary, ...savedSettings.coverLibrary };
+        // 🆕 v6.0: tierSystemConfig 마이그레이션 (슬롯 전환 시에도 적용)
+        if (!savedSettings.tierSystemConfig && merged.tierThresholds) {
+          const legacyTh = merged.tierThresholds;
+          merged.tierSystemConfig = {
+            ...DEFAULT_TIER_SYSTEM_CONFIG,
+            tiers: DEFAULT_TIER_SYSTEM_CONFIG.tiers.map(t => ({
+              ...t,
+              threshold: legacyTh[t.key] !== undefined ? legacyTh[t.key] : t.threshold,
+            })),
+          };
+        }
+        if (savedSettings.tierSystemConfig) {
+          merged.tierSystemConfig = { ...DEFAULT_TIER_SYSTEM_CONFIG, ...savedSettings.tierSystemConfig };
+          if (savedSettings.tierSystemConfig.tiers) {
+            merged.tierSystemConfig.tiers = savedSettings.tierSystemConfig.tiers;
+          }
+        }
         setAppSettings(merged);
         if (merged.tierThresholds) globalTierThresholds = { ...DEFAULT_SETTINGS.tierThresholds, ...merged.tierThresholds };
+        // 🆕 v6.0: globalTierConfig 초기화 (슬롯 전환)
+        if (merged.tierSystemConfig) {
+          globalTierConfig = { ...merged.tierSystemConfig };
+          rebuildTierLookup(globalTierConfig);
+        }
       }
       if (Array.isArray(savedTierHistory)) setTierHistory(savedTierHistory.slice(0, 50));
       if (savedCustomTagCategories && typeof savedCustomTagCategories === "object") setCustomTagCategories(savedCustomTagCategories);
@@ -24494,20 +24755,38 @@ function AppContent() {
     const merged = { ...appSettings };
     
     for (const key of Object.keys(newSettings)) {
-      if (key === 'plannedFields' || key === 'supplement' || key === 'recentChanges' || key === 'coverLibrary') {
+      if (key === 'plannedFields' || key === 'supplement' || key === 'recentChanges' || key === 'coverLibrary' || key === 'tierSystemConfig') {
         // nested object는 deep merge
         merged[key] = { ...appSettings[key], ...newSettings[key] };
+        // 🆕 v6.0: tierSystemConfig의 tiers 배열은 교체 (merge 아님)
+        if (key === 'tierSystemConfig' && newSettings[key].tiers) {
+          merged[key].tiers = newSettings[key].tiers;
+        }
       } else {
         merged[key] = newSettings[key];
       }
     }
-    
+
     setAppSettings(merged);
     await setAppMeta("app_settings", merged);
-    
+
     // 티어 임계값이 변경되면 전역 변수도 업데이트
     if (newSettings.tierThresholds) {
       globalTierThresholds = { ...globalTierThresholds, ...newSettings.tierThresholds };
+    }
+    // 🆕 v6.0: tierSystemConfig 변경 시 전역 config + 룩업 테이블 갱신
+    if (newSettings.tierSystemConfig || merged.tierSystemConfig) {
+      const tsc = merged.tierSystemConfig || DEFAULT_TIER_SYSTEM_CONFIG;
+      globalTierConfig = { ...tsc };
+      rebuildTierLookup(globalTierConfig);
+      // 레거시 tierThresholds도 동기화 (하위 호환)
+      if (tsc.tiers) {
+        const th = {};
+        for (const t of tsc.tiers) {
+          if (t.key !== tsc.defaultTier) th[t.key] = t.threshold;
+        }
+        globalTierThresholds = th;
+      }
     }
   }
   

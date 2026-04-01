@@ -16,7 +16,7 @@
  * - 기타 통계/분석 헬퍼 함수
  */
 
-import { TIER_ORDER } from '../constants/config';
+import { TIER_ORDER, DEFAULT_TIER_SYSTEM_CONFIG } from '../constants/config';
 
 // ═══════════════════════════════════════════════════════════════
 // 📌 ID 생성
@@ -204,18 +204,93 @@ export function wilsonConfidenceInterval(successes, total, confidence = 0.95) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 📌 티어 관련
+// 📌 티어 관련 (유연한 티어 시스템 v6.0)
 // ═══════════════════════════════════════════════════════════════
+
+/**
+ * 활성 티어 순서 배열 반환
+ * @param {object} config - tierSystemConfig 객체
+ * @returns {string[]} 티어 key 배열 (높은 순)
+ */
+export function getActiveTierOrder(config) {
+  if (!config || !config.tiers || config.tiers.length === 0) return TIER_ORDER;
+  return config.tiers.map(t => t.key);
+}
+
+/**
+ * 티어 색상 조회
+ * @param {string} tier - 티어 key
+ * @param {object} config - tierSystemConfig 객체
+ * @returns {string} hex 색상
+ */
+export function getTierColor(tier, config) {
+  if (config && config.tiers) {
+    const found = config.tiers.find(t => t.key === tier);
+    if (found) return found.color;
+  }
+  // 레거시 폴백
+  const legacyColors = { S: "#8b5cf6", A: "#3b82f6", "B+": "#22c55e", B: "#a3e635", "B-": "#f59e0b", C: "#ef4444" };
+  return legacyColors[tier] || "#6b7280";
+}
+
+/**
+ * 티어 라벨 조회
+ * @param {string} tier - 티어 key
+ * @param {object} config - tierSystemConfig 객체
+ * @returns {string} 표시 라벨
+ */
+export function getTierLabel(tier, config) {
+  if (config && config.tiers) {
+    const found = config.tiers.find(t => t.key === tier);
+    if (found) return found.label;
+  }
+  return tier || "?";
+}
+
+/**
+ * gated 티어 목록 반환
+ * @param {object} config - tierSystemConfig 객체
+ * @returns {string[]} gated=true인 티어 key 배열
+ */
+export function getGatedTiers(config) {
+  if (!config || !config.tiers) return ["S", "A"];
+  return config.tiers.filter(t => t.gated).map(t => t.key);
+}
+
+/**
+ * 특정 티어가 gated인지 확인
+ * @param {string} tier - 티어 key
+ * @param {object} config - tierSystemConfig 객체
+ * @returns {boolean}
+ */
+export function isGatedTier(tier, config) {
+  if (!config || !config.tiers) return tier === "S" || tier === "A";
+  const found = config.tiers.find(t => t.key === tier);
+  return found ? found.gated : false;
+}
+
+/**
+ * 가장 높은 non-gated 티어 반환
+ * @param {object} config - tierSystemConfig 객체
+ * @returns {string} 티어 key
+ */
+export function getHighestNonGatedTier(config) {
+  if (!config || !config.tiers) return "B+";
+  const nonGated = config.tiers.filter(t => !t.gated);
+  return nonGated.length > 0 ? nonGated[0].key : config.tiers[config.tiers.length - 1].key;
+}
 
 /**
  * 티어 차이 계산 (양수면 A가 높음)
  * @param {string} tierA - 티어 A
  * @param {string} tierB - 티어 B
+ * @param {object} [config] - tierSystemConfig 객체 (없으면 TIER_ORDER 사용)
  * @returns {number} 차이 (양수: A가 높음, 음수: B가 높음)
  */
-export function getTierDiff(tierA, tierB) {
-  const idxA = TIER_ORDER.indexOf(tierA);
-  const idxB = TIER_ORDER.indexOf(tierB);
+export function getTierDiff(tierA, tierB, config) {
+  const order = config ? getActiveTierOrder(config) : TIER_ORDER;
+  const idxA = order.indexOf(tierA);
+  const idxB = order.indexOf(tierB);
   if (idxA === -1 || idxB === -1) return 0;
   return idxB - idxA;
 }
@@ -224,35 +299,48 @@ export function getTierDiff(tierA, tierB) {
  * 티어가 더 높은지 확인
  * @param {string} tierA - 비교할 티어
  * @param {string} tierB - 기준 티어
+ * @param {object} [config] - tierSystemConfig 객체
  * @returns {boolean} tierA가 tierB보다 높으면 true
  */
-export function isTierHigher(tierA, tierB) {
-  return getTierDiff(tierA, tierB) > 0;
+export function isTierHigher(tierA, tierB, config) {
+  return getTierDiff(tierA, tierB, config) > 0;
 }
 
 /**
- * 레이팅 기반 티어 계산
+ * 레이팅 기반 티어 계산 (동적 config 지원)
  * @param {number} r - 레이팅
- * @param {object} thresholds - 티어 임계값 객체
- * @returns {string} 티어 (S, A, B+, B, B-, C)
+ * @param {object|Array} configOrThresholds - tierSystemConfig 또는 레거시 thresholds 또는 tiers 배열
+ * @returns {string} 티어 key
  */
-export function tierFromRating(r, thresholds = { S: 1950, A: 1850, "B+": 1700, B: 1600, "B-": 1500 }) {
-  if (r >= thresholds.S) return "S";
-  if (r >= thresholds.A) return "A";
-  if (r >= thresholds["B+"]) return "B+";
-  if (r >= thresholds.B) return "B";
-  if (r >= thresholds["B-"]) return "B-";
+export function tierFromRating(r, configOrThresholds) {
+  // tierSystemConfig 형태 (tiers 배열 보유)
+  if (configOrThresholds && configOrThresholds.tiers && Array.isArray(configOrThresholds.tiers)) {
+    const tiers = configOrThresholds.tiers;
+    for (const t of tiers) {
+      if (r >= t.threshold) return t.key;
+    }
+    return tiers[tiers.length - 1].key;
+  }
+  // 레거시 thresholds 객체 폴백
+  const th = configOrThresholds || { S: 1950, A: 1850, "B+": 1700, B: 1600, "B-": 1500 };
+  if (r >= (th.S || 1950)) return "S";
+  if (r >= (th.A || 1850)) return "A";
+  if (r >= (th["B+"] || 1700)) return "B+";
+  if (r >= (th.B || 1600)) return "B";
+  if (r >= (th["B-"] || 1500)) return "B-";
   return "C";
 }
 
 /**
- * 티어 순위 비교용 (S=0, A=1, ... C=5)
+ * 티어 순위 비교용 (낮을수록 높은 티어)
  * @param {string} tier - 티어
- * @returns {number} 순위 (낮을수록 높은 티어)
+ * @param {object} [config] - tierSystemConfig 객체
+ * @returns {number} 순위 인덱스
  */
-export function tierRank(tier) {
-  const idx = TIER_ORDER.indexOf(tier);
-  return idx === -1 ? 5 : idx;
+export function tierRank(tier, config) {
+  const order = config ? getActiveTierOrder(config) : TIER_ORDER;
+  const idx = order.indexOf(tier);
+  return idx === -1 ? order.length : idx;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -438,50 +526,103 @@ export function deepMerge(target, source) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 📌 티어 관련 추가 함수들 (원본 14572-14644줄)
+// 📌 티어 관련 추가 함수들 (유연한 티어 시스템 v6.0)
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * 실제 표시 티어 계산 (manual_tier 고려)
- * S/A 티어는 검토를 통해서만 진입 가능
+ * 실제 표시 티어 계산 (mode + manual_tier + gated 고려)
+ * @param {object} novel - 작품 객체
+ * @param {object} config - tierSystemConfig 객체
+ * @returns {string} 표시 티어 key
  */
-export function getDisplayTier(novel, thresholds = { S: 1950, A: 1850, "B+": 1700, B: 1600, "B-": 1500 }) {
-  const recommended = tierFromRating(novel.rating || 1500, thresholds);
-  
-  // S/A 수동 지정이 있으면 그것 사용
-  if (novel.manual_tier === 'S' || novel.manual_tier === 'A') {
+export function getDisplayTier(novel, config) {
+  // config 유효성 검사 + 레거시 폴백
+  if (!config || !config.tiers) {
+    config = DEFAULT_TIER_SYSTEM_CONFIG;
+  }
+
+  const mode = config.mode || "match";
+  const tierOrder = getActiveTierOrder(config);
+
+  // manual 모드: manual_tier 직접 반환
+  if (mode === "manual") {
+    const mt = novel.manual_tier;
+    // 유효한 티어 key인지 확인
+    if (mt && tierOrder.includes(mt)) return mt;
+    return config.defaultTier || tierOrder[tierOrder.length - 1];
+  }
+
+  // hybrid 모드: manual_tier 우선, 없으면 rating 기반 (게이트 없음)
+  if (mode === "hybrid") {
+    const mt = novel.manual_tier;
+    if (mt && tierOrder.includes(mt)) return mt;
+    return tierFromRating(novel.rating || (config.defaultRating || 1500), config);
+  }
+
+  // match 모드: rating 기반 + gated 로직
+  const recommended = tierFromRating(novel.rating || (config.defaultRating || 1500), config);
+
+  // manual_tier가 설정되어 있고 유효하면 사용
+  if (novel.manual_tier && tierOrder.includes(novel.manual_tier)) {
     return novel.manual_tier;
   }
-  
-  // 권장 티어가 S/A인데 수동 지정 없으면 B+ 이하 중 최고로 고정
-  // (검토를 통해서만 S/A 진입 가능)
-  if (recommended === 'S' || recommended === 'A') {
-    return 'B+';
+
+  // recommended가 gated 티어인데 manual_tier가 없으면 → 가장 높은 non-gated 티어로 고정
+  if (isGatedTier(recommended, config)) {
+    return getHighestNonGatedTier(config);
   }
-  
-  // B+ 이하는 점수 기반 자동
+
   return recommended;
 }
 
 /**
- * 검토 상태 확인
+ * 검토 상태 확인 (match 모드에서만 유효)
+ * @param {object} novel - 작품 객체
+ * @param {object} config - tierSystemConfig 객체
  * @returns {{ type: 'promote'|'demote', from: string, to: string } | null}
  */
-export function getReviewStatus(novel, thresholds = { S: 1950, A: 1850, "B+": 1700, B: 1600, "B-": 1500 }) {
-  const recommended = tierFromRating(novel.rating || 1500, thresholds);
-  const actual = getDisplayTier(novel, thresholds);
-  
-  // 현재 S/A인데 권장이 더 낮음 → 강등 검토
-  if ((actual === 'S' || actual === 'A') && tierRank(recommended) > tierRank(actual)) {
+export function getReviewStatus(novel, config) {
+  if (!config || !config.tiers) {
+    config = DEFAULT_TIER_SYSTEM_CONFIG;
+  }
+
+  // manual/hybrid 모드에서는 검토 불필요
+  if (config.mode !== "match") return null;
+
+  const recommended = tierFromRating(novel.rating || (config.defaultRating || 1500), config);
+  const actual = getDisplayTier(novel, config);
+
+  // 현재 gated 티어인데 권장이 더 낮음 → 강등 검토
+  if (isGatedTier(actual, config) && tierRank(recommended, config) > tierRank(actual, config)) {
     return { type: 'demote', from: actual, to: recommended };
   }
-  
-  // 권장이 S/A인데 현재가 더 낮음 → 승급 검토
-  if ((recommended === 'S' || recommended === 'A') && tierRank(actual) > tierRank(recommended)) {
+
+  // 권장이 gated 티어인데 현재가 더 낮음 → 승급 검토
+  if (isGatedTier(recommended, config) && tierRank(actual, config) > tierRank(recommended, config)) {
     return { type: 'promote', from: actual, to: recommended };
   }
-  
-  return null; // 검토 불필요
+
+  return null;
+}
+
+/**
+ * 프리셋 전환 시 티어 키 매핑 (위치 비율 기반)
+ * @param {string} oldKey - 이전 티어 key
+ * @param {object} oldConfig - 이전 tierSystemConfig
+ * @param {object} newConfig - 새 tierSystemConfig
+ * @returns {string} 매핑된 새 티어 key
+ */
+export function migrateTierKey(oldKey, oldConfig, newConfig) {
+  const oldOrder = getActiveTierOrder(oldConfig);
+  const newOrder = getActiveTierOrder(newConfig);
+
+  const oldIdx = oldOrder.indexOf(oldKey);
+  if (oldIdx === -1) return newConfig.defaultTier || newOrder[newOrder.length - 1];
+
+  // 위치 비율 기반 매핑 (상위 X% → 새 시스템 상위 X%)
+  const ratio = oldOrder.length > 1 ? oldIdx / (oldOrder.length - 1) : 0;
+  const newIdx = Math.round(ratio * (newOrder.length - 1));
+  return newOrder[Math.min(newIdx, newOrder.length - 1)];
 }
 
 /**
