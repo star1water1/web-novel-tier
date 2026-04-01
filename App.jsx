@@ -24590,8 +24590,13 @@ function AppContent() {
              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
             [n.id, n.title, n.author, n.tags, n.platforms, n.note, n.read_count, n.rating, n.rd, n.wins, n.losses, n.match_count, n.tier, n.created_at, n.awards, n.total_episodes, n.status, n.pinned, n.cover_image, n.link, n.work_status, n.read_count_updated_at, n.major_genre, n.sub_genre, n.gaiden_status, n.gaiden_read_count, n.gaiden_total_episodes, n.manual_tier, n.reread_count || 1, n.tag_data || "", n.aliases || "", n.memorable_quote || ""]
           );
+          // 🔧 v3.6.2: 복원된 작품의 표지를 라이브러리에서 "사용중"으로 동기화
+          if (n.cover_image) {
+            await applyNovelCover(n.id, n.cover_image, null);
+            await loadCoverLibrary();
+          }
           break;
-          
+
         case 'match_delete':
           // 매칭 삭제 되돌리기
           const m = item.payload.match;
