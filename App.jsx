@@ -8145,14 +8145,24 @@ function getFirstGenre(value) {
    - 하위 호환: 기존 JSON 배열 '["quote1","quote2"]' 파싱 지원
    - v3.5.6: 새 형식 @ 구분자 '문장1 @ 문장2' (쉼표 충돌 방지)
    ========================================================= */
+/**
+ * 이미지 인용구 판별
+ */
+function isImageQuote(q) {
+  return q && typeof q === "object" && q.type === "image" && !!q.uri;
+}
+
 function parseQuotes(val) {
   if (!val || typeof val !== "string" || !val.trim()) return [];
   const trimmed = val.trim();
-  // 하위호환: 기존 JSON 배열 형식 지원
+  // 하위호환: 기존 JSON 배열 형식 지원 (텍스트 + 이미지 객체)
   if (trimmed.startsWith("[")) {
     try {
       const arr = JSON.parse(trimmed);
-      if (Array.isArray(arr)) return arr.filter(q => typeof q === "string" && q.trim());
+      if (Array.isArray(arr)) return arr.filter(q =>
+        (typeof q === "string" && q.trim()) ||
+        (q && typeof q === "object" && q.type === "image" && q.uri)
+      );
       return [];
     } catch { /* JSON 파싱 실패 시 아래로 계속 */ }
   }
@@ -8165,10 +8175,18 @@ function parseQuotes(val) {
 
 function serializeQuotes(arr) {
   if (!arr || arr.length === 0) return "";
+  // 이미지가 포함된 경우 JSON 직렬화
+  const hasImages = arr.some(q => isImageQuote(q));
+  if (hasImages) {
+    const cleaned = arr.filter(q =>
+      isImageQuote(q) || (typeof q === "string" && q.trim())
+    );
+    return cleaned.length > 0 ? JSON.stringify(cleaned) : "";
+  }
+  // 텍스트 전용: 기존 @ 구분자 로직
   const cleaned = arr.filter(q => typeof q === "string" && q.trim()).map(q => q.trim());
   if (cleaned.length === 0) return "";
   if (cleaned.length === 1) return cleaned[0]; // 하위 호환: 1개면 단일 문자열
-  // 🔧 v3.5.6: @ 구분자로 저장 (문장 내 쉼표 충돌 방지)
   return cleaned.join(" @ ");
 }
 
@@ -15797,28 +15815,36 @@ const AwardsScreen = memo(({
                           </View>
                         </View>
                         
-                        {/* 💬 인상깊은 문장 */}
+                        {/* 💬 인상깊은 문장 (텍스트 우선, 이미지는 썸네일) */}
                         {(() => {
                           const awardQuotes = parseQuotes(novel.memorable_quote);
-                          return awardQuotes.length > 0 ? (
-                          <View style={{ 
+                          // 텍스트 인용구 우선, 없으면 첫 번째 항목
+                          const firstText = awardQuotes.find(q => typeof q === "string");
+                          const firstItem = firstText || awardQuotes[0];
+                          if (!firstItem) return null;
+                          return (
+                          <View style={{
                             marginTop: 14,
-                            padding: 14, 
-                            backgroundColor: isDark ? "#1e293b" : "#fffbeb", 
+                            padding: isImageQuote(firstItem) ? 8 : 14,
+                            backgroundColor: isDark ? "#1e293b" : "#fffbeb",
                             borderRadius: 12,
                             borderLeftWidth: 4,
                             borderLeftColor: award.color,
                           }}>
-                            <Text style={{ 
-                              fontStyle: "italic", 
-                              fontSize: 14, 
-                              color: isDark ? "#fef3c7" : "#78350f",
-                              lineHeight: 22,
-                            }}>
-                              {awardQuotes[0]}
-                            </Text>
+                            {isImageQuote(firstItem) ? (
+                              <ExpoImage source={{ uri: firstItem.uri }} style={{ width: "100%", height: 100, borderRadius: 8 }} contentFit="contain" cachePolicy="memory-disk" />
+                            ) : (
+                              <Text style={{
+                                fontStyle: "italic",
+                                fontSize: 14,
+                                color: isDark ? "#fef3c7" : "#78350f",
+                                lineHeight: 22,
+                              }}>
+                                {firstItem}
+                              </Text>
+                            )}
                           </View>
-                        ) : null;
+                        );
                         })()}
                       </View>
                     );
@@ -20228,6 +20254,7 @@ function AppContent() {
   const [quotesIdx, setQuotesIdx] = useState(0);
   const [quotesShuffled, setQuotesShuffled] = useState(null); // null=원본순, array=셔플순
   const quotesSwipeRef = useRef({ startX: 0, startY: 0 }); // 🔀 v3.5.5: 스와이프 감지
+  const removedQuoteImagesRef = useRef([]); // 📷 v3.6.1: 편집 중 삭제된 이미지 URI 추적 (저장 시 실제 삭제)
   const [settingsSubTab, setSettingsSubTab] = useState("app"); // 🆕 Phase 2: 설정 서브탭 ("app" | "tags" | "analysis" | "backup" | "diag")
   const [refreshKey, setRefreshKey] = useState(0); // 🔬 v3.5.9: 진단 대시보드 새로고침 키
   const [list, setList] = useState([]);
@@ -20819,10 +20846,14 @@ function AppContent() {
       const tc = getTierColor(t);
       const mg = (() => { try { const mg = JSON.parse(n.major_genre || "[]"); return Array.isArray(mg) ? mg[0] || "" : mg || ""; } catch { return n.major_genre || ""; } })();
       for (let qi = 0; qi < quotes.length; qi++) {
+        const q = quotes[qi];
+        const img = isImageQuote(q);
         cards.push({
           id: `${n.id}-q${qi}`,
           novelId: n.id,
-          quote: quotes[qi],
+          quote: img ? (q.caption || "") : q,
+          isImage: img,
+          imageUri: img ? q.uri : null,
           title: n.title,
           author: n.author || "작가 미상",
           tier: t,
@@ -25599,6 +25630,7 @@ function AppContent() {
     
     // 💬 인상깊은 문장 로드
     setEditQuotes(parseQuotes(n.memorable_quote)); // 💬 v3.5.4: 다중 문장 파싱
+    removedQuoteImagesRef.current = []; // 📷 v3.6.1: 이미지 삭제 추적 초기화
 
     // ★ awards JSON → 편집용 배열로 파싱
     let parsed = [];
@@ -25761,6 +25793,13 @@ function AppContent() {
         ]
       );
       
+      // 📷 v3.6.1: 편집 중 삭제된 명대사 이미지 파일 정리 (저장 성공 후에만)
+      if (removedQuoteImagesRef.current.length > 0) {
+        for (const uri of removedQuoteImagesRef.current) {
+          FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+        }
+        removedQuoteImagesRef.current = [];
+      }
       // 🔧 v3.5.9: DB 저장 성공 후 모달 닫기 (savePlannedEdit 패턴과 통일)
       syncTagsToCustom(n.tags?.trim() || ""); // 🔧 v3.5.9: 태그 동기화
       if (_pt) PerfMonitor.trackFunc("saveEdit", Date.now() - _pt); // 🔬
@@ -27508,10 +27547,23 @@ function buildUltraCompactBackup(novels, matches, coverImages = null) {
       opt.al = aliasesStr;
     }
     
-    // 💬 v3.2.2: 인상깊은 문장
+    // 💬 v3.2.2: 인상깊은 문장 / 📷 v3.6.1: 이미지 인용구 base64 포함
     const memorableQuote = (n.memorable_quote || "").trim();
     if (memorableQuote) {
       opt.mq = memorableQuote;
+      // 이미지 인용구가 포함된 경우 파일을 base64로 포함
+      const mQuotes = parseQuotes(memorableQuote);
+      const imgQuotes = mQuotes.filter(q => isImageQuote(q));
+      if (imgQuotes.length > 0) {
+        const mqImg = {};
+        for (const iq of imgQuotes) {
+          try {
+            const b64 = await FileSystem.readAsStringAsync(iq.uri, { encoding: FileSystem.EncodingType.Base64 });
+            mqImg[iq.uri] = b64;
+          } catch { /* 파일 읽기 실패 시 스킵 */ }
+        }
+        if (Object.keys(mqImg).length > 0) opt.mqImg = mqImg;
+      }
     }
 
     // [title, authorIdx, tagIdx[], platIdx[], rating*10, rd, W, L, MC, opt?]
@@ -28123,8 +28175,28 @@ async function importJSON() {
                 // 🏷️ v5.0: tag_data, aliases
                 const tagData = opt.td || "";
                 const aliases = opt.al || "";
-                // 💬 v3.2.2: 인상깊은 문장
-                const memorableQuote = opt.mq || "";
+                // 💬 v3.2.2: 인상깊은 문장 / 📷 v3.6.1: 이미지 base64 복원
+                let memorableQuote = opt.mq || "";
+                if (opt.mqImg && typeof opt.mqImg === "object" && memorableQuote.startsWith("[")) {
+                  try {
+                    const quotes = JSON.parse(memorableQuote);
+                    if (Array.isArray(quotes)) {
+                      let modified = false;
+                      for (let qi = 0; qi < quotes.length; qi++) {
+                        const q = quotes[qi];
+                        if (q && typeof q === "object" && q.type === "image" && q.uri && opt.mqImg[q.uri]) {
+                          await ensureCoverDir();
+                          const newId = uuid();
+                          const newPath = COVER_DIR + `quote_${newId}.jpg`;
+                          await FileSystem.writeAsStringAsync(newPath, opt.mqImg[q.uri], { encoding: FileSystem.EncodingType.Base64 });
+                          quotes[qi] = { ...q, uri: newPath };
+                          modified = true;
+                        }
+                      }
+                      if (modified) memorableQuote = JSON.stringify(quotes);
+                    }
+                  } catch { /* 파싱 실패 시 원본 유지 */ }
+                }
 
                 const tags = tagIdxArr
                   .map(idx => (typeof idx === "number" && idx >= 0 && idx < tagDict.length) ? tagDict[idx] : "")
@@ -29252,7 +29324,7 @@ async function importJSON() {
   <TextInput
     value={memorableQuote}
     onChangeText={setMemorableQuote}
-    placeholder={'인상깊은 문장... (여러 개는 @ 로 구분)'}
+    placeholder={'인상깊은 문장... (여러 개는 @ 로 구분, 이미지는 수정에서 추가)'}
     placeholderTextColor={C.sub}
     multiline
     style={{
@@ -29782,22 +29854,33 @@ async function importJSON() {
                 return parsedQuotes.length > 0 ? (
                 <View style={{ marginBottom: 12 }}>
                   {parsedQuotes.map((quote, qi) => (
-                    <View key={`q-${qi}`} style={{ 
-                      backgroundColor: isDark ? "#1e293b" : "#fef3c7", 
-                      padding: 14, 
-                      borderRadius: 12, 
+                    <View key={`q-${qi}`} style={{
+                      backgroundColor: isDark ? "#1e293b" : "#fef3c7",
+                      padding: isImageQuote(quote) ? 8 : 14,
+                      borderRadius: 12,
                       marginBottom: qi < parsedQuotes.length - 1 ? 8 : 0,
                       borderLeftWidth: 4,
                       borderLeftColor: isDark ? "#fbbf24" : "#f59e0b",
                     }}>
-                      <Text style={{ 
-                        fontStyle: "italic", 
-                        fontSize: 15, 
-                        color: isDark ? "#fef3c7" : "#78350f",
-                        lineHeight: 22,
-                      }}>
-                        {quote}
-                      </Text>
+                      {isImageQuote(quote) ? (
+                        <View>
+                          <ExpoImage source={{ uri: quote.uri }} style={{ width: "100%", height: 200, borderRadius: 8 }} contentFit="contain" cachePolicy="memory-disk" />
+                          {quote.caption ? (
+                            <Text style={{ fontStyle: "italic", fontSize: 13, color: isDark ? "#fef3c7" : "#78350f", marginTop: 6, textAlign: "center" }}>
+                              {quote.caption}
+                            </Text>
+                          ) : null}
+                        </View>
+                      ) : (
+                        <Text style={{
+                          fontStyle: "italic",
+                          fontSize: 15,
+                          color: isDark ? "#fef3c7" : "#78350f",
+                          lineHeight: 22,
+                        }}>
+                          {quote}
+                        </Text>
+                      )}
                     </View>
                   ))}
                 </View>
@@ -32182,13 +32265,33 @@ async function importJSON() {
                       <Text style={{ color: isDark ? "#fbbf24" : "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 필수 입력</Text>
                     )}
                     <Label>💬 인상깊은 문장</Label>
-                    <Input
-                      value={editItem?.memorable_quote || ""}
-                      onChangeText={(t) => updateEditItem(prev => prev ? { ...prev, memorable_quote: t } : null)}
-                      placeholder="작품에서 인상깊었던 문장이나 대사"
-                      multiline
-                      style={{ minHeight: 50 }}
-                    />
+                    {(() => {
+                      const quotes = parseQuotes(editItem?.memorable_quote || "");
+                      const hasImages = quotes.some(q => isImageQuote(q));
+                      if (hasImages) {
+                        return (
+                          <View style={{ padding: 10, backgroundColor: C.card, borderRadius: 10, borderWidth: 1, borderColor: C.line }}>
+                            <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>📷 이미지 포함 ({quotes.length}개) — 상세 편집에서 수정 가능</Text>
+                            <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
+                              {quotes.map((q, i) => isImageQuote(q) ? (
+                                <ExpoImage key={i} source={{ uri: q.uri }} style={{ width: 50, height: 50, borderRadius: 6 }} contentFit="cover" cachePolicy="memory-disk" />
+                              ) : (
+                                <Text key={i} style={{ color: C.text, fontSize: 12, fontStyle: "italic" }} numberOfLines={1}>{q}</Text>
+                              ))}
+                            </View>
+                          </View>
+                        );
+                      }
+                      return (
+                        <Input
+                          value={editItem?.memorable_quote || ""}
+                          onChangeText={(t) => updateEditItem(prev => prev ? { ...prev, memorable_quote: t } : null)}
+                          placeholder="작품에서 인상깊었던 문장이나 대사"
+                          multiline
+                          style={{ minHeight: 50 }}
+                        />
+                      );
+                    })()}
                   </View>
 
                   {/* 🔧 v3.5.6: 표지 */}
@@ -33955,8 +34058,8 @@ async function importJSON() {
                 {/* ═══ 메인 카드 (쇼츠) ═══ */}
                 {card && (() => {
                   const tierBg = card.tierColor + "15";
-                  const isLong = card.quote.length > 100;
-                  const isMedium = card.quote.length > 50;
+                  const isLong = (card.quote || "").length > 100;
+                  const isMedium = (card.quote || "").length > 50;
                   
                   return (
                     <View 
@@ -34032,26 +34135,44 @@ async function importJSON() {
                         </View>
                       </View>
                       
-                      {/* 중앙: 인용구 */}
-                      <View style={{ 
-                        flex: 1, 
-                        justifyContent: "center", 
+                      {/* 중앙: 인용구 (텍스트 또는 이미지) */}
+                      <View style={{
+                        flex: 1,
+                        justifyContent: "center",
                         alignItems: "center",
-                        paddingHorizontal: 28,
+                        paddingHorizontal: card.isImage ? 16 : 28,
                       }}>
-                        <Text style={{ fontSize: 36, color: card.tierColor, marginBottom: 12, opacity: 0.3 }}>❝</Text>
-                        <Text style={{ 
-                          fontSize: isLong ? 16 : isMedium ? 19 : 22,
-                          fontStyle: "italic",
-                          color: C.text,
-                          textAlign: "center",
-                          lineHeight: isLong ? 26 : isMedium ? 30 : 36,
-                          fontWeight: "500",
-                          letterSpacing: 0.3,
-                        }}>
-                          {card.quote}
-                        </Text>
-                        <Text style={{ fontSize: 36, color: card.tierColor, marginTop: 12, opacity: 0.3 }}>❞</Text>
+                        {card.isImage ? (
+                          <View style={{ flex: 1, width: "100%", justifyContent: "center", alignItems: "center" }}>
+                            <ExpoImage
+                              source={{ uri: card.imageUri }}
+                              style={{ width: "100%", flex: 1, borderRadius: 12, marginVertical: 8 }}
+                              contentFit="contain"
+                              cachePolicy="memory-disk"
+                            />
+                            {card.quote ? (
+                              <Text style={{ fontSize: 13, color: C.sub, fontStyle: "italic", textAlign: "center", marginTop: 4 }}>
+                                {card.quote}
+                              </Text>
+                            ) : null}
+                          </View>
+                        ) : (
+                          <>
+                            <Text style={{ fontSize: 36, color: card.tierColor, marginBottom: 12, opacity: 0.3 }}>❝</Text>
+                            <Text style={{
+                              fontSize: isLong ? 16 : isMedium ? 19 : 22,
+                              fontStyle: "italic",
+                              color: C.text,
+                              textAlign: "center",
+                              lineHeight: isLong ? 26 : isMedium ? 30 : 36,
+                              fontWeight: "500",
+                              letterSpacing: 0.3,
+                            }}>
+                              {card.quote}
+                            </Text>
+                            <Text style={{ fontSize: 36, color: card.tierColor, marginTop: 12, opacity: 0.3 }}>❞</Text>
+                          </>
+                        )}
                       </View>
                       
                       {/* 하단: 작품 정보 */}
@@ -36942,18 +37063,45 @@ async function importJSON() {
                   multiline
                 />
 
-                {/* 💬 v3.5.4: 인상깊은 문장 (다중 지원) */}
+                {/* 💬 v3.5.4: 인상깊은 문장 (다중 지원) / 📷 v3.6.1: 이미지 첨부 지원 */}
                 <View style={{ marginTop: 16, padding: 12, backgroundColor: C.bg, borderRadius: 12, borderLeftWidth: 3, borderLeftColor: C.primary }}>
                   <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                     <Label>💬 인상깊은 문장 ({editQuotes.length})</Label>
-                    <TouchableOpacity
-                      onPress={() => setEditQuotes([...editQuotes, ""])}
-                      style={{ backgroundColor: C.primary, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}
-                    >
-                      <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>+ 추가</Text>
-                    </TouchableOpacity>
+                    <View style={{ flexDirection: "row", gap: 6 }}>
+                      <TouchableOpacity
+                        onPress={() => setEditQuotes([...editQuotes, ""])}
+                        style={{ backgroundColor: C.primary, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
+                      >
+                        <Text style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}>+ 텍스트</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={async () => {
+                          try {
+                            const result = await ImagePicker.launchImageLibraryAsync({
+                              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                              allowsEditing: true,
+                              quality: 0.8,
+                            });
+                            await resetDbConnection();
+                            try { await openDb(); } catch {}
+                            if (!result.canceled && result.assets?.[0]) {
+                              const { ext } = getImageFormat(result.assets[0]);
+                              const saved = await saveCoverToLibrary(result.assets[0].uri, "medium", ext);
+                              if (saved && !saved.error) {
+                                setEditQuotes(prev => [...prev, { type: "image", uri: saved.file_path }]);
+                              }
+                            }
+                          } catch (e) {
+                            Alert.alert("오류", "이미지 선택 실패: " + e.message);
+                          }
+                        }}
+                        style={{ backgroundColor: isDark ? "#374151" : "#e5e7eb", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
+                      >
+                        <Text style={{ color: C.text, fontWeight: "700", fontSize: 12 }}>📷 이미지</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
-                  
+
                   {editQuotes.length === 0 ? (
                     <TouchableOpacity
                       onPress={() => setEditQuotes([""])}
@@ -36965,14 +37113,42 @@ async function importJSON() {
                     editQuotes.map((q, qi) => (
                       <View key={`quote-${qi}`} style={{ marginBottom: 10 }}>
                         <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
-                          <Text style={{ color: C.sub, fontSize: 11, flex: 1 }}>#{qi + 1}</Text>
+                          <Text style={{ color: C.sub, fontSize: 11, flex: 1 }}>#{qi + 1} {isImageQuote(q) ? "📷" : "💬"}</Text>
                           <TouchableOpacity
-                            onPress={() => setEditQuotes(editQuotes.filter((_, i) => i !== qi))}
+                            onPress={() => {
+                              if (isImageQuote(q)) removedQuoteImagesRef.current.push(q.uri);
+                              setEditQuotes(editQuotes.filter((_, i) => i !== qi));
+                            }}
                             style={{ padding: 4 }}
                           >
                             <Text style={{ color: C.warn, fontSize: 12, fontWeight: "700" }}>삭제</Text>
                           </TouchableOpacity>
                         </View>
+                        {isImageQuote(q) ? (
+                          <View>
+                            <ExpoImage source={{ uri: q.uri }} style={{ width: "100%", height: 180, borderRadius: 10, backgroundColor: C.card }} contentFit="contain" cachePolicy="memory-disk" />
+                            <TextInput
+                              value={q.caption || ""}
+                              onChangeText={(t) => {
+                                const updated = [...editQuotes];
+                                updated[qi] = { ...q, caption: t };
+                                setEditQuotes(updated);
+                              }}
+                              placeholder="캡션 (선택)"
+                              placeholderTextColor={C.sub}
+                              style={{
+                                backgroundColor: C.card,
+                                borderWidth: 1,
+                                borderColor: C.line,
+                                borderRadius: 8,
+                                padding: 8,
+                                fontSize: 13,
+                                color: C.text,
+                                marginTop: 6,
+                              }}
+                            />
+                          </View>
+                        ) : (
                         <TextInput
                           value={q}
                           onChangeText={(t) => {
@@ -36996,11 +37172,12 @@ async function importJSON() {
                             textAlignVertical: "top",
                           }}
                         />
+                        )}
                       </View>
                     ))
                   )}
                   <Text style={{ color: C.sub, fontSize: 11, marginTop: 4 }}>
-                    📌 추천, 수상, 💬명언 탭에서 인용구로 표시됩니다
+                    📌 추천, 수상, 💬명언 탭에서 인용구로 표시됩니다. 📷 이미지도 첨부 가능.
                   </Text>
                 </View>
 
