@@ -20255,6 +20255,7 @@ function AppContent() {
   const [quotesShuffled, setQuotesShuffled] = useState(null); // null=원본순, array=셔플순
   const quotesSwipeRef = useRef({ startX: 0, startY: 0 }); // 🔀 v3.5.5: 스와이프 감지
   const removedQuoteImagesRef = useRef([]); // 📷 v3.6.1: 편집 중 삭제된 이미지 URI 추적 (저장 시 실제 삭제)
+  const regQuoteImagesRef = useRef([]); // 📷 v3.6.2: 등록 폼에서 추가된 이미지 URI 추적 (실패/취소 시 정리)
   const [settingsSubTab, setSettingsSubTab] = useState("app"); // 🆕 Phase 2: 설정 서브탭 ("app" | "tags" | "analysis" | "backup" | "diag")
   const [refreshKey, setRefreshKey] = useState(0); // 🔬 v3.5.9: 진단 대시보드 새로고침 키
   const [list, setList] = useState([]);
@@ -25070,6 +25071,7 @@ function AppContent() {
       setPlatforms([]);
       setNote("");
       setMemorableQuote([]); // 💬 인상깊은 문장 초기화
+      regQuoteImagesRef.current = []; // 📷 v3.6.2: 등록 성공 → 추적 해제 (파일 유지)
       setReadCount("");
       setTotalEpisodes("");
       setRereadCount("1"); // 다회독 초기화
@@ -25110,6 +25112,13 @@ function AppContent() {
     } catch (e) {
       if (_pt) PerfMonitor.logError("addNovel", e); // 🔬
       console.warn("addNovel 오류:", e);
+      // 📷 v3.6.2: 등록 실패 시 이미 저장된 명대사 이미지 파일 정리 (고아 방지)
+      if (regQuoteImagesRef.current.length > 0) {
+        for (const uri of regQuoteImagesRef.current) {
+          FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+        }
+        regQuoteImagesRef.current = [];
+      }
       Alert.alert("오류", "작품 추가 중 오류가 발생했습니다.\n\n" + e.message);
     }
     setIsLoading(false);
@@ -25576,6 +25585,7 @@ function AppContent() {
           { text: "계속 편집", style: "cancel" },
           { text: "저장하지 않고 닫기", style: "destructive", onPress: () => {
             editOriginalSnapshotRef.current = null;
+            removedQuoteImagesRef.current = []; // 📷 v3.6.2: 취소 시 삭제 목록 폐기 (이미지 보존)
             setEditOpen(false);
             updateEditItem(null);
           }},
@@ -25583,6 +25593,7 @@ function AppContent() {
       );
     } else {
       editOriginalSnapshotRef.current = null;
+      removedQuoteImagesRef.current = []; // 📷 v3.6.2: 닫기 시 삭제 목록 초기화
       setEditOpen(false);
       updateEditItem(null);
     }
@@ -28187,7 +28198,9 @@ async function importJSON() {
                         if (q && typeof q === "object" && q.type === "image" && q.uri && opt.mqImg[q.uri]) {
                           await ensureCoverDir();
                           const newId = uuid();
-                          const newPath = COVER_DIR + `quote_${newId}.jpg`;
+                          // 🔧 v3.6.2: 원본 URI에서 확장자 추출 (하드코딩 .jpg 제거)
+                          const origExt = (q.uri.match(/\.(\w+)$/) || [])[1] || "jpg";
+                          const newPath = COVER_DIR + `quote_${newId}.${origExt}`;
                           await FileSystem.writeAsStringAsync(newPath, opt.mqImg[q.uri], { encoding: FileSystem.EncodingType.Base64 });
                           quotes[qi] = { ...q, uri: newPath };
                           modified = true;
@@ -29343,6 +29356,7 @@ async function importJSON() {
               const { ext } = getImageFormat(result.assets[0]);
               const saved = await saveCoverToLibrary(result.assets[0].uri, "medium", ext);
               if (saved && !saved.error) {
+                regQuoteImagesRef.current.push(saved.file_path); // 📷 v3.6.2: 고아 방지 추적
                 setMemorableQuote(prev => [...prev, { type: "image", uri: saved.file_path }]);
               }
             }
@@ -29368,7 +29382,14 @@ async function importJSON() {
       <View key={`reg-quote-${qi}`} style={{ marginBottom: 8 }}>
         <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 3 }}>
           <Text style={{ color: C.sub, fontSize: 11, flex: 1 }}>#{qi + 1} {isImageQuote(q) ? "📷" : "💬"}</Text>
-          <TouchableOpacity onPress={() => setMemorableQuote(prev => prev.filter((_, i) => i !== qi))} style={{ padding: 4 }}>
+          <TouchableOpacity onPress={() => {
+            // 📷 v3.6.2: 등록 폼에서 이미지 삭제 시 파일도 즉시 정리
+            if (isImageQuote(q)) {
+              regQuoteImagesRef.current = regQuoteImagesRef.current.filter(u => u !== q.uri);
+              FileSystem.deleteAsync(q.uri, { idempotent: true }).catch(() => {});
+            }
+            setMemorableQuote(prev => prev.filter((_, i) => i !== qi));
+          }} style={{ padding: 4 }}>
             <Text style={{ color: C.warn, fontSize: 12, fontWeight: "700" }}>삭제</Text>
           </TouchableOpacity>
         </View>
@@ -32325,16 +32346,60 @@ async function importJSON() {
                       const quotes = parseQuotes(editItem?.memorable_quote || "");
                       const hasImages = quotes.some(q => isImageQuote(q));
                       if (hasImages) {
+                        // 📷 v3.6.2: 이미지 포함 시에도 편집 가능 (텍스트 인라인 편집 + 이미지 삭제/캡션)
+                        const updateQuotesInEditItem = (newQuotes) => {
+                          updateEditItem(prev => prev ? { ...prev, memorable_quote: serializeQuotes(newQuotes) } : null);
+                        };
                         return (
                           <View style={{ padding: 10, backgroundColor: C.card, borderRadius: 10, borderWidth: 1, borderColor: C.line }}>
-                            <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>📷 이미지 포함 ({quotes.length}개) — 상세 편집에서 수정 가능</Text>
-                            <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
-                              {quotes.map((q, i) => isImageQuote(q) ? (
-                                <ExpoImage key={i} source={{ uri: q.uri }} style={{ width: 50, height: 50, borderRadius: 6 }} contentFit="cover" cachePolicy="memory-disk" />
-                              ) : (
-                                <Text key={i} style={{ color: C.text, fontSize: 12, fontStyle: "italic" }} numberOfLines={1}>{q}</Text>
-                              ))}
-                            </View>
+                            {quotes.map((q, i) => (
+                              <View key={`suppl-q-${i}`} style={{ marginBottom: i < quotes.length - 1 ? 8 : 0 }}>
+                                <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 3 }}>
+                                  <Text style={{ color: C.sub, fontSize: 11, flex: 1 }}>#{i + 1} {isImageQuote(q) ? "📷" : "💬"}</Text>
+                                  <TouchableOpacity onPress={() => {
+                                    if (isImageQuote(q)) removedQuoteImagesRef.current.push(q.uri);
+                                    updateQuotesInEditItem(quotes.filter((_, j) => j !== i));
+                                  }} style={{ padding: 4 }}>
+                                    <Text style={{ color: C.warn, fontSize: 12, fontWeight: "700" }}>삭제</Text>
+                                  </TouchableOpacity>
+                                </View>
+                                {isImageQuote(q) ? (
+                                  <View>
+                                    <ExpoImage source={{ uri: q.uri }} style={{ width: "100%", height: 120, borderRadius: 8 }} contentFit="contain" cachePolicy="memory-disk" />
+                                    <TextInput
+                                      value={q.caption || ""}
+                                      onChangeText={(t) => {
+                                        const updated = [...quotes];
+                                        updated[i] = { ...q, caption: t };
+                                        updateQuotesInEditItem(updated);
+                                      }}
+                                      placeholder="캡션 (선택)"
+                                      placeholderTextColor={C.sub}
+                                      style={{ backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 8, padding: 8, fontSize: 13, color: C.text, marginTop: 6 }}
+                                    />
+                                  </View>
+                                ) : (
+                                  <TextInput
+                                    value={q}
+                                    onChangeText={(t) => {
+                                      const updated = [...quotes];
+                                      updated[i] = t;
+                                      updateQuotesInEditItem(updated);
+                                    }}
+                                    placeholder="인상깊은 문장..."
+                                    placeholderTextColor={C.sub}
+                                    multiline
+                                    style={{ backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 10, padding: 10, fontSize: 14, fontStyle: "italic", color: C.text, minHeight: 44, textAlignVertical: "top" }}
+                                  />
+                                )}
+                              </View>
+                            ))}
+                            <TouchableOpacity
+                              onPress={() => updateQuotesInEditItem([...quotes, ""])}
+                              style={{ marginTop: 8, padding: 8, borderWidth: 1, borderColor: C.line, borderRadius: 8, borderStyle: "dashed", alignItems: "center" }}
+                            >
+                              <Text style={{ color: C.sub, fontSize: 12 }}>+ 텍스트 추가</Text>
+                            </TouchableOpacity>
                           </View>
                         );
                       }
