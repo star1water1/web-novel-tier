@@ -21195,7 +21195,12 @@ function AppContent() {
           setTimeout(async () => {
             try {
               const novels = await all("SELECT tags, major_genre, sub_genre FROM novels;");
-              if (!novels || novels.length === 0 || !loadedRegistry) return;
+              if (!novels || novels.length === 0) return;
+
+              // 🔧 v3.6.1: 실행 시점의 최신 registry를 DB에서 직접 읽어 race condition 방지
+              // (loadedRegistry는 init 시점 스냅샷이라, 100ms 사이 다른 조작이 있으면 덮어씀)
+              const freshRegistry = await getAppMeta("tag_registry");
+              if (!freshRegistry) return;
 
               const allDefaultSet = new Set([...ALL_DEFAULT_TAGS, ...MAJOR_GENRES, ...SUB_GENRES]);
               const newTags = new Set();
@@ -21222,7 +21227,7 @@ function AppContent() {
               }
 
               if (newTags.size > 0) {
-                const newGeneralTags = { ...(loadedRegistry.generalTags || {}) };
+                const newGeneralTags = { ...(freshRegistry.generalTags || {}) };
                 if (!newGeneralTags["📁 사용자 태그"]) newGeneralTags["📁 사용자 태그"] = [];
                 const userTags = [...newGeneralTags["📁 사용자 태그"]];
                 let added = 0;
@@ -21234,7 +21239,7 @@ function AppContent() {
                 }
                 if (added > 0) {
                   newGeneralTags["📁 사용자 태그"] = userTags;
-                  updateTagRegistry({ ...loadedRegistry, generalTags: newGeneralTags });
+                  updateTagRegistry({ ...freshRegistry, generalTags: newGeneralTags });
                 }
               }
             } catch (e) {
@@ -21307,7 +21312,8 @@ function AppContent() {
       setUpsetFactors({ factors: [], lastUpdated: 0 });
       setTagRelations({ groups: {}, tagToGroup: {} });
       setTagCoOccurrences({});
-      if (tagRegistry) updateTagRegistry({...tagRegistry, generalTags: {...FACTORY_GENERAL_TAGS}, majorGenres: [...FACTORY_MAJOR_GENRES], subGenres: [...FACTORY_SUB_GENRES]});
+      // 🔧 v3.6.1: slotRegistry 사용 (tagRegistry 클로저는 이전 슬롯의 stale 데이터)
+      if (slotRegistry) updateTagRegistry({...slotRegistry, generalTags: {...FACTORY_GENERAL_TAGS}, majorGenres: [...FACTORY_MAJOR_GENRES], subGenres: [...FACTORY_SUB_GENRES]});
       setComboTags([]);
       setTagSentiments({});
       setTagAttributes({});
