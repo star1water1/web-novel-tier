@@ -21051,8 +21051,8 @@ function AppContent() {
       const tierOrder = getActiveTierOrder(globalTierConfig);
       const tiers = Object.fromEntries(tierOrder.map(t => [t, []]));
       for (const n of sorted) {
-        const t = getDisplayTier(n);
-        tiers[t].push(n.title);
+        const t = getDisplayTier(n, globalTierConfig);
+        if (tiers[t]) tiers[t].push(n.title);
       }
       
       for (const [tier, novels] of Object.entries(tiers)) {
@@ -21097,7 +21097,7 @@ function AppContent() {
     for (const n of (list || [])) {
       const quotes = parseQuotes(n.memorable_quote);
       if (quotes.length === 0) continue; // 🚀 빈 명언 작품 스킵
-      const t = getDisplayTier(n); // 🚀 v3.5.4: 1회 계산 캐시
+      const t = getDisplayTier(n, globalTierConfig); // 🚀 v3.5.4: 1회 계산 캐시
       const tc = getTierColor(t);
       const mg = (() => { try { const mg = JSON.parse(n.major_genre || "[]"); return Array.isArray(mg) ? mg[0] || "" : mg || ""; } catch { return n.major_genre || ""; } })();
       for (let qi = 0; qi < quotes.length; qi++) {
@@ -21164,7 +21164,7 @@ function AppContent() {
      ========================================================= */
   function advancedFilter(novels) {
     return novels.filter(n => {
-      if (filterTier !== "ALL" && getDisplayTier(n) !== filterTier) return false;
+      if (filterTier !== "ALL" && getDisplayTier(n, globalTierConfig) !== filterTier) return false;
       if (filterPlatform !== "ALL" && !parsePlatforms(n.platforms).includes(filterPlatform)) return false;
       if (filterGenre !== "ALL" && deriveMajorGenre(n.tags) !== filterGenre) return false;
       if (filterStatus !== "ALL" && (n.status || "reading") !== filterStatus) return false;
@@ -22686,9 +22686,10 @@ function AppContent() {
           continue;
         }
         
-        // 6) 티어 높은 덜 읽은 작품
-        const tier = tierFromRating(rating);
-        if (["S", "A", "B+"].includes(tier) && (totalEp === 0 || readRatio < 0.5)) {
+        // 6) 티어 높은 덜 읽은 작품 (v6.0: 상위 절반 티어 동적 판정)
+        const tier = tierFromRating(rating, globalTierConfig);
+        const tierOrder = getActiveTierOrder(globalTierConfig);
+        if (tierRank(tier, globalTierConfig) < Math.ceil(tierOrder.length / 2) && (totalEp === 0 || readRatio < 0.5)) {
           candidates.push({
             novel: n,
             weight: 50 + (rating - 1500) / 20 + taste.score / 4,
@@ -27308,10 +27309,10 @@ function AppContent() {
 
     // 1) 실제 티어 우선 → 같은 티어 내에서 레이팅 내림차순 → 등록 순 → 제목 순
     const sorted = [...list].sort((a, b) => {
-      const tierA = getDisplayTier(a);
-      const tierB = getDisplayTier(b);
-      const tierRankA = tierRank(tierA);
-      const tierRankB = tierRank(tierB);
+      const tierA = getDisplayTier(a, globalTierConfig);
+      const tierB = getDisplayTier(b, globalTierConfig);
+      const tierRankA = tierRank(tierA, globalTierConfig);
+      const tierRankB = tierRank(tierB, globalTierConfig);
       
       // 티어가 다르면 티어 순서대로 (S=0, A=1, B+=2, ...)
       if (tierRankA !== tierRankB) return tierRankA - tierRankB;
@@ -27334,7 +27335,7 @@ function AppContent() {
     for (const n of sorted) {
       rank += 1; // 전역 순위
 
-      const t = getDisplayTier(n); // 실제 티어 (S, A, B+ ...)
+      const t = getDisplayTier(n, globalTierConfig); // 실제 티어
       if (rankTier !== "ALL" && t !== rankTier) continue;
 
       // 검색용 문자열 구성 (제목 / 작가 / 태그 / 메모 / 플랫폼 / 수상)
@@ -30159,7 +30160,7 @@ async function importJSON() {
           const tags = (n.tags || "").split(",").map(t => t.trim()).filter(Boolean);
           
           // 예정작은 티어/레이팅/전적이 없음
-          const t = isPlanned ? "예정" : getDisplayTier(n);
+          const t = isPlanned ? "예정" : getDisplayTier(n, globalTierConfig);
           const c = isPlanned ? "#8b5cf6" : getTierColor(t);
           const reliability = isPlanned ? 0 : computeReliability(n, list.length);
           const winRate = isPlanned ? 0 : getWinRate(n.wins, n.losses);
@@ -30572,7 +30573,7 @@ async function importJSON() {
                 renderItem={({ item: entry }) => {
                   const { item, rank } = entry || {};
                   if (!item) return null;
-                  const actualTier = getDisplayTier(item);
+                  const actualTier = getDisplayTier(item, globalTierConfig);
                   const c = getTierColor(actualTier);
                   const winRate = getWinRate(item.wins, item.losses);
                   const isNew = isNewNovel(item.created_at);
@@ -33141,9 +33142,9 @@ async function importJSON() {
                       { text: "적용", onPress: async () => {
                         const historyItems = [];
                         const queries = reviews.map(n => {
-                          const recommended = tierFromRating(n.rating);
+                          const recommended = tierFromRating(n.rating, globalTierConfig);
                           const newTier = isGatedTier(recommended, globalTierConfig) ? recommended : null;
-                          const current = getDisplayTier(n);
+                          const current = getDisplayTier(n, globalTierConfig);
                           historyItems.push({ id: n.id, title: n.title, from: current, to: newTier || recommended, at: Date.now() });
                           return {
                             sql: "UPDATE novels SET manual_tier=? WHERE id=?",
@@ -33177,9 +33178,9 @@ async function importJSON() {
                         { text: "적용", onPress: async () => {
                           const historyItems = [];
                           const queries = selected.map(n => {
-                            const recommended = tierFromRating(n.rating);
+                            const recommended = tierFromRating(n.rating, globalTierConfig);
                             const newTier = isGatedTier(recommended, globalTierConfig) ? recommended : null;
-                            const current = getDisplayTier(n);
+                            const current = getDisplayTier(n, globalTierConfig);
                             historyItems.push({ id: n.id, title: n.title, from: current, to: newTier || recommended, at: Date.now() });
                             return {
                               sql: "UPDATE novels SET manual_tier=? WHERE id=?",
@@ -33215,8 +33216,8 @@ async function importJSON() {
                       { text: "적용", onPress: async () => {
                         const historyItems = [];
                         const queries = promotes.map(n => {
-                          const newTier = tierFromRating(n.rating);
-                          const current = getDisplayTier(n);
+                          const newTier = tierFromRating(n.rating, globalTierConfig);
+                          const current = getDisplayTier(n, globalTierConfig);
                           historyItems.push({ id: n.id, title: n.title, from: current, to: newTier, at: Date.now() });
                           return {
                             sql: "UPDATE novels SET manual_tier=? WHERE id=?",
@@ -33261,9 +33262,9 @@ async function importJSON() {
                       { text: "적용", onPress: async () => {
                         const historyItems = [];
                         const queries = demotes.map(n => {
-                          const recommended = tierFromRating(n.rating);
+                          const recommended = tierFromRating(n.rating, globalTierConfig);
                           const newTier = isGatedTier(recommended, globalTierConfig) ? recommended : null;
-                          const current = getDisplayTier(n);
+                          const current = getDisplayTier(n, globalTierConfig);
                           historyItems.push({ id: n.id, title: n.title, from: current, to: newTier || recommended, at: Date.now() });
                           return {
                             sql: "UPDATE novels SET manual_tier=? WHERE id=?",
@@ -33373,8 +33374,8 @@ async function importJSON() {
               return (
                 <Section title={`⬆️ 승급 검토 (${promotes.length}건)`}>
                   {promotes.map(n => {
-                    const recommended = tierFromRating(n.rating);
-                    const current = getDisplayTier(n);
+                    const recommended = tierFromRating(n.rating, globalTierConfig);
+                    const current = getDisplayTier(n, globalTierConfig);
                     const isSelected = reviewSelectedIds.includes(n.id);
                     
                     return (
@@ -34984,19 +34985,21 @@ async function importJSON() {
                         [
                           { text: "취소" },
                           { text: "변경", onPress: async () => {
+                            // 🔧 v6.0: await 전에 현재 config 캡처 (stale closure 방지)
+                            const oldConfig = { ...globalTierConfig };
                             // 🔴 Critical: match→manual 전환 시 백필
                             if (m.key === "manual" || m.key === "hybrid") {
                               const novels = await all("SELECT id, rating, manual_tier FROM novels");
                               const queries = [];
                               for (const n of (novels || [])) {
                                 if (!n.manual_tier) {
-                                  const currentTier = getDisplayTier(n, globalTierConfig);
+                                  const currentTier = getDisplayTier(n, oldConfig);
                                   queries.push({ sql: "UPDATE novels SET manual_tier=? WHERE id=?", params: [currentTier, n.id] });
                                 }
                               }
                               if (queries.length > 0) await execBatch(queries);
                             }
-                            const newConfig = { ...globalTierConfig, mode: m.key };
+                            const newConfig = { ...oldConfig, mode: m.key };
                             if (m.key === "manual") newConfig.allowRegistrationTier = true;
                             saveAppSettings({ tierSystemConfig: newConfig });
                             await loadList(undefined, undefined, "settings");
@@ -35036,10 +35039,11 @@ async function importJSON() {
                             { text: "취소" },
                             { text: "적용", onPress: async () => {
                               const newConfig = JSON.parse(JSON.stringify(preset.config));
+                              // 🔧 v6.0: await 전에 현재 config 캡처 (stale closure 방지)
+                              const oldConfig = { ...globalTierConfig };
                               // manual/hybrid 모드 전환 시 백필
                               if (newConfig.mode === "manual" || newConfig.mode === "hybrid") {
                                 const novels = await all("SELECT id, rating, manual_tier FROM novels");
-                                const oldConfig = globalTierConfig;
                                 const queries = [];
                                 for (const n of (novels || [])) {
                                   const currentTier = getDisplayTier(n, oldConfig);
@@ -35047,7 +35051,7 @@ async function importJSON() {
                                   queries.push({ sql: "UPDATE novels SET manual_tier=? WHERE id=?", params: [mappedTier, n.id] });
                                 }
                                 if (queries.length > 0) await execBatch(queries);
-                              } else if (globalTierConfig.mode !== "match") {
+                              } else if (oldConfig.mode !== "match") {
                                 // match 모드로 돌아갈 때 manual_tier 중 유효하지 않은 것 정리
                                 const novels = await all("SELECT id, manual_tier FROM novels");
                                 const newOrder = getActiveTierOrder(newConfig);
@@ -35057,7 +35061,7 @@ async function importJSON() {
                                   if (n.manual_tier && !gated.includes(n.manual_tier)) {
                                     queries.push({ sql: "UPDATE novels SET manual_tier=NULL WHERE id=?", params: [n.id] });
                                   } else if (n.manual_tier && !newOrder.includes(n.manual_tier)) {
-                                    const mapped = migrateTierKey(n.manual_tier, globalTierConfig, newConfig);
+                                    const mapped = migrateTierKey(n.manual_tier, oldConfig, newConfig);
                                     queries.push({ sql: "UPDATE novels SET manual_tier=? WHERE id=?", params: [gated.includes(mapped) ? mapped : null, n.id] });
                                   }
                                 }
@@ -38009,8 +38013,8 @@ async function importJSON() {
                       // v2.8: 상대 작품의 현재 티어 계산
                       const oppRating = youAreA ? item.b_rating : item.a_rating;
                       const oppManualTier = youAreA ? item.b_manual_tier : item.a_manual_tier;
-                      const oppTier = oppRating 
-                        ? (oppManualTier || tierFromRating(oppRating))
+                      const oppTier = oppRating
+                        ? (oppManualTier || tierFromRating(oppRating, globalTierConfig))
                         : null;
                       const oppTierColor = oppTier ? getTierColor(oppTier) : null;
                       
