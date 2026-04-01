@@ -14823,6 +14823,7 @@ const AwardsScreen = memo(({
   onGiveAward,
   onRemoveAward,
   onSaveSettings,
+  onModalShow,
 }) => {
   PerfMonitor.trackRender("AwardsScreen"); // 🔬
   const C = theme;
@@ -31156,6 +31157,7 @@ async function importJSON() {
               setAwardSystemSettings(settings);
               await setAppMeta("award_system_settings", settings);
             }}
+            onModalShow={onModalShow}
           />
         )}
 
