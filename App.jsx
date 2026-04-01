@@ -20326,7 +20326,7 @@ function AppContent() {
     setTagsRaw(val);
   }, []);
   const [note, setNote] = useState("");
-  const [memorableQuote, setMemorableQuote] = useState(""); // 💬 인상깊은 문장
+  const [memorableQuote, setMemorableQuote] = useState([]); // 💬 인상깊은 문장 (QuoteItem[])
   const [readCount, setReadCount] = useState("");
   const [totalEpisodes, setTotalEpisodes] = useState(""); // 📚 전체 회차 수
   const [rereadCount, setRereadCount] = useState("1"); // 📚 v3.0.4: 다회독 카운트 (기본 1회)
@@ -25057,7 +25057,7 @@ function AppContent() {
           Number(newGaidenTotalEpisodes) || 0,
           Math.max(1, Number(rereadCount) || 1), // 📚 다회독 카운트
           tagDataJson, // 🏷️ v5.0
-          memorableQuote.trim(), // 💬 인상깊은 문장
+          serializeQuotes(memorableQuote), // 💬 인상깊은 문장 (텍스트+이미지)
           "", // aliases (빈 값)
           null, // manual_tier (null)
         ]
@@ -25069,7 +25069,7 @@ function AppContent() {
       setTags("");
       setPlatforms([]);
       setNote("");
-      setMemorableQuote(""); // 💬 인상깊은 문장 초기화
+      setMemorableQuote([]); // 💬 인상깊은 문장 초기화
       setReadCount("");
       setTotalEpisodes("");
       setRereadCount("1"); // 다회독 초기화
@@ -29318,28 +29318,84 @@ async function importJSON() {
   multiline
 />
 
-{/* 💬 인상깊은 문장 */}
+{/* 💬 인상깊은 문장 (텍스트+이미지) */}
 <View style={{ marginTop: 12, padding: 12, backgroundColor: isDark ? "#1e293b" : "#fffbeb", borderRadius: 12, borderLeftWidth: 3, borderLeftColor: isDark ? "#fbbf24" : "#f59e0b" }}>
-  <Label style={{ marginBottom: 6 }}>💬 인상깊은 문장 (선택)</Label>
-  <TextInput
-    value={memorableQuote}
-    onChangeText={setMemorableQuote}
-    placeholder={'인상깊은 문장... (여러 개는 @ 로 구분, 이미지는 수정에서 추가)'}
-    placeholderTextColor={C.sub}
-    multiline
-    style={{
-      backgroundColor: C.card,
-      borderWidth: 1,
-      borderColor: C.line,
-      borderRadius: 10,
-      padding: 12,
-      fontSize: 15,
-      fontStyle: "italic",
-      color: C.text,
-      minHeight: 70,
-      textAlignVertical: "top",
-    }}
-  />
+  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+    <Label>💬 인상깊은 문장 ({memorableQuote.length})</Label>
+    <View style={{ flexDirection: "row", gap: 6 }}>
+      <TouchableOpacity
+        onPress={() => setMemorableQuote(prev => [...prev, ""])}
+        style={{ backgroundColor: isDark ? "#fbbf24" : "#f59e0b", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }}
+      >
+        <Text style={{ color: "#000", fontWeight: "700", fontSize: 12 }}>+ 텍스트</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        onPress={async () => {
+          try {
+            const result = await ImagePicker.launchImageLibraryAsync({
+              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              allowsEditing: true,
+              quality: 0.8,
+            });
+            await resetDbConnection();
+            try { await openDb(); } catch {}
+            if (!result.canceled && result.assets?.[0]) {
+              const { ext } = getImageFormat(result.assets[0]);
+              const saved = await saveCoverToLibrary(result.assets[0].uri, "medium", ext);
+              if (saved && !saved.error) {
+                setMemorableQuote(prev => [...prev, { type: "image", uri: saved.file_path }]);
+              }
+            }
+          } catch (e) {
+            Alert.alert("오류", "이미지 선택 실패: " + e.message);
+          }
+        }}
+        style={{ backgroundColor: isDark ? "#374151" : "#e5e7eb", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }}
+      >
+        <Text style={{ color: C.text, fontWeight: "700", fontSize: 12 }}>📷 이미지</Text>
+      </TouchableOpacity>
+    </View>
+  </View>
+  {memorableQuote.length === 0 ? (
+    <TouchableOpacity
+      onPress={() => setMemorableQuote([""])}
+      style={{ padding: 16, borderWidth: 1, borderColor: isDark ? "#fbbf2440" : "#f59e0b40", borderRadius: 10, borderStyle: "dashed", alignItems: "center" }}
+    >
+      <Text style={{ color: C.sub, fontSize: 13 }}>터치하여 첫 문장 추가</Text>
+    </TouchableOpacity>
+  ) : (
+    memorableQuote.map((q, qi) => (
+      <View key={`reg-quote-${qi}`} style={{ marginBottom: 8 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 3 }}>
+          <Text style={{ color: C.sub, fontSize: 11, flex: 1 }}>#{qi + 1} {isImageQuote(q) ? "📷" : "💬"}</Text>
+          <TouchableOpacity onPress={() => setMemorableQuote(prev => prev.filter((_, i) => i !== qi))} style={{ padding: 4 }}>
+            <Text style={{ color: C.warn, fontSize: 12, fontWeight: "700" }}>삭제</Text>
+          </TouchableOpacity>
+        </View>
+        {isImageQuote(q) ? (
+          <View>
+            <ExpoImage source={{ uri: q.uri }} style={{ width: "100%", height: 150, borderRadius: 10, backgroundColor: C.card }} contentFit="contain" cachePolicy="memory-disk" />
+            <TextInput
+              value={q.caption || ""}
+              onChangeText={(t) => setMemorableQuote(prev => { const u = [...prev]; u[qi] = { ...q, caption: t }; return u; })}
+              placeholder="캡션 (선택)"
+              placeholderTextColor={C.sub}
+              style={{ backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8, padding: 8, fontSize: 13, color: C.text, marginTop: 6 }}
+            />
+          </View>
+        ) : (
+          <TextInput
+            value={q}
+            onChangeText={(t) => setMemorableQuote(prev => { const u = [...prev]; u[qi] = t; return u; })}
+            placeholder={`기억에 남는 문장 ${qi + 1}...`}
+            placeholderTextColor={C.sub}
+            multiline
+            style={{ backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 10, padding: 12, fontSize: 15, fontStyle: "italic", color: C.text, minHeight: 60, textAlignVertical: "top" }}
+          />
+        )}
+      </View>
+    ))
+  )}
 </View>
 
               <PrimaryButton
