@@ -15066,11 +15066,11 @@ const AwardsScreen = memo(({
         
         // 티어 최소 조건 (상 설정의 tierMin)
         if (award.tierMin) {
-          const tierOrder = ["S", "A", "B+", "B", "B-", "C"];
+          const tierOrder = getActiveTierOrder(globalTierConfig);
           const minIndex = tierOrder.indexOf(award.tierMin);
           if (minIndex !== -1) {
             result = result.filter(novel => {
-              const novelTier = novel.manual_tier || tierFromRating(novel.rating);
+              const novelTier = getDisplayTier(novel, globalTierConfig);
               const novelIndex = tierOrder.indexOf(novelTier);
               return novelIndex <= minIndex;
             });
@@ -15078,14 +15078,14 @@ const AwardsScreen = memo(({
         }
       }
     }
-    
+
     // 전역 티어 필터
     if (awardFilter.tierMin) {
-      const tierOrder = ["S", "A", "B+", "B", "B-", "C"];
+      const tierOrder = getActiveTierOrder(globalTierConfig);
       const minIndex = tierOrder.indexOf(awardFilter.tierMin);
       if (minIndex !== -1) {
         result = result.filter(novel => {
-          const novelTier = novel.manual_tier || tierFromRating(novel.rating);
+          const novelTier = getDisplayTier(novel, globalTierConfig);
           const novelIndex = tierOrder.indexOf(novelTier);
           return novelIndex <= minIndex;
         });
@@ -15140,18 +15140,18 @@ const AwardsScreen = memo(({
     if (!candidatesForAward || candidatesForAward.length === 0) return 0;
     if (candidatesForAward.length === 1) return 100;
     
-    const tierOrder = ["S", "A", "B+", "B", "B-", "C"];
+    const tierOrder = getActiveTierOrder(globalTierConfig);
     const totalNovelCount = list.length;
-    
+
     // 개별 작품 점수 계산 함수
     const calculateNovelScore = (n) => {
       let score = 0;
-      
+
       // 1. 기본 레이팅 (정규화: 1500 기준으로 차이를 점수화)
       score += (n.rating - 1400) * 0.5;  // 레이팅 1500이면 50점, 1800이면 200점
-      
+
       // 2. 티어 보정 (S:100, A:80, B+:60, B:40, B-:20, C:0)
-      const tier = n.manual_tier || tierFromRating(n.rating);
+      const tier = getDisplayTier(n, globalTierConfig);
       const tierIndex = tierOrder.indexOf(tier);
       score += (5 - tierIndex) * 20;
       
@@ -15259,11 +15259,11 @@ const AwardsScreen = memo(({
     
     // 티어 최소 조건
     if (award.tierMin) {
-      const tierOrder = ["S", "A", "B+", "B", "B-", "C"];
+      const tierOrder = getActiveTierOrder(globalTierConfig);
       const minIndex = tierOrder.indexOf(award.tierMin);
       if (minIndex !== -1) {
         result = result.filter(novel => {
-          const novelTier = novel.manual_tier || tierFromRating(novel.rating);
+          const novelTier = getDisplayTier(novel, globalTierConfig);
           const novelIndex = tierOrder.indexOf(novelTier);
           return novelIndex <= minIndex;
         });
@@ -15602,7 +15602,7 @@ const AwardsScreen = memo(({
             ) : (
               filteredCandidates.map((novel, idx) => {
                 const novelAwards = getNovelAwardsForYear(novel);
-                const tier = novel.manual_tier || tierFromRating(novel.rating);
+                const tier = getDisplayTier(novel, globalTierConfig);
                 const tierColor = getTierColor(tier);
                 const isWinner = novelAwards.length > 0;
                 
@@ -15838,7 +15838,7 @@ const AwardsScreen = memo(({
                 {/* 수상작 (크게 표시) */}
                 {winners.length > 0 ? (
                   winners.map((novel, idx) => {
-                    const tier = novel.manual_tier || tierFromRating(novel.rating);
+                    const tier = getDisplayTier(novel, globalTierConfig);
                     const tierColor = getTierColor(tier);
                     const winRate = getWinRate(novel.wins, novel.losses);
                     const plats = parsePlatforms(novel.platforms);
@@ -16070,7 +16070,7 @@ const AwardsScreen = memo(({
                             >
                               <View style={{ flexDirection: "row", gap: 10, paddingHorizontal: 4 }}>
                                 {candidatesForThisAward.slice(0, 15).map((novel, idx) => {
-                                  const tier = novel.manual_tier || tierFromRating(novel.rating);
+                                  const tier = getDisplayTier(novel, globalTierConfig);
                                   const tierColor = getTierColor(tier);
                                   const prob = calculateWinProbability(novel, award, candidatesForThisAward);
                                   
@@ -16189,9 +16189,9 @@ const AwardsScreen = memo(({
               >
                 <View style={{ flexDirection: "row", gap: 12, paddingHorizontal: 8 }}>
                   {nonWinnerCandidates.slice(0, 25).map((novel, idx) => {
-                    const tier = novel.manual_tier || tierFromRating(novel.rating);
+                    const tier = getDisplayTier(novel, globalTierConfig);
                     const tierColor = getTierColor(tier);
-                    
+
                     return (
                       <View
                         key={novel.id}
@@ -20550,6 +20550,7 @@ function AppContent() {
   const [platforms, setPlatforms] = useState([]);
   const [newStatus, setNewStatus] = useState("reading"); // 🆕 읽기 상태
   const [newWorkStatus, setNewWorkStatus] = useState("ongoing"); // 🆕 작품 연재 상태
+  const [newManualTier, setNewManualTier] = useState(""); // 🆕 v6.0: 등록 시 티어 선택 (manual/hybrid 모드)
   const [newCoverImage, setNewCoverImage] = useState(""); // 🆕 표지 이미지
   const [newLink, setNewLink] = useState(""); // 🔗 작품 링크
   // 📖 외전 관련
@@ -20592,6 +20593,7 @@ function AppContent() {
   // openEdit 시 전체 편집 상태를 스냅샷으로 저장 → 닫기 시 비교하여 변경 여부 확인
   const editOriginalSnapshotRef = useRef(null);
   const [editRating, setEditRating] = useState("");
+  const [editManualTier, setEditManualTier] = useState(""); // 🆕 v6.0: 편집 시 티어 선택
   const [editPlatforms, setEditPlatforms] = useState([]); // 🆕 편집용 플랫폼
   const [editStatus, setEditStatus] = useState("reading"); // 🆕 편집용 상태
   const [editWorkStatus, setEditWorkStatus] = useState("ongoing"); // 🆕 편집용 작품 연재 상태
@@ -21045,7 +21047,8 @@ function AppContent() {
       const sorted = [...list].sort((a, b) => b.rating - a.rating);
       const lines = ["🏆 내 웹소설 티어표 🏆", ""];
       
-      const tiers = { S: [], A: [], "B+": [], B: [], "B-": [], C: [] };
+      const tierOrder = getActiveTierOrder(globalTierConfig);
+      const tiers = Object.fromEntries(tierOrder.map(t => [t, []]));
       for (const n of sorted) {
         const t = getDisplayTier(n);
         tiers[t].push(n.title);
@@ -24790,26 +24793,26 @@ function AppContent() {
     }
   }
   
-  // 티어 히스토리 저장 (S/A 관련만)
+  // 🆕 v6.0: 티어 히스토리 저장 (gated 티어 관련만 영속화)
   async function saveTierHistory(newHistory) {
-    // S/A 관련 변경만 필터링 (from 또는 to가 S/A인 경우)
-    const saOnly = newHistory.filter(h => 
-      h.from === 'S' || h.from === 'A' || h.to === 'S' || h.to === 'A'
+    const gated = getGatedTiers(globalTierConfig);
+    const filtered = newHistory.filter(h =>
+      gated.includes(h.from) || gated.includes(h.to)
     );
-    const limited = saOnly.slice(0, 50); // 최대 50개
+    const limited = filtered.slice(0, 50);
     setTierHistory(limited);
     await setAppMeta("tier_history", limited);
   }
-  
-  // 티어 변경 기록 추가 (모든 변경 기록, 저장은 S/A만)
+
+  // 티어 변경 기록 추가 (모든 변경 기록, 저장은 gated 관련만)
   function addTierHistoryEntry(id, title, from, to) {
     const entry = { id, title, from, to, at: Date.now() };
     setTierHistory(prev => {
       const updated = [entry, ...prev].slice(0, 50);
-      // S/A 관련만 영속화
-      if (from === 'S' || from === 'A' || to === 'S' || to === 'A') {
-        setAppMeta("tier_history", updated.filter(h => 
-          h.from === 'S' || h.from === 'A' || h.to === 'S' || h.to === 'A'
+      const gated = getGatedTiers(globalTierConfig);
+      if (gated.includes(from) || gated.includes(to)) {
+        setAppMeta("tier_history", updated.filter(h =>
+          gated.includes(h.from) || gated.includes(h.to)
         ).slice(0, 50));
       }
       return updated;
@@ -24908,15 +24911,18 @@ function AppContent() {
     
     const novel = await first("SELECT * FROM novels WHERE id=?", [novelId]);
     if (!novel) return;
-    
-    const recommended = tierFromRating(novel.rating);
-    const actual = getDisplayTier(novel);
-    
-    // 이미 S/A면 스킵
-    if (actual === 'S' || actual === 'A') return;
-    
-    // 권장이 S/A가 아니면 스킵
-    if (recommended !== 'S' && recommended !== 'A') return;
+
+    // 🆕 v6.0: manual/hybrid 모드에서는 자동 승인 불필요
+    if (globalTierConfig.mode !== "match") return;
+
+    const recommended = tierFromRating(novel.rating, globalTierConfig);
+    const actual = getDisplayTier(novel, globalTierConfig);
+
+    // 이미 gated 티어면 스킵
+    if (isGatedTier(actual, globalTierConfig)) return;
+
+    // 권장이 gated 티어가 아니면 스킵
+    if (!isGatedTier(recommended, globalTierConfig)) return;
     
     // 조건 체크
     const minWins = appSettings.autoApproveMinWins || 10;
@@ -25360,12 +25366,12 @@ function AppContent() {
           JSON.stringify(platforms),
           note.trim(),
           Number(readCount) || 0,
-          1500,
+          globalTierConfig.defaultRating || 1500, // 🆕 v6.0: config 기반 기본 레이팅
           350,
           0,
           0,
           0,
-          "C",
+          globalTierConfig.defaultTier || "C", // 🆕 v6.0: config 기반 기본 티어
           now,
           "",
           Number(totalEpisodes) || 0,
@@ -25384,7 +25390,10 @@ function AppContent() {
           tagDataJson, // 🏷️ v5.0
           serializeQuotes(memorableQuote), // 💬 인상깊은 문장 (텍스트+이미지)
           "", // aliases (빈 값)
-          null, // manual_tier (null)
+          // 🆕 v6.0: 모드별 manual_tier 설정
+          (globalTierConfig.mode === "manual" || (globalTierConfig.mode !== "match" && newManualTier) || (globalTierConfig.allowRegistrationTier && newManualTier))
+            ? (newManualTier || globalTierConfig.defaultTier || null)
+            : null,
         ]
       );
       // 🔧 v3.5.9: 텍스트 입력 태그 → customTags 동기화 (태그 관리 모달 연동)
@@ -25409,6 +25418,7 @@ function AppContent() {
       setNewGaidenStatus("none");
       setNewGaidenReadCount("");
       setNewGaidenTotalEpisodes("");
+      setNewManualTier(""); // 🆕 v6.0: 등록 시 티어 선택 초기화
       await loadList(undefined, undefined, "register");
       await refreshDailyRecommendation(false);
       
@@ -25929,7 +25939,8 @@ function AppContent() {
     setEditOriginalReadCount(Number(n.read_count) || 0); // 🆕 원본 저장
     setEditOriginalTitle(n.title || ""); // 🔧 v3.0.2: 원본 제목 저장
     setEditRating(String((Number(n.rating) || 1500).toFixed(1)));
-    
+    setEditManualTier(n.manual_tier || ""); // 🆕 v6.0: 편집 시 현재 manual_tier
+
     // 🆕 v3.4.1 #12: 최근 편집 기록에 추가
     setRecentlyEditedIds(prev => {
       const filtered = prev.filter(id => id !== n.id);
@@ -26070,6 +26081,18 @@ function AppContent() {
       const ratingNum = Number(editRating);
       if (!isNaN(ratingNum) && ratingNum > 0 && ratingNum !== n.rating) {
         await exec("UPDATE novels SET rating=? WHERE id=?", [ratingNum, n.id]);
+      }
+
+      // 🆕 v6.0: manual_tier 업데이트 (manual/hybrid 모드에서만)
+      if (globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid") {
+        const newMt = editManualTier || null;
+        if (newMt !== n.manual_tier) {
+          const oldTier = getDisplayTier(n, globalTierConfig);
+          await exec("UPDATE novels SET manual_tier=? WHERE id=?", [newMt, n.id]);
+          if (newMt && oldTier !== newMt) {
+            addTierHistoryEntry(n.id, n.title, oldTier, newMt);
+          }
+        }
       }
 
       // ★ 수상 정보 JSON 생성 (editAwards 기준)
@@ -26504,9 +26527,15 @@ function AppContent() {
       const B = normalizeNovel(rawB);
       
       // 📰 v3.0.2: 매칭 전 티어 저장 (자동 티어 변동 추적용)
-      const tierBeforeA = A.manual_tier || tierFromRating(A.rating);
-      const tierBeforeB = B.manual_tier || tierFromRating(B.rating);
-      
+      const tierBeforeA = getDisplayTier(A, globalTierConfig);
+      const tierBeforeB = getDisplayTier(B, globalTierConfig);
+
+      // 🆕 v6.0: manual 모드에서는 Elo 계산 스킵 (매칭 자체가 비활성화되어야 하지만 안전장치)
+      if (globalTierConfig.mode === "manual") {
+        console.warn("decide: manual 모드에서 매칭 호출됨 (무시)");
+        return;
+      }
+
       const aIsWinner = winnerId === A.id;
       const { newA, newB, kA, kB } = applyElo(A, B, aIsWinner);
       const kUsed = aIsWinner ? kA : kB;
@@ -26698,7 +26727,7 @@ function AppContent() {
     
     // 4. 티어 차이
     if (criteria.tierDiff?.enabled) {
-      const tierOrder = ["S", "A", "B+", "B", "B-", "C"];
+      const tierOrder = getActiveTierOrder(globalTierConfig);
       const getTierIdx = (r) => {
         const t = tierBadge(r).t;
         return tierOrder.indexOf(t);
@@ -29135,11 +29164,11 @@ async function importJSON() {
       filtered = filtered.filter(item => item.issues.includes(supplementFilter));
     }
     // 정렬
-    const tierOrder = { S: 0, A: 1, B: 2, C: 3, D: 4, E: 5, F: 6 };
+    // 🆕 v6.0: 동적 티어 순위
     filtered.sort((a, b) => {
       if (supplementSort === "tier") {
-        const ta = tierOrder[getDisplayTier(a.novel)] ?? 9;
-        const tb = tierOrder[getDisplayTier(b.novel)] ?? 9;
+        const ta = tierRank(getDisplayTier(a.novel, globalTierConfig), globalTierConfig);
+        const tb = tierRank(getDisplayTier(b.novel, globalTierConfig), globalTierConfig);
         return ta - tb || (b.novel.rating - a.novel.rating);
       } else if (supplementSort === "issues") {
         return b.issues.length - a.issues.length;
@@ -29269,6 +29298,9 @@ async function importJSON() {
     // 📋 예정 작품 개수
     const plannedCount = plannedList?.length || 0;
     
+    // 🆕 v6.0: manual 모드에서 매칭/리뷰 탭 숨김
+    const isManualMode = globalTierConfig.mode === "manual";
+
     return (
     <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
       {[
@@ -29277,11 +29309,11 @@ async function importJSON() {
         ["📰최신", "recent"],
         ["순위", "rank"],
         ["🏆수상", "awards"],
-        ["검토", "review"],
+        ...(!isManualMode ? [["검토", "review"]] : []),
         ["보충", "supplement"],
         ["취향", "taste"],
         ["추천", "reco"],
-        ["매칭", "match"],
+        ...(!isManualMode ? [["매칭", "match"]] : []),
         ["분석", "analysis"],
         ["대량", "bulk"],
         ["🖼️표지", "covers"], // 🆕 v3.4.5
@@ -29744,11 +29776,47 @@ async function importJSON() {
   )}
 </View>
 
+              {/* 🆕 v6.0: 등록 시 티어 선택기 (manual 모드 필수, hybrid/match+옵션에서 표시) */}
+              {(globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid" || globalTierConfig.allowRegistrationTier) && (
+                <View style={{ marginTop: 8, marginBottom: 4 }}>
+                  <Label>초기 티어{globalTierConfig.mode === "manual" ? " (필수)" : " (선택)"}</Label>
+                  <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
+                    {globalTierConfig.mode !== "manual" && (
+                      <TouchableOpacity
+                        onPress={() => setNewManualTier("")}
+                        style={{
+                          paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999,
+                          backgroundColor: !newManualTier ? C.primary : C.chip,
+                          borderWidth: 1, borderColor: !newManualTier ? C.primary : C.line,
+                        }}
+                      >
+                        <Text style={{ color: !newManualTier ? "#fff" : C.sub, fontWeight: "600", fontSize: 13 }}>자동</Text>
+                      </TouchableOpacity>
+                    )}
+                    {getActiveTierOrder(globalTierConfig).map(tierKey => (
+                      <TouchableOpacity
+                        key={tierKey}
+                        onPress={() => setNewManualTier(tierKey)}
+                        style={{
+                          paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999,
+                          backgroundColor: newManualTier === tierKey ? getTierColor(tierKey) : C.chip,
+                          borderWidth: 1, borderColor: newManualTier === tierKey ? getTierColor(tierKey) : C.line,
+                        }}
+                      >
+                        <Text style={{ color: newManualTier === tierKey ? "#fff" : C.text, fontWeight: "700", fontSize: 13 }}>
+                          {getTierLabel(tierKey)}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              )}
+
               <PrimaryButton
                 title="작품 추가"
                 onPress={addNovel}
                 style={{ marginTop: 12 }}
-                disabled={isLoading}
+                disabled={isLoading || (globalTierConfig.mode === "manual" && !newManualTier)}
               />
             </Section>
 
@@ -29795,7 +29863,7 @@ async function importJSON() {
             <Section title="고급 필터">
               <Label>티어</Label>
               <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
-                {["ALL", "S", "A", "B+", "B", "B-", "C"].map((t) => (
+                {["ALL", ...getActiveTierOrder(globalTierConfig)].map((t) => (
                   <Chip key={t} label={t === "ALL" ? "전체" : t} active={filterTier === t} onPress={() => setFilterTier(t)} />
                 ))}
               </View>
@@ -33007,27 +33075,24 @@ async function importJSON() {
             {/* 현황 요약 */}
             <Section title="현황">
               {(() => {
-                // 🚀 v3.5.4: 2회 전체 순회 → 1회 단일 루프
-                let sCount = 0, aCount = 0;
+                // 🆕 v6.0: 동적 gated 티어 집계
+                const gatedKeys = getGatedTiers(globalTierConfig);
+                const counts = {};
+                for (const k of gatedKeys) counts[k] = 0;
                 for (const n of list) {
-                  const t = getDisplayTier(n);
-                  if (t === 'S') sCount++;
-                  else if (t === 'A') aCount++;
+                  const t = getDisplayTier(n, globalTierConfig);
+                  if (counts[t] !== undefined) counts[t]++;
                 }
                 const total = list.length;
-                const sPercent = total > 0 ? ((sCount / total) * 100).toFixed(1) : 0;
-                const aPercent = total > 0 ? ((aCount / total) * 100).toFixed(1) : 0;
-                
+
                 return (
                   <View style={{ flexDirection: "row", gap: 16, flexWrap: "wrap" }}>
-                    <View style={{ backgroundColor: "#8b5cf6", paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12 }}>
-                      <Text style={{ color: "#fff", fontWeight: "800", fontSize: 18 }}>S: {sCount}작품</Text>
-                      <Text style={{ color: "rgba(255,255,255,0.8)", fontSize: 12 }}>{sPercent}%</Text>
-                    </View>
-                    <View style={{ backgroundColor: "#3b82f6", paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12 }}>
-                      <Text style={{ color: "#fff", fontWeight: "800", fontSize: 18 }}>A: {aCount}작품</Text>
-                      <Text style={{ color: "rgba(255,255,255,0.8)", fontSize: 12 }}>{aPercent}%</Text>
-                    </View>
+                    {gatedKeys.map(gk => (
+                      <View key={gk} style={{ backgroundColor: getTierColor(gk), paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12 }}>
+                        <Text style={{ color: "#fff", fontWeight: "800", fontSize: 18 }}>{getTierLabel(gk)}: {counts[gk]}작품</Text>
+                        <Text style={{ color: "rgba(255,255,255,0.8)", fontSize: 12 }}>{total > 0 ? ((counts[gk] / total) * 100).toFixed(1) : 0}%</Text>
+                      </View>
+                    ))}
                     <View style={{ backgroundColor: C.chip, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12 }}>
                       <Text style={{ color: C.text, fontWeight: "700" }}>전체: {total}작품</Text>
                     </View>
@@ -34941,104 +35006,309 @@ async function importJSON() {
               </View>
             </Section>
 
-            {/* ⚙️ 티어 시스템 설정 (v2.6) */}
+            {/* ⚙️ 티어 시스템 설정 (v6.0 유연한 티어 시스템) */}
             <Section title="🏆 티어 시스템">
-              <Text style={{ color: C.sub, marginBottom: 12 }}>
-                S/A 티어 진입 기준과 자동 승인 조건을 설정합니다.
-              </Text>
-              
-              {/* 티어 임계값 설정 */}
-              <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>티어 임계값 (레이팅)</Text>
-              <View style={{ backgroundColor: C.bg, padding: 12, borderRadius: 12, marginBottom: 16 }}>
-                {["S", "A", "B+", "B", "B-"].map((tier) => (
-                  <View key={tier} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                      <View style={{ backgroundColor: getTierColor(tier), paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 }}>
-                        <Text style={{ color: "#fff", fontWeight: "800" }}>{tier}</Text>
-                      </View>
-                      <Text style={{ color: C.sub }}>이상</Text>
-                    </View>
-                    <TextInput
-                      value={String(appSettings.tierThresholds?.[tier] || DEFAULT_SETTINGS.tierThresholds[tier])}
-                      onChangeText={(v) => {
-                        const num = parseInt(v) || DEFAULT_SETTINGS.tierThresholds[tier];
-                        saveAppSettings({
-                          tierThresholds: { ...appSettings.tierThresholds, [tier]: num }
-                        });
+              {/* 🆕 v6.0: 모드 선택기 */}
+              <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>시스템 유형</Text>
+              <View style={{ flexDirection: "row", gap: 8, marginBottom: 16 }}>
+                {[
+                  { key: "match", label: "매칭 기반", desc: "Elo 레이팅으로 자동 배정" },
+                  { key: "manual", label: "직접 배정", desc: "매칭 없이 수동 지정" },
+                  { key: "hybrid", label: "혼합", desc: "매칭 + 자유 오버라이드" },
+                ].map(m => (
+                  <TouchableOpacity
+                    key={m.key}
+                    onPress={() => {
+                      if (m.key === globalTierConfig.mode) return;
+                      Alert.alert(
+                        "모드 변경",
+                        `"${m.label}" 모드로 변경하시겠습니까?\n\n${m.desc}\n\n${m.key === "manual" ? "기존 레이팅 기반 티어가 manual_tier에 자동 저장됩니다." : ""}`,
+                        [
+                          { text: "취소" },
+                          { text: "변경", onPress: async () => {
+                            // 🔴 Critical: match→manual 전환 시 백필
+                            if (m.key === "manual" || m.key === "hybrid") {
+                              const novels = await all("SELECT id, rating, manual_tier FROM novels");
+                              const queries = [];
+                              for (const n of (novels || [])) {
+                                if (!n.manual_tier) {
+                                  const currentTier = getDisplayTier(n, globalTierConfig);
+                                  queries.push({ sql: "UPDATE novels SET manual_tier=? WHERE id=?", params: [currentTier, n.id] });
+                                }
+                              }
+                              if (queries.length > 0) await execBatch(queries);
+                            }
+                            const newConfig = { ...globalTierConfig, mode: m.key };
+                            if (m.key === "manual") newConfig.allowRegistrationTier = true;
+                            saveAppSettings({ tierSystemConfig: newConfig });
+                            await loadList(undefined, undefined, "settings");
+                            Alert.alert("완료", `${m.label} 모드로 변경되었습니다.`);
+                          }},
+                        ]
+                      );
+                    }}
+                    style={{
+                      flex: 1,
+                      backgroundColor: globalTierConfig.mode === m.key ? C.primary : C.bg,
+                      padding: 10,
+                      borderRadius: 12,
+                      borderWidth: 1,
+                      borderColor: globalTierConfig.mode === m.key ? C.primary : C.line,
+                      alignItems: "center",
+                    }}
+                  >
+                    <Text style={{ color: globalTierConfig.mode === m.key ? "#fff" : C.text, fontWeight: "700", fontSize: 13 }}>{m.label}</Text>
+                    <Text style={{ color: globalTierConfig.mode === m.key ? "rgba(255,255,255,0.7)" : C.sub, fontSize: 10, marginTop: 2 }}>{m.desc}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* 🆕 v6.0: 프리셋 선택기 */}
+              <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>프리셋</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
+                <View style={{ flexDirection: "row", gap: 8, paddingRight: 16 }}>
+                  {TIER_PRESETS.map(preset => (
+                    <TouchableOpacity
+                      key={preset.id}
+                      onPress={() => {
+                        Alert.alert(
+                          "프리셋 적용",
+                          `"${preset.name}" 프리셋을 적용하시겠습니까?\n\n${preset.description}\n\n현재 티어 설정이 교체됩니다.`,
+                          [
+                            { text: "취소" },
+                            { text: "적용", onPress: async () => {
+                              const newConfig = JSON.parse(JSON.stringify(preset.config));
+                              // manual/hybrid 모드 전환 시 백필
+                              if (newConfig.mode === "manual" || newConfig.mode === "hybrid") {
+                                const novels = await all("SELECT id, rating, manual_tier FROM novels");
+                                const oldConfig = globalTierConfig;
+                                const queries = [];
+                                for (const n of (novels || [])) {
+                                  const currentTier = getDisplayTier(n, oldConfig);
+                                  const mappedTier = migrateTierKey(currentTier, oldConfig, newConfig);
+                                  queries.push({ sql: "UPDATE novels SET manual_tier=? WHERE id=?", params: [mappedTier, n.id] });
+                                }
+                                if (queries.length > 0) await execBatch(queries);
+                              } else if (globalTierConfig.mode !== "match") {
+                                // match 모드로 돌아갈 때 manual_tier 중 유효하지 않은 것 정리
+                                const novels = await all("SELECT id, manual_tier FROM novels");
+                                const newOrder = getActiveTierOrder(newConfig);
+                                const gated = newConfig.tiers.filter(t => t.gated).map(t => t.key);
+                                const queries = [];
+                                for (const n of (novels || [])) {
+                                  if (n.manual_tier && !gated.includes(n.manual_tier)) {
+                                    queries.push({ sql: "UPDATE novels SET manual_tier=NULL WHERE id=?", params: [n.id] });
+                                  } else if (n.manual_tier && !newOrder.includes(n.manual_tier)) {
+                                    const mapped = migrateTierKey(n.manual_tier, globalTierConfig, newConfig);
+                                    queries.push({ sql: "UPDATE novels SET manual_tier=? WHERE id=?", params: [gated.includes(mapped) ? mapped : null, n.id] });
+                                  }
+                                }
+                                if (queries.length > 0) await execBatch(queries);
+                              }
+                              saveAppSettings({ tierSystemConfig: newConfig });
+                              await loadList(undefined, undefined, "settings");
+                              Alert.alert("완료", `"${preset.name}" 프리셋이 적용되었습니다.`);
+                            }},
+                          ]
+                        );
                       }}
-                      keyboardType="number-pad"
                       style={{
                         backgroundColor: C.card,
                         borderWidth: 1,
                         borderColor: C.line,
-                        borderRadius: 8,
-                        paddingHorizontal: 12,
-                        paddingVertical: 6,
-                        width: 80,
-                        textAlign: "center",
-                        color: C.text,
-                        fontWeight: "700",
+                        borderRadius: 12,
+                        padding: 12,
+                        width: 140,
+                      }}
+                    >
+                      <Text style={{ color: C.text, fontWeight: "700", marginBottom: 4 }}>{preset.name}</Text>
+                      <View style={{ flexDirection: "row", gap: 3, flexWrap: "wrap", marginBottom: 6 }}>
+                        {preset.config.tiers.slice(0, 5).map(t => (
+                          <View key={t.key} style={{ backgroundColor: t.color, width: 16, height: 16, borderRadius: 4 }} />
+                        ))}
+                        {preset.config.tiers.length > 5 && (
+                          <Text style={{ color: C.sub, fontSize: 10 }}>+{preset.config.tiers.length - 5}</Text>
+                        )}
+                      </View>
+                      <Text style={{ color: C.sub, fontSize: 10 }}>{preset.description}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </ScrollView>
+
+              {/* 🆕 v6.0: 티어 리스트 편집기 */}
+              <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>티어 목록 편집</Text>
+              <View style={{ backgroundColor: C.bg, padding: 12, borderRadius: 12, marginBottom: 16 }}>
+                {(globalTierConfig.tiers || []).map((t, idx) => (
+                  <View key={t.key + idx} style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                    {/* 색상 스와치 */}
+                    <TouchableOpacity
+                      onPress={() => {
+                        // 색상 팔레트에서 다음 색상으로 순환
+                        const currentIdx = TIER_COLOR_PALETTE.indexOf(t.color);
+                        const nextColor = TIER_COLOR_PALETTE[(currentIdx + 1) % TIER_COLOR_PALETTE.length];
+                        const newTiers = [...globalTierConfig.tiers];
+                        newTiers[idx] = { ...newTiers[idx], color: nextColor };
+                        saveAppSettings({ tierSystemConfig: { ...globalTierConfig, tiers: newTiers } });
+                      }}
+                      style={{ backgroundColor: t.color, width: 28, height: 28, borderRadius: 8, borderWidth: 2, borderColor: "rgba(255,255,255,0.3)" }}
+                    />
+                    {/* 라벨 입력 */}
+                    <TextInput
+                      value={t.label}
+                      onChangeText={(v) => {
+                        const newTiers = [...globalTierConfig.tiers];
+                        newTiers[idx] = { ...newTiers[idx], label: v, key: v || t.key };
+                        saveAppSettings({ tierSystemConfig: { ...globalTierConfig, tiers: newTiers } });
+                      }}
+                      style={{
+                        backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8,
+                        paddingHorizontal: 8, paddingVertical: 4, width: 60, textAlign: "center",
+                        color: C.text, fontWeight: "700",
                       }}
                     />
+                    {/* threshold (match/hybrid 모드에서만) */}
+                    {globalTierConfig.mode !== "manual" && (
+                      <TextInput
+                        value={String(t.threshold)}
+                        onChangeText={(v) => {
+                          const newTiers = [...globalTierConfig.tiers];
+                          newTiers[idx] = { ...newTiers[idx], threshold: parseInt(v) || 0 };
+                          saveAppSettings({ tierSystemConfig: { ...globalTierConfig, tiers: newTiers } });
+                        }}
+                        keyboardType="number-pad"
+                        placeholder="기준"
+                        placeholderTextColor={C.sub}
+                        style={{
+                          backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8,
+                          paddingHorizontal: 8, paddingVertical: 4, width: 60, textAlign: "center",
+                          color: C.text, fontSize: 12,
+                        }}
+                      />
+                    )}
+                    {/* gated 토글 (match 모드에서만) */}
+                    {globalTierConfig.mode === "match" && (
+                      <TouchableOpacity
+                        onPress={() => {
+                          const newTiers = [...globalTierConfig.tiers];
+                          newTiers[idx] = { ...newTiers[idx], gated: !newTiers[idx].gated };
+                          saveAppSettings({ tierSystemConfig: { ...globalTierConfig, tiers: newTiers } });
+                        }}
+                        style={{
+                          backgroundColor: t.gated ? "#f59e0b" : C.chip,
+                          paddingHorizontal: 6, paddingVertical: 3, borderRadius: 6,
+                        }}
+                      >
+                        <Text style={{ color: t.gated ? "#fff" : C.sub, fontSize: 10, fontWeight: "600" }}>
+                          {t.gated ? "승인" : "자동"}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                    {/* 삭제 버튼 (최소 2개) */}
+                    {globalTierConfig.tiers.length > 2 && (
+                      <TouchableOpacity
+                        onPress={() => {
+                          Alert.alert("삭제", `"${t.label}" 티어를 삭제할까요?`, [
+                            { text: "취소" },
+                            { text: "삭제", style: "destructive", onPress: () => {
+                              const newTiers = globalTierConfig.tiers.filter((_, i) => i !== idx);
+                              const newDefault = newTiers[newTiers.length - 1]?.key || "C";
+                              saveAppSettings({ tierSystemConfig: { ...globalTierConfig, tiers: newTiers, defaultTier: newDefault } });
+                            }},
+                          ]);
+                        }}
+                        style={{ padding: 4 }}
+                      >
+                        <Text style={{ color: C.warn, fontSize: 14 }}>✕</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 ))}
-                <TouchableOpacity
-                  onPress={() => {
-                    saveAppSettings({ tierThresholds: DEFAULT_SETTINGS.tierThresholds });
-                    Alert.alert("완료", "티어 임계값이 기본값으로 복원되었습니다.");
-                  }}
-                  style={{ backgroundColor: C.chip, padding: 10, borderRadius: 8, alignItems: "center", marginTop: 4 }}
-                >
-                  <Text style={{ color: C.sub, fontWeight: "600" }}>기본값 복원</Text>
-                </TouchableOpacity>
-              </View>
-              
-              {/* 자동 승인 설정 */}
-              <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>자동 승인</Text>
-              <View style={{ backgroundColor: C.bg, padding: 12, borderRadius: 12, marginBottom: 16 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ color: C.text, fontWeight: "600" }}>자동 승인 활성화</Text>
-                    <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>조건 충족 시 검토 없이 자동 S/A 진입</Text>
-                  </View>
-                  <Switch
-                    value={appSettings.autoApproveEnabled || false}
-                    onValueChange={(v) => saveAppSettings({ autoApproveEnabled: v })}
-                  />
-                </View>
-                
-                {appSettings.autoApproveEnabled && (
-                  <>
-                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                      <Text style={{ color: C.text }}>최소 승수</Text>
-                      <TextInput
-                        value={String(appSettings.autoApproveMinWins || 10)}
-                        onChangeText={(v) => saveAppSettings({ autoApproveMinWins: parseInt(v) || 10 })}
-                        keyboardType="number-pad"
-                        style={{ backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, width: 60, textAlign: "center", color: C.text }}
-                      />
-                    </View>
-                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                      <Text style={{ color: C.text }}>최대 패수</Text>
-                      <TextInput
-                        value={String(appSettings.autoApproveMaxLosses || 3)}
-                        onChangeText={(v) => saveAppSettings({ autoApproveMaxLosses: parseInt(v) || 3 })}
-                        keyboardType="number-pad"
-                        style={{ backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, width: 60, textAlign: "center", color: C.text }}
-                      />
-                    </View>
-                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                      <Text style={{ color: C.text }}>최소 매칭 수</Text>
-                      <TextInput
-                        value={String(appSettings.autoApproveMinMatches || 15)}
-                        onChangeText={(v) => saveAppSettings({ autoApproveMinMatches: parseInt(v) || 15 })}
-                        keyboardType="number-pad"
-                        style={{ backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, width: 60, textAlign: "center", color: C.text }}
-                      />
-                    </View>
-                  </>
+                {/* 티어 추가 버튼 (최대 10개) */}
+                {globalTierConfig.tiers.length < 10 && (
+                  <TouchableOpacity
+                    onPress={() => {
+                      const usedColors = new Set(globalTierConfig.tiers.map(t => t.color));
+                      const nextColor = TIER_COLOR_PALETTE.find(c => !usedColors.has(c)) || TIER_COLOR_PALETTE[0];
+                      const newKey = "T" + (globalTierConfig.tiers.length + 1);
+                      const newTiers = [...globalTierConfig.tiers];
+                      // 마지막(기본 티어) 앞에 삽입
+                      newTiers.splice(newTiers.length - 1, 0, { key: newKey, label: newKey, color: nextColor, threshold: 0, gated: false });
+                      saveAppSettings({ tierSystemConfig: { ...globalTierConfig, tiers: newTiers } });
+                    }}
+                    style={{ backgroundColor: C.chip, padding: 10, borderRadius: 8, alignItems: "center", marginTop: 4 }}
+                  >
+                    <Text style={{ color: C.primary, fontWeight: "600" }}>+ 티어 추가</Text>
+                  </TouchableOpacity>
                 )}
               </View>
+
+              {/* 등록 옵션 */}
+              {globalTierConfig.mode !== "manual" && (
+                <View style={{ backgroundColor: C.bg, padding: 12, borderRadius: 12, marginBottom: 16 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: C.text, fontWeight: "600" }}>등록 시 티어 선택 허용</Text>
+                      <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>작품 등록 시 초기 티어를 직접 선택</Text>
+                    </View>
+                    <Switch
+                      value={globalTierConfig.allowRegistrationTier || false}
+                      onValueChange={(v) => saveAppSettings({ tierSystemConfig: { ...globalTierConfig, allowRegistrationTier: v } })}
+                    />
+                  </View>
+                </View>
+              )}
+
+              {/* 자동 승인 설정 (match 모드에서만) */}
+              {globalTierConfig.mode === "match" && (
+                <>
+                  <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>자동 승인</Text>
+                  <View style={{ backgroundColor: C.bg, padding: 12, borderRadius: 12, marginBottom: 16 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: C.text, fontWeight: "600" }}>자동 승인 활성화</Text>
+                        <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>조건 충족 시 검토 없이 gated 티어 자동 진입</Text>
+                      </View>
+                      <Switch
+                        value={appSettings.autoApproveEnabled || false}
+                        onValueChange={(v) => saveAppSettings({ autoApproveEnabled: v })}
+                      />
+                    </View>
+
+                    {appSettings.autoApproveEnabled && (
+                      <>
+                        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                          <Text style={{ color: C.text }}>최소 승수</Text>
+                          <TextInput
+                            value={String(appSettings.autoApproveMinWins || 10)}
+                            onChangeText={(v) => saveAppSettings({ autoApproveMinWins: parseInt(v) || 10 })}
+                            keyboardType="number-pad"
+                            style={{ backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, width: 60, textAlign: "center", color: C.text }}
+                          />
+                        </View>
+                        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                          <Text style={{ color: C.text }}>최대 패수</Text>
+                          <TextInput
+                            value={String(appSettings.autoApproveMaxLosses || 3)}
+                            onChangeText={(v) => saveAppSettings({ autoApproveMaxLosses: parseInt(v) || 3 })}
+                            keyboardType="number-pad"
+                            style={{ backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, width: 60, textAlign: "center", color: C.text }}
+                          />
+                        </View>
+                        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                          <Text style={{ color: C.text }}>최소 매칭 수</Text>
+                          <TextInput
+                            value={String(appSettings.autoApproveMinMatches || 15)}
+                            onChangeText={(v) => saveAppSettings({ autoApproveMinMatches: parseInt(v) || 15 })}
+                            keyboardType="number-pad"
+                            style={{ backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, width: 60, textAlign: "center", color: C.text }}
+                          />
+                        </View>
+                      </>
+                    )}
+                  </View>
+                </>
+              )}
               
               {/* 기타 옵션 */}
               <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>기타 옵션</Text>
@@ -39226,7 +39496,7 @@ async function importJSON() {
                 
                 <Label style={{ marginTop: 10 }}>예상 티어</Label>
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-                  {["", "S", "A", "B+", "B", "B-", "C"].map((tier) => (
+                  {["", ...getActiveTierOrder(globalTierConfig)].map((tier) => (
                     <TouchableOpacity
                       key={tier || "none"}
                       onPress={() => updatePlannedEditItem(prev => prev ? { ...prev, expected_tier: tier } : null)}
