@@ -4843,6 +4843,7 @@ function getActiveTierOrder(config) {
 }
 
 function isGatedTier(tier, config) {
+  if (!tier) return false;
   if (!config || !config.tiers) return tier === "S" || tier === "A";
   const found = config.tiers.find(t => t.key === tier);
   return found ? found.gated : false;
@@ -22275,7 +22276,9 @@ function AppContent() {
                   planned.tag_data || "", // 🆕 태그 데이터 이전
                   "", // memorable_quote
                   "", // aliases
-                  null, // manual_tier
+                  // 🆕 v6.0: manual/hybrid 모드에서 expected_tier를 manual_tier로 활용
+                  (globalTierConfig.mode !== "match" && planned.expected_tier && getActiveTierOrder(globalTierConfig).includes(planned.expected_tier))
+                    ? planned.expected_tier : null,
                 ]
               );
               
@@ -25391,9 +25394,12 @@ function AppContent() {
           serializeQuotes(memorableQuote), // 💬 인상깊은 문장 (텍스트+이미지)
           "", // aliases (빈 값)
           // 🆕 v6.0: 모드별 manual_tier 설정
-          (globalTierConfig.mode === "manual" || (globalTierConfig.mode !== "match" && newManualTier) || (globalTierConfig.allowRegistrationTier && newManualTier))
-            ? (newManualTier || globalTierConfig.defaultTier || null)
-            : null,
+          (() => {
+            if (globalTierConfig.mode === "manual") return newManualTier || globalTierConfig.defaultTier;
+            if (globalTierConfig.mode === "hybrid" && newManualTier) return newManualTier;
+            if (globalTierConfig.mode === "match" && globalTierConfig.allowRegistrationTier && newManualTier) return newManualTier;
+            return null;
+          })(),
         ]
       );
       // 🔧 v3.5.9: 텍스트 입력 태그 → customTags 동기화 (태그 관리 모달 연동)
@@ -26587,7 +26593,7 @@ function AppContent() {
       
       // 📰 v3.0.2: 자동 티어 변동 추적 (manual_tier가 없는 경우만)
       if (!A.manual_tier) {
-        const tierAfterA = tierFromRating(newA.rating);
+        const tierAfterA = tierFromRating(newA.rating, globalTierConfig);
         if (tierBeforeA !== tierAfterA) {
           await addRecentChange(A.id, A.title, "auto_tier", {
             from: tierBeforeA,
@@ -26598,7 +26604,7 @@ function AppContent() {
         }
       }
       if (!B.manual_tier) {
-        const tierAfterB = tierFromRating(newB.rating);
+        const tierAfterB = tierFromRating(newB.rating, globalTierConfig);
         if (tierBeforeB !== tierAfterB) {
           await addRecentChange(B.id, B.title, "auto_tier", {
             from: tierBeforeB,
@@ -27394,16 +27400,15 @@ function AppContent() {
 
     for (const n of list) {
       // 티어별 (실제 티어 기준)
-      const t = getDisplayTier(n);
+      const t = getDisplayTier(n, globalTierConfig);
       byTier[t] = (byTier[t] || 0) + 1;
       sum += n.rating;
-      
-      // 🏆 수동 지정 여부
-      if (n.manual_tier === 'S' || n.manual_tier === 'A') {
+
+      // 🏆 수동 지정 여부 (v6.0: 동적 gated 기반)
+      if (n.manual_tier && isGatedTier(n.manual_tier, globalTierConfig)) {
         manualTierCount++;
-        // 강제 지정 (점수 미달인데 S/A)
-        const recommended = tierFromRating(n.rating);
-        if (tierRank(recommended) > tierRank(n.manual_tier)) {
+        const recommended = tierFromRating(n.rating, globalTierConfig);
+        if (tierRank(recommended, globalTierConfig) > tierRank(n.manual_tier, globalTierConfig)) {
           forcedTierCount++;
         }
       }
@@ -27886,9 +27891,8 @@ function buildUltraCompactBackup(novels, matches, coverImages = null) {
     if (gaidenStatus !== "none") opt.gs = gaidenStatus === "ongoing" ? 1 : 2; // 1=ongoing, 2=completed
     if (gaidenReadCount) opt.gr = gaidenReadCount;
     if (gaidenTotalEp) opt.ge = gaidenTotalEp;
-    // 🏆 수동 티어 지정 (v2.5)
-    if (n.manual_tier === 'S') opt.mt = 1;
-    else if (n.manual_tier === 'A') opt.mt = 2;
+    // 🏆 수동 티어 지정 (v6.0: 동적 — 문자열 key 저장)
+    if (n.manual_tier) opt.mt = n.manual_tier;
     
     // 📚 v3.0.4: 다회독 카운트 (기본 1, 1보다 큰 경우에만 저장)
     const rereadCount = Math.max(1, Number(n.reread_count) || 1);
@@ -28006,14 +28010,25 @@ function buildExtendedBackup(novels, matches, settings, tierHist, coverImages = 
     if (Object.keys(pfDiff).length > 0) settingsDiff.pf = pfDiff;
   }
   
+  // 🆕 v6.0: tierSystemConfig 백업 (기본값과 다를 때)
+  if (settings.tierSystemConfig) {
+    const tsc = settings.tierSystemConfig;
+    const defTsc = DEFAULT_TIER_SYSTEM_CONFIG;
+    if (tsc.mode !== defTsc.mode || JSON.stringify(tsc.tiers) !== JSON.stringify(defTsc.tiers) ||
+        tsc.defaultTier !== defTsc.defaultTier || tsc.allowRegistrationTier !== defTsc.allowRegistrationTier) {
+      settingsDiff.tc = tsc; // 전체 tierSystemConfig 저장
+    }
+  }
+
   if (Object.keys(settingsDiff).length > 0) {
     base.S = settingsDiff;
   }
   
-  // S/A 관련 티어 히스토리 추가 (최대 30개)
+  // 🆕 v6.0: gated 티어 관련 히스토리 (동적)
   if (tierHist && tierHist.length > 0) {
-    const saHist = tierHist.filter(h => 
-      h.from === 'S' || h.from === 'A' || h.to === 'S' || h.to === 'A'
+    const gatedKeys = getGatedTiers(globalTierConfig);
+    const saHist = tierHist.filter(h =>
+      gatedKeys.includes(h.from) || gatedKeys.includes(h.to)
     ).slice(0, 30).map(h => ({
       t: h.title,
       f: h.from,
@@ -28533,8 +28548,8 @@ async function importJSON() {
                 const gaidenStatus = opt.gs === 1 ? "ongoing" : (opt.gs === 2 ? "completed" : "none");
                 const gaidenReadCount = opt.gr || 0;
                 const gaidenTotalEpisodes = opt.ge || 0;
-                // 🏆 수동 티어 지정 (v2.5)
-                const manualTier = opt.mt === 1 ? 'S' : (opt.mt === 2 ? 'A' : null);
+                // 🏆 수동 티어 지정 (v6.0: 레거시 숫자 + 새 문자열 호환)
+                const manualTier = typeof opt.mt === 'string' ? opt.mt : (opt.mt === 1 ? 'S' : (opt.mt === 2 ? 'A' : null));
                 // 📚 v3.0.4: 다회독 카운트
                 const rereadCount = Math.max(1, opt.rr || 1);
                 // 🏷️ v5.0: tag_data, aliases
@@ -28579,7 +28594,7 @@ async function importJSON() {
                 novelQueries.push({
                   sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,reread_count,tag_data,aliases,memorable_quote)
                         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, rereadCount, tagData, aliases, memorableQuote],
+                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, rereadCount, tagData, aliases, memorableQuote],
                 });
               }
 
@@ -28644,7 +28659,17 @@ async function importJSON() {
                   if (s.pf.ss !== undefined) restored.plannedFields.showScheduledStart = s.pf.ss === 1;
                   if (s.pf.sn !== undefined) restored.plannedFields.showSimilarNovels = s.pf.sn === 1;
                 }
-                
+                // 🆕 v6.0: tierSystemConfig 복원
+                if (s.tc && typeof s.tc === "object" && Array.isArray(s.tc.tiers)) {
+                  restored.tierSystemConfig = s.tc;
+                }
+
+                // 🆕 v6.0: globalTierConfig를 소설 복원 전에 갱신 (tierFromRating 정합성)
+                if (restored.tierSystemConfig) {
+                  globalTierConfig = { ...restored.tierSystemConfig };
+                  rebuildTierLookup(globalTierConfig);
+                }
+
                 setAppSettings(restored);
                 await setAppMeta("app_settings", restored);
                 if (restored.tierThresholds) {
@@ -33117,7 +33142,7 @@ async function importJSON() {
                         const historyItems = [];
                         const queries = reviews.map(n => {
                           const recommended = tierFromRating(n.rating);
-                          const newTier = (recommended === 'S' || recommended === 'A') ? recommended : null;
+                          const newTier = isGatedTier(recommended, globalTierConfig) ? recommended : null;
                           const current = getDisplayTier(n);
                           historyItems.push({ id: n.id, title: n.title, from: current, to: newTier || recommended, at: Date.now() });
                           return {
@@ -33153,7 +33178,7 @@ async function importJSON() {
                           const historyItems = [];
                           const queries = selected.map(n => {
                             const recommended = tierFromRating(n.rating);
-                            const newTier = (recommended === 'S' || recommended === 'A') ? recommended : null;
+                            const newTier = isGatedTier(recommended, globalTierConfig) ? recommended : null;
                             const current = getDisplayTier(n);
                             historyItems.push({ id: n.id, title: n.title, from: current, to: newTier || recommended, at: Date.now() });
                             return {
@@ -33237,7 +33262,7 @@ async function importJSON() {
                         const historyItems = [];
                         const queries = demotes.map(n => {
                           const recommended = tierFromRating(n.rating);
-                          const newTier = (recommended === 'S' || recommended === 'A') ? recommended : null;
+                          const newTier = isGatedTier(recommended, globalTierConfig) ? recommended : null;
                           const current = getDisplayTier(n);
                           historyItems.push({ id: n.id, title: n.title, from: current, to: newTier || recommended, at: Date.now() });
                           return {
@@ -33387,29 +33412,21 @@ async function importJSON() {
                               점수: {n.rating.toFixed(0)} · {current} → {recommended} 권장
                             </Text>
                           </View>
+                          {/* 🆕 v6.0: 동적 gated 티어 승급 버튼 */}
                           <View style={{ flexDirection: "row", gap: 6 }}>
-                            {recommended === 'S' && (
+                            {getGatedTiers(globalTierConfig).map(gt => (
                               <TouchableOpacity
+                                key={gt}
                                 onPress={async () => {
-                                  setTierHistory(prev => [{ id: n.id, title: n.title, from: current, to: 'S', at: Date.now() }, ...prev].slice(0, 20));
-                                  await exec("UPDATE novels SET manual_tier='S' WHERE id=?", [n.id]);
+                                  addTierHistoryEntry(n.id, n.title, current, gt);
+                                  await exec("UPDATE novels SET manual_tier=? WHERE id=?", [gt, n.id]);
                                   await loadList(undefined, undefined, "update");
                                 }}
-                                style={{ backgroundColor: "#8b5cf6", paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10 }}
+                                style={{ backgroundColor: getTierColor(gt), paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10 }}
                               >
-                                <Text style={{ color: "#fff", fontWeight: "700" }}>S 승급</Text>
+                                <Text style={{ color: "#fff", fontWeight: "700" }}>{getTierLabel(gt)} 승급</Text>
                               </TouchableOpacity>
-                            )}
-                            <TouchableOpacity
-                              onPress={async () => {
-                                setTierHistory(prev => [{ id: n.id, title: n.title, from: current, to: 'A', at: Date.now() }, ...prev].slice(0, 20));
-                                await exec("UPDATE novels SET manual_tier='A' WHERE id=?", [n.id]);
-                                await loadList(undefined, undefined, "update");
-                              }}
-                              style={{ backgroundColor: "#3b82f6", paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10 }}
-                            >
-                              <Text style={{ color: "#fff", fontWeight: "700" }}>A 승급</Text>
-                            </TouchableOpacity>
+                            ))}
                           </View>
                         </View>
                       </View>
@@ -33431,9 +33448,9 @@ async function importJSON() {
               return (
                 <Section title={`⬇️ 강등 검토 (${demotes.length}건)`}>
                   {demotes.map(n => {
-                    const recommended = tierFromRating(n.rating);
-                    const current = getDisplayTier(n);
-                    const isForced = n.manual_tier && tierRank(tierFromRating(n.rating)) > tierRank(n.manual_tier);
+                    const recommended = tierFromRating(n.rating, globalTierConfig);
+                    const current = getDisplayTier(n, globalTierConfig);
+                    const isForced = n.manual_tier && tierRank(tierFromRating(n.rating, globalTierConfig), globalTierConfig) > tierRank(n.manual_tier, globalTierConfig);
                     const isSelected = reviewSelectedIds.includes(n.id);
                     
                     return (
@@ -33481,7 +33498,7 @@ async function importJSON() {
                           <View style={{ flexDirection: "row", gap: 6 }}>
                             <TouchableOpacity
                               onPress={async () => {
-                                const newTier = (recommended === 'S' || recommended === 'A') ? recommended : null;
+                                const newTier = isGatedTier(recommended, globalTierConfig) ? recommended : null;
                                 setTierHistory(prev => [{ id: n.id, title: n.title, from: current, to: newTier || recommended, at: Date.now() }, ...prev].slice(0, 20));
                                 await exec("UPDATE novels SET manual_tier=? WHERE id=?", [newTier, n.id]);
                                 await loadList(undefined, undefined, "update");
@@ -33521,126 +33538,81 @@ async function importJSON() {
               );
             })()}
 
-            {/* 현재 S/A 작품 목록 */}
-            <Section title="현재 S/A 작품">
+            {/* 🆕 v6.0: 현재 gated 티어 작품 목록 (동적) */}
+            <Section title={`현재 ${getGatedTiers(globalTierConfig).map(g => getTierLabel(g)).join("/")} 작품`}>
               {(() => {
-                // 🚀 v3.5.4: 2회 전체 순회 → 1회 단일 루프 후 정렬
-                const sTier = [], aTier = [];
+                const gatedKeys = getGatedTiers(globalTierConfig);
+                const byGated = {};
+                for (const gk of gatedKeys) byGated[gk] = [];
                 for (const n of list) {
-                  const t = getDisplayTier(n);
-                  if (t === 'S') sTier.push(n);
-                  else if (t === 'A') aTier.push(n);
+                  const t = getDisplayTier(n, globalTierConfig);
+                  if (byGated[t]) byGated[t].push(n);
                 }
-                sTier.sort((a, b) => b.rating - a.rating);
-                aTier.sort((a, b) => b.rating - a.rating);
-                
+                for (const gk of gatedKeys) byGated[gk].sort((a, b) => b.rating - a.rating);
+
                 return (
                   <View>
-                    {/* S티어 */}
-                    <View style={{ marginBottom: 16 }}>
-                      <Text style={{ fontWeight: "800", color: "#8b5cf6", marginBottom: 8 }}>
-                        🥇 S티어 ({sTier.length}작품)
-                      </Text>
-                      {sTier.length === 0 ? (
-                        <Text style={{ color: C.sub }}>아직 S티어 작품이 없습니다.</Text>
-                      ) : (
-                        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-                          {sTier.map(n => {
-                            const isForced = n.manual_tier === 'S' && tierFromRating(n.rating) !== 'S';
-                            return (
-                              <TouchableOpacity
-                                key={n.id}
-                                onPress={() => {
-                                  Alert.alert(
-                                    n.title,
-                                    `점수: ${n.rating.toFixed(0)}\n권장: ${tierFromRating(n.rating)}티어${isForced ? '\n⚠️ 강제 지정됨' : ''}`,
-                                    [
-                                      { text: "닫기" },
-                                      { text: "A로 강등", onPress: async () => {
-                                        setTierHistory(prev => [{ id: n.id, title: n.title, from: 'S', to: 'A', at: Date.now() }, ...prev].slice(0, 20));
-                                        await exec("UPDATE novels SET manual_tier='A' WHERE id=?", [n.id]);
-                                        await loadList(undefined, undefined, "update");
-                                      }},
-                                      { text: "S 해제", style: "destructive", onPress: async () => {
-                                        const recommended = tierFromRating(n.rating);
-                                        const newTier = (recommended === 'S' || recommended === 'A') ? recommended : null;
-                                        setTierHistory(prev => [{ id: n.id, title: n.title, from: 'S', to: newTier || recommended, at: Date.now() }, ...prev].slice(0, 20));
-                                        await exec("UPDATE novels SET manual_tier=? WHERE id=?", [newTier, n.id]);
-                                        await loadList(undefined, undefined, "update");
-                                      }},
-                                    ]
-                                  );
-                                }}
-                                style={{
-                                  backgroundColor: "#8b5cf6",
-                                  paddingHorizontal: 10,
-                                  paddingVertical: 6,
-                                  borderRadius: 8,
-                                  borderWidth: isForced ? 2 : 0,
-                                  borderColor: "#fef3c7",
-                                }}
-                              >
-                                <Text style={{ color: "#fff", fontWeight: "600", fontSize: 13 }} numberOfLines={1}>
-                                  {isForced ? "⚠️ " : ""}{n.title}
-                                </Text>
-                              </TouchableOpacity>
-                            );
-                          })}
-                        </View>
-                      )}
-                    </View>
-                    
-                    {/* A티어 */}
-                    <View>
-                      <Text style={{ fontWeight: "800", color: "#3b82f6", marginBottom: 8 }}>
-                        🥈 A티어 ({aTier.length}작품)
-                      </Text>
-                      {aTier.length === 0 ? (
-                        <Text style={{ color: C.sub }}>아직 A티어 작품이 없습니다.</Text>
-                      ) : (
-                        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-                          {aTier.map(n => {
-                            const isForced = n.manual_tier === 'A' && tierFromRating(n.rating) !== 'A' && tierFromRating(n.rating) !== 'S';
-                            return (
-                              <TouchableOpacity
-                                key={n.id}
-                                onPress={() => {
-                                  Alert.alert(
-                                    n.title,
-                                    `점수: ${n.rating.toFixed(0)}\n권장: ${tierFromRating(n.rating)}티어${isForced ? '\n⚠️ 강제 지정됨' : ''}`,
-                                    [
-                                      { text: "닫기" },
-                                      { text: "S로 승급", onPress: async () => {
-                                        setTierHistory(prev => [{ id: n.id, title: n.title, from: 'A', to: 'S', at: Date.now() }, ...prev].slice(0, 20));
-                                        await exec("UPDATE novels SET manual_tier='S' WHERE id=?", [n.id]);
-                                        await loadList(undefined, undefined, "update");
-                                      }},
-                                      { text: "A 해제", style: "destructive", onPress: async () => {
-                                        const recommended = tierFromRating(n.rating);
-                                        const newTier = (recommended === 'S' || recommended === 'A') ? recommended : null;
-                                        setTierHistory(prev => [{ id: n.id, title: n.title, from: 'A', to: newTier || recommended, at: Date.now() }, ...prev].slice(0, 20));
-                                        await exec("UPDATE novels SET manual_tier=? WHERE id=?", [newTier, n.id]);
-                                        await loadList(undefined, undefined, "update");
-                                      }},
-                                    ]
-                                  );
-                                }}
-                                style={{
-                                  backgroundColor: "#3b82f6",
-                                  paddingHorizontal: 10,
-                                  paddingVertical: 6,
-                                  borderRadius: 8,
-                                  borderWidth: isForced ? 2 : 0,
-                                  borderColor: "#fef3c7",
-                                }}
-                              >
-                                <Text style={{ color: "#fff", fontWeight: "600", fontSize: 13 }} numberOfLines={1}>
-                                  {isForced ? "⚠️ " : ""}{n.title}
-                                </Text>
-                              </TouchableOpacity>
-                            );
-                          })}
-                        </View>
+                    {gatedKeys.map((gk, gkIdx) => {
+                      const novels = byGated[gk];
+                      const higherTier = gkIdx > 0 ? gatedKeys[gkIdx - 1] : null;
+                      const lowerTier = gkIdx < gatedKeys.length - 1 ? gatedKeys[gkIdx + 1] : null;
+
+                      return (
+                        <View key={gk} style={{ marginBottom: 16 }}>
+                          <Text style={{ fontWeight: "800", color: getTierColor(gk), marginBottom: 8 }}>
+                            {getTierLabel(gk)}티어 ({novels.length}작품)
+                          </Text>
+                          {novels.length === 0 ? (
+                            <Text style={{ color: C.sub }}>아직 {getTierLabel(gk)}티어 작품이 없습니다.</Text>
+                          ) : (
+                            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                              {novels.map(n => {
+                                const rec = tierFromRating(n.rating, globalTierConfig);
+                                const isForced = n.manual_tier && rec !== n.manual_tier;
+                                const actions = [{ text: "닫기" }];
+                                // 상위 gated 티어로 승급
+                                if (higherTier) {
+                                  actions.push({ text: `${getTierLabel(higherTier)}로 승급`, onPress: async () => {
+                                    addTierHistoryEntry(n.id, n.title, gk, higherTier);
+                                    await exec("UPDATE novels SET manual_tier=? WHERE id=?", [higherTier, n.id]);
+                                    await loadList(undefined, undefined, "update");
+                                  }});
+                                }
+                                // 하위 gated 티어로 강등
+                                if (lowerTier) {
+                                  actions.push({ text: `${getTierLabel(lowerTier)}로 강등`, onPress: async () => {
+                                    addTierHistoryEntry(n.id, n.title, gk, lowerTier);
+                                    await exec("UPDATE novels SET manual_tier=? WHERE id=?", [lowerTier, n.id]);
+                                    await loadList(undefined, undefined, "update");
+                                  }});
+                                }
+                                // 해제 (권장 티어로 복원)
+                                actions.push({ text: `${getTierLabel(gk)} 해제`, style: "destructive", onPress: async () => {
+                                  const newTier = isGatedTier(rec, globalTierConfig) ? rec : null;
+                                  addTierHistoryEntry(n.id, n.title, gk, newTier || rec);
+                                  await exec("UPDATE novels SET manual_tier=? WHERE id=?", [newTier, n.id]);
+                                  await loadList(undefined, undefined, "update");
+                                }});
+
+                                return (
+                                  <TouchableOpacity
+                                    key={n.id}
+                                    onPress={() => {
+                                      Alert.alert(n.title, `점수: ${n.rating.toFixed(0)}\n권장: ${getTierLabel(rec)}티어${isForced ? '\n⚠️ 강제 지정됨' : ''}`, actions);
+                                    }}
+                                    style={{
+                                      backgroundColor: getTierColor(gk),
+                                      paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8,
+                                      borderWidth: isForced ? 2 : 0, borderColor: "#fef3c7",
+                                    }}
+                                  >
+                                    <Text style={{ color: "#fff", fontWeight: "600", fontSize: 13 }} numberOfLines={1}>
+                                      {isForced ? "⚠️ " : ""}{n.title}
+                                    </Text>
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </View>
                       )}
                     </View>
                   </View>
@@ -33649,9 +33621,10 @@ async function importJSON() {
             </Section>
 
             {/* 강제 지정 */}
+            {/* 🆕 v6.0: 강제 티어 지정 (동적 gated) */}
             <Section title="➕ 강제 티어 지정">
               <Text style={{ color: C.sub, marginBottom: 12 }}>
-                점수와 무관하게 특정 작품을 S/A 티어로 강제 지정합니다.{"\n"}
+                점수와 무관하게 특정 작품을 gated 티어로 강제 지정합니다.{"\n"}
                 ※ 점수가 미달이면 검토 탭에 계속 표시됩니다.
               </Text>
               <Input
@@ -33664,55 +33637,40 @@ async function importJSON() {
                   {list
                     .filter(n => {
                       const q = reviewSearchQuery.toLowerCase();
-                      const current = getDisplayTier(n);
-                      // S/A 아닌 작품만 표시
-                      if (current === 'S' || current === 'A') return false;
-                      return n.title.toLowerCase().includes(q) || 
+                      const current = getDisplayTier(n, globalTierConfig);
+                      if (isGatedTier(current, globalTierConfig)) return false;
+                      return n.title.toLowerCase().includes(q) ||
                              (n.author || '').toLowerCase().includes(q);
                     })
                     .slice(0, 10)
                     .map(n => (
                       <View key={n.id} style={{
-                        flexDirection: "row",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        paddingVertical: 8,
-                        borderBottomWidth: 1,
-                        borderBottomColor: C.line,
+                        flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+                        paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: C.line,
                       }}>
                         <View style={{ flex: 1 }}>
                           <Text style={{ fontWeight: "700", color: C.text }} numberOfLines={1}>{n.title}</Text>
                           <Text style={{ color: C.sub, fontSize: 12 }}>
-                            점수: {n.rating.toFixed(0)} · 현재: {getDisplayTier(n)}
+                            점수: {n.rating.toFixed(0)} · 현재: {getTierLabel(getDisplayTier(n, globalTierConfig))}
                           </Text>
                         </View>
                         <View style={{ flexDirection: "row", gap: 6 }}>
-                          <TouchableOpacity
-                            onPress={async () => {
-                              const current = getDisplayTier(n);
-                              setTierHistory(prev => [{ id: n.id, title: n.title, from: current, to: 'S', at: Date.now() }, ...prev].slice(0, 20));
-                              await exec("UPDATE novels SET manual_tier='S' WHERE id=?", [n.id]);
-                              await loadList(undefined, undefined, "update");
-                              setReviewSearchQuery("");
-                              Alert.alert("완료", `${n.title}을(를) S티어로 지정했습니다.`);
-                            }}
-                            style={{ backgroundColor: "#8b5cf6", paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8 }}
-                          >
-                            <Text style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}>S</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            onPress={async () => {
-                              const current = getDisplayTier(n);
-                              setTierHistory(prev => [{ id: n.id, title: n.title, from: current, to: 'A', at: Date.now() }, ...prev].slice(0, 20));
-                              await exec("UPDATE novels SET manual_tier='A' WHERE id=?", [n.id]);
-                              await loadList(undefined, undefined, "update");
-                              setReviewSearchQuery("");
-                              Alert.alert("완료", `${n.title}을(를) A티어로 지정했습니다.`);
-                            }}
-                            style={{ backgroundColor: "#3b82f6", paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8 }}
-                          >
-                            <Text style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}>A</Text>
-                          </TouchableOpacity>
+                          {getGatedTiers(globalTierConfig).map(gt => (
+                            <TouchableOpacity
+                              key={gt}
+                              onPress={async () => {
+                                const current = getDisplayTier(n, globalTierConfig);
+                                addTierHistoryEntry(n.id, n.title, current, gt);
+                                await exec("UPDATE novels SET manual_tier=? WHERE id=?", [gt, n.id]);
+                                await loadList(undefined, undefined, "update");
+                                setReviewSearchQuery("");
+                                Alert.alert("완료", `${n.title}을(를) ${getTierLabel(gt)}티어로 지정했습니다.`);
+                              }}
+                              style={{ backgroundColor: getTierColor(gt), paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8 }}
+                            >
+                              <Text style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}>{getTierLabel(gt)}</Text>
+                            </TouchableOpacity>
+                          ))}
                         </View>
                       </View>
                     ))
@@ -33756,7 +33714,7 @@ async function importJSON() {
                         <TouchableOpacity
                           onPress={async () => {
                             // 되돌리기: from 티어로 복원
-                            const restoreTier = (h.from === 'S' || h.from === 'A') ? h.from : null;
+                            const restoreTier = isGatedTier(h.from, globalTierConfig) ? h.from : null;
                             Alert.alert("되돌리기", `${h.title}을(를) ${h.from}티어로 복원할까요?`, [
                               { text: "취소" },
                               { text: "복원", onPress: async () => {
@@ -35140,11 +35098,10 @@ async function importJSON() {
               <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>티어 목록 편집</Text>
               <View style={{ backgroundColor: C.bg, padding: 12, borderRadius: 12, marginBottom: 16 }}>
                 {(globalTierConfig.tiers || []).map((t, idx) => (
-                  <View key={t.key + idx} style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                  <View key={`tier-${idx}`} style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 }}>
                     {/* 색상 스와치 */}
                     <TouchableOpacity
                       onPress={() => {
-                        // 색상 팔레트에서 다음 색상으로 순환
                         const currentIdx = TIER_COLOR_PALETTE.indexOf(t.color);
                         const nextColor = TIER_COLOR_PALETTE[(currentIdx + 1) % TIER_COLOR_PALETTE.length];
                         const newTiers = [...globalTierConfig.tiers];
@@ -35153,12 +35110,13 @@ async function importJSON() {
                       }}
                       style={{ backgroundColor: t.color, width: 28, height: 28, borderRadius: 8, borderWidth: 2, borderColor: "rgba(255,255,255,0.3)" }}
                     />
-                    {/* 라벨 입력 */}
+                    {/* 라벨 입력 (key는 불변 — label만 변경) */}
                     <TextInput
                       value={t.label}
                       onChangeText={(v) => {
+                        if (!v.trim()) return; // 빈 라벨 방지
                         const newTiers = [...globalTierConfig.tiers];
-                        newTiers[idx] = { ...newTiers[idx], label: v, key: v || t.key };
+                        newTiers[idx] = { ...newTiers[idx], label: v.trim() };
                         saveAppSettings({ tierSystemConfig: { ...globalTierConfig, tiers: newTiers } });
                       }}
                       style={{
@@ -35230,10 +35188,11 @@ async function importJSON() {
                     onPress={() => {
                       const usedColors = new Set(globalTierConfig.tiers.map(t => t.color));
                       const nextColor = TIER_COLOR_PALETTE.find(c => !usedColors.has(c)) || TIER_COLOR_PALETTE[0];
-                      const newKey = "T" + (globalTierConfig.tiers.length + 1);
+                      // key는 유니크 + 안정적 (타임스탬프 기반, 이후 변경 불가)
+                      const newKey = "T_" + Date.now().toString(36);
+                      const newLabel = "T" + (globalTierConfig.tiers.length);
                       const newTiers = [...globalTierConfig.tiers];
-                      // 마지막(기본 티어) 앞에 삽입
-                      newTiers.splice(newTiers.length - 1, 0, { key: newKey, label: newKey, color: nextColor, threshold: 0, gated: false });
+                      newTiers.splice(newTiers.length - 1, 0, { key: newKey, label: newLabel, color: nextColor, threshold: 0, gated: false });
                       saveAppSettings({ tierSystemConfig: { ...globalTierConfig, tiers: newTiers } });
                     }}
                     style={{ backgroundColor: C.chip, padding: 10, borderRadius: 8, alignItems: "center", marginTop: 4 }}

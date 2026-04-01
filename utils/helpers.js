@@ -264,6 +264,7 @@ export function getGatedTiers(config) {
  * @returns {boolean}
  */
 export function isGatedTier(tier, config) {
+  if (!tier) return false;
   if (!config || !config.tiers) return tier === "S" || tier === "A";
   const found = config.tiers.find(t => t.key === tier);
   return found ? found.gated : false;
