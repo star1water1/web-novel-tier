@@ -20902,7 +20902,9 @@ function AppContent() {
           await migrateTagSystem();
 
           // 🔧 v3.6.0: Tag Registry 로드 (없으면 FACTORY에서 시드 + 기존 사용자 데이터 병합)
-          await loadTagRegistry();
+          // 🔧 v3.6.1: registry 반환값 보존 — useEffect 내에서는 React state가 배치 업데이트 전이므로
+          //   tagRegistry 클로저가 null. addTagToRegistry 등 registry를 참조하는 함수 사용 불가.
+          const loadedRegistry = await loadTagRegistry();
 
           // 🔧 v3.5.15b: 기존 작품 중복 태그 일괄 정리 (1회 자동 실행)
           const dedupDone = await getAppMeta("tag_dedup_v1");
@@ -20923,13 +20925,12 @@ function AppContent() {
           // 🔧 v3.4.4: Promise.all 인덱스 매칭 버그 수정
           // ⚠️ 이전에 getAppMeta("tag_sentiments")가 중복 호출되어 인덱스가 밀려
           //    savedRecentChanges에 award_system_settings가 들어가는 버그 발생했음
-          // 🔧 v3.6.1: user_major_genres, user_sub_genres 제거 (tagRegistry에서 파생)
+          // 🔧 v3.6.1: custom_tags, user_major_genres, user_sub_genres 전부 제거 (tagRegistry에서 파생)
           const [
             savedDarkMode,
             savedPlatformCovers,
             savedSettings,
             savedTierHistory,
-            savedCustomTags,
             savedComboTags,
             savedTagSentiments,
             savedTagAttributes, // 🆕 v3.4: 태그 속성
@@ -20950,22 +20951,21 @@ function AppContent() {
             getAppMeta("platform_covers"),        // 1: savedPlatformCovers
             getAppMeta("app_settings"),           // 2: savedSettings
             getAppMeta("tier_history"),           // 3: savedTierHistory
-            getAppMeta("custom_tags"),            // 4: savedCustomTags (auto-collection 최적화용)
-            getAppMeta("combo_tags"),             // 5: savedComboTags (마이그레이션용)
-            getAppMeta("tag_sentiments"),         // 6: savedTagSentiments
-            getAppMeta("tag_attributes"),         // 7: savedTagAttributes
-            getAppMeta("hidden_tags"),            // 8: savedHiddenTags
-            getAppMeta("award_system_settings"),  // 9: savedAwardSystemSettings
-            getAppMeta("recent_changes"),         // 10: savedRecentChanges
-            getAppMeta("match_insights"),         // 11: savedMatchInsights
-            getAppMeta("tag_relations"),          // 12: savedTagRelations
-            getAppMeta("upset_factors"),          // 13: savedUpsetFactors
-            getAppMeta("auto_match_settings"),    // 14: savedAutoMatchSettings
-            getAppMeta("custom_combo_traits"),    // 15: savedCustomComboTraits
-            getAppMeta("custom_combo_targets"),   // 16: savedCustomComboTargets
-            getTagCoordinateSystems(),            // 17: savedCoordinateSystems
-            getAppMeta("custom_tag_categories"),  // 18: savedCustomTagCategories
-            getAppMeta("match_filter_settings"),  // 19: savedMatchFilterSettings
+            getAppMeta("combo_tags"),             // 4: savedComboTags (마이그레이션용)
+            getAppMeta("tag_sentiments"),         // 5: savedTagSentiments
+            getAppMeta("tag_attributes"),         // 6: savedTagAttributes
+            getAppMeta("hidden_tags"),            // 7: savedHiddenTags
+            getAppMeta("award_system_settings"),  // 8: savedAwardSystemSettings
+            getAppMeta("recent_changes"),         // 9: savedRecentChanges
+            getAppMeta("match_insights"),         // 10: savedMatchInsights
+            getAppMeta("tag_relations"),          // 11: savedTagRelations
+            getAppMeta("upset_factors"),          // 12: savedUpsetFactors
+            getAppMeta("auto_match_settings"),    // 13: savedAutoMatchSettings
+            getAppMeta("custom_combo_traits"),    // 14: savedCustomComboTraits
+            getAppMeta("custom_combo_targets"),   // 15: savedCustomComboTargets
+            getTagCoordinateSystems(),            // 16: savedCoordinateSystems
+            getAppMeta("custom_tag_categories"),  // 17: savedCustomTagCategories
+            getAppMeta("match_filter_settings"),  // 18: savedMatchFilterSettings
           ]);
           
           if (!mounted) return;
@@ -21014,9 +21014,6 @@ function AppContent() {
             setTierHistory(savedTierHistory.slice(0, 50));
           }
           
-          // 🏷️ 커스텀 태그
-          const customTagsList = Array.isArray(savedCustomTags) ? savedCustomTags : [];
-          
           // 🆕 v3.5.9: 커스텀 태그 카테고리
           if (savedCustomTagCategories && typeof savedCustomTagCategories === "object") {
             setCustomTagCategories(savedCustomTagCategories);
@@ -21029,19 +21026,24 @@ function AppContent() {
           }
           
           // 🔧 v3.5.12: 조합식 태그 → 커스텀 태그로 통합 마이그레이션
-          // comboTags에 남아있는 항목을 customTags로 머지 후 comboTags 비움
-          if (Array.isArray(savedComboTags) && savedComboTags.length > 0) {
+          // 🔧 v3.6.1: addTagToRegistry는 tagRegistry 클로저(null)를 참조하므로
+          //   loadedRegistry를 직접 수정하여 updateTagRegistry 호출
+          if (Array.isArray(savedComboTags) && savedComboTags.length > 0 && loadedRegistry) {
             let migrated = 0;
+            const newGeneralTags = { ...(loadedRegistry.generalTags || {}) };
+            if (!newGeneralTags["📁 사용자 태그"]) newGeneralTags["📁 사용자 태그"] = [];
+            const userTags = [...newGeneralTags["📁 사용자 태그"]];
             for (const ct of savedComboTags) {
-              if (!customTags.some(t => isSameTag(t, ct)) && !ALL_DEFAULT_TAGS.some(t => isSameTag(t, ct))) {
-                addTagToRegistry(ct);
+              if (!ALL_DEFAULT_TAGS.some(t => isSameTag(t, ct)) && !userTags.some(t => isSameTag(t, ct))) {
+                userTags.push(ct);
                 migrated++;
               }
             }
             if (migrated > 0) {
+              newGeneralTags["📁 사용자 태그"] = userTags;
+              updateTagRegistry({ ...loadedRegistry, generalTags: newGeneralTags });
               console.log(`[태그 마이그레이션] 조합식 ${migrated}개 → 커스텀 태그로 통합`);
             }
-            // comboTags 비움 (UI에서 빈 배열로 표시)
             setComboTags([]);
             await setAppMeta("combo_tags", []);
           }
@@ -21189,39 +21191,50 @@ function AppContent() {
           }, 2000); // 초기 로딩 완료 후 실행
           
           // 🏷️ 태그 자동 수집 (비동기 - UI 블로킹 없음)
+          // 🔧 v3.6.1: loadedRegistry 직접 사용 (stale closure 방지)
           setTimeout(async () => {
             try {
               const novels = await all("SELECT tags, major_genre, sub_genre FROM novels;");
-              if (!novels || novels.length === 0) return;
-              
+              if (!novels || novels.length === 0 || !loadedRegistry) return;
+
               const allDefaultSet = new Set([...ALL_DEFAULT_TAGS, ...MAJOR_GENRES, ...SUB_GENRES]);
-              const currentCustomSet = new Set(customTagsList);
               const newTags = new Set();
-              
+
               for (const n of novels) {
                 const tags = (n.tags || "").split(",").map(t => t.trim()).filter(Boolean);
                 for (const tag of tags) {
-                  if (!allDefaultSet.has(tag) && !currentCustomSet.has(tag)) {
+                  if (!allDefaultSet.has(tag)) {
                     newTags.add(tag);
                   }
                 }
                 const majors = parseMajorSub(n.major_genre);
                 for (const g of majors) {
-                  if (!listHasTag(MAJOR_GENRES, g) && !allDefaultSet.has(g) && !currentCustomSet.has(g)) {
+                  if (!listHasTag(MAJOR_GENRES, g) && !allDefaultSet.has(g)) {
                     newTags.add(g);
                   }
                 }
                 const subs = parseMajorSub(n.sub_genre);
                 for (const g of subs) {
-                  if (!listHasTag(SUB_GENRES, g) && !allDefaultSet.has(g) && !currentCustomSet.has(g)) {
+                  if (!listHasTag(SUB_GENRES, g) && !allDefaultSet.has(g)) {
                     newTags.add(g);
                   }
                 }
               }
-              
+
               if (newTags.size > 0) {
+                const newGeneralTags = { ...(loadedRegistry.generalTags || {}) };
+                if (!newGeneralTags["📁 사용자 태그"]) newGeneralTags["📁 사용자 태그"] = [];
+                const userTags = [...newGeneralTags["📁 사용자 태그"]];
+                let added = 0;
                 for (const t of newTags) {
-                  addTagToRegistry(t);
+                  if (!userTags.some(ut => isSameTag(ut, t))) {
+                    userTags.push(t);
+                    added++;
+                  }
+                }
+                if (added > 0) {
+                  newGeneralTags["📁 사용자 태그"] = userTags;
+                  updateTagRegistry({ ...loadedRegistry, generalTags: newGeneralTags });
                 }
               }
             } catch (e) {
@@ -21276,7 +21289,7 @@ function AppContent() {
       // 2. 새 DB 초기화 (테이블 생성 등)
       await initDb();
       await migrateTagSystem();
-      await loadTagRegistry(); // 🔧 v3.6.0: 슬롯별 레지스트리 로드
+      const slotRegistry = await loadTagRegistry(); // 🔧 v3.6.1: 반환값 보존
 
       // 3. 모든 데이터 state 초기값으로 리셋
       setList([]);
@@ -21433,17 +21446,22 @@ function AppContent() {
       // 🔧 v3.5.15e: pinnedTags 복원 (useEffect([]) 는 마운트 시 1회만이므로 슬롯 전환 시 별도 로드 필수)
       if (Array.isArray(savedPinnedTags)) setPinnedTags(savedPinnedTags);
       
-      // 🔧 v3.5.15e: comboTags → customTags 마이그레이션 (초기화 코드와 동일한 로직)
-      // 옛 데이터가 있는 슬롯으로 전환 시 마이그레이션 누락 방지
-      if (Array.isArray(savedComboTags) && savedComboTags.length > 0) {
+      // 🔧 v3.6.1: addTagToRegistry는 tagRegistry 클로저(null)를 참조하므로
+      //   slotRegistry를 직접 수정하여 updateTagRegistry 호출
+      if (Array.isArray(savedComboTags) && savedComboTags.length > 0 && slotRegistry) {
         let migrated = 0;
+        const newGeneralTags = { ...(slotRegistry.generalTags || {}) };
+        if (!newGeneralTags["📁 사용자 태그"]) newGeneralTags["📁 사용자 태그"] = [];
+        const userTags = [...newGeneralTags["📁 사용자 태그"]];
         for (const ct of savedComboTags) {
-          if (!customTags.some(t => isSameTag(t, ct)) && !ALL_DEFAULT_TAGS.some(t => isSameTag(t, ct))) {
-            addTagToRegistry(ct);
+          if (!ALL_DEFAULT_TAGS.some(t => isSameTag(t, ct)) && !userTags.some(t => isSameTag(t, ct))) {
+            userTags.push(ct);
             migrated++;
           }
         }
         if (migrated > 0) {
+          newGeneralTags["📁 사용자 태그"] = userTags;
+          updateTagRegistry({ ...slotRegistry, generalTags: newGeneralTags });
           console.log(`[슬롯 전환 태그 마이그레이션] 조합식 ${migrated}개 → 커스텀 태그로 통합`);
         }
         setComboTags([]);
@@ -23699,6 +23717,7 @@ function AppContent() {
       await setAppMeta("custom_tag_categories", null);
     }
     updateTagRegistry(registry);
+    return registry; // 🔧 v3.6.1: 호출자가 React 배치 업데이트 전에도 사용 가능
   }
 
   /** 첫 실행 시드: FACTORY + 기존 사용자 데이터 병합 */
