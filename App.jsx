@@ -5883,7 +5883,7 @@ async function getActiveWeights() {
 /**
  * 취향 기반 승부 예측 생성
  */
-async function generateEnhancedPrediction(A, B) {
+async function generateEnhancedPrediction(A, B, tagAttributes = {}) {
   try {
     const weights = await getActiveWeights();
     const patterns = await getCachedPatterns(5); // 🔧 v3.5.14: 캐시 사용
@@ -6267,8 +6267,8 @@ async function migrateExistingMatchesToPatterns(tagAttrs = {}) {
       
       // 태그 파워
       // 🆕 v3.5.8: 작품명 태그 제외 (분석 교란 방지)
-      const winnerTags = (winnerIsA ? m.a_tags : m.b_tags || "").split(",").map(t => t.trim()).filter(t => t && !isTagTitle(t, tagAttrs));
-      const loserTags = (winnerIsA ? m.b_tags : m.a_tags || "").split(",").map(t => t.trim()).filter(t => t && !isTagTitle(t, tagAttrs));
+      const winnerTags = ((winnerIsA ? m.a_tags : m.b_tags) || "").split(",").map(t => t.trim()).filter(t => t && !isTagTitle(t, tagAttrs));
+      const loserTags = ((winnerIsA ? m.b_tags : m.a_tags) || "").split(",").map(t => t.trim()).filter(t => t && !isTagTitle(t, tagAttrs));
       
       for (const tag of winnerTags) {
         updates.push({ category: "tag_power", patternKey: `tag:${tag}`, didWin: true });
@@ -8034,7 +8034,7 @@ async function rebuildAllFromMatches(savedTagAttrs = {}) {
  * - gap_when_matched + 현재 레이팅으로 이변 여부 근사 판정
  * - 한 번만 실행하면 되는 수동 기능
  */
-async function rebuildMatchInsightsFromHistory(novels) {
+async function rebuildMatchInsightsFromHistory(novels, savedTagAttrs = {}) {
   const matches = await all("SELECT * FROM matches ORDER BY created_at ASC;");
   
   if (!matches || matches.length === 0) {
@@ -25219,7 +25219,7 @@ function AppContent() {
     }
     
     try {
-      const prediction = await generateEnhancedPrediction(novelA, novelB);
+      const prediction = await generateEnhancedPrediction(novelA, novelB, tagAttributes);
       setMatchPrediction(prediction);
     } catch (e) {
       console.warn("generateMatchPrediction 오류:", e);
@@ -36950,7 +36950,7 @@ async function importJSON() {
                         onPress: async () => {
                           setIsLoading(true);
                           try {
-                            const result = await rebuildMatchInsightsFromHistory(list);
+                            const result = await rebuildMatchInsightsFromHistory(list, tagAttributes);
                             
                             // matchInsights 업데이트
                             setMatchInsights(result.insights);
