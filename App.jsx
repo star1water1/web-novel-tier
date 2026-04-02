@@ -24403,6 +24403,8 @@ function AppContent() {
       if (changes.isTitle !== undefined) {
         let attrsCommitted = null;
         setTagAttributes(prev => {
+          const currentIsTitle = !!(prev[tag]?.isTitle);
+          if (changes.isTitle === currentIsTitle) return prev; // 변경 없으면 early return
           const attrs = { ...prev };
           if (changes.isTitle) {
             attrs[tag] = { ...(attrs[tag] || {}), isTitle: true };
