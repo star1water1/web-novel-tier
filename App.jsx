@@ -8319,14 +8319,17 @@ function parseQuotes(val) {
     } catch { /* JSON 파싱 실패 시 아래로 계속 */ }
   }
   // 🔧 v6.0.1: @ 구분자 기반 다중 문장 파싱 — 이메일/핸들러 패턴 보호
-  // "@" 앞뒤에 공백이 없으면(예: user@email.com) 구분자가 아닌 것으로 판단
+  // 구분자 @: 앞뒤에 공백이 1개 이상 있어야 구분자로 인식 (user@email.com 보호)
+  // 레거시 호환: 공백 없는 @ 단독 사용("문장1@문장2")도 지원
   if (trimmed.includes("@")) {
-    const parts = trimmed.split(/\s*@\s*/).filter(Boolean);
-    if (parts.length > 1 && parts.length !== trimmed.split("@").length) {
-      // 공백 기반 분할과 단순 분할이 다르면 → 일부 @는 구분자가 아님 → 단일 문장
-      return [trimmed];
+    // 공백 있는 @ 먼저 시도 (안전한 구분자)
+    if (/\s@\s/.test(trimmed)) {
+      return trimmed.split(/\s+@\s+/).map(q => q.trim()).filter(Boolean);
     }
-    if (parts.length > 1) return parts;
+    // 레거시 폴백: @가 단어 사이에 없을 때만 (이메일 패턴 아닐 때)
+    if (!/\w@\w/.test(trimmed)) {
+      return trimmed.split("@").map(q => q.trim()).filter(Boolean);
+    }
   }
   return [trimmed];
 }
@@ -15523,7 +15526,7 @@ const AwardsScreen = memo(({
               {/* 🔧 v6.0.1: 동적 티어 필터 옵션 */}
               {[
                 { value: null, label: "무관" },
-                ...globalTierConfig.tiers.slice(0, -1).map(t => ({ value: t.key, label: `${getTierLabel(t.key, globalTierConfig)} 이상` })),
+                ...(globalTierConfig.tiers || []).slice(0, -1).map(t => ({ value: t.key, label: `${getTierLabel(t.key, globalTierConfig)} 이상` })),
               ].map(opt => (
                 <TouchableOpacity
                   key={opt.value || "null"}
@@ -16456,7 +16459,7 @@ const AwardsScreen = memo(({
                       {/* 🔧 v6.0.1: 동적 티어 필터 옵션 */}
                       {[
                         { value: null, label: "무관" },
-                        ...globalTierConfig.tiers.slice(0, -1).map(t => ({ value: t.key, label: `${getTierLabel(t.key, globalTierConfig)}+` })),
+                        ...(globalTierConfig.tiers || []).slice(0, -1).map(t => ({ value: t.key, label: `${getTierLabel(t.key, globalTierConfig)}+` })),
                       ].map(opt => (
                         <TouchableOpacity
                           key={opt.value || "none"}
@@ -24138,15 +24141,21 @@ function AppContent() {
   }
 
   /** 🔧 v6.0.1: 함수형 업데이트 기반 registry 변경 (stale closure 방지) */
+  /** 부수효과(applyTagRegistry, setAppMeta)는 updater 외부에서 실행 */
   function updateTagRegistryFn(updaterFn) {
+    let committed = null;
     setTagRegistry(prev => {
       if (!prev) return prev;
       const next = updaterFn(prev);
       if (next === prev) return prev;
-      applyTagRegistry(next);
-      setAppMeta("tag_registry", next);
+      committed = next;
       return next;
     });
+    // React batch 후 부수효과 실행 (updater 순수성 보장)
+    if (committed) {
+      applyTagRegistry(committed);
+      setAppMeta("tag_registry", committed);
+    }
   }
 
   /** 레지스트리에 태그 추가 (카테고리 미지정 시 "📁 사용자 태그") */
@@ -24371,8 +24380,10 @@ function AppContent() {
       }
       
       // 🔧 v6.0.1: 속성(감정) 변경 — 함수형 업데이트로 stale closure 방지
+      // 부수효과(setAppMeta)는 updater 외부에서 실행 (React 순수성 보장)
       if (changes.sentiment !== undefined) {
         const newSentiment = changes.sentiment || null;
+        let sentimentCommitted = null;
         setTagSentiments(prev => {
           const currentSentiment = getTagSentiment(tag, prev);
           if (newSentiment === currentSentiment) return prev;
@@ -24382,13 +24393,15 @@ function AppContent() {
           } else {
             updated[tag] = newSentiment;
           }
-          setAppMeta("tag_sentiments", updated);
+          sentimentCommitted = updated;
           return updated;
         });
+        if (sentimentCommitted) setAppMeta("tag_sentiments", sentimentCommitted);
       }
 
       // 🔧 v6.0.1: 작품명 태그 속성 변경 — 함수형 업데이트로 stale closure 방지
       if (changes.isTitle !== undefined) {
+        let attrsCommitted = null;
         setTagAttributes(prev => {
           const attrs = { ...prev };
           if (changes.isTitle) {
@@ -24399,9 +24412,10 @@ function AppContent() {
               if (Object.keys(attrs[tag]).length === 0) delete attrs[tag];
             }
           }
-          setAppMeta("tag_attributes", attrs);
+          attrsCommitted = attrs;
           return attrs;
         });
+        if (attrsCommitted) setAppMeta("tag_attributes", attrsCommitted);
       }
     } catch (e) {
       console.warn("handleTagEditModalSave error:", e);
@@ -24559,19 +24573,21 @@ function AppContent() {
           text: "삭제",
           style: "destructive",
           onPress: async () => {
-            // 🔧 v6.0.1: 일괄 제거 (setState 배칭으로 인한 유실 방지)
+            // 🔧 v6.0.1: 일괄 제거 — updateTagRegistryFn으로 stale closure 방지
             const allUnused = [...unusedCustom, ...unusedMajor, ...unusedSub];
-            if (allUnused.length > 0 && tagRegistry) {
-              const newRegistry = { ...tagRegistry };
-              newRegistry.majorGenres = newRegistry.majorGenres.filter(t => !allUnused.some(u => isSameTag(t, u)));
-              newRegistry.subGenres = newRegistry.subGenres.filter(t => !allUnused.some(u => isSameTag(t, u)));
-              const newGeneral = {};
-              for (const [cat, tags] of Object.entries(newRegistry.generalTags)) {
-                const filtered = tags.filter(t => !allUnused.some(u => isSameTag(t, u)));
-                if (filtered.length > 0) newGeneral[cat] = filtered;
-              }
-              newRegistry.generalTags = newGeneral;
-              updateTagRegistry(newRegistry);
+            if (allUnused.length > 0) {
+              updateTagRegistryFn(prev => {
+                const newRegistry = { ...prev };
+                newRegistry.majorGenres = newRegistry.majorGenres.filter(t => !allUnused.some(u => isSameTag(t, u)));
+                newRegistry.subGenres = newRegistry.subGenres.filter(t => !allUnused.some(u => isSameTag(t, u)));
+                const newGeneral = {};
+                for (const [cat, tags] of Object.entries(newRegistry.generalTags)) {
+                  const filtered = tags.filter(t => !allUnused.some(u => isSameTag(t, u)));
+                  if (filtered.length > 0) newGeneral[cat] = filtered;
+                }
+                newRegistry.generalTags = newGeneral;
+                return newRegistry;
+              });
             }
             Alert.alert("완료", `미사용 태그 ${total}개를 삭제했습니다.`);
           }
@@ -25926,6 +25942,11 @@ function AppContent() {
     // 스냅샷 없거나 editItem 없으면 바로 닫기
     if (!snap || !curr) {
       removedQuoteImagesRef.current = []; // 📷 v3.6.2: 방어적 정리
+      // 📷 v6.0.1: 비정상 닫기 시 새 이미지 고아 방지
+      for (const uri of editNewQuoteImagesRef.current) {
+        FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+      }
+      editNewQuoteImagesRef.current = [];
       setEditOpen(false);
       updateEditItem(null);
       return;
@@ -25982,6 +26003,13 @@ function AppContent() {
     } else {
       editOriginalSnapshotRef.current = null;
       removedQuoteImagesRef.current = []; // 📷 v3.6.2: 닫기 시 삭제 목록 초기화
+      // 📷 v6.0.1: 방어적 정리 (변경 감지가 누락된 경우 대비)
+      if (editNewQuoteImagesRef.current.length > 0) {
+        for (const uri of editNewQuoteImagesRef.current) {
+          FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+        }
+        editNewQuoteImagesRef.current = [];
+      }
       setEditOpen(false);
       updateEditItem(null);
     }
@@ -27497,7 +27525,7 @@ function AppContent() {
         count: byTier[k] || 0, ratio: total > 0 ? ((byTier[k] || 0) / total * 100).toFixed(1) : "0",
       })),
     };
-  }, [list, screen]);
+  }, [list, screen, appSettings]); // 🔧 v6.0.1: appSettings 추가 (tierSystemConfig 변경 시 byTier 키 갱신)
 
   // 🔧 v3.5.3: selectedIds 변경 시 ref 동기화 (stale closure 완전 방지)
   useEffect(() => {
@@ -28846,8 +28874,15 @@ async function importJSON() {
               if (data.TR && typeof data.TR === "object") {
                 updateTagRegistry(data.TR);
               } else if (data.TM) {
-                // 🔧 v6.0.1: TR 없는 구 백업 → FACTORY를 base로 사용 (현재 registry 오염 방지)
-                const newRegistry = { majorGenres: [...FACTORY_MAJOR_GENRES], subGenres: [...FACTORY_SUB_GENRES], generalTags: {...FACTORY_GENERAL_TAGS} };
+                // 🔧 v6.0.1: TR 없는 구 백업 → 완전한 FACTORY를 base로 사용 (현재 registry 오염 방지)
+                const newRegistry = {
+                  majorGenres: [...FACTORY_MAJOR_GENRES],
+                  subGenres: [...FACTORY_SUB_GENRES],
+                  generalTags: {...FACTORY_GENERAL_TAGS},
+                  characterCategories: { ...FACTORY_CHARACTER_CATEGORIES },
+                  aliases: { ...FACTORY_TAG_ALIASES },
+                  spectrumGroups: { ...FACTORY_TAG_SPECTRUM_GROUPS },
+                };
                 if (Array.isArray(data.TM.umg))
                   newRegistry.majorGenres = deduplicateTags([...FACTORY_MAJOR_GENRES, ...data.TM.umg]);
                 if (Array.isArray(data.TM.usg))
@@ -29305,6 +29340,8 @@ async function importJSON() {
 
   // 📝 다음 보충 작품 선택
   const pickNextSupplementNovel = useCallback(() => {
+    // 📷 v6.0.1: 작품 전환 전 이미지 삭제 추적 초기화 (다음 작품에 이전 삭제목록 적용 방지)
+    removedQuoteImagesRef.current = [];
     if (supplementList.length === 0) {
       setSupplementCurrentNovel(null);
       updateEditItem(null);
@@ -29316,7 +29353,7 @@ async function importJSON() {
     // 다음 인덱스 (끝이면 처음으로)
     const nextIdx = currentIdx >= 0 && currentIdx < supplementList.length - 1 ? currentIdx + 1 : 0;
     const picked = supplementList[nextIdx];
-    
+
     setSupplementCurrentNovel(picked);
     updateEditItem(picked ? { ...picked.novel } : null);
     return picked;
@@ -30594,7 +30631,7 @@ async function importJSON() {
                 {/* 🔧 v6.0.1: 동적 티어 필터 (하드코딩 제거) */}
                 {[
                   ["전체", "ALL"],
-                  ...globalTierConfig.tiers.map(t => [getTierLabel(t.key, globalTierConfig), t.key]),
+                  ...(globalTierConfig.tiers || []).map(t => [getTierLabel(t.key, globalTierConfig), t.key]),
                 ].map(([label, key]) => (
                   <Chip
                     key={key}
