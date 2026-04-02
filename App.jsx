@@ -27814,7 +27814,7 @@ const WORK_STATUS_REV = ["ongoing", "completed", "hiatus", "dropped", "discontin
 // 기준 타임스탬프: 2024-01-01 00:00:00 UTC (초 단위)
 const BASE_TIMESTAMP = 1704067200;
 
-function buildUltraCompactBackup(novels, matches, coverImages = null) {
+async function buildUltraCompactBackup(novels, matches, coverImages = null) {
   // 사전 구축
   const tagDict = [], tagIndex = new Map();
   const platDict = [], platIndex = new Map();
@@ -27981,8 +27981,8 @@ function buildUltraCompactBackup(novels, matches, coverImages = null) {
 }
 
 // ⚙️ 설정 및 히스토리를 포함한 확장 백업 (v2.6)
-function buildExtendedBackup(novels, matches, settings, tierHist, coverImages = null, analysisData = null) {
-  const base = buildUltraCompactBackup(novels, matches, coverImages);
+async function buildExtendedBackup(novels, matches, settings, tierHist, coverImages = null, analysisData = null) {
+  const base = await buildUltraCompactBackup(novels, matches, coverImages);
   
   // 설정 추가 (기본값 아닌 것만)
   const settingsDiff = {};
@@ -28146,7 +28146,7 @@ async function exportJSON() {
     };
 
     // ⚙️ 확장 백업: 설정 + 히스토리 + 표지 + 분석데이터 포함 (v3.0.4)
-    const payload = buildExtendedBackup(novels, matches, appSettings, tierHistory, coverCount > 0 ? coverImages : null, analysisData);
+    const payload = await buildExtendedBackup(novels, matches, appSettings, tierHistory, coverCount > 0 ? coverImages : null, analysisData);
     
     // 📷 표지 포함 여부 표시
     if (coverCount > 0) {
