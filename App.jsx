@@ -4988,14 +4988,9 @@ function createNovelSnapshot(novel, tagAttributes = {}) {
     majorGenre = novel.major_genre || null;
   }
   
-  // 레이팅에서 티어 계산
-  const rating = Number(novel.rating) || 1500;
-  let tier = "C";
-  if (rating >= 1950) tier = "S";
-  else if (rating >= 1850) tier = "A";
-  else if (rating >= 1700) tier = "B+";
-  else if (rating >= 1600) tier = "B";
-  else if (rating >= 1500) tier = "B-";
+  // 🔧 v6.0.1: 레이팅에서 티어 계산 — globalTierConfig 기반 동적 (하드코딩 제거)
+  const rating = Number(novel.rating) || (globalTierConfig.defaultRating || 1500);
+  const tier = tierFromRating(rating, globalTierConfig);
   
   return {
     id: novel.id,
@@ -8323,9 +8318,15 @@ function parseQuotes(val) {
       return [];
     } catch { /* JSON 파싱 실패 시 아래로 계속 */ }
   }
-  // 🔧 v3.5.6: @ 구분자 기반 다중 문장 파싱
+  // 🔧 v6.0.1: @ 구분자 기반 다중 문장 파싱 — 이메일/핸들러 패턴 보호
+  // "@" 앞뒤에 공백이 없으면(예: user@email.com) 구분자가 아닌 것으로 판단
   if (trimmed.includes("@")) {
-    return trimmed.split("@").map(q => q.trim()).filter(Boolean);
+    const parts = trimmed.split(/\s*@\s*/).filter(Boolean);
+    if (parts.length > 1 && parts.length !== trimmed.split("@").length) {
+      // 공백 기반 분할과 단순 분할이 다르면 → 일부 @는 구분자가 아님 → 단일 문장
+      return [trimmed];
+    }
+    if (parts.length > 1) return parts;
   }
   return [trimmed];
 }
@@ -8670,13 +8671,11 @@ const Section = ({ title, children }) => (
   </View>
 );
 
+// 🔧 v6.0.1: globalTierConfig 기반 동적 tierBadge (하드코딩 제거)
 const tierBadge = (r) => {
-  if (r >= 1950) return { t: "S", c: C.s };
-  if (r >= 1850) return { t: "A", c: C.a };
-  if (r >= 1700) return { t: "B+", c: C.bp };
-  if (r >= 1600) return { t: "B", c: C.b };
-  if (r >= 1500) return { t: "B-", c: C.bm };
-  return { t: "C", c: C.c };
+  const cfg = globalTierConfig;
+  const tier = tierFromRating(r, cfg);
+  return { t: getTierLabel(tier, cfg), c: getTierColor(tier, cfg) };
 };
 const TierTag = memo(({ rating }) => {
   const { t, c } = tierBadge(rating);
@@ -8706,7 +8705,7 @@ const ActualTierTag = memo(({ novel, showDiff = false }) => {
   // match/hybrid 모드에서만 권장 티어 비교 의미 있음
   const isMatchMode = cfg.mode === "match" || cfg.mode === "hybrid";
   const recommended = isMatchMode ? tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg) : actual;
-  const isForced = isMatchMode && novel.manual_tier && tierRank(tierFromRating(novel.rating || 1500, cfg), cfg) > tierRank(novel.manual_tier, cfg);
+  const isForced = isMatchMode && novel.manual_tier && tierRank(tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg), cfg) > tierRank(novel.manual_tier, cfg);
   const hasDiff = actual !== recommended;
 
   return (
@@ -8925,7 +8924,8 @@ const TagChipView = memo(({
 
 // 기본 상 템플릿 (새 연도 생성 시 복사)
 const DEFAULT_AWARD_TEMPLATE = [
-  { id: "grand", name: "대상", count: 1, tierMin: "S", matchTags: [], color: "#f97316", icon: "🏆" },
+  // 🔧 v6.0.1: tierMin은 null로 기본 설정 (커스텀 프리셋에서 "S" 키가 없을 수 있음)
+  { id: "grand", name: "대상", count: 1, tierMin: null, matchTags: [], color: "#f97316", icon: "🏆" },
   { id: "best_fantasy", name: "베스트 판타지", count: 1, tierMin: null, matchTags: ["판타지", "하이판타지", "마법", "정령"], color: "#6366f1", icon: "🐉" },
   { id: "best_modern", name: "베스트 현판", count: 1, tierMin: null, matchTags: ["현판", "현대판타지", "헌터", "던전", "게이트"], color: "#0ea5e9", icon: "⚡" },
   { id: "best_murim", name: "베스트 무협", count: 1, tierMin: null, matchTags: ["무협", "신무협", "무림", "강호"], color: "#dc2626", icon: "⚔️" },
@@ -15520,12 +15520,10 @@ const AwardsScreen = memo(({
             {/* 티어 필터 */}
             <Text style={{ color: C.text, fontWeight: "700", marginBottom: 6 }}>최소 티어</Text>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+              {/* 🔧 v6.0.1: 동적 티어 필터 옵션 */}
               {[
                 { value: null, label: "무관" },
-                { value: "S", label: "S 이상" },
-                { value: "A", label: "A 이상" },
-                { value: "B+", label: "B+ 이상" },
-                { value: "B", label: "B 이상" },
+                ...globalTierConfig.tiers.slice(0, -1).map(t => ({ value: t.key, label: `${getTierLabel(t.key, globalTierConfig)} 이상` })),
               ].map(opt => (
                 <TouchableOpacity
                   key={opt.value || "null"}
@@ -16455,12 +16453,10 @@ const AwardsScreen = memo(({
                   <View style={{ marginBottom: 12 }}>
                     <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>최소 티어 조건</Text>
                     <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                      {/* 🔧 v6.0.1: 동적 티어 필터 옵션 */}
                       {[
                         { value: null, label: "무관" },
-                        { value: "S", label: "S+" },
-                        { value: "A", label: "A+" },
-                        { value: "B+", label: "B++" },
-                        { value: "B", label: "B+" },
+                        ...globalTierConfig.tiers.slice(0, -1).map(t => ({ value: t.key, label: `${getTierLabel(t.key, globalTierConfig)}+` })),
                       ].map(opt => (
                         <TouchableOpacity
                           key={opt.value || "none"}
@@ -19335,7 +19331,8 @@ function tierRank(tier, config) {
 // 🆕 v6.0: 모드별 표시 티어 계산
 function getDisplayTier(novel, config) {
   const cfg = config || globalTierConfig;
-  if (!cfg || !cfg.tiers) return "C";
+  // 🔧 v6.0.1: 커스텀 프리셋에서 "C" 키가 없을 수 있으므로 defaultTier 사용
+  if (!cfg || !cfg.tiers) return DEFAULT_TIER_SYSTEM_CONFIG.defaultTier;
 
   const mode = cfg.mode || "match";
   const tierOrder = getActiveTierOrder(cfg);
@@ -19392,10 +19389,12 @@ function getReviewStatus(novel, config) {
 function getTierColor(tier, config) {
   const cfg = config || globalTierConfig;
   if (cfg && cfg.tiers) {
-    // O(1) 룩업 테이블 사용
-    const found = globalTierLookup.get(tier);
-    if (found) return found.color;
-    // 폴백: 배열 검색
+    // 🔧 v6.0.1: 전달된 config가 globalTierConfig와 같을 때만 룩업 테이블 사용
+    if (!config || config === globalTierConfig) {
+      const found = globalTierLookup.get(tier);
+      if (found) return found.color;
+    }
+    // 배열 검색 (다른 config 전달 시 또는 룩업 미스 시)
     const t = cfg.tiers.find(t => t.key === tier);
     if (t) return t.color;
   }
@@ -19407,8 +19406,11 @@ function getTierColor(tier, config) {
 function getTierLabel(tier, config) {
   const cfg = config || globalTierConfig;
   if (cfg && cfg.tiers) {
-    const found = globalTierLookup.get(tier);
-    if (found) return found.label;
+    // 🔧 v6.0.1: 전달된 config가 globalTierConfig와 같을 때만 룩업 테이블 사용
+    if (!config || config === globalTierConfig) {
+      const found = globalTierLookup.get(tier);
+      if (found) return found.label;
+    }
     const t = cfg.tiers.find(t => t.key === tier);
     if (t) return t.label;
   }
@@ -20472,6 +20474,7 @@ function AppContent() {
   const [quotesShuffled, setQuotesShuffled] = useState(null); // null=원본순, array=셔플순
   const quotesSwipeRef = useRef({ startX: 0, startY: 0 }); // 🔀 v3.5.5: 스와이프 감지
   const removedQuoteImagesRef = useRef([]); // 📷 v3.6.1: 편집 중 삭제된 이미지 URI 추적 (저장 시 실제 삭제)
+  const editNewQuoteImagesRef = useRef([]); // 📷 v6.0.1: 편집 모달에서 새로 추가된 이미지 URI 추적 (취소 시 정리)
   const regQuoteImagesRef = useRef([]); // 📷 v3.6.2: 등록 폼에서 추가된 이미지 URI 추적 (실패/취소 시 정리)
   const [settingsSubTab, setSettingsSubTab] = useState("app"); // 🆕 Phase 2: 설정 서브탭 ("app" | "tags" | "analysis" | "backup" | "diag")
   const [refreshKey, setRefreshKey] = useState(0); // 🔬 v3.5.9: 진단 대시보드 새로고침 키
@@ -21643,8 +21646,8 @@ function AppContent() {
       setUpsetFactors({ factors: [], lastUpdated: 0 });
       setTagRelations({ groups: {}, tagToGroup: {} });
       setTagCoOccurrences({});
-      // 🔧 v3.6.1: slotRegistry 사용 (tagRegistry 클로저는 이전 슬롯의 stale 데이터)
-      if (slotRegistry) updateTagRegistry({...slotRegistry, generalTags: {...FACTORY_GENERAL_TAGS}, majorGenres: [...FACTORY_MAJOR_GENRES], subGenres: [...FACTORY_SUB_GENRES]});
+      // 🔧 v6.0.1: 새 슬롯의 registry를 그대로 사용 (FACTORY 강제 덮어쓰기 제거 — 사용자 정의 태그 보존)
+      if (slotRegistry) updateTagRegistry(slotRegistry);
       setComboTags([]);
       setTagSentiments({});
       setTagAttributes({});
@@ -21665,6 +21668,9 @@ function AppContent() {
       // 🔧 v3.5.15e: appSettings + globalTierThresholds 리셋 (이전 슬롯 설정 잔류 방지)
       setAppSettings(DEFAULT_SETTINGS);
       globalTierThresholds = { ...DEFAULT_SETTINGS.tierThresholds };
+      // 🔧 v6.0.1: globalTierConfig + lookup 리셋 (이전 슬롯 커스텀 프리셋 잔류 방지)
+      globalTierConfig = { ...DEFAULT_TIER_SYSTEM_CONFIG };
+      rebuildTierLookup(globalTierConfig);
       // 🔧 누락 리셋 보완
       setMatchStats({ total: 0, done: 0, percent: 0 });
       setIsAutoMatching(false);
@@ -22257,7 +22263,7 @@ function AppContent() {
                   0, // wins
                   0, // losses
                   0, // match_count
-                  "C", // tier
+                  globalTierConfig.defaultTier || "C", // 🔧 v6.0.1: 동적 기본 티어
                   now,
                   "", // awards
                   Number(planned.total_episodes) || 0,
@@ -24131,33 +24137,47 @@ function AppContent() {
     });
   }
 
+  /** 🔧 v6.0.1: 함수형 업데이트 기반 registry 변경 (stale closure 방지) */
+  function updateTagRegistryFn(updaterFn) {
+    setTagRegistry(prev => {
+      if (!prev) return prev;
+      const next = updaterFn(prev);
+      if (next === prev) return prev;
+      applyTagRegistry(next);
+      setAppMeta("tag_registry", next);
+      return next;
+    });
+  }
+
   /** 레지스트리에 태그 추가 (카테고리 미지정 시 "📁 사용자 태그") */
   function addTagToRegistry(tag, category = "📁 사용자 태그") {
-    if (!tag || !tagRegistry) return;
-    if (ALL_DEFAULT_TAGS.some(t => isSameTag(t, tag))) return; // 전체 레지스트리 중복 체크
-    const newGeneralTags = { ...tagRegistry.generalTags };
-    if (!newGeneralTags[category]) newGeneralTags[category] = [];
-    newGeneralTags[category] = [...newGeneralTags[category], tag];
-    updateTagRegistry({ ...tagRegistry, generalTags: newGeneralTags });
+    if (!tag) return;
+    if (ALL_DEFAULT_TAGS.some(t => isSameTag(t, tag))) return;
+    updateTagRegistryFn(prev => {
+      const newGeneralTags = { ...prev.generalTags };
+      if (!newGeneralTags[category]) newGeneralTags[category] = [];
+      // 이미 있으면 무시
+      if (newGeneralTags[category].some(t => isSameTag(t, tag))) return prev;
+      newGeneralTags[category] = [...newGeneralTags[category], tag];
+      return { ...prev, generalTags: newGeneralTags };
+    });
   }
 
   /** 레지스트리에서 태그 제거 (모든 카테고리에서 검색하여 제거) */
   function removeTagFromRegistry(tag) {
-    if (!tag || !tagRegistry) return;
-    const newRegistry = { ...tagRegistry };
-    // majorGenres에서 제거
-    newRegistry.majorGenres = newRegistry.majorGenres.filter(t => !isSameTag(t, tag));
-    // subGenres에서 제거
-    newRegistry.subGenres = newRegistry.subGenres.filter(t => !isSameTag(t, tag));
-    // generalTags 각 카테고리에서 제거
-    const newGeneral = {};
-    for (const [cat, tags] of Object.entries(newRegistry.generalTags)) {
-      const filtered = tags.filter(t => !isSameTag(t, tag));
-      if (filtered.length > 0) newGeneral[cat] = filtered;
-      // 빈 카테고리는 자동 삭제
-    }
-    newRegistry.generalTags = newGeneral;
-    updateTagRegistry(newRegistry);
+    if (!tag) return;
+    updateTagRegistryFn(prev => {
+      const newRegistry = { ...prev };
+      newRegistry.majorGenres = newRegistry.majorGenres.filter(t => !isSameTag(t, tag));
+      newRegistry.subGenres = newRegistry.subGenres.filter(t => !isSameTag(t, tag));
+      const newGeneral = {};
+      for (const [cat, tags] of Object.entries(newRegistry.generalTags)) {
+        const filtered = tags.filter(t => !isSameTag(t, tag));
+        if (filtered.length > 0) newGeneral[cat] = filtered;
+      }
+      newRegistry.generalTags = newGeneral;
+      return newRegistry;
+    });
   }
 
   // 🎭 v2.8: 태그 속성 저장
@@ -24350,38 +24370,38 @@ function AppContent() {
         });
       }
       
-      // 속성(감정) 변경
+      // 🔧 v6.0.1: 속성(감정) 변경 — 함수형 업데이트로 stale closure 방지
       if (changes.sentiment !== undefined) {
-        const currentSentiment = getTagSentiment(tag, tagSentiments);
-        // null인 경우: 커스텀 설정 삭제 (기본값 사용)
-        // 값이 있는 경우: 해당 값으로 설정
         const newSentiment = changes.sentiment || null;
-        if (newSentiment !== currentSentiment) {
+        setTagSentiments(prev => {
+          const currentSentiment = getTagSentiment(tag, prev);
+          if (newSentiment === currentSentiment) return prev;
+          const updated = { ...prev };
           if (newSentiment === null) {
-            // 커스텀 설정 삭제 → 기본값 사용
-            const updated = { ...tagSentiments };
             delete updated[tag];
-            await saveTagSentiments(updated);
           } else {
-            await setTagSentiment(tag, newSentiment);
+            updated[tag] = newSentiment;
           }
-        }
+          setAppMeta("tag_sentiments", updated);
+          return updated;
+        });
       }
-      
-      // 🆕 v3.5.8: 작품명 태그 속성 변경
+
+      // 🔧 v6.0.1: 작품명 태그 속성 변경 — 함수형 업데이트로 stale closure 방지
       if (changes.isTitle !== undefined) {
-        const attrs = { ...tagAttributes };
-        if (changes.isTitle) {
-          attrs[tag] = { ...(attrs[tag] || {}), isTitle: true };
-        } else {
-          if (attrs[tag]) {
-            delete attrs[tag].isTitle;
-            // 빈 객체면 제거
-            if (Object.keys(attrs[tag]).length === 0) delete attrs[tag];
+        setTagAttributes(prev => {
+          const attrs = { ...prev };
+          if (changes.isTitle) {
+            attrs[tag] = { ...(attrs[tag] || {}), isTitle: true };
+          } else {
+            if (attrs[tag]) {
+              delete attrs[tag].isTitle;
+              if (Object.keys(attrs[tag]).length === 0) delete attrs[tag];
+            }
           }
-        }
-        setTagAttributes(attrs);
-        await setAppMeta("tag_attributes", attrs);
+          setAppMeta("tag_attributes", attrs);
+          return attrs;
+        });
       }
     } catch (e) {
       console.warn("handleTagEditModalSave error:", e);
@@ -24539,10 +24559,19 @@ function AppContent() {
           text: "삭제",
           style: "destructive",
           onPress: async () => {
-            // 🔧 v3.6.1: registry 단일 경로로 제거 (구 state 자동 파생)
+            // 🔧 v6.0.1: 일괄 제거 (setState 배칭으로 인한 유실 방지)
             const allUnused = [...unusedCustom, ...unusedMajor, ...unusedSub];
-            for (const tag of allUnused) {
-              removeTagFromRegistry(tag);
+            if (allUnused.length > 0 && tagRegistry) {
+              const newRegistry = { ...tagRegistry };
+              newRegistry.majorGenres = newRegistry.majorGenres.filter(t => !allUnused.some(u => isSameTag(t, u)));
+              newRegistry.subGenres = newRegistry.subGenres.filter(t => !allUnused.some(u => isSameTag(t, u)));
+              const newGeneral = {};
+              for (const [cat, tags] of Object.entries(newRegistry.generalTags)) {
+                const filtered = tags.filter(t => !allUnused.some(u => isSameTag(t, u)));
+                if (filtered.length > 0) newGeneral[cat] = filtered;
+              }
+              newRegistry.generalTags = newGeneral;
+              updateTagRegistry(newRegistry);
             }
             Alert.alert("완료", `미사용 태그 ${total}개를 삭제했습니다.`);
           }
@@ -25475,8 +25504,8 @@ function AppContent() {
         onPress: async () => {
           setIsLoading(true);
           try {
-            // 🖼️ v3.4.5: 삭제 전에 해당 작품의 표지 가져오기
-            const novel = await first("SELECT cover_image FROM novels WHERE id=?", [id]);
+            // 🖼️ v3.4.5: 삭제 전에 해당 작품의 표지 + 📷 v6.0.1: 명대사 이미지 가져오기
+            const novel = await first("SELECT cover_image, memorable_quote FROM novels WHERE id=?", [id]);
             const coverPath = novel?.cover_image;
             
             // 🔄 v3.5.0: 상태 동기화 - 삭제 대상과 관련된 모든 상태 초기화
@@ -25512,6 +25541,18 @@ function AppContent() {
             if (coverPath) {
               await updateCoverStatus(coverPath, null, "unused");
               await loadCoverLibrary();
+            }
+
+            // 📷 v6.0.1: 명대사 이미지 파일 정리 (고아 방지)
+            if (novel?.memorable_quote) {
+              try {
+                const quotes = parseQuotes(novel.memorable_quote);
+                for (const q of quotes) {
+                  if (isImageQuote(q)) {
+                    FileSystem.deleteAsync(q.uri, { idempotent: true }).catch(() => {});
+                  }
+                }
+              } catch {}
             }
             
             await rebuildAllFromMatches(tagAttributes);
@@ -25928,6 +25969,11 @@ function AppContent() {
           { text: "저장하지 않고 닫기", style: "destructive", onPress: () => {
             editOriginalSnapshotRef.current = null;
             removedQuoteImagesRef.current = []; // 📷 v3.6.2: 취소 시 삭제 목록 폐기 (이미지 보존)
+            // 📷 v6.0.1: 취소 시 새로 추가한 이미지 파일 정리 (고아 방지)
+            for (const uri of editNewQuoteImagesRef.current) {
+              FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+            }
+            editNewQuoteImagesRef.current = [];
             setEditOpen(false);
             updateEditItem(null);
           }},
@@ -25985,6 +26031,7 @@ function AppContent() {
     // 💬 인상깊은 문장 로드
     setEditQuotes(parseQuotes(n.memorable_quote)); // 💬 v3.5.4: 다중 문장 파싱
     removedQuoteImagesRef.current = []; // 📷 v3.6.1: 이미지 삭제 추적 초기화
+    editNewQuoteImagesRef.current = []; // 📷 v6.0.1: 새 이미지 추적 초기화
 
     // ★ awards JSON → 편집용 배열로 파싱
     let parsed = [];
@@ -26166,6 +26213,7 @@ function AppContent() {
         }
         removedQuoteImagesRef.current = [];
       }
+      editNewQuoteImagesRef.current = []; // 📷 v6.0.1: 저장 성공 → 추적 해제 (파일 유지)
       // 🔧 v3.5.9: DB 저장 성공 후 모달 닫기 (savePlannedEdit 패턴과 통일)
       syncTagsToCustom(n.tags?.trim() || ""); // 🔧 v3.5.9: 태그 동기화
       if (_pt) PerfMonitor.trackFunc("saveEdit", Date.now() - _pt); // 🔬
@@ -27374,7 +27422,7 @@ function AppContent() {
       return {
         total: list?.length || 0,
         avg: 0,
-        byTier: { S: 0, A: 0, "B+": 0, B: 0, "B-": 0, C: 0 },
+        byTier: Object.fromEntries(getActiveTierOrder(globalTierConfig).map(k => [k, 0])),
         byPlat: {},
         byGenre: {},
         byStatus: {},
@@ -27382,13 +27430,12 @@ function AppContent() {
         manualTierCount: 0,     // 수동 지정된 작품 수
         forcedTierCount: 0,     // 강제 지정 (점수 미달) 수
         pendingReviewCount: 0,  // 검토 대기 수
-        sRatio: 0,
-        aRatio: 0,
       };
     }
 
     const total = list.length;
-    const byTier = { S: 0, A: 0, "B+": 0, B: 0, "B-": 0, C: 0 };
+    // 🔧 v6.0.1: 동적 티어 키로 byTier 초기화 (하드코딩 제거)
+    const byTier = Object.fromEntries(getActiveTierOrder(globalTierConfig).map(k => [k, 0]));
     const byPlat = {};
     const byGenre = {};
     const byStatus = {};
@@ -27444,8 +27491,11 @@ function AppContent() {
       manualTierCount,
       forcedTierCount,
       pendingReviewCount,
-      sRatio: total > 0 ? (byTier.S / total * 100).toFixed(1) : 0,
-      aRatio: total > 0 ? (byTier.A / total * 100).toFixed(1) : 0,
+      // 🔧 v6.0.1: 동적 gated 티어 비율 (하드코딩 S/A 제거)
+      gatedRatios: getGatedTiers(globalTierConfig).map(k => ({
+        key: k, label: getTierLabel(k, globalTierConfig), color: getTierColor(k, globalTierConfig),
+        count: byTier[k] || 0, ratio: total > 0 ? ((byTier[k] || 0) / total * 100).toFixed(1) : "0",
+      })),
     };
   }, [list, screen]);
 
@@ -27986,10 +28036,11 @@ async function buildExtendedBackup(novels, matches, settings, tierHist, coverIma
   
   // 설정 추가 (기본값 아닌 것만)
   const settingsDiff = {};
+  // 🔧 v6.0.1: 레거시 tierThresholds 비교 → 동적 키 비교
   if (settings.tierThresholds) {
     const th = settings.tierThresholds;
     const def = DEFAULT_SETTINGS.tierThresholds;
-    if (th.S !== def.S || th.A !== def.A || th["B+"] !== def["B+"] || th.B !== def.B || th["B-"] !== def["B-"]) {
+    if (JSON.stringify(th) !== JSON.stringify(def)) {
       settingsDiff.th = th;
     }
   }
@@ -28795,8 +28846,8 @@ async function importJSON() {
               if (data.TR && typeof data.TR === "object") {
                 updateTagRegistry(data.TR);
               } else if (data.TM) {
-                // TR 없는 구 백업: TM에서 registry 재구성
-                const newRegistry = { ...(tagRegistry || { majorGenres: [...FACTORY_MAJOR_GENRES], subGenres: [...FACTORY_SUB_GENRES], generalTags: {...FACTORY_GENERAL_TAGS} }) };
+                // 🔧 v6.0.1: TR 없는 구 백업 → FACTORY를 base로 사용 (현재 registry 오염 방지)
+                const newRegistry = { majorGenres: [...FACTORY_MAJOR_GENRES], subGenres: [...FACTORY_SUB_GENRES], generalTags: {...FACTORY_GENERAL_TAGS} };
                 if (Array.isArray(data.TM.umg))
                   newRegistry.majorGenres = deduplicateTags([...FACTORY_MAJOR_GENRES, ...data.TM.umg]);
                 if (Array.isArray(data.TM.usg))
@@ -30540,14 +30591,10 @@ async function importJSON() {
                   marginTop: 10,
                 }}
               >
+                {/* 🔧 v6.0.1: 동적 티어 필터 (하드코딩 제거) */}
                 {[
                   ["전체", "ALL"],
-                  ["S", "S"],
-                  ["A", "A"],
-                  ["B+", "B+"],
-                  ["B", "B"],
-                  ["B-", "B-"],
-                  ["C", "C"],
+                  ...globalTierConfig.tiers.map(t => [getTierLabel(t.key, globalTierConfig), t.key]),
                 ].map(([label, key]) => (
                   <Chip
                     key={key}
@@ -33001,6 +33048,14 @@ async function importJSON() {
                             timestamp: Date.now(),
                           }, ...prev].slice(0, 20));
                           
+                          // 📷 v6.0.1: 보충 편집에서 삭제된 명대사 이미지 파일 정리
+                          if (removedQuoteImagesRef.current.length > 0) {
+                            for (const uri of removedQuoteImagesRef.current) {
+                              FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+                            }
+                            removedQuoteImagesRef.current = [];
+                          }
+
                           syncTagsToCustom(current.tags?.trim() || ""); // 🔧 v3.5.9: 태그 동기화
                           await loadList(undefined, undefined, "supplement");
                           // 🔧 v3.5.9: loadList 완료 후 savedId 설정 (supplementList가 최신 데이터일 때 다음 작품 전환)
@@ -33298,7 +33353,7 @@ async function importJSON() {
                   onPress={() => {
                     Alert.alert(
                       "전체 리셋",
-                      "모든 S/A 수동 지정을 해제하고 점수 기준으로 재배치할까요?\n\n※ 점수가 S/A 기준 미달인 작품은 B+ 이하로 이동됩니다.",
+                      `모든 ${getGatedTiers(globalTierConfig).map(k => getTierLabel(k, globalTierConfig)).join("/")} 수동 지정을 해제하고 점수 기준으로 재배치할까요?\n\n※ 점수 미달인 작품은 ${getTierLabel(getHighestNonGatedTier(globalTierConfig), globalTierConfig)} 이하로 이동됩니다.`,
                       [
                         { text: "취소" },
                         { text: "리셋", style: "destructive", onPress: async () => {
@@ -33825,15 +33880,14 @@ async function importJSON() {
 
             {/* 🏆 티어 검토 통계 (v2.6) */}
             <Section title="🏆 티어 검토 현황">
+              {/* 🔧 v6.0.1: 동적 gated 티어 통계 표시 */}
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12, marginBottom: 12 }}>
-                <View style={{ backgroundColor: "#8b5cf6", paddingHorizontal: 16, paddingVertical: 12, borderRadius: 12 }}>
-                  <Text style={{ color: "#fff", fontWeight: "800", fontSize: 20 }}>S: {analysisStats.byTier.S}</Text>
-                  <Text style={{ color: "rgba(255,255,255,0.8)", fontSize: 12 }}>{analysisStats.sRatio}%</Text>
-                </View>
-                <View style={{ backgroundColor: "#3b82f6", paddingHorizontal: 16, paddingVertical: 12, borderRadius: 12 }}>
-                  <Text style={{ color: "#fff", fontWeight: "800", fontSize: 20 }}>A: {analysisStats.byTier.A}</Text>
-                  <Text style={{ color: "rgba(255,255,255,0.8)", fontSize: 12 }}>{analysisStats.aRatio}%</Text>
-                </View>
+                {(analysisStats.gatedRatios || []).map(gr => (
+                  <View key={gr.key} style={{ backgroundColor: gr.color, paddingHorizontal: 16, paddingVertical: 12, borderRadius: 12 }}>
+                    <Text style={{ color: "#fff", fontWeight: "800", fontSize: 20 }}>{gr.label}: {gr.count}</Text>
+                    <Text style={{ color: "rgba(255,255,255,0.8)", fontSize: 12 }}>{gr.ratio}%</Text>
+                  </View>
+                ))}
               </View>
               
               <View style={{ backgroundColor: C.bg, padding: 14, borderRadius: 12 }}>
@@ -37795,6 +37849,7 @@ async function importJSON() {
                               const { ext } = getImageFormat(result.assets[0]);
                               const saved = await saveCoverToLibrary(result.assets[0].uri, "medium", ext);
                               if (saved && !saved.error) {
+                                editNewQuoteImagesRef.current.push(saved.file_path); // 📷 v6.0.1: 고아 방지 추적
                                 setEditQuotes(prev => [...prev, { type: "image", uri: saved.file_path }]);
                               }
                             }
@@ -37823,7 +37878,11 @@ async function importJSON() {
                           <Text style={{ color: C.sub, fontSize: 11, flex: 1 }}>#{qi + 1} {isImageQuote(q) ? "📷" : "💬"}</Text>
                           <TouchableOpacity
                             onPress={() => {
-                              if (isImageQuote(q)) removedQuoteImagesRef.current.push(q.uri);
+                              if (isImageQuote(q)) {
+                                removedQuoteImagesRef.current.push(q.uri);
+                                // 📷 v6.0.1: 새로 추가한 이미지면 추적 목록에서도 제거
+                                editNewQuoteImagesRef.current = editNewQuoteImagesRef.current.filter(u => u !== q.uri);
+                              }
                               setEditQuotes(editQuotes.filter((_, i) => i !== qi));
                             }}
                             style={{ padding: 4 }}
@@ -38013,8 +38072,9 @@ async function importJSON() {
                       // v2.8: 상대 작품의 현재 티어 계산
                       const oppRating = youAreA ? item.b_rating : item.a_rating;
                       const oppManualTier = youAreA ? item.b_manual_tier : item.a_manual_tier;
+                      // 🔧 v6.0.1: getDisplayTier 사용하여 gated 로직 반영
                       const oppTier = oppRating
-                        ? (oppManualTier || tierFromRating(oppRating, globalTierConfig))
+                        ? getDisplayTier({ rating: oppRating, manual_tier: oppManualTier }, globalTierConfig)
                         : null;
                       const oppTierColor = oppTier ? getTierColor(oppTier) : null;
                       
