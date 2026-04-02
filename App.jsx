@@ -12048,9 +12048,10 @@ const TagPickerModal = memo(({
       setSearch("");
       setExpandedCat(null);
       // 약간의 딜레이 후 포커스 (모달 애니메이션 완료 후)
-      setTimeout(() => searchRef.current?.focus(), 300);
+      const timerId = setTimeout(() => searchRef.current?.focus(), 300);
+      return () => clearTimeout(timerId);
     }
-  }, [visible]);
+  }, [visible, initialSelected]);
 
   const excludeSet = useMemo(() => new Set(excludeTags.map(t => t.toLowerCase())), [excludeTags]);
 
@@ -14820,10 +14821,6 @@ const TagManagerModal = memo(({
                       <TouchableOpacity
                         onPress={() => {
                           const current = !!(tagAttributes[selectedTag.tag]?.isTitle);
-                          const updated = {
-                            ...tagAttributes,
-                            [selectedTag.tag]: { ...(tagAttributes[selectedTag.tag] || {}), isTitle: !current }
-                          };
                           // onBatchChangeTitle 콜백을 단일 태그에 재활용
                           if (onBatchChangeTitle) {
                             onBatchChangeTitle([selectedTag.tag], !current);
@@ -15317,9 +15314,9 @@ const AwardsScreen = memo(({
     Alert.alert("확인", "이 상을 삭제할까요?", [
       { text: "취소" },
       { text: "삭제", style: "destructive", onPress: () => {
-        const updated = { ...awardSystemSettings };
-        updated.yearlyAwards[awardSelectedYear] = 
-          updated.yearlyAwards[awardSelectedYear].filter(a => a.id !== awardId);
+        const updated = { ...awardSystemSettings, yearlyAwards: { ...awardSystemSettings.yearlyAwards } };
+        updated.yearlyAwards[awardSelectedYear] =
+          (updated.yearlyAwards[awardSelectedYear] || []).filter(a => a.id !== awardId);
         onSaveSettings(updated);
       }}
     ]);
@@ -15327,13 +15324,14 @@ const AwardsScreen = memo(({
   
   // 상 설정 업데이트
   const updateAward = (awardId, updates) => {
-    const updated = { ...awardSystemSettings };
-    const idx = updated.yearlyAwards[awardSelectedYear]?.findIndex(a => a.id === awardId);
+    const updated = { ...awardSystemSettings, yearlyAwards: { ...awardSystemSettings.yearlyAwards } };
+    const yearAwards = updated.yearlyAwards[awardSelectedYear];
+    if (!yearAwards) return;
+    const idx = yearAwards.findIndex(a => a.id === awardId);
     if (idx !== -1) {
-      updated.yearlyAwards[awardSelectedYear][idx] = {
-        ...updated.yearlyAwards[awardSelectedYear][idx],
-        ...updates
-      };
+      updated.yearlyAwards[awardSelectedYear] = yearAwards.map((a, i) =>
+        i === idx ? { ...a, ...updates } : a
+      );
       onSaveSettings(updated);
     }
   };
@@ -19895,7 +19893,7 @@ async function analyzePreferences(novels, matches) {
   };
 
   // 10. 매칭 분석
-  let matchAnalysis = { total: 0, autoCount: 0, manualCount: 0, genreVsGenre: {} };
+  let matchAnalysis = { total: 0, autoCount: 0, manualCount: 0, genreVsGenre: [] };
   if (matches && matches.length > 0) {
     const novelMap = {};
     for (const n of enriched) novelMap[n.id] = n;
@@ -21948,11 +21946,12 @@ function AppContent() {
   async function loadPlannedList() {
     const _pt = PerfMonitor.enabled ? Date.now() : 0; // 🔬
     try {
-      let orderBy = `created_at ${plannedSortDir}`;
+      const safeDir = plannedSortDir === "ASC" ? "ASC" : "DESC";
+      let orderBy = `created_at ${safeDir}`;
       if (plannedSortKey === "title") {
-        orderBy = `title COLLATE NOCASE ${plannedSortDir}`;
+        orderBy = `title COLLATE NOCASE ${safeDir}`;
       } else if (plannedSortKey === "priority") {
-        orderBy = `priority ${plannedSortDir}, created_at DESC`;
+        orderBy = `priority ${safeDir}, created_at DESC`;
       }
       const rows = await all(`SELECT * FROM planned_novels ORDER BY ${orderBy};`);
       setPlannedList(rows || []);
@@ -23228,7 +23227,7 @@ function AppContent() {
     }
     
     // 전체 승률 반영
-    predictedWinRateA += (totalWinRateA / (totalWinRateA + totalWinRateB || 1)) * 0.15;
+    predictedWinRateA += (totalWinRateA / ((totalWinRateA + totalWinRateB) || 1)) * 0.15;
     
     // 신뢰도 반영 (신뢰도 높은 쪽 약간 유리)
     const reliabilityFactor = (reliabilityA - reliabilityB) * 0.1 + 0.5;
@@ -23657,8 +23656,8 @@ function AppContent() {
         }
       }
       
-      // 신뢰도 계산 (전체 이변 대비 발생 비율)
-      const totalUpsets = (matchInsights.filter(i => i.isUpset).length || 1) + 1;
+      // 신뢰도 계산 (현재 이변 요인 수 기반 — stale closure 방지)
+      const totalUpsets = (factors.filter(f => f.occurrences > 0).length || 1) + 1;
       for (const f of factors) {
         f.confidence = Math.min(1, f.occurrences / totalUpsets);
       }
@@ -24894,23 +24893,19 @@ function AppContent() {
     try {
       switch (item.type) {
         case 'tier_change':
-          // 티어 변경 되돌리기
+          // 티어 변경 되돌리기 (gated 티어가 아니면 null로 복원)
           await exec("UPDATE novels SET manual_tier=? WHERE id=?", [
-            item.payload.prevTier === 'B+' || item.payload.prevTier === 'B' || 
-            item.payload.prevTier === 'B-' || item.payload.prevTier === 'C' 
-              ? null : item.payload.prevTier,
+            isGatedTier(item.payload.prevTier, globalTierConfig) ? item.payload.prevTier : null,
             item.payload.id
           ]);
           addTierHistoryEntry(item.payload.id, item.payload.title, item.payload.newTier, item.payload.prevTier);
           break;
-          
+
         case 'tier_batch':
           // 일괄 티어 변경 되돌리기
           for (const change of item.payload.changes) {
             await exec("UPDATE novels SET manual_tier=? WHERE id=?", [
-              change.prevTier === 'B+' || change.prevTier === 'B' || 
-              change.prevTier === 'B-' || change.prevTier === 'C'
-                ? null : change.prevTier,
+              isGatedTier(change.prevTier, globalTierConfig) ? change.prevTier : null,
               change.id
             ]);
           }
@@ -25176,32 +25171,36 @@ function AppContent() {
       // 변경사항이 없으면 저장 안 함
       if (changedWeights.length === 0) return;
       
-      // 기존 활성 가중치 비활성화
-      await exec(`UPDATE weight_config SET is_active = 0 WHERE is_active = 1`);
-      
-      // 새 버전으로 저장 (개별 컬럼 사용)
-      await exec(`
-        INSERT INTO weight_config (
-          w_elo, w_h2h, w_overall_winrate, w_reliability,
-          w_genre_matchup, w_tag_power, w_read_preference,
-          w_author_affinity, w_coordinate_zone,
-          change_source, change_reason, changed_weights,
-          is_active, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
-      `, [
-        weights.w_elo,
-        weights.w_h2h,
-        weights.w_overall_winrate,
-        weights.w_reliability,
-        weights.w_genre_matchup,
-        weights.w_tag_power,
-        weights.w_read_preference,
-        weights.w_author_affinity,
-        weights.w_coordinate_zone,
-        'user_feedback',
-        '피드백 기반 자동 조정',
-        JSON.stringify(changedWeights),
-        Date.now(),
+      // 기존 활성 가중치 비활성화 + 새 버전 저장 (원자적 실행)
+      await execBatch([
+        {
+          sql: `UPDATE weight_config SET is_active = 0 WHERE is_active = 1`,
+          params: [],
+        },
+        {
+          sql: `INSERT INTO weight_config (
+            w_elo, w_h2h, w_overall_winrate, w_reliability,
+            w_genre_matchup, w_tag_power, w_read_preference,
+            w_author_affinity, w_coordinate_zone,
+            change_source, change_reason, changed_weights,
+            is_active, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+          params: [
+            weights.w_elo,
+            weights.w_h2h,
+            weights.w_overall_winrate,
+            weights.w_reliability,
+            weights.w_genre_matchup,
+            weights.w_tag_power,
+            weights.w_read_preference,
+            weights.w_author_affinity,
+            weights.w_coordinate_zone,
+            'user_feedback',
+            '피드백 기반 자동 조정',
+            JSON.stringify(changedWeights),
+            Date.now(),
+          ],
+        },
       ]);
       
       console.log("[adjustWeightsFromFeedback] 가중치 조정 완료:", changedWeights);
@@ -25334,12 +25333,13 @@ function AppContent() {
       timestamp: customTimestamp || Date.now(),
     };
     
+    let updated;
     setRecentChanges(prev => {
-      const updated = [change, ...prev].slice(0, 500); // 최대 500개 유지
-      // 비동기로 저장 (UI 블로킹 방지)
-      deferSetAppMeta("recent_changes", updated);
+      updated = [change, ...prev].slice(0, 500); // 최대 500개 유지
       return updated;
     });
+    // 비동기로 저장 (UI 블로킹 방지) — updater 외부에서 실행
+    if (updated) deferSetAppMeta("recent_changes", updated);
   }, []);
   
   // 📰 v3.0: 최신 변화 기록 전체 삭제
@@ -26572,7 +26572,7 @@ function AppContent() {
     
     // 🔄 v3.4.6: pair를 로컬에 캡처 (큐 처리 중 상태 변경 대비)
     const currentPair = { A: { ...pair.A }, B: { ...pair.B } };
-    const pairKey = matchPairKey(currentPair.A.id, currentPair.B.id);
+    const currentPairKey = matchPairKey(currentPair.A.id, currentPair.B.id);
 
     // 🛡️ winnerId 무결성 검증 (stale onPress/중복 탭 방어)
     if (winnerId !== currentPair.A.id && winnerId !== currentPair.B.id) {
@@ -26738,7 +26738,7 @@ function AppContent() {
         // 자동매칭: loadList는 마지막에 1회만 (needsListRefreshRef로 추적)
         needsListRefreshRef.current = true;
       }
-    }, pairKey).catch((e) => {
+    }, currentPairKey).catch((e) => {
       if (_pt) PerfMonitor.logError("decide", e); // 🔬
       console.warn("decide 오류:", e);
       // 🔧 v3.5.15d: 자동매칭 중에는 Alert 억제 (연속 Alert 스태킹 → ANR 방지)
@@ -28401,8 +28401,6 @@ function validateImportData(text) {
       hasTierHistory: false,
       hasSettings: false,
       hasPlannedNovels: false, // 📋 v3.3.0
-      hasPatterns: false, // 🧠 v3.5.5
-      hasPlatformCovers: false, // 📷 v3.5.5
       hasPatterns: false, // 🧠 v3.5.5
       hasPlatformCovers: false, // 📷 v3.5.5
     },
@@ -37090,7 +37088,6 @@ async function importJSON() {
             {/* ═══════════════════════════════════════════════════════════════ */}
             {settingsSubTab === "diag" && (() => {
               const summary = PerfMonitor.getSummary();
-              const isDark = darkMode;
               const fmt = (ms) => ms >= 1000 ? `${(ms/1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
               const fmtUptime = (ms) => {
                 const s = Math.floor(ms/1000);
@@ -37685,7 +37682,7 @@ async function importJSON() {
 <Input
   value={String(editItem.read_count || 0)}
   onChangeText={(t) =>
-    updateEditItem(prev => prev ? { ...prev, read_count: t } : null)
+    updateEditItem(prev => prev ? { ...prev, read_count: parseInt(t, 10) || 0 } : null)
   }
   keyboardType="number-pad"
 />
@@ -37694,7 +37691,7 @@ async function importJSON() {
 <Input
   value={String(editItem.total_episodes || 0)}
   onChangeText={(t) =>
-    updateEditItem(prev => prev ? { ...prev, total_episodes: t } : null)
+    updateEditItem(prev => prev ? { ...prev, total_episodes: parseInt(t, 10) || 0 } : null)
   }
   keyboardType="number-pad"
 />
@@ -37922,7 +37919,7 @@ async function importJSON() {
                                 // 📷 v6.0.1: 새로 추가한 이미지면 추적 목록에서도 제거
                                 editNewQuoteImagesRef.current = editNewQuoteImagesRef.current.filter(u => u !== q.uri);
                               }
-                              setEditQuotes(editQuotes.filter((_, i) => i !== qi));
+                              setEditQuotes(prev => prev.filter((_, i) => i !== qi));
                             }}
                             style={{ padding: 4 }}
                           >
