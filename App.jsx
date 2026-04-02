@@ -4078,7 +4078,6 @@ function deferSetAppMeta(key, value) {
   _pendingMetaWrites[key] = value;
   if (_metaBatchTimer) return; // 이미 타이머 대기 중
   _metaBatchTimer = setTimeout(async () => {
-    _metaBatchTimer = null;
     // 🔧 v3.5.15d: 매칭 큐가 처리 중이면 드레인 대기 후 flush
     // 큐 작업의 execBatch와 이 flush의 execBatch가 동시 실행되면 SQLITE_BUSY 경합
     if (!isMatchQueueIdle()) {
@@ -4086,8 +4085,10 @@ function deferSetAppMeta(key, value) {
         await waitForMatchQueueDrain(3000);
       } catch {}
     }
+    // 🔧 스냅샷 후에 타이머 클리어 (drain 중 재진입 방지)
     const snapshot = { ..._pendingMetaWrites };
     for (const k of Object.keys(_pendingMetaWrites)) delete _pendingMetaWrites[k];
+    _metaBatchTimer = null;
     try {
       await batchSetAppMeta(snapshot);
     } catch (e) {
@@ -4128,7 +4129,7 @@ async function migrateTagSystem() {
       }
       
       await setAppMeta("tag_system_version", 1);
-      console.log(`태그 시스템 Phase 1 완료: ${novels.length}개 작품 변환`);
+      console.log(`태그 시스템 Phase 1 완료: ${(novels || []).length}개 작품 변환`);
     }
     
     if (version < 2) {
@@ -4448,6 +4449,7 @@ async function verifyDataIntegrity(options = {}) {
     
     const novelIds = new Set((novels || []).map(n => n.id));
     const queries = [];
+    let _integrityTagAttrs = null; // 1d에서 lazy 로드
     
     for (const novel of (novels || [])) {
       const fixes = {};
@@ -4509,8 +4511,15 @@ async function verifyDataIntegrity(options = {}) {
       }
       
       // ── 1d. tags → major_genre/sub_genre 재계산 ──
-      const allMajor = MAJOR_GENRES; // userMajorGenres는 런타임 상태라 기본만 사용
-      const allSub = SUB_GENRES;
+      // 🔧 tagAttributes를 DB에서 로드하여 사용자 커스텀 장르 반영
+      if (!_integrityTagAttrs) {
+        try {
+          const raw = await getAppMeta("tag_attributes");
+          _integrityTagAttrs = safeParseJSON(raw, {});
+        } catch { _integrityTagAttrs = {}; }
+      }
+      const allMajor = getAllMajorTags(_integrityTagAttrs);
+      const allSub = getAllSubTags(_integrityTagAttrs);
       
       const detectedMajor = currentTags
         .filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
