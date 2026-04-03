@@ -9441,18 +9441,32 @@ const NovelCard = memo(({
     </TouchableOpacity>
   );
 }, (prevProps, nextProps) => {
-  // 커스텀 비교: 필수 필드만 비교하여 불필요한 리렌더링 방지
+  // 커스텀 비교: 렌더링에 사용되는 모든 필드 비교 (🔧 누락 필드 추가)
+  const p = prevProps.item, n = nextProps.item;
   return (
-    prevProps.item.id === nextProps.item.id &&
-    prevProps.item.rating === nextProps.item.rating &&
-    prevProps.item.wins === nextProps.item.wins &&
-    prevProps.item.losses === nextProps.item.losses &&
-    prevProps.item.pinned === nextProps.item.pinned &&
-    prevProps.item.cover_image === nextProps.item.cover_image &&
-    prevProps.item.title === nextProps.item.title &&
-    prevProps.item.status === nextProps.item.status &&
-    prevProps.item.work_status === nextProps.item.work_status &&
-    prevProps.item.read_count === nextProps.item.read_count &&
+    p.id === n.id &&
+    p.rating === n.rating &&
+    p.wins === n.wins &&
+    p.losses === n.losses &&
+    p.pinned === n.pinned &&
+    p.cover_image === n.cover_image &&
+    p.title === n.title &&
+    p.status === n.status &&
+    p.work_status === n.work_status &&
+    p.read_count === n.read_count &&
+    p.rd === n.rd &&
+    p.author === n.author &&
+    p.major_genre === n.major_genre &&
+    p.sub_genre === n.sub_genre &&
+    p.total_episodes === n.total_episodes &&
+    p.gaiden_status === n.gaiden_status &&
+    p.gaiden_read_count === n.gaiden_read_count &&
+    p.gaiden_total_episodes === n.gaiden_total_episodes &&
+    p.platforms === n.platforms &&
+    p.awards === n.awards &&
+    p.link === n.link &&
+    p.manual_tier === n.manual_tier &&
+    p.created_at === n.created_at &&
     prevProps.index === nextProps.index &&
     prevProps.isComparing === nextProps.isComparing &&
     prevProps.compareMode === nextProps.compareMode &&
@@ -18684,8 +18698,8 @@ const TasteAnalysisScreen = memo(({
                 
                 {/* 비교 막대 */}
                 <View style={{ flexDirection: "row", height: 24, borderRadius: 12, overflow: "hidden" }}>
-                  <View style={{ 
-                    flex: pair.groupA.stats.avgRating - 1400, 
+                  <View style={{
+                    flex: Math.max(1, pair.groupA.stats.avgRating - 1400),
                     backgroundColor: colorA,
                     justifyContent: "center",
                     alignItems: "center",
@@ -18694,8 +18708,8 @@ const TasteAnalysisScreen = memo(({
                       {pair.groupA.stats.avgRating.toFixed(0)}
                     </Text>
                   </View>
-                  <View style={{ 
-                    flex: pair.groupB.stats.avgRating - 1400, 
+                  <View style={{
+                    flex: Math.max(1, pair.groupB.stats.avgRating - 1400),
                     backgroundColor: colorB,
                     justifyContent: "center",
                     alignItems: "center",
@@ -21179,7 +21193,7 @@ function AppContent() {
     return novels.filter(n => {
       if (filterTier !== "ALL" && getDisplayTier(n, globalTierConfig) !== filterTier) return false;
       if (filterPlatform !== "ALL" && !parsePlatforms(n.platforms).includes(filterPlatform)) return false;
-      if (filterGenre !== "ALL" && deriveMajorGenre(n.tags) !== filterGenre) return false;
+      if (filterGenre !== "ALL" && (n.major_genre || deriveMajorGenre(n.tags)) !== filterGenre) return false;
       if (filterStatus !== "ALL" && (n.status || "reading") !== filterStatus) return false;
       return true;
     });
@@ -23325,10 +23339,10 @@ function AppContent() {
       upsetCauses, // 🔮 이변 원인 후보
     };
     
-    // 인사이트 저장
+    // 인사이트 저장 (🔧 React 18+ 배칭 대응: updater 내 부수효과 제거)
     setMatchInsights(prev => {
       const updated = [insight, ...prev].slice(0, 200); // 최대 200개 유지
-      deferSetAppMeta("match_insights", updated);
+      setTimeout(() => deferSetAppMeta("match_insights", updated), 0);
       return updated;
     });
     
@@ -23794,18 +23808,18 @@ function AppContent() {
   async function cleanupTagMetadata(tag) {
     // 🔧 v3.5.9: 함수형 setState로 stale closure 방지 (일괄 삭제 시 안전)
     // 🔧 v3.5.13: isSameTag 사용으로 공백/alias 변형도 정확히 정리
-    // 고정 태그에서 제거
+    // 고정 태그에서 제거 (🔧 React 18+ 배칭 대응: updater 내 부수효과 → setTimeout)
     setPinnedTags(prev => {
       if (!prev.some(t => isSameTag(t, tag))) return prev;
       const next = prev.filter(t => !isSameTag(t, tag));
-      deferSetAppMeta("pinned_tags", next);
+      setTimeout(() => deferSetAppMeta("pinned_tags", next), 0);
       return next;
     });
     // 숨김 태그에서 제거
     setHiddenTags(prev => {
       if (!prev.some(t => isSameTag(t, tag))) return prev;
       const next = prev.filter(t => !isSameTag(t, tag));
-      deferSetAppMeta("hidden_tags", next);
+      setTimeout(() => deferSetAppMeta("hidden_tags", next), 0);
       return next;
     });
     // 감정 속성 제거
@@ -23814,7 +23828,7 @@ function AppContent() {
       if (!matchKey) return prev;
       const next = { ...prev };
       delete next[matchKey];
-      deferSetAppMeta("tag_sentiments", next);
+      setTimeout(() => deferSetAppMeta("tag_sentiments", next), 0);
       return next;
     });
     // tagAttributes (isMajor/isSub/isTitle) 제거
@@ -23823,7 +23837,7 @@ function AppContent() {
       if (!matchKey) return prev;
       const next = { ...prev };
       delete next[matchKey];
-      deferSetAppMeta("tag_attributes", next);
+      setTimeout(() => deferSetAppMeta("tag_attributes", next), 0);
       return next;
     });
   }
@@ -24149,21 +24163,20 @@ function AppContent() {
   }
 
   /** 🔧 v6.0.1: 함수형 업데이트 기반 registry 변경 (stale closure 방지) */
-  /** 부수효과(applyTagRegistry, setAppMeta)는 updater 외부에서 실행 */
+  /** 🔧 React 18+ 배칭 대응: setTimeout으로 부수효과를 렌더 이후 실행 */
   function updateTagRegistryFn(updaterFn) {
-    let committed = null;
     setTagRegistry(prev => {
       if (!prev) return prev;
       const next = updaterFn(prev);
       if (next === prev) return prev;
-      committed = next;
+      // React 18+에서 updater 외부 변수 할당은 배칭으로 인해 실행 시점 보장 불가
+      // setTimeout으로 렌더 커밋 이후 부수효과 실행
+      setTimeout(() => {
+        applyTagRegistry(next);
+        setAppMeta("tag_registry", next);
+      }, 0);
       return next;
     });
-    // React batch 후 부수효과 실행 (updater 순수성 보장)
-    if (committed) {
-      applyTagRegistry(committed);
-      setAppMeta("tag_registry", committed);
-    }
   }
 
   /** 레지스트리에 태그 추가 (카테고리 미지정 시 "📁 사용자 태그") */
@@ -24357,11 +24370,11 @@ function AppContent() {
           const isPinned = prev.some(t => isSameTag(t, tag));
           if (changes.pinned && !isPinned) {
             const next = [...prev, tag];
-            setAppMeta("pinned_tags", next);
+            setTimeout(() => setAppMeta("pinned_tags", next), 0);
             return next;
           } else if (!changes.pinned && isPinned) {
             const next = prev.filter(t => !isSameTag(t, tag));
-            setAppMeta("pinned_tags", next);
+            setTimeout(() => setAppMeta("pinned_tags", next), 0);
             return next;
           }
           return prev;
@@ -24376,11 +24389,11 @@ function AppContent() {
           const isHidden = prev.some(t => isSameTag(t, tag));
           if (changes.hidden && !isHidden) {
             const next = [...prev, tag];
-            setAppMeta("hidden_tags", next);
+            setTimeout(() => setAppMeta("hidden_tags", next), 0);
             return next;
           } else if (!changes.hidden && isHidden) {
             const next = prev.filter(t => !isSameTag(t, tag));
-            setAppMeta("hidden_tags", next);
+            setTimeout(() => setAppMeta("hidden_tags", next), 0);
             return next;
           }
           return prev;
@@ -24391,7 +24404,6 @@ function AppContent() {
       // 부수효과(setAppMeta)는 updater 외부에서 실행 (React 순수성 보장)
       if (changes.sentiment !== undefined) {
         const newSentiment = changes.sentiment || null;
-        let sentimentCommitted = null;
         setTagSentiments(prev => {
           const currentSentiment = getTagSentiment(tag, prev);
           if (newSentiment === currentSentiment) return prev;
@@ -24401,15 +24413,14 @@ function AppContent() {
           } else {
             updated[tag] = newSentiment;
           }
-          sentimentCommitted = updated;
+          // 🔧 React 18+ 배칭 대응: setTimeout으로 렌더 이후 저장
+          setTimeout(() => setAppMeta("tag_sentiments", updated), 0);
           return updated;
         });
-        if (sentimentCommitted) setAppMeta("tag_sentiments", sentimentCommitted);
       }
 
       // 🔧 v6.0.1: 작품명 태그 속성 변경 — 함수형 업데이트로 stale closure 방지
       if (changes.isTitle !== undefined) {
-        let attrsCommitted = null;
         setTagAttributes(prev => {
           const currentIsTitle = !!(prev[tag]?.isTitle);
           if (changes.isTitle === currentIsTitle) return prev; // 변경 없으면 early return
@@ -24422,10 +24433,10 @@ function AppContent() {
               if (Object.keys(attrs[tag]).length === 0) delete attrs[tag];
             }
           }
-          attrsCommitted = attrs;
+          // 🔧 React 18+ 배칭 대응: setTimeout으로 렌더 이후 저장
+          setTimeout(() => setAppMeta("tag_attributes", attrs), 0);
           return attrs;
         });
-        if (attrsCommitted) setAppMeta("tag_attributes", attrsCommitted);
       }
     } catch (e) {
       console.warn("handleTagEditModalSave error:", e);
@@ -24459,28 +24470,30 @@ function AppContent() {
   }
 
   // 태그에 대장르 속성 추가 (기존 위치에서 제거하지 않음)
+  // 🔧 stale closure 방지: updateTagRegistryFn(함수형 업데이트) 사용
   async function promoteToMajorGenre(tag) {
     if (listHasTag(MAJOR_GENRES, tag) || listHasTag(userMajorGenres, tag)) {
       Alert.alert("알림", "이미 대장르 속성이 있습니다.");
       return;
     }
-    // 대장르 속성 추가 — registry 단일 경로
-    if (tagRegistry && !tagRegistry.majorGenres.some(t => isSameTag(t, tag))) {
-      updateTagRegistry({ ...tagRegistry, majorGenres: [...tagRegistry.majorGenres, tag] });
-    }
+    updateTagRegistryFn(prev => {
+      if (prev.majorGenres.some(t => isSameTag(t, tag))) return prev;
+      return { ...prev, majorGenres: [...prev.majorGenres, tag] };
+    });
     Alert.alert("완료", `"${tag}"에 대장르 속성을 추가했습니다.`);
   }
 
   // 태그에 부장르 속성 추가 (기존 위치에서 제거하지 않음)
+  // 🔧 stale closure 방지: updateTagRegistryFn(함수형 업데이트) 사용
   async function promoteToSubGenre(tag) {
     if (listHasTag(SUB_GENRES, tag) || listHasTag(userSubGenres, tag)) {
       Alert.alert("알림", "이미 부장르 속성이 있습니다.");
       return;
     }
-    // 부장르 속성 추가 — registry 단일 경로
-    if (tagRegistry && !tagRegistry.subGenres.some(t => isSameTag(t, tag))) {
-      updateTagRegistry({ ...tagRegistry, subGenres: [...tagRegistry.subGenres, tag] });
-    }
+    updateTagRegistryFn(prev => {
+      if (prev.subGenres.some(t => isSameTag(t, tag))) return prev;
+      return { ...prev, subGenres: [...prev.subGenres, tag] };
+    });
     Alert.alert("완료", `"${tag}"에 부장르 속성을 추가했습니다.`);
   }
 
@@ -24497,20 +24510,20 @@ function AppContent() {
       Alert.alert("알림", "기본 제공 대장르는 속성을 제거할 수 없습니다.");
       return;
     }
-    // registry 단일 경로로 대장르 제거
-    if (tagRegistry) {
-      updateTagRegistry({
-        ...tagRegistry,
-        majorGenres: tagRegistry.majorGenres.filter(t => !isSameTag(t, genre)),
-      });
-    }
+    // 🔧 stale closure 방지: updateTagRegistryFn(함수형 업데이트) 사용
+    updateTagRegistryFn(prev => {
+      const filtered = prev.majorGenres.filter(t => !isSameTag(t, genre));
+      if (filtered.length === prev.majorGenres.length) return prev;
+      return { ...prev, majorGenres: filtered };
+    });
     // 🔧 v3.5.9: tagAttributes.isMajor도 함께 제거 (잔존 방지, 함수형 setState)
+    // 🔧 React 18+ 배칭 대응: setTimeout으로 부수효과 실행
     setTagAttributes(prev => {
       if (!prev[genre]?.isMajor) return prev;
       const updated = { ...prev, [genre]: { ...prev[genre] } };
       delete updated[genre].isMajor;
       if (Object.keys(updated[genre]).length === 0) delete updated[genre];
-      deferSetAppMeta("tag_attributes", updated);
+      setTimeout(() => deferSetAppMeta("tag_attributes", updated), 0);
       return updated;
     });
     Alert.alert("완료", `"${genre}"의 대장르 속성을 제거했습니다.`);
@@ -24523,20 +24536,20 @@ function AppContent() {
       Alert.alert("알림", "기본 제공 부장르는 속성을 제거할 수 없습니다.");
       return;
     }
-    // registry 단일 경로로 부장르 제거
-    if (tagRegistry) {
-      updateTagRegistry({
-        ...tagRegistry,
-        subGenres: tagRegistry.subGenres.filter(t => !isSameTag(t, genre)),
-      });
-    }
+    // 🔧 stale closure 방지: updateTagRegistryFn(함수형 업데이트) 사용
+    updateTagRegistryFn(prev => {
+      const filtered = prev.subGenres.filter(t => !isSameTag(t, genre));
+      if (filtered.length === prev.subGenres.length) return prev;
+      return { ...prev, subGenres: filtered };
+    });
     // 🔧 v3.5.9: tagAttributes.isSub도 함께 제거 (잔존 방지, 함수형 setState)
+    // 🔧 React 18+ 배칭 대응: setTimeout으로 부수효과 실행
     setTagAttributes(prev => {
       if (!prev[genre]?.isSub) return prev;
       const updated = { ...prev, [genre]: { ...prev[genre] } };
       delete updated[genre].isSub;
       if (Object.keys(updated[genre]).length === 0) delete updated[genre];
-      deferSetAppMeta("tag_attributes", updated);
+      setTimeout(() => deferSetAppMeta("tag_attributes", updated), 0);
       return updated;
     });
     Alert.alert("완료", `"${genre}"의 부장르 속성을 제거했습니다.`);
@@ -25323,11 +25336,11 @@ function AppContent() {
     }
   }
 
-  // 🆕 핀 토글
-  const togglePin = useCallback(async (id, currentPinned) => {
+  // 🆕 핀 토글 (🔧 stale closure 방지를 위해 일반 함수 사용)
+  async function togglePin(id, currentPinned) {
     await exec("UPDATE novels SET pinned=? WHERE id=?", [currentPinned ? 0 : 1, id]);
     await loadList(undefined, undefined, "pin");
-  }, []);
+  }
 
   // 📰 v3.0: 최신 변화 기록 추가 헬퍼
   // type: "new" | "award" | "tier_change" | "tier_review" | "read_count" | "title_change" | "auto_tier"
@@ -25342,13 +25355,12 @@ function AppContent() {
       timestamp: customTimestamp || Date.now(),
     };
     
-    let updated;
     setRecentChanges(prev => {
-      updated = [change, ...prev].slice(0, 500); // 최대 500개 유지
+      const updated = [change, ...prev].slice(0, 500); // 최대 500개 유지
+      // 🔧 React 18+ 배칭 대응: setTimeout으로 렌더 이후 저장
+      setTimeout(() => deferSetAppMeta("recent_changes", updated), 0);
       return updated;
     });
-    // 비동기로 저장 (UI 블로킹 방지) — updater 외부에서 실행
-    if (updated) deferSetAppMeta("recent_changes", updated);
   }, []);
   
   // 📰 v3.0: 최신 변화 기록 전체 삭제
@@ -27894,11 +27906,11 @@ function decodeBase64(str) {
   return bytes;
 }
 
-// 상태 매핑
-const STATUS_MAP = { reading: 0, completed: 1, dropped: 2, planned: 3, onhold: 4 };
-const STATUS_REV = ["reading", "completed", "dropped", "planned", "onhold"];
-const WORK_STATUS_MAP = { ongoing: 0, completed: 1, hiatus: 2, dropped: 3, discontinued: 4 };
-const WORK_STATUS_REV = ["ongoing", "completed", "hiatus", "dropped", "discontinued"];
+// 상태 매핑 (백업 인코딩용 — 모듈 스코프의 STATUS_MAP/WORK_STATUS_MAP과 이름 충돌 방지)
+const BACKUP_STATUS_ENCODE = { reading: 0, completed: 1, dropped: 2, planned: 3, onhold: 4 };
+const BACKUP_STATUS_DECODE = ["reading", "completed", "dropped", "planned", "onhold"];
+const BACKUP_WORK_STATUS_ENCODE = { ongoing: 0, completed: 1, hiatus: 2, dropped: 3, discontinued: 4 };
+const BACKUP_WORK_STATUS_DECODE = ["ongoing", "completed", "hiatus", "dropped", "discontinued"];
 
 // 기준 타임스탬프: 2024-01-01 00:00:00 UTC (초 단위)
 const BASE_TIMESTAMP = 1704067200;
@@ -27950,9 +27962,9 @@ async function buildUltraCompactBackup(novels, matches, coverImages = null) {
     const opt = {};
     const readCount = Number(n.read_count) || 0;
     const totalEp = Number(n.total_episodes) || 0;
-    const statusNum = STATUS_MAP[n.status] ?? 0;
+    const statusNum = BACKUP_STATUS_ENCODE[n.status] ?? 0;
     const pinnedNum = n.pinned ? 1 : 0;
-    const workStatusNum = WORK_STATUS_MAP[n.work_status] ?? 0;
+    const workStatusNum = BACKUP_WORK_STATUS_ENCODE[n.work_status] ?? 0;
     const awards = n.awards || "";
     const note = (n.note || "").trim();
     const link = (n.link || "").trim();
@@ -28621,9 +28633,9 @@ async function importJSON() {
                 const opt = (row.length > 9 && typeof row[9] === "object") ? row[9] : {};
                 const readCount = opt.r || 0;
                 const totalEpisodes = opt.e || 0;
-                const status = STATUS_REV[opt.s || 0] || "reading";
+                const status = BACKUP_STATUS_DECODE[opt.s || 0] || "reading";
                 const pinned = opt.p || 0;
-                const workStatus = WORK_STATUS_REV[opt.w || 0] || "ongoing";
+                const workStatus = BACKUP_WORK_STATUS_DECODE[opt.w || 0] || "ongoing";
                 const awards = opt.a || "";
                 const note = opt.n || "";
                 const link = opt.l || "";
@@ -34667,6 +34679,7 @@ async function importJSON() {
                         };
                       }}
                       onTouchEnd={(e) => {
+                        if (!quotesSwipeRef.current?.startX) return;
                         const dx = e.nativeEvent.pageX - quotesSwipeRef.current.startX;
                         const dy = Math.abs(e.nativeEvent.pageY - quotesSwipeRef.current.startY);
                         // 수평 50px 이상 + 수직보다 수평이 큰 경우만 스와이프
@@ -39356,7 +39369,8 @@ async function importJSON() {
                           updatePlannedEditItem(prev => {
                             if (!prev) return null;
                             const curP = parsePlatforms(prev.platforms);
-                            const next = on ? curP.filter((x) => x !== p) : [...curP, p];
+                            // 🔧 stale closure 방지: on 대신 curP에서 재계산
+                            const next = curP.includes(p) ? curP.filter((x) => x !== p) : [...curP, p];
                             return { ...prev, platforms: JSON.stringify(next) };
                           });
                         }}

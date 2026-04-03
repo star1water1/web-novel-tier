@@ -505,6 +505,7 @@ export function randomPick(array) {
  * @returns {object} 복사된 객체
  */
 export function deepClone(obj) {
+  if (obj === undefined || obj === null) return obj;
   return JSON.parse(JSON.stringify(obj));
 }
 
@@ -515,6 +516,7 @@ export function deepClone(obj) {
  * @returns {object} 병합된 객체
  */
 export function deepMerge(target, source) {
+  if (!source) return { ...target };
   const result = { ...target };
   for (const key of Object.keys(source)) {
     if (source[key] !== null && typeof source[key] === 'object' && !Array.isArray(source[key])) {
