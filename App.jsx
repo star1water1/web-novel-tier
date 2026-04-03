@@ -21087,7 +21087,7 @@ function AppContent() {
       const preset = COMPRESSION_PRESETS[compressionLevel] || COMPRESSION_PRESETS.light;
 
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [3, 4],
         quality: autoRegister ? preset.quality : 0.5,
@@ -22936,7 +22936,7 @@ function AppContent() {
       const preset = COMPRESSION_PRESETS[compressionLevel] || COMPRESSION_PRESETS.light;
       
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         allowsMultipleSelection: true,
         quality: preset.quality,
         base64: false, // 🔧 v3.5.3: 다중 선택에서는 base64 비활성 (메모리 문제)
@@ -30028,7 +30028,7 @@ async function importJSON() {
         onPress={async () => {
           try {
             const result = await ImagePicker.launchImageLibraryAsync({
-              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              mediaTypes: ['images'],
               allowsEditing: true,
               quality: 0.8,
             });
@@ -36895,7 +36895,7 @@ async function importJSON() {
                       onPress={async () => {
                         try {
                           const result = await ImagePicker.launchImageLibraryAsync({
-                            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                            mediaTypes: ['images'],
                             allowsEditing: true,
                             aspect: [3, 4],
                             quality: 0.5,
@@ -38132,7 +38132,7 @@ async function importJSON() {
                         onPress={async () => {
                           try {
                             const result = await ImagePicker.launchImageLibraryAsync({
-                              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                              mediaTypes: ['images'],
                               allowsEditing: true,
                               quality: 0.8,
                             });
