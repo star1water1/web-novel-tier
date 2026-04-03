@@ -39602,14 +39602,6 @@ async function importJSON() {
                   {(() => {
                     const cur = parsePlatforms(plannedEditItem.platforms);
                     const extras = cur.filter(p => !PLATFORM_OPTIONS.includes(p));
-                    const togglePlat = (p) => {
-                      updatePlannedEditItem(prev => {
-                        if (!prev) return null;
-                        const curP = parsePlatforms(prev.platforms);
-                        const next = curP.includes(p) ? curP.filter((x) => x !== p) : [...curP, p];
-                        return { ...prev, platforms: JSON.stringify(next) };
-                      });
-                    };
                     return (
                       <PlatformChips
                         platforms={cur}
