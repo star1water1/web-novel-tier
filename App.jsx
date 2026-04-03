@@ -2678,7 +2678,6 @@ import {
   Platform,
   AppState,
   Dimensions,
-  LogBox,
 } from "react-native";
 import { Image as ExpoImage } from "expo-image";
 import * as SQLite from "expo-sqlite";
@@ -21429,8 +21428,8 @@ function AppContent() {
             // 🔧 v3.4.6: NavigationBar null 체크 추가
             if (Platform.OS === "android" && NavigationBar && merged.fullscreenMode === true) {
               try {
-                NavigationBar.setVisibilityAsync("hidden");
-                NavigationBar.setBehaviorAsync("overlay-swipe");
+                await NavigationBar.setVisibilityAsync("hidden");
+                await NavigationBar.setBehaviorAsync("overlay-swipe");
               } catch (e) {
                 console.warn("NavigationBar init error:", e);
               }
@@ -26641,14 +26640,19 @@ function AppContent() {
           }
         }
       } else {
+        // 🔧 reservoir sampling: O(n^2) 메모리 방지 (작품 수 많을 때 OOM 크래시 방지)
+        let candidateCount = 0;
+        let picked = null;
         for (let i = 0; i < allNovels.length; i++) {
           for (let j = i + 1; j < allNovels.length; j++) {
-            const A = allNovels[i],
-              B = allNovels[j];
-            if (played.has(pairKey(A.id, B.id))) continue;
-            candidates.push({ A, B });
+            if (played.has(pairKey(allNovels[i].id, allNovels[j].id))) continue;
+            candidateCount++;
+            if (Math.random() < 1 / candidateCount) {
+              picked = { A: allNovels[i], B: allNovels[j] };
+            }
           }
         }
+        if (picked) candidates.push(picked);
       }
 
       if (candidates.length === 0) {
@@ -33801,10 +33805,12 @@ async function importJSON() {
                           <View style={{ flexDirection: "row", gap: 6 }}>
                             <TouchableOpacity
                               onPress={async () => {
-                                const newTier = isGatedTier(recommended, globalTierConfig) ? recommended : null;
-                                setTierHistory(prev => [{ id: n.id, title: n.title, from: current, to: newTier || recommended, at: Date.now() }, ...prev].slice(0, 20));
-                                await exec("UPDATE novels SET manual_tier=? WHERE id=?", [newTier, n.id]);
-                                await loadList(undefined, undefined, "update");
+                                try {
+                                  const newTier = isGatedTier(recommended, globalTierConfig) ? recommended : null;
+                                  setTierHistory(prev => [{ id: n.id, title: n.title, from: current, to: newTier || recommended, at: Date.now() }, ...prev].slice(0, 20));
+                                  await exec("UPDATE novels SET manual_tier=? WHERE id=?", [newTier, n.id]);
+                                  await loadList(undefined, undefined, "update");
+                                } catch (e) { console.warn("티어 강등 오류:", e); }
                               }}
                               style={{ backgroundColor: C.warn, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10 }}
                             >
@@ -33812,10 +33818,12 @@ async function importJSON() {
                             </TouchableOpacity>
                             <TouchableOpacity
                               onPress={async () => {
-                                // 현재 티어를 manual_tier로 고정하여 강등 후보에서 제외
-                                await exec("UPDATE novels SET manual_tier=? WHERE id=?", [current, n.id]);
-                                await loadList(undefined, undefined, "update");
-                                Alert.alert("유지", `${n.title}을(를) ${current}티어로 유지합니다.`);
+                                try {
+                                  // 현재 티어를 manual_tier로 고정하여 강등 후보에서 제외
+                                  await exec("UPDATE novels SET manual_tier=? WHERE id=?", [current, n.id]);
+                                  await loadList(undefined, undefined, "update");
+                                  Alert.alert("유지", `${n.title}을(를) ${current}티어로 유지합니다.`);
+                                } catch (e) { console.warn("티어 유지 오류:", e); }
                               }}
                               style={{ backgroundColor: C.chip, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: C.line }}
                             >
@@ -33867,25 +33875,31 @@ async function importJSON() {
                                 // 상위 gated 티어로 승급
                                 if (higherTier) {
                                   actions.push({ text: `${getTierLabel(higherTier)}로 승급`, onPress: async () => {
-                                    addTierHistoryEntry(n.id, n.title, gk, higherTier);
-                                    await exec("UPDATE novels SET manual_tier=? WHERE id=?", [higherTier, n.id]);
-                                    await loadList(undefined, undefined, "update");
+                                    try {
+                                      addTierHistoryEntry(n.id, n.title, gk, higherTier);
+                                      await exec("UPDATE novels SET manual_tier=? WHERE id=?", [higherTier, n.id]);
+                                      await loadList(undefined, undefined, "update");
+                                    } catch (e) { console.warn("승급 오류:", e); }
                                   }});
                                 }
                                 // 하위 gated 티어로 강등
                                 if (lowerTier) {
                                   actions.push({ text: `${getTierLabel(lowerTier)}로 강등`, onPress: async () => {
-                                    addTierHistoryEntry(n.id, n.title, gk, lowerTier);
-                                    await exec("UPDATE novels SET manual_tier=? WHERE id=?", [lowerTier, n.id]);
-                                    await loadList(undefined, undefined, "update");
+                                    try {
+                                      addTierHistoryEntry(n.id, n.title, gk, lowerTier);
+                                      await exec("UPDATE novels SET manual_tier=? WHERE id=?", [lowerTier, n.id]);
+                                      await loadList(undefined, undefined, "update");
+                                    } catch (e) { console.warn("강등 오류:", e); }
                                   }});
                                 }
                                 // 해제 (권장 티어로 복원)
                                 actions.push({ text: `${getTierLabel(gk)} 해제`, style: "destructive", onPress: async () => {
-                                  const newTier = isGatedTier(rec, globalTierConfig) ? rec : null;
-                                  addTierHistoryEntry(n.id, n.title, gk, newTier || rec);
-                                  await exec("UPDATE novels SET manual_tier=? WHERE id=?", [newTier, n.id]);
-                                  await loadList(undefined, undefined, "update");
+                                  try {
+                                    const newTier = isGatedTier(rec, globalTierConfig) ? rec : null;
+                                    addTierHistoryEntry(n.id, n.title, gk, newTier || rec);
+                                    await exec("UPDATE novels SET manual_tier=? WHERE id=?", [newTier, n.id]);
+                                    await loadList(undefined, undefined, "update");
+                                  } catch (e) { console.warn("해제 오류:", e); }
                                 }});
 
                                 return (
@@ -35187,17 +35201,17 @@ async function importJSON() {
                 </View>
                 <Switch
                   value={appSettings.fullscreenMode === true}
-                  onValueChange={(v) => {
+                  onValueChange={async (v) => {
                     saveAppSettings({ fullscreenMode: v });
                     // Android 네비게이션 바 숨기기/표시
                     // 🔧 v3.4.6: NavigationBar null 체크 추가
                     if (Platform.OS === "android" && NavigationBar) {
                       try {
                         if (v) {
-                          NavigationBar.setVisibilityAsync("hidden");
-                          NavigationBar.setBehaviorAsync("overlay-swipe");
+                          await NavigationBar.setVisibilityAsync("hidden");
+                          await NavigationBar.setBehaviorAsync("overlay-swipe");
                         } else {
-                          NavigationBar.setVisibilityAsync("visible");
+                          await NavigationBar.setVisibilityAsync("visible");
                         }
                       } catch (e) {
                         console.warn("NavigationBar error:", e);
@@ -36903,7 +36917,7 @@ async function importJSON() {
                           // 🔧 v3.5.7: 갤러리 복귀 후 DB 재연결
                           await resetDbConnection();
                           try { await openDb(); } catch {}
-                          if (!result.canceled && result.assets[0]?.uri) {
+                          if (!result.canceled && result.assets?.[0]?.uri) {
                             const { ext } = getImageFormat(result.assets[0]);
                             const saved = await saveCoverToLibrary(result.assets[0].uri, "light", ext);
                             if (saved.error) {
@@ -37061,12 +37075,14 @@ async function importJSON() {
                         />
                         <TouchableOpacity
                           onPress={async () => {
-                            if (slotRenameInput.trim()) {
-                              await renameSlot(slot.id, slotRenameInput.trim());
-                              const meta = await loadSlotMeta();
-                              setSlotMeta(meta);
-                            }
-                            setSlotRenameTarget(null);
+                            try {
+                              if (slotRenameInput.trim()) {
+                                await renameSlot(slot.id, slotRenameInput.trim());
+                                const meta = await loadSlotMeta();
+                                setSlotMeta(meta);
+                              }
+                              setSlotRenameTarget(null);
+                            } catch (e) { console.warn("슬롯 이름변경 오류:", e); setSlotRenameTarget(null); }
                           }}
                           style={{ backgroundColor: "#3b82f6", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}
                         >
@@ -37169,21 +37185,23 @@ async function importJSON() {
               <PrimaryButton
                 title="매치 로그 기준 Elo 재계산"
                 onPress={async () => {
-                  setIsLoading(true);
-                  await rebuildAllFromMatches(tagAttributes);
-                  await loadList(undefined, undefined, "rebuild");
-                  setIsLoading(false);
-                  Alert.alert("완료", "재계산 완료");
+                  try {
+                    setIsLoading(true);
+                    await rebuildAllFromMatches(tagAttributes);
+                    await loadList(undefined, undefined, "rebuild");
+                    Alert.alert("완료", "재계산 완료");
+                  } catch (e) { console.warn("재계산 오류:", e); Alert.alert("오류", "재계산 실패: " + e.message); } finally { setIsLoading(false); }
                 }}
                 disabled={isLoading}
               />
               <OutlineButton
                 title="모든 RD를 350으로 리셋"
                 onPress={async () => {
-                  setIsLoading(true);
-                  await exec("UPDATE novels SET rd=350;");
-                  await loadList(undefined, undefined, "update");
-                  setIsLoading(false);
+                  try {
+                    setIsLoading(true);
+                    await exec("UPDATE novels SET rd=350;");
+                    await loadList(undefined, undefined, "update");
+                  } catch (e) { console.warn("RD 리셋 오류:", e); } finally { setIsLoading(false); }
                 }}
                 style={{ marginTop: 8 }}
               />
@@ -39360,17 +39378,19 @@ async function importJSON() {
                 <View style={{ flexDirection: "row", gap: 8, marginTop: 16 }}>
                   <TouchableOpacity
                     onPress={async () => {
-                      if (!editingCoordSystem.name.trim()) {
-                        Alert.alert("알림", "좌표계 이름을 입력하세요.");
-                        return;
-                      }
-                      const updated = { ...coordinateSystems, [editingCoordSystem.id]: editingCoordSystem };
-                      setCoordinateSystems(updated);
-                      await saveTagCoordinateSystems(updated);
-                      setCoordManageOpen(false);
-                      setEditingCoordSystem(null);
-                      setCoordPickerOpen(false); // 🔧 v3.5.12
-                      Alert.alert("완료", "좌표계가 저장되었습니다.");
+                      try {
+                        if (!editingCoordSystem.name.trim()) {
+                          Alert.alert("알림", "좌표계 이름을 입력하세요.");
+                          return;
+                        }
+                        const updated = { ...coordinateSystems, [editingCoordSystem.id]: editingCoordSystem };
+                        setCoordinateSystems(updated);
+                        await saveTagCoordinateSystems(updated);
+                        setCoordManageOpen(false);
+                        setEditingCoordSystem(null);
+                        setCoordPickerOpen(false); // 🔧 v3.5.12
+                        Alert.alert("완료", "좌표계가 저장되었습니다.");
+                      } catch (e) { console.warn("좌표계 저장 오류:", e); Alert.alert("오류", "저장 실패: " + e.message); }
                     }}
                     style={{ flex: 2, backgroundColor: C.primary, paddingVertical: 14, borderRadius: 12, alignItems: "center" }}
                   >
