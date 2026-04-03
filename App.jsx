@@ -30325,7 +30325,6 @@ async function importJSON() {
                 const ts = dailyReco.tasteScore;
                 const scoreColor = ts.score >= 60 ? "#22c55e" : ts.score >= 35 ? "#f59e0b" : "#94a3b8";
                 const bd = ts.breakdown || {};
-                const maxBar = Math.max(bd.genre || 0, bd.tag || 0, bd.author || 0, 1);
                 return (
                   <View style={{
                     backgroundColor: isDark ? "#1e293b" : "#f8fafc",
@@ -32104,7 +32103,7 @@ async function importJSON() {
                         
                         {/* 읽은 회차 */}
                         <Text style={{ color: C.sub, fontSize: 12, marginTop: 2 }}>
-                          📖 {pair.A.read_count}화 읽음
+                          📖 {pair.A.read_count || 0}화 읽음
                         </Text>
                       </View>
                     </View>
@@ -32325,7 +32324,7 @@ async function importJSON() {
                         
                         {/* 읽은 회차 */}
                         <Text style={{ color: C.sub, fontSize: 12, marginTop: 2 }}>
-                          📖 {pair.B.read_count}화 읽음
+                          📖 {pair.B.read_count || 0}화 읽음
                         </Text>
                       </View>
                     </View>
@@ -33610,7 +33609,10 @@ async function importJSON() {
                               <Text style={{ color: "#fff", fontWeight: "700" }}>강등</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
-                              onPress={() => {
+                              onPress={async () => {
+                                // 현재 티어를 manual_tier로 고정하여 강등 후보에서 제외
+                                await exec("UPDATE novels SET manual_tier=? WHERE id=?", [current, n.id]);
+                                await loadList(undefined, undefined, "update");
                                 Alert.alert("유지", `${n.title}을(를) ${current}티어로 유지합니다.`);
                               }}
                               style={{ backgroundColor: C.chip, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: C.line }}
@@ -33626,19 +33628,7 @@ async function importJSON() {
               );
             })()}
 
-            {/* 검토 대기 없음 */}
-            {(() => {
-              const reviews = list.filter(n => getReviewStatus(n) !== null);
-              if (reviews.length > 0) return null;
-              
-              return (
-                <Section title="✨ 검토 완료">
-                  <Text style={{ color: C.sub, textAlign: "center", paddingVertical: 20 }}>
-                    검토 대기 중인 작품이 없습니다!
-                  </Text>
-                </Section>
-              );
-            })()}
+            {/* 검토 대기 없음 — 33426-33457의 "검토 현황" 섹션에서 이미 표시됨 */}
 
             {/* 🆕 v6.0: 현재 gated 티어 작품 목록 (동적) */}
             <Section title={`현재 ${getGatedTiers(globalTierConfig).map(g => getTierLabel(g)).join("/")} 작품`}>
@@ -34011,7 +34001,7 @@ async function importJSON() {
                         <View
                           key={insight.id}
                           style={{
-                            backgroundColor: "#fff",
+                            backgroundColor: C.card,
                             borderLeftWidth: 4,
                             borderLeftColor: meta.color,
                             borderRadius: 12,
