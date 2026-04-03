@@ -21262,7 +21262,7 @@ function AppContent() {
     return novels.filter(n => {
       if (filterTier !== "ALL" && getDisplayTier(n, globalTierConfig) !== filterTier) return false;
       if (filterPlatform !== "ALL" && !parsePlatforms(n.platforms).includes(filterPlatform)) return false;
-      if (filterGenre !== "ALL" && (n.major_genre || deriveMajorGenre(n.tags)) !== filterGenre) return false;
+      if (filterGenre !== "ALL" && (getFirstGenre(n.major_genre) || deriveMajorGenre(n.tags)) !== filterGenre) return false;
       if (filterStatus !== "ALL" && (n.status || "reading") !== filterStatus) return false;
       return true;
     });
