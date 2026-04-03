@@ -8437,16 +8437,25 @@ const COMPRESSION_PRESETS = {
 /**
  * 이미지 포맷 감지 (expo-image-picker asset 기반)
  * asset.mimeType → fileName → uri 순서로 폴백
+ * 지원: jpg, png, webp, gif, bmp, tiff, avif, heic/heif
  */
 function getImageFormat(asset) {
   const mime = asset?.mimeType || "";
-  if (mime.includes("webp")) return { mime: "image/webp", ext: "webp" };
-  if (mime.includes("png"))  return { mime: "image/png", ext: "png" };
-  if (mime.includes("gif"))  return { mime: "image/gif", ext: "gif" };
+  if (mime.includes("webp"))  return { mime: "image/webp", ext: "webp" };
+  if (mime.includes("png"))   return { mime: "image/png", ext: "png" };
+  if (mime.includes("gif"))   return { mime: "image/gif", ext: "gif" };
+  if (mime.includes("bmp"))   return { mime: "image/bmp", ext: "bmp" };
+  if (mime.includes("tiff"))  return { mime: "image/tiff", ext: "tiff" };
+  if (mime.includes("avif"))  return { mime: "image/avif", ext: "avif" };
+  if (mime.includes("heic") || mime.includes("heif")) return { mime: "image/heic", ext: "heic" };
   const name = (asset?.fileName || asset?.uri || "").toLowerCase();
   if (name.endsWith(".webp")) return { mime: "image/webp", ext: "webp" };
   if (name.endsWith(".png"))  return { mime: "image/png", ext: "png" };
   if (name.endsWith(".gif"))  return { mime: "image/gif", ext: "gif" };
+  if (name.endsWith(".bmp"))  return { mime: "image/bmp", ext: "bmp" };
+  if (name.endsWith(".tiff") || name.endsWith(".tif")) return { mime: "image/tiff", ext: "tiff" };
+  if (name.endsWith(".avif")) return { mime: "image/avif", ext: "avif" };
+  if (name.endsWith(".heic") || name.endsWith(".heif")) return { mime: "image/heic", ext: "heic" };
   return { mime: "image/jpeg", ext: "jpg" };
 }
 
