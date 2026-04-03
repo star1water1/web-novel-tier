@@ -6984,21 +6984,31 @@ function detectGenres(tagsStr) {
   let majorGenre = null;
   let subGenre = null;
   
-  // 대장르 탐색
+  // 대장르 탐색 (🔧 정확한 매칭 우선 + includes 시 긴 장르명 우선 매칭)
+  // 먼저 정확한 매칭 시도
   for (const tag of tags) {
-    const found = MAJOR_GENRES.find(g => g.toLowerCase() === tag || tag.includes(g.toLowerCase()));
-    if (found) {
-      majorGenre = found;
-      break;
+    const exact = MAJOR_GENRES.find(g => g.toLowerCase() === tag);
+    if (exact) { majorGenre = exact; break; }
+  }
+  // 정확한 매칭 없으면 포함 매칭 (긴 장르명부터 검사하여 "현대판타지" > "판타지" 우선)
+  if (!majorGenre) {
+    const sorted = [...MAJOR_GENRES].sort((a, b) => b.length - a.length);
+    for (const tag of tags) {
+      const found = sorted.find(g => tag.includes(g.toLowerCase()));
+      if (found) { majorGenre = found; break; }
     }
   }
-  
-  // 부장르 탐색
+
+  // 부장르 탐색 (동일 로직)
   for (const tag of tags) {
-    const found = SUB_GENRES.find(g => g.toLowerCase() === tag || tag.includes(g.toLowerCase()));
-    if (found) {
-      subGenre = found;
-      break;
+    const exact = SUB_GENRES.find(g => g.toLowerCase() === tag);
+    if (exact) { subGenre = exact; break; }
+  }
+  if (!subGenre) {
+    const sorted = [...SUB_GENRES].sort((a, b) => b.length - a.length);
+    for (const tag of tags) {
+      const found = sorted.find(g => tag.includes(g.toLowerCase()));
+      if (found) { subGenre = found; break; }
     }
   }
   
