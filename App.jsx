@@ -8218,13 +8218,26 @@ const DarkTheme = {
 /* =========================================================
    상수
    ========================================================= */
-const PLATFORM_URLS = {
+// 🆕 플랫폼: 팩토리 기본값 + 런타임 변수 (태그 레지스트리 패턴)
+const FACTORY_PLATFORM_OPTIONS = ["문피아", "리디", "카카페", "노벨피아", "시리즈"];
+const FACTORY_PLATFORM_URLS = {
   "문피아": "https://www.munpia.com",
   "리디": "https://ridibooks.com",
   "카카페": "https://page.kakao.com",
   "노벨피아": "https://novelpia.com",
   "시리즈": "https://series.naver.com",
 };
+let PLATFORM_OPTIONS = [...FACTORY_PLATFORM_OPTIONS];
+let PLATFORM_URLS = { ...FACTORY_PLATFORM_URLS };
+
+/** 플랫폼 레지스트리 적용 (모듈 레벨 변수 업데이트) */
+function applyPlatformRegistry(registry) {
+  if (!registry) return;
+  PLATFORM_OPTIONS = Array.isArray(registry.platforms)
+    ? registry.platforms : [...FACTORY_PLATFORM_OPTIONS];
+  PLATFORM_URLS = { ...FACTORY_PLATFORM_URLS, ...(registry.urls || {}) };
+}
+
 const STATUS_OPTIONS = [
   { key: "reading", label: "읽는 중", color: "#3b82f6" },  // 파랑
   { key: "completed", label: "완독", color: "#22c55e" },   // 초록
@@ -8579,7 +8592,7 @@ function formatFileSize(bytes) {
 /* =========================================================
    UI helpers (테마 prop 받도록 수정)
    ========================================================= */
-const PLATFORM_OPTIONS = ["문피아", "리디", "카카페", "노벨피아", "시리즈"];
+// (PLATFORM_OPTIONS는 상단에서 let으로 선언됨 — applyPlatformRegistry로 업데이트)
 
 // 모듈 스코프 테마 변수 (App에서 렌더링 시 업데이트됨)
 let C = {
@@ -14990,17 +15003,40 @@ const TagManagerModal = memo(({
 /* =========================================================
    🏢 플랫폼 선택 컴포넌트 (분리됨 - 상태 격리)
    ========================================================= */
-const PlatformChips = memo(({ platforms, onChange, options, theme }) => {
+const PlatformChips = memo(({ platforms, onChange, options, extraPlatforms, theme }) => {
   const C = theme;
-  
+
   const toggle = useCallback((p) => {
     onChange(platforms.includes(p) ? platforms.filter(x => x !== p) : [...platforms, p]);
   }, [platforms, onChange]);
+
+  // 🆕 비등록 플랫폼: 소설에 저장되어 있지만 레지스트리에 없는 플랫폼
+  const extras = extraPlatforms || [];
 
   return (
     <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
       {options.map((p) => (
         <Chip key={p} label={p} active={platforms.includes(p)} onPress={() => toggle(p)} />
+      ))}
+      {extras.map((p) => (
+        <TouchableOpacity
+          key={`extra-${p}`}
+          onPress={() => toggle(p)}
+          style={{
+            paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999,
+            marginRight: 6, marginBottom: 6,
+            backgroundColor: platforms.includes(p) ? (C?.warn || "#E05252") : (C?.chip || "#EEF4FF"),
+            borderWidth: 1, borderStyle: "dashed",
+            borderColor: platforms.includes(p) ? (C?.warn || "#E05252") : (C?.sub || "#6B7A90"),
+          }}
+        >
+          <Text style={{
+            fontSize: 13,
+            color: platforms.includes(p) ? "#fff" : (C?.sub || "#6B7A90"),
+          }}>
+            {p} (미등록)
+          </Text>
+        </TouchableOpacity>
       ))}
     </View>
   );
@@ -15010,7 +15046,11 @@ const PlatformChips = memo(({ platforms, onChange, options, theme }) => {
   for (let i = 0; i < prev.platforms.length; i++) {
     if (prev.platforms[i] !== next.platforms[i]) return false;
   }
-  return prev.options === next.options;
+  if (prev.options !== next.options) return false;
+  const pe = prev.extraPlatforms || [], ne = next.extraPlatforms || [];
+  if (pe.length !== ne.length) return false;
+  for (let i = 0; i < pe.length; i++) { if (pe[i] !== ne[i]) return false; }
+  return true;
 });
 
 /* =========================================================
@@ -20859,6 +20899,8 @@ function AppContent() {
   const [tagSortMode, setTagSortMode] = useState("usage"); // 🔧 v3.5.16: 태그 정렬 모드 ("usage" | "name" | "registered")
   const [tagLastTab, setTagLastTab] = useState("general"); // 🔧 v3.5.16: 마지막 사용 탭 기억
   const [tagRegistry, setTagRegistry] = useState(null); // 🔧 v3.6.0: Tag Registry (모든 태그의 유일한 저장소)
+  const [platformRegistry, setPlatformRegistry] = useState(null); // 🆕 플랫폼 레지스트리
+  const [newPlatformInput, setNewPlatformInput] = useState(""); // 🆕 플랫폼 추가 입력
 
   // 🏆 v2.9: 수상 시스템
   const [awardSystemSettings, setAwardSystemSettings] = useState(DEFAULT_AWARD_SYSTEM_SETTINGS);
@@ -21262,6 +21304,7 @@ function AppContent() {
           // 🔧 v3.6.1: registry 반환값 보존 — useEffect 내에서는 React state가 배치 업데이트 전이므로
           //   tagRegistry 클로저가 null. addTagToRegistry 등 registry를 참조하는 함수 사용 불가.
           const loadedRegistry = await loadTagRegistry();
+          await loadPlatformRegistry(); // 🆕 플랫폼 레지스트리 로드
 
           // 🔧 v3.5.15b: 기존 작품 중복 태그 일괄 정리 (1회 자동 실행)
           const dedupDone = await getAppMeta("tag_dedup_v1");
@@ -21680,6 +21723,7 @@ function AppContent() {
       await initDb();
       await migrateTagSystem();
       const slotRegistry = await loadTagRegistry(); // 🔧 v3.6.1: 반환값 보존
+      await loadPlatformRegistry(); // 🆕 플랫폼 레지스트리 로드
 
       // 3. 모든 데이터 state 초기값으로 리셋
       setList([]);
@@ -21735,6 +21779,10 @@ function AppContent() {
       // 🔧 v6.0.1: globalTierConfig + lookup 리셋 (이전 슬롯 커스텀 프리셋 잔류 방지)
       globalTierConfig = { ...DEFAULT_TIER_SYSTEM_CONFIG };
       rebuildTierLookup(globalTierConfig);
+      // 🆕 플랫폼 레지스트리 리셋 (이전 슬롯 커스텀 플랫폼 잔류 방지)
+      PLATFORM_OPTIONS = [...FACTORY_PLATFORM_OPTIONS];
+      PLATFORM_URLS = { ...FACTORY_PLATFORM_URLS };
+      setPlatformRegistry(null);
       // 🔧 누락 리셋 보완
       setMatchStats({ total: 0, done: 0, percent: 0 });
       setIsAutoMatching(false);
@@ -24158,6 +24206,93 @@ function AppContent() {
     }
     updateTagRegistry(registry);
     return registry; // 🔧 v3.6.1: 호출자가 React 배치 업데이트 전에도 사용 가능
+  }
+
+  /* =========================================================
+     📱 플랫폼 레지스트리 CRUD (태그 레지스트리 패턴 답습)
+     ========================================================= */
+  function updatePlatformRegistry(registry) {
+    applyPlatformRegistry(registry);
+    setPlatformRegistry(registry);
+    setAppMeta("platform_registry", registry);
+  }
+
+  async function loadPlatformRegistry() {
+    let registry = await getAppMeta("platform_registry");
+    if (!registry) {
+      // 첫 실행: factory 기본값으로 시드
+      registry = {
+        version: 1,
+        platforms: [...FACTORY_PLATFORM_OPTIONS],
+        urls: { ...FACTORY_PLATFORM_URLS },
+      };
+      await setAppMeta("platform_registry", registry);
+    }
+    applyPlatformRegistry(registry);
+    setPlatformRegistry(registry);
+    return registry;
+  }
+
+  function addPlatform(name) {
+    const trimmed = (name || "").trim();
+    if (!trimmed) return false;
+    if (PLATFORM_OPTIONS.some(p => p === trimmed)) {
+      Alert.alert("알림", "이미 존재하는 플랫폼입니다.");
+      return false;
+    }
+    const reg = platformRegistry || { version: 1, platforms: [...FACTORY_PLATFORM_OPTIONS], urls: {} };
+    updatePlatformRegistry({
+      ...reg,
+      platforms: [...reg.platforms, trimmed],
+    });
+    return true;
+  }
+
+  function removePlatform(name) {
+    const reg = platformRegistry;
+    if (!reg) return;
+    Alert.alert(
+      "플랫폼 삭제",
+      `"${name}" 플랫폼을 목록에서 삭제할까요?\n\n기존 작품의 플랫폼 데이터는 보존됩니다.`,
+      [
+        { text: "취소" },
+        {
+          text: "삭제", style: "destructive",
+          onPress: () => {
+            const newUrls = { ...reg.urls };
+            delete newUrls[name];
+            updatePlatformRegistry({
+              ...reg,
+              platforms: reg.platforms.filter(p => p !== name),
+              urls: newUrls,
+            });
+            // 필터가 삭제된 플랫폼이면 리셋
+            if (filterPlatform === name) setFilterPlatform("ALL");
+            if (plannedFilterPlatform === name) setPlannedFilterPlatform("ALL");
+          },
+        },
+      ]
+    );
+  }
+
+  function resetPlatformsToFactory() {
+    Alert.alert(
+      "초기화",
+      "플랫폼 목록을 기본값으로 초기화할까요?",
+      [
+        { text: "취소" },
+        {
+          text: "초기화", style: "destructive",
+          onPress: () => {
+            updatePlatformRegistry({
+              version: 1,
+              platforms: [...FACTORY_PLATFORM_OPTIONS],
+              urls: { ...FACTORY_PLATFORM_URLS },
+            });
+          },
+        },
+      ]
+    );
   }
 
   /** 첫 실행 시드: FACTORY + 기존 사용자 데이터 병합 */
@@ -28360,6 +28495,11 @@ async function exportJSON() {
       payload.TR = tagRegistry;
     }
 
+    // 🆕 플랫폼 레지스트리 백업 (PR = Platform Registry)
+    if (platformRegistry) {
+      payload.PR = platformRegistry;
+    }
+
     // 📋 v3.3.0: 예정 작품 백업 (PL = Planned List)
     // 🆕 v3.4: 확장 필드 추가
     if (plannedNovels && plannedNovels.length > 0) {
@@ -28961,6 +29101,11 @@ async function importJSON() {
                   newRegistry.generalTags = { ...(newRegistry.generalTags || FACTORY_GENERAL_TAGS), "📁 사용자 태그": merged };
                 }
                 updateTagRegistry(newRegistry);
+              }
+
+              // 🆕 플랫폼 레지스트리 복원
+              if (data.PR && typeof data.PR === "object") {
+                updatePlatformRegistry(data.PR);
               }
 
               // 📋 v3.3.0: 예정 작품 복원
@@ -36643,6 +36788,58 @@ async function importJSON() {
               </View>
             </Section>
 
+            {/* 🆕 플랫폼 관리 (커스텀 플랫폼 추가/삭제) */}
+            <Section title="📱 플랫폼 관리">
+              <Text style={{ color: C.sub, fontSize: 12, marginBottom: 10, lineHeight: 18 }}>
+                추가한 플랫폼은 작품 등록/편집, 필터, 통계에 자동 반영됩니다.
+              </Text>
+              {PLATFORM_OPTIONS.map((p, i) => (
+                <View key={p} style={{
+                  flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+                  paddingVertical: 8, paddingHorizontal: 12, marginBottom: 4,
+                  backgroundColor: C.bg, borderRadius: 8,
+                }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+                    <Text style={{ color: C.text, fontSize: 15 }}>{p}</Text>
+                    {FACTORY_PLATFORM_OPTIONS.includes(p) && (
+                      <Text style={{ color: C.sub, fontSize: 11, marginLeft: 6 }}>기본</Text>
+                    )}
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => removePlatform(p)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text style={{ color: C.warn, fontSize: 18 }}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+              <View style={{ flexDirection: "row", marginTop: 8 }}>
+                <TextInput
+                  value={newPlatformInput || ""}
+                  onChangeText={setNewPlatformInput}
+                  placeholder="새 플랫폼 이름"
+                  placeholderTextColor={C.sub}
+                  style={{
+                    flex: 1, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line,
+                    borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8,
+                    fontSize: 14, color: C.text, marginRight: 8,
+                  }}
+                />
+                <PrimaryButton
+                  title="추가"
+                  onPress={() => {
+                    if (addPlatform(newPlatformInput)) setNewPlatformInput("");
+                  }}
+                  disabled={!(newPlatformInput || "").trim()}
+                />
+              </View>
+              <OutlineButton
+                title="기본값으로 초기화"
+                onPress={resetPlatformsToFactory}
+                style={{ marginTop: 8 }}
+              />
+            </Section>
+
             {/* 🆕 플랫폼별 기본 표지 */}
             <Section title="플랫폼별 기본 표지">
               <Text style={{ color: C.sub, marginBottom: 10 }}>
@@ -37706,6 +37903,7 @@ async function importJSON() {
                   platforms={editPlatforms}
                   onChange={setEditPlatforms}
                   options={PLATFORM_OPTIONS}
+                  extraPlatforms={editPlatforms.filter(p => !PLATFORM_OPTIONS.includes(p))}
                   theme={C}
                 />
 
@@ -39401,27 +39599,27 @@ async function importJSON() {
                 
                 <Label style={{ marginTop: 10 }}>연재처</Label>
                 <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
-                  {PLATFORM_OPTIONS.map((p) => {
+                  {(() => {
                     const cur = parsePlatforms(plannedEditItem.platforms);
-                    const on = cur.includes(p);
+                    const extras = cur.filter(p => !PLATFORM_OPTIONS.includes(p));
+                    const togglePlat = (p) => {
+                      updatePlannedEditItem(prev => {
+                        if (!prev) return null;
+                        const curP = parsePlatforms(prev.platforms);
+                        const next = curP.includes(p) ? curP.filter((x) => x !== p) : [...curP, p];
+                        return { ...prev, platforms: JSON.stringify(next) };
+                      });
+                    };
                     return (
-                      <Chip
-                        key={p}
-                        label={p}
-                        active={on}
-                        onPress={() => {
-                          // 🔧 v3.5.8: 함수형 업데이트
-                          updatePlannedEditItem(prev => {
-                            if (!prev) return null;
-                            const curP = parsePlatforms(prev.platforms);
-                            // 🔧 stale closure 방지: on 대신 curP에서 재계산
-                            const next = curP.includes(p) ? curP.filter((x) => x !== p) : [...curP, p];
-                            return { ...prev, platforms: JSON.stringify(next) };
-                          });
-                        }}
+                      <PlatformChips
+                        platforms={cur}
+                        onChange={(next) => updatePlannedEditItem(prev => prev ? { ...prev, platforms: JSON.stringify(next) } : null)}
+                        options={PLATFORM_OPTIONS}
+                        extraPlatforms={extras}
+                        theme={C}
                       />
                     );
-                  })}
+                  })()}
                 </View>
                 
                 <Label style={{ marginTop: 10 }}>작품 상태</Label>
