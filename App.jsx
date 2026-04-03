@@ -2773,6 +2773,16 @@ function getSlotDbFilename(slotId) {
 
 // 현재 활성 슬롯 ID (모듈 레벨 — openDb에서 참조)
 let activeSlotId = 0;
+// 🔧 슬롯 세대 카운터: setTimeout 기반 지연 쓰기가 슬롯 전환 후 잘못된 DB에 기록되는 것 방지
+let _slotGeneration = 0;
+/** setTimeout 내에서 슬롯 전환 여부를 확인하는 안전한 지연 쓰기 래퍼 */
+function safeDefer(fn) {
+  const gen = _slotGeneration;
+  setTimeout(() => {
+    if (_slotGeneration !== gen) return; // 슬롯이 전환됨 → 이전 슬롯 데이터 무시
+    fn();
+  }, 0);
+}
 
 async function loadSlotMeta() {
   try {
@@ -2906,7 +2916,11 @@ async function flushAllPendingWrites() {
   for (const k of Object.keys(_pendingMetaWrites)) delete _pendingMetaWrites[k];
   if (Object.keys(metaSnapshot).length > 0) {
     try { await batchSetAppMeta(metaSnapshot); } catch (e) {
-      console.warn("슬롯 전환 전 메타 flush 실패:", e);
+      console.warn("슬롯 전환 전 메타 flush 실패 — 재시도:", e);
+      // 🔧 1회 재시도: DB 잠금 등 일시적 오류 대응
+      try { await batchSetAppMeta(metaSnapshot); } catch (e2) {
+        console.warn("슬롯 전환 전 메타 flush 재시도 실패:", e2);
+      }
     }
   }
   
@@ -2936,9 +2950,12 @@ async function flushAllPendingWrites() {
 async function switchSlotDb(newSlotId) {
   console.log(`[슬롯] 전환 시작: ${activeSlotId} → ${newSlotId}`);
   
+  // 0. 🔧 슬롯 세대 증가 → 이전 슬롯의 setTimeout 기반 지연 쓰기를 무효화
+  _slotGeneration++;
+
   // 1. 모든 지연 쓰기 flush
   await flushAllPendingWrites();
-  
+
   // 2. 현재 슬롯 작품 수 업데이트
   try {
     const novels = await all("SELECT COUNT(*) as c FROM novels;");
@@ -21491,7 +21508,7 @@ function AppContent() {
             const { relations: migrated, addedCount } = migrateAliasesToRelations(loaded);
             if (addedCount > 0) {
               loaded = migrated;
-              setTimeout(() => setAppMeta("tag_relations", migrated), 100);
+              safeDefer(() => setAppMeta("tag_relations", migrated));
               console.log(`[태그 관계] ${addedCount}개 약어 그룹 자동 마이그레이션`);
             }
             
@@ -21501,7 +21518,7 @@ function AppContent() {
             const { relations: initial, addedCount } = migrateAliasesToRelations(null);
             if (addedCount > 0) {
               setTagRelations(initial);
-              setTimeout(() => setAppMeta("tag_relations", initial), 100);
+              safeDefer(() => setAppMeta("tag_relations", initial));
               console.log(`[태그 관계] 초기 ${addedCount}개 약어 그룹 생성`);
             }
           }
@@ -21680,8 +21697,21 @@ function AppContent() {
       setUpsetFactors({ factors: [], lastUpdated: 0 });
       setTagRelations({ groups: {}, tagToGroup: {} });
       setTagCoOccurrences({});
-      // 🔧 v6.0.1: 새 슬롯의 registry를 그대로 사용 (FACTORY 강제 덮어쓰기 제거 — 사용자 정의 태그 보존)
-      if (slotRegistry) updateTagRegistry(slotRegistry);
+      // 🔧 v6.0.1: 새 슬롯의 registry를 그대로 사용 (사용자 정의 태그 보존)
+      // 🔧 슬롯 전환: slotRegistry가 null이면 팩토리 기본값으로 초기화 (이전 슬롯 데이터 잔류 방지)
+      if (slotRegistry) {
+        updateTagRegistry(slotRegistry);
+      } else {
+        updateTagRegistry({
+          version: 1,
+          majorGenres: [...FACTORY_MAJOR_GENRES],
+          subGenres: [...FACTORY_SUB_GENRES],
+          generalTags: { ...FACTORY_GENERAL_TAGS },
+          characterCategories: { ...FACTORY_CHARACTER_CATEGORIES },
+          aliases: { ...FACTORY_TAG_ALIASES },
+          spectrumGroups: { ...FACTORY_TAG_SPECTRUM_GROUPS },
+        });
+      }
       setComboTags([]);
       setTagSentiments({});
       setTagAttributes({});
@@ -21726,11 +21756,16 @@ function AppContent() {
       setTagUsageCounts({});
       setQuotesIdx(0);
       setQuotesShuffled(null);
-      // refs
+      // refs (🔧 슬롯 전환 시 이전 슬롯 데이터 잔류 방지)
       isAutoMatchingRef.current = false;
       needsListRefreshRef.current = false;
       loadListRunningRef.current = false; // 🔧 v3.5.15e: 이전 loadList 비정상 종료 시 잔류 방지
+      editItemRef.current = null;
+      editOriginalSnapshotRef.current = null;
+      selectedIdsRef.current = [];
+      plannedEditItemRef.current = null;
       if (matchStatsTimerRef.current) { clearTimeout(matchStatsTimerRef.current); matchStatsTimerRef.current = null; }
+      if (pairAnalysisTimerRef.current) { clearTimeout(pairAnalysisTimerRef.current); pairAnalysisTimerRef.current = null; }
       // 캐시 무효화
       invalidateMatchCache();
       invalidatePatternCache();
@@ -23352,7 +23387,7 @@ function AppContent() {
     // 인사이트 저장 (🔧 React 18+ 배칭 대응: updater 내 부수효과 제거)
     setMatchInsights(prev => {
       const updated = [insight, ...prev].slice(0, 200); // 최대 200개 유지
-      setTimeout(() => deferSetAppMeta("match_insights", updated), 0);
+      safeDefer(() => deferSetAppMeta("match_insights", updated));
       return updated;
     });
     
@@ -23822,14 +23857,14 @@ function AppContent() {
     setPinnedTags(prev => {
       if (!prev.some(t => isSameTag(t, tag))) return prev;
       const next = prev.filter(t => !isSameTag(t, tag));
-      setTimeout(() => deferSetAppMeta("pinned_tags", next), 0);
+      safeDefer(() => deferSetAppMeta("pinned_tags", next));
       return next;
     });
     // 숨김 태그에서 제거
     setHiddenTags(prev => {
       if (!prev.some(t => isSameTag(t, tag))) return prev;
       const next = prev.filter(t => !isSameTag(t, tag));
-      setTimeout(() => deferSetAppMeta("hidden_tags", next), 0);
+      safeDefer(() => deferSetAppMeta("hidden_tags", next));
       return next;
     });
     // 감정 속성 제거
@@ -23838,7 +23873,7 @@ function AppContent() {
       if (!matchKey) return prev;
       const next = { ...prev };
       delete next[matchKey];
-      setTimeout(() => deferSetAppMeta("tag_sentiments", next), 0);
+      safeDefer(() => deferSetAppMeta("tag_sentiments", next));
       return next;
     });
     // tagAttributes (isMajor/isSub/isTitle) 제거
@@ -23847,7 +23882,7 @@ function AppContent() {
       if (!matchKey) return prev;
       const next = { ...prev };
       delete next[matchKey];
-      setTimeout(() => deferSetAppMeta("tag_attributes", next), 0);
+      safeDefer(() => deferSetAppMeta("tag_attributes", next));
       return next;
     });
   }
@@ -24181,10 +24216,10 @@ function AppContent() {
       if (next === prev) return prev;
       // React 18+에서 updater 외부 변수 할당은 배칭으로 인해 실행 시점 보장 불가
       // setTimeout으로 렌더 커밋 이후 부수효과 실행
-      setTimeout(() => {
+      safeDefer(() => {
         applyTagRegistry(next);
         setAppMeta("tag_registry", next);
-      }, 0);
+      });
       return next;
     });
   }
@@ -24380,11 +24415,11 @@ function AppContent() {
           const isPinned = prev.some(t => isSameTag(t, tag));
           if (changes.pinned && !isPinned) {
             const next = [...prev, tag];
-            setTimeout(() => setAppMeta("pinned_tags", next), 0);
+            safeDefer(() => setAppMeta("pinned_tags", next));
             return next;
           } else if (!changes.pinned && isPinned) {
             const next = prev.filter(t => !isSameTag(t, tag));
-            setTimeout(() => setAppMeta("pinned_tags", next), 0);
+            safeDefer(() => setAppMeta("pinned_tags", next));
             return next;
           }
           return prev;
@@ -24399,11 +24434,11 @@ function AppContent() {
           const isHidden = prev.some(t => isSameTag(t, tag));
           if (changes.hidden && !isHidden) {
             const next = [...prev, tag];
-            setTimeout(() => setAppMeta("hidden_tags", next), 0);
+            safeDefer(() => setAppMeta("hidden_tags", next));
             return next;
           } else if (!changes.hidden && isHidden) {
             const next = prev.filter(t => !isSameTag(t, tag));
-            setTimeout(() => setAppMeta("hidden_tags", next), 0);
+            safeDefer(() => setAppMeta("hidden_tags", next));
             return next;
           }
           return prev;
@@ -24424,7 +24459,7 @@ function AppContent() {
             updated[tag] = newSentiment;
           }
           // 🔧 React 18+ 배칭 대응: setTimeout으로 렌더 이후 저장
-          setTimeout(() => setAppMeta("tag_sentiments", updated), 0);
+          safeDefer(() => setAppMeta("tag_sentiments", updated));
           return updated;
         });
       }
@@ -24444,7 +24479,7 @@ function AppContent() {
             }
           }
           // 🔧 React 18+ 배칭 대응: setTimeout으로 렌더 이후 저장
-          setTimeout(() => setAppMeta("tag_attributes", attrs), 0);
+          safeDefer(() => setAppMeta("tag_attributes", attrs));
           return attrs;
         });
       }
@@ -24533,7 +24568,7 @@ function AppContent() {
       const updated = { ...prev, [genre]: { ...prev[genre] } };
       delete updated[genre].isMajor;
       if (Object.keys(updated[genre]).length === 0) delete updated[genre];
-      setTimeout(() => deferSetAppMeta("tag_attributes", updated), 0);
+      safeDefer(() => deferSetAppMeta("tag_attributes", updated));
       return updated;
     });
     Alert.alert("완료", `"${genre}"의 대장르 속성을 제거했습니다.`);
@@ -24559,7 +24594,7 @@ function AppContent() {
       const updated = { ...prev, [genre]: { ...prev[genre] } };
       delete updated[genre].isSub;
       if (Object.keys(updated[genre]).length === 0) delete updated[genre];
-      setTimeout(() => deferSetAppMeta("tag_attributes", updated), 0);
+      safeDefer(() => deferSetAppMeta("tag_attributes", updated));
       return updated;
     });
     Alert.alert("완료", `"${genre}"의 부장르 속성을 제거했습니다.`);
@@ -25368,7 +25403,7 @@ function AppContent() {
     setRecentChanges(prev => {
       const updated = [change, ...prev].slice(0, 500); // 최대 500개 유지
       // 🔧 React 18+ 배칭 대응: setTimeout으로 렌더 이후 저장
-      setTimeout(() => deferSetAppMeta("recent_changes", updated), 0);
+      safeDefer(() => deferSetAppMeta("recent_changes", updated));
       return updated;
     });
   }, []);
