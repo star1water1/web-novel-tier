@@ -3854,11 +3854,17 @@ function deferSetAppMeta(key, value) {
     // 🔧 스냅샷 후에 타이머 클리어 (drain 중 재진입 방지)
     const snapshot = { ..._pendingMetaWrites };
     for (const k of Object.keys(_pendingMetaWrites)) delete _pendingMetaWrites[k];
-    _metaBatchTimer = null;
     try {
       await batchSetAppMeta(snapshot);
     } catch (e) {
       console.warn("deferSetAppMeta flush 오류:", e);
+    } finally {
+      _metaBatchTimer = null;
+      // 🔧 flush 중 새로운 쓰기가 쌓였으면 재스케줄
+      if (Object.keys(_pendingMetaWrites).length > 0) {
+        const nextKey = Object.keys(_pendingMetaWrites)[0];
+        deferSetAppMeta(nextKey, _pendingMetaWrites[nextKey]);
+      }
     }
   }, 300);
 }
@@ -7659,6 +7665,7 @@ function analyzeSpectrum(tagData, spectrumId) {
   if (matches.length === 1) {
     const tag = normalizeTag(matches[0].tag);
     const pos = spectrum.tags.indexOf(tag) + 1;
+    if (pos <= 0) return null; // 🔧 normalizeTag 결과가 spectrum에 없는 엣지 케이스 방어 (복수매칭과 동일한 가드)
     const normalizedPos = pos / spectrumLength;
     return {
       type: "single",
