@@ -50,8 +50,8 @@ eas build -p android --profile preview  # APK 빌드
 | 15220-16960 | AwardsScreen | `AwardsScreen` |
 | 16960-17080 | 차트 컴포넌트 (BarChart, RadarChart, PieChart, Heatmap) | `BarChart`, `RadarChartSimple` |
 | 17080-20300 | TasteAnalysisScreen | `TasteAnalysisScreen` |
-| 20300-41100 | App() 메인 컴포넌트 (useState ~200개, useEffect, 매칭 엔진, CRUD, 모든 탭 JSX) | `export default function App` |
-| 41100-41107 | App() export | `export default` |
+| 20300-41400 | App() 메인 컴포넌트 (useState ~200개, useEffect, 매칭 엔진, CRUD, 모든 탭 JSX) | `export default function App` |
+| 41400-41427 | App() export | `export default` |
 
 ## 절대 준수 규칙 (App.jsx 11-42줄)
 

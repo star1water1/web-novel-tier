@@ -20948,6 +20948,11 @@ function AppContent() {
   const [rankQuery, setRankQuery] = useState("");
   const [rankTier, setRankTier] = useState("ALL"); // ALL, S, A, B+, B, B-, C
 
+  // 🆕 v6.1: 티어 관리 탭 (manual 모드)
+  const [tierManageFilter, setTierManageFilter] = useState("ALL");
+  const [tierManageQuery, setTierManageQuery] = useState("");
+  const [expandedNovelId, setExpandedNovelId] = useState(null);
+
   // 이주의 추천 → 오늘의 추천 (v3.3.0)
   const [dailyReco, setDailyReco] = useState(null); // { novel, pickedAt, reason, category, isPlanned }
   const [recoHistory, setRecoHistory] = useState([]); // 최근 5회 추천 기록 [{novelId, pickedAt}]
@@ -27845,6 +27850,44 @@ function AppContent() {
     return result;
   }, [list, rankQuery, rankTier, screen]);
 
+  // 🆕 v6.1: 티어 관리 탭 데이터 (manual/hybrid 모드)
+  const tierManageEntries = useMemo(() => {
+    if (screen !== "tierManage") return [];
+    if (!list || list.length === 0) return [];
+
+    const sorted = [...list].sort((a, b) => {
+      const tierA = getDisplayTier(a, globalTierConfig);
+      const tierB = getDisplayTier(b, globalTierConfig);
+      const tierRankA = tierRank(tierA, globalTierConfig);
+      const tierRankB = tierRank(tierB, globalTierConfig);
+      if (tierRankA !== tierRankB) return tierRankA - tierRankB;
+      if (b.rating !== a.rating) return b.rating - a.rating;
+      const ac = a.created_at || 0;
+      const bc = b.created_at || 0;
+      if (ac !== bc) return ac - bc;
+      return (a.title || "").localeCompare(b.title || "");
+    });
+
+    const q = tierManageQuery.toLowerCase().trim();
+    let rank = 0;
+    const result = [];
+
+    for (const n of sorted) {
+      rank += 1;
+      const t = getDisplayTier(n, globalTierConfig);
+      if (tierManageFilter !== "ALL" && t !== tierManageFilter) continue;
+
+      if (q) {
+        const bank = [n.title, n.author, n.tags, n.note].join(" ").toLowerCase();
+        if (!bank.includes(q)) continue;
+      }
+
+      result.push({ item: n, rank, tier: t });
+    }
+
+    return result;
+  }, [list, tierManageQuery, tierManageFilter, screen]);
+
   // 🆕 분석 통계 (useMemo로 캐싱)
   // 🚀 v3.5.4: 분석 탭에서만 계산 (다른 탭에서 불필요한 전체 순회 방지)
   const analysisStats = useMemo(() => {
@@ -28160,6 +28203,38 @@ function AppContent() {
     await loadList(undefined, undefined, "batch");
     Alert.alert("완료", `${ids.length}개 작품의 연재 상태를 변경했습니다.`);
   }, []);
+
+  // 🆕 v6.1: 티어 일괄 변경 (manual/hybrid 모드)
+  const batchSetTier = useCallback(async (tierKey) => {
+    const ids = selectedIdsRef.current;
+    if (!ids.length) {
+      Alert.alert("알림", "먼저 작품을 선택해주세요.");
+      return;
+    }
+    if (!tierKey) return;
+    const queries = ids.map((id) => ({
+      sql: "UPDATE novels SET manual_tier=? WHERE id=?",
+      params: [tierKey, id],
+    }));
+    await execBatch(queries);
+    await loadList(undefined, undefined, "batch");
+    Alert.alert("완료", `${ids.length}개 작품의 티어를 ${getTierLabel(tierKey)}(으)로 변경했습니다.`);
+  }, []);
+
+  // 🆕 v6.1: 티어 내 순위 교환 (manual 모드 전용)
+  async function swapRating(idA, ratingA, idB, ratingB) {
+    if (ratingA === ratingB) {
+      await execBatch([
+        { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingB + 1, idA] },
+      ]);
+    } else {
+      await execBatch([
+        { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingB, idA] },
+        { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingA, idB] },
+      ]);
+    }
+    await loadList(undefined, undefined, "tierManage");
+  }
 
   // 🔧 v3.5.1: useCallback으로 변경 (stale closure 방지)
   const batchDelete = useCallback(async () => {
@@ -29834,7 +29909,7 @@ async function importJSON() {
         ["📰최신", "recent"],
         ["순위", "rank"],
         ["🏆수상", "awards"],
-        ...(!isManualMode ? [["검토", "review"]] : []),
+        ...(!isManualMode ? [["검토", "review"]] : [["🏷️배정", "tierManage"]]),
         ["보충", "supplement"],
         ["취향", "taste"],
         ["추천", "reco"],
@@ -33667,6 +33742,193 @@ async function importJSON() {
           </>
         )}
 
+        {/* 🆕 v6.1: TIER MANAGE - 티어 배정 (manual/hybrid 모드) */}
+        {screen === "tierManage" && (
+          <>
+            <H>🏷️ 티어 배정</H>
+
+            <Section title="검색 / 필터">
+              <Input
+                value={tierManageQuery}
+                onChangeText={setTierManageQuery}
+                placeholder="제목/작가/태그/메모 검색"
+              />
+              <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 10 }}>
+                {[
+                  ["전체", "ALL"],
+                  ...(globalTierConfig.tiers || []).map(t => [getTierLabel(t.key, globalTierConfig), t.key]),
+                ].map(([label, key]) => (
+                  <Chip
+                    key={key}
+                    label={label}
+                    active={tierManageFilter === key}
+                    onPress={() => setTierManageFilter(key)}
+                  />
+                ))}
+              </View>
+            </Section>
+
+            <Section title={`작품 목록 (${tierManageEntries.length}작)`}>
+              <FlatList
+                data={tierManageEntries}
+                keyExtractor={(entry, index) => String(entry?.item?.id || `tm-${index}`)}
+                extraData={expandedNovelId}
+                initialNumToRender={10}
+                maxToRenderPerBatch={8}
+                windowSize={5}
+                removeClippedSubviews={false}
+                scrollEnabled={false}
+                renderItem={({ item: entry, index }) => {
+                  const { item, rank, tier } = entry || {};
+                  if (!item) return null;
+                  const tierColor = getTierColor(tier);
+                  const isExpanded = expandedNovelId === item.id;
+                  const isManualOnly = globalTierConfig.mode === "manual";
+                  const hasQuery = tierManageQuery.trim().length > 0;
+
+                  // 같은 티어 내 인접 항목 찾기 (▲/▼용)
+                  const sameTierEntries = tierManageEntries.filter(e => e.tier === tier);
+                  const posInTier = sameTierEntries.findIndex(e => e.item.id === item.id);
+
+                  return (
+                    <View style={{ marginBottom: 8 }}>
+                      <View
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          padding: 12,
+                          borderRadius: 12,
+                          borderWidth: 2,
+                          borderColor: isExpanded ? tierColor : C.line,
+                          backgroundColor: C.card,
+                        }}
+                      >
+                        {/* 순위 */}
+                        <Text style={{ color: C.sub, fontWeight: "700", fontSize: 13, width: 30, textAlign: "center" }}>
+                          {rank}
+                        </Text>
+
+                        {/* 제목 + 작가 */}
+                        <View style={{ flex: 1, marginHorizontal: 8 }}>
+                          <Text style={{ color: C.text, fontWeight: "700", fontSize: 14 }} numberOfLines={1}>
+                            {item.title}
+                          </Text>
+                          {item.author ? (
+                            <Text style={{ color: C.sub, fontSize: 12 }} numberOfLines={1}>
+                              {item.author}
+                            </Text>
+                          ) : null}
+                        </View>
+
+                        {/* 티어 배지 (탭하면 인라인 확장) */}
+                        <TouchableOpacity
+                          onPress={() => setExpandedNovelId(isExpanded ? null : item.id)}
+                          style={{
+                            paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999,
+                            backgroundColor: tierColor, minWidth: 36, alignItems: "center",
+                          }}
+                        >
+                          <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>
+                            {getTierLabel(tier)}
+                          </Text>
+                        </TouchableOpacity>
+
+                        {/* ▲/▼ (manual 모드 + 검색 미활성 시만) */}
+                        {isManualOnly && !hasQuery && (
+                          <View style={{ marginLeft: 6, gap: 2 }}>
+                            <TouchableOpacity
+                              disabled={posInTier <= 0}
+                              onPress={() => {
+                                const above = sameTierEntries[posInTier - 1];
+                                if (above) swapRating(item.id, item.rating, above.item.id, above.item.rating);
+                              }}
+                              style={{
+                                width: 32, height: 28, alignItems: "center", justifyContent: "center",
+                                borderRadius: 6, backgroundColor: posInTier > 0 ? C.chip : "transparent",
+                              }}
+                            >
+                              <Text style={{ color: posInTier > 0 ? C.text : "transparent", fontSize: 14, fontWeight: "700" }}>▲</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              disabled={posInTier >= sameTierEntries.length - 1}
+                              onPress={() => {
+                                const below = sameTierEntries[posInTier + 1];
+                                if (below) swapRating(item.id, item.rating, below.item.id, below.item.rating);
+                              }}
+                              style={{
+                                width: 32, height: 28, alignItems: "center", justifyContent: "center",
+                                borderRadius: 6, backgroundColor: posInTier < sameTierEntries.length - 1 ? C.chip : "transparent",
+                              }}
+                            >
+                              <Text style={{ color: posInTier < sameTierEntries.length - 1 ? C.text : "transparent", fontSize: 14, fontWeight: "700" }}>▼</Text>
+                            </TouchableOpacity>
+                          </View>
+                        )}
+                      </View>
+
+                      {/* 인라인 티어 선택 (확장 시) */}
+                      {isExpanded && (
+                        <View style={{
+                          flexDirection: "row", flexWrap: "wrap", gap: 6,
+                          padding: 10, marginTop: -2,
+                          borderWidth: 1, borderTopWidth: 0, borderColor: tierColor,
+                          borderBottomLeftRadius: 12, borderBottomRightRadius: 12,
+                          backgroundColor: C.card,
+                        }}>
+                          {getActiveTierOrder(globalTierConfig).map(tk => (
+                            <TouchableOpacity
+                              key={tk}
+                              onPress={async () => {
+                                if (tk === tier) { setExpandedNovelId(null); return; }
+                                const oldTier = tier;
+                                await exec("UPDATE novels SET manual_tier=? WHERE id=?", [tk, item.id]);
+                                addTierHistoryEntry(item.id, item.title, oldTier, tk);
+                                setExpandedNovelId(null);
+                                await loadList(undefined, undefined, "tierManage");
+                              }}
+                              style={{
+                                paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999,
+                                backgroundColor: tk === tier ? getTierColor(tk) : C.chip,
+                                borderWidth: 1, borderColor: tk === tier ? getTierColor(tk) : C.line,
+                              }}
+                            >
+                              <Text style={{ color: tk === tier ? "#fff" : C.text, fontWeight: "700", fontSize: 13 }}>
+                                {getTierLabel(tk)}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      )}
+                    </View>
+                  );
+                }}
+                ListHeaderComponent={() => {
+                  // 티어별 그룹 헤더용 분포 요약
+                  const tierCounts = {};
+                  for (const e of tierManageEntries) {
+                    tierCounts[e.tier] = (tierCounts[e.tier] || 0) + 1;
+                  }
+                  const tierOrder = getActiveTierOrder(globalTierConfig);
+                  const activeTiers = tierOrder.filter(tk => tierCounts[tk]);
+                  if (activeTiers.length === 0) return null;
+                  return (
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+                      {activeTiers.map(tk => (
+                        <View key={tk} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                          <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: getTierColor(tk) }} />
+                          <Text style={{ color: C.sub, fontSize: 12, fontWeight: "600" }}>
+                            {getTierLabel(tk)} {tierCounts[tk]}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  );
+                }}
+              />
+            </Section>
+          </>
+        )}
+
         {/* REVIEW - 티어 검토 */}
         {screen === "review" && (
           <>
@@ -34843,6 +35105,32 @@ async function importJSON() {
                 ))}
               </View>
 
+              {/* 🆕 v6.1: 티어 일괄 변경 (manual/hybrid 모드) */}
+              {(globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid") && (
+                <>
+                  <View style={{ height: 12 }} />
+                  <Text style={{ fontWeight: "700", marginBottom: 6, color: C.text }}>
+                    티어 일괄 변경
+                  </Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                    {getActiveTierOrder(globalTierConfig).map(tierKey => (
+                      <TouchableOpacity
+                        key={tierKey}
+                        onPress={() => batchSetTier(tierKey)}
+                        style={{
+                          paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999,
+                          backgroundColor: getTierColor(tierKey), marginBottom: 4,
+                        }}
+                      >
+                        <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>
+                          {getTierLabel(tierKey)}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </>
+              )}
+
               <View style={{ height: 12 }} />
               <View style={{ flexDirection: "row", gap: 8 }}>
                 <OutlineButton
@@ -35596,7 +35884,17 @@ async function importJSON() {
                             }
                             const newConfig = { ...oldConfig, mode: m.key };
                             if (m.key === "manual") newConfig.allowRegistrationTier = true;
+                            // 🆕 v6.1: manual→match 복귀 시 ELO 재계산
+                            if (m.key === "match" && oldConfig.mode === "manual") {
+                              await rebuildAllFromMatches(tagAttributes);
+                            }
                             saveAppSettings({ tierSystemConfig: newConfig });
+                            // 🆕 v6.1: 모드 전환 시 화면 리다이렉트 (숨겨지는 탭 대응)
+                            if (m.key === "manual" && (screen === "match" || screen === "review")) {
+                              setScreen("tierManage");
+                            } else if (m.key === "match" && screen === "tierManage") {
+                              setScreen("home");
+                            }
                             await loadList(undefined, undefined, "settings");
                             Alert.alert("완료", `${m.label} 모드로 변경되었습니다.`);
                           }},
@@ -38621,6 +38919,30 @@ async function importJSON() {
   </View>
 )}
 
+                {/* 🆕 v6.1: 편집 시 티어 직접 지정 (manual/hybrid 모드) */}
+                {(globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid") && (
+                  <>
+                    <Label style={{ marginTop: 10 }}>티어 지정</Label>
+                    <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
+                      {getActiveTierOrder(globalTierConfig).map(tierKey => (
+                        <TouchableOpacity
+                          key={tierKey}
+                          onPress={() => setEditManualTier(tierKey)}
+                          style={{
+                            paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999,
+                            backgroundColor: editManualTier === tierKey ? getTierColor(tierKey) : C.chip,
+                            borderWidth: 1, borderColor: editManualTier === tierKey ? getTierColor(tierKey) : C.line,
+                          }}
+                        >
+                          <Text style={{ color: editManualTier === tierKey ? "#fff" : C.text, fontWeight: "700", fontSize: 13 }}>
+                            {getTierLabel(tierKey)}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </>
+                )}
+
                 <Label style={{ marginTop: 10, color: C.warn }}>
                   고급: 레이팅 직접 입력
                 </Label>
@@ -38630,8 +38952,6 @@ async function importJSON() {
                   keyboardType="numeric"
                   placeholder="예: 1725.0"
                 />
-
-    
 
                 {/* ★ 수상 설정 UI */}
                 <Label style={{ marginTop: 10 }}>수상 설정</Label>
