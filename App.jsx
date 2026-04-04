@@ -25083,20 +25083,21 @@ function AppContent() {
   }
 
   /** 🔧 v6.0.1: 함수형 업데이트 기반 registry 변경 (stale closure 방지) */
-  /** 🔧 React 18+ 배칭 대응: setTimeout으로 부수효과를 렌더 이후 실행 */
+  /** 🔧 모듈 변수는 즉시 갱신 (렌더링 시 최신 값 참조 보장), DB만 safeDefer */
   function updateTagRegistryFn(updaterFn) {
+    let nextResult = null;
     setTagRegistry(prev => {
       if (!prev) return prev;
       const next = updaterFn(prev);
       if (next === prev) return prev;
-      // React 18+에서 updater 외부 변수 할당은 배칭으로 인해 실행 시점 보장 불가
-      // setTimeout으로 렌더 커밋 이후 부수효과 실행
-      safeDefer(() => {
-        applyTagRegistry(next);
-        setAppMeta("tag_registry", next);
-      });
+      nextResult = next;
       return next;
     });
+    // 부수효과: updater 밖에서 실행 (saveAppSettings과 동일 패턴)
+    if (nextResult) {
+      applyTagRegistry(nextResult); // 모듈 변수 즉시 갱신 (GENERAL_TAGS, ALL_DEFAULT_TAGS 등)
+      safeDefer(() => setAppMeta("tag_registry", nextResult)); // DB만 비동기
+    }
   }
 
   /** 레지스트리에 태그 추가 (카테고리 미지정 시 "📁 사용자 태그") */
@@ -42080,33 +42081,39 @@ async function importJSON() {
           addTagToRegistry(tag, category || "📁 사용자 태그");
           Alert.alert("완료", `"${tag}" 태그를 추가했습니다.`);
         }}
-        onChangeSentiment={async (tag, sentiment) => {
-          const updated = { ...tagSentiments, [tag]: sentiment };
-          setTagSentiments(updated);
-          await setAppMeta("tag_sentiments", updated);
+        onChangeSentiment={(tag, sentiment) => {
+          // 🔧 함수형 setState로 stale closure 방지
+          setTagSentiments(prev => {
+            const updated = { ...prev, [tag]: sentiment };
+            safeDefer(() => setAppMeta("tag_sentiments", updated));
+            return updated;
+          });
         }}
-        onBatchChangeSentiment={async (tags, sentiment) => {
-          const updated = { ...tagSentiments };
-          for (const tag of tags) {
-            updated[tag] = sentiment;
-          }
-          setTagSentiments(updated);
-          await setAppMeta("tag_sentiments", updated);
-        }}
-        onBatchChangeTitle={async (tags, setAsTitle) => {
-          const updated = { ...tagAttributes };
-          for (const tag of tags) {
-            if (!updated[tag]) updated[tag] = {};
-            if (setAsTitle) {
-              updated[tag].isTitle = true;
-            } else {
-              delete updated[tag].isTitle;
-              // 빈 객체면 키 자체 삭제
-              if (Object.keys(updated[tag]).length === 0) delete updated[tag];
+        onBatchChangeSentiment={(tags, sentiment) => {
+          setTagSentiments(prev => {
+            const updated = { ...prev };
+            for (const tag of tags) {
+              updated[tag] = sentiment;
             }
-          }
-          setTagAttributes(updated);
-          await setAppMeta("tag_attributes", updated);
+            safeDefer(() => setAppMeta("tag_sentiments", updated));
+            return updated;
+          });
+        }}
+        onBatchChangeTitle={(tags, setAsTitle) => {
+          setTagAttributes(prev => {
+            const updated = { ...prev };
+            for (const tag of tags) {
+              if (!updated[tag]) updated[tag] = {};
+              if (setAsTitle) {
+                updated[tag].isTitle = true;
+              } else {
+                delete updated[tag].isTitle;
+                if (Object.keys(updated[tag]).length === 0) delete updated[tag];
+              }
+            }
+            safeDefer(() => setAppMeta("tag_attributes", updated));
+            return updated;
+          });
         }}
         onCleanupDuplicates={cleanupDuplicateTags}
         onCleanupUnused={cleanupUnusedTags}
