@@ -26008,6 +26008,9 @@ function AppContent() {
   // 설정 저장 (변경 시 자동 호출)
   function saveAppSettings(newSettings) {
     // 🔧 함수형 setState로 stale closure 방지 (모든 토글 동시 조작 안전)
+    // 부수효과는 updater 밖에서 실행 (React 안티패턴 회피, StrictMode 안전)
+    let mergedResult = null;
+
     setAppSettings(prev => {
       const merged = { ...prev };
 
@@ -26024,30 +26027,33 @@ function AppContent() {
         }
       }
 
-      // 🔧 전역 변수는 즉시 갱신 (렌더링 시 최신 값 참조 보장)
-      if (newSettings.tierThresholds) {
-        globalTierThresholds = { ...globalTierThresholds, ...newSettings.tierThresholds };
-      }
-      if (newSettings.tierSystemConfig || merged.tierSystemConfig) {
-        const tsc = merged.tierSystemConfig || DEFAULT_TIER_SYSTEM_CONFIG;
-        globalTierConfig = { ...tsc };
-        rebuildTierLookup(globalTierConfig);
-        if (tsc.tiers) {
-          const th = {};
-          for (const t of tsc.tiers) {
-            if (t.key !== tsc.defaultTier) th[t.key] = t.threshold;
-          }
-          globalTierThresholds = th;
-        }
-      }
-
-      // DB 영속화만 렌더 이후 실행
-      safeDefer(() => {
-        setAppMeta("app_settings", merged);
-      });
-
+      mergedResult = merged;
       return merged;
     });
+
+    // 부수효과: 전역 변수 갱신 + DB 영속화 (updater 밖, 같은 동기 블록 내)
+    if (mergedResult) {
+      try {
+        if (newSettings.tierThresholds) {
+          globalTierThresholds = { ...globalTierThresholds, ...newSettings.tierThresholds };
+        }
+        if (newSettings.tierSystemConfig || mergedResult.tierSystemConfig) {
+          const tsc = mergedResult.tierSystemConfig || DEFAULT_TIER_SYSTEM_CONFIG;
+          globalTierConfig = { ...tsc };
+          rebuildTierLookup(globalTierConfig);
+          if (tsc.tiers) {
+            const th = {};
+            for (const t of tsc.tiers) {
+              if (t.key !== tsc.defaultTier) th[t.key] = t.threshold;
+            }
+            globalTierThresholds = th;
+          }
+        }
+      } catch (e) {
+        console.warn("saveAppSettings: global update error:", e);
+      }
+      safeDefer(() => setAppMeta("app_settings", mergedResult));
+    }
   }
   
   // 🆕 v6.0: 티어 히스토리 저장 (gated 티어 관련만 영속화)
