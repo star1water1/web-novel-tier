@@ -23354,20 +23354,30 @@ function AppContent() {
        * 🧠 v3.5.5: user_confirmed 보너스, 팩터 칩용 chips[], source 필드 추가
        * @returns {{ score, factors, chips, breakdown: { genre, tag, author }, source }}
        */
+      // 🆕 tagAttributes 기반 대장르 통합 (루프 밖에서 1회 계산)
+      const allMajorForScore = getAllMajorTags(tagAttributes, userMajorGenres);
+
       function computeTasteScore(novel) {
         let genreScore = 0, tagScore = 0, authorScore = 0;
         const factors = []; // 추천 이유 텍스트
         const chips = [];   // 🧠 v3.5.5: UI 팩터 칩 [{ label, value, type, confirmed }]
         let source = "fallback"; // "pattern" | "fallback"
-        
+
         // — 장르 점수 (최대 40점) —
         const novelGenres = [];
         if (novel.major_genre) {
-          try { 
+          try {
             const mg = JSON.parse(novel.major_genre);
             if (Array.isArray(mg)) novelGenres.push(...mg);
             else if (typeof mg === "string") novelGenres.push(mg);
           } catch { if (novel.major_genre.trim()) novelGenres.push(novel.major_genre.trim()); }
+        }
+        // 🆕 tagAttributes 기반 대장르도 추가 (novel.tags에서 isMajor 태그 감지)
+        const ntags = (novel.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+        for (const t of ntags) {
+          if (allMajorForScore.some(m => isSameTag(m, t)) && !novelGenres.some(g => isSameTag(g, t))) {
+            novelGenres.push(t);
+          }
         }
         
         if (hasPatterns && Object.keys(genreScores).length > 0) {
@@ -30442,6 +30452,19 @@ async function importJSON() {
     return list.filter(n => getReviewStatus(n) !== null).length;
   }, [list]);
 
+  // 🆕 tagAttributes 기반 대장르/부장르 통합 감지용 Set (O(1) 룩업, 1회 계산)
+  const allMajorTagsSet = useMemo(() => {
+    const s = new Set();
+    getAllMajorTags(tagAttributes, userMajorGenres).forEach(t => s.add(normalizeTagKey(t)));
+    return s;
+  }, [tagAttributes, userMajorGenres]);
+
+  const allSubTagsSet = useMemo(() => {
+    const s = new Set();
+    getAllSubTags(tagAttributes, userSubGenres).forEach(t => s.add(normalizeTagKey(t)));
+    return s;
+  }, [tagAttributes, userSubGenres]);
+
   // 📝 보충 대상 작품 판별 함수 (v2.8)
   const isSupplementTarget = useCallback((novel) => {
     const settings = appSettings.supplement || DEFAULT_SETTINGS.supplement;
@@ -30449,6 +30472,9 @@ async function importJSON() {
 
     // 부정 태그 체크 (취향아님 포함 N개 이상이면 제외)
     const novelTags = (novel.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+    // 🆕 tagAttributes 기반 대장르/부장르 통합 감지
+    const hasMajorFromTags = novelTags.some(t => allMajorTagsSet.has(normalizeTagKey(t)));
+    const hasSubFromTags = novelTags.some(t => allSubTagsSet.has(normalizeTagKey(t)));
     const excludeTagsSet = new Set(settings.excludeTags || ["취향아님"]);
     let negativeCount = 0;
     
@@ -30490,13 +30516,13 @@ async function importJSON() {
       issues.push("readCount");
     }
     
-    // 대장르 체크
-    if (settings.requireMajorGenre && !novel.major_genre?.trim()) {
+    // 대장르 체크 (필드 + tagAttributes 통합)
+    if (settings.requireMajorGenre && !novel.major_genre?.trim() && !hasMajorFromTags) {
       issues.push("majorGenre");
     }
-    
-    // 부장르 체크
-    if (settings.requireSubGenre && !novel.sub_genre?.trim()) {
+
+    // 부장르 체크 (필드 + tagAttributes 통합)
+    if (settings.requireSubGenre && !novel.sub_genre?.trim() && !hasSubFromTags) {
       issues.push("subGenre");
     }
     
@@ -30541,11 +30567,11 @@ async function importJSON() {
     // 🆕 v3.5.12→v3.5.14: 질적 완성도 가이드 (설정 기반, 태그 3개 이상일 때)
     if (novelTags.length >= 3) {
       // 대장르 미설정 (requireMajorGenre와 별개: "태그는 충분한데 분류 안 함")
-      if (settings.requireQualityMajorGenre && !novel.major_genre?.trim()) {
+      if (settings.requireQualityMajorGenre && !novel.major_genre?.trim() && !hasMajorFromTags) {
         issues.push("no_major_genre");
       }
       // 부장르 미설정
-      if (settings.requireQualitySubGenre && !novel.sub_genre?.trim()) {
+      if (settings.requireQualitySubGenre && !novel.sub_genre?.trim() && !hasSubFromTags) {
         issues.push("no_sub_genre");
       }
       // 모든 농도가 기본값(3)
@@ -30558,7 +30584,7 @@ async function importJSON() {
     }
     
     return issues.length > 0 ? issues : false;
-  }, [appSettings.supplement, tagSentiments]);
+  }, [appSettings.supplement, tagSentiments, allMajorTagsSet, allSubTagsSet]);
 
   // 📝 보충 대상 목록 계산 (전체)
   const supplementListAll = useMemo(() => {
