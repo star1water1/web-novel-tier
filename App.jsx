@@ -8731,6 +8731,332 @@ const Section = ({ title, children }) => (
   </View>
 );
 
+/* ═══════════════════════════════════════════════════════════════════════
+   ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
+   ═══════════════════════════════════════════════════════════════════════ */
+const APP_VERSION = "3.5.15e";
+
+const CHANGE_TYPE_CONFIG = {
+  new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
+  improve: { emoji: "🎨", label: "개선", color: "#3b82f6" },
+  fix:     { emoji: "🔧", label: "수정", color: "#f59e0b" },
+  perf:    { emoji: "⚡", label: "성능", color: "#8b5cf6" },
+};
+
+function compareVersions(a, b) {
+  if (a === b) return 0;
+  const parse = (v) => v.split(".").map(p => {
+    const m = p.match(/^(\d+)([a-z]*)$/);
+    return m ? [parseInt(m[1], 10), m[2] || ""] : [0, p];
+  });
+  const pa = parse(a), pb = parse(b);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const [na, sa] = pa[i] || [0, ""];
+    const [nb, sb] = pb[i] || [0, ""];
+    if (na !== nb) return na > nb ? 1 : -1;
+    if (sa !== sb) return sa > sb ? 1 : -1;
+  }
+  return 0;
+}
+
+const CHANGELOG_DATA = [
+  {
+    version: "3.5.15e", date: "2025-03-08",
+    title: "슬롯 전환 안정성 개선",
+    highlights: [
+      { type: "fix", text: "슬롯 전환 시 앱 설정·고정 태그·조합 태그 복원 누락 수정" },
+      { type: "fix", text: "매칭 초기화·백업 가져오기 시 상태 정리 누락 11건 수정" },
+    ],
+    details: [
+      { type: "fix", text: "performSlotSwitch에서 appSettings 리셋 누락 수정" },
+      { type: "fix", text: "슬롯 전환 시 pinnedTags 미로드 수정" },
+      { type: "fix", text: "comboTags 복원 및 마이그레이션 경로 추가" },
+      { type: "fix", text: "loadListRunningRef 슬롯 전환 시 미리셋 수정" },
+      { type: "improve", text: "슬롯 전환 후 인사이트·패턴 자동 재로드" },
+      { type: "fix", text: "resetMatches 상태 정리 누락 6건 수정" },
+      { type: "fix", text: "resetAll 상태 정리 누락 5건 수정" },
+      { type: "fix", text: "importJSON 상태 정리 누락 3건 수정" },
+      { type: "fix", text: "삭제 시 choiceLogQueue 고아 로그 재삽입 방지" },
+      { type: "fix", text: "지연 쓰기 경합 방지 (import/reset 전 타이머 정리)" },
+    ],
+  },
+  {
+    version: "3.5.15d", date: "2025-03-01",
+    title: "매칭 안정성 대폭 개선 + 슬롯 시스템",
+    highlights: [
+      { type: "new", text: "📁 슬롯 시스템 — 최대 10개 독립 데이터셋 관리" },
+      { type: "fix", text: "매칭 크래시 근본 원인 5건 수정" },
+      { type: "fix", text: "자동매칭 Alert 스태킹 → ANR 방지" },
+    ],
+    details: [
+      { type: "new", text: "슬롯 시스템: 10개 독립 데이터셋 생성·전환·삭제·이름변경" },
+      { type: "fix", text: "decide() matchAnalysis stale closure 수정" },
+      { type: "fix", text: "자동매칭 IIFE unhandled rejection 수정" },
+      { type: "fix", text: "deferSetAppMeta 동시 DB 쓰기 경합 수정" },
+      { type: "fix", text: "TasteAnalysisScreen tagAttributes prop 누락 수정" },
+    ],
+  },
+  {
+    version: "3.5.15c", date: "2025-03-01",
+    title: "DB 경합 근본 수정",
+    highlights: [
+      { type: "fix", text: "safeDbOperation 경합·연결 오류 분리 — 연쇄 크래시 방지" },
+      { type: "fix", text: "batchSetAppMeta 원자적 트랜잭션 실행" },
+      { type: "perf", text: "TagPickerModal allTags Set 반복 생성 O(n×m)→O(n+m)" },
+    ],
+    details: [
+      { type: "fix", text: "SQLITE_BUSY/LOCKED를 연결 오류와 분리하여 처리" },
+      { type: "fix", text: "processMatchQueue/choiceLogQueue에서 불필요한 resetDbConnection 제거" },
+      { type: "fix", text: "loadList 동시 실행 방지 (loadListRunningRef)" },
+      { type: "fix", text: "포그라운드 전환 시 매칭 큐 드레인 대기 추가" },
+    ],
+  },
+  {
+    version: "3.5.13", date: "2025-02-26",
+    title: "취향탭 크래시 + 농도 조절 수정",
+    highlights: [
+      { type: "fix", text: "취향 탭 진입 시 'Rendered more hooks' 크래시 수정" },
+    ],
+    details: [
+      { type: "fix", text: "TasteAnalysisScreen useMemo가 early return 뒤에 위치하여 hooks 순서 불일치" },
+    ],
+  },
+  {
+    version: "3.5.7", date: "2025-02-25",
+    title: "최신변화 탭 디자인 전면 개선",
+    highlights: [
+      { type: "improve", text: "📰 최신변화 탭 UI 전면 개선 — 다크모드·필터·카드 디자인" },
+    ],
+    details: [
+      { type: "improve", text: "요약 스탯 바, 타입 필터 칩, 날짜 헤더 디자인" },
+      { type: "improve", text: "설정 접기/펼치기, 빈 상태 맞춤 메시지" },
+    ],
+  },
+  {
+    version: "3.5.4", date: "2025-02-24",
+    title: "명언 갤러리 + 매칭 행동 분석",
+    highlights: [
+      { type: "new", text: "💬 명언 갤러리(쇼츠) 탭 신설 — 스와이프 카드 UX" },
+      { type: "new", text: "🧠 매칭 행동 분석 — 장르상성·태그파워·작가충성도" },
+      { type: "new", text: "📝 인상깊은 문장 다중 지원 (텍스트 + 이미지)" },
+      { type: "improve", text: "🧠 추천 시스템에 취향 학습 데이터 통합" },
+    ],
+    details: [
+      { type: "new", text: "쇼츠 UX: 좌우 스와이프, 셔플/원래순서, 점프" },
+      { type: "new", text: "preference_patterns 테이블 기반 동적 취향 학습" },
+      { type: "new", text: "computeTasteScore: 장르(40)+태그(35)+작가(25)=100점 체계" },
+      { type: "improve", text: "모달 초기 높이 이슈 일괄 수정 (6개 모달)" },
+      { type: "new", text: "🔗 태그 동의어 그룹 시스템 + 핵심 알고리즘 연동" },
+      { type: "new", text: "커스텀 초기화 모달 (6그룹 24항목 선택적 초기화)" },
+      { type: "perf", text: "rankedEntries/analysisStats 비활성 탭 계산 스킵" },
+    ],
+  },
+  {
+    version: "3.5.3", date: "2025-02-22",
+    title: "DB 안정성 개선",
+    highlights: [
+      { type: "fix", text: "갤러리 복귀 후 DB 연결 강제 재설정" },
+      { type: "fix", text: "content:// URI 처리 3단계 폴백 (copy→download→base64)" },
+    ],
+    details: [
+      { type: "fix", text: "saveCoverToLibrary 에러 수집 + 진단 강화" },
+      { type: "fix", text: "safeDbOperation 재시도 메커니즘 추가" },
+    ],
+  },
+];
+
+const GUIDE_CONTENT = [
+  {
+    key: "getting_started", icon: "🚀", title: "시작하기", subtitle: "첫 작품 등록부터 관리까지",
+    entries: [
+      {
+        title: "작품 등록하기", icon: "📝", tabs: ["홈"], tabKey: "home",
+        description: "제목, 작가, 장르 태그, 플랫폼, 표지 이미지, 인상깊은 문장 등을 입력해 작품을 등록합니다.",
+        tips: [
+          "제목과 작가만 입력해도 바로 등록할 수 있어요.",
+          "태그는 취향 분석과 추천에 활용되니 꼼꼼히 입력하면 좋아요.",
+          "표지는 갤러리에서 선택하거나 URL로 등록할 수 있어요.",
+          "중복 제목이 있으면 자동으로 경고해 드려요.",
+        ],
+      },
+      {
+        title: "읽을 예정 작품 관리", icon: "📋", tabs: ["📋예정"], tabKey: "planned",
+        description: "아직 읽지 않았지만 관심 있는 작품을 따로 관리합니다. 예정 작품은 매칭·분석에서 제외됩니다.",
+        tips: [
+          "예정 작품은 순위에 영향을 주지 않아요.",
+          "읽기 시작하면 '등록전환' 버튼으로 본 목록에 추가하세요.",
+        ],
+      },
+      {
+        title: "티어 시스템 이해하기", icon: "🏅", tabs: [],
+        description: "작품은 레이팅(Elo 점수)에 따라 SS·S·A·B·C·D 티어가 자동 부여됩니다. 매칭에서 이기면 점수가 오르고, 지면 내려갑니다.",
+        tips: [
+          "매칭을 많이 할수록 순위가 정확해져요 (신뢰도↑).",
+          "수동 모드에서는 직접 티어를 지정할 수 있어요.",
+          "설정에서 티어 경계값을 원하는 대로 조정할 수 있어요.",
+        ],
+      },
+      {
+        title: "태그와 장르 활용법", icon: "🏷️", tabs: [],
+        description: "대장르·부장르·일반 태그를 조합해 작품 특성을 기록합니다. 태그 농도(1~5)로 해당 태그가 작품을 얼마나 대표하는지도 설정할 수 있어요.",
+        tips: [
+          "태그는 쉼표(,)로 여러 개를 한번에 입력할 수 있어요.",
+          "태그 관계(유사/상반)를 설정하면 취향 분석이 더 정밀해져요.",
+        ],
+      },
+    ],
+  },
+  {
+    key: "browse_discover", icon: "🔍", title: "탐색 & 발견", subtitle: "내 라이브러리 활용하기",
+    entries: [
+      {
+        title: "순위로 작품 찾기", icon: "🏆", tabs: ["순위"], tabKey: "rank",
+        description: "모든 작품을 티어순으로 보거나, 제목·작가·태그·플랫폼·수상 등으로 검색·필터링합니다.",
+        tips: [
+          "티어 필터를 누르면 특정 티어만 볼 수 있어요.",
+          "검색은 제목, 작가, 태그를 모두 포함해 찾아줘요.",
+        ],
+      },
+      {
+        title: "최근 변화 추적하기", icon: "📰", tabs: ["📰최신"], tabKey: "recent",
+        description: "신규 등록, 수상, 티어 변동, 읽기 진행 등 모든 변화를 날짜별 타임라인으로 보여줍니다.",
+        tips: [
+          "타입 필터 칩으로 특정 변화만 모아 볼 수 있어요.",
+          "기본 30일 보관, 설정에서 보관 기간을 조정할 수 있어요.",
+        ],
+      },
+      {
+        title: "연간 수상작 관리", icon: "🏆", tabs: ["🏆수상"], tabKey: "awards",
+        description: "연도별 수상 카테고리를 만들고, 작품에 상을 부여합니다. 나만의 시상식을 열어보세요!",
+        tips: [
+          "수상 카테고리에 커스텀 아이콘을 설정할 수 있어요.",
+          "수상작에는 인상깊은 문장이 함께 표시돼요.",
+        ],
+      },
+      {
+        title: "표지 라이브러리", icon: "🖼️", tabs: ["🖼️표지"], tabKey: "covers",
+        description: "갤러리에서 가져온 표지 이미지를 관리합니다. 사용 현황, 용량, 미사용 이미지 정리까지.",
+        tips: [
+          "플랫폼별 기본 표지를 설정하면 URL 입력 없이 자동 적용돼요.",
+        ],
+      },
+      {
+        title: "명언 갤러리 감상", icon: "💬", tabs: ["💬명언"], tabKey: "quotes",
+        description: "등록한 인상깊은 문장들을 쇼츠처럼 카드 형태로 감상합니다. 좌우 스와이프로 넘겨보세요.",
+        tips: [
+          "셔플 버튼으로 랜덤 순서로 즐길 수 있어요.",
+          "이미지 명언도 지원 — 스크린샷을 첨부해 보세요.",
+        ],
+      },
+    ],
+  },
+  {
+    key: "evaluate_rank", icon: "⚔️", title: "평가 & 순위", subtitle: "작품의 가치를 정하다",
+    entries: [
+      {
+        title: "Elo 매칭으로 순위 결정", icon: "🎯", tabs: ["매칭"], tabKey: "match",
+        requiresMatchMode: true,
+        description: "두 작품을 비교해 더 좋아하는 쪽을 고르면 Elo 레이팅이 자동 계산됩니다. 매칭을 반복할수록 정밀한 순위가 만들어져요.",
+        tips: [
+          "특정 작품에 집중 매칭하려면 '작품 선택' 기능을 사용하세요.",
+          "진행률 바에서 전체 조합 중 몇 %를 매칭했는지 확인할 수 있어요.",
+        ],
+      },
+      {
+        title: "자동 승패 규칙 설정", icon: "⚡", tabs: ["매칭"], tabKey: "match",
+        requiresMatchMode: true,
+        description: "승률 차이, 티어 차이, 직접 대결 기록 등으로 자동 판정 규칙을 설정할 수 있습니다.",
+        tips: [
+          "자동 매칭 + 자동 판정을 결합하면 빠르게 많은 매칭을 처리할 수 있어요.",
+          "규칙은 매칭 탭 하단의 설정에서 세밀하게 조정 가능해요.",
+        ],
+      },
+      {
+        title: "S/A 티어 검토 큐", icon: "✅", tabs: ["검토"], tabKey: "review",
+        requiresMatchMode: true,
+        description: "S·A 상위 티어 작품이 정말 그 자리에 걸맞은지 검토합니다. 승급이 필요하거나 강등이 필요한 작품을 한눈에 확인하세요.",
+        tips: [
+          "매칭 데이터가 쌓인 후 검토하면 더 정확해요.",
+        ],
+      },
+    ],
+  },
+  {
+    key: "analyze_taste", icon: "📊", title: "분석 & 취향", subtitle: "나의 독서 성향 알기",
+    entries: [
+      {
+        title: "내 독서 취향 분석", icon: "🧠", tabs: ["취향"], tabKey: "taste",
+        description: "장르·태그·작가별 선호도를 매칭 결과에서 자동 분석합니다. 이변 분석으로 뜻밖의 취향도 발견할 수 있어요.",
+        tips: [
+          "매칭 10회 이상부터 의미 있는 패턴이 나타나기 시작해요.",
+          "각 섹션을 펼치면 상세 데이터를 확인할 수 있어요.",
+        ],
+      },
+      {
+        title: "통계 대시보드", icon: "📈", tabs: ["분석"], tabKey: "analysis",
+        description: "티어 분포, 플랫폼별 작품 수, 장르·작가 통계 등 전체 라이브러리를 한눈에 파악합니다.",
+        tips: [],
+      },
+      {
+        title: "AI 추천 시스템", icon: "💡", tabs: ["추천"], tabKey: "reco",
+        description: "매칭 학습 데이터를 기반으로 취향에 맞는 작품을 매일 추천합니다. 여러 카테고리(미독 예정작, 재독 추천 등)로 다양하게 제안해요.",
+        tips: [
+          "매칭 데이터가 충분하면 취향 적합도 점수가 함께 표시돼요.",
+          "추천이 마음에 들지 않으면 새로고침으로 다른 작품을 받아보세요.",
+        ],
+      },
+    ],
+  },
+  {
+    key: "maintain", icon: "🧹", title: "관리 & 정리", subtitle: "데이터를 깔끔하게",
+    entries: [
+      {
+        title: "데이터 완성도 점검", icon: "📋", tabs: ["보충"], tabKey: "supplement",
+        description: "태그·플랫폼·회차 수 등 누락된 정보가 있는 작품을 자동으로 찾아줍니다. 진행률 바로 전체 완성도를 확인하세요.",
+        tips: [
+          "완성도가 높을수록 분석과 추천의 정확도가 올라가요.",
+        ],
+      },
+      {
+        title: "대량 수정으로 효율 높이기", icon: "📦", tabs: ["대량"], tabKey: "bulk",
+        description: "여러 작품을 한번에 선택하여 태그·플랫폼·메모를 일괄 수정합니다.",
+        tips: [
+          "체크박스로 원하는 작품만 선택한 뒤 일괄 적용하세요.",
+          "정렬 기준을 바꿔가며 작업하면 더 효율적이에요.",
+        ],
+      },
+    ],
+  },
+  {
+    key: "settings_guide", icon: "⚙️", title: "설정 & 고급", subtitle: "앱을 내 맘대로",
+    entries: [
+      {
+        title: "테마와 디스플레이", icon: "🎨", tabs: ["설정"],
+        description: "다크 모드와 전체 화면 모드를 설정합니다.",
+        tips: [
+          "전체 화면 모드는 Android에서 하단 네비게이션 바를 숨겨줘요.",
+        ],
+      },
+      {
+        title: "슬롯으로 데이터셋 분리", icon: "📁", tabs: ["설정"],
+        description: "최대 10개의 독립 데이터셋(슬롯)을 만들어 다른 취향·목적별로 분리 관리할 수 있습니다.",
+        tips: [
+          "슬롯 전환 시 모든 데이터가 독립적으로 관리돼요.",
+          "슬롯 이름을 지정하면 구분이 쉬워요.",
+        ],
+      },
+      {
+        title: "백업과 복원", icon: "💾", tabs: ["설정"],
+        description: "전체 데이터를 JSON 파일로 내보내거나, 이전 백업에서 복원합니다. 커스텀 초기화로 특정 데이터만 선택적으로 지울 수도 있어요.",
+        tips: [
+          "정기적으로 백업하면 데이터 손실을 방지할 수 있어요.",
+          "가져오기 시 기존 데이터와 병합하거나 덮어쓸 수 있어요.",
+        ],
+      },
+    ],
+  },
+];
+
 // 🔧 v6.0.1: globalTierConfig 기반 동적 tierBadge (하드코딩 제거)
 const tierBadge = (r) => {
   const cfg = globalTierConfig;
@@ -20757,6 +21083,13 @@ function AppContent() {
   });
   const [autoSettingsExpanded, setAutoSettingsExpanded] = useState(false); // 설정 UI 확장 여부
 
+  // ℹ️ 정보 탭 & What's New 모달
+  const [showWhatsNewModal, setShowWhatsNewModal] = useState(false);
+  const [whatsNewEntries, setWhatsNewEntries] = useState([]);
+  const [expandedGuide, setExpandedGuide] = useState(new Set());
+  const [expandedChangelog, setExpandedChangelog] = useState(new Set());
+  const [guideSearchQuery, setGuideSearchQuery] = useState("");
+
   // 매칭 진행도
   const [matchStats, setMatchStats] = useState({
     total: 0,
@@ -21683,6 +22016,23 @@ function AppContent() {
             }
           }, 100); // UI 렌더링 후 실행
           
+          // ℹ️ What's New 버전 체크
+          try {
+            const lastSeenVer = await getAppMeta("last_seen_version");
+            if (lastSeenVer !== APP_VERSION) {
+              const newChanges = lastSeenVer
+                ? CHANGELOG_DATA.filter(e => compareVersions(e.version, lastSeenVer) > 0)
+                : CHANGELOG_DATA.slice(0, 1);
+              if (newChanges.length > 0) {
+                setTimeout(() => {
+                  if (!mounted) return;
+                  setWhatsNewEntries(newChanges);
+                  deferOpen(setShowWhatsNewModal);
+                }, 500);
+              }
+            }
+          } catch (e) { console.warn("What's New check error:", e); }
+
           setIsLoading(false);
           return; // 성공하면 종료
           
@@ -35145,11 +35495,10 @@ async function importJSON() {
             {/* ═══════════════════════════════════════════════════════════════ */}
             {/* 🆕 Phase 2: 서브탭 네비게이션 (v3.2.1) */}
             {/* ═══════════════════════════════════════════════════════════════ */}
-            <View style={{ 
-              flexDirection: "row", 
-              backgroundColor: C.card, 
-              borderRadius: 12, 
-              padding: 4, 
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{
+              backgroundColor: C.card,
+              borderRadius: 12,
+              padding: 4,
               marginBottom: 16,
               borderWidth: 1,
               borderColor: C.line,
@@ -35161,29 +35510,29 @@ async function importJSON() {
                 { key: "slot", label: "📁 슬롯" },
                 { key: "backup", label: "💾 백업" },
                 { key: "diag", label: "🔬 진단" },
+                { key: "info", label: "ℹ️ 정보" },
               ].map((tab) => (
                 <TouchableOpacity
                   key={tab.key}
                   onPress={() => setSettingsSubTab(tab.key)}
                   style={{
-                    flex: 1,
                     paddingVertical: 10,
-                    paddingHorizontal: 4,
+                    paddingHorizontal: 14,
                     borderRadius: 10,
                     backgroundColor: settingsSubTab === tab.key ? C.primary : "transparent",
                     alignItems: "center",
                   }}
                 >
-                  <Text style={{ 
-                    fontSize: 12, 
-                    fontWeight: "700", 
+                  <Text style={{
+                    fontSize: 12,
+                    fontWeight: "700",
                     color: settingsSubTab === tab.key ? "#fff" : C.sub,
                   }}>
                     {tab.label}
                   </Text>
                 </TouchableOpacity>
               ))}
-            </View>
+            </ScrollView>
             
             {/* ═══════════════════════════════════════════════════════════════ */}
             {/* 🎯 앱 설정 서브탭 */}
@@ -37702,9 +38051,316 @@ async function importJSON() {
               </>
               );
             })()}
+
+            {/* ═══════════════════════════════════════════════════════════════ */}
+            {/* ℹ️ 정보 서브탭 */}
+            {/* ═══════════════════════════════════════════════════════════════ */}
+            {settingsSubTab === "info" && (
+              <>
+                {/* === 앱 정보 === */}
+                <Section title="ℹ️ 앱 정보">
+                  <View style={{ alignItems: "center", paddingVertical: 12 }}>
+                    <Text style={{ fontSize: 26, fontWeight: "900", color: C.text }}>웹소설 티어 랭킹</Text>
+                    <Text style={{ fontSize: 16, color: C.primary, fontWeight: "700", marginTop: 4 }}>v{APP_VERSION}</Text>
+                    <Text style={{ fontSize: 12, color: C.sub, marginTop: 8, textAlign: "center", lineHeight: 18 }}>
+                      당신의 웹소설 취향을 체계적으로 관리하고{"\n"}발견하는 프리미엄 도구
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: "row", justifyContent: "space-around", backgroundColor: C.bg, borderRadius: 12, padding: 12, marginTop: 8 }}>
+                    <View style={{ alignItems: "center" }}>
+                      <Text style={{ fontSize: 20, fontWeight: "800", color: C.primary }}>{list.length}</Text>
+                      <Text style={{ fontSize: 11, color: C.sub }}>등록 작품</Text>
+                    </View>
+                    <View style={{ alignItems: "center" }}>
+                      <Text style={{ fontSize: 20, fontWeight: "800", color: C.ok }}>{plannedList?.length || 0}</Text>
+                      <Text style={{ fontSize: 11, color: C.sub }}>예정 작품</Text>
+                    </View>
+                    <View style={{ alignItems: "center" }}>
+                      <Text style={{ fontSize: 20, fontWeight: "800", color: "#8b5cf6" }}>{matchStats.done}</Text>
+                      <Text style={{ fontSize: 11, color: C.sub }}>완료 매칭</Text>
+                    </View>
+                  </View>
+                </Section>
+
+                {/* === 사용 가이드 === */}
+                <Section title="📖 사용 가이드">
+                  <Text style={{ color: C.sub, fontSize: 13, marginBottom: 12, lineHeight: 19 }}>
+                    처음이시라면 '시작하기'부터, 특정 기능이 궁금하시면 해당 섹션을 펼쳐보세요.
+                  </Text>
+
+                  {/* 검색 */}
+                  <TextInput
+                    value={guideSearchQuery}
+                    onChangeText={setGuideSearchQuery}
+                    placeholder="기능 검색..."
+                    placeholderTextColor={C.sub}
+                    style={{
+                      backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 10,
+                      paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: C.text, marginBottom: 12,
+                    }}
+                  />
+
+                  {/* 전체 펼치기/접기 */}
+                  <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 12, marginBottom: 12 }}>
+                    <TouchableOpacity onPress={() => {
+                      const allKeys = new Set();
+                      GUIDE_CONTENT.forEach(s => { allKeys.add(s.key); s.entries.forEach((_, i) => allKeys.add(`${s.key}_${i}`)); });
+                      setExpandedGuide(allKeys);
+                    }}>
+                      <Text style={{ color: C.primary, fontSize: 12, fontWeight: "600" }}>전체 펼치기</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => setExpandedGuide(new Set())}>
+                      <Text style={{ color: C.sub, fontSize: 12, fontWeight: "600" }}>전체 접기</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* 가이드 아코디언 */}
+                  {(() => {
+                    const q = guideSearchQuery.trim().toLowerCase();
+                    const isManual = globalTierConfig.mode === "manual";
+
+                    // 검색 모드: 플랫 리스트
+                    if (q) {
+                      const results = [];
+                      GUIDE_CONTENT.forEach(section => {
+                        section.entries.forEach(entry => {
+                          const haystack = `${entry.title} ${entry.description} ${(entry.tips || []).join(" ")}`.toLowerCase();
+                          if (haystack.includes(q)) results.push({ ...entry, sectionTitle: section.title });
+                        });
+                      });
+                      if (results.length === 0) return (
+                        <Text style={{ color: C.sub, textAlign: "center", paddingVertical: 20 }}>
+                          '{guideSearchQuery}'에 해당하는 항목이 없습니다.
+                        </Text>
+                      );
+                      return results.map((entry, idx) => (
+                        <View key={`sr_${idx}`} style={{ backgroundColor: C.bg, borderRadius: 12, padding: 14, marginBottom: 10 }}>
+                          <Text style={{ fontWeight: "700", fontSize: 14, color: C.text, marginBottom: 6 }}>
+                            {entry.icon} {entry.title}
+                          </Text>
+                          <Text style={{ fontSize: 11, color: C.primary, marginBottom: 6 }}>{entry.sectionTitle}</Text>
+                          <Text style={{ color: C.text, fontSize: 13, lineHeight: 20 }}>{entry.description}</Text>
+                          {entry.requiresMatchMode && isManual && (
+                            <Text style={{ color: C.warn, fontSize: 11, marginTop: 6 }}>⚠️ 매칭 모드 전환 후 사용 가능</Text>
+                          )}
+                          {entry.tips && entry.tips.length > 0 && (
+                            <View style={{ marginTop: 8, backgroundColor: C.card, borderRadius: 8, padding: 10 }}>
+                              <Text style={{ fontWeight: "700", fontSize: 11, color: C.primary, marginBottom: 4 }}>💡 꿀팁</Text>
+                              {entry.tips.map((tip, ti) => (
+                                <Text key={ti} style={{ color: C.sub, fontSize: 12, lineHeight: 17, marginBottom: 2 }}>• {tip}</Text>
+                              ))}
+                            </View>
+                          )}
+                          {entry.tabKey && (
+                            <TouchableOpacity onPress={() => setScreen(entry.tabKey)} style={{ marginTop: 8 }}>
+                              <Text style={{ color: C.primary, fontSize: 12, fontWeight: "600" }}>
+                                {entry.tabs?.[0] || entry.title} 탭으로 이동 →
+                              </Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                      ));
+                    }
+
+                    // 일반 모드: 아코디언
+                    return GUIDE_CONTENT.map(section => (
+                      <View key={section.key} style={{ marginBottom: 12 }}>
+                        <TouchableOpacity
+                          onPress={() => setExpandedGuide(prev => {
+                            const next = new Set(prev);
+                            next.has(section.key) ? next.delete(section.key) : next.add(section.key);
+                            return next;
+                          })}
+                          style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: C.bg, borderRadius: 12, padding: 14 }}
+                        >
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1 }}>
+                            <Text style={{ fontSize: 20 }}>{section.icon}</Text>
+                            <View style={{ flex: 1 }}>
+                              <Text style={{ fontWeight: "800", fontSize: 15, color: C.text }}>{section.title}</Text>
+                              <Text style={{ fontSize: 11, color: C.sub }}>{section.subtitle}</Text>
+                            </View>
+                          </View>
+                          <Text style={{ color: C.sub, fontSize: 14 }}>{expandedGuide.has(section.key) ? "▲" : "▼"}</Text>
+                        </TouchableOpacity>
+
+                        {expandedGuide.has(section.key) && section.entries.map((entry, idx) => {
+                          const entryKey = `${section.key}_${idx}`;
+                          const isOpen = expandedGuide.has(entryKey);
+                          return (
+                            <View key={entryKey} style={{ marginLeft: 12, marginTop: 8 }}>
+                              <TouchableOpacity
+                                onPress={() => setExpandedGuide(prev => {
+                                  const next = new Set(prev);
+                                  next.has(entryKey) ? next.delete(entryKey) : next.add(entryKey);
+                                  return next;
+                                })}
+                                style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 10, paddingHorizontal: 12, backgroundColor: isOpen ? C.bg : "transparent", borderRadius: 10 }}
+                              >
+                                <Text style={{ fontWeight: "700", fontSize: 14, color: C.text, flex: 1 }} numberOfLines={1}>
+                                  {entry.icon} {entry.title}
+                                </Text>
+                                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                                  {entry.tabs.map(t => (
+                                    <View key={t} style={{ backgroundColor: C.chip, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
+                                      <Text style={{ fontSize: 10, color: C.sub }}>{t}</Text>
+                                    </View>
+                                  ))}
+                                  <Text style={{ color: C.sub, fontSize: 12 }}>{isOpen ? "▲" : "▼"}</Text>
+                                </View>
+                              </TouchableOpacity>
+
+                              {isOpen && (
+                                <View style={{ paddingHorizontal: 12, paddingBottom: 12 }}>
+                                  <Text style={{ color: C.text, fontSize: 13, lineHeight: 20, marginTop: 8 }}>{entry.description}</Text>
+                                  {entry.requiresMatchMode && isManual && (
+                                    <Text style={{ color: C.warn, fontSize: 11, marginTop: 6 }}>⚠️ 매칭 모드 전환 후 사용 가능 (설정 → 앱 → 티어 시스템)</Text>
+                                  )}
+                                  {entry.tips && entry.tips.length > 0 && (
+                                    <View style={{ marginTop: 10, backgroundColor: C.bg, borderRadius: 10, padding: 12 }}>
+                                      <Text style={{ fontWeight: "700", fontSize: 12, color: C.primary, marginBottom: 6 }}>💡 꿀팁</Text>
+                                      {entry.tips.map((tip, ti) => (
+                                        <Text key={ti} style={{ color: C.sub, fontSize: 12, lineHeight: 18, marginBottom: 3 }}>• {tip}</Text>
+                                      ))}
+                                    </View>
+                                  )}
+                                  {entry.tabKey && (
+                                    <TouchableOpacity onPress={() => setScreen(entry.tabKey)} style={{ marginTop: 10 }}>
+                                      <Text style={{ color: C.primary, fontSize: 13, fontWeight: "600" }}>
+                                        {entry.tabs?.[0] || entry.title} 탭으로 이동 →
+                                      </Text>
+                                    </TouchableOpacity>
+                                  )}
+                                </View>
+                              )}
+                            </View>
+                          );
+                        })}
+                      </View>
+                    ));
+                  })()}
+                </Section>
+
+                {/* === 업데이트 내역 === */}
+                <Section title="📋 업데이트 내역">
+                  {CHANGELOG_DATA.map(entry => (
+                    <View key={entry.version} style={{ borderBottomWidth: 1, borderBottomColor: C.line, paddingVertical: 12 }}>
+                      <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8 }}>
+                        <Text style={{ fontWeight: "800", fontSize: 15, color: C.text }}>v{entry.version}</Text>
+                        <Text style={{ fontSize: 12, color: C.sub }}>{entry.date}</Text>
+                      </View>
+                      <Text style={{ fontSize: 13, color: C.sub, marginTop: 2 }}>{entry.title}</Text>
+                      <View style={{ marginTop: 8 }}>
+                        {entry.highlights.map((h, i) => (
+                          <Text key={i} style={{ fontSize: 13, color: C.text, marginBottom: 3, lineHeight: 18 }}>
+                            {CHANGE_TYPE_CONFIG[h.type]?.emoji || "•"} {h.text}
+                          </Text>
+                        ))}
+                      </View>
+                      {entry.details && entry.details.length > entry.highlights.length && (
+                        <>
+                          <TouchableOpacity
+                            onPress={() => setExpandedChangelog(prev => {
+                              const next = new Set(prev);
+                              next.has(entry.version) ? next.delete(entry.version) : next.add(entry.version);
+                              return next;
+                            })}
+                            style={{ marginTop: 6 }}
+                          >
+                            <Text style={{ fontSize: 12, color: C.primary, fontWeight: "600" }}>
+                              {expandedChangelog.has(entry.version) ? "▲ 간략히" : `▼ 상세 보기 (${entry.details.length - entry.highlights.length}건 더)`}
+                            </Text>
+                          </TouchableOpacity>
+                          {expandedChangelog.has(entry.version) && entry.details.map((d, i) => (
+                            <Text key={`d${i}`} style={{ fontSize: 12, color: C.sub, marginTop: 3, marginLeft: 8, lineHeight: 17 }}>
+                              {CHANGE_TYPE_CONFIG[d.type]?.emoji || "•"} {d.text}
+                            </Text>
+                          ))}
+                        </>
+                      )}
+                    </View>
+                  ))}
+                </Section>
+              </>
+            )}
           </>
         )}
       </ScrollView>
+
+      {/* ═══════════════════════════════════════════════════════════════ */}
+      {/* ℹ️ What's New 모달 */}
+      {/* ═══════════════════════════════════════════════════════════════ */}
+      <Modal
+        visible={showWhatsNewModal}
+        animationType="fade"
+        transparent
+        onRequestClose={() => {
+          setShowWhatsNewModal(false);
+          setAppMeta("last_seen_version", APP_VERSION);
+        }}
+      >
+        <View style={{ flex: 1, backgroundColor: C.modal, justifyContent: "center", alignItems: "center" }}>
+          <TouchableOpacity
+            style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }}
+            activeOpacity={1}
+            onPress={() => {
+              setShowWhatsNewModal(false);
+              setAppMeta("last_seen_version", APP_VERSION);
+            }}
+          />
+          <View style={{
+            backgroundColor: C.card,
+            borderRadius: 20,
+            padding: 24,
+            width: "88%",
+            maxHeight: "70%",
+            borderWidth: 1,
+            borderColor: C.line,
+          }}>
+            <View style={{ alignItems: "center", marginBottom: 16 }}>
+              <Text style={{ fontSize: 32 }}>🎉</Text>
+              <Text style={{ fontSize: 20, fontWeight: "900", color: C.text, marginTop: 8 }}>새로운 소식</Text>
+              <Text style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>v{APP_VERSION} 업데이트</Text>
+            </View>
+
+            <ScrollView style={{ maxHeight: 300 }}>
+              {whatsNewEntries.map(entry => (
+                <View key={entry.version} style={{ marginBottom: 16 }}>
+                  {whatsNewEntries.length > 1 && (
+                    <Text style={{ fontWeight: "700", fontSize: 13, color: C.sub, marginBottom: 6 }}>v{entry.version}</Text>
+                  )}
+                  {entry.highlights.map((h, i) => (
+                    <View key={i} style={{ flexDirection: "row", alignItems: "flex-start", marginBottom: 6 }}>
+                      <Text style={{ fontSize: 14, marginRight: 8 }}>{CHANGE_TYPE_CONFIG[h.type]?.emoji || "•"}</Text>
+                      <Text style={{ fontSize: 14, color: C.text, flex: 1, lineHeight: 20 }}>{h.text}</Text>
+                    </View>
+                  ))}
+                </View>
+              ))}
+            </ScrollView>
+
+            <PrimaryButton
+              title="확인했어요!"
+              onPress={() => {
+                setShowWhatsNewModal(false);
+                setAppMeta("last_seen_version", APP_VERSION);
+              }}
+              style={{ marginTop: 16 }}
+            />
+
+            <TouchableOpacity
+              onPress={() => {
+                setShowWhatsNewModal(false);
+                setAppMeta("last_seen_version", APP_VERSION);
+                setScreen("settings");
+                setSettingsSubTab("info");
+              }}
+              style={{ marginTop: 10, alignItems: "center" }}
+            >
+              <Text style={{ color: C.primary, fontSize: 13, fontWeight: "600" }}>전체 업데이트 내역 보기 →</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* ---- 편집 모달 ---- */}
       <Modal
