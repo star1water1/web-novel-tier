@@ -25138,6 +25138,8 @@ function AppContent() {
 
   function deleteCategory(name) {
     if (!name) return;
+    // "📁 사용자 태그"는 기본 카테고리이므로 삭제 불가
+    if (name === "📁 사용자 태그") return;
     updateTagRegistryFn(prev => {
       const generalTags = { ...(prev.generalTags || {}) };
       const tagsToMove = generalTags[name] || [];
@@ -25660,10 +25662,10 @@ function AppContent() {
               await execBatch(updates);
             }
             // 🔧 v3.5.9: 연관 메타데이터 일괄 정리 (고정/숨김/감정/속성)
-            await cleanupTagMetadata(tag);
-            // 🆕 기본 태그는 숨김 처리 (상수에서 제거 불가하므로 영구 숨김)
             const isDefault = ALL_DEFAULT_TAGS.some(t => isSameTag(t, tag));
-            if (isDefault && !hiddenTags.some(t => isSameTag(t, tag))) {
+            await cleanupTagMetadata(tag); // 🔧 숨김 포함 모든 메타데이터 제거
+            // 🆕 기본 태그는 cleanup 이후 다시 숨김 추가
+            if (isDefault) {
               toggleHideTag(tag);
             }
             await loadList(undefined, undefined, "batch");
@@ -25698,7 +25700,6 @@ function AppContent() {
     // 2. 모든 작품에서 해당 태그들 일괄 제거 (한 번의 스캔)
     const novels = await all("SELECT id, tags, tag_data, major_genre, sub_genre FROM novels;");
     const updates = [];
-    const deleteSet = new Set(tagsToDelete.map(t => t.toLowerCase().trim()));
     const isSameTagBatch = (t) => tagsToDelete.some(d => isSameTag(t, d));
 
     for (const n of (novels || [])) {
@@ -25735,12 +25736,26 @@ function AppContent() {
     }
 
     // 3. 메타데이터 정리 + 기본 태그 숨김 처리
+    // 🔧 cleanupTagMetadata가 hiddenTags에서도 제거하므로,
+    //    기본 태그의 숨김은 cleanup 이후에 일괄 적용해야 함
+    const defaultTagsToHide = [];
     for (const tag of tagsToDelete) {
-      await cleanupTagMetadata(tag);
       const isDefault = ALL_DEFAULT_TAGS.some(t => isSameTag(t, tag));
-      if (isDefault && !hiddenTags.some(t => isSameTag(t, tag))) {
-        toggleHideTag(tag);
-      }
+      if (isDefault) defaultTagsToHide.push(tag);
+      await cleanupTagMetadata(tag); // 숨김 포함 모든 메타데이터 제거
+    }
+    // 기본 태그는 cleanup 이후 다시 숨김 추가 (cleanupTagMetadata가 제거한 것을 복원)
+    if (defaultTagsToHide.length > 0) {
+      setHiddenTags(prev => {
+        const next = [...prev];
+        for (const tag of defaultTagsToHide) {
+          if (!next.some(t => isSameTag(t, tag))) {
+            next.push(tag);
+          }
+        }
+        safeDefer(() => deferSetAppMeta("hidden_tags", next));
+        return next;
+      });
     }
 
     await loadList(undefined, undefined, "batch");
@@ -25783,14 +25798,16 @@ function AppContent() {
     }
 
     // 🆕 숨긴 태그는 자동 수집에서 제외
+    // 🔧 O(1) 룩업으로 성능 최적화 + Set 순회 중 삭제 방지
     if (hiddenTags.length > 0) {
-      for (const ht of hiddenTags) {
-        newTags.delete(ht);
-        // isSameTag 기반 제거
-        for (const nt of newTags) {
-          if (isSameTag(nt, ht)) newTags.delete(nt);
+      const hiddenKeySet = buildTagKeySet(hiddenTags);
+      const toRemove = [];
+      for (const nt of newTags) {
+        if (hiddenKeySet.has(normalizeTagKey(nt))) {
+          toRemove.push(nt);
         }
       }
+      for (const t of toRemove) newTags.delete(t);
     }
     if (newTags.size > 0) {
       for (const t of newTags) addTagToRegistry(t);
@@ -41891,19 +41908,25 @@ async function importJSON() {
         onDeleteGlobally={deleteTagGlobally}
         onBatchDeleteGlobally={batchDeleteTagsGlobally}
         onAddCustomTag={async (tag, category) => {
-          // 🔧 v3.5.12: isSameTag + comboTags 제거
-          // 🆕 전체 카테고리에서 중복 체크
-          if (customTags.some(t => isSameTag(t, tag)) || ALL_DEFAULT_TAGS.some(t => isSameTag(t, tag)) || userMajorGenres.some(t => isSameTag(t, tag)) || userSubGenres.some(t => isSameTag(t, tag))) {
-            // 전체 레지스트리에서 추가 중복 체크
-            if (tagRegistry?.generalTags) {
-              for (const [cat, tags] of Object.entries(tagRegistry.generalTags)) {
-                if (tags.some(t => isSameTag(t, tag))) {
-                  Alert.alert("알림", `이미 "${cat}" 카테고리에 존재하는 태그입니다.`);
-                  return;
-                }
+          // 🔧 전체 레지스트리 + 기본 태그에서 중복 체크 (카테고리별 구체적 안내)
+          if (tagRegistry?.generalTags) {
+            for (const [cat, tags] of Object.entries(tagRegistry.generalTags)) {
+              if (tags.some(t => isSameTag(t, tag))) {
+                Alert.alert("알림", `이미 "${cat}" 카테고리에 존재하는 태그입니다.`);
+                return;
               }
             }
-            Alert.alert("알림", "이미 존재하는 태그입니다.");
+          }
+          if (ALL_DEFAULT_TAGS.some(t => isSameTag(t, tag))) {
+            Alert.alert("알림", "이미 기본 태그에 존재합니다.");
+            return;
+          }
+          if (userMajorGenres.some(t => isSameTag(t, tag))) {
+            Alert.alert("알림", "이미 사용자 대장르에 존재합니다.");
+            return;
+          }
+          if (userSubGenres.some(t => isSameTag(t, tag))) {
+            Alert.alert("알림", "이미 사용자 부장르에 존재합니다.");
             return;
           }
           addTagToRegistry(tag, category || "📁 사용자 태그");
