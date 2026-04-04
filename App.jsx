@@ -3979,6 +3979,10 @@ async function initDb() {
     created_at INTEGER NOT NULL
   );`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_iq_status ON insight_queue(status, priority DESC);`);
+  // 🔧 DB 최적화: preference_patterns 복합 인덱스 (loadPreferencePatterns 248ms → ~50ms)
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_pp_sample_conf ON preference_patterns(sample_size, confidence_lower);`);
+  // 🔧 DB 최적화: insight_queue 정렬 커버링 인덱스
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_iq_status_sort ON insight_queue(status, priority DESC, created_at DESC);`);
   
   // 4️⃣ weight_config: 예측 가중치 버전 관리
   await database.runAsync(`CREATE TABLE IF NOT EXISTS weight_config (
@@ -5539,15 +5543,14 @@ function schedulePatternStatsRefresh() {
  */
 async function refreshPatternStats() {
   try {
-    const patterns = await all(`SELECT * FROM preference_patterns`);
-    
+    // 🔧 DB 최적화: 필요 컬럼만 + WHERE로 sample_size < 5 사전 필터링
+    const patterns = await all(`SELECT id, sample_size, win_count FROM preference_patterns WHERE sample_size >= 5`);
+
     const queries = [];
-    
+
     for (const p of (patterns || [])) {
       const n = p.sample_size || 0;
       const wins = p.win_count || 0;
-      
-      if (n < 5) continue;  // 샘플 너무 적으면 스킵
       
       const winRate = wins / n;
       const { lower, upper } = wilsonConfidenceInterval(wins, n, 0.95);
@@ -22371,36 +22374,50 @@ function AppContent() {
       
       // 백그라운드 → 포그라운드 전환 시
       if (lastState.match(/inactive|background/) && nextAppState === "active") {
-        console.log("앱 포그라운드 전환 - DB 연결 리셋 및 데이터 리로드");
-        // 🔧 v3.5.15c: 매칭 큐가 처리 중이면 먼저 드레인 대기
-        // 이유: resetDbConnection이 진행 중인 매칭 DB 작업의 연결을 파괴하면 크래시
-        // 큐 드레인 후 안전하게 연결 리셋 수행
-        if (!isMatchQueueIdle()) {
-          console.log("포그라운드 전환: 매칭 큐 드레인 대기...");
-          await waitForMatchQueueDrain(3000);
-        }
-        // 기존 연결을 강제로 끊고 새로 연결 (🔧 v3.5.3: await)
-        await resetDbConnection();
-        try {
-          await openDb();
-          // 🔧 v3.5.3: 포그라운드 복귀 후 안정화 대기
-          await new Promise(r => setTimeout(r, 200));
-          console.log("DB 재연결 성공 (WAL mode)");
-          // 🔧 v3.5.1: 데이터 리로드
-          await loadList(undefined, undefined, "fg-recovery");
-          await loadCoverLibrary();
-          console.log("데이터 리로드 성공");
-        } catch (e) {
-          console.error("DB 재연결/리로드 실패:", e.message);
-          // 🔧 v3.5.3: 재연결 실패 시 한 번 더 시도
+        // 🔧 DB 최적화: 짧은 BG (< 5초)에서는 연결 검증만, 리셋 스킵
+        // 빠른 앱 전환(멀티태스킹)에서 불필요한 resetDbConnection 9회 → 최소화
+        const bgDuration = Date.now() - (PerfMonitor._lastForegroundTime || 0);
+        const isShortBackground = bgDuration < 5000;
+
+        if (isShortBackground) {
+          console.log(`짧은 BG 복귀 (${bgDuration}ms) - 연결 검증만 수행`);
           try {
+            const database = await openDb();
+            await database.getAllAsync("SELECT 1;");
+            console.log("DB 연결 유효 - 리셋 스킵");
+          } catch (e) {
+            console.log("DB 연결 무효 - 리셋 수행");
             await resetDbConnection();
-            await new Promise(r => setTimeout(r, 500));
             await openDb();
-            await loadList(undefined, undefined, "fg-retry");
-            console.log("DB 2차 재연결 성공");
-          } catch (e2) {
-            console.error("DB 2차 재연결도 실패:", e2.message);
+            await loadList(undefined, undefined, "fg-recovery");
+            await loadCoverLibrary();
+          }
+        } else {
+          console.log(`앱 포그라운드 전환 (${bgDuration}ms) - DB 연결 리셋 및 데이터 리로드`);
+          // 🔧 v3.5.15c: 매칭 큐가 처리 중이면 먼저 드레인 대기
+          if (!isMatchQueueIdle()) {
+            console.log("포그라운드 전환: 매칭 큐 드레인 대기...");
+            await waitForMatchQueueDrain(3000);
+          }
+          await resetDbConnection();
+          try {
+            await openDb();
+            await new Promise(r => setTimeout(r, 200));
+            console.log("DB 재연결 성공 (WAL mode)");
+            await loadList(undefined, undefined, "fg-recovery");
+            await loadCoverLibrary();
+            console.log("데이터 리로드 성공");
+          } catch (e) {
+            console.error("DB 재연결/리로드 실패:", e.message);
+            try {
+              await resetDbConnection();
+              await new Promise(r => setTimeout(r, 500));
+              await openDb();
+              await loadList(undefined, undefined, "fg-retry");
+              console.log("DB 2차 재연결 성공");
+            } catch (e2) {
+              console.error("DB 2차 재연결도 실패:", e2.message);
+            }
           }
         }
       }
@@ -25565,16 +25582,16 @@ function AppContent() {
   async function loadInsights() {
     try {
       setInsightLoading(true);
-      const rows = await all(`
-        SELECT * FROM insight_queue 
-        WHERE status IN ('pending', 'shown', 'confirmed', 'rejected')
-        ORDER BY 
-          CASE status WHEN 'pending' THEN 0 WHEN 'shown' THEN 1 ELSE 2 END,
-          priority DESC,
-          created_at DESC
-        LIMIT 20;
-      `);
-      setInsightList(rows || []);
+      // 🔧 DB 최적화: CASE ORDER BY → 상태별 개별 쿼리 후 JS 병합
+      // CASE 정렬은 인덱스를 무시하고 전체 테이블 스캔 → 196ms
+      // 상태별 쿼리는 idx_iq_status_sort 인덱스 활용 가능
+      const [pending, shown, rest] = await Promise.all([
+        all(`SELECT * FROM insight_queue WHERE status = 'pending' ORDER BY priority DESC, created_at DESC LIMIT 20`),
+        all(`SELECT * FROM insight_queue WHERE status = 'shown' ORDER BY priority DESC, created_at DESC LIMIT 20`),
+        all(`SELECT * FROM insight_queue WHERE status IN ('confirmed', 'rejected') ORDER BY priority DESC, created_at DESC LIMIT 20`),
+      ]);
+      const rows = [...(pending || []), ...(shown || []), ...(rest || [])].slice(0, 20);
+      setInsightList(rows);
     } catch (e) {
       console.warn("loadInsights 오류:", e);
       setInsightList([]);
@@ -25584,15 +25601,16 @@ function AppContent() {
   }
 
   /** 상위 패턴 요약 로드 (높은 신뢰도 순) */
+  // 🔧 DB 최적화: getCachedPatterns 활용 (TTL 10초 캐시) + JS 필터링
+  // 기존: 매번 DB 쿼리 248ms → 캐시 히트 시 0ms
   async function loadPreferencePatterns() {
     try {
-      const rows = await all(`
-        SELECT * FROM preference_patterns 
-        WHERE sample_size >= 3 AND confidence_lower > 0.1
-        ORDER BY win_rate DESC, sample_size DESC
-        LIMIT 30;
-      `);
-      setPreferencePatterns(rows || []);
+      const cached = await getCachedPatterns(3);
+      const rows = cached
+        .filter(p => p.confidence_lower > 0.1)
+        .sort((a, b) => b.win_rate - a.win_rate || b.sample_size - a.sample_size)
+        .slice(0, 30);
+      setPreferencePatterns(rows);
     } catch (e) {
       console.warn("loadPreferencePatterns 오류:", e);
       setPreferencePatterns([]);
@@ -27166,8 +27184,10 @@ function AppContent() {
     
     // 🔄 v3.4.6: 매칭 큐잉 시스템 사용 (빠른 연타 대응, pairKey로 중복 방지)
     return enqueueMatchTask(async () => {
-      const rawA = await first("SELECT * FROM novels WHERE id=?", [currentPair.A.id]);
-      const rawB = await first("SELECT * FROM novels WHERE id=?", [currentPair.B.id]);
+      // 🔧 DB 최적화: 2개 SELECT → 1개 IN 쿼리 (DB 왕복 50% 절감)
+      const rows = await all("SELECT * FROM novels WHERE id IN (?, ?)", [currentPair.A.id, currentPair.B.id]);
+      const rawA = rows?.find(r => r.id === currentPair.A.id);
+      const rawB = rows?.find(r => r.id === currentPair.B.id);
       if (!rawA || !rawB) {
         return;
       }
