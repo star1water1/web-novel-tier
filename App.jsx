@@ -26006,44 +26006,49 @@ function AppContent() {
   // =========================================================
   
   // 설정 저장 (변경 시 자동 호출)
-  async function saveAppSettings(newSettings) {
-    // 🆕 v3.4: nested object deep merge
-    const merged = { ...appSettings };
-    
-    for (const key of Object.keys(newSettings)) {
-      if (key === 'plannedFields' || key === 'supplement' || key === 'recentChanges' || key === 'coverLibrary' || key === 'tierSystemConfig') {
-        // nested object는 deep merge
-        merged[key] = { ...appSettings[key], ...newSettings[key] };
-        // 🆕 v6.0: tierSystemConfig의 tiers 배열은 교체 (merge 아님)
-        if (key === 'tierSystemConfig' && newSettings[key].tiers) {
-          merged[key].tiers = newSettings[key].tiers;
-        }
-      } else {
-        merged[key] = newSettings[key];
-      }
-    }
+  function saveAppSettings(newSettings) {
+    // 🔧 함수형 setState로 stale closure 방지 (모든 토글 동시 조작 안전)
+    setAppSettings(prev => {
+      const merged = { ...prev };
 
-    setAppSettings(merged);
-    await setAppMeta("app_settings", merged);
-
-    // 티어 임계값이 변경되면 전역 변수도 업데이트
-    if (newSettings.tierThresholds) {
-      globalTierThresholds = { ...globalTierThresholds, ...newSettings.tierThresholds };
-    }
-    // 🆕 v6.0: tierSystemConfig 변경 시 전역 config + 룩업 테이블 갱신
-    if (newSettings.tierSystemConfig || merged.tierSystemConfig) {
-      const tsc = merged.tierSystemConfig || DEFAULT_TIER_SYSTEM_CONFIG;
-      globalTierConfig = { ...tsc };
-      rebuildTierLookup(globalTierConfig);
-      // 레거시 tierThresholds도 동기화 (하위 호환)
-      if (tsc.tiers) {
-        const th = {};
-        for (const t of tsc.tiers) {
-          if (t.key !== tsc.defaultTier) th[t.key] = t.threshold;
+      for (const key of Object.keys(newSettings)) {
+        if (key === 'plannedFields' || key === 'supplement' || key === 'recentChanges' || key === 'coverLibrary' || key === 'tierSystemConfig') {
+          // nested object는 deep merge (prev 기준 — stale closure 아닌 최신 state)
+          merged[key] = { ...(prev[key] || {}), ...newSettings[key] };
+          // 🆕 v6.0: tierSystemConfig의 tiers 배열은 교체 (merge 아님)
+          if (key === 'tierSystemConfig' && newSettings[key].tiers) {
+            merged[key].tiers = newSettings[key].tiers;
+          }
+        } else {
+          merged[key] = newSettings[key];
         }
-        globalTierThresholds = th;
       }
-    }
+
+      // 부수효과: DB 영속화 + 전역 변수 갱신 (렌더 이후 실행)
+      safeDefer(() => {
+        setAppMeta("app_settings", merged);
+
+        // 티어 임계값이 변경되면 전역 변수도 업데이트
+        if (newSettings.tierThresholds) {
+          globalTierThresholds = { ...globalTierThresholds, ...newSettings.tierThresholds };
+        }
+        // 🆕 v6.0: tierSystemConfig 변경 시 전역 config + 룩업 테이블 갱신
+        if (newSettings.tierSystemConfig || merged.tierSystemConfig) {
+          const tsc = merged.tierSystemConfig || DEFAULT_TIER_SYSTEM_CONFIG;
+          globalTierConfig = { ...tsc };
+          rebuildTierLookup(globalTierConfig);
+          if (tsc.tiers) {
+            const th = {};
+            for (const t of tsc.tiers) {
+              if (t.key !== tsc.defaultTier) th[t.key] = t.threshold;
+            }
+            globalTierThresholds = th;
+          }
+        }
+      });
+
+      return merged;
+    });
   }
   
   // 🆕 v6.0: 티어 히스토리 저장 (gated 티어 관련만 영속화)
