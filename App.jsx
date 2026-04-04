@@ -2994,9 +2994,21 @@ async function switchSlotDb(newSlotId) {
 let db = null;
 let dbOpenPromise = null;
 let dbLastSuccessTime = 0; // 마지막 성공 시간
+let _dbOpenedForSlot = -1; // 🔧 현재 db가 어떤 슬롯용으로 열렸는지 추적
 
 // 🔧 v3.4.7: 데이터베이스 초기화 (강화된 재연결 로직)
 async function openDb() {
+  // 🔧 슬롯 불일치 감지: 캐시된 연결이 다른 슬롯용이면 즉시 무효화
+  // 원인: 앱 시작 시 pinned_tags/hidden_tags useEffect가 loadSlotMeta() 완료 전에
+  //   openDb()를 호출하면 슬롯 0 DB로 연결이 캐시되어 이후 모든 쿼리가 잘못된 슬롯으로 감
+  if (db && _dbOpenedForSlot !== activeSlotId) {
+    console.warn(`[openDb] 슬롯 불일치: db=슬롯${_dbOpenedForSlot}, active=슬롯${activeSlotId} → 캐시 무효화`);
+    try { await db.closeAsync(); } catch (_) {}
+    db = null;
+    dbOpenPromise = null;
+    dbLastSuccessTime = 0;
+  }
+
   // 이미 연결 시도 중이면 해당 Promise를 기다림
   if (dbOpenPromise) {
     try {
@@ -3006,12 +3018,12 @@ async function openDb() {
       db = null;
     }
   }
-  
+
   // 🔧 v3.5.3: 캐시 시간 단축 (5초→1초) + 테스트 실패 시 실제 close
   if (db && Date.now() - dbLastSuccessTime < 1000) {
     return db;
   }
-  
+
   // 기존 연결이 있으면 테스트
   if (db) {
     try {
@@ -3026,7 +3038,7 @@ async function openDb() {
       db = null;
     }
   }
-  
+
   // 새 연결 생성
   // 🔧 v3.5.15d: 슬롯 시스템 — activeSlotId에 따른 DB 파일명
   const dbFilename = getSlotDbFilename(activeSlotId);
@@ -3034,6 +3046,7 @@ async function openDb() {
   
   try {
     db = await dbOpenPromise;
+    _dbOpenedForSlot = activeSlotId; // 🔧 연결된 슬롯 기록
     // 🔧 v3.5.3: WAL 모드 + busy_timeout + synchronous 최적화
     // WAL: 쓰기 중에도 읽기 가능 (동시 접근 안정성 대폭 향상)
     // busy_timeout: DB 잠금 시 5초 대기 후 에러 (즉시 실패 방지)
@@ -3046,7 +3059,7 @@ async function openDb() {
       console.warn("PRAGMA 설정 실패 (무시 가능):", pragmaErr.message);
     }
     dbLastSuccessTime = Date.now();
-    console.log("DB 연결 성공 (WAL mode)");
+    console.log(`DB 연결 성공 (슬롯 ${activeSlotId}, ${dbFilename}, WAL mode)`);
     return db;
   } catch (e) {
     console.error("DB 열기 실패:", e.message);
@@ -3065,6 +3078,7 @@ async function resetDbConnection() {
   db = null;
   dbOpenPromise = null;
   dbLastSuccessTime = 0;
+  _dbOpenedForSlot = -1; // 🔧 슬롯 추적 리셋
   // 🔧 v3.5.3: 기존 연결을 실제로 닫아야 새 연결이 정상 작동
   if (oldDb) {
     try {
@@ -21690,6 +21704,9 @@ function AppContent() {
             savedCoordinateSystems, // 📐 v3.2.0: 태그 좌표계
             savedCustomTagCategories, // 🆕 v3.5.9: 커스텀 태그 카테고리
             savedMatchFilterSettings, // 🆕 v3.5.11: 매치 필터링 설정
+            savedPinnedTags,          // 🔧 19: 별도 useEffect에서 이동 (슬롯 경쟁 조건 방지)
+            savedTagSortMode,         // 🔧 20: 동일 이유
+            savedTagLastTab,          // 🔧 21: 동일 이유
           ] = await Promise.all([
             getAppMeta("settings_darkMode"),      // 0: savedDarkMode
             getAppMeta("platform_covers"),        // 1: savedPlatformCovers
@@ -21710,6 +21727,9 @@ function AppContent() {
             getTagCoordinateSystems(),            // 16: savedCoordinateSystems
             getAppMeta("custom_tag_categories"),  // 17: savedCustomTagCategories
             getAppMeta("match_filter_settings"),  // 18: savedMatchFilterSettings
+            getAppMeta("pinned_tags"),            // 19: savedPinnedTags (🔧 별도 useEffect에서 이동 — 슬롯 경쟁 조건 방지)
+            getAppMeta("tag_sort_mode"),           // 20: savedTagSortMode (🔧 동일 이유)
+            getAppMeta("tag_last_tab"),            // 21: savedTagLastTab (🔧 동일 이유)
           ]);
           
           if (!mounted) return;
@@ -21835,6 +21855,19 @@ function AppContent() {
           // 🙈 숨김 태그
           if (Array.isArray(savedHiddenTags)) {
             setHiddenTags(savedHiddenTags);
+          }
+
+          // 📌 고정 태그 (🔧 별도 useEffect에서 이동 — 슬롯 경쟁 조건 방지)
+          if (Array.isArray(savedPinnedTags)) {
+            setPinnedTags(savedPinnedTags);
+          }
+          // 🔧 태그 정렬 모드 / 마지막 탭 (별도 useEffect에서 이동)
+          if (savedTagSortMode && ["usage", "name", "registered"].includes(savedTagSortMode)) {
+            setTagSortMode(savedTagSortMode);
+          }
+          if (savedTagLastTab) {
+            const VALID_TAB_KEYS = ["genre", "general", "sentiment", "combo", "intensity"];
+            if (VALID_TAB_KEYS.includes(savedTagLastTab)) setTagLastTab(savedTagLastTab);
           }
           
           // 🏆 v2.9: 수상 시스템 설정
@@ -24480,34 +24513,14 @@ function AppContent() {
   // 🏷️ 태그 관리 고급 함수 (v2.3)
   // ═══════════════════════════════════════════════════════════════
 
-  // 상단 고정 태그 로드/저장
-  useEffect(() => {
-    (async () => {
-      try {
-        const saved = await getAppMeta("pinned_tags");
-        if (Array.isArray(saved)) setPinnedTags(saved);
-      } catch (e) {
-        console.warn("pinned_tags load error:", e);
-      }
-    })();
-  }, []);
+  // 상단 고정 태그 로드 → 메인 초기화 Promise.all로 이동 (슬롯 경쟁 조건 방지)
 
   async function savePinnedTags(tags) {
     setPinnedTags(tags);
     await setAppMeta("pinned_tags", tags);
   }
 
-  // 숨김 태그 로드/저장
-  useEffect(() => {
-    (async () => {
-      try {
-        const saved = await getAppMeta("hidden_tags");
-        if (Array.isArray(saved)) setHiddenTags(saved);
-      } catch (e) {
-        console.warn("hidden_tags load error:", e);
-      }
-    })();
-  }, []);
+  // 숨김 태그 로드 → 메인 초기화 Promise.all에서 처리 (슬롯 경쟁 조건 방지)
 
   // 🏆 검토 탭 전환 시 선택 초기화
   useEffect(() => {
@@ -24521,35 +24534,14 @@ function AppContent() {
     await setAppMeta("hidden_tags", tags);
   }
 
-  // 🔧 v3.5.16: 태그 정렬 모드 로드/저장
-  useEffect(() => {
-    (async () => {
-      try {
-        const saved = await getAppMeta("tag_sort_mode");
-        if (saved && ["usage", "name", "registered"].includes(saved)) setTagSortMode(saved);
-      } catch (e) {
-        console.warn("tag_sort_mode load error:", e);
-      }
-    })();
-  }, []);
+  // 🔧 v3.5.16: 태그 정렬 모드 → 메인 초기화에서 로드 (슬롯 경쟁 조건 방지)
 
   function handleChangeTagSortMode(mode) {
     setTagSortMode(mode);
     setAppMeta("tag_sort_mode", mode);
   }
 
-  // 🔧 v3.5.16: 마지막 사용 탭 로드/저장
-  useEffect(() => {
-    (async () => {
-      try {
-        const saved = await getAppMeta("tag_last_tab");
-        const VALID_TAB_KEYS = ["genre", "general", "sentiment", "combo", "intensity"];
-        if (saved && VALID_TAB_KEYS.includes(saved)) setTagLastTab(saved);
-      } catch (e) {
-        console.warn("tag_last_tab load error:", e);
-      }
-    })();
-  }, []);
+  // 🔧 v3.5.16: 마지막 사용 탭 → 메인 초기화에서 로드 (슬롯 경쟁 조건 방지)
 
   function handleChangeTagLastTab(tab) {
     setTagLastTab(tab);
