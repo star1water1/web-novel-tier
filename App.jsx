@@ -20901,7 +20901,7 @@ function AppContent() {
   const removedQuoteImagesRef = useRef([]); // 📷 v3.6.1: 편집 중 삭제된 이미지 URI 추적 (저장 시 실제 삭제)
   const editNewQuoteImagesRef = useRef([]); // 📷 v6.0.1: 편집 모달에서 새로 추가된 이미지 URI 추적 (취소 시 정리)
   const regQuoteImagesRef = useRef([]); // 📷 v3.6.2: 등록 폼에서 추가된 이미지 URI 추적 (실패/취소 시 정리)
-  const [settingsSubTab, setSettingsSubTab] = useState("app"); // 🆕 Phase 2: 설정 서브탭 ("app" | "tags" | "analysis" | "backup" | "diag")
+  const [settingsSubTab, setSettingsSubTab] = useState("app"); // 🆕 Phase 2: 설정 서브탭 ("app" | "tags" | "analysis" | "slot" | "backup" | "diag" | "info")
   const [refreshKey, setRefreshKey] = useState(0); // 🔬 v3.5.9: 진단 대시보드 새로고침 키
   const [list, setList] = useState([]);
 
@@ -38256,27 +38256,32 @@ async function importJSON() {
                           </Text>
                         ))}
                       </View>
-                      {entry.details && entry.details.length > entry.highlights.length && (
-                        <>
-                          <TouchableOpacity
-                            onPress={() => setExpandedChangelog(prev => {
-                              const next = new Set(prev);
-                              next.has(entry.version) ? next.delete(entry.version) : next.add(entry.version);
-                              return next;
-                            })}
-                            style={{ marginTop: 6 }}
-                          >
-                            <Text style={{ fontSize: 12, color: C.primary, fontWeight: "600" }}>
-                              {expandedChangelog.has(entry.version) ? "▲ 간략히" : `▼ 상세 보기 (${entry.details.length - entry.highlights.length}건 더)`}
-                            </Text>
-                          </TouchableOpacity>
-                          {expandedChangelog.has(entry.version) && entry.details.map((d, i) => (
-                            <Text key={`d${i}`} style={{ fontSize: 12, color: C.sub, marginTop: 3, marginLeft: 8, lineHeight: 17 }}>
-                              {CHANGE_TYPE_CONFIG[d.type]?.emoji || "•"} {d.text}
-                            </Text>
-                          ))}
-                        </>
-                      )}
+                      {entry.details && (() => {
+                        const hlSet = new Set(entry.highlights.map(h => h.text));
+                        const extra = entry.details.filter(d => !hlSet.has(d.text));
+                        if (extra.length === 0) return null;
+                        return (
+                          <>
+                            <TouchableOpacity
+                              onPress={() => setExpandedChangelog(prev => {
+                                const next = new Set(prev);
+                                next.has(entry.version) ? next.delete(entry.version) : next.add(entry.version);
+                                return next;
+                              })}
+                              style={{ marginTop: 6 }}
+                            >
+                              <Text style={{ fontSize: 12, color: C.primary, fontWeight: "600" }}>
+                                {expandedChangelog.has(entry.version) ? "▲ 간략히" : `▼ 상세 보기 (${extra.length}건 더)`}
+                              </Text>
+                            </TouchableOpacity>
+                            {expandedChangelog.has(entry.version) && extra.map((d, i) => (
+                              <Text key={`d${i}`} style={{ fontSize: 12, color: C.sub, marginTop: 3, marginLeft: 8, lineHeight: 17 }}>
+                                {CHANGE_TYPE_CONFIG[d.type]?.emoji || "•"} {d.text}
+                              </Text>
+                            ))}
+                          </>
+                        );
+                      })()}
                     </View>
                   ))}
                 </Section>
