@@ -9930,6 +9930,7 @@ const TagSelectModal = memo(({
   onClose,
   onConfirm,
   initialTags = [],
+  // 🔧 scrollKey for Android modal scroll fix is handled internally
   initialMajor = [],
   initialSub = [],
   initialTagData = [], // 🏷️ v5.0: 농도 정보 [{tag, intensity}, ...]
@@ -9962,6 +9963,8 @@ const TagSelectModal = memo(({
   theme, // C 객체
 }) => {
   PerfMonitor.trackRender("TagSelectModal"); // 🔬
+  // 🔧 Android modal ScrollView 스크롤 수정 (onShow + key 패턴)
+  const [_tsScrollKey, _setTsScrollKey] = useState(0);
   // 내부 상태 (App과 격리됨)
   const [selectedTags, setSelectedTags] = useState(initialTags);
   const [selectedMajor, setSelectedMajor] = useState(initialMajor);
@@ -10599,11 +10602,11 @@ const TagSelectModal = memo(({
   ];
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose} onShow={() => _setTsScrollKey(k => k + 1)}>
       <View style={{ flex: 1, backgroundColor: C.modal }}>
-        <TouchableOpacity 
-          style={{ height: Math.round(Dimensions.get("window").height * 0.08) }} 
-          activeOpacity={1} 
+        <TouchableOpacity
+          style={{ height: Math.round(Dimensions.get("window").height * 0.08) }}
+          activeOpacity={1}
           onPress={onClose}
         />
         <View 
@@ -10816,6 +10819,7 @@ const TagSelectModal = memo(({
           </View>
 
           <ScrollView
+            key={`tagsel-scroll-${_tsScrollKey}`}
             style={{ flex: 1 }}
             nestedScrollEnabled={true}
             showsVerticalScrollIndicator={true}
@@ -12507,6 +12511,8 @@ const TagPickerModal = memo(({
 }) => {
   const C = theme;
   const isDark = C.bg !== "#F5F7FB";
+  // 🔧 Android modal ScrollView 스크롤 수정
+  const [_tpScrollKey, _setTpScrollKey] = useState(0);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState(new Set(initialSelected));
   const [expandedCat, setExpandedCat] = useState(null);
@@ -12612,7 +12618,7 @@ const TagPickerModal = memo(({
 
   // 🔧 v3.5.12: statusBarTranslucent로 Android 모달 중첩 호환성 확보
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose} statusBarTranslucent>
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose} statusBarTranslucent onShow={() => _setTpScrollKey(k => k + 1)}>
       <View style={{ flex: 1, backgroundColor: C.card }}>
         {/* 헤더 */}
         <View style={{
@@ -12650,6 +12656,7 @@ const TagPickerModal = memo(({
 
         {/* 메인 콘텐츠 */}
         <ScrollView
+          key={`tagpicker-scroll-${_tpScrollKey}`}
           style={{ flex: 1 }}
           contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 120 }}
           keyboardShouldPersistTaps="handled"
@@ -13985,6 +13992,8 @@ const TagManagerModal = memo(({
   PerfMonitor.trackRender("TagManagerModal"); // 🔬
   const C = theme;
   const isDark = C.bg !== "#F5F7FB"; // 다크모드 감지
+  // 🔧 Android modal ScrollView 스크롤 수정
+  const [_tmScrollKey, _setTmScrollKey] = useState(0);
   const [activeTab, setActiveTab] = useState("all");
   const [searchQ, setSearchQ] = useState("");
   const [selectedTag, setSelectedTag] = useState(null); // { tag, type }
@@ -14560,7 +14569,7 @@ const TagManagerModal = memo(({
   if (!visible) return null;
   
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose} onShow={() => _setTmScrollKey(k => k + 1)}>
       <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
         {/* 헤더 */}
         <View style={{ 
@@ -15025,8 +15034,10 @@ const TagManagerModal = memo(({
             </View>
           ) : (
             <ScrollView
+              key={`tagmgr-scroll-${_tmScrollKey}`}
               showsVerticalScrollIndicator={true}
               nestedScrollEnabled={true}
+              style={{ flex: 1 }}
               contentContainerStyle={{ flexDirection: "row", flexWrap: "wrap", paddingBottom: 20 }}
             >
               {currentTags.map((item, idx) => (
