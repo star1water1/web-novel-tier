@@ -26024,27 +26024,26 @@ function AppContent() {
         }
       }
 
-      // 부수효과: DB 영속화 + 전역 변수 갱신 (렌더 이후 실행)
+      // 🔧 전역 변수는 즉시 갱신 (렌더링 시 최신 값 참조 보장)
+      if (newSettings.tierThresholds) {
+        globalTierThresholds = { ...globalTierThresholds, ...newSettings.tierThresholds };
+      }
+      if (newSettings.tierSystemConfig || merged.tierSystemConfig) {
+        const tsc = merged.tierSystemConfig || DEFAULT_TIER_SYSTEM_CONFIG;
+        globalTierConfig = { ...tsc };
+        rebuildTierLookup(globalTierConfig);
+        if (tsc.tiers) {
+          const th = {};
+          for (const t of tsc.tiers) {
+            if (t.key !== tsc.defaultTier) th[t.key] = t.threshold;
+          }
+          globalTierThresholds = th;
+        }
+      }
+
+      // DB 영속화만 렌더 이후 실행
       safeDefer(() => {
         setAppMeta("app_settings", merged);
-
-        // 티어 임계값이 변경되면 전역 변수도 업데이트
-        if (newSettings.tierThresholds) {
-          globalTierThresholds = { ...globalTierThresholds, ...newSettings.tierThresholds };
-        }
-        // 🆕 v6.0: tierSystemConfig 변경 시 전역 config + 룩업 테이블 갱신
-        if (newSettings.tierSystemConfig || merged.tierSystemConfig) {
-          const tsc = merged.tierSystemConfig || DEFAULT_TIER_SYSTEM_CONFIG;
-          globalTierConfig = { ...tsc };
-          rebuildTierLookup(globalTierConfig);
-          if (tsc.tiers) {
-            const th = {};
-            for (const t of tsc.tiers) {
-              if (t.key !== tsc.defaultTier) th[t.key] = t.threshold;
-            }
-            globalTierThresholds = th;
-          }
-        }
       });
 
       return merged;
