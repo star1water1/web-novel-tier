@@ -8589,16 +8589,19 @@ async function compressAndSaveImage(sourceUri, maxSize, quality, ext = "jpg") {
       return await saveCoverToLibrary(sourceUri, "original", ext);
     }
 
+    // 출력 포맷 결정: PNG 입력은 PNG 유지, 그 외(HEIC/WebP 포함)는 JPEG로 변환
+    const isPng = ext === "png";
+    const format = isPng ? ImageManipulator.SaveFormat.PNG : ImageManipulator.SaveFormat.JPEG;
+    const outputExt = isPng ? "png" : "jpg"; // 실제 출력 포맷에 맞는 확장자
+
+    // 리사이즈: width만 지정하여 비율 유지 (height는 자동 계산)
+    // 가로 이미지: width=800 → height 비율 자동 축소
+    // 세로 이미지: width=800이면 원본 width가 이미 작을 수 있음 → 축소 안 됨 (upscale은 아래서 방지)
+    // ※ width+height 동시 지정하면 비율 무시하고 강제 리사이즈되므로 width만 사용
     const actions = [];
     if (maxSize) {
-      // width+height 동시 지정: 비율 유지하면서 두 값 모두 초과하지 않도록 축소 (fit-inside)
-      // 세로 이미지(600×1200)도 height 800으로 축소됨
-      actions.push({ resize: { width: maxSize, height: maxSize } });
+      actions.push({ resize: { width: maxSize } });
     }
-
-    const format = ext === "png"
-      ? ImageManipulator.SaveFormat.PNG
-      : ImageManipulator.SaveFormat.JPEG;
 
     const result = await ImageManipulator.manipulateAsync(
       sourceUri,
@@ -8607,7 +8610,7 @@ async function compressAndSaveImage(sourceUri, maxSize, quality, ext = "jpg") {
     );
 
     // 압축된 파일을 covers 디렉토리로 이동
-    const saved = await saveCoverToLibrary(result.uri, "original", ext);
+    const saved = await saveCoverToLibrary(result.uri, "original", outputExt);
 
     // 임시 파일 정리 (manipulateAsync가 캐시에 생성)
     if (result.uri !== sourceUri) {
@@ -31141,11 +31144,14 @@ async function importJSON() {
               {!isPlanned && (() => {
                 const parsedQuotes = parseQuotes(n.memorable_quote);
                 if (parsedQuotes.length === 0) return null;
-                const textQuotes = parsedQuotes.filter(q => !isImageQuote(q));
-                const imageQuotes = parsedQuotes.filter(q => isImageQuote(q));
-                const visibleImages = imageQuotes.slice(0, 2);
-                const hiddenImageCount = imageQuotes.length - visibleImages.length;
-                const visibleQuotes = [...textQuotes, ...visibleImages];
+                // 원래 순서 유지하면서 이미지만 2개로 제한
+                let imgShown = 0;
+                const totalImages = parsedQuotes.filter(q => isImageQuote(q)).length;
+                const visibleQuotes = parsedQuotes.filter(q => {
+                  if (!isImageQuote(q)) return true; // 텍스트는 전부 표시
+                  return ++imgShown <= 2; // 이미지는 2개까지
+                });
+                const hiddenImageCount = totalImages - Math.min(totalImages, 2);
                 return (
                 <View style={{ marginBottom: 12 }}>
                   {visibleQuotes.map((quote, qi) => (
@@ -35598,14 +35604,14 @@ async function importJSON() {
                     {visibleCards.map((c, i) => (
                       <TouchableOpacity
                         key={c.id}
-                        onPress={() => setQuotesIdx(quotesListExpanded ? i : displayCards.indexOf(c))}
+                        onPress={() => setQuotesIdx(i)}
                         style={{
                           flexDirection: "row",
                           alignItems: "center",
                           padding: 12,
-                          backgroundColor: (quotesListExpanded ? i : displayCards.indexOf(c)) === safeIdx ? (card?.tierColor || C.primary) + "18" : "transparent",
+                          backgroundColor: i === safeIdx ? (card?.tierColor || C.primary) + "18" : "transparent",
                           borderRadius: 10,
-                          borderLeftWidth: (quotesListExpanded ? i : displayCards.indexOf(c)) === safeIdx ? 3 : 0,
+                          borderLeftWidth: i === safeIdx ? 3 : 0,
                           borderLeftColor: card?.tierColor || C.primary,
                           marginBottom: 4,
                         }}
