@@ -13711,6 +13711,7 @@ const TagManagerModal = memo(({
   onDemoteToCustom,
   // 🔧 v3.5.12: onComboToCustom 제거 (조합분류 폐지)
   onDeleteTag,
+  onBatchDeleteTags, // 🆕 일괄 레지스트리 삭제 (배치 최적화)
   onDeleteGlobally,
   onBatchDeleteGlobally, // 🆕 일괄 전체 삭제
   onAddCustomTag,
@@ -14336,15 +14337,20 @@ const TagManagerModal = memo(({
           text: "삭제",
           style: "destructive",
           onPress: () => {
-            // 기본 태그 → 숨기기
-            for (const tag of defaultTags) {
-              if (!listHasTag(hiddenTags, tag)) {
-                if (onToggleHide) onToggleHide(tag);
+            // 🔧 배치 최적화: 1회 레지스트리 업데이트 + 1회 메타데이터 정리
+            const allTagNames = [...defaultTags, ...userTags.map(u => u.tag)];
+            if (onBatchDeleteTags) {
+              onBatchDeleteTags(allTagNames, defaultTags);
+            } else {
+              // fallback: 개별 처리
+              for (const tag of defaultTags) {
+                if (!listHasTag(hiddenTags, tag)) {
+                  if (onToggleHide) onToggleHide(tag);
+                }
               }
-            }
-            // 사용자 태그 → 삭제
-            for (const { tag, type } of userTags) {
-              if (onDeleteTag) onDeleteTag(tag, type);
+              for (const { tag, type } of userTags) {
+                if (onDeleteTag) onDeleteTag(tag, type);
+              }
             }
             setSelectedTags(new Set());
             setSelectMode(false);
@@ -25095,6 +25101,63 @@ function AppContent() {
     });
   }
 
+  /** 🆕 레지스트리에서 다수 태그 일괄 제거 (1회 updateTagRegistryFn = 1회 DB write) */
+  function batchRemoveTagsFromRegistry(tagsToRemove) {
+    if (!tagsToRemove || tagsToRemove.length === 0) return;
+    updateTagRegistryFn(prev => {
+      const newRegistry = { ...prev };
+      const shouldRemove = (t) => tagsToRemove.some(d => isSameTag(t, d));
+      newRegistry.majorGenres = newRegistry.majorGenres.filter(t => !shouldRemove(t));
+      newRegistry.subGenres = newRegistry.subGenres.filter(t => !shouldRemove(t));
+      const newGeneral = {};
+      const userCats = newRegistry.userCategories || [];
+      for (const [cat, tags] of Object.entries(newRegistry.generalTags)) {
+        const filtered = tags.filter(t => !shouldRemove(t));
+        if (filtered.length > 0 || userCats.includes(cat)) {
+          newGeneral[cat] = filtered;
+        }
+      }
+      newRegistry.generalTags = newGeneral;
+      return newRegistry;
+    });
+  }
+
+  /** 🆕 다수 태그의 메타데이터 일괄 정리 (4회 setState + 4회 deferSetAppMeta만) */
+  function cleanupTagMetadataBatch(tagsToClean) {
+    if (!tagsToClean || tagsToClean.length === 0) return;
+    const shouldClean = (t) => tagsToClean.some(d => isSameTag(t, d));
+    const shouldCleanKey = (k) => tagsToClean.some(d => isSameTag(k, d));
+
+    setPinnedTags(prev => {
+      if (!prev.some(t => shouldClean(t))) return prev;
+      const next = prev.filter(t => !shouldClean(t));
+      safeDefer(() => deferSetAppMeta("pinned_tags", next));
+      return next;
+    });
+    setHiddenTags(prev => {
+      if (!prev.some(t => shouldClean(t))) return prev;
+      const next = prev.filter(t => !shouldClean(t));
+      safeDefer(() => deferSetAppMeta("hidden_tags", next));
+      return next;
+    });
+    setTagSentiments(prev => {
+      const matchKeys = Object.keys(prev).filter(k => shouldCleanKey(k));
+      if (matchKeys.length === 0) return prev;
+      const next = { ...prev };
+      for (const k of matchKeys) delete next[k];
+      safeDefer(() => deferSetAppMeta("tag_sentiments", next));
+      return next;
+    });
+    setTagAttributes(prev => {
+      const matchKeys = Object.keys(prev).filter(k => shouldCleanKey(k));
+      if (matchKeys.length === 0) return prev;
+      const next = { ...prev };
+      for (const k of matchKeys) delete next[k];
+      safeDefer(() => deferSetAppMeta("tag_attributes", next));
+      return next;
+    });
+  }
+
   // ═══════════════════════════════════════════════════════════════
   // 🆕 카테고리 관리 CRUD
   // ═══════════════════════════════════════════════════════════════
@@ -25735,16 +25798,12 @@ function AppContent() {
       await execBatch(updates);
     }
 
-    // 3. 메타데이터 정리 + 기본 태그 숨김 처리
-    // 🔧 cleanupTagMetadata가 hiddenTags에서도 제거하므로,
-    //    기본 태그의 숨김은 cleanup 이후에 일괄 적용해야 함
-    const defaultTagsToHide = [];
-    for (const tag of tagsToDelete) {
-      const isDefault = ALL_DEFAULT_TAGS.some(t => isSameTag(t, tag));
-      if (isDefault) defaultTagsToHide.push(tag);
-      await cleanupTagMetadata(tag); // 숨김 포함 모든 메타데이터 제거
-    }
-    // 기본 태그는 cleanup 이후 다시 숨김 추가 (cleanupTagMetadata가 제거한 것을 복원)
+    // 3. 🔧 배치 최적화: per-tag cleanupTagMetadata → cleanupTagMetadataBatch
+    //    (N회 setState × 4 → 4회 setState로 축소)
+    cleanupTagMetadataBatch(tagsToDelete);
+
+    // 기본 태그는 cleanup 이후 다시 숨김 추가
+    const defaultTagsToHide = tagsToDelete.filter(tag => ALL_DEFAULT_TAGS.some(t => isSameTag(t, tag)));
     if (defaultTagsToHide.length > 0) {
       setHiddenTags(prev => {
         const next = [...prev];
@@ -41904,6 +41963,24 @@ async function importJSON() {
             await cleanupTagMetadata(tag);
             Alert.alert("완료", `"${tag}" 태그를 삭제했습니다.`);
           }
+        }}
+        onBatchDeleteTags={(allTags, defaultTagsToHide) => {
+          // 🆕 배치 최적화: N개 태그 → 1회 레지스트리 업데이트 + 1회 메타데이터 정리
+          // (per-tag onDeleteTag 루프 대비 N배 빠름)
+          batchRemoveTagsFromRegistry(allTags);
+          cleanupTagMetadataBatch(allTags);
+          // 기본 태그는 숨김 추가
+          if (defaultTagsToHide && defaultTagsToHide.length > 0) {
+            setHiddenTags(prev => {
+              const next = [...prev];
+              for (const tag of defaultTagsToHide) {
+                if (!next.some(t => isSameTag(t, tag))) next.push(tag);
+              }
+              safeDefer(() => deferSetAppMeta("hidden_tags", next));
+              return next;
+            });
+          }
+          Alert.alert("완료", `${allTags.length}개 태그를 삭제했습니다.`);
         }}
         onDeleteGlobally={deleteTagGlobally}
         onBatchDeleteGlobally={batchDeleteTagsGlobally}
