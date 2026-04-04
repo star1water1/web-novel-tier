@@ -28223,6 +28223,7 @@ function AppContent() {
 
   // 🆕 v6.1: 티어 내 순위 교환 (manual 모드 전용)
   async function swapRating(idA, ratingA, idB, ratingB) {
+    if (idA === idB) return; // 동일 작품 방어 (빠른 연타 시)
     if (ratingA === ratingB) {
       await execBatch([
         { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingB + 1, idA] },
@@ -33881,10 +33882,15 @@ async function importJSON() {
                               onPress={async () => {
                                 if (tk === tier) { setExpandedNovelId(null); return; }
                                 const oldTier = tier;
-                                await exec("UPDATE novels SET manual_tier=? WHERE id=?", [tk, item.id]);
-                                addTierHistoryEntry(item.id, item.title, oldTier, tk);
-                                setExpandedNovelId(null);
-                                await loadList(undefined, undefined, "tierManage");
+                                try {
+                                  await exec("UPDATE novels SET manual_tier=? WHERE id=?", [tk, item.id]);
+                                  addTierHistoryEntry(item.id, item.title, oldTier, tk);
+                                  setExpandedNovelId(null);
+                                  await loadList(undefined, undefined, "tierManage");
+                                } catch (e) {
+                                  console.warn("티어 변경 오류:", e.message);
+                                  Alert.alert("오류", "티어 변경에 실패했습니다.");
+                                }
                               }}
                               style={{
                                 paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999,
