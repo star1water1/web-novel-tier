@@ -6288,8 +6288,14 @@ function isTagTitle(tag, tagAttributes = {}) {
 
 // 🆕 v3.5.8: 분석용 태그 필터 — 작품명 태그 제외
 // 매칭 점수, 취향 분석, 인사이트 등 모든 분석 함수에서 사용
-function getAnalysisTags(tagsStr, tagAttributes = {}) {
-  return (tagsStr || "").split(",").map(t => t.trim()).filter(t => t && !isTagTitle(t, tagAttributes));
+function getAnalysisTags(tagsStr, tagAttributes = {}, hiddenTags = null) {
+  return (tagsStr || "").split(",").map(t => t.trim()).filter(t => {
+    if (!t) return false;
+    if (isTagTitle(t, tagAttributes)) return false;
+    // 🆕 숨김 태그 제외 (취향 분석에서 제외)
+    if (hiddenTags && hiddenTags.length > 0 && hiddenTags.some(h => isSameTag(h, t))) return false;
+    return true;
+  });
 }
 
 // 🆕 v3.5.8: 태그 제거 + 대장르/부장르 자동 동기화 헬퍼
@@ -7115,7 +7121,12 @@ function applyTagRegistry(registry) {
   ALL_GENERAL_TAGS = Object.values(GENERAL_TAGS).flat();
   ALL_DEFAULT_TAGS = [...MAJOR_GENRES, ...SUB_GENRES, ...ALL_GENERAL_TAGS];
   TAG_REVERSE_ALIASES = buildReverseAliases(TAG_ALIASES);
-  TAG_PICKER_CATEGORIES = Object.entries(GENERAL_TAGS).map(([cat, tags]) => ({ label: cat, tags }));
+  // 🆕 hiddenCategories/categoryAliases 적용
+  const _hiddenCats = Array.isArray(registry.hiddenCategories) ? registry.hiddenCategories : [];
+  const _catAliases = (registry.categoryAliases && typeof registry.categoryAliases === "object") ? registry.categoryAliases : {};
+  TAG_PICKER_CATEGORIES = Object.entries(GENERAL_TAGS)
+    .filter(([cat]) => !_hiddenCats.includes(cat))
+    .map(([cat, tags]) => ({ label: _catAliases[cat] || cat, tags }));
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -12052,24 +12063,27 @@ const TagEditModal = memo(({
             </View>
             
             {/* ═══════════════════════════════════════════════════════════════ */}
-            {/* 🗑️ 삭제 (사용자 정의만) */}
+            {/* 🗑️ 삭제/숨기기 (모든 태그 타입) */}
             {/* ═══════════════════════════════════════════════════════════════ */}
-            {isUserDefined && (
-              <TouchableOpacity
-                onPress={() => { onDeleteGlobally?.(tag); onClose(); }}
-                style={{
-                  backgroundColor: "#fee2e2",
-                  padding: 14,
-                  borderRadius: 12,
-                  flexDirection: "row",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  marginBottom: 16,
-                }}
-              >
-                <Text style={{ fontSize: 16, marginRight: 8 }}>🗑️</Text>
-                <Text style={{ fontWeight: "700", color: "#dc2626" }}>전체에서 삭제</Text>
-              </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => { onDeleteGlobally?.(tag); onClose(); }}
+              style={{
+                backgroundColor: "#fee2e2",
+                padding: 14,
+                borderRadius: 12,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center",
+                marginBottom: isUserDefined ? 16 : 4,
+              }}
+            >
+              <Text style={{ fontSize: 16, marginRight: 8 }}>{isUserDefined ? "🗑️" : "💥"}</Text>
+              <Text style={{ fontWeight: "700", color: "#dc2626" }}>전체에서 삭제</Text>
+            </TouchableOpacity>
+            {!isUserDefined && (
+              <Text style={{ fontSize: 10, color: "#9ca3af", textAlign: "center", marginBottom: 16 }}>
+                기본 태그는 모든 작품에서 제거 + 숨김 처리됩니다
+              </Text>
             )}
           </ScrollView>
           
@@ -17592,6 +17606,7 @@ const TasteAnalysisScreen = memo(({
   coordinateSystems = null,  // 🆕 v3.2.1: 사용자 정의 좌표계
   customTagCategories = {},  // 🆕 v3.5.9: 커스텀 태그 카테고리
   tagAttributes = {},  // 🔧 v3.5.15d: 유사그룹 일관성 등에서 isTagTitle 사용
+  hiddenTags = [],  // 🆕 숨김 태그 필터용
 }) => {
   PerfMonitor.trackRender("TasteAnalysisScreen"); // 🔬
   const [analysis, setAnalysis] = useState(null);
@@ -17861,11 +17876,11 @@ const TasteAnalysisScreen = memo(({
     
     for (const novel of highRatedNovels) {
       // 🆕 v3.5.8: 작품명 태그 제외
-      const tags = getAnalysisTags(novel.tags, tagAttributes);
+      const tags = getAnalysisTags(novel.tags, tagAttributes, hiddenTags);
       const majorGenres = parseMajorSub(novel.major_genre);
       const subGenres = parseMajorSub(novel.sub_genre);
       const allTags = [...new Set([...tags, ...majorGenres, ...subGenres])];
-      
+
       // 2개 조합
       for (let i = 0; i < allTags.length; i++) {
         for (let j = i + 1; j < allTags.length; j++) {
@@ -17884,7 +17899,7 @@ const TasteAnalysisScreen = memo(({
     const allPairCounts = {};
     
     for (const novel of allNovels) {
-      const tags = getAnalysisTags(novel.tags, tagAttributes);
+      const tags = getAnalysisTags(novel.tags, tagAttributes, hiddenTags);
       const majorGenres = parseMajorSub(novel.major_genre);
       const subGenres = parseMajorSub(novel.sub_genre);
       const allTags = [...new Set([...tags, ...majorGenres, ...subGenres])];
@@ -23383,7 +23398,7 @@ function AppContent() {
         
         // — 태그 점수 (최대 35점) —
         // 🆕 v3.5.8: 작품명 태그 제외 (검색 편의용 → 분석 교란 방지)
-        const novelTags = getAnalysisTags(novel.tags, tagAttributes);
+        const novelTags = getAnalysisTags(novel.tags, tagAttributes, hiddenTags);
         
         if (hasPatterns && Object.keys(tagScores).length > 0) {
           source = "pattern";
@@ -25033,6 +25048,10 @@ function AppContent() {
       characterCategories: { ...FACTORY_CHARACTER_CATEGORIES },
       aliases: { ...FACTORY_TAG_ALIASES },
       spectrumGroups: { ...FACTORY_TAG_SPECTRUM_GROUPS },
+      // 🆕 카테고리 관리 필드 초기화
+      hiddenCategories: [],
+      categoryAliases: {},
+      userCategories: [],
     };
   }
 
@@ -25046,6 +25065,10 @@ function AppContent() {
       characterCategories: { ...FACTORY_CHARACTER_CATEGORIES },
       aliases: { ...FACTORY_TAG_ALIASES },
       spectrumGroups: { ...FACTORY_TAG_SPECTRUM_GROUPS },
+      // 🆕 카테고리 관리 필드 리셋
+      hiddenCategories: [],
+      categoryAliases: {},
+      userCategories: [],
     });
   }
 
@@ -26930,7 +26953,14 @@ function AppContent() {
                 await setAppMeta("custom_combo_traits", []);
               }
               if (sel.custom_tags) {
-                if (tagRegistry) updateTagRegistry({...tagRegistry, generalTags: {...FACTORY_GENERAL_TAGS}});
+                if (tagRegistry) updateTagRegistry({
+                  ...tagRegistry,
+                  generalTags: {...FACTORY_GENERAL_TAGS},
+                  // 🆕 카테고리 관리 필드도 리셋
+                  hiddenCategories: [],
+                  categoryAliases: {},
+                  userCategories: [],
+                });
               }
               if (sel.tag_pins) {
                 setPinnedTags([]);
@@ -30141,6 +30171,10 @@ async function importJSON() {
                   characterCategories: { ...FACTORY_CHARACTER_CATEGORIES },
                   aliases: { ...FACTORY_TAG_ALIASES },
                   spectrumGroups: { ...FACTORY_TAG_SPECTRUM_GROUPS },
+                  // 🆕 구 백업에 없는 필드 초기화
+                  hiddenCategories: [],
+                  categoryAliases: {},
+                  userCategories: [],
                 };
                 if (Array.isArray(data.TM.umg))
                   newRegistry.majorGenres = deduplicateTags([...FACTORY_MAJOR_GENRES, ...data.TM.umg]);
@@ -35380,6 +35414,7 @@ async function importJSON() {
             coordinateSystems={coordinateSystems}
             customTagCategories={customTagCategories}
             tagAttributes={tagAttributes}
+            hiddenTags={hiddenTags}
           />
         )}
 
