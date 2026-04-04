@@ -2685,6 +2685,7 @@ import * as ImagePicker from "expo-image-picker";
 import * as NavigationBar from "expo-navigation-bar";
 // 🔧 v3.4.7: 새 FileSystem API가 불안정하여 레거시 API 사용
 import * as FileSystem from "expo-file-system/legacy"; // 🔧 v3.5.3: SDK 54 신규 API 불안정 → 레거시 API 사용
+import * as ImageManipulator from "expo-image-manipulator"; // 📷 명대사 이미지 압축
 
 /* =========================================================
    🛡️ v3.5.6: 글로벌 에러 핸들러 + ErrorBoundary
@@ -8451,6 +8452,11 @@ const COMPRESSION_PRESETS = {
   heavy: { quality: 0.4, maxSize: 600 },            // 강한 압축
 };
 
+// 📷 명대사 이미지 압축 설정
+const QUOTE_IMAGE_MAX_SIZE = 800;   // 긴 변 최대 800px
+const QUOTE_IMAGE_QUALITY = 0.7;    // JPEG 품질 70%
+const QUOTE_IMAGE_MAX_COUNT = 10;   // 이미지 인용구 최대 개수
+
 /**
  * 이미지 포맷 감지 (expo-image-picker asset 기반)
  * asset.mimeType → fileName → uri 순서로 폴백
@@ -8564,6 +8570,54 @@ async function saveCoverToLibrary(sourceUri, compressionLevel = "light", ext = "
     };
   } catch (e) {
     return { error: "전체: " + e.message };
+  }
+}
+
+/**
+ * 📷 이미지 압축/리사이즈 후 저장 (명대사 이미지용)
+ * expo-image-manipulator로 리사이즈 + 압축 후 covers 디렉토리에 저장
+ * @param sourceUri - ImagePicker에서 받은 원본 URI
+ * @param maxSize - 긴 변 최대 크기 (px). null이면 리사이즈 스킵
+ * @param quality - JPEG 압축 품질 (0~1)
+ * @param ext - 파일 확장자
+ * @returns { id, file_path, file_size } 또는 { error }
+ */
+async function compressAndSaveImage(sourceUri, maxSize, quality, ext = "jpg") {
+  try {
+    // GIF는 압축 스킵 (애니메이션 손실 방지)
+    if (ext === "gif") {
+      return await saveCoverToLibrary(sourceUri, "original", ext);
+    }
+
+    const actions = [];
+    if (maxSize) {
+      // width+height 동시 지정: 비율 유지하면서 두 값 모두 초과하지 않도록 축소 (fit-inside)
+      // 세로 이미지(600×1200)도 height 800으로 축소됨
+      actions.push({ resize: { width: maxSize, height: maxSize } });
+    }
+
+    const format = ext === "png"
+      ? ImageManipulator.SaveFormat.PNG
+      : ImageManipulator.SaveFormat.JPEG;
+
+    const result = await ImageManipulator.manipulateAsync(
+      sourceUri,
+      actions,
+      { compress: quality, format }
+    );
+
+    // 압축된 파일을 covers 디렉토리로 이동
+    const saved = await saveCoverToLibrary(result.uri, "original", ext);
+
+    // 임시 파일 정리 (manipulateAsync가 캐시에 생성)
+    if (result.uri !== sourceUri) {
+      FileSystem.deleteAsync(result.uri, { idempotent: true }).catch(() => {});
+    }
+
+    return saved;
+  } catch (e) {
+    console.warn("[compressAndSaveImage] 실패, 원본 저장 폴백:", e.message);
+    return await saveCoverToLibrary(sourceUri, "original", ext);
   }
 }
 
@@ -16435,7 +16489,7 @@ const AwardsScreen = memo(({
                             borderLeftColor: award.color,
                           }}>
                             {isImageQuote(firstItem) ? (
-                              <ExpoImage source={{ uri: firstItem.uri }} style={{ width: "100%", height: 100, borderRadius: 8 }} contentFit="contain" cachePolicy="memory-disk" />
+                              <ExpoImage source={{ uri: firstItem.uri }} style={{ width: "100%", height: 100, borderRadius: 8 }} contentFit="contain" cachePolicy="disk" />
                             ) : (
                               <Text style={{
                                 fontStyle: "italic",
@@ -20914,6 +20968,8 @@ function AppContent() {
   // 💬 v3.5.4: 명언 쇼츠 상태
   const [quotesIdx, setQuotesIdx] = useState(0);
   const [quotesShuffled, setQuotesShuffled] = useState(null); // null=원본순, array=셔플순
+  const [quotesListExpanded, setQuotesListExpanded] = useState(false); // 📋 전체 목록 접기/펼치기
+  const [batchImporting, setBatchImporting] = useState(false); // 📷 일괄 가져오기 로딩
   const quotesSwipeRef = useRef({ startX: 0, startY: 0 }); // 🔀 v3.5.5: 스와이프 감지
   const removedQuoteImagesRef = useRef([]); // 📷 v3.6.1: 편집 중 삭제된 이미지 URI 추적 (저장 시 실제 삭제)
   const editNewQuoteImagesRef = useRef([]); // 📷 v6.0.1: 편집 모달에서 새로 추가된 이미지 URI 추적 (취소 시 정리)
@@ -26507,6 +26563,11 @@ function AppContent() {
   // ※ 일반 함수로 선언 (useCallback 아님) — 별도 state 접근을 위해 항상 최신 closure 필요
   //    closeEditModal은 사용자 인터랙션(버튼/뒤로가기) 시에만 호출되므로 재생성 비용 무시 가능
   function closeEditModal() {
+    // 📷 일괄 가져오기 중에는 닫기 방지
+    if (batchImporting) {
+      Alert.alert("처리 중", "이미지를 저장 중입니다. 잠시 기다려주세요.");
+      return;
+    }
     const snap = editOriginalSnapshotRef.current;
     const curr = editItemRef.current;
     
@@ -28579,7 +28640,8 @@ async function buildUltraCompactBackup(novels, matches, coverImages = null) {
       opt.mq = memorableQuote;
       // 이미지 인용구가 포함된 경우 파일을 base64로 포함
       const mQuotes = parseQuotes(memorableQuote);
-      const imgQuotes = mQuotes.filter(q => isImageQuote(q));
+      // 📷 내보내기 시 이미지 base64는 최대 3개 (메모리 폭발 방지)
+      const imgQuotes = mQuotes.filter(q => isImageQuote(q)).slice(0, 3);
       if (imgQuotes.length > 0) {
         const mqImg = {};
         for (const iq of imgQuotes) {
@@ -30392,40 +30454,97 @@ async function importJSON() {
 <View style={{ marginTop: 12, padding: 12, backgroundColor: isDark ? "#1e293b" : "#fffbeb", borderRadius: 12, borderLeftWidth: 3, borderLeftColor: isDark ? "#fbbf24" : "#f59e0b" }}>
   <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
     <Label>💬 인상깊은 문장 ({memorableQuote.length})</Label>
-    <View style={{ flexDirection: "row", gap: 6 }}>
-      <TouchableOpacity
-        onPress={() => setMemorableQuote(prev => [...prev, ""])}
-        style={{ backgroundColor: isDark ? "#fbbf24" : "#f59e0b", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }}
-      >
-        <Text style={{ color: "#000", fontWeight: "700", fontSize: 12 }}>+ 텍스트</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        onPress={async () => {
-          try {
-            const result = await ImagePicker.launchImageLibraryAsync({
-              mediaTypes: ['images'],
-              allowsEditing: true,
-              quality: 0.8,
-            });
-            await resetDbConnection();
-            try { await openDb(); } catch {}
-            if (!result.canceled && result.assets?.[0]) {
-              const { ext } = getImageFormat(result.assets[0]);
-              const saved = await saveCoverToLibrary(result.assets[0].uri, "medium", ext);
-              if (saved && !saved.error) {
-                regQuoteImagesRef.current.push(saved.file_path); // 📷 v3.6.2: 고아 방지 추적
-                setMemorableQuote(prev => [...prev, { type: "image", uri: saved.file_path }]);
+    {(() => {
+      const imgCount = memorableQuote.filter(isImageQuote).length;
+      const maxReached = imgCount >= QUOTE_IMAGE_MAX_COUNT;
+      const maxRemaining = QUOTE_IMAGE_MAX_COUNT - imgCount;
+      return (
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+        <TouchableOpacity
+          onPress={() => setMemorableQuote(prev => [...prev, ""])}
+          style={{ backgroundColor: isDark ? "#fbbf24" : "#f59e0b", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }}
+        >
+          <Text style={{ color: "#000", fontWeight: "700", fontSize: 12 }}>+ 텍스트</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={async () => {
+            if (maxReached || batchImporting) return;
+            try {
+              const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: ['images'],
+                allowsEditing: true,
+                quality: 1.0,
+              });
+              await resetDbConnection();
+              try { await openDb(); } catch {}
+              if (!result.canceled && result.assets?.[0]) {
+                const { ext } = getImageFormat(result.assets[0]);
+                const saved = await compressAndSaveImage(result.assets[0].uri, QUOTE_IMAGE_MAX_SIZE, QUOTE_IMAGE_QUALITY, ext);
+                if (saved && !saved.error) {
+                  regQuoteImagesRef.current.push(saved.file_path);
+                  setMemorableQuote(prev => [...prev, { type: "image", uri: saved.file_path }]);
+                }
               }
+            } catch (e) {
+              Alert.alert("오류", "이미지 선택 실패: " + e.message);
             }
-          } catch (e) {
-            Alert.alert("오류", "이미지 선택 실패: " + e.message);
-          }
-        }}
-        style={{ backgroundColor: isDark ? "#374151" : "#e5e7eb", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 }}
-      >
-        <Text style={{ color: C.text, fontWeight: "700", fontSize: 12 }}>📷 이미지</Text>
-      </TouchableOpacity>
-    </View>
+          }}
+          style={{ backgroundColor: isDark ? "#374151" : "#e5e7eb", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, opacity: maxReached || batchImporting ? 0.4 : 1 }}
+          disabled={maxReached || batchImporting}
+        >
+          <Text style={{ color: C.text, fontWeight: "700", fontSize: 12 }}>📷 이미지</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={async () => {
+            if (maxReached || batchImporting) return;
+            try {
+              setBatchImporting(true);
+              const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: ['images'],
+                allowsMultipleSelection: true,
+                quality: 1.0,
+                base64: false,
+                selectionLimit: maxRemaining,
+              });
+              await resetDbConnection();
+              try { await openDb(); } catch {}
+              if (result.canceled || !result.assets?.length) return;
+              let assets = result.assets.slice(0, maxRemaining);
+              const trimmed = result.assets.length > maxRemaining;
+              const newImages = [];
+              for (const asset of assets) {
+                const { ext } = getImageFormat(asset);
+                const saved = await compressAndSaveImage(asset.uri, QUOTE_IMAGE_MAX_SIZE, QUOTE_IMAGE_QUALITY, ext);
+                if (saved && !saved.error) {
+                  regQuoteImagesRef.current.push(saved.file_path);
+                  newImages.push({ type: "image", uri: saved.file_path });
+                }
+              }
+              if (newImages.length > 0) {
+                setMemorableQuote(prev => [...prev, ...newImages]);
+              }
+              if (trimmed || newImages.length < assets.length) {
+                const msgs = [];
+                if (trimmed) msgs.push(`최대 ${maxRemaining}개만 선택됨`);
+                if (newImages.length < assets.length) msgs.push(`${assets.length - newImages.length}개 저장 실패`);
+                Alert.alert("알림", msgs.join("\n"));
+              }
+            } catch (e) {
+              Alert.alert("오류", "이미지 가져오기 실패: " + e.message);
+            } finally {
+              setBatchImporting(false);
+            }
+          }}
+          style={{ backgroundColor: isDark ? "#422006" : "#fef3c7", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, opacity: maxReached || batchImporting ? 0.4 : 1 }}
+          disabled={maxReached || batchImporting}
+        >
+          <Text style={{ color: isDark ? "#fbbf24" : "#92400e", fontWeight: "700", fontSize: 12 }}>
+            {batchImporting ? "처리중..." : `📷 일괄 (${imgCount}/${QUOTE_IMAGE_MAX_COUNT})`}
+          </Text>
+        </TouchableOpacity>
+      </View>
+      );
+    })()}
   </View>
   {memorableQuote.length === 0 ? (
     <TouchableOpacity
@@ -30452,7 +30571,7 @@ async function importJSON() {
         </View>
         {isImageQuote(q) ? (
           <View>
-            <ExpoImage source={{ uri: q.uri }} style={{ width: "100%", height: 150, borderRadius: 10, backgroundColor: C.card }} contentFit="contain" cachePolicy="memory-disk" />
+            <ExpoImage source={{ uri: q.uri }} style={{ width: "100%", height: 120, borderRadius: 10, backgroundColor: C.card }} contentFit="contain" cachePolicy="disk" />
             <TextInput
               value={q.caption || ""}
               onChangeText={(t) => setMemorableQuote(prev => { const u = [...prev]; u[qi] = { ...q, caption: t }; return u; })}
@@ -31018,22 +31137,29 @@ async function importJSON() {
               )}
 
               {/* 💬 인상깊은 문장 (본목록만, 다중 지원) */}
+              {/* 📷 이미지 인용구는 최대 2개만 표시 (메모리 절약) */}
               {!isPlanned && (() => {
                 const parsedQuotes = parseQuotes(n.memorable_quote);
-                return parsedQuotes.length > 0 ? (
+                if (parsedQuotes.length === 0) return null;
+                const textQuotes = parsedQuotes.filter(q => !isImageQuote(q));
+                const imageQuotes = parsedQuotes.filter(q => isImageQuote(q));
+                const visibleImages = imageQuotes.slice(0, 2);
+                const hiddenImageCount = imageQuotes.length - visibleImages.length;
+                const visibleQuotes = [...textQuotes, ...visibleImages];
+                return (
                 <View style={{ marginBottom: 12 }}>
-                  {parsedQuotes.map((quote, qi) => (
+                  {visibleQuotes.map((quote, qi) => (
                     <View key={`q-${qi}`} style={{
                       backgroundColor: isDark ? "#1e293b" : "#fef3c7",
                       padding: isImageQuote(quote) ? 8 : 14,
                       borderRadius: 12,
-                      marginBottom: qi < parsedQuotes.length - 1 ? 8 : 0,
+                      marginBottom: qi < visibleQuotes.length - 1 ? 8 : 0,
                       borderLeftWidth: 4,
                       borderLeftColor: isDark ? "#fbbf24" : "#f59e0b",
                     }}>
                       {isImageQuote(quote) ? (
                         <View>
-                          <ExpoImage source={{ uri: quote.uri }} style={{ width: "100%", height: 200, borderRadius: 8 }} contentFit="contain" cachePolicy="memory-disk" />
+                          <ExpoImage source={{ uri: quote.uri }} style={{ width: "100%", height: 200, borderRadius: 8 }} contentFit="contain" cachePolicy="disk" />
                           {quote.caption ? (
                             <Text style={{ fontStyle: "italic", fontSize: 13, color: isDark ? "#fef3c7" : "#78350f", marginTop: 6, textAlign: "center" }}>
                               {quote.caption}
@@ -31052,8 +31178,13 @@ async function importJSON() {
                       )}
                     </View>
                   ))}
+                  {hiddenImageCount > 0 && (
+                    <Text style={{ color: isDark ? "#fbbf24" : "#d97706", fontSize: 12, marginTop: 6, textAlign: "center" }}>
+                      +{hiddenImageCount}개 이미지 (명언 탭에서 전체 감상)
+                    </Text>
+                  )}
                 </View>
-              ) : null;
+              );
               })()}
 
               {/* 상세 정보 박스 */}
@@ -33454,7 +33585,7 @@ async function importJSON() {
                                 </View>
                                 {isImageQuote(q) ? (
                                   <View>
-                                    <ExpoImage source={{ uri: q.uri }} style={{ width: "100%", height: 120, borderRadius: 8 }} contentFit="contain" cachePolicy="memory-disk" />
+                                    <ExpoImage source={{ uri: q.uri }} style={{ width: "100%", height: 120, borderRadius: 8 }} contentFit="contain" cachePolicy="disk" />
                                     <TextInput
                                       value={q.caption || ""}
                                       onChangeText={(t) => {
@@ -35163,6 +35294,7 @@ async function importJSON() {
           const goPrev = () => setQuotesIdx(i => Math.max(0, i - 1));
           const goNext = () => setQuotesIdx(i => Math.min(total - 1, i + 1));
           const doShuffle = () => {
+            setQuotesListExpanded(false);
             const arr = [...quotesCards];
             for (let i = arr.length - 1; i > 0; i--) {
               const j = Math.floor(Math.random() * (i + 1));
@@ -35324,9 +35456,11 @@ async function importJSON() {
                           <View style={{ flex: 1, width: "100%", justifyContent: "center", alignItems: "center" }}>
                             <ExpoImage
                               source={{ uri: card.imageUri }}
+                              recyclingKey={card.imageUri}
                               style={{ width: "100%", flex: 1, borderRadius: 12, marginVertical: 8 }}
                               contentFit="contain"
-                              cachePolicy="memory-disk"
+                              cachePolicy="disk"
+                              transition={200}
                             />
                             {card.quote ? (
                               <Text style={{ fontSize: 13, color: C.sub, fontStyle: "italic", textAlign: "center", marginTop: 4 }}>
@@ -35455,44 +35589,60 @@ async function importJSON() {
                   </TouchableOpacity>
                 </View>
 
-                {/* ═══ 전체 목록 (접기 가능) ═══ */}
-                <Section title={`📋 전체 명언 목록 (${total})`}>
-                  {displayCards.map((c, i) => (
-                    <TouchableOpacity
-                      key={c.id}
-                      onPress={() => setQuotesIdx(i)}
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        padding: 12,
-                        backgroundColor: i === safeIdx ? (card?.tierColor || C.primary) + "18" : "transparent",
-                        borderRadius: 10,
-                        borderLeftWidth: i === safeIdx ? 3 : 0,
-                        borderLeftColor: card?.tierColor || C.primary,
-                        marginBottom: 4,
-                      }}
-                    >
-                      <CoverImage uri={c.coverImage} platforms={c.platforms} platformCovers={platformCovers} size={32} theme={C} />
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ fontSize: 13, fontWeight: "700", color: C.text }} numberOfLines={1}>
-                          {c.title}
+                {/* ═══ 전체 목록 (접기/펼치기) ═══ */}
+                {(() => {
+                  const QUOTE_LIST_INITIAL = 7;
+                  const visibleCards = quotesListExpanded ? displayCards : displayCards.slice(0, QUOTE_LIST_INITIAL);
+                  return (
+                  <Section title={`📋 전체 명언 목록 (${total})`}>
+                    {visibleCards.map((c, i) => (
+                      <TouchableOpacity
+                        key={c.id}
+                        onPress={() => setQuotesIdx(quotesListExpanded ? i : displayCards.indexOf(c))}
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          padding: 12,
+                          backgroundColor: (quotesListExpanded ? i : displayCards.indexOf(c)) === safeIdx ? (card?.tierColor || C.primary) + "18" : "transparent",
+                          borderRadius: 10,
+                          borderLeftWidth: (quotesListExpanded ? i : displayCards.indexOf(c)) === safeIdx ? 3 : 0,
+                          borderLeftColor: card?.tierColor || C.primary,
+                          marginBottom: 4,
+                        }}
+                      >
+                        <CoverImage uri={c.coverImage} platforms={c.platforms} platformCovers={platformCovers} size={32} theme={C} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 13, fontWeight: "700", color: C.text }} numberOfLines={1}>
+                            {c.title}
+                          </Text>
+                          <Text style={{ fontSize: 12, color: C.sub, fontStyle: "italic" }} numberOfLines={1}>
+                            {c.isImage ? "📷 " + (c.quote || "이미지") : c.quote}
+                          </Text>
+                        </View>
+                        <View style={{
+                          backgroundColor: c.tierColor,
+                          paddingHorizontal: 7,
+                          paddingVertical: 2,
+                          borderRadius: 6,
+                          marginLeft: 6,
+                        }}>
+                          <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>{c.tier}</Text>
+                        </View>
+                      </TouchableOpacity>
+                    ))}
+                    {total > QUOTE_LIST_INITIAL && (
+                      <TouchableOpacity
+                        onPress={() => setQuotesListExpanded(prev => !prev)}
+                        style={{ alignItems: "center", paddingVertical: 10, marginTop: 4 }}
+                      >
+                        <Text style={{ color: C.primary, fontWeight: "700", fontSize: 13 }}>
+                          {quotesListExpanded ? "접기 ▲" : `${total - QUOTE_LIST_INITIAL}개 더 보기 ▼`}
                         </Text>
-                        <Text style={{ fontSize: 12, color: C.sub, fontStyle: "italic" }} numberOfLines={1}>
-                          {c.quote}
-                        </Text>
-                      </View>
-                      <View style={{
-                        backgroundColor: c.tierColor,
-                        paddingHorizontal: 7,
-                        paddingVertical: 2,
-                        borderRadius: 6,
-                        marginLeft: 6,
-                      }}>
-                        <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>{c.tier}</Text>
-                      </View>
-                    </TouchableOpacity>
-                  ))}
-                </Section>
+                      </TouchableOpacity>
+                    )}
+                  </Section>
+                  );
+                })()}
               </>
             )}
           </>
@@ -38821,39 +38971,98 @@ async function importJSON() {
                 <View style={{ marginTop: 16, padding: 12, backgroundColor: C.bg, borderRadius: 12, borderLeftWidth: 3, borderLeftColor: C.primary }}>
                   <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                     <Label>💬 인상깊은 문장 ({editQuotes.length})</Label>
-                    <View style={{ flexDirection: "row", gap: 6 }}>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
                       <TouchableOpacity
                         onPress={() => setEditQuotes([...editQuotes, ""])}
                         style={{ backgroundColor: C.primary, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
                       >
                         <Text style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}>+ 텍스트</Text>
                       </TouchableOpacity>
-                      <TouchableOpacity
-                        onPress={async () => {
-                          try {
-                            const result = await ImagePicker.launchImageLibraryAsync({
-                              mediaTypes: ['images'],
-                              allowsEditing: true,
-                              quality: 0.8,
-                            });
-                            await resetDbConnection();
-                            try { await openDb(); } catch {}
-                            if (!result.canceled && result.assets?.[0]) {
-                              const { ext } = getImageFormat(result.assets[0]);
-                              const saved = await saveCoverToLibrary(result.assets[0].uri, "medium", ext);
-                              if (saved && !saved.error) {
-                                editNewQuoteImagesRef.current.push(saved.file_path); // 📷 v6.0.1: 고아 방지 추적
-                                setEditQuotes(prev => [...prev, { type: "image", uri: saved.file_path }]);
+                      {(() => {
+                        const imgCount = editQuotes.filter(isImageQuote).length;
+                        const maxReached = imgCount >= QUOTE_IMAGE_MAX_COUNT;
+                        const maxRemaining = QUOTE_IMAGE_MAX_COUNT - imgCount;
+                        return (
+                        <>
+                        <TouchableOpacity
+                          onPress={async () => {
+                            if (maxReached || batchImporting) return;
+                            try {
+                              const result = await ImagePicker.launchImageLibraryAsync({
+                                mediaTypes: ['images'],
+                                allowsEditing: true,
+                                quality: 1.0,
+                              });
+                              await resetDbConnection();
+                              try { await openDb(); } catch {}
+                              if (!result.canceled && result.assets?.[0]) {
+                                const { ext } = getImageFormat(result.assets[0]);
+                                const saved = await compressAndSaveImage(result.assets[0].uri, QUOTE_IMAGE_MAX_SIZE, QUOTE_IMAGE_QUALITY, ext);
+                                if (saved && !saved.error) {
+                                  editNewQuoteImagesRef.current.push(saved.file_path);
+                                  setEditQuotes(prev => [...prev, { type: "image", uri: saved.file_path }]);
+                                }
                               }
+                            } catch (e) {
+                              Alert.alert("오류", "이미지 선택 실패: " + e.message);
                             }
-                          } catch (e) {
-                            Alert.alert("오류", "이미지 선택 실패: " + e.message);
-                          }
-                        }}
-                        style={{ backgroundColor: isDark ? "#374151" : "#e5e7eb", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
-                      >
-                        <Text style={{ color: C.text, fontWeight: "700", fontSize: 12 }}>📷 이미지</Text>
-                      </TouchableOpacity>
+                          }}
+                          style={{ backgroundColor: isDark ? "#374151" : "#e5e7eb", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, opacity: maxReached || batchImporting ? 0.4 : 1 }}
+                          disabled={maxReached || batchImporting}
+                        >
+                          <Text style={{ color: C.text, fontWeight: "700", fontSize: 12 }}>📷 이미지</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={async () => {
+                            if (maxReached || batchImporting) return;
+                            try {
+                              setBatchImporting(true);
+                              const result = await ImagePicker.launchImageLibraryAsync({
+                                mediaTypes: ['images'],
+                                allowsMultipleSelection: true,
+                                quality: 1.0,
+                                base64: false,
+                                selectionLimit: maxRemaining,
+                              });
+                              await resetDbConnection();
+                              try { await openDb(); } catch {}
+                              if (result.canceled || !result.assets?.length) return;
+                              let assets = result.assets.slice(0, maxRemaining);
+                              const trimmed = result.assets.length > maxRemaining;
+                              const newImages = [];
+                              for (const asset of assets) {
+                                const { ext } = getImageFormat(asset);
+                                const saved = await compressAndSaveImage(asset.uri, QUOTE_IMAGE_MAX_SIZE, QUOTE_IMAGE_QUALITY, ext);
+                                if (saved && !saved.error) {
+                                  editNewQuoteImagesRef.current.push(saved.file_path);
+                                  newImages.push({ type: "image", uri: saved.file_path });
+                                }
+                              }
+                              if (newImages.length > 0) {
+                                setEditQuotes(prev => [...prev, ...newImages]);
+                              }
+                              if (trimmed || newImages.length < assets.length) {
+                                const msgs = [];
+                                if (trimmed) msgs.push(`최대 ${maxRemaining}개만 선택됨`);
+                                if (newImages.length < assets.length) msgs.push(`${assets.length - newImages.length}개 저장 실패`);
+                                Alert.alert("알림", msgs.join("\n"));
+                              }
+                            } catch (e) {
+                              Alert.alert("오류", "이미지 가져오기 실패: " + e.message);
+                            } finally {
+                              setBatchImporting(false);
+                            }
+                          }}
+                          style={{ backgroundColor: isDark ? "#1e3a5f" : "#dbeafe", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, opacity: maxReached || batchImporting ? 0.4 : 1 }}
+                          disabled={maxReached || batchImporting}
+                        >
+                          <Text style={{ color: isDark ? "#93c5fd" : "#1d4ed8", fontWeight: "700", fontSize: 12 }}>
+                            {batchImporting ? "처리중..." : `📷 일괄 (${imgCount}/${QUOTE_IMAGE_MAX_COUNT})`}
+                          </Text>
+                        </TouchableOpacity>
+                        </>
+                        );
+                      })()}
                     </View>
                   </View>
 
@@ -38885,7 +39094,7 @@ async function importJSON() {
                         </View>
                         {isImageQuote(q) ? (
                           <View>
-                            <ExpoImage source={{ uri: q.uri }} style={{ width: "100%", height: 180, borderRadius: 10, backgroundColor: C.card }} contentFit="contain" cachePolicy="memory-disk" />
+                            <ExpoImage source={{ uri: q.uri }} style={{ width: "100%", height: 120, borderRadius: 10, backgroundColor: C.card }} contentFit="contain" cachePolicy="disk" />
                             <TextInput
                               value={q.caption || ""}
                               onChangeText={(t) => {
