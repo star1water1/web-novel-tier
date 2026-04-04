@@ -9960,6 +9960,8 @@ const TagSelectModal = memo(({
   onChangeSortMode, // 🔧 v3.5.16: 정렬 모드 변경 콜백
   initialTab = "general", // 🔧 v3.5.16: 기본 탭 (마지막 사용 탭 기억)
   onChangeTab, // 🔧 v3.5.16: 탭 변경 시 콜백 (App에서 저장)
+  initialPreviewExpanded = false, // 📌 태그 칩 프리뷰 펼침 초기값
+  onChangePreviewExpanded, // 📌 펼침 상태 변경 콜백
   theme, // C 객체
 }) => {
   PerfMonitor.trackRender("TagSelectModal"); // 🔬
@@ -9994,7 +9996,7 @@ const TagSelectModal = memo(({
   const [detailMode, setDetailMode] = useState(enableIntensity);
 
   // 🔧 v3.5.16: 선택된 태그 프리뷰 접이식 상태
-  const [showSelectedPreview, setShowSelectedPreview] = useState(false);
+  const [showSelectedPreview, setShowSelectedPreview] = useState(initialPreviewExpanded);
 
   // 🔧 v3.5.9: 작품명 태그 표시 헬퍼 (📖 prefix)
   const titleLabel = useCallback((tag) => {
@@ -10647,7 +10649,11 @@ const TagSelectModal = memo(({
           {/* 🔧 v3.5.16: 선택된 태그 요약 + 접이식 칩 프리뷰 */}
           <View style={{ backgroundColor: C.bg, padding: 10, borderRadius: 10, marginBottom: 12 }}>
             <TouchableOpacity
-              onPress={() => setShowSelectedPreview(!showSelectedPreview)}
+              onPress={() => {
+                const next = !showSelectedPreview;
+                setShowSelectedPreview(next);
+                if (onChangePreviewExpanded) onChangePreviewExpanded(next);
+              }}
               activeOpacity={0.7}
             >
               <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
@@ -21326,6 +21332,7 @@ function AppContent() {
   const [tagAttributes, setTagAttributes] = useState({}); // 🆕 v3.4: 태그 속성 { [tag]: { isMajor: bool, isSub: bool } }
   const [tagSortMode, setTagSortMode] = useState("usage"); // 🔧 v3.5.16: 태그 정렬 모드 ("usage" | "name" | "registered")
   const [tagLastTab, setTagLastTab] = useState("general"); // 🔧 v3.5.16: 마지막 사용 탭 기억
+  const [tagPreviewExpanded, setTagPreviewExpanded] = useState(false); // 📌 태그 선택 모달 칩 프리뷰 펼침 상태
   const [tagRegistry, setTagRegistry] = useState(null); // 🔧 v3.6.0: Tag Registry (모든 태그의 유일한 저장소)
   const [platformRegistry, setPlatformRegistry] = useState(null); // 🆕 플랫폼 레지스트리
   const [newPlatformInput, setNewPlatformInput] = useState(""); // 🆕 플랫폼 추가 입력
@@ -21777,6 +21784,7 @@ function AppContent() {
             savedPinnedTags,          // 🔧 19: 별도 useEffect에서 이동 (슬롯 경쟁 조건 방지)
             savedTagSortMode,         // 🔧 20: 동일 이유
             savedTagLastTab,          // 🔧 21: 동일 이유
+            savedTagPreviewExpanded,  // 22: 태그 칩 프리뷰 펼침 상태
           ] = await Promise.all([
             getAppMeta("settings_darkMode"),      // 0: savedDarkMode
             getAppMeta("platform_covers"),        // 1: savedPlatformCovers
@@ -21800,6 +21808,7 @@ function AppContent() {
             getAppMeta("pinned_tags"),            // 19: savedPinnedTags (🔧 별도 useEffect에서 이동 — 슬롯 경쟁 조건 방지)
             getAppMeta("tag_sort_mode"),           // 20: savedTagSortMode (🔧 동일 이유)
             getAppMeta("tag_last_tab"),            // 21: savedTagLastTab (🔧 동일 이유)
+            getAppMeta("tag_preview_expanded"),    // 22: savedTagPreviewExpanded
           ]);
           
           if (!mounted) return;
@@ -21939,6 +21948,7 @@ function AppContent() {
             const VALID_TAB_KEYS = ["genre", "general", "sentiment", "combo", "intensity"];
             if (VALID_TAB_KEYS.includes(savedTagLastTab)) setTagLastTab(savedTagLastTab);
           }
+          if (savedTagPreviewExpanded === true) setTagPreviewExpanded(true);
           
           // 🏆 v2.9: 수상 시스템 설정
           if (savedAwardSystemSettings && typeof savedAwardSystemSettings === "object") {
@@ -24618,6 +24628,11 @@ function AppContent() {
     setAppMeta("tag_last_tab", tab);
   }
 
+  function handleChangeTagPreviewExpanded(expanded) {
+    setTagPreviewExpanded(expanded);
+    setAppMeta("tag_preview_expanded", expanded);
+  }
+
   // ═══════════════════════════════════════════════════════════════
   // 🔧 v3.6.0: Tag Registry — 모든 태그의 유일한 저장소
   // ═══════════════════════════════════════════════════════════════
@@ -24688,13 +24703,16 @@ function AppContent() {
   function removePlatform(name) {
     const reg = platformRegistry;
     if (!reg) return;
+    const isFactory = FACTORY_PLATFORM_OPTIONS.includes(name);
     Alert.alert(
-      "플랫폼 삭제",
-      `"${name}" 플랫폼을 목록에서 삭제할까요?\n\n기존 작품의 플랫폼 데이터는 보존됩니다.`,
+      isFactory ? "기본 플랫폼 숨기기" : "플랫폼 삭제",
+      isFactory
+        ? `"${name}" 기본 플랫폼을 목록에서 숨길까요?\n\n기존 작품의 데이터는 보존되며, "기본값으로 초기화"로 복원할 수 있습니다.`
+        : `"${name}" 플랫폼을 목록에서 삭제할까요?\n\n기존 작품의 플랫폼 데이터는 보존됩니다.`,
       [
         { text: "취소" },
         {
-          text: "삭제", style: "destructive",
+          text: isFactory ? "숨기기" : "삭제", style: "destructive",
           onPress: () => {
             const newUrls = { ...reg.urls };
             delete newUrls[name];
@@ -37344,7 +37362,7 @@ async function importJSON() {
             {/* 🆕 플랫폼 관리 (커스텀 플랫폼 추가/삭제) */}
             <Section title="📱 플랫폼 관리">
               <Text style={{ color: C.sub, fontSize: 12, marginBottom: 10, lineHeight: 18 }}>
-                추가한 플랫폼은 작품 등록/편집, 필터, 통계에 자동 반영됩니다.
+                추가한 플랫폼은 작품 등록/편집, 필터, 통계에 자동 반영됩니다.{"\n"}기본 플랫폼도 숨길 수 있으며, 초기화로 복원 가능합니다.
               </Text>
               {PLATFORM_OPTIONS.map((p, i) => (
                 <View key={p} style={{
@@ -39963,6 +39981,8 @@ async function importJSON() {
         onChangeSortMode={handleChangeTagSortMode}
         initialTab={tagLastTab}
         onChangeTab={handleChangeTagLastTab}
+        initialPreviewExpanded={tagPreviewExpanded}
+        onChangePreviewExpanded={handleChangeTagPreviewExpanded}
         tagRegistry={tagRegistry}
         theme={C}
       />}
