@@ -13712,6 +13712,7 @@ const TagManagerModal = memo(({
   // 🔧 v3.5.12: onComboToCustom 제거 (조합분류 폐지)
   onDeleteTag,
   onDeleteGlobally,
+  onBatchDeleteGlobally, // 🆕 일괄 전체 삭제
   onAddCustomTag,
   onChangeSentiment,  // 🆕 속성 변경 콜백
   onBatchChangeSentiment,  // 🆕 일괄 속성 변경 콜백
@@ -13724,6 +13725,15 @@ const TagManagerModal = memo(({
   onCleanupUnused,
   findUnusedTags,
   onEditRelations, // 🆕 v3.5.5: 유사/상반 태그 관계 편집
+  // 🆕 카테고리 관리
+  onRenameCategory,
+  onToggleHideCategory,
+  onAddCategory,
+  onDeleteCategory,
+  onMoveTagToCategory,
+  // 🆕 데이터
+  tagRegistry,
+  usedTagsSet, // 🆕 사용중인 태그 Set
   theme,
 }) => {
   PerfMonitor.trackRender("TagManagerModal"); // 🔬
@@ -13736,11 +13746,18 @@ const TagManagerModal = memo(({
   const [selectedTag, setSelectedTag] = useState(null); // { tag, type }
   const [actionModalOpen, setActionModalOpen] = useState(false);
   const [newTagInput, setNewTagInput] = useState("");
-  
+  const [addTagCategory, setAddTagCategory] = useState(null); // 🆕 태그 추가 시 카테고리 선택
+  const [showCategoryPicker, setShowCategoryPicker] = useState(false); // 🆕 카테고리 피커 표시
+  const [categoryEditMode, setCategoryEditMode] = useState(false); // 🆕 카테고리 관리 모드
+  const [editingCategoryName, setEditingCategoryName] = useState({}); // 🆕 { 원래이름: 편집중이름 }
+  const [newCategoryInput, setNewCategoryInput] = useState(""); // 🆕 새 카테고리 입력
+  const [tagCategoryPickerOpen, setTagCategoryPickerOpen] = useState(false); // 🆕 태그 카테고리 이동 피커
+
   // 🆕 대량 선택 모드
   const [selectMode, setSelectMode] = useState(false);
   const [selectedTags, setSelectedTags] = useState(new Set());
-  
+  const [selectPresetOpen, setSelectPresetOpen] = useState(false); // 🆕 선택 프리셋 드롭다운
+
   // 🆕 v3.4: 고급 필터 상태
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState({
@@ -13748,6 +13765,7 @@ const TagManagerModal = memo(({
     attributes: [], // ["major"], ["sub"], ["combo"], ["custom"], ["default"]
     states: [],     // ["pinned"], ["hidden"], ["normal"]
     excludeAttrs: [], // 제외할 속성
+    usage: [], // 🆕 ["used"], ["unused"]
   });
   
   // 🔧 v3.5.15b: O(1) 룩업용 정규화 Set 사전 구축 (컴포넌트 전체 공유)
@@ -13913,10 +13931,21 @@ const TagManagerModal = memo(({
         });
         if (shouldExclude) return false;
       }
-      
+
+      // 5. 🆕 사용 여부 필터
+      if (filters.usage.length > 0 && usedTagsSet) {
+        const isUsed = usedTagsSet.has(item.tag);
+        const matchesAny = filters.usage.some(u => {
+          if (u === "used") return isUsed;
+          if (u === "unused") return !isUsed;
+          return false;
+        });
+        if (!matchesAny) return false;
+      }
+
       return true;
     });
-  }, [filters]);
+  }, [filters, usedTagsSet]);
   
   // 카테고리별 태그 데이터
   const categories = useMemo(() => {
@@ -13985,10 +14014,11 @@ const TagManagerModal = memo(({
         count: userSubGenres.length,
         tags: userSubGenres.map(t => ({ tag: t, type: "userSub", sentiment: getTagSentimentValue(t) })),
       },
-      // 일반 태그 카테고리별
+      // 🆕 일반 태그 카테고리별 (aliases 적용)
       ...Object.entries(GENERAL_TAGS).reduce((acc, [cat, tags]) => {
+        const aliases = tagRegistry?.categoryAliases || {};
         acc[`general_${cat}`] = {
-          label: cat.replace(/^[📖🎭📝⚡💕👤🏙️🔞⭐📅]\s?/, ""),
+          label: (aliases[cat] || cat).replace(/^[📖🎭📝⚡💕👤🏙️🔞⭐📅📂📁]\s?/, ""),
           count: tags.length,
           tags: tags.map(t => ({ tag: t, type: "defaultGeneral", sentiment: getTagSentimentValue(t) })),
           isGeneral: true,
@@ -13996,7 +14026,7 @@ const TagManagerModal = memo(({
         return acc;
       }, {}),
     };
-  }, [customTags, userMajorGenres, userSubGenres, pinnedTags, allTagsWithSentiment, getTagSentimentValue, tagKeySets]);
+  }, [customTags, userMajorGenres, userSubGenres, pinnedTags, allTagsWithSentiment, getTagSentimentValue, tagKeySets, tagRegistry]);
   
   // 현재 탭의 태그들 (검색 + 고급 필터 적용)
   const currentTags = useMemo(() => {
@@ -14013,10 +14043,11 @@ const TagManagerModal = memo(({
     }
     
     // 3. 🆕 v3.4: 고급 필터 적용 (필터가 설정된 경우에만)
-    const hasFilters = filters.sentiments.length > 0 || 
-                       filters.attributes.length > 0 || 
-                       filters.states.length > 0 || 
-                       filters.excludeAttrs.length > 0;
+    const hasFilters = filters.sentiments.length > 0 ||
+                       filters.attributes.length > 0 ||
+                       filters.states.length > 0 ||
+                       filters.excludeAttrs.length > 0 ||
+                       filters.usage.length > 0;
     
     if (hasFilters) {
       // 기존 tags에 속성 정보 보강
@@ -14054,16 +14085,20 @@ const TagManagerModal = memo(({
       // 🔧 v3.5.12: combo 탭 제거 (customTags로 통합)
     ];
     
-    // 일반 태그 카테고리들 (축약)
-    const generalTabs = Object.keys(GENERAL_TAGS).slice(0, 5).map(cat => ({
-      key: `general_${cat}`,
-      label: cat.replace(/^[📖🎭📝⚡💕👤🏙️🔞⭐📅]\s?/, "").slice(0, 4),
-      count: GENERAL_TAGS[cat].length,
-      isGeneral: true,
-    }));
-    
+    // 🆕 일반 태그 카테고리들 (hiddenCategories/aliases 적용, 전체 표시)
+    const hiddenCats = tagRegistry?.hiddenCategories || [];
+    const aliases = tagRegistry?.categoryAliases || {};
+    const generalTabs = Object.keys(GENERAL_TAGS)
+      .filter(cat => !hiddenCats.includes(cat))
+      .map(cat => ({
+        key: `general_${cat}`,
+        label: (aliases[cat] || cat).replace(/^[📖🎭📝⚡💕👤🏙️🔞⭐📅📂📁]\s?/, "").slice(0, 6),
+        count: GENERAL_TAGS[cat].length,
+        isGeneral: true,
+      }));
+
     return [...main, ...generalTabs];
-  }, [pinnedTags.length, customTags.length, categories]);
+  }, [pinnedTags.length, customTags.length, categories, tagRegistry]);
   
   const handleTagPress = (tag, type) => {
     if (selectMode) {
@@ -14090,11 +14125,26 @@ const TagManagerModal = memo(({
     }
   };
   
+  // 🆕 현재 탭에 맞는 카테고리 자동 결정
+  const getTargetCategory = useCallback(() => {
+    if (addTagCategory) return addTagCategory;
+    if (activeTab.startsWith("general_")) {
+      // general_카테고리이름 → 원래 카테고리 이름 추출
+      const catKey = activeTab.replace("general_", "");
+      return catKey;
+    }
+    if (activeTab === "custom") return "📁 사용자 태그";
+    return null; // 기본 탭에서는 카테고리 선택 필요
+  }, [activeTab, addTagCategory]);
+
   const handleAddCustomTag = () => {
     const t = newTagInput.trim();
     if (!t) return;
-    onAddCustomTag(t);
+    const cat = getTargetCategory() || "📁 사용자 태그";
+    onAddCustomTag(t, cat);
     setNewTagInput("");
+    setAddTagCategory(null);
+    setShowCategoryPicker(false);
   };
   
   // 🆕 일괄 속성 변경
@@ -14253,30 +14303,73 @@ const TagManagerModal = memo(({
     );
   };
   
-  // 🆕 일괄 삭제
+  // 🆕 일괄 삭제 (모든 태그 타입 지원 — 기본 태그는 숨김 처리)
   const handleBatchDelete = () => {
     if (selectedTags.size === 0) return;
     const tags = Array.from(selectedTags);
-    
+
+    // 기본 태그와 사용자 태그 분류
+    const defaultTags = [];
+    const userTags = [];
+    for (const tag of tags) {
+      const info = allTagsWithSentiment.find(t => t.tag === tag);
+      const type = info?.type || "custom";
+      if (type === "defaultMajor" || type === "defaultSub" || type === "defaultGeneral") {
+        defaultTags.push(tag);
+      } else {
+        userTags.push({ tag, type });
+      }
+    }
+
+    const msg = [
+      `선택한 ${tags.length}개 태그를 삭제할까요?`,
+      defaultTags.length > 0 ? `\n기본 태그 ${defaultTags.length}개 → 숨김 처리` : "",
+      userTags.length > 0 ? `\n사용자 태그 ${userTags.length}개 → 삭제` : "",
+    ].join("");
+
     Alert.alert(
       "태그 삭제",
-      `선택한 ${tags.length}개 태그를 삭제할까요?\n(커스텀/조합/사용자 장르만 삭제 가능)`,
+      msg,
       [
         { text: "취소", style: "cancel" },
         {
           text: "삭제",
           style: "destructive",
           onPress: () => {
-            for (const tag of tags) {
-              // 커스텀/조합/사용자 장르만 삭제 가능 - type 전달 필수!
-              if (listHasTag(customTags, tag)) {
-                if (onDeleteTag) onDeleteTag(tag, "custom");
-              // 🔧 v3.5.12: comboTags 판별 제거
-              } else if (listHasTag(userMajorGenres, tag)) {
-                if (onDeleteTag) onDeleteTag(tag, "userMajor");
-              } else if (listHasTag(userSubGenres, tag)) {
-                if (onDeleteTag) onDeleteTag(tag, "userSub");
+            // 기본 태그 → 숨기기
+            for (const tag of defaultTags) {
+              if (!listHasTag(hiddenTags, tag)) {
+                if (onToggleHide) onToggleHide(tag);
               }
+            }
+            // 사용자 태그 → 삭제
+            for (const { tag, type } of userTags) {
+              if (onDeleteTag) onDeleteTag(tag, type);
+            }
+            setSelectedTags(new Set());
+            setSelectMode(false);
+          }
+        }
+      ]
+    );
+  };
+
+  // 🆕 일괄 전체 삭제 (모든 작품에서도 제거)
+  const handleBatchDeleteGlobally = () => {
+    if (selectedTags.size === 0) return;
+    const tags = Array.from(selectedTags);
+
+    Alert.alert(
+      "💥 전체에서 일괄 삭제",
+      `선택한 ${tags.length}개 태그를 모든 작품에서도 삭제합���다.\n이 작업은 되돌릴 수 없습니다.`,
+      [
+        { text: "취소", style: "cancel" },
+        {
+          text: "전체 삭제",
+          style: "destructive",
+          onPress: () => {
+            if (onBatchDeleteGlobally) {
+              onBatchDeleteGlobally(tags);
             }
             setSelectedTags(new Set());
             setSelectMode(false);
@@ -14300,7 +14393,55 @@ const TagManagerModal = memo(({
       setSelectedTags(new Set(currentTags.map(t => t.tag)));
     }
   };
-  
+
+  // 🆕 선택 반전
+  const invertSelection = () => {
+    const current = new Set(selectedTags);
+    const inverted = new Set();
+    for (const t of currentTags) {
+      if (!current.has(t.tag)) inverted.add(t.tag);
+    }
+    setSelectedTags(inverted);
+  };
+
+  // 🆕 프리셋 기반 선택
+  const selectByPreset = (preset) => {
+    let filtered = [];
+    switch (preset) {
+      case "unused":
+        filtered = currentTags.filter(t => usedTagsSet && !usedTagsSet.has(t.tag));
+        break;
+      case "used":
+        filtered = currentTags.filter(t => usedTagsSet && usedTagsSet.has(t.tag));
+        break;
+      case "positive":
+        filtered = currentTags.filter(t => t.sentiment === TAG_SENTIMENT.POSITIVE);
+        break;
+      case "negative":
+        filtered = currentTags.filter(t => t.sentiment === TAG_SENTIMENT.NEGATIVE);
+        break;
+      case "neutral":
+        filtered = currentTags.filter(t => t.sentiment === TAG_SENTIMENT.NEUTRAL);
+        break;
+      case "custom":
+        filtered = currentTags.filter(t => t.isCustom || t.type === "custom");
+        break;
+      case "default":
+        filtered = currentTags.filter(t => t.type === "defaultMajor" || t.type === "defaultSub" || t.type === "defaultGeneral");
+        break;
+      case "major":
+        filtered = currentTags.filter(t => t.isMajor);
+        break;
+      case "sub":
+        filtered = currentTags.filter(t => t.isSub);
+        break;
+      default:
+        filtered = currentTags;
+    }
+    setSelectedTags(new Set(filtered.map(t => t.tag)));
+    setSelectPresetOpen(false);
+  };
+
   // 🔧 v3.5.14: renderTagItem 제거 (FlatList → ScrollView + inline map으로 교체)
   
   if (!visible) return null;
@@ -14320,10 +14461,20 @@ const TagManagerModal = memo(({
         }}>
           <Text style={{ fontSize: 20, fontWeight: "800", color: C.text }}>🏷️ 태그 관리 v3.0</Text>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            {/* 🆕 카테고리 관리 버튼 */}
+            <TouchableOpacity
+              onPress={() => setCategoryEditMode(!categoryEditMode)}
+              style={{
+                backgroundColor: categoryEditMode ? C.primary : (isDark ? "#374151" : "#f3f4f6"),
+                paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8
+              }}
+            >
+              <Text style={{ fontSize: 13, fontWeight: "700", color: categoryEditMode ? "#fff" : C.text }}>⚙️ 카테고리</Text>
+            </TouchableOpacity>
             {onEditRelations && (
-              <TouchableOpacity 
-                onPress={() => { 
-                  onClose(); 
+              <TouchableOpacity
+                onPress={() => {
+                  onClose();
                   setTimeout(() => onEditRelations(null), 400);
                 }}
                 style={{ backgroundColor: isDark ? "#1e3a5f" : "#e0e7ff", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
@@ -14351,21 +14502,69 @@ const TagManagerModal = memo(({
             <Text style={{ color: isDark ? "#93c5fd" : "#1e40af", fontWeight: "700" }}>
               {selectedTags.size}개 선택됨
             </Text>
-            <View style={{ flexDirection: "row", gap: 8 }}>
-              <TouchableOpacity 
+            <View style={{ flexDirection: "row", gap: 6 }}>
+              <TouchableOpacity
                 onPress={toggleSelectAll}
-                style={{ backgroundColor: isDark ? C.card : "#fff", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
+                style={{ backgroundColor: isDark ? C.card : "#fff", paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8 }}
               >
-                <Text style={{ color: isDark ? C.text : "#1e40af", fontWeight: "600", fontSize: 12 }}>
+                <Text style={{ color: isDark ? C.text : "#1e40af", fontWeight: "600", fontSize: 11 }}>
                   {selectedTags.size === currentTags.length ? "전체 해제" : "전체 선택"}
                 </Text>
               </TouchableOpacity>
-              <TouchableOpacity 
-                onPress={exitSelectMode}
-                style={{ backgroundColor: isDark ? C.card : "#fff", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
+              <TouchableOpacity
+                onPress={invertSelection}
+                style={{ backgroundColor: isDark ? C.card : "#fff", paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8 }}
               >
-                <Text style={{ color: "#dc2626", fontWeight: "600", fontSize: 12 }}>취소</Text>
+                <Text style={{ color: isDark ? C.text : "#1e40af", fontWeight: "600", fontSize: 11 }}>↔️ 반전</Text>
               </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setSelectPresetOpen(!selectPresetOpen)}
+                style={{ backgroundColor: selectPresetOpen ? C.primary : (isDark ? C.card : "#fff"), paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8 }}
+              >
+                <Text style={{ color: selectPresetOpen ? "#fff" : (isDark ? C.text : "#1e40af"), fontWeight: "600", fontSize: 11 }}>▼ 조건</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={exitSelectMode}
+                style={{ backgroundColor: isDark ? C.card : "#fff", paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8 }}
+              >
+                <Text style={{ color: "#dc2626", fontWeight: "600", fontSize: 11 }}>취소</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {/* 🆕 선택 프리셋 드롭다운 */}
+        {selectMode && selectPresetOpen && (
+          <View style={{
+            backgroundColor: isDark ? "#1e293b" : "#f0f4ff",
+            padding: 10,
+            borderBottomWidth: 1,
+            borderBottomColor: C.line,
+          }}>
+            <Text style={{ color: C.sub, fontSize: 11, marginBottom: 6 }}>조건별 선택 (현재 탭 내)</Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+              {[
+                { key: "unused", label: "📕 미사용만" },
+                { key: "used", label: "📗 사용중만" },
+                { key: "positive", label: "👍 긍정만" },
+                { key: "negative", label: "👎 부정만" },
+                { key: "neutral", label: "⚖️ 중립만" },
+                { key: "custom", label: "✏️ 커스텀만" },
+                { key: "default", label: "📚 기본만" },
+                { key: "major", label: "🏷️ 대장르만" },
+                { key: "sub", label: "🔖 부장르만" },
+              ].map(p => (
+                <TouchableOpacity
+                  key={p.key}
+                  onPress={() => selectByPreset(p.key)}
+                  style={{
+                    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999,
+                    backgroundColor: isDark ? "#374151" : "#e2e8f0",
+                  }}
+                >
+                  <Text style={{ color: C.text, fontWeight: "600", fontSize: 11 }}>{p.label}</Text>
+                </TouchableOpacity>
+              ))}
             </View>
           </View>
         )}
@@ -14455,6 +14654,12 @@ const TagManagerModal = memo(({
               >
                 <Text style={{ color: isDark ? "#fca5a5" : "#dc2626", fontWeight: "700", fontSize: 11 }}>🗑️ 삭제</Text>
               </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleBatchDeleteGlobally}
+                style={{ flex: 1, backgroundColor: isDark ? "#7f1d1d" : "#fee2e2", padding: 10, borderRadius: 8, alignItems: "center" }}
+              >
+                <Text style={{ color: isDark ? "#fca5a5" : "#dc2626", fontWeight: "700", fontSize: 11 }}>💥 전체삭제</Text>
+              </TouchableOpacity>
             </View>
           </View>
         )}
@@ -14502,7 +14707,7 @@ const TagManagerModal = memo(({
                 {/* 필터 헤더 */}
                 <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 10 }}>
                   <Text style={{ fontWeight: "800", color: C.text, fontSize: 14 }}>🔍 고급 필터</Text>
-                  <TouchableOpacity onPress={() => setFilters({ sentiments: [], attributes: [], states: [], excludeAttrs: [] })}>
+                  <TouchableOpacity onPress={() => setFilters({ sentiments: [], attributes: [], states: [], excludeAttrs: [], usage: [] })}>
                     <Text style={{ color: C.primary, fontWeight: "600", fontSize: 12 }}>초기화</Text>
                   </TouchableOpacity>
                 </View>
@@ -14664,8 +14869,45 @@ const TagManagerModal = memo(({
                   ))}
                 </View>
                 
+                {/* 🆕 사용 여부 필터 */}
+                <Text style={{ color: C.sub, fontSize: 12, marginTop: 10, marginBottom: 4 }}>📊 사용 여부</Text>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                  {[
+                    { key: "used", label: "📗 사용중", color: "#22c55e" },
+                    { key: "unused", label: "📕 ��사용", color: "#ef4444" },
+                  ].map(opt => (
+                    <TouchableOpacity
+                      key={opt.key}
+                      onPress={() => {
+                        setFilters(prev => ({
+                          ...prev,
+                          usage: prev.usage.includes(opt.key)
+                            ? prev.usage.filter(s => s !== opt.key)
+                            : [...prev.usage, opt.key]
+                        }));
+                      }}
+                      style={{
+                        paddingHorizontal: 10,
+                        paddingVertical: 6,
+                        borderRadius: 999,
+                        backgroundColor: filters.usage.includes(opt.key) ? opt.color : C.chip,
+                        borderWidth: 1,
+                        borderColor: filters.usage.includes(opt.key) ? opt.color : C.line,
+                      }}
+                    >
+                      <Text style={{
+                        color: filters.usage.includes(opt.key) ? "#fff" : C.text,
+                        fontWeight: "600",
+                        fontSize: 12
+                      }}>
+                        {opt.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
                 {/* 활성 필터 요약 */}
-                {(filters.sentiments.length > 0 || filters.attributes.length > 0 || filters.states.length > 0 || filters.excludeAttrs.length > 0) && (
+                {(filters.sentiments.length > 0 || filters.attributes.length > 0 || filters.states.length > 0 || filters.excludeAttrs.length > 0 || filters.usage.length > 0) && (
                   <View style={{ marginTop: 10, padding: 8, backgroundColor: isDark ? "#334155" : "#e2e8f0", borderRadius: 8 }}>
                     <Text style={{ color: C.text, fontSize: 11 }}>
                       필터 적용 중: {currentTags.length}개 결과
@@ -14677,9 +14919,9 @@ const TagManagerModal = memo(({
           </View>
         )}
         
-        {/* 탭 (가로 스크롤) */}
-        <ScrollView 
-          horizontal 
+        {/* 탭 (가로 스크롤) — 카테고리 편집 모드에서 숨김 */}
+        {!categoryEditMode && <ScrollView
+          horizontal
           showsHorizontalScrollIndicator={false}
           style={{ maxHeight: 50, backgroundColor: C.card, borderBottomWidth: 1, borderBottomColor: C.line }}
           contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 8 }}
@@ -14705,8 +14947,8 @@ const TagManagerModal = memo(({
               </Text>
             </TouchableOpacity>
           ))}
-        </ScrollView>
-        
+        </ScrollView>}
+
         {/* 유틸리티 버튼 (고정 탭일 때만) */}
         {activeTab === "pinned" && !selectMode && (
           <View style={{ flexDirection: "row", padding: 12, gap: 8, backgroundColor: C.card }}>
@@ -14725,33 +14967,237 @@ const TagManagerModal = memo(({
           </View>
         )}
         
-        {/* 커스텀 태그 추가 (커스텀 탭일 때만) */}
-        {activeTab === "custom" && !selectMode && (
-          <View style={{ flexDirection: "row", padding: 12, gap: 8, backgroundColor: C.card }}>
-            <TextInput
-              value={newTagInput}
-              onChangeText={setNewTagInput}
-              placeholder="새 태그 입력..."
-              placeholderTextColor={C.sub}
-              style={{
-                flex: 1,
-                backgroundColor: C.bg,
-                borderRadius: 10,
-                padding: 10,
-                color: C.text,
-              }}
-            />
-            <TouchableOpacity
-              onPress={handleAddCustomTag}
-              style={{ backgroundColor: C.primary, paddingHorizontal: 16, borderRadius: 10, justifyContent: "center" }}
-            >
-              <Text style={{ color: "#fff", fontWeight: "700" }}>추가</Text>
-            </TouchableOpacity>
+        {/* 🆕 태그 추가 (모든 탭에서 가능) */}
+        {!selectMode && !categoryEditMode && (
+          <View style={{ backgroundColor: C.card, borderBottomWidth: 1, borderBottomColor: C.line }}>
+            {/* 카테고리 선택 (기본 탭에서만 표시) */}
+            {!activeTab.startsWith("general_") && activeTab !== "custom" && showCategoryPicker && tagRegistry && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingHorizontal: 12, paddingTop: 8 }}>
+                <View style={{ flexDirection: "row", gap: 6, paddingBottom: 4 }}>
+                  {Object.keys(tagRegistry.generalTags || {}).map(cat => (
+                    <TouchableOpacity
+                      key={cat}
+                      onPress={() => setAddTagCategory(cat)}
+                      style={{
+                        paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12,
+                        backgroundColor: addTagCategory === cat ? C.primary : C.chip,
+                      }}
+                    >
+                      <Text style={{
+                        fontSize: 11, fontWeight: "600",
+                        color: addTagCategory === cat ? "#fff" : C.sub,
+                      }}>{cat.replace(/^[📁📂📖🎭📝⚡💕👤🏙️🔞⭐📅]\s?/, "").slice(0, 8)}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </ScrollView>
+            )}
+            <View style={{ flexDirection: "row", padding: 12, gap: 8 }}>
+              {/* 카테고리 토글 ��튼 (기본 탭에서만) */}
+              {!activeTab.startsWith("general_") && activeTab !== "custom" && (
+                <TouchableOpacity
+                  onPress={() => setShowCategoryPicker(!showCategoryPicker)}
+                  style={{
+                    backgroundColor: showCategoryPicker ? C.primary : C.chip,
+                    width: 36, height: 36, borderRadius: 10,
+                    justifyContent: "center", alignItems: "center",
+                  }}
+                >
+                  <Text style={{ fontSize: 14, color: showCategoryPicker ? "#fff" : C.sub }}>📂</Text>
+                </TouchableOpacity>
+              )}
+              <TextInput
+                value={newTagInput}
+                onChangeText={setNewTagInput}
+                placeholder={activeTab.startsWith("general_") ? `${activeTab.replace("general_", "").replace(/^[📖🎭📝⚡💕👤🏙️🔞⭐📅]\s?/, "").slice(0, 6)}에 태그 추가...` : "새 태그 입력..."}
+                placeholderTextColor={C.sub}
+                style={{
+                  flex: 1,
+                  backgroundColor: C.bg,
+                  borderRadius: 10,
+                  padding: 10,
+                  color: C.text,
+                }}
+                onSubmitEditing={handleAddCustomTag}
+              />
+              <TouchableOpacity
+                onPress={handleAddCustomTag}
+                style={{ backgroundColor: C.primary, paddingHorizontal: 16, borderRadius: 10, justifyContent: "center" }}
+              >
+                <Text style={{ color: "#fff", fontWeight: "700" }}>추가</Text>
+              </TouchableOpacity>
+            </View>
+            {/* 현재 대상 카테고리 표시 */}
+            {(addTagCategory || activeTab.startsWith("general_") || activeTab === "custom") && (
+              <View style={{ paddingHorizontal: 12, paddingBottom: 8 }}>
+                <Text style={{ fontSize: 10, color: C.sub }}>
+                  📂 추가 대상: {getTargetCategory() || "📁 사용자 태그"}
+                </Text>
+              </View>
+            )}
           </View>
         )}
         
+        {/* 🆕 카테고리 관리 모드 */}
+        {categoryEditMode && (
+          <View style={{ flex: 1, padding: 12 }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <Text style={{ fontSize: 16, fontWeight: "800", color: C.text }}>📂 카테고리 관리</Text>
+              <TouchableOpacity onPress={() => setCategoryEditMode(false)}>
+                <Text style={{ color: C.primary, fontWeight: "600" }}>← 돌아가기</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* 새 카테고리 추가 */}
+            <View style={{ flexDirection: "row", gap: 8, marginBottom: 16 }}>
+              <TextInput
+                value={newCategoryInput}
+                onChangeText={setNewCategoryInput}
+                placeholder="새 카테고리 이름..."
+                placeholderTextColor={C.sub}
+                style={{
+                  flex: 1, backgroundColor: C.bg, borderRadius: 10, padding: 10, color: C.text,
+                }}
+                onSubmitEditing={() => {
+                  if (newCategoryInput.trim() && onAddCategory) {
+                    onAddCategory(newCategoryInput.trim());
+                    setNewCategoryInput("");
+                  }
+                }}
+              />
+              <TouchableOpacity
+                onPress={() => {
+                  if (newCategoryInput.trim() && onAddCategory) {
+                    onAddCategory(newCategoryInput.trim());
+                    setNewCategoryInput("");
+                  }
+                }}
+                style={{ backgroundColor: C.primary, paddingHorizontal: 16, borderRadius: 10, justifyContent: "center" }}
+              >
+                <Text style={{ color: "#fff", fontWeight: "700" }}>추가</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={true} style={{ flex: 1 }}>
+              {Object.entries(GENERAL_TAGS).map(([cat, tags]) => {
+                const hiddenCats = tagRegistry?.hiddenCategories || [];
+                const aliases = tagRegistry?.categoryAliases || {};
+                const isHidden = hiddenCats.includes(cat);
+                const isUserCat = (tagRegistry?.userCategories || []).includes(cat);
+                const displayName = aliases[cat] || cat;
+                const isEditing = editingCategoryName[cat] !== undefined;
+
+                return (
+                  <View key={cat} style={{
+                    backgroundColor: isHidden ? (isDark ? "#1f2937" : "#f9fafb") : C.card,
+                    borderRadius: 12, padding: 14, marginBottom: 8,
+                    borderWidth: 1, borderColor: isHidden ? (isDark ? "#374151" : "#e5e7eb") : C.line,
+                    opacity: isHidden ? 0.6 : 1,
+                  }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                      {isEditing ? (
+                        <View style={{ flex: 1, flexDirection: "row", gap: 8, alignItems: "center" }}>
+                          <TextInput
+                            value={editingCategoryName[cat]}
+                            onChangeText={v => setEditingCategoryName(prev => ({ ...prev, [cat]: v }))}
+                            style={{
+                              flex: 1, backgroundColor: C.bg, borderRadius: 8, padding: 8, color: C.text, fontSize: 14,
+                            }}
+                            autoFocus
+                          />
+                          <TouchableOpacity onPress={() => {
+                            const newName = editingCategoryName[cat]?.trim();
+                            if (newName && newName !== cat && onRenameCategory) {
+                              onRenameCategory(cat, newName);
+                            }
+                            setEditingCategoryName(prev => {
+                              const next = { ...prev };
+                              delete next[cat];
+                              return next;
+                            });
+                          }}>
+                            <Text style={{ color: C.primary, fontWeight: "700", fontSize: 13 }}>✓</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity onPress={() => {
+                            setEditingCategoryName(prev => {
+                              const next = { ...prev };
+                              delete next[cat];
+                              return next;
+                            });
+                          }}>
+                            <Text style={{ color: C.sub, fontWeight: "700", fontSize: 13 }}>✕</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ) : (
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontWeight: "700", color: C.text, fontSize: 14 }}>
+                            {displayName}
+                            {aliases[cat] ? ` (${cat})` : ""}
+                          </Text>
+                          <Text style={{ fontSize: 11, color: C.sub, marginTop: 2 }}>
+                            {tags.length}개 태그 · {isUserCat ? "사용자 카테고리" : "기본 카테고리"}
+                            {isHidden ? " · 숨김" : ""}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+
+                    {/* 카테고리 액션 버튼들 */}
+                    {!isEditing && (
+                      <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                        {/* 이름 변경 */}
+                        <TouchableOpacity
+                          onPress={() => setEditingCategoryName(prev => ({ ...prev, [cat]: aliases[cat] || cat }))}
+                          style={{ flex: 1, backgroundColor: isDark ? "#374151" : "#f3f4f6", padding: 8, borderRadius: 8, alignItems: "center" }}
+                        >
+                          <Text style={{ color: C.text, fontSize: 11, fontWeight: "600" }}>✏️ 이름변경</Text>
+                        </TouchableOpacity>
+
+                        {/* 숨기기 토글 */}
+                        <TouchableOpacity
+                          onPress={() => onToggleHideCategory && onToggleHideCategory(cat)}
+                          style={{
+                            flex: 1, padding: 8, borderRadius: 8, alignItems: "center",
+                            backgroundColor: isHidden ? (isDark ? "#7f1d1d" : "#fee2e2") : (isDark ? "#374151" : "#f3f4f6"),
+                          }}
+                        >
+                          <Text style={{
+                            color: isHidden ? (isDark ? "#fca5a5" : "#dc2626") : C.text,
+                            fontSize: 11, fontWeight: "600",
+                          }}>
+                            {isHidden ? "👁️ 표시" : "🚫 숨기기"}
+                          </Text>
+                        </TouchableOpacity>
+
+                        {/* 삭제 (사용자 카테고리만) */}
+                        {isUserCat && (
+                          <TouchableOpacity
+                            onPress={() => {
+                              Alert.alert(
+                                "카테고리 삭제",
+                                `"${displayName}" 카테고리를 삭제할까요?\n\n소속 태그 ${tags.length}개는 "📁 사용자 태그"로 이동합니다.`,
+                                [
+                                  { text: "취소" },
+                                  { text: "삭제", style: "destructive", onPress: () => onDeleteCategory && onDeleteCategory(cat) }
+                                ]
+                              );
+                            }}
+                            style={{ flex: 1, backgroundColor: isDark ? "#7f1d1d" : "#fee2e2", padding: 8, borderRadius: 8, alignItems: "center" }}
+                          >
+                            <Text style={{ color: isDark ? "#fca5a5" : "#dc2626", fontSize: 11, fontWeight: "600" }}>🗑️ 삭제</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
+
         {/* 태그 리스트 */}
-        <View style={{ flex: 1, padding: 12 }}>
+        {!categoryEditMode && <View style={{ flex: 1, padding: 12 }}>
           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
             <Text style={{ color: C.sub, fontSize: 12 }}>
               {currentTags.length}개 태그 · {selectMode ? "태그를 눌러 선택" : "태그를 눌러 관리 · 길게 눌러 다중 선택"}
@@ -14795,15 +15241,15 @@ const TagManagerModal = memo(({
               ))}
             </ScrollView>
           )}
-        </View>
-        
+        </View>}
+
         {/* 통계 */}
-        <View style={{ padding: 12, backgroundColor: C.card, borderTopWidth: 1, borderTopColor: C.line }}>
+        {!categoryEditMode && <View style={{ padding: 12, backgroundColor: C.card, borderTopWidth: 1, borderTopColor: C.line }}>
           <Text style={{ color: C.sub, fontSize: 11, textAlign: "center" }}>
-            👍 {categories.positive?.count || 0} · 👎 {categories.negative?.count || 0} · ⚖️ {categories.neutral?.count || 0} · 
+            👍 {categories.positive?.count || 0} · 👎 {categories.negative?.count || 0} · ⚖️ {categories.neutral?.count || 0} ·
             커스텀 {customTags.length}
           </Text>
-        </View>
+        </View>}
         
         {/* 태그 액션 모달 */}
         <Modal
@@ -14952,31 +15398,72 @@ const TagManagerModal = memo(({
                       </Text>
                     </TouchableOpacity>
                     
-                    {/* 숨기기 (기본 태그용) */}
-                    {(selectedTag.type === "defaultMajor" || selectedTag.type === "defaultSub" || selectedTag.type === "defaultGeneral") && (
-                      <TouchableOpacity
-                        onPress={() => {
-                          onToggleHide(selectedTag.tag);
-                          setActionModalOpen(false);
-                        }}
-                        style={{
-                          backgroundColor: listHasTag(hiddenTags, selectedTag.tag) ? (isDark ? "#7f1d1d" : "#fee2e2") : C.chip,
-                          padding: 14,
-                          borderRadius: 12,
-                          flexDirection: "row",
-                          alignItems: "center",
-                        }}
-                      >
-                        <Text style={{ fontSize: 18, marginRight: 10 }}>🚫</Text>
-                        <View>
-                          <Text style={{ fontWeight: "700", color: C.text }}>
-                            {listHasTag(hiddenTags, selectedTag.tag) ? "숨김 해제" : "목록에서 숨기기"}
-                          </Text>
-                          <Text style={{ fontSize: 11, color: C.sub }}>태그 선택 모달에서 숨김</Text>
-                        </View>
-                      </TouchableOpacity>
-                    )}
+                    {/* 숨기기 (모든 태그 타입) */}
+                    <TouchableOpacity
+                      onPress={() => {
+                        onToggleHide(selectedTag.tag);
+                        setActionModalOpen(false);
+                      }}
+                      style={{
+                        backgroundColor: listHasTag(hiddenTags, selectedTag.tag) ? (isDark ? "#7f1d1d" : "#fee2e2") : C.chip,
+                        padding: 14,
+                        borderRadius: 12,
+                        flexDirection: "row",
+                        alignItems: "center",
+                      }}
+                    >
+                      <Text style={{ fontSize: 18, marginRight: 10 }}>🚫</Text>
+                      <View>
+                        <Text style={{ fontWeight: "700", color: C.text }}>
+                          {listHasTag(hiddenTags, selectedTag.tag) ? "숨김 해제" : "목록에서 숨기기"}
+                        </Text>
+                        <Text style={{ fontSize: 11, color: C.sub }}>태그 선택 모달에서 숨김</Text>
+                      </View>
+                    </TouchableOpacity>
                     
+                    {/* 🆕 카테고리 변경 */}
+                    {onMoveTagToCategory && tagRegistry && (
+                      <View>
+                        <TouchableOpacity
+                          onPress={() => setTagCategoryPickerOpen(!tagCategoryPickerOpen)}
+                          style={{
+                            backgroundColor: tagCategoryPickerOpen ? C.primary : (isDark ? "#374151" : "#f3f4f6"),
+                            padding: 14,
+                            borderRadius: 12,
+                            flexDirection: "row",
+                            alignItems: "center",
+                          }}
+                        >
+                          <Text style={{ fontSize: 18, marginRight: 10 }}>📂</Text>
+                          <Text style={{ fontWeight: "700", color: tagCategoryPickerOpen ? "#fff" : C.text }}>카테고리 변경</Text>
+                        </TouchableOpacity>
+                        {tagCategoryPickerOpen && (
+                          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 6, marginBottom: 4 }}>
+                            {Object.keys(tagRegistry.generalTags || {}).map(cat => {
+                              const aliases = tagRegistry?.categoryAliases || {};
+                              const label = (aliases[cat] || cat).replace(/^[📁📂📖🎭📝⚡💕👤🏙️🔞⭐📅]\s?/, "");
+                              return (
+                                <TouchableOpacity
+                                  key={cat}
+                                  onPress={() => {
+                                    onMoveTagToCategory(selectedTag.tag, cat);
+                                    setTagCategoryPickerOpen(false);
+                                    setActionModalOpen(false);
+                                  }}
+                                  style={{
+                                    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999,
+                                    backgroundColor: isDark ? "#374151" : "#e2e8f0",
+                                  }}
+                                >
+                                  <Text style={{ color: C.text, fontWeight: "600", fontSize: 11 }}>{label}</Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </View>
+                        )}
+                      </View>
+                    )}
+
                     {/* 🆕 v3.4: 대장르 속성 토글 (모든 태그에 적용 가능) */}
                     {onToggleMajorAttr && checkIsMajor && (
                       <TouchableOpacity
@@ -15087,50 +15574,60 @@ const TagManagerModal = memo(({
                       </TouchableOpacity>
                     )}
                     
-                    {/* 삭제 (사용자 정의만) */}
-                    {(selectedTag.type === "custom" || 
-                      selectedTag.type === "userMajor" || selectedTag.type === "userSub") && (
-                      <TouchableOpacity
-                        onPress={() => {
+                    {/* 삭제 (모든 태그 — 기본 태그는 숨김 처리) */}
+                    <TouchableOpacity
+                      onPress={() => {
+                        const isDefault = selectedTag.type === "defaultMajor" || selectedTag.type === "defaultSub" || selectedTag.type === "defaultGeneral";
+                        if (isDefault) {
+                          // 기본 태그는 숨김 처리
+                          if (!listHasTag(hiddenTags, selectedTag.tag)) {
+                            onToggleHide(selectedTag.tag);
+                          }
+                        } else {
                           onDeleteTag(selectedTag.tag, selectedTag.type);
-                          setActionModalOpen(false);
-                        }}
-                        style={{
-                          backgroundColor: isDark ? "#7f1d1d" : "#fef2f2",
-                          padding: 14,
-                          borderRadius: 12,
-                          flexDirection: "row",
-                          alignItems: "center",
-                        }}
-                      >
-                        <Text style={{ fontSize: 18, marginRight: 10 }}>🗑️</Text>
-                        <Text style={{ fontWeight: "700", color: isDark ? "#fca5a5" : "#dc2626" }}>태그 삭제</Text>
-                      </TouchableOpacity>
-                    )}
-                    
-                    {/* 전체에서 삭제 */}
-                    {(selectedTag.type === "custom" || 
-                      selectedTag.type === "userMajor" || selectedTag.type === "userSub") && (
-                      <TouchableOpacity
-                        onPress={() => {
-                          onDeleteGlobally(selectedTag.tag);
-                          setActionModalOpen(false);
-                        }}
-                        style={{
-                          backgroundColor: isDark ? "#7f1d1d" : "#fee2e2",
-                          padding: 14,
-                          borderRadius: 12,
-                          flexDirection: "row",
-                          alignItems: "center",
-                        }}
-                      >
-                        <Text style={{ fontSize: 18, marginRight: 10 }}>💥</Text>
-                        <View>
-                          <Text style={{ fontWeight: "700", color: isDark ? "#fca5a5" : "#dc2626" }}>전체에서 삭제</Text>
-                          <Text style={{ fontSize: 11, color: C.sub }}>모든 작품에서도 제거</Text>
-                        </View>
-                      </TouchableOpacity>
-                    )}
+                        }
+                        setActionModalOpen(false);
+                      }}
+                      style={{
+                        backgroundColor: isDark ? "#7f1d1d" : "#fef2f2",
+                        padding: 14,
+                        borderRadius: 12,
+                        flexDirection: "row",
+                        alignItems: "center",
+                      }}
+                    >
+                      <Text style={{ fontSize: 18, marginRight: 10 }}>🗑️</Text>
+                      <View>
+                        <Text style={{ fontWeight: "700", color: isDark ? "#fca5a5" : "#dc2626" }}>
+                          {(selectedTag.type === "defaultMajor" || selectedTag.type === "defaultSub" || selectedTag.type === "defaultGeneral")
+                            ? "태그 삭제 (숨김 처리)" : "태그 삭제"}
+                        </Text>
+                        {(selectedTag.type === "defaultMajor" || selectedTag.type === "defaultSub" || selectedTag.type === "defaultGeneral") && (
+                          <Text style={{ fontSize: 11, color: C.sub }}>기본 태그는 숨김으로 처리됩니다</Text>
+                        )}
+                      </View>
+                    </TouchableOpacity>
+
+                    {/* 전체에서 삭제 (모든 태그) */}
+                    <TouchableOpacity
+                      onPress={() => {
+                        onDeleteGlobally(selectedTag.tag);
+                        setActionModalOpen(false);
+                      }}
+                      style={{
+                        backgroundColor: isDark ? "#7f1d1d" : "#fee2e2",
+                        padding: 14,
+                        borderRadius: 12,
+                        flexDirection: "row",
+                        alignItems: "center",
+                      }}
+                    >
+                      <Text style={{ fontSize: 18, marginRight: 10 }}>💥</Text>
+                      <View>
+                        <Text style={{ fontWeight: "700", color: isDark ? "#fca5a5" : "#dc2626" }}>전체에서 삭제</Text>
+                        <Text style={{ fontSize: 11, color: C.sub }}>모든 작품에서도 제거</Text>
+                      </View>
+                    </TouchableOpacity>
                   </View>
                   
                   <TouchableOpacity
@@ -21090,6 +21587,17 @@ function AppContent() {
   // 🔧 v3.6.1: tagRegistry에서 자동 파생
   const userMajorGenres = useMemo(() => deriveUserMajorGenres(tagRegistry), [tagRegistry]);
   const userSubGenres = useMemo(() => deriveUserSubGenres(tagRegistry), [tagRegistry]);
+  // 🆕 사용중인 태그 Set (TagManagerModal에서 usage 필터용)
+  const usedTagsSet = useMemo(() => {
+    const set = new Set();
+    for (const n of list) {
+      const tags = (n.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+      tags.forEach(t => set.add(t));
+      parseMajorSub(n.major_genre).forEach(g => set.add(g));
+      parseMajorSub(n.sub_genre).forEach(g => set.add(g));
+    }
+    return set;
+  }, [list]);
   const [newMajorGenre, setNewMajorGenre] = useState([]);
   const [newSubGenre, setNewSubGenre] = useState([]);
   const [newTagData, setNewTagDataRaw] = useState([]); // 🏷️ v5.0: [{tag, intensity}, ...]
@@ -24171,6 +24679,8 @@ function AppContent() {
       if (customTags.some(t => isSameTag(t, tag))) return false;
       if (allMajor.some(t => isSameTag(t, tag))) return false;
       if (allSub.some(t => isSameTag(t, tag))) return false;
+      // 🆕 숨긴 태그는 자동 등록하지 않음
+      if (hiddenTags.some(t => isSameTag(t, tag))) return false;
       return true;
     });
     if (toAdd.length === 0) return;
@@ -24572,12 +25082,115 @@ function AppContent() {
       newRegistry.majorGenres = newRegistry.majorGenres.filter(t => !isSameTag(t, tag));
       newRegistry.subGenres = newRegistry.subGenres.filter(t => !isSameTag(t, tag));
       const newGeneral = {};
+      const userCats = newRegistry.userCategories || [];
       for (const [cat, tags] of Object.entries(newRegistry.generalTags)) {
         const filtered = tags.filter(t => !isSameTag(t, tag));
-        if (filtered.length > 0) newGeneral[cat] = filtered;
+        // 🆕 userCategories에 있는 카테고리는 빈 배열이어도 보존
+        if (filtered.length > 0 || userCats.includes(cat)) {
+          newGeneral[cat] = filtered;
+        }
       }
       newRegistry.generalTags = newGeneral;
       return newRegistry;
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // 🆕 카테고리 관리 CRUD
+  // ═══════════════════════════════════════════════════════════════
+
+  function renameCategory(oldName, newName) {
+    if (!oldName || !newName || oldName === newName) return;
+    updateTagRegistryFn(prev => {
+      const aliases = { ...(prev.categoryAliases || {}) };
+      aliases[oldName] = newName.trim();
+      return { ...prev, categoryAliases: aliases };
+    });
+  }
+
+  function toggleHideCategory(name) {
+    if (!name) return;
+    updateTagRegistryFn(prev => {
+      const hidden = [...(prev.hiddenCategories || [])];
+      const idx = hidden.indexOf(name);
+      if (idx >= 0) {
+        hidden.splice(idx, 1);
+      } else {
+        hidden.push(name);
+      }
+      return { ...prev, hiddenCategories: hidden };
+    });
+  }
+
+  function addCategory(name) {
+    const trimmed = (name || "").trim();
+    if (!trimmed) return false;
+    updateTagRegistryFn(prev => {
+      const generalTags = { ...(prev.generalTags || {}) };
+      if (generalTags[trimmed]) return prev; // 이미 존재
+      generalTags[trimmed] = [];
+      const userCats = [...(prev.userCategories || [])];
+      if (!userCats.includes(trimmed)) userCats.push(trimmed);
+      return { ...prev, generalTags, userCategories: userCats };
+    });
+    return true;
+  }
+
+  function deleteCategory(name) {
+    if (!name) return;
+    updateTagRegistryFn(prev => {
+      const generalTags = { ...(prev.generalTags || {}) };
+      const tagsToMove = generalTags[name] || [];
+      delete generalTags[name];
+
+      // 소속 태그를 "📁 사용자 태그"로 이동 (중복 제거)
+      const targetCat = "📁 사용자 태그";
+      if (!generalTags[targetCat]) generalTags[targetCat] = [];
+      const existing = generalTags[targetCat];
+      for (const tag of tagsToMove) {
+        if (!existing.some(e => isSameTag(e, tag))) {
+          existing.push(tag);
+        }
+      }
+      generalTags[targetCat] = existing;
+
+      // userCategories에서 제거
+      const userCats = (prev.userCategories || []).filter(c => c !== name);
+      // hiddenCategories에서 제거
+      const hiddenCats = (prev.hiddenCategories || []).filter(c => c !== name);
+      // categoryAliases에서 제거
+      const aliases = { ...(prev.categoryAliases || {}) };
+      delete aliases[name];
+
+      return { ...prev, generalTags, userCategories: userCats, hiddenCategories: hiddenCats, categoryAliases: aliases };
+    });
+  }
+
+  function moveTagToCategory(tag, toCat) {
+    if (!tag || !toCat) return;
+    updateTagRegistryFn(prev => {
+      const generalTags = { ...(prev.generalTags || {}) };
+
+      // 모든 카테고리에서 태그 제거
+      for (const [cat, tags] of Object.entries(generalTags)) {
+        generalTags[cat] = tags.filter(t => !isSameTag(t, tag));
+      }
+
+      // 대상 카테고리에 추가
+      if (!generalTags[toCat]) generalTags[toCat] = [];
+      if (!generalTags[toCat].some(t => isSameTag(t, tag))) {
+        generalTags[toCat] = [...generalTags[toCat], tag];
+      }
+
+      // 빈 카테고리 정리 (userCategories에 있는 건 보존)
+      const userCats = prev.userCategories || [];
+      for (const [cat, tags] of Object.entries(generalTags)) {
+        if (tags.length === 0 && !userCats.includes(cat)) {
+          delete generalTags[cat];
+        }
+      }
+
+      return { ...prev, generalTags };
     });
   }
 
@@ -25048,12 +25661,90 @@ function AppContent() {
             }
             // 🔧 v3.5.9: 연관 메타데이터 일괄 정리 (고정/숨김/감정/속성)
             await cleanupTagMetadata(tag);
+            // 🆕 기본 태그는 숨김 처리 (상수에서 제거 불가하므로 영구 숨김)
+            const isDefault = ALL_DEFAULT_TAGS.some(t => isSameTag(t, tag));
+            if (isDefault && !hiddenTags.some(t => isSameTag(t, tag))) {
+              toggleHideTag(tag);
+            }
             await loadList(undefined, undefined, "batch");
             Alert.alert("완료", `"${tag}" 태그를 전체에서 삭제했습니다. (${updates.length}개 작품 수정)`);
           }
         }
       ]
     );
+  }
+
+  // 🆕 일괄 전체 삭제 (한 번의 소설 스캔으로 다중 태그 제거 — O(N) 최적화)
+  async function batchDeleteTagsGlobally(tagsToDelete) {
+    if (!tagsToDelete || tagsToDelete.length === 0) return;
+
+    // 1. 레지스트리에서 모든 태그 제거
+    updateTagRegistryFn(prev => {
+      const newRegistry = { ...prev };
+      newRegistry.majorGenres = newRegistry.majorGenres.filter(t => !tagsToDelete.some(d => isSameTag(t, d)));
+      newRegistry.subGenres = newRegistry.subGenres.filter(t => !tagsToDelete.some(d => isSameTag(t, d)));
+      const newGeneral = {};
+      for (const [cat, tags] of Object.entries(newRegistry.generalTags)) {
+        const filtered = tags.filter(t => !tagsToDelete.some(d => isSameTag(t, d)));
+        // 🆕 userCategories에 있는 카테고리는 빈 배열이어도 보존
+        if (filtered.length > 0 || (newRegistry.userCategories || []).includes(cat)) {
+          newGeneral[cat] = filtered;
+        }
+      }
+      newRegistry.generalTags = newGeneral;
+      return newRegistry;
+    });
+
+    // 2. 모든 작품에서 해당 태그들 일괄 제거 (한 번의 스캔)
+    const novels = await all("SELECT id, tags, tag_data, major_genre, sub_genre FROM novels;");
+    const updates = [];
+    const deleteSet = new Set(tagsToDelete.map(t => t.toLowerCase().trim()));
+    const isSameTagBatch = (t) => tagsToDelete.some(d => isSameTag(t, d));
+
+    for (const n of (novels || [])) {
+      let changed = false;
+      const tags = (n.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+      const newTags = tags.filter(t => !isSameTagBatch(t));
+      if (newTags.length !== tags.length) changed = true;
+      const majors = parseMajorSub(n.major_genre);
+      const newMajors = majors.filter(g => !isSameTagBatch(g));
+      if (newMajors.length !== majors.length) changed = true;
+      const subs = parseMajorSub(n.sub_genre);
+      const newSubs = subs.filter(g => !isSameTagBatch(g));
+      if (newSubs.length !== subs.length) changed = true;
+      let tagData = [];
+      try { tagData = JSON.parse(n.tag_data || "[]"); if (!Array.isArray(tagData)) tagData = []; } catch { tagData = []; }
+      const newTagData = tagData.filter(td => !isSameTagBatch(td.tag));
+      if (newTagData.length !== tagData.length) changed = true;
+
+      if (changed) {
+        updates.push({
+          sql: "UPDATE novels SET tags=?, tag_data=?, major_genre=?, sub_genre=? WHERE id=?",
+          params: [
+            newTags.join(", "),
+            newTagData.length > 0 ? JSON.stringify(newTagData) : "",
+            JSON.stringify(newMajors),
+            JSON.stringify(newSubs),
+            n.id
+          ]
+        });
+      }
+    }
+    if (updates.length > 0) {
+      await execBatch(updates);
+    }
+
+    // 3. 메타데이터 정리 + 기본 태그 숨김 처리
+    for (const tag of tagsToDelete) {
+      await cleanupTagMetadata(tag);
+      const isDefault = ALL_DEFAULT_TAGS.some(t => isSameTag(t, tag));
+      if (isDefault && !hiddenTags.some(t => isSameTag(t, tag))) {
+        toggleHideTag(tag);
+      }
+    }
+
+    await loadList(undefined, undefined, "batch");
+    Alert.alert("완료", `${tagsToDelete.length}개 태그를 전체에서 삭제했습니다. (${updates.length}개 작품 수정)`);
   }
 
   // 🏷️ 작품에 적용된 태그 중 기본 목록에 없는 것들을 커스텀 태그로 자동 수집
@@ -25091,6 +25782,16 @@ function AppContent() {
       }
     }
 
+    // 🆕 숨긴 태그는 자동 수집에서 제외
+    if (hiddenTags.length > 0) {
+      for (const ht of hiddenTags) {
+        newTags.delete(ht);
+        // isSameTag 기반 제거
+        for (const nt of newTags) {
+          if (isSameTag(nt, ht)) newTags.delete(nt);
+        }
+      }
+    }
     if (newTags.size > 0) {
       for (const t of newTags) addTagToRegistry(t);
       console.log(`자동 수집된 커스텀 태그 ${newTags.size}개:`, Array.from(newTags));
@@ -41173,19 +41874,39 @@ async function importJSON() {
         }}
         // 🔧 v3.5.12: onComboToCustom 제거
         onDeleteTag={async (tag, type) => {
-          // 🔧 v3.6.1: removeTagFromRegistry가 majorGenres/subGenres/generalTags 전부 처리
-          removeTagFromRegistry(tag);
-          await cleanupTagMetadata(tag);
-          Alert.alert("완료", `"${tag}" 태그를 삭제했습니다.`);
+          // 🆕 기본 태그는 숨김 처리, 사용자 태그는 레지스트리에서 삭제
+          const isDefault = type === "defaultMajor" || type === "defaultSub" || type === "defaultGeneral";
+          if (isDefault) {
+            if (!hiddenTags.some(t => isSameTag(t, tag))) {
+              toggleHideTag(tag);
+            }
+            Alert.alert("완료", `"${tag}" 기본 태그를 숨김 처리했습니다.`);
+          } else {
+            // 🔧 v3.6.1: removeTagFromRegistry가 majorGenres/subGenres/generalTags 전부 처리
+            removeTagFromRegistry(tag);
+            await cleanupTagMetadata(tag);
+            Alert.alert("완료", `"${tag}" 태그를 삭제했습니다.`);
+          }
         }}
         onDeleteGlobally={deleteTagGlobally}
-        onAddCustomTag={async (tag) => {
+        onBatchDeleteGlobally={batchDeleteTagsGlobally}
+        onAddCustomTag={async (tag, category) => {
           // 🔧 v3.5.12: isSameTag + comboTags 제거
+          // 🆕 전체 카테고리에서 중복 체크
           if (customTags.some(t => isSameTag(t, tag)) || ALL_DEFAULT_TAGS.some(t => isSameTag(t, tag)) || userMajorGenres.some(t => isSameTag(t, tag)) || userSubGenres.some(t => isSameTag(t, tag))) {
+            // 전체 레지스트리에서 추가 중복 체크
+            if (tagRegistry?.generalTags) {
+              for (const [cat, tags] of Object.entries(tagRegistry.generalTags)) {
+                if (tags.some(t => isSameTag(t, tag))) {
+                  Alert.alert("알림", `이미 "${cat}" 카테고리에 존재하는 태그입니다.`);
+                  return;
+                }
+              }
+            }
             Alert.alert("알림", "이미 존재하는 태그입니다.");
             return;
           }
-          addTagToRegistry(tag);
+          addTagToRegistry(tag, category || "📁 사용자 태그");
           Alert.alert("완료", `"${tag}" 태그를 추가했습니다.`);
         }}
         onChangeSentiment={async (tag, sentiment) => {
@@ -41220,7 +41941,13 @@ async function importJSON() {
         onCleanupUnused={cleanupUnusedTags}
         findUnusedTags={findUnusedTags}
         onEditRelations={openTagRelationModal}
+        onRenameCategory={renameCategory}
+        onToggleHideCategory={toggleHideCategory}
+        onAddCategory={addCategory}
+        onDeleteCategory={deleteCategory}
+        onMoveTagToCategory={moveTagToCategory}
         tagRegistry={tagRegistry}
+        usedTagsSet={usedTagsSet}
         theme={C}
       />}
 
