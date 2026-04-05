@@ -25041,7 +25041,8 @@ function AppContent() {
       if (result.canceled || !result.assets?.length) return;
 
       setGalleryLoading(true);
-      const assets = result.assets;
+      // 🔧 ImagePicker가 selectionLimit을 무시하는 Android 기기 대응: 재검증
+      const assets = result.assets.slice(0, remaining);
       let successCount = 0;
       let failCount = 0;
       const queries = [];
@@ -37751,9 +37752,9 @@ async function importJSON() {
                 <TouchableOpacity
                   key={tab.key}
                   onPress={() => {
+                    if (gallerySubTab === tab.key) return; // 같은 탭 재클릭 무시
                     setGallerySubTab(tab.key);
                     if (tab.key === "view") { setGalleryIdx(0); setGalleryShuffled(null); }
-                    loadGalleryImages();
                   }}
                   style={{
                     flex: 1,
@@ -44623,11 +44624,14 @@ async function importJSON() {
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={async () => {
-                  if (galleryCaptionEditId) {
-                    await updateGalleryCaption(galleryCaptionEditId, galleryEditCaption.trim());
-                  }
+                  if (!galleryCaptionEditId) return;
+                  // 다중 클릭 방어: 즉시 모달 닫기
+                  const _id = galleryCaptionEditId;
+                  const _caption = galleryEditCaption.trim();
                   setGalleryCaptionEditOpen(false);
                   setGalleryCaptionEditId(null);
+                  setGalleryEditCaption("");
+                  await updateGalleryCaption(_id, _caption);
                 }}
                 style={{
                   flex: 1,
