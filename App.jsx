@@ -2573,7 +2573,7 @@ import * as FileSystem from "expo-file-system/legacy"; // 🔧 v3.5.3: SDK 54 �
 import * as ImageManipulator from "expo-image-manipulator"; // 📷 명대사 이미지 압축
 
 /* =========================================================
-   💥 v3.8.2: 크래시 로그 영속화 + Breadcrumbs
+   💥 v3.9.0: 크래시 로그 영속화 + Breadcrumbs
    - 크래시/에러 발생 시 파일 시스템에 즉시 기록 (DB 미사용)
    - 최근 사용자 액션 20개를 링 버퍼로 추적
    - 다음 실행 시 진단탭에서 "마지막 크래시" 확인 가능
@@ -2730,11 +2730,8 @@ if (global.ErrorUtils) {
   });
 }
 
-// 🛡️ Unhandled Promise Rejection 추적
-const _origRejectionTracking = global.HermesInternal?.enablePromiseRejectionTracker;
-if (typeof global.addEventListener === 'function') {
-  // Web/Hermes에서 지원하는 경우
-} else if (!global.__crashLogRejectionSet) {
+// 🛡️ Unhandled Promise Rejection 추적 (console.warn 메시지 감지)
+if (!global.__crashLogRejectionSet) {
   global.__crashLogRejectionSet = true;
   const origWarn = console.warn;
   const rejectionPattern = /Possible Unhandled Promise Rejection/;
@@ -4180,6 +4177,7 @@ async function batchSetAppMeta(entries) {
 // 큐 처리 중이면 추가 대기 (매칭 큐 DB 쓰기와 경합 방지)
 const _pendingMetaWrites = {};
 let _metaBatchTimer = null;
+let _metaFlushFailCount = 0; // 🔧 v3.9.0: 무한 재시도 방지
 
 function deferSetAppMeta(key, value) {
   _pendingMetaWrites[key] = value;
@@ -4197,11 +4195,18 @@ function deferSetAppMeta(key, value) {
     for (const k of Object.keys(_pendingMetaWrites)) delete _pendingMetaWrites[k];
     try {
       await batchSetAppMeta(snapshot);
+      _metaFlushFailCount = 0; // 성공 시 리셋
     } catch (e) {
-      console.warn("deferSetAppMeta flush 오류:", e);
-      // 🔧 flush 실패 시 데이터 복원 (영구 손실 방지)
-      for (const [k, v] of Object.entries(snapshot)) {
-        if (!(k in _pendingMetaWrites)) _pendingMetaWrites[k] = v;
+      _metaFlushFailCount++;
+      console.warn(`deferSetAppMeta flush 오류 (${_metaFlushFailCount}회):`, e);
+      // 🔧 flush 실패 시 데이터 복원 (영구 손실 방지, 최대 3회까지만)
+      if (_metaFlushFailCount <= 3) {
+        for (const [k, v] of Object.entries(snapshot)) {
+          if (!(k in _pendingMetaWrites)) _pendingMetaWrites[k] = v;
+        }
+      } else {
+        console.warn("deferSetAppMeta: 연속 실패 초과, 대기 데이터 폐기");
+        _metaFlushFailCount = 0;
       }
     } finally {
       _metaBatchTimer = null;
@@ -6377,7 +6382,7 @@ async function migrateExistingMatchesToPatterns(tagAttrs = {}) {
         const genreKey = createGenreMatchupKey(majorA, majorB);
         if (genreKey) {
           const winnerGenre = winnerIsA ? majorA : majorB;
-          const didFirstWin = genreKey.startsWith(winnerGenre);
+          const didFirstWin = genreKey.split("_vs_")[0] === winnerGenre;
           
           updates.push({
             category: "genre_matchup",
@@ -22216,12 +22221,16 @@ function AppContent() {
   const [resetSelections, setResetSelections] = useState({}); // { key: boolean }
 
   const [screen, setScreenRaw] = useState("home");
+  const screenRef = useRef("home"); // 💥 v3.9.0: side effect 안전한 화면 추적
   // 🔬 v3.5.9: 화면 전환 추적 래퍼
   const setScreen = useCallback((next) => {
-    setScreenRaw(prev => {
-      if (prev !== next) { PerfMonitor.trackNavigation(prev, next); Breadcrumbs.navigation(prev, next); }
-      return next;
-    });
+    const prev = screenRef.current;
+    if (prev !== next) {
+      PerfMonitor.trackNavigation(prev, next);
+      Breadcrumbs.navigation(prev, next);
+      screenRef.current = next;
+    }
+    setScreenRaw(next);
   }, []);
   
   // 💬 v3.5.4: 명언 쇼츠 상태
@@ -22252,8 +22261,8 @@ function AppContent() {
   const [galleryCount, setGalleryCount] = useState(0); // 뱃지용 카운트 (지연 로드)
   const [galleryExpandedGroups, setGalleryExpandedGroups] = useState({}); // 관리 탭 그룹 펼침 상태
   const [refreshKey, setRefreshKey] = useState(0); // 🔬 v3.5.9: 진단 대시보드 새로고침 키
-  const [lastCrashLog, setLastCrashLog] = useState(null); // 💥 v3.8.2: 마지막 크래시 로그
-  const [crashHistory, setCrashHistory] = useState([]); // 💥 v3.8.2: 크래시 이력
+  const [lastCrashLog, setLastCrashLog] = useState(null); // 💥 v3.9.0: 마지막 크래시 로그
+  const [crashHistory, setCrashHistory] = useState([]); // 💥 v3.9.0: 크래시 이력
   const [list, setList] = useState([]);
 
   // 홈 검색/정렬
@@ -23293,7 +23302,7 @@ function AppContent() {
     const initialize = async () => {
       setIsLoading(true);
 
-      // 💥 v3.8.2: 이전 크래시 로그 로드
+      // 💥 v3.9.0: 이전 크래시 로그 로드
       try {
         const lastCrash = await CrashLog.loadLastCrash();
         if (lastCrash && mounted) setLastCrashLog(lastCrash);
@@ -23767,22 +23776,21 @@ function AppContent() {
     
     initialize();
 
-    // 💥 v3.8.2: CrashLog 상태 스냅샷 함수 등록
-    CrashLog.registerStateSnapshot(() => ({
-      screen: screen || "unknown",
-      activeTab: activeTab,
-      listCount: list?.length || 0,
-      slotId: activeSlotId,
-      isAutoMatching: isAutoMatchingRef.current,
-      isLoading: isLoading,
-    }));
-
     return () => {
       mounted = false;
       setMatchQueueCallback(null); // 🔄 v3.4.6: 콜백 정리
       if (coOccTimerRef.current) { clearTimeout(coOccTimerRef.current); coOccTimerRef.current = null; }
     };
   }, []);
+
+  // 💥 v3.9.0: CrashLog 상태 스냅샷 — 매 렌더마다 최신 클로저로 등록 (stale closure 방지)
+  CrashLog.registerStateSnapshot(() => ({
+    screen: screen || "unknown",
+    activeTab: activeTab,
+    listCount: list?.length || 0,
+    slotId: activeSlotId,
+    isAutoMatching: isAutoMatchingRef.current,
+  }));
 
   // 📁 v3.5.15d: 슬롯 전환 함수 (전체 state 리셋 + 새 DB 초기화 + 재로드)
   const performSlotSwitch = async (newSlotId) => {
@@ -28221,7 +28229,6 @@ function AppContent() {
   async function addNovel() {
     const _pt = PerfMonitor.enabled ? Date.now() : 0; // 🔬
     const t = (title || "").trim();
-    Breadcrumbs.action("novel_add", t);
     if (!t) {
       Alert.alert("알림", "제목은 필수입니다.");
       return;
@@ -28239,6 +28246,7 @@ function AppContent() {
         return;
       }
       
+      Breadcrumbs.action("novel_add", t);
       // 🏷️ 대장르/부장르 자동 감지 (설정 안 된 경우)
       const detectedGenres = detectGenres(tags);
       // 배열로 저장 (선택된 것이 있으면 그것을, 없으면 자동 감지 결과)
@@ -28365,13 +28373,13 @@ function AppContent() {
 
 
   async function removeNovel(id) {
-    Breadcrumbs.action("novel_delete", id);
     Alert.alert("확인", "정말로 이 작품을 삭제할까요? (대진 로그도 함께 삭제됩니다)", [
       { text: "취소" },
       {
         text: "삭제",
         style: "destructive",
         onPress: async () => {
+          Breadcrumbs.action("novel_delete", id);
           setIsLoading(true);
           try {
             // 🖼️ v3.4.5: 삭제 전에 해당 작품의 표지 + 📷 v6.0.1: 명대사 이미지 가져오기
@@ -41383,7 +41391,7 @@ async function importJSON() {
               
               return (
               <>
-            {/* 💥 v3.8.2: 크래시 로그 섹션 (항상 표시, PerfMonitor 무관) */}
+            {/* 💥 v3.9.0: 크래시 로그 섹션 (항상 표시, PerfMonitor 무관) */}
             <Section title="💥 크래시 로그">
               {lastCrashLog ? (
                 <View>
@@ -41402,7 +41410,7 @@ async function importJSON() {
                     </Text>
 
                     {/* 상태 스냅샷 */}
-                    {lastCrashLog.state && (
+                    {lastCrashLog.state && typeof lastCrashLog.state === "object" && (
                       <View style={{ backgroundColor: isDark ? "#450a0a" : "#fee2e2", padding: 8, borderRadius: 8, marginBottom: 8 }}>
                         <Text style={{ fontWeight: "700", color: isDark ? "#fca5a5" : "#991b1b", fontSize: 11, marginBottom: 4 }}>크래시 당시 상태</Text>
                         <Text style={{ color: isDark ? "#f87171" : "#b91c1c", fontSize: 11, fontFamily: "monospace" }}>
@@ -41528,10 +41536,13 @@ async function importJSON() {
               )}
 
               {/* 현재 Breadcrumbs (실시간) */}
+              {(() => {
+                const currentBreadcrumbs = Breadcrumbs.getAll();
+                return (
               <View style={{ marginTop: 12 }}>
-                <Text style={{ fontWeight: "700", color: C.text, fontSize: 13, marginBottom: 6 }}>현재 세션 Breadcrumbs ({Breadcrumbs.getAll().length}건)</Text>
-                {Breadcrumbs.getAll().length > 0 ? (
-                  Breadcrumbs.getAll().slice(-10).reverse().map((bc, i) => (
+                <Text style={{ fontWeight: "700", color: C.text, fontSize: 13, marginBottom: 6 }}>현재 세션 Breadcrumbs ({currentBreadcrumbs.length}건)</Text>
+                {currentBreadcrumbs.length > 0 ? (
+                  currentBreadcrumbs.slice(-10).reverse().map((bc, i) => (
                     <View key={i} style={{ flexDirection: "row", paddingVertical: 2, borderBottomWidth: 0.5, borderColor: C.line + "30" }}>
                       <Text style={{ color: C.sub, fontSize: 10, width: 55 }}>{new Date(bc.time).toLocaleTimeString()}</Text>
                       <Text style={{ color: C.primary, fontSize: 10, width: 50, fontWeight: "600" }}>{bc.category}</Text>
@@ -41544,6 +41555,8 @@ async function importJSON() {
                   <Text style={{ color: C.sub, fontSize: 11, textAlign: "center" }}>아직 기록 없음</Text>
                 )}
               </View>
+                );
+              })()}
             </Section>
 
             <Section title="🔬 성능 모니터">
