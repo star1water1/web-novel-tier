@@ -2,9 +2,28 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.8.0                                                                   ║
+ * ║  버전: 3.8.1                                                                   ║
  * ║  최종 수정: 2026-04-05                                                        ║
- * ║  총 라인 수: 약 44,200줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 44,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v3.8.1 진단탭 개선 + 진행도 표시 (2026-04-05)                              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [개선] 📊 진행도 표시 시스템                                                  ║
+ * ║ • ProgressOverlay: 프로그레스 바 지원 (기존 LoadingOverlay 대체)              ║
+ * ║ • execBatch에 onProgress 콜백 추가 (50개 단위 청크 완료 시 호출)              ║
+ * ║ • 대상: batchDeleteTagsGlobally, batchDelete, batchAddTag, batchRemoveTag    ║
+ * ║ • removeAllUnusedCovers: 인라인 coverLibraryProgress 진행도 추가             ║
+ * ║ • 동시 실행 보호: isLoading 가드로 더블탭 방지                                ║
+ * ║                                                                              ║
+ * ║ [개선] 🔬 진단탭 확장                                                         ║
+ * ║ • DB 테이블 규모: 모든 테이블 행 수 + DB 파일 크기 표시                       ║
+ * ║ • 슬롯 시스템 상태: activeSlotId/DB 일치 여부, 슬롯별 작품 수                ║
+ * ║ • 인사이트/패턴 상태: preference_patterns 카테고리별 수, insight_queue 상태   ║
+ * ║ • 진단 리포트 내보내기에 테이블 규모/슬롯/인사이트 정보 포함                  ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -3293,9 +3312,9 @@ async function first(sql, params = []) {
 }
 
 /** 트랜잭션 실행 (🔧 v3.5.3: 대량 배치 청크 처리) */
-async function execBatch(queries) {
+async function execBatch(queries, onProgress = null) {
   if (!queries || queries.length === 0) return;
-  
+
   // 🔧 v3.5.3: 50개 이상이면 청크로 분할 (트랜잭션 타임아웃 방지)
   const CHUNK_SIZE = 50;
   if (queries.length > CHUNK_SIZE) {
@@ -3311,6 +3330,10 @@ async function execBatch(queries) {
         },
         `execBatch[${i}~${Math.min(i + CHUNK_SIZE, queries.length)}]`
       );
+      // 🔧 v3.6.0: 청크 완료 시 진행도 콜백
+      if (onProgress) {
+        onProgress(Math.min(i + CHUNK_SIZE, queries.length), queries.length);
+      }
       // 청크 사이 DB 안정화 대기
       if (i + CHUNK_SIZE < queries.length) {
         await new Promise(r => setTimeout(r, 50));
@@ -21953,6 +21976,7 @@ function AppContent() {
 
   // 🔄 로딩 상태
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState(null); // 🔧 v3.6.0: { current, total, label } or null
   const [customResetOpen, setCustomResetOpen] = useState(false); // 🧹 v3.5.5: 커스텀 초기화 모달
   const [resetSelections, setResetSelections] = useState({}); // { key: boolean }
 
@@ -22490,12 +22514,30 @@ function AppContent() {
     await setAppMeta("platform_covers", covers);
   };
 
-  const LoadingOverlay = () => isLoading ? (
-    <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: C.overlay, justifyContent: "center", alignItems: "center", zIndex: 999 }}>
-      <ActivityIndicator size="large" color={C.primary} />
-      <Text style={{ marginTop: 12, color: C.sub }}>처리 중...</Text>
-    </View>
-  ) : null;
+  // 🔧 v3.6.0: ProgressOverlay — loadingProgress가 있으면 프로그레스 바, 없으면 기존 스피너
+  const ProgressOverlay = () => {
+    if (!isLoading) return null;
+    return (
+      <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: C.overlay, justifyContent: "center", alignItems: "center", zIndex: 999 }}>
+        <ActivityIndicator size="large" color={C.primary} />
+        {loadingProgress ? (
+          <View style={{ marginTop: 12, width: "60%", alignItems: "center" }}>
+            <Text style={{ color: C.sub, marginBottom: 6, fontSize: 13 }}>
+              {loadingProgress.label || "처리 중..."} ({loadingProgress.current}/{loadingProgress.total})
+            </Text>
+            <View style={{ height: 6, width: "100%", backgroundColor: C.line, borderRadius: 3, overflow: "hidden" }}>
+              <View style={{
+                width: `${loadingProgress.total > 0 ? (loadingProgress.current / loadingProgress.total * 100) : 0}%`,
+                height: "100%", backgroundColor: C.primary, borderRadius: 3,
+              }} />
+            </View>
+          </View>
+        ) : (
+          <Text style={{ marginTop: 12, color: C.sub }}>처리 중...</Text>
+        )}
+      </View>
+    );
+  };
 
   /* =========================================================
      🆕 이미지 URL 입력 모달 (Android 호환)
@@ -24885,16 +24927,20 @@ function AppContent() {
           style: "destructive",
           onPress: async () => {
             setCoverLibraryLoading(true);
-            
-            for (const cover of unusedCovers) {
-              await deleteCoverFromLibrary(cover.file_path);
+            setCoverLibraryProgress({ current: 0, total: unusedCovers.length }); // 🔧 v3.6.0: 진행도
+            try {
+              for (let i = 0; i < unusedCovers.length; i++) {
+                await deleteCoverFromLibrary(unusedCovers[i].file_path);
+                setCoverLibraryProgress({ current: i + 1, total: unusedCovers.length });
+              }
+
+              await exec("DELETE FROM cover_library WHERE status='unused'");
+              await loadCoverLibrary();
+              Alert.alert("완료", `${unusedCovers.length}개의 미사용 표지를 삭제했습니다.`);
+            } finally {
+              setCoverLibraryLoading(false);
+              setCoverLibraryProgress({ current: 0, total: 0 });
             }
-            
-            await exec("DELETE FROM cover_library WHERE status='unused'");
-            
-            setCoverLibraryLoading(false);
-            await loadCoverLibrary();
-            Alert.alert("완료", `${unusedCovers.length}개의 미사용 표지를 삭제했습니다.`);
           },
         },
       ]);
@@ -27066,7 +27112,11 @@ function AppContent() {
   // 🆕 일괄 전체 삭제 (한 번의 소설 스캔으로 다중 태그 제거 — O(N) 최적화)
   async function batchDeleteTagsGlobally(tagsToDelete) {
     if (!tagsToDelete || tagsToDelete.length === 0) return;
+    if (isLoading) return; // 🔧 v3.6.0: 동시 실행 보호
 
+    setIsLoading(true);
+    setLoadingProgress({ current: 0, total: 0, label: "태그 일괄 삭제 중..." });
+    try {
     // 1. 레지스트리에서 모든 태그 제거
     updateTagRegistryFn(prev => {
       const newRegistry = { ...prev };
@@ -27119,7 +27169,7 @@ function AppContent() {
       }
     }
     if (updates.length > 0) {
-      await execBatch(updates);
+      await execBatch(updates, (cur, tot) => setLoadingProgress({ current: cur, total: tot, label: "태그 일괄 삭제 중..." }));
     }
 
     // 3. 🔧 배치 최적화: per-tag cleanupTagMetadata → cleanupTagMetadataBatch
@@ -27143,6 +27193,10 @@ function AppContent() {
 
     await loadList(undefined, undefined, "batch");
     Alert.alert("완료", `${tagsToDelete.length}개 태그를 전체에서 삭제했습니다. (${updates.length}개 작품 수정)`);
+    } finally {
+      setLoadingProgress(null);
+      setIsLoading(false);
+    }
   }
 
   // 🏷️ 작품에 적용된 태그 중 기본 목록에 없는 것들을 커스텀 태그로 자동 수집
@@ -30226,10 +30280,17 @@ function AppContent() {
       });
     }
 
-    await execBatch(queries);
-    syncTagsToCustom(t); // 🔧 v3.5.9: 일괄 추가 태그도 customTags 동기화
-    await loadList(undefined, undefined, "supplement");
-    Alert.alert("완료", `${ids.length}개 작품에 "${t}" 태그를 추가했습니다.`);
+    // 🔧 v3.6.0: 50개 초과 시 진행도 표시
+    const showProgress = queries.length > 50;
+    if (showProgress) { setIsLoading(true); setLoadingProgress({ current: 0, total: queries.length, label: "태그 추가 중..." }); }
+    try {
+      await execBatch(queries, showProgress ? (cur, tot) => setLoadingProgress({ current: cur, total: tot, label: "태그 추가 중..." }) : null);
+      syncTagsToCustom(t); // 🔧 v3.5.9: 일괄 추가 태그도 customTags 동기화
+      await loadList(undefined, undefined, "supplement");
+      Alert.alert("완료", `${ids.length}개 작품에 "${t}" 태그를 추가했습니다.`);
+    } finally {
+      if (showProgress) { setLoadingProgress(null); setIsLoading(false); }
+    }
   }, [userMajorGenres, userSubGenres, tagAttributes]); // 🔧 v3.5.13: tagAttributes dep 추가
 
   // 🏷️ v3.1.2: 대량편집 농도 지원 - tag_data에서도 제거
@@ -30294,9 +30355,16 @@ function AppContent() {
       });
     }
 
-    await execBatch(queries);
-    await loadList(undefined, undefined, "batch");
-    Alert.alert("완료", `${ids.length}개 작품에서 "${t}" 태그를 삭제했습니다.`);
+    // 🔧 v3.6.0: 50개 초과 시 진행도 표시
+    const showProgress = queries.length > 50;
+    if (showProgress) { setIsLoading(true); setLoadingProgress({ current: 0, total: queries.length, label: "태그 제거 중..." }); }
+    try {
+      await execBatch(queries, showProgress ? (cur, tot) => setLoadingProgress({ current: cur, total: tot, label: "태그 제거 중..." }) : null);
+      await loadList(undefined, undefined, "batch");
+      Alert.alert("완료", `${ids.length}개 작품에서 "${t}" 태그를 삭제했습니다.`);
+    } finally {
+      if (showProgress) { setLoadingProgress(null); setIsLoading(false); }
+    }
   }, [userMajorGenres, userSubGenres, tagAttributes]); // 🔧 v3.5.13: tagAttributes dep 추가
 
   // 🔧 v3.5.1: useCallback으로 변경 (stale closure 방지)
@@ -30407,7 +30475,9 @@ function AppContent() {
         text: "삭제",
         style: "destructive",
         onPress: async () => {
+          if (isLoading) return; // 🔧 v3.6.0: 동시 실행 보호
           setIsLoading(true);
+          setLoadingProgress({ current: 0, total: 0, label: "작품 삭제 중..." });
           try {
             // 🔄 v3.5.0: 상태 동기화 - 삭제 대상과 관련된 모든 상태 초기화
             if (pair && (ids.includes(pair.A?.id) || ids.includes(pair.B?.id))) {
@@ -30424,14 +30494,14 @@ function AppContent() {
             if (focusMatchNovel && ids.includes(focusMatchNovel.id)) {
               setFocusMatchNovel(null);
             }
-            
+
             // 🔧 v3.5.8: 삭제 전 표지 정보 수집
             const placeholders = ids.map(() => "?").join(",");
             const coverNovels = await all(
               `SELECT id, cover_image FROM novels WHERE id IN (${placeholders}) AND cover_image IS NOT NULL AND cover_image != ''`,
               ids
             );
-            
+
             const queries = [];
             for (const id of ids) {
               // 🔧 v3.5.8: choice_logs도 함께 삭제 (고아 방지)
@@ -30452,13 +30522,14 @@ function AppContent() {
                 params: [id],
               });
             }
-            await execBatch(queries);
+            await execBatch(queries, (cur, tot) => setLoadingProgress({ current: cur, total: tot, label: "작품 삭제 중..." }));
             await loadNovelFolderMap();
             // 🔧 v3.5.15e: 미플러시 choiceLog에서도 삭제 대상 제거 (고아 재삽입 방지)
             const deletedSet = new Set(ids);
             choiceLogQueue.pending = choiceLogQueue.pending.filter(l => !deletedSet.has(l.winner_id) && !deletedSet.has(l.loser_id));
             // 🔧 v3.5.8: 표지 상태 일괄 업데이트
             if (coverNovels && coverNovels.length > 0) {
+              setLoadingProgress({ current: 0, total: coverNovels.length, label: "표지 정리 중..." });
               const coverQueries = coverNovels.map(cn => ({
                 sql: "UPDATE cover_library SET status='unused', novel_id=NULL WHERE file_path=?",
                 params: [cn.cover_image],
@@ -30466,15 +30537,18 @@ function AppContent() {
               await execBatch(coverQueries);
               await loadCoverLibrary();
             }
-            
+
+            setLoadingProgress(null); // 🔧 v3.6.0: rebuild 단계는 스피너로 전환
             await rebuildAllFromMatches(tagAttributes);
             setSelectedIds([]);
             await loadList(undefined, undefined, "rebuild");
           } catch (e) {
             console.warn("batchDelete 오류:", e);
             Alert.alert("오류", "삭제 중 문제가 발생했습니다: " + (e.message || e));
+          } finally {
+            setLoadingProgress(null);
+            setIsLoading(false);
           }
-          setIsLoading(false);
         },
       },
     ]);
@@ -32266,7 +32340,7 @@ async function importJSON() {
         backgroundColor={C.bg}
         translucent={appSettings.fullscreenMode === true}
       />
-      <LoadingOverlay />
+      <ProgressOverlay />
       <ScrollView 
         contentContainerStyle={{ padding: 16, paddingBottom: 48 }}
         showsVerticalScrollIndicator={true}
@@ -41219,22 +41293,56 @@ async function importJSON() {
             )}
 
             {PerfMonitor.enabled && summary.stateSnapshots.length > 0 && (
+            {/* 🔧 v3.6.0: DB 테이블 규모 확장 */}
             <Section title="📦 데이터 규모">
               {(() => {
                 const latest = summary.stateSnapshots[0];
+                const [tableStats, setTableStats] = React.useState(null);
+                React.useEffect(() => {
+                  (async () => {
+                    try {
+                      const tables = ["novels", "matches", "choice_logs", "cover_library", "novel_folders", "folders", "gallery_images", "planned_novels", "preference_patterns", "insight_queue"];
+                      const counts = {};
+                      for (const t of tables) {
+                        try { const r = await first(`SELECT COUNT(*) as cnt FROM ${t}`); counts[t] = r?.cnt ?? "?"; } catch { counts[t] = "N/A"; }
+                      }
+                      let dbSize = "?";
+                      try {
+                        const pc = await first("PRAGMA page_count"); const ps = await first("PRAGMA page_size");
+                        if (pc && ps) { const bytes = (pc.page_count || pc[0]) * (ps.page_size || ps[0]); dbSize = bytes > 1048576 ? `${(bytes / 1048576).toFixed(1)}MB` : `${(bytes / 1024).toFixed(0)}KB`; }
+                      } catch {}
+                      setTableStats({ counts, dbSize });
+                    } catch {}
+                  })();
+                }, [refreshKey]);
+                const cardStyle = { backgroundColor: isDark ? "#1a1a2e" : "#f0f0f5", borderRadius: 8, padding: 8, minWidth: "45%", flex: 1 };
                 return (
-                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                    {[
-                      { label: "작품 수", value: latest.novels || 0 },
-                      { label: "커스텀 태그", value: latest.customTags || 0 },
-                      // 🔧 v3.5.12: comboTags 통계 제거 (항상 0)
-                      { label: "표지 이미지", value: latest.coverImages || 0 },
-                    ].map((item, i) => (
-                      <View key={i} style={{ backgroundColor: isDark ? "#1a1a2e" : "#f0f0f5", borderRadius: 8, padding: 8, minWidth: "45%", flex: 1 }}>
-                        <Text style={{ color: C.sub, fontSize: 10 }}>{item.label}</Text>
-                        <Text style={{ color: C.text, fontSize: 15, fontWeight: "700" }}>{item.value}</Text>
+                  <View>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                      {[
+                        { label: "작품 수", value: latest.novels || 0 },
+                        { label: "커스텀 태그", value: latest.customTags || 0 },
+                        { label: "표지 이미지", value: latest.coverImages || 0 },
+                      ].map((item, i) => (
+                        <View key={i} style={cardStyle}>
+                          <Text style={{ color: C.sub, fontSize: 10 }}>{item.label}</Text>
+                          <Text style={{ color: C.text, fontSize: 15, fontWeight: "700" }}>{item.value}</Text>
+                        </View>
+                      ))}
+                    </View>
+                    {tableStats && (
+                      <View style={{ marginTop: 10 }}>
+                        <Text style={{ color: C.sub, fontSize: 11, fontWeight: "600", marginBottom: 6 }}>DB 테이블별 행 수 (파일 크기: {tableStats.dbSize})</Text>
+                        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                          {Object.entries(tableStats.counts).map(([t, cnt]) => (
+                            <View key={t} style={{ backgroundColor: isDark ? "#1a1a2e" : "#f0f0f5", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4 }}>
+                              <Text style={{ color: C.sub, fontSize: 9 }}>{t}</Text>
+                              <Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>{cnt}</Text>
+                            </View>
+                          ))}
+                        </View>
                       </View>
-                    ))}
+                    )}
                   </View>
                 );
               })()}
@@ -41256,6 +41364,90 @@ async function importJSON() {
               </Text>
             </Section>
             )}
+
+            {/* 🔧 v3.6.0: 슬롯 시스템 상태 */}
+            <Section title="🗂️ 슬롯 시스템">
+              {(() => {
+                const meta = slotMeta;
+                const slotMatch = _dbOpenedForSlot === activeSlotId;
+                return (
+                  <View>
+                    <View style={{ flexDirection: "row", gap: 12, marginBottom: 8 }}>
+                      <Text style={{ color: C.sub, fontSize: 12 }}>활성 슬롯: <Text style={{ color: C.text, fontWeight: "700" }}>{activeSlotId}</Text></Text>
+                      <Text style={{ color: C.sub, fontSize: 12 }}>DB 슬롯: <Text style={{ color: slotMatch ? "#22c55e" : "#ef4444", fontWeight: "700" }}>{_dbOpenedForSlot}</Text></Text>
+                      <Text style={{ color: slotMatch ? "#22c55e" : "#ef4444", fontSize: 12, fontWeight: "700" }}>{slotMatch ? "✓ 일치" : "⚠ 불일치!"}</Text>
+                    </View>
+                    {meta?.slots ? (
+                      <View style={{ gap: 4 }}>
+                        {meta.slots.map((s, i) => (
+                          <View key={i} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 3, borderBottomWidth: 0.5, borderColor: C.line + "40" }}>
+                            <Text style={{ color: s.id === activeSlotId ? C.primary : C.text, fontSize: 12, fontWeight: s.id === activeSlotId ? "700" : "400" }}>
+                              슬롯 {s.id}: {s.name || "(기본)"}
+                            </Text>
+                            <Text style={{ color: C.sub, fontSize: 12 }}>{s.novelCount ?? "?"}개 작품</Text>
+                          </View>
+                        ))}
+                      </View>
+                    ) : (
+                      <Text style={{ color: C.sub, fontSize: 12 }}>슬롯 메타데이터 로드 대기 중...</Text>
+                    )}
+                  </View>
+                );
+              })()}
+            </Section>
+
+            {/* 🔧 v3.6.0: 인사이트/패턴 시스템 상태 */}
+            <Section title="🧠 인사이트/패턴">
+              {(() => {
+                const [patternStats, setPatternStats] = React.useState(null);
+                React.useEffect(() => {
+                  (async () => {
+                    try {
+                      const cats = await all("SELECT category, COUNT(*) as cnt FROM preference_patterns GROUP BY category");
+                      const totalPatterns = (cats || []).reduce((s, c) => s + c.cnt, 0);
+                      const insights = await all("SELECT status, COUNT(*) as cnt FROM insight_queue GROUP BY status");
+                      const oldestPending = await first("SELECT MIN(created_at) as oldest FROM insight_queue WHERE status='pending'");
+                      let oldestAge = null;
+                      if (oldestPending?.oldest) {
+                        const diff = Date.now() - new Date(oldestPending.oldest).getTime();
+                        oldestAge = diff > 86400000 ? `${Math.floor(diff / 86400000)}일` : diff > 3600000 ? `${Math.floor(diff / 3600000)}시간` : `${Math.floor(diff / 60000)}분`;
+                      }
+                      setPatternStats({ categories: cats || [], totalPatterns, insights: insights || [], oldestAge });
+                    } catch {}
+                  })();
+                }, [refreshKey]);
+                if (!patternStats) return <Text style={{ color: C.sub, fontSize: 12 }}>로딩 중...</Text>;
+                return (
+                  <View>
+                    <Text style={{ color: C.sub, fontSize: 11, fontWeight: "600", marginBottom: 6 }}>취향 패턴 ({patternStats.totalPatterns}건)</Text>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                      {patternStats.categories.map((c, i) => (
+                        <View key={i} style={{ backgroundColor: isDark ? "#1a1a2e" : "#f0f0f5", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+                          <Text style={{ color: C.sub, fontSize: 9 }}>{c.category}</Text>
+                          <Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>{c.cnt}</Text>
+                        </View>
+                      ))}
+                    </View>
+                    <Text style={{ color: C.sub, fontSize: 11, fontWeight: "600", marginBottom: 6 }}>인사이트 큐</Text>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                      {patternStats.insights.map((ins, i) => (
+                        <View key={i} style={{ backgroundColor: isDark ? "#1a1a2e" : "#f0f0f5", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+                          <Text style={{ color: C.sub, fontSize: 9 }}>{ins.status}</Text>
+                          <Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>{ins.cnt}</Text>
+                        </View>
+                      ))}
+                      {patternStats.insights.length === 0 && <Text style={{ color: C.sub, fontSize: 11 }}>인사이트 없음</Text>}
+                    </View>
+                    {patternStats.oldestAge && (
+                      <Text style={{ color: "#f59e0b", fontSize: 11, marginTop: 6 }}>⏳ 가장 오래된 미확인 인사이트: {patternStats.oldestAge} 전</Text>
+                    )}
+                    <Text style={{ color: C.sub, fontSize: 10, marginTop: 8, fontStyle: "italic" }}>
+                      ⚠ insight_queue는 백업에 포함되지 않습니다. 복원 시 인사이트 이력이 초기화됩니다.
+                    </Text>
+                  </View>
+                );
+              })()}
+            </Section>
 
             {PerfMonitor.enabled && (
             <Section title="📋 진단 내보내기">
@@ -41305,7 +41497,19 @@ async function importJSON() {
                     `[화면 전환 (최근 10)]`,
                     ...s.navigation.slice(0,10).map(n => `  ${n.from} → ${n.to} (${new Date(n.time).toLocaleTimeString()})`),
                     ...(s.stateSnapshots.length > 0 ? [``, `[데이터 규모]`, `  작품: ${s.stateSnapshots[0].novels}, 커스텀태그: ${s.stateSnapshots[0].customTags}, 조합태그: ${s.stateSnapshots[0].comboTags}, 표지: ${s.stateSnapshots[0].coverImages}`] : []),
+                    ``,
+                    `[슬롯] 활성: ${activeSlotId}, DB연결: ${_dbOpenedForSlot}, ${_dbOpenedForSlot === activeSlotId ? "일치" : "⚠불일치"}`,
+                    ...(slotMeta?.slots ? slotMeta.slots.map(sl => `  슬롯${sl.id}: ${sl.name || "(기본)"} (${sl.novelCount ?? "?"}개)`) : []),
                   ];
+                  // 🔧 v3.6.0: DB 테이블 규모 + 인사이트 상태 추가
+                  try {
+                    const tables = ["novels","matches","choice_logs","cover_library","planned_novels","preference_patterns","insight_queue"];
+                    const tcLines = [];
+                    for (const t of tables) { try { const r = await first(`SELECT COUNT(*) as cnt FROM ${t}`); tcLines.push(`${t}=${r?.cnt??'?'}`); } catch { tcLines.push(`${t}=N/A`); } }
+                    lines.push(``, `[테이블 규모] ${tcLines.join(", ")}`);
+                    const insQ = await all("SELECT status, COUNT(*) as cnt FROM insight_queue GROUP BY status");
+                    if (insQ && insQ.length > 0) lines.push(`[인사이트] ${insQ.map(i => `${i.status}=${i.cnt}`).join(", ")}`);
+                  } catch {}
                   const report = lines.join("\n");
                   try {
                     await Share.share({ title: "성능 진단 리포트", message: report });
