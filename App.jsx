@@ -63,6 +63,11 @@
  * ║ • exitSelectMode에 setSelectPresetOpen(false) 추가                            ║
  * ║ • 배치 핸들러 8곳의 setSelectMode(false) 직접 호출 → exitSelectMode() 통일    ║
  * ║                                                                              ║
+ * ║ [버그 수정 2] 🔴 태그 삭제 시 관계도/좌표계 고아 데이터 잔류                  ║
+ * ║ • cleanupTagMetadata/cleanupTagMetadataBatch에 tag_relations 정리 추가        ║
+ * ║ • cleanupTagMetadata/cleanupTagMetadataBatch에 coordinateSystems 정리 추가    ║
+ * ║ • 그룹 내 태그 1개 이하 시 그룹 자체 삭제                                    ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -8613,11 +8618,13 @@ const CHANGELOG_DATA = [
       { type: "fix", text: "인상깊은 문장 버튼(텍스트/이미지/일괄)이 화면 밖으로 잘리는 레이아웃 수정" },
       { type: "improve", text: "태그 관리 '전체 선택' 버튼을 '▼ 일괄선택' 드롭다운에 통합 — 혼동 해소" },
       { type: "fix", text: "선택 모드 종료 시 드롭다운 상태 미리셋 버그 수정" },
+      { type: "fix", text: "태그 삭제 시 관계도·좌표계 고아 데이터 잔류 수정" },
     ],
     details: [
       { type: "fix", text: "등록/편집 모달 라벨+버튼 가로→세로 스택 변경" },
       { type: "improve", text: "드롭다운에 '✅ 전체 선택' / '🔲 전체 해제' 칩 추가 (파란 계열 구분)" },
       { type: "fix", text: "배치 핸들러 8곳의 setSelectMode 직접 호출 → exitSelectMode() 통일" },
+      { type: "fix", text: "cleanupTagMetadata/Batch에 tag_relations + coordinateSystems 정리 추가" },
     ],
   },
   {
@@ -25058,6 +25065,54 @@ function AppContent() {
       safeDefer(() => deferSetAppMeta("tag_attributes", next));
       return next;
     });
+    // 🔧 v3.6.2: tag_relations (관계도/유사그룹)에서 제거
+    setTagRelations(prev => {
+      if (!prev || !prev.groups) return prev;
+      const matchGroup = Object.keys(prev.tagToGroup || {}).find(k => isSameTag(k, tag));
+      if (!matchGroup) return prev;
+      const groupId = prev.tagToGroup[matchGroup];
+      const group = prev.groups[groupId];
+      if (!group) return prev;
+      const newTags = group.tags.filter(t => !isSameTag(t, tag));
+      const newGroups = { ...prev.groups };
+      const newTagToGroup = { ...prev.tagToGroup };
+      if (newTags.length <= 1) {
+        // 그룹에 태그가 1개 이하면 그룹 자체 삭제
+        delete newGroups[groupId];
+        for (const t of (group.tags || [])) {
+          const mk = Object.keys(newTagToGroup).find(k => isSameTag(k, t));
+          if (mk) delete newTagToGroup[mk];
+        }
+      } else {
+        newGroups[groupId] = { ...group, tags: newTags };
+        delete newTagToGroup[matchGroup];
+      }
+      const updated = { groups: newGroups, tagToGroup: newTagToGroup };
+      safeDefer(() => deferSetAppMeta("tag_relations", updated));
+      return updated;
+    });
+    // 🔧 v3.6.2: coordinateSystems (좌표계)에서 제거
+    setCoordinateSystems(prev => {
+      if (!prev) return prev;
+      let changed = false;
+      const next = {};
+      for (const [csId, cs] of Object.entries(prev)) {
+        if (cs.tags) {
+          const matchKey = Object.keys(cs.tags).find(k => isSameTag(k, tag));
+          if (matchKey) {
+            changed = true;
+            const newTags = { ...cs.tags };
+            delete newTags[matchKey];
+            next[csId] = { ...cs, tags: newTags };
+            continue;
+          }
+        }
+        next[csId] = cs;
+      }
+      if (!changed) return prev;
+      safeDefer(() => saveTagCoordinateSystems(next));
+      return next;
+    });
   }
 
   // 🔧 v3.5.9: 작품 저장 시 텍스트 입력 태그 → customTags 자동 동기화
@@ -25550,6 +25605,58 @@ function AppContent() {
       const next = { ...prev };
       for (const k of matchKeys) delete next[k];
       safeDefer(() => deferSetAppMeta("tag_attributes", next));
+      return next;
+    });
+    // 🔧 v3.6.2: tag_relations (관계도/유사그룹)에서 배치 제거
+    setTagRelations(prev => {
+      if (!prev || !prev.groups) return prev;
+      const newGroups = { ...prev.groups };
+      const newTagToGroup = { ...prev.tagToGroup };
+      let changed = false;
+      for (const tag of tagsToClean) {
+        const matchKey = Object.keys(newTagToGroup).find(k => isSameTag(k, tag));
+        if (!matchKey) continue;
+        changed = true;
+        const groupId = newTagToGroup[matchKey];
+        const group = newGroups[groupId];
+        if (!group) { delete newTagToGroup[matchKey]; continue; }
+        const newTags = group.tags.filter(t => !isSameTag(t, tag));
+        if (newTags.length <= 1) {
+          for (const t of (group.tags || [])) {
+            const mk = Object.keys(newTagToGroup).find(k => isSameTag(k, t));
+            if (mk) delete newTagToGroup[mk];
+          }
+          delete newGroups[groupId];
+        } else {
+          newGroups[groupId] = { ...group, tags: newTags };
+          delete newTagToGroup[matchKey];
+        }
+      }
+      if (!changed) return prev;
+      const updated = { groups: newGroups, tagToGroup: newTagToGroup };
+      safeDefer(() => deferSetAppMeta("tag_relations", updated));
+      return updated;
+    });
+    // 🔧 v3.6.2: coordinateSystems (좌표계)에서 배치 제거
+    setCoordinateSystems(prev => {
+      if (!prev) return prev;
+      let changed = false;
+      const next = {};
+      for (const [csId, cs] of Object.entries(prev)) {
+        if (cs.tags) {
+          const matchKeys = Object.keys(cs.tags).filter(k => shouldCleanKey(k));
+          if (matchKeys.length > 0) {
+            changed = true;
+            const newTags = { ...cs.tags };
+            for (const mk of matchKeys) delete newTags[mk];
+            next[csId] = { ...cs, tags: newTags };
+            continue;
+          }
+        }
+        next[csId] = cs;
+      }
+      if (!changed) return prev;
+      safeDefer(() => saveTagCoordinateSystems(next));
       return next;
     });
   }
