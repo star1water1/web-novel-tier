@@ -2,11 +2,31 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.6.2                                                                   ║
+ * ║  버전: 3.7.0                                                                   ║
  * ║  최종 수정: 2026-04-05                                                        ║
- * ║  총 라인 수: 약 42,400줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 43,200줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
- * 
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📂 v3.7.0 폴더(카테고리) 시스템 (2026-04-05)                                 ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [신규 기능] 📂 폴더 시스템 — 작품을 자유롭게 분류                            ║
+ * ║ • DB: folders + novel_folders 정션 테이블 (다대다 관계)                       ║
+ * ║ • 폴더 CRUD: 생성(이름+색상+아이콘), 편집, 삭제, 순서변경                    ║
+ * ║ • 작품-폴더 배정: 롱프레스 메뉴, 편집 모달, 일괄 선택 모드 지원              ║
+ * ║ • 고급 필터 통합: 기존 티어/플랫폼/장르/상태 필터와 AND 조합                 ║
+ * ║ • 폴더 필터는 homeFiltered(홈 탭)에만 적용                                   ║
+ * ║   — 매칭/랭킹/통계/추천 등 전역 기능은 영향 없음                             ║
+ * ║ • 백업/복원 통합 (FD/NF 키, v11 하위호환)                                    ║
+ * ║ • 슬롯별 독립 폴더 데이터 (DB 파일 격리)                                     ║
+ * ║ • 낙관적 업데이트 + DB 실패 시 롤백                                          ║
+ * ║ • 폴더 필터 활성 시 시각적 배너 표시                                         ║
+ * ║ • FolderManagerModal: 설정 탭에서 폴더 관리                                  ║
+ * ║ • FolderAssignModal: 작품별 폴더 배정 (빠른 폴더 생성 포함)                  ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ ⚠️ 매칭 시스템 불변조건 (v3.5.15c~d에서 확립, 절대 위반 금지)              ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -3811,11 +3831,29 @@ async function initDb() {
   
   // 🧠 v3.5.0 Phase 2: preference_patterns 마이그레이션
   await ensureColumn("preference_patterns", "user_confirmed", "INTEGER", "0");
-  
+
   // 🧠 v3.5.0 Phase 2: insight_queue 마이그레이션
   await ensureColumn("insight_queue", "confidence", "REAL", "0");
   await ensureColumn("insight_queue", "content", "TEXT", "''");
   await ensureColumn("insight_queue", "responded_at", "INTEGER", "0");
+
+  // 📂 v3.7.0: 폴더(카테고리) 시스템
+  await database.runAsync(`CREATE TABLE IF NOT EXISTS folders (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT UNIQUE NOT NULL,
+    color TEXT DEFAULT '#6366f1',
+    icon TEXT DEFAULT '📂',
+    sort_order INTEGER DEFAULT 0,
+    created_at INTEGER
+  );`);
+  await database.runAsync(`CREATE TABLE IF NOT EXISTS novel_folders (
+    folder_id TEXT NOT NULL,
+    novel_id TEXT NOT NULL,
+    added_at INTEGER,
+    PRIMARY KEY (folder_id, novel_id)
+  );`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_nf_novel ON novel_folders(novel_id);`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_nf_folder ON novel_folders(folder_id);`);
 }
 
 // -----------------------------------------
@@ -16053,6 +16091,205 @@ const TagManagerModal = memo(({
 });
 
 /* =========================================================
+   📂 v3.7.0: 폴더 관리 모달
+   ========================================================= */
+const FOLDER_COLORS = ["#6366f1","#3b82f6","#22c55e","#f59e0b","#ef4444","#ec4899","#8b5cf6","#06b6d4"];
+const FOLDER_ICONS = ["📂","📁","📚","⭐","❤️","🔖","🎯","💎"];
+
+const FolderManagerModal = memo(({ visible, onClose, folders, onCreateFolder, onRenameFolder, onDeleteFolder, onUpdateColor, onUpdateIcon, onReorder, getFolderNovelCount, theme }) => {
+  const C = theme;
+  const [newName, setNewName] = useState("");
+  const [newColor, setNewColor] = useState(FOLDER_COLORS[0]);
+  const [newIcon, setNewIcon] = useState("📂");
+  const [editingId, setEditingId] = useState(null);
+  const [editName, setEditName] = useState("");
+
+  const handleCreate = useCallback(() => {
+    if (!newName.trim()) return;
+    onCreateFolder(newName.trim(), newColor, newIcon);
+    setNewName("");
+    setNewColor(FOLDER_COLORS[0]);
+    setNewIcon("📂");
+  }, [newName, newColor, newIcon, onCreateFolder]);
+
+  const handleRename = useCallback((id) => {
+    if (!editName.trim()) { setEditingId(null); return; }
+    onRenameFolder(id, editName.trim());
+    setEditingId(null);
+  }, [editName, onRenameFolder]);
+
+  const handleDelete = useCallback((folder) => {
+    Alert.alert("폴더 삭제", `"${folder.name}" 폴더를 삭제하시겠습니까?\n(작품은 삭제되지 않습니다)`, [
+      { text: "취소" },
+      { text: "삭제", style: "destructive", onPress: () => onDeleteFolder(folder.id) },
+    ]);
+  }, [onDeleteFolder]);
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 16 }}>
+          <Text style={{ fontSize: 20, fontWeight: "800", color: C.text }}>📂 폴더 관리</Text>
+          <TouchableOpacity onPress={onClose}><Text style={{ fontSize: 16, color: C.primary, fontWeight: "700" }}>닫기</Text></TouchableOpacity>
+        </View>
+        <ScrollView style={{ flex: 1, padding: 16 }}>
+          {/* 새 폴더 만들기 */}
+          <View style={{ backgroundColor: C.card, borderRadius: 12, padding: 14, marginBottom: 16, borderWidth: 1, borderColor: C.line }}>
+            <Text style={{ fontSize: 14, fontWeight: "700", color: C.text, marginBottom: 10 }}>새 폴더 만들기</Text>
+            <TextInput
+              value={newName}
+              onChangeText={(t) => setNewName(t.slice(0, 20))}
+              placeholder="폴더 이름 (최대 20자)"
+              placeholderTextColor={C.sub}
+              maxLength={20}
+              style={{ backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 8, padding: 10, fontSize: 15, color: C.text, marginBottom: 10 }}
+            />
+            <Text style={{ fontSize: 12, color: C.sub, marginBottom: 6 }}>색상</Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 10 }}>
+              {FOLDER_COLORS.map(c => (
+                <TouchableOpacity key={c} onPress={() => setNewColor(c)}
+                  style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: c, marginRight: 8, marginBottom: 6, borderWidth: newColor === c ? 3 : 0, borderColor: "#fff", ...(newColor === c ? { shadowColor: c, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.5, shadowRadius: 4, elevation: 4 } : {}) }} />
+              ))}
+            </View>
+            <Text style={{ fontSize: 12, color: C.sub, marginBottom: 6 }}>아이콘</Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 10 }}>
+              {FOLDER_ICONS.map(ic => (
+                <TouchableOpacity key={ic} onPress={() => setNewIcon(ic)}
+                  style={{ width: 36, height: 36, borderRadius: 8, backgroundColor: newIcon === ic ? C.primary : C.chip, justifyContent: "center", alignItems: "center", marginRight: 8, marginBottom: 6 }}>
+                  <Text style={{ fontSize: 18 }}>{ic}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <TouchableOpacity onPress={handleCreate}
+              style={{ backgroundColor: C.primary, paddingVertical: 10, borderRadius: 10, alignItems: "center" }}>
+              <Text style={{ color: "#fff", fontWeight: "700", fontSize: 15 }}>➕ 폴더 만들기</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* 폴더 목록 */}
+          {folders.length === 0 && (
+            <Text style={{ textAlign: "center", color: C.sub, marginTop: 20 }}>아직 폴더가 없습니다. 위에서 새 폴더를 만들어보세요!</Text>
+          )}
+          {folders.map((f, idx) => (
+            <View key={f.id} style={{ backgroundColor: C.card, borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: C.line, borderLeftWidth: 4, borderLeftColor: f.color || C.primary }}>
+              {editingId === f.id ? (
+                <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 8 }}>
+                  <TextInput
+                    value={editName}
+                    onChangeText={(t) => setEditName(t.slice(0, 20))}
+                    maxLength={20}
+                    autoFocus
+                    style={{ flex: 1, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 8, padding: 8, fontSize: 14, color: C.text }}
+                    onSubmitEditing={() => handleRename(f.id)}
+                  />
+                  <TouchableOpacity onPress={() => handleRename(f.id)} style={{ marginLeft: 8 }}>
+                    <Text style={{ color: C.primary, fontWeight: "700" }}>저장</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => setEditingId(null)} style={{ marginLeft: 8 }}>
+                    <Text style={{ color: C.sub }}>취소</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                  <Text style={{ fontSize: 16, fontWeight: "700", color: C.text }}>{f.icon || "📂"} {f.name}</Text>
+                  <Text style={{ fontSize: 12, color: C.sub }}>{getFolderNovelCount(f.id)}개 작품</Text>
+                </View>
+              )}
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                {/* 색상 변경 */}
+                {FOLDER_COLORS.map(c => (
+                  <TouchableOpacity key={c} onPress={() => onUpdateColor(f.id, c)}
+                    style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: c, borderWidth: (f.color || '#6366f1') === c ? 2 : 0, borderColor: "#fff" }} />
+                ))}
+              </View>
+              <View style={{ flexDirection: "row", justifyContent: "flex-end", marginTop: 10, gap: 12 }}>
+                {idx > 0 && <TouchableOpacity onPress={() => onReorder(f.id, "up")}><Text style={{ color: C.sub }}>⬆️</Text></TouchableOpacity>}
+                {idx < folders.length - 1 && <TouchableOpacity onPress={() => onReorder(f.id, "down")}><Text style={{ color: C.sub }}>⬇️</Text></TouchableOpacity>}
+                {FOLDER_ICONS.map(ic => (
+                  <TouchableOpacity key={ic} onPress={() => onUpdateIcon(f.id, ic)}>
+                    <Text style={{ fontSize: 14, opacity: (f.icon || '📂') === ic ? 1 : 0.3 }}>{ic}</Text>
+                  </TouchableOpacity>
+                ))}
+                <TouchableOpacity onPress={() => { setEditingId(f.id); setEditName(f.name); }}>
+                  <Text style={{ color: C.primary, fontWeight: "600" }}>이름변경</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => handleDelete(f)}>
+                  <Text style={{ color: C.warn, fontWeight: "600" }}>삭제</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+});
+
+/* =========================================================
+   📂 v3.7.0: 폴더 배정 모달
+   ========================================================= */
+const FolderAssignModal = memo(({ visible, onClose, novelId, novelTitle, folders, novelFolderMap, onToggle, onCreateFolder, theme }) => {
+  const C = theme;
+  const [newFolderName, setNewFolderName] = useState("");
+  const currentFolders = novelFolderMap.get(novelId) || [];
+
+  const handleQuickCreate = useCallback(async () => {
+    const trimmed = (newFolderName || "").trim();
+    if (!trimmed) return;
+    await onCreateFolder(trimmed, FOLDER_COLORS[0], "📂");
+    setNewFolderName("");
+  }, [newFolderName, onCreateFolder]);
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: C.overlay, justifyContent: "flex-end" }}>
+        <View style={{ backgroundColor: C.bg, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: "70%", padding: 20 }}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }} numberOfLines={1}>📂 폴더 배정</Text>
+            <TouchableOpacity onPress={onClose}><Text style={{ fontSize: 16, color: C.primary, fontWeight: "700" }}>완료</Text></TouchableOpacity>
+          </View>
+          {novelTitle && <Text style={{ fontSize: 13, color: C.sub, marginBottom: 12 }} numberOfLines={1}>{novelTitle}</Text>}
+          <ScrollView style={{ maxHeight: 300 }}>
+            {folders.length === 0 && (
+              <Text style={{ textAlign: "center", color: C.sub, paddingVertical: 20 }}>폴더가 없습니다. 아래에서 새 폴더를 만들어보세요.</Text>
+            )}
+            {folders.map(f => {
+              const isIn = currentFolders.includes(f.id);
+              return (
+                <TouchableOpacity key={f.id} onPress={() => onToggle(novelId, f.id)}
+                  style={{ flexDirection: "row", alignItems: "center", paddingVertical: 12, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: C.line }}>
+                  <View style={{ width: 24, height: 24, borderRadius: 6, backgroundColor: isIn ? (f.color || C.primary) : C.chip, justifyContent: "center", alignItems: "center", marginRight: 12 }}>
+                    {isIn && <Text style={{ color: "#fff", fontSize: 14, fontWeight: "700" }}>✓</Text>}
+                  </View>
+                  <Text style={{ fontSize: 15, color: C.text, fontWeight: isIn ? "700" : "400" }}>{f.icon || "📂"} {f.name}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+          {/* 빠른 폴더 생성 */}
+          <View style={{ flexDirection: "row", alignItems: "center", marginTop: 12, gap: 8 }}>
+            <TextInput
+              value={newFolderName}
+              onChangeText={(t) => setNewFolderName(t.slice(0, 20))}
+              placeholder="➕ 새 폴더 이름"
+              placeholderTextColor={C.sub}
+              maxLength={20}
+              style={{ flex: 1, backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8, padding: 10, fontSize: 14, color: C.text }}
+              onSubmitEditing={handleQuickCreate}
+            />
+            <TouchableOpacity onPress={handleQuickCreate}
+              style={{ backgroundColor: C.primary, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 8 }}>
+              <Text style={{ color: "#fff", fontWeight: "700" }}>추가</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+});
+
+/* =========================================================
    🏢 플랫폼 선택 컴포넌트 (분리됨 - 상태 격리)
    ========================================================= */
 const PlatformChips = memo(({ platforms, onChange, options, extraPlatforms, theme }) => {
@@ -21636,6 +21873,14 @@ function AppContent() {
   const [filterPlatform, setFilterPlatform] = useState("ALL");
   const [filterGenre, setFilterGenre] = useState("ALL");
   const [filterStatus, setFilterStatus] = useState("ALL");
+  const [filterFolder, setFilterFolder] = useState("ALL"); // 📂 v3.7.0: 폴더 필터
+
+  // 📂 v3.7.0: 폴더 시스템
+  const [folders, setFolders] = useState([]);
+  const [novelFolderMap, setNovelFolderMap] = useState(new Map());
+  const [folderModalOpen, setFolderModalOpen] = useState(false);
+  const [folderAssignModalOpen, setFolderAssignModalOpen] = useState(false);
+  const [folderAssignTarget, setFolderAssignTarget] = useState(null);
 
   // 🔍 고급 검색 필터 (v2.3)
   const [searchIncludeTags, setSearchIncludeTags] = useState([]); // AND 조건 포함 태그
@@ -22335,6 +22580,160 @@ function AppContent() {
   }, [screen]);
 
   /* =========================================================
+     📂 v3.7.0: 폴더 시스템 함수
+     ========================================================= */
+  async function loadFolders() {
+    const rows = await all("SELECT * FROM folders ORDER BY sort_order ASC, name ASC;");
+    setFolders(rows || []);
+  }
+
+  async function loadNovelFolderMap() {
+    const rows = await all("SELECT novel_id, folder_id FROM novel_folders;");
+    const map = new Map();
+    for (const r of (rows || [])) {
+      if (!map.has(r.novel_id)) map.set(r.novel_id, []);
+      map.get(r.novel_id).push(r.folder_id);
+    }
+    setNovelFolderMap(map);
+  }
+
+  async function createFolder(name, color, icon) {
+    const trimmed = (name || "").trim().slice(0, 20);
+    if (!trimmed) { Alert.alert("알림", "폴더 이름을 입력해주세요."); return null; }
+    try {
+      const id = uuid();
+      await exec("INSERT INTO folders (id, name, color, icon, sort_order, created_at) VALUES (?,?,?,?,?,?);",
+        [id, trimmed, color || '#6366f1', icon || '📂', folders.length, Date.now()]);
+      await loadFolders();
+      return id;
+    } catch (e) {
+      if (e.message?.includes("UNIQUE")) {
+        Alert.alert("알림", "이미 같은 이름의 폴더가 있습니다.");
+      }
+      return null;
+    }
+  }
+
+  async function renameFolder(id, newName) {
+    const trimmed = (newName || "").trim().slice(0, 20);
+    if (!trimmed) return;
+    try {
+      await exec("UPDATE folders SET name=? WHERE id=?;", [trimmed, id]);
+      await loadFolders();
+    } catch (e) {
+      if (e.message?.includes("UNIQUE")) {
+        Alert.alert("알림", "이미 같은 이름의 폴더가 있습니다.");
+      }
+    }
+  }
+
+  async function deleteFolder(id) {
+    await execBatch([
+      { sql: "DELETE FROM novel_folders WHERE folder_id=?;", params: [id] },
+      { sql: "DELETE FROM folders WHERE id=?;", params: [id] },
+    ]);
+    await loadFolders();
+    await loadNovelFolderMap();
+    if (filterFolder === id) setFilterFolder("ALL");
+  }
+
+  async function updateFolderColor(id, color) {
+    await exec("UPDATE folders SET color=? WHERE id=?;", [color, id]);
+    await loadFolders();
+  }
+
+  async function updateFolderIcon(id, icon) {
+    await exec("UPDATE folders SET icon=? WHERE id=?;", [icon, id]);
+    await loadFolders();
+  }
+
+  async function reorderFolder(id, direction) {
+    const idx = folders.findIndex(f => f.id === id);
+    if (idx < 0) return;
+    const targetIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= folders.length) return;
+    const queries = [
+      { sql: "UPDATE folders SET sort_order=? WHERE id=?;", params: [targetIdx, folders[idx].id] },
+      { sql: "UPDATE folders SET sort_order=? WHERE id=?;", params: [idx, folders[targetIdx].id] },
+    ];
+    await execBatch(queries);
+    await loadFolders();
+  }
+
+  async function toggleNovelFolder(novelId, folderId) {
+    const current = novelFolderMap.get(novelId) || [];
+    const oldMap = novelFolderMap;
+    const newMap = new Map(novelFolderMap);
+    if (current.includes(folderId)) {
+      newMap.set(novelId, current.filter(f => f !== folderId));
+      setNovelFolderMap(newMap);
+      try {
+        await exec("DELETE FROM novel_folders WHERE folder_id=? AND novel_id=?;", [folderId, novelId]);
+      } catch (e) { setNovelFolderMap(oldMap); }
+    } else {
+      newMap.set(novelId, [...current, folderId]);
+      setNovelFolderMap(newMap);
+      try {
+        await exec("INSERT OR IGNORE INTO novel_folders (folder_id, novel_id, added_at) VALUES (?,?,?);",
+          [folderId, novelId, Date.now()]);
+      } catch (e) { setNovelFolderMap(oldMap); }
+    }
+  }
+
+  async function setNovelFolders(novelId, folderIds) {
+    const queries = [{ sql: "DELETE FROM novel_folders WHERE novel_id=?;", params: [novelId] }];
+    for (const fid of folderIds) {
+      queries.push({ sql: "INSERT INTO novel_folders (folder_id, novel_id, added_at) VALUES (?,?,?);", params: [fid, novelId, Date.now()] });
+    }
+    await execBatch(queries);
+    const newMap = new Map(novelFolderMap);
+    newMap.set(novelId, [...folderIds]);
+    setNovelFolderMap(newMap);
+  }
+
+  async function batchSetFolder(folderId, mode) {
+    const ids = selectedIdsRef.current;
+    if (!ids.length) { Alert.alert("알림", "먼저 작품을 선택해주세요."); return; }
+    const folder = folders.find(f => f.id === folderId);
+    if (!folder) return;
+    if (mode === "add") {
+      const queries = ids.map(nid => ({
+        sql: "INSERT OR IGNORE INTO novel_folders (folder_id, novel_id, added_at) VALUES (?,?,?);",
+        params: [folderId, nid, Date.now()],
+      }));
+      await execBatch(queries);
+      await loadNovelFolderMap();
+      Alert.alert("완료", `${ids.length}개 작품을 "${folder.name}" 폴더에 추가했습니다.`);
+    } else {
+      const queries = ids.map(nid => ({
+        sql: "DELETE FROM novel_folders WHERE folder_id=? AND novel_id=?;",
+        params: [folderId, nid],
+      }));
+      await execBatch(queries);
+      await loadNovelFolderMap();
+      Alert.alert("완료", `${ids.length}개 작품을 "${folder.name}" 폴더에서 제거했습니다.`);
+    }
+  }
+
+  function getFolderNovelCount(folderId) {
+    let count = 0;
+    novelFolderMap.forEach((folderIds) => {
+      if (folderIds.includes(folderId)) count++;
+    });
+    return count;
+  }
+
+  // 📂 폴더 필터용 파생 상태 (Set.has()로 O(1) 조회)
+  const folderFilteredIds = useMemo(() => {
+    if (filterFolder === "ALL") return null;
+    const ids = new Set();
+    novelFolderMap.forEach((folderIds, novelId) => {
+      if (folderIds.includes(filterFolder)) ids.add(novelId);
+    });
+    return ids;
+  }, [filterFolder, novelFolderMap]);
+
+  /* =========================================================
      🆕 고급 필터 함수
      ========================================================= */
   function advancedFilter(novels) {
@@ -22343,6 +22742,7 @@ function AppContent() {
       if (filterPlatform !== "ALL" && !parsePlatforms(n.platforms).includes(filterPlatform)) return false;
       if (filterGenre !== "ALL" && (getFirstGenre(n.major_genre) || deriveMajorGenre(n.tags)) !== filterGenre) return false;
       if (filterStatus !== "ALL" && (n.status || "reading") !== filterStatus) return false;
+      if (folderFilteredIds !== null && !folderFilteredIds.has(n.id)) return false;
       return true;
     });
   }
@@ -22707,7 +23107,11 @@ function AppContent() {
           
           // 🖼️ v3.4.5: 표지 라이브러리 로드
           await loadCoverLibrary();
-          
+
+          // 📂 v3.7.0: 폴더 데이터 로드
+          await loadFolders();
+          await loadNovelFolderMap();
+
           // 🧠 v3.5.0: 취향 발견 시스템 마이그레이션 (기존 매칭 데이터에서 패턴 추출)
           // 🆕 v3.5.8: savedTagAttributes 전달 (작품명 태그 제외)
           const migrateTagAttrs = savedTagAttributes || {};
@@ -22901,6 +23305,13 @@ function AppContent() {
       PLATFORM_OPTIONS = [...FACTORY_PLATFORM_OPTIONS];
       PLATFORM_URLS = { ...FACTORY_PLATFORM_URLS };
       setPlatformRegistry(null);
+      // 📂 v3.7.0: 폴더 상태 리셋
+      setFolders([]);
+      setNovelFolderMap(new Map());
+      setFilterFolder("ALL");
+      setFolderModalOpen(false);
+      setFolderAssignModalOpen(false);
+      setFolderAssignTarget(null);
       // 🔧 누락 리셋 보완
       setMatchStats({ total: 0, done: 0, percent: 0 });
       setIsAutoMatching(false);
@@ -23074,6 +23485,9 @@ function AppContent() {
       await loadList(undefined, undefined, "slot-switch");
       await loadPlannedList();
       await loadCoverLibrary();
+      // 📂 v3.7.0: 폴더 데이터 로드
+      await loadFolders();
+      await loadNovelFolderMap();
       
       // 🔧 v3.5.15e: 인사이트/패턴도 새 DB에서 재로드 (분석 탭 진입 전 일관성 보장)
       loadInsights().catch(() => {});
@@ -27243,6 +27657,7 @@ function AppContent() {
             await execBatch([
               { sql: "DELETE FROM choice_logs WHERE winner_id=? OR loser_id=?", params: [id, id] },
               { sql: "DELETE FROM matches WHERE a_id=? OR b_id=?", params: [id, id] },
+              { sql: "DELETE FROM novel_folders WHERE novel_id=?", params: [id] },
               { sql: "DELETE FROM novels WHERE id=?", params: [id] },
             ]);
             // 🔧 v3.5.15e: 미플러시 choiceLog에서도 삭제 대상 제거 (고아 재삽입 방지)
@@ -27371,6 +27786,8 @@ function AppContent() {
               // === 핵심 데이터 ===
               if (effectiveSel.novels) {
                 batch.push({ sql: "DELETE FROM novels;" });
+                batch.push({ sql: "DELETE FROM folders;" });
+                batch.push({ sql: "DELETE FROM novel_folders;" });
                 // 표지 상태도 리셋
                 batch.push({ sql: "UPDATE cover_library SET status='unused', novel_id=NULL" });
               }
@@ -29016,7 +29433,7 @@ function AppContent() {
       });
     }
     return result;
-  }, [homeQuery, list, filterTier, filterPlatform, filterGenre, filterStatus, searchIncludeTags, searchExcludeTags, searchExcludeStatus, searchExcludeWorkStatus]);
+  }, [homeQuery, list, filterTier, filterPlatform, filterGenre, filterStatus, searchIncludeTags, searchExcludeTags, searchExcludeStatus, searchExcludeWorkStatus, folderFilteredIds]);
 
   // 공용 검색 필터 (bulk/search)
   const filtered = useMemo(() => {
@@ -29595,11 +30012,16 @@ function AppContent() {
                 params: [id, id],
               });
               queries.push({
+                sql: "DELETE FROM novel_folders WHERE novel_id=?",
+                params: [id],
+              });
+              queries.push({
                 sql: "DELETE FROM novels WHERE id=?",
                 params: [id],
               });
             }
             await execBatch(queries);
+            await loadNovelFolderMap();
             // 🔧 v3.5.15e: 미플러시 choiceLog에서도 삭제 대상 제거 (고아 재삽입 방지)
             const deletedSet = new Set(ids);
             choiceLogQueue.pending = choiceLogQueue.pending.filter(l => !deletedSet.has(l.winner_id) && !deletedSet.has(l.loser_id));
@@ -30083,6 +30505,12 @@ async function exportJSON() {
       payload.PR = platformRegistry;
     }
 
+    // 📂 v3.7.0: 폴더 백업 (FD = Folders, NF = Novel-Folders)
+    const foldersData = await all("SELECT * FROM folders ORDER BY sort_order;");
+    const novelFoldersData = await all("SELECT * FROM novel_folders;");
+    if (foldersData?.length) payload.FD = foldersData;
+    if (novelFoldersData?.length) payload.NF = novelFoldersData;
+
     // 📋 v3.3.0: 예정 작품 백업 (PL = Planned List)
     // 🆕 v3.4: 확장 필드 추가
     if (plannedNovels && plannedNovels.length > 0) {
@@ -30328,6 +30756,8 @@ async function importJSON() {
         { sql: "DELETE FROM choice_logs;", params: [] },
         { sql: "DELETE FROM preference_patterns;", params: [] },
         { sql: "DELETE FROM insight_queue;", params: [] },
+        { sql: "DELETE FROM folders;", params: [] },
+        { sql: "DELETE FROM novel_folders;", params: [] },
       ]);
       invalidatePatternCache(); // 🔧 v3.5.14
       invalidateWeightsCache(); // 🔧 v3.5.14
@@ -30740,7 +31170,25 @@ async function importJSON() {
               }
 
               // v9는 Elo 데이터 포함 → 재계산 불필요!
-              
+
+              // 📂 v3.7.0: 폴더 복원
+              if (Array.isArray(data.FD) && data.FD.length > 0) {
+                const folderQueries = data.FD.map(f => ({
+                  sql: "INSERT INTO folders (id,name,color,icon,sort_order,created_at) VALUES (?,?,?,?,?,?);",
+                  params: [f.id, f.name, f.color||'#6366f1', f.icon||'📂', f.sort_order||0, f.created_at||Date.now()],
+                }));
+                await execBatch(folderQueries);
+              }
+              if (Array.isArray(data.NF) && data.NF.length > 0) {
+                const nfQueries = data.NF.map(nf => ({
+                  sql: "INSERT OR IGNORE INTO novel_folders (folder_id,novel_id,added_at) VALUES (?,?,?);",
+                  params: [nf.folder_id, nf.novel_id, nf.added_at||Date.now()],
+                }));
+                await execBatch(nfQueries);
+              }
+              await loadFolders();
+              await loadNovelFolderMap();
+
               // 🧠 v3.5.5: preference_patterns 복원
               let patternsRestored = false;
               if (Array.isArray(data.PP) && data.PP.length > 0) {
@@ -31873,6 +32321,21 @@ async function importJSON() {
                   <Chip key={s.key} label={s.label} active={filterStatus === s.key} onPress={() => setFilterStatus(s.key)} />
                 ))}
               </View>
+              {folders.length > 0 && (
+                <>
+                  <Label style={{ marginTop: 8 }}>📂 폴더</Label>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+                    <Chip label="전체" active={filterFolder === "ALL"} onPress={() => setFilterFolder("ALL")} />
+                    {folders.map(f => (
+                      <Chip key={f.id} label={`${f.icon || '📂'} ${f.name}`} active={filterFolder === f.id} onPress={() => setFilterFolder(f.id)} />
+                    ))}
+                    <Chip label="➕" active={false} onPress={() => {
+                      Alert.prompt ? Alert.prompt("새 폴더", "폴더 이름을 입력하세요 (최대 20자)", (text) => { if (text?.trim()) createFolder(text.trim()); }, "plain-text", "", "default") :
+                      Alert.alert("새 폴더", "설정 > 폴더 관리에서 폴더를 만들 수 있습니다.");
+                    }} />
+                  </View>
+                </>
+              )}
             </Section>
 
             <Section title="검색 / 정렬">
@@ -31905,6 +32368,18 @@ async function importJSON() {
                 </TouchableOpacity>
               </View>
               
+              {/* 📂 폴더 필터 표시 */}
+              {filterFolder !== "ALL" && (() => {
+                const f = folders.find(x => x.id === filterFolder);
+                return f ? (
+                  <View style={{ backgroundColor: f.color || C.primary, padding: 8, borderRadius: 10, marginBottom: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                    <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>📂 {f.icon || '📂'} {f.name} 폴더 필터 적용 중</Text>
+                    <TouchableOpacity onPress={() => setFilterFolder("ALL")}>
+                      <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>✕ 해제</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null;
+              })()}
               {/* 현재 적용된 필터 표시 */}
               {(searchIncludeTags.length > 0 || searchExcludeTags.length > 0 || searchExcludeStatus.length > 0 || searchExcludeWorkStatus.length > 0) && (
                 <View style={{ 
@@ -32072,7 +32547,17 @@ async function importJSON() {
                     item={item}
                     index={index}
                     onPress={compareMode ? () => toggleCompare(item.id) : () => openEdit({ ...item })}
-                    onLongPress={() => Alert.alert(item.title, `작가: ${item.author || "-"}\n\n${item.note || "(메모 없음)"}`)}
+                    onLongPress={() => {
+                      const folderNames = (novelFolderMap.get(item.id) || []).map(fid => { const f = folders.find(x => x.id === fid); return f ? `${f.icon||'📂'} ${f.name}` : null; }).filter(Boolean).join(", ");
+                      Alert.alert(
+                        item.title,
+                        `작가: ${item.author || "-"}\n${folderNames ? `📂 폴더: ${folderNames}\n` : ""}\n${item.note || "(메모 없음)"}`,
+                        [
+                          { text: "📂 폴더 배정", onPress: () => { setFolderAssignTarget(item.id); deferOpen(setFolderAssignModalOpen); } },
+                          { text: "확인" },
+                        ]
+                      );
+                    }}
                     onTogglePin={(e) => { e?.stopPropagation?.(); togglePin(item.id, item.pinned); }}
                     onLinkPress={(e) => { e?.stopPropagation?.(); safeOpenURL(item.link); }}
                     onCoverPress={setCoverViewerUri}
@@ -36444,6 +36929,30 @@ async function importJSON() {
                 style={{ marginTop: 8 }}
               />
 
+              {/* 📂 v3.7.0: 폴더 일괄 배정 */}
+              {folders.length > 0 && (
+                <>
+                  <View style={{ height: 12 }} />
+                  <Text style={{ fontWeight: "700", marginBottom: 6, color: C.text }}>
+                    📂 폴더 일괄 배정
+                  </Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+                    {folders.map(f => (
+                      <View key={f.id} style={{ flexDirection: "row", marginRight: 8, marginBottom: 8 }}>
+                        <TouchableOpacity onPress={() => batchSetFolder(f.id, "add")}
+                          style={{ backgroundColor: f.color || C.primary, paddingHorizontal: 10, paddingVertical: 6, borderTopLeftRadius: 8, borderBottomLeftRadius: 8 }}>
+                          <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>+ {f.icon || '📂'} {f.name}</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => batchSetFolder(f.id, "remove")}
+                          style={{ backgroundColor: C.warn, paddingHorizontal: 8, paddingVertical: 6, borderTopRightRadius: 8, borderBottomRightRadius: 8 }}>
+                          <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>−</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                  </View>
+                </>
+              )}
+
               <View style={{ height: 12 }} />
               <Text style={{ fontWeight: "700", marginBottom: 6, color: C.text }}>
                 읽은 회차 수 증감
@@ -37235,6 +37744,28 @@ async function importJSON() {
                   </TouchableOpacity>
                 ))}
               </View>
+            </Section>
+
+            {/* 📂 v3.7.0: 폴더 관리 */}
+            <Section title="📂 폴더 관리">
+              <Text style={{ color: C.sub, marginBottom: 12, fontSize: 13 }}>
+                폴더를 만들어 작품을 자유롭게 분류할 수 있습니다. 하나의 작품을 여러 폴더에 넣을 수 있습니다.
+              </Text>
+              <TouchableOpacity
+                onPress={() => deferOpen(setFolderModalOpen)}
+                style={{
+                  backgroundColor: C.primary,
+                  padding: 14,
+                  borderRadius: 12,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  marginBottom: 8,
+                }}
+              >
+                <Text style={{ color: "#fff", fontSize: 16, fontWeight: "700" }}>📂 폴더 관리 열기</Text>
+              </TouchableOpacity>
+              <Text style={{ color: C.sub, fontSize: 11, textAlign: "center" }}>현재 {folders.length}개 폴더</Text>
             </Section>
 
             {/* ⚙️ 티어 시스템 설정 (v6.0 유연한 티어 시스템) */}
@@ -40238,6 +40769,24 @@ async function importJSON() {
                   ))}
                 </View>
 
+                {/* 📂 v3.7.0: 폴더 배정 */}
+                {folders.length > 0 && (
+                  <>
+                    <Label style={{ marginTop: 10 }}>📂 폴더</Label>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+                      {folders.map(f => {
+                        const isIn = (novelFolderMap.get(editItem?.id) || []).includes(f.id);
+                        return (
+                          <TouchableOpacity key={f.id} onPress={() => editItem?.id && toggleNovelFolder(editItem.id, f.id)}
+                            style={{ flexDirection: "row", alignItems: "center", paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, backgroundColor: isIn ? (f.color || C.primary) : C.chip, marginRight: 8, marginBottom: 8 }}>
+                            <Text style={{ color: isIn ? "#fff" : C.text, fontWeight: isIn ? "700" : "400", fontSize: 13 }}>{f.icon || '📂'} {f.name}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </>
+                )}
+
                 <Label style={{ marginTop: 10 }}>본편 읽은 회차</Label>
 <Input
   value={String(editItem.read_count || 0)}
@@ -42530,6 +43079,34 @@ async function importJSON() {
           </View>
         </View>
       </Modal>
+
+      {/* 📂 v3.7.0: 폴더 관리 모달 */}
+      {folderModalOpen && <FolderManagerModal
+        visible={folderModalOpen}
+        onClose={() => setFolderModalOpen(false)}
+        folders={folders}
+        onCreateFolder={createFolder}
+        onRenameFolder={renameFolder}
+        onDeleteFolder={deleteFolder}
+        onUpdateColor={updateFolderColor}
+        onUpdateIcon={updateFolderIcon}
+        onReorder={reorderFolder}
+        getFolderNovelCount={getFolderNovelCount}
+        theme={C}
+      />}
+
+      {/* 📂 v3.7.0: 폴더 배정 모달 */}
+      {folderAssignModalOpen && <FolderAssignModal
+        visible={folderAssignModalOpen}
+        onClose={() => { setFolderAssignModalOpen(false); setFolderAssignTarget(null); }}
+        novelId={folderAssignTarget}
+        novelTitle={folderAssignTarget ? (listMap.get(folderAssignTarget)?.title || "") : ""}
+        folders={folders}
+        novelFolderMap={novelFolderMap}
+        onToggle={toggleNovelFolder}
+        onCreateFolder={createFolder}
+        theme={C}
+      />}
 
       {/* 🏷️ 태그 매니저 모달 (풀스크린) — v3.5.9: 조건부 마운트로 성능 최적화 */}
       {tagManagerModalOpen && <TagManagerModal
