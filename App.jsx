@@ -2,9 +2,40 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.9.0                                                                   ║
+ * ║  버전: 3.9.1                                                                   ║
  * ║  최종 수정: 2026-04-05                                                        ║
  * ║  총 라인 수: 약 45,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v3.9.1 코드 전반 버그 수정 15건 (2026-04-05)                               ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [수정] 🗄️ DB/데이터 무결성                                                   ║
+ * ║ • switchSlotDb: 세대 증가가 flush 전에 실행되어 지연 쓰기 데이터 손실 수정    ║
+ * ║ • Import: NF(폴더매핑)/GI(갤러리) ��원 시 novel_id 미리매핑 → 고아 데이터    ║
+ * ║   발생 수정 (NID 백업 필드 추가, old→new ID 매핑 구축)                        ║
+ * ║ • calculatePredictionAccuracy: all() null 반환 시 크래시 수정                 ║
+ * ║ • migrateExistingMatchesToPatterns: all() null 반환 시 크래시 수정            ║
+ * ║                                                                              ║
+ * ║ [수정] 🧮 로직/기능 오류                                                      ║
+ * ║ • CoordinateGridView: X축/Y축 라벨 위치가 서로 바뀌어 있던 것 수정           ║
+ * ║ • analyzeSpectrum: normalizedScore 분모에 미매칭 태그 포함 → positions 기준   ║
+ * ║ • combo_tags: 커스텀 초기화에서 RESET_CATEGORIES 누락 → 초기화 불가 수정     ║
+ * ║ • matchTags 제거: award.matchTags null일 때 크래시 가능성 수정               ║
+ * ║ • 모두승인/선택승인: addRecentChange 누락 → 최근 변경 기록 미반영 수정       ║
+ * ║ • 진단탭 데이터규모 섹션: JSX 주석이 JS 컨텍스트에 위치 → 렌더 오류 수정    ║
+ * ║ • 슬롯 전환: setScreenRaw → setScreen으로 변경 (screenRef 동기화)            ║
+ * ║                                                                              ║
+ * ║ [수정] 🎨 UI/다크모드                                                         ║
+ * ║ • 매칭/검토/설정 등 다수 하드코딩 색상 → isDark 분기 적용                     ║
+ * ║ • AwardsScreen settingsScrollKey: onShow에서 미호출 수정                      ║
+ * ║                                                                              ║
+ * ║ [개선] ⚡ 성능/안정성                                                          ║
+ * ║ • NovelCard memo: platformCovers, awardSystemSettings 비교 누락 추가         ║
+ * ║ • NovelCard AwardsRow: awardSystemSettings 미전달 → 커스텀 수상 미표시 수정  ║
+ * ║ • SentimentChip: 렌더마다 재생성 → useMemo로 안정화 (불필요 리마운트 방지)   ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -2987,11 +3018,11 @@ async function flushAllPendingWrites() {
 async function switchSlotDb(newSlotId) {
   console.log(`[슬롯] 전환 시작: ${activeSlotId} → ${newSlotId}`);
   
+  // 1. 모든 지연 쓰기 flush (세대 증가 전에 수행 — flush 중 safeDefer가 현재 세대로 실행되도록)
+  await flushAllPendingWrites();
+
   // 0. 🔧 슬롯 세대 증가 → 이전 슬롯의 setTimeout 기반 지연 쓰기를 무효화
   _slotGeneration++;
-
-  // 1. 모든 지연 쓰기 flush
-  await flushAllPendingWrites();
 
   // 2. 현재 슬롯 작품 수 업데이트
   try {
@@ -6313,17 +6344,17 @@ async function calculatePredictionAccuracy(days = 30) {
   try {
     const since = Date.now() - (days * 24 * 60 * 60 * 1000);
     
-    const rows = await all(`
-      SELECT was_correct FROM choice_logs 
-      WHERE match_type = 'user' 
-        AND was_correct IS NOT NULL 
+    const rows = (await all(`
+      SELECT was_correct FROM choice_logs
+      WHERE match_type = 'user'
+        AND was_correct IS NOT NULL
         AND created_at >= ?
-    `, [since]);
-    
+    `, [since])) || [];
+
     if (rows.length === 0) {
       return { accuracy: 0, sampleSize: 0 };
     }
-    
+
     const correct = rows.filter(r => r.was_correct === 1).length;
     return {
       accuracy: correct / rows.length,
@@ -6347,8 +6378,8 @@ async function migrateExistingMatchesToPatterns(tagAttrs = {}) {
       return;
     }
     
-    const matches = await all(`
-      SELECT m.*, a.title as a_title, a.rating as a_rating, a.tags as a_tags, 
+    const matches = (await all(`
+      SELECT m.*, a.title as a_title, a.rating as a_rating, a.tags as a_tags,
              a.major_genre as a_genre, a.author as a_author,
              a.read_count as a_read, a.total_episodes as a_total,
              b.title as b_title, b.rating as b_rating, b.tags as b_tags,
@@ -6359,8 +6390,8 @@ async function migrateExistingMatchesToPatterns(tagAttrs = {}) {
       JOIN novels b ON b.id = m.b_id
       WHERE m.decided_by = 'user'
       ORDER BY m.created_at ASC
-    `);
-    
+    `)) || [];
+
     console.log(`[migrateExistingMatchesToPatterns] ${matches.length}개 매칭 마이그레이션 시작`);
     
     const updates = [];
@@ -8057,7 +8088,7 @@ function analyzeSpectrum(tagData, spectrumId) {
   return {
     type: "range",
     avgScore: sumWeight > 0 ? sumScore / sumWeight : 0,
-    normalizedScore: sumWeight > 0 ? (sumScore / sumWeight) * (sumWeight / matches.length) : 0,
+    normalizedScore: sumWeight > 0 ? (sumScore / sumWeight) * (sumWeight / (positions.length || 1)) : 0,
     tags: positions,
     spectrumName: spectrum.name,
   };
@@ -10300,19 +10331,20 @@ const GalleryGridItem = memo(({ item, onPress, onLongPress, theme }) => (
 ));
 
 // 📱 NovelCard: 홈 화면 작품 카드 컴포넌트 (메모이제이션으로 성능 최적화)
-const NovelCard = memo(({ 
-  item, 
-  index, 
-  onPress, 
+const NovelCard = memo(({
+  item,
+  index,
+  onPress,
   onLongPress, // 🆕 v3.4.1: 길게 누르면 전체 제목 표시
-  onTogglePin, 
+  onTogglePin,
   onLinkPress,
   onCoverPress, // 🖼️ v3.5.9: 표지 크게 보기
-  compareMode, 
-  isComparing, 
-  platformCovers, 
-  theme, 
-  isDark 
+  compareMode,
+  isComparing,
+  platformCovers,
+  awardSystemSettings,
+  theme,
+  isDark
 }) => {
   PerfMonitor.trackRender("NovelCard"); // 🔬
   // 메모이제이션된 계산들
@@ -10407,7 +10439,7 @@ const NovelCard = memo(({
           </Text>
           
           {/* 수상 뱃지 */}
-          {hasAwards && <AwardsRow awardsJson={item.awards} />}
+          {hasAwards && <AwardsRow awardsJson={item.awards} awardSystemSettings={awardSystemSettings} />}
         </View>
       </View>
       
@@ -10452,7 +10484,9 @@ const NovelCard = memo(({
     prevProps.index === nextProps.index &&
     prevProps.isComparing === nextProps.isComparing &&
     prevProps.compareMode === nextProps.compareMode &&
-    prevProps.isDark === nextProps.isDark
+    prevProps.isDark === nextProps.isDark &&
+    prevProps.platformCovers === nextProps.platformCovers &&
+    prevProps.awardSystemSettings === nextProps.awardSystemSettings
   );
 });
 
@@ -11055,8 +11089,8 @@ const TagSelectModal = memo(({
     );
   };
 
-  // 🎭 감정 태그 칩 (색상 표시)
-  const SentimentChip = ({ tag, active, onPress }) => {
+  // 🎭 감정 태그 칩 (색상 표시) — 🔧 v3.9.1: useMemo로 안정화 (렌더마다 재생성 방지)
+  const SentimentChip = useMemo(() => ({ tag, active, onPress }) => {
     const sentiment = getTagSentimentLocal(tag);
     const isPinned = listHasTag(pinnedTags, tag);
     // 🔧 v3.5.9: 작품명 태그 시각 구분 (tagAttributes 참조)
@@ -11115,7 +11149,7 @@ const TagSelectModal = memo(({
         </Text>
       </TouchableOpacity>
     );
-  };
+  }, [getTagSentimentLocal, pinnedTags, tagAttributes, isDark, bulkMode, bulkSelectedTags, handleLongPressTag]);
 
   if (!visible) return null;
 
@@ -13529,31 +13563,8 @@ const CoordinateGridView = memo(({
         {/* 그리드 선 */}
         {gridLines}
         
-        {/* 축 라벨 - X축 (상단/하단) */}
-        <Text style={{
-          position: "absolute",
-          top: 8,
-          left: padding + gridSize / 2,
-          transform: [{ translateX: -30 }],
-          fontSize: 10,
-          color: C.sub,
-          fontWeight: "600",
-        }}>
-          {system.xAxis?.positive || "→"}
-        </Text>
-        <Text style={{
-          position: "absolute",
-          bottom: 8,
-          left: padding + gridSize / 2,
-          transform: [{ translateX: -30 }],
-          fontSize: 10,
-          color: C.sub,
-          fontWeight: "600",
-        }}>
-          {system.xAxis?.negative || "←"}
-        </Text>
-        
-        {/* 축 라벨 - Y축 (좌측/우측) */}
+        {/* 🔧 v3.9.1: 축 라벨 위치 수정 — X축은 좌/우, Y축은 상/하 */}
+        {/* 축 라벨 - X축 (좌측: negative, 우측: positive) */}
         <Text style={{
           position: "absolute",
           left: 4,
@@ -13565,7 +13576,7 @@ const CoordinateGridView = memo(({
           width: 32,
           textAlign: "center",
         }}>
-          {system.yAxis?.negative || "↓"}
+          {system.xAxis?.negative || "←"}
         </Text>
         <Text style={{
           position: "absolute",
@@ -13578,7 +13589,31 @@ const CoordinateGridView = memo(({
           width: 32,
           textAlign: "center",
         }}>
+          {system.xAxis?.positive || "→"}
+        </Text>
+
+        {/* 축 라벨 - Y축 (상단: positive, 하단: negative) */}
+        <Text style={{
+          position: "absolute",
+          top: 8,
+          left: padding + gridSize / 2,
+          transform: [{ translateX: -30 }],
+          fontSize: 10,
+          color: C.sub,
+          fontWeight: "600",
+        }}>
           {system.yAxis?.positive || "↑"}
+        </Text>
+        <Text style={{
+          position: "absolute",
+          bottom: 8,
+          left: padding + gridSize / 2,
+          transform: [{ translateX: -30 }],
+          fontSize: 10,
+          color: C.sub,
+          fontWeight: "600",
+        }}>
+          {system.yAxis?.negative || "↓"}
         </Text>
         
         {/* 태그 점들 */}
@@ -18099,32 +18134,32 @@ const AwardsScreen = memo(({
         visible={settingsModalOpen}
         animationType="slide"
         onRequestClose={() => setSettingsModalOpen(false)}
-        onShow={() => onModalShow('settings')}
+        onShow={() => { onModalShow('settings'); setSettingsScrollKey(k => k + 1); }}
         transparent
       >
         <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)" }}>
-          <TouchableOpacity 
-            style={{ height: Math.round(Dimensions.get("window").height * 0.08) }} 
-            activeOpacity={1} 
-            onPress={() => setSettingsModalOpen(false)} 
+          <TouchableOpacity
+            style={{ height: Math.round(Dimensions.get("window").height * 0.08) }}
+            activeOpacity={1}
+            onPress={() => setSettingsModalOpen(false)}
           />
-          <View style={{ 
-            backgroundColor: C.card, 
-            borderTopLeftRadius: 20, 
-            borderTopRightRadius: 20, 
-            padding: 20, 
+          <View style={{
+            backgroundColor: C.card,
+            borderTopLeftRadius: 20,
+            borderTopRightRadius: 20,
+            padding: 20,
             flex: 1,
           }}>
             <Text style={{ fontSize: 20, fontWeight: "900", color: C.text, marginBottom: 16 }}>
               ⚙️ {awardSelectedYear}년 상 설정
             </Text>
-            <TouchableOpacity 
-              onPress={() => setSettingsModalOpen(false)} 
+            <TouchableOpacity
+              onPress={() => setSettingsModalOpen(false)}
               style={{ position: "absolute", top: 20, right: 20, padding: 8, zIndex: 10 }}
             >
               <Text style={{ fontSize: 24, color: C.sub }}>×</Text>
             </TouchableOpacity>
-            
+
             <ScrollView key={`settings-scroll-${settingsScrollKey}`} style={{ flex: 1 }} nestedScrollEnabled={true} showsVerticalScrollIndicator={true}>
               {/* 현재 상 목록 */}
               <Text style={{ fontWeight: "800", color: C.text, marginBottom: 12, fontSize: 16 }}>
@@ -18276,7 +18311,7 @@ const AwardsScreen = memo(({
                         <TouchableOpacity
                           key={i}
                           onPress={() => {
-                            const newTags = (award.matchTags || []).filter((_, idx) => award.matchTags[idx] !== tag);
+                            const newTags = (award.matchTags || []).filter(t => t !== tag);
                             updateAward(award.id, { matchTags: newTags });
                           }}
                           style={{
@@ -24076,8 +24111,8 @@ function AppContent() {
       const meta = await loadSlotMeta();
       setSlotMeta(meta);
       
-      // 화면을 홈으로 이동
-      setScreenRaw("home");
+      // 화면을 홈으로 이동 (🔧 v3.9.1: setScreen 사용 — screenRef 동기화)
+      setScreen("home");
       
       Alert.alert("슬롯 전환 완료", `"${meta.slots.find(s => s.id === newSlotId)?.name || "슬롯"}"으로 전환되었습니다.`);
       
@@ -28496,6 +28531,7 @@ function AppContent() {
         { key: "tag_coordinates", label: "태그 좌표계", desc: "스펙트럼 좌표계 설정" },
         { key: "tag_attributes", label: "태그 속성", desc: "농도, 호불호 등 태그 속성" },
         { key: "custom_tags", label: "커스텀 태그 목록", desc: "사용자 추가 태그 (조합 태그 포함)" },
+        { key: "combo_tags", label: "조합식 태그 설정", desc: "커스텀 조합 특성/대상 설정" },
         { key: "tag_pins", label: "태그 고정/숨김", desc: "고정 및 숨김 태그" },
       ],
     },
@@ -31320,10 +31356,14 @@ async function exportJSON() {
     }
 
     // 📂 v3.7.0: 폴더 백업 (FD = Folders, NF = Novel-Folders)
+    // 🔧 v3.9.1: NID(소설 ID 목록) 추가 — NF/GI 복원 시 old→new ID 매핑용
     const foldersData = await all("SELECT * FROM folders ORDER BY sort_order;");
     const novelFoldersData = await all("SELECT * FROM novel_folders;");
     if (foldersData?.length) payload.FD = foldersData;
-    if (novelFoldersData?.length) payload.NF = novelFoldersData;
+    if (novelFoldersData?.length) {
+      payload.NF = novelFoldersData;
+      if (!payload.NID) payload.NID = novels.map(n => n.id);
+    }
 
     // 🎨 v3.8.0: 갤러리 이미지 백업 (GI = Gallery Images, 메타데이터만)
     try {
@@ -31332,6 +31372,7 @@ async function exportJSON() {
         payload.GI = giRows.map(r => ({
           i: r.id, n: r.novel_id, fp: r.file_path || "", c: r.caption || "", t: r.created_at || 0,
         }));
+        if (!payload.NID) payload.NID = novels.map(n => n.id);
       }
     } catch (giErr) {
       console.warn("gallery_images 백업 실패:", giErr);
@@ -32019,6 +32060,15 @@ async function importJSON() {
 
               // v9는 Elo 데이터 포함 → 재계산 불필요!
 
+              // 🔧 v3.9.1: old→new 소설 ID 매핑 구축 (NF/GI 복원용)
+              const oldIdToNewId = {};
+              if (Array.isArray(data.NID)) {
+                data.NID.forEach((oldId, i) => {
+                  if (i < idList.length) oldIdToNewId[oldId] = idList[i];
+                });
+              }
+              const remapNovelId = (oldId) => oldIdToNewId[oldId] || oldId;
+
               // 📂 v3.7.0: 폴더 복원
               try {
                 if (Array.isArray(data.FD) && data.FD.length > 0) {
@@ -32035,7 +32085,7 @@ async function importJSON() {
                     if (validNF.length > 0) {
                       const nfQueries = validNF.map(nf => ({
                         sql: "INSERT OR IGNORE INTO novel_folders (folder_id,novel_id,added_at) VALUES (?,?,?);",
-                        params: [nf.folder_id, nf.novel_id, nf.added_at||Date.now()],
+                        params: [nf.folder_id, remapNovelId(nf.novel_id), nf.added_at||Date.now()],
                       }));
                       await execBatch(nfQueries);
                     }
@@ -32062,7 +32112,7 @@ async function importJSON() {
                   if (validGI.length > 0) {
                     const giQueries = validGI.map(gi => ({
                       sql: "INSERT OR IGNORE INTO gallery_images (id,novel_id,file_path,caption,created_at) VALUES (?,?,?,?,?);",
-                      params: [gi.i || uuid(), gi.n, gi.fp, gi.c || "", gi.t || Date.now()],
+                      params: [gi.i || uuid(), remapNovelId(gi.n), gi.fp, gi.c || "", gi.t || Date.now()],
                     }));
                     await execBatch(giQueries);
                   }
@@ -33448,6 +33498,7 @@ async function importJSON() {
                     compareMode={compareMode}
                     isComparing={compareIds.includes(item.id)}
                     platformCovers={platformCovers}
+                    awardSystemSettings={awardSystemSettings}
                     theme={C}
                     isDark={isDark}
                   />
@@ -34053,7 +34104,7 @@ async function importJSON() {
               {/* 중복 체크 */}
               {plannedTitleDuplicateInfo && (
                 <View style={{ 
-                  backgroundColor: plannedTitleDuplicateInfo.type.startsWith("exact") ? "#fef2f2" : "#fffbeb", 
+                  backgroundColor: plannedTitleDuplicateInfo.type.startsWith("exact") ? (isDark ? "#7f1d1d" : "#fef2f2") : (isDark ? "#422006" : "#fffbeb"),
                   padding: 10, 
                   borderRadius: 8, 
                   marginTop: 6,
@@ -34888,7 +34939,7 @@ async function importJSON() {
               <View
                 style={{
                   height: 10,
-                  backgroundColor: "#eef2ff",
+                  backgroundColor: isDark ? "#1e1e3a" : "#eef2ff",
                   borderRadius: 999,
                   overflow: "hidden",
                 }}
@@ -34915,12 +34966,12 @@ async function importJSON() {
                   flexDirection: "row", 
                   alignItems: "center", 
                   marginTop: 10,
-                  backgroundColor: "#fef3c7",
+                  backgroundColor: isDark ? "#422006" : "#fef3c7",
                   padding: 8,
                   borderRadius: 8,
                 }}>
                   <ActivityIndicator size="small" color="#f59e0b" style={{ marginRight: 8 }} />
-                  <Text style={{ color: "#92400e", fontWeight: "600" }}>
+                  <Text style={{ color: isDark ? "#fcd34d" : "#92400e", fontWeight: "600" }}>
                     매칭 처리 중... {matchQueueStatus.pending > 0 ? `(대기: ${matchQueueStatus.pending}건)` : ""}
                   </Text>
                 </View>
@@ -35106,21 +35157,21 @@ async function importJSON() {
                   
               {/* 현재 매칭 자동판정 미리보기 — 자동매칭 ON일 때만 */}
               {autoEnabled && pair && (
-                    <View style={{ backgroundColor: "#fef3c7", padding: 10, borderRadius: 10, marginTop: 4 }}>
-                      <Text style={{ fontWeight: "700", color: "#92400e", marginBottom: 4 }}>
+                    <View style={{ backgroundColor: isDark ? "#422006" : "#fef3c7", padding: 10, borderRadius: 10, marginTop: 4 }}>
+                      <Text style={{ fontWeight: "700", color: isDark ? "#fcd34d" : "#92400e", marginBottom: 4 }}>
                         🔍 현재 매칭 자동판정 미리보기
                       </Text>
                       {(() => {
                         const result = evaluateAutoMatch(pair.A, pair.B, matchAnalysis);
                         if (!result) {
-                          return <Text style={{ color: "#92400e", fontSize: 12 }}>기준 미충족 - 수동 결정 필요</Text>;
+                          return <Text style={{ color: isDark ? "#fcd34d" : "#92400e", fontSize: 12 }}>기준 미충족 - 수동 결정 필요</Text>;
                         }
                         return (
                           <>
-                            <Text style={{ color: "#166534", fontWeight: "600" }}>
+                            <Text style={{ color: isDark ? "#86efac" : "#166534", fontWeight: "600" }}>
                               예상 승자: {result.winner.title}
                             </Text>
-                            <Text style={{ color: "#92400e", fontSize: 11 }}>
+                            <Text style={{ color: isDark ? "#fcd34d" : "#92400e", fontSize: 11 }}>
                               충족 기준: {result.reasons.map(r => autoMatchSettings.criteria[r.criterion]?.desc).join(", ")}
                             </Text>
                           </>
@@ -35288,8 +35339,8 @@ async function importJSON() {
             <Section title="매칭">
               {/* 🆕 v3.5.11: 매치 필터링 활성 표시 */}
               {matchFilterEnabled && (
-                <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#eff6ff", padding: 6, borderRadius: 8, marginBottom: 8 }}>
-                  <Text style={{ fontSize: 11, color: "#1d4ed8" }}>📊 매치 필터링 ON — 정보 충실 작품만 매칭</Text>
+                <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: isDark ? "#1e1b4b" : "#eff6ff", padding: 6, borderRadius: 8, marginBottom: 8 }}>
+                  <Text style={{ fontSize: 11, color: isDark ? "#93c5fd" : "#1d4ed8" }}>📊 매치 필터링 ON — 정보 충실 작품만 매칭</Text>
                 </View>
               )}
               {!pair ? (
@@ -35376,7 +35427,7 @@ async function importJSON() {
                           <Text style={{ color: C.ok, fontWeight: "800", fontSize: 13, width: 45, textAlign: "center" }}>
                             {Math.round(matchAnalysis.predictedWinRateA * 100)}%
                           </Text>
-                          <View style={{ flex: 1, height: 8, backgroundColor: "#e5e7eb", borderRadius: 999, overflow: "hidden", marginHorizontal: 6 }}>
+                          <View style={{ flex: 1, height: 8, backgroundColor: isDark ? "#374151" : "#e5e7eb", borderRadius: 999, overflow: "hidden", marginHorizontal: 6 }}>
                             <View style={{ 
                               width: `${Math.round(matchAnalysis.predictedWinRateA * 100)}%`, 
                               height: "100%", 
@@ -36693,6 +36744,12 @@ async function importJSON() {
                         setTierHistory(prev => [...historyItems, ...prev].slice(0, 20));
                         setReviewSelectedIds([]);
                         await loadList(undefined, undefined, "batch");
+                        // 🔧 v3.9.1: 모두 승인 시 최근 변경 기록 누락 수정
+                        for (const item of historyItems) {
+                          await addRecentChange(item.id, item.title, "tier_review", {
+                            from: item.from, to: item.to, action: "approve_all"
+                          });
+                        }
                         Alert.alert("완료", `${reviews.length}건 적용됨`);
                       }},
                     ]);
@@ -36729,6 +36786,12 @@ async function importJSON() {
                           setTierHistory(prev => [...historyItems, ...prev].slice(0, 20));
                           setReviewSelectedIds([]);
                           await loadList(undefined, undefined, "batch");
+                          // 🔧 v3.9.1: 선택 승인 시 최근 변경 기록 누락 수정
+                          for (const item of historyItems) {
+                            await addRecentChange(item.id, item.title, "tier_review", {
+                              from: item.from, to: item.to, action: "approve_selected"
+                            });
+                          }
                           Alert.alert("완료", `${selected.length}건 적용됨`);
                         }},
                       ]);
@@ -36880,17 +36943,17 @@ async function importJSON() {
               if (!hasPromotes && !hasDemotes) {
                 return (
                   <Section title="검토 현황">
-                    <View style={{ 
-                      backgroundColor: "#dcfce7", 
-                      padding: 16, 
+                    <View style={{
+                      backgroundColor: isDark ? "#14532d" : "#dcfce7",
+                      padding: 16,
                       borderRadius: 12,
                       alignItems: "center",
                     }}>
                       <Text style={{ fontSize: 24, marginBottom: 8 }}>✅</Text>
-                      <Text style={{ color: "#166534", fontWeight: "700", fontSize: 16 }}>
+                      <Text style={{ color: isDark ? "#86efac" : "#166534", fontWeight: "700", fontSize: 16 }}>
                         모든 검토가 완료되었습니다!
                       </Text>
-                      <Text style={{ color: "#15803d", fontSize: 13, marginTop: 4 }}>
+                      <Text style={{ color: isDark ? "#4ade80" : "#15803d", fontSize: 13, marginTop: 4 }}>
                         현재 승급/강등 대기 중인 작품이 없습니다.
                       </Text>
                     </View>
@@ -37551,25 +37614,25 @@ async function importJSON() {
                               onPress={() => handleInsightResponse(insight.id, 'confirmed')}
                               style={{
                                 flex: 1,
-                                backgroundColor: "#dcfce7",
+                                backgroundColor: isDark ? "#14532d" : "#dcfce7",
                                 padding: 10,
                                 borderRadius: 8,
                                 alignItems: "center",
                               }}
                             >
-                              <Text style={{ color: "#166534", fontWeight: "600" }}>✓ 맞아요</Text>
+                              <Text style={{ color: isDark ? "#86efac" : "#166534", fontWeight: "600" }}>✓ 맞아요</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
                               onPress={() => handleInsightResponse(insight.id, 'rejected')}
                               style={{
                                 flex: 1,
-                                backgroundColor: "#fee2e2",
+                                backgroundColor: isDark ? "#7f1d1d" : "#fee2e2",
                                 padding: 10,
                                 borderRadius: 8,
                                 alignItems: "center",
                               }}
                             >
-                              <Text style={{ color: "#991b1b", fontWeight: "600" }}>✗ 아니에요</Text>
+                              <Text style={{ color: isDark ? "#fca5a5" : "#991b1b", fontWeight: "600" }}>✗ 아니에요</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
                               onPress={() => handleInsightResponse(insight.id, 'skipped')}
@@ -39772,13 +39835,13 @@ async function importJSON() {
                   onPress={cleanupUnusedTags}
                   style={{
                     flex: 1,
-                    backgroundColor: "#fee2e2",
+                    backgroundColor: isDark ? "#7f1d1d" : "#fee2e2",
                     padding: 12,
                     borderRadius: 12,
                     alignItems: "center",
                   }}
                 >
-                  <Text style={{ color: C.warn, fontWeight: "600" }}>🗑️ 미사용 정리</Text>
+                  <Text style={{ color: isDark ? "#fca5a5" : C.warn, fontWeight: "600" }}>🗑️ 미사용 정리</Text>
                 </TouchableOpacity>
               </View>
               
@@ -39786,14 +39849,14 @@ async function importJSON() {
               <View style={{ backgroundColor: C.bg, padding: 14, borderRadius: 12 }}>
                 <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>📊 태그 통계</Text>
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                  <View style={{ backgroundColor: "#dcfce7", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
-                    <Text style={{ color: "#166534", fontSize: 12 }}>기본 대장르 {MAJOR_GENRES.length}</Text>
+                  <View style={{ backgroundColor: isDark ? "#14532d" : "#dcfce7", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
+                    <Text style={{ color: isDark ? "#86efac" : "#166534", fontSize: 12 }}>기본 대장르 {MAJOR_GENRES.length}</Text>
                   </View>
-                  <View style={{ backgroundColor: "#f0fdf4", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
-                    <Text style={{ color: "#15803d", fontSize: 12 }}>기본 부장르 {SUB_GENRES.length}</Text>
+                  <View style={{ backgroundColor: isDark ? "#14532d" : "#f0fdf4", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
+                    <Text style={{ color: isDark ? "#4ade80" : "#15803d", fontSize: 12 }}>기본 부장르 {SUB_GENRES.length}</Text>
                   </View>
-                  <View style={{ backgroundColor: "#e0e7ff", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
-                    <Text style={{ color: "#3730a3", fontSize: 12 }}>기본 일반 {ALL_DEFAULT_TAGS.length}</Text>
+                  <View style={{ backgroundColor: isDark ? "#1e1b4b" : "#e0e7ff", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
+                    <Text style={{ color: isDark ? "#a5b4fc" : "#3730a3", fontSize: 12 }}>기본 일반 {ALL_DEFAULT_TAGS.length}</Text>
                   </View>
                   <View style={{ backgroundColor: C.chip, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
                     <Text style={{ color: C.text, fontSize: 12 }}>커스텀 {customTags.length}</Text>
@@ -41775,8 +41838,8 @@ async function importJSON() {
             </Section>
             )}
 
-            {PerfMonitor.enabled && summary.stateSnapshots.length > 0 && (
             {/* 🔧 v3.6.0: DB 테이블 규모 확장 */}
+            {PerfMonitor.enabled && summary.stateSnapshots.length > 0 && (
             <Section title="📦 데이터 규모">
               {(() => {
                 const latest = summary.stateSnapshots[0];
