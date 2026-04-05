@@ -8634,6 +8634,18 @@ const CHANGELOG_DATA = [
     ],
   },
   {
+    version: "3.5.16", date: "2025-03-10",
+    title: "태그 정렬 + 대장르 통합 + 감정 재분류",
+    highlights: [
+      { type: "improve", text: "🏷️ 태그 정렬 모드 — 사용빈도/이름순/등록순 선택 + 마지막 탭 기억" },
+      { type: "improve", text: "대장르 통합 — 유사 중복 해소 (호러→공포/스릴러 등)" },
+    ],
+    details: [
+      { type: "improve", text: "선택된 태그 프리뷰 접이식 표시" },
+      { type: "fix", text: "'대중적'/'가작' 태그 감정 NEUTRAL로 재분류" },
+    ],
+  },
+  {
     version: "3.6.0", date: "2026-03-10",
     title: "Tag Registry — 태그 단일 저장소",
     highlights: [
