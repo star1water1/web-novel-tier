@@ -2,9 +2,31 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.9.1                                                                   ║
+ * ║  버전: 3.9.2                                                                   ║
  * ║  최종 수정: 2026-04-05                                                        ║
  * ║  총 라인 수: 약 45,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v3.9.2 코드 전반 버그 수정 7건 (2026-04-05)                                ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [수정] 🗄️ DB/데이터 무결성                                                   ║
+ * ║ • planned_novels INSERT: tag_data 컬럼 누락 수정 (UPDATE에만 존재)            ║
+ * ║ • Import rereadCount: opt.rr || 1 falsy 강제변환 → != null 체크 변경         ║
+ * ║                                                                              ║
+ * ║ [수정] 🧮 로직/기능 오류                                                      ║
+ * ║ • analyzePreferences: n=0일 때 wins/n 0으로 나누기 발생 → continue 추가      ║
+ * ║ • getAwardProbability: 빈 후보 배열 시 Math.max(...[]) = -Infinity 크래시     ║
+ * ║   → allScores.length === 0 조기 반환 추가                                    ║
+ * ║ • tierFromRating: cfg.tiers가 빈 배열일 때 cfg.tiers[-1] → undefined 크래시  ║
+ * ║   → length > 0 조건 추가                                                     ║
+ * ║                                                                              ║
+ * ║ [수정] ⚡ 성능/안정성                                                          ║
+ * ║ • 자동매칭 useEffect: autoMatchSettings.speed stale closure 수정             ║
+ * ║   → async 진입 전 capturedSpeed로 로컬 캡처                                  ║
+ * ║ • Chip memo areEqual: value 비교 누락 → onToggle 모드 전환 시 미갱신 수정    ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -5694,7 +5716,8 @@ async function refreshPatternStats() {
     for (const p of (patterns || [])) {
       const n = p.sample_size || 0;
       const wins = p.win_count || 0;
-      
+      if (n === 0) continue;
+
       const winRate = wins / n;
       const { lower, upper } = wilsonConfidenceInterval(wins, n, 0.95);
       const significance = 1 - (upper - lower);  // 구간 좁을수록 확실
@@ -8931,7 +8954,7 @@ const Chip = memo(
       </Text>
     </TouchableOpacity>
   ),
-  (prev, next) => prev.label === next.label && prev.active === next.active
+  (prev, next) => prev.label === next.label && prev.active === next.active && prev.value === next.value
 );
 const PrimaryButton = memo(({ title, onPress, style, disabled }) => (
   <TouchableOpacity
@@ -17008,7 +17031,8 @@ const AwardsScreen = memo(({
       id: n.id,
       score: calculateNovelScore(n),
     }));
-    
+    if (allScores.length === 0) return 0;
+
     // 소프트맥스로 확률 계산 (온도 파라미터로 분포 조절)
     const temperature = 50;  // 높을수록 확률이 균등해짐
     const maxScore = Math.max(...allScores.map(s => s.score));
@@ -21098,7 +21122,7 @@ function tierFromRating(r, configOrThresholds) {
   // globalTierConfig 기본 사용
   const cfg = configOrThresholds || globalTierConfig;
   // tierSystemConfig 형태 (tiers 배열 보유)
-  if (cfg && cfg.tiers && Array.isArray(cfg.tiers)) {
+  if (cfg && cfg.tiers && Array.isArray(cfg.tiers) && cfg.tiers.length > 0) {
     for (const t of cfg.tiers) {
       if (r >= t.threshold) return t.key;
     }
@@ -24264,8 +24288,8 @@ function AppContent() {
       const now = Date.now();
       
       await exec(
-        `INSERT INTO planned_novels (id,title,author,tags,platforms,note,total_episodes,cover_image,link,work_status,major_genre,sub_genre,priority,created_at,expected_rating,expected_tier,interest_level,discovery_source,first_chapter_read,scheduled_start_date,similar_novels,why_interested)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+        `INSERT INTO planned_novels (id,title,author,tags,platforms,note,total_episodes,cover_image,link,work_status,major_genre,sub_genre,priority,created_at,expected_rating,expected_tier,interest_level,discovery_source,first_chapter_read,scheduled_start_date,similar_novels,why_interested,tag_data)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
         [
           id,
           t,
@@ -24296,9 +24320,10 @@ function AppContent() {
           })(),
           plannedSimilarNovels.length > 0 ? JSON.stringify(plannedSimilarNovels) : "",
           plannedWhyInterested.trim(),
+          "", // 🔧 v3.9.2: tag_data 누락 수정 (UPDATE에는 있으나 INSERT에 빠져있었음)
         ]
       );
-      
+
       // 🔧 v3.5.9: 텍스트 입력 태그 → customTags 동기화 (태그 관리 모달 연동)
       syncTagsToCustom(plannedTags.trim());
       
@@ -29914,20 +29939,23 @@ function AppContent() {
     const result = evaluateAutoMatch(pair.A, pair.B, matchAnalysis);
     if (!result || !result.winner) return;
     
+    // 🔧 v3.9.2: autoMatchSettings를 로컬에 캡처 (stale closure 방지)
+    const capturedSpeed = autoMatchSettings.speed || "fast";
+
     // 잠금 (동기 — 다음 렌더 전에 설정)
     isAutoMatchingRef.current = true;
     Breadcrumbs.action("autoMatch_start", `mode=${autoMatchSettings?.mode}`);
     setIsAutoMatching(true);
-    
+
     (async () => {
       try {
         await decide(result.winner.id, "auto");
-        
+
         // 큐 드레인 대기
         await waitForMatchQueueDrain(2000);
-        
+
         // 속도 설정에 따른 딜레이
-        const speed = autoMatchSettings.speed || "fast";
+        const speed = capturedSpeed;
         const delayMs = speed === "fast" ? 100 : speed === "normal" ? 300 : 700;
         await new Promise(r => setTimeout(r, delayMs));
       } catch (e) {
@@ -31739,7 +31767,7 @@ async function importJSON() {
                 // 🏆 수동 티어 지정 (v6.0: 레거시 숫자 + 새 문자열 호환)
                 const manualTier = typeof opt.mt === 'string' ? opt.mt : (opt.mt === 1 ? 'S' : (opt.mt === 2 ? 'A' : null));
                 // 📚 v3.0.4: 다회독 카운트
-                const rereadCount = Math.max(1, opt.rr || 1);
+                const rereadCount = Math.max(1, opt.rr != null ? Number(opt.rr) : 1);
                 // 🏷️ v5.0: tag_data, aliases
                 const tagData = opt.td || "";
                 const aliases = opt.al || "";
