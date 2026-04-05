@@ -28820,10 +28820,15 @@ function AppContent() {
         }, newReadCountUpdatedAt); // 📅 수동 설정된 날짜로 기록
       }
       
-      // 🖼️ v3.4.5: 표지 변경 시 라이브러리 상태 업데이트
+      // 🖼️ v3.4.5: 표지 변경 시 라이브러��� 상태 업데이트
       if (editCoverImage !== editOriginalCoverImage) {
         await applyNovelCover(n.id, editCoverImage, editOriginalCoverImage);
         await loadCoverLibrary();
+      }
+
+      // 🎨 v3.8.0: 갤러리 이미지 메타데이터 갱신 (제목/작가 변경 반영)
+      if (galleryCount > 0) {
+        loadGalleryImages().catch(() => {});
       }
     } catch (e) {
       if (_pt) PerfMonitor.logError("saveEdit", e); // 🔬
