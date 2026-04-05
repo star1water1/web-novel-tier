@@ -19,7 +19,7 @@
  * ║ • 관리: 작품별 그룹, 캡션 편집, 연관 작품 변경, 삭제                          ║
  * ║ • 백업/복원 통합 (GI 키, 메타데이터만)                                        ║
  * ║ • 슬롯 전환/초기화/작품 삭제 시 연쇄 정리                                     ║
- * ║ • 성능: useMemo, memo(GalleryGridItem), SectionList, 지연 로드                ║
+ * ║ • 성능: useMemo, memo(GalleryGridItem), 접기/펼치기, 지연 로드                ║
  * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
@@ -21991,6 +21991,7 @@ function AppContent() {
   const [galleryCaptionEditOpen, setGalleryCaptionEditOpen] = useState(false);
   const [galleryCaptionEditId, setGalleryCaptionEditId] = useState(null);
   const [galleryCount, setGalleryCount] = useState(0); // 뱃지용 카운트 (지연 로드)
+  const [galleryExpandedGroups, setGalleryExpandedGroups] = useState({}); // 관리 탭 그룹 펼침 상태
   const [refreshKey, setRefreshKey] = useState(0); // 🔬 v3.5.9: 진단 대시보드 새로고침 키
   const [list, setList] = useState([]);
 
@@ -23538,6 +23539,7 @@ function AppContent() {
       setGalleryCaptionEditOpen(false);
       setGalleryCaptionEditId(null);
       setGalleryCount(0);
+      setGalleryExpandedGroups({});
       // 🔧 누락 리셋 보완
       setMatchStats({ total: 0, done: 0, percent: 0 });
       setIsAutoMatching(false);
@@ -28039,7 +28041,7 @@ function AppContent() {
               for (const g of gImgs) {
                 await deleteCoverFromLibrary(g.file_path);
               }
-            } catch {}
+            } catch (gErr) { console.warn("removeNovel gallery cleanup:", gErr); }
 
             await execBatch([
               { sql: "DELETE FROM choice_logs WHERE winner_id=? OR loser_id=?", params: [id, id] },
@@ -38147,10 +38149,12 @@ async function importJSON() {
                         marginBottom: 12,
                       }}
                     />
-                    <View style={{ maxHeight: 400 }}>
+                    <View style={{ maxHeight: Math.min(400, Dimensions.get("window").height * 0.45) }}>
                       <FlatList
                         data={galleryRegFilteredNovels}
                         keyExtractor={item => item.id}
+                        nestedScrollEnabled
+                        keyboardShouldPersistTaps="handled"
                         initialNumToRender={10}
                         maxToRenderPerBatch={5}
                         windowSize={3}
@@ -38239,9 +38243,29 @@ async function importJSON() {
                         총 {galleryImages.length}장 · {galleryGrouped.length}작품
                       </Text>
                     </View>
-                    {galleryGrouped.map(group => (
-                      <Section key={group.novelId} title={`${group.title || "(삭제된 작품)"} (${group.images.length})`}>
-                        <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 10 }}>
+                    {galleryGrouped.map(group => {
+                      const isExpanded = galleryExpandedGroups[group.novelId];
+                      return (
+                      <View key={group.novelId} style={{
+                        backgroundColor: C.card,
+                        borderRadius: 16,
+                        marginBottom: 12,
+                        borderWidth: 1,
+                        borderColor: C.line,
+                        overflow: "hidden",
+                      }}>
+                        {/* 그룹 헤더 (탭하여 펼치기/접기) */}
+                        <TouchableOpacity
+                          onPress={() => setGalleryExpandedGroups(prev => ({
+                            ...prev,
+                            [group.novelId]: !prev[group.novelId],
+                          }))}
+                          style={{
+                            flexDirection: "row",
+                            alignItems: "center",
+                            padding: 14,
+                          }}
+                        >
                           <CoverImage
                             uri={group.cover_image}
                             platforms={group.platforms}
@@ -38249,52 +38273,65 @@ async function importJSON() {
                             size={36}
                             theme={C}
                           />
-                          <Text style={{ fontSize: 13, color: C.sub }}>
-                            {group.author || "작가 미상"} · {group.images.length}장
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontSize: 14, fontWeight: "700", color: C.text }} numberOfLines={1}>
+                              {group.title || "(삭제된 작품)"}
+                            </Text>
+                            <Text style={{ fontSize: 12, color: C.sub }}>
+                              {group.author || "작가 미상"} · {group.images.length}장
+                            </Text>
+                          </View>
+                          <Text style={{ fontSize: 16, color: C.sub }}>
+                            {isExpanded ? "▲" : "▼"}
                           </Text>
-                        </View>
-                        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-                          {group.images.map(img => (
-                            <GalleryGridItem
-                              key={img.id}
-                              item={img}
-                              theme={C}
-                              onPress={(item) => setGalleryExpandImg(item)}
-                              onLongPress={(item) => {
-                                Alert.alert(
-                                  item.caption || "이미지 관리",
-                                  null,
-                                  [
-                                    {
-                                      text: "설명 편집",
-                                      onPress: () => {
-                                        setGalleryCaptionEditId(item.id);
-                                        setGalleryEditCaption(item.caption || "");
-                                        setGalleryCaptionEditOpen(true);
+                        </TouchableOpacity>
+
+                        {/* 이미지 그리드 (펼쳐진 경우만 렌더) */}
+                        {isExpanded && (
+                          <View style={{ padding: 12, paddingTop: 0, flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                            {group.images.map(img => (
+                              <GalleryGridItem
+                                key={img.id}
+                                item={img}
+                                theme={C}
+                                onPress={(item) => setGalleryExpandImg(item)}
+                                onLongPress={(item) => {
+                                  Alert.alert(
+                                    item.caption || "이미지 관리",
+                                    null,
+                                    [
+                                      {
+                                        text: "설명 편집",
+                                        onPress: () => {
+                                          setGalleryCaptionEditId(item.id);
+                                          setGalleryEditCaption(item.caption || "");
+                                          setGalleryCaptionEditOpen(true);
+                                        },
                                       },
-                                    },
-                                    {
-                                      text: "연관 작품 변경",
-                                      onPress: () => {
-                                        setGalleryChangeNovelTarget(item);
-                                        setGalleryRegSearch("");
-                                        setGalleryNovelPickerOpen(true);
+                                      {
+                                        text: "연관 작품 변경",
+                                        onPress: () => {
+                                          setGalleryChangeNovelTarget(item);
+                                          setGalleryRegSearch("");
+                                          setGalleryNovelPickerOpen(true);
+                                        },
                                       },
-                                    },
-                                    {
-                                      text: "삭제",
-                                      style: "destructive",
-                                      onPress: () => deleteGalleryImage(item.id, item.file_path),
-                                    },
-                                    { text: "취소", style: "cancel" },
-                                  ]
-                                );
-                              }}
-                            />
-                          ))}
-                        </View>
-                      </Section>
-                    ))}
+                                      {
+                                        text: "삭제",
+                                        style: "destructive",
+                                        onPress: () => deleteGalleryImage(item.id, item.file_path),
+                                      },
+                                      { text: "취소", style: "cancel" },
+                                    ]
+                                  );
+                                }}
+                              />
+                            ))}
+                          </View>
+                        )}
+                      </View>
+                      );
+                    })}
                   </>
                 )}
               </>
