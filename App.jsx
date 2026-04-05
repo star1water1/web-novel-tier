@@ -9039,7 +9039,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "3.6.2";
+const APP_VERSION = "3.9.2";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -9065,6 +9065,123 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "3.9.2", date: "2026-04-05",
+    title: "코드 안정성 강화 + 성능 최적화",
+    highlights: [
+      { type: "perf", text: "loadList 태그 계산 86% 단축 (365ms → ~50ms)" },
+      { type: "fix", text: "자동매칭 stale closure 2건 수정 (불변규칙 #2 위반)" },
+      { type: "fix", text: "Import 타임스탬프·rereadCount 데이터 손실 수정" },
+      { type: "fix", text: "planned_novels INSERT에 tag_data 누락 수정" },
+    ],
+    details: [
+      { type: "fix", text: "analyzePreferences: 0으로 나누기 방지" },
+      { type: "fix", text: "getAwardProbability: 빈 후보 배열 시 크래시 방지" },
+      { type: "fix", text: "tierFromRating: 빈 tiers 배열 시 크래시 방지" },
+      { type: "fix", text: "Chip memo: value 비교 누락 → 토글 모드 전환 시 미갱신 수정" },
+      { type: "fix", text: "명언 셔플 useEffect: 의존성 누락으로 데이터 변경 시 재셔플 안 됨 수정" },
+      { type: "fix", text: "홈 FlatList: 비교 모드 extraData 누락 → UI 미갱신 수정" },
+      { type: "perf", text: "saveEdit: addRecentChange 병렬화" },
+      { type: "perf", text: "짧은 BG 복귀 시 SQLITE_BUSY 구분 → 불필요한 DB 재연결 방지" },
+      { type: "fix", text: "진단 리포트 조합태그 undefined 표시 수정" },
+    ],
+  },
+  {
+    version: "3.9.1", date: "2026-04-05",
+    title: "코드 전반 버그 수정 15건",
+    highlights: [
+      { type: "fix", text: "슬롯 전환 시 지연 쓰기 데이터 손실 수정" },
+      { type: "fix", text: "Import NF/GI 복원 시 고아 데이터 발생 수정" },
+      { type: "fix", text: "다크모드 하드코딩 색상 다수 수정" },
+      { type: "improve", text: "NovelCard memo 비교 누락 필드 추가 (platformCovers, awardSystemSettings)" },
+    ],
+    details: [
+      { type: "fix", text: "CoordinateGridView: X/Y축 라벨 위치 교차 수정" },
+      { type: "fix", text: "analyzeSpectrum: normalizedScore 분모 계산 수정" },
+      { type: "fix", text: "combo_tags 커스텀 초기화 RESET_CATEGORIES 누락 수정" },
+      { type: "fix", text: "matchTags null 크래시 가능성 수정" },
+      { type: "fix", text: "모두승인/선택승인 addRecentChange 누락 수정" },
+      { type: "fix", text: "진단탭 JSX 주석 렌더 오류 수정" },
+      { type: "fix", text: "슬롯 전환 screenRef 동기화 수정" },
+      { type: "improve", text: "SentimentChip useMemo 안정화" },
+    ],
+  },
+  {
+    version: "3.9.0", date: "2026-04-05",
+    title: "크래시 진단 시스템",
+    highlights: [
+      { type: "new", text: "💥 CrashLog: 파일 기반 크래시 로그 기록 (last_crash.json + 히스토리 10건)" },
+      { type: "new", text: "🍞 Breadcrumbs: 최근 20개 사용자 동선 링 버퍼 추적" },
+      { type: "new", text: "📊 진단탭에 크래시 뷰어·리포트 공유·breadcrumbs 실시간 뷰 추가" },
+    ],
+    details: [
+      { type: "new", text: "크래시 당시 앱 상태 스냅샷 자동 저장 (화면, 탭, 작품수, 슬롯 등)" },
+      { type: "new", text: "ErrorBoundary, ErrorUtils, Unhandled Rejection 모두 CrashLog와 연동" },
+    ],
+  },
+  {
+    version: "3.8.2", date: "2026-04-05",
+    title: "버그 수정 18건",
+    highlights: [
+      { type: "fix", text: "verifyDataIntegrity: 커스텀 장르 사용 시 데이터 오염 수정" },
+      { type: "fix", text: "deferSetAppMeta flush 실패 시 대기 데이터 영구 손실 → 복원 로직 추가" },
+      { type: "fix", text: "reread_count 0이 || 1로 강제변환되는 falsy 오류 수정" },
+      { type: "fix", text: "Import: tierSystemConfig 적용 순서 오류로 티어 부정확 수정" },
+    ],
+    details: [
+      { type: "fix", text: "deleteLog: choice_logs 미삭제 고아 데이터 수정" },
+      { type: "fix", text: "flipWinner: choice_logs 미동기화 학습 데이터 불일치 수정" },
+      { type: "fix", text: "tagPower contribution 미클램핑 값 → 예측 점수 불일치 수정" },
+      { type: "fix", text: "genreKey.startsWith 부분 매칭 → split 기반 정확 비교" },
+      { type: "fix", text: "AwardsScreen isDark 미정의 ReferenceError 수정" },
+      { type: "fix", text: "Import/Export 모달 다크모드 색상 수정" },
+      { type: "fix", text: "homeFiltered useMemo tagRelations 의존성 누락 수정" },
+    ],
+  },
+  {
+    version: "3.8.1", date: "2026-04-05",
+    title: "진단탭 개선 + 진행도 표시",
+    highlights: [
+      { type: "improve", text: "📊 대량 작업 시 진행도 바 표시 (ProgressOverlay)" },
+      { type: "improve", text: "🔬 진단탭에 DB 테이블 규모·슬롯 상태·인사이트 정보 추가" },
+    ],
+    details: [
+      { type: "improve", text: "execBatch에 onProgress 콜백 추가 (50개 단위 청크)" },
+      { type: "improve", text: "대량 태그 삭제/추가/제거, 미사용 표지 정리에 진행도 적용" },
+      { type: "improve", text: "진단 리포트 내보내기에 테이블/슬롯/인사이트 정보 포함" },
+    ],
+  },
+  {
+    version: "3.8.0", date: "2026-04-05",
+    title: "갤러리 시스템",
+    highlights: [
+      { type: "new", text: "🎨 갤러리 — 팬아트/관련 이미지 등록·감상·관리" },
+      { type: "new", text: "작품당 최대 20장, 쇼츠 뷰 스와이프, 셔플, 확대 모달" },
+      { type: "new", text: "관리: 캡션 편집, 연관 작품 변경, 삭제" },
+    ],
+    details: [
+      { type: "new", text: "3개 서브탭: 갤러리(쇼츠), 등록(작품→이미지), 관리(그룹화)" },
+      { type: "new", text: "1200px 자동 압축, 전용 디렉토리 저장" },
+      { type: "new", text: "백업/복원 통합 (GI 키, 메타데이터)" },
+      { type: "improve", text: "슬롯 전환/초기화/작품 삭제 시 연쇄 정리" },
+    ],
+  },
+  {
+    version: "3.7.0", date: "2026-04-05",
+    title: "폴더(카테고리) 시스템",
+    highlights: [
+      { type: "new", text: "📂 폴더 시스템 — 작품을 자유롭게 분류 (다대다 관계)" },
+      { type: "new", text: "폴더 CRUD: 이름+색상+아이콘 설정, 순서 변경" },
+      { type: "new", text: "홈 탭 고급 필터에 폴더 필터 통합 (AND 조합)" },
+    ],
+    details: [
+      { type: "new", text: "작품-폴더 배정: 롱프레스, 편집 모달, 일괄 선택 모드" },
+      { type: "new", text: "FolderManagerModal + FolderAssignModal (빠른 폴더 생성 포함)" },
+      { type: "new", text: "백업/복원 통합 (FD/NF 키)" },
+      { type: "improve", text: "낙관적 업데이트 + DB 실패 시 롤백" },
+      { type: "improve", text: "폴더 필터 활성 시 시각적 배너 표시" },
+    ],
+  },
   {
     version: "3.6.2", date: "2026-04-05",
     title: "UI 레이아웃 + 태그 관리 UX 개선",
@@ -9575,10 +9692,29 @@ const GUIDE_CONTENT = [
         ],
       },
       {
+        title: "📂 폴더로 분류하기", icon: "📂", tabs: ["홈"], tabKey: "home",
+        description: "작품을 폴더(카테고리)로 자유롭게 분류합니다. 하나의 작품이 여러 폴더에 속할 수 있어요 (다대다 관계).",
+        tips: [
+          "작품 롱프레스 → '📂 폴더 배정'으로 빠르게 분류할 수 있어요.",
+          "홈 탭 필터에서 폴더를 선택하면 해당 폴더 작품만 볼 수 있어요.",
+          "폴더 필터는 홈 탭에만 적용 — 매칭·순위·통계에는 영향 없어요.",
+          "설정 → 폴더 관리에서 이름·색상·아이콘·순서를 편집하세요.",
+        ],
+      },
+      {
         title: "표지 라이브러리", icon: "🖼️", tabs: ["🖼️표지"], tabKey: "covers",
         description: "갤러리에서 가져온 표지 이미지를 관리합니다. 사용 현황, 용량, 미사용 이미지 정리까지.",
         tips: [
           "플랫폼별 기본 표지를 설정하면 URL 입력 없이 자동 적용돼요.",
+        ],
+      },
+      {
+        title: "🎨 이미지 갤러리", icon: "🎨", tabs: ["🎨갤러리"], tabKey: "gallery",
+        description: "팬아트, 스크린샷 등 작품 관련 이미지를 등록하고 감상합니다. 작품당 최대 20장까지 저장할 수 있어요.",
+        tips: [
+          "쇼츠 뷰에서 좌우 스와이프로 이미지를 넘겨보세요.",
+          "셔플 버튼으로 랜덤 순서로 감상할 수 있어요.",
+          "관리 탭에서 캡션 편집, 연관 작품 변경이 가능해요.",
         ],
       },
       {
@@ -9692,6 +9828,15 @@ const GUIDE_CONTENT = [
         tips: [
           "정기적으로 백업하면 데이터 손실을 방지할 수 있어요.",
           "가져오기 시 기존 데이터와 병합하거나 덮어쓸 수 있어요.",
+        ],
+      },
+      {
+        title: "크래시 진단", icon: "💥", tabs: ["설정"],
+        description: "앱 크래시 발생 시 자동으로 로그가 저장됩니다. 진단 탭에서 크래시 상세 정보와 직전 사용자 동선(Breadcrumbs)을 확인할 수 있어요.",
+        tips: [
+          "크래시 리포트를 공유하면 문제 해결에 도움이 돼요.",
+          "Breadcrumbs에서 크래시 직전에 어떤 작업을 했는지 추적할 수 있어요.",
+          "성능 모니터를 활성화하면 느린 쿼리와 렌더 횟수도 확인할 수 있어요.",
         ],
       },
     ],
