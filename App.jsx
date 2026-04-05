@@ -2,11 +2,66 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.5.15e                                                                ║
- * ║  최종 수정: 2025-03-08                                                        ║
- * ║  총 라인 수: 약 38,700줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 3.8.1                                                                   ║
+ * ║  최종 수정: 2026-04-05                                                        ║
+ * ║  총 라인 수: 약 44,500줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
- * 
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v3.8.1 진단탭 개선 + 진행도 표시 (2026-04-05)                              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [개선] 📊 진행도 표시 시스템                                                  ║
+ * ║ • ProgressOverlay: 프로그레스 바 지원 (기존 LoadingOverlay 대체)              ║
+ * ║ • execBatch에 onProgress 콜백 추가 (50개 단위 청크 완료 시 호출)              ║
+ * ║ • 대상: batchDeleteTagsGlobally, batchDelete, batchAddTag, batchRemoveTag    ║
+ * ║ • removeAllUnusedCovers: 인라인 coverLibraryProgress 진행도 추가             ║
+ * ║ • 동시 실행 보호: isLoading 가드로 더블탭 방지                                ║
+ * ║                                                                              ║
+ * ║ [개선] 🔬 진단탭 확장                                                         ║
+ * ║ • DB 테이블 규모: 모든 테이블 행 수 + DB 파일 크기 표시                       ║
+ * ║ • 슬롯 시스템 상태: activeSlotId/DB 일치 여부, 슬롯별 작품 수                ║
+ * ║ • 인사이트/패턴 상태: preference_patterns 카테고리별 수, insight_queue 상태   ║
+ * ║ • 진단 리포트 내보내기에 테이블 규모/슬롯/인사이트 정보 포함                  ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🎨 v3.8.0 갤러리 시스템 (2026-04-05)                                         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [신규 기능] 🎨 갤러리 — 팬아트/관련 이미지 등록·감상·관리                     ║
+ * ║ • DB: gallery_images 테이블 (novel_id, file_path, caption)                    ║
+ * ║ • 3개 서브탭: 갤러리(쇼츠 뷰), 등록(작품 선택→이미지 추가), 관리(그룹화)     ║
+ * ║ • 작품당 최대 20장, 1200px 압축, GALLERY_DIR 별도 디렉토리                    ║
+ * ║ • 쇼츠 뷰: 스와이프 네비게이션, 셔플, 확대 모달                              ║
+ * ║ • 관리: 작품별 그룹, 캡션 편집, 연관 작품 변경, 삭제                          ║
+ * ║ • 백업/복원 통합 (GI 키, 메타데이터만)                                        ║
+ * ║ • 슬롯 전환/초기화/작품 삭제 시 연쇄 정리                                     ║
+ * ║ • 성능: useMemo, memo(GalleryGridItem), 접기/펼치기, 지연 로드                ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📂 v3.7.0 폴더(카테고리) 시스템 (2026-04-05)                                 ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [신규 기능] 📂 폴더 시스템 — 작품을 자유롭게 분류                            ║
+ * ║ • DB: folders + novel_folders 정션 테이블 (다대다 관계)                       ║
+ * ║ • 폴더 CRUD: 생성(이름+색상+아이콘), 편집, 삭제, 순서변경                    ║
+ * ║ • 작품-폴더 배정: 롱프레스 메뉴, 편집 모달, 일괄 선택 모드 지원              ║
+ * ║ • 고급 필터 통합: 기존 티어/플랫폼/장르/상태 필터와 AND 조합                 ║
+ * ║ • 폴더 필터는 homeFiltered(홈 탭)에만 적용                                   ║
+ * ║   — 매칭/랭킹/통계/추천 등 전역 기능은 영향 없음                             ║
+ * ║ • 백업/복원 통합 (FD/NF 키, v11 하위호환)                                    ║
+ * ║ • 슬롯별 독립 폴더 데이터 (DB 파일 격리)                                     ║
+ * ║ • 낙관적 업데이트 + DB 실패 시 롤백                                          ║
+ * ║ • 폴더 필터 활성 시 시각적 배너 표시                                         ║
+ * ║ • FolderManagerModal: 설정 탭에서 폴더 관리                                  ║
+ * ║ • FolderAssignModal: 작품별 폴더 배정 (빠른 폴더 생성 포함)                  ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ ⚠️ 매칭 시스템 불변조건 (v3.5.15c~d에서 확립, 절대 위반 금지)              ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -41,7 +96,43 @@
  * ║     - finally에서 isAutoMatchingRef/setIsAutoMatching 리셋 보장              ║
  * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
- * 
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🎨 v3.6.2 수정 사항 - UI 레이아웃 + 태그 관리 UX 개선 (2026-04-05)         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [변경 1] 📐 인상깊은 문장 버튼 레이아웃 오버플로우 수정                       ║
+ * ║ • 등록/편집 모달에서 "텍스트/이미지/일괄" 버튼이 화면 밖으로 잘리는 문제      ║
+ * ║ • 라벨+버튼 가로 배치 → 세로 스택으로 변경 (column layout)                   ║
+ * ║ • 내부 버튼 그룹은 flexDirection: "row" + flexWrap 유지                      ║
+ * ║                                                                              ║
+ * ║ [변경 2] 🏷️ 태그 관리 전체선택 UX 개선 - 드롭다운 통합                       ║
+ * ║ • 헤더 바의 "전체 선택" 버튼과 "조건별 선택" 드롭다운 분리 → 혼동 피드백     ║
+ * ║ • "전체 선택" 버튼 제거, "▼ 조건" → "▼ 일괄선택" 드롭다운에 통합            ║
+ * ║ • 드롭다운 내 "✅ 전체 선택" / "🔲 전체 해제" 칩 추가 (파란 계열 구분)       ║
+ * ║ • selectByPreset에 "all"/"none" case 추가                                    ║
+ * ║ • toggleSelectAll 함수 제거 (미사용 코드 정리)                                ║
+ * ║                                                                              ║
+ * ║ [버그 수정 1] 🟡 exitSelectMode에서 selectPresetOpen 미리셋                   ║
+ * ║ • 선택 모드 취소 후 재진입 시 드롭다운이 즉시 열리는 문제                     ║
+ * ║ • exitSelectMode에 setSelectPresetOpen(false) 추가                            ║
+ * ║ • 배치 핸들러 8곳의 setSelectMode(false) 직접 호출 → exitSelectMode() 통일    ║
+ * ║                                                                              ║
+ * ║ [버그 수정 2] 🔴 태그 삭제 시 관계도/좌표계 고아 데이터 잔류                  ║
+ * ║ • cleanupTagMetadata/cleanupTagMetadataBatch에 tag_relations 정리 추가        ║
+ * ║ • cleanupTagMetadata/cleanupTagMetadataBatch에 coordinateSystems 정리 추가    ║
+ * ║ • 그룹 내 태그 1개 이하 시 그룹 자체 삭제                                    ║
+ * ║                                                                              ║
+ * ║ [변경 3] 🏅 검토 탭 강제지정 해제 섹션 추가                                  ║
+ * ║ • manual_tier 설정된 모든 작품을 목록으로 표시 + 개별 해제 버튼               ║
+ * ║ • 비-gated 티어 강제지정 후 검토 불가 문제 해결                               ║
+ * ║                                                                              ║
+ * ║ [변경 4] 🔕 순위 탭 ⚠️ 강제지정 경고 표시 제거                               ║
+ * ║ • ActualTierTag에 showWarning prop 추가 (기본 true)                          ║
+ * ║ • 순위 탭에서 showWarning={false}로 경고 숨김                                ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🧠 v3.5.4~v3.5.5 수정 사항 - 명언 쇼츠 탭 + 매칭 행동 분석 + 다중 버그 수정        ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -3221,9 +3312,9 @@ async function first(sql, params = []) {
 }
 
 /** 트랜잭션 실행 (🔧 v3.5.3: 대량 배치 청크 처리) */
-async function execBatch(queries) {
+async function execBatch(queries, onProgress = null) {
   if (!queries || queries.length === 0) return;
-  
+
   // 🔧 v3.5.3: 50개 이상이면 청크로 분할 (트랜잭션 타임아웃 방지)
   const CHUNK_SIZE = 50;
   if (queries.length > CHUNK_SIZE) {
@@ -3239,6 +3330,10 @@ async function execBatch(queries) {
         },
         `execBatch[${i}~${Math.min(i + CHUNK_SIZE, queries.length)}]`
       );
+      // 🔧 v3.6.0: 청크 완료 시 진행도 콜백
+      if (onProgress) {
+        onProgress(Math.min(i + CHUNK_SIZE, queries.length), queries.length);
+      }
       // 청크 사이 DB 안정화 대기
       if (i + CHUNK_SIZE < queries.length) {
         await new Promise(r => setTimeout(r, 50));
@@ -3775,11 +3870,40 @@ async function initDb() {
   
   // 🧠 v3.5.0 Phase 2: preference_patterns 마이그레이션
   await ensureColumn("preference_patterns", "user_confirmed", "INTEGER", "0");
-  
+
   // 🧠 v3.5.0 Phase 2: insight_queue 마이그레이션
   await ensureColumn("insight_queue", "confidence", "REAL", "0");
   await ensureColumn("insight_queue", "content", "TEXT", "''");
   await ensureColumn("insight_queue", "responded_at", "INTEGER", "0");
+
+  // 📂 v3.7.0: 폴더(카테고리) 시스템
+  await database.runAsync(`CREATE TABLE IF NOT EXISTS folders (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT UNIQUE NOT NULL,
+    color TEXT DEFAULT '#6366f1',
+    icon TEXT DEFAULT '📂',
+    sort_order INTEGER DEFAULT 0,
+    created_at INTEGER
+  );`);
+  await database.runAsync(`CREATE TABLE IF NOT EXISTS novel_folders (
+    folder_id TEXT NOT NULL,
+    novel_id TEXT NOT NULL,
+    added_at INTEGER,
+    PRIMARY KEY (folder_id, novel_id)
+  );`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_nf_novel ON novel_folders(novel_id);`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_nf_folder ON novel_folders(folder_id);`);
+
+  // 🎨 v3.8.0: 갤러리 이미지 시스템
+  await database.runAsync(`CREATE TABLE IF NOT EXISTS gallery_images (
+    id TEXT PRIMARY KEY NOT NULL,
+    novel_id TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    caption TEXT DEFAULT '',
+    created_at INTEGER
+  );`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_gallery_novel ON gallery_images(novel_id);`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_gallery_created ON gallery_images(created_at DESC);`);
 }
 
 // -----------------------------------------
@@ -8206,6 +8330,50 @@ const QUOTE_IMAGE_MAX_SIZE = 800;   // 긴 변 최대 800px
 const QUOTE_IMAGE_QUALITY = 0.7;    // JPEG 품질 70%
 const QUOTE_IMAGE_MAX_COUNT = 10;   // 이미지 인용구 최대 개수
 
+// 🎨 v3.8.0: 갤러리 이미지 설정
+const GALLERY_IMAGE_MAX_COUNT = 20;    // 작품당 갤러리 이미지 최대 개수
+const GALLERY_IMAGE_MAX_SIZE = 1200;   // 긴 변 최대 1200px
+const GALLERY_IMAGE_QUALITY = 0.8;     // JPEG 품질 80%
+const GALLERY_DIR = FileSystem.documentDirectory + "gallery/";
+
+async function ensureGalleryDir() {
+  try {
+    const dirInfo = await FileSystem.getInfoAsync(GALLERY_DIR);
+    if (!dirInfo.exists) {
+      await FileSystem.makeDirectoryAsync(GALLERY_DIR, { intermediates: true });
+    }
+  } catch (e) {
+    console.warn("ensureGalleryDir error:", e);
+  }
+}
+
+/**
+ * 🎨 갤러리 이미지 저장 (gallery 디렉토리)
+ * compressAndSaveImage → COVER_DIR 임시 저장 → GALLERY_DIR로 이동
+ */
+async function saveGalleryImage(sourceUri, ext = "jpg") {
+  try {
+    const compressed = await compressAndSaveImage(sourceUri, GALLERY_IMAGE_MAX_SIZE, GALLERY_IMAGE_QUALITY, ext);
+    if (compressed.error || !compressed.file_path) return compressed.error ? compressed : { error: "no file_path" };
+
+    // COVER_DIR → GALLERY_DIR 이동
+    await ensureGalleryDir();
+    const fileName = compressed.file_path.split("/").pop();
+    const destUri = GALLERY_DIR + fileName;
+    try {
+      await FileSystem.moveAsync({ from: compressed.file_path, to: destUri });
+    } catch (moveErr) {
+      // moveAsync 실패 시 COVER_DIR에 남은 파일 정리 (고아 방지)
+      FileSystem.deleteAsync(compressed.file_path, { idempotent: true }).catch(() => {});
+      return { error: "moveAsync: " + moveErr.message };
+    }
+
+    return { id: compressed.id, file_path: destUri, file_size: compressed.file_size };
+  } catch (e) {
+    return { error: "saveGalleryImage: " + e.message };
+  }
+}
+
 /**
  * 이미지 포맷 감지 (expo-image-picker asset 기반)
  * asset.mimeType → fileName → uri 순서로 폴백
@@ -8557,7 +8725,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "3.5.15e";
+const APP_VERSION = "3.6.2";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -8583,6 +8751,60 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "3.6.2", date: "2026-04-05",
+    title: "UI 레이아웃 + 태그 관리 UX 개선",
+    highlights: [
+      { type: "fix", text: "인상깊은 문장 버튼(텍스트/이미지/일괄)이 화면 밖으로 잘리는 레이아웃 수정" },
+      { type: "improve", text: "태그 관리 '전체 선택' 버튼을 '▼ 일괄선택' 드롭다운에 통합 — 혼동 해소" },
+      { type: "fix", text: "선택 모드 종료 시 드롭다운 상태 미리셋 버그 수정" },
+      { type: "fix", text: "태그 삭제 시 관계도·좌표계 고아 데이터 잔류 수정" },
+      { type: "new", text: "검토 탭에 '강제지정 해제' 섹션 추가 — 개별 manual_tier 해제 가능" },
+      { type: "improve", text: "순위 탭에서 ⚠️ 강제지정 경고 표시 제거 (검토 탭에서만 표시)" },
+    ],
+    details: [
+      { type: "fix", text: "등록/편집 모달 라벨+버튼 가로→세로 스택 변경" },
+      { type: "improve", text: "드롭다운에 '✅ 전체 선택' / '🔲 전체 해제' 칩 추가 (파란 계열 구분)" },
+      { type: "fix", text: "배치 핸들러 8곳의 setSelectMode 직접 호출 → exitSelectMode() 통일" },
+      { type: "fix", text: "cleanupTagMetadata/Batch에 tag_relations + coordinateSystems 정리 추가" },
+    ],
+  },
+  {
+    version: "3.6.1", date: "2026-03-20",
+    title: "명대사 이미지 첨부 + Tag Registry 안정화",
+    highlights: [
+      { type: "new", text: "📷 인상깊은 문장에 이미지 첨부 지원" },
+      { type: "improve", text: "Tag Registry → 구 state 자동 파생 (이중 저장소 제거)" },
+    ],
+    details: [
+      { type: "fix", text: "편집 중 삭제된 명대사 이미지 파일 추적 및 정리" },
+      { type: "fix", text: "tagRegistry stale closure 방지 — loadedRegistry 직접 사용" },
+      { type: "fix", text: "custom_tags, user_major_genres, user_sub_genres 제거 (tagRegistry에서 파생)" },
+    ],
+  },
+  {
+    version: "3.5.16", date: "2025-03-10",
+    title: "태그 정렬 + 대장르 통합 + 감정 재분류",
+    highlights: [
+      { type: "improve", text: "🏷️ 태그 정렬 모드 — 사용빈도/이름순/등록순 선택 + 마지막 탭 기억" },
+      { type: "improve", text: "대장르 통합 — 유사 중복 해소 (호러→공포/스릴러 등)" },
+    ],
+    details: [
+      { type: "improve", text: "선택된 태그 프리뷰 접이식 표시" },
+      { type: "fix", text: "'대중적'/'가작' 태그 감정 NEUTRAL로 재분류" },
+    ],
+  },
+  {
+    version: "3.6.0", date: "2026-03-10",
+    title: "Tag Registry — 태그 단일 저장소",
+    highlights: [
+      { type: "new", text: "🏷️ Tag Registry — 모든 태그의 유일한 저장소 (단일 진실의 원천)" },
+    ],
+    details: [
+      { type: "new", text: "백업/복원에 Tag Registry 포함 (TR 키)" },
+      { type: "improve", text: "태그 추가/삭제/수정이 단일 경로로 통일" },
+    ],
+  },
   {
     version: "3.5.15e", date: "2025-03-08",
     title: "슬롯 전환 안정성 개선",
@@ -8635,6 +8857,32 @@ const CHANGELOG_DATA = [
     ],
   },
   {
+    version: "3.5.15b", date: "2025-02-27",
+    title: "매칭 크래시 추가 수정",
+    highlights: [
+      { type: "fix", text: "v3.5.15 매칭 크래시 추가 수정" },
+    ],
+    details: [],
+  },
+  {
+    version: "3.5.15", date: "2025-02-27",
+    title: "매칭 크래시 근본 수정 + 매칭 캐시",
+    highlights: [
+      { type: "fix", text: "매칭 크래시 근본 수정 — 5대 불변조건 확립" },
+      { type: "perf", text: "매칭 캐시 시스템 도입" },
+    ],
+    details: [],
+  },
+  {
+    version: "3.5.14", date: "2025-02-26",
+    title: "매칭 큐 드레인 + 패턴 캐시",
+    highlights: [
+      { type: "perf", text: "preference_patterns 캐시 — DB 쿼리 269ms×2→269ms×1" },
+      { type: "improve", text: "매칭 큐 드레인 대기 (waitForMatchQueueDrain)" },
+    ],
+    details: [],
+  },
+  {
     version: "3.5.13", date: "2025-02-26",
     title: "취향탭 크래시 + 농도 조절 수정",
     highlights: [
@@ -8642,6 +8890,47 @@ const CHANGELOG_DATA = [
     ],
     details: [
       { type: "fix", text: "TasteAnalysisScreen useMemo가 early return 뒤에 위치하여 hooks 순서 불일치" },
+    ],
+  },
+  {
+    version: "3.5.12", date: "2025-02-25",
+    title: "태그 시스템 실사용성 개선",
+    highlights: [
+      { type: "improve", text: "🏷️ 태그 시스템 실사용성 개선 — 보충탭 필터칩, 태그 동기화" },
+    ],
+    details: [],
+  },
+  {
+    version: "3.5.11", date: "2025-02-25",
+    title: "tagAttributes 데이터 흐름 수정 + 성능 최적화",
+    highlights: [
+      { type: "fix", text: "tagAttributes 데이터 흐름 근본 수정" },
+      { type: "perf", text: "성능 최적화 — DB 쿼리 감소, 불필요한 리렌더링 제거" },
+    ],
+    details: [],
+  },
+  {
+    version: "3.5.9", date: "2025-02-25",
+    title: "인앱 성능 진단 + saveEdit 안전성",
+    highlights: [
+      { type: "new", text: "🔬 인앱 성능 진단 시스템 (Performance Monitor)" },
+      { type: "fix", text: "saveEdit 안전성 강화 + 편집 미저장 확인" },
+    ],
+    details: [
+      { type: "new", text: "함수별 서브스텝 타이밍 측정" },
+      { type: "fix", text: "BG→FG 전환 직후 호출 여부 판별 (3초 이내)" },
+    ],
+  },
+  {
+    version: "3.5.8", date: "2025-02-25",
+    title: "모달 스크롤 근본 수정 + 데이터 무결성",
+    highlights: [
+      { type: "fix", text: "모달 스크롤 근본 수정 — deferOpen() 헬퍼로 모든 모달 적용" },
+      { type: "new", text: "🔧 데이터 무결성 검증 + 자동 수정 (verifyDataIntegrity)" },
+    ],
+    details: [
+      { type: "fix", text: "태그 관계 stale 데이터 수정" },
+      { type: "improve", text: "작품명 태그 자동 제외 (분석 교란 방지)" },
     ],
   },
   {
@@ -8653,6 +8942,27 @@ const CHANGELOG_DATA = [
     details: [
       { type: "improve", text: "요약 스탯 바, 타입 필터 칩, 날짜 헤더 디자인" },
       { type: "improve", text: "설정 접기/펼치기, 빈 상태 맞춤 메시지" },
+    ],
+  },
+  {
+    version: "3.5.6", date: "2025-02-25",
+    title: "글로벌 에러 핸들러",
+    highlights: [
+      { type: "improve", text: "🛡️ 글로벌 에러 핸들러 + ErrorBoundary 추가" },
+    ],
+    details: [],
+  },
+  {
+    version: "3.5.5", date: "2025-02-24",
+    title: "취향 학습 통합 + 커스텀 초기화",
+    highlights: [
+      { type: "new", text: "🔗 태그 동의어 그룹 시스템 + 핵심 알고리즘 연동" },
+      { type: "new", text: "🔧 커스텀 초기화 모달 (6그룹 24항목 선택적 초기화)" },
+      { type: "improve", text: "백업/복원 확장 — preference_patterns + platform_covers 포함" },
+    ],
+    details: [
+      { type: "fix", text: "모달 초기 높이 이슈 일괄 수정 (6개 모달)" },
+      { type: "perf", text: "rankedEntries/analysisStats 비활성 탭 계산 스킵" },
     ],
   },
   {
@@ -8684,6 +8994,200 @@ const CHANGELOG_DATA = [
     details: [
       { type: "fix", text: "saveCoverToLibrary 에러 수집 + 진단 강화" },
       { type: "fix", text: "safeDbOperation 재시도 메커니즘 추가" },
+    ],
+  },
+  {
+    version: "3.5.0", date: "2025-02-20",
+    title: "취향 발견 시스템 (Preference Discovery)",
+    highlights: [
+      { type: "new", text: "🧠 취향 발견 시스템 — 매칭 기반 AI 취향 분석" },
+      { type: "new", text: "📊 12개 패턴 카테고리 자동 학습 (장르상성, 태그파워, 작가충성 등)" },
+      { type: "new", text: "💡 인사이트 시스템 — 확인형+발견형 취향 인사이트 제공" },
+    ],
+    details: [
+      { type: "new", text: "4개 신규 테이블: choice_logs, preference_patterns, insight_queue, weight_config" },
+      { type: "new", text: "윌슨 신뢰구간 기반 통계적 유의성 검증" },
+      { type: "new", text: "취향 기반 승부 예측 엔진 (generateEnhancedPrediction)" },
+      { type: "new", text: "분석 탭 인사이트 섹션 + 응답 UI (동의/비동의/건너뛰기)" },
+    ],
+  },
+  {
+    version: "3.4.7", date: "2025-02-18",
+    title: "안정성 대폭 개선 + 매칭 큐잉",
+    highlights: [
+      { type: "fix", text: "DB 연결 관리 강화 — safeDbOperation 자동 재연결 + 5회 재시도" },
+      { type: "new", text: "⚡ 매칭 큐잉 시스템 — 빠른 연타 시 트랜잭션 충돌 방지" },
+      { type: "fix", text: "자동 승패 무한 루프 버그 수정" },
+    ],
+    details: [
+      { type: "fix", text: "expo-file-system 레거시 API 롤백 (SDK 54 새 API 불안정)" },
+      { type: "improve", text: "자동 매칭 속도 옵션 추가 (터보/보통/느림)" },
+    ],
+  },
+  {
+    version: "3.4.6", date: "2025-02-16",
+    title: "매칭 큐잉 시스템 도입",
+    highlights: [
+      { type: "new", text: "🔄 매칭 큐잉 시스템 — DB 트랜잭션 순차 처리로 충돌 방지" },
+    ],
+    details: [
+      { type: "new", text: "pendingMatchPairs Set으로 중복 매치 방지" },
+      { type: "improve", text: "UI는 즉시 응답, DB는 순차 처리" },
+    ],
+  },
+  {
+    version: "3.4.5", date: "2025-02-15",
+    title: "표지 라이브러리 + 전체화면 모드",
+    highlights: [
+      { type: "new", text: "🖼️ 표지 라이브러리 — 갤러리에서 다중 이미지 가져오기, 상태 추적" },
+      { type: "new", text: "📱 전체 화면 모드 (Android) — 상태바+네비게이션 바 숨기기" },
+      { type: "fix", text: "대량 편집 선택 안 됨 버그 수정 (FlatList extraData 누락)" },
+    ],
+    details: [
+      { type: "new", text: "이미지 압축 4단계 설정 (원본/가벼운/중간/강한)" },
+      { type: "fix", text: "표지 상태 동기화: 등록/편집/삭제/전환 시 자동 처리" },
+    ],
+  },
+  {
+    version: "3.4.4", date: "2025-02-14",
+    title: "태그 동기화 통합 + 크리티컬 버그 수정",
+    highlights: [
+      { type: "fix", text: "🚨 Promise.all 인덱스 매칭 버그 — 최신 변경 데이터 유실 수정" },
+      { type: "fix", text: "태그 고정 기능 복구 (pinnedTags prop 누락)" },
+      { type: "improve", text: "대장르/부장르 태그 동기화 완전 통합" },
+    ],
+    details: [
+      { type: "improve", text: "최신 탭에 표지 이미지 추가" },
+    ],
+  },
+  {
+    version: "3.4.3", date: "2025-02-13",
+    title: "태그 빠른 입력 + 예정탭 태그 모달",
+    highlights: [
+      { type: "new", text: "🏷️ 태그 빠른 입력 — 쉼표로 여러 태그 한번에 입력" },
+      { type: "improve", text: "예정탭에 태그 선택 모달 연동" },
+    ],
+    details: [],
+  },
+  {
+    version: "3.4.2", date: "2025-02-12",
+    title: "예정탭 대폭 간소화",
+    highlights: [
+      { type: "improve", text: "📋 예정탭 간소화 — 등록 필드 18개→6개, 카드 터치→수정 모달" },
+    ],
+    details: [
+      { type: "improve", text: "FlatList 성능 최적화 + 플랫폼 필터 추가" },
+      { type: "improve", text: "링크 바로가기 아이콘 추가" },
+    ],
+  },
+  {
+    version: "3.4.1", date: "2025-02-11",
+    title: "UX 편의성 개선",
+    highlights: [
+      { type: "improve", text: "작품 카드 길게 누르면 전체 제목+메모 표시" },
+      { type: "new", text: "실시간 중복 제목 체크 + 경고 표시" },
+      { type: "new", text: "홈 상단에 최근 편집 작품 5개 빠른 접근" },
+    ],
+    details: [
+      { type: "improve", text: "예정→본목록 전환 시 모든 정보 자동 이전 (메모 병합)" },
+    ],
+  },
+  {
+    version: "3.4.0", date: "2025-02-10",
+    title: "예정탭 확장 + 태그 고급 필터",
+    highlights: [
+      { type: "new", text: "📋 예정탭 필드 대폭 확장 — 관심도, 예상 티어, 발견 경로 등" },
+      { type: "new", text: "🏷️ 태그 관리 고급 필터 — 감정/속성/상태 조합 필터링" },
+      { type: "improve", text: "취향 분석 태그 기반 장르 판단으로 전환" },
+    ],
+    details: [
+      { type: "fix", text: "예정탭 작품 상태 버튼 버그 수정" },
+      { type: "improve", text: "다크모드 좌표계·태그 모달 가시성 개선" },
+    ],
+  },
+  {
+    version: "3.3.0", date: "2025-02-05",
+    title: "예정 탭 + 오늘의 추천 시스템",
+    highlights: [
+      { type: "new", text: "📋 예정 탭 — 읽을 예정 작품 가등록 관리" },
+      { type: "new", text: "🎯 오늘의 추천 시스템 — 8단계 우선순위 가중치 추천" },
+    ],
+    details: [
+      { type: "new", text: "예정 작품은 매칭·분석에서 제외, '등록전환' 버튼으로 본 목록 이동" },
+      { type: "new", text: "5회 내 재추천 방지, 추천 이유 상세 설명" },
+    ],
+  },
+  {
+    version: "3.2.2", date: "2025-01-28",
+    title: "태그 관리 v3.0 + 인상깊은 문장",
+    highlights: [
+      { type: "new", text: "🏷️ 태그 관리 시스템 v3.0 — 속성 기반 체계로 전환" },
+      { type: "new", text: "💬 인상깊은 문장 기능 — 작품별 명언 기록" },
+      { type: "improve", text: "수상 확률 계산 소프트맥스 기반으로 대폭 개선" },
+    ],
+    details: [
+      { type: "new", text: "대량 선택 확장 작업 패널: 감정/속성 토글/고정/숨김/삭제" },
+      { type: "fix", text: "수상탭 태그 추가: Alert.prompt → 인라인 TextInput (Android 대응)" },
+    ],
+  },
+  {
+    version: "3.2.1", date: "2025-01-25",
+    title: "편의성 대개선 + 취향분석 강화",
+    highlights: [
+      { type: "improve", text: "🎛️ 편의성 개선 3단계 — 설정 서브탭, 좌표계 시각화, 태그 편집 확장" },
+      { type: "improve", text: "📊 취향 분석 4개 섹션 추가 — 황금조합, 좌표분석, 매칭일관성, 유사그룹" },
+      { type: "new", text: "🏆 수상 탭 개선 — 표지 표시, 수상 확률 예측, 후보작 목록" },
+    ],
+    details: [
+      { type: "new", text: "🔗 태그 추천: 공동 출현 기반 추천 + 유사 태그 그룹" },
+      { type: "improve", text: "💾 백업 시스템: 태그 메타데이터 전체 백업/복원" },
+      { type: "new", text: "🔄 과거 매칭 인사이트 재생성 기능" },
+    ],
+  },
+  {
+    version: "3.2.0", date: "2025-01-20",
+    title: "태그 좌표계 시스템",
+    highlights: [
+      { type: "new", text: "📐 태그 좌표계 — 태그를 2D 좌표계에 배치하여 관계 자동 도출" },
+    ],
+    details: [
+      { type: "new", text: "기본 좌표계 4종: 주인공강함, 분위기, 로맨스, 전개속도" },
+      { type: "new", text: "사용자 커스텀 좌표계 생성/편집/삭제" },
+      { type: "new", text: "유사(거리<0.3)/상반(x차이≥0.7)/뉘앙스 관계 자동 도출" },
+    ],
+  },
+  {
+    version: "3.1.2", date: "2025-01-15",
+    title: "스펙트럼 분석 + 상반 태그",
+    highlights: [
+      { type: "new", text: "📊 취향 스펙트럼 분석 — 6개 스펙트럼별 선호 구간 시각화" },
+      { type: "new", text: "⚡ 상반 태그 선호도 비교 분석" },
+    ],
+    details: [
+      { type: "improve", text: "매칭 인사이트에 농도 가중치 적용" },
+    ],
+  },
+  {
+    version: "3.1.1", date: "2025-01-12",
+    title: "태그 농도 시스템",
+    highlights: [
+      { type: "new", text: "📊 태그 농도 UI — 1~5단계 선택, 색상 시각화" },
+      { type: "improve", text: "취향 분석에 농도 가중치 적용" },
+    ],
+    details: [
+      { type: "new", text: "대량편집에서도 농도 설정 지원" },
+    ],
+  },
+  {
+    version: "3.1.0", date: "2025-01-10",
+    title: "태그 시스템 v5.0",
+    highlights: [
+      { type: "new", text: "🏷️ 태그 시스템 v5.0 — tag_data JSON 스키마, 별명(aliases) 분리" },
+      { type: "new", text: "🔍 별명 기반 검색 확장 (약어/정식명 모두 검색)" },
+    ],
+    details: [
+      { type: "new", text: "스펙트럼 그룹 정의: 주인공강함, 분위기, 로맨스, 전개속도, 평가" },
+      { type: "new", text: "자동 마이그레이션: tags → tag_data 변환" },
     ],
   },
 ];
@@ -8903,7 +9407,7 @@ const TierTag = memo(({ rating }) => {
 });
 
 // 실제 티어 표시 (manual_tier 고려)
-const ActualTierTag = memo(({ novel, showDiff = false }) => {
+const ActualTierTag = memo(({ novel, showDiff = false, showWarning = true }) => {
   if (!novel) return null;
 
   const cfg = globalTierConfig;
@@ -8914,7 +9418,7 @@ const ActualTierTag = memo(({ novel, showDiff = false }) => {
   // match/hybrid 모드에서만 권장 티어 비교 의미 있음
   const isMatchMode = cfg.mode === "match" || cfg.mode === "hybrid";
   const recommended = isMatchMode ? tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg) : actual;
-  const isForced = isMatchMode && novel.manual_tier && tierRank(tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg), cfg) > tierRank(novel.manual_tier, cfg);
+  const isForced = showWarning && isMatchMode && novel.manual_tier && tierRank(tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg), cfg) > tierRank(novel.manual_tier, cfg);
   const hasDiff = actual !== recommended;
 
   return (
@@ -9509,6 +10013,50 @@ const CoverSelectItem = memo(({ item, isUsed, onSelect, onAlertUsed, theme }) =>
         alignItems: "center",
       }}>
         <Text style={{ color: "#fff", fontSize: 10, fontWeight: "700" }}>사용중</Text>
+      </View>
+    ) : null}
+  </TouchableOpacity>
+));
+
+/**
+ * 🎨 v3.8.0: 갤러리 관리 탭 그리드 아이템 (memo 최적화)
+ */
+const GalleryGridItem = memo(({ item, onPress, onLongPress, theme }) => (
+  <TouchableOpacity
+    style={{
+      flex: 1,
+      aspectRatio: 1,
+      maxWidth: "31.5%",
+      borderRadius: 10,
+      overflow: "hidden",
+      borderWidth: 1.5,
+      borderColor: theme.line,
+      position: "relative",
+    }}
+    onPress={() => onPress(item)}
+    onLongPress={() => onLongPress(item)}
+    activeOpacity={0.7}
+  >
+    <ExpoImage
+      source={{ uri: item.file_path }}
+      style={{ width: "100%", height: "100%" }}
+      contentFit="cover"
+      cachePolicy="memory-disk"
+      recyclingKey={item.id}
+    />
+    {item.caption ? (
+      <View style={{
+        position: "absolute",
+        bottom: 0,
+        left: 0,
+        right: 0,
+        backgroundColor: "rgba(0,0,0,0.6)",
+        paddingHorizontal: 5,
+        paddingVertical: 3,
+      }}>
+        <Text style={{ color: "#fff", fontSize: 9, fontWeight: "600" }} numberOfLines={1}>
+          {item.caption}
+        </Text>
       </View>
     ) : null}
   </TouchableOpacity>
@@ -14175,8 +14723,7 @@ const TagManagerModal = memo(({
     if (onBatchChangeSentiment) {
       onBatchChangeSentiment(Array.from(selectedTags), newSentiment);
     }
-    setSelectedTags(new Set());
-    setSelectMode(false);
+    exitSelectMode();
   };
   
   // 🆕 일괄 속성 토글 (대장르/부장르 속성 추가/제거)
@@ -14226,8 +14773,7 @@ const TagManagerModal = memo(({
                 }
               }
             }
-            setSelectedTags(new Set());
-            setSelectMode(false);
+            exitSelectMode();
           }
         }
       ]
@@ -14259,8 +14805,7 @@ const TagManagerModal = memo(({
                 if (onTogglePin) onTogglePin(tag);
               }
             }
-            setSelectedTags(new Set());
-            setSelectMode(false);
+            exitSelectMode();
           }
         }
       ]
@@ -14291,8 +14836,7 @@ const TagManagerModal = memo(({
                 if (onToggleHide) onToggleHide(tag);
               }
             }
-            setSelectedTags(new Set());
-            setSelectMode(false);
+            exitSelectMode();
           }
         }
       ]
@@ -14317,8 +14861,7 @@ const TagManagerModal = memo(({
           text: anyNotTitle ? "설정" : "해제",
           onPress: () => {
             onBatchChangeTitle(tags, anyNotTitle);
-            setSelectedTags(new Set());
-            setSelectMode(false);
+            exitSelectMode();
           }
         }
       ]
@@ -14373,8 +14916,7 @@ const TagManagerModal = memo(({
                 if (onDeleteTag) onDeleteTag(tag, type);
               }
             }
-            setSelectedTags(new Set());
-            setSelectMode(false);
+            exitSelectMode();
           }
         }
       ]
@@ -14398,8 +14940,7 @@ const TagManagerModal = memo(({
             if (onBatchDeleteGlobally) {
               onBatchDeleteGlobally(tags);
             }
-            setSelectedTags(new Set());
-            setSelectMode(false);
+            exitSelectMode();
           }
         }
       ]
@@ -14410,15 +14951,7 @@ const TagManagerModal = memo(({
   const exitSelectMode = () => {
     setSelectMode(false);
     setSelectedTags(new Set());
-  };
-  
-  // 🆕 전체 선택/해제
-  const toggleSelectAll = () => {
-    if (selectedTags.size === currentTags.length) {
-      setSelectedTags(new Set());
-    } else {
-      setSelectedTags(new Set(currentTags.map(t => t.tag)));
-    }
+    setSelectPresetOpen(false);
   };
 
   // 🆕 선택 반전
@@ -14435,6 +14968,12 @@ const TagManagerModal = memo(({
   const selectByPreset = (preset) => {
     let filtered = [];
     switch (preset) {
+      case "all":
+        filtered = currentTags;
+        break;
+      case "none":
+        filtered = [];
+        break;
       case "unused":
         filtered = currentTags.filter(t => usedTagsSet && !usedTagsSet.has(t.tag));
         break;
@@ -14531,14 +15070,6 @@ const TagManagerModal = memo(({
             </Text>
             <View style={{ flexDirection: "row", gap: 6 }}>
               <TouchableOpacity
-                onPress={toggleSelectAll}
-                style={{ backgroundColor: isDark ? C.card : "#fff", paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8 }}
-              >
-                <Text style={{ color: isDark ? C.text : "#1e40af", fontWeight: "600", fontSize: 11 }}>
-                  {selectedTags.size === currentTags.length ? "전체 해제" : "전체 선택"}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
                 onPress={invertSelection}
                 style={{ backgroundColor: isDark ? C.card : "#fff", paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8 }}
               >
@@ -14548,7 +15079,7 @@ const TagManagerModal = memo(({
                 onPress={() => setSelectPresetOpen(!selectPresetOpen)}
                 style={{ backgroundColor: selectPresetOpen ? C.primary : (isDark ? C.card : "#fff"), paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8 }}
               >
-                <Text style={{ color: selectPresetOpen ? "#fff" : (isDark ? C.text : "#1e40af"), fontWeight: "600", fontSize: 11 }}>▼ 조건</Text>
+                <Text style={{ color: selectPresetOpen ? "#fff" : (isDark ? C.text : "#1e40af"), fontWeight: "600", fontSize: 11 }}>▼ 일괄선택</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={exitSelectMode}
@@ -14568,7 +15099,24 @@ const TagManagerModal = memo(({
             borderBottomWidth: 1,
             borderBottomColor: C.line,
           }}>
-            <Text style={{ color: C.sub, fontSize: 11, marginBottom: 6 }}>조건별 선택 (현재 탭 내)</Text>
+            <Text style={{ color: C.sub, fontSize: 11, marginBottom: 6 }}>일괄선택 도구 (현재 탭 내)</Text>
+            <View style={{ flexDirection: "row", gap: 6, marginBottom: 8 }}>
+              {[
+                { key: "all", label: "✅ 전체 선택" },
+                { key: "none", label: "🔲 전체 해제" },
+              ].map(p => (
+                <TouchableOpacity
+                  key={p.key}
+                  onPress={() => selectByPreset(p.key)}
+                  style={{
+                    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999,
+                    backgroundColor: isDark ? "#1e3a5f" : "#dbeafe",
+                  }}
+                >
+                  <Text style={{ color: isDark ? "#93c5fd" : "#1e40af", fontWeight: "700", fontSize: 11 }}>{p.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
               {[
                 { key: "unused", label: "📕 미사용만" },
@@ -15676,6 +16224,205 @@ const TagManagerModal = memo(({
           </View>
         </Modal>
       </SafeAreaView>
+    </Modal>
+  );
+});
+
+/* =========================================================
+   📂 v3.7.0: 폴더 관리 모달
+   ========================================================= */
+const FOLDER_COLORS = ["#6366f1","#3b82f6","#22c55e","#f59e0b","#ef4444","#ec4899","#8b5cf6","#06b6d4"];
+const FOLDER_ICONS = ["📂","📁","📚","⭐","❤️","🔖","🎯","💎"];
+
+const FolderManagerModal = memo(({ visible, onClose, folders, onCreateFolder, onRenameFolder, onDeleteFolder, onUpdateColor, onUpdateIcon, onReorder, getFolderNovelCount, theme }) => {
+  const C = theme;
+  const [newName, setNewName] = useState("");
+  const [newColor, setNewColor] = useState(FOLDER_COLORS[0]);
+  const [newIcon, setNewIcon] = useState("📂");
+  const [editingId, setEditingId] = useState(null);
+  const [editName, setEditName] = useState("");
+
+  const handleCreate = useCallback(() => {
+    if (!newName.trim()) return;
+    onCreateFolder(newName.trim(), newColor, newIcon);
+    setNewName("");
+    setNewColor(FOLDER_COLORS[0]);
+    setNewIcon("📂");
+  }, [newName, newColor, newIcon, onCreateFolder]);
+
+  const handleRename = useCallback((id) => {
+    if (!editName.trim()) { setEditingId(null); return; }
+    onRenameFolder(id, editName.trim());
+    setEditingId(null);
+  }, [editName, onRenameFolder]);
+
+  const handleDelete = useCallback((folder) => {
+    Alert.alert("폴더 삭제", `"${folder.name}" 폴더를 삭제하시겠습니까?\n(작품은 삭제되지 않습니다)`, [
+      { text: "취소" },
+      { text: "삭제", style: "destructive", onPress: () => onDeleteFolder(folder.id) },
+    ]);
+  }, [onDeleteFolder]);
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 16 }}>
+          <Text style={{ fontSize: 20, fontWeight: "800", color: C.text }}>📂 폴더 관리</Text>
+          <TouchableOpacity onPress={onClose}><Text style={{ fontSize: 16, color: C.primary, fontWeight: "700" }}>닫기</Text></TouchableOpacity>
+        </View>
+        <ScrollView style={{ flex: 1, padding: 16 }}>
+          {/* 새 폴더 만들기 */}
+          <View style={{ backgroundColor: C.card, borderRadius: 12, padding: 14, marginBottom: 16, borderWidth: 1, borderColor: C.line }}>
+            <Text style={{ fontSize: 14, fontWeight: "700", color: C.text, marginBottom: 10 }}>새 폴더 만들기</Text>
+            <TextInput
+              value={newName}
+              onChangeText={(t) => setNewName(t.slice(0, 20))}
+              placeholder="폴더 이름 (최대 20자)"
+              placeholderTextColor={C.sub}
+              maxLength={20}
+              style={{ backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 8, padding: 10, fontSize: 15, color: C.text, marginBottom: 10 }}
+            />
+            <Text style={{ fontSize: 12, color: C.sub, marginBottom: 6 }}>색상</Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 10 }}>
+              {FOLDER_COLORS.map(c => (
+                <TouchableOpacity key={c} onPress={() => setNewColor(c)}
+                  style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: c, marginRight: 8, marginBottom: 6, borderWidth: newColor === c ? 3 : 0, borderColor: "#fff", ...(newColor === c ? { shadowColor: c, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.5, shadowRadius: 4, elevation: 4 } : {}) }} />
+              ))}
+            </View>
+            <Text style={{ fontSize: 12, color: C.sub, marginBottom: 6 }}>아이콘</Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 10 }}>
+              {FOLDER_ICONS.map(ic => (
+                <TouchableOpacity key={ic} onPress={() => setNewIcon(ic)}
+                  style={{ width: 36, height: 36, borderRadius: 8, backgroundColor: newIcon === ic ? C.primary : C.chip, justifyContent: "center", alignItems: "center", marginRight: 8, marginBottom: 6 }}>
+                  <Text style={{ fontSize: 18 }}>{ic}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <TouchableOpacity onPress={handleCreate}
+              style={{ backgroundColor: C.primary, paddingVertical: 10, borderRadius: 10, alignItems: "center" }}>
+              <Text style={{ color: "#fff", fontWeight: "700", fontSize: 15 }}>➕ 폴더 만들기</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* 폴더 목록 */}
+          {folders.length === 0 && (
+            <Text style={{ textAlign: "center", color: C.sub, marginTop: 20 }}>아직 폴더가 없습니다. 위에서 새 폴더를 만들어보세요!</Text>
+          )}
+          {folders.map((f, idx) => (
+            <View key={f.id} style={{ backgroundColor: C.card, borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: C.line, borderLeftWidth: 4, borderLeftColor: f.color || C.primary }}>
+              {editingId === f.id ? (
+                <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 8 }}>
+                  <TextInput
+                    value={editName}
+                    onChangeText={(t) => setEditName(t.slice(0, 20))}
+                    maxLength={20}
+                    autoFocus
+                    style={{ flex: 1, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 8, padding: 8, fontSize: 14, color: C.text }}
+                    onSubmitEditing={() => handleRename(f.id)}
+                  />
+                  <TouchableOpacity onPress={() => handleRename(f.id)} style={{ marginLeft: 8 }}>
+                    <Text style={{ color: C.primary, fontWeight: "700" }}>저장</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => setEditingId(null)} style={{ marginLeft: 8 }}>
+                    <Text style={{ color: C.sub }}>취소</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                  <Text style={{ fontSize: 16, fontWeight: "700", color: C.text }}>{f.icon || "📂"} {f.name}</Text>
+                  <Text style={{ fontSize: 12, color: C.sub }}>{getFolderNovelCount(f.id)}개 작품</Text>
+                </View>
+              )}
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                {/* 색상 변경 */}
+                {FOLDER_COLORS.map(c => (
+                  <TouchableOpacity key={c} onPress={() => onUpdateColor(f.id, c)}
+                    style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: c, borderWidth: (f.color || '#6366f1') === c ? 2 : 0, borderColor: "#fff" }} />
+                ))}
+              </View>
+              <View style={{ flexDirection: "row", justifyContent: "flex-end", marginTop: 10, gap: 12 }}>
+                {idx > 0 && <TouchableOpacity onPress={() => onReorder(f.id, "up")}><Text style={{ color: C.sub }}>⬆️</Text></TouchableOpacity>}
+                {idx < folders.length - 1 && <TouchableOpacity onPress={() => onReorder(f.id, "down")}><Text style={{ color: C.sub }}>⬇️</Text></TouchableOpacity>}
+                {FOLDER_ICONS.map(ic => (
+                  <TouchableOpacity key={ic} onPress={() => onUpdateIcon(f.id, ic)}>
+                    <Text style={{ fontSize: 14, opacity: (f.icon || '📂') === ic ? 1 : 0.3 }}>{ic}</Text>
+                  </TouchableOpacity>
+                ))}
+                <TouchableOpacity onPress={() => { setEditingId(f.id); setEditName(f.name); }}>
+                  <Text style={{ color: C.primary, fontWeight: "600" }}>이름변경</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => handleDelete(f)}>
+                  <Text style={{ color: C.warn, fontWeight: "600" }}>삭제</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+});
+
+/* =========================================================
+   📂 v3.7.0: 폴더 배정 모달
+   ========================================================= */
+const FolderAssignModal = memo(({ visible, onClose, novelId, novelTitle, folders, novelFolderMap, onToggle, onCreateFolder, theme }) => {
+  const C = theme;
+  const [newFolderName, setNewFolderName] = useState("");
+  const currentFolders = novelFolderMap.get(novelId) || [];
+
+  const handleQuickCreate = useCallback(async () => {
+    const trimmed = (newFolderName || "").trim();
+    if (!trimmed) return;
+    await onCreateFolder(trimmed, FOLDER_COLORS[0], "📂");
+    setNewFolderName("");
+  }, [newFolderName, onCreateFolder]);
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: C.overlay, justifyContent: "flex-end" }}>
+        <View style={{ backgroundColor: C.bg, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: "70%", padding: 20 }}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }} numberOfLines={1}>📂 폴더 배정</Text>
+            <TouchableOpacity onPress={onClose}><Text style={{ fontSize: 16, color: C.primary, fontWeight: "700" }}>완료</Text></TouchableOpacity>
+          </View>
+          {novelTitle && <Text style={{ fontSize: 13, color: C.sub, marginBottom: 12 }} numberOfLines={1}>{novelTitle}</Text>}
+          <ScrollView style={{ maxHeight: 300 }}>
+            {folders.length === 0 && (
+              <Text style={{ textAlign: "center", color: C.sub, paddingVertical: 20 }}>폴더가 없습니다. 아래에서 새 폴더를 만들어보세요.</Text>
+            )}
+            {folders.map(f => {
+              const isIn = currentFolders.includes(f.id);
+              return (
+                <TouchableOpacity key={f.id} onPress={() => onToggle(novelId, f.id)}
+                  style={{ flexDirection: "row", alignItems: "center", paddingVertical: 12, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: C.line }}>
+                  <View style={{ width: 24, height: 24, borderRadius: 6, backgroundColor: isIn ? (f.color || C.primary) : C.chip, justifyContent: "center", alignItems: "center", marginRight: 12 }}>
+                    {isIn && <Text style={{ color: "#fff", fontSize: 14, fontWeight: "700" }}>✓</Text>}
+                  </View>
+                  <Text style={{ fontSize: 15, color: C.text, fontWeight: isIn ? "700" : "400" }}>{f.icon || "📂"} {f.name}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+          {/* 빠른 폴더 생성 */}
+          <View style={{ flexDirection: "row", alignItems: "center", marginTop: 12, gap: 8 }}>
+            <TextInput
+              value={newFolderName}
+              onChangeText={(t) => setNewFolderName(t.slice(0, 20))}
+              placeholder="➕ 새 폴더 이름"
+              placeholderTextColor={C.sub}
+              maxLength={20}
+              style={{ flex: 1, backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8, padding: 10, fontSize: 14, color: C.text }}
+              onSubmitEditing={handleQuickCreate}
+            />
+            <TouchableOpacity onPress={handleQuickCreate}
+              style={{ backgroundColor: C.primary, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 8 }}>
+              <Text style={{ color: "#fff", fontWeight: "700" }}>추가</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
     </Modal>
   );
 });
@@ -21229,6 +21976,9 @@ function AppContent() {
 
   // 🔄 로딩 상태
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState(null); // 🔧 v3.6.0: { current, total, label } or null
+  const [diagTableStats, setDiagTableStats] = useState(null); // 🔧 v3.6.0: { counts, dbSize } for 진단탭
+  const [diagPatternStats, setDiagPatternStats] = useState(null); // 🔧 v3.6.0: 인사이트/패턴 통계
   const [customResetOpen, setCustomResetOpen] = useState(false); // 🧹 v3.5.5: 커스텀 초기화 모달
   const [resetSelections, setResetSelections] = useState({}); // { key: boolean }
 
@@ -21251,6 +22001,23 @@ function AppContent() {
   const editNewQuoteImagesRef = useRef([]); // 📷 v6.0.1: 편집 모달에서 새로 추가된 이미지 URI 추적 (취소 시 정리)
   const regQuoteImagesRef = useRef([]); // 📷 v3.6.2: 등록 폼에서 추가된 이미지 URI 추적 (실패/취소 시 정리)
   const [settingsSubTab, setSettingsSubTab] = useState("app"); // 🆕 Phase 2: 설정 서브탭 ("app" | "tags" | "analysis" | "slot" | "backup" | "diag" | "info")
+  // 🎨 v3.8.0: 갤러리 시스템
+  const [gallerySubTab, setGallerySubTab] = useState("view");
+  const [galleryImages, setGalleryImages] = useState([]);
+  const [galleryIdx, setGalleryIdx] = useState(0);
+  const [galleryShuffled, setGalleryShuffled] = useState(null);
+  const gallerySwipeRef = useRef({ startX: 0, startY: 0 });
+  const [galleryRegNovel, setGalleryRegNovel] = useState(null);
+  const [galleryRegSearch, setGalleryRegSearch] = useState("");
+  const [galleryExpandImg, setGalleryExpandImg] = useState(null);
+  const [galleryEditCaption, setGalleryEditCaption] = useState("");
+  const [galleryChangeNovelTarget, setGalleryChangeNovelTarget] = useState(null);
+  const [galleryLoading, setGalleryLoading] = useState(false);
+  const [galleryNovelPickerOpen, setGalleryNovelPickerOpen] = useState(false);
+  const [galleryCaptionEditOpen, setGalleryCaptionEditOpen] = useState(false);
+  const [galleryCaptionEditId, setGalleryCaptionEditId] = useState(null);
+  const [galleryCount, setGalleryCount] = useState(0); // 뱃지용 카운트 (지연 로드)
+  const [galleryExpandedGroups, setGalleryExpandedGroups] = useState({}); // 관리 탭 그룹 펼침 상태
   const [refreshKey, setRefreshKey] = useState(0); // 🔬 v3.5.9: 진단 대시보드 새로고침 키
   const [list, setList] = useState([]);
 
@@ -21264,6 +22031,14 @@ function AppContent() {
   const [filterPlatform, setFilterPlatform] = useState("ALL");
   const [filterGenre, setFilterGenre] = useState("ALL");
   const [filterStatus, setFilterStatus] = useState("ALL");
+  const [filterFolder, setFilterFolder] = useState("ALL"); // 📂 v3.7.0: 폴더 필터
+
+  // 📂 v3.7.0: 폴더 시스템
+  const [folders, setFolders] = useState([]);
+  const [novelFolderMap, setNovelFolderMap] = useState(new Map());
+  const [folderModalOpen, setFolderModalOpen] = useState(false);
+  const [folderAssignModalOpen, setFolderAssignModalOpen] = useState(false);
+  const [folderAssignTarget, setFolderAssignTarget] = useState(null);
 
   // 🔍 고급 검색 필터 (v2.3)
   const [searchIncludeTags, setSearchIncludeTags] = useState([]); // AND 조건 포함 태그
@@ -21741,12 +22516,32 @@ function AppContent() {
     await setAppMeta("platform_covers", covers);
   };
 
-  const LoadingOverlay = () => isLoading ? (
-    <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: C.overlay, justifyContent: "center", alignItems: "center", zIndex: 999 }}>
-      <ActivityIndicator size="large" color={C.primary} />
-      <Text style={{ marginTop: 12, color: C.sub }}>처리 중...</Text>
-    </View>
-  ) : null;
+  // 🔧 v3.6.0: ProgressOverlay — loadingProgress가 있으면 프로그레스 바, 없으면 기존 스피너
+  const ProgressOverlay = () => {
+    if (!isLoading) return null;
+    return (
+      <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: C.overlay, justifyContent: "center", alignItems: "center", zIndex: 999 }}>
+        <ActivityIndicator size="large" color={C.primary} />
+        {loadingProgress ? (
+          <View style={{ marginTop: 12, width: "60%", alignItems: "center" }}>
+            <Text style={{ color: C.sub, marginBottom: 6, fontSize: 13 }}>
+              {loadingProgress.label || "처리 중..."}{loadingProgress.total > 0 ? ` (${loadingProgress.current}/${loadingProgress.total})` : ""}
+            </Text>
+            {loadingProgress.total > 0 && (
+              <View style={{ height: 6, width: "100%", backgroundColor: C.line, borderRadius: 3, overflow: "hidden" }}>
+                <View style={{
+                  width: `${(loadingProgress.current / loadingProgress.total * 100)}%`,
+                  height: "100%", backgroundColor: C.primary, borderRadius: 3,
+                }} />
+              </View>
+            )}
+          </View>
+        ) : (
+          <Text style={{ marginTop: 12, color: C.sub }}>처리 중...</Text>
+        )}
+      </View>
+    );
+  };
 
   /* =========================================================
      🆕 이미지 URL 입력 모달 (Android 호환)
@@ -21962,6 +22757,280 @@ function AppContent() {
     }
   }, [screen]);
 
+  // 🎨 v3.8.0: 갤러리 useMemo + useEffect
+  const galleryCards = useMemo(() => {
+    return (galleryImages || []).map(img => {
+      const t = img.tier || tierFromRating(Number(img.rating) || 1500, globalTierConfig);
+      const tc = getTierColor(t);
+      let mg = "";
+      try { const parsed = JSON.parse(img.major_genre || "[]"); mg = Array.isArray(parsed) ? parsed[0] || "" : parsed || ""; } catch { mg = img.major_genre || ""; }
+      return { ...img, tier: t, tierColor: tc, majorGenre: mg };
+    });
+  }, [galleryImages]);
+
+  const galleryGrouped = useMemo(() => {
+    const groups = {};
+    for (const img of galleryImages) {
+      const key = img.novel_id;
+      if (!groups[key]) {
+        groups[key] = {
+          novelId: key,
+          title: img.title,
+          author: img.author,
+          cover_image: img.cover_image,
+          platforms: img.platforms,
+          images: [],
+        };
+      }
+      groups[key].images.push(img);
+    }
+    return Object.values(groups);
+  }, [galleryImages]);
+
+  // 🎨 작품별 갤러리 이미지 수 캐시 (renderItem 내 O(n) filter 방지)
+  const galleryCountByNovel = useMemo(() => {
+    const counts = {};
+    for (const img of galleryImages) {
+      counts[img.novel_id] = (counts[img.novel_id] || 0) + 1;
+    }
+    return counts;
+  }, [galleryImages]);
+
+  const galleryRegFilteredNovels = useMemo(() => {
+    if (!galleryRegSearch.trim()) return list;
+    const q = galleryRegSearch.toLowerCase();
+    return list.filter(n => n.title.toLowerCase().includes(q) || (n.author || "").toLowerCase().includes(q));
+  }, [list, galleryRegSearch]);
+
+  // 갤러리 셔플 stale 방지
+  useEffect(() => {
+    if (galleryShuffled && galleryCards.length > 0) {
+      const arr = [...galleryCards];
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      setGalleryShuffled(arr);
+      setGalleryIdx(0);
+    } else if (galleryShuffled && galleryCards.length === 0) {
+      setGalleryShuffled(null);
+    }
+  }, [galleryCards]);
+
+  // 🔧 v3.6.0: 진단탭 비동기 데이터 로드 (조건부 IIFE 내 hooks 금지 → 최상위 useEffect로 이동)
+  useEffect(() => {
+    if (settingsSubTab !== "diag") return;
+    (async () => {
+      try {
+        // DB 테이블 규모
+        const tables = ["novels", "matches", "choice_logs", "cover_library", "novel_folders", "folders", "gallery_images", "planned_novels", "preference_patterns", "insight_queue"];
+        const counts = {};
+        for (const t of tables) {
+          try { const r = await first(`SELECT COUNT(*) as cnt FROM ${t}`); counts[t] = r?.cnt ?? "?"; } catch { counts[t] = "N/A"; }
+        }
+        let dbSize = "?";
+        try {
+          const pc = await first("PRAGMA page_count"); const ps = await first("PRAGMA page_size");
+          if (pc && ps) { const bytes = (pc.page_count || pc[0]) * (ps.page_size || ps[0]); dbSize = bytes > 1048576 ? `${(bytes / 1048576).toFixed(1)}MB` : `${(bytes / 1024).toFixed(0)}KB`; }
+        } catch {}
+        setDiagTableStats({ counts, dbSize });
+        // 인사이트/패턴 통계
+        const cats = await all("SELECT category, COUNT(*) as cnt FROM preference_patterns GROUP BY category");
+        const totalPatterns = (cats || []).reduce((s, c) => s + c.cnt, 0);
+        const insights = await all("SELECT status, COUNT(*) as cnt FROM insight_queue GROUP BY status");
+        const oldestPending = await first("SELECT MIN(created_at) as oldest FROM insight_queue WHERE status='pending'");
+        let oldestAge = null;
+        if (oldestPending?.oldest) {
+          const diff = Date.now() - new Date(oldestPending.oldest).getTime();
+          oldestAge = diff > 86400000 ? `${Math.floor(diff / 86400000)}일` : diff > 3600000 ? `${Math.floor(diff / 3600000)}시간` : `${Math.floor(diff / 60000)}분`;
+        }
+        setDiagPatternStats({ categories: cats || [], totalPatterns, insights: insights || [], oldestAge });
+      } catch {}
+    })();
+  }, [settingsSubTab, refreshKey]);
+
+  // 갤러리 탭 진입 시 자동 셔플 + 데이터 로드
+  useEffect(() => {
+    if (screen === "gallery") {
+      if (galleryImages.length === 0) loadGalleryImages();
+      if (!galleryShuffled && galleryCards.length > 0) {
+        const arr = [...galleryCards];
+        for (let i = arr.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [arr[i], arr[j]] = [arr[j], arr[i]];
+        }
+        setGalleryShuffled(arr);
+        setGalleryIdx(0);
+      }
+    }
+  }, [screen, galleryCards.length]);
+
+  /* =========================================================
+     📂 v3.7.0: 폴더 시스템 함수
+     ========================================================= */
+  async function loadFolders() {
+    try {
+      const rows = await all("SELECT * FROM folders ORDER BY sort_order ASC, name ASC;");
+      setFolders(rows || []);
+    } catch (e) { console.warn("loadFolders 실패:", e); setFolders([]); }
+  }
+
+  async function loadNovelFolderMap() {
+    try {
+      const rows = await all("SELECT novel_id, folder_id FROM novel_folders;");
+      const map = new Map();
+      for (const r of (rows || [])) {
+        if (!map.has(r.novel_id)) map.set(r.novel_id, []);
+        map.get(r.novel_id).push(r.folder_id);
+      }
+      setNovelFolderMap(map);
+    } catch (e) { console.warn("loadNovelFolderMap 실패:", e); setNovelFolderMap(new Map()); }
+  }
+
+  async function createFolder(name, color, icon) {
+    const trimmed = (name || "").trim().slice(0, 20);
+    if (!trimmed) { Alert.alert("알림", "폴더 이름을 입력해주세요."); return null; }
+    try {
+      const id = uuid();
+      await exec("INSERT INTO folders (id, name, color, icon, sort_order, created_at) VALUES (?,?,?,?,?,?);",
+        [id, trimmed, color || '#6366f1', icon || '📂', folders.length, Date.now()]);
+      await loadFolders();
+      return id;
+    } catch (e) {
+      if (e.message?.includes("UNIQUE")) {
+        Alert.alert("알림", "이미 같은 이름의 폴더가 있습니다.");
+      }
+      return null;
+    }
+  }
+
+  async function renameFolder(id, newName) {
+    const trimmed = (newName || "").trim().slice(0, 20);
+    if (!trimmed) return;
+    try {
+      await exec("UPDATE folders SET name=? WHERE id=?;", [trimmed, id]);
+      await loadFolders();
+    } catch (e) {
+      if (e.message?.includes("UNIQUE")) {
+        Alert.alert("알림", "이미 같은 이름의 폴더가 있습니다.");
+      }
+    }
+  }
+
+  async function deleteFolder(id) {
+    try {
+      await execBatch([
+        { sql: "DELETE FROM novel_folders WHERE folder_id=?;", params: [id] },
+        { sql: "DELETE FROM folders WHERE id=?;", params: [id] },
+      ]);
+      await loadFolders();
+      await loadNovelFolderMap();
+      if (filterFolder === id) setFilterFolder("ALL");
+    } catch (e) { console.warn("deleteFolder 실패:", e); }
+  }
+
+  async function updateFolderColor(id, color) {
+    try {
+      await exec("UPDATE folders SET color=? WHERE id=?;", [color, id]);
+      await loadFolders();
+    } catch (e) { console.warn("updateFolderColor 실패:", e); }
+  }
+
+  async function updateFolderIcon(id, icon) {
+    try {
+      await exec("UPDATE folders SET icon=? WHERE id=?;", [icon, id]);
+      await loadFolders();
+    } catch (e) { console.warn("updateFolderIcon 실패:", e); }
+  }
+
+  async function reorderFolder(id, direction) {
+    const idx = folders.findIndex(f => f.id === id);
+    if (idx < 0) return;
+    const targetIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= folders.length) return;
+    try {
+      const queries = [
+        { sql: "UPDATE folders SET sort_order=? WHERE id=?;", params: [targetIdx, folders[idx].id] },
+        { sql: "UPDATE folders SET sort_order=? WHERE id=?;", params: [idx, folders[targetIdx].id] },
+      ];
+      await execBatch(queries);
+      await loadFolders();
+    } catch (e) { console.warn("reorderFolder 실패:", e); }
+  }
+
+  async function toggleNovelFolder(novelId, folderId) {
+    const current = novelFolderMap.get(novelId) || [];
+    const oldMap = novelFolderMap;
+    const newMap = new Map(novelFolderMap);
+    if (current.includes(folderId)) {
+      newMap.set(novelId, current.filter(f => f !== folderId));
+      setNovelFolderMap(newMap);
+      try {
+        await exec("DELETE FROM novel_folders WHERE folder_id=? AND novel_id=?;", [folderId, novelId]);
+      } catch (e) { setNovelFolderMap(oldMap); }
+    } else {
+      newMap.set(novelId, [...current, folderId]);
+      setNovelFolderMap(newMap);
+      try {
+        await exec("INSERT OR IGNORE INTO novel_folders (folder_id, novel_id, added_at) VALUES (?,?,?);",
+          [folderId, novelId, Date.now()]);
+      } catch (e) { setNovelFolderMap(oldMap); }
+    }
+  }
+
+  async function setNovelFolders(novelId, folderIds) {
+    const queries = [{ sql: "DELETE FROM novel_folders WHERE novel_id=?;", params: [novelId] }];
+    for (const fid of folderIds) {
+      queries.push({ sql: "INSERT INTO novel_folders (folder_id, novel_id, added_at) VALUES (?,?,?);", params: [fid, novelId, Date.now()] });
+    }
+    await execBatch(queries);
+    const newMap = new Map(novelFolderMap);
+    newMap.set(novelId, [...folderIds]);
+    setNovelFolderMap(newMap);
+  }
+
+  async function batchSetFolder(folderId, mode) {
+    const ids = selectedIdsRef.current;
+    if (!ids.length) { Alert.alert("알림", "먼저 작품을 선택해주세요."); return; }
+    const folder = folders.find(f => f.id === folderId);
+    if (!folder) return;
+    if (mode === "add") {
+      const queries = ids.map(nid => ({
+        sql: "INSERT OR IGNORE INTO novel_folders (folder_id, novel_id, added_at) VALUES (?,?,?);",
+        params: [folderId, nid, Date.now()],
+      }));
+      await execBatch(queries);
+      await loadNovelFolderMap();
+      Alert.alert("완료", `${ids.length}개 작품을 "${folder.name}" 폴더에 추가했습니다.`);
+    } else {
+      const queries = ids.map(nid => ({
+        sql: "DELETE FROM novel_folders WHERE folder_id=? AND novel_id=?;",
+        params: [folderId, nid],
+      }));
+      await execBatch(queries);
+      await loadNovelFolderMap();
+      Alert.alert("완료", `${ids.length}개 작품을 "${folder.name}" 폴더에서 제거했습니다.`);
+    }
+  }
+
+  function getFolderNovelCount(folderId) {
+    let count = 0;
+    novelFolderMap.forEach((folderIds) => {
+      if (folderIds.includes(folderId)) count++;
+    });
+    return count;
+  }
+
+  // 📂 폴더 필터용 파생 상태 (Set.has()로 O(1) 조회)
+  const folderFilteredIds = useMemo(() => {
+    if (filterFolder === "ALL") return null;
+    const ids = new Set();
+    novelFolderMap.forEach((folderIds, novelId) => {
+      if (folderIds.includes(filterFolder)) ids.add(novelId);
+    });
+    return ids;
+  }, [filterFolder, novelFolderMap]);
+
   /* =========================================================
      🆕 고급 필터 함수
      ========================================================= */
@@ -21971,6 +23040,7 @@ function AppContent() {
       if (filterPlatform !== "ALL" && !parsePlatforms(n.platforms).includes(filterPlatform)) return false;
       if (filterGenre !== "ALL" && (getFirstGenre(n.major_genre) || deriveMajorGenre(n.tags)) !== filterGenre) return false;
       if (filterStatus !== "ALL" && (n.status || "reading") !== filterStatus) return false;
+      if (folderFilteredIds !== null && !folderFilteredIds.has(n.id)) return false;
       return true;
     });
   }
@@ -22335,7 +23405,14 @@ function AppContent() {
           
           // 🖼️ v3.4.5: 표지 라이브러리 로드
           await loadCoverLibrary();
-          
+
+          // 📂 v3.7.0: 폴더 데이터 로드
+          await loadFolders();
+          await loadNovelFolderMap();
+
+          // 🎨 v3.8.0: 갤러리 카운트 로드 (뱃지용, 전체 데이터는 탭 진입 시)
+          await loadGalleryCount();
+
           // 🧠 v3.5.0: 취향 발견 시스템 마이그레이션 (기존 매칭 데이터에서 패턴 추출)
           // 🆕 v3.5.8: savedTagAttributes 전달 (작품명 태그 제외)
           const migrateTagAttrs = savedTagAttributes || {};
@@ -22529,6 +23606,27 @@ function AppContent() {
       PLATFORM_OPTIONS = [...FACTORY_PLATFORM_OPTIONS];
       PLATFORM_URLS = { ...FACTORY_PLATFORM_URLS };
       setPlatformRegistry(null);
+      // 📂 v3.7.0: 폴더 상태 리셋
+      setFolders([]);
+      setNovelFolderMap(new Map());
+      setFilterFolder("ALL");
+      setFolderModalOpen(false);
+      setFolderAssignModalOpen(false);
+      setFolderAssignTarget(null);
+      // 🎨 v3.8.0: 갤러리 상태 리셋
+      setGalleryImages([]);
+      setGalleryIdx(0);
+      setGalleryShuffled(null);
+      setGalleryRegNovel(null);
+      setGalleryRegSearch("");
+      setGallerySubTab("view");
+      setGalleryExpandImg(null);
+      setGalleryChangeNovelTarget(null);
+      setGalleryNovelPickerOpen(false);
+      setGalleryCaptionEditOpen(false);
+      setGalleryCaptionEditId(null);
+      setGalleryCount(0);
+      setGalleryExpandedGroups({});
       // 🔧 누락 리셋 보완
       setMatchStats({ total: 0, done: 0, percent: 0 });
       setIsAutoMatching(false);
@@ -22702,7 +23800,12 @@ function AppContent() {
       await loadList(undefined, undefined, "slot-switch");
       await loadPlannedList();
       await loadCoverLibrary();
-      
+      // 📂 v3.7.0: 폴더 데이터 로드
+      await loadFolders();
+      await loadNovelFolderMap();
+      // 🎨 v3.8.0: 갤러리 카운트 로드
+      await loadGalleryCount();
+
       // 🔧 v3.5.15e: 인사이트/패턴도 새 DB에서 재로드 (분석 탭 진입 전 일관성 보장)
       loadInsights().catch(() => {});
       loadPreferencePatterns().catch(() => {});
@@ -22791,6 +23894,7 @@ function AppContent() {
             console.log("DB 재연결 성공 (WAL mode)");
             await loadList(undefined, undefined, "fg-recovery");
             await loadCoverLibrary();
+            loadGalleryCount().catch(() => {}); // 🎨 v3.8.0
             console.log("데이터 리로드 성공");
           } catch (e) {
             console.error("DB 재연결/리로드 실패:", e.message);
@@ -23859,16 +24963,20 @@ function AppContent() {
           style: "destructive",
           onPress: async () => {
             setCoverLibraryLoading(true);
-            
-            for (const cover of unusedCovers) {
-              await deleteCoverFromLibrary(cover.file_path);
+            setCoverLibraryProgress({ current: 0, total: unusedCovers.length }); // 🔧 v3.6.0: 진행도
+            try {
+              for (let i = 0; i < unusedCovers.length; i++) {
+                await deleteCoverFromLibrary(unusedCovers[i].file_path);
+                setCoverLibraryProgress({ current: i + 1, total: unusedCovers.length });
+              }
+
+              await exec("DELETE FROM cover_library WHERE status='unused'");
+              await loadCoverLibrary();
+              Alert.alert("완료", `${unusedCovers.length}개의 미사용 표지를 삭제했습니다.`);
+            } finally {
+              setCoverLibraryLoading(false);
+              setCoverLibraryProgress({ current: 0, total: 0 });
             }
-            
-            await exec("DELETE FROM cover_library WHERE status='unused'");
-            
-            setCoverLibraryLoading(false);
-            await loadCoverLibrary();
-            Alert.alert("완료", `${unusedCovers.length}개의 미사용 표지를 삭제했습니다.`);
           },
         },
       ]);
@@ -23965,6 +25073,163 @@ function AppContent() {
   const GALLERY_COL3_ITEM_H = GALLERY_COL3_ITEM_W / 0.7 + 8; // aspectRatio 0.7 + marginBottom 8
   // 갤러리 뷰포트 높이 (5행 표시)
   const GALLERY_VIEWPORT_HEIGHT = GALLERY_COL3_ITEM_H * 5;
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 🎨 v3.8.0: 갤러리 이미지 시스템
+  // ═══════════════════════════════════════════════════════════════════
+
+  async function loadGalleryImages() {
+    try {
+      const rows = await safeDbOperation(async () => {
+        return await all(`
+          SELECT g.id, g.novel_id, g.file_path, g.caption, g.created_at,
+                 n.title, n.author, n.rating, n.tier, n.platforms, n.major_genre,
+                 CASE WHEN n.cover_image LIKE 'data:%' THEN '' ELSE COALESCE(n.cover_image,'') END as cover_image
+          FROM gallery_images g
+          LEFT JOIN novels n ON g.novel_id = n.id
+          ORDER BY g.created_at DESC
+        `);
+      }, "loadGalleryImages");
+      setGalleryImages(rows || []);
+      setGalleryCount((rows || []).length);
+    } catch (e) {
+      console.warn("loadGalleryImages error:", e);
+    }
+  }
+
+  async function loadGalleryCount() {
+    try {
+      const row = await first("SELECT COUNT(*) as c FROM gallery_images");
+      setGalleryCount(row?.c || 0);
+    } catch (e) {
+      console.warn("loadGalleryCount error:", e);
+    }
+  }
+
+  async function addGalleryImages(novelId) {
+    try {
+      // 작품 존재 확인 (삭제된 작품 방어)
+      const novelExists = await first("SELECT id FROM novels WHERE id=?", [novelId]);
+      if (!novelExists) {
+        Alert.alert("오류", "선택한 작품이 삭제되었습니다. 다시 선택해주세요.");
+        setGalleryRegNovel(null);
+        return;
+      }
+      // 현재 개수 체크
+      const existingRow = await first("SELECT COUNT(*) as c FROM gallery_images WHERE novel_id=?", [novelId]);
+      const existing = existingRow?.c || 0;
+      const remaining = GALLERY_IMAGE_MAX_COUNT - existing;
+      if (remaining <= 0) {
+        Alert.alert("알림", `이 작품은 이미 최대 ${GALLERY_IMAGE_MAX_COUNT}장이 등록되어 있습니다.`);
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsMultipleSelection: true,
+        selectionLimit: remaining,
+        quality: 0.8,
+        base64: false,
+      });
+
+      // DB 연결 복구 (Android 필수, 300ms 안정화 대기)
+      await resetDbConnection();
+      try { await openDb(); await new Promise(r => setTimeout(r, 300)); } catch (dbErr) {
+        console.warn("gallery ImagePicker DB 재연결 실패:", dbErr.message);
+      }
+
+      if (result.canceled || !result.assets?.length) return;
+
+      setGalleryLoading(true);
+      // 🔧 ImagePicker가 selectionLimit을 무시하는 Android 기기 대응: 재검증
+      const assets = result.assets.slice(0, remaining);
+      let successCount = 0;
+      let failCount = 0;
+      const queries = [];
+
+      for (let i = 0; i < assets.length; i++) {
+        const asset = assets[i];
+        const { ext } = getImageFormat(asset);
+        const saved = await saveGalleryImage(asset.uri, ext);
+
+        if (saved && saved.id && !saved.error) {
+          queries.push({
+            sql: "INSERT INTO gallery_images (id, novel_id, file_path, caption, created_at) VALUES (?,?,?,?,?);",
+            params: [saved.id, novelId, saved.file_path, "", Date.now()],
+          });
+          successCount++;
+        } else {
+          failCount++;
+          console.warn("gallery image save failed:", saved?.error);
+        }
+      }
+
+      if (queries.length > 0) await execBatch(queries);
+
+      setGalleryLoading(false);
+      await loadGalleryImages();
+
+      if (failCount > 0) {
+        Alert.alert("완료", `${successCount}장 등록, ${failCount}장 실패`);
+      } else {
+        Alert.alert("완료", `${successCount}장이 등록되었습니다.`);
+      }
+    } catch (e) {
+      setGalleryLoading(false);
+      console.warn("addGalleryImages error:", e);
+      Alert.alert("오류", "이미지 등록 중 문제가 발생했습니다: " + (e.message || e));
+    }
+  }
+
+  async function deleteGalleryImage(imgId, filePath) {
+    Alert.alert("확인", "이 이미지를 삭제할까요?", [
+      { text: "취소", style: "cancel" },
+      {
+        text: "삭제",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            // DB 먼저 삭제 (트랜잭션 안전), 파일은 실패해도 허용
+            await exec("DELETE FROM gallery_images WHERE id=?", [imgId]);
+            deleteCoverFromLibrary(filePath).catch(() => {});
+            await loadGalleryImages();
+          } catch (e) {
+            console.warn("deleteGalleryImage error:", e);
+            Alert.alert("오류", "이미지 삭제 중 문제가 발생했습니다.");
+          }
+        },
+      },
+    ]);
+  }
+
+  async function updateGalleryCaption(imgId, caption) {
+    try {
+      // 낙관적 업데이트 먼저
+      setGalleryImages(prev => prev.map(g => g.id === imgId ? { ...g, caption } : g));
+      await exec("UPDATE gallery_images SET caption=? WHERE id=?", [caption, imgId]);
+    } catch (e) {
+      console.warn("updateGalleryCaption error:", e);
+      // DB 실패 시 롤백
+      await loadGalleryImages();
+    }
+  }
+
+  async function changeGalleryNovel(imgId, newNovelId) {
+    try {
+      // 대상 작품 20장 제한 체크
+      const targetCount = await first("SELECT COUNT(*) as c FROM gallery_images WHERE novel_id=?", [newNovelId]);
+      if ((targetCount?.c || 0) >= GALLERY_IMAGE_MAX_COUNT) {
+        Alert.alert("알림", `대상 작품은 이미 최대 ${GALLERY_IMAGE_MAX_COUNT}장이 등록되어 있습니다.`);
+        return;
+      }
+      await exec("UPDATE gallery_images SET novel_id=? WHERE id=?", [newNovelId, imgId]);
+      await loadGalleryImages();
+      setGalleryChangeNovelTarget(null);
+      setGalleryNovelPickerOpen(false);
+    } catch (e) {
+      console.warn("changeGalleryNovel error:", e);
+    }
+  }
 
   async function loadMatchStats() {
     try {
@@ -24703,6 +25968,54 @@ function AppContent() {
       safeDefer(() => deferSetAppMeta("tag_attributes", next));
       return next;
     });
+    // 🔧 v3.6.2: tag_relations (관계도/유사그룹)에서 제거
+    setTagRelations(prev => {
+      if (!prev || !prev.groups) return prev;
+      const matchGroup = Object.keys(prev.tagToGroup || {}).find(k => isSameTag(k, tag));
+      if (!matchGroup) return prev;
+      const groupId = prev.tagToGroup[matchGroup];
+      const group = prev.groups[groupId];
+      if (!group) return prev;
+      const newTags = group.tags.filter(t => !isSameTag(t, tag));
+      const newGroups = { ...prev.groups };
+      const newTagToGroup = { ...prev.tagToGroup };
+      if (newTags.length <= 1) {
+        // 그룹에 태그가 1개 이하면 그룹 자체 삭제
+        delete newGroups[groupId];
+        for (const t of (group.tags || [])) {
+          const mk = Object.keys(newTagToGroup).find(k => isSameTag(k, t));
+          if (mk) delete newTagToGroup[mk];
+        }
+      } else {
+        newGroups[groupId] = { ...group, tags: newTags };
+        delete newTagToGroup[matchGroup];
+      }
+      const updated = { groups: newGroups, tagToGroup: newTagToGroup };
+      safeDefer(() => deferSetAppMeta("tag_relations", updated));
+      return updated;
+    });
+    // 🔧 v3.6.2: coordinateSystems (좌표계)에서 제거
+    setCoordinateSystems(prev => {
+      if (!prev) return prev;
+      let changed = false;
+      const next = {};
+      for (const [csId, cs] of Object.entries(prev)) {
+        if (cs.tags) {
+          const matchKey = Object.keys(cs.tags).find(k => isSameTag(k, tag));
+          if (matchKey) {
+            changed = true;
+            const newTags = { ...cs.tags };
+            delete newTags[matchKey];
+            next[csId] = { ...cs, tags: newTags };
+            continue;
+          }
+        }
+        next[csId] = cs;
+      }
+      if (!changed) return prev;
+      safeDefer(() => saveTagCoordinateSystems(next));
+      return next;
+    });
   }
 
   // 🔧 v3.5.9: 작품 저장 시 텍스트 입력 태그 → customTags 자동 동기화
@@ -25195,6 +26508,58 @@ function AppContent() {
       const next = { ...prev };
       for (const k of matchKeys) delete next[k];
       safeDefer(() => deferSetAppMeta("tag_attributes", next));
+      return next;
+    });
+    // 🔧 v3.6.2: tag_relations (관계도/유사그룹)에서 배치 제거
+    setTagRelations(prev => {
+      if (!prev || !prev.groups) return prev;
+      const newGroups = { ...prev.groups };
+      const newTagToGroup = { ...prev.tagToGroup };
+      let changed = false;
+      for (const tag of tagsToClean) {
+        const matchKey = Object.keys(newTagToGroup).find(k => isSameTag(k, tag));
+        if (!matchKey) continue;
+        changed = true;
+        const groupId = newTagToGroup[matchKey];
+        const group = newGroups[groupId];
+        if (!group) { delete newTagToGroup[matchKey]; continue; }
+        const newTags = group.tags.filter(t => !isSameTag(t, tag));
+        if (newTags.length <= 1) {
+          for (const t of (group.tags || [])) {
+            const mk = Object.keys(newTagToGroup).find(k => isSameTag(k, t));
+            if (mk) delete newTagToGroup[mk];
+          }
+          delete newGroups[groupId];
+        } else {
+          newGroups[groupId] = { ...group, tags: newTags };
+          delete newTagToGroup[matchKey];
+        }
+      }
+      if (!changed) return prev;
+      const updated = { groups: newGroups, tagToGroup: newTagToGroup };
+      safeDefer(() => deferSetAppMeta("tag_relations", updated));
+      return updated;
+    });
+    // 🔧 v3.6.2: coordinateSystems (좌표계)에서 배치 제거
+    setCoordinateSystems(prev => {
+      if (!prev) return prev;
+      let changed = false;
+      const next = {};
+      for (const [csId, cs] of Object.entries(prev)) {
+        if (cs.tags) {
+          const matchKeys = Object.keys(cs.tags).filter(k => shouldCleanKey(k));
+          if (matchKeys.length > 0) {
+            changed = true;
+            const newTags = { ...cs.tags };
+            for (const mk of matchKeys) delete newTags[mk];
+            next[csId] = { ...cs, tags: newTags };
+            continue;
+          }
+        }
+        next[csId] = cs;
+      }
+      if (!changed) return prev;
+      safeDefer(() => saveTagCoordinateSystems(next));
       return next;
     });
   }
@@ -25783,7 +27148,11 @@ function AppContent() {
   // 🆕 일괄 전체 삭제 (한 번의 소설 스캔으로 다중 태그 제거 — O(N) 최적화)
   async function batchDeleteTagsGlobally(tagsToDelete) {
     if (!tagsToDelete || tagsToDelete.length === 0) return;
+    if (isLoading) return; // 🔧 v3.6.0: 동시 실행 보호
 
+    setIsLoading(true);
+    setLoadingProgress({ current: 0, total: 0, label: "태그 일괄 삭제 중..." });
+    try {
     // 1. 레지스트리에서 모든 태그 제거
     updateTagRegistryFn(prev => {
       const newRegistry = { ...prev };
@@ -25836,7 +27205,7 @@ function AppContent() {
       }
     }
     if (updates.length > 0) {
-      await execBatch(updates);
+      await execBatch(updates, (cur, tot) => setLoadingProgress({ current: cur, total: tot, label: "태그 일괄 삭제 중..." }));
     }
 
     // 3. 🔧 배치 최적화: per-tag cleanupTagMetadata → cleanupTagMetadataBatch
@@ -25860,6 +27229,10 @@ function AppContent() {
 
     await loadList(undefined, undefined, "batch");
     Alert.alert("완료", `${tagsToDelete.length}개 태그를 전체에서 삭제했습니다. (${updates.length}개 작품 수정)`);
+    } finally {
+      setLoadingProgress(null);
+      setIsLoading(false);
+    }
   }
 
   // 🏷️ 작품에 적용된 태그 중 기본 목록에 없는 것들을 커스텀 태그로 자동 수집
@@ -26768,9 +28141,19 @@ function AppContent() {
             }
             
             // 🔧 v3.5.8: choice_logs도 함께 삭제 (고아 방지)
+            // 🎨 v3.8.0: 갤러리 이미지 파일 삭제 (DB 삭제 전)
+            try {
+              const gImgs = await all("SELECT file_path FROM gallery_images WHERE novel_id=?", [id]);
+              for (const g of gImgs) {
+                await deleteCoverFromLibrary(g.file_path);
+              }
+            } catch (gErr) { console.warn("removeNovel gallery cleanup:", gErr); }
+
             await execBatch([
               { sql: "DELETE FROM choice_logs WHERE winner_id=? OR loser_id=?", params: [id, id] },
               { sql: "DELETE FROM matches WHERE a_id=? OR b_id=?", params: [id, id] },
+              { sql: "DELETE FROM novel_folders WHERE novel_id=?", params: [id] },
+              { sql: "DELETE FROM gallery_images WHERE novel_id=?", params: [id] }, // 🎨 v3.8.0
               { sql: "DELETE FROM novels WHERE id=?", params: [id] },
             ]);
             // 🔧 v3.5.15e: 미플러시 choiceLog에서도 삭제 대상 제거 (고아 재삽입 방지)
@@ -26796,6 +28179,7 @@ function AppContent() {
             
             await rebuildAllFromMatches(tagAttributes);
             await loadList(undefined, undefined, "rebuild");
+            await loadGalleryImages(); // 🎨 v3.8.0
           } catch (e) {
             console.warn("removeNovel 오류:", e);
             Alert.alert("오류", "삭제 중 문제가 발생했습니다: " + (e.message || e));
@@ -26853,6 +28237,7 @@ function AppContent() {
       group: "🖼️ 표지 & 수상",
       items: [
         { key: "covers", label: "표지 라이브러리", desc: "저장된 표지 이미지 전체" },
+        { key: "gallery", label: "갤러리 이미지", desc: "등록된 팬아트/관련 이미지 전체" },
         { key: "platform_covers", label: "플랫폼 기본 표지", desc: "플랫폼별 기본 표지 설정" },
         { key: "awards", label: "수상 시스템 설정", desc: "수상 기준 및 커스텀 설정" },
       ],
@@ -26894,11 +28279,14 @@ function AppContent() {
               if (effectiveSel.novels) {
                 effectiveSel.matches = true;
                 effectiveSel.choice_logs = true;
+                effectiveSel.gallery = true; // 🎨 v3.8.0
               }
 
               // === 핵심 데이터 ===
               if (effectiveSel.novels) {
                 batch.push({ sql: "DELETE FROM novels;" });
+                batch.push({ sql: "DELETE FROM folders;" });
+                batch.push({ sql: "DELETE FROM novel_folders;" });
                 // 표지 상태도 리셋
                 batch.push({ sql: "UPDATE cover_library SET status='unused', novel_id=NULL" });
               }
@@ -26999,6 +28387,15 @@ function AppContent() {
               if (sel.covers) {
                 await exec("DELETE FROM cover_library;");
                 await loadCoverLibrary();
+              }
+              if (effectiveSel.gallery) {
+                try {
+                  const gImgs = await all("SELECT file_path FROM gallery_images");
+                  for (const g of gImgs) await deleteCoverFromLibrary(g.file_path);
+                } catch {}
+                await exec("DELETE FROM gallery_images;");
+                setGalleryImages([]);
+                setGalleryCount(0);
               }
               if (sel.platform_covers) {
                 setPlatformCovers({});
@@ -27110,11 +28507,20 @@ function AppContent() {
                         { sql: "DELETE FROM choice_logs;" },
                         { sql: "DELETE FROM preference_patterns;" },
                         { sql: "DELETE FROM insight_queue;" },
+                        { sql: "DELETE FROM gallery_images;" }, // 🎨 v3.8.0
                       ]);
-                      
+
                       // 🖼️ v3.4.5: 모든 표지를 미사용 상태로 변경
                       await exec("UPDATE cover_library SET status='unused', novel_id=NULL");
                       await loadCoverLibrary();
+
+                      // 🎨 v3.8.0: 갤러리 파일 전체 삭제
+                      try {
+                        const gdInfo = await FileSystem.getInfoAsync(GALLERY_DIR);
+                        if (gdInfo.exists) await FileSystem.deleteAsync(GALLERY_DIR, { idempotent: true });
+                      } catch {}
+                      setGalleryImages([]);
+                      setGalleryCount(0);
                       
                       // 🔧 v3.5.8: 메모리 큐 정리 (재삽입/재생성 방지)
                       if (choiceLogQueue.timer) { clearTimeout(choiceLogQueue.timer); choiceLogQueue.timer = null; }
@@ -27504,10 +28910,15 @@ function AppContent() {
         }, newReadCountUpdatedAt); // 📅 수동 설정된 날짜로 기록
       }
       
-      // 🖼️ v3.4.5: 표지 변경 시 라이브러리 상태 업데이트
+      // 🖼️ v3.4.5: 표지 변경 시 라이브러��� 상태 업데이트
       if (editCoverImage !== editOriginalCoverImage) {
         await applyNovelCover(n.id, editCoverImage, editOriginalCoverImage);
         await loadCoverLibrary();
+      }
+
+      // 🎨 v3.8.0: 갤러리 이미지 메타데이터 갱신 (제목/작가 변경 반영)
+      if (galleryCount > 0) {
+        loadGalleryImages().catch(() => {});
       }
     } catch (e) {
       if (_pt) PerfMonitor.logError("saveEdit", e); // 🔬
@@ -28544,7 +29955,7 @@ function AppContent() {
       });
     }
     return result;
-  }, [homeQuery, list, filterTier, filterPlatform, filterGenre, filterStatus, searchIncludeTags, searchExcludeTags, searchExcludeStatus, searchExcludeWorkStatus]);
+  }, [homeQuery, list, filterTier, filterPlatform, filterGenre, filterStatus, searchIncludeTags, searchExcludeTags, searchExcludeStatus, searchExcludeWorkStatus, folderFilteredIds]);
 
   // 공용 검색 필터 (bulk/search)
   const filtered = useMemo(() => {
@@ -28905,10 +30316,17 @@ function AppContent() {
       });
     }
 
-    await execBatch(queries);
-    syncTagsToCustom(t); // 🔧 v3.5.9: 일괄 추가 태그도 customTags 동기화
-    await loadList(undefined, undefined, "supplement");
-    Alert.alert("완료", `${ids.length}개 작품에 "${t}" 태그를 추가했습니다.`);
+    // 🔧 v3.6.0: 50개 초과 시 진행도 표시
+    const showProgress = queries.length > 50;
+    if (showProgress) { setIsLoading(true); setLoadingProgress({ current: 0, total: queries.length, label: "태그 추가 중..." }); }
+    try {
+      await execBatch(queries, showProgress ? (cur, tot) => setLoadingProgress({ current: cur, total: tot, label: "태그 추가 중..." }) : null);
+      syncTagsToCustom(t); // 🔧 v3.5.9: 일괄 추가 태그도 customTags 동기화
+      await loadList(undefined, undefined, "supplement");
+      Alert.alert("완료", `${ids.length}개 작품에 "${t}" 태그를 추가했습니다.`);
+    } finally {
+      if (showProgress) { setLoadingProgress(null); setIsLoading(false); }
+    }
   }, [userMajorGenres, userSubGenres, tagAttributes]); // 🔧 v3.5.13: tagAttributes dep 추가
 
   // 🏷️ v3.1.2: 대량편집 농도 지원 - tag_data에서도 제거
@@ -28973,9 +30391,16 @@ function AppContent() {
       });
     }
 
-    await execBatch(queries);
-    await loadList(undefined, undefined, "batch");
-    Alert.alert("완료", `${ids.length}개 작품에서 "${t}" 태그를 삭제했습니다.`);
+    // 🔧 v3.6.0: 50개 초과 시 진행도 표시
+    const showProgress = queries.length > 50;
+    if (showProgress) { setIsLoading(true); setLoadingProgress({ current: 0, total: queries.length, label: "태그 제거 중..." }); }
+    try {
+      await execBatch(queries, showProgress ? (cur, tot) => setLoadingProgress({ current: cur, total: tot, label: "태그 제거 중..." }) : null);
+      await loadList(undefined, undefined, "batch");
+      Alert.alert("완료", `${ids.length}개 작품에서 "${t}" 태그를 삭제했습니다.`);
+    } finally {
+      if (showProgress) { setLoadingProgress(null); setIsLoading(false); }
+    }
   }, [userMajorGenres, userSubGenres, tagAttributes]); // 🔧 v3.5.13: tagAttributes dep 추가
 
   // 🔧 v3.5.1: useCallback으로 변경 (stale closure 방지)
@@ -29086,7 +30511,9 @@ function AppContent() {
         text: "삭제",
         style: "destructive",
         onPress: async () => {
+          if (isLoading) return; // 🔧 v3.6.0: 동시 실행 보호
           setIsLoading(true);
+          setLoadingProgress({ current: 0, total: 0, label: "작품 삭제 중..." });
           try {
             // 🔄 v3.5.0: 상태 동기화 - 삭제 대상과 관련된 모든 상태 초기화
             if (pair && (ids.includes(pair.A?.id) || ids.includes(pair.B?.id))) {
@@ -29103,14 +30530,14 @@ function AppContent() {
             if (focusMatchNovel && ids.includes(focusMatchNovel.id)) {
               setFocusMatchNovel(null);
             }
-            
+
             // 🔧 v3.5.8: 삭제 전 표지 정보 수집
             const placeholders = ids.map(() => "?").join(",");
             const coverNovels = await all(
               `SELECT id, cover_image FROM novels WHERE id IN (${placeholders}) AND cover_image IS NOT NULL AND cover_image != ''`,
               ids
             );
-            
+
             const queries = [];
             for (const id of ids) {
               // 🔧 v3.5.8: choice_logs도 함께 삭제 (고아 방지)
@@ -29123,16 +30550,22 @@ function AppContent() {
                 params: [id, id],
               });
               queries.push({
+                sql: "DELETE FROM novel_folders WHERE novel_id=?",
+                params: [id],
+              });
+              queries.push({
                 sql: "DELETE FROM novels WHERE id=?",
                 params: [id],
               });
             }
-            await execBatch(queries);
+            await execBatch(queries, (cur, tot) => setLoadingProgress({ current: cur, total: tot, label: "작품 삭제 중..." }));
+            await loadNovelFolderMap();
             // 🔧 v3.5.15e: 미플러시 choiceLog에서도 삭제 대상 제거 (고아 재삽입 방지)
             const deletedSet = new Set(ids);
             choiceLogQueue.pending = choiceLogQueue.pending.filter(l => !deletedSet.has(l.winner_id) && !deletedSet.has(l.loser_id));
             // 🔧 v3.5.8: 표지 상태 일괄 업데이트
             if (coverNovels && coverNovels.length > 0) {
+              setLoadingProgress({ current: 0, total: coverNovels.length, label: "표지 정리 중..." });
               const coverQueries = coverNovels.map(cn => ({
                 sql: "UPDATE cover_library SET status='unused', novel_id=NULL WHERE file_path=?",
                 params: [cn.cover_image],
@@ -29140,15 +30573,18 @@ function AppContent() {
               await execBatch(coverQueries);
               await loadCoverLibrary();
             }
-            
+
+            setLoadingProgress(null); // 🔧 v3.6.0: rebuild 단계는 스피너로 전환
             await rebuildAllFromMatches(tagAttributes);
             setSelectedIds([]);
             await loadList(undefined, undefined, "rebuild");
           } catch (e) {
             console.warn("batchDelete 오류:", e);
             Alert.alert("오류", "삭제 중 문제가 발생했습니다: " + (e.message || e));
+          } finally {
+            setLoadingProgress(null);
+            setIsLoading(false);
           }
-          setIsLoading(false);
         },
       },
     ]);
@@ -29611,6 +31047,24 @@ async function exportJSON() {
       payload.PR = platformRegistry;
     }
 
+    // 📂 v3.7.0: 폴더 백업 (FD = Folders, NF = Novel-Folders)
+    const foldersData = await all("SELECT * FROM folders ORDER BY sort_order;");
+    const novelFoldersData = await all("SELECT * FROM novel_folders;");
+    if (foldersData?.length) payload.FD = foldersData;
+    if (novelFoldersData?.length) payload.NF = novelFoldersData;
+
+    // 🎨 v3.8.0: 갤러리 이미지 백업 (GI = Gallery Images, 메타데이터만)
+    try {
+      const giRows = await all("SELECT id, novel_id, file_path, caption, created_at FROM gallery_images");
+      if (giRows?.length) {
+        payload.GI = giRows.map(r => ({
+          i: r.id, n: r.novel_id, fp: r.file_path || "", c: r.caption || "", t: r.created_at || 0,
+        }));
+      }
+    } catch (giErr) {
+      console.warn("gallery_images 백업 실패:", giErr);
+    }
+
     // 📋 v3.3.0: 예정 작품 백업 (PL = Planned List)
     // 🆕 v3.4: 확장 필드 추가
     if (plannedNovels && plannedNovels.length > 0) {
@@ -29655,7 +31109,8 @@ async function exportJSON() {
     const tagRegistryInfo = payload.TR ? ", 태그 체계" : "";
     const plannedInfo = payload.PL ? `, 예정 ${payload.PL.length}개` : "";
     const patternInfo = payload.PP ? `, 학습 패턴 ${payload.PP.length}개` : "";
-    const summary = `${novels.length}작품, ${matches.length}매치${plannedInfo}${coverInfo}${analysisInfo}${tagMetaInfo}${tagRegistryInfo}${patternInfo}\n크기: ${sizeText}`;
+    const galleryInfo = payload.GI ? `, 갤러리 ${payload.GI.length}장` : "";
+    const summary = `${novels.length}작품, ${matches.length}매치${plannedInfo}${coverInfo}${galleryInfo}${analysisInfo}${tagMetaInfo}${tagRegistryInfo}${patternInfo}\n크기: ${sizeText}`;
     
     if (_pt) PerfMonitor.trackFunc("exportJSON", Date.now() - _pt); // 🔬
     setIsLoading(false);
@@ -29720,6 +31175,7 @@ function validateImportData(text) {
       hasPlannedNovels: false, // 📋 v3.3.0
       hasPatterns: false, // 🧠 v3.5.5
       hasPlatformCovers: false, // 📷 v3.5.5
+      hasGallery: false, // 🎨 v3.8.0
     },
     summary: "",
   };
@@ -29796,6 +31252,11 @@ function validateImportData(text) {
       result.features.hasPlatformCovers = true;
     }
 
+    // 🎨 v3.8.0: 갤러리 이미지 확인
+    if (Array.isArray(data.GI) && data.GI.length > 0) {
+      result.features.hasGallery = true;
+    }
+
     // 요약 생성
     const extras = [];
     if (result.features.hasCoverImage) extras.push("표지 이미지");
@@ -29856,9 +31317,19 @@ async function importJSON() {
         { sql: "DELETE FROM choice_logs;", params: [] },
         { sql: "DELETE FROM preference_patterns;", params: [] },
         { sql: "DELETE FROM insight_queue;", params: [] },
+        { sql: "DELETE FROM folders;", params: [] },
+        { sql: "DELETE FROM novel_folders;", params: [] },
+        { sql: "DELETE FROM gallery_images;", params: [] }, // 🎨 v3.8.0
       ]);
       invalidatePatternCache(); // 🔧 v3.5.14
       invalidateWeightsCache(); // 🔧 v3.5.14
+      // 🎨 v3.8.0: 갤러리 파일 전체 삭제
+      try {
+        const gdInfo = await FileSystem.getInfoAsync(GALLERY_DIR);
+        if (gdInfo.exists) await FileSystem.deleteAsync(GALLERY_DIR, { idempotent: true });
+      } catch {}
+      setGalleryImages([]);
+      setGalleryCount(0);
     };
 
     // -------------------------------
@@ -30268,7 +31739,60 @@ async function importJSON() {
               }
 
               // v9는 Elo 데이터 포함 → 재계산 불필요!
-              
+
+              // 📂 v3.7.0: 폴더 복원
+              try {
+                if (Array.isArray(data.FD) && data.FD.length > 0) {
+                  const folderQueries = data.FD.map(f => ({
+                    sql: "INSERT INTO folders (id,name,color,icon,sort_order,created_at) VALUES (?,?,?,?,?,?);",
+                    params: [f.id, f.name, f.color||'#6366f1', f.icon||'📂', f.sort_order||0, f.created_at||Date.now()],
+                  }));
+                  await execBatch(folderQueries);
+
+                  // NF 복원 (FD가 있을 때만 — 고아 매핑 방지)
+                  if (Array.isArray(data.NF) && data.NF.length > 0) {
+                    const folderIds = new Set(data.FD.map(f => f.id));
+                    const validNF = data.NF.filter(nf => folderIds.has(nf.folder_id));
+                    if (validNF.length > 0) {
+                      const nfQueries = validNF.map(nf => ({
+                        sql: "INSERT OR IGNORE INTO novel_folders (folder_id,novel_id,added_at) VALUES (?,?,?);",
+                        params: [nf.folder_id, nf.novel_id, nf.added_at||Date.now()],
+                      }));
+                      await execBatch(nfQueries);
+                    }
+                  }
+                }
+                await loadFolders();
+                await loadNovelFolderMap();
+              } catch (fdErr) {
+                console.warn("폴더 복원 실패:", fdErr);
+              }
+
+              // 🎨 v3.8.0: 갤러리 이미지 복원
+              if (Array.isArray(data.GI) && data.GI.length > 0) {
+                try {
+                  const validGI = [];
+                  for (const gi of data.GI) {
+                    if (gi.fp) {
+                      try {
+                        const fInfo = await FileSystem.getInfoAsync(gi.fp);
+                        if (fInfo.exists) validGI.push(gi);
+                      } catch {}
+                    }
+                  }
+                  if (validGI.length > 0) {
+                    const giQueries = validGI.map(gi => ({
+                      sql: "INSERT OR IGNORE INTO gallery_images (id,novel_id,file_path,caption,created_at) VALUES (?,?,?,?,?);",
+                      params: [gi.i || uuid(), gi.n, gi.fp, gi.c || "", gi.t || Date.now()],
+                    }));
+                    await execBatch(giQueries);
+                  }
+                  await loadGalleryImages();
+                } catch (giErr) {
+                  console.warn("갤러리 이미지 복원 실패:", giErr);
+                }
+              }
+
               // 🧠 v3.5.5: preference_patterns 복원
               let patternsRestored = false;
               if (Array.isArray(data.PP) && data.PP.length > 0) {
@@ -30773,6 +32297,7 @@ async function importJSON() {
         ["분석", "analysis"],
         ["대량", "bulk"],
         ["🖼️표지", "covers"], // 🆕 v3.4.5
+        ["🎨갤러리", "gallery"], // 🆕 v3.8.0
         ["💬명언", "quotes"], // 🆕 v3.5.4
         ["설정", "settings"],
       ].map(([label, key]) => {
@@ -30782,19 +32307,22 @@ async function importJSON() {
           (key === "supplement" && supplementTotalCount > 0) ||
           (key === "recent" && recentChangesCount > 0) ||
           (key === "planned" && plannedCount > 0) ||
-          (key === "quotes" && quotesCards.length > 0);
-        const badgeCount = 
-          key === "review" ? reviewCount : 
-          key === "supplement" ? supplementTotalCount : 
-          key === "recent" ? recentChangesCount : 
-          key === "planned" ? plannedCount : 
-          key === "quotes" ? quotesCards.length : 0;
+          (key === "quotes" && quotesCards.length > 0) ||
+          (key === "gallery" && galleryCount > 0);
+        const badgeCount =
+          key === "review" ? reviewCount :
+          key === "supplement" ? supplementTotalCount :
+          key === "recent" ? recentChangesCount :
+          key === "planned" ? plannedCount :
+          key === "quotes" ? quotesCards.length :
+          key === "gallery" ? galleryCount : 0;
         const badgeColor = 
           key === "review" ? "#f59e0b" : 
           key === "supplement" ? "#3b82f6" :
           key === "recent" ? "#10b981" : 
-          key === "planned" ? "#8b5cf6" : 
-          key === "quotes" ? "#f59e0b" : "#3b82f6";
+          key === "planned" ? "#8b5cf6" :
+          key === "quotes" ? "#f59e0b" :
+          key === "gallery" ? "#ec4899" : "#3b82f6";
         
         return (
         <TouchableOpacity
@@ -30848,7 +32376,7 @@ async function importJSON() {
         backgroundColor={C.bg}
         translucent={appSettings.fullscreenMode === true}
       />
-      <LoadingOverlay />
+      <ProgressOverlay />
       <ScrollView 
         contentContainerStyle={{ padding: 16, paddingBottom: 48 }}
         showsVerticalScrollIndicator={true}
@@ -31146,7 +32674,7 @@ async function importJSON() {
 
 {/* 💬 인상깊은 문장 (텍스트+이미지) */}
 <View style={{ marginTop: 12, padding: 12, backgroundColor: isDark ? "#1e293b" : "#fffbeb", borderRadius: 12, borderLeftWidth: 3, borderLeftColor: isDark ? "#fbbf24" : "#f59e0b" }}>
-  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+  <View style={{ gap: 8, marginBottom: 8 }}>
     <Label>💬 인상깊은 문장 ({memorableQuote.length})</Label>
     {(() => {
       const imgCount = memorableQuote.filter(isImageQuote).length;
@@ -31401,6 +32929,18 @@ async function importJSON() {
                   <Chip key={s.key} label={s.label} active={filterStatus === s.key} onPress={() => setFilterStatus(s.key)} />
                 ))}
               </View>
+              {folders.length > 0 && (
+                <>
+                  <Label style={{ marginTop: 8 }}>📂 폴더</Label>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+                    <Chip label="전체" active={filterFolder === "ALL"} onPress={() => setFilterFolder("ALL")} />
+                    {folders.map(f => (
+                      <Chip key={f.id} label={`${f.icon || '📂'} ${f.name}`} active={filterFolder === f.id} onPress={() => setFilterFolder(f.id)} />
+                    ))}
+                    <Chip label="➕" active={false} onPress={() => deferOpen(setFolderModalOpen)} />
+                  </View>
+                </>
+              )}
             </Section>
 
             <Section title="검색 / 정렬">
@@ -31433,6 +32973,18 @@ async function importJSON() {
                 </TouchableOpacity>
               </View>
               
+              {/* 📂 폴더 필터 표시 */}
+              {filterFolder !== "ALL" && (() => {
+                const f = folders.find(x => x.id === filterFolder);
+                return f ? (
+                  <View style={{ backgroundColor: f.color || C.primary, padding: 8, borderRadius: 10, marginBottom: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                    <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>📂 {f.icon || '📂'} {f.name} 폴더 필터 적용 중</Text>
+                    <TouchableOpacity onPress={() => setFilterFolder("ALL")}>
+                      <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>✕ 해제</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null;
+              })()}
               {/* 현재 적용된 필터 표시 */}
               {(searchIncludeTags.length > 0 || searchExcludeTags.length > 0 || searchExcludeStatus.length > 0 || searchExcludeWorkStatus.length > 0) && (
                 <View style={{ 
@@ -31600,7 +33152,17 @@ async function importJSON() {
                     item={item}
                     index={index}
                     onPress={compareMode ? () => toggleCompare(item.id) : () => openEdit({ ...item })}
-                    onLongPress={() => Alert.alert(item.title, `작가: ${item.author || "-"}\n\n${item.note || "(메모 없음)"}`)}
+                    onLongPress={() => {
+                      const folderNames = (novelFolderMap.get(item.id) || []).map(fid => { const f = folders.find(x => x.id === fid); return f ? `${f.icon||'📂'} ${f.name}` : null; }).filter(Boolean).join(", ");
+                      Alert.alert(
+                        item.title,
+                        `작가: ${item.author || "-"}\n${folderNames ? `📂 폴더: ${folderNames}\n` : ""}\n${item.note || "(메모 없음)"}`,
+                        [
+                          { text: "📂 폴더 배정", onPress: () => { setFolderAssignTarget(item.id); deferOpen(setFolderAssignModalOpen); } },
+                          { text: "확인" },
+                        ]
+                      );
+                    }}
                     onTogglePin={(e) => { e?.stopPropagation?.(); togglePin(item.id, item.pinned); }}
                     onLinkPress={(e) => { e?.stopPropagation?.(); safeOpenURL(item.link); }}
                     onCoverPress={setCoverViewerUri}
@@ -32121,7 +33683,7 @@ async function importJSON() {
                           
                           {/* 2줄: 티어 + 레이팅 + 승률 */}
                           <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 6 }}>
-                            <ActualTierTag novel={item} />
+                            <ActualTierTag novel={item} showWarning={false} />
                             <Text style={{ marginLeft: 8, fontWeight: "800", color: c, fontSize: 16 }}>
                               {(Number(item.rating) || 1500).toFixed(1)}
                             </Text>
@@ -35380,6 +36942,61 @@ async function importJSON() {
               )}
             </Section>
 
+            {/* 🔧 v3.6.2: 강제지정 해제 (manual_tier 설정된 모든 작품) */}
+            {(() => {
+              const forcedNovels = list.filter(n => n.manual_tier);
+              if (forcedNovels.length === 0) return null;
+              return (
+                <Section title={`🔓 강제지정 해제 (${forcedNovels.length})`}>
+                  <Text style={{ color: C.sub, marginBottom: 12, fontSize: 12 }}>
+                    manual_tier가 설정된 작품입니다. 해제하면 점수 기반 티어로 복원됩니다.
+                  </Text>
+                  <View style={{ maxHeight: 300 }}>
+                    {forcedNovels
+                      .sort((a, b) => (a.title || "").localeCompare(b.title || ""))
+                      .map(n => {
+                        const rec = tierFromRating(n.rating || (globalTierConfig.defaultRating || 1500), globalTierConfig);
+                        const actual = getDisplayTier(n, globalTierConfig);
+                        return (
+                          <View key={n.id} style={{
+                            flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+                            paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: C.line,
+                          }}>
+                            <View style={{ flex: 1 }}>
+                              <Text style={{ fontWeight: "700", color: C.text }} numberOfLines={1}>{n.title}</Text>
+                              <Text style={{ color: C.sub, fontSize: 11 }}>
+                                강제: {getTierLabel(actual)} · 권장: {getTierLabel(rec)} · 점수: {(n.rating || 1500).toFixed(0)}
+                              </Text>
+                            </View>
+                            <TouchableOpacity
+                              onPress={() => {
+                                Alert.alert(
+                                  "강제지정 해제",
+                                  `${n.title}의 강제 티어(${getTierLabel(actual)})를 해제하고\n점수 기반 티어(${getTierLabel(rec)})로 복원할까요?`,
+                                  [
+                                    { text: "취소", style: "cancel" },
+                                    { text: "해제", style: "destructive", onPress: async () => {
+                                      try {
+                                        addTierHistoryEntry(n.id, n.title, actual, rec);
+                                        await exec("UPDATE novels SET manual_tier=NULL WHERE id=?", [n.id]);
+                                        await loadList(undefined, undefined, "update");
+                                      } catch (e) { console.warn("강제지정 해제 오류:", e); }
+                                    }},
+                                  ]
+                                );
+                              }}
+                              style={{ backgroundColor: isDark ? "#374151" : "#e5e7eb", paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8 }}
+                            >
+                              <Text style={{ color: isDark ? "#f87171" : "#dc2626", fontWeight: "700", fontSize: 12 }}>해제</Text>
+                            </TouchableOpacity>
+                          </View>
+                        );
+                      })}
+                  </View>
+                </Section>
+              );
+            })()}
+
             {/* 티어 변경 히스토리 */}
             {tierHistory.length > 0 && (
               <Section title="📋 최근 변경 이력">
@@ -35917,6 +37534,30 @@ async function importJSON() {
                 style={{ marginTop: 8 }}
               />
 
+              {/* 📂 v3.7.0: 폴더 일괄 배정 */}
+              {folders.length > 0 && (
+                <>
+                  <View style={{ height: 12 }} />
+                  <Text style={{ fontWeight: "700", marginBottom: 6, color: C.text }}>
+                    📂 폴더 일괄 배정
+                  </Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+                    {folders.map(f => (
+                      <View key={f.id} style={{ flexDirection: "row", marginRight: 8, marginBottom: 8 }}>
+                        <TouchableOpacity onPress={() => batchSetFolder(f.id, "add")}
+                          style={{ backgroundColor: f.color || C.primary, paddingHorizontal: 10, paddingVertical: 6, borderTopLeftRadius: 8, borderBottomLeftRadius: 8 }}>
+                          <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>+ {f.icon || '📂'} {f.name}</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => batchSetFolder(f.id, "remove")}
+                          style={{ backgroundColor: C.warn, paddingHorizontal: 8, paddingVertical: 6, borderTopRightRadius: 8, borderBottomRightRadius: 8 }}>
+                          <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>−</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                  </View>
+                </>
+              )}
+
               <View style={{ height: 12 }} />
               <Text style={{ fontWeight: "700", marginBottom: 6, color: C.text }}>
                 읽은 회차 수 증감
@@ -36199,6 +37840,636 @@ async function importJSON() {
             </Section>
           </>
         )}
+
+        {/* 🎨 GALLERY - v3.8.0 갤러리 시스템 */}
+        {screen === "gallery" && (() => {
+          const displayCards = galleryShuffled || galleryCards;
+          const total = displayCards.length;
+          const safeIdx = Math.min(galleryIdx, Math.max(0, total - 1));
+          const card = total > 0 ? displayCards[safeIdx] : null;
+          const CARD_H = Math.max(Dimensions.get("window").height * 0.62, 420);
+
+          const goPrev = () => setGalleryIdx(i => Math.max(0, i - 1));
+          const goNext = () => setGalleryIdx(i => Math.min(total - 1, i + 1));
+          const doShuffle = () => {
+            const arr = [...galleryCards];
+            for (let i = arr.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [arr[i], arr[j]] = [arr[j], arr[i]];
+            }
+            setGalleryShuffled(arr);
+            setGalleryIdx(0);
+          };
+          const resetOrder = () => { setGalleryShuffled(null); setGalleryIdx(0); };
+
+          return (
+          <>
+            <H>🎨 갤러리</H>
+
+            {/* 서브탭 바 */}
+            <View style={{
+              flexDirection: "row",
+              gap: 6,
+              marginBottom: 16,
+              backgroundColor: C.card,
+              padding: 6,
+              borderRadius: 14,
+              borderWidth: 1,
+              borderColor: C.line,
+            }}>
+              {[
+                { key: "view", label: "갤러리" },
+                { key: "register", label: "등록" },
+                { key: "manage", label: "관리" },
+              ].map(tab => (
+                <TouchableOpacity
+                  key={tab.key}
+                  onPress={() => {
+                    if (gallerySubTab === tab.key) return; // 같은 탭 재클릭 무시
+                    setGallerySubTab(tab.key);
+                    if (tab.key === "view") { setGalleryIdx(0); setGalleryShuffled(null); }
+                  }}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 10,
+                    borderRadius: 10,
+                    backgroundColor: gallerySubTab === tab.key ? C.primary : "transparent",
+                    alignItems: "center",
+                  }}
+                >
+                  <Text style={{
+                    fontWeight: "800",
+                    fontSize: 14,
+                    color: gallerySubTab === tab.key ? "#fff" : C.sub,
+                  }}>
+                    {tab.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* ═══ 서브탭 1: 갤러리 (쇼츠 뷰) ═══ */}
+            {gallerySubTab === "view" && (
+              <>
+                {total === 0 ? (
+                  <View style={{
+                    padding: 40,
+                    alignItems: "center",
+                    backgroundColor: C.card,
+                    borderRadius: 16,
+                  }}>
+                    <Text style={{ fontSize: 48, marginBottom: 16 }}>🎨</Text>
+                    <Text style={{ color: C.text, fontWeight: "700", fontSize: 16, textAlign: "center", marginBottom: 8 }}>
+                      아직 등록된 이미지가 없습니다
+                    </Text>
+                    <Text style={{ color: C.sub, fontSize: 13, textAlign: "center", lineHeight: 20 }}>
+                      등록 탭에서 작품을 선택하고{"\n"}
+                      팬아트나 관련 이미지를 추가해보세요.
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => { setGallerySubTab("register"); loadGalleryImages(); }}
+                      style={{
+                        marginTop: 18,
+                        backgroundColor: C.primary,
+                        paddingHorizontal: 24,
+                        paddingVertical: 12,
+                        borderRadius: 12,
+                      }}
+                    >
+                      <Text style={{ color: "#fff", fontWeight: "700", fontSize: 14 }}>이미지 등록하기</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <>
+                    {/* 상단 컨트롤 바 */}
+                    <View style={{
+                      flexDirection: "row",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      marginBottom: 14,
+                      backgroundColor: C.card,
+                      padding: 12,
+                      borderRadius: 12,
+                    }}>
+                      <Text style={{ color: C.sub, fontSize: 13 }}>
+                        총 {total}장 · {new Set(galleryCards.map(g => g.novel_id)).size}작품
+                      </Text>
+                      <TouchableOpacity
+                        onPress={galleryShuffled ? resetOrder : doShuffle}
+                        style={{
+                          backgroundColor: galleryShuffled ? C.primary : C.chip,
+                          paddingHorizontal: 12,
+                          paddingVertical: 6,
+                          borderRadius: 8,
+                        }}
+                      >
+                        <Text style={{ color: galleryShuffled ? "#fff" : C.text, fontWeight: "700", fontSize: 13 }}>
+                          {galleryShuffled ? "원래순서" : "셔플"}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* 메인 카드 (쇼츠) */}
+                    {card && (() => {
+                      const tierColor = card.tierColor || C.primary;
+                      const tierBg = tierColor + "15";
+
+                      return (
+                        <View
+                          style={{
+                            height: CARD_H,
+                            backgroundColor: C.card,
+                            borderRadius: 24,
+                            overflow: "hidden",
+                            borderWidth: 2,
+                            borderColor: tierColor + "40",
+                            marginBottom: 14,
+                          }}
+                          onTouchStart={(e) => {
+                            gallerySwipeRef.current = {
+                              startX: e.nativeEvent.pageX,
+                              startY: e.nativeEvent.pageY,
+                            };
+                          }}
+                          onTouchEnd={(e) => {
+                            if (gallerySwipeRef.current?.startX == null) return;
+                            const dx = e.nativeEvent.pageX - gallerySwipeRef.current.startX;
+                            const dy = Math.abs(e.nativeEvent.pageY - gallerySwipeRef.current.startY);
+                            if (Math.abs(dx) > 50 && Math.abs(dx) > dy) {
+                              if (dx < 0) goNext();
+                              else goPrev();
+                            }
+                          }}
+                        >
+                          {/* 배경 장식 */}
+                          <View style={{
+                            position: "absolute",
+                            top: 0, left: 0, right: 0,
+                            height: "45%",
+                            backgroundColor: tierBg,
+                            borderBottomLeftRadius: 120,
+                            borderBottomRightRadius: 120,
+                          }} />
+
+                          {/* 상단: 카운터 + 티어 + 장르 */}
+                          <View style={{
+                            flexDirection: "row",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            padding: 18,
+                            paddingBottom: 8,
+                          }}>
+                            <Text style={{ color: C.sub, fontSize: 13, fontWeight: "600" }}>
+                              {safeIdx + 1} / {total}
+                            </Text>
+                            <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
+                              {card.majorGenre ? (
+                                <View style={{
+                                  backgroundColor: C.chip,
+                                  paddingHorizontal: 10,
+                                  paddingVertical: 4,
+                                  borderRadius: 999,
+                                }}>
+                                  <Text style={{ color: C.text, fontSize: 11, fontWeight: "600" }}>
+                                    {card.majorGenre}
+                                  </Text>
+                                </View>
+                              ) : null}
+                              {card.tier ? (
+                                <View style={{
+                                  backgroundColor: tierColor,
+                                  paddingHorizontal: 12,
+                                  paddingVertical: 5,
+                                  borderRadius: 999,
+                                }}>
+                                  <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>
+                                    {card.tier}
+                                  </Text>
+                                </View>
+                              ) : null}
+                            </View>
+                          </View>
+
+                          {/* 중앙: 이미지 */}
+                          <TouchableOpacity
+                            style={{ flex: 1, paddingHorizontal: 16 }}
+                            activeOpacity={0.9}
+                            onPress={() => setGalleryExpandImg(card)}
+                          >
+                            <ExpoImage
+                              source={{ uri: card.file_path }}
+                              recyclingKey={card.id}
+                              style={{ width: "100%", flex: 1, borderRadius: 12 }}
+                              contentFit="contain"
+                              cachePolicy="disk"
+                              transition={200}
+                            />
+                            {card.caption ? (
+                              <Text style={{
+                                fontSize: 13,
+                                color: C.sub,
+                                fontStyle: "italic",
+                                textAlign: "center",
+                                marginTop: 6,
+                                marginBottom: 4,
+                              }}>
+                                {card.caption}
+                              </Text>
+                            ) : null}
+                          </TouchableOpacity>
+
+                          {/* 하단: 작품 정보 */}
+                          <View style={{
+                            padding: 18,
+                            paddingTop: 10,
+                            borderTopWidth: 1,
+                            borderTopColor: C.line,
+                            flexDirection: "row",
+                            alignItems: "center",
+                          }}>
+                            <CoverImage
+                              uri={card.cover_image}
+                              platforms={card.platforms}
+                              platformCovers={platformCovers}
+                              size={46}
+                              theme={C}
+                            />
+                            <View style={{ flex: 1 }}>
+                              <Text style={{
+                                fontSize: 15,
+                                fontWeight: "800",
+                                color: C.text,
+                              }} numberOfLines={1}>
+                                {card.title || "(삭제된 작품)"}
+                              </Text>
+                              <Text style={{
+                                fontSize: 13,
+                                color: C.sub,
+                                marginTop: 2,
+                              }}>
+                                {card.author || "작가 미상"} · {(Number(card.rating) || 1500).toFixed(0)}점
+                              </Text>
+                            </View>
+                          </View>
+                        </View>
+                      );
+                    })()}
+
+                    {/* 네비게이션 바 */}
+                    <View style={{
+                      flexDirection: "row",
+                      justifyContent: "center",
+                      alignItems: "center",
+                      gap: 12,
+                      marginBottom: 16,
+                    }}>
+                      <TouchableOpacity
+                        onPress={goPrev}
+                        disabled={safeIdx === 0}
+                        style={{
+                          backgroundColor: safeIdx === 0 ? C.chip : C.card,
+                          width: 52, height: 52, borderRadius: 26,
+                          alignItems: "center", justifyContent: "center",
+                          borderWidth: 1, borderColor: C.line,
+                          opacity: safeIdx === 0 ? 0.4 : 1,
+                        }}
+                      >
+                        <Text style={{ fontSize: 22, color: C.text }}>◀</Text>
+                      </TouchableOpacity>
+
+                      <View style={{ flex: 1, maxWidth: 180 }}>
+                        <View style={{
+                          height: 6,
+                          backgroundColor: C.chip,
+                          borderRadius: 3,
+                          overflow: "hidden",
+                        }}>
+                          <View style={{
+                            height: "100%",
+                            width: `${((safeIdx + 1) / total) * 100}%`,
+                            backgroundColor: card?.tierColor || C.primary,
+                            borderRadius: 3,
+                          }} />
+                        </View>
+                      </View>
+
+                      <TouchableOpacity
+                        onPress={goNext}
+                        disabled={safeIdx >= total - 1}
+                        style={{
+                          backgroundColor: safeIdx >= total - 1 ? C.chip : C.card,
+                          width: 52, height: 52, borderRadius: 26,
+                          alignItems: "center", justifyContent: "center",
+                          borderWidth: 1, borderColor: C.line,
+                          opacity: safeIdx >= total - 1 ? 0.4 : 1,
+                        }}
+                      >
+                        <Text style={{ fontSize: 22, color: C.text }}>▶</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                )}
+              </>
+            )}
+
+            {/* ═══ 서브탭 2: 등록 ═══ */}
+            {gallerySubTab === "register" && (
+              <>
+                {galleryRegNovel ? (
+                  <Section title={`${galleryRegNovel.title} — 이미지 등록`}>
+                    <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 14 }}>
+                      <CoverImage
+                        uri={galleryRegNovel.cover_image}
+                        platforms={galleryRegNovel.platforms}
+                        platformCovers={platformCovers}
+                        size={56}
+                        theme={C}
+                      />
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 15, fontWeight: "800", color: C.text }} numberOfLines={1}>
+                          {galleryRegNovel.title}
+                        </Text>
+                        <Text style={{ fontSize: 13, color: C.sub, marginTop: 2 }}>
+                          {galleryRegNovel.author || "작가 미상"}
+                        </Text>
+                        <Text style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>
+                          등록 이미지: {galleryCountByNovel[galleryRegNovel.id] || 0} / {GALLERY_IMAGE_MAX_COUNT}
+                        </Text>
+                      </View>
+                    </View>
+
+                    <View style={{ flexDirection: "row", gap: 10 }}>
+                      <TouchableOpacity
+                        onPress={() => addGalleryImages(galleryRegNovel.id)}
+                        disabled={galleryLoading}
+                        style={{
+                          flex: 1,
+                          backgroundColor: galleryLoading ? C.chip : C.primary,
+                          paddingVertical: 14,
+                          borderRadius: 12,
+                          alignItems: "center",
+                        }}
+                      >
+                        <Text style={{ color: "#fff", fontWeight: "700", fontSize: 15 }}>
+                          {galleryLoading ? "처리 중..." : "이미지 추가"}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => { setGalleryRegNovel(null); setGalleryRegSearch(""); }}
+                        style={{
+                          backgroundColor: C.chip,
+                          paddingVertical: 14,
+                          paddingHorizontal: 18,
+                          borderRadius: 12,
+                          alignItems: "center",
+                        }}
+                      >
+                        <Text style={{ color: C.sub, fontWeight: "700", fontSize: 15 }}>다른 작품</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* 현재 작품의 갤러리 이미지 미리보기 */}
+                    {(() => {
+                      const novelImgs = galleryImages.filter(g => g.novel_id === galleryRegNovel.id);
+                      if (novelImgs.length === 0) return null;
+                      return (
+                        <View style={{ marginTop: 14 }}>
+                          <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>등록된 이미지</Text>
+                          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                            {novelImgs.slice(0, 9).map(img => (
+                              <ExpoImage
+                                key={img.id}
+                                source={{ uri: img.file_path }}
+                                recyclingKey={img.id}
+                                style={{ width: 60, height: 60, borderRadius: 8 }}
+                                contentFit="cover"
+                                cachePolicy="memory-disk"
+                              />
+                            ))}
+                            {novelImgs.length > 9 && (
+                              <View style={{
+                                width: 60, height: 60, borderRadius: 8,
+                                backgroundColor: C.chip,
+                                alignItems: "center", justifyContent: "center",
+                              }}>
+                                <Text style={{ color: C.sub, fontWeight: "700", fontSize: 13 }}>
+                                  +{novelImgs.length - 9}
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+                        </View>
+                      );
+                    })()}
+                  </Section>
+                ) : (
+                  <Section title="작품 선택">
+                    <TextInput
+                      value={galleryRegSearch}
+                      onChangeText={setGalleryRegSearch}
+                      placeholder="작품명 또는 작가명 검색..."
+                      placeholderTextColor={C.sub}
+                      style={{
+                        backgroundColor: C.bg,
+                        color: C.text,
+                        borderRadius: 10,
+                        padding: 12,
+                        fontSize: 14,
+                        borderWidth: 1,
+                        borderColor: C.line,
+                        marginBottom: 12,
+                      }}
+                    />
+                    <View style={{ maxHeight: Math.min(400, Dimensions.get("window").height * 0.45) }}>
+                      <FlatList
+                        data={galleryRegFilteredNovels}
+                        keyExtractor={item => item.id}
+                        nestedScrollEnabled
+                        keyboardShouldPersistTaps="handled"
+                        initialNumToRender={10}
+                        maxToRenderPerBatch={5}
+                        windowSize={3}
+                        renderItem={({ item }) => {
+                          const imgCount = galleryCountByNovel[item.id] || 0;
+                          return (
+                            <TouchableOpacity
+                              onPress={() => setGalleryRegNovel(item)}
+                              style={{
+                                flexDirection: "row",
+                                alignItems: "center",
+                                padding: 10,
+                                borderRadius: 10,
+                                marginBottom: 4,
+                                backgroundColor: C.bg,
+                              }}
+                            >
+                              <CoverImage
+                                uri={item.cover_image}
+                                platforms={item.platforms}
+                                platformCovers={platformCovers}
+                                size={40}
+                                theme={C}
+                              />
+                              <View style={{ flex: 1 }}>
+                                <Text style={{ fontSize: 14, fontWeight: "700", color: C.text }} numberOfLines={1}>
+                                  {item.title}
+                                </Text>
+                                <Text style={{ fontSize: 12, color: C.sub }}>
+                                  {item.author || "작가 미상"}
+                                </Text>
+                              </View>
+                              <View style={{
+                                backgroundColor: imgCount > 0 ? C.primary + "20" : C.chip,
+                                paddingHorizontal: 8,
+                                paddingVertical: 4,
+                                borderRadius: 8,
+                              }}>
+                                <Text style={{
+                                  fontSize: 11,
+                                  fontWeight: "700",
+                                  color: imgCount > 0 ? C.primary : C.sub,
+                                }}>
+                                  {imgCount}/{GALLERY_IMAGE_MAX_COUNT}
+                                </Text>
+                              </View>
+                            </TouchableOpacity>
+                          );
+                        }}
+                        ListEmptyComponent={
+                          <Text style={{ color: C.sub, textAlign: "center", padding: 20 }}>
+                            {list.length === 0 ? "등록된 작품이 없습니다." : galleryRegSearch.trim() ? "검색 결과가 없습니다." : "등록된 작품이 없습니다."}
+                          </Text>
+                        }
+                      />
+                    </View>
+                  </Section>
+                )}
+              </>
+            )}
+
+            {/* ═══ 서브탭 3: 관리 ═══ */}
+            {gallerySubTab === "manage" && (
+              <>
+                {galleryGrouped.length === 0 ? (
+                  <View style={{
+                    padding: 40,
+                    alignItems: "center",
+                    backgroundColor: C.card,
+                    borderRadius: 16,
+                  }}>
+                    <Text style={{ fontSize: 48, marginBottom: 16 }}>🎨</Text>
+                    <Text style={{ color: C.text, fontWeight: "700", fontSize: 16, textAlign: "center" }}>
+                      등록된 이미지가 없습니다
+                    </Text>
+                  </View>
+                ) : (
+                  <>
+                    <View style={{
+                      backgroundColor: C.card,
+                      padding: 12,
+                      borderRadius: 12,
+                      marginBottom: 14,
+                    }}>
+                      <Text style={{ color: C.sub, fontSize: 13 }}>
+                        총 {galleryImages.length}장 · {galleryGrouped.length}작품
+                      </Text>
+                    </View>
+                    {galleryGrouped.map(group => {
+                      const isExpanded = galleryExpandedGroups[group.novelId];
+                      return (
+                      <View key={group.novelId} style={{
+                        backgroundColor: C.card,
+                        borderRadius: 16,
+                        marginBottom: 12,
+                        borderWidth: 1,
+                        borderColor: C.line,
+                        overflow: "hidden",
+                      }}>
+                        {/* 그룹 헤더 (탭하여 펼치기/접기) */}
+                        <TouchableOpacity
+                          onPress={() => setGalleryExpandedGroups(prev => ({
+                            ...prev,
+                            [group.novelId]: !prev[group.novelId],
+                          }))}
+                          style={{
+                            flexDirection: "row",
+                            alignItems: "center",
+                            padding: 14,
+                          }}
+                        >
+                          <CoverImage
+                            uri={group.cover_image}
+                            platforms={group.platforms}
+                            platformCovers={platformCovers}
+                            size={36}
+                            theme={C}
+                          />
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontSize: 14, fontWeight: "700", color: C.text }} numberOfLines={1}>
+                              {group.title || "(삭제된 작품)"}
+                            </Text>
+                            <Text style={{ fontSize: 12, color: C.sub }}>
+                              {group.author || "작가 미상"} · {group.images.length}장
+                            </Text>
+                          </View>
+                          <Text style={{ fontSize: 16, color: C.sub }}>
+                            {isExpanded ? "▲" : "▼"}
+                          </Text>
+                        </TouchableOpacity>
+
+                        {/* 이미지 그리드 (펼쳐진 경우만 렌더) */}
+                        {isExpanded && (
+                          <View style={{ padding: 12, paddingTop: 0, flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                            {group.images.map(img => (
+                              <GalleryGridItem
+                                key={img.id}
+                                item={img}
+                                theme={C}
+                                onPress={(item) => setGalleryExpandImg(item)}
+                                onLongPress={(item) => {
+                                  Alert.alert(
+                                    item.caption || "이미지 관리",
+                                    null,
+                                    [
+                                      {
+                                        text: "설명 편집",
+                                        onPress: () => {
+                                          setGalleryCaptionEditId(item.id);
+                                          setGalleryEditCaption(item.caption || "");
+                                          setGalleryCaptionEditOpen(true);
+                                        },
+                                      },
+                                      {
+                                        text: "연관 작품 변경",
+                                        onPress: () => {
+                                          setGalleryChangeNovelTarget(item);
+                                          setGalleryRegSearch("");
+                                          setGalleryNovelPickerOpen(true);
+                                        },
+                                      },
+                                      {
+                                        text: "삭제",
+                                        style: "destructive",
+                                        onPress: () => deleteGalleryImage(item.id, item.file_path),
+                                      },
+                                      { text: "취소", style: "cancel" },
+                                    ]
+                                  );
+                                }}
+                              />
+                            ))}
+                          </View>
+                        )}
+                      </View>
+                      );
+                    })}
+                  </>
+                )}
+              </>
+            )}
+          </>
+          );
+        })()}
 
         {/* 💬 QUOTES - v3.5.4 명언 쇼츠 */}
         {screen === "quotes" && (() => {
@@ -36708,6 +38979,28 @@ async function importJSON() {
                   </TouchableOpacity>
                 ))}
               </View>
+            </Section>
+
+            {/* 📂 v3.7.0: 폴더 관리 */}
+            <Section title="📂 폴더 관리">
+              <Text style={{ color: C.sub, marginBottom: 12, fontSize: 13 }}>
+                폴더를 만들어 작품을 자유롭게 분류할 수 있습니다. 하나의 작품을 여러 폴더에 넣을 수 있습니다.
+              </Text>
+              <TouchableOpacity
+                onPress={() => deferOpen(setFolderModalOpen)}
+                style={{
+                  backgroundColor: C.primary,
+                  padding: 14,
+                  borderRadius: 12,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  marginBottom: 8,
+                }}
+              >
+                <Text style={{ color: "#fff", fontSize: 16, fontWeight: "700" }}>📂 폴더 관리 열기</Text>
+              </TouchableOpacity>
+              <Text style={{ color: C.sub, fontSize: 11, textAlign: "center" }}>현재 {folders.length}개 폴더</Text>
             </Section>
 
             {/* ⚙️ 티어 시스템 설정 (v6.0 유연한 티어 시스템) */}
@@ -39036,22 +41329,38 @@ async function importJSON() {
             )}
 
             {PerfMonitor.enabled && summary.stateSnapshots.length > 0 && (
+            {/* 🔧 v3.6.0: DB 테이블 규모 확장 */}
             <Section title="📦 데이터 규모">
               {(() => {
                 const latest = summary.stateSnapshots[0];
+                const cardStyle = { backgroundColor: isDark ? "#1a1a2e" : "#f0f0f5", borderRadius: 8, padding: 8, minWidth: "45%", flex: 1 };
                 return (
-                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                    {[
-                      { label: "작품 수", value: latest.novels || 0 },
-                      { label: "커스텀 태그", value: latest.customTags || 0 },
-                      // 🔧 v3.5.12: comboTags 통계 제거 (항상 0)
-                      { label: "표지 이미지", value: latest.coverImages || 0 },
-                    ].map((item, i) => (
-                      <View key={i} style={{ backgroundColor: isDark ? "#1a1a2e" : "#f0f0f5", borderRadius: 8, padding: 8, minWidth: "45%", flex: 1 }}>
-                        <Text style={{ color: C.sub, fontSize: 10 }}>{item.label}</Text>
-                        <Text style={{ color: C.text, fontSize: 15, fontWeight: "700" }}>{item.value}</Text>
+                  <View>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                      {[
+                        { label: "작품 수", value: latest.novels || 0 },
+                        { label: "커스텀 태그", value: latest.customTags || 0 },
+                        { label: "표지 이미지", value: latest.coverImages || 0 },
+                      ].map((item, i) => (
+                        <View key={i} style={cardStyle}>
+                          <Text style={{ color: C.sub, fontSize: 10 }}>{item.label}</Text>
+                          <Text style={{ color: C.text, fontSize: 15, fontWeight: "700" }}>{item.value}</Text>
+                        </View>
+                      ))}
+                    </View>
+                    {diagTableStats && (
+                      <View style={{ marginTop: 10 }}>
+                        <Text style={{ color: C.sub, fontSize: 11, fontWeight: "600", marginBottom: 6 }}>DB 테이블별 행 수 (파일 크기: {diagTableStats.dbSize})</Text>
+                        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                          {Object.entries(diagTableStats.counts).map(([t, cnt]) => (
+                            <View key={t} style={{ backgroundColor: isDark ? "#1a1a2e" : "#f0f0f5", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4 }}>
+                              <Text style={{ color: C.sub, fontSize: 9 }}>{t}</Text>
+                              <Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>{cnt}</Text>
+                            </View>
+                          ))}
+                        </View>
                       </View>
-                    ))}
+                    )}
                   </View>
                 );
               })()}
@@ -39073,6 +41382,72 @@ async function importJSON() {
               </Text>
             </Section>
             )}
+
+            {/* 🔧 v3.6.0: 슬롯 시스템 상태 */}
+            <Section title="🗂️ 슬롯 시스템">
+              {(() => {
+                const meta = slotMeta;
+                const slotMatch = _dbOpenedForSlot === activeSlotId;
+                return (
+                  <View>
+                    <View style={{ flexDirection: "row", gap: 12, marginBottom: 8 }}>
+                      <Text style={{ color: C.sub, fontSize: 12 }}>활성 슬롯: <Text style={{ color: C.text, fontWeight: "700" }}>{activeSlotId}</Text></Text>
+                      <Text style={{ color: C.sub, fontSize: 12 }}>DB 슬롯: <Text style={{ color: slotMatch ? "#22c55e" : "#ef4444", fontWeight: "700" }}>{_dbOpenedForSlot}</Text></Text>
+                      <Text style={{ color: slotMatch ? "#22c55e" : "#ef4444", fontSize: 12, fontWeight: "700" }}>{slotMatch ? "✓ 일치" : "⚠ 불일치!"}</Text>
+                    </View>
+                    {meta?.slots ? (
+                      <View style={{ gap: 4 }}>
+                        {meta.slots.map((s, i) => (
+                          <View key={i} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 3, borderBottomWidth: 0.5, borderColor: C.line + "40" }}>
+                            <Text style={{ color: s.id === activeSlotId ? C.primary : C.text, fontSize: 12, fontWeight: s.id === activeSlotId ? "700" : "400" }}>
+                              슬롯 {s.id}: {s.name || "(기본)"}
+                            </Text>
+                            <Text style={{ color: C.sub, fontSize: 12 }}>{s.novelCount ?? "?"}개 작품</Text>
+                          </View>
+                        ))}
+                      </View>
+                    ) : (
+                      <Text style={{ color: C.sub, fontSize: 12 }}>슬롯 메타데이터 로드 대기 중...</Text>
+                    )}
+                  </View>
+                );
+              })()}
+            </Section>
+
+            {/* 🔧 v3.6.0: 인사이트/패턴 시스템 상태 */}
+            <Section title="🧠 인사이트/패턴">
+              {!diagPatternStats ? (
+                <Text style={{ color: C.sub, fontSize: 12 }}>로딩 중...</Text>
+              ) : (
+                <View>
+                  <Text style={{ color: C.sub, fontSize: 11, fontWeight: "600", marginBottom: 6 }}>취향 패턴 ({diagPatternStats.totalPatterns}건)</Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                    {diagPatternStats.categories.map((c, i) => (
+                      <View key={i} style={{ backgroundColor: isDark ? "#1a1a2e" : "#f0f0f5", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+                        <Text style={{ color: C.sub, fontSize: 9 }}>{c.category}</Text>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>{c.cnt}</Text>
+                      </View>
+                    ))}
+                  </View>
+                  <Text style={{ color: C.sub, fontSize: 11, fontWeight: "600", marginBottom: 6 }}>인사이트 큐</Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                    {diagPatternStats.insights.map((ins, i) => (
+                      <View key={i} style={{ backgroundColor: isDark ? "#1a1a2e" : "#f0f0f5", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+                        <Text style={{ color: C.sub, fontSize: 9 }}>{ins.status}</Text>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>{ins.cnt}</Text>
+                      </View>
+                    ))}
+                    {diagPatternStats.insights.length === 0 && <Text style={{ color: C.sub, fontSize: 11 }}>인사이트 없음</Text>}
+                  </View>
+                  {diagPatternStats.oldestAge && (
+                    <Text style={{ color: "#f59e0b", fontSize: 11, marginTop: 6 }}>⏳ 가장 오래된 미확인 인사이트: {diagPatternStats.oldestAge} 전</Text>
+                  )}
+                  <Text style={{ color: C.sub, fontSize: 10, marginTop: 8, fontStyle: "italic" }}>
+                    ⚠ insight_queue는 백업에 포함되지 않습니다. 복원 시 인사이트 이력이 초기화됩니다.
+                  </Text>
+                </View>
+              )}
+            </Section>
 
             {PerfMonitor.enabled && (
             <Section title="📋 진단 내보내기">
@@ -39122,7 +41497,19 @@ async function importJSON() {
                     `[화면 전환 (최근 10)]`,
                     ...s.navigation.slice(0,10).map(n => `  ${n.from} → ${n.to} (${new Date(n.time).toLocaleTimeString()})`),
                     ...(s.stateSnapshots.length > 0 ? [``, `[데이터 규모]`, `  작품: ${s.stateSnapshots[0].novels}, 커스텀태그: ${s.stateSnapshots[0].customTags}, 조합태그: ${s.stateSnapshots[0].comboTags}, 표지: ${s.stateSnapshots[0].coverImages}`] : []),
+                    ``,
+                    `[슬롯] 활성: ${activeSlotId}, DB연결: ${_dbOpenedForSlot}, ${_dbOpenedForSlot === activeSlotId ? "일치" : "⚠불일치"}`,
+                    ...(slotMeta?.slots ? slotMeta.slots.map(sl => `  슬롯${sl.id}: ${sl.name || "(기본)"} (${sl.novelCount ?? "?"}개)`) : []),
                   ];
+                  // 🔧 v3.6.0: DB 테이블 규모 + 인사이트 상태 추가
+                  try {
+                    const tables = ["novels","matches","choice_logs","cover_library","planned_novels","preference_patterns","insight_queue"];
+                    const tcLines = [];
+                    for (const t of tables) { try { const r = await first(`SELECT COUNT(*) as cnt FROM ${t}`); tcLines.push(`${t}=${r?.cnt??'?'}`); } catch { tcLines.push(`${t}=N/A`); } }
+                    lines.push(``, `[테이블 규모] ${tcLines.join(", ")}`);
+                    const insQ = await all("SELECT status, COUNT(*) as cnt FROM insight_queue GROUP BY status");
+                    if (insQ && insQ.length > 0) lines.push(`[인사이트] ${insQ.map(i => `${i.status}=${i.cnt}`).join(", ")}`);
+                  } catch {}
                   const report = lines.join("\n");
                   try {
                     await Share.share({ title: "성능 진단 리포트", message: report });
@@ -39711,6 +42098,24 @@ async function importJSON() {
                   ))}
                 </View>
 
+                {/* 📂 v3.7.0: 폴더 배정 */}
+                {folders.length > 0 && (
+                  <>
+                    <Label style={{ marginTop: 10 }}>📂 폴더</Label>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+                      {folders.map(f => {
+                        const isIn = (novelFolderMap.get(editItem?.id) || []).includes(f.id);
+                        return (
+                          <TouchableOpacity key={f.id} onPress={() => editItem?.id && toggleNovelFolder(editItem.id, f.id)}
+                            style={{ flexDirection: "row", alignItems: "center", paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, backgroundColor: isIn ? (f.color || C.primary) : C.chip, marginRight: 8, marginBottom: 8 }}>
+                            <Text style={{ color: isIn ? "#fff" : C.text, fontWeight: isIn ? "700" : "400", fontSize: 13 }}>{f.icon || '📂'} {f.name}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </>
+                )}
+
                 <Label style={{ marginTop: 10 }}>본편 읽은 회차</Label>
 <Input
   value={String(editItem.read_count || 0)}
@@ -39917,7 +42322,7 @@ async function importJSON() {
 
                 {/* 💬 v3.5.4: 인상깊은 문장 (다중 지원) / 📷 v3.6.1: 이미지 첨부 지원 */}
                 <View style={{ marginTop: 16, padding: 12, backgroundColor: C.bg, borderRadius: 12, borderLeftWidth: 3, borderLeftColor: C.primary }}>
-                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <View style={{ gap: 8, marginBottom: 8 }}>
                     <Label>💬 인상깊은 문장 ({editQuotes.length})</Label>
                     <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
                       <TouchableOpacity
@@ -42004,6 +44409,34 @@ async function importJSON() {
         </View>
       </Modal>
 
+      {/* 📂 v3.7.0: 폴더 관리 모달 */}
+      {folderModalOpen && <FolderManagerModal
+        visible={folderModalOpen}
+        onClose={() => setFolderModalOpen(false)}
+        folders={folders}
+        onCreateFolder={createFolder}
+        onRenameFolder={renameFolder}
+        onDeleteFolder={deleteFolder}
+        onUpdateColor={updateFolderColor}
+        onUpdateIcon={updateFolderIcon}
+        onReorder={reorderFolder}
+        getFolderNovelCount={getFolderNovelCount}
+        theme={C}
+      />}
+
+      {/* 📂 v3.7.0: 폴더 배정 모달 */}
+      {folderAssignModalOpen && <FolderAssignModal
+        visible={folderAssignModalOpen}
+        onClose={() => { setFolderAssignModalOpen(false); setFolderAssignTarget(null); }}
+        novelId={folderAssignTarget}
+        novelTitle={folderAssignTarget ? (listMap.get(folderAssignTarget)?.title || "") : ""}
+        folders={folders}
+        novelFolderMap={novelFolderMap}
+        onToggle={toggleNovelFolder}
+        onCreateFolder={createFolder}
+        theme={C}
+      />}
+
       {/* 🏷️ 태그 매니저 모달 (풀스크린) — v3.5.9: 조건부 마운트로 성능 최적화 */}
       {tagManagerModalOpen && <TagManagerModal
         visible={tagManagerModalOpen}
@@ -42328,6 +44761,264 @@ async function importJSON() {
           </View>
         </TouchableOpacity>
       </Modal>
+      {/* 🎨 v3.8.0: 갤러리 이미지 확대 모달 */}
+      <Modal
+        visible={!!galleryExpandImg}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setGalleryExpandImg(null)}
+      >
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => setGalleryExpandImg(null)}
+          style={{
+            flex: 1,
+            backgroundColor: "rgba(0,0,0,0.92)",
+            justifyContent: "center",
+            alignItems: "center",
+          }}
+        >
+          {galleryExpandImg && (
+            <>
+              <ExpoImage
+                source={{ uri: galleryExpandImg.file_path }}
+                style={{ width: "92%", height: "72%", borderRadius: 12 }}
+                contentFit="contain"
+                cachePolicy="disk"
+                transition={200}
+              />
+              {galleryExpandImg.caption ? (
+                <Text style={{
+                  color: "rgba(255,255,255,0.85)",
+                  fontSize: 14,
+                  fontStyle: "italic",
+                  textAlign: "center",
+                  marginTop: 12,
+                  paddingHorizontal: 24,
+                }}>
+                  {galleryExpandImg.caption}
+                </Text>
+              ) : null}
+              {galleryExpandImg.title ? (
+                <Text style={{
+                  color: "rgba(255,255,255,0.5)",
+                  fontSize: 12,
+                  marginTop: 8,
+                }}>
+                  {galleryExpandImg.title} · {galleryExpandImg.author || "작가 미상"}
+                </Text>
+              ) : null}
+              <View style={{
+                position: "absolute",
+                bottom: 40,
+                alignSelf: "center",
+                backgroundColor: "rgba(255,255,255,0.15)",
+                paddingHorizontal: 20,
+                paddingVertical: 8,
+                borderRadius: 20,
+              }}>
+                <Text style={{ color: "rgba(255,255,255,0.7)", fontSize: 13 }}>탭하여 닫기</Text>
+              </View>
+            </>
+          )}
+        </TouchableOpacity>
+      </Modal>
+
+      {/* 🎨 v3.8.0: 갤러리 캡션 편집 모달 */}
+      <Modal
+        visible={galleryCaptionEditOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setGalleryCaptionEditOpen(false)}
+      >
+        <View style={{
+          flex: 1,
+          backgroundColor: C.modal,
+          justifyContent: "center",
+          alignItems: "center",
+          padding: 24,
+        }}>
+          <View style={{
+            backgroundColor: C.card,
+            borderRadius: 20,
+            padding: 24,
+            width: "100%",
+            maxWidth: 360,
+          }}>
+            <Text style={{ fontSize: 17, fontWeight: "800", color: C.text, marginBottom: 14 }}>
+              이미지 설명
+            </Text>
+            <TextInput
+              value={galleryEditCaption}
+              onChangeText={setGalleryEditCaption}
+              placeholder="이미지에 대한 설명을 입력하세요..."
+              placeholderTextColor={C.sub}
+              multiline
+              maxLength={200}
+              style={{
+                backgroundColor: C.bg,
+                color: C.text,
+                borderRadius: 12,
+                padding: 14,
+                fontSize: 14,
+                borderWidth: 1,
+                borderColor: C.line,
+                minHeight: 80,
+                textAlignVertical: "top",
+                marginBottom: 6,
+              }}
+            />
+            <Text style={{ color: C.sub, fontSize: 11, textAlign: "right", marginBottom: 14 }}>
+              {galleryEditCaption.length}/200
+            </Text>
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <TouchableOpacity
+                onPress={() => setGalleryCaptionEditOpen(false)}
+                style={{
+                  flex: 1,
+                  backgroundColor: C.chip,
+                  paddingVertical: 12,
+                  borderRadius: 10,
+                  alignItems: "center",
+                }}
+              >
+                <Text style={{ color: C.sub, fontWeight: "700" }}>취소</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={async () => {
+                  if (!galleryCaptionEditId) return;
+                  // 다중 클릭 방어: 즉시 모달 닫기
+                  const _id = galleryCaptionEditId;
+                  const _caption = galleryEditCaption.trim();
+                  setGalleryCaptionEditOpen(false);
+                  setGalleryCaptionEditId(null);
+                  setGalleryEditCaption("");
+                  await updateGalleryCaption(_id, _caption);
+                }}
+                style={{
+                  flex: 1,
+                  backgroundColor: C.primary,
+                  paddingVertical: 12,
+                  borderRadius: 10,
+                  alignItems: "center",
+                }}
+              >
+                <Text style={{ color: "#fff", fontWeight: "700" }}>저장</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 🎨 v3.8.0: 갤러리 연관 작품 변경 모달 */}
+      <Modal
+        visible={galleryNovelPickerOpen}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setGalleryNovelPickerOpen(false)}
+      >
+        <View style={{
+          flex: 1,
+          backgroundColor: C.modal,
+        }}>
+          <TouchableOpacity
+            style={{ height: Math.round(Dimensions.get("window").height * 0.15) }}
+            activeOpacity={1}
+            onPress={() => setGalleryNovelPickerOpen(false)}
+          />
+          <View style={{
+            backgroundColor: C.card,
+            borderTopLeftRadius: 20,
+            borderTopRightRadius: 20,
+            padding: 16,
+            flex: 1,
+          }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>연관 작품 변경</Text>
+              <TouchableOpacity onPress={() => setGalleryNovelPickerOpen(false)}>
+                <View style={{
+                  backgroundColor: C.chip,
+                  paddingHorizontal: 14,
+                  paddingVertical: 8,
+                  borderRadius: 10,
+                }}>
+                  <Text style={{ color: C.sub, fontWeight: "700" }}>닫기</Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              value={galleryRegSearch}
+              onChangeText={setGalleryRegSearch}
+              placeholder="작품명 또는 작가명 검색..."
+              placeholderTextColor={C.sub}
+              style={{
+                backgroundColor: C.bg,
+                color: C.text,
+                borderRadius: 10,
+                padding: 12,
+                fontSize: 14,
+                borderWidth: 1,
+                borderColor: C.line,
+                marginBottom: 12,
+              }}
+            />
+            <FlatList
+              data={galleryRegFilteredNovels}
+              keyExtractor={item => item.id}
+              nestedScrollEnabled
+              keyboardShouldPersistTaps="handled"
+              initialNumToRender={10}
+              maxToRenderPerBatch={5}
+              windowSize={3}
+              renderItem={({ item }) => {
+                const imgCount = galleryCountByNovel[item.id] || 0;
+                const isFull = imgCount >= GALLERY_IMAGE_MAX_COUNT;
+                const isCurrent = galleryChangeNovelTarget && item.id === galleryChangeNovelTarget.novel_id;
+                const isDisabled = isFull || isCurrent;
+                return (
+                  <TouchableOpacity
+                    onPress={() => {
+                      if (isCurrent) return;
+                      if (isFull) {
+                        Alert.alert("알림", `이 작품은 이미 최대 ${GALLERY_IMAGE_MAX_COUNT}장이 등록되어 있습니다.`);
+                        return;
+                      }
+                      if (galleryChangeNovelTarget) {
+                        changeGalleryNovel(galleryChangeNovelTarget.id, item.id);
+                      }
+                    }}
+                    disabled={isDisabled}
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      padding: 10,
+                      borderRadius: 10,
+                      marginBottom: 4,
+                      backgroundColor: isCurrent ? C.primary + "10" : C.bg,
+                      opacity: isDisabled ? 0.5 : 1,
+                    }}
+                  >
+                    <CoverImage uri={item.cover_image} platforms={item.platforms} platformCovers={platformCovers} size={40} theme={C} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 14, fontWeight: "700", color: C.text }} numberOfLines={1}>{item.title}</Text>
+                      <Text style={{ fontSize: 12, color: C.sub }}>{item.author || "작가 미상"}</Text>
+                    </View>
+                    <View style={{
+                      backgroundColor: isFull ? "#ef444420" : C.chip,
+                      paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8,
+                    }}>
+                      <Text style={{ fontSize: 11, fontWeight: "700", color: isFull ? "#ef4444" : C.sub }}>
+                        {imgCount}/{GALLERY_IMAGE_MAX_COUNT}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              }}
+            />
+          </View>
+        </View>
+      </Modal>
+
     </SafeAreaView>
   );
 }
