@@ -68,6 +68,14 @@
  * ║ • cleanupTagMetadata/cleanupTagMetadataBatch에 coordinateSystems 정리 추가    ║
  * ║ • 그룹 내 태그 1개 이하 시 그룹 자체 삭제                                    ║
  * ║                                                                              ║
+ * ║ [변경 3] 🏅 검토 탭 강제지정 해제 섹션 추가                                  ║
+ * ║ • manual_tier 설정된 모든 작품을 목록으로 표시 + 개별 해제 버튼               ║
+ * ║ • 비-gated 티어 강제지정 후 검토 불가 문제 해결                               ║
+ * ║                                                                              ║
+ * ║ [변경 4] 🔕 순위 탭 ⚠️ 강제지정 경고 표시 제거                               ║
+ * ║ • ActualTierTag에 showWarning prop 추가 (기본 true)                          ║
+ * ║ • 순위 탭에서 showWarning={false}로 경고 숨김                                ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -8619,6 +8627,8 @@ const CHANGELOG_DATA = [
       { type: "improve", text: "태그 관리 '전체 선택' 버튼을 '▼ 일괄선택' 드롭다운에 통합 — 혼동 해소" },
       { type: "fix", text: "선택 모드 종료 시 드롭다운 상태 미리셋 버그 수정" },
       { type: "fix", text: "태그 삭제 시 관계도·좌표계 고아 데이터 잔류 수정" },
+      { type: "new", text: "검토 탭에 '강제지정 해제' 섹션 추가 — 개별 manual_tier 해제 가능" },
+      { type: "improve", text: "순위 탭에서 ⚠️ 강제지정 경고 표시 제거 (검토 탭에서만 표시)" },
     ],
     details: [
       { type: "fix", text: "등록/편집 모달 라벨+버튼 가로→세로 스택 변경" },
@@ -9265,7 +9275,7 @@ const TierTag = memo(({ rating }) => {
 });
 
 // 실제 티어 표시 (manual_tier 고려)
-const ActualTierTag = memo(({ novel, showDiff = false }) => {
+const ActualTierTag = memo(({ novel, showDiff = false, showWarning = true }) => {
   if (!novel) return null;
 
   const cfg = globalTierConfig;
@@ -9276,7 +9286,7 @@ const ActualTierTag = memo(({ novel, showDiff = false }) => {
   // match/hybrid 모드에서만 권장 티어 비교 의미 있음
   const isMatchMode = cfg.mode === "match" || cfg.mode === "hybrid";
   const recommended = isMatchMode ? tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg) : actual;
-  const isForced = isMatchMode && novel.manual_tier && tierRank(tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg), cfg) > tierRank(novel.manual_tier, cfg);
+  const isForced = showWarning && isMatchMode && novel.manual_tier && tierRank(tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg), cfg) > tierRank(novel.manual_tier, cfg);
   const hasDiff = actual !== recommended;
 
   return (
@@ -32583,7 +32593,7 @@ async function importJSON() {
                           
                           {/* 2줄: 티어 + 레이팅 + 승률 */}
                           <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 6 }}>
-                            <ActualTierTag novel={item} />
+                            <ActualTierTag novel={item} showWarning={false} />
                             <Text style={{ marginLeft: 8, fontWeight: "800", color: c, fontSize: 16 }}>
                               {(Number(item.rating) || 1500).toFixed(1)}
                             </Text>
@@ -35841,6 +35851,61 @@ async function importJSON() {
                 </View>
               )}
             </Section>
+
+            {/* 🔧 v3.6.2: 강제지정 해제 (manual_tier 설정된 모든 작품) */}
+            {(() => {
+              const forcedNovels = list.filter(n => n.manual_tier);
+              if (forcedNovels.length === 0) return null;
+              return (
+                <Section title={`🔓 강제지정 해제 (${forcedNovels.length})`}>
+                  <Text style={{ color: C.sub, marginBottom: 12, fontSize: 12 }}>
+                    manual_tier가 설정된 작품입니다. 해제하면 점수 기반 티어로 복원됩니다.
+                  </Text>
+                  <View style={{ maxHeight: 300 }}>
+                    {forcedNovels
+                      .sort((a, b) => (a.title || "").localeCompare(b.title || ""))
+                      .map(n => {
+                        const rec = tierFromRating(n.rating || (globalTierConfig.defaultRating || 1500), globalTierConfig);
+                        const actual = getDisplayTier(n, globalTierConfig);
+                        return (
+                          <View key={n.id} style={{
+                            flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+                            paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: C.line,
+                          }}>
+                            <View style={{ flex: 1 }}>
+                              <Text style={{ fontWeight: "700", color: C.text }} numberOfLines={1}>{n.title}</Text>
+                              <Text style={{ color: C.sub, fontSize: 11 }}>
+                                강제: {getTierLabel(actual)} · 권장: {getTierLabel(rec)} · 점수: {(n.rating || 1500).toFixed(0)}
+                              </Text>
+                            </View>
+                            <TouchableOpacity
+                              onPress={() => {
+                                Alert.alert(
+                                  "강제지정 해제",
+                                  `${n.title}의 강제 티어(${getTierLabel(actual)})를 해제하고\n점수 기반 티어(${getTierLabel(rec)})로 복원할까요?`,
+                                  [
+                                    { text: "취소", style: "cancel" },
+                                    { text: "해제", style: "destructive", onPress: async () => {
+                                      try {
+                                        addTierHistoryEntry(n.id, n.title, actual, rec);
+                                        await exec("UPDATE novels SET manual_tier=NULL WHERE id=?", [n.id]);
+                                        await loadList(undefined, undefined, "update");
+                                      } catch (e) { console.warn("강제지정 해제 오류:", e); }
+                                    }},
+                                  ]
+                                );
+                              }}
+                              style={{ backgroundColor: isDark ? "#374151" : "#e5e7eb", paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8 }}
+                            >
+                              <Text style={{ color: isDark ? "#f87171" : "#dc2626", fontWeight: "700", fontSize: 12 }}>해제</Text>
+                            </TouchableOpacity>
+                          </View>
+                        );
+                      })}
+                  </View>
+                </Section>
+              );
+            })()}
 
             {/* 티어 변경 히스토리 */}
             {tierHistory.length > 0 && (
