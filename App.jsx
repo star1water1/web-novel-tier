@@ -2,9 +2,43 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.8.1                                                                   ║
+ * ║  버전: 3.8.2                                                                   ║
  * ║  최종 수정: 2026-04-05                                                        ║
- * ║  총 라인 수: 약 44,500줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 45,100줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v3.8.2 버그 수정 18건 (2026-04-05)                                         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [수정] 🗄️ DB/데이터 무결성                                                   ║
+ * ║ • "no such table" 오류가 연결 오류로 잘못 분류되어 무의미한 리셋 반복 수정     ║
+ * ║ • deferSetAppMeta flush 실패 시 대기 데이터 영구 손실 → 복원 로직 추가        ║
+ * ║ • verifyDataIntegrity: userMajorGenres/userSubGenres 미전달 → 커스텀 장르     ║
+ * ║   사용 시 major_genre/sub_genre 잘못 재계산되는 데이터 오염 수정              ║
+ * ║ • verifyDataIntegrity: cover 상태 수정 시 planned_novels 미검색 수정          ║
+ * ║ • Phase 2 마이그레이션: 이미 aliases에 있는 작품 식별자의 tag_data 정리 누락  ║
+ * ║ • deleteLog: choice_logs 미삭제로 고아 데이터 발생 수정                       ║
+ * ║ • flipWinner: choice_logs 미동기화로 학습 데이터 불일치 수정                  ║
+ * ║ • Import: tierSystemConfig가 소설 INSERT 후 적용되어 티어 부정확 수정         ║
+ * ║                                                                              ║
+ * ║ [수정] 🧮 매칭/예측 로직                                                      ║
+ * ║ • tagPower contribution이 미클램핑 값 사용 → 예측 점수 불일치 수정            ║
+ * ║ • genreKey.startsWith 부분 문자열 매칭 → split 기반 정확 비교로 변경          ║
+ * ║ • reread_count: 0이 || 1로 인해 1로 변환되는 falsy 강제변환 수정             ║
+ * ║                                                                              ║
+ * ║ [수정] 🎨 UI/다크모드                                                         ║
+ * ║ • AwardsScreen: isDark 미정의로 인용구 렌더링 시 ReferenceError 수정          ║
+ * ║ • Import/Export 모달: 하드코딩 배경색 → 테마 색상(C.bg) 적용                 ║
+ * ║ • 조합식 태그 입력: 하드코딩 "#fff" → C.card 적용                            ║
+ * ║ • Import 모달 타이틀: color 누락으로 다크모드 텍스트 안보임 수정              ║
+ * ║ • 로그 모달 배경: 하드코딩 rgba → C.modal 통일                               ║
+ * ║                                                                              ║
+ * ║ [수정] ⚡ 기타                                                                ║
+ * ║ • homeFiltered useMemo: tagRelations 의존성 누락 수정                         ║
+ * ║ • AwardsRow: App() 내 호출에서 awardSystemSettings 미전달 수정               ║
+ * ║ • coOccTimerRef: 언마운트 시 타이머 미정리 수정                               ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -3223,8 +3257,7 @@ async function safeDbOperation(operation, operationName = "DB") {
         errorMsg.includes("database") ||
         errorMsg.includes("null") ||
         errorMsg.includes("closed") ||
-        errorMsg.includes("disk I/O") ||
-        errorMsg.includes("no such table")
+        errorMsg.includes("disk I/O")
       );
       
       console.warn(`${operationName} 오류 (시도 ${attempt + 1}/${maxRetries}):`, errorMsg,
@@ -3982,6 +4015,10 @@ function deferSetAppMeta(key, value) {
       await batchSetAppMeta(snapshot);
     } catch (e) {
       console.warn("deferSetAppMeta flush 오류:", e);
+      // 🔧 flush 실패 시 데이터 복원 (영구 손실 방지)
+      for (const [k, v] of Object.entries(snapshot)) {
+        if (!(k in _pendingMetaWrites)) _pendingMetaWrites[k] = v;
+      }
     } finally {
       _metaBatchTimer = null;
       // 🔧 flush 중 새로운 쓰기가 쌓였으면 재스케줄
@@ -4045,9 +4082,9 @@ async function migrateTagSystem() {
         
         for (const t of tagData) {
           if (isWorkIdentifier(t.tag)) {
+            changed = true; // 🔧 tag_data에서 작품 식별자 제거 시 항상 changed
             if (!newAliases.includes(t.tag)) {
               newAliases.push(t.tag);
-              changed = true;
             }
           } else {
             cleanedTagData.push(t);
@@ -4346,6 +4383,8 @@ async function verifyDataIntegrity(options = {}) {
     const novelIds = new Set((novels || []).map(n => n.id));
     const queries = [];
     let _integrityTagAttrs = null; // 1d에서 lazy 로드
+    let _integrityUserMajorGenres = null;
+    let _integrityUserSubGenres = null;
     
     for (const novel of (novels || [])) {
       const fixes = {};
@@ -4414,8 +4453,15 @@ async function verifyDataIntegrity(options = {}) {
           _integrityTagAttrs = safeParseJSON(raw, {});
         } catch { _integrityTagAttrs = {}; }
       }
-      const allMajor = getAllMajorTags(_integrityTagAttrs);
-      const allSub = getAllSubTags(_integrityTagAttrs);
+      // 🔧 사용자 커스텀 장르를 포함하여 정확한 장르 재계산
+      if (!_integrityUserMajorGenres) {
+        try { _integrityUserMajorGenres = safeParseJSON(await getAppMeta("user_major_genres"), []); } catch { _integrityUserMajorGenres = []; }
+      }
+      if (!_integrityUserSubGenres) {
+        try { _integrityUserSubGenres = safeParseJSON(await getAppMeta("user_sub_genres"), []); } catch { _integrityUserSubGenres = []; }
+      }
+      const allMajor = getAllMajorTags(_integrityTagAttrs, _integrityUserMajorGenres);
+      const allSub = getAllSubTags(_integrityTagAttrs, _integrityUserSubGenres);
       
       const detectedMajor = currentTags
         .filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
@@ -4504,7 +4550,8 @@ async function verifyDataIntegrity(options = {}) {
       
       if (isActuallyUsed && !markedUsed) {
         // 실제 사용 중인데 unused로 표시된 경우
-        const usingNovel = (novels || []).find(n => n.cover_image === cover.file_path);
+        const usingNovel = (novels || []).find(n => n.cover_image === cover.file_path)
+          || (plannedNovelsForCover || []).find(n => n.cover_image === cover.file_path);
         queries.push({
           sql: "UPDATE cover_library SET status='used', novel_id=? WHERE id=?",
           params: [usingNovel?.id || null, cover.id],
@@ -5832,7 +5879,7 @@ async function generateEnhancedPrediction(A, B, tagAttributes = {}) {
       );
       
       if (genrePattern && genrePattern.sample_size >= 10) {
-        const isAFirst = genreKey.startsWith(majorA);
+        const isAFirst = genreKey.split("_vs_")[0] === majorA;
         const genreRate = isAFirst ? genrePattern.win_rate : (1 - genrePattern.win_rate);
         
         factors.genre = {
@@ -5904,10 +5951,11 @@ async function generateEnhancedPrediction(A, B, tagAttributes = {}) {
     
     if (tagCount > 0) {
       const tagAdvantage = 0.5 + (tagPowerA - tagPowerB) / 2;
+      const clampedTagAdvantage = Math.max(0.1, Math.min(0.9, tagAdvantage));
       factors.tagPower = {
-        value: Math.max(0.1, Math.min(0.9, tagAdvantage)),
+        value: clampedTagAdvantage,
         weight: weights.w_tag_power,
-        contribution: tagAdvantage * weights.w_tag_power,
+        contribution: clampedTagAdvantage * weights.w_tag_power,
       };
     } else {
       factors.tagPower = { value: 0.5, weight: weights.w_tag_power, contribution: 0.5 * weights.w_tag_power };
@@ -8305,7 +8353,7 @@ function normalizeNovel(r) {
     losses: Number(r.losses) || 0,
     match_count: Number(r.match_count) || 0,
     read_count: Number(r.read_count) || 0,
-    reread_count: Number(r.reread_count) || 1,
+    reread_count: r.reread_count != null ? Number(r.reread_count) : 1,
     pinned: Number(r.pinned) || 0,
   };
 }
@@ -16506,6 +16554,7 @@ const AwardsScreen = memo(({
 }) => {
   PerfMonitor.trackRender("AwardsScreen"); // 🔬
   const C = theme;
+  const isDark = C.bg !== "#F5F7FB"; // 🔧 다크모드 감지 (누락 수정)
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [newAwardName, setNewAwardName] = useState("");
   const [newTagInput, setNewTagInput] = useState("");
@@ -23524,9 +23573,10 @@ function AppContent() {
     
     initialize();
     
-    return () => { 
+    return () => {
       mounted = false;
       setMatchQueueCallback(null); // 🔄 v3.4.6: 콜백 정리
+      if (coOccTimerRef.current) { clearTimeout(coOccTimerRef.current); coOccTimerRef.current = null; }
     };
   }, []);
 
@@ -28967,6 +29017,7 @@ function AppContent() {
         text: "삭제",
         style: "destructive",
         onPress: async () => {
+          await exec("DELETE FROM choice_logs WHERE match_id=?", [mid]);
           await exec("DELETE FROM matches WHERE id=?", [mid]);
           await rebuildAllFromMatches(tagAttributes);
           await loadList(undefined, undefined, "rebuild");
@@ -28981,6 +29032,8 @@ function AppContent() {
     if (!m) return;
     const newWinner = m.winner_id === m.a_id ? m.b_id : m.a_id;
     await exec("UPDATE matches SET winner_id=? WHERE id=?", [newWinner, mid]);
+    // 🔧 choice_logs도 동기화 (학습 데이터 정합성)
+    await exec("DELETE FROM choice_logs WHERE match_id=?", [mid]);
     await rebuildAllFromMatches(tagAttributes);
     await loadList(undefined, undefined, "rebuild");
     if (logTarget) await openLogs(logTarget);
@@ -29955,7 +30008,7 @@ function AppContent() {
       });
     }
     return result;
-  }, [homeQuery, list, filterTier, filterPlatform, filterGenre, filterStatus, searchIncludeTags, searchExcludeTags, searchExcludeStatus, searchExcludeWorkStatus, folderFilteredIds]);
+  }, [homeQuery, list, filterTier, filterPlatform, filterGenre, filterStatus, searchIncludeTags, searchExcludeTags, searchExcludeStatus, searchExcludeWorkStatus, folderFilteredIds, tagRelations]);
 
   // 공용 검색 필터 (bulk/search)
   const filtered = useMemo(() => {
@@ -31376,6 +31429,12 @@ async function importJSON() {
               try {
               await doClearAll();
               deleteCompleted = true;
+
+              // 🔧 tierSystemConfig를 소설 INSERT 전에 미리 적용 (tierFromRating 정합성)
+              if (data.S && typeof data.S === "object" && data.S.tc && typeof data.S.tc === "object" && Array.isArray(data.S.tc.tiers)) {
+                globalTierConfig = { ...data.S.tc };
+                rebuildTierLookup(globalTierConfig);
+              }
 
               const novelQueries = [];
               const idList = [];
@@ -33386,9 +33445,9 @@ async function importJSON() {
               </View>
 
               {/* 수상 뱃지 (본목록만) */}
-              {!isPlanned && n.awards && parseAwards(n.awards).length > 0 && (
+              {!isPlanned && n.awards && parseAwards(n.awards, awardSystemSettings).length > 0 && (
                 <View style={{ marginBottom: 10 }}>
-                  <AwardsRow awardsJson={n.awards} />
+                  <AwardsRow awardsJson={n.awards} awardSystemSettings={awardSystemSettings} />
                 </View>
               )}
 
@@ -33715,8 +33774,8 @@ async function importJSON() {
                           </Text>
                           
                           {/* 수상 뱃지 */}
-                          {item.awards && parseAwards(item.awards).length > 0 && (
-                            <AwardsRow awardsJson={item.awards} />
+                          {item.awards && parseAwards(item.awards, awardSystemSettings).length > 0 && (
+                            <AwardsRow awardsJson={item.awards} awardSystemSettings={awardSystemSettings} />
                           )}
                         </View>
                       </View>
@@ -39919,7 +39978,7 @@ async function importJSON() {
                     placeholderTextColor="#9aa8bd"
                     style={{
                       flex: 1,
-                      backgroundColor: "#fff",
+                      backgroundColor: C.card,
                       borderWidth: 1,
                       borderColor: C.line,
                       borderRadius: 10,
@@ -39996,7 +40055,7 @@ async function importJSON() {
                     placeholderTextColor="#9aa8bd"
                     style={{
                       flex: 1,
-                      backgroundColor: "#fff",
+                      backgroundColor: C.card,
                       borderWidth: 1,
                       borderColor: C.line,
                       borderRadius: 10,
@@ -42579,13 +42638,13 @@ async function importJSON() {
         <View
           style={{
             flex: 1,
-            backgroundColor: "rgba(0,0,0,0.4)",
+            backgroundColor: C.modal,
           }}
         >
-          <TouchableOpacity 
-            style={{ height: Math.round(Dimensions.get("window").height * 0.12) }} 
-            activeOpacity={1} 
-            onPress={() => setLogOpen(false)} 
+          <TouchableOpacity
+            style={{ height: Math.round(Dimensions.get("window").height * 0.12) }}
+            activeOpacity={1}
+            onPress={() => setLogOpen(false)}
           />
           <View
             style={{
@@ -42963,7 +43022,7 @@ async function importJSON() {
             }}
           >
             <Text
-              style={{ fontSize: 18, fontWeight: "800", marginBottom: 8 }}
+              style={{ fontSize: 18, fontWeight: "800", marginBottom: 8, color: C.text }}
             >
               JSON 데이터 입력
             </Text>
@@ -42980,7 +43039,7 @@ async function importJSON() {
               placeholder='{"v":9, "N":[...], "M":"..."}'
               placeholderTextColor="#9aa8bd"
               style={{
-                backgroundColor: "#f8f9fa",
+                backgroundColor: C.bg,
                 borderWidth: 1,
                 borderColor: C.line,
                 borderRadius: 12,
@@ -43134,7 +43193,7 @@ async function importJSON() {
               multiline
               selectTextOnFocus={true}
               style={{
-                backgroundColor: "#f8f9fa",
+                backgroundColor: C.bg,
                 borderWidth: 1,
                 borderColor: C.line,
                 borderRadius: 12,
