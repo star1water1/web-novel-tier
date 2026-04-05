@@ -8621,6 +8621,30 @@ const CHANGELOG_DATA = [
     ],
   },
   {
+    version: "3.6.1", date: "2026-03-20",
+    title: "명대사 이미지 첨부 + Tag Registry 안정화",
+    highlights: [
+      { type: "new", text: "📷 인상깊은 문장에 이미지 첨부 지원" },
+      { type: "improve", text: "Tag Registry → 구 state 자동 파생 (이중 저장소 제거)" },
+    ],
+    details: [
+      { type: "fix", text: "편집 중 삭제된 명대사 이미지 파일 추적 및 정리" },
+      { type: "fix", text: "tagRegistry stale closure 방지 — loadedRegistry 직접 사용" },
+      { type: "fix", text: "custom_tags, user_major_genres, user_sub_genres 제거 (tagRegistry에서 파생)" },
+    ],
+  },
+  {
+    version: "3.6.0", date: "2026-03-10",
+    title: "Tag Registry — 태그 단일 저장소",
+    highlights: [
+      { type: "new", text: "🏷️ Tag Registry — 모든 태그의 유일한 저장소 (단일 진실의 원천)" },
+    ],
+    details: [
+      { type: "new", text: "백업/복원에 Tag Registry 포함 (TR 키)" },
+      { type: "improve", text: "태그 추가/삭제/수정이 단일 경로로 통일" },
+    ],
+  },
+  {
     version: "3.5.15e", date: "2025-03-08",
     title: "슬롯 전환 안정성 개선",
     highlights: [
@@ -8672,6 +8696,32 @@ const CHANGELOG_DATA = [
     ],
   },
   {
+    version: "3.5.15b", date: "2025-02-27",
+    title: "매칭 크래시 추가 수정",
+    highlights: [
+      { type: "fix", text: "v3.5.15 매칭 크래시 추가 수정" },
+    ],
+    details: [],
+  },
+  {
+    version: "3.5.15", date: "2025-02-27",
+    title: "매칭 크래시 근본 수정 + 매칭 캐시",
+    highlights: [
+      { type: "fix", text: "매칭 크래시 근본 수정 — 5대 불변조건 확립" },
+      { type: "perf", text: "매칭 캐시 시스템 도입" },
+    ],
+    details: [],
+  },
+  {
+    version: "3.5.14", date: "2025-02-26",
+    title: "매칭 큐 드레인 + 패턴 캐시",
+    highlights: [
+      { type: "perf", text: "preference_patterns 캐시 — DB 쿼리 269ms×2→269ms×1" },
+      { type: "improve", text: "매칭 큐 드레인 대기 (waitForMatchQueueDrain)" },
+    ],
+    details: [],
+  },
+  {
     version: "3.5.13", date: "2025-02-26",
     title: "취향탭 크래시 + 농도 조절 수정",
     highlights: [
@@ -8679,6 +8729,47 @@ const CHANGELOG_DATA = [
     ],
     details: [
       { type: "fix", text: "TasteAnalysisScreen useMemo가 early return 뒤에 위치하여 hooks 순서 불일치" },
+    ],
+  },
+  {
+    version: "3.5.12", date: "2025-02-25",
+    title: "태그 시스템 실사용성 개선",
+    highlights: [
+      { type: "improve", text: "🏷️ 태그 시스템 실사용성 개선 — 보충탭 필터칩, 태그 동기화" },
+    ],
+    details: [],
+  },
+  {
+    version: "3.5.11", date: "2025-02-25",
+    title: "tagAttributes 데이터 흐름 수정 + 성능 최적화",
+    highlights: [
+      { type: "fix", text: "tagAttributes 데이터 흐름 근본 수정" },
+      { type: "perf", text: "성능 최적화 — DB 쿼리 감소, 불필요한 리렌더링 제거" },
+    ],
+    details: [],
+  },
+  {
+    version: "3.5.9", date: "2025-02-25",
+    title: "인앱 성능 진단 + saveEdit 안전성",
+    highlights: [
+      { type: "new", text: "🔬 인앱 성능 진단 시스템 (Performance Monitor)" },
+      { type: "fix", text: "saveEdit 안전성 강화 + 편집 미저장 확인" },
+    ],
+    details: [
+      { type: "new", text: "함수별 서브스텝 타이밍 측정" },
+      { type: "fix", text: "BG→FG 전환 직후 호출 여부 판별 (3초 이내)" },
+    ],
+  },
+  {
+    version: "3.5.8", date: "2025-02-25",
+    title: "모달 스크롤 근본 수정 + 데이터 무결성",
+    highlights: [
+      { type: "fix", text: "모달 스크롤 근본 수정 — deferOpen() 헬퍼로 모든 모달 적용" },
+      { type: "new", text: "🔧 데이터 무결성 검증 + 자동 수정 (verifyDataIntegrity)" },
+    ],
+    details: [
+      { type: "fix", text: "태그 관계 stale 데이터 수정" },
+      { type: "improve", text: "작품명 태그 자동 제외 (분석 교란 방지)" },
     ],
   },
   {
@@ -8691,6 +8782,14 @@ const CHANGELOG_DATA = [
       { type: "improve", text: "요약 스탯 바, 타입 필터 칩, 날짜 헤더 디자인" },
       { type: "improve", text: "설정 접기/펼치기, 빈 상태 맞춤 메시지" },
     ],
+  },
+  {
+    version: "3.5.6", date: "2025-02-25",
+    title: "글로벌 에러 핸들러",
+    highlights: [
+      { type: "improve", text: "🛡️ 글로벌 에러 핸들러 + ErrorBoundary 추가" },
+    ],
+    details: [],
   },
   {
     version: "3.5.4", date: "2025-02-24",
@@ -8721,6 +8820,154 @@ const CHANGELOG_DATA = [
     details: [
       { type: "fix", text: "saveCoverToLibrary 에러 수집 + 진단 강화" },
       { type: "fix", text: "safeDbOperation 재시도 메커니즘 추가" },
+    ],
+  },
+  {
+    version: "3.5.0", date: "2025-02-20",
+    title: "취향 발견 시스템 (Preference Discovery)",
+    highlights: [
+      { type: "new", text: "🧠 취향 발견 시스템 — 매칭 기반 AI 취향 분석" },
+      { type: "new", text: "📊 12개 패턴 카테고리 자동 학습 (장르상성, 태그파워, 작가충성 등)" },
+      { type: "new", text: "💡 인사이트 시스템 — 확인형+발견형 취향 인사이트 제공" },
+    ],
+    details: [
+      { type: "new", text: "4개 신규 테이블: choice_logs, preference_patterns, insight_queue, weight_config" },
+      { type: "new", text: "윌슨 신뢰구간 기반 통계적 유의성 검증" },
+      { type: "new", text: "취향 기반 승부 예측 엔진 (generateEnhancedPrediction)" },
+      { type: "new", text: "분석 탭 인사이트 섹션 + 응답 UI (동의/비동의/건너뛰기)" },
+    ],
+  },
+  {
+    version: "3.4.7", date: "2025-02-18",
+    title: "안정성 대폭 개선 + 매칭 큐잉",
+    highlights: [
+      { type: "fix", text: "DB 연결 관리 강화 — safeDbOperation 자동 재연결 + 5회 재시도" },
+      { type: "new", text: "⚡ 매칭 큐잉 시스템 — 빠른 연타 시 트랜잭션 충돌 방지" },
+      { type: "fix", text: "자동 승패 무한 루프 버그 수정" },
+    ],
+    details: [
+      { type: "fix", text: "expo-file-system 레거시 API 롤백 (SDK 54 새 API 불안정)" },
+      { type: "improve", text: "자동 매칭 속도 옵션 추가 (터보/보통/느림)" },
+    ],
+  },
+  {
+    version: "3.4.5", date: "2025-02-15",
+    title: "표지 라이브러리 + 전체화면 모드",
+    highlights: [
+      { type: "new", text: "🖼️ 표지 라이브러리 — 갤러리에서 다중 이미지 가져오기, 상태 추적" },
+      { type: "new", text: "📱 전체 화면 모드 (Android) — 상태바+네비게이션 바 숨기기" },
+      { type: "fix", text: "대량 편집 선택 안 됨 버그 수정 (FlatList extraData 누락)" },
+    ],
+    details: [
+      { type: "new", text: "이미지 압축 4단계 설정 (원본/가벼운/중간/강한)" },
+      { type: "fix", text: "표지 상태 동기화: 등록/편집/삭제/전환 시 자동 처리" },
+    ],
+  },
+  {
+    version: "3.4.3", date: "2025-02-13",
+    title: "태그 빠른 입력 + 예정탭 태그 모달",
+    highlights: [
+      { type: "new", text: "🏷️ 태그 빠른 입력 — 쉼표로 여러 태그 한번에 입력" },
+      { type: "improve", text: "예정탭에 태그 선택 모달 연동" },
+    ],
+    details: [],
+  },
+  {
+    version: "3.4.0", date: "2025-02-10",
+    title: "예정탭 확장 + 태그 고급 필터",
+    highlights: [
+      { type: "new", text: "📋 예정탭 필드 대폭 확장 — 관심도, 예상 티어, 발견 경로 등" },
+      { type: "new", text: "🏷️ 태그 관리 고급 필터 — 감정/속성/상태 조합 필터링" },
+      { type: "improve", text: "취향 분석 태그 기반 장르 판단으로 전환" },
+    ],
+    details: [
+      { type: "fix", text: "예정탭 작품 상태 버튼 버그 수정" },
+      { type: "improve", text: "다크모드 좌표계·태그 모달 가시성 개선" },
+    ],
+  },
+  {
+    version: "3.3.0", date: "2025-02-05",
+    title: "예정 탭 + 오늘의 추천 시스템",
+    highlights: [
+      { type: "new", text: "📋 예정 탭 — 읽을 예정 작품 가등록 관리" },
+      { type: "new", text: "🎯 오늘의 추천 시스템 — 8단계 우선순위 가중치 추천" },
+    ],
+    details: [
+      { type: "new", text: "예정 작품은 매칭·분석에서 제외, '등록전환' 버튼으로 본 목록 이동" },
+      { type: "new", text: "5회 내 재추천 방지, 추천 이유 상세 설명" },
+    ],
+  },
+  {
+    version: "3.2.2", date: "2025-01-28",
+    title: "태그 관리 v3.0 + 인상깊은 문장",
+    highlights: [
+      { type: "new", text: "🏷️ 태그 관리 시스템 v3.0 — 속성 기반 체계로 전환" },
+      { type: "new", text: "💬 인상깊은 문장 기능 — 작품별 명언 기록" },
+      { type: "improve", text: "수상 확률 계산 소프트맥스 기반으로 대폭 개선" },
+    ],
+    details: [
+      { type: "new", text: "대량 선택 확장 작업 패널: 감정/속성 토글/고정/숨김/삭제" },
+      { type: "fix", text: "수상탭 태그 추가: Alert.prompt → 인라인 TextInput (Android 대응)" },
+    ],
+  },
+  {
+    version: "3.2.1", date: "2025-01-25",
+    title: "편의성 대개선 + 취향분석 강화",
+    highlights: [
+      { type: "improve", text: "🎛️ 편의성 개선 3단계 — 설정 서브탭, 좌표계 시각화, 태그 편집 확장" },
+      { type: "improve", text: "📊 취향 분석 4개 섹션 추가 — 황금조합, 좌표분석, 매칭일관성, 유사그룹" },
+      { type: "new", text: "🏆 수상 탭 개선 — 표지 표시, 수상 확률 예측, 후보작 목록" },
+    ],
+    details: [
+      { type: "new", text: "🔗 태그 추천: 공동 출현 기반 추천 + 유사 태그 그룹" },
+      { type: "improve", text: "💾 백업 시스템: 태그 메타데이터 전체 백업/복원" },
+      { type: "new", text: "🔄 과거 매칭 인사이트 재생성 기능" },
+    ],
+  },
+  {
+    version: "3.2.0", date: "2025-01-20",
+    title: "태그 좌표계 시스템",
+    highlights: [
+      { type: "new", text: "📐 태그 좌표계 — 태그를 2D 좌표계에 배치하여 관계 자동 도출" },
+    ],
+    details: [
+      { type: "new", text: "기본 좌표계 4종: 주인공강함, 분위기, 로맨스, 전개속도" },
+      { type: "new", text: "사용자 커스텀 좌표계 생성/편집/삭제" },
+      { type: "new", text: "유사(거리<0.3)/상반(x차이≥0.7)/뉘앙스 관계 자동 도출" },
+    ],
+  },
+  {
+    version: "3.1.2", date: "2025-01-15",
+    title: "스펙트럼 분석 + 상반 태그",
+    highlights: [
+      { type: "new", text: "📊 취향 스펙트럼 분석 — 6개 스펙트럼별 선호 구간 시각화" },
+      { type: "new", text: "⚡ 상반 태그 선호도 비교 분석" },
+    ],
+    details: [
+      { type: "improve", text: "매칭 인사이트에 농도 가중치 적용" },
+    ],
+  },
+  {
+    version: "3.1.1", date: "2025-01-12",
+    title: "태그 농도 시스템",
+    highlights: [
+      { type: "new", text: "📊 태그 농도 UI — 1~5단계 선택, 색상 시각화" },
+      { type: "improve", text: "취향 분석에 농도 가중치 적용" },
+    ],
+    details: [
+      { type: "new", text: "대량편집에서도 농도 설정 지원" },
+    ],
+  },
+  {
+    version: "3.1.0", date: "2025-01-10",
+    title: "태그 시스템 v5.0",
+    highlights: [
+      { type: "new", text: "🏷️ 태그 시스템 v5.0 — tag_data JSON 스키마, 별명(aliases) 분리" },
+      { type: "new", text: "🔍 별명 기반 검색 확장 (약어/정식명 모두 검색)" },
+    ],
+    details: [
+      { type: "new", text: "스펙트럼 그룹 정의: 주인공강함, 분위기, 로맨스, 전개속도, 평가" },
+      { type: "new", text: "자동 마이그레이션: tags → tag_data 변환" },
     ],
   },
 ];
