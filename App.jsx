@@ -8,12 +8,14 @@
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
- * ║ 🔧 v3.9.2 코드 전반 버그 수정 7건 (2026-04-05)                                ║
+ * ║ 🔧 v3.9.2 코드 전반 버그 수정 11건 (2026-04-05)                               ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║                                                                              ║
  * ║ [수정] 🗄️ DB/데이터 무결성                                                   ║
  * ║ • planned_novels INSERT: tag_data 컬럼 누락 수정 (UPDATE에만 존재)            ║
  * ║ • Import rereadCount: opt.rr || 1 falsy 강제변환 → != null 체크 변경         ║
+ * ║ • Import 타임스탬프: || Date.now() 패턴이 값 0을 무시 → != null 체크 변경    ║
+ * ║   (preference_patterns, gallery_images, folders, novel_folders 4곳)           ║
  * ║                                                                              ║
  * ║ [수정] 🧮 로직/기능 오류                                                      ║
  * ║ • analyzePreferences: n=0일 때 wins/n 0으로 나누기 발생 → continue 추가      ║
@@ -25,7 +27,11 @@
  * ║ [수정] ⚡ 성능/안정성                                                          ║
  * ║ • 자동매칭 useEffect: autoMatchSettings.speed stale closure 수정             ║
  * ║   → async 진입 전 capturedSpeed로 로컬 캡처                                  ║
+ * ║ • decide: tagAttributes stale closure 수정 (불변규칙 #2 위반)                ║
+ * ║   → capturedTagAttributes로 호출 시점 캡처                                   ║
  * ║ • Chip memo areEqual: value 비교 누락 → onToggle 모드 전환 시 미갱신 수정    ║
+ * ║ • 명언 셔플 useEffect: quotesCards/quotesShuffled 의존성 누락 수정           ║
+ * ║ • 홈 FlatList: compareMode/compareIds extraData 누락 → 비교 모드 미갱신     ║
  * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
@@ -23048,6 +23054,7 @@ function AppContent() {
   }, [quotesCards]);
 
   // 🔀 v3.5.5: 명언 탭 진입 시 자동 셔플 (기본 랜덤 순서)
+  // 🔧 v3.9.2: quotesShuffled 의존성 추가 — quotesCards 변경 시 null 리셋 후 재셔플 트리거
   useEffect(() => {
     if (screen === "quotes" && !quotesShuffled && quotesCards.length > 0) {
       const arr = [...quotesCards];
@@ -23058,7 +23065,7 @@ function AppContent() {
       setQuotesShuffled(arr);
       setQuotesIdx(0);
     }
-  }, [screen]);
+  }, [screen, quotesShuffled, quotesCards]);
 
   // 🎨 v3.8.0: 갤러리 useMemo + useEffect
   const galleryCards = useMemo(() => {
@@ -29564,8 +29571,10 @@ function AppContent() {
     }
     
     // 🔧 v3.5.15d: matchAnalysis도 호출 시점에 캡처
-    // 큐 작업이 실행될 때는 이미 다음 pair의 분석으로 바뀌어 있을 수 있음 (stale closure)
+    // 큐 작업이 실행될 때는 이미 다음 pair의 분석으로 ��뀌어 있을 수 있�� (stale closure)
     const capturedAnalysis = matchAnalysis;
+    // 🔧 v3.9.2: tagAttributes도 캡처 (saveChoiceLog에서 참조 — 불변규칙 #2)
+    const capturedTagAttributes = tagAttributes;
     
     // 🔄 v3.4.6: 이미 큐에서 처리 중인 조합이면 무시
     if (isMatchPending(currentPair.A.id, currentPair.B.id)) {
@@ -29700,7 +29709,7 @@ function AppContent() {
               predictedWinnerId,
               confidence: capturedAnalysis.confidence || 0,
               factors: null,
-            } : null, tagAttributes);
+            } : null, capturedTagAttributes);
           } catch (e) {
             console.warn("[decide] saveChoiceLog 오류:", e);
           }
@@ -32102,7 +32111,7 @@ async function importJSON() {
                 if (Array.isArray(data.FD) && data.FD.length > 0) {
                   const folderQueries = data.FD.map(f => ({
                     sql: "INSERT INTO folders (id,name,color,icon,sort_order,created_at) VALUES (?,?,?,?,?,?);",
-                    params: [f.id, f.name, f.color||'#6366f1', f.icon||'📂', f.sort_order||0, f.created_at||Date.now()],
+                    params: [f.id, f.name, f.color||'#6366f1', f.icon||'📂', f.sort_order||0, f.created_at != null && f.created_at !== "" ? f.created_at : Date.now()],
                   }));
                   await execBatch(folderQueries);
 
@@ -32113,7 +32122,7 @@ async function importJSON() {
                     if (validNF.length > 0) {
                       const nfQueries = validNF.map(nf => ({
                         sql: "INSERT OR IGNORE INTO novel_folders (folder_id,novel_id,added_at) VALUES (?,?,?);",
-                        params: [nf.folder_id, remapNovelId(nf.novel_id), nf.added_at||Date.now()],
+                        params: [nf.folder_id, remapNovelId(nf.novel_id), nf.added_at != null && nf.added_at !== "" ? nf.added_at : Date.now()],
                       }));
                       await execBatch(nfQueries);
                     }
@@ -32140,7 +32149,7 @@ async function importJSON() {
                   if (validGI.length > 0) {
                     const giQueries = validGI.map(gi => ({
                       sql: "INSERT OR IGNORE INTO gallery_images (id,novel_id,file_path,caption,created_at) VALUES (?,?,?,?,?);",
-                      params: [gi.i || uuid(), remapNovelId(gi.n), gi.fp, gi.c || "", gi.t || Date.now()],
+                      params: [gi.i || uuid(), remapNovelId(gi.n), gi.fp, gi.c || "", gi.t != null && gi.t !== "" ? gi.t : Date.now()],
                     }));
                     await execBatch(giQueries);
                   }
@@ -32161,7 +32170,7 @@ async function importJSON() {
                     params: [
                       uuid(), row[0], row[1], row[2], row[3],
                       row[4], row[5], row[6], row[7],
-                      row[8] || 0, row[9] || Date.now(), row[10] || Date.now(),
+                      row[8] || 0, row[9] != null && row[9] !== "" ? row[9] : Date.now(), row[10] != null && row[10] !== "" ? row[10] : Date.now(),
                     ],
                   }));
                   await execBatch(ppQueries);
@@ -33498,6 +33507,7 @@ async function importJSON() {
             <Section title={`현재 순위 (${homeFiltered.length})`}>
               <FlatList
                 data={homeFiltered}
+                extraData={`${compareMode}_${compareIds.join(",")}`}
                 keyExtractor={(item, index) => item?.id || `fb-${index}`}
                 initialNumToRender={8}
                 maxToRenderPerBatch={5}
