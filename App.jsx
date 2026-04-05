@@ -22583,18 +22583,22 @@ function AppContent() {
      📂 v3.7.0: 폴더 시스템 함수
      ========================================================= */
   async function loadFolders() {
-    const rows = await all("SELECT * FROM folders ORDER BY sort_order ASC, name ASC;");
-    setFolders(rows || []);
+    try {
+      const rows = await all("SELECT * FROM folders ORDER BY sort_order ASC, name ASC;");
+      setFolders(rows || []);
+    } catch (e) { console.warn("loadFolders 실패:", e); setFolders([]); }
   }
 
   async function loadNovelFolderMap() {
-    const rows = await all("SELECT novel_id, folder_id FROM novel_folders;");
-    const map = new Map();
-    for (const r of (rows || [])) {
-      if (!map.has(r.novel_id)) map.set(r.novel_id, []);
-      map.get(r.novel_id).push(r.folder_id);
-    }
-    setNovelFolderMap(map);
+    try {
+      const rows = await all("SELECT novel_id, folder_id FROM novel_folders;");
+      const map = new Map();
+      for (const r of (rows || [])) {
+        if (!map.has(r.novel_id)) map.set(r.novel_id, []);
+        map.get(r.novel_id).push(r.folder_id);
+      }
+      setNovelFolderMap(map);
+    } catch (e) { console.warn("loadNovelFolderMap 실패:", e); setNovelFolderMap(new Map()); }
   }
 
   async function createFolder(name, color, icon) {
@@ -22628,23 +22632,29 @@ function AppContent() {
   }
 
   async function deleteFolder(id) {
-    await execBatch([
-      { sql: "DELETE FROM novel_folders WHERE folder_id=?;", params: [id] },
-      { sql: "DELETE FROM folders WHERE id=?;", params: [id] },
-    ]);
-    await loadFolders();
-    await loadNovelFolderMap();
-    if (filterFolder === id) setFilterFolder("ALL");
+    try {
+      await execBatch([
+        { sql: "DELETE FROM novel_folders WHERE folder_id=?;", params: [id] },
+        { sql: "DELETE FROM folders WHERE id=?;", params: [id] },
+      ]);
+      await loadFolders();
+      await loadNovelFolderMap();
+      if (filterFolder === id) setFilterFolder("ALL");
+    } catch (e) { console.warn("deleteFolder 실패:", e); }
   }
 
   async function updateFolderColor(id, color) {
-    await exec("UPDATE folders SET color=? WHERE id=?;", [color, id]);
-    await loadFolders();
+    try {
+      await exec("UPDATE folders SET color=? WHERE id=?;", [color, id]);
+      await loadFolders();
+    } catch (e) { console.warn("updateFolderColor 실패:", e); }
   }
 
   async function updateFolderIcon(id, icon) {
-    await exec("UPDATE folders SET icon=? WHERE id=?;", [icon, id]);
-    await loadFolders();
+    try {
+      await exec("UPDATE folders SET icon=? WHERE id=?;", [icon, id]);
+      await loadFolders();
+    } catch (e) { console.warn("updateFolderIcon 실패:", e); }
   }
 
   async function reorderFolder(id, direction) {
@@ -22652,12 +22662,14 @@ function AppContent() {
     if (idx < 0) return;
     const targetIdx = direction === "up" ? idx - 1 : idx + 1;
     if (targetIdx < 0 || targetIdx >= folders.length) return;
-    const queries = [
-      { sql: "UPDATE folders SET sort_order=? WHERE id=?;", params: [targetIdx, folders[idx].id] },
-      { sql: "UPDATE folders SET sort_order=? WHERE id=?;", params: [idx, folders[targetIdx].id] },
-    ];
-    await execBatch(queries);
-    await loadFolders();
+    try {
+      const queries = [
+        { sql: "UPDATE folders SET sort_order=? WHERE id=?;", params: [targetIdx, folders[idx].id] },
+        { sql: "UPDATE folders SET sort_order=? WHERE id=?;", params: [idx, folders[targetIdx].id] },
+      ];
+      await execBatch(queries);
+      await loadFolders();
+    } catch (e) { console.warn("reorderFolder 실패:", e); }
   }
 
   async function toggleNovelFolder(novelId, folderId) {
@@ -31172,22 +31184,32 @@ async function importJSON() {
               // v9는 Elo 데이터 포함 → 재계산 불필요!
 
               // 📂 v3.7.0: 폴더 복원
-              if (Array.isArray(data.FD) && data.FD.length > 0) {
-                const folderQueries = data.FD.map(f => ({
-                  sql: "INSERT INTO folders (id,name,color,icon,sort_order,created_at) VALUES (?,?,?,?,?,?);",
-                  params: [f.id, f.name, f.color||'#6366f1', f.icon||'📂', f.sort_order||0, f.created_at||Date.now()],
-                }));
-                await execBatch(folderQueries);
+              try {
+                if (Array.isArray(data.FD) && data.FD.length > 0) {
+                  const folderQueries = data.FD.map(f => ({
+                    sql: "INSERT INTO folders (id,name,color,icon,sort_order,created_at) VALUES (?,?,?,?,?,?);",
+                    params: [f.id, f.name, f.color||'#6366f1', f.icon||'📂', f.sort_order||0, f.created_at||Date.now()],
+                  }));
+                  await execBatch(folderQueries);
+
+                  // NF 복원 (FD가 있을 때만 — 고아 매핑 방지)
+                  if (Array.isArray(data.NF) && data.NF.length > 0) {
+                    const folderIds = new Set(data.FD.map(f => f.id));
+                    const validNF = data.NF.filter(nf => folderIds.has(nf.folder_id));
+                    if (validNF.length > 0) {
+                      const nfQueries = validNF.map(nf => ({
+                        sql: "INSERT OR IGNORE INTO novel_folders (folder_id,novel_id,added_at) VALUES (?,?,?);",
+                        params: [nf.folder_id, nf.novel_id, nf.added_at||Date.now()],
+                      }));
+                      await execBatch(nfQueries);
+                    }
+                  }
+                }
+                await loadFolders();
+                await loadNovelFolderMap();
+              } catch (fdErr) {
+                console.warn("폴더 복원 실패:", fdErr);
               }
-              if (Array.isArray(data.NF) && data.NF.length > 0) {
-                const nfQueries = data.NF.map(nf => ({
-                  sql: "INSERT OR IGNORE INTO novel_folders (folder_id,novel_id,added_at) VALUES (?,?,?);",
-                  params: [nf.folder_id, nf.novel_id, nf.added_at||Date.now()],
-                }));
-                await execBatch(nfQueries);
-              }
-              await loadFolders();
-              await loadNovelFolderMap();
 
               // 🧠 v3.5.5: preference_patterns 복원
               let patternsRestored = false;
@@ -32329,10 +32351,7 @@ async function importJSON() {
                     {folders.map(f => (
                       <Chip key={f.id} label={`${f.icon || '📂'} ${f.name}`} active={filterFolder === f.id} onPress={() => setFilterFolder(f.id)} />
                     ))}
-                    <Chip label="➕" active={false} onPress={() => {
-                      Alert.prompt ? Alert.prompt("새 폴더", "폴더 이름을 입력하세요 (최대 20자)", (text) => { if (text?.trim()) createFolder(text.trim()); }, "plain-text", "", "default") :
-                      Alert.alert("새 폴더", "설정 > 폴더 관리에서 폴더를 만들 수 있습니다.");
-                    }} />
+                    <Chip label="➕" active={false} onPress={() => deferOpen(setFolderModalOpen)} />
                   </View>
                 </>
               )}
