@@ -8580,7 +8580,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "3.5.15e";
+const APP_VERSION = "3.6.2";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -8606,6 +8606,20 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "3.6.2", date: "2026-04-05",
+    title: "UI 레이아웃 + 태그 관리 UX 개선",
+    highlights: [
+      { type: "fix", text: "인상깊은 문장 버튼(텍스트/이미지/일괄)이 화면 밖으로 잘리는 레이아웃 수정" },
+      { type: "improve", text: "태그 관리 '전체 선택' 버튼을 '▼ 일괄선택' 드롭다운에 통합 — 혼동 해소" },
+      { type: "fix", text: "선택 모드 종료 시 드롭다운 상태 미리셋 버그 수정" },
+    ],
+    details: [
+      { type: "fix", text: "등록/편집 모달 라벨+버튼 가로→세로 스택 변경" },
+      { type: "improve", text: "드롭다운에 '✅ 전체 선택' / '🔲 전체 해제' 칩 추가 (파란 계열 구분)" },
+      { type: "fix", text: "배치 핸들러 8곳의 setSelectMode 직접 호출 → exitSelectMode() 통일" },
+    ],
+  },
   {
     version: "3.5.15e", date: "2025-03-08",
     title: "슬롯 전환 안정성 개선",
