@@ -8331,13 +8331,19 @@ async function ensureGalleryDir() {
 async function saveGalleryImage(sourceUri, ext = "jpg") {
   try {
     const compressed = await compressAndSaveImage(sourceUri, GALLERY_IMAGE_MAX_SIZE, GALLERY_IMAGE_QUALITY, ext);
-    if (compressed.error) return compressed;
+    if (compressed.error || !compressed.file_path) return compressed.error ? compressed : { error: "no file_path" };
 
     // COVER_DIR → GALLERY_DIR 이동
     await ensureGalleryDir();
     const fileName = compressed.file_path.split("/").pop();
     const destUri = GALLERY_DIR + fileName;
-    await FileSystem.moveAsync({ from: compressed.file_path, to: destUri });
+    try {
+      await FileSystem.moveAsync({ from: compressed.file_path, to: destUri });
+    } catch (moveErr) {
+      // moveAsync 실패 시 COVER_DIR에 남은 파일 정리 (고아 방지)
+      FileSystem.deleteAsync(compressed.file_path, { idempotent: true }).catch(() => {});
+      return { error: "moveAsync: " + moveErr.message };
+    }
 
     return { id: compressed.id, file_path: destUri, file_size: compressed.file_size };
   } catch (e) {
@@ -22769,7 +22775,7 @@ function AppContent() {
         setGalleryIdx(0);
       }
     }
-  }, [screen]);
+  }, [screen, galleryCards.length]);
 
   /* =========================================================
      📂 v3.7.0: 폴더 시스템 함수
@@ -25026,9 +25032,9 @@ function AppContent() {
         base64: false,
       });
 
-      // DB 연결 복구 (Android 필수)
+      // DB 연결 복구 (Android 필수, 300ms 안정화 대기)
       await resetDbConnection();
-      try { await openDb(); } catch (dbErr) {
+      try { await openDb(); await new Promise(r => setTimeout(r, 300)); } catch (dbErr) {
         console.warn("gallery ImagePicker DB 재연결 실패:", dbErr.message);
       }
 
@@ -25082,11 +25088,13 @@ function AppContent() {
         style: "destructive",
         onPress: async () => {
           try {
-            await deleteCoverFromLibrary(filePath);
+            // DB 먼저 삭제 (트랜잭션 안전), 파일은 실패해도 허용
             await exec("DELETE FROM gallery_images WHERE id=?", [imgId]);
+            deleteCoverFromLibrary(filePath).catch(() => {});
             await loadGalleryImages();
           } catch (e) {
             console.warn("deleteGalleryImage error:", e);
+            Alert.alert("오류", "이미지 삭제 중 문제가 발생했습니다.");
           }
         },
       },
@@ -25095,10 +25103,13 @@ function AppContent() {
 
   async function updateGalleryCaption(imgId, caption) {
     try {
-      await exec("UPDATE gallery_images SET caption=? WHERE id=?", [caption, imgId]);
+      // 낙관적 업데이트 먼저
       setGalleryImages(prev => prev.map(g => g.id === imgId ? { ...g, caption } : g));
+      await exec("UPDATE gallery_images SET caption=? WHERE id=?", [caption, imgId]);
     } catch (e) {
       console.warn("updateGalleryCaption error:", e);
+      // DB 실패 시 롤백
+      await loadGalleryImages();
     }
   }
 
@@ -37847,7 +37858,7 @@ async function importJSON() {
                             };
                           }}
                           onTouchEnd={(e) => {
-                            if (!gallerySwipeRef.current?.startX) return;
+                            if (gallerySwipeRef.current?.startX == null) return;
                             const dx = e.nativeEvent.pageX - gallerySwipeRef.current.startX;
                             const dy = Math.abs(e.nativeEvent.pageY - gallerySwipeRef.current.startY);
                             if (Math.abs(dx) > 50 && Math.abs(dx) > dy) {
@@ -38190,7 +38201,7 @@ async function importJSON() {
                         }}
                         ListEmptyComponent={
                           <Text style={{ color: C.sub, textAlign: "center", padding: 20 }}>
-                            {list.length === 0 ? "등록된 작품이 없습니다." : "검색 결과가 없습니다."}
+                            {list.length === 0 ? "등록된 작품이 없습니다." : galleryRegSearch.trim() ? "검색 결과가 없습니다." : "등록된 작품이 없습니다."}
                           </Text>
                         }
                       />
