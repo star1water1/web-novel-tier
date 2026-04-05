@@ -22741,6 +22741,15 @@ function AppContent() {
     return Object.values(groups);
   }, [galleryImages]);
 
+  // 🎨 작품별 갤러리 이미지 수 캐시 (renderItem 내 O(n) filter 방지)
+  const galleryCountByNovel = useMemo(() => {
+    const counts = {};
+    for (const img of galleryImages) {
+      counts[img.novel_id] = (counts[img.novel_id] || 0) + 1;
+    }
+    return counts;
+  }, [galleryImages]);
+
   const galleryRegFilteredNovels = useMemo(() => {
     if (!galleryRegSearch.trim()) return list;
     const q = galleryRegSearch.toLowerCase();
@@ -25017,6 +25026,13 @@ function AppContent() {
 
   async function addGalleryImages(novelId) {
     try {
+      // 작품 존재 확인 (삭제된 작품 방어)
+      const novelExists = await first("SELECT id FROM novels WHERE id=?", [novelId]);
+      if (!novelExists) {
+        Alert.alert("오류", "선택한 작품이 삭제되었습니다. 다시 선택해주세요.");
+        setGalleryRegNovel(null);
+        return;
+      }
       // 현재 개수 체크
       const existingRow = await first("SELECT COUNT(*) as c FROM gallery_images WHERE novel_id=?", [novelId]);
       const existing = existingRow?.c || 0;
@@ -38062,7 +38078,7 @@ async function importJSON() {
                           {galleryRegNovel.author || "작가 미상"}
                         </Text>
                         <Text style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>
-                          등록 이미지: {galleryImages.filter(g => g.novel_id === galleryRegNovel.id).length} / {GALLERY_IMAGE_MAX_COUNT}
+                          등록 이미지: {galleryCountByNovel[galleryRegNovel.id] || 0} / {GALLERY_IMAGE_MAX_COUNT}
                         </Text>
                       </View>
                     </View>
@@ -38159,7 +38175,7 @@ async function importJSON() {
                         maxToRenderPerBatch={5}
                         windowSize={3}
                         renderItem={({ item }) => {
-                          const imgCount = galleryImages.filter(g => g.novel_id === item.id).length;
+                          const imgCount = galleryCountByNovel[item.id] || 0;
                           return (
                             <TouchableOpacity
                               onPress={() => setGalleryRegNovel(item)}
@@ -44740,15 +44756,20 @@ async function importJSON() {
             <FlatList
               data={galleryRegFilteredNovels}
               keyExtractor={item => item.id}
+              nestedScrollEnabled
+              keyboardShouldPersistTaps="handled"
               initialNumToRender={10}
               maxToRenderPerBatch={5}
               windowSize={3}
               renderItem={({ item }) => {
-                const imgCount = galleryImages.filter(g => g.novel_id === item.id).length;
+                const imgCount = galleryCountByNovel[item.id] || 0;
                 const isFull = imgCount >= GALLERY_IMAGE_MAX_COUNT;
+                const isCurrent = galleryChangeNovelTarget && item.id === galleryChangeNovelTarget.novel_id;
+                const isDisabled = isFull || isCurrent;
                 return (
                   <TouchableOpacity
                     onPress={() => {
+                      if (isCurrent) return;
                       if (isFull) {
                         Alert.alert("알림", `이 작품은 이미 최대 ${GALLERY_IMAGE_MAX_COUNT}장이 등록되어 있습니다.`);
                         return;
@@ -44757,15 +44778,15 @@ async function importJSON() {
                         changeGalleryNovel(galleryChangeNovelTarget.id, item.id);
                       }
                     }}
-                    disabled={isFull}
+                    disabled={isDisabled}
                     style={{
                       flexDirection: "row",
                       alignItems: "center",
                       padding: 10,
                       borderRadius: 10,
                       marginBottom: 4,
-                      backgroundColor: C.bg,
-                      opacity: isFull ? 0.5 : 1,
+                      backgroundColor: isCurrent ? C.primary + "10" : C.bg,
+                      opacity: isDisabled ? 0.5 : 1,
                     }}
                   >
                     <CoverImage uri={item.cover_image} platforms={item.platforms} platformCovers={platformCovers} size={40} theme={C} />
