@@ -2,9 +2,38 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.8.2                                                                   ║
+ * ║  버전: 3.9.0                                                                   ║
  * ║  최종 수정: 2026-04-05                                                        ║
- * ║  총 라인 수: 약 45,100줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 45,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 💥 v3.9.0 크래시 진단 시스템 (2026-04-05)                                     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [신규] 💥 크래시 로그 영속화                                                  ║
+ * ║ • CrashLog: 파일 시스템 기반 크래시 로그 기록 (DB 미사용 — 크래시 안전)       ║
+ * ║ • 에러 발생 시 즉시 JSON 파일로 기록 (last_crash.json)                        ║
+ * ║ • 크래시 히스토리 최대 10건 보관 (crash_history.json)                         ║
+ * ║ • 크래시 당시 앱 상태 스냅샷 (화면, 탭, 작품수, 슬롯, 자동매칭 여부)         ║
+ * ║                                                                              ║
+ * ║ [신규] 🍞 Breadcrumbs (사용자 동선 추적)                                      ║
+ * ║ • 최근 20개 사용자 액션을 링 버퍼로 상시 추적 (PerfMonitor와 독립)            ║
+ * ║ • 카테고리: nav(화면전환), action(작업), db(DB), error(에러), lifecycle       ║
+ * ║ • 크래시 발생 시 breadcrumbs도 함께 저장 → "직전에 뭘 했는지" 파악 가능      ║
+ * ║ • 추적 대상: 탭 전환, 작품 추가/삭제, 매칭, 자동매칭, 슬롯 전환,            ║
+ * ║   백업/복원, DB 에러, AppState 전환, loadList                                 ║
+ * ║                                                                              ║
+ * ║ [신규] 📊 진단탭 크래시 뷰어                                                  ║
+ * ║ • 마지막 크래시 상세 보기 (에러 메시지, 스택, 상태, breadcrumbs)              ║
+ * ║ • 크래시 리포트 공유 기능                                                     ║
+ * ║ • 크래시 히스토리 (최근 10건) 목록                                            ║
+ * ║ • 현재 세션 실시간 breadcrumbs 뷰어                                           ║
+ * ║                                                                              ║
+ * ║ [연동] ErrorBoundary → CrashLog.record (렌더 크래시 + 컴포넌트 스택)          ║
+ * ║ [연동] ErrorUtils → CrashLog.record (치명적 JS 에러)                          ║
+ * ║ [연동] Unhandled Rejection → Breadcrumbs (Promise rejection 추적)             ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -2544,6 +2573,138 @@ import * as FileSystem from "expo-file-system/legacy"; // 🔧 v3.5.3: SDK 54 �
 import * as ImageManipulator from "expo-image-manipulator"; // 📷 명대사 이미지 압축
 
 /* =========================================================
+   💥 v3.8.2: 크래시 로그 영속화 + Breadcrumbs
+   - 크래시/에러 발생 시 파일 시스템에 즉시 기록 (DB 미사용)
+   - 최근 사용자 액션 20개를 링 버퍼로 추적
+   - 다음 실행 시 진단탭에서 "마지막 크래시" 확인 가능
+   ========================================================= */
+
+const CRASH_LOG_DIR = (FileSystem.documentDirectory || "") + "crash_logs/";
+const CRASH_LOG_FILE = CRASH_LOG_DIR + "last_crash.json";
+const CRASH_HISTORY_FILE = CRASH_LOG_DIR + "crash_history.json";
+const MAX_CRASH_HISTORY = 10;
+
+// Breadcrumbs: 최근 사용자 액션 링 버퍼 (항상 활성, PerfMonitor 무관)
+const Breadcrumbs = {
+  _items: [],
+  MAX: 20,
+
+  add(category, message, data = null) {
+    const entry = { category, message, time: Date.now() };
+    if (data) entry.data = typeof data === "string" ? data : JSON.stringify(data).substring(0, 200);
+    this._items.push(entry);
+    if (this._items.length > this.MAX) this._items.shift();
+  },
+
+  getAll() { return [...this._items]; },
+
+  // 주요 카테고리별 편의 메서드
+  navigation(from, to) { this.add("nav", `${from} → ${to}`); },
+  action(msg, data) { this.add("action", msg, data); },
+  db(msg, data) { this.add("db", msg, data); },
+  error(msg, data) { this.add("error", msg, data); },
+  lifecycle(event) { this.add("lifecycle", event); },
+};
+
+// CrashLog: 파일 기반 크래시 로그 기록/읽기
+const CrashLog = {
+  _lastCrash: null,        // 앱 시작 시 로드
+  _crashHistory: null,     // 이전 크래시 이력
+  _stateSnapshotFn: null,  // App()에서 등록하는 상태 스냅샷 함수
+
+  // 상태 스냅샷 함수 등록 (App 컴포넌트 마운트 시)
+  registerStateSnapshot(fn) { this._stateSnapshotFn = fn; },
+
+  // 크래시 기록 (에러 발생 시 즉시 호출)
+  async record(error, context = "unknown", componentStack = null) {
+    try {
+      const entry = {
+        timestamp: Date.now(),
+        date: new Date().toISOString(),
+        context,
+        error: {
+          message: error?.message || String(error),
+          name: error?.name || "Error",
+          stack: (error?.stack || "").substring(0, 1500),
+        },
+        breadcrumbs: Breadcrumbs.getAll(),
+        state: null,
+      };
+      if (componentStack) {
+        entry.componentStack = componentStack.substring(0, 800);
+      }
+      // 상태 스냅샷 수집 (등록되어 있으면)
+      if (this._stateSnapshotFn) {
+        try { entry.state = this._stateSnapshotFn(); } catch {}
+      }
+
+      // 디렉토리 확인/생성
+      const dirInfo = await FileSystem.getInfoAsync(CRASH_LOG_DIR);
+      if (!dirInfo.exists) await FileSystem.makeDirectoryAsync(CRASH_LOG_DIR, { intermediates: true });
+
+      // 현재 크래시 기록
+      await FileSystem.writeAsStringAsync(CRASH_LOG_FILE, JSON.stringify(entry));
+
+      // 히스토리에 추가
+      let history = [];
+      try {
+        const raw = await FileSystem.readAsStringAsync(CRASH_HISTORY_FILE);
+        history = JSON.parse(raw);
+        if (!Array.isArray(history)) history = [];
+      } catch {}
+      history.unshift(entry);
+      if (history.length > MAX_CRASH_HISTORY) history = history.slice(0, MAX_CRASH_HISTORY);
+      await FileSystem.writeAsStringAsync(CRASH_HISTORY_FILE, JSON.stringify(history));
+
+      console.log("💥 크래시 로그 기록 완료:", context);
+    } catch (writeErr) {
+      console.warn("크래시 로그 기록 실패:", writeErr);
+    }
+  },
+
+  // 마지막 크래시 로드 (앱 시작 시)
+  async loadLastCrash() {
+    try {
+      const info = await FileSystem.getInfoAsync(CRASH_LOG_FILE);
+      if (!info.exists) return null;
+      const raw = await FileSystem.readAsStringAsync(CRASH_LOG_FILE);
+      this._lastCrash = JSON.parse(raw);
+      return this._lastCrash;
+    } catch { return null; }
+  },
+
+  // 크래시 히스토리 로드
+  async loadHistory() {
+    try {
+      const info = await FileSystem.getInfoAsync(CRASH_HISTORY_FILE);
+      if (!info.exists) return [];
+      const raw = await FileSystem.readAsStringAsync(CRASH_HISTORY_FILE);
+      const history = JSON.parse(raw);
+      this._crashHistory = Array.isArray(history) ? history : [];
+      return this._crashHistory;
+    } catch { return []; }
+  },
+
+  // 마지막 크래시 확인 후 삭제 (확인 완료 표시)
+  async dismissLastCrash() {
+    try {
+      const info = await FileSystem.getInfoAsync(CRASH_LOG_FILE);
+      if (info.exists) await FileSystem.deleteAsync(CRASH_LOG_FILE, { idempotent: true });
+      this._lastCrash = null;
+    } catch {}
+  },
+
+  // 전체 히스토리 삭제
+  async clearHistory() {
+    try {
+      const info = await FileSystem.getInfoAsync(CRASH_HISTORY_FILE);
+      if (info.exists) await FileSystem.deleteAsync(CRASH_HISTORY_FILE, { idempotent: true });
+      this._crashHistory = [];
+    } catch {}
+  },
+};
+
+/* =========================================================
    🛡️ v3.5.6: 글로벌 에러 핸들러 + ErrorBoundary
    - 미처리 Promise rejection → 무시 (crash 방지)
    - 렌더링 에러 → 복구 UI 표시 (white screen 방지)
@@ -2556,13 +2717,33 @@ if (global.ErrorUtils) {
   global.ErrorUtils.setGlobalHandler((error, isFatal) => {
     if (isFatal) {
       console.error("🔴 치명적 오류:", error?.message || error);
+      // 💥 크래시 로그 영속화 (fire-and-forget)
+      Breadcrumbs.error("fatal", error?.message);
+      CrashLog.record(error, "fatal_error").catch(() => {});
       // 치명적 오류는 기본 핸들러에 위임
       if (originalHandler) originalHandler(error, isFatal);
     } else {
       console.warn("🟡 비치명적 오류:", error?.message || error);
+      Breadcrumbs.error("non_fatal", error?.message);
       // 비치명적 오류는 로그만 남기고 무시 (crash 방지)
     }
   });
+}
+
+// 🛡️ Unhandled Promise Rejection 추적
+const _origRejectionTracking = global.HermesInternal?.enablePromiseRejectionTracker;
+if (typeof global.addEventListener === 'function') {
+  // Web/Hermes에서 지원하는 경우
+} else if (!global.__crashLogRejectionSet) {
+  global.__crashLogRejectionSet = true;
+  const origWarn = console.warn;
+  const rejectionPattern = /Possible Unhandled Promise Rejection/;
+  console.warn = function(...args) {
+    if (args[0] && typeof args[0] === "string" && rejectionPattern.test(args[0])) {
+      Breadcrumbs.error("unhandled_rejection", args.slice(0, 2).join(" ").substring(0, 200));
+    }
+    return origWarn.apply(console, args);
+  };
 }
 
 // 🛡️ ErrorBoundary: 렌더링 중 발생하는 에러를 잡아 white screen 방지
@@ -2578,6 +2759,9 @@ class AppErrorBoundary extends Component {
 
   componentDidCatch(error, errorInfo) {
     console.error("🔴 렌더링 크래시:", error?.message, errorInfo?.componentStack?.slice(0, 500));
+    // 💥 크래시 로그 영속화
+    Breadcrumbs.error("render_crash", error?.message);
+    CrashLog.record(error, "render_crash", errorInfo?.componentStack).catch(() => {});
   }
 
   render() {
@@ -3240,7 +3424,7 @@ async function safeDbOperation(operation, operationName = "DB") {
       return result;
     } catch (e) {
       const errorMsg = e.message || "";
-      
+      Breadcrumbs.error(`db_${operationName}`, errorMsg.substring(0, 100));
       // 🔧 v3.5.15c: 경합 오류와 연결 오류를 분리
       // BUSY/LOCKED는 WAL 모드에서 정상적인 경합 — resetDbConnection 금지
       // resetDbConnection은 다른 동시 작업의 DB 연결도 파괴하여 연쇄 크래시 유발
@@ -22035,7 +22219,7 @@ function AppContent() {
   // 🔬 v3.5.9: 화면 전환 추적 래퍼
   const setScreen = useCallback((next) => {
     setScreenRaw(prev => {
-      if (prev !== next) PerfMonitor.trackNavigation(prev, next);
+      if (prev !== next) { PerfMonitor.trackNavigation(prev, next); Breadcrumbs.navigation(prev, next); }
       return next;
     });
   }, []);
@@ -22068,6 +22252,8 @@ function AppContent() {
   const [galleryCount, setGalleryCount] = useState(0); // 뱃지용 카운트 (지연 로드)
   const [galleryExpandedGroups, setGalleryExpandedGroups] = useState({}); // 관리 탭 그룹 펼침 상태
   const [refreshKey, setRefreshKey] = useState(0); // 🔬 v3.5.9: 진단 대시보드 새로고침 키
+  const [lastCrashLog, setLastCrashLog] = useState(null); // 💥 v3.8.2: 마지막 크래시 로그
+  const [crashHistory, setCrashHistory] = useState([]); // 💥 v3.8.2: 크래시 이력
   const [list, setList] = useState([]);
 
   // 홈 검색/정렬
@@ -23106,7 +23292,15 @@ function AppContent() {
     
     const initialize = async () => {
       setIsLoading(true);
-      
+
+      // 💥 v3.8.2: 이전 크래시 로그 로드
+      try {
+        const lastCrash = await CrashLog.loadLastCrash();
+        if (lastCrash && mounted) setLastCrashLog(lastCrash);
+        const history = await CrashLog.loadHistory();
+        if (history.length > 0 && mounted) setCrashHistory(history);
+      } catch {}
+
       // 📁 v3.5.15d: 슬롯 메타 먼저 로드 → 활성 슬롯 DB로 연결
       try {
         const meta = await loadSlotMeta();
@@ -23572,7 +23766,17 @@ function AppContent() {
     };
     
     initialize();
-    
+
+    // 💥 v3.8.2: CrashLog 상태 스냅샷 함수 등록
+    CrashLog.registerStateSnapshot(() => ({
+      screen: screen || "unknown",
+      activeTab: activeTab,
+      listCount: list?.length || 0,
+      slotId: activeSlotId,
+      isAutoMatching: isAutoMatchingRef.current,
+      isLoading: isLoading,
+    }));
+
     return () => {
       mounted = false;
       setMatchQueueCallback(null); // 🔄 v3.4.6: 콜백 정리
@@ -23583,7 +23787,7 @@ function AppContent() {
   // 📁 v3.5.15d: 슬롯 전환 함수 (전체 state 리셋 + 새 DB 초기화 + 재로드)
   const performSlotSwitch = async (newSlotId) => {
     if (newSlotId === activeSlotId || slotSwitching) return;
-    
+    Breadcrumbs.action("slot_switch", `${activeSlotId} → ${newSlotId}`);
     const previousSlotId = activeSlotId; // 🔧 롤백용 백업
     setSlotSwitching(true);
     setIsLoading(true);
@@ -23900,6 +24104,7 @@ function AppContent() {
     
     const subscription = AppState.addEventListener("change", async (nextAppState) => {
       PerfMonitor.trackLifecycle(nextAppState === "active" ? "foreground" : "background"); // 🔬
+      Breadcrumbs.lifecycle(nextAppState === "active" ? "foreground" : "background");
       // 포그라운드 → 백그라운드 전환 시: 큐 플러시
       if (lastState === "active" && nextAppState.match(/inactive|background/)) {
         console.log("앱 백그라운드 전환 - 큐 플러시 + DB 정리");
@@ -27910,6 +28115,7 @@ function AppContent() {
       return;
     }
     loadListRunningRef.current = true;
+    Breadcrumbs.db("loadList", _trigger || "unknown");
     PerfMonitor.beginFunc("loadList", _trigger || "unknown"); // 🔬 v3.5.9b
     try {
       const sk = sortKey ?? homeSortKey;
@@ -28015,6 +28221,7 @@ function AppContent() {
   async function addNovel() {
     const _pt = PerfMonitor.enabled ? Date.now() : 0; // 🔬
     const t = (title || "").trim();
+    Breadcrumbs.action("novel_add", t);
     if (!t) {
       Alert.alert("알림", "제목은 필수입니다.");
       return;
@@ -28158,6 +28365,7 @@ function AppContent() {
 
 
   async function removeNovel(id) {
+    Breadcrumbs.action("novel_delete", id);
     Alert.alert("확인", "정말로 이 작품을 삭제할까요? (대진 로그도 함께 삭제됩니다)", [
       { text: "취소" },
       {
@@ -29664,6 +29872,7 @@ function AppContent() {
     
     // 잠금 (동기 — 다음 렌더 전에 설정)
     isAutoMatchingRef.current = true;
+    Breadcrumbs.action("autoMatch_start", `mode=${autoMatchSettings?.mode}`);
     setIsAutoMatching(true);
     
     (async () => {
@@ -29682,6 +29891,7 @@ function AppContent() {
         console.warn("[자동매칭] 오류 발생, 중단:", e.message || e);
         // 자동매칭 중단 (finally에서 플래그 리셋됨)
       } finally {
+        Breadcrumbs.action("autoMatch_stop");
         isAutoMatchingRef.current = false;
         setIsAutoMatching(false);
         
@@ -30999,6 +31209,7 @@ function collectCoverImageUrls(novels) {
 
 async function exportJSON() {
   const _pt = PerfMonitor.enabled ? Date.now() : 0; // 🔬
+  Breadcrumbs.action("data_export");
   try {
     setIsLoading(true);
     
@@ -31347,6 +31558,7 @@ function validateImportData(text) {
 
 async function importJSON() {
   const _pt = PerfMonitor.enabled ? Date.now() : 0; // 🔬
+  Breadcrumbs.action("data_import");
   try {
     const text = importText.trim();
     if (!text) {
@@ -41171,6 +41383,169 @@ async function importJSON() {
               
               return (
               <>
+            {/* 💥 v3.8.2: 크래시 로그 섹션 (항상 표시, PerfMonitor 무관) */}
+            <Section title="💥 크래시 로그">
+              {lastCrashLog ? (
+                <View>
+                  <View style={{ backgroundColor: isDark ? "#7f1d1d" : "#fef2f2", padding: 12, borderRadius: 10, borderWidth: 1, borderColor: isDark ? "#ef4444" : "#fca5a5", marginBottom: 10 }}>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <Text style={{ fontWeight: "800", color: isDark ? "#fca5a5" : "#dc2626", fontSize: 14 }}>마지막 크래시</Text>
+                      <Text style={{ color: isDark ? "#f87171" : "#991b1b", fontSize: 10 }}>
+                        {new Date(lastCrashLog.timestamp).toLocaleString()}
+                      </Text>
+                    </View>
+                    <Text style={{ fontWeight: "700", color: isDark ? "#fecaca" : "#991b1b", fontSize: 13, marginBottom: 4 }}>
+                      [{lastCrashLog.context}] {lastCrashLog.error?.name || "Error"}
+                    </Text>
+                    <Text style={{ color: isDark ? "#fca5a5" : "#b91c1c", fontSize: 12, marginBottom: 8, lineHeight: 18 }} numberOfLines={3}>
+                      {lastCrashLog.error?.message || "알 수 없는 오류"}
+                    </Text>
+
+                    {/* 상태 스냅샷 */}
+                    {lastCrashLog.state && (
+                      <View style={{ backgroundColor: isDark ? "#450a0a" : "#fee2e2", padding: 8, borderRadius: 8, marginBottom: 8 }}>
+                        <Text style={{ fontWeight: "700", color: isDark ? "#fca5a5" : "#991b1b", fontSize: 11, marginBottom: 4 }}>크래시 당시 상태</Text>
+                        <Text style={{ color: isDark ? "#f87171" : "#b91c1c", fontSize: 11, fontFamily: "monospace" }}>
+                          {Object.entries(lastCrashLog.state).map(([k, v]) => `${k}: ${v}`).join("\n")}
+                        </Text>
+                      </View>
+                    )}
+
+                    {/* Breadcrumbs */}
+                    {lastCrashLog.breadcrumbs && lastCrashLog.breadcrumbs.length > 0 && (
+                      <View style={{ backgroundColor: isDark ? "#450a0a" : "#fee2e2", padding: 8, borderRadius: 8, marginBottom: 8 }}>
+                        <Text style={{ fontWeight: "700", color: isDark ? "#fca5a5" : "#991b1b", fontSize: 11, marginBottom: 4 }}>
+                          크래시 직전 동선 ({lastCrashLog.breadcrumbs.length}건)
+                        </Text>
+                        {lastCrashLog.breadcrumbs.slice(-10).map((bc, i) => (
+                          <View key={i} style={{ flexDirection: "row", paddingVertical: 1 }}>
+                            <Text style={{ color: isDark ? "#f87171" : "#b91c1c", fontSize: 10, width: 55 }}>
+                              {new Date(bc.time).toLocaleTimeString()}
+                            </Text>
+                            <Text style={{ color: isDark ? "#fca5a5" : "#991b1b", fontSize: 10, width: 45, fontWeight: "600" }}>
+                              {bc.category}
+                            </Text>
+                            <Text style={{ color: isDark ? "#fecaca" : "#7f1d1d", fontSize: 10, flex: 1 }} numberOfLines={1}>
+                              {bc.message}{bc.data ? ` (${bc.data})` : ""}
+                            </Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+
+                    {/* 컴포넌트 스택 */}
+                    {lastCrashLog.componentStack && (
+                      <View style={{ backgroundColor: isDark ? "#450a0a" : "#fee2e2", padding: 8, borderRadius: 8, marginBottom: 8 }}>
+                        <Text style={{ fontWeight: "700", color: isDark ? "#fca5a5" : "#991b1b", fontSize: 11, marginBottom: 4 }}>컴포넌트 스택</Text>
+                        <Text style={{ color: isDark ? "#f87171" : "#b91c1c", fontSize: 9, fontFamily: "monospace" }} numberOfLines={8}>
+                          {lastCrashLog.componentStack}
+                        </Text>
+                      </View>
+                    )}
+
+                    <View style={{ flexDirection: "row", gap: 8 }}>
+                      <TouchableOpacity
+                        onPress={async () => {
+                          try {
+                            const report = [
+                              "=== 크래시 리포트 ===",
+                              `시간: ${lastCrashLog.date}`,
+                              `컨텍스트: ${lastCrashLog.context}`,
+                              `에러: ${lastCrashLog.error?.name}: ${lastCrashLog.error?.message}`,
+                              "",
+                              "--- 스택 ---",
+                              lastCrashLog.error?.stack || "(없음)",
+                              "",
+                              lastCrashLog.componentStack ? `--- 컴포넌트 스택 ---\n${lastCrashLog.componentStack}\n` : "",
+                              lastCrashLog.state ? `--- 상태 ---\n${JSON.stringify(lastCrashLog.state, null, 2)}\n` : "",
+                              "--- Breadcrumbs ---",
+                              ...(lastCrashLog.breadcrumbs || []).map(bc =>
+                                `  ${new Date(bc.time).toLocaleTimeString()} [${bc.category}] ${bc.message}${bc.data ? ` (${bc.data})` : ""}`
+                              ),
+                            ].join("\n");
+                            await Share.share({ title: "크래시 리포트", message: report });
+                          } catch { Alert.alert("공유 실패"); }
+                        }}
+                        style={{ flex: 1, backgroundColor: isDark ? "#991b1b" : "#dc2626", padding: 8, borderRadius: 8, alignItems: "center" }}
+                      >
+                        <Text style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}>공유</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={async () => {
+                          await CrashLog.dismissLastCrash();
+                          setLastCrashLog(null);
+                        }}
+                        style={{ flex: 1, backgroundColor: isDark ? "#374151" : "#e5e7eb", padding: 8, borderRadius: 8, alignItems: "center" }}
+                      >
+                        <Text style={{ color: C.text, fontWeight: "700", fontSize: 12 }}>확인 (삭제)</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              ) : (
+                <Text style={{ color: C.sub, fontSize: 13, textAlign: "center", paddingVertical: 8 }}>
+                  기록된 크래시가 없습니다
+                </Text>
+              )}
+
+              {/* 크래시 히스토리 */}
+              {crashHistory.length > 0 && (
+                <View style={{ marginTop: 8 }}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                    <Text style={{ fontWeight: "700", color: C.text, fontSize: 13 }}>이전 크래시 이력 ({crashHistory.length}건)</Text>
+                    <TouchableOpacity
+                      onPress={async () => {
+                        Alert.alert("확인", "크래시 이력을 모두 삭제할까요?", [
+                          { text: "취소" },
+                          { text: "삭제", style: "destructive", onPress: async () => {
+                            await CrashLog.clearHistory();
+                            setCrashHistory([]);
+                          }},
+                        ]);
+                      }}
+                    >
+                      <Text style={{ color: C.warn, fontSize: 11, fontWeight: "600" }}>전체 삭제</Text>
+                    </TouchableOpacity>
+                  </View>
+                  {crashHistory.slice(0, 5).map((crash, i) => (
+                    <View key={i} style={{ backgroundColor: isDark ? "#1f2937" : "#f9fafb", padding: 8, borderRadius: 8, marginBottom: 4, borderWidth: 0.5, borderColor: C.line }}>
+                      <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                        <Text style={{ color: isDark ? "#f87171" : "#dc2626", fontSize: 11, fontWeight: "600" }} numberOfLines={1}>
+                          [{crash.context}] {crash.error?.message?.substring(0, 50) || "Error"}
+                        </Text>
+                        <Text style={{ color: C.sub, fontSize: 9 }}>
+                          {new Date(crash.timestamp).toLocaleDateString()}
+                        </Text>
+                      </View>
+                      {crash.breadcrumbs && crash.breadcrumbs.length > 0 && (
+                        <Text style={{ color: C.sub, fontSize: 9, marginTop: 2 }} numberOfLines={1}>
+                          마지막 동선: {crash.breadcrumbs[crash.breadcrumbs.length - 1]?.message || "-"}
+                        </Text>
+                      )}
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {/* 현재 Breadcrumbs (실시간) */}
+              <View style={{ marginTop: 12 }}>
+                <Text style={{ fontWeight: "700", color: C.text, fontSize: 13, marginBottom: 6 }}>현재 세션 Breadcrumbs ({Breadcrumbs.getAll().length}건)</Text>
+                {Breadcrumbs.getAll().length > 0 ? (
+                  Breadcrumbs.getAll().slice(-10).reverse().map((bc, i) => (
+                    <View key={i} style={{ flexDirection: "row", paddingVertical: 2, borderBottomWidth: 0.5, borderColor: C.line + "30" }}>
+                      <Text style={{ color: C.sub, fontSize: 10, width: 55 }}>{new Date(bc.time).toLocaleTimeString()}</Text>
+                      <Text style={{ color: C.primary, fontSize: 10, width: 50, fontWeight: "600" }}>{bc.category}</Text>
+                      <Text style={{ color: C.text, fontSize: 10, flex: 1 }} numberOfLines={1}>
+                        {bc.message}{bc.data ? ` (${bc.data})` : ""}
+                      </Text>
+                    </View>
+                  ))
+                ) : (
+                  <Text style={{ color: C.sub, fontSize: 11, textAlign: "center" }}>아직 기록 없음</Text>
+                )}
+              </View>
+            </Section>
+
             <Section title="🔬 성능 모니터">
               <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                 <Text style={{ color: C.text, fontWeight: "700" }}>실시간 추적</Text>
@@ -41578,7 +41953,7 @@ async function importJSON() {
                 }}
               />
               <Text style={{ color: C.sub, fontSize: 10, marginTop: 6, textAlign: "center" }}>
-                진단 데이터는 앱 종료 시 초기화됩니다.
+                성능 데이터는 앱 종료 시 초기화됩니다. 크래시 로그는 파일에 영속 저장됩니다.
               </Text>
             </Section>
             )}
