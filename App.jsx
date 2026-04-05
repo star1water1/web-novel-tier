@@ -8792,6 +8792,19 @@ const CHANGELOG_DATA = [
     details: [],
   },
   {
+    version: "3.5.5", date: "2025-02-24",
+    title: "취향 학습 통합 + 커스텀 초기화",
+    highlights: [
+      { type: "new", text: "🔗 태그 동의어 그룹 시스템 + 핵심 알고리즘 연동" },
+      { type: "new", text: "🔧 커스텀 초기화 모달 (6그룹 24항목 선택적 초기화)" },
+      { type: "improve", text: "백업/복원 확장 — preference_patterns + platform_covers 포함" },
+    ],
+    details: [
+      { type: "fix", text: "모달 초기 높이 이슈 일괄 수정 (6개 모달)" },
+      { type: "perf", text: "rankedEntries/analysisStats 비활성 탭 계산 스킵" },
+    ],
+  },
+  {
     version: "3.5.4", date: "2025-02-24",
     title: "명언 갤러리 + 매칭 행동 분석",
     highlights: [
@@ -8851,6 +8864,17 @@ const CHANGELOG_DATA = [
     ],
   },
   {
+    version: "3.4.6", date: "2025-02-16",
+    title: "매칭 큐잉 시스템 도입",
+    highlights: [
+      { type: "new", text: "🔄 매칭 큐잉 시스템 — DB 트랜잭션 순차 처리로 충돌 방지" },
+    ],
+    details: [
+      { type: "new", text: "pendingMatchPairs Set으로 중복 매치 방지" },
+      { type: "improve", text: "UI는 즉시 응답, DB는 순차 처리" },
+    ],
+  },
+  {
     version: "3.4.5", date: "2025-02-15",
     title: "표지 라이브러리 + 전체화면 모드",
     highlights: [
@@ -8864,6 +8888,18 @@ const CHANGELOG_DATA = [
     ],
   },
   {
+    version: "3.4.4", date: "2025-02-14",
+    title: "태그 동기화 통합 + 크리티컬 버그 수정",
+    highlights: [
+      { type: "fix", text: "🚨 Promise.all 인덱스 매칭 버그 — 최신 변경 데이터 유실 수정" },
+      { type: "fix", text: "태그 고정 기능 복구 (pinnedTags prop 누락)" },
+      { type: "improve", text: "대장르/부장르 태그 동기화 완전 통합" },
+    ],
+    details: [
+      { type: "improve", text: "최신 탭에 표지 이미지 추가" },
+    ],
+  },
+  {
     version: "3.4.3", date: "2025-02-13",
     title: "태그 빠른 입력 + 예정탭 태그 모달",
     highlights: [
@@ -8871,6 +8907,29 @@ const CHANGELOG_DATA = [
       { type: "improve", text: "예정탭에 태그 선택 모달 연동" },
     ],
     details: [],
+  },
+  {
+    version: "3.4.2", date: "2025-02-12",
+    title: "예정탭 대폭 간소화",
+    highlights: [
+      { type: "improve", text: "📋 예정탭 간소화 — 등록 필드 18개→6개, 카드 터치→수정 모달" },
+    ],
+    details: [
+      { type: "improve", text: "FlatList 성능 최적화 + 플랫폼 필터 추가" },
+      { type: "improve", text: "링크 바로가기 아이콘 추가" },
+    ],
+  },
+  {
+    version: "3.4.1", date: "2025-02-11",
+    title: "UX 편의성 개선",
+    highlights: [
+      { type: "improve", text: "작품 카드 길게 누르면 전체 제목+메모 표시" },
+      { type: "new", text: "실시간 중복 제목 체크 + 경고 표시" },
+      { type: "new", text: "홈 상단에 최근 편집 작품 5개 빠른 접근" },
+    ],
+    details: [
+      { type: "improve", text: "예정→본목록 전환 시 모든 정보 자동 이전 (메모 병합)" },
+    ],
   },
   {
     version: "3.4.0", date: "2025-02-10",
