@@ -2,9 +2,103 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.8.1                                                                   ║
+ * ║  버전: 3.9.1                                                                   ║
  * ║  최종 수정: 2026-04-05                                                        ║
- * ║  총 라인 수: 약 44,500줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 45,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v3.9.1 코드 전반 버그 수정 15건 (2026-04-05)                               ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [수정] 🗄️ DB/데이터 무결성                                                   ║
+ * ║ • switchSlotDb: 세대 증가가 flush 전에 실행되어 지연 쓰기 데이터 손실 수정    ║
+ * ║ • Import: NF(폴더매핑)/GI(갤러리) ��원 시 novel_id 미리매핑 → 고아 데이터    ║
+ * ║   발생 수정 (NID 백업 필드 추가, old→new ID 매핑 구축)                        ║
+ * ║ • calculatePredictionAccuracy: all() null 반환 시 크래시 수정                 ║
+ * ║ • migrateExistingMatchesToPatterns: all() null 반환 시 크래시 수정            ║
+ * ║                                                                              ║
+ * ║ [수정] 🧮 로직/기능 오류                                                      ║
+ * ║ • CoordinateGridView: X축/Y축 라벨 위치가 서로 바뀌어 있던 것 수정           ║
+ * ║ • analyzeSpectrum: normalizedScore 분모에 미매칭 태그 포함 → positions 기준   ║
+ * ║ • combo_tags: 커스텀 초기화에서 RESET_CATEGORIES 누락 → 초기화 불가 수정     ║
+ * ║ • matchTags 제거: award.matchTags null일 때 크래시 가능성 수정               ║
+ * ║ • 모두승인/선택승인: addRecentChange 누락 → 최근 변경 기록 미반영 수정       ║
+ * ║ • 진단탭 데이터규모 섹션: JSX 주석이 JS 컨텍스트에 위치 → 렌더 오류 수정    ║
+ * ║ • 슬롯 전환: setScreenRaw → setScreen으로 변경 (screenRef 동기화)            ║
+ * ║                                                                              ║
+ * ║ [수정] 🎨 UI/다크모드                                                         ║
+ * ║ • 매칭/검토/설정 등 다수 하드코딩 색상 → isDark 분기 적용                     ║
+ * ║ • AwardsScreen settingsScrollKey: onShow에서 미호출 수정                      ║
+ * ║                                                                              ║
+ * ║ [개선] ⚡ 성능/안정성                                                          ║
+ * ║ • NovelCard memo: platformCovers, awardSystemSettings 비교 누락 추가         ║
+ * ║ • NovelCard AwardsRow: awardSystemSettings 미전달 → 커스텀 수상 미표시 수정  ║
+ * ║ • SentimentChip: 렌더마다 재생성 → useMemo로 안정화 (불필요 리마운트 방지)   ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 💥 v3.9.0 크래시 진단 시스템 (2026-04-05)                                     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [신규] 💥 크래시 로그 영속화                                                  ║
+ * ║ • CrashLog: 파일 시스템 기반 크래시 로그 기록 (DB 미사용 — 크래시 안전)       ║
+ * ║ • 에러 발생 시 즉시 JSON 파일로 기록 (last_crash.json)                        ║
+ * ║ • 크래시 히스토리 최대 10건 보관 (crash_history.json)                         ║
+ * ║ • 크래시 당시 앱 상태 스냅샷 (화면, 탭, 작품수, 슬롯, 자동매칭 여부)         ║
+ * ║                                                                              ║
+ * ║ [신규] 🍞 Breadcrumbs (사용자 동선 추적)                                      ║
+ * ║ • 최근 20개 사용자 액션을 링 버퍼로 상시 추적 (PerfMonitor와 독립)            ║
+ * ║ • 카테고리: nav(화면전환), action(작업), db(DB), error(에러), lifecycle       ║
+ * ║ • 크래시 발생 시 breadcrumbs도 함께 저장 → "직전에 뭘 했는지" 파악 가능      ║
+ * ║ • 추적 대상: 탭 전환, 작품 추가/삭제, 매칭, 자동매칭, 슬롯 전환,            ║
+ * ║   백업/복원, DB 에러, AppState 전환, loadList                                 ║
+ * ║                                                                              ║
+ * ║ [신규] 📊 진단탭 크래시 뷰어                                                  ║
+ * ║ • 마지막 크래시 상세 보기 (에러 메시지, 스택, 상태, breadcrumbs)              ║
+ * ║ • 크래시 리포트 공유 기능                                                     ║
+ * ║ • 크래시 히스토리 (최근 10건) 목록                                            ║
+ * ║ • 현재 세션 실시간 breadcrumbs 뷰어                                           ║
+ * ║                                                                              ║
+ * ║ [연동] ErrorBoundary → CrashLog.record (렌더 크래시 + 컴포넌트 스택)          ║
+ * ║ [연동] ErrorUtils → CrashLog.record (치명적 JS 에러)                          ║
+ * ║ [연동] Unhandled Rejection → Breadcrumbs (Promise rejection 추적)             ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v3.8.2 버그 수정 18건 (2026-04-05)                                         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [수정] 🗄️ DB/데이터 무결성                                                   ║
+ * ║ • "no such table" 오류가 연결 오류로 잘못 분류되어 무의미한 리셋 반복 수정     ║
+ * ║ • deferSetAppMeta flush 실패 시 대기 데이터 영구 손실 → 복원 로직 추가        ║
+ * ║ • verifyDataIntegrity: userMajorGenres/userSubGenres 미전달 → 커스텀 장르     ║
+ * ║   사용 시 major_genre/sub_genre 잘못 재계산되는 데이터 오염 수정              ║
+ * ║ • verifyDataIntegrity: cover 상태 수정 시 planned_novels 미검색 수정          ║
+ * ║ • Phase 2 마이그레이션: 이미 aliases에 있는 작품 식별자의 tag_data 정리 누락  ║
+ * ║ • deleteLog: choice_logs 미삭제로 고아 데이터 발생 수정                       ║
+ * ║ • flipWinner: choice_logs 미동기화로 학습 데이터 불일치 수정                  ║
+ * ║ • Import: tierSystemConfig가 소설 INSERT 후 적용되어 티어 부정확 수정         ║
+ * ║                                                                              ║
+ * ║ [수정] 🧮 매칭/예측 로직                                                      ║
+ * ║ • tagPower contribution이 미클램핑 값 사용 → 예측 점수 불일치 수정            ║
+ * ║ • genreKey.startsWith 부분 문자열 매칭 → split 기반 정확 비교로 변경          ║
+ * ║ • reread_count: 0이 || 1로 인해 1로 변환되는 falsy 강제변환 수정             ║
+ * ║                                                                              ║
+ * ║ [수정] 🎨 UI/다크모드                                                         ║
+ * ║ • AwardsScreen: isDark 미정의로 인용구 렌더링 시 ReferenceError 수정          ║
+ * ║ • Import/Export 모달: 하드코딩 배경색 → 테마 색상(C.bg) 적용                 ║
+ * ║ • 조합식 태그 입력: 하드코딩 "#fff" → C.card 적용                            ║
+ * ║ • Import 모달 타이틀: color 누락으로 다크모드 텍스트 안보임 수정              ║
+ * ║ • 로그 모달 배경: 하드코딩 rgba → C.modal 통일                               ║
+ * ║                                                                              ║
+ * ║ [수정] ⚡ 기타                                                                ║
+ * ║ • homeFiltered useMemo: tagRelations 의존성 누락 수정                         ║
+ * ║ • AwardsRow: App() 내 호출에서 awardSystemSettings 미전달 수정               ║
+ * ║ • coOccTimerRef: 언마운트 시 타이머 미정리 수정                               ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -2510,6 +2604,138 @@ import * as FileSystem from "expo-file-system/legacy"; // 🔧 v3.5.3: SDK 54 �
 import * as ImageManipulator from "expo-image-manipulator"; // 📷 명대사 이미지 압축
 
 /* =========================================================
+   💥 v3.9.0: 크래시 로그 영속화 + Breadcrumbs
+   - 크래시/에러 발생 시 파일 시스템에 즉시 기록 (DB 미사용)
+   - 최근 사용자 액션 20개를 링 버퍼로 추적
+   - 다음 실행 시 진단탭에서 "마지막 크래시" 확인 가능
+   ========================================================= */
+
+const CRASH_LOG_DIR = (FileSystem.documentDirectory || "") + "crash_logs/";
+const CRASH_LOG_FILE = CRASH_LOG_DIR + "last_crash.json";
+const CRASH_HISTORY_FILE = CRASH_LOG_DIR + "crash_history.json";
+const MAX_CRASH_HISTORY = 10;
+
+// Breadcrumbs: 최근 사용자 액션 링 버퍼 (항상 활성, PerfMonitor 무관)
+const Breadcrumbs = {
+  _items: [],
+  MAX: 20,
+
+  add(category, message, data = null) {
+    const entry = { category, message, time: Date.now() };
+    if (data) entry.data = typeof data === "string" ? data : JSON.stringify(data).substring(0, 200);
+    this._items.push(entry);
+    if (this._items.length > this.MAX) this._items.shift();
+  },
+
+  getAll() { return [...this._items]; },
+
+  // 주요 카테고리별 편의 메서드
+  navigation(from, to) { this.add("nav", `${from} → ${to}`); },
+  action(msg, data) { this.add("action", msg, data); },
+  db(msg, data) { this.add("db", msg, data); },
+  error(msg, data) { this.add("error", msg, data); },
+  lifecycle(event) { this.add("lifecycle", event); },
+};
+
+// CrashLog: 파일 기반 크래시 로그 기록/읽기
+const CrashLog = {
+  _lastCrash: null,        // 앱 시작 시 로드
+  _crashHistory: null,     // 이전 크래시 이력
+  _stateSnapshotFn: null,  // App()에서 등록하는 상태 스냅샷 함수
+
+  // 상태 스냅샷 함수 등록 (App 컴포넌트 마운트 시)
+  registerStateSnapshot(fn) { this._stateSnapshotFn = fn; },
+
+  // 크래시 기록 (에러 발생 시 즉시 호출)
+  async record(error, context = "unknown", componentStack = null) {
+    try {
+      const entry = {
+        timestamp: Date.now(),
+        date: new Date().toISOString(),
+        context,
+        error: {
+          message: error?.message || String(error),
+          name: error?.name || "Error",
+          stack: (error?.stack || "").substring(0, 1500),
+        },
+        breadcrumbs: Breadcrumbs.getAll(),
+        state: null,
+      };
+      if (componentStack) {
+        entry.componentStack = componentStack.substring(0, 800);
+      }
+      // 상태 스냅샷 수집 (등록되어 있으면)
+      if (this._stateSnapshotFn) {
+        try { entry.state = this._stateSnapshotFn(); } catch {}
+      }
+
+      // 디렉토리 확인/생성
+      const dirInfo = await FileSystem.getInfoAsync(CRASH_LOG_DIR);
+      if (!dirInfo.exists) await FileSystem.makeDirectoryAsync(CRASH_LOG_DIR, { intermediates: true });
+
+      // 현재 크래시 기록
+      await FileSystem.writeAsStringAsync(CRASH_LOG_FILE, JSON.stringify(entry));
+
+      // 히스토리에 추가
+      let history = [];
+      try {
+        const raw = await FileSystem.readAsStringAsync(CRASH_HISTORY_FILE);
+        history = JSON.parse(raw);
+        if (!Array.isArray(history)) history = [];
+      } catch {}
+      history.unshift(entry);
+      if (history.length > MAX_CRASH_HISTORY) history = history.slice(0, MAX_CRASH_HISTORY);
+      await FileSystem.writeAsStringAsync(CRASH_HISTORY_FILE, JSON.stringify(history));
+
+      console.log("💥 크래시 로그 기록 완료:", context);
+    } catch (writeErr) {
+      console.warn("크래시 로그 기록 실패:", writeErr);
+    }
+  },
+
+  // 마지막 크래시 로드 (앱 시작 시)
+  async loadLastCrash() {
+    try {
+      const info = await FileSystem.getInfoAsync(CRASH_LOG_FILE);
+      if (!info.exists) return null;
+      const raw = await FileSystem.readAsStringAsync(CRASH_LOG_FILE);
+      this._lastCrash = JSON.parse(raw);
+      return this._lastCrash;
+    } catch { return null; }
+  },
+
+  // 크래시 히스토리 로드
+  async loadHistory() {
+    try {
+      const info = await FileSystem.getInfoAsync(CRASH_HISTORY_FILE);
+      if (!info.exists) return [];
+      const raw = await FileSystem.readAsStringAsync(CRASH_HISTORY_FILE);
+      const history = JSON.parse(raw);
+      this._crashHistory = Array.isArray(history) ? history : [];
+      return this._crashHistory;
+    } catch { return []; }
+  },
+
+  // 마지막 크래시 확인 후 삭제 (확인 완료 표시)
+  async dismissLastCrash() {
+    try {
+      const info = await FileSystem.getInfoAsync(CRASH_LOG_FILE);
+      if (info.exists) await FileSystem.deleteAsync(CRASH_LOG_FILE, { idempotent: true });
+      this._lastCrash = null;
+    } catch {}
+  },
+
+  // 전체 히스토리 삭제
+  async clearHistory() {
+    try {
+      const info = await FileSystem.getInfoAsync(CRASH_HISTORY_FILE);
+      if (info.exists) await FileSystem.deleteAsync(CRASH_HISTORY_FILE, { idempotent: true });
+      this._crashHistory = [];
+    } catch {}
+  },
+};
+
+/* =========================================================
    🛡️ v3.5.6: 글로벌 에러 핸들러 + ErrorBoundary
    - 미처리 Promise rejection → 무시 (crash 방지)
    - 렌더링 에러 → 복구 UI 표시 (white screen 방지)
@@ -2522,13 +2748,30 @@ if (global.ErrorUtils) {
   global.ErrorUtils.setGlobalHandler((error, isFatal) => {
     if (isFatal) {
       console.error("🔴 치명적 오류:", error?.message || error);
+      // 💥 크래시 로그 영속화 (fire-and-forget)
+      Breadcrumbs.error("fatal", error?.message);
+      CrashLog.record(error, "fatal_error").catch(() => {});
       // 치명적 오류는 기본 핸들러에 위임
       if (originalHandler) originalHandler(error, isFatal);
     } else {
       console.warn("🟡 비치명적 오류:", error?.message || error);
+      Breadcrumbs.error("non_fatal", error?.message);
       // 비치명적 오류는 로그만 남기고 무시 (crash 방지)
     }
   });
+}
+
+// 🛡️ Unhandled Promise Rejection 추적 (console.warn 메시지 감지)
+if (!global.__crashLogRejectionSet) {
+  global.__crashLogRejectionSet = true;
+  const origWarn = console.warn;
+  const rejectionPattern = /Possible Unhandled Promise Rejection/;
+  console.warn = function(...args) {
+    if (args[0] && typeof args[0] === "string" && rejectionPattern.test(args[0])) {
+      Breadcrumbs.error("unhandled_rejection", args.slice(0, 2).join(" ").substring(0, 200));
+    }
+    return origWarn.apply(console, args);
+  };
 }
 
 // 🛡️ ErrorBoundary: 렌더링 중 발생하는 에러를 잡아 white screen 방지
@@ -2544,6 +2787,9 @@ class AppErrorBoundary extends Component {
 
   componentDidCatch(error, errorInfo) {
     console.error("🔴 렌더링 크래시:", error?.message, errorInfo?.componentStack?.slice(0, 500));
+    // 💥 크래시 로그 영속화
+    Breadcrumbs.error("render_crash", error?.message);
+    CrashLog.record(error, "render_crash", errorInfo?.componentStack).catch(() => {});
   }
 
   render() {
@@ -2772,11 +3018,11 @@ async function flushAllPendingWrites() {
 async function switchSlotDb(newSlotId) {
   console.log(`[슬롯] 전환 시작: ${activeSlotId} → ${newSlotId}`);
   
+  // 1. 모든 지연 쓰기 flush (세대 증가 전에 수행 — flush 중 safeDefer가 현재 세대로 실행되도록)
+  await flushAllPendingWrites();
+
   // 0. 🔧 슬롯 세대 증가 → 이전 슬롯의 setTimeout 기반 지연 쓰기를 무효화
   _slotGeneration++;
-
-  // 1. 모든 지연 쓰기 flush
-  await flushAllPendingWrites();
 
   // 2. 현재 슬롯 작품 수 업데이트
   try {
@@ -3206,7 +3452,7 @@ async function safeDbOperation(operation, operationName = "DB") {
       return result;
     } catch (e) {
       const errorMsg = e.message || "";
-      
+      Breadcrumbs.error(`db_${operationName}`, errorMsg.substring(0, 100));
       // 🔧 v3.5.15c: 경합 오류와 연결 오류를 분리
       // BUSY/LOCKED는 WAL 모드에서 정상적인 경합 — resetDbConnection 금지
       // resetDbConnection은 다른 동시 작업의 DB 연결도 파괴하여 연쇄 크래시 유발
@@ -3223,8 +3469,7 @@ async function safeDbOperation(operation, operationName = "DB") {
         errorMsg.includes("database") ||
         errorMsg.includes("null") ||
         errorMsg.includes("closed") ||
-        errorMsg.includes("disk I/O") ||
-        errorMsg.includes("no such table")
+        errorMsg.includes("disk I/O")
       );
       
       console.warn(`${operationName} 오류 (시도 ${attempt + 1}/${maxRetries}):`, errorMsg,
@@ -3963,6 +4208,7 @@ async function batchSetAppMeta(entries) {
 // 큐 처리 중이면 추가 대기 (매칭 큐 DB 쓰기와 경합 방지)
 const _pendingMetaWrites = {};
 let _metaBatchTimer = null;
+let _metaFlushFailCount = 0; // 🔧 v3.9.0: 무한 재시도 방지
 
 function deferSetAppMeta(key, value) {
   _pendingMetaWrites[key] = value;
@@ -3980,8 +4226,19 @@ function deferSetAppMeta(key, value) {
     for (const k of Object.keys(_pendingMetaWrites)) delete _pendingMetaWrites[k];
     try {
       await batchSetAppMeta(snapshot);
+      _metaFlushFailCount = 0; // 성공 시 리셋
     } catch (e) {
-      console.warn("deferSetAppMeta flush 오류:", e);
+      _metaFlushFailCount++;
+      console.warn(`deferSetAppMeta flush 오류 (${_metaFlushFailCount}회):`, e);
+      // 🔧 flush 실패 시 데이터 복원 (영구 손실 방지, 최대 3회까지만)
+      if (_metaFlushFailCount <= 3) {
+        for (const [k, v] of Object.entries(snapshot)) {
+          if (!(k in _pendingMetaWrites)) _pendingMetaWrites[k] = v;
+        }
+      } else {
+        console.warn("deferSetAppMeta: 연속 실패 초과, 대기 데이터 폐기");
+        _metaFlushFailCount = 0;
+      }
     } finally {
       _metaBatchTimer = null;
       // 🔧 flush 중 새로운 쓰기가 쌓였으면 재스케줄
@@ -4045,9 +4302,9 @@ async function migrateTagSystem() {
         
         for (const t of tagData) {
           if (isWorkIdentifier(t.tag)) {
+            changed = true; // 🔧 tag_data에서 작품 식별자 제거 시 항상 changed
             if (!newAliases.includes(t.tag)) {
               newAliases.push(t.tag);
-              changed = true;
             }
           } else {
             cleanedTagData.push(t);
@@ -4346,6 +4603,8 @@ async function verifyDataIntegrity(options = {}) {
     const novelIds = new Set((novels || []).map(n => n.id));
     const queries = [];
     let _integrityTagAttrs = null; // 1d에서 lazy 로드
+    let _integrityUserMajorGenres = null;
+    let _integrityUserSubGenres = null;
     
     for (const novel of (novels || [])) {
       const fixes = {};
@@ -4414,8 +4673,15 @@ async function verifyDataIntegrity(options = {}) {
           _integrityTagAttrs = safeParseJSON(raw, {});
         } catch { _integrityTagAttrs = {}; }
       }
-      const allMajor = getAllMajorTags(_integrityTagAttrs);
-      const allSub = getAllSubTags(_integrityTagAttrs);
+      // 🔧 사용자 커스텀 장르를 포함하여 정확한 장르 재계산
+      if (!_integrityUserMajorGenres) {
+        try { _integrityUserMajorGenres = safeParseJSON(await getAppMeta("user_major_genres"), []); } catch { _integrityUserMajorGenres = []; }
+      }
+      if (!_integrityUserSubGenres) {
+        try { _integrityUserSubGenres = safeParseJSON(await getAppMeta("user_sub_genres"), []); } catch { _integrityUserSubGenres = []; }
+      }
+      const allMajor = getAllMajorTags(_integrityTagAttrs, _integrityUserMajorGenres);
+      const allSub = getAllSubTags(_integrityTagAttrs, _integrityUserSubGenres);
       
       const detectedMajor = currentTags
         .filter(tag => allMajor.some(m => m.toLowerCase() === tag.toLowerCase()))
@@ -4504,7 +4770,8 @@ async function verifyDataIntegrity(options = {}) {
       
       if (isActuallyUsed && !markedUsed) {
         // 실제 사용 중인데 unused로 표시된 경우
-        const usingNovel = (novels || []).find(n => n.cover_image === cover.file_path);
+        const usingNovel = (novels || []).find(n => n.cover_image === cover.file_path)
+          || (plannedNovelsForCover || []).find(n => n.cover_image === cover.file_path);
         queries.push({
           sql: "UPDATE cover_library SET status='used', novel_id=? WHERE id=?",
           params: [usingNovel?.id || null, cover.id],
@@ -5832,7 +6099,7 @@ async function generateEnhancedPrediction(A, B, tagAttributes = {}) {
       );
       
       if (genrePattern && genrePattern.sample_size >= 10) {
-        const isAFirst = genreKey.startsWith(majorA);
+        const isAFirst = genreKey.split("_vs_")[0] === majorA;
         const genreRate = isAFirst ? genrePattern.win_rate : (1 - genrePattern.win_rate);
         
         factors.genre = {
@@ -5904,10 +6171,11 @@ async function generateEnhancedPrediction(A, B, tagAttributes = {}) {
     
     if (tagCount > 0) {
       const tagAdvantage = 0.5 + (tagPowerA - tagPowerB) / 2;
+      const clampedTagAdvantage = Math.max(0.1, Math.min(0.9, tagAdvantage));
       factors.tagPower = {
-        value: Math.max(0.1, Math.min(0.9, tagAdvantage)),
+        value: clampedTagAdvantage,
         weight: weights.w_tag_power,
-        contribution: tagAdvantage * weights.w_tag_power,
+        contribution: clampedTagAdvantage * weights.w_tag_power,
       };
     } else {
       factors.tagPower = { value: 0.5, weight: weights.w_tag_power, contribution: 0.5 * weights.w_tag_power };
@@ -6076,17 +6344,17 @@ async function calculatePredictionAccuracy(days = 30) {
   try {
     const since = Date.now() - (days * 24 * 60 * 60 * 1000);
     
-    const rows = await all(`
-      SELECT was_correct FROM choice_logs 
-      WHERE match_type = 'user' 
-        AND was_correct IS NOT NULL 
+    const rows = (await all(`
+      SELECT was_correct FROM choice_logs
+      WHERE match_type = 'user'
+        AND was_correct IS NOT NULL
         AND created_at >= ?
-    `, [since]);
-    
+    `, [since])) || [];
+
     if (rows.length === 0) {
       return { accuracy: 0, sampleSize: 0 };
     }
-    
+
     const correct = rows.filter(r => r.was_correct === 1).length;
     return {
       accuracy: correct / rows.length,
@@ -6110,8 +6378,8 @@ async function migrateExistingMatchesToPatterns(tagAttrs = {}) {
       return;
     }
     
-    const matches = await all(`
-      SELECT m.*, a.title as a_title, a.rating as a_rating, a.tags as a_tags, 
+    const matches = (await all(`
+      SELECT m.*, a.title as a_title, a.rating as a_rating, a.tags as a_tags,
              a.major_genre as a_genre, a.author as a_author,
              a.read_count as a_read, a.total_episodes as a_total,
              b.title as b_title, b.rating as b_rating, b.tags as b_tags,
@@ -6122,8 +6390,8 @@ async function migrateExistingMatchesToPatterns(tagAttrs = {}) {
       JOIN novels b ON b.id = m.b_id
       WHERE m.decided_by = 'user'
       ORDER BY m.created_at ASC
-    `);
-    
+    `)) || [];
+
     console.log(`[migrateExistingMatchesToPatterns] ${matches.length}개 매칭 마이그레이션 시작`);
     
     const updates = [];
@@ -6145,7 +6413,7 @@ async function migrateExistingMatchesToPatterns(tagAttrs = {}) {
         const genreKey = createGenreMatchupKey(majorA, majorB);
         if (genreKey) {
           const winnerGenre = winnerIsA ? majorA : majorB;
-          const didFirstWin = genreKey.startsWith(winnerGenre);
+          const didFirstWin = genreKey.split("_vs_")[0] === winnerGenre;
           
           updates.push({
             category: "genre_matchup",
@@ -7820,7 +8088,7 @@ function analyzeSpectrum(tagData, spectrumId) {
   return {
     type: "range",
     avgScore: sumWeight > 0 ? sumScore / sumWeight : 0,
-    normalizedScore: sumWeight > 0 ? (sumScore / sumWeight) * (sumWeight / matches.length) : 0,
+    normalizedScore: sumWeight > 0 ? (sumScore / sumWeight) * (sumWeight / (positions.length || 1)) : 0,
     tags: positions,
     spectrumName: spectrum.name,
   };
@@ -8305,7 +8573,7 @@ function normalizeNovel(r) {
     losses: Number(r.losses) || 0,
     match_count: Number(r.match_count) || 0,
     read_count: Number(r.read_count) || 0,
-    reread_count: Number(r.reread_count) || 1,
+    reread_count: r.reread_count != null ? Number(r.reread_count) : 1,
     pinned: Number(r.pinned) || 0,
   };
 }
@@ -10063,19 +10331,20 @@ const GalleryGridItem = memo(({ item, onPress, onLongPress, theme }) => (
 ));
 
 // 📱 NovelCard: 홈 화면 작품 카드 컴포넌트 (메모이제이션으로 성능 최적화)
-const NovelCard = memo(({ 
-  item, 
-  index, 
-  onPress, 
+const NovelCard = memo(({
+  item,
+  index,
+  onPress,
   onLongPress, // 🆕 v3.4.1: 길게 누르면 전체 제목 표시
-  onTogglePin, 
+  onTogglePin,
   onLinkPress,
   onCoverPress, // 🖼️ v3.5.9: 표지 크게 보기
-  compareMode, 
-  isComparing, 
-  platformCovers, 
-  theme, 
-  isDark 
+  compareMode,
+  isComparing,
+  platformCovers,
+  awardSystemSettings,
+  theme,
+  isDark
 }) => {
   PerfMonitor.trackRender("NovelCard"); // 🔬
   // 메모이제이션된 계산들
@@ -10170,7 +10439,7 @@ const NovelCard = memo(({
           </Text>
           
           {/* 수상 뱃지 */}
-          {hasAwards && <AwardsRow awardsJson={item.awards} />}
+          {hasAwards && <AwardsRow awardsJson={item.awards} awardSystemSettings={awardSystemSettings} />}
         </View>
       </View>
       
@@ -10215,7 +10484,9 @@ const NovelCard = memo(({
     prevProps.index === nextProps.index &&
     prevProps.isComparing === nextProps.isComparing &&
     prevProps.compareMode === nextProps.compareMode &&
-    prevProps.isDark === nextProps.isDark
+    prevProps.isDark === nextProps.isDark &&
+    prevProps.platformCovers === nextProps.platformCovers &&
+    prevProps.awardSystemSettings === nextProps.awardSystemSettings
   );
 });
 
@@ -10818,8 +11089,8 @@ const TagSelectModal = memo(({
     );
   };
 
-  // 🎭 감정 태그 칩 (색상 표시)
-  const SentimentChip = ({ tag, active, onPress }) => {
+  // 🎭 감정 태그 칩 (색상 표시) — 🔧 v3.9.1: useMemo로 안정화 (렌더마다 재생성 방지)
+  const SentimentChip = useMemo(() => ({ tag, active, onPress }) => {
     const sentiment = getTagSentimentLocal(tag);
     const isPinned = listHasTag(pinnedTags, tag);
     // 🔧 v3.5.9: 작품명 태그 시각 구분 (tagAttributes 참조)
@@ -10878,7 +11149,7 @@ const TagSelectModal = memo(({
         </Text>
       </TouchableOpacity>
     );
-  };
+  }, [getTagSentimentLocal, pinnedTags, tagAttributes, isDark, bulkMode, bulkSelectedTags, handleLongPressTag]);
 
   if (!visible) return null;
 
@@ -13292,31 +13563,8 @@ const CoordinateGridView = memo(({
         {/* 그리드 선 */}
         {gridLines}
         
-        {/* 축 라벨 - X축 (상단/하단) */}
-        <Text style={{
-          position: "absolute",
-          top: 8,
-          left: padding + gridSize / 2,
-          transform: [{ translateX: -30 }],
-          fontSize: 10,
-          color: C.sub,
-          fontWeight: "600",
-        }}>
-          {system.xAxis?.positive || "→"}
-        </Text>
-        <Text style={{
-          position: "absolute",
-          bottom: 8,
-          left: padding + gridSize / 2,
-          transform: [{ translateX: -30 }],
-          fontSize: 10,
-          color: C.sub,
-          fontWeight: "600",
-        }}>
-          {system.xAxis?.negative || "←"}
-        </Text>
-        
-        {/* 축 라벨 - Y축 (좌측/우측) */}
+        {/* 🔧 v3.9.1: 축 라벨 위치 수정 — X축은 좌/우, Y축은 상/하 */}
+        {/* 축 라벨 - X축 (좌측: negative, 우측: positive) */}
         <Text style={{
           position: "absolute",
           left: 4,
@@ -13328,7 +13576,7 @@ const CoordinateGridView = memo(({
           width: 32,
           textAlign: "center",
         }}>
-          {system.yAxis?.negative || "↓"}
+          {system.xAxis?.negative || "←"}
         </Text>
         <Text style={{
           position: "absolute",
@@ -13341,7 +13589,31 @@ const CoordinateGridView = memo(({
           width: 32,
           textAlign: "center",
         }}>
+          {system.xAxis?.positive || "→"}
+        </Text>
+
+        {/* 축 라벨 - Y축 (상단: positive, 하단: negative) */}
+        <Text style={{
+          position: "absolute",
+          top: 8,
+          left: padding + gridSize / 2,
+          transform: [{ translateX: -30 }],
+          fontSize: 10,
+          color: C.sub,
+          fontWeight: "600",
+        }}>
           {system.yAxis?.positive || "↑"}
+        </Text>
+        <Text style={{
+          position: "absolute",
+          bottom: 8,
+          left: padding + gridSize / 2,
+          transform: [{ translateX: -30 }],
+          fontSize: 10,
+          color: C.sub,
+          fontWeight: "600",
+        }}>
+          {system.yAxis?.negative || "↓"}
         </Text>
         
         {/* 태그 점들 */}
@@ -16506,6 +16778,7 @@ const AwardsScreen = memo(({
 }) => {
   PerfMonitor.trackRender("AwardsScreen"); // 🔬
   const C = theme;
+  const isDark = C.bg !== "#F5F7FB"; // 🔧 다크모드 감지 (누락 수정)
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [newAwardName, setNewAwardName] = useState("");
   const [newTagInput, setNewTagInput] = useState("");
@@ -17861,32 +18134,32 @@ const AwardsScreen = memo(({
         visible={settingsModalOpen}
         animationType="slide"
         onRequestClose={() => setSettingsModalOpen(false)}
-        onShow={() => onModalShow('settings')}
+        onShow={() => { onModalShow('settings'); setSettingsScrollKey(k => k + 1); }}
         transparent
       >
         <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)" }}>
-          <TouchableOpacity 
-            style={{ height: Math.round(Dimensions.get("window").height * 0.08) }} 
-            activeOpacity={1} 
-            onPress={() => setSettingsModalOpen(false)} 
+          <TouchableOpacity
+            style={{ height: Math.round(Dimensions.get("window").height * 0.08) }}
+            activeOpacity={1}
+            onPress={() => setSettingsModalOpen(false)}
           />
-          <View style={{ 
-            backgroundColor: C.card, 
-            borderTopLeftRadius: 20, 
-            borderTopRightRadius: 20, 
-            padding: 20, 
+          <View style={{
+            backgroundColor: C.card,
+            borderTopLeftRadius: 20,
+            borderTopRightRadius: 20,
+            padding: 20,
             flex: 1,
           }}>
             <Text style={{ fontSize: 20, fontWeight: "900", color: C.text, marginBottom: 16 }}>
               ⚙️ {awardSelectedYear}년 상 설정
             </Text>
-            <TouchableOpacity 
-              onPress={() => setSettingsModalOpen(false)} 
+            <TouchableOpacity
+              onPress={() => setSettingsModalOpen(false)}
               style={{ position: "absolute", top: 20, right: 20, padding: 8, zIndex: 10 }}
             >
               <Text style={{ fontSize: 24, color: C.sub }}>×</Text>
             </TouchableOpacity>
-            
+
             <ScrollView key={`settings-scroll-${settingsScrollKey}`} style={{ flex: 1 }} nestedScrollEnabled={true} showsVerticalScrollIndicator={true}>
               {/* 현재 상 목록 */}
               <Text style={{ fontWeight: "800", color: C.text, marginBottom: 12, fontSize: 16 }}>
@@ -18038,7 +18311,7 @@ const AwardsScreen = memo(({
                         <TouchableOpacity
                           key={i}
                           onPress={() => {
-                            const newTags = (award.matchTags || []).filter((_, idx) => award.matchTags[idx] !== tag);
+                            const newTags = (award.matchTags || []).filter(t => t !== tag);
                             updateAward(award.id, { matchTags: newTags });
                           }}
                           style={{
@@ -21983,12 +22256,16 @@ function AppContent() {
   const [resetSelections, setResetSelections] = useState({}); // { key: boolean }
 
   const [screen, setScreenRaw] = useState("home");
+  const screenRef = useRef("home"); // 💥 v3.9.0: side effect 안전한 화면 추적
   // 🔬 v3.5.9: 화면 전환 추적 래퍼
   const setScreen = useCallback((next) => {
-    setScreenRaw(prev => {
-      if (prev !== next) PerfMonitor.trackNavigation(prev, next);
-      return next;
-    });
+    const prev = screenRef.current;
+    if (prev !== next) {
+      PerfMonitor.trackNavigation(prev, next);
+      Breadcrumbs.navigation(prev, next);
+      screenRef.current = next;
+    }
+    setScreenRaw(next);
   }, []);
   
   // 💬 v3.5.4: 명언 쇼츠 상태
@@ -22019,6 +22296,8 @@ function AppContent() {
   const [galleryCount, setGalleryCount] = useState(0); // 뱃지용 카운트 (지연 로드)
   const [galleryExpandedGroups, setGalleryExpandedGroups] = useState({}); // 관리 탭 그룹 펼침 상태
   const [refreshKey, setRefreshKey] = useState(0); // 🔬 v3.5.9: 진단 대시보드 새로고침 키
+  const [lastCrashLog, setLastCrashLog] = useState(null); // 💥 v3.9.0: 마지막 크래시 로그
+  const [crashHistory, setCrashHistory] = useState([]); // 💥 v3.9.0: 크래시 이력
   const [list, setList] = useState([]);
 
   // 홈 검색/정렬
@@ -23057,7 +23336,15 @@ function AppContent() {
     
     const initialize = async () => {
       setIsLoading(true);
-      
+
+      // 💥 v3.9.0: 이전 크래시 로그 로드
+      try {
+        const lastCrash = await CrashLog.loadLastCrash();
+        if (lastCrash && mounted) setLastCrashLog(lastCrash);
+        const history = await CrashLog.loadHistory();
+        if (history.length > 0 && mounted) setCrashHistory(history);
+      } catch {}
+
       // 📁 v3.5.15d: 슬롯 메타 먼저 로드 → 활성 슬롯 DB로 연결
       try {
         const meta = await loadSlotMeta();
@@ -23523,17 +23810,27 @@ function AppContent() {
     };
     
     initialize();
-    
-    return () => { 
+
+    return () => {
       mounted = false;
       setMatchQueueCallback(null); // 🔄 v3.4.6: 콜백 정리
+      if (coOccTimerRef.current) { clearTimeout(coOccTimerRef.current); coOccTimerRef.current = null; }
     };
   }, []);
+
+  // 💥 v3.9.0: CrashLog 상태 스냅샷 — 매 렌더마다 최신 클로저로 등록 (stale closure 방지)
+  CrashLog.registerStateSnapshot(() => ({
+    screen: screen || "unknown",
+    activeTab: activeTab,
+    listCount: list?.length || 0,
+    slotId: activeSlotId,
+    isAutoMatching: isAutoMatchingRef.current,
+  }));
 
   // 📁 v3.5.15d: 슬롯 전환 함수 (전체 state 리셋 + 새 DB 초기화 + 재로드)
   const performSlotSwitch = async (newSlotId) => {
     if (newSlotId === activeSlotId || slotSwitching) return;
-    
+    Breadcrumbs.action("slot_switch", `${activeSlotId} → ${newSlotId}`);
     const previousSlotId = activeSlotId; // 🔧 롤백용 백업
     setSlotSwitching(true);
     setIsLoading(true);
@@ -23814,8 +24111,8 @@ function AppContent() {
       const meta = await loadSlotMeta();
       setSlotMeta(meta);
       
-      // 화면을 홈으로 이동
-      setScreenRaw("home");
+      // 화면을 홈으로 이동 (🔧 v3.9.1: setScreen 사용 — screenRef 동기화)
+      setScreen("home");
       
       Alert.alert("슬롯 전환 완료", `"${meta.slots.find(s => s.id === newSlotId)?.name || "슬롯"}"으로 전환되었습니다.`);
       
@@ -23850,6 +24147,7 @@ function AppContent() {
     
     const subscription = AppState.addEventListener("change", async (nextAppState) => {
       PerfMonitor.trackLifecycle(nextAppState === "active" ? "foreground" : "background"); // 🔬
+      Breadcrumbs.lifecycle(nextAppState === "active" ? "foreground" : "background");
       // 포그라운드 → 백그라운드 전환 시: 큐 플러시
       if (lastState === "active" && nextAppState.match(/inactive|background/)) {
         console.log("앱 백그라운드 전환 - 큐 플러시 + DB 정리");
@@ -27860,6 +28158,7 @@ function AppContent() {
       return;
     }
     loadListRunningRef.current = true;
+    Breadcrumbs.db("loadList", _trigger || "unknown");
     PerfMonitor.beginFunc("loadList", _trigger || "unknown"); // 🔬 v3.5.9b
     try {
       const sk = sortKey ?? homeSortKey;
@@ -27982,6 +28281,7 @@ function AppContent() {
         return;
       }
       
+      Breadcrumbs.action("novel_add", t);
       // 🏷️ 대장르/부장르 자동 감지 (설정 안 된 경우)
       const detectedGenres = detectGenres(tags);
       // 배열로 저장 (선택된 것이 있으면 그것을, 없으면 자동 감지 결과)
@@ -28114,6 +28414,7 @@ function AppContent() {
         text: "삭제",
         style: "destructive",
         onPress: async () => {
+          Breadcrumbs.action("novel_delete", id);
           setIsLoading(true);
           try {
             // 🖼️ v3.4.5: 삭제 전에 해당 작품의 표지 + 📷 v6.0.1: 명대사 이미지 가져오기
@@ -28230,6 +28531,7 @@ function AppContent() {
         { key: "tag_coordinates", label: "태그 좌표계", desc: "스펙트럼 좌표계 설정" },
         { key: "tag_attributes", label: "태그 속성", desc: "농도, 호불호 등 태그 속성" },
         { key: "custom_tags", label: "커스텀 태그 목록", desc: "사용자 추가 태그 (조합 태그 포함)" },
+        { key: "combo_tags", label: "조합식 태그 설정", desc: "커스텀 조합 특성/대상 설정" },
         { key: "tag_pins", label: "태그 고정/숨김", desc: "고정 및 숨김 태그" },
       ],
     },
@@ -28967,6 +29269,7 @@ function AppContent() {
         text: "삭제",
         style: "destructive",
         onPress: async () => {
+          await exec("DELETE FROM choice_logs WHERE match_id=?", [mid]);
           await exec("DELETE FROM matches WHERE id=?", [mid]);
           await rebuildAllFromMatches(tagAttributes);
           await loadList(undefined, undefined, "rebuild");
@@ -28981,6 +29284,8 @@ function AppContent() {
     if (!m) return;
     const newWinner = m.winner_id === m.a_id ? m.b_id : m.a_id;
     await exec("UPDATE matches SET winner_id=? WHERE id=?", [newWinner, mid]);
+    // 🔧 choice_logs도 동기화 (학습 데이터 정합성)
+    await exec("DELETE FROM choice_logs WHERE match_id=?", [mid]);
     await rebuildAllFromMatches(tagAttributes);
     await loadList(undefined, undefined, "rebuild");
     if (logTarget) await openLogs(logTarget);
@@ -29611,6 +29916,7 @@ function AppContent() {
     
     // 잠금 (동기 — 다음 렌더 전에 설정)
     isAutoMatchingRef.current = true;
+    Breadcrumbs.action("autoMatch_start", `mode=${autoMatchSettings?.mode}`);
     setIsAutoMatching(true);
     
     (async () => {
@@ -29629,6 +29935,7 @@ function AppContent() {
         console.warn("[자동매칭] 오류 발생, 중단:", e.message || e);
         // 자동매칭 중단 (finally에서 플래그 리셋됨)
       } finally {
+        Breadcrumbs.action("autoMatch_stop");
         isAutoMatchingRef.current = false;
         setIsAutoMatching(false);
         
@@ -29955,7 +30262,7 @@ function AppContent() {
       });
     }
     return result;
-  }, [homeQuery, list, filterTier, filterPlatform, filterGenre, filterStatus, searchIncludeTags, searchExcludeTags, searchExcludeStatus, searchExcludeWorkStatus, folderFilteredIds]);
+  }, [homeQuery, list, filterTier, filterPlatform, filterGenre, filterStatus, searchIncludeTags, searchExcludeTags, searchExcludeStatus, searchExcludeWorkStatus, folderFilteredIds, tagRelations]);
 
   // 공용 검색 필터 (bulk/search)
   const filtered = useMemo(() => {
@@ -30946,6 +31253,7 @@ function collectCoverImageUrls(novels) {
 
 async function exportJSON() {
   const _pt = PerfMonitor.enabled ? Date.now() : 0; // 🔬
+  Breadcrumbs.action("data_export");
   try {
     setIsLoading(true);
     
@@ -31048,10 +31356,14 @@ async function exportJSON() {
     }
 
     // 📂 v3.7.0: 폴더 백업 (FD = Folders, NF = Novel-Folders)
+    // 🔧 v3.9.1: NID(소설 ID 목록) 추가 — NF/GI 복원 시 old→new ID 매핑용
     const foldersData = await all("SELECT * FROM folders ORDER BY sort_order;");
     const novelFoldersData = await all("SELECT * FROM novel_folders;");
     if (foldersData?.length) payload.FD = foldersData;
-    if (novelFoldersData?.length) payload.NF = novelFoldersData;
+    if (novelFoldersData?.length) {
+      payload.NF = novelFoldersData;
+      if (!payload.NID) payload.NID = novels.map(n => n.id);
+    }
 
     // 🎨 v3.8.0: 갤러리 이미지 백업 (GI = Gallery Images, 메타데이터만)
     try {
@@ -31060,6 +31372,7 @@ async function exportJSON() {
         payload.GI = giRows.map(r => ({
           i: r.id, n: r.novel_id, fp: r.file_path || "", c: r.caption || "", t: r.created_at || 0,
         }));
+        if (!payload.NID) payload.NID = novels.map(n => n.id);
       }
     } catch (giErr) {
       console.warn("gallery_images 백업 실패:", giErr);
@@ -31294,6 +31607,7 @@ function validateImportData(text) {
 
 async function importJSON() {
   const _pt = PerfMonitor.enabled ? Date.now() : 0; // 🔬
+  Breadcrumbs.action("data_import");
   try {
     const text = importText.trim();
     if (!text) {
@@ -31376,6 +31690,12 @@ async function importJSON() {
               try {
               await doClearAll();
               deleteCompleted = true;
+
+              // 🔧 tierSystemConfig를 소설 INSERT 전에 미리 적용 (tierFromRating 정합성)
+              if (data.S && typeof data.S === "object" && data.S.tc && typeof data.S.tc === "object" && Array.isArray(data.S.tc.tiers)) {
+                globalTierConfig = { ...data.S.tc };
+                rebuildTierLookup(globalTierConfig);
+              }
 
               const novelQueries = [];
               const idList = [];
@@ -31740,6 +32060,15 @@ async function importJSON() {
 
               // v9는 Elo 데이터 포함 → 재계산 불필요!
 
+              // 🔧 v3.9.1: old→new 소설 ID 매핑 구축 (NF/GI 복원용)
+              const oldIdToNewId = {};
+              if (Array.isArray(data.NID)) {
+                data.NID.forEach((oldId, i) => {
+                  if (i < idList.length) oldIdToNewId[oldId] = idList[i];
+                });
+              }
+              const remapNovelId = (oldId) => oldIdToNewId[oldId] || oldId;
+
               // 📂 v3.7.0: 폴더 복원
               try {
                 if (Array.isArray(data.FD) && data.FD.length > 0) {
@@ -31756,7 +32085,7 @@ async function importJSON() {
                     if (validNF.length > 0) {
                       const nfQueries = validNF.map(nf => ({
                         sql: "INSERT OR IGNORE INTO novel_folders (folder_id,novel_id,added_at) VALUES (?,?,?);",
-                        params: [nf.folder_id, nf.novel_id, nf.added_at||Date.now()],
+                        params: [nf.folder_id, remapNovelId(nf.novel_id), nf.added_at||Date.now()],
                       }));
                       await execBatch(nfQueries);
                     }
@@ -31783,7 +32112,7 @@ async function importJSON() {
                   if (validGI.length > 0) {
                     const giQueries = validGI.map(gi => ({
                       sql: "INSERT OR IGNORE INTO gallery_images (id,novel_id,file_path,caption,created_at) VALUES (?,?,?,?,?);",
-                      params: [gi.i || uuid(), gi.n, gi.fp, gi.c || "", gi.t || Date.now()],
+                      params: [gi.i || uuid(), remapNovelId(gi.n), gi.fp, gi.c || "", gi.t || Date.now()],
                     }));
                     await execBatch(giQueries);
                   }
@@ -33169,6 +33498,7 @@ async function importJSON() {
                     compareMode={compareMode}
                     isComparing={compareIds.includes(item.id)}
                     platformCovers={platformCovers}
+                    awardSystemSettings={awardSystemSettings}
                     theme={C}
                     isDark={isDark}
                   />
@@ -33386,9 +33716,9 @@ async function importJSON() {
               </View>
 
               {/* 수상 뱃지 (본목록만) */}
-              {!isPlanned && n.awards && parseAwards(n.awards).length > 0 && (
+              {!isPlanned && n.awards && parseAwards(n.awards, awardSystemSettings).length > 0 && (
                 <View style={{ marginBottom: 10 }}>
-                  <AwardsRow awardsJson={n.awards} />
+                  <AwardsRow awardsJson={n.awards} awardSystemSettings={awardSystemSettings} />
                 </View>
               )}
 
@@ -33715,8 +34045,8 @@ async function importJSON() {
                           </Text>
                           
                           {/* 수상 뱃지 */}
-                          {item.awards && parseAwards(item.awards).length > 0 && (
-                            <AwardsRow awardsJson={item.awards} />
+                          {item.awards && parseAwards(item.awards, awardSystemSettings).length > 0 && (
+                            <AwardsRow awardsJson={item.awards} awardSystemSettings={awardSystemSettings} />
                           )}
                         </View>
                       </View>
@@ -33774,7 +34104,7 @@ async function importJSON() {
               {/* 중복 체크 */}
               {plannedTitleDuplicateInfo && (
                 <View style={{ 
-                  backgroundColor: plannedTitleDuplicateInfo.type.startsWith("exact") ? "#fef2f2" : "#fffbeb", 
+                  backgroundColor: plannedTitleDuplicateInfo.type.startsWith("exact") ? (isDark ? "#7f1d1d" : "#fef2f2") : (isDark ? "#422006" : "#fffbeb"),
                   padding: 10, 
                   borderRadius: 8, 
                   marginTop: 6,
@@ -34609,7 +34939,7 @@ async function importJSON() {
               <View
                 style={{
                   height: 10,
-                  backgroundColor: "#eef2ff",
+                  backgroundColor: isDark ? "#1e1e3a" : "#eef2ff",
                   borderRadius: 999,
                   overflow: "hidden",
                 }}
@@ -34636,12 +34966,12 @@ async function importJSON() {
                   flexDirection: "row", 
                   alignItems: "center", 
                   marginTop: 10,
-                  backgroundColor: "#fef3c7",
+                  backgroundColor: isDark ? "#422006" : "#fef3c7",
                   padding: 8,
                   borderRadius: 8,
                 }}>
                   <ActivityIndicator size="small" color="#f59e0b" style={{ marginRight: 8 }} />
-                  <Text style={{ color: "#92400e", fontWeight: "600" }}>
+                  <Text style={{ color: isDark ? "#fcd34d" : "#92400e", fontWeight: "600" }}>
                     매칭 처리 중... {matchQueueStatus.pending > 0 ? `(대기: ${matchQueueStatus.pending}건)` : ""}
                   </Text>
                 </View>
@@ -34827,21 +35157,21 @@ async function importJSON() {
                   
               {/* 현재 매칭 자동판정 미리보기 — 자동매칭 ON일 때만 */}
               {autoEnabled && pair && (
-                    <View style={{ backgroundColor: "#fef3c7", padding: 10, borderRadius: 10, marginTop: 4 }}>
-                      <Text style={{ fontWeight: "700", color: "#92400e", marginBottom: 4 }}>
+                    <View style={{ backgroundColor: isDark ? "#422006" : "#fef3c7", padding: 10, borderRadius: 10, marginTop: 4 }}>
+                      <Text style={{ fontWeight: "700", color: isDark ? "#fcd34d" : "#92400e", marginBottom: 4 }}>
                         🔍 현재 매칭 자동판정 미리보기
                       </Text>
                       {(() => {
                         const result = evaluateAutoMatch(pair.A, pair.B, matchAnalysis);
                         if (!result) {
-                          return <Text style={{ color: "#92400e", fontSize: 12 }}>기준 미충족 - 수동 결정 필요</Text>;
+                          return <Text style={{ color: isDark ? "#fcd34d" : "#92400e", fontSize: 12 }}>기준 미충족 - 수동 결정 필요</Text>;
                         }
                         return (
                           <>
-                            <Text style={{ color: "#166534", fontWeight: "600" }}>
+                            <Text style={{ color: isDark ? "#86efac" : "#166534", fontWeight: "600" }}>
                               예상 승자: {result.winner.title}
                             </Text>
-                            <Text style={{ color: "#92400e", fontSize: 11 }}>
+                            <Text style={{ color: isDark ? "#fcd34d" : "#92400e", fontSize: 11 }}>
                               충족 기준: {result.reasons.map(r => autoMatchSettings.criteria[r.criterion]?.desc).join(", ")}
                             </Text>
                           </>
@@ -35009,8 +35339,8 @@ async function importJSON() {
             <Section title="매칭">
               {/* 🆕 v3.5.11: 매치 필터링 활성 표시 */}
               {matchFilterEnabled && (
-                <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: "#eff6ff", padding: 6, borderRadius: 8, marginBottom: 8 }}>
-                  <Text style={{ fontSize: 11, color: "#1d4ed8" }}>📊 매치 필터링 ON — 정보 충실 작품만 매칭</Text>
+                <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: isDark ? "#1e1b4b" : "#eff6ff", padding: 6, borderRadius: 8, marginBottom: 8 }}>
+                  <Text style={{ fontSize: 11, color: isDark ? "#93c5fd" : "#1d4ed8" }}>📊 매치 필터링 ON — 정보 충실 작품만 매칭</Text>
                 </View>
               )}
               {!pair ? (
@@ -35097,7 +35427,7 @@ async function importJSON() {
                           <Text style={{ color: C.ok, fontWeight: "800", fontSize: 13, width: 45, textAlign: "center" }}>
                             {Math.round(matchAnalysis.predictedWinRateA * 100)}%
                           </Text>
-                          <View style={{ flex: 1, height: 8, backgroundColor: "#e5e7eb", borderRadius: 999, overflow: "hidden", marginHorizontal: 6 }}>
+                          <View style={{ flex: 1, height: 8, backgroundColor: isDark ? "#374151" : "#e5e7eb", borderRadius: 999, overflow: "hidden", marginHorizontal: 6 }}>
                             <View style={{ 
                               width: `${Math.round(matchAnalysis.predictedWinRateA * 100)}%`, 
                               height: "100%", 
@@ -36414,6 +36744,12 @@ async function importJSON() {
                         setTierHistory(prev => [...historyItems, ...prev].slice(0, 20));
                         setReviewSelectedIds([]);
                         await loadList(undefined, undefined, "batch");
+                        // 🔧 v3.9.1: 모두 승인 시 최근 변경 기록 누락 수정
+                        for (const item of historyItems) {
+                          await addRecentChange(item.id, item.title, "tier_review", {
+                            from: item.from, to: item.to, action: "approve_all"
+                          });
+                        }
                         Alert.alert("완료", `${reviews.length}건 적용됨`);
                       }},
                     ]);
@@ -36450,6 +36786,12 @@ async function importJSON() {
                           setTierHistory(prev => [...historyItems, ...prev].slice(0, 20));
                           setReviewSelectedIds([]);
                           await loadList(undefined, undefined, "batch");
+                          // 🔧 v3.9.1: 선택 승인 시 최근 변경 기록 누락 수정
+                          for (const item of historyItems) {
+                            await addRecentChange(item.id, item.title, "tier_review", {
+                              from: item.from, to: item.to, action: "approve_selected"
+                            });
+                          }
                           Alert.alert("완료", `${selected.length}건 적용됨`);
                         }},
                       ]);
@@ -36601,17 +36943,17 @@ async function importJSON() {
               if (!hasPromotes && !hasDemotes) {
                 return (
                   <Section title="검토 현황">
-                    <View style={{ 
-                      backgroundColor: "#dcfce7", 
-                      padding: 16, 
+                    <View style={{
+                      backgroundColor: isDark ? "#14532d" : "#dcfce7",
+                      padding: 16,
                       borderRadius: 12,
                       alignItems: "center",
                     }}>
                       <Text style={{ fontSize: 24, marginBottom: 8 }}>✅</Text>
-                      <Text style={{ color: "#166534", fontWeight: "700", fontSize: 16 }}>
+                      <Text style={{ color: isDark ? "#86efac" : "#166534", fontWeight: "700", fontSize: 16 }}>
                         모든 검토가 완료되었습니다!
                       </Text>
-                      <Text style={{ color: "#15803d", fontSize: 13, marginTop: 4 }}>
+                      <Text style={{ color: isDark ? "#4ade80" : "#15803d", fontSize: 13, marginTop: 4 }}>
                         현재 승급/강등 대기 중인 작품이 없습니다.
                       </Text>
                     </View>
@@ -37272,25 +37614,25 @@ async function importJSON() {
                               onPress={() => handleInsightResponse(insight.id, 'confirmed')}
                               style={{
                                 flex: 1,
-                                backgroundColor: "#dcfce7",
+                                backgroundColor: isDark ? "#14532d" : "#dcfce7",
                                 padding: 10,
                                 borderRadius: 8,
                                 alignItems: "center",
                               }}
                             >
-                              <Text style={{ color: "#166534", fontWeight: "600" }}>✓ 맞아요</Text>
+                              <Text style={{ color: isDark ? "#86efac" : "#166534", fontWeight: "600" }}>✓ 맞아요</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
                               onPress={() => handleInsightResponse(insight.id, 'rejected')}
                               style={{
                                 flex: 1,
-                                backgroundColor: "#fee2e2",
+                                backgroundColor: isDark ? "#7f1d1d" : "#fee2e2",
                                 padding: 10,
                                 borderRadius: 8,
                                 alignItems: "center",
                               }}
                             >
-                              <Text style={{ color: "#991b1b", fontWeight: "600" }}>✗ 아니에요</Text>
+                              <Text style={{ color: isDark ? "#fca5a5" : "#991b1b", fontWeight: "600" }}>✗ 아니에요</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
                               onPress={() => handleInsightResponse(insight.id, 'skipped')}
@@ -39493,13 +39835,13 @@ async function importJSON() {
                   onPress={cleanupUnusedTags}
                   style={{
                     flex: 1,
-                    backgroundColor: "#fee2e2",
+                    backgroundColor: isDark ? "#7f1d1d" : "#fee2e2",
                     padding: 12,
                     borderRadius: 12,
                     alignItems: "center",
                   }}
                 >
-                  <Text style={{ color: C.warn, fontWeight: "600" }}>🗑️ 미사용 정리</Text>
+                  <Text style={{ color: isDark ? "#fca5a5" : C.warn, fontWeight: "600" }}>🗑️ 미사용 정리</Text>
                 </TouchableOpacity>
               </View>
               
@@ -39507,14 +39849,14 @@ async function importJSON() {
               <View style={{ backgroundColor: C.bg, padding: 14, borderRadius: 12 }}>
                 <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>📊 태그 통계</Text>
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                  <View style={{ backgroundColor: "#dcfce7", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
-                    <Text style={{ color: "#166534", fontSize: 12 }}>기본 대장르 {MAJOR_GENRES.length}</Text>
+                  <View style={{ backgroundColor: isDark ? "#14532d" : "#dcfce7", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
+                    <Text style={{ color: isDark ? "#86efac" : "#166534", fontSize: 12 }}>기본 대장르 {MAJOR_GENRES.length}</Text>
                   </View>
-                  <View style={{ backgroundColor: "#f0fdf4", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
-                    <Text style={{ color: "#15803d", fontSize: 12 }}>기본 부장르 {SUB_GENRES.length}</Text>
+                  <View style={{ backgroundColor: isDark ? "#14532d" : "#f0fdf4", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
+                    <Text style={{ color: isDark ? "#4ade80" : "#15803d", fontSize: 12 }}>기본 부장르 {SUB_GENRES.length}</Text>
                   </View>
-                  <View style={{ backgroundColor: "#e0e7ff", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
-                    <Text style={{ color: "#3730a3", fontSize: 12 }}>기본 일반 {ALL_DEFAULT_TAGS.length}</Text>
+                  <View style={{ backgroundColor: isDark ? "#1e1b4b" : "#e0e7ff", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
+                    <Text style={{ color: isDark ? "#a5b4fc" : "#3730a3", fontSize: 12 }}>기본 일반 {ALL_DEFAULT_TAGS.length}</Text>
                   </View>
                   <View style={{ backgroundColor: C.chip, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
                     <Text style={{ color: C.text, fontSize: 12 }}>커스텀 {customTags.length}</Text>
@@ -39919,7 +40261,7 @@ async function importJSON() {
                     placeholderTextColor="#9aa8bd"
                     style={{
                       flex: 1,
-                      backgroundColor: "#fff",
+                      backgroundColor: C.card,
                       borderWidth: 1,
                       borderColor: C.line,
                       borderRadius: 10,
@@ -39996,7 +40338,7 @@ async function importJSON() {
                     placeholderTextColor="#9aa8bd"
                     style={{
                       flex: 1,
-                      backgroundColor: "#fff",
+                      backgroundColor: C.card,
                       borderWidth: 1,
                       borderColor: C.line,
                       borderRadius: 10,
@@ -41112,6 +41454,174 @@ async function importJSON() {
               
               return (
               <>
+            {/* 💥 v3.9.0: 크래시 로그 섹션 (항상 표시, PerfMonitor 무관) */}
+            <Section title="💥 크래시 로그">
+              {lastCrashLog ? (
+                <View>
+                  <View style={{ backgroundColor: isDark ? "#7f1d1d" : "#fef2f2", padding: 12, borderRadius: 10, borderWidth: 1, borderColor: isDark ? "#ef4444" : "#fca5a5", marginBottom: 10 }}>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <Text style={{ fontWeight: "800", color: isDark ? "#fca5a5" : "#dc2626", fontSize: 14 }}>마지막 크래시</Text>
+                      <Text style={{ color: isDark ? "#f87171" : "#991b1b", fontSize: 10 }}>
+                        {new Date(lastCrashLog.timestamp).toLocaleString()}
+                      </Text>
+                    </View>
+                    <Text style={{ fontWeight: "700", color: isDark ? "#fecaca" : "#991b1b", fontSize: 13, marginBottom: 4 }}>
+                      [{lastCrashLog.context}] {lastCrashLog.error?.name || "Error"}
+                    </Text>
+                    <Text style={{ color: isDark ? "#fca5a5" : "#b91c1c", fontSize: 12, marginBottom: 8, lineHeight: 18 }} numberOfLines={3}>
+                      {lastCrashLog.error?.message || "알 수 없는 오류"}
+                    </Text>
+
+                    {/* 상태 스냅샷 */}
+                    {lastCrashLog.state && typeof lastCrashLog.state === "object" && (
+                      <View style={{ backgroundColor: isDark ? "#450a0a" : "#fee2e2", padding: 8, borderRadius: 8, marginBottom: 8 }}>
+                        <Text style={{ fontWeight: "700", color: isDark ? "#fca5a5" : "#991b1b", fontSize: 11, marginBottom: 4 }}>크래시 당시 상태</Text>
+                        <Text style={{ color: isDark ? "#f87171" : "#b91c1c", fontSize: 11, fontFamily: "monospace" }}>
+                          {Object.entries(lastCrashLog.state).map(([k, v]) => `${k}: ${v}`).join("\n")}
+                        </Text>
+                      </View>
+                    )}
+
+                    {/* Breadcrumbs */}
+                    {lastCrashLog.breadcrumbs && lastCrashLog.breadcrumbs.length > 0 && (
+                      <View style={{ backgroundColor: isDark ? "#450a0a" : "#fee2e2", padding: 8, borderRadius: 8, marginBottom: 8 }}>
+                        <Text style={{ fontWeight: "700", color: isDark ? "#fca5a5" : "#991b1b", fontSize: 11, marginBottom: 4 }}>
+                          크래시 직전 동선 ({lastCrashLog.breadcrumbs.length}건)
+                        </Text>
+                        {lastCrashLog.breadcrumbs.slice(-10).map((bc, i) => (
+                          <View key={i} style={{ flexDirection: "row", paddingVertical: 1 }}>
+                            <Text style={{ color: isDark ? "#f87171" : "#b91c1c", fontSize: 10, width: 55 }}>
+                              {new Date(bc.time).toLocaleTimeString()}
+                            </Text>
+                            <Text style={{ color: isDark ? "#fca5a5" : "#991b1b", fontSize: 10, width: 45, fontWeight: "600" }}>
+                              {bc.category}
+                            </Text>
+                            <Text style={{ color: isDark ? "#fecaca" : "#7f1d1d", fontSize: 10, flex: 1 }} numberOfLines={1}>
+                              {bc.message}{bc.data ? ` (${bc.data})` : ""}
+                            </Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+
+                    {/* 컴포넌트 스택 */}
+                    {lastCrashLog.componentStack && (
+                      <View style={{ backgroundColor: isDark ? "#450a0a" : "#fee2e2", padding: 8, borderRadius: 8, marginBottom: 8 }}>
+                        <Text style={{ fontWeight: "700", color: isDark ? "#fca5a5" : "#991b1b", fontSize: 11, marginBottom: 4 }}>컴포넌트 스택</Text>
+                        <Text style={{ color: isDark ? "#f87171" : "#b91c1c", fontSize: 9, fontFamily: "monospace" }} numberOfLines={8}>
+                          {lastCrashLog.componentStack}
+                        </Text>
+                      </View>
+                    )}
+
+                    <View style={{ flexDirection: "row", gap: 8 }}>
+                      <TouchableOpacity
+                        onPress={async () => {
+                          try {
+                            const report = [
+                              "=== 크래시 리포트 ===",
+                              `시간: ${lastCrashLog.date}`,
+                              `컨텍스트: ${lastCrashLog.context}`,
+                              `에러: ${lastCrashLog.error?.name}: ${lastCrashLog.error?.message}`,
+                              "",
+                              "--- 스택 ---",
+                              lastCrashLog.error?.stack || "(없음)",
+                              "",
+                              lastCrashLog.componentStack ? `--- 컴포넌트 스택 ---\n${lastCrashLog.componentStack}\n` : "",
+                              lastCrashLog.state ? `--- 상태 ---\n${JSON.stringify(lastCrashLog.state, null, 2)}\n` : "",
+                              "--- Breadcrumbs ---",
+                              ...(lastCrashLog.breadcrumbs || []).map(bc =>
+                                `  ${new Date(bc.time).toLocaleTimeString()} [${bc.category}] ${bc.message}${bc.data ? ` (${bc.data})` : ""}`
+                              ),
+                            ].join("\n");
+                            await Share.share({ title: "크래시 리포트", message: report });
+                          } catch { Alert.alert("공유 실패"); }
+                        }}
+                        style={{ flex: 1, backgroundColor: isDark ? "#991b1b" : "#dc2626", padding: 8, borderRadius: 8, alignItems: "center" }}
+                      >
+                        <Text style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}>공유</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={async () => {
+                          await CrashLog.dismissLastCrash();
+                          setLastCrashLog(null);
+                        }}
+                        style={{ flex: 1, backgroundColor: isDark ? "#374151" : "#e5e7eb", padding: 8, borderRadius: 8, alignItems: "center" }}
+                      >
+                        <Text style={{ color: C.text, fontWeight: "700", fontSize: 12 }}>확인 (삭제)</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              ) : (
+                <Text style={{ color: C.sub, fontSize: 13, textAlign: "center", paddingVertical: 8 }}>
+                  기록된 크래시가 없습니다
+                </Text>
+              )}
+
+              {/* 크래시 히스토리 */}
+              {crashHistory.length > 0 && (
+                <View style={{ marginTop: 8 }}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                    <Text style={{ fontWeight: "700", color: C.text, fontSize: 13 }}>이전 크래시 이력 ({crashHistory.length}건)</Text>
+                    <TouchableOpacity
+                      onPress={async () => {
+                        Alert.alert("확인", "크래시 이력을 모두 삭제할까요?", [
+                          { text: "취소" },
+                          { text: "삭제", style: "destructive", onPress: async () => {
+                            await CrashLog.clearHistory();
+                            setCrashHistory([]);
+                          }},
+                        ]);
+                      }}
+                    >
+                      <Text style={{ color: C.warn, fontSize: 11, fontWeight: "600" }}>전체 삭제</Text>
+                    </TouchableOpacity>
+                  </View>
+                  {crashHistory.slice(0, 5).map((crash, i) => (
+                    <View key={i} style={{ backgroundColor: isDark ? "#1f2937" : "#f9fafb", padding: 8, borderRadius: 8, marginBottom: 4, borderWidth: 0.5, borderColor: C.line }}>
+                      <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                        <Text style={{ color: isDark ? "#f87171" : "#dc2626", fontSize: 11, fontWeight: "600" }} numberOfLines={1}>
+                          [{crash.context}] {crash.error?.message?.substring(0, 50) || "Error"}
+                        </Text>
+                        <Text style={{ color: C.sub, fontSize: 9 }}>
+                          {new Date(crash.timestamp).toLocaleDateString()}
+                        </Text>
+                      </View>
+                      {crash.breadcrumbs && crash.breadcrumbs.length > 0 && (
+                        <Text style={{ color: C.sub, fontSize: 9, marginTop: 2 }} numberOfLines={1}>
+                          마지막 동선: {crash.breadcrumbs[crash.breadcrumbs.length - 1]?.message || "-"}
+                        </Text>
+                      )}
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {/* 현재 Breadcrumbs (실시간) */}
+              {(() => {
+                const currentBreadcrumbs = Breadcrumbs.getAll();
+                return (
+              <View style={{ marginTop: 12 }}>
+                <Text style={{ fontWeight: "700", color: C.text, fontSize: 13, marginBottom: 6 }}>현재 세션 Breadcrumbs ({currentBreadcrumbs.length}건)</Text>
+                {currentBreadcrumbs.length > 0 ? (
+                  currentBreadcrumbs.slice(-10).reverse().map((bc, i) => (
+                    <View key={i} style={{ flexDirection: "row", paddingVertical: 2, borderBottomWidth: 0.5, borderColor: C.line + "30" }}>
+                      <Text style={{ color: C.sub, fontSize: 10, width: 55 }}>{new Date(bc.time).toLocaleTimeString()}</Text>
+                      <Text style={{ color: C.primary, fontSize: 10, width: 50, fontWeight: "600" }}>{bc.category}</Text>
+                      <Text style={{ color: C.text, fontSize: 10, flex: 1 }} numberOfLines={1}>
+                        {bc.message}{bc.data ? ` (${bc.data})` : ""}
+                      </Text>
+                    </View>
+                  ))
+                ) : (
+                  <Text style={{ color: C.sub, fontSize: 11, textAlign: "center" }}>아직 기록 없음</Text>
+                )}
+              </View>
+                );
+              })()}
+            </Section>
+
             <Section title="🔬 성능 모니터">
               <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                 <Text style={{ color: C.text, fontWeight: "700" }}>실시간 추적</Text>
@@ -41328,8 +41838,8 @@ async function importJSON() {
             </Section>
             )}
 
-            {PerfMonitor.enabled && summary.stateSnapshots.length > 0 && (
             {/* 🔧 v3.6.0: DB 테이블 규모 확장 */}
+            {PerfMonitor.enabled && summary.stateSnapshots.length > 0 && (
             <Section title="📦 데이터 규모">
               {(() => {
                 const latest = summary.stateSnapshots[0];
@@ -41519,7 +42029,7 @@ async function importJSON() {
                 }}
               />
               <Text style={{ color: C.sub, fontSize: 10, marginTop: 6, textAlign: "center" }}>
-                진단 데이터는 앱 종료 시 초기화됩니다.
+                성능 데이터는 앱 종료 시 초기화됩니다. 크래시 로그는 파일에 영속 저장됩니다.
               </Text>
             </Section>
             )}
@@ -42579,13 +43089,13 @@ async function importJSON() {
         <View
           style={{
             flex: 1,
-            backgroundColor: "rgba(0,0,0,0.4)",
+            backgroundColor: C.modal,
           }}
         >
-          <TouchableOpacity 
-            style={{ height: Math.round(Dimensions.get("window").height * 0.12) }} 
-            activeOpacity={1} 
-            onPress={() => setLogOpen(false)} 
+          <TouchableOpacity
+            style={{ height: Math.round(Dimensions.get("window").height * 0.12) }}
+            activeOpacity={1}
+            onPress={() => setLogOpen(false)}
           />
           <View
             style={{
@@ -42963,7 +43473,7 @@ async function importJSON() {
             }}
           >
             <Text
-              style={{ fontSize: 18, fontWeight: "800", marginBottom: 8 }}
+              style={{ fontSize: 18, fontWeight: "800", marginBottom: 8, color: C.text }}
             >
               JSON 데이터 입력
             </Text>
@@ -42980,7 +43490,7 @@ async function importJSON() {
               placeholder='{"v":9, "N":[...], "M":"..."}'
               placeholderTextColor="#9aa8bd"
               style={{
-                backgroundColor: "#f8f9fa",
+                backgroundColor: C.bg,
                 borderWidth: 1,
                 borderColor: C.line,
                 borderRadius: 12,
@@ -43134,7 +43644,7 @@ async function importJSON() {
               multiline
               selectTextOnFocus={true}
               style={{
-                backgroundColor: "#f8f9fa",
+                backgroundColor: C.bg,
                 borderWidth: 1,
                 borderColor: C.line,
                 borderRadius: 12,
