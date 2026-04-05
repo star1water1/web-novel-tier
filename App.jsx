@@ -61,6 +61,7 @@
  * ║ [버그 수정 1] 🟡 exitSelectMode에서 selectPresetOpen 미리셋                   ║
  * ║ • 선택 모드 취소 후 재진입 시 드롭다운이 즉시 열리는 문제                     ║
  * ║ • exitSelectMode에 setSelectPresetOpen(false) 추가                            ║
+ * ║ • 배치 핸들러 8곳의 setSelectMode(false) 직접 호출 → exitSelectMode() 통일    ║
  * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
@@ -14197,8 +14198,7 @@ const TagManagerModal = memo(({
     if (onBatchChangeSentiment) {
       onBatchChangeSentiment(Array.from(selectedTags), newSentiment);
     }
-    setSelectedTags(new Set());
-    setSelectMode(false);
+    exitSelectMode();
   };
   
   // 🆕 일괄 속성 토글 (대장르/부장르 속성 추가/제거)
@@ -14248,8 +14248,7 @@ const TagManagerModal = memo(({
                 }
               }
             }
-            setSelectedTags(new Set());
-            setSelectMode(false);
+            exitSelectMode();
           }
         }
       ]
@@ -14281,8 +14280,7 @@ const TagManagerModal = memo(({
                 if (onTogglePin) onTogglePin(tag);
               }
             }
-            setSelectedTags(new Set());
-            setSelectMode(false);
+            exitSelectMode();
           }
         }
       ]
@@ -14313,8 +14311,7 @@ const TagManagerModal = memo(({
                 if (onToggleHide) onToggleHide(tag);
               }
             }
-            setSelectedTags(new Set());
-            setSelectMode(false);
+            exitSelectMode();
           }
         }
       ]
@@ -14339,8 +14336,7 @@ const TagManagerModal = memo(({
           text: anyNotTitle ? "설정" : "해제",
           onPress: () => {
             onBatchChangeTitle(tags, anyNotTitle);
-            setSelectedTags(new Set());
-            setSelectMode(false);
+            exitSelectMode();
           }
         }
       ]
@@ -14395,8 +14391,7 @@ const TagManagerModal = memo(({
                 if (onDeleteTag) onDeleteTag(tag, type);
               }
             }
-            setSelectedTags(new Set());
-            setSelectMode(false);
+            exitSelectMode();
           }
         }
       ]
@@ -14420,8 +14415,7 @@ const TagManagerModal = memo(({
             if (onBatchDeleteGlobally) {
               onBatchDeleteGlobally(tags);
             }
-            setSelectedTags(new Set());
-            setSelectMode(false);
+            exitSelectMode();
           }
         }
       ]
