@@ -69,3 +69,4 @@ eas build -p android --profile preview  # APK 빌드
 - DB 작업은 반드시 `safeDbOperation` 래퍼 사용
 - 현재 단일 파일 구조 — 새 파일 생성 불필요, App.jsx 내에서 작업
 - memo() 컴포넌트는 props 변경에만 리렌더링됨을 고려하여 설계
+- App.jsx 수정 시 반드시 헤더 버전 히스토리 (1~290줄) 업데이트: 버전 번호 증가, 날짜 갱신, 변경 내역 추가

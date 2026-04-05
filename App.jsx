@@ -2,9 +2,9 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.5.15e                                                                ║
- * ║  최종 수정: 2025-03-08                                                        ║
- * ║  총 라인 수: 약 38,700줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 3.6.2                                                                   ║
+ * ║  최종 수정: 2026-04-05                                                        ║
+ * ║  총 라인 수: 약 42,400줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  * 
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -41,7 +41,29 @@
  * ║     - finally에서 isAutoMatchingRef/setIsAutoMatching 리셋 보장              ║
  * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
- * 
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🎨 v3.6.2 수정 사항 - UI 레이아웃 + 태그 관리 UX 개선 (2026-04-05)         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [변경 1] 📐 인상깊은 문장 버튼 레이아웃 오버플로우 수정                       ║
+ * ║ • 등록/편집 모달에서 "텍스트/이미지/일괄" 버튼이 화면 밖으로 잘리는 문제      ║
+ * ║ • 라벨+버튼 가로 배치 → 세로 스택으로 변경 (column layout)                   ║
+ * ║ • 내부 버튼 그룹은 flexDirection: "row" + flexWrap 유지                      ║
+ * ║                                                                              ║
+ * ║ [변경 2] 🏷️ 태그 관리 전체선택 UX 개선 - 드롭다운 통합                       ║
+ * ║ • 헤더 바의 "전체 선택" 버튼과 "조건별 선택" 드롭다운 분리 → 혼동 피드백     ║
+ * ║ • "전체 선택" 버튼 제거, "▼ 조건" → "▼ 일괄선택" 드롭다운에 통합            ║
+ * ║ • 드롭다운 내 "✅ 전체 선택" / "🔲 전체 해제" 칩 추가 (파란 계열 구분)       ║
+ * ║ • selectByPreset에 "all"/"none" case 추가                                    ║
+ * ║ • toggleSelectAll 함수 제거 (미사용 코드 정리)                                ║
+ * ║                                                                              ║
+ * ║ [버그 수정 1] 🟡 exitSelectMode에서 selectPresetOpen 미리셋                   ║
+ * ║ • 선택 모드 취소 후 재진입 시 드롭다운이 즉시 열리는 문제                     ║
+ * ║ • exitSelectMode에 setSelectPresetOpen(false) 추가                            ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🧠 v3.5.4~v3.5.5 수정 사항 - 명언 쇼츠 탭 + 매칭 행동 분석 + 다중 버그 수정        ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -14410,15 +14432,7 @@ const TagManagerModal = memo(({
   const exitSelectMode = () => {
     setSelectMode(false);
     setSelectedTags(new Set());
-  };
-  
-  // 🆕 전체 선택/해제
-  const toggleSelectAll = () => {
-    if (selectedTags.size === currentTags.length) {
-      setSelectedTags(new Set());
-    } else {
-      setSelectedTags(new Set(currentTags.map(t => t.tag)));
-    }
+    setSelectPresetOpen(false);
   };
 
   // 🆕 선택 반전
@@ -14435,6 +14449,12 @@ const TagManagerModal = memo(({
   const selectByPreset = (preset) => {
     let filtered = [];
     switch (preset) {
+      case "all":
+        filtered = currentTags;
+        break;
+      case "none":
+        filtered = [];
+        break;
       case "unused":
         filtered = currentTags.filter(t => usedTagsSet && !usedTagsSet.has(t.tag));
         break;
@@ -14531,14 +14551,6 @@ const TagManagerModal = memo(({
             </Text>
             <View style={{ flexDirection: "row", gap: 6 }}>
               <TouchableOpacity
-                onPress={toggleSelectAll}
-                style={{ backgroundColor: isDark ? C.card : "#fff", paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8 }}
-              >
-                <Text style={{ color: isDark ? C.text : "#1e40af", fontWeight: "600", fontSize: 11 }}>
-                  {selectedTags.size === currentTags.length ? "전체 해제" : "전체 선택"}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
                 onPress={invertSelection}
                 style={{ backgroundColor: isDark ? C.card : "#fff", paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8 }}
               >
@@ -14548,7 +14560,7 @@ const TagManagerModal = memo(({
                 onPress={() => setSelectPresetOpen(!selectPresetOpen)}
                 style={{ backgroundColor: selectPresetOpen ? C.primary : (isDark ? C.card : "#fff"), paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8 }}
               >
-                <Text style={{ color: selectPresetOpen ? "#fff" : (isDark ? C.text : "#1e40af"), fontWeight: "600", fontSize: 11 }}>▼ 조건</Text>
+                <Text style={{ color: selectPresetOpen ? "#fff" : (isDark ? C.text : "#1e40af"), fontWeight: "600", fontSize: 11 }}>▼ 일괄선택</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={exitSelectMode}
@@ -14568,7 +14580,24 @@ const TagManagerModal = memo(({
             borderBottomWidth: 1,
             borderBottomColor: C.line,
           }}>
-            <Text style={{ color: C.sub, fontSize: 11, marginBottom: 6 }}>조건별 선택 (현재 탭 내)</Text>
+            <Text style={{ color: C.sub, fontSize: 11, marginBottom: 6 }}>일괄선택 도구 (현재 탭 내)</Text>
+            <View style={{ flexDirection: "row", gap: 6, marginBottom: 8 }}>
+              {[
+                { key: "all", label: "✅ 전체 선택" },
+                { key: "none", label: "🔲 전체 해제" },
+              ].map(p => (
+                <TouchableOpacity
+                  key={p.key}
+                  onPress={() => selectByPreset(p.key)}
+                  style={{
+                    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999,
+                    backgroundColor: isDark ? "#1e3a5f" : "#dbeafe",
+                  }}
+                >
+                  <Text style={{ color: isDark ? "#93c5fd" : "#1e40af", fontWeight: "700", fontSize: 11 }}>{p.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
               {[
                 { key: "unused", label: "📕 미사용만" },
@@ -31146,7 +31175,7 @@ async function importJSON() {
 
 {/* 💬 인상깊은 문장 (텍스트+이미지) */}
 <View style={{ marginTop: 12, padding: 12, backgroundColor: isDark ? "#1e293b" : "#fffbeb", borderRadius: 12, borderLeftWidth: 3, borderLeftColor: isDark ? "#fbbf24" : "#f59e0b" }}>
-  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+  <View style={{ gap: 8, marginBottom: 8 }}>
     <Label>💬 인상깊은 문장 ({memorableQuote.length})</Label>
     {(() => {
       const imgCount = memorableQuote.filter(isImageQuote).length;
@@ -39917,7 +39946,7 @@ async function importJSON() {
 
                 {/* 💬 v3.5.4: 인상깊은 문장 (다중 지원) / 📷 v3.6.1: 이미지 첨부 지원 */}
                 <View style={{ marginTop: 16, padding: 12, backgroundColor: C.bg, borderRadius: 12, borderLeftWidth: 3, borderLeftColor: C.primary }}>
-                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <View style={{ gap: 8, marginBottom: 8 }}>
                     <Label>💬 인상깊은 문장 ({editQuotes.length})</Label>
                     <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
                       <TouchableOpacity
