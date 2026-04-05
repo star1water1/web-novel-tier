@@ -21977,6 +21977,8 @@ function AppContent() {
   // 🔄 로딩 상태
   const [isLoading, setIsLoading] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState(null); // 🔧 v3.6.0: { current, total, label } or null
+  const [diagTableStats, setDiagTableStats] = useState(null); // 🔧 v3.6.0: { counts, dbSize } for 진단탭
+  const [diagPatternStats, setDiagPatternStats] = useState(null); // 🔧 v3.6.0: 인사이트/패턴 통계
   const [customResetOpen, setCustomResetOpen] = useState(false); // 🧹 v3.5.5: 커스텀 초기화 모달
   const [resetSelections, setResetSelections] = useState({}); // { key: boolean }
 
@@ -22523,14 +22525,16 @@ function AppContent() {
         {loadingProgress ? (
           <View style={{ marginTop: 12, width: "60%", alignItems: "center" }}>
             <Text style={{ color: C.sub, marginBottom: 6, fontSize: 13 }}>
-              {loadingProgress.label || "처리 중..."} ({loadingProgress.current}/{loadingProgress.total})
+              {loadingProgress.label || "처리 중..."}{loadingProgress.total > 0 ? ` (${loadingProgress.current}/${loadingProgress.total})` : ""}
             </Text>
-            <View style={{ height: 6, width: "100%", backgroundColor: C.line, borderRadius: 3, overflow: "hidden" }}>
-              <View style={{
-                width: `${loadingProgress.total > 0 ? (loadingProgress.current / loadingProgress.total * 100) : 0}%`,
-                height: "100%", backgroundColor: C.primary, borderRadius: 3,
-              }} />
-            </View>
+            {loadingProgress.total > 0 && (
+              <View style={{ height: 6, width: "100%", backgroundColor: C.line, borderRadius: 3, overflow: "hidden" }}>
+                <View style={{
+                  width: `${(loadingProgress.current / loadingProgress.total * 100)}%`,
+                  height: "100%", backgroundColor: C.primary, borderRadius: 3,
+                }} />
+              </View>
+            )}
           </View>
         ) : (
           <Text style={{ marginTop: 12, color: C.sub }}>처리 중...</Text>
@@ -22812,6 +22816,38 @@ function AppContent() {
       setGalleryShuffled(null);
     }
   }, [galleryCards]);
+
+  // 🔧 v3.6.0: 진단탭 비동기 데이터 로드 (조건부 IIFE 내 hooks 금지 → 최상위 useEffect로 이동)
+  useEffect(() => {
+    if (settingsSubTab !== "diag") return;
+    (async () => {
+      try {
+        // DB 테이블 규모
+        const tables = ["novels", "matches", "choice_logs", "cover_library", "novel_folders", "folders", "gallery_images", "planned_novels", "preference_patterns", "insight_queue"];
+        const counts = {};
+        for (const t of tables) {
+          try { const r = await first(`SELECT COUNT(*) as cnt FROM ${t}`); counts[t] = r?.cnt ?? "?"; } catch { counts[t] = "N/A"; }
+        }
+        let dbSize = "?";
+        try {
+          const pc = await first("PRAGMA page_count"); const ps = await first("PRAGMA page_size");
+          if (pc && ps) { const bytes = (pc.page_count || pc[0]) * (ps.page_size || ps[0]); dbSize = bytes > 1048576 ? `${(bytes / 1048576).toFixed(1)}MB` : `${(bytes / 1024).toFixed(0)}KB`; }
+        } catch {}
+        setDiagTableStats({ counts, dbSize });
+        // 인사이트/패턴 통계
+        const cats = await all("SELECT category, COUNT(*) as cnt FROM preference_patterns GROUP BY category");
+        const totalPatterns = (cats || []).reduce((s, c) => s + c.cnt, 0);
+        const insights = await all("SELECT status, COUNT(*) as cnt FROM insight_queue GROUP BY status");
+        const oldestPending = await first("SELECT MIN(created_at) as oldest FROM insight_queue WHERE status='pending'");
+        let oldestAge = null;
+        if (oldestPending?.oldest) {
+          const diff = Date.now() - new Date(oldestPending.oldest).getTime();
+          oldestAge = diff > 86400000 ? `${Math.floor(diff / 86400000)}일` : diff > 3600000 ? `${Math.floor(diff / 3600000)}시간` : `${Math.floor(diff / 60000)}분`;
+        }
+        setDiagPatternStats({ categories: cats || [], totalPatterns, insights: insights || [], oldestAge });
+      } catch {}
+    })();
+  }, [settingsSubTab, refreshKey]);
 
   // 갤러리 탭 진입 시 자동 셔플 + 데이터 로드
   useEffect(() => {
@@ -41297,24 +41333,6 @@ async function importJSON() {
             <Section title="📦 데이터 규모">
               {(() => {
                 const latest = summary.stateSnapshots[0];
-                const [tableStats, setTableStats] = React.useState(null);
-                React.useEffect(() => {
-                  (async () => {
-                    try {
-                      const tables = ["novels", "matches", "choice_logs", "cover_library", "novel_folders", "folders", "gallery_images", "planned_novels", "preference_patterns", "insight_queue"];
-                      const counts = {};
-                      for (const t of tables) {
-                        try { const r = await first(`SELECT COUNT(*) as cnt FROM ${t}`); counts[t] = r?.cnt ?? "?"; } catch { counts[t] = "N/A"; }
-                      }
-                      let dbSize = "?";
-                      try {
-                        const pc = await first("PRAGMA page_count"); const ps = await first("PRAGMA page_size");
-                        if (pc && ps) { const bytes = (pc.page_count || pc[0]) * (ps.page_size || ps[0]); dbSize = bytes > 1048576 ? `${(bytes / 1048576).toFixed(1)}MB` : `${(bytes / 1024).toFixed(0)}KB`; }
-                      } catch {}
-                      setTableStats({ counts, dbSize });
-                    } catch {}
-                  })();
-                }, [refreshKey]);
                 const cardStyle = { backgroundColor: isDark ? "#1a1a2e" : "#f0f0f5", borderRadius: 8, padding: 8, minWidth: "45%", flex: 1 };
                 return (
                   <View>
@@ -41330,11 +41348,11 @@ async function importJSON() {
                         </View>
                       ))}
                     </View>
-                    {tableStats && (
+                    {diagTableStats && (
                       <View style={{ marginTop: 10 }}>
-                        <Text style={{ color: C.sub, fontSize: 11, fontWeight: "600", marginBottom: 6 }}>DB 테이블별 행 수 (파일 크기: {tableStats.dbSize})</Text>
+                        <Text style={{ color: C.sub, fontSize: 11, fontWeight: "600", marginBottom: 6 }}>DB 테이블별 행 수 (파일 크기: {diagTableStats.dbSize})</Text>
                         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-                          {Object.entries(tableStats.counts).map(([t, cnt]) => (
+                          {Object.entries(diagTableStats.counts).map(([t, cnt]) => (
                             <View key={t} style={{ backgroundColor: isDark ? "#1a1a2e" : "#f0f0f5", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4 }}>
                               <Text style={{ color: C.sub, fontSize: 9 }}>{t}</Text>
                               <Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>{cnt}</Text>
@@ -41398,55 +41416,37 @@ async function importJSON() {
 
             {/* 🔧 v3.6.0: 인사이트/패턴 시스템 상태 */}
             <Section title="🧠 인사이트/패턴">
-              {(() => {
-                const [patternStats, setPatternStats] = React.useState(null);
-                React.useEffect(() => {
-                  (async () => {
-                    try {
-                      const cats = await all("SELECT category, COUNT(*) as cnt FROM preference_patterns GROUP BY category");
-                      const totalPatterns = (cats || []).reduce((s, c) => s + c.cnt, 0);
-                      const insights = await all("SELECT status, COUNT(*) as cnt FROM insight_queue GROUP BY status");
-                      const oldestPending = await first("SELECT MIN(created_at) as oldest FROM insight_queue WHERE status='pending'");
-                      let oldestAge = null;
-                      if (oldestPending?.oldest) {
-                        const diff = Date.now() - new Date(oldestPending.oldest).getTime();
-                        oldestAge = diff > 86400000 ? `${Math.floor(diff / 86400000)}일` : diff > 3600000 ? `${Math.floor(diff / 3600000)}시간` : `${Math.floor(diff / 60000)}분`;
-                      }
-                      setPatternStats({ categories: cats || [], totalPatterns, insights: insights || [], oldestAge });
-                    } catch {}
-                  })();
-                }, [refreshKey]);
-                if (!patternStats) return <Text style={{ color: C.sub, fontSize: 12 }}>로딩 중...</Text>;
-                return (
-                  <View>
-                    <Text style={{ color: C.sub, fontSize: 11, fontWeight: "600", marginBottom: 6 }}>취향 패턴 ({patternStats.totalPatterns}건)</Text>
-                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-                      {patternStats.categories.map((c, i) => (
-                        <View key={i} style={{ backgroundColor: isDark ? "#1a1a2e" : "#f0f0f5", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
-                          <Text style={{ color: C.sub, fontSize: 9 }}>{c.category}</Text>
-                          <Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>{c.cnt}</Text>
-                        </View>
-                      ))}
-                    </View>
-                    <Text style={{ color: C.sub, fontSize: 11, fontWeight: "600", marginBottom: 6 }}>인사이트 큐</Text>
-                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-                      {patternStats.insights.map((ins, i) => (
-                        <View key={i} style={{ backgroundColor: isDark ? "#1a1a2e" : "#f0f0f5", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
-                          <Text style={{ color: C.sub, fontSize: 9 }}>{ins.status}</Text>
-                          <Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>{ins.cnt}</Text>
-                        </View>
-                      ))}
-                      {patternStats.insights.length === 0 && <Text style={{ color: C.sub, fontSize: 11 }}>인사이트 없음</Text>}
-                    </View>
-                    {patternStats.oldestAge && (
-                      <Text style={{ color: "#f59e0b", fontSize: 11, marginTop: 6 }}>⏳ 가장 오래된 미확인 인사이트: {patternStats.oldestAge} 전</Text>
-                    )}
-                    <Text style={{ color: C.sub, fontSize: 10, marginTop: 8, fontStyle: "italic" }}>
-                      ⚠ insight_queue는 백업에 포함되지 않습니다. 복원 시 인사이트 이력이 초기화됩니다.
-                    </Text>
+              {!diagPatternStats ? (
+                <Text style={{ color: C.sub, fontSize: 12 }}>로딩 중...</Text>
+              ) : (
+                <View>
+                  <Text style={{ color: C.sub, fontSize: 11, fontWeight: "600", marginBottom: 6 }}>취향 패턴 ({diagPatternStats.totalPatterns}건)</Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                    {diagPatternStats.categories.map((c, i) => (
+                      <View key={i} style={{ backgroundColor: isDark ? "#1a1a2e" : "#f0f0f5", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+                        <Text style={{ color: C.sub, fontSize: 9 }}>{c.category}</Text>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>{c.cnt}</Text>
+                      </View>
+                    ))}
                   </View>
-                );
-              })()}
+                  <Text style={{ color: C.sub, fontSize: 11, fontWeight: "600", marginBottom: 6 }}>인사이트 큐</Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                    {diagPatternStats.insights.map((ins, i) => (
+                      <View key={i} style={{ backgroundColor: isDark ? "#1a1a2e" : "#f0f0f5", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+                        <Text style={{ color: C.sub, fontSize: 9 }}>{ins.status}</Text>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>{ins.cnt}</Text>
+                      </View>
+                    ))}
+                    {diagPatternStats.insights.length === 0 && <Text style={{ color: C.sub, fontSize: 11 }}>인사이트 없음</Text>}
+                  </View>
+                  {diagPatternStats.oldestAge && (
+                    <Text style={{ color: "#f59e0b", fontSize: 11, marginTop: 6 }}>⏳ 가장 오래된 미확인 인사이트: {diagPatternStats.oldestAge} 전</Text>
+                  )}
+                  <Text style={{ color: C.sub, fontSize: 10, marginTop: 8, fontStyle: "italic" }}>
+                    ⚠ insight_queue는 백업에 포함되지 않습니다. 복원 시 인사이트 이력이 초기화됩니다.
+                  </Text>
+                </View>
+              )}
             </Section>
 
             {PerfMonitor.enabled && (
