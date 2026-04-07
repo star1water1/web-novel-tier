@@ -233,11 +233,11 @@
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
- * ║ ⚠️ 매칭 시스템 불변조건 (v3.5.15c~d에서 확립, 절대 위반 금지)              ║
+ * ║ ⚠️ 앱 불변조건 (v3.5.15c~d, v3.9.4에서 확립, 절대 위반 금지)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║                                                                              ║
- * ║  아래 5개 규칙은 매칭 중 크래시/ANR/데이터 오염을 방지하는 구조적 방어선      ║
- * ║  입니다. 기능 추가·리팩토링 시 이 조건이 깨지면 회귀 크래시가 발생합니다.     ║
+ * ║  아래 6개 규칙은 매칭/설정 중 크래시/ANR/stale UI/데이터 오염을 방지하는      ║
+ * ║  구조적 방어선입니다. 기능 추가·리팩토링 시 이 조건이 깨지면 회귀 발생.       ║
  * ║                                                                              ║
  * ║  1. 자동매칭 중 사용자 Alert 호출 금지                                       ║
  * ║     - isAutoMatchingRef.current === true 일 때 Alert.alert() 호출 금지       ║
@@ -264,6 +264,28 @@
  * ║     - IIFE, decide(), pickRandomUnseenPair 등 모든 async 경로               ║
  * ║     - catch 누락 → unhandled promise rejection → 프로세스 크래시            ║
  * ║     - finally에서 isAutoMatchingRef/setIsAutoMatching 리셋 보장              ║
+ * ║                                                                              ║
+ * ║  6. JSX 렌더 경로에서 module-level 변경 가능 변수 직접 참조 금지 (v3.9.4)   ║
+ * ║     - 대상: globalTierConfig, globalTierThresholds, MAJOR_GENRES,            ║
+ * ║       SUB_GENRES, GENERAL_TAGS, ALL_DEFAULT_TAGS, TAG_PICKER_CATEGORIES       ║
+ * ║       등 let 선언된 모듈 변수                                                 ║
+ * ║     - 이유: React는 module 변수 변경을 추적하지 않음 → setState로 리렌더 가  ║
+ * ║       능한 것처럼 보여도 타이밍/memo 차단으로 stale UI 발생                   ║
+ * ║     - 규칙:                                                                   ║
+ * ║       (a) JSX 렌더 경로는 React state(appSettings/useState 값)에서 읽기    ║
+ * ║           · 예: appSettings.tierSystemConfig || globalTierConfig              ║
+ * ║       (b) memoized 컴포넌트 내부에서 module 변수를 읽어야 한다면              ║
+ * ║           → 해당 변수의 현재 값(또는 version 키)을 prop으로 전달하여         ║
+ * ║             shallow compare가 변경을 감지하고 리렌더를 트리거하도록 함       ║
+ * ║           · 예: <AwardsScreen tierSystemConfig={appSettings.tierSystemConfig}/>║
+ * ║       (c) module 변수를 업데이트하는 헬퍼(saveAppSettings, applyTagRegistry)  ║
+ * ║           는 반드시 대응 React state도 setXxx로 함께 갱신 (동기 블록에서)    ║
+ * ║       (d) useMemo 의존성 배열은 module 변수 변경과 함께 바뀌는 state         ║
+ * ║           (tagRegistry 등)을 반드시 포함                                      ║
+ * ║     - 예외: 이벤트 핸들러(onPress) 안의 읽기는 클릭 시점에 module 변수가      ║
+ * ║       이미 동기 갱신된 상태이므로 안전. 렌더 경로만 해당 규칙 적용.           ║
+ * ║     - 위반 증상: "토글을 눌러도 UI가 바뀌지 않는" 것처럼 보이는 설정 탭,      ║
+ * ║       설정 변경 후 다른 탭에서 이전 값이 계속 표시되는 stale 렌더             ║
  * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *

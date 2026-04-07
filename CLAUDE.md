@@ -53,15 +53,24 @@ eas build -p android --profile preview  # APK 빌드
 | 20300-41400 | App() 메인 컴포넌트 (useState ~200개, useEffect, 매칭 엔진, CRUD, 모든 탭 JSX) | `export default function App` |
 | 41400-41427 | App() export | `export default` |
 
-## 절대 준수 규칙 (App.jsx 11-42줄)
+## 절대 준수 규칙 (App.jsx 236~줄, 불변조건 6개)
 
-매칭 시스템 5대 불변조건 — **위반 시 크래시/데이터 오염 발생**:
+**위반 시 크래시 / ANR / 데이터 오염 / stale UI 발생**
 
 1. **자동매칭 중 Alert.alert() 호출 금지** — `isAutoMatchingRef.current === true`일 때 Alert 금지
 2. **매칭 큐 내부에서 React state 직접 참조 금지** — 스냅샷만 사용 (stale closure 방지)
 3. **큐 외부 write 타이머는 flush 전 queue drain 대기** — `waitForMatchQueueDrain()` 호출 필수
 4. **SQLITE_BUSY 시 resetDbConnection 금지** — 경합은 jitter 재시도만, 연결 오류와 분리
 5. **자동매칭 루프는 모든 비동기 경로에 catch/finally 강제** — 누락 시 unhandled rejection 크래시
+6. **JSX 렌더 경로에서 module-level 변경 가능 변수 직접 참조 금지** (v3.9.4 확립)
+   - 대상: `globalTierConfig`, `globalTierThresholds`, `MAJOR_GENRES`, `SUB_GENRES`, `GENERAL_TAGS`, `ALL_DEFAULT_TAGS`, `TAG_PICKER_CATEGORIES` 등 `let` 선언 모듈 변수
+   - 이유: React는 module 변수 변경을 추적하지 않음 → 타이밍/memo 차단으로 stale UI 발생
+   - 해결:
+     - **렌더 경로**: React state에서 읽기 (`appSettings.tierSystemConfig || globalTierConfig` 패턴)
+     - **memoized 컴포넌트**: 해당 값(또는 version 키)을 prop으로 전달 → shallow compare가 변경 감지
+     - **useMemo**: deps에 module 변수와 함께 바뀌는 state(tagRegistry 등) 포함
+     - **모듈 변수 업데이트 헬퍼**(saveAppSettings, applyTagRegistry)는 반드시 대응 setXxx도 동기 블록에서 호출
+   - 예외: onPress 등 이벤트 핸들러 내부 읽기는 클릭 시점에 module 변수가 이미 갱신돼 있으므로 안전
 
 ## 개발 지침
 
