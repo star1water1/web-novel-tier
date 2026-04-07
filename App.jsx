@@ -8,14 +8,19 @@
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
- * ║ 🔧 v3.9.3 티어 편집기 UI 수정 (2026-04-05)                                     ║
+ * ║ 🔧 v3.9.3 티어 편집기 UI + 검토 토글 작동 불가 수정 (2026-04-05)               ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [🔴 Critical] 검토 토글 작동 불가 근본 원인                                   ║
+ * ║ • JSX가 module 변수(globalTierConfig)를 직접 읽음 → React가 변경 감지 못 함  ║
+ * ║ • saveAppSettings가 호출돼도 JSX는 이전 globalTierConfig 참조로 렌더 가능    ║
+ * ║ • 수정: appSettings.tierSystemConfig(React state)에서 직접 읽도록 변경       ║
+ * ║   → 토글/TextInput이 즉시 UI에 반영됨                                         ║
  * ║                                                                              ║
  * ║ [수정] 🏆 티어 목록 편집기                                                    ║
  * ║ • row 레이아웃이 좁은 화면에서 오버플로우 → flexWrap: "wrap" 추가             ║
  * ║   (검토 토글이 잘리거나 숨겨지던 UI 깨짐 현상 해결)                            ║
  * ║ • 검토 토글(gated) 터치 영역 확대: 30×20 → 64×36 + hitSlop 8                ║
- * ║   (너무 작아서 탭이 안 되던 문제 — '전혀 작동하지 않는' 증상의 원인)         ║
  * ║ • 검토 토글 라벨 변경: '승인' → '✓ 검토' (의미 명확화)                       ║
  * ║ • 삭제 버튼 터치 영역 확대: 22×22 → 32×36 + hitSlop 8                       ║
  * ║ • 라벨/기준값 TextInput 최소 높이 36px 확보                                   ║
@@ -9082,15 +9087,18 @@ function compareVersions(a, b) {
 const CHANGELOG_DATA = [
   {
     version: "3.9.3", date: "2026-04-05",
-    title: "티어 편집기 UI 수정",
+    title: "티어 편집기 UI + 검토 토글 작동 불가 수정",
     highlights: [
-      { type: "fix", text: "🏆 티어 목록 편집기 row 레이아웃이 좁은 화면에서 오버플로우되어 검토 토글이 잘리거나 숨겨지는 문제 수정" },
-      { type: "fix", text: "티어 검토 토글(gated) 터치 영역이 너무 작아 탭이 잘 되지 않던 문제 수정 (30×20 → 64×36 + hitSlop)" },
+      { type: "fix", text: "🏆 티어 검토 토글이 눌러도 반영되지 않던 근본 원인 수정 — JSX가 module 변수(globalTierConfig)를 읽어 React 재렌더 누락" },
+      { type: "fix", text: "티어 편집기 row 레이아웃이 좁은 화면에서 오버플로우되어 검토 토글이 잘리거나 숨겨지는 문제 수정 (flexWrap 적용)" },
+      { type: "improve", text: "검토 토글 터치 영역 대폭 확대 (30×20 → 64×36 + hitSlop)" },
       { type: "improve", text: "검토 토글 라벨 '승인'→'✓ 검토'로 변경 (의미 명확화)" },
+    ],
+    details: [
+      { type: "fix", text: "티어 편집기 전체를 appSettings.tierSystemConfig(React state)에서 읽도록 변경 — 토글/TextInput이 즉시 UI에 반영됨" },
       { type: "improve", text: "삭제 버튼 터치 영역 확대 (22×22 → 32×36 + hitSlop)" },
       { type: "improve", text: "라벨/기준값 TextInput 최소 높이 36px 확보 (터치 일관성)" },
     ],
-    details: [],
   },
   {
     version: "3.9.2", date: "2026-04-05",
@@ -39725,18 +39733,24 @@ async function importJSON() {
               </ScrollView>
 
               {/* 🆕 v6.0: 티어 리스트 편집기 */}
+              {/* 🔧 v3.9.3: React state(appSettings)에서 직접 읽음 — globalTierConfig는 module 변수라 re-render 미감지 */}
               <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>티어 목록 편집</Text>
+              {(() => {
+                const tsc = appSettings.tierSystemConfig || globalTierConfig;
+                const tiersForUI = tsc.tiers || [];
+                const modeForUI = tsc.mode;
+                return (
               <View style={{ backgroundColor: C.bg, padding: 12, borderRadius: 12, marginBottom: 16 }}>
-                {(globalTierConfig.tiers || []).map((t, idx) => (
+                {tiersForUI.map((t, idx) => (
                   <View key={`tier-${idx}`} style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
                     {/* 색상 스와치 */}
                     <TouchableOpacity
                       onPress={() => {
                         const currentIdx = TIER_COLOR_PALETTE.indexOf(t.color);
                         const nextColor = TIER_COLOR_PALETTE[(currentIdx + 1) % TIER_COLOR_PALETTE.length];
-                        const newTiers = [...globalTierConfig.tiers];
+                        const newTiers = [...tiersForUI];
                         newTiers[idx] = { ...newTiers[idx], color: nextColor };
-                        saveAppSettings({ tierSystemConfig: { ...globalTierConfig, tiers: newTiers } });
+                        saveAppSettings({ tierSystemConfig: { ...tsc, tiers: newTiers } });
                       }}
                       style={{ backgroundColor: t.color, width: 32, height: 32, borderRadius: 8, borderWidth: 2, borderColor: "rgba(255,255,255,0.3)" }}
                     />
@@ -39745,9 +39759,9 @@ async function importJSON() {
                       value={t.label}
                       onChangeText={(v) => {
                         if (!v.trim()) return; // 빈 라벨 방지
-                        const newTiers = [...globalTierConfig.tiers];
+                        const newTiers = [...tiersForUI];
                         newTiers[idx] = { ...newTiers[idx], label: v.trim() };
-                        saveAppSettings({ tierSystemConfig: { ...globalTierConfig, tiers: newTiers } });
+                        saveAppSettings({ tierSystemConfig: { ...tsc, tiers: newTiers } });
                       }}
                       style={{
                         backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8,
@@ -39756,13 +39770,13 @@ async function importJSON() {
                       }}
                     />
                     {/* threshold (match/hybrid 모드에서만) */}
-                    {globalTierConfig.mode !== "manual" && (
+                    {modeForUI !== "manual" && (
                       <TextInput
                         value={String(t.threshold)}
                         onChangeText={(v) => {
-                          const newTiers = [...globalTierConfig.tiers];
+                          const newTiers = [...tiersForUI];
                           newTiers[idx] = { ...newTiers[idx], threshold: parseInt(v) || 0 };
-                          saveAppSettings({ tierSystemConfig: { ...globalTierConfig, tiers: newTiers } });
+                          saveAppSettings({ tierSystemConfig: { ...tsc, tiers: newTiers } });
                         }}
                         keyboardType="number-pad"
                         placeholder="기준"
@@ -39774,13 +39788,13 @@ async function importJSON() {
                         }}
                       />
                     )}
-                    {/* 🔧 v3.9.3: 검토 토글 (match 모드에서만) — 터치 영역 확대 + 라벨 명확화 */}
-                    {globalTierConfig.mode === "match" && (
+                    {/* 🔧 v3.9.3: 검토 토글 (match 모드에서만) — 터치 영역 확대 + 라벨 명확화 + React state 직결 */}
+                    {modeForUI === "match" && (
                       <TouchableOpacity
                         onPress={() => {
-                          const newTiers = [...globalTierConfig.tiers];
+                          const newTiers = [...tiersForUI];
                           newTiers[idx] = { ...newTiers[idx], gated: !newTiers[idx].gated };
-                          saveAppSettings({ tierSystemConfig: { ...globalTierConfig, tiers: newTiers } });
+                          saveAppSettings({ tierSystemConfig: { ...tsc, tiers: newTiers } });
                         }}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                         style={{
@@ -39796,15 +39810,15 @@ async function importJSON() {
                       </TouchableOpacity>
                     )}
                     {/* 삭제 버튼 (최소 2개) */}
-                    {globalTierConfig.tiers.length > 2 && (
+                    {tiersForUI.length > 2 && (
                       <TouchableOpacity
                         onPress={() => {
                           Alert.alert("삭제", `"${t.label}" 티어를 삭제할까요?`, [
                             { text: "취소" },
                             { text: "삭제", style: "destructive", onPress: () => {
-                              const newTiers = globalTierConfig.tiers.filter((_, i) => i !== idx);
+                              const newTiers = tiersForUI.filter((_, i) => i !== idx);
                               const newDefault = newTiers[newTiers.length - 1]?.key || "C";
-                              saveAppSettings({ tierSystemConfig: { ...globalTierConfig, tiers: newTiers, defaultTier: newDefault } });
+                              saveAppSettings({ tierSystemConfig: { ...tsc, tiers: newTiers, defaultTier: newDefault } });
                             }},
                           ]);
                         }}
@@ -39817,17 +39831,17 @@ async function importJSON() {
                   </View>
                 ))}
                 {/* 티어 추가 버튼 (최대 10개) */}
-                {globalTierConfig.tiers.length < 10 && (
+                {tiersForUI.length < 10 && (
                   <TouchableOpacity
                     onPress={() => {
-                      const usedColors = new Set(globalTierConfig.tiers.map(t => t.color));
+                      const usedColors = new Set(tiersForUI.map(t => t.color));
                       const nextColor = TIER_COLOR_PALETTE.find(c => !usedColors.has(c)) || TIER_COLOR_PALETTE[0];
                       // key는 유니크 + 안정적 (타임스탬프 기반, 이후 변경 불가)
                       const newKey = "T_" + Date.now().toString(36);
-                      const newLabel = "T" + (globalTierConfig.tiers.length);
-                      const newTiers = [...globalTierConfig.tiers];
+                      const newLabel = "T" + tiersForUI.length;
+                      const newTiers = [...tiersForUI];
                       newTiers.splice(newTiers.length - 1, 0, { key: newKey, label: newLabel, color: nextColor, threshold: 0, gated: false });
-                      saveAppSettings({ tierSystemConfig: { ...globalTierConfig, tiers: newTiers } });
+                      saveAppSettings({ tierSystemConfig: { ...tsc, tiers: newTiers } });
                     }}
                     style={{ backgroundColor: C.chip, padding: 10, borderRadius: 8, alignItems: "center", marginTop: 4 }}
                   >
@@ -39835,9 +39849,11 @@ async function importJSON() {
                   </TouchableOpacity>
                 )}
               </View>
+                );
+              })()}
 
               {/* 등록 옵션 */}
-              {globalTierConfig.mode !== "manual" && (
+              {(appSettings.tierSystemConfig?.mode || globalTierConfig.mode) !== "manual" && (
                 <View style={{ backgroundColor: C.bg, padding: 12, borderRadius: 12, marginBottom: 16 }}>
                   <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
                     <View style={{ flex: 1 }}>
@@ -39845,15 +39861,18 @@ async function importJSON() {
                       <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>작품 등록 시 초기 티어를 직접 선택</Text>
                     </View>
                     <Switch
-                      value={globalTierConfig.allowRegistrationTier || false}
-                      onValueChange={(v) => saveAppSettings({ tierSystemConfig: { ...globalTierConfig, allowRegistrationTier: v } })}
+                      value={(appSettings.tierSystemConfig?.allowRegistrationTier ?? globalTierConfig.allowRegistrationTier) || false}
+                      onValueChange={(v) => {
+                        const tsc = appSettings.tierSystemConfig || globalTierConfig;
+                        saveAppSettings({ tierSystemConfig: { ...tsc, allowRegistrationTier: v } });
+                      }}
                     />
                   </View>
                 </View>
               )}
 
               {/* 자동 승인 설정 (match 모드에서만) */}
-              {globalTierConfig.mode === "match" && (
+              {(appSettings.tierSystemConfig?.mode || globalTierConfig.mode) === "match" && (
                 <>
                   <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>자동 승인</Text>
                   <View style={{ backgroundColor: C.bg, padding: 12, borderRadius: 12, marginBottom: 16 }}>
