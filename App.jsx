@@ -2,9 +2,29 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.9.3                                                                   ║
+ * ║  버전: 3.9.4                                                                   ║
  * ║  최종 수정: 2026-04-05                                                        ║
  * ║  총 라인 수: 약 45,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v3.9.4 module 변수 stale UI 전수검수 (2026-04-05)                           ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [수정] 🔍 JSX가 module-level 변수 직접 읽던 문제들 (v3.9.3 후속 전수검수)     ║
+ * ║ • 등록 폼 '초기 티어' 선택기 — globalTierConfig → appSettings.tierSystemConfig║
+ * ║ • 순위 탭 고급 필터 티어 칩 — 동일 패턴 적용                                  ║
+ * ║ • AwardsScreen memo 차단 해결 — tierSystemConfig prop 추가                    ║
+ * ║   (AwardsScreen 내부는 여러 파일 위치에서 globalTierConfig 읽음. prop이        ║
+ * ║    추가되면 shallow memo compare가 변경 감지 → 재렌더 → 내부 읽기 갱신)       ║
+ * ║                                                                              ║
+ * ║ [확인] 🛡️ 기타 memo 컴포넌트                                                   ║
+ * ║ • NovelCard, TierTag, ActualTierTag 등도 module var를 읽지만,                 ║
+ * ║   앱은 {screen === "xxx" && ...} 패턴으로 탭 전환 시 언마운트/재마운트         ║
+ * ║   → 설정 변경 후 돌아오면 새 마운트되어 stale 문제 실사용에서 미발생          ║
+ * ║ • TagEditModal/TagPickerModal도 userMajorGenres/userSubGenres가               ║
+ * ║   tagRegistry에서 useMemo로 파생되어 deps 체인이 간접 추적함 → 문제없음        ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -9059,7 +9079,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "3.9.3";
+const APP_VERSION = "3.9.4";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -9085,6 +9105,20 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "3.9.4", date: "2026-04-05",
+    title: "module 변수 stale UI 전수검수",
+    highlights: [
+      { type: "fix", text: "🔧 등록 폼 '초기 티어' 선택기가 globalTierConfig를 읽어 설정 변경 시 stale 표시 가능하던 문제 수정" },
+      { type: "fix", text: "순위 탭 고급 필터의 티어 칩이 설정 변경 즉시 반영되지 않던 문제 수정" },
+      { type: "fix", text: "🏆 AwardsScreen이 memoized되어 tierSystemConfig 변경을 감지 못 하던 memo 차단 문제 수정 (prop 추가)" },
+    ],
+    details: [
+      { type: "improve", text: "등록 폼과 필터 칩이 appSettings.tierSystemConfig(React state)에서 직접 읽도록 변경" },
+      { type: "improve", text: "AwardsScreen에 tierSystemConfig prop 추가 → shallow compare가 변경 감지하여 리렌더" },
+      { type: "fix", text: "전수검수: 다른 memo 컴포넌트들(NovelCard, TierTag 등)은 탭 전환 시 언마운트/재마운트되므로 실사용에서 stale 문제 없음 확인" },
+    ],
+  },
   {
     version: "3.9.3", date: "2026-04-05",
     title: "티어 편집기 UI + 검토 토글 작동 불가 수정",
@@ -17001,6 +17035,8 @@ const AwardsScreen = memo(({
   onRemoveAward,
   onSaveSettings,
   onModalShow,
+  // 🔧 v3.9.4: tierSystemConfig prop 추가 — module 변수 변경 시 memo 재렌더 트리거
+  tierSystemConfig,
 }) => {
   PerfMonitor.trackRender("AwardsScreen"); // 🔬
   const C = theme;
@@ -33390,11 +33426,16 @@ async function importJSON() {
 </View>
 
               {/* 🆕 v6.0: 등록 시 티어 선택기 (manual 모드 필수, hybrid/match+옵션에서 표시) */}
-              {(globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid" || globalTierConfig.allowRegistrationTier) && (
+              {/* 🔧 v3.9.4: React state 직접 참조 (module var stale UI 방지) */}
+              {(() => {
+                const tsc = appSettings.tierSystemConfig || globalTierConfig;
+                const tscMode = tsc.mode;
+                if (tscMode !== "manual" && tscMode !== "hybrid" && !tsc.allowRegistrationTier) return null;
+                return (
                 <View style={{ marginTop: 8, marginBottom: 4 }}>
-                  <Label>초기 티어{globalTierConfig.mode === "manual" ? " (필수)" : " (선택)"}</Label>
+                  <Label>초기 티어{tscMode === "manual" ? " (필수)" : " (선택)"}</Label>
                   <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
-                    {globalTierConfig.mode !== "manual" && (
+                    {tscMode !== "manual" && (
                       <TouchableOpacity
                         onPress={() => setNewManualTier("")}
                         style={{
@@ -33406,7 +33447,7 @@ async function importJSON() {
                         <Text style={{ color: !newManualTier ? "#fff" : C.sub, fontWeight: "600", fontSize: 13 }}>자동</Text>
                       </TouchableOpacity>
                     )}
-                    {getActiveTierOrder(globalTierConfig).map(tierKey => (
+                    {getActiveTierOrder(tsc).map(tierKey => (
                       <TouchableOpacity
                         key={tierKey}
                         onPress={() => setNewManualTier(tierKey)}
@@ -33423,13 +33464,14 @@ async function importJSON() {
                     ))}
                   </View>
                 </View>
-              )}
+                );
+              })()}
 
               <PrimaryButton
                 title="작품 추가"
                 onPress={addNovel}
                 style={{ marginTop: 12 }}
-                disabled={isLoading || (globalTierConfig.mode === "manual" && !newManualTier)}
+                disabled={isLoading || ((appSettings.tierSystemConfig?.mode || globalTierConfig.mode) === "manual" && !newManualTier)}
               />
             </Section>
 
@@ -33476,7 +33518,8 @@ async function importJSON() {
             <Section title="고급 필터">
               <Label>티어</Label>
               <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
-                {["ALL", ...getActiveTierOrder(globalTierConfig)].map((t) => (
+                {/* 🔧 v3.9.4: React state 직접 참조 (module var stale UI 방지) */}
+                {["ALL", ...getActiveTierOrder(appSettings.tierSystemConfig || globalTierConfig)].map((t) => (
                   <Chip key={t} label={t === "ALL" ? "전체" : t} active={filterTier === t} onPress={() => setFilterTier(t)} />
                 ))}
               </View>
@@ -35109,6 +35152,7 @@ async function importJSON() {
             awardFilter={awardFilter}
             setAwardFilter={setAwardFilter}
             theme={C}
+            tierSystemConfig={appSettings.tierSystemConfig}
             onGiveAward={async (novelId, awardId, year) => {
               // 수상 부여
               const novel = listMap.get(novelId);
