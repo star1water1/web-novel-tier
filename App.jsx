@@ -2,9 +2,24 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.9.2                                                                   ║
+ * ║  버전: 3.9.3                                                                   ║
  * ║  최종 수정: 2026-04-05                                                        ║
  * ║  총 라인 수: 약 45,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v3.9.3 티어 편집기 UI 수정 (2026-04-05)                                     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [수정] 🏆 티어 목록 편집기                                                    ║
+ * ║ • row 레이아웃이 좁은 화면에서 오버플로우 → flexWrap: "wrap" 추가             ║
+ * ║   (검토 토글이 잘리거나 숨겨지던 UI 깨짐 현상 해결)                            ║
+ * ║ • 검토 토글(gated) 터치 영역 확대: 30×20 → 64×36 + hitSlop 8                ║
+ * ║   (너무 작아서 탭이 안 되던 문제 — '전혀 작동하지 않는' 증상의 원인)         ║
+ * ║ • 검토 토글 라벨 변경: '승인' → '✓ 검토' (의미 명확화)                       ║
+ * ║ • 삭제 버튼 터치 영역 확대: 22×22 → 32×36 + hitSlop 8                       ║
+ * ║ • 라벨/기준값 TextInput 최소 높이 36px 확보                                   ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -9039,7 +9054,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "3.9.2";
+const APP_VERSION = "3.9.3";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -9065,6 +9080,18 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "3.9.3", date: "2026-04-05",
+    title: "티어 편집기 UI 수정",
+    highlights: [
+      { type: "fix", text: "🏆 티어 목록 편집기 row 레이아웃이 좁은 화면에서 오버플로우되어 검토 토글이 잘리거나 숨겨지는 문제 수정" },
+      { type: "fix", text: "티어 검토 토글(gated) 터치 영역이 너무 작아 탭이 잘 되지 않던 문제 수정 (30×20 → 64×36 + hitSlop)" },
+      { type: "improve", text: "검토 토글 라벨 '승인'→'✓ 검토'로 변경 (의미 명확화)" },
+      { type: "improve", text: "삭제 버튼 터치 영역 확대 (22×22 → 32×36 + hitSlop)" },
+      { type: "improve", text: "라벨/기준값 TextInput 최소 높이 36px 확보 (터치 일관성)" },
+    ],
+    details: [],
+  },
   {
     version: "3.9.2", date: "2026-04-05",
     title: "코드 안정성 강화 + 성능 최적화",
@@ -39701,7 +39728,7 @@ async function importJSON() {
               <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>티어 목록 편집</Text>
               <View style={{ backgroundColor: C.bg, padding: 12, borderRadius: 12, marginBottom: 16 }}>
                 {(globalTierConfig.tiers || []).map((t, idx) => (
-                  <View key={`tier-${idx}`} style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                  <View key={`tier-${idx}`} style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
                     {/* 색상 스와치 */}
                     <TouchableOpacity
                       onPress={() => {
@@ -39711,7 +39738,7 @@ async function importJSON() {
                         newTiers[idx] = { ...newTiers[idx], color: nextColor };
                         saveAppSettings({ tierSystemConfig: { ...globalTierConfig, tiers: newTiers } });
                       }}
-                      style={{ backgroundColor: t.color, width: 28, height: 28, borderRadius: 8, borderWidth: 2, borderColor: "rgba(255,255,255,0.3)" }}
+                      style={{ backgroundColor: t.color, width: 32, height: 32, borderRadius: 8, borderWidth: 2, borderColor: "rgba(255,255,255,0.3)" }}
                     />
                     {/* 라벨 입력 (key는 불변 — label만 변경) */}
                     <TextInput
@@ -39724,8 +39751,8 @@ async function importJSON() {
                       }}
                       style={{
                         backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8,
-                        paddingHorizontal: 8, paddingVertical: 4, width: 60, textAlign: "center",
-                        color: C.text, fontWeight: "700",
+                        paddingHorizontal: 8, paddingVertical: 6, width: 60, textAlign: "center",
+                        color: C.text, fontWeight: "700", minHeight: 36,
                       }}
                     />
                     {/* threshold (match/hybrid 모드에서만) */}
@@ -39742,12 +39769,12 @@ async function importJSON() {
                         placeholderTextColor={C.sub}
                         style={{
                           backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8,
-                          paddingHorizontal: 8, paddingVertical: 4, width: 60, textAlign: "center",
-                          color: C.text, fontSize: 12,
+                          paddingHorizontal: 8, paddingVertical: 6, width: 70, textAlign: "center",
+                          color: C.text, fontSize: 12, minHeight: 36,
                         }}
                       />
                     )}
-                    {/* gated 토글 (match 모드에서만) */}
+                    {/* 🔧 v3.9.3: 검토 토글 (match 모드에서만) — 터치 영역 확대 + 라벨 명확화 */}
                     {globalTierConfig.mode === "match" && (
                       <TouchableOpacity
                         onPress={() => {
@@ -39755,13 +39782,16 @@ async function importJSON() {
                           newTiers[idx] = { ...newTiers[idx], gated: !newTiers[idx].gated };
                           saveAppSettings({ tierSystemConfig: { ...globalTierConfig, tiers: newTiers } });
                         }}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                         style={{
                           backgroundColor: t.gated ? "#f59e0b" : C.chip,
-                          paddingHorizontal: 6, paddingVertical: 3, borderRadius: 6,
+                          paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8,
+                          minHeight: 36, minWidth: 64, alignItems: "center", justifyContent: "center",
+                          borderWidth: 1, borderColor: t.gated ? "#f59e0b" : C.line,
                         }}
                       >
-                        <Text style={{ color: t.gated ? "#fff" : C.sub, fontSize: 10, fontWeight: "600" }}>
-                          {t.gated ? "승인" : "자동"}
+                        <Text style={{ color: t.gated ? "#fff" : C.text, fontSize: 12, fontWeight: "700" }}>
+                          {t.gated ? "✓ 검토" : "자동"}
                         </Text>
                       </TouchableOpacity>
                     )}
@@ -39778,9 +39808,10 @@ async function importJSON() {
                             }},
                           ]);
                         }}
-                        style={{ padding: 4 }}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        style={{ padding: 8, minWidth: 32, minHeight: 36, alignItems: "center", justifyContent: "center" }}
                       >
-                        <Text style={{ color: C.warn, fontSize: 14 }}>✕</Text>
+                        <Text style={{ color: C.warn, fontSize: 16, fontWeight: "700" }}>✕</Text>
                       </TouchableOpacity>
                     )}
                   </View>
