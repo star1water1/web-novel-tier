@@ -2,9 +2,46 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.9.4                                                                   ║
+ * ║  버전: 3.9.5                                                                   ║
  * ║  최종 수정: 2026-04-05                                                        ║
  * ║  총 라인 수: 약 45,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v3.9.5 검토 탭 기록 시스템 통합 + 부가 UI 버그 수정 (2026-04-05)             ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [🔴 근본 수정] 🏆 티어 액션 기록 시스템 통합                                  ║
+ * ║ • 기존: tierHistory/undoStack/recentChanges 3개 병렬 기록이 호출 지점마다      ║
+ * ║   누락/불일치 → 개별 승급/강등/유지가 📰최신 탭에 표시 안 됨                  ║
+ * ║ • 수정: recordTierAction/recordTierActions 통합 헬퍼 2개 추가 (line 28057~)   ║
+ * ║   → 3개 기록 시스템을 단일 진입점에서 일괄 처리                                ║
+ * ║ • 마이그레이션 10곳: 배치 4곳(모두/선택 승인, 승급만/강등만) + 개별 6곳       ║
+ * ║   (승급 검토 버튼, 강등 검토 버튼, 유지 버튼, Alert 내 승급/강등/해제)        ║
+ * ║                                                                              ║
+ * ║ [수정] 🏆 검토 탭 버그들                                                      ║
+ * ║ • 📋 최근 변경 이력 되돌리기: stale idx closure → id+at 기준 필터로 수정      ║
+ * ║   + 슬롯 생성 가드 + 에러 핸들링 + undo 기록 추가                             ║
+ * ║ • "유지" 버튼: manual_tier === current이면 중복 기록 skip                    ║
+ * ║ • 인라인 setTierHistory(slice 20, 영속화 없음) vs helper(slice 50, 영속화)    ║
+ * ║   불일치 → 통합 헬퍼로 일관화                                                 ║
+ * ║ • 배치 undo 활성화: performUndo의 tier_batch case(이미 존재)에 producer 연결 ║
+ * ║                                                                              ║
+ * ║ [수정] 🔒 검토 탭 불변규칙 #6 준수                                            ║
+ * ║ • 검토 탭 전체를 IIFE로 감싸고 tsc 지역 상수 도입                             ║
+ * ║ • 렌더 경로 18곳의 globalTierConfig 직접 참조 → tsc로 교체                    ║
+ * ║ • onPress 콜백은 예외 조항에 따라 기존 그대로 유지                            ║
+ * ║                                                                              ║
+ * ║ [수정] 📰 최신 탭 부가 버그                                                    ║
+ * ║ • typeOrder 정렬: indexOf 결과 -1인 unknown 타입이 맨 앞에 정렬되던 버그      ║
+ * ║   → rankOf 함수로 -1을 999로 치환                                            ║
+ * ║ • key 충돌 가능성: novelId||novelTitle → `${id}-${title}` 결합 key로 변경     ║
+ * ║                                                                              ║
+ * ║ [정리] 🧹 dead code                                                          ║
+ * ║ • DEFAULT_SETTINGS.recentChanges에서 사용되지 않는 visibility flags 5개 제거 ║
+ * ║   (showNewRegistration, showAward, showTierChange, showTierReview,            ║
+ * ║    showReadCountIncrease — UI 토글 없고 필터에도 미적용이었음)                ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -9101,7 +9138,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "3.9.4";
+const APP_VERSION = "3.9.5";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -9127,6 +9164,28 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "3.9.5", date: "2026-04-05",
+    title: "검토 탭 기록 시스템 통합 + 부가 UI 버그 수정",
+    highlights: [
+      { type: "fix", text: "🏆 검토 탭 개별 액션(승급/강등/유지)이 📰최신 탭에 표시되지 않던 근본 원인 수정 — 3개 기록 시스템(tierHistory/undoStack/recentChanges)을 통합 헬퍼로 단일 진입점화" },
+      { type: "new", text: "✨ 일괄 검토 액션도 글로벌 undo에 쌓임 (이전엔 개별 자동승인만 가능, 배치는 불가)" },
+      { type: "fix", text: "↩️ 되돌리기 버튼이 map index closure로 잘못된 항목을 삭제하던 stale idx 버그 수정 (id+at 기준 필터로 변경)" },
+      { type: "fix", text: "\"유지\" 버튼이 tierHistory/recentChanges 어디에도 기록되지 않던 문제 수정" },
+      { type: "fix", text: "📰최신 탭 unknown 타입이 맨 앞에 정렬되던 정렬 버그 수정" },
+    ],
+    details: [
+      { type: "new", text: "recordTierAction/recordTierActions 통합 헬퍼 2개 추가 — 3개 기록 시스템 일괄 처리" },
+      { type: "fix", text: "배치 액션 4곳 마이그레이션 (모두/선택 승인, 승급만/강등만) — inline slice(0,20) → helper slice(0,50) + 영속화로 통일" },
+      { type: "fix", text: "개별 액션 6곳 마이그레이션 (승급/강등/유지 버튼, Alert 내 승급/강등/해제)" },
+      { type: "improve", text: "되돌리기: 슬롯 전환 가드 + 에러 핸들링 + undo 기록 추가" },
+      { type: "improve", text: "\"유지\" 버튼: manual_tier === current인 경우 no-op으로 중복 기록 방지" },
+      { type: "fix", text: "검토 탭 globalTierConfig 직접 참조 18곳 → tsc 지역 상수 (불변규칙 #6 엄격 준수)" },
+      { type: "fix", text: "📰최신 탭 key 충돌 가능성 수정 (novelId||title → 결합 키)" },
+      { type: "improve", text: "DEFAULT_SETTINGS.recentChanges의 dead visibility flags 5개 제거" },
+      { type: "perf", text: "performUndo의 tier_batch case(v2.6부터 존재)에 producer 연결 — 배치 undo 죽은 코드 활성화" },
+    ],
+  },
   {
     version: "3.9.4", date: "2026-04-05",
     title: "module 변수 stale UI 전수검수",
@@ -21353,13 +21412,9 @@ const DEFAULT_SETTINGS = {
     excludeTags: ["취향아님"],        // 제외 기준에 반드시 포함되는 태그
   },
   // 📰 최신 탭 설정 (v3.0)
+  // 🔧 v3.9.5: show* visibility flags는 dead code (UI 토글 없음, 필터에도 미적용)로 제거
   recentChanges: {
     retentionDays: 30,               // 기록 유지 기간 (일)
-    showNewRegistration: true,       // 신규 등록 표시
-    showAward: true,                 // 수상 표시
-    showTierChange: true,            // 티어 변화 표시
-    showTierReview: true,            // 티어 심사 통과 표시
-    showReadCountIncrease: true,     // 읽은 회차 증가 표시
   },
   // 📋 예정탭 확장 필드 설정 (v3.4)
   plannedFields: {
@@ -28054,7 +28109,51 @@ function AppContent() {
       return updated;
     });
   }
-  
+
+  // 🔧 v3.9.5: 티어 액션 통합 기록 헬퍼 (개별/배치)
+  // 3개 기록 시스템을 하나의 진입점에서 일괄 처리하여 누락/불일치 방지:
+  //  1) tierHistory (로컬, 📋 최근 변경 이력)
+  //  2) undoStack   (글로벌, 설정 탭 되돌리기)
+  //  3) recentChanges (글로벌, 📰최신 탭)
+  async function recordTierAction(id, title, from, to, action) {
+    addTierHistoryEntry(id, title, from, to);
+    pushUndo('tier_change', { id, title, prevTier: from, newTier: to },
+      `${action}: ${title} ${from} → ${to}`);
+    await addRecentChange(id, title, "tier_review", { from, to, action });
+  }
+
+  async function recordTierActions(items, action) {
+    // items: [{ id, title, from, to }, ...]
+    if (!items || items.length === 0) return;
+    const now = Date.now();
+    const withTime = items.map(it => ({ ...it, at: now }));
+
+    // 1) tierHistory 배치 업데이트 (slice 50 + gated 영속화)
+    setTierHistory(prev => {
+      const updated = [...withTime, ...prev].slice(0, 50);
+      const gated = getGatedTiers(globalTierConfig);
+      if (withTime.some(it => gated.includes(it.from) || gated.includes(it.to))) {
+        setAppMeta("tier_history", updated.filter(h =>
+          gated.includes(h.from) || gated.includes(h.to)
+        ).slice(0, 50));
+      }
+      return updated;
+    });
+
+    // 2) undoStack: 배치 전체를 단일 entry로 push (performUndo tier_batch case 재사용)
+    pushUndo('tier_batch',
+      { changes: items.map(it => ({ id: it.id, title: it.title, prevTier: it.from, newTier: it.to })) },
+      `${action}: ${items.length}건`
+    );
+
+    // 3) recentChanges 각 항목별 기록
+    for (const it of items) {
+      await addRecentChange(it.id, it.title, "tier_review", {
+        from: it.from, to: it.to, action
+      });
+    }
+  }
+
   // =========================================================
   // ↩️ 전역 되돌리기 스택 (v2.6)
   // =========================================================
@@ -35075,13 +35174,16 @@ async function importJSON() {
                       changesByType[type].push(c);
                     }
                     const typeOrder = ["new", "title_change", "award", "tier_review", "tier_change", "auto_tier", "read_count"];
-                    const sortedTypes = Object.keys(changesByType).sort(
-                      (a, b) => typeOrder.indexOf(a) - typeOrder.indexOf(b)
-                    );
+                    // 🔧 v3.9.5: unknown 타입(indexOf 결과 -1)이 맨 앞에 정렬되던 버그 수정
+                    const rankOf = (t) => {
+                      const i = typeOrder.indexOf(t);
+                      return i === -1 ? 999 : i;
+                    };
+                    const sortedTypes = Object.keys(changesByType).sort((a, b) => rankOf(a) - rankOf(b));
                     
                     return (
                       <View
-                        key={novelGroup.novelId || novelGroup.novelTitle}
+                        key={`${novelGroup.novelId || 'deleted'}-${novelGroup.novelTitle}`}
                         style={{
                           backgroundColor: C.card, borderRadius: 14,
                           marginBottom: 8, borderWidth: 1, borderColor: C.line,
@@ -36993,19 +37095,23 @@ async function importJSON() {
         )}
 
         {/* REVIEW - 티어 검토 */}
-        {screen === "review" && (
+        {screen === "review" && (() => {
+          // 🔧 v3.9.5: 불변규칙 #6 — React state에서 tsc 지역 상수 도입
+          // 렌더 경로는 이 tsc를 사용, onPress 콜백은 globalTierConfig 유지 (예외 조항)
+          const tsc = appSettings.tierSystemConfig || globalTierConfig;
+          return (
           <>
             <H>🏆 티어 검토</H>
-            
+
             {/* 현황 요약 */}
             <Section title="현황">
               {(() => {
                 // 🆕 v6.0: 동적 gated 티어 집계
-                const gatedKeys = getGatedTiers(globalTierConfig);
+                const gatedKeys = getGatedTiers(tsc);
                 const counts = {};
                 for (const k of gatedKeys) counts[k] = 0;
                 for (const n of list) {
-                  const t = getDisplayTier(n, globalTierConfig);
+                  const t = getDisplayTier(n, tsc);
                   if (counts[t] !== undefined) counts[t]++;
                 }
                 const total = list.length;
@@ -37039,27 +37145,22 @@ async function importJSON() {
                     Alert.alert("확인", `${reviews.length}건을 모두 권장 티어로 적용할까요?`, [
                       { text: "취소" },
                       { text: "적용", onPress: async () => {
+                        // 🔧 v3.9.5: 통합 헬퍼 사용 (tierHistory + undoStack + recentChanges)
                         const historyItems = [];
                         const queries = reviews.map(n => {
                           const recommended = tierFromRating(n.rating, globalTierConfig);
                           const newTier = isGatedTier(recommended, globalTierConfig) ? recommended : null;
                           const current = getDisplayTier(n, globalTierConfig);
-                          historyItems.push({ id: n.id, title: n.title, from: current, to: newTier || recommended, at: Date.now() });
+                          historyItems.push({ id: n.id, title: n.title, from: current, to: newTier || recommended });
                           return {
                             sql: "UPDATE novels SET manual_tier=? WHERE id=?",
                             params: [newTier, n.id],
                           };
                         });
                         await execBatch(queries);
-                        setTierHistory(prev => [...historyItems, ...prev].slice(0, 20));
                         setReviewSelectedIds([]);
                         await loadList(undefined, undefined, "batch");
-                        // 🔧 v3.9.1: 모두 승인 시 최근 변경 기록 누락 수정
-                        for (const item of historyItems) {
-                          await addRecentChange(item.id, item.title, "tier_review", {
-                            from: item.from, to: item.to, action: "approve_all"
-                          });
-                        }
+                        await recordTierActions(historyItems, "approve_all");
                         Alert.alert("완료", `${reviews.length}건 적용됨`);
                       }},
                     ]);
@@ -37081,27 +37182,22 @@ async function importJSON() {
                       Alert.alert("확인", `선택한 ${selected.length}건을 권장 티어로 적용할까요?`, [
                         { text: "취소" },
                         { text: "적용", onPress: async () => {
+                          // 🔧 v3.9.5: 통합 헬퍼 사용
                           const historyItems = [];
                           const queries = selected.map(n => {
                             const recommended = tierFromRating(n.rating, globalTierConfig);
                             const newTier = isGatedTier(recommended, globalTierConfig) ? recommended : null;
                             const current = getDisplayTier(n, globalTierConfig);
-                            historyItems.push({ id: n.id, title: n.title, from: current, to: newTier || recommended, at: Date.now() });
+                            historyItems.push({ id: n.id, title: n.title, from: current, to: newTier || recommended });
                             return {
                               sql: "UPDATE novels SET manual_tier=? WHERE id=?",
                               params: [newTier, n.id],
                             };
                           });
                           await execBatch(queries);
-                          setTierHistory(prev => [...historyItems, ...prev].slice(0, 20));
                           setReviewSelectedIds([]);
                           await loadList(undefined, undefined, "batch");
-                          // 🔧 v3.9.1: 선택 승인 시 최근 변경 기록 누락 수정
-                          for (const item of historyItems) {
-                            await addRecentChange(item.id, item.title, "tier_review", {
-                              from: item.from, to: item.to, action: "approve_selected"
-                            });
-                          }
+                          await recordTierActions(historyItems, "approve_selected");
                           Alert.alert("완료", `${selected.length}건 적용됨`);
                         }},
                       ]);
@@ -37125,30 +37221,21 @@ async function importJSON() {
                     Alert.alert("확인", `승급 ${promotes.length}건을 적용할까요?`, [
                       { text: "취소" },
                       { text: "적용", onPress: async () => {
+                        // 🔧 v3.9.5: 통합 헬퍼 사용 (promote 후보는 recommended가 항상 gated — getReviewStatus 보장)
                         const historyItems = [];
                         const queries = promotes.map(n => {
                           const newTier = tierFromRating(n.rating, globalTierConfig);
                           const current = getDisplayTier(n, globalTierConfig);
-                          historyItems.push({ id: n.id, title: n.title, from: current, to: newTier, at: Date.now() });
+                          historyItems.push({ id: n.id, title: n.title, from: current, to: newTier });
                           return {
                             sql: "UPDATE novels SET manual_tier=? WHERE id=?",
                             params: [newTier, n.id],
                           };
                         });
                         await execBatch(queries);
-                        setTierHistory(prev => [...historyItems, ...prev].slice(0, 20));
                         setReviewSelectedIds([]);
                         await loadList(undefined, undefined, "batch");
-                        
-                        // 📰 v3.0: 티어 심사 통과 기록
-                        for (const item of historyItems) {
-                          await addRecentChange(item.id, item.title, "tier_review", {
-                            from: item.from,
-                            to: item.to,
-                            action: "promote"
-                          });
-                        }
-                        
+                        await recordTierActions(historyItems, "promote");
                         Alert.alert("완료", `${promotes.length}건 승급됨`);
                       }},
                     ]);
@@ -37171,31 +37258,22 @@ async function importJSON() {
                     Alert.alert("확인", `강등 ${demotes.length}건을 적용할까요?`, [
                       { text: "취소" },
                       { text: "적용", onPress: async () => {
+                        // 🔧 v3.9.5: 통합 헬퍼 사용
                         const historyItems = [];
                         const queries = demotes.map(n => {
                           const recommended = tierFromRating(n.rating, globalTierConfig);
                           const newTier = isGatedTier(recommended, globalTierConfig) ? recommended : null;
                           const current = getDisplayTier(n, globalTierConfig);
-                          historyItems.push({ id: n.id, title: n.title, from: current, to: newTier || recommended, at: Date.now() });
+                          historyItems.push({ id: n.id, title: n.title, from: current, to: newTier || recommended });
                           return {
                             sql: "UPDATE novels SET manual_tier=? WHERE id=?",
                             params: [newTier, n.id],
                           };
                         });
                         await execBatch(queries);
-                        setTierHistory(prev => [...historyItems, ...prev].slice(0, 20));
                         setReviewSelectedIds([]);
                         await loadList(undefined, undefined, "batch");
-                        
-                        // 📰 v3.0: 티어 심사 통과 기록 (강등)
-                        for (const item of historyItems) {
-                          await addRecentChange(item.id, item.title, "tier_review", {
-                            from: item.from,
-                            to: item.to,
-                            action: "demote"
-                          });
-                        }
-                        
+                        await recordTierActions(historyItems, "demote");
                         Alert.alert("완료", `${demotes.length}건 강등됨`);
                       }},
                     ]);
@@ -37285,8 +37363,8 @@ async function importJSON() {
               return (
                 <Section title={`⬆️ 승급 검토 (${promotes.length}건)`}>
                   {promotes.map(n => {
-                    const recommended = tierFromRating(n.rating, globalTierConfig);
-                    const current = getDisplayTier(n, globalTierConfig);
+                    const recommended = tierFromRating(n.rating, tsc);
+                    const current = getDisplayTier(n, tsc);
                     const isSelected = reviewSelectedIds.includes(n.id);
                     
                     return (
@@ -37326,13 +37404,14 @@ async function importJSON() {
                           </View>
                           {/* 🆕 v6.0: 동적 gated 티어 승급 버튼 */}
                           <View style={{ flexDirection: "row", gap: 6 }}>
-                            {getGatedTiers(globalTierConfig).map(gt => (
+                            {getGatedTiers(tsc).map(gt => (
                               <TouchableOpacity
                                 key={gt}
                                 onPress={async () => {
-                                  addTierHistoryEntry(n.id, n.title, current, gt);
+                                  // 🔧 v3.9.5: 통합 헬퍼 사용
                                   await exec("UPDATE novels SET manual_tier=? WHERE id=?", [gt, n.id]);
                                   await loadList(undefined, undefined, "update");
+                                  await recordTierAction(n.id, n.title, current, gt, "promote");
                                 }}
                                 style={{ backgroundColor: getTierColor(gt), paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10 }}
                               >
@@ -37360,9 +37439,9 @@ async function importJSON() {
               return (
                 <Section title={`⬇️ 강등 검토 (${demotes.length}건)`}>
                   {demotes.map(n => {
-                    const recommended = tierFromRating(n.rating, globalTierConfig);
-                    const current = getDisplayTier(n, globalTierConfig);
-                    const isForced = n.manual_tier && tierRank(tierFromRating(n.rating, globalTierConfig), globalTierConfig) > tierRank(n.manual_tier, globalTierConfig);
+                    const recommended = tierFromRating(n.rating, tsc);
+                    const current = getDisplayTier(n, tsc);
+                    const isForced = n.manual_tier && tierRank(tierFromRating(n.rating, tsc), tsc) > tierRank(n.manual_tier, tsc);
                     const isSelected = reviewSelectedIds.includes(n.id);
                     
                     return (
@@ -37411,10 +37490,11 @@ async function importJSON() {
                             <TouchableOpacity
                               onPress={async () => {
                                 try {
+                                  // 🔧 v3.9.5: 통합 헬퍼 사용
                                   const newTier = isGatedTier(recommended, globalTierConfig) ? recommended : null;
-                                  setTierHistory(prev => [{ id: n.id, title: n.title, from: current, to: newTier || recommended, at: Date.now() }, ...prev].slice(0, 20));
                                   await exec("UPDATE novels SET manual_tier=? WHERE id=?", [newTier, n.id]);
                                   await loadList(undefined, undefined, "update");
+                                  await recordTierAction(n.id, n.title, current, newTier || recommended, "demote");
                                 } catch (e) { console.warn("티어 강등 오류:", e); }
                               }}
                               style={{ backgroundColor: C.warn, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10 }}
@@ -37424,9 +37504,15 @@ async function importJSON() {
                             <TouchableOpacity
                               onPress={async () => {
                                 try {
+                                  // 🔧 v3.9.5: 이미 manual_tier === current이면 no-op (중복 기록 방지)
+                                  if (n.manual_tier === current) {
+                                    Alert.alert("유지", `${n.title}은(는) 이미 ${current}티어로 고정되어 있습니다.`);
+                                    return;
+                                  }
                                   // 현재 티어를 manual_tier로 고정하여 강등 후보에서 제외
                                   await exec("UPDATE novels SET manual_tier=? WHERE id=?", [current, n.id]);
                                   await loadList(undefined, undefined, "update");
+                                  await recordTierAction(n.id, n.title, current, current, "keep");
                                   Alert.alert("유지", `${n.title}을(를) ${current}티어로 유지합니다.`);
                                 } catch (e) { console.warn("티어 유지 오류:", e); }
                               }}
@@ -37446,13 +37532,13 @@ async function importJSON() {
             {/* 검토 대기 없음 — 33426-33457의 "검토 현황" 섹션에서 이미 표시됨 */}
 
             {/* 🆕 v6.0: 현재 gated 티어 작품 목록 (동적) */}
-            <Section title={`현재 ${getGatedTiers(globalTierConfig).map(g => getTierLabel(g)).join("/")} 작품`}>
+            <Section title={`현재 ${getGatedTiers(tsc).map(g => getTierLabel(g)).join("/")} 작품`}>
               {(() => {
-                const gatedKeys = getGatedTiers(globalTierConfig);
+                const gatedKeys = getGatedTiers(tsc);
                 const byGated = {};
                 for (const gk of gatedKeys) byGated[gk] = [];
                 for (const n of list) {
-                  const t = getDisplayTier(n, globalTierConfig);
+                  const t = getDisplayTier(n, tsc);
                   if (byGated[t]) byGated[t].push(n);
                 }
                 for (const gk of gatedKeys) byGated[gk].sort((a, b) => b.rating - a.rating);
@@ -37474,36 +37560,36 @@ async function importJSON() {
                           ) : (
                             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
                               {novels.map(n => {
-                                const rec = tierFromRating(n.rating, globalTierConfig);
+                                const rec = tierFromRating(n.rating, tsc);
                                 const isForced = n.manual_tier && rec !== n.manual_tier;
                                 const actions = [{ text: "닫기" }];
-                                // 상위 gated 티어로 승급
+                                // 상위 gated 티어로 승급 (🔧 v3.9.5: 통합 헬퍼)
                                 if (higherTier) {
                                   actions.push({ text: `${getTierLabel(higherTier)}로 승급`, onPress: async () => {
                                     try {
-                                      addTierHistoryEntry(n.id, n.title, gk, higherTier);
                                       await exec("UPDATE novels SET manual_tier=? WHERE id=?", [higherTier, n.id]);
                                       await loadList(undefined, undefined, "update");
+                                      await recordTierAction(n.id, n.title, gk, higherTier, "promote");
                                     } catch (e) { console.warn("승급 오류:", e); }
                                   }});
                                 }
-                                // 하위 gated 티어로 강등
+                                // 하위 gated 티어로 강등 (🔧 v3.9.5: 통합 헬퍼)
                                 if (lowerTier) {
                                   actions.push({ text: `${getTierLabel(lowerTier)}로 강등`, onPress: async () => {
                                     try {
-                                      addTierHistoryEntry(n.id, n.title, gk, lowerTier);
                                       await exec("UPDATE novels SET manual_tier=? WHERE id=?", [lowerTier, n.id]);
                                       await loadList(undefined, undefined, "update");
+                                      await recordTierAction(n.id, n.title, gk, lowerTier, "demote");
                                     } catch (e) { console.warn("강등 오류:", e); }
                                   }});
                                 }
-                                // 해제 (권장 티어로 복원)
+                                // 해제 (권장 티어로 복원, 🔧 v3.9.5: 통합 헬퍼)
                                 actions.push({ text: `${getTierLabel(gk)} 해제`, style: "destructive", onPress: async () => {
                                   try {
                                     const newTier = isGatedTier(rec, globalTierConfig) ? rec : null;
-                                    addTierHistoryEntry(n.id, n.title, gk, newTier || rec);
                                     await exec("UPDATE novels SET manual_tier=? WHERE id=?", [newTier, n.id]);
                                     await loadList(undefined, undefined, "update");
+                                    await recordTierAction(n.id, n.title, gk, newTier || rec, "release");
                                   } catch (e) { console.warn("해제 오류:", e); }
                                 }});
 
@@ -37552,8 +37638,8 @@ async function importJSON() {
                   {list
                     .filter(n => {
                       const q = reviewSearchQuery.toLowerCase();
-                      const current = getDisplayTier(n, globalTierConfig);
-                      if (isGatedTier(current, globalTierConfig)) return false;
+                      const current = getDisplayTier(n, tsc);
+                      if (isGatedTier(current, tsc)) return false;
                       return n.title.toLowerCase().includes(q) ||
                              (n.author || '').toLowerCase().includes(q);
                     })
@@ -37566,18 +37652,19 @@ async function importJSON() {
                         <View style={{ flex: 1 }}>
                           <Text style={{ fontWeight: "700", color: C.text }} numberOfLines={1}>{n.title}</Text>
                           <Text style={{ color: C.sub, fontSize: 12 }}>
-                            점수: {n.rating.toFixed(0)} · 현재: {getTierLabel(getDisplayTier(n, globalTierConfig))}
+                            점수: {n.rating.toFixed(0)} · 현재: {getTierLabel(getDisplayTier(n, tsc))}
                           </Text>
                         </View>
                         <View style={{ flexDirection: "row", gap: 6 }}>
-                          {getGatedTiers(globalTierConfig).map(gt => (
+                          {getGatedTiers(tsc).map(gt => (
                             <TouchableOpacity
                               key={gt}
                               onPress={async () => {
-                                const current = getDisplayTier(n, globalTierConfig);
-                                addTierHistoryEntry(n.id, n.title, current, gt);
+                                // 🔧 v3.9.5: 통합 헬퍼 사용
+                                const current = getDisplayTier(n, tsc);
                                 await exec("UPDATE novels SET manual_tier=? WHERE id=?", [gt, n.id]);
                                 await loadList(undefined, undefined, "update");
+                                await recordTierAction(n.id, n.title, current, gt, "force_assign");
                                 setReviewSearchQuery("");
                                 Alert.alert("완료", `${n.title}을(를) ${getTierLabel(gt)}티어로 지정했습니다.`);
                               }}
@@ -37607,8 +37694,8 @@ async function importJSON() {
                     {forcedNovels
                       .sort((a, b) => (a.title || "").localeCompare(b.title || ""))
                       .map(n => {
-                        const rec = tierFromRating(n.rating || (globalTierConfig.defaultRating || 1500), globalTierConfig);
-                        const actual = getDisplayTier(n, globalTierConfig);
+                        const rec = tierFromRating(n.rating || (tsc.defaultRating || 1500), tsc);
+                        const actual = getDisplayTier(n, tsc);
                         return (
                           <View key={n.id} style={{
                             flexDirection: "row", justifyContent: "space-between", alignItems: "center",
@@ -37683,14 +37770,24 @@ async function importJSON() {
                         </View>
                         <TouchableOpacity
                           onPress={async () => {
-                            // 되돌리기: from 티어로 복원
+                            // 🔧 v3.9.5: 슬롯 가드 + id/at 기준 필터 + 에러 핸들링 + recentChanges 기록
+                            const gen = _slotGeneration;
                             const restoreTier = isGatedTier(h.from, globalTierConfig) ? h.from : null;
                             Alert.alert("되돌리기", `${h.title}을(를) ${h.from}티어로 복원할까요?`, [
                               { text: "취소" },
                               { text: "복원", onPress: async () => {
-                                await exec("UPDATE novels SET manual_tier=? WHERE id=?", [restoreTier, h.id]);
-                                setTierHistory(prev => prev.filter((_, i) => i !== idx));
-                                await loadList(undefined, undefined, "update");
+                                if (gen !== _slotGeneration) return; // 슬롯 전환됨 → 무시
+                                try {
+                                  await exec("UPDATE novels SET manual_tier=? WHERE id=?", [restoreTier, h.id]);
+                                  setTierHistory(prev => prev.filter(x => !(x.id === h.id && x.at === h.at)));
+                                  await addRecentChange(h.id, h.title, "tier_review", {
+                                    from: h.to, to: h.from, action: "undo"
+                                  });
+                                  await loadList(undefined, undefined, "update");
+                                } catch (e) {
+                                  console.warn("되돌리기 오류:", e);
+                                  Alert.alert("오류", "되돌리기 중 오류가 발생했습니다.");
+                                }
                               }},
                             ]);
                           }}
@@ -37710,7 +37807,8 @@ async function importJSON() {
               </Section>
             )}
           </>
-        )}
+          );
+        })()}
 
         {/* TASTE - 취향 분석 */}
         {screen === "taste" && (
