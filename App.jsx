@@ -3971,6 +3971,11 @@ async function processMatchQueue() {
     isProcessingMatchQueue = false;
     matchQueueAborted = false;
     try { notifyQueueStatus(); } catch (_) {}
+    // 🔧 v3.9.6: abort 윈도우 중 enqueue된 태스크가 고아되는 것 방지
+    // (abortMatchQueue → while 탈출 → finally 사이에 enqueueMatchTask 호출 시)
+    if (matchQueue.length > 0) {
+      processMatchQueue();
+    }
   }
 }
 
