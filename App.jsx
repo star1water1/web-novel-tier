@@ -2,9 +2,32 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.9.8                                                                   ║
+ * ║  버전: 3.10.0                                                                  ║
  * ║  최종 수정: 2026-04-10                                                        ║
  * ║  총 라인 수: 약 45,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📊 v3.10.0 비율 기반 티어 모드 추가 (2026-04-10)                                ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [신규] 비율 기반 티어 모드 (mode: "ratio")                                    ║
+ * ║ • ELO 매칭 유지 + 상위 %로 동적 티어 배정                                    ║
+ * ║ • 예: S(상위 10%), A(다음 15%), B+(다음 25%) 등                              ║
+ * ║ • computeRatioTierMap: 정렬 + 누적 비율로 O(n log n) 사전 계산              ║
+ * ║ • getDisplayTier에 ratio 분기 (시그니처 변경 없음, globalRatioTierMap 참조)   ║
+ * ║ • 동점 소설 동일 티어 배정, ratio 합계 0 시 균등 분배 폴백                    ║
+ * ║ • gating + manual_tier 오버라이드 지원 (match 모드와 동일)                    ║
+ * ║                                                                              ║
+ * ║ [신규] 비율 기반 프리셋 2종                                                   ║
+ * ║ • "비율 기반 (6티어)": 10/15/25/25/15/10% 균형 분포                          ║
+ * ║ • "피라미드 (5티어)": 5/15/30/30/20% 상위 정예형                             ║
+ * ║                                                                              ║
+ * ║ [UI] 설정 > 모드 선택기에 "비율 기반" 버튼 추가                               ║
+ * ║ • 티어 편집기: 비율 모드 시 % 입력 + 합계 검증 표시                          ║
+ * ║ • 검토/자동승인 기능: 비율 모드에서도 동작                                    ║
+ * ║ • 모드 전환: manual→ratio 시 ELO 재계산, ratio→manual 시 백필                ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -5185,12 +5208,12 @@ const TIER_ORDER = ["S", "A", "B+", "B", "B-", "C"];
 const DEFAULT_TIER_SYSTEM_CONFIG = {
   mode: "match",
   tiers: [
-    { key: "S",  label: "S",  color: "#8b5cf6", threshold: 1950, gated: true  },
-    { key: "A",  label: "A",  color: "#3b82f6", threshold: 1850, gated: true  },
-    { key: "B+", label: "B+", color: "#22c55e", threshold: 1700, gated: false },
-    { key: "B",  label: "B",  color: "#a3e635", threshold: 1600, gated: false },
-    { key: "B-", label: "B-", color: "#f59e0b", threshold: 1500, gated: false },
-    { key: "C",  label: "C",  color: "#ef4444", threshold: 0,    gated: false },
+    { key: "S",  label: "S",  color: "#8b5cf6", threshold: 1950, gated: true,  ratio: 10 },
+    { key: "A",  label: "A",  color: "#3b82f6", threshold: 1850, gated: true,  ratio: 15 },
+    { key: "B+", label: "B+", color: "#22c55e", threshold: 1700, gated: false, ratio: 25 },
+    { key: "B",  label: "B",  color: "#a3e635", threshold: 1600, gated: false, ratio: 25 },
+    { key: "B-", label: "B-", color: "#f59e0b", threshold: 1500, gated: false, ratio: 15 },
+    { key: "C",  label: "C",  color: "#ef4444", threshold: 0,    gated: false, ratio: 10 },
   ],
   defaultTier: "C",
   defaultRating: 1500,
@@ -5296,10 +5319,89 @@ const TIER_PRESETS = [
       defaultTier: "보통", defaultRating: 1500, allowRegistrationTier: true,
     },
   },
+  // 📊 v3.10.0: 비율 기반 프리셋
+  {
+    id: "ratio_6", name: "비율 기반 (6티어)", description: "상위 %로 자동 분류",
+    config: {
+      mode: "ratio",
+      tiers: [
+        { key: "S",  label: "S",  color: "#8b5cf6", threshold: 1950, gated: true,  ratio: 10 },
+        { key: "A",  label: "A",  color: "#3b82f6", threshold: 1850, gated: true,  ratio: 15 },
+        { key: "B+", label: "B+", color: "#22c55e", threshold: 1700, gated: false, ratio: 25 },
+        { key: "B",  label: "B",  color: "#a3e635", threshold: 1600, gated: false, ratio: 25 },
+        { key: "B-", label: "B-", color: "#f59e0b", threshold: 1500, gated: false, ratio: 15 },
+        { key: "C",  label: "C",  color: "#ef4444", threshold: 0,    gated: false, ratio: 10 },
+      ],
+      defaultTier: "C", defaultRating: 1500, allowRegistrationTier: false,
+    },
+  },
+  {
+    id: "ratio_pyramid", name: "피라미드 (5티어)", description: "상위 소수 정예 + 넓은 중간층",
+    config: {
+      mode: "ratio",
+      tiers: [
+        { key: "S", label: "S", color: "#8b5cf6", threshold: 1950, gated: true,  ratio: 5  },
+        { key: "A", label: "A", color: "#3b82f6", threshold: 1800, gated: false, ratio: 15 },
+        { key: "B", label: "B", color: "#22c55e", threshold: 1600, gated: false, ratio: 30 },
+        { key: "C", label: "C", color: "#f59e0b", threshold: 1400, gated: false, ratio: 30 },
+        { key: "D", label: "D", color: "#ef4444", threshold: 0,    gated: false, ratio: 20 },
+      ],
+      defaultTier: "D", defaultRating: 1500, allowRegistrationTier: false,
+    },
+  },
 ];
 
 /** 커스텀 프리셋 최대 개수 */
 const MAX_CUSTOM_PRESETS = 5;
+
+/**
+ * 📊 v3.10.0: 비율 기반 티어 배정 맵 계산 (순수 함수)
+ * novels를 rating DESC로 정렬 후 누적 비율로 티어 경계 배정.
+ * 동점 소설은 동일 티어로 묶음.
+ */
+function computeRatioTierMap(novels, config) {
+  if (!novels || novels.length === 0 || !config || !config.tiers || config.tiers.length === 0) return new Map();
+
+  const sorted = [...novels].sort((a, b) => {
+    const rd = (b.rating || 1500) - (a.rating || 1500);
+    if (rd !== 0) return rd;
+    const cd = (a.created_at || 0) - (b.created_at || 0);
+    if (cd !== 0) return cd;
+    return (a.title || "").localeCompare(b.title || "");
+  });
+
+  const total = sorted.length;
+  const map = new Map();
+  const tiers = config.tiers;
+
+  // ratio 합계 0 대비: 균등 분배 폴백
+  const ratioSum = tiers.reduce((s, t) => s + (t.ratio || 0), 0);
+
+  // 누적 비율 → 인원수 경계 계산
+  const breakpoints = [];
+  let cumRatio = 0;
+  for (let ti = 0; ti < tiers.length; ti++) {
+    const r = ratioSum > 0 ? (tiers[ti].ratio || 0) : (100 / tiers.length);
+    cumRatio += r;
+    breakpoints.push({ key: tiers[ti].key, cumCount: Math.round(cumRatio / 100 * total) });
+  }
+  breakpoints[breakpoints.length - 1].cumCount = total; // 마지막 티어가 나머지 흡수
+
+  let tierIdx = 0;
+  let i = 0;
+  while (i < total) {
+    // 동점 그룹 찾기
+    let j = i;
+    while (j < total && (sorted[j].rating || 1500) === (sorted[i].rating || 1500)) j++;
+    // 티어 경계 진행
+    while (tierIdx < breakpoints.length - 1 && breakpoints[tierIdx].cumCount <= i) tierIdx++;
+    // 동점 그룹 전체 동일 티어 배정
+    const tierKey = breakpoints[tierIdx] ? breakpoints[tierIdx].key : tiers[tiers.length - 1].key;
+    for (let k = i; k < j; k++) map.set(sorted[k].id, tierKey);
+    i = j;
+  }
+  return map;
+}
 
 // 🆕 v6.0: 유연한 티어 시스템 헬퍼 함수들 (인라인)
 function getActiveTierOrder(config) {
@@ -21531,6 +21633,8 @@ let globalTierThresholds = { S: 1950, A: 1850, "B+": 1700, B: 1600, "B-": 1500 }
 let globalTierConfig = { ...DEFAULT_TIER_SYSTEM_CONFIG };
 // 🆕 v6.0: 티어 key→객체 룩업 테이블 (O(1) 성능 유지)
 let globalTierLookup = new Map(DEFAULT_TIER_SYSTEM_CONFIG.tiers.map(t => [t.key, t]));
+// 📊 v3.10.0: 비율 기반 티어 배정 맵 (ratio 모드에서만 사용)
+let globalRatioTierMap = new Map();
 function rebuildTierLookup(config) {
   globalTierLookup = new Map((config && config.tiers || []).map(t => [t.key, t]));
 }
@@ -21627,6 +21731,20 @@ function getDisplayTier(novel, config) {
   const mode = cfg.mode || "match";
   const tierOrder = getActiveTierOrder(cfg);
 
+  // 📊 v3.10.0: ratio 모드 — 비율 기반 동적 배정
+  if (mode === "ratio") {
+    const mt = novel.manual_tier;
+    if (mt && tierOrder.includes(mt)) return mt; // 수동 오버라이드
+    const assigned = globalRatioTierMap.get(novel.id);
+    if (assigned && tierOrder.includes(assigned)) {
+      if (isGatedTier(assigned, cfg) && !novel.manual_tier) {
+        return getHighestNonGatedTier(cfg);
+      }
+      return assigned;
+    }
+    return cfg.defaultTier || tierOrder[tierOrder.length - 1];
+  }
+
   // manual 모드
   if (mode === "manual") {
     const mt = novel.manual_tier;
@@ -21659,6 +21777,21 @@ function getDisplayTier(novel, config) {
 function getReviewStatus(novel, config) {
   const cfg = config || globalTierConfig;
   if (!cfg || !cfg.tiers) return null;
+
+  // 📊 v3.10.0: ratio 모드도 검토 시스템 지원
+  if (cfg.mode === "ratio") {
+    const recommended = globalRatioTierMap.get(novel.id);
+    if (!recommended) return null;
+    const actual = getDisplayTier(novel, cfg);
+    if (isGatedTier(actual, cfg) && tierRank(recommended, cfg) > tierRank(actual, cfg)) {
+      return { type: 'demote', from: actual, to: recommended };
+    }
+    if (isGatedTier(recommended, cfg) && tierRank(actual, cfg) > tierRank(recommended, cfg)) {
+      return { type: 'promote', from: actual, to: recommended };
+    }
+    return null;
+  }
+
   if (cfg.mode !== "match") return null;
 
   const recommended = tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg);
@@ -23810,6 +23943,18 @@ function AppContent() {
     });
     return ids;
   }, [filterFolder, novelFolderMap]);
+
+  /* =========================================================
+     📊 v3.10.0: 비율 기반 티어 사전 계산 (ratio 모드에서만 활성)
+     ========================================================= */
+  const computedRatioTierMap = useMemo(() => {
+    const tsc = appSettings.tierSystemConfig || globalTierConfig;
+    if (tsc.mode !== "ratio") return new Map();
+    return computeRatioTierMap(list, tsc);
+  }, [list, appSettings.tierSystemConfig]);
+  // 모듈 변수 동기화 — 이벤트 핸들러에서 getDisplayTier 호출 시 사용
+  // 후속 useMemo(rankedEntries, homeFiltered 등)보다 먼저 실행됨 (선언 순서 보장)
+  globalRatioTierMap = computedRatioTierMap;
 
   /* =========================================================
      🆕 고급 필터 함수
@@ -39915,11 +40060,12 @@ async function importJSON() {
             <Section title="🏆 티어 시스템">
               {/* 🆕 v6.0: 모드 선택기 */}
               <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>시스템 유형</Text>
-              <View style={{ flexDirection: "row", gap: 8, marginBottom: 16 }}>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
                 {[
                   { key: "match", label: "매칭 기반", desc: "Elo 레이팅으로 자동 배정" },
                   { key: "manual", label: "직접 배정", desc: "매칭 없이 수동 지정" },
                   { key: "hybrid", label: "혼합", desc: "매칭 + 자유 오버라이드" },
+                  { key: "ratio", label: "비율 기반", desc: "ELO + 상위 %로 티어 배정" },
                 ].map(m => (
                   <TouchableOpacity
                     key={m.key}
@@ -39933,7 +40079,7 @@ async function importJSON() {
                           { text: "변경", onPress: async () => {
                             // 🔧 v6.0: await 전에 현재 config 캡처 (stale closure 방지)
                             const oldConfig = { ...globalTierConfig };
-                            // 🔴 Critical: match→manual 전환 시 백필
+                            // 🔴 Critical: match/ratio→manual/hybrid 전환 시 백필
                             if (m.key === "manual" || m.key === "hybrid") {
                               const novels = await all("SELECT id, rating, manual_tier FROM novels");
                               const queries = [];
@@ -39947,6 +40093,29 @@ async function importJSON() {
                             }
                             const newConfig = { ...oldConfig, mode: m.key };
                             if (m.key === "manual") newConfig.allowRegistrationTier = true;
+                            // 📊 v3.10.0: manual→ratio 전환 시 ELO 재계산 + ratio 기본값 부여
+                            if (m.key === "ratio" && oldConfig.mode === "manual") {
+                              await rebuildAllFromMatches(tagAttributes);
+                              const gatedKeys = getGatedTiers(newConfig);
+                              const novels = await all("SELECT id, manual_tier FROM novels");
+                              const clearQueries = [];
+                              for (const n of (novels || [])) {
+                                if (n.manual_tier && !gatedKeys.includes(n.manual_tier)) {
+                                  clearQueries.push({ sql: "UPDATE novels SET manual_tier=NULL WHERE id=?", params: [n.id] });
+                                }
+                              }
+                              if (clearQueries.length > 0) await execBatch(clearQueries);
+                            }
+                            // 📊 v3.10.0: ratio 전환 시 ratio 기본값 자동 부여
+                            if (m.key === "ratio") {
+                              const tiersWithRatio = newConfig.tiers.map((t, _i, arr) => ({
+                                ...t,
+                                ratio: t.ratio || Math.round(100 / arr.length),
+                              }));
+                              const sum = tiersWithRatio.reduce((s, t) => s + t.ratio, 0);
+                              if (sum !== 100) tiersWithRatio[tiersWithRatio.length - 1].ratio += (100 - sum);
+                              newConfig.tiers = tiersWithRatio;
+                            }
                             // 🆕 v6.1: manual→match 복귀 시 ELO 재계산
                             if (m.key === "match" && oldConfig.mode === "manual") {
                               await rebuildAllFromMatches(tagAttributes);
@@ -39968,7 +40137,7 @@ async function importJSON() {
                             // 🆕 v6.1: 모드 전환 시 화면 리다이렉트 (숨겨지는 탭 대응)
                             if (m.key === "manual" && (screen === "match" || screen === "review")) {
                               setScreen("tierManage");
-                            } else if (m.key === "match" && screen === "tierManage") {
+                            } else if ((m.key === "match" || m.key === "ratio") && screen === "tierManage") {
                               setScreen("home");
                             }
                             await loadList(undefined, undefined, "settings");
@@ -40105,7 +40274,7 @@ async function importJSON() {
                       }}
                     />
                     {/* threshold (match/hybrid 모드에서만) */}
-                    {modeForUI !== "manual" && (
+                    {(modeForUI === "match" || modeForUI === "hybrid") && (
                       <TextInput
                         value={String(t.threshold)}
                         onChangeText={(v) => {
@@ -40123,8 +40292,27 @@ async function importJSON() {
                         }}
                       />
                     )}
-                    {/* 🔧 v3.9.3: 검토 토글 (match 모드에서만) — 터치 영역 확대 + 라벨 명확화 + React state 직결 */}
-                    {modeForUI === "match" && (
+                    {/* 📊 v3.10.0: ratio 입력 (비율 모드에서만) */}
+                    {modeForUI === "ratio" && (
+                      <TextInput
+                        value={String(t.ratio || 0)}
+                        onChangeText={(v) => {
+                          const newTiers = [...tiersForUI];
+                          newTiers[idx] = { ...newTiers[idx], ratio: parseInt(v) || 0 };
+                          saveAppSettings({ tierSystemConfig: { ...tsc, tiers: newTiers } });
+                        }}
+                        keyboardType="number-pad"
+                        placeholder="%"
+                        placeholderTextColor={C.sub}
+                        style={{
+                          backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8,
+                          paddingHorizontal: 8, paddingVertical: 6, width: 60, textAlign: "center",
+                          color: C.text, fontSize: 12, minHeight: 36,
+                        }}
+                      />
+                    )}
+                    {/* 🔧 v3.9.3: 검토 토글 (match/ratio 모드에서) — 터치 영역 확대 + 라벨 명확화 + React state 직결 */}
+                    {(modeForUI === "match" || modeForUI === "ratio") && (
                       <TouchableOpacity
                         onPress={() => {
                           const newTiers = [...tiersForUI];
@@ -40165,6 +40353,23 @@ async function importJSON() {
                     )}
                   </View>
                 ))}
+                {/* 📊 v3.10.0: 비율 합계 검증 */}
+                {modeForUI === "ratio" && (() => {
+                  const sum = tiersForUI.reduce((s, t) => s + (t.ratio || 0), 0);
+                  return (
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 4, marginBottom: 4 }}>
+                      <Text style={{ color: sum === 100 ? "#22c55e" : "#ef4444", fontWeight: "700", fontSize: 12 }}>
+                        합계: {sum}% {sum === 100 ? "✓" : sum < 100 ? `(${100 - sum}% 부족)` : `(${sum - 100}% 초과)`}
+                      </Text>
+                    </View>
+                  );
+                })()}
+                {/* 📊 v3.10.0: 최소 작품 수 안내 */}
+                {modeForUI === "ratio" && list.length < 20 && (
+                  <Text style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>
+                    비율 기반 모드는 20작품 이상에서 정확한 분포를 보입니다. (현재 {list.length}개)
+                  </Text>
+                )}
                 {/* 티어 추가 버튼 (최대 10개) */}
                 {tiersForUI.length < 10 && (
                   <TouchableOpacity
@@ -40175,7 +40380,7 @@ async function importJSON() {
                       const newKey = "T_" + Date.now().toString(36);
                       const newLabel = "T" + tiersForUI.length;
                       const newTiers = [...tiersForUI];
-                      newTiers.splice(newTiers.length - 1, 0, { key: newKey, label: newLabel, color: nextColor, threshold: 0, gated: false });
+                      newTiers.splice(newTiers.length - 1, 0, { key: newKey, label: newLabel, color: nextColor, threshold: 0, gated: false, ratio: 0 });
                       saveAppSettings({ tierSystemConfig: { ...tsc, tiers: newTiers } });
                     }}
                     style={{ backgroundColor: C.chip, padding: 10, borderRadius: 8, alignItems: "center", marginTop: 4 }}
@@ -40206,8 +40411,8 @@ async function importJSON() {
                 </View>
               )}
 
-              {/* 자동 승인 설정 (match 모드에서만) */}
-              {(appSettings.tierSystemConfig?.mode || globalTierConfig.mode) === "match" && (
+              {/* 자동 승인 설정 (match/ratio 모드에서만) */}
+              {((appSettings.tierSystemConfig?.mode || globalTierConfig.mode) === "match" || (appSettings.tierSystemConfig?.mode || globalTierConfig.mode) === "ratio") && (
                 <>
                   <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>자동 승인</Text>
                   <View style={{ backgroundColor: C.bg, padding: 12, borderRadius: 12, marginBottom: 16 }}>
