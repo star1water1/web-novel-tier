@@ -10284,10 +10284,11 @@ const ActualTierTag = memo(({ novel, showDiff = false, showWarning = true }) => 
   const label = getTierLabel(actual, cfg);
   const color = getTierColor(actual, cfg);
 
-  // match/hybrid 모드에서만 권장 티어 비교 의미 있음
-  const isMatchMode = cfg.mode === "match" || cfg.mode === "hybrid";
-  const recommended = isMatchMode ? tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg) : actual;
-  const isForced = showWarning && isMatchMode && novel.manual_tier && tierRank(tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg), cfg) > tierRank(novel.manual_tier, cfg);
+  // match/hybrid/ratio 모드에서만 권장 티어 비교 의미 있음
+  const isMatchMode = cfg.mode === "match" || cfg.mode === "hybrid" || cfg.mode === "ratio";
+  const recommended = isMatchMode ? (cfg.mode === "ratio" ? (globalRatioTierMap.get(novel.id) || actual) : tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg)) : actual;
+  const ratioOrThreshold = cfg.mode === "ratio" ? (globalRatioTierMap.get(novel.id) || actual) : tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg);
+  const isForced = showWarning && isMatchMode && novel.manual_tier && tierRank(ratioOrThreshold, cfg) > tierRank(novel.manual_tier, cfg);
   const hasDiff = actual !== recommended;
 
   return (
@@ -25219,7 +25220,7 @@ function AppContent() {
                   "", // memorable_quote
                   "", // aliases
                   // 🆕 v6.0: manual/hybrid 모드에서 expected_tier를 manual_tier로 활용
-                  (globalTierConfig.mode !== "match" && planned.expected_tier && getActiveTierOrder(globalTierConfig).includes(planned.expected_tier))
+                  (globalTierConfig.mode !== "match" && globalTierConfig.mode !== "ratio" && planned.expected_tier && getActiveTierOrder(globalTierConfig).includes(planned.expected_tier))
                     ? planned.expected_tier : null,
                 ]
               );
@@ -29029,7 +29030,7 @@ function AppContent() {
           (() => {
             if (globalTierConfig.mode === "manual") return newManualTier || globalTierConfig.defaultTier;
             if (globalTierConfig.mode === "hybrid" && newManualTier) return newManualTier;
-            if (globalTierConfig.mode === "match" && globalTierConfig.allowRegistrationTier && newManualTier) return newManualTier;
+            if ((globalTierConfig.mode === "match" || globalTierConfig.mode === "ratio") && globalTierConfig.allowRegistrationTier && newManualTier) return newManualTier;
             return null;
           })(),
         ]
@@ -37448,7 +37449,7 @@ async function importJSON() {
                         // 🔧 v3.9.5: 통합 헬퍼 사용 (tierHistory + undoStack + recentChanges)
                         const historyItems = [];
                         const queries = reviews.map(n => {
-                          const recommended = tierFromRating(n.rating, globalTierConfig);
+                          const recommended = globalTierConfig.mode === "ratio" ? (globalRatioTierMap.get(n.id) || tierFromRating(n.rating, globalTierConfig)) : tierFromRating(n.rating, globalTierConfig);
                           const newTier = isGatedTier(recommended, globalTierConfig) ? recommended : null;
                           const current = getDisplayTier(n, globalTierConfig);
                           historyItems.push({ id: n.id, title: n.title, from: current, to: newTier || recommended });
@@ -37485,7 +37486,7 @@ async function importJSON() {
                           // 🔧 v3.9.5: 통합 헬퍼 사용
                           const historyItems = [];
                           const queries = selected.map(n => {
-                            const recommended = tierFromRating(n.rating, globalTierConfig);
+                            const recommended = globalTierConfig.mode === "ratio" ? (globalRatioTierMap.get(n.id) || tierFromRating(n.rating, globalTierConfig)) : tierFromRating(n.rating, globalTierConfig);
                             const newTier = isGatedTier(recommended, globalTierConfig) ? recommended : null;
                             const current = getDisplayTier(n, globalTierConfig);
                             historyItems.push({ id: n.id, title: n.title, from: current, to: newTier || recommended });
@@ -37524,7 +37525,7 @@ async function importJSON() {
                         // 🔧 v3.9.5: 통합 헬퍼 사용 (promote 후보는 recommended가 항상 gated — getReviewStatus 보장)
                         const historyItems = [];
                         const queries = promotes.map(n => {
-                          const newTier = tierFromRating(n.rating, globalTierConfig);
+                          const newTier = globalTierConfig.mode === "ratio" ? (globalRatioTierMap.get(n.id) || tierFromRating(n.rating, globalTierConfig)) : tierFromRating(n.rating, globalTierConfig);
                           const current = getDisplayTier(n, globalTierConfig);
                           historyItems.push({ id: n.id, title: n.title, from: current, to: newTier });
                           return {
@@ -37561,7 +37562,7 @@ async function importJSON() {
                         // 🔧 v3.9.5: 통합 헬퍼 사용
                         const historyItems = [];
                         const queries = demotes.map(n => {
-                          const recommended = tierFromRating(n.rating, globalTierConfig);
+                          const recommended = globalTierConfig.mode === "ratio" ? (globalRatioTierMap.get(n.id) || tierFromRating(n.rating, globalTierConfig)) : tierFromRating(n.rating, globalTierConfig);
                           const newTier = isGatedTier(recommended, globalTierConfig) ? recommended : null;
                           const current = getDisplayTier(n, globalTierConfig);
                           historyItems.push({ id: n.id, title: n.title, from: current, to: newTier || recommended });
@@ -37660,11 +37661,11 @@ async function importJSON() {
               }).sort((a, b) => b.rating - a.rating);
               
               if (promotes.length === 0) return null;
-              
+
               return (
                 <Section title={`⬆️ 승급 검토 (${promotes.length}건)`}>
                   {promotes.map(n => {
-                    const recommended = tierFromRating(n.rating, tsc);
+                    const recommended = tsc.mode === "ratio" ? (globalRatioTierMap.get(n.id) || tierFromRating(n.rating, tsc)) : tierFromRating(n.rating, tsc);
                     const current = getDisplayTier(n, tsc);
                     const isSelected = reviewSelectedIds.includes(n.id);
                     
@@ -37741,9 +37742,9 @@ async function importJSON() {
               return (
                 <Section title={`⬇️ 강등 검토 (${demotes.length}건)`}>
                   {demotes.map(n => {
-                    const recommended = tierFromRating(n.rating, tsc);
+                    const recommended = tsc.mode === "ratio" ? (globalRatioTierMap.get(n.id) || tierFromRating(n.rating, tsc)) : tierFromRating(n.rating, tsc);
                     const current = getDisplayTier(n, tsc);
-                    const isForced = n.manual_tier && tierRank(tierFromRating(n.rating, tsc), tsc) > tierRank(n.manual_tier, tsc);
+                    const isForced = n.manual_tier && tierRank(recommended, tsc) > tierRank(n.manual_tier, tsc);
                     const isSelected = reviewSelectedIds.includes(n.id);
                     
                     return (
