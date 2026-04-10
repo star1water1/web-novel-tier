@@ -2,9 +2,26 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.10.1                                                                  ║
+ * ║  버전: 3.10.2                                                                  ║
  * ║  최종 수정: 2026-04-10                                                        ║
  * ║  총 라인 수: 약 45,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔴 v3.10.2 매칭 네이티브 크래시 근본 수정 (2026-04-10)                           ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [근본 수정] safeDbOperation 내 resetDbConnection → 핸들 폐기로 교체            ║
+ * ║ • 근본 원인: 연결 오류 시 resetDbConnection() 호출 → closeAsync()              ║
+ * ║   → 동시 실행 중인 다른 DB 작업의 네이티브 SQLite 핸들 파괴                    ║
+ * ║   → 네이티브 레벨 크래시 (JS 로그 없음)                                        ║
+ * ║ • 수정: closeAsync 없이 db=null, dbOpenPromise=null만 설정                    ║
+ * ║   → 다음 retry에서 openDb()가 fresh connection 생성                            ║
+ * ║   → 기존 핸들은 GC가 자연 회수 (진행 중 작업 안전)                             ║
+ * ║                                                                              ║
+ * ║ [최적화] 비-ratio 모드 EMPTY_RATIO_MAP 싱글톤                                  ║
+ * ║ • 매 렌더 new Map() 생성 → 싱글톤 참조로 GC 압박 제거                         ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -3764,11 +3781,18 @@ async function safeDbOperation(operation, operationName = "DB") {
       // 🔧 v3.5.15c: 연결 오류만 resetDbConnection (경합 오류는 대기만)
       // 경합: busy_timeout=5000 내에서 자동 재시도, 그래도 실패 시 직접 retry
       // 연결: DB가 죽었거나 null이므로 리셋 필요
+      // 🔧 v3.10.1: resetDbConnection 대신 연결 폐기만 수행 (동시 작업 핸들 파괴 방지)
+      // closeAsync()는 호출하지 않음 — 다른 진행 중 작업의 네이티브 핸들 보존
+      // GC가 old handle을 자연 회수, 새 openDb()가 fresh connection 생성
       if (isConnectionError) {
-        await resetDbConnection();
+        console.warn(`[safeDbOperation] 연결 오류 — 핸들 폐기 (close 없이)`);
+        db = null;
+        dbOpenPromise = null;
       } else if (!isContentionError && attempt > 1) {
-        // 기타 오류: 3번째 시도부터 리셋 (보수적)
-        await resetDbConnection();
+        // 기타 오류: 3번째 시도부터 핸들 폐기 (보수적)
+        console.warn(`[safeDbOperation] 기타 오류 반복 — 핸들 폐기 (close 없이)`);
+        db = null;
+        dbOpenPromise = null;
       }
       // 경합 오류: resetDbConnection 절대 하지 않음 (대기 후 재시도만)
       
@@ -21668,6 +21692,7 @@ let globalTierConfig = { ...DEFAULT_TIER_SYSTEM_CONFIG };
 let globalTierLookup = new Map(DEFAULT_TIER_SYSTEM_CONFIG.tiers.map(t => [t.key, t]));
 // 📊 v3.10.0: 비율 기반 티어 배정 맵 (ratio 모드에서만 사용)
 let globalRatioTierMap = new Map();
+const EMPTY_RATIO_MAP = new Map(); // 📊 v3.10.1: 비-ratio 모드에서 매 렌더 new Map() 방지 (싱글톤)
 function rebuildTierLookup(config) {
   globalTierLookup = new Map((config && config.tiers || []).map(t => [t.key, t]));
 }
@@ -23982,7 +24007,7 @@ function AppContent() {
      ========================================================= */
   const computedRatioTierMap = useMemo(() => {
     const tsc = appSettings.tierSystemConfig || globalTierConfig;
-    if (tsc.mode !== "ratio") return new Map();
+    if (tsc.mode !== "ratio") return EMPTY_RATIO_MAP;
     return computeRatioTierMap(list, tsc);
   }, [list, appSettings.tierSystemConfig]);
   // 모듈 변수 동기화 — 이벤트 핸들러에서 getDisplayTier 호출 시 사용
