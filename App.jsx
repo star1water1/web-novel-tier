@@ -2,9 +2,29 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.10.0                                                                  ║
+ * ║  버전: 3.10.1                                                                  ║
  * ║  최종 수정: 2026-04-10                                                        ║
  * ║  총 라인 수: 약 45,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v3.10.1 매칭 크래시 방어 강화 (2026-04-10)                                   ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [수정 1] 자동매칭 IIFE에 외부 .catch() 추가 (불변규칙 #5 보완)                ║
+ * ║ • finally 블록 throw 시 unhandled rejection → 크래시 로그 없는 사망 방지     ║
+ * ║                                                                              ║
+ * ║ [수정 2] setTimeout async 콜백 3곳 try-catch 래핑                             ║
+ * ║ • schedulePatternUpdate / schedulePatternStatsRefresh / scheduleInsightDiscovery ║
+ * ║ • 내부 함수 자체 try-catch 보유하나, 콜백 레벨 방어 추가 (변수 오염 대비)    ║
+ * ║                                                                              ║
+ * ║ [수정 3] 자동매칭 큐 드레인 타임아웃 시 안전 중단                             ║
+ * ║ • waitForMatchQueueDrain 실패(false) → 다음 매칭 강행 대신 return (큐 누적 방지)║
+ * ║                                                                              ║
+ * ║ [수정 4] applyElo NaN/Infinity 전파 방어                                      ║
+ * ║ • rating이 NaN/Infinity일 때 기본값(1500) 대체 + console.warn                ║
+ * ║ • DB 오염으로 인한 점진적 데이터 전파 차단                                    ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -5890,16 +5910,18 @@ function schedulePatternUpdate(logs) {
   if (!patternUpdateScheduled) {
     patternUpdateScheduled = true;
     setTimeout(async () => {
-      const batch = patternUpdateBatch.splice(0);
-      patternUpdateScheduled = false;
-      
-      if (batch.length > 0) {
-        // 🔧 v3.5.15d: 매칭 큐 드레인 대기 후 패턴 업데이트
-        if (!isMatchQueueIdle()) {
-          try { await waitForMatchQueueDrain(3000); } catch {}
+      try {
+        const batch = patternUpdateBatch.splice(0);
+        patternUpdateScheduled = false;
+
+        if (batch.length > 0) {
+          // 🔧 v3.5.15d: 매칭 큐 드레인 대기 후 패턴 업데이트
+          if (!isMatchQueueIdle()) {
+            try { await waitForMatchQueueDrain(3000); } catch {}
+          }
+          await processPatternUpdates(batch);
         }
-        await processPatternUpdates(batch);
-      }
+      } catch (e) { console.error("[schedulePatternUpdate] 예기치 않은 오류:", e); }
     }, 1000);
   }
 }
@@ -6070,8 +6092,10 @@ function schedulePatternStatsRefresh() {
   if (!statsRefreshScheduled) {
     statsRefreshScheduled = true;
     setTimeout(async () => {
-      statsRefreshScheduled = false;
-      await refreshPatternStats();
+      try {
+        statsRefreshScheduled = false;
+        await refreshPatternStats();
+      } catch (e) { console.error("[schedulePatternStatsRefresh] 예기치 않은 오류:", e); }
     }, 2000);
   }
 }
@@ -6157,8 +6181,10 @@ function scheduleInsightDiscovery() {
   if (!insightDiscoveryScheduled) {
     insightDiscoveryScheduled = true;
     setTimeout(async () => {
-      insightDiscoveryScheduled = false;
-      await discoverInsights();
+      try {
+        insightDiscoveryScheduled = false;
+        await discoverInsights();
+      } catch (e) { console.error("[scheduleInsightDiscovery] 예기치 않은 오류:", e); }
     }, 3000);
   }
 }
@@ -8559,8 +8585,14 @@ const kFactor = (mc, rd) => {
 };
 
 function applyElo(A, B, aWin) {
-  const Ea = expected(A.rating, B.rating),
-    Eb = expected(B.rating, A.rating);
+  // 🔧 v3.10.1: NaN 전파 방어 — DB 오염 시 기본값 대체
+  const rA = (isFinite(A.rating) ? A.rating : 1500);
+  const rB = (isFinite(B.rating) ? B.rating : 1500);
+  if (!isFinite(A.rating) || !isFinite(B.rating)) {
+    console.warn("[applyElo] NaN/Infinity rating 감지, 기본값 대체:", { A: A.rating, B: B.rating });
+  }
+  const Ea = expected(rA, rB),
+    Eb = expected(rB, rA);
   const kA = kFactor(A.match_count || 0, A.rd || 350);
   const kB = kFactor(B.match_count || 0, B.rd || 350);
   const Sa = aWin ? 1 : 0,
@@ -8568,8 +8600,8 @@ function applyElo(A, B, aWin) {
   const newA = { ...A },
     newB = { ...B };
 
-  newA.rating = A.rating + kA * (Sa - Ea);
-  newB.rating = B.rating + kB * (Sb - Eb);
+  newA.rating = rA + kA * (Sa - Ea);
+  newB.rating = rB + kB * (Sb - Eb);
   newA.rd = Math.max(60, (A.rd || 350) * 0.98);
   newB.rd = Math.max(60, (B.rd || 350) * 0.98);
   newA.match_count = (A.match_count || 0) + 1;
@@ -30623,8 +30655,12 @@ function AppContent() {
       try {
         await decide(result.winner.id, "auto");
 
-        // 큐 드레인 대기
-        await waitForMatchQueueDrain(2000);
+        // 큐 드레인 대기 — 🔧 v3.10.1: 드레인 실패 시 큐 누적 방지
+        const drained = await waitForMatchQueueDrain(2000);
+        if (!drained) {
+          console.warn("[자동매칭] 큐 드레인 타임아웃 — 안전 중단");
+          return; // finally에서 자동매칭 플래그 리셋
+        }
 
         // 속도 설정에 따른 딜레이
         const speed = capturedSpeed;
@@ -30646,7 +30682,12 @@ function AppContent() {
           invalidateMatchCache(); // 다음 매칭 세션을 위해 캐시도 갱신
         }
       }
-    })();
+    })().catch(e => {
+      // 🔧 v3.10.1: 불변규칙 #5 — 자동매칭 IIFE 최외곽 방어 (finally throw 시 unhandled rejection 방지)
+      console.error("[autoMatch] 예기치 않은 오류:", e);
+      isAutoMatchingRef.current = false;
+      setIsAutoMatching(false);
+    });
   }, [pair, autoEnabled, autoMatchSettings, matchAnalysis, evaluateAutoMatch]);
   
   // 자동승패 설정 저장
