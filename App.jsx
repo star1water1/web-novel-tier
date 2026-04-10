@@ -2,9 +2,41 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.9.5                                                                   ║
- * ║  최종 수정: 2026-04-05                                                        ║
+ * ║  버전: 3.9.6                                                                   ║
+ * ║  최종 수정: 2026-04-10                                                        ║
  * ║  총 라인 수: 약 45,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v3.9.6 매칭 큐 DB 크래시 근본 수정 (2026-04-10)                              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [🔴 근본 수정] 매칭 중 간헐적 크래시 + 백그라운드 복귀 후 DB 크래시            ║
+ * ║ • 근본 원인: ImagePicker 복귀/에러 핸들러/AppState 핸들러에서 직접             ║
+ * ║   resetDbConnection() 호출 시 매칭 큐의 활성 네이티브 연결이 closeAsync로      ║
+ * ║   파괴 → Android 네이티브 레벨 크래시 (SIGSEGV/NullPointerException)          ║
+ * ║ • 악화 요인: DB 연결 끊긴 상태에서 safeDbOperation 5회 재시도(3~5초/태스크)    ║
+ * ║   → 큐 pile-up → waitForMatchQueueDrain 타임아웃 → 강행 resetDbConnection     ║
+ * ║                                                                              ║
+ * ║ [수정 1] processMatchQueue 강화                                               ║
+ * ║ • outer try-finally: isProcessingMatchQueue 리셋 보장                         ║
+ * ║ • circuit breaker: DB 연결 오류 시 나머지 큐 즉시 reject (slow drain 방지)    ║
+ * ║ • matchQueueAborted 플래그: 외부에서 안전한 큐 중단 지원                      ║
+ * ║ • BUSY/LOCKED(경합)은 circuit breaker 제외 (불변규칙 #4 준수)                 ║
+ * ║                                                                              ║
+ * ║ [수정 2] safeResetAndReconnect() 헬퍼 추가                                    ║
+ * ║ • 매칭 큐 활성 시: abortMatchQueue → drain 대기 → 안전하게 resetDbConnection  ║
+ * ║ • 불변규칙 #3(drain 후 flush) 패턴을 DB 리셋에 확장                           ║
+ * ║                                                                              ║
+ * ║ [수정 3] 비협조적 resetDbConnection 호출 13곳 교체                             ║
+ * ║ • ImagePicker 복귀 8곳 → safeResetAndReconnect 교체                           ║
+ * ║ • 에러 핸들러 2곳 → safeResetAndReconnect 교체                                ║
+ * ║ • AppState 긴 BG 복귀: waitForMatchQueueDrain → abortMatchQueue + drain 대기  ║
+ * ║ • AppState 짧은 BG 복귀: resetDbConnection → safeResetAndReconnect 교체       ║
+ * ║                                                                              ║
+ * ║ [수정 4] decide().catch() 큐 중단 Alert 억제                                  ║
+ * ║ • _queueAborted 마커로 큐 abort/circuit breaker reject 시 불필요 Alert 차단   ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -3294,6 +3326,25 @@ async function resetDbConnection() {
   }
 }
 
+// 🔧 v3.9.6: 매칭 큐와 안전하게 조율된 DB 리셋 + 재연결
+// - ImagePicker 복귀, 에러 핸들러 등에서 직접 resetDbConnection 호출 시
+//   매칭 큐의 활성 네이티브 연결이 closeAsync로 파괴 → 네이티브 크래시 방지
+// - 큐 활성 시: abortMatchQueue → drain 대기 → 안전하게 리셋
+// - 큐 비활성 시: 즉시 리셋 (기존과 동일)
+async function safeResetAndReconnect(source = "unknown") {
+  if (!isMatchQueueIdle()) {
+    console.log(`[${source}] 매칭 큐 활성 — abort + drain 대기 후 DB 리셋`);
+    abortMatchQueue();
+    await waitForMatchQueueDrain(3000);
+  }
+  await resetDbConnection();
+  try {
+    await openDb();
+  } catch (e) {
+    console.warn(`[${source}] DB 재연결 실패:`, e.message);
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 🔬 v3.5.9: 인앱 성능 진단 시스템 (Performance Monitor)
 // - SQL 쿼리 추적 (횟수, 총 시간, 느린 쿼리 감지)
@@ -3742,6 +3793,7 @@ async function execBatch(queries, onProgress = null) {
    ========================================================= */
 const matchQueue = [];
 let isProcessingMatchQueue = false;
+let matchQueueAborted = false; // 🔧 v3.9.6: 외부에서 큐 중단 요청 플래그
 let matchQueueUpdateCallback = null; // 상태 업데이트용 콜백
 const pendingMatchPairs = new Set(); // 큐에서 처리 대기 중인 pair 키들
 
@@ -3791,6 +3843,21 @@ function waitForMatchQueueDrain(timeout = 2000) {
   });
 }
 
+// 🔧 v3.9.6: 매칭 큐 즉시 중단 (DB 리셋 전 안전한 드레인용)
+// - matchQueueAborted 플래그로 processMatchQueue의 while 루프 탈출
+// - 대기 중인 모든 태스크 즉시 reject (_queueAborted 마커로 Alert 억제)
+function abortMatchQueue() {
+  matchQueueAborted = true;
+  while (matchQueue.length > 0) {
+    const { reject, pairKey } = matchQueue.shift();
+    const err = new Error("매칭 큐 중단됨");
+    err._queueAborted = true;
+    try { reject(err); } catch (_) {}
+    if (pairKey) pendingMatchPairs.delete(pairKey);
+  }
+  try { notifyQueueStatus(); } catch (_) {}
+}
+
 // 매칭 작업을 큐에 추가 (pairKey도 함께 추적)
 function enqueueMatchTask(task, pairKey = null) {
   return new Promise((resolve, reject) => {
@@ -3812,39 +3879,69 @@ function enqueueMatchTask(task, pairKey = null) {
 }
 
 // 큐 순차 처리
+// 🔧 v3.9.6: outer try-finally로 isProcessingMatchQueue 리셋 보장
+//   + circuit breaker (DB 연결 오류 시 나머지 큐 즉시 실패 처리)
+//   + matchQueueAborted 플래그로 외부 중단 지원
 async function processMatchQueue() {
   if (isProcessingMatchQueue) return;
   isProcessingMatchQueue = true;
-  notifyQueueStatus();
-  
-  while (matchQueue.length > 0) {
-    const { task, resolve, reject, pairKey } = matchQueue.shift();
-    notifyQueueStatus();
-    
-    try {
-      const result = await task();
-      resolve(result);
-    } catch (e) {
-      console.warn("매칭 큐 처리 오류:", e.message);
-      // 🔧 v3.5.15c: resetDbConnection 제거
-      // 이유: safeDbOperation이 내부적으로 연결 오류를 구분하여 처리함
-      // 여기서 resetDbConnection을 호출하면 동시 실행 중인 다른 DB 작업
-      // (분석, choiceLog flush, deferSetAppMeta 등)의 연결도 함께 파괴됨
-      // → 연쇄 크래시의 근본 원인이었음
-      reject(e);
-    } finally {
-      // 처리 완료 후 pending에서 제거
-      if (pairKey) {
-        pendingMatchPairs.delete(pairKey);
+  matchQueueAborted = false;
+  try { notifyQueueStatus(); } catch (_) {}
+
+  try {
+    while (matchQueue.length > 0 && !matchQueueAborted) {
+      const { task, resolve, reject, pairKey } = matchQueue.shift();
+      try { notifyQueueStatus(); } catch (_) {}
+
+      try {
+        const result = await task();
+        resolve(result);
+      } catch (e) {
+        console.warn("매칭 큐 처리 오류:", e.message);
+        // 🔧 v3.5.15c: resetDbConnection 제거 (safeDbOperation이 내부 처리)
+        reject(e);
+
+        // 🔧 v3.9.6: Circuit breaker — DB 연결 오류 시 나머지 큐 즉시 실패 처리
+        // 이유: 연결 끊긴 상태에서 각 태스크가 safeDbOperation 5회 재시도(3~5초)
+        //   → 큐 pile-up → drain 타임아웃 → 외부 resetDbConnection이 네이티브 크래시 유발
+        // 경합 오류(BUSY/LOCKED)는 circuit breaker 제외 (불변규칙 #4)
+        const msg = (e.message || "").toLowerCase();
+        const isContentionError = msg.includes("busy") || msg.includes("locked");
+        const isConnectionError = !isContentionError && (
+          msg.includes("nullpointerexception") ||
+          msg.includes("closed") ||
+          msg.includes("database") ||
+          msg.includes("null") ||
+          msg.includes("disk i/o")
+        );
+
+        if (isConnectionError) {
+          console.warn("매칭 큐: DB 연결 오류 감지 — circuit breaker 발동, 나머지 큐 즉시 실패 처리");
+          while (matchQueue.length > 0) {
+            const next = matchQueue.shift();
+            const abortErr = new Error("DB 연결 끊김 — 큐 중단");
+            abortErr._queueAborted = true;
+            try { next.reject(abortErr); } catch (_) {}
+            if (next.pairKey) pendingMatchPairs.delete(next.pairKey);
+          }
+          break;
+        }
+      } finally {
+        // 처리 완료 후 pending에서 제거
+        if (pairKey) {
+          pendingMatchPairs.delete(pairKey);
+        }
       }
+
+      // 각 작업 사이에 약간의 딜레이 (DB 안정성)
+      await new Promise(r => setTimeout(r, 50));
     }
-    
-    // 각 작업 사이에 약간의 딜레이 (DB 안정성)
-    await new Promise(r => setTimeout(r, 50));
+  } finally {
+    // 🔧 v3.9.6: outer finally로 isProcessingMatchQueue 리셋 보장
+    isProcessingMatchQueue = false;
+    matchQueueAborted = false;
+    try { notifyQueueStatus(); } catch (_) {}
   }
-  
-  isProcessingMatchQueue = false;
-  notifyQueueStatus();
 }
 
 /* =========================================================
@@ -23214,11 +23311,8 @@ function AppContent() {
         quality: autoRegister ? preset.quality : 0.5,
         base64: !autoRegister,
       });
-      // 🔧 v3.5.3: 갤러리 복귀 후 DB 연결 강제 재설정
-      await resetDbConnection();
-      try { await openDb(); } catch (dbErr) {
-        console.warn("pickImage DB 재연결 실패:", dbErr.message);
-      }
+      // 🔧 v3.9.6: 갤러리 복귀 후 매칭 큐 안전 조율 DB 리셋
+      await safeResetAndReconnect("pickImage");
 
       if (result.canceled || !result.assets?.[0]) return;
       const asset = result.assets[0];
@@ -24519,18 +24613,21 @@ function AppContent() {
             if (isBusy) {
               console.log("DB 경합 감지 (BUSY/LOCKED) - 리셋 스킵 (연결 유효)");
             } else {
-              console.log("DB 연결 무효 - 리셋 수행");
-              await resetDbConnection();
-              await openDb();
+              // 🔧 v3.9.6: 매칭 큐 안전 조율 DB 리셋 (짧은 BG)
+              console.log("DB 연결 무효 - 매칭 큐 안전 조율 후 리셋 수행");
+              await safeResetAndReconnect("fg-short-recovery");
               await loadList(undefined, undefined, "fg-recovery");
               await loadCoverLibrary();
             }
           }
         } else {
           console.log(`앱 포그라운드 전환 (${bgDuration}ms) - DB 연결 리셋 및 데이터 리로드`);
-          // 🔧 v3.5.15c: 매칭 큐가 처리 중이면 먼저 드레인 대기
+          // 🔧 v3.9.6: 매칭 큐 abort + drain 후 안전하게 DB 리셋
+          // 기존: waitForMatchQueueDrain만 → 타임아웃 시 강행 resetDbConnection → 네이티브 크래시
+          // 수정: abortMatchQueue로 pending 즉시 제거 + circuit breaker로 현재 태스크 빠른 실패
           if (!isMatchQueueIdle()) {
-            console.log("포그라운드 전환: 매칭 큐 드레인 대기...");
+            console.log("포그라운드 전환: 매칭 큐 abort + drain 대기...");
+            abortMatchQueue();
             await waitForMatchQueueDrain(3000);
           }
           await resetDbConnection();
@@ -24545,9 +24642,8 @@ function AppContent() {
           } catch (e) {
             console.error("DB 재연결/리로드 실패:", e.message);
             try {
-              await resetDbConnection();
+              await safeResetAndReconnect("fg-long-retry");
               await new Promise(r => setTimeout(r, 500));
-              await openDb();
               await loadList(undefined, undefined, "fg-retry");
               console.log("DB 2차 재연결 성공");
             } catch (e2) {
@@ -25472,17 +25568,9 @@ function AppContent() {
         return;
       }
 
-      // 🔧 v3.5.1: 갤러리에서 돌아온 후 DB 연결 확인 및 복구
-      await resetDbConnection();
-      try {
-        await openDb();
-        // 🔧 v3.5.3: DB 안정화 대기
-        await new Promise(r => setTimeout(r, 300));
-      } catch (dbErr) {
-        console.error("갤러리 복귀 후 DB 연결 실패:", dbErr);
-        Alert.alert("오류", "데이터베이스 연결이 끊어졌습니다. 앱을 다시 시작해주세요.");
-        return;
-      }
+      // 🔧 v3.9.6: 갤러리 복귀 후 매칭 큐 안전 조율 DB 리셋
+      await safeResetAndReconnect("importCovers");
+      await new Promise(r => setTimeout(r, 300)); // DB 안정화 대기
 
       const assets = result.assets;
       const total = assets.length;
@@ -25550,12 +25638,11 @@ function AppContent() {
       setCoverLibraryLoading(false);
       setCoverLibraryProgress({ current: 0, total: 0 });
       
-      // 🔧 v3.5.1: 에러 발생 시 DB 연결 복구 시도 후 데이터 리로드
-      await resetDbConnection();
+      // 🔧 v3.9.6: 에러 발생 시 매칭 큐 안전 조율 DB 복구 + 데이터 리로드
+      await safeResetAndReconnect("importCoverErr");
       try {
-        await openDb();
         await loadCoverLibrary();
-        await loadList(undefined, undefined, "cover-reload");  // 전체 데이터도 리로드
+        await loadList(undefined, undefined, "cover-reload");
       } catch (recoveryErr) {
         console.error("복구 실패:", recoveryErr);
       }
@@ -25779,11 +25866,9 @@ function AppContent() {
         base64: false,
       });
 
-      // DB 연결 복구 (Android 필수, 300ms 안정화 대기)
-      await resetDbConnection();
-      try { await openDb(); await new Promise(r => setTimeout(r, 300)); } catch (dbErr) {
-        console.warn("gallery ImagePicker DB 재연결 실패:", dbErr.message);
-      }
+      // 🔧 v3.9.6: 갤러리 복귀 후 매칭 큐 안전 조율 DB 리셋
+      await safeResetAndReconnect("galleryPicker");
+      await new Promise(r => setTimeout(r, 300)); // DB 안정화 대기
 
       if (result.canceled || !result.assets?.length) return;
 
@@ -29621,11 +29706,11 @@ function AppContent() {
       if (_pt) PerfMonitor.logError("saveEdit", e); // 🔬
       console.warn("saveEdit 오류:", e);
       const errorMsg = e.message || "";
-      // 🔧 v3.5.9: 모달이 아직 열려 있으므로 사용자가 재시도 가능
-      if (errorMsg.includes("NullPointerException") || 
+      // 🔧 v3.9.6: 모달이 아직 열려 있으므로 사용자가 재시도 가능
+      if (errorMsg.includes("NullPointerException") ||
           errorMsg.includes("prepareAsync") ||
           errorMsg.includes("rejected")) {
-        await resetDbConnection(); // DB 연결 리셋
+        await safeResetAndReconnect("saveEditErr");
         Alert.alert(
           "저장 실패", 
           "데이터베이스 연결 오류가 발생했습니다.\n\n편집 내용은 유지됩니다. '저장' 버튼을 다시 눌러주세요.\n문제가 지속되면 앱을 재시작해주세요.",
@@ -30092,6 +30177,8 @@ function AppContent() {
         needsListRefreshRef.current = true;
       }
     }, currentPairKey).catch((e) => {
+      // 🔧 v3.9.6: 큐 중단(abort/circuit breaker)으로 인한 reject는 무시
+      if (e._queueAborted) return;
       if (_pt) PerfMonitor.logError("decide", e); // 🔬
       console.warn("decide 오류:", e);
       // 🔧 v3.5.15d: 자동매칭 중에는 Alert 억제 (연속 Alert 스태킹 → ANR 방지)
@@ -33426,8 +33513,7 @@ async function importJSON() {
                 allowsEditing: true,
                 quality: 1.0,
               });
-              await resetDbConnection();
-              try { await openDb(); } catch {}
+              await safeResetAndReconnect("quotePicker");
               if (!result.canceled && result.assets?.[0]) {
                 const { ext } = getImageFormat(result.assets[0]);
                 const saved = await compressAndSaveImage(result.assets[0].uri, QUOTE_IMAGE_MAX_SIZE, QUOTE_IMAGE_QUALITY, ext);
@@ -33457,8 +33543,7 @@ async function importJSON() {
                 base64: false,
                 selectionLimit: maxRemaining,
               });
-              await resetDbConnection();
-              try { await openDb(); } catch {}
+              await safeResetAndReconnect("quoteBatchPicker");
               if (result.canceled || !result.assets?.length) return;
               let assets = result.assets.slice(0, maxRemaining);
               const trimmed = result.assets.length > maxRemaining;
@@ -41418,9 +41503,8 @@ async function importJSON() {
                             aspect: [3, 4],
                             quality: 0.5,
                           });
-                          // 🔧 v3.5.7: 갤러리 복귀 후 DB 재연결
-                          await resetDbConnection();
-                          try { await openDb(); } catch {}
+                          // 🔧 v3.9.6: 갤러리 복귀 후 매칭 큐 안전 조율 DB 리셋
+                          await safeResetAndReconnect("platformCover");
                           if (!result.canceled && result.assets?.[0]?.uri) {
                             const { ext } = getImageFormat(result.assets[0]);
                             const saved = await saveCoverToLibrary(result.assets[0].uri, "light", ext);
@@ -43279,8 +43363,7 @@ async function importJSON() {
                                 allowsEditing: true,
                                 quality: 1.0,
                               });
-                              await resetDbConnection();
-                              try { await openDb(); } catch {}
+                              await safeResetAndReconnect("editQuotePicker");
                               if (!result.canceled && result.assets?.[0]) {
                                 const { ext } = getImageFormat(result.assets[0]);
                                 const saved = await compressAndSaveImage(result.assets[0].uri, QUOTE_IMAGE_MAX_SIZE, QUOTE_IMAGE_QUALITY, ext);
@@ -43310,8 +43393,7 @@ async function importJSON() {
                                 base64: false,
                                 selectionLimit: maxRemaining,
                               });
-                              await resetDbConnection();
-                              try { await openDb(); } catch {}
+                              await safeResetAndReconnect("editQuoteBatch");
                               if (result.canceled || !result.assets?.length) return;
                               let assets = result.assets.slice(0, maxRemaining);
                               const trimmed = result.assets.length > maxRemaining;
