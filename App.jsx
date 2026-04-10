@@ -2,9 +2,39 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.9.6                                                                   ║
+ * ║  버전: 3.9.7                                                                   ║
  * ║  최종 수정: 2026-04-10                                                        ║
  * ║  총 라인 수: 약 45,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v3.9.7 검토탭 전수조사 수정 — 6건 근본 해결 (2026-04-10)                     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [수정 1] 승급 검토 카드 UI 레이아웃 깨짐                                      ║
+ * ║ • 체크박스+제목+버튼 단일 row → 2행 분리 (체크박스+제목 / 버튼)               ║
+ * ║ • 버튼 행에 flexWrap: wrap 추가 (좁은 화면 오버플로우 방지)                   ║
+ * ║                                                                              ║
+ * ║ [수정 2] 최근 변경 이력 등 3곳 화면 밖 확장                                   ║
+ * ║ • maxHeight View → ScrollView + nestedScrollEnabled 교체                     ║
+ * ║ • 대상: 최근 변경 이력, 강제지정 검색 결과, 강제지정 해제 목록                ║
+ * ║                                                                              ║
+ * ║ [수정 3] 매칭→지정→매칭 모드 전환 후 모든 작품 강제지정                        ║
+ * ║ • 근본 원인: manual→match 시 rebuildAllFromMatches가 ELO만 리셋,             ║
+ * ║   지정 모드에서 백필된 manual_tier가 잔존 → 전체 "강제지정" 표시              ║
+ * ║ • 수정: manual→match 전환 시 비-gated manual_tier NULL 클리어                 ║
+ * ║                                                                              ║
+ * ║ [수정 4] 전 티어구간 자동 설정해도 검토 대기 배너 잔존                        ║
+ * ║ • 근본 원인: reviewCount useMemo deps [list]만 → gated 변경 시 stale         ║
+ * ║ • 수정: appSettings deps 추가 + getReviewStatus에 cfg 전달 (불변규칙 #6)     ║
+ * ║ • 부가: 홈 배너 "S/A" 하드코딩 → 동적 gated 티어명                           ║
+ * ║                                                                              ║
+ * ║ [수정 5] 강제지정 해제 시 undo/recentChanges 기록 누락                        ║
+ * ║ • addTierHistoryEntry → recordTierAction 통합 헬퍼 교체                      ║
+ * ║                                                                              ║
+ * ║ [수정 6] 검토탭 render 경로 getReviewStatus 불변규칙 #6 위반                  ║
+ * ║ • getReviewStatus(n) → getReviewStatus(n, tsc) 교체 (4곳)                    ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -32806,9 +32836,12 @@ async function importJSON() {
 
   /* ---------- Nav ---------- */
   // 검토 대기 건수 계산
+  // 🔧 v3.9.7: appSettings deps 추가 (tierSystemConfig.gated 변경 시 재계산)
+  // 기존: [list]만 → gated 설정 변경해도 stale 값 유지 → 홈 배너에 잘못된 검토 대기 건수 표시
   const reviewCount = useMemo(() => {
-    return list.filter(n => getReviewStatus(n) !== null).length;
-  }, [list]);
+    const cfg = appSettings.tierSystemConfig || globalTierConfig;
+    return list.filter(n => getReviewStatus(n, cfg) !== null).length;
+  }, [list, appSettings]);
 
   // 🆕 tagAttributes 기반 대장르/부장르 통합 감지용 Set (O(1) 룩업, 1회 계산)
   const allMajorTagsSet = useMemo(() => {
@@ -33226,7 +33259,7 @@ async function importJSON() {
                       티어 검토 대기 {reviewCount}건
                     </Text>
                     <Text style={{ fontSize: 12, color: "#b45309" }}>
-                      S/A 승급/강등 검토가 필요합니다
+                      {getGatedTiers(appSettings.tierSystemConfig || globalTierConfig).map(k => getTierLabel(k)).join("/") || "상위"} 승급/강등 검토가 필요합니다
                     </Text>
                   </View>
                 </View>
@@ -37404,12 +37437,13 @@ async function importJSON() {
 
             {/* 검토 대기 없음 메시지 */}
             {(() => {
+              // 🔧 v3.9.7: 불변규칙 #6 — 렌더 경로는 tsc(React state) 사용
               const hasPromotes = list.some(n => {
-                const status = getReviewStatus(n);
+                const status = getReviewStatus(n, tsc);
                 return status && status.type === 'promote';
               });
               const hasDemotes = list.some(n => {
-                const status = getReviewStatus(n);
+                const status = getReviewStatus(n, tsc);
                 return status && status.type === 'demote';
               });
               
@@ -37439,7 +37473,7 @@ async function importJSON() {
             {/* 승급 검토 */}
             {(() => {
               const promotes = list.filter(n => {
-                const status = getReviewStatus(n);
+                const status = getReviewStatus(n, tsc);
                 return status && status.type === 'promote';
               }).sort((a, b) => b.rating - a.rating);
               
@@ -37461,10 +37495,11 @@ async function importJSON() {
                         borderWidth: 2,
                         borderColor: isSelected ? C.primary : "#22c55e",
                       }}>
-                        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
+                        {/* 🔧 v3.9.7: 레이아웃 재구성 — 체크박스+제목 / 버튼을 2행 분리 (좁은 화면 오버플로우 방지) */}
+                        <View style={{ flexDirection: "row", alignItems: "flex-start" }}>
                           {/* 체크박스 */}
                           <TouchableOpacity
-                            onPress={() => setReviewSelectedIds(prev => 
+                            onPress={() => setReviewSelectedIds(prev =>
                               prev.includes(n.id) ? prev.filter(x => x !== n.id) : [...prev, n.id]
                             )}
                             style={{ marginRight: 10, paddingTop: 2 }}
@@ -37478,7 +37513,7 @@ async function importJSON() {
                               {isSelected && <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>✓</Text>}
                             </View>
                           </TouchableOpacity>
-                          
+
                           <View style={{ flex: 1 }}>
                             <Text style={{ fontSize: 16, fontWeight: "800", color: C.text }} numberOfLines={1}>
                               {n.title}
@@ -37487,23 +37522,23 @@ async function importJSON() {
                               점수: {n.rating.toFixed(0)} · {current} → {recommended} 권장
                             </Text>
                           </View>
-                          {/* 🆕 v6.0: 동적 gated 티어 승급 버튼 */}
-                          <View style={{ flexDirection: "row", gap: 6 }}>
-                            {getGatedTiers(tsc).map(gt => (
-                              <TouchableOpacity
-                                key={gt}
-                                onPress={async () => {
-                                  // 🔧 v3.9.5: 통합 헬퍼 사용
-                                  await exec("UPDATE novels SET manual_tier=? WHERE id=?", [gt, n.id]);
-                                  await loadList(undefined, undefined, "update");
-                                  await recordTierAction(n.id, n.title, current, gt, "promote");
-                                }}
-                                style={{ backgroundColor: getTierColor(gt), paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10 }}
-                              >
-                                <Text style={{ color: "#fff", fontWeight: "700" }}>{getTierLabel(gt)} 승급</Text>
-                              </TouchableOpacity>
-                            ))}
-                          </View>
+                        </View>
+                        {/* 🆕 v6.0: 동적 gated 티어 승급 버튼 (🔧 v3.9.7: 하단 분리 행) */}
+                        <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap", marginTop: 10, paddingLeft: 32 }}>
+                          {getGatedTiers(tsc).map(gt => (
+                            <TouchableOpacity
+                              key={gt}
+                              onPress={async () => {
+                                // 🔧 v3.9.5: 통합 헬퍼 사용
+                                await exec("UPDATE novels SET manual_tier=? WHERE id=?", [gt, n.id]);
+                                await loadList(undefined, undefined, "update");
+                                await recordTierAction(n.id, n.title, current, gt, "promote");
+                              }}
+                              style={{ backgroundColor: getTierColor(gt), paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10 }}
+                            >
+                              <Text style={{ color: "#fff", fontWeight: "700" }}>{getTierLabel(gt)} 승급</Text>
+                            </TouchableOpacity>
+                          ))}
                         </View>
                       </View>
                     );
@@ -37515,7 +37550,7 @@ async function importJSON() {
             {/* 강등 검토 */}
             {(() => {
               const demotes = list.filter(n => {
-                const status = getReviewStatus(n);
+                const status = getReviewStatus(n, tsc);
                 return status && status.type === 'demote';
               }).sort((a, b) => a.rating - b.rating);
               
@@ -37719,7 +37754,7 @@ async function importJSON() {
                 placeholder="작품 검색..."
               />
               {reviewSearchQuery.trim().length > 0 && (
-                <View style={{ marginTop: 10, maxHeight: 200 }}>
+                <ScrollView style={{ marginTop: 10, maxHeight: 200 }} nestedScrollEnabled>
                   {list
                     .filter(n => {
                       const q = reviewSearchQuery.toLowerCase();
@@ -37762,7 +37797,7 @@ async function importJSON() {
                       </View>
                     ))
                   }
-                </View>
+                </ScrollView>
               )}
             </Section>
 
@@ -37775,7 +37810,7 @@ async function importJSON() {
                   <Text style={{ color: C.sub, marginBottom: 12, fontSize: 12 }}>
                     manual_tier가 설정된 작품입니다. 해제하면 점수 기반 티어로 복원됩니다.
                   </Text>
-                  <View style={{ maxHeight: 300 }}>
+                  <ScrollView style={{ maxHeight: 300 }} nestedScrollEnabled>
                     {forcedNovels
                       .sort((a, b) => (a.title || "").localeCompare(b.title || ""))
                       .map(n => {
@@ -37801,9 +37836,10 @@ async function importJSON() {
                                     { text: "취소", style: "cancel" },
                                     { text: "해제", style: "destructive", onPress: async () => {
                                       try {
-                                        addTierHistoryEntry(n.id, n.title, actual, rec);
                                         await exec("UPDATE novels SET manual_tier=NULL WHERE id=?", [n.id]);
                                         await loadList(undefined, undefined, "update");
+                                        // 🔧 v3.9.7: 통합 헬퍼 사용 (undo + recentChanges 기록 추가)
+                                        await recordTierAction(n.id, n.title, actual, rec, "force_release");
                                       } catch (e) { console.warn("강제지정 해제 오류:", e); }
                                     }},
                                   ]
@@ -37816,7 +37852,7 @@ async function importJSON() {
                           </View>
                         );
                       })}
-                  </View>
+                  </ScrollView>
                 </Section>
               );
             })()}
@@ -37824,7 +37860,7 @@ async function importJSON() {
             {/* 티어 변경 히스토리 */}
             {tierHistory.length > 0 && (
               <Section title="📋 최근 변경 이력">
-                <View style={{ maxHeight: 200 }}>
+                <ScrollView style={{ maxHeight: 200 }} nestedScrollEnabled>
                   {tierHistory.slice(0, 10).map((h, idx) => {
                     const timeAgo = (() => {
                       const diff = Date.now() - h.at;
@@ -37883,7 +37919,7 @@ async function importJSON() {
                       </View>
                     );
                   })}
-                </View>
+                </ScrollView>
                 {tierHistory.length > 10 && (
                   <Text style={{ color: C.sub, fontSize: 12, marginTop: 8, textAlign: "center" }}>
                     최근 10건만 표시됩니다
@@ -39877,6 +39913,19 @@ async function importJSON() {
                             // 🆕 v6.1: manual→match 복귀 시 ELO 재계산
                             if (m.key === "match" && oldConfig.mode === "manual") {
                               await rebuildAllFromMatches(tagAttributes);
+                              // 🔧 v3.9.7: 비-gated manual_tier 클리어
+                              // 매칭→지정 전환 시 백필된 manual_tier가 남아있으면
+                              // ELO 리셋(1500) + manual_tier 조합으로 모든 작품이 "강제지정"으로 표시됨
+                              // gated 티어(S/A 등)의 manual_tier만 보존 (의도적 강제지정 유지)
+                              const gatedKeys = getGatedTiers(newConfig);
+                              const novels = await all("SELECT id, manual_tier FROM novels");
+                              const clearQueries = [];
+                              for (const n of (novels || [])) {
+                                if (n.manual_tier && !gatedKeys.includes(n.manual_tier)) {
+                                  clearQueries.push({ sql: "UPDATE novels SET manual_tier=NULL WHERE id=?", params: [n.id] });
+                                }
+                              }
+                              if (clearQueries.length > 0) await execBatch(clearQueries);
                             }
                             saveAppSettings({ tierSystemConfig: newConfig });
                             // 🆕 v6.1: 모드 전환 시 화면 리다이렉트 (숨겨지는 탭 대응)
