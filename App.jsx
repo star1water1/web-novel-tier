@@ -2,9 +2,35 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.9.7                                                                   ║
+ * ║  버전: 3.9.8                                                                   ║
  * ║  최종 수정: 2026-04-10                                                        ║
  * ║  총 라인 수: 약 45,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📂 v3.9.8 폴더 시스템 버그 수정 + 안정성 개선 (2026-04-10)                      ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [버그 수정] removeNovel에서 novelFolderMap 미갱신                              ║
+ * ║ • 소설 단건 삭제 후 loadNovelFolderMap() 호출 누락                            ║
+ * ║ • 증상: 삭제된 소설이 폴더 카운트/필터에 phantom 잔존                         ║
+ * ║ • 수정: loadGalleryImages() 직후 loadNovelFolderMap() 추가                    ║
+ * ║ • 근거: batchDelete(line 31391)에는 이미 동일 호출 존재                       ║
+ * ║                                                                              ║
+ * ║ [개선 1] getFolderNovelCount 메모이제이션                                     ║
+ * ║ • 기존: 호출마다 novelFolderMap 전체 O(n) 순회                                ║
+ * ║ • 변경: useMemo로 folderCounts Map 사전 계산 → O(1) 조회                     ║
+ * ║                                                                              ║
+ * ║ [개선 2] toggleNovelFolder DB 실패 시 오류 피드백 추가                        ║
+ * ║ • 기존: 무피드백 롤백 (사용자 원인 파악 불가)                                 ║
+ * ║ • 변경: console.warn + Alert.alert 추가                                       ║
+ * ║ • 불변규칙 #1 안전: 자동매칭 중 호출 경로 없음                                ║
+ * ║                                                                              ║
+ * ║ [개선 3] deleteFolder filterFolder 초기화 순서 개선                            ║
+ * ║ • 기존: loadFolders → loadNovelFolderMap → setFilterFolder("ALL")             ║
+ * ║ • 변경: setFilterFolder("ALL") → loadFolders → loadNovelFolderMap             ║
+ * ║ • 효과: 폴더 삭제 시 빈 목록 1프레임 플래시 방지                              ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -23672,9 +23698,9 @@ function AppContent() {
         { sql: "DELETE FROM novel_folders WHERE folder_id=?;", params: [id] },
         { sql: "DELETE FROM folders WHERE id=?;", params: [id] },
       ]);
+      if (filterFolder === id) setFilterFolder("ALL"); // 📂 v3.9.8: 빈 목록 플래시 방지 — 필터 해제를 데이터 로드보다 먼저 실행
       await loadFolders();
       await loadNovelFolderMap();
-      if (filterFolder === id) setFilterFolder("ALL");
     } catch (e) { console.warn("deleteFolder 실패:", e); }
   }
 
@@ -23716,14 +23742,14 @@ function AppContent() {
       setNovelFolderMap(newMap);
       try {
         await exec("DELETE FROM novel_folders WHERE folder_id=? AND novel_id=?;", [folderId, novelId]);
-      } catch (e) { setNovelFolderMap(oldMap); }
+      } catch (e) { console.warn("toggleNovelFolder 실패:", e); setNovelFolderMap(oldMap); Alert.alert("오류", "폴더 배정 변경에 실패했습니다."); }
     } else {
       newMap.set(novelId, [...current, folderId]);
       setNovelFolderMap(newMap);
       try {
         await exec("INSERT OR IGNORE INTO novel_folders (folder_id, novel_id, added_at) VALUES (?,?,?);",
           [folderId, novelId, Date.now()]);
-      } catch (e) { setNovelFolderMap(oldMap); }
+      } catch (e) { console.warn("toggleNovelFolder 실패:", e); setNovelFolderMap(oldMap); Alert.alert("오류", "폴더 배정 변경에 실패했습니다."); }
     }
   }
 
@@ -23762,12 +23788,17 @@ function AppContent() {
     }
   }
 
-  function getFolderNovelCount(folderId) {
-    let count = 0;
+  // 📂 v3.9.8: 폴더별 소설 수 사전 계산 (O(n) 1회 → O(1) 조회)
+  const folderCounts = useMemo(() => {
+    const counts = new Map();
     novelFolderMap.forEach((folderIds) => {
-      if (folderIds.includes(folderId)) count++;
+      folderIds.forEach(fid => counts.set(fid, (counts.get(fid) || 0) + 1));
     });
-    return count;
+    return counts;
+  }, [novelFolderMap]);
+
+  function getFolderNovelCount(folderId) {
+    return folderCounts.get(folderId) || 0;
   }
 
   // 📂 폴더 필터용 파생 상태 (Set.has()로 O(1) 조회)
@@ -28995,6 +29026,7 @@ function AppContent() {
             await rebuildAllFromMatches(tagAttributes);
             await loadList(undefined, undefined, "rebuild");
             await loadGalleryImages(); // 🎨 v3.8.0
+            await loadNovelFolderMap(); // 📂 v3.9.8: 폴더 매핑 동기화 (batchDelete와 동일 패턴)
           } catch (e) {
             console.warn("removeNovel 오류:", e);
             Alert.alert("오류", "삭제 중 문제가 발생했습니다: " + (e.message || e));
