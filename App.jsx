@@ -40847,10 +40847,37 @@ async function importJSON() {
                     {/* 🔧 v3.9.3: 검토 토글 (match/ratio 모드에서) — 터치 영역 확대 + 라벨 명확화 + React state 직결 */}
                     {(modeForUI === "match" || modeForUI === "ratio") && (
                       <TouchableOpacity
-                        onPress={() => {
-                          const newTiers = [...tiersForUI];
-                          newTiers[idx] = { ...newTiers[idx], gated: !newTiers[idx].gated };
-                          saveAppSettings({ tierSystemConfig: { ...tsc, tiers: newTiers } });
+                        onPress={async () => {
+                          const newGated = !tiersForUI[idx].gated;
+                          const updatedTiers = [...tiersForUI];
+                          updatedTiers[idx] = { ...updatedTiers[idx], gated: newGated };
+                          saveAppSettings({ tierSystemConfig: { ...tsc, tiers: updatedTiers } });
+
+                          // 🔧 v3.11.3: gated 해제 시 해당 티어의 manual_tier 자동 클리어
+                          // → 강등 검토 대기 중이던 작품이 자동으로 레이팅 기반 티어로 처리됨
+                          // (gated 해제 = "이 티어는 자유롭게 변동"이므로 수동 고정 해제가 자연스러움)
+                          if (!newGated) {
+                            try {
+                              const tierKey = updatedTiers[idx].key;
+                              const novels = await all("SELECT id FROM novels WHERE manual_tier = ?", [tierKey]);
+                              if (novels && novels.length > 0) {
+                                const queries = novels.map(n => ({
+                                  sql: "UPDATE novels SET manual_tier=NULL WHERE id=?",
+                                  params: [n.id],
+                                }));
+                                await execBatch(queries);
+                                await loadList(undefined, undefined, "gated-toggle");
+                                if (!isAutoMatchingRef.current) {
+                                  Alert.alert(
+                                    "자동 처리",
+                                    `"${tierKey}" 티어의 강제 지정 ${novels.length}개가 해제되어\n레이팅 기반 티어로 자동 처리되었습니다.`
+                                  );
+                                }
+                              }
+                            } catch (e) {
+                              console.warn("[gated 토글] manual_tier 클리어 실패:", e);
+                            }
+                          }
                         }}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                         style={{
