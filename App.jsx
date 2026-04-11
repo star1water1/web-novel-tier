@@ -2,7 +2,7 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.11.5                                                                  ║
+ * ║  버전: 3.11.6                                                                  ║
  * ║  최종 수정: 2026-04-10                                                        ║
  * ║  총 라인 수: 약 46,600줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -9759,7 +9759,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "3.11.5";
+const APP_VERSION = "3.11.6";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -9786,11 +9786,11 @@ function compareVersions(a, b) {
 
 const CHANGELOG_DATA = [
   {
-    version: "3.11.5", date: "2026-04-10",
-    title: "검토 토글 자동 반영 완료",
+    version: "3.11.6", date: "2026-04-10",
+    title: "비율 모드 검토 토글 승급 완전 해결",
     highlights: [
-      { type: "fix", text: "🏆 티어 시스템의 검토 토글을 해제해도 승급 대기 중이던 작품의 티어가 즉시 반영되지 않던 문제 해결" },
-      { type: "fix", text: "토글 변경 시 목록이 새로고침되지 않아 화면이 갱신되지 않던 문제 수정" },
+      { type: "fix", text: "🏆 비율 기반 모드에서 검토 토글을 해제해도 승급 대기 작품의 화면 티어가 그대로이던 문제 해결" },
+      { type: "fix", text: "토글 변경 시 일부 상황에서 목록 갱신이 건너뛰어지던 문제 수정" },
     ],
   },
   {
@@ -40858,9 +40858,8 @@ async function importJSON() {
                           updatedTiers[idx] = { ...updatedTiers[idx], gated: newGated };
                           saveAppSettings({ tierSystemConfig: { ...tsc, tiers: updatedTiers } });
 
-                          // 🔧 v3.11.5: gated 해제 시 해당 티어의 manual_tier 자동 클리어
+                          // 🔧 v3.11.6: gated 해제 시 해당 티어의 manual_tier 자동 클리어
                           // → 강등 검토 대기 중이던 작품이 자동으로 레이팅 기반 티어로 처리됨
-                          // (gated 해제 = "이 티어는 자유롭게 변동"이므로 수동 고정 해제가 자연스러움)
                           let clearedCount = 0;
                           if (!newGated) {
                             try {
@@ -40879,10 +40878,19 @@ async function importJSON() {
                             }
                           }
 
-                          // 🔧 v3.11.5: 토글 방향/클리어 여부와 무관하게 loadList 호출
-                          // → list 참조가 갱신되어 rankedEntries/homeFiltered 등 모든 useMemo 재실행
-                          // → 승급 검토 시나리오(manual_tier=NULL이라 클리어할 게 없는 경우)도
-                          //   즉시 새 티어로 반영됨
+                          // 🔧 v3.11.6: 강제 UI 재렌더 (비율 모드 승급 시나리오 대응)
+                          // 문제: gated OFF 후에도 화면이 갱신 안 되는 경우가 있었음
+                          //   원인: rankedEntries/homeFiltered useMemo는 [list, ...] deps라
+                          //         appSettings 변경만으론 재실행 안 되고 list 참조가 바뀌어야 함.
+                          //         loadList는 loadListRunningRef가 true면 조용히 skip됨.
+                          // 해결:
+                          //   1) matchCache 무효화 (ratio 모드의 computeRatioTierMap이 stale 캐시 참조 방지)
+                          //   2) setList(prev => prev.map(n => ({...n}))) — 모든 novel 객체를 새 참조로 복제
+                          //      → NovelCard memo 깨기 → getDisplayTier 재호출 → 새 globalTierConfig 기준 계산
+                          //   3) loadListRunningRef 강제 해제 후 loadList — DB fresh data 로드
+                          invalidateMatchCache();
+                          setList(prev => (prev || []).map(n => ({ ...n })));
+                          loadListRunningRef.current = false;
                           try { await loadList(undefined, undefined, "gated-toggle"); } catch (e) { console.warn("[gated 토글] loadList 실패:", e); }
 
                           if (clearedCount > 0 && !isAutoMatchingRef.current) {
