@@ -9787,10 +9787,10 @@ function compareVersions(a, b) {
 const CHANGELOG_DATA = [
   {
     version: "3.11.6", date: "2026-04-10",
-    title: "비율 모드 검토 토글 승급 완전 해결",
+    title: "티어 설정 변경 시 UI 즉시 반영",
     highlights: [
-      { type: "fix", text: "🏆 비율 기반 모드에서 검토 토글을 해제해도 승급 대기 작품의 화면 티어가 그대로이던 문제 해결" },
-      { type: "fix", text: "토글 변경 시 일부 상황에서 목록 갱신이 건너뛰어지던 문제 수정" },
+      { type: "fix", text: "🏆 티어 검토 토글을 해제해도 승급 대기 작품이 즉시 반영되지 않던 문제 해결 (비율 모드 포함)" },
+      { type: "fix", text: "티어 시스템에서 값(검토 토글/threshold/비율%/색상/라벨/추가/삭제) 변경 시 목록이 즉시 갱신되지 않던 문제 전반 수정" },
     ],
   },
   {
@@ -28861,6 +28861,16 @@ function AppContent() {
             }
             globalTierThresholds = th;
           }
+          // 🔧 v3.11.6: tierSystemConfig 변경 시 list 강제 재참조 (전역 UI 갱신 보장)
+          // 원인: rankedEntries/homeFiltered 등 useMemo는 [list, ...] deps로
+          //   appSettings.tierSystemConfig 변경만으론 재실행 안 됨
+          // 해결: list의 각 novel을 새 참조로 복제 → useMemo 재실행 + NovelCard memo 깨기
+          // 대상: gated 토글, threshold/ratio 변경, label/color 변경, 티어 추가/삭제, 프리셋 적용 등
+          //   모든 tier 편집 경로가 이 saveAppSettings를 경유하므로 일괄 해결됨
+          if (newSettings.tierSystemConfig) {
+            invalidateMatchCache();
+            setList(prev => (prev || []).map(n => ({ ...n })));
+          }
         }
       } catch (e) {
         console.warn("saveAppSettings: global update error:", e);
@@ -40856,10 +40866,11 @@ async function importJSON() {
                           const newGated = !tiersForUI[idx].gated;
                           const updatedTiers = [...tiersForUI];
                           updatedTiers[idx] = { ...updatedTiers[idx], gated: newGated };
+                          // saveAppSettings가 내부적으로 list 강제 재참조 + matchCache 무효화 수행 (v3.11.6)
                           saveAppSettings({ tierSystemConfig: { ...tsc, tiers: updatedTiers } });
 
-                          // 🔧 v3.11.6: gated 해제 시 해당 티어의 manual_tier 자동 클리어
-                          // → 강등 검토 대기 중이던 작품이 자동으로 레이팅 기반 티어로 처리됨
+                          // gated 해제 시 해당 티어의 manual_tier 자동 클리어
+                          // (강등 검토 대기 작품이 자동으로 레이팅 기반 티어로 처리됨)
                           let clearedCount = 0;
                           if (!newGated) {
                             try {
@@ -40872,26 +40883,14 @@ async function importJSON() {
                                 }));
                                 await execBatch(queries);
                                 clearedCount = novels.length;
+                                // DB 변경사항(manual_tier=NULL)을 list에 반영하려면 fresh data 필요
+                                loadListRunningRef.current = false;
+                                try { await loadList(undefined, undefined, "gated-toggle"); } catch (e) { console.warn("[gated 토글] loadList 실패:", e); }
                               }
                             } catch (e) {
                               console.warn("[gated 토글] manual_tier 클리어 실패:", e);
                             }
                           }
-
-                          // 🔧 v3.11.6: 강제 UI 재렌더 (비율 모드 승급 시나리오 대응)
-                          // 문제: gated OFF 후에도 화면이 갱신 안 되는 경우가 있었음
-                          //   원인: rankedEntries/homeFiltered useMemo는 [list, ...] deps라
-                          //         appSettings 변경만으론 재실행 안 되고 list 참조가 바뀌어야 함.
-                          //         loadList는 loadListRunningRef가 true면 조용히 skip됨.
-                          // 해결:
-                          //   1) matchCache 무효화 (ratio 모드의 computeRatioTierMap이 stale 캐시 참조 방지)
-                          //   2) setList(prev => prev.map(n => ({...n}))) — 모든 novel 객체를 새 참조로 복제
-                          //      → NovelCard memo 깨기 → getDisplayTier 재호출 → 새 globalTierConfig 기준 계산
-                          //   3) loadListRunningRef 강제 해제 후 loadList — DB fresh data 로드
-                          invalidateMatchCache();
-                          setList(prev => (prev || []).map(n => ({ ...n })));
-                          loadListRunningRef.current = false;
-                          try { await loadList(undefined, undefined, "gated-toggle"); } catch (e) { console.warn("[gated 토글] loadList 실패:", e); }
 
                           if (clearedCount > 0 && !isAutoMatchingRef.current) {
                             Alert.alert(
