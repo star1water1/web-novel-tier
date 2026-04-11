@@ -11,13 +11,18 @@
  * ║ 🔴 v3.10.2 매칭 네이티브 크래시 근본 수정 (2026-04-10)                           ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║                                                                              ║
- * ║ [근본 수정] safeDbOperation 내 resetDbConnection → 핸들 폐기로 교체            ║
- * ║ • 근본 원인: 연결 오류 시 resetDbConnection() 호출 → closeAsync()              ║
+ * ║ [근본 수정] resetDbConnection closeAsync → 5초 지연 close로 변경                ║
+ * ║ • 근본 원인: resetDbConnection()이 closeAsync()를 즉시 await                   ║
  * ║   → 동시 실행 중인 다른 DB 작업의 네이티브 SQLite 핸들 파괴                    ║
  * ║   → 네이티브 레벨 크래시 (JS 로그 없음)                                        ║
- * ║ • 수정: closeAsync 없이 db=null, dbOpenPromise=null만 설정                    ║
- * ║   → 다음 retry에서 openDb()가 fresh connection 생성                            ║
- * ║   → 기존 핸들은 GC가 자연 회수 (진행 중 작업 안전)                             ║
+ * ║ • 매칭 중 동시 DB 작업 예시:                                                  ║
+ * ║   - matchQueue task → execBatch → safeDbOperation                            ║
+ * ║   - choiceLogQueue.flush → execBatch → safeDbOperation (타이머)              ║
+ * ║   - deferSetAppMeta → batchSetAppMeta → safeDbOperation (타이머)             ║
+ * ║ • 하나가 연결 오류로 resetDbConnection 호출 → 다른 작업의 네이티브 핸들 파괴   ║
+ * ║ • 수정: db 참조만 즉시 폐기, closeAsync는 setTimeout 5초 후 실행              ║
+ * ║   → in-flight operations 완료 시간 확보 후 안전하게 close                      ║
+ * ║   → 새 openDb()는 fresh connection 즉시 생성 (지연 없음)                      ║
  * ║                                                                              ║
  * ║ [최적화] 비-ratio 모드 EMPTY_RATIO_MAP 싱글톤                                  ║
  * ║ • 매 렌더 new Map() 생성 → 싱글톤 참조로 GC 압박 제거                         ║
@@ -3431,14 +3436,14 @@ async function resetDbConnection() {
   dbOpenPromise = null;
   dbLastSuccessTime = 0;
   _dbOpenedForSlot = -1; // 🔧 슬롯 추적 리셋
-  // 🔧 v3.5.3: 기존 연결을 실제로 닫아야 새 연결이 정상 작동
+  // 🔧 v3.10.2: 즉시 closeAsync 금지 — 동시 실행 중인 다른 DB 작업의 네이티브 핸들 파괴 방지
+  // 5초 후 지연 close로 in-flight operations 완료 대기
   if (oldDb) {
-    try {
-      await oldDb.closeAsync();
-      console.log("기존 DB 연결 닫기 성공");
-    } catch (closeErr) {
-      console.warn("기존 DB 닫기 실패 (무시):", closeErr.message);
-    }
+    setTimeout(() => {
+      oldDb.closeAsync()
+        .then(() => console.log("기존 DB 연결 지연 close 성공"))
+        .catch((closeErr) => console.warn("기존 DB 지연 close 실패 (무시):", closeErr.message));
+    }, 5000);
   }
 }
 
@@ -3781,18 +3786,12 @@ async function safeDbOperation(operation, operationName = "DB") {
       // 🔧 v3.5.15c: 연결 오류만 resetDbConnection (경합 오류는 대기만)
       // 경합: busy_timeout=5000 내에서 자동 재시도, 그래도 실패 시 직접 retry
       // 연결: DB가 죽었거나 null이므로 리셋 필요
-      // 🔧 v3.10.1: resetDbConnection 대신 연결 폐기만 수행 (동시 작업 핸들 파괴 방지)
-      // closeAsync()는 호출하지 않음 — 다른 진행 중 작업의 네이티브 핸들 보존
-      // GC가 old handle을 자연 회수, 새 openDb()가 fresh connection 생성
+      // 🔧 v3.10.2: resetDbConnection이 이제 지연 close 사용 → 동시 작업 핸들 안전
       if (isConnectionError) {
-        console.warn(`[safeDbOperation] 연결 오류 — 핸들 폐기 (close 없이)`);
-        db = null;
-        dbOpenPromise = null;
+        await resetDbConnection();
       } else if (!isContentionError && attempt > 1) {
-        // 기타 오류: 3번째 시도부터 핸들 폐기 (보수적)
-        console.warn(`[safeDbOperation] 기타 오류 반복 — 핸들 폐기 (close 없이)`);
-        db = null;
-        dbOpenPromise = null;
+        // 기타 오류: 3번째 시도부터 리셋 (보수적)
+        await resetDbConnection();
       }
       // 경합 오류: resetDbConnection 절대 하지 않음 (대기 후 재시도만)
       
