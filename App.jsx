@@ -2,7 +2,7 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.11.4                                                                  ║
+ * ║  버전: 3.11.5                                                                  ║
  * ║  최종 수정: 2026-04-10                                                        ║
  * ║  총 라인 수: 약 46,600줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -9759,7 +9759,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "3.11.4";
+const APP_VERSION = "3.11.5";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -9785,6 +9785,14 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "3.11.5", date: "2026-04-10",
+    title: "검토 토글 자동 반영 완료",
+    highlights: [
+      { type: "fix", text: "🏆 티어 시스템의 검토 토글을 해제해도 승급 대기 중이던 작품의 티어가 즉시 반영되지 않던 문제 해결" },
+      { type: "fix", text: "토글 변경 시 목록이 새로고침되지 않아 화면이 갱신되지 않던 문제 수정" },
+    ],
+  },
   {
     version: "3.11.4", date: "2026-04-10",
     title: "설정 저장 + 안정성 개선",
@@ -40850,9 +40858,10 @@ async function importJSON() {
                           updatedTiers[idx] = { ...updatedTiers[idx], gated: newGated };
                           saveAppSettings({ tierSystemConfig: { ...tsc, tiers: updatedTiers } });
 
-                          // 🔧 v3.11.3: gated 해제 시 해당 티어의 manual_tier 자동 클리어
+                          // 🔧 v3.11.5: gated 해제 시 해당 티어의 manual_tier 자동 클리어
                           // → 강등 검토 대기 중이던 작품이 자동으로 레이팅 기반 티어로 처리됨
                           // (gated 해제 = "이 티어는 자유롭게 변동"이므로 수동 고정 해제가 자연스러움)
+                          let clearedCount = 0;
                           if (!newGated) {
                             try {
                               const tierKey = updatedTiers[idx].key;
@@ -40863,17 +40872,24 @@ async function importJSON() {
                                   params: [n.id],
                                 }));
                                 await execBatch(queries);
-                                await loadList(undefined, undefined, "gated-toggle");
-                                if (!isAutoMatchingRef.current) {
-                                  Alert.alert(
-                                    "자동 처리",
-                                    `"${tierKey}" 티어의 강제 지정 ${novels.length}개가 해제되어\n레이팅 기반 티어로 자동 처리되었습니다.`
-                                  );
-                                }
+                                clearedCount = novels.length;
                               }
                             } catch (e) {
                               console.warn("[gated 토글] manual_tier 클리어 실패:", e);
                             }
+                          }
+
+                          // 🔧 v3.11.5: 토글 방향/클리어 여부와 무관하게 loadList 호출
+                          // → list 참조가 갱신되어 rankedEntries/homeFiltered 등 모든 useMemo 재실행
+                          // → 승급 검토 시나리오(manual_tier=NULL이라 클리어할 게 없는 경우)도
+                          //   즉시 새 티어로 반영됨
+                          try { await loadList(undefined, undefined, "gated-toggle"); } catch (e) { console.warn("[gated 토글] loadList 실패:", e); }
+
+                          if (clearedCount > 0 && !isAutoMatchingRef.current) {
+                            Alert.alert(
+                              "자동 처리",
+                              `"${updatedTiers[idx].key}" 티어의 강제 지정 ${clearedCount}개가 해제되어\n레이팅 기반 티어로 자동 처리되었습니다.`
+                            );
                           }
                         }}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
