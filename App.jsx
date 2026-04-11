@@ -2,9 +2,35 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.11.3                                                                  ║
+ * ║  버전: 3.11.4                                                                  ║
  * ║  최종 수정: 2026-04-10                                                        ║
  * ║  총 라인 수: 약 46,600줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🧹 v3.11.4 코드베이스 심층 감사 기반 수정 (2026-04-10)                          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ 4개 분야별 에이전트(null 안전성·async·state·데이터 무결성)로 전수 감사 후      ║
+ * ║ 가드 존재 여부를 직접 검증하여 진짜 버그만 선별 수정                             ║
+ * ║                                                                              ║
+ * ║ [수정 1] getHighestNonGatedTier 빈 tiers 배열 크래시 가드                      ║
+ * ║ • 기존: `if (!config || !config.tiers) return "B+"`                           ║
+ * ║ • 문제: config.tiers = [] 인 경우 guard 통과 후 tiers[-1].key 접근 → 크래시    ║
+ * ║ • 수정: length === 0 체크 추가                                                 ║
+ * ║                                                                              ║
+ * ║ [수정 2] parseInt(v) || N 패턴 5곳 — 사용자의 "0" 입력 유실 방지                 ║
+ * ║ • 기존: `parseInt(v) || 30` → 사용자가 "0" 입력 시 30으로 fallback             ║
+ * ║ • 영향: undoStackSize=0, autoApproveMaxLosses=0 등 유효한 0 입력 불가          ║
+ * ║ • 수정: `const n = parseInt(v); n = Number.isFinite(n) ? n : default`         ║
+ * ║ • 대상: autoApproveMinWins/MaxLosses/MinMatches, undoStackSize (4곳)          ║
+ * ║                                                                              ║
+ * ║ [검증 과정 메모]                                                                ║
+ * ║ • 4개 에이전트의 60+ 보고 중 대부분 오탐 (가드 이미 존재, 의도된 설계 등)       ║
+ * ║ • 각 보고를 수동으로 주변 코드/맥락 검증 후 진짜 버그만 선별                     ║
+ * ║ • 오탐 사례: null access 대부분, Promise.all(getAppMeta 내부 safe),            ║
+ * ║   loadPlannedList(내부 try-catch), importBackupRef(성공/catch 경로 배타적)     ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -5699,7 +5725,8 @@ function getGatedTiers(config) {
 }
 
 function getHighestNonGatedTier(config) {
-  if (!config || !config.tiers) return "B+";
+  // 🔧 v3.11.4: 빈 tiers 배열 가드 추가 — length 체크 없으면 config.tiers[-1] 크래시
+  if (!config || !config.tiers || config.tiers.length === 0) return "B+";
   const nonGated = config.tiers.filter(t => !t.gated);
   return nonGated.length > 0 ? nonGated[0].key : config.tiers[config.tiers.length - 1].key;
 }
@@ -9732,7 +9759,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "3.11.3";
+const APP_VERSION = "3.11.4";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -9758,6 +9785,19 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "3.11.4", date: "2026-04-10",
+    title: "코드베이스 심층 감사 기반 수정",
+    highlights: [
+      { type: "fix", text: "🧹 getHighestNonGatedTier 빈 tiers 배열 크래시 가드 추가" },
+      { type: "fix", text: "parseInt(v) || N 패턴 4곳 수정 — 사용자의 '0' 입력이 fallback으로 덮어씌워지던 문제" },
+      { type: "fix", text: "대상: autoApproveMinWins/MaxLosses/MinMatches, undoStackSize" },
+    ],
+    details: [
+      { type: "improve", text: "4개 분야별 에이전트(null 안전성·async·state·데이터 무결성)로 전수 감사" },
+      { type: "improve", text: "60+ 에이전트 보고를 수동 검증하여 진짜 버그만 선별 수정 (대부분 오탐)" },
+    ],
+  },
   {
     version: "3.11.3", date: "2026-04-10",
     title: "expo-sqlite connection pool 우회 — NPE 진짜 근본 수정",
@@ -40992,8 +41032,8 @@ async function importJSON() {
                         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
                           <Text style={{ color: C.text }}>최소 승수</Text>
                           <TextInput
-                            value={String(appSettings.autoApproveMinWins || 10)}
-                            onChangeText={(v) => saveAppSettings({ autoApproveMinWins: parseInt(v) || 10 })}
+                            value={String(appSettings.autoApproveMinWins ?? 10)}
+                            onChangeText={(v) => { const n = parseInt(v); saveAppSettings({ autoApproveMinWins: Number.isFinite(n) ? n : 10 }); }}
                             keyboardType="number-pad"
                             style={{ backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, width: 60, textAlign: "center", color: C.text }}
                           />
@@ -41001,8 +41041,8 @@ async function importJSON() {
                         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
                           <Text style={{ color: C.text }}>최대 패수</Text>
                           <TextInput
-                            value={String(appSettings.autoApproveMaxLosses || 3)}
-                            onChangeText={(v) => saveAppSettings({ autoApproveMaxLosses: parseInt(v) || 3 })}
+                            value={String(appSettings.autoApproveMaxLosses ?? 3)}
+                            onChangeText={(v) => { const n = parseInt(v); saveAppSettings({ autoApproveMaxLosses: Number.isFinite(n) ? n : 3 }); }}
                             keyboardType="number-pad"
                             style={{ backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, width: 60, textAlign: "center", color: C.text }}
                           />
@@ -41010,8 +41050,8 @@ async function importJSON() {
                         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
                           <Text style={{ color: C.text }}>최소 매칭 수</Text>
                           <TextInput
-                            value={String(appSettings.autoApproveMinMatches || 15)}
-                            onChangeText={(v) => saveAppSettings({ autoApproveMinMatches: parseInt(v) || 15 })}
+                            value={String(appSettings.autoApproveMinMatches ?? 15)}
+                            onChangeText={(v) => { const n = parseInt(v); saveAppSettings({ autoApproveMinMatches: Number.isFinite(n) ? n : 15 }); }}
                             keyboardType="number-pad"
                             style={{ backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, width: 60, textAlign: "center", color: C.text }}
                           />
@@ -41041,8 +41081,8 @@ async function importJSON() {
                     <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>최대 저장할 되돌리기 항목 수</Text>
                   </View>
                   <TextInput
-                    value={String(appSettings.undoStackSize || 30)}
-                    onChangeText={(v) => saveAppSettings({ undoStackSize: parseInt(v) || 30 })}
+                    value={String(appSettings.undoStackSize ?? 30)}
+                    onChangeText={(v) => { const n = parseInt(v); saveAppSettings({ undoStackSize: Number.isFinite(n) ? n : 30 }); }}
                     keyboardType="number-pad"
                     style={{ backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, width: 60, textAlign: "center", color: C.text }}
                   />
