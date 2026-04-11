@@ -2,9 +2,46 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.10.2                                                                  ║
+ * ║  버전: 3.11.0                                                                  ║
  * ║  최종 수정: 2026-04-10                                                        ║
  * ║  총 라인 수: 약 45,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ ⚙️ v3.11.0 매칭 지연 작업 시스템 근본 재설계 (2026-04-10)                        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [근본 재설계] 분산된 지연 타이머 → 단일 파이프라인                              ║
+ * ║ • 문제: choiceLog/pattern/stats/insight/meta — 5개 시스템이 독립 타이머 운영   ║
+ * ║   → 서로 조율 없이 동시 실행 → SQLITE_BUSY 경합 + 큐 pile-up                   ║
+ * ║ • 자동매칭 30회 연속 시 수백 개 DB 작업이 단일 연결에 적체                     ║
+ * ║                                                                              ║
+ * ║ [핵심 1] isAutoMatchingActive 모듈 플래그                                     ║
+ * ║ • 모듈 레벨 스케줄러가 자동매칭 상태 동기 감지                                ║
+ * ║                                                                              ║
+ * ║ [핵심 2] runDeferredPipeline — 단일 시퀀셜 파이프라인                         ║
+ * ║ • 순차 실행: drain → choiceLog → pattern → stats → insight → meta            ║
+ * ║ • 3단계 연쇄 타이머(1s→2s→3s) → 1개 파이프라인                                ║
+ * ║                                                                              ║
+ * ║ [핵심 3] 자동매칭 중 지연 작업 전면 차단                                      ║
+ * ║ • choiceLogQueue/schedulePatternUpdate/deferSetAppMeta: 누적만, 처리 스킵      ║
+ * ║ • 데이터는 pending 배열/객체에 누적                                           ║
+ * ║                                                                              ║
+ * ║ [핵심 4] 자동매칭 종료 시 일괄 플러시                                          ║
+ * ║ • finally 블록에서 runDeferredPipeline() await                                ║
+ * ║ • 100회 자동매칭 → 수백 회 DB 작업 → 1회 파이프라인                           ║
+ * ║ • ProgressOverlay 표시로 사용자 가시성 확보                                    ║
+ * ║                                                                              ║
+ * ║ [보강 1] 체크포인트 — 30회마다 choiceLog만 mini-flush (데이터 손실 방지)      ║
+ * ║ [보강 2] 배치 크기 캡 — 2000개 초과 시 경고                                   ║
+ * ║ [보강 3] AppState BG 전환 시 자동매칭 강제 종료 + 파이프라인                   ║
+ * ║ [보강 4] 슬롯 전환/import 시 파이프라인 플래그 리셋                            ║
+ * ║                                                                              ║
+ * ║ [효과]                                                                       ║
+ * ║ • 100회 자동매칭 DB 작업: ~500회 → ~5회                                      ║
+ * ║ • 동시 실행 최대: 5~6 → 1~2 (matchQueue + 파이프라인 순차)                   ║
+ * ║ • SQLITE_BUSY 경합 대폭 감소                                                 ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -4569,8 +4606,22 @@ const _pendingMetaWrites = {};
 let _metaBatchTimer = null;
 let _metaFlushFailCount = 0; // 🔧 v3.9.0: 무한 재시도 방지
 
+// 📊 v3.11.0: 자동매칭 활성 상태 모듈 플래그 (근본 수정 — 지연 작업 일괄 처리)
+// 스케줄러들이 모듈 레벨이라 React ref에 접근 불가 → 동기 플래그로 조율
+let isAutoMatchingActive = false;
+// 📊 v3.11.0: 지연 파이프라인 상태
+let deferredPipelineScheduled = false;
+let deferredPipelineRunning = false;
+// 📊 v3.11.0: 자동매칭 체크포인트 카운터 (데이터 손실 방지)
+let autoMatchCheckpointCounter = 0;
+const AUTO_MATCH_CHECKPOINT_INTERVAL = 30;
+// 📊 v3.11.0: 배치 크기 캡 (OOM 방지)
+const MAX_PENDING_PATTERN_UPDATES = 2000;
+
 function deferSetAppMeta(key, value) {
   _pendingMetaWrites[key] = value;
+  // 📊 v3.11.0: 자동매칭 중엔 누적만 (종료 시 일괄 flush)
+  if (isAutoMatchingActive) return;
   if (_metaBatchTimer) return; // 이미 타이머 대기 중
   _metaBatchTimer = setTimeout(async () => {
     // 🔧 v3.5.15d: 매칭 큐가 처리 중이면 드레인 대기 후 flush
@@ -5790,7 +5841,10 @@ const choiceLogQueue = {
   
   add(log) {
     this.pending.push(log);
-    
+
+    // 📊 v3.11.0: 자동매칭 중엔 누적만 (종료 시 일괄 flush)
+    if (isAutoMatchingActive) return;
+
     if (this.pending.length >= this.maxSize) {
       this.flush();
     } else if (!this.timer) {
@@ -5929,22 +5983,23 @@ let patternUpdateBatch = [];
 
 function schedulePatternUpdate(logs) {
   patternUpdateBatch.push(...logs);
-  
-  if (!patternUpdateScheduled) {
-    patternUpdateScheduled = true;
-    setTimeout(async () => {
-      try {
-        const batch = patternUpdateBatch.splice(0);
-        patternUpdateScheduled = false;
 
-        if (batch.length > 0) {
-          // 🔧 v3.5.15d: 매칭 큐 드레인 대기 후 패턴 업데이트
-          if (!isMatchQueueIdle()) {
-            try { await waitForMatchQueueDrain(3000); } catch {}
-          }
-          await processPatternUpdates(batch);
-        }
-      } catch (e) { console.error("[schedulePatternUpdate] 예기치 않은 오류:", e); }
+  // 📊 v3.11.0: 자동매칭 중엔 누적만 (종료 시 일괄 처리)
+  if (isAutoMatchingActive) {
+    // OOM 방지: 최대 크기 초과 시 경고만 (종료 시 일괄 처리)
+    if (patternUpdateBatch.length > MAX_PENDING_PATTERN_UPDATES) {
+      console.warn(`[patternBatch] 누적 ${patternUpdateBatch.length}개 — 자동매칭 종료 후 일괄 처리`);
+    }
+    return;
+  }
+
+  // 📊 v3.11.0: 개별 타이머 → 통합 파이프라인으로 위임
+  // 파이프라인이 자체적으로 patternUpdateBatch 처리 + stats refresh + insights 순차 실행
+  if (!patternUpdateScheduled && !deferredPipelineScheduled && !deferredPipelineRunning) {
+    patternUpdateScheduled = true;
+    setTimeout(() => {
+      patternUpdateScheduled = false;
+      scheduleDeferredPipeline(0); // 즉시 파이프라인 실행
     }, 1000);
   }
 }
@@ -6101,9 +6156,13 @@ async function batchUpdatePatternStats(updates) {
   }
   
   await execBatch(queries);
-  
-  // 통계 재계산 스케줄
-  schedulePatternStatsRefresh();
+
+  // 📊 v3.11.0: 연쇄 스케줄 제거 — 파이프라인이 순차 처리
+  // 기존: schedulePatternStatsRefresh() → 2초 후 refreshPatternStats → 3초 후 scheduleInsightDiscovery
+  // 변경: runDeferredPipeline이 직접 순차 실행
+  if (!isAutoMatchingActive && !deferredPipelineRunning) {
+    scheduleDeferredPipeline(500); // 짧은 지연 후 나머지 파이프라인 실행
+  }
 }
 
 /**
@@ -6182,10 +6241,14 @@ async function refreshPatternStats() {
     if (queries.length > 0) {
       await execBatch(queries);
     }
-    
-    // 인사이트 발견 스케줄
-    scheduleInsightDiscovery();
-    
+
+    // 📊 v3.11.0: 연쇄 스케줄 제거 — 파이프라인 내에서 직접 호출됨
+    // (runDeferredPipeline이 refreshPatternStats → discoverInsights 순차 실행)
+    // 파이프라인 외부에서 호출된 경우에만 다음 단계 스케줄
+    if (!isAutoMatchingActive && !deferredPipelineRunning) {
+      scheduleDeferredPipeline(500);
+    }
+
   } catch (e) {
     console.error("[refreshPatternStats] 오류:", e);
   }
@@ -6210,6 +6273,59 @@ function scheduleInsightDiscovery() {
       } catch (e) { console.error("[scheduleInsightDiscovery] 예기치 않은 오류:", e); }
     }, 3000);
   }
+}
+
+/**
+ * 📊 v3.11.0: 지연 작업 통합 파이프라인
+ * 기존 3단계 연쇄 스케줄(1s→2s→3s 타이머)을 단일 시퀀셜 파이프라인으로 통합.
+ * 모든 지연 작업을 순차 실행하여 동시성 제거.
+ */
+async function runDeferredPipeline() {
+  if (deferredPipelineRunning) return;
+  if (isAutoMatchingActive) return; // 자동매칭 중에는 실행 안 함
+  deferredPipelineRunning = true;
+  try {
+    // 0. 매칭 큐 드레인 대기 (최우선)
+    if (!isMatchQueueIdle()) {
+      try { await waitForMatchQueueDrain(3000); } catch {}
+    }
+    // 1. choice log flush (pending 있으면)
+    if (choiceLogQueue.pending.length > 0) {
+      try { await choiceLogQueue.flush(); } catch (e) { console.warn("[pipeline] choiceLog flush 실패:", e); }
+    }
+    // 2. pattern update (배치 누적분 처리)
+    const batch = patternUpdateBatch.splice(0);
+    if (batch.length > 0) {
+      try { await processPatternUpdates(batch); } catch (e) { console.warn("[pipeline] patternUpdate 실패:", e); }
+    }
+    // 3. stats refresh (연쇄 호출 대신 직접)
+    try { await refreshPatternStats(); } catch (e) { console.warn("[pipeline] statsRefresh 실패:", e); }
+    // 4. insight discovery (연쇄 호출 대신 직접)
+    try { await discoverInsights(); } catch (e) { console.warn("[pipeline] insightDiscovery 실패:", e); }
+    // 5. meta flush (pending 있으면)
+    if (Object.keys(_pendingMetaWrites).length > 0) {
+      if (_metaBatchTimer) { clearTimeout(_metaBatchTimer); _metaBatchTimer = null; }
+      const snapshot = { ..._pendingMetaWrites };
+      for (const k of Object.keys(_pendingMetaWrites)) delete _pendingMetaWrites[k];
+      try { await batchSetAppMeta(snapshot); } catch (e) { console.warn("[pipeline] meta flush 실패:", e); }
+    }
+  } catch (e) {
+    console.error("[runDeferredPipeline] 예기치 않은 오류:", e);
+  } finally {
+    deferredPipelineRunning = false;
+  }
+}
+
+function scheduleDeferredPipeline(delay = 1000) {
+  if (deferredPipelineScheduled || deferredPipelineRunning) return;
+  if (isAutoMatchingActive) return; // 자동매칭 중에는 스케줄 안 함
+  deferredPipelineScheduled = true;
+  setTimeout(async () => {
+    try {
+      deferredPipelineScheduled = false;
+      await runDeferredPipeline();
+    } catch (e) { console.error("[scheduleDeferredPipeline] 예기치 않은 오류:", e); }
+  }, delay);
 }
 
 /**
@@ -24650,6 +24766,11 @@ function AppContent() {
       setQuotesShuffled(null);
       // refs (🔧 슬롯 전환 시 이전 슬롯 데이터 잔류 방지)
       isAutoMatchingRef.current = false;
+      isAutoMatchingActive = false; // 📊 v3.11.0: 모듈 플래그 리셋
+      autoMatchCheckpointCounter = 0;
+      deferredPipelineScheduled = false;
+      deferredPipelineRunning = false;
+      patternUpdateBatch.length = 0; // 이전 슬롯 배치 폐기
       needsListRefreshRef.current = false;
       loadListRunningRef.current = false; // 🔧 v3.5.15e: 이전 loadList 비정상 종료 시 잔류 방지
       editItemRef.current = null;
@@ -24854,10 +24975,19 @@ function AppContent() {
       // 포그라운드 → 백그라운드 전환 시: 큐 플러시
       if (lastState === "active" && nextAppState.match(/inactive|background/)) {
         console.log("앱 백그라운드 전환 - 큐 플러시 + DB 정리");
-        try {
-          await choiceLogQueue.flush();
-        } catch (e) {
-          console.warn("백그라운드 전환 큐 플러시 실패:", e);
+        // 📊 v3.11.0: 자동매칭 중이면 강제 종료 + 파이프라인 플러시
+        if (isAutoMatchingActive) {
+          console.log("백그라운드 전환: 자동매칭 강제 종료");
+          isAutoMatchingRef.current = false;
+          isAutoMatchingActive = false;
+          autoMatchCheckpointCounter = 0;
+          try { await runDeferredPipeline(); } catch (e) { console.warn("BG 전환 파이프라인 실패:", e); }
+        } else {
+          try {
+            await choiceLogQueue.flush();
+          } catch (e) {
+            console.warn("백그라운드 전환 큐 플러시 실패:", e);
+          }
         }
       }
       
@@ -30671,7 +30801,9 @@ function AppContent() {
     const capturedSpeed = autoMatchSettings.speed || "fast";
 
     // 잠금 (동기 — 다음 렌더 전에 설정)
+    // 📊 v3.11.0: 모듈 플래그도 함께 동기화 (지연 작업 차단용)
     isAutoMatchingRef.current = true;
+    isAutoMatchingActive = true;
     Breadcrumbs.action("autoMatch_start", `mode=${autoMatchSettings?.mode}`);
     setIsAutoMatching(true);
 
@@ -30686,6 +30818,23 @@ function AppContent() {
           return; // finally에서 자동매칭 플래그 리셋
         }
 
+        // 📊 v3.11.0: 체크포인트 — N회마다 choiceLog만 mini-flush (데이터 손실 방지)
+        autoMatchCheckpointCounter++;
+        if (autoMatchCheckpointCounter >= AUTO_MATCH_CHECKPOINT_INTERVAL) {
+          autoMatchCheckpointCounter = 0;
+          try {
+            if (choiceLogQueue.pending.length > 0) {
+              // 임시로 플래그 해제 → flush → 다시 설정 (choiceLogQueue.flush 내부 동작 허용)
+              isAutoMatchingActive = false;
+              await choiceLogQueue.flush();
+              isAutoMatchingActive = true;
+            }
+          } catch (e) {
+            console.warn("[autoMatch] 체크포인트 실패:", e);
+            isAutoMatchingActive = true; // 에러 시에도 플래그 복구
+          }
+        }
+
         // 속도 설정에 따른 딜레이
         const speed = capturedSpeed;
         const delayMs = speed === "fast" ? 100 : speed === "normal" ? 300 : 700;
@@ -30696,21 +30845,38 @@ function AppContent() {
         // 자동매칭 중단 (finally에서 플래그 리셋됨)
       } finally {
         Breadcrumbs.action("autoMatch_stop");
+        // 📊 v3.11.0: 모듈 플래그 먼저 해제 → 파이프라인 실행 가능
         isAutoMatchingRef.current = false;
+        isAutoMatchingActive = false;
+        autoMatchCheckpointCounter = 0;
         setIsAutoMatching(false);
-        
+
         // 🔧 v3.5.15: 자동매칭 종료 후 지연된 loadList 실행
         if (needsListRefreshRef.current) {
           needsListRefreshRef.current = false;
           loadList(undefined, undefined, "auto-batch").catch(() => {});
           invalidateMatchCache(); // 다음 매칭 세션을 위해 캐시도 갱신
         }
+
+        // 📊 v3.11.0: 누적된 지연 작업 일괄 처리 (파이프라인)
+        // 진행 상태 표시 — 100회 자동매칭 후 1회만 실행되므로 UX 영향 최소
+        try {
+          setLoadingProgress({ current: 0, total: 0, label: "매칭 데이터 정리 중..." });
+          await runDeferredPipeline();
+        } catch (e) {
+          console.warn("[autoMatch] 지연 작업 처리 실패:", e);
+        } finally {
+          setLoadingProgress(null);
+        }
       }
     })().catch(e => {
       // 🔧 v3.10.1: 불변규칙 #5 — 자동매칭 IIFE 최외곽 방어 (finally throw 시 unhandled rejection 방지)
       console.error("[autoMatch] 예기치 않은 오류:", e);
       isAutoMatchingRef.current = false;
+      isAutoMatchingActive = false;
+      autoMatchCheckpointCounter = 0;
       setIsAutoMatching(false);
+      setLoadingProgress(null);
     });
   }, [pair, autoEnabled, autoMatchSettings, matchAnalysis, evaluateAutoMatch]);
   
@@ -32449,6 +32615,10 @@ async function importJSON() {
               choiceLogQueue.pending = [];
               patternUpdateBatch.length = 0;
               patternUpdateScheduled = false;
+              // 📊 v3.11.0: 파이프라인 플래그도 리셋
+              deferredPipelineScheduled = false;
+              deferredPipelineRunning = false;
+              autoMatchCheckpointCounter = 0;
               // 🔧 v3.5.8: 전체 복원 플로우를 try-catch로 보호
               // DELETE 후 INSERT 실패 시 데이터 소실 방지를 위한 안전장치
               let deleteCompleted = false;
