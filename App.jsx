@@ -9609,7 +9609,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "3.9.5";
+const APP_VERSION = "3.11.2";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -9635,6 +9635,123 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "3.11.2", date: "2026-04-10",
+    title: "매칭 prepareAsync NPE 크래시 근본 수정",
+    highlights: [
+      { type: "fix", text: "🔴 매칭 중 NativeDatabase.prepareAsync NullPointerException 크래시 근본 수정" },
+      { type: "fix", text: "openDb() 내부 2곳의 즉시 closeAsync 호출 → 5초 지연 close로 교체" },
+      { type: "fix", text: "진행 중 작업의 네이티브 핸들 보호 (슬롯 불일치 감지, 연결 테스트 실패)" },
+    ],
+    details: [
+      { type: "fix", text: "슬롯 불일치 감지 시 즉시 close → 참조 폐기 + 5초 지연 close" },
+      { type: "fix", text: "SELECT 1 연결 테스트 실패 시 즉시 close → 참조 폐기 + 5초 지연 close" },
+      { type: "improve", text: "전체 closeAsync 호출 인벤토리 검증 — 남은 직접 호출 없음 확인" },
+    ],
+  },
+  {
+    version: "3.11.1", date: "2026-04-10",
+    title: "지연 파이프라인 race/dead code 수정",
+    highlights: [
+      { type: "fix", text: "🔧 체크포인트 플래그 토글 제거 — deferSetAppMeta 타이머 race 방지" },
+      { type: "fix", text: "파이프라인 종료 후 누적 배치 재스케줄 (데이터 손실 방지)" },
+      { type: "fix", text: "자동매칭 외부 catch에 파이프라인 호출 추가 (finally 실패 시 복구)" },
+      { type: "improve", text: "schedulePatternStatsRefresh, scheduleInsightDiscovery dead code 제거" },
+    ],
+  },
+  {
+    version: "3.11.0", date: "2026-04-10",
+    title: "매칭 지연 작업 통합 파이프라인",
+    highlights: [
+      { type: "perf", text: "⚡ 100회 자동매칭 DB 작업 수 ~500회 → ~5회 (90% 감소)" },
+      { type: "new", text: "단일 시퀀셜 파이프라인 (drain→choiceLog→pattern→stats→insight→meta)" },
+      { type: "improve", text: "자동매칭 중 지연 작업 전면 차단 → 종료 시 일괄 처리" },
+      { type: "improve", text: "3단계 타이머 체인(1s→2s→3s) → 1개 파이프라인 통합" },
+    ],
+    details: [
+      { type: "new", text: "isAutoMatchingActive 모듈 플래그 — 스케줄러가 자동매칭 상태 동기 감지" },
+      { type: "new", text: "runDeferredPipeline / scheduleDeferredPipeline 함수" },
+      { type: "new", text: "체크포인트 메커니즘 (30회마다 choiceLog mini-flush로 데이터 손실 방지)" },
+      { type: "new", text: "배치 크기 캡 (MAX_PENDING_PATTERN_UPDATES=2000)" },
+      { type: "improve", text: "AppState BG 전환 시 자동매칭 강제 종료 + 파이프라인 플러시" },
+      { type: "improve", text: "슬롯 전환/import 시 파이프라인 플래그 리셋" },
+      { type: "improve", text: "자동매칭 종료 시 ProgressOverlay 표시 (매칭 데이터 정리 중...)" },
+    ],
+  },
+  {
+    version: "3.10.2", date: "2026-04-10",
+    title: "매칭 네이티브 크래시 근본 수정 (DB 핸들 보호)",
+    highlights: [
+      { type: "fix", text: "🔴 resetDbConnection closeAsync 즉시 호출 → 5초 지연 close" },
+      { type: "fix", text: "동시 실행 DB 작업의 네이티브 핸들 파괴 방지" },
+      { type: "fix", text: "safeDbOperation 연결 오류 시 다른 작업 핸들 안전 보존" },
+    ],
+    details: [
+      { type: "improve", text: "비-ratio 모드 EMPTY_RATIO_MAP 싱글톤 (매 렌더 new Map() 생성 방지)" },
+    ],
+  },
+  {
+    version: "3.10.1", date: "2026-04-10",
+    title: "매칭 크래시 방어 강화",
+    highlights: [
+      { type: "fix", text: "🔧 자동매칭 IIFE 외부 .catch() 추가 (unhandled rejection 방지 — 불변규칙 #5)" },
+      { type: "fix", text: "setTimeout async 콜백 3곳 try-catch 래핑 (pattern update/stats refresh/insight discovery)" },
+      { type: "fix", text: "자동매칭 큐 드레인 타임아웃 시 안전 중단 (큐 누적 → OOM 방지)" },
+      { type: "fix", text: "applyElo NaN/Infinity 전파 방어 (DB 오염 시 기본값 1500 대체)" },
+    ],
+  },
+  {
+    version: "3.10.0", date: "2026-04-10",
+    title: "비율 기반 티어 모드 추가",
+    highlights: [
+      { type: "new", text: "📊 비율 기반 티어 모드 (mode: \"ratio\") — ELO 매칭 유지 + 상위 %로 동적 배정" },
+      { type: "new", text: "비율 기반 프리셋 2종 (균형 6티어 10/15/25/25/15/10%, 피라미드 5티어 5/15/30/30/20%)" },
+      { type: "new", text: "설정 > 모드 선택기에 \"비율 기반\" 버튼 추가 (기존 match/manual/hybrid와 병행)" },
+    ],
+    details: [
+      { type: "new", text: "computeRatioTierMap — 정렬 + 누적 비율로 O(n log n) 사전 계산" },
+      { type: "new", text: "동점 소설 동일 티어 배정, ratio 합계 0 시 균등 분배 폴백" },
+      { type: "new", text: "비율 모드에서도 gating + manual_tier 오버라이드 지원" },
+      { type: "new", text: "티어 편집기에 % 입력 + 합계 검증 표시 (100% 부족/초과 경고)" },
+      { type: "new", text: "검토/자동승인 기능을 비율 모드에서도 지원" },
+      { type: "fix", text: "검토 탭 액션 핸들러 4곳 + 렌더 2곳 ratio 모드 대응" },
+      { type: "fix", text: "ActualTierTag, 소설 등록 allowRegistrationTier, 예정 소설 전환 ratio 대응" },
+    ],
+  },
+  {
+    version: "3.9.8", date: "2026-04-10",
+    title: "폴더 시스템 버그 수정 + 안정성 개선",
+    highlights: [
+      { type: "fix", text: "🔧 소설 삭제 후 novelFolderMap 미갱신 버그 수정 — 폴더 카운트/필터 stale" },
+      { type: "perf", text: "⚡ getFolderNovelCount useMemo 메모이제이션 (O(n*m) → O(1))" },
+      { type: "fix", text: "toggleNovelFolder DB 실패 시 오류 피드백 추가 (무피드백 롤백 → Alert)" },
+      { type: "fix", text: "deleteFolder 시 filterFolder 초기화 순서 개선 (빈 목록 플래시 방지)" },
+    ],
+  },
+  {
+    version: "3.9.7", date: "2026-04-10",
+    title: "검토 탭 전수조사 6건 근본 수정",
+    highlights: [
+      { type: "fix", text: "🏆 승급 검토 카드 UI 레이아웃 깨짐 수정 (체크박스+제목+버튼 2행 분리)" },
+      { type: "fix", text: "최근 변경 이력/강제지정 검색 결과/강제지정 해제 목록 화면 밖 확장 수정" },
+      { type: "fix", text: "매칭→지정→매칭 모드 전환 후 모든 작품 강제지정 문제 근본 수정" },
+      { type: "fix", text: "전 티어구간 자동 설정 해도 검토 대기 배너 잔존 문제 수정 (reviewCount useMemo deps)" },
+    ],
+    details: [
+      { type: "fix", text: "검토탭 render 경로 getReviewStatus 불변규칙 #6 위반 수정" },
+      { type: "fix", text: "검토 탭 globalTierConfig 직접 참조 18곳 → tsc 지역 상수 (불변규칙 #6 엄격 준수)" },
+    ],
+  },
+  {
+    version: "3.9.6", date: "2026-04-10",
+    title: "매칭 큐 DB 크래시 근본 수정",
+    highlights: [
+      { type: "fix", text: "🔴 processMatchQueue outer try-finally로 isProcessingMatchQueue 리셋 보장" },
+      { type: "fix", text: "circuit breaker 추가 — DB 연결 오류 시 나머지 큐 즉시 실패 처리" },
+      { type: "fix", text: "matchQueueAborted 플래그로 외부 중단 지원" },
+      { type: "fix", text: "abort 윈도우 중 enqueue된 태스크 고아 방지" },
+    ],
+  },
   {
     version: "3.9.5", date: "2026-04-05",
     title: "검토 탭 기록 시스템 통합 + 부가 UI 버그 수정",
