@@ -2,9 +2,31 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.11.0                                                                  ║
+ * ║  버전: 3.11.1                                                                  ║
  * ║  최종 수정: 2026-04-10                                                        ║
  * ║  총 라인 수: 약 45,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v3.11.1 파이프라인 v3.11.0 검증 수정 (2026-04-10)                             ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [수정 1] 체크포인트 플래그 토글 제거 (race 방지)                                ║
+ * ║ • 기존: isAutoMatchingActive = false → flush → = true                         ║
+ * ║ • 문제: 토글 창 중 deferSetAppMeta가 타이머 설정 → 중간 flush 발생            ║
+ * ║ • 수정: choiceLogQueue.flush()는 내부 플래그 체크 없음 → 토글 불필요          ║
+ * ║                                                                              ║
+ * ║ [수정 2] 파이프라인 종료 후 누적 배치 재스케줄                                 ║
+ * ║ • 기존: 파이프라인 실행 중 추가된 pattern/choiceLog 배치가 다음 트리거까지 대기 ║
+ * ║ • 수정: finally에서 pending 데이터 확인 후 자동 재스케줄 (데이터 손실 방지)    ║
+ * ║                                                                              ║
+ * ║ [수정 3] 자동매칭 IIFE 외부 .catch()에 파이프라인 호출 추가                    ║
+ * ║ • finally 블록 throw 시 pending 데이터 처리 누락 방지                         ║
+ * ║                                                                              ║
+ * ║ [정리] dead code 제거                                                         ║
+ * ║ • schedulePatternStatsRefresh, scheduleInsightDiscovery — 호출처 없음          ║
+ * ║ • runDeferredPipeline이 대체                                                  ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -6165,22 +6187,9 @@ async function batchUpdatePatternStats(updates) {
   }
 }
 
-/**
- * 패턴 통계 재계산 스케줄러
- */
-let statsRefreshScheduled = false;
-
-function schedulePatternStatsRefresh() {
-  if (!statsRefreshScheduled) {
-    statsRefreshScheduled = true;
-    setTimeout(async () => {
-      try {
-        statsRefreshScheduled = false;
-        await refreshPatternStats();
-      } catch (e) { console.error("[schedulePatternStatsRefresh] 예기치 않은 오류:", e); }
-    }, 2000);
-  }
-}
+// 🔧 v3.11.1: schedulePatternStatsRefresh 제거 — runDeferredPipeline으로 통합됨
+// 기존: 2초 타이머 → refreshPatternStats → scheduleInsightDiscovery 연쇄
+// 변경: runDeferredPipeline이 순차 실행 (drain → choiceLog → pattern → stats → insight → meta)
 
 /**
  * 패턴 통계 재계산 (윌슨 신뢰구간)
@@ -6258,22 +6267,8 @@ async function refreshPatternStats() {
 // 💡 발견층: 인사이트 생성
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/**
- * 인사이트 발견 스케줄러
- */
-let insightDiscoveryScheduled = false;
-
-function scheduleInsightDiscovery() {
-  if (!insightDiscoveryScheduled) {
-    insightDiscoveryScheduled = true;
-    setTimeout(async () => {
-      try {
-        insightDiscoveryScheduled = false;
-        await discoverInsights();
-      } catch (e) { console.error("[scheduleInsightDiscovery] 예기치 않은 오류:", e); }
-    }, 3000);
-  }
-}
+// 🔧 v3.11.1: scheduleInsightDiscovery 제거 — runDeferredPipeline으로 통합됨
+// discoverInsights는 이제 파이프라인 내부에서 직접 호출됨
 
 /**
  * 📊 v3.11.0: 지연 작업 통합 파이프라인
@@ -6313,6 +6308,13 @@ async function runDeferredPipeline() {
     console.error("[runDeferredPipeline] 예기치 않은 오류:", e);
   } finally {
     deferredPipelineRunning = false;
+    // 🔧 v3.11.1: 파이프라인 실행 중 누적된 배치가 있으면 재스케줄 (데이터 손실 방지)
+    // 수동 매칭이 파이프라인 실행 중에 발생한 경우, patternUpdateBatch에 새 항목이 추가되지만
+    // schedulePatternUpdate의 guard(!deferredPipelineRunning)가 false라 새 타이머를 켜지 못함
+    // → 파이프라인 종료 시점에 수동으로 재스케줄하여 다음 파이프라인이 처리하도록 함
+    if (!isAutoMatchingActive && (patternUpdateBatch.length > 0 || choiceLogQueue.pending.length > 0 || Object.keys(_pendingMetaWrites).length > 0)) {
+      scheduleDeferredPipeline(500);
+    }
   }
 }
 
@@ -30819,19 +30821,17 @@ function AppContent() {
         }
 
         // 📊 v3.11.0: 체크포인트 — N회마다 choiceLog만 mini-flush (데이터 손실 방지)
+        // 🔧 v3.11.1: choiceLogQueue.flush()는 isAutoMatchingActive를 체크하지 않으므로
+        //   플래그 토글 불필요 (토글 시 race 발생 — deferSetAppMeta가 중간에 타이머 설정)
         autoMatchCheckpointCounter++;
         if (autoMatchCheckpointCounter >= AUTO_MATCH_CHECKPOINT_INTERVAL) {
           autoMatchCheckpointCounter = 0;
           try {
             if (choiceLogQueue.pending.length > 0) {
-              // 임시로 플래그 해제 → flush → 다시 설정 (choiceLogQueue.flush 내부 동작 허용)
-              isAutoMatchingActive = false;
               await choiceLogQueue.flush();
-              isAutoMatchingActive = true;
             }
           } catch (e) {
             console.warn("[autoMatch] 체크포인트 실패:", e);
-            isAutoMatchingActive = true; // 에러 시에도 플래그 복구
           }
         }
 
@@ -30877,6 +30877,8 @@ function AppContent() {
       autoMatchCheckpointCounter = 0;
       setIsAutoMatching(false);
       setLoadingProgress(null);
+      // 🔧 v3.11.1: finally 실행 실패 시에도 누적된 pending 데이터 처리 (데이터 손실 방지)
+      runDeferredPipeline().catch(err => console.warn("[autoMatch.catch] 파이프라인 복구 실패:", err));
     });
   }, [pair, autoEnabled, autoMatchSettings, matchAnalysis, evaluateAutoMatch]);
   
