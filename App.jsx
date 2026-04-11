@@ -3902,6 +3902,11 @@ async function safeDbOperation(operation, operationName = "DB") {
       
       const result = await operation(database);
       dbLastSuccessTime = Date.now();
+      // 📊 v3.11.3: 성공 시 NPE circuit breaker 카운터 즉시 리셋 (true consecutive만 트리거)
+      if (_npeCircuit.errorCount > 0) {
+        _npeCircuit.errorCount = 0;
+        _npeCircuit.windowStart = 0;
+      }
       PerfMonitor.trackDbSuccess(); // 🔬
       return result;
     } catch (e) {
