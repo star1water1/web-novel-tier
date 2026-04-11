@@ -2,9 +2,34 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.11.1                                                                  ║
+ * ║  버전: 3.11.2                                                                  ║
  * ║  최종 수정: 2026-04-10                                                        ║
  * ║  총 라인 수: 약 46,600줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔴 v3.11.2 openDb 내부 즉시 closeAsync 제거 — 매칭 크래시 근본 수정 (2026-04-10) ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [심각 버그] openDb()가 SELECT 1 테스트 실패 시 즉시 closeAsync 호출             ║
+ * ║ • 증상: 매칭 중 NativeDatabase.prepareAsync NullPointerException 크래시        ║
+ * ║ • 원인: 매 openDb() 호출마다 SELECT 1 테스트 → 실패 시 db.closeAsync() 즉시     ║
+ * ║   → 진행 중 다른 작업이 참조하는 네이티브 핸들 파괴 → prepareAsync 실패         ║
+ * ║ • v3.10.2는 resetDbConnection만 수정 → openDb 내부 경로 누락                   ║
+ * ║                                                                              ║
+ * ║ [수정] 2곳 모두 즉시 closeAsync 제거, 5초 지연 close로 교체                     ║
+ * ║ • 슬롯 불일치 감지 시 (line 3422)                                              ║
+ * ║ • 연결 테스트 SELECT 1 실패 시 (line 3453)                                     ║
+ * ║ • 참조(db)만 즉시 폐기, oldDb.closeAsync는 setTimeout 5초 지연                 ║
+ * ║ • 진행 중 작업은 캡처된 database 변수로 작업 완료 → 안전                       ║
+ * ║                                                                              ║
+ * ║ [검증] 파일 전체 closeAsync 호출 인벤토리:                                      ║
+ * ║ • resetDbConnection: 지연 close ✓ (v3.10.2)                                   ║
+ * ║ • safeDbOperation catch: resetDbConnection 경유 ✓                             ║
+ * ║ • openDb 슬롯 불일치: 지연 close ✓ (v3.11.2 — 본 수정)                        ║
+ * ║ • openDb 연결 테스트: 지연 close ✓ (v3.11.2 — 본 수정)                        ║
+ * ║ • 다른 직접 closeAsync 호출: 없음 ✓                                            ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -3419,10 +3444,17 @@ async function openDb() {
   //   openDb()를 호출하면 슬롯 0 DB로 연결이 캐시되어 이후 모든 쿼리가 잘못된 슬롯으로 감
   if (db && _dbOpenedForSlot !== activeSlotId) {
     console.warn(`[openDb] 슬롯 불일치: db=슬롯${_dbOpenedForSlot}, active=슬롯${activeSlotId} → 캐시 무효화`);
-    try { await db.closeAsync(); } catch (_) {}
+    // 🔧 v3.11.2: closeAsync 즉시 호출 금지 — 진행 중 작업의 네이티브 핸들 파괴 방지
+    // 참조만 폐기하고 5초 후 지연 close
+    const oldDb = db;
     db = null;
     dbOpenPromise = null;
     dbLastSuccessTime = 0;
+    if (oldDb) {
+      setTimeout(() => {
+        oldDb.closeAsync().catch(() => {});
+      }, 5000);
+    }
   }
 
   // 이미 연결 시도 중이면 해당 Promise를 기다림
@@ -3448,10 +3480,16 @@ async function openDb() {
       dbLastSuccessTime = Date.now();
       return db;
     } catch (e) {
-      // 연결이 죽었으면 실제로 닫고 정리
+      // 연결이 죽었으면 참조만 폐기 (🔧 v3.11.2: closeAsync 즉시 호출 금지)
+      // 진행 중인 다른 작업이 이 핸들을 참조할 수 있으므로 5초 후 지연 close
       console.warn("DB 연결 테스트 실패:", e.message);
-      try { await db.closeAsync(); } catch (_) {}
+      const oldDb = db;
       db = null;
+      if (oldDb) {
+        setTimeout(() => {
+          oldDb.closeAsync().catch(() => {});
+        }, 5000);
+      }
     }
   }
 
