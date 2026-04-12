@@ -9500,6 +9500,14 @@ const YearStepper = memo(({ label, value, onChange, isDark }) => {
         >
           <Text style={{ fontSize: 18, fontWeight: "700", color: textColor }}>+</Text>
         </TouchableOpacity>
+        {value > 0 && (
+          <TouchableOpacity
+            onPress={() => onChange(0)}
+            style={{ paddingHorizontal: 10, paddingVertical: 10, backgroundColor: btnBg, borderLeftWidth: 1, borderLeftColor: border }}
+          >
+            <Text style={{ fontSize: 14, fontWeight: "700", color: isDark ? "#e57373" : "#d32f2f" }}>✕</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </View>
   );
