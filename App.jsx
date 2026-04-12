@@ -2,7 +2,7 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.11.7                                                                  ║
+ * ║  버전: 3.11.8                                                                  ║
  * ║  최종 수정: 2026-04-10                                                        ║
  * ║  총 라인 수: 약 46,600줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -9759,7 +9759,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "3.11.7";
+const APP_VERSION = "3.11.8";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -9786,12 +9786,13 @@ function compareVersions(a, b) {
 
 const CHANGELOG_DATA = [
   {
-    version: "3.11.7", date: "2026-04-12",
-    title: "검토 토글 저장 + 즉시 반영 완전 수정",
+    version: "3.11.8", date: "2026-04-12",
+    title: "검토 토글 자동 승급/강등 완전 수정",
     highlights: [
-      { type: "fix", text: "🏆 검토 토글 변경이 앱 재시작 후 되돌아가던 저장 실패 문제 수정" },
-      { type: "fix", text: "토글 해제 시 승급 대기 작품이 즉시 반영되지 않던 문제 해결 (비율 모드 포함)" },
-      { type: "fix", text: "티어 시스템 전반 설정 변경 시 목록 즉시 갱신" },
+      { type: "fix", text: "🏆 검토 토글 해제 시 승급 대기 작품이 실제 승급되지 않던 근본 원인 수정" },
+      { type: "fix", text: "토글 해제 시 승급 대기 작품을 즉시 해당 티어로 확정 (DB 영구 저장)" },
+      { type: "fix", text: "강등 대기 작품도 자동으로 레이팅 기반 티어로 복귀" },
+      { type: "fix", text: "설정 변경이 앱 재시작 후 되돌아가던 저장 실패 문제 수정" },
     ],
   },
   {
@@ -40869,51 +40870,69 @@ async function importJSON() {
                           updatedTiers[idx] = { ...updatedTiers[idx], gated: newGated };
                           const newConfig = { ...tsc, tiers: updatedTiers };
 
-                          // 🔧 v3.11.7: saveAppSettings + 직접 await setAppMeta로 DB 저장 보장
-                          // saveAppSettings의 safeDefer(setAppMeta)는 fire-and-forget이라 실패해도 사용자 모름
-                          // → 직접 await으로 저장 확인 + 실패 시 Alert
+                          // 1. config 저장 (React state + module var + DB)
                           saveAppSettings({ tierSystemConfig: newConfig });
                           try {
-                            // saveAppSettings의 setAppSettings updater로 merged 계산됨 → appSettings에 반영
-                            // 하지만 DB 저장은 safeDefer(setTimeout)로 비동기 → 앱 종료 시 유실 가능
-                            // 직접 await으로 즉시 저장 보장
-                            const currentSettings = { ...(appSettings || {}), tierSystemConfig: newConfig };
-                            await setAppMeta("app_settings", currentSettings);
+                            await setAppMeta("app_settings", { ...(appSettings || {}), tierSystemConfig: newConfig });
                           } catch (e) {
-                            console.warn("[gated 토글] DB 저장 실패:", e);
-                            if (!isAutoMatchingRef.current) {
-                              Alert.alert("저장 실패", "설정이 저장되지 않았습니다.\n앱을 재시작한 후 다시 시도해주세요.");
-                            }
+                            console.warn("[gated 토글] config DB 저장 실패:", e);
                           }
 
-                          // gated 해제 시 해당 티어의 manual_tier 자동 클리어
-                          let clearedCount = 0;
+                          // 2. 🔧 v3.11.8: gated OFF 시 승급/강등 대기 작품 즉시 자동 처리
+                          // 핵심: manual_tier를 명시적으로 DB에 기록하여 "진짜 승급/강등" 실행
+                          // 이전 접근(getDisplayTier 동적 계산 의존)은 useMemo 캐시 등으로 실제 반영 안 됨
+                          let promoteCount = 0;
+                          let demoteCount = 0;
                           if (!newGated) {
                             try {
                               const tierKey = updatedTiers[idx].key;
-                              const novels = await all("SELECT id FROM novels WHERE manual_tier = ?", [tierKey]);
-                              if (novels && novels.length > 0) {
-                                const queries = novels.map(n => ({
+                              const novels = list || [];
+
+                              // 승급 대기: 추천 티어가 tierKey인데 manual_tier 없는 소설
+                              // → manual_tier = tierKey 설정 ("모두 승인" 버튼과 동일 동작)
+                              const promoteTargets = novels.filter(n => {
+                                const recommended = newConfig.mode === "ratio"
+                                  ? globalRatioTierMap.get(n.id)
+                                  : tierFromRating(n.rating || 1500, newConfig);
+                                return recommended === tierKey && !n.manual_tier;
+                              });
+
+                              // 강등 대기: manual_tier가 tierKey인 소설
+                              // → manual_tier = NULL (rating 기반으로 자동 복귀)
+                              const demoteTargets = novels.filter(n => n.manual_tier === tierKey);
+
+                              const queries = [
+                                ...promoteTargets.map(n => ({
+                                  sql: "UPDATE novels SET manual_tier=? WHERE id=?",
+                                  params: [tierKey, n.id],
+                                })),
+                                ...demoteTargets.map(n => ({
                                   sql: "UPDATE novels SET manual_tier=NULL WHERE id=?",
                                   params: [n.id],
-                                }));
+                                })),
+                              ];
+
+                              if (queries.length > 0) {
                                 await execBatch(queries);
-                                clearedCount = novels.length;
                               }
+                              promoteCount = promoteTargets.length;
+                              demoteCount = demoteTargets.length;
                             } catch (e) {
-                              console.warn("[gated 토글] manual_tier 클리어 실패:", e);
+                              console.warn("[gated 토글] 자동 처리 실패:", e);
                             }
                           }
 
-                          // 🔧 v3.11.7: 항상 loadList — 승급/강등 모든 시나리오에서 UI 즉시 반영
+                          // 3. UI 갱신 (DB fresh data 로드)
                           loadListRunningRef.current = false;
                           try { await loadList(undefined, undefined, "gated-toggle"); } catch (e) { console.warn("[gated 토글] loadList 실패:", e); }
 
-                          if (clearedCount > 0 && !isAutoMatchingRef.current) {
-                            Alert.alert(
-                              "자동 처리",
-                              `"${updatedTiers[idx].key}" 티어의 강제 지정 ${clearedCount}개가 해제되어\n레이팅 기반 티어로 자동 처리되었습니다.`
-                            );
+                          // 4. 결과 알림
+                          const total = promoteCount + demoteCount;
+                          if (total > 0 && !isAutoMatchingRef.current) {
+                            const parts = [];
+                            if (promoteCount > 0) parts.push(`승급 ${promoteCount}건`);
+                            if (demoteCount > 0) parts.push(`강등 해제 ${demoteCount}건`);
+                            Alert.alert("자동 처리", `"${updatedTiers[idx].key}" 티어: ${parts.join(", ")} 자동 처리되었습니다.`);
                           }
                         }}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
