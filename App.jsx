@@ -2,7 +2,7 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.11.6                                                                  ║
+ * ║  버전: 3.11.7                                                                  ║
  * ║  최종 수정: 2026-04-10                                                        ║
  * ║  총 라인 수: 약 46,600줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -9759,7 +9759,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "3.11.6";
+const APP_VERSION = "3.11.7";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -9786,11 +9786,12 @@ function compareVersions(a, b) {
 
 const CHANGELOG_DATA = [
   {
-    version: "3.11.6", date: "2026-04-10",
-    title: "티어 설정 변경 시 UI 즉시 반영",
+    version: "3.11.7", date: "2026-04-12",
+    title: "검토 토글 저장 + 즉시 반영 완전 수정",
     highlights: [
-      { type: "fix", text: "🏆 티어 검토 토글을 해제해도 승급 대기 작품이 즉시 반영되지 않던 문제 해결 (비율 모드 포함)" },
-      { type: "fix", text: "티어 시스템에서 값(검토 토글/threshold/비율%/색상/라벨/추가/삭제) 변경 시 목록이 즉시 갱신되지 않던 문제 전반 수정" },
+      { type: "fix", text: "🏆 검토 토글 변경이 앱 재시작 후 되돌아가던 저장 실패 문제 수정" },
+      { type: "fix", text: "토글 해제 시 승급 대기 작품이 즉시 반영되지 않던 문제 해결 (비율 모드 포함)" },
+      { type: "fix", text: "티어 시스템 전반 설정 변경 시 목록 즉시 갱신" },
     ],
   },
   {
@@ -40866,11 +40867,26 @@ async function importJSON() {
                           const newGated = !tiersForUI[idx].gated;
                           const updatedTiers = [...tiersForUI];
                           updatedTiers[idx] = { ...updatedTiers[idx], gated: newGated };
-                          // saveAppSettings가 내부적으로 list 강제 재참조 + matchCache 무효화 수행 (v3.11.6)
-                          saveAppSettings({ tierSystemConfig: { ...tsc, tiers: updatedTiers } });
+                          const newConfig = { ...tsc, tiers: updatedTiers };
+
+                          // 🔧 v3.11.7: saveAppSettings + 직접 await setAppMeta로 DB 저장 보장
+                          // saveAppSettings의 safeDefer(setAppMeta)는 fire-and-forget이라 실패해도 사용자 모름
+                          // → 직접 await으로 저장 확인 + 실패 시 Alert
+                          saveAppSettings({ tierSystemConfig: newConfig });
+                          try {
+                            // saveAppSettings의 setAppSettings updater로 merged 계산됨 → appSettings에 반영
+                            // 하지만 DB 저장은 safeDefer(setTimeout)로 비동기 → 앱 종료 시 유실 가능
+                            // 직접 await으로 즉시 저장 보장
+                            const currentSettings = { ...(appSettings || {}), tierSystemConfig: newConfig };
+                            await setAppMeta("app_settings", currentSettings);
+                          } catch (e) {
+                            console.warn("[gated 토글] DB 저장 실패:", e);
+                            if (!isAutoMatchingRef.current) {
+                              Alert.alert("저장 실패", "설정이 저장되지 않았습니다.\n앱을 재시작한 후 다시 시도해주세요.");
+                            }
+                          }
 
                           // gated 해제 시 해당 티어의 manual_tier 자동 클리어
-                          // (강등 검토 대기 작품이 자동으로 레이팅 기반 티어로 처리됨)
                           let clearedCount = 0;
                           if (!newGated) {
                             try {
@@ -40883,14 +40899,15 @@ async function importJSON() {
                                 }));
                                 await execBatch(queries);
                                 clearedCount = novels.length;
-                                // DB 변경사항(manual_tier=NULL)을 list에 반영하려면 fresh data 필요
-                                loadListRunningRef.current = false;
-                                try { await loadList(undefined, undefined, "gated-toggle"); } catch (e) { console.warn("[gated 토글] loadList 실패:", e); }
                               }
                             } catch (e) {
                               console.warn("[gated 토글] manual_tier 클리어 실패:", e);
                             }
                           }
+
+                          // 🔧 v3.11.7: 항상 loadList — 승급/강등 모든 시나리오에서 UI 즉시 반영
+                          loadListRunningRef.current = false;
+                          try { await loadList(undefined, undefined, "gated-toggle"); } catch (e) { console.warn("[gated 토글] loadList 실패:", e); }
 
                           if (clearedCount > 0 && !isAutoMatchingRef.current) {
                             Alert.alert(
