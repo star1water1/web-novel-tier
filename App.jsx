@@ -27545,6 +27545,12 @@ function AppContent() {
       setNewMajorGenre(selectedMajor);
       setNewSubGenre(selectedSub);
       setNewTagData(tagData); // 🏷️ v5.0
+      // 🏆 v3.12.0: 등록 시에도 태그에서 연도 추출 → 미설정 시 자동 반영
+      const extractedYears = extractYearsFromText(allTagsString);
+      if (extractedYears.length > 0) {
+        setNewStartYear(prev => prev > 0 ? prev : extractedYears[0]);
+        setNewEndYear(prev => prev > 0 ? prev : (extractedYears.length > 1 ? extractedYears[extractedYears.length - 1] : 0));
+      }
     } else if (tagModalTarget === "edit" || tagModalTarget === "supplement") {
       // 🔧 v3.5.6: 함수형 업데이트로 stale closure 방지
       updateEditItem(prev => prev ? {
