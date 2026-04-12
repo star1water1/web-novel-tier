@@ -2,9 +2,40 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.11.8                                                                  ║
- * ║  최종 수정: 2026-04-10                                                        ║
- * ║  총 라인 수: 약 46,600줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 3.12.0                                                                  ║
+ * ║  최종 수정: 2026-04-12                                                        ║
+ * ║  총 라인 수: 약 47,000줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🏆 v3.12.0 수상 시스템 UX 대폭 개선 (2026-04-12)                                ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [핵심 변경] 연재 연도 전용 필드 도입 (태그 의존 완전 제거)                      ║
+ * ║ • start_year / end_year INTEGER 컬럼 추가 (novels 테이블)                     ║
+ * ║ • 기존 태그/메모 기반 연도 감지 → 전용 필드 기반 필터링으로 교체               ║
+ * ║ • 레거시 폴백 유지 (마이그레이션 누락 데이터 대비)                              ║
+ * ║                                                                              ║
+ * ║ [신규 UI] YearStepper 컴포넌트                                                 ║
+ * ║ • +/- 버튼으로 연도 설정, 길게 누르면 미설정으로 리셋                           ║
+ * ║ • 작품 등록/편집 폼에 '연재 시작 연도', '연재 종료 연도' 스텝퍼 추가           ║
+ * ║                                                                              ║
+ * ║ [수상 후보 로직 개선]                                                           ║
+ * ║ • start_year/end_year 범위 내이면 자동 후보 선정                               ║
+ * ║ • 연재 중(end_year=0): 시작 연도만으로 판단                                    ║
+ * ║                                                                              ║
+ * ║ [AwardsScreen UX]                                                              ║
+ * ║ • 빈 상태 안내: 전용 필드 기반 안내로 교체 + 일괄 연도 배정 버튼               ║
+ * ║ • 연도 범위: 2024~ → 2020~ 확장 (소급 수상 허용)                               ║
+ * ║ • 편집 모달: AWARD_META(레거시) → 동적 yearlyAwards 사용                       ║
+ * ║                                                                              ║
+ * ║ [데이터 마이그레이션]                                                           ║
+ * ║ • 기존 연도 태그/메모에서 자동 추출 → start_year/end_year 설정                  ║
+ * ║ • 태그 저장 시 연도 자동 동기화 (미설정인 경우만)                               ║
+ * ║                                                                              ║
+ * ║ [백업 호환] opt.sy / opt.ey 추가, 구버전 복원 시 0 폴백                        ║
+ * ║ [팩토리 태그] 연도/시기 카테고리 2020~2027로 확장                               ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -4490,6 +4521,9 @@ async function initDb() {
     ["aliases", "TEXT", "''"],        // JSON: ["하늑", ...] 작품 별명
     // 💬 v3.2.2: 인상깊은 문장
     ["memorable_quote", "TEXT", "''"], // 작품에서 인상깊었던 문장
+    // 🏆 v3.12.0: 연재 연도 (수상 시스템용)
+    ["start_year", "INTEGER", "0"],   // 연재 시작 연도 (0 = 미설정)
+    ["end_year", "INTEGER", "0"],     // 연재 종료 연도 (0 = 미설정/연재중)
   ];
   
   // 필요한 마이그레이션만 실행
@@ -5174,6 +5208,49 @@ async function migrateTagSystem() {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════
+// 🏆 v3.12.0: 연재 연도 마이그레이션 (태그/메모 → start_year/end_year)
+// ═══════════════════════════════════════════════════════════════
+
+async function migrateStartEndYear() {
+  try {
+    const done = await getAppMeta("start_end_year_migrated");
+    if (done) return;
+
+    const novels = await all("SELECT id, tags, note, work_status, start_year, end_year FROM novels");
+    if (!novels || novels.length === 0) {
+      await setAppMeta("start_end_year_migrated", "1");
+      return;
+    }
+
+    const queries = [];
+    let count = 0;
+    for (const n of novels) {
+      // 이미 설정된 경우 스킵
+      if ((Number(n.start_year) || 0) > 0 || (Number(n.end_year) || 0) > 0) continue;
+
+      const combined = `${n.tags || ""} ${n.note || ""}`;
+      const years = extractYearsFromText(combined);
+      if (years.length === 0) continue;
+
+      const sy = years[0]; // 최소값
+      const ey = years.length > 1 ? years[years.length - 1] : (n.work_status === "completed" ? sy : 0);
+
+      queries.push({
+        sql: "UPDATE novels SET start_year=?, end_year=? WHERE id=?",
+        params: [sy, ey, n.id],
+      });
+      count++;
+    }
+
+    if (queries.length > 0) await execBatch(queries);
+    await setAppMeta("start_end_year_migrated", "1");
+    console.log(`연재 연도 마이그레이션 완료: ${count}개 작품 업데이트`);
+  } catch (e) {
+    console.warn("연재 연도 마이그레이션 오류:", e);
+  }
+}
+
 /**
  * 단일 작품의 태그 동기화
  * tag_data를 마스터로, tags를 자동 갱신
@@ -5486,6 +5563,34 @@ async function syncNovelTags(novelId, tagData) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // 🔧 헬퍼 함수들
 // ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * 🏆 v3.12.0: 텍스트에서 연도 추출 (태그/메모 → start_year/end_year 마이그레이션용)
+ * "2025", "2025년", "25년", "2025완결", "25완결" 등의 패턴을 인식
+ * @returns {number[]} 정렬된 유효 연도 배열 (예: [2024, 2025])
+ */
+function extractYearsFromText(text) {
+  if (!text) return [];
+  const years = new Set();
+  // 4자리 연도: "2025", "2025년", "2025완결"
+  const full = text.match(/\b(20[0-9]{2})(?:년|완결)?\b/g);
+  if (full) {
+    for (const m of full) {
+      const y = Number(m.match(/20[0-9]{2}/)[0]);
+      if (y >= 2000 && y <= 2099) years.add(y);
+    }
+  }
+  // 2자리 연도 + 접미사: "25년", "25완결" (접미사 필수 — 단독 숫자는 오탐 방지)
+  const short = text.match(/\b([0-9]{2})(?:년|완결)/g);
+  if (short) {
+    for (const m of short) {
+      const digits = Number(m.match(/[0-9]{2}/)[0]);
+      const y = 2000 + digits;
+      if (y >= 2000 && y <= 2099) years.add(y);
+    }
+  }
+  return Array.from(years).sort((a, b) => a - b);
+}
 
 /**
  * 안전한 JSON 파싱
@@ -7633,7 +7738,7 @@ const FACTORY_GENERAL_TAGS = {
     "캐빨", "사두용미", "용두용미"
   ],
   "📅 연도/시기": [
-    "2024", "2025", "2026"
+    "2020", "2021", "2022", "2023", "2024", "2025", "2026", "2027"
   ]
 };
 
@@ -9341,8 +9446,64 @@ function normalizeNovel(r) {
     read_count: Number(r.read_count) || 0,
     reread_count: r.reread_count != null ? Number(r.reread_count) : 1,
     pinned: Number(r.pinned) || 0,
+    start_year: Number(r.start_year) || 0,
+    end_year: Number(r.end_year) || 0,
   };
 }
+
+// 🏆 v3.12.0: 연도 스텝퍼 컴포넌트 (+/- 버튼으로 연도 설정)
+const YearStepper = memo(({ label, value, onChange, isDark }) => {
+  const displayValue = value > 0 ? String(value) : "미설정";
+  const currentYear = new Date().getFullYear();
+  const bg = isDark ? "#1a1a2e" : "#f8f9fa";
+  const border = isDark ? "#333" : "#ddd";
+  const textColor = isDark ? "#e0e0e0" : "#333";
+  const subColor = isDark ? "#888" : "#999";
+  const btnBg = isDark ? "#2a2a3e" : "#eee";
+
+  const step = (delta) => {
+    if (value === 0) {
+      onChange(delta > 0 ? currentYear : currentYear - 1);
+    } else {
+      const next = value + delta;
+      if (next >= 1990 && next <= 2099) onChange(next);
+    }
+  };
+
+  return (
+    <View style={{ marginBottom: 8 }}>
+      {label && <Text style={{ color: subColor, fontSize: 12, marginBottom: 4 }}>{label}</Text>}
+      <View style={{
+        flexDirection: "row", alignItems: "center",
+        backgroundColor: bg, borderRadius: 8, borderWidth: 1, borderColor: border,
+        overflow: "hidden",
+      }}>
+        <TouchableOpacity
+          onPress={() => step(-1)}
+          style={{ paddingHorizontal: 14, paddingVertical: 10, backgroundColor: btnBg }}
+        >
+          <Text style={{ fontSize: 18, fontWeight: "700", color: textColor }}>−</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onLongPress={() => onChange(0)}
+          delayLongPress={500}
+          style={{ flex: 1, alignItems: "center", paddingVertical: 10 }}
+        >
+          <Text style={{
+            fontSize: 15, fontWeight: value > 0 ? "700" : "400",
+            color: value > 0 ? textColor : subColor,
+          }}>{displayValue}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => step(1)}
+          style={{ paddingHorizontal: 14, paddingVertical: 10, backgroundColor: btnBg }}
+        >
+          <Text style={{ fontSize: 18, fontWeight: "700", color: textColor }}>+</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+});
 
 /* =========================================================
    🖼️ 표지 라이브러리 시스템 (v3.4.7 - 레거시 FileSystem API)
@@ -11008,7 +11169,7 @@ const DEFAULT_AWARD_SYSTEM_SETTINGS = {
 const getAwardYears = () => {
   const currentYear = new Date().getFullYear();
   const years = [];
-  for (let y = 2024; y <= currentYear + 1; y++) {
+  for (let y = 2020; y <= currentYear + 1; y++) {
     years.push(String(y));
   }
   return years;
@@ -11558,6 +11719,8 @@ const NovelCard = memo(({
     p.link === n.link &&
     p.manual_tier === n.manual_tier &&
     p.created_at === n.created_at &&
+    p.start_year === n.start_year && // 🏆 v3.12.0
+    p.end_year === n.end_year &&
     prevProps.index === nextProps.index &&
     prevProps.isComparing === nextProps.isComparing &&
     prevProps.compareMode === nextProps.compareMode &&
@@ -17875,39 +18038,33 @@ const AwardsScreen = memo(({
     return awardSystemSettings?.yearlyAwards?.[awardSelectedYear] || [];
   }, [awardSystemSettings, awardSelectedYear]);
   
-  // 🆕 후보작 필터링 - 해당 연도 관련 작품만 (v3.0 개선)
-  // 기준: 태그/메모에 연도가 명시되어 있거나, 완결작 중 해당 연도 힌트가 있는 경우
-  // ※ 단순 등록일은 기준에서 제외 (앱 등록일 ≠ 연재시작일)
+  // 🏆 v3.12.0: 후보작 필터링 — start_year/end_year 기반 (레거시 태그/메모 폴백 유지)
   const candidates = useMemo(() => {
     if (!list || list.length === 0) return [];
     const yearNum = Number(awardSelectedYear);
-    const yearStr = String(awardSelectedYear);
-    const shortYear = String(yearNum).slice(2); // "25" for 2025
-    
+
     return list.filter(novel => {
-      // 🆕 v3.2.1: 연중작/서비스종료작 제외 옵션
       if (awardFilter.excludeDropped && novel.work_status === "dropped") return false;
       if (awardFilter.excludeDiscontinued && novel.work_status === "discontinued") return false;
-      
-      // 1. 태그에 연도 포함 (예: "2025", "2025년", "25년", "2025완결")
+
+      const sy = Number(novel.start_year) || 0;
+      const ey = Number(novel.end_year) || 0;
+
+      // 1차: 전용 필드 기반 (하나라도 설정된 경우)
+      if (sy > 0 || ey > 0) {
+        if (sy === yearNum) return true;
+        if (ey > 0 && ey === yearNum) return true;
+        if (sy > 0 && ey > 0 && sy < yearNum && yearNum < ey) return true;
+        return false;
+      }
+
+      // 2차: 레거시 폴백 (태그/메모 스캔) — 마이그레이션 안 된 데이터 대비
+      const yearStr = String(yearNum);
+      const shortYear = yearStr.slice(2);
       const tags = (novel.tags || "").toLowerCase();
-      const hasYearInTags = tags.includes(yearStr) || 
-                           tags.includes(`${yearStr}년`) ||
-                           tags.includes(`${shortYear}년`) ||
-                           tags.includes(`${yearStr}완결`) ||
-                           tags.includes(`${shortYear}완결`);
-      
-      // 2. 메모에 연도 포함
       const note = (novel.note || "").toLowerCase();
-      const hasYearInNote = note.includes(yearStr) || 
-                           note.includes(`${yearStr}년`) ||
-                           note.includes(`${shortYear}년`);
-      
-      // 3. 완결작이면서 연도 힌트가 있는 경우
-      const isCompleteWithYearHint = novel.work_status === "completed" && (hasYearInTags || hasYearInNote);
-      
-      // 최소 하나의 명시적 기준 충족 필요
-      return hasYearInTags || hasYearInNote || isCompleteWithYearHint;
+      return tags.includes(yearStr) || tags.includes(`${yearStr}년`) ||
+             tags.includes(`${shortYear}년`) || note.includes(yearStr);
     });
   }, [list, awardSelectedYear, awardFilter.excludeDropped, awardFilter.excludeDiscontinued]);
   
@@ -18465,9 +18622,51 @@ const AwardsScreen = memo(({
                 <Text style={{ fontSize: 40, marginBottom: 12 }}>📭</Text>
                 <Text style={{ color: C.sub, textAlign: "center", lineHeight: 20 }}>
                   {awardSelectedYear}년 후보작이 없습니다.{"\n\n"}
-                  작품의 태그나 메모에 "{awardSelectedYear}" 또는 "{awardSelectedYear}년"을{"\n"}
-                  추가하면 해당 연도 후보로 표시됩니다.
+                  홈 탭에서 작품을 선택 → 편집 →{"\n"}
+                  '연재 시작/종료 연도'를 설정해주세요.
                 </Text>
+                <TouchableOpacity
+                  onPress={async () => {
+                    // 연도 미설정 작품 일괄 배정: 선택한 연도로 start_year 설정
+                    const unset = (list || []).filter(n => !(Number(n.start_year) || 0) && !(Number(n.end_year) || 0));
+                    if (unset.length === 0) {
+                      Alert.alert("안내", "연도가 미설정인 작품이 없습니다.");
+                      return;
+                    }
+                    Alert.alert(
+                      "일괄 연도 배정",
+                      `연도가 미설정인 ${unset.length}개 작품의 시작 연도를 ${awardSelectedYear}년으로 설정할까요?`,
+                      [
+                        { text: "취소", style: "cancel" },
+                        {
+                          text: "설정",
+                          onPress: async () => {
+                            try {
+                              const yearNum = Number(awardSelectedYear);
+                              const queries = unset.map(n => ({
+                                sql: "UPDATE novels SET start_year=? WHERE id=?",
+                                params: [yearNum, n.id],
+                              }));
+                              await execBatch(queries);
+                              await loadList(undefined, undefined, "award_year_batch");
+                              Alert.alert("완료", `${unset.length}개 작품에 시작 연도 ${awardSelectedYear}년이 설정되었습니다.`);
+                            } catch (e) {
+                              Alert.alert("오류", "일괄 배정 중 오류가 발생했습니다.");
+                            }
+                          },
+                        },
+                      ]
+                    );
+                  }}
+                  style={{
+                    marginTop: 16, paddingHorizontal: 20, paddingVertical: 10,
+                    backgroundColor: C.accent || "#4A90D9", borderRadius: 8,
+                  }}
+                >
+                  <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>
+                    일괄 연도 배정
+                  </Text>
+                </TouchableOpacity>
               </View>
             ) : (
               filteredCandidates.map((novel, idx) => {
@@ -23559,6 +23758,11 @@ function AppContent() {
 
   // ★ 수상 편집용 상태
   const [editAwards, setEditAwards] = useState([]); // [{year: "2024", type: "grand"}, ...]
+  // 🏆 v3.12.0: 연재 연도 편집/등록 state
+  const [editStartYear, setEditStartYear] = useState(0);
+  const [editEndYear, setEditEndYear] = useState(0);
+  const [newStartYear, setNewStartYear] = useState(0);
+  const [newEndYear, setNewEndYear] = useState(0);
   const [awardYearInput, setAwardYearInput] = useState(
     String(new Date().getFullYear())
   );
@@ -24487,6 +24691,9 @@ function AppContent() {
           // 🏷️ v5.0 태그 시스템 마이그레이션
           await migrateTagSystem();
 
+          // 🏆 v3.12.0: 연재 연도 마이그레이션 (태그/메모 → start_year/end_year)
+          await migrateStartEndYear();
+
           // 🔧 v3.6.0: Tag Registry 로드 (없으면 FACTORY에서 시드 + 기존 사용자 데이터 병합)
           // 🔧 v3.6.1: registry 반환값 보존 — useEffect 내에서는 React state가 배치 업데이트 전이므로
           //   tagRegistry 클로저가 null. addTagToRegistry 등 registry를 참조하는 함수 사용 불가.
@@ -24965,6 +25172,7 @@ function AppContent() {
       // 2. 새 DB 초기화 (테이블 생성 등)
       await initDb();
       await migrateTagSystem();
+      await migrateStartEndYear(); // 🏆 v3.12.0
       const slotRegistry = await loadTagRegistry(); // 🔧 v3.6.1: 반환값 보존
       await loadPlatformRegistry(); // 🆕 플랫폼 레지스트리 로드
 
@@ -25675,8 +25883,8 @@ function AppContent() {
               
               // 본 목록에 등록 (모든 필드 이전)
               await exec(
-                `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,start_year,end_year)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
                 [
                   id,
                   planned.title,
@@ -25712,6 +25920,8 @@ function AppContent() {
                   // 🆕 v6.0: manual/hybrid 모드에서 expected_tier를 manual_tier로 활용
                   (globalTierConfig.mode !== "match" && globalTierConfig.mode !== "ratio" && planned.expected_tier && getActiveTierOrder(globalTierConfig).includes(planned.expected_tier))
                     ? planned.expected_tier : null,
+                  0, // start_year (예정작에는 없음)
+                  0, // end_year
                 ]
               );
               
@@ -27344,6 +27554,12 @@ function AppContent() {
         sub_genre: subJson,
         tag_data: tagDataJson, // 🏷️ v5.0
       } : null);
+      // 🏆 v3.12.0: 태그에서 연도 추출 → 미설정 시 자동 반영
+      const extractedYears = extractYearsFromText(allTagsString);
+      if (extractedYears.length > 0) {
+        setEditStartYear(prev => prev > 0 ? prev : extractedYears[0]);
+        setEditEndYear(prev => prev > 0 ? prev : (extractedYears.length > 1 ? extractedYears[extractedYears.length - 1] : 0));
+      }
     } else if (tagModalTarget === "planned") {
       // 🆕 v3.4.3: 예정탭 편집에서 태그 선택
       // 🔧 v3.5.8: 함수형 업데이트로 stale closure 방지
@@ -28997,9 +29213,9 @@ function AppContent() {
           // 작품 삭제 되돌리기 (복원)
           const n = item.payload.novel;
           await exec(
-            `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,reread_count,tag_data,aliases,memorable_quote)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-            [n.id, n.title, n.author, n.tags, n.platforms, n.note, n.read_count, n.rating, n.rd, n.wins, n.losses, n.match_count, n.tier, n.created_at, n.awards, n.total_episodes, n.status, n.pinned, n.cover_image, n.link, n.work_status, n.read_count_updated_at, n.major_genre, n.sub_genre, n.gaiden_status, n.gaiden_read_count, n.gaiden_total_episodes, n.manual_tier, n.reread_count || 1, n.tag_data || "", n.aliases || "", n.memorable_quote || ""]
+            `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,reread_count,tag_data,aliases,memorable_quote,start_year,end_year)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+            [n.id, n.title, n.author, n.tags, n.platforms, n.note, n.read_count, n.rating, n.rd, n.wins, n.losses, n.match_count, n.tier, n.created_at, n.awards, n.total_episodes, n.status, n.pinned, n.cover_image, n.link, n.work_status, n.read_count_updated_at, n.major_genre, n.sub_genre, n.gaiden_status, n.gaiden_read_count, n.gaiden_total_episodes, n.manual_tier, n.reread_count || 1, n.tag_data || "", n.aliases || "", n.memorable_quote || "", n.start_year || 0, n.end_year || 0]
           );
           // 🔧 v3.6.2: 복원된 작품의 표지를 라이브러리에서 "사용중"으로 동기화
           if (n.cover_image) {
@@ -29492,8 +29708,8 @@ function AppContent() {
         : "";
       
       await exec(
-        `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+        `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,start_year,end_year)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
         [
           id,
           t,
@@ -29533,6 +29749,8 @@ function AppContent() {
             if ((globalTierConfig.mode === "match" || globalTierConfig.mode === "ratio") && globalTierConfig.allowRegistrationTier && newManualTier) return newManualTier;
             return null;
           })(),
+          newStartYear, // 🏆 v3.12.0
+          newEndYear,
         ]
       );
       // 🔧 v3.5.9: 텍스트 입력 태그 → customTags 동기화 (태그 관리 모달 연동)
@@ -29555,6 +29773,8 @@ function AppContent() {
       setNewSubGenre([]);
       setNewTagData([]); // 🏷️ v5.0
       setNewGaidenStatus("none");
+      setNewStartYear(0); // 🏆 v3.12.0
+      setNewEndYear(0);
       setNewGaidenReadCount("");
       setNewGaidenTotalEpisodes("");
       setNewManualTier(""); // 🆕 v6.0: 등록 시 티어 선택 초기화
@@ -30113,7 +30333,9 @@ function AppContent() {
       editCreatedAt !== snap.created_at ||
       editReadCountUpdatedAt !== snap.read_count_updated_at ||
       JSON.stringify(editQuotes) !== snap.quotes ||
-      JSON.stringify(editAwards) !== snap.awards
+      JSON.stringify(editAwards) !== snap.awards ||
+      editStartYear !== snap.start_year || // 🏆 v3.12.0
+      editEndYear !== snap.end_year
     );
     
     if (itemChanged || stateChanged) {
@@ -30190,7 +30412,11 @@ function AppContent() {
     
     // 📚 v3.0.4: 다회독 카운트 로드
     setEditRereadCount(String(n.reread_count || 1));
-    
+
+    // 🏆 v3.12.0: 연재 연도 로드
+    setEditStartYear(Number(n.start_year) || 0);
+    setEditEndYear(Number(n.end_year) || 0);
+
     // 💬 인상깊은 문장 로드
     setEditQuotes(parseQuotes(n.memorable_quote)); // 💬 v3.5.4: 다중 문장 파싱
     removedQuoteImagesRef.current = []; // 📷 v3.6.1: 이미지 삭제 추적 초기화
@@ -30249,6 +30475,8 @@ function AppContent() {
       read_count_updated_at: formatDateLocal(n.read_count_updated_at),
       quotes: JSON.stringify(parseQuotes(n.memorable_quote)),
       awards: JSON.stringify(parsed), // parsed는 바로 위에서 생성된 editAwards 초기값
+      start_year: Number(n.start_year) || 0, // 🏆 v3.12.0
+      end_year: Number(n.end_year) || 0,
     };
 
     // 🔧 v3.5.7: Android transparent Modal ScrollView 버그 대응
@@ -30340,7 +30568,7 @@ function AppContent() {
       const newReadCountUpdatedAt = parseDate(editReadCountUpdatedAt) || (readCountChanged ? Date.now() : (n.read_count_updated_at || Date.now()));
 
       await exec(
-        "UPDATE novels SET title=?, author=?, tags=?, note=?, platforms=?, read_count=?, awards=?, total_episodes=?, status=?, cover_image=?, link=?, work_status=?, read_count_updated_at=?, major_genre=?, sub_genre=?, gaiden_status=?, gaiden_read_count=?, gaiden_total_episodes=?, created_at=?, reread_count=?, tag_data=?, memorable_quote=?, aliases=? WHERE id=?;",
+        "UPDATE novels SET title=?, author=?, tags=?, note=?, platforms=?, read_count=?, awards=?, total_episodes=?, status=?, cover_image=?, link=?, work_status=?, read_count_updated_at=?, major_genre=?, sub_genre=?, gaiden_status=?, gaiden_read_count=?, gaiden_total_episodes=?, created_at=?, reread_count=?, tag_data=?, memorable_quote=?, aliases=?, start_year=?, end_year=? WHERE id=?;",
         [
           newTitle,
           n.author?.trim() || "",
@@ -30365,6 +30593,8 @@ function AppContent() {
           n.tag_data || "", // 🏷️ v5.0
           serializeQuotes(editQuotes), // 💬 v3.5.4: 인상깊은 문장 (다중 지원)
           n.aliases || "", // 🏷️ 작품 별명 유지
+          editStartYear, // 🏆 v3.12.0
+          editEndYear,
           n.id,
         ]
       );
@@ -32273,7 +32503,12 @@ async function buildUltraCompactBackup(novels, matches, coverImages = null) {
     if (gaidenTotalEp) opt.ge = gaidenTotalEp;
     // 🏆 수동 티어 지정 (v6.0: 동적 — 문자열 key 저장)
     if (n.manual_tier) opt.mt = n.manual_tier;
-    
+    // 🏆 v3.12.0: 연재 연도
+    const startYear = Number(n.start_year) || 0;
+    const endYear = Number(n.end_year) || 0;
+    if (startYear) opt.sy = startYear;
+    if (endYear) opt.ey = endYear;
+
     // 📚 v3.0.4: 다회독 카운트 (기본 1, 1보다 큰 경우에만 저장)
     const rereadCount = Math.max(1, Number(n.reread_count) || 1);
     if (rereadCount > 1) opt.rr = rereadCount;
@@ -32989,6 +33224,9 @@ async function importJSON() {
                 const manualTier = typeof opt.mt === 'string' ? opt.mt : (opt.mt === 1 ? 'S' : (opt.mt === 2 ? 'A' : null));
                 // 📚 v3.0.4: 다회독 카운트
                 const rereadCount = Math.max(1, opt.rr != null ? Number(opt.rr) : 1);
+                // 🏆 v3.12.0: 연재 연도
+                const startYearVal = opt.sy || 0;
+                const endYearVal = opt.ey || 0;
                 // 🏷️ v5.0: tag_data, aliases
                 const tagData = opt.td || "";
                 const aliases = opt.al || "";
@@ -33029,9 +33267,9 @@ async function importJSON() {
                 idList.push(id);
 
                 novelQueries.push({
-                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,reread_count,tag_data,aliases,memorable_quote)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, rereadCount, tagData, aliases, memorableQuote],
+                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,reread_count,tag_data,aliases,memorable_quote,start_year,end_year)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, rereadCount, tagData, aliases, memorableQuote, startYearVal, endYearVal],
                 });
               }
 
@@ -34200,6 +34438,20 @@ async function importJSON() {
       onPress={() => setNewWorkStatus(s.key)}
     />
   ))}
+</View>
+
+{/* 🏆 v3.12.0: 연재 연도 */}
+<Label style={{ marginTop: 10 }}>연재 연도</Label>
+<Text style={{ color: C.sub, fontSize: 11, marginBottom: 6 }}>
+  수상 후보 자동 선정에 사용됩니다.
+</Text>
+<View style={{ flexDirection: "row", gap: 12 }}>
+  <View style={{ flex: 1 }}>
+    <YearStepper label="시작 연도" value={newStartYear} onChange={setNewStartYear} isDark={isDark} />
+  </View>
+  <View style={{ flex: 1 }}>
+    <YearStepper label="종료 연도" value={newEndYear} onChange={setNewEndYear} isDark={isDark} />
+  </View>
 </View>
 
 {/* 📖 외전 상태 */}
@@ -44144,6 +44396,20 @@ async function importJSON() {
                   placeholder="예: 1725.0"
                 />
 
+                {/* 🏆 v3.12.0: 연재 연도 설정 */}
+                <Label style={{ marginTop: 10 }}>연재 연도</Label>
+                <Text style={{ color: C.sub, fontSize: 11, marginBottom: 6 }}>
+                  수상 후보 자동 선정에 사용됩니다. 길게 누르면 미설정으로 리셋합니다.
+                </Text>
+                <View style={{ flexDirection: "row", gap: 12 }}>
+                  <View style={{ flex: 1 }}>
+                    <YearStepper label="시작 연도" value={editStartYear} onChange={setEditStartYear} isDark={isDark} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <YearStepper label="종료 연도" value={editEndYear} onChange={setEditEndYear} isDark={isDark} />
+                  </View>
+                </View>
+
                 {/* ★ 수상 설정 UI */}
                 <Label style={{ marginTop: 10 }}>수상 설정</Label>
                 <Text style={{ color: C.sub, marginBottom: 4 }}>
@@ -44160,7 +44426,7 @@ async function importJSON() {
                   style={{ marginBottom: 8 }}
                 />
 
-                {/* 수상 종류 선택 (AWARD_META 기반) */}
+                {/* 수상 종류 선택 (동적 yearlyAwards 기반, 폴백: AWARD_META) */}
                 <Label>수상 종류</Label>
                 <View
                   style={{
@@ -44169,14 +44435,28 @@ async function importJSON() {
                     marginBottom: 8,
                   }}
                 >
-                  {Object.entries(AWARD_META).map(([key, meta]) => (
-                    <Chip
-                      key={key}
-                      label={meta.label}
-                      active={awardTypeInput === key}
-                      onPress={() => setAwardTypeInput(key)}
-                    />
-                  ))}
+                  {(() => {
+                    const yearKey = awardYearInput.trim();
+                    const dynamicAwards = awardSystemSettings?.yearlyAwards?.[yearKey];
+                    if (dynamicAwards && dynamicAwards.length > 0) {
+                      return dynamicAwards.map((award) => (
+                        <Chip
+                          key={award.id}
+                          label={`${award.icon || ""} ${award.name}`}
+                          active={awardTypeInput === award.id}
+                          onPress={() => setAwardTypeInput(award.id)}
+                        />
+                      ));
+                    }
+                    return Object.entries(AWARD_META).map(([key, meta]) => (
+                      <Chip
+                        key={key}
+                        label={meta.label}
+                        active={awardTypeInput === key}
+                        onPress={() => setAwardTypeInput(key)}
+                      />
+                    ));
+                  })()}
                 </View>
 
                 <PrimaryButton
