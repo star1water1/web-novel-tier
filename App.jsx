@@ -2,9 +2,20 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.12.2                                                                  ║
+ * ║  버전: 3.12.3                                                                  ║
  * ║  최종 수정: 2026-04-13                                                        ║
  * ║  총 라인 수: 약 47,000줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📋 v3.12.3 예정작 연재 연도 필드 추가 (2026-04-13)                                ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ • planned_novels에 start_year / end_year INTEGER 컬럼 추가                    ║
+ * ║ • 등록 폼 + 편집 모달에 YearStepper UI 추가                                   ║
+ * ║ • 등록전환(convertPlannedToNovel) 시 본작에 연도 자동 이전                     ║
+ * ║ • 백업/복원에 sy/ey 필드 포함 (구버전 복원 시 0 폴백)                          ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -4584,7 +4595,9 @@ async function initDb() {
   await ensureColumn("planned_novels", "why_interested", "TEXT", "''");
   await ensureColumn("planned_novels", "tag_data", "TEXT", "''");
   await ensureColumn("planned_novels", "memorable_quote", "TEXT", "''"); // 🏆 v3.12.1: 인상깊은 문장
-  
+  await ensureColumn("planned_novels", "start_year", "INTEGER", "0"); // 🏆 v3.12.3: 연재 시작 연도
+  await ensureColumn("planned_novels", "end_year", "INTEGER", "0"); // 🏆 v3.12.3: 연재 종료 연도
+
   // 🖼️ v3.4.5: 표지 라이브러리 테이블
   await database.runAsync(`CREATE TABLE IF NOT EXISTS cover_library (
     id TEXT PRIMARY KEY NOT NULL,
@@ -9959,7 +9972,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "3.12.2";
+const APP_VERSION = "3.12.3";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -9985,6 +9998,15 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "3.12.3", date: "2026-04-13",
+    title: "예정작 연재 연도 입력 지원",
+    highlights: [
+      { type: "new", text: "📋 예정작 등록/편집에 연재 시작·종료 연도 입력 추가" },
+      { type: "new", text: "등록전환 시 연도가 본작에 자동 이전 (수상 후보 반영)" },
+      { type: "improve", text: "백업/복원에 예정작 연도 데이터 포함" },
+    ],
+  },
   {
     version: "3.12.2", date: "2026-04-13",
     title: "예정작 명대사 · 갤러리 안정성 보완",
@@ -24098,6 +24120,8 @@ function AppContent() {
   const [plannedScheduledStart, setPlannedScheduledStart] = useState("");
   const [plannedSimilarNovels, setPlannedSimilarNovels] = useState([]);
   const [plannedWhyInterested, setPlannedWhyInterested] = useState("");
+  const [plannedStartYear, setPlannedStartYear] = useState(0); // 🏆 v3.12.3: 연재 시작 연도
+  const [plannedEndYear, setPlannedEndYear] = useState(0); // 🏆 v3.12.3: 연재 종료 연도
   // 예정 작품 편집 모달
   const [plannedEditOpen, setPlannedEditOpen] = useState(false);
   const [plannedEditItem, setPlannedEditItem] = useState(null);
@@ -25849,8 +25873,8 @@ function AppContent() {
       const now = Date.now();
       
       await exec(
-        `INSERT INTO planned_novels (id,title,author,tags,platforms,note,total_episodes,cover_image,link,work_status,major_genre,sub_genre,priority,created_at,expected_rating,expected_tier,interest_level,discovery_source,first_chapter_read,scheduled_start_date,similar_novels,why_interested,tag_data,memorable_quote)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+        `INSERT INTO planned_novels (id,title,author,tags,platforms,note,total_episodes,cover_image,link,work_status,major_genre,sub_genre,priority,created_at,expected_rating,expected_tier,interest_level,discovery_source,first_chapter_read,scheduled_start_date,similar_novels,why_interested,tag_data,memorable_quote,start_year,end_year)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
         [
           id,
           t,
@@ -25883,6 +25907,8 @@ function AppContent() {
           plannedWhyInterested.trim(),
           "", // 🔧 v3.9.2: tag_data 누락 수정 (UPDATE에는 있으나 INSERT에 빠져있었음)
           "", // memorable_quote (등록 시 빈값)
+          plannedStartYear, // 🏆 v3.12.3: 연재 시작 연도
+          plannedEndYear, // 🏆 v3.12.3: 연재 종료 연도
         ]
       );
 
@@ -25911,7 +25937,9 @@ function AppContent() {
       setPlannedScheduledStart("");
       setPlannedSimilarNovels([]);
       setPlannedWhyInterested("");
-      
+      setPlannedStartYear(0); // 🏆 v3.12.3
+      setPlannedEndYear(0); // 🏆 v3.12.3
+
       await loadPlannedList();
       
       // 🖼️ v3.4.5: 표지가 있으면 라이브러리 상태 업데이트
@@ -25991,7 +26019,7 @@ function AppContent() {
       const newCover = n.cover_image || "";
       
       await exec(
-        `UPDATE planned_novels SET title=?, author=?, tags=?, platforms=?, note=?, total_episodes=?, cover_image=?, link=?, work_status=?, major_genre=?, sub_genre=?, priority=?, expected_rating=?, expected_tier=?, interest_level=?, discovery_source=?, first_chapter_read=?, scheduled_start_date=?, similar_novels=?, why_interested=?, tag_data=?, memorable_quote=? WHERE id=?;`,
+        `UPDATE planned_novels SET title=?, author=?, tags=?, platforms=?, note=?, total_episodes=?, cover_image=?, link=?, work_status=?, major_genre=?, sub_genre=?, priority=?, expected_rating=?, expected_tier=?, interest_level=?, discovery_source=?, first_chapter_read=?, scheduled_start_date=?, similar_novels=?, why_interested=?, tag_data=?, memorable_quote=?, start_year=?, end_year=? WHERE id=?;`,
         [
           newTitle,
           n.author?.trim() || "",
@@ -26016,6 +26044,8 @@ function AppContent() {
           n.why_interested || "",
           n.tag_data || "", // 🔧 v3.5.9: tag_data 저장 누락 수정
           serializeQuotes(plannedEditQuotes), // 🏆 v3.12.1: 인상깊은 문장
+          Number(n.start_year) || 0, // 🏆 v3.12.3: 연재 시작 연도
+          Number(n.end_year) || 0, // 🏆 v3.12.3: 연재 종료 연도
           n.id,
         ]
       );
@@ -26161,8 +26191,8 @@ function AppContent() {
                   // 🆕 v6.0: manual/hybrid 모드에서 expected_tier를 manual_tier로 활용
                   (globalTierConfig.mode !== "match" && globalTierConfig.mode !== "ratio" && planned.expected_tier && getActiveTierOrder(globalTierConfig).includes(planned.expected_tier))
                     ? planned.expected_tier : null,
-                  0, // start_year (예정작에는 없음)
-                  0, // end_year
+                  Number(planned.start_year) || 0, // 🏆 v3.12.3: 예정작에서 연도 이전
+                  Number(planned.end_year) || 0, // 🏆 v3.12.3: 예정작에서 연도 이전
                 ]
               );
               
@@ -33172,6 +33202,8 @@ async function exportJSON() {
         wi: p.why_interested || "",
         td: p.tag_data || "", // 🔧 v3.5.9: tag_data 백업
         mq: p.memorable_quote || "", // 🏆 v3.12.2: 인상깊은 문장
+        sy: Number(p.start_year) || 0, // 🏆 v3.12.3: 연재 시작 연도
+        ey: Number(p.end_year) || 0, // 🏆 v3.12.3: 연재 종료 연도
       }));
     }
     
@@ -33797,8 +33829,8 @@ async function importJSON() {
                 
                 const plannedQueries = data.PL.map(p => ({
                   sql: `INSERT INTO planned_novels
-                    (id, title, author, tags, platforms, note, total_episodes, cover_image, link, work_status, major_genre, sub_genre, priority, created_at, expected_rating, expected_tier, interest_level, discovery_source, first_chapter_read, scheduled_start_date, similar_novels, why_interested, tag_data, memorable_quote)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                    (id, title, author, tags, platforms, note, total_episodes, cover_image, link, work_status, major_genre, sub_genre, priority, created_at, expected_rating, expected_tier, interest_level, discovery_source, first_chapter_read, scheduled_start_date, similar_novels, why_interested, tag_data, memorable_quote, start_year, end_year)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
                   params: [
                     uuid(),
                     p.t || "",
@@ -33825,6 +33857,8 @@ async function importJSON() {
                     p.wi || "",
                     p.td || "", // 🔧 v3.5.9: tag_data 복원
                     p.mq || "", // 🏆 v3.12.2: 인상깊은 문장 복원
+                    Number(p.sy) || 0, // 🏆 v3.12.3: 연재 시작 연도 복원
+                    Number(p.ey) || 0, // 🏆 v3.12.3: 연재 종료 연도 복원
                   ],
                 }));
                 
@@ -36063,14 +36097,28 @@ async function importJSON() {
                 )}
               </View>
               
+              {/* 🏆 v3.12.3: 연재 연도 */}
+              <Label style={{ marginTop: 10 }}>연재 연도</Label>
+              <Text style={{ color: C.sub, fontSize: 11, marginBottom: 6 }}>
+                등록전환 시 본작에 자동 반영됩니다.
+              </Text>
+              <View style={{ flexDirection: "row", gap: 12 }}>
+                <View style={{ flex: 1 }}>
+                  <YearStepper label="시작 연도" value={plannedStartYear} onChange={setPlannedStartYear} isDark={isDark} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <YearStepper label="종료 연도" value={plannedEndYear} onChange={setPlannedEndYear} isDark={isDark} />
+                </View>
+              </View>
+
               <Label style={{ marginTop: 10 }}>메모</Label>
-              <Input 
-                value={plannedNote} 
-                onChangeText={setPlannedNote} 
-                placeholder="관심 갖게 된 이유, 추천받은 곳 등" 
+              <Input
+                value={plannedNote}
+                onChangeText={setPlannedNote}
+                placeholder="관심 갖게 된 이유, 추천받은 곳 등"
                 multiline
               />
-              
+
               <PrimaryButton
                 title="예정 작품 추가"
                 onPress={addPlannedNovel}
@@ -46683,6 +46731,30 @@ async function importJSON() {
                   </>
                 )}
                 
+                {/* 🏆 v3.12.3: 연재 연도 */}
+                <Label style={{ marginTop: 10 }}>연재 연도</Label>
+                <Text style={{ color: C.sub, fontSize: 11, marginBottom: 6 }}>
+                  등록전환 시 본작에 자동 반영됩니다.
+                </Text>
+                <View style={{ flexDirection: "row", gap: 12 }}>
+                  <View style={{ flex: 1 }}>
+                    <YearStepper
+                      label="시작 연도"
+                      value={Number(plannedEditItem.start_year) || 0}
+                      onChange={(val) => updatePlannedEditItem(prev => prev ? { ...prev, start_year: val } : null)}
+                      isDark={isDark}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <YearStepper
+                      label="종료 연도"
+                      value={Number(plannedEditItem.end_year) || 0}
+                      onChange={(val) => updatePlannedEditItem(prev => prev ? { ...prev, end_year: val } : null)}
+                      isDark={isDark}
+                    />
+                  </View>
+                </View>
+
                 {/* 📊 예상 레이팅 (설정 기반) */}
                 {appSettings.plannedFields?.showExpectedRating === true && (
                   <>
