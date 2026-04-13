@@ -30523,6 +30523,8 @@ function AppContent() {
       editNewQuoteImagesRef.current = [];
       setEditOpen(false);
       updateEditItem(null);
+      setEditStartYear(0); // 🏆 v3.12.1: 연도 상태 리셋
+      setEditEndYear(0);
       return;
     }
     
@@ -30573,6 +30575,8 @@ function AppContent() {
             editNewQuoteImagesRef.current = [];
             setEditOpen(false);
             updateEditItem(null);
+            setEditStartYear(0); // 🏆 v3.12.1
+            setEditEndYear(0);
           }},
         ]
       );
@@ -30588,6 +30592,8 @@ function AppContent() {
       }
       setEditOpen(false);
       updateEditItem(null);
+      setEditStartYear(0); // 🏆 v3.12.1
+      setEditEndYear(0);
     }
   }
 
