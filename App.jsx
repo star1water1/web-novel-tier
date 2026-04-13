@@ -23781,6 +23781,20 @@ function AppContent() {
   const [filterStatus, setFilterStatus] = useState("ALL");
   const [filterFolder, setFilterFolder] = useState("ALL"); // 📂 v3.7.0: 폴더 필터
 
+  // 🏆 v3.12.1: 홈 정렬/필터 설정 자동 저장
+  const homeSortInitRef = useRef(false); // 초기 복원 완료 전 저장 방지
+  useEffect(() => {
+    if (!homeSortInitRef.current) return; // 초기 로드 시에는 저장하지 않음
+    deferSetAppMeta("home_sort_settings", {
+      sortKey: homeSortKey,
+      sortDir: homeSortDir,
+      filterTier,
+      filterPlatform,
+      filterGenre,
+      filterStatus,
+    });
+  }, [homeSortKey, homeSortDir, filterTier, filterPlatform, filterGenre, filterStatus]);
+
   // 📂 v3.7.0: 폴더 시스템
   const [folders, setFolders] = useState([]);
   const [novelFolderMap, setNovelFolderMap] = useState(new Map());
@@ -24906,6 +24920,7 @@ function AppContent() {
             savedTagSortMode,         // 🔧 20: 동일 이유
             savedTagLastTab,          // 🔧 21: 동일 이유
             savedTagPreviewExpanded,  // 22: 태그 칩 프리뷰 펼침 상태
+            savedHomeSortSettings,    // 23: 🏆 v3.12.1: 홈 정렬/필터 설정
           ] = await Promise.all([
             getAppMeta("settings_darkMode"),      // 0: savedDarkMode
             getAppMeta("platform_covers"),        // 1: savedPlatformCovers
@@ -24930,6 +24945,7 @@ function AppContent() {
             getAppMeta("tag_sort_mode"),           // 20: savedTagSortMode (🔧 동일 이유)
             getAppMeta("tag_last_tab"),            // 21: savedTagLastTab (🔧 동일 이유)
             getAppMeta("tag_preview_expanded"),    // 22: savedTagPreviewExpanded
+            getAppMeta("home_sort_settings"),      // 23: savedHomeSortSettings (🏆 v3.12.1)
           ]);
           
           if (!mounted) return;
@@ -25070,7 +25086,18 @@ function AppContent() {
             if (VALID_TAB_KEYS.includes(savedTagLastTab)) setTagLastTab(savedTagLastTab);
           }
           if (savedTagPreviewExpanded === true) setTagPreviewExpanded(true);
-          
+
+          // 🏆 v3.12.1: 홈 정렬/필터 설정 복원
+          if (savedHomeSortSettings && typeof savedHomeSortSettings === "object") {
+            if (savedHomeSortSettings.sortKey) setHomeSortKey(savedHomeSortSettings.sortKey);
+            if (savedHomeSortSettings.sortDir) setHomeSortDir(savedHomeSortSettings.sortDir);
+            if (savedHomeSortSettings.filterTier) setFilterTier(savedHomeSortSettings.filterTier);
+            if (savedHomeSortSettings.filterPlatform) setFilterPlatform(savedHomeSortSettings.filterPlatform);
+            if (savedHomeSortSettings.filterGenre) setFilterGenre(savedHomeSortSettings.filterGenre);
+            if (savedHomeSortSettings.filterStatus) setFilterStatus(savedHomeSortSettings.filterStatus);
+          }
+          homeSortInitRef.current = true; // 초기 복원 완료 → 이후 변경은 저장됨
+
           // 🏆 v2.9: 수상 시스템 설정
           if (savedAwardSystemSettings && typeof savedAwardSystemSettings === "object") {
             // 기존 설정과 병합 (새 연도 자동 추가)
