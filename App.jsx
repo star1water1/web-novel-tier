@@ -11225,7 +11225,7 @@ function parseAwards(json, awardSystemSettings = null) {
     if (!Array.isArray(arr)) return [];
     return arr
       .map((a) => ({
-        year: a.year,
+        year: Number(a.year) || 0, // 🔧 v3.12.0: 항상 숫자로 정규화 (문자열 "2025" → 2025)
         type: a.type,
       }))
       .filter((a) => {
