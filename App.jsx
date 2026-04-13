@@ -2,8 +2,8 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.12.0                                                                  ║
- * ║  최종 수정: 2026-04-12                                                        ║
+ * ║  버전: 3.12.1                                                                  ║
+ * ║  최종 수정: 2026-04-13                                                        ║
  * ║  총 라인 수: 약 47,000줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
@@ -35,6 +35,20 @@
  * ║                                                                              ║
  * ║ [백업 호환] opt.sy / opt.ey 추가, 구버전 복원 시 0 폴백                        ║
  * ║ [팩토리 태그] 연도/시기 카테고리 2020~2027로 확장                               ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🏆 v3.12.1 취향 분석 + 매칭 인사이트에 연중/편수 요인 통합 (2026-04-13)          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ • createNovelSnapshot에 work_status 추가 (패턴 학습 기반)                     ║
+ * ║ • preference_patterns: work_status_affinity, episode_length 카테고리 추가     ║
+ * ║ • analyzePreferences: workDropRate(연중률), avgEpisodes, episodeAnalysis      ║
+ * ║ • 이상치 탐지: 고평가 연중작 (highRatingDropped)                               ║
+ * ║ • analyzeUpsetCauses: 연중 패널티/극복 + 편수 비율 차이 요인                   ║
+ * ║ • generateInsights: 연중작 평가 편향, 연중률 높은 장르 경고                     ║
+ * ║ • TasteAnalysisScreen UI: 연중률, 연중 편향, 편수 분석, 고평가 연중작 표시     ║
  * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
@@ -5985,6 +5999,7 @@ function createNovelSnapshot(novel, tagAttributes = {}) {
     read_ratio: calculateReadRatio(novel),
     platforms: platforms,
     status: novel.status || "reading",
+    work_status: novel.work_status || "ongoing", // 🏆 v3.12.1: 연재 상태 (연중/완결 등)
   };
 }
 
@@ -6406,6 +6421,21 @@ async function processPatternUpdates(logs) {
           didWin: true,
         });
       }
+
+      // 🏆 v3.12.1: 연재 상태 패턴 (연중/완결 등)
+      if (ws.work_status) {
+        updates.push({ category: "work_status_affinity", patternKey: `status:${ws.work_status}`, didWin: true });
+      }
+      if (ls.work_status) {
+        updates.push({ category: "work_status_affinity", patternKey: `status:${ls.work_status}`, didWin: false });
+      }
+
+      // 🏆 v3.12.1: 편수 길이 패턴 (완결 + 편수 > 0)
+      const getEpBucket = (ep) => ep < 100 ? "short" : ep < 400 ? "medium" : "long";
+      const wEpLen = ws.work_status === "completed" && (ws.total_episodes || 0) > 0 ? ws.total_episodes : 0;
+      const lEpLen = ls.work_status === "completed" && (ls.total_episodes || 0) > 0 ? ls.total_episodes : 0;
+      if (wEpLen > 0) updates.push({ category: "episode_length", patternKey: `length:${getEpBucket(wEpLen)}`, didWin: true });
+      if (lEpLen > 0) updates.push({ category: "episode_length", patternKey: `length:${getEpBucket(lEpLen)}`, didWin: false });
     }
     
     // DB 업데이트 (배치)
@@ -20795,7 +20825,7 @@ const TasteAnalysisScreen = memo(({
                   <View>
                     <Text style={{ color: C.text, fontWeight: "700" }}>{g.genre}</Text>
                     <Text style={{ color: C.sub, fontSize: 11 }}>
-                      {g.count}작 · 완독률 {(g.completionRate * 100).toFixed(0)}% · 드롭률 {(g.dropRate * 100).toFixed(0)}%
+                      {g.count}작 · 완독률 {(g.completionRate * 100).toFixed(0)}% · 드롭률 {(g.dropRate * 100).toFixed(0)}%{g.workDropRate > 0 ? ` · 연중률 ${(g.workDropRate * 100).toFixed(0)}%` : ""}
                     </Text>
                   </View>
                   <View style={{ alignItems: "flex-end" }}>
@@ -21372,6 +21402,36 @@ const TasteAnalysisScreen = memo(({
             </View>
           ))}
         </View>
+
+        {/* 🏆 v3.12.1: 연중작 평가 편향 */}
+        {readingPattern.droppedRatingBias && readingPattern.droppedRatingBias.count > 0 && (
+          <View style={{ marginTop: 12, padding: 12, backgroundColor: isDark ? "#2a1a1a" : "#fef2f2", borderRadius: 10 }}>
+            <Text style={{ color: isDark ? "#f87171" : "#dc2626", fontWeight: "700", fontSize: 13, marginBottom: 4 }}>
+              🚫 연중/서비스종료 작품 평가 ({readingPattern.droppedRatingBias.count}작)
+            </Text>
+            <Text style={{ color: C.text, fontSize: 12 }}>
+              연중작 평균 {readingPattern.droppedRatingBias.droppedAvg.toFixed(0)}점 vs 비연중 {readingPattern.droppedRatingBias.nonDroppedAvg.toFixed(0)}점
+              {" "}({readingPattern.droppedRatingBias.droppedAvg - readingPattern.droppedRatingBias.nonDroppedAvg > 0 ? "+" : ""}{(readingPattern.droppedRatingBias.droppedAvg - readingPattern.droppedRatingBias.nonDroppedAvg).toFixed(0)}점)
+            </Text>
+          </View>
+        )}
+
+        {/* 🏆 v3.12.1: 완결작 편수 분석 */}
+        {readingPattern.episodeAnalysis && (readingPattern.episodeAnalysis.short.count + readingPattern.episodeAnalysis.medium.count + readingPattern.episodeAnalysis.long.count) > 0 && (
+          <View style={{ marginTop: 12 }}>
+            <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>완결작 편수별 평가 (편수 기입된 작품만)</Text>
+            {[
+              { label: "단편 (<100화)", ...readingPattern.episodeAnalysis.short },
+              { label: "중편 (100-400화)", ...readingPattern.episodeAnalysis.medium },
+              { label: "장편 (400화+)", ...readingPattern.episodeAnalysis.long },
+            ].filter(item => item.count > 0).map((item, i) => (
+              <View key={i} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 4 }}>
+                <Text style={{ color: C.text }}>{item.label}</Text>
+                <Text style={{ color: C.sub }}>{item.count}작 · 평균 {(item.avgRating || 0).toFixed(0)}점</Text>
+              </View>
+            ))}
+          </View>
+        )}
       </Section>
 
       {/* 작가 충성도 (상세) */}
@@ -21929,6 +21989,22 @@ const TasteAnalysisScreen = memo(({
                   {anomalies.lowInfoQuality.slice(0, 3).map((n, i) => (
                     <Text key={i} style={{ color: C.sub, fontSize: 12 }}>
                       • {n.title} ({n.rating.toFixed(0)}점, 신뢰도 {Math.round(n.reliability)}%)
+                    </Text>
+                  ))}
+                </View>
+              )}
+
+              {anomalies.highRatingDropped && anomalies.highRatingDropped.length > 0 && (
+                <View style={{ marginBottom: 12 }}>
+                  <Text style={{ color: "#ef4444", fontWeight: "700", marginBottom: 4 }}>
+                    🚫 고평가 연중작 ({anomalies.highRatingDropped.length}개)
+                  </Text>
+                  <Text style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>
+                    연중/서비스종료임에도 높은 평가를 받은 작품
+                  </Text>
+                  {anomalies.highRatingDropped.slice(0, 5).map((n, i) => (
+                    <Text key={i} style={{ color: C.sub, fontSize: 12 }}>
+                      • {n.title} ({n.rating.toFixed(0)}점, {n.workStatus === "dropped" ? "연중" : "서비스종료"}{n.totalEpisodes > 0 ? `, ${n.totalEpisodes}화` : ""})
                     </Text>
                   ))}
                 </View>
@@ -22731,6 +22807,15 @@ async function analyzePreferences(novels, matches) {
     rereadNovelCount: rereadNovels.length,
     totalRereadCount,
     avgRereadCount: totalCount > 0 ? totalRereadCount / totalCount : 1,
+    // 🏆 v3.12.1: 연재 상태별 통계
+    workStatusCounts: {
+      completed: reliable.filter(n => n.work_status === "completed").length,
+      dropped: reliable.filter(n => n.work_status === "dropped").length,
+      discontinued: reliable.filter(n => n.work_status === "discontinued").length,
+      ongoing: reliable.filter(n => n.work_status === "ongoing").length,
+      hiatus: reliable.filter(n => n.work_status === "hiatus").length,
+    },
+    avgEpisodesCompleted: avg(reliable.filter(n => n.work_status === "completed" && (Number(n.total_episodes) || 0) > 0).map(n => Number(n.total_episodes))),
   };
   
   // 3. 대장르 분석
@@ -22738,7 +22823,7 @@ async function analyzePreferences(novels, matches) {
   for (const n of reliable) {
     for (const g of n.majorGenres) {
       if (!majorGenreStats[g]) {
-        majorGenreStats[g] = { count: 0, weightedCount: 0, ratings: [], readRatios: [], completed: 0, dropped: 0, wins: 0, losses: 0, readCounts: [], rereadSum: 0 };
+        majorGenreStats[g] = { count: 0, weightedCount: 0, ratings: [], readRatios: [], completed: 0, dropped: 0, wins: 0, losses: 0, readCounts: [], rereadSum: 0, workDropped: 0, workDiscontinued: 0, episodeSums: [] };
       }
       const stat = majorGenreStats[g];
       // 📚 v3.4: 강화된 다회독 가중치 사용
@@ -22750,6 +22835,9 @@ async function analyzePreferences(novels, matches) {
       stat.readCounts.push(Number(n.read_count) || 0);
       if (n.status === "completed") stat.completed++;
       if (n.status === "dropped") stat.dropped++;
+      if (n.work_status === "dropped") stat.workDropped++;
+      if (n.work_status === "discontinued") stat.workDiscontinued++;
+      if ((Number(n.total_episodes) || 0) > 0) stat.episodeSums.push(Number(n.total_episodes));
       stat.wins += Number(n.wins) || 0;
       stat.losses += Number(n.losses) || 0;
       stat.rereadSum += n.rereadCount;
@@ -22769,6 +22857,8 @@ async function analyzePreferences(novels, matches) {
       winRate: (stat.wins + stat.losses) > 0 ? stat.wins / (stat.wins + stat.losses) : 0,
       totalRead: stat.readCounts.reduce((a, b) => a + b, 0),
       avgReread: stat.count > 0 ? stat.rereadSum / stat.count : 1,
+      workDropRate: stat.count > 0 ? (stat.workDropped + stat.workDiscontinued) / stat.count : 0, // 🏆 v3.12.1
+      avgEpisodes: avg(stat.episodeSums), // 🏆 v3.12.1
     }))
     .sort((a, b) => b.weightedCount - a.weightedCount || b.avgRating - a.avgRating);
 
@@ -22777,7 +22867,7 @@ async function analyzePreferences(novels, matches) {
   for (const n of reliable) {
     for (const g of n.subGenres) {
       if (!subGenreStats[g]) {
-        subGenreStats[g] = { count: 0, weightedCount: 0, ratings: [], completed: 0, dropped: 0, rereadSum: 0 };
+        subGenreStats[g] = { count: 0, weightedCount: 0, ratings: [], completed: 0, dropped: 0, rereadSum: 0, workDropped: 0, workDiscontinued: 0 };
       }
       const rereadWeight = n.rereadWeight || (1 + Math.sqrt(n.rereadCount - 1) * 0.7);
       subGenreStats[g].count++;
@@ -22785,6 +22875,8 @@ async function analyzePreferences(novels, matches) {
       subGenreStats[g].ratings.push(n.rating);
       if (n.status === "completed") subGenreStats[g].completed++;
       if (n.status === "dropped") subGenreStats[g].dropped++;
+      if (n.work_status === "dropped") subGenreStats[g].workDropped++;
+      if (n.work_status === "discontinued") subGenreStats[g].workDiscontinued++;
       subGenreStats[g].rereadSum += n.rereadCount;
     }
   }
@@ -22796,6 +22888,7 @@ async function analyzePreferences(novels, matches) {
       weightedCount: stat.weightedCount,
       avgRating: avg(stat.ratings),
       dropRate: stat.count > 0 ? stat.dropped / stat.count : 0,
+      workDropRate: stat.count > 0 ? (stat.workDropped + stat.workDiscontinued) / stat.count : 0,
       avgReread: stat.count > 0 ? stat.rereadSum / stat.count : 1,
     }))
     .sort((a, b) => b.weightedCount - a.weightedCount || b.avgRating - a.avgRating);
@@ -22996,6 +23089,28 @@ async function analyzePreferences(novels, matches) {
       totalEpisodes: n.total_episodes,
       tags: [...n.majorGenres, ...n.subGenres].join(", "),
     })),
+    // 🏆 v3.12.1: 연중작 분석 (work_status 기반)
+    workDroppedNovels: reliable.filter(n => n.work_status === "dropped" || n.work_status === "discontinued").map(n => ({
+      title: n.title, rating: n.rating, readCount: n.read_count,
+      totalEpisodes: n.total_episodes, workStatus: n.work_status,
+      tags: [...n.majorGenres, ...n.subGenres].join(", "),
+    })),
+    droppedRatingBias: (() => {
+      const dropped = reliable.filter(n => n.work_status === "dropped" || n.work_status === "discontinued");
+      const nonDropped = reliable.filter(n => n.work_status !== "dropped" && n.work_status !== "discontinued");
+      return { droppedAvg: avg(dropped.map(n => n.rating)), nonDroppedAvg: avg(nonDropped.map(n => n.rating)), count: dropped.length };
+    })(),
+    episodeAnalysis: (() => {
+      const withEp = reliable.filter(n => n.work_status === "completed" && (Number(n.total_episodes) || 0) > 0);
+      const short = withEp.filter(n => Number(n.total_episodes) < 100);
+      const medium = withEp.filter(n => Number(n.total_episodes) >= 100 && Number(n.total_episodes) < 400);
+      const long = withEp.filter(n => Number(n.total_episodes) >= 400);
+      return {
+        short: { count: short.length, avgRating: avg(short.map(n => n.rating)) },
+        medium: { count: medium.length, avgRating: avg(medium.map(n => n.rating)) },
+        long: { count: long.length, avgRating: avg(long.map(n => n.rating)) },
+      };
+    })(),
   };
 
   // 10. 매칭 분석
@@ -23100,9 +23215,13 @@ async function analyzePreferences(novels, matches) {
       (Number(n.reread_count) || 1) >= 2 && n.rating < 1550
     ).map(n => ({ title: n.title, rating: n.rating, rereadCount: Number(n.reread_count) || 1 })),
     // 🆕 v3.4: 정보 불완전 (신뢰도 낮음) - enriched에 이미 reliability 계산됨
-    lowInfoQuality: enriched.filter(n => 
+    lowInfoQuality: enriched.filter(n =>
       n.reliability < 25 && n.rating >= 1600
     ).map(n => ({ title: n.title, rating: n.rating, reliability: n.reliability })),
+    // 🏆 v3.12.1: 고평가 연중작 (연중임에도 높은 점수)
+    highRatingDropped: reliable.filter(n =>
+      (n.work_status === "dropped" || n.work_status === "discontinued") && n.rating >= 1600
+    ).map(n => ({ title: n.title, rating: n.rating, workStatus: n.work_status, totalEpisodes: Number(n.total_episodes) || 0 })),
   };
 
   // 13. 🎯 v3.1.2 스펙트럼 분석 (태그 연속 스케일 분석)
@@ -23271,6 +23390,20 @@ async function analyzePreferences(novels, matches) {
           sample: p.sample_size,
         }));
 
+      // 🏆 v3.12.1: 연재 상태 선호도
+      const workStatusAffinity = patterns
+        .filter(p => p.category === "work_status_affinity" && p.sample_size >= 5)
+        .sort((a, b) => (b.win_rate || 0) - (a.win_rate || 0))
+        .slice(0, 5)
+        .map(p => ({ status: p.pattern_key.replace("status:", ""), winRate: p.win_rate || 0.5, sample: p.sample_size }));
+
+      // 🏆 v3.12.1: 편수 길이 선호도
+      const episodeLengthPref = patterns
+        .filter(p => p.category === "episode_length" && p.sample_size >= 5)
+        .sort((a, b) => (b.win_rate || 0) - (a.win_rate || 0))
+        .slice(0, 3)
+        .map(p => ({ length: p.pattern_key.replace("length:", ""), winRate: p.win_rate || 0.5, sample: p.sample_size }));
+
       // 예측 정확도
       const predAcc = await calculateBehaviorPredictionAccuracy(30);
 
@@ -23284,6 +23417,8 @@ async function analyzePreferences(novels, matches) {
         genreAffinity,
         tagPower,
         authorLoyalty,
+        workStatusAffinity, // 🏆 v3.12.1
+        episodeLengthPref,  // 🏆 v3.12.1
         predictionAccuracy: predAcc,
         insights: behaviorInsights,
         totalPatterns: patterns.length,
@@ -23493,9 +23628,28 @@ function generateInsights(data) {
     }
   }
   
+  // 🏆 v3.12.1: 연중작 평가 편향 인사이트
+  if (readingPattern.droppedRatingBias && readingPattern.droppedRatingBias.count >= 3) {
+    const bias = readingPattern.droppedRatingBias;
+    const diff = bias.droppedAvg - bias.nonDroppedAvg;
+    if (Math.abs(diff) > 30) {
+      if (diff < 0) {
+        hiddenPatterns.push(`연중/서비스종료 작품을 비연중 작품보다 평균 ${Math.abs(diff).toFixed(0)}점 낮게 평가 (${bias.count}작)`);
+      } else {
+        hiddenPatterns.push(`연중에도 불구하고 비연중 작품보다 평균 +${diff.toFixed(0)}점 높게 평가 (${bias.count}작)`);
+      }
+    }
+  }
+
   // 기피 요소
   const avoidFactors = [];
-  
+
+  // 🏆 v3.12.1: 연중률 높은 장르 경고
+  const highWorkDropGenres = majorGenreAnalysis.filter(g => g.workDropRate > 0.2 && g.count >= 3);
+  for (const g of highWorkDropGenres.slice(0, 2)) {
+    avoidFactors.push(`${g.genre} (연중률 ${(g.workDropRate * 100).toFixed(0)}%)`);
+  }
+
   // 드롭률 높은 태그
   const highDropTags = [...subGenreAnalysis, ...tagAnalysis]
     .filter(t => t.dropRate > 0.3 && t.count >= 3)
@@ -27248,7 +27402,31 @@ function AppContent() {
         direction: "positive",
       });
     }
-    
+
+    // 🏆 v3.12.1: 연중 상태 차이
+    const wDropped = winner.work_status === "dropped" || winner.work_status === "discontinued";
+    const lDropped = loser.work_status === "dropped" || loser.work_status === "discontinued";
+    if (lDropped && !wDropped) {
+      causes.push({ type: "work_status_penalty", key: loser.work_status === "dropped" ? "연중" : "서비스종료", direction: "negative", weight: 1.0 });
+    }
+    if (wDropped && !lDropped) {
+      causes.push({ type: "work_status_overcome", key: "연중작 승리", direction: "positive", weight: 1.0 });
+    }
+
+    // 🏆 v3.12.1: 편수 차이 (완결 + 편수 > 0, 비율 기반)
+    const wEpCount = (winner.work_status === "completed" && Number(winner.total_episodes) > 0) ? Number(winner.total_episodes) : 0;
+    const lEpCount = (loser.work_status === "completed" && Number(loser.total_episodes) > 0) ? Number(loser.total_episodes) : 0;
+    if (wEpCount > 0 && lEpCount > 0) {
+      const epRatio = Math.max(wEpCount, lEpCount) / Math.min(wEpCount, lEpCount);
+      if (epRatio >= 1.5) {
+        causes.push({
+          type: wEpCount > lEpCount ? "longer_work_preference" : "shorter_work_preference",
+          key: `${Math.min(wEpCount,lEpCount)}화 vs ${Math.max(wEpCount,lEpCount)}화`,
+          direction: "positive", weight: 0.5,
+        });
+      }
+    }
+
     return causes;
   }
 
@@ -42411,8 +42589,11 @@ async function importJSON() {
                     <View key={idx} style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
                       <Text style={{ width: 24, color: C.sub, fontSize: 12 }}>#{idx + 1}</Text>
                       <Text style={{ flex: 1, color: C.text, fontSize: 12 }} numberOfLines={1}>
-                        {factor.type === "tag_only_winner" ? "👍 " : 
-                         factor.type === "tag_only_loser" ? "👎 " : "📌 "}
+                        {factor.type === "tag_only_winner" ? "👍 " :
+                         factor.type === "tag_only_loser" ? "👎 " :
+                         factor.type === "work_status_penalty" ? "🚫 " :
+                         factor.type === "work_status_overcome" ? "💪 " :
+                         factor.type.includes("work_preference") ? "📏 " : "📌 "}
                         {factor.key}
                       </Text>
                       <Text style={{ color: C.primary, fontWeight: "600", fontSize: 12 }}>
