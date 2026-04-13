@@ -2,7 +2,7 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.12.1                                                                  ║
+ * ║  버전: 3.12.2                                                                  ║
  * ║  최종 수정: 2026-04-13                                                        ║
  * ║  총 라인 수: 약 47,000줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -4583,6 +4583,7 @@ async function initDb() {
   await ensureColumn("planned_novels", "similar_novels", "TEXT", "''");
   await ensureColumn("planned_novels", "why_interested", "TEXT", "''");
   await ensureColumn("planned_novels", "tag_data", "TEXT", "''");
+  await ensureColumn("planned_novels", "memorable_quote", "TEXT", "''"); // 🏆 v3.12.1: 인상깊은 문장
   
   // 🖼️ v3.4.5: 표지 라이브러리 테이블
   await database.runAsync(`CREATE TABLE IF NOT EXISTS cover_library (
@@ -24065,6 +24066,7 @@ function AppContent() {
   // 예정 작품 편집 모달
   const [plannedEditOpen, setPlannedEditOpen] = useState(false);
   const [plannedEditItem, setPlannedEditItem] = useState(null);
+  const [plannedEditQuotes, setPlannedEditQuotes] = useState([]); // 🏆 v3.12.1: 예정작 명대사
   // 🔧 v3.5.8: editItemRef 패턴 적용 (stale closure 방지)
   const plannedEditItemRef = useRef(null);
   const updatePlannedEditItem = useCallback((updater) => {
@@ -25807,8 +25809,8 @@ function AppContent() {
       const now = Date.now();
       
       await exec(
-        `INSERT INTO planned_novels (id,title,author,tags,platforms,note,total_episodes,cover_image,link,work_status,major_genre,sub_genre,priority,created_at,expected_rating,expected_tier,interest_level,discovery_source,first_chapter_read,scheduled_start_date,similar_novels,why_interested,tag_data)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+        `INSERT INTO planned_novels (id,title,author,tags,platforms,note,total_episodes,cover_image,link,work_status,major_genre,sub_genre,priority,created_at,expected_rating,expected_tier,interest_level,discovery_source,first_chapter_read,scheduled_start_date,similar_novels,why_interested,tag_data,memorable_quote)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
         [
           id,
           t,
@@ -25840,6 +25842,7 @@ function AppContent() {
           plannedSimilarNovels.length > 0 ? JSON.stringify(plannedSimilarNovels) : "",
           plannedWhyInterested.trim(),
           "", // 🔧 v3.9.2: tag_data 누락 수정 (UPDATE에는 있으나 INSERT에 빠져있었음)
+          "", // memorable_quote (등록 시 빈값)
         ]
       );
 
@@ -25898,8 +25901,15 @@ function AppContent() {
           const planned = await first("SELECT cover_image FROM planned_novels WHERE id=?", [id]);
           const coverPath = planned?.cover_image;
           
+          // 🏆 v3.12.1: 갤러리 이미지 정리
+          try {
+            const gImgs = await all("SELECT file_path FROM gallery_images WHERE novel_id=?", [id]);
+            for (const g of (gImgs || [])) { await deleteCoverFromLibrary(g.file_path); }
+            await exec("DELETE FROM gallery_images WHERE novel_id=?", [id]);
+          } catch {}
+
           await exec("DELETE FROM planned_novels WHERE id=?", [id]);
-          
+
           // 🖼️ v3.4.5: 표지가 있었으면 미사용으로 변경
           if (coverPath) {
             await updateCoverStatus(coverPath, null, "unused");
@@ -25941,7 +25951,7 @@ function AppContent() {
       const newCover = n.cover_image || "";
       
       await exec(
-        `UPDATE planned_novels SET title=?, author=?, tags=?, platforms=?, note=?, total_episodes=?, cover_image=?, link=?, work_status=?, major_genre=?, sub_genre=?, priority=?, expected_rating=?, expected_tier=?, interest_level=?, discovery_source=?, first_chapter_read=?, scheduled_start_date=?, similar_novels=?, why_interested=?, tag_data=? WHERE id=?;`,
+        `UPDATE planned_novels SET title=?, author=?, tags=?, platforms=?, note=?, total_episodes=?, cover_image=?, link=?, work_status=?, major_genre=?, sub_genre=?, priority=?, expected_rating=?, expected_tier=?, interest_level=?, discovery_source=?, first_chapter_read=?, scheduled_start_date=?, similar_novels=?, why_interested=?, tag_data=?, memorable_quote=? WHERE id=?;`,
         [
           newTitle,
           n.author?.trim() || "",
@@ -25965,6 +25975,7 @@ function AppContent() {
           n.similar_novels || "",
           n.why_interested || "",
           n.tag_data || "", // 🔧 v3.5.9: tag_data 저장 누락 수정
+          serializeQuotes(plannedEditQuotes), // 🏆 v3.12.1: 인상깊은 문장
           n.id,
         ]
       );
@@ -26104,7 +26115,7 @@ function AppContent() {
                   0, // gaiden_total_episodes
                   1, // reread_count
                   planned.tag_data || "", // 🆕 태그 데이터 이전
-                  "", // memorable_quote
+                  planned.memorable_quote || "", // 🏆 v3.12.1: 인상깊은 문장 이전
                   "", // aliases
                   // 🆕 v6.0: manual/hybrid 모드에서 expected_tier를 manual_tier로 활용
                   (globalTierConfig.mode !== "match" && globalTierConfig.mode !== "ratio" && planned.expected_tier && getActiveTierOrder(globalTierConfig).includes(planned.expected_tier))
@@ -26114,6 +26125,9 @@ function AppContent() {
                 ]
               );
               
+              // 🏆 v3.12.1: 갤러리 이미지 소유권 이전 (planned ID → novel ID)
+              await exec("UPDATE gallery_images SET novel_id=? WHERE novel_id=?", [id, planned.id]);
+
               // 예정 목록에서 삭제
               await exec("DELETE FROM planned_novels WHERE id=?", [planned.id]);
               
@@ -26918,10 +26932,15 @@ function AppContent() {
       const rows = await safeDbOperation(async () => {
         return await all(`
           SELECT g.id, g.novel_id, g.file_path, g.caption, g.created_at,
-                 n.title, n.author, n.rating, n.tier, n.platforms, n.major_genre,
-                 CASE WHEN n.cover_image LIKE 'data:%' THEN '' ELSE COALESCE(n.cover_image,'') END as cover_image
+                 COALESCE(n.title, p.title) as title,
+                 COALESCE(n.author, p.author) as author,
+                 n.rating, n.tier,
+                 COALESCE(n.platforms, p.platforms) as platforms,
+                 COALESCE(n.major_genre, p.major_genre) as major_genre,
+                 CASE WHEN n.cover_image LIKE 'data:%' THEN '' ELSE COALESCE(n.cover_image, p.cover_image, '') END as cover_image
           FROM gallery_images g
           LEFT JOIN novels n ON g.novel_id = n.id
+          LEFT JOIN planned_novels p ON g.novel_id = p.id
           ORDER BY g.created_at DESC
         `);
       }, "loadGalleryImages");
@@ -36143,6 +36162,7 @@ async function importJSON() {
                         <TouchableOpacity
                           onPress={() => {
                             updatePlannedEditItem({ ...item });
+                            setPlannedEditQuotes(parseQuotes(item.memorable_quote)); // 🏆 v3.12.1
                             deferOpen(setPlannedEditOpen); // 🔧 v3.5.8
                           }}
                           onLongPress={() => Alert.alert(item.title, item.note || "(메모 없음)")}
@@ -46717,7 +46737,64 @@ async function importJSON() {
                   onChangeText={(t) => updatePlannedEditItem(prev => prev ? { ...prev, note: t } : null)}
                   multiline
                 />
-                
+
+                {/* 🏆 v3.12.1: 인상깊은 문장 (예정작) */}
+                <Label style={{ marginTop: 10 }}>💬 인상깊은 문장 ({plannedEditQuotes.length})</Label>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                  <TouchableOpacity
+                    onPress={() => setPlannedEditQuotes([...plannedEditQuotes, ""])}
+                    style={{ backgroundColor: C.primary, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
+                  >
+                    <Text style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}>+ 텍스트</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={async () => {
+                      try {
+                        const result = await ImagePicker.launchImageLibraryAsync({
+                          mediaTypes: ['images'], allowsEditing: true, quality: 1.0,
+                        });
+                        await safeResetAndReconnect("plannedQuotePicker");
+                        if (!result.canceled && result.assets?.[0]) {
+                          const { ext } = getImageFormat(result.assets[0]);
+                          const saved = await compressAndSaveImage(result.assets[0].uri, QUOTE_IMAGE_MAX_SIZE, QUOTE_IMAGE_QUALITY, ext);
+                          if (saved && !saved.error) {
+                            setPlannedEditQuotes(prev => [...prev, { type: "image", uri: saved.file_path }]);
+                          }
+                        }
+                      } catch (e) { Alert.alert("오류", "이미지 선택 실패: " + e.message); }
+                    }}
+                    style={{ backgroundColor: isDark ? "#374151" : "#e5e7eb", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
+                  >
+                    <Text style={{ color: C.text, fontWeight: "700", fontSize: 12 }}>📷 이미지</Text>
+                  </TouchableOpacity>
+                </View>
+                {plannedEditQuotes.map((q, i) => (
+                  <View key={i} style={{ flexDirection: "row", alignItems: "center", marginTop: 6 }}>
+                    {isImageQuote(q) ? (
+                      <Image source={{ uri: q.uri }} style={{ width: 60, height: 60, borderRadius: 8, marginRight: 8 }} />
+                    ) : (
+                      <Input
+                        value={q}
+                        onChangeText={(t) => setPlannedEditQuotes(prev => { const n = [...prev]; n[i] = t; return n; })}
+                        placeholder={`문장 ${i + 1}`}
+                        style={{ flex: 1, marginRight: 8 }}
+                      />
+                    )}
+                    <TouchableOpacity onPress={() => setPlannedEditQuotes(prev => prev.filter((_, j) => j !== i))}>
+                      <Text style={{ color: C.warn, fontSize: 16, fontWeight: "700" }}>✕</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+
+                {/* 🏆 v3.12.1: 갤러리 이미지 관리 */}
+                <Label style={{ marginTop: 10 }}>🎨 갤러리</Label>
+                <TouchableOpacity
+                  onPress={() => addGalleryImages(plannedEditItem.id)}
+                  style={{ backgroundColor: C.primary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, alignSelf: "flex-start" }}
+                >
+                  <Text style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}>+ 이미지 추가</Text>
+                </TouchableOpacity>
+
                 <View style={{ flexDirection: "row", gap: 8, marginTop: 16 }}>
                   <PrimaryButton
                     title="저장"
