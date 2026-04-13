@@ -36409,7 +36409,7 @@ async function importJSON() {
                     <TextInput
                       value={String(retentionDays)}
                       onChangeText={(v) => {
-                        const days = parseInt(v) || 30;
+                        const n = parseInt(v); const days = Number.isFinite(n) ? n : 30;
                         saveAppSettings({ 
                           recentChanges: { 
                             ...DEFAULT_SETTINGS.recentChanges, 
@@ -41234,16 +41234,16 @@ async function importJSON() {
                     }}
                     style={{
                       flex: 1,
-                      backgroundColor: globalTierConfig.mode === m.key ? C.primary : C.bg,
+                      backgroundColor: (appSettings.tierSystemConfig || globalTierConfig).mode === m.key ? C.primary : C.bg,
                       padding: 10,
                       borderRadius: 12,
                       borderWidth: 1,
-                      borderColor: globalTierConfig.mode === m.key ? C.primary : C.line,
+                      borderColor: (appSettings.tierSystemConfig || globalTierConfig).mode === m.key ? C.primary : C.line,
                       alignItems: "center",
                     }}
                   >
-                    <Text style={{ color: globalTierConfig.mode === m.key ? "#fff" : C.text, fontWeight: "700", fontSize: 13 }}>{m.label}</Text>
-                    <Text style={{ color: globalTierConfig.mode === m.key ? "rgba(255,255,255,0.7)" : C.sub, fontSize: 10, marginTop: 2 }}>{m.desc}</Text>
+                    <Text style={{ color: (appSettings.tierSystemConfig || globalTierConfig).mode === m.key ? "#fff" : C.text, fontWeight: "700", fontSize: 13 }}>{m.label}</Text>
+                    <Text style={{ color: (appSettings.tierSystemConfig || globalTierConfig).mode === m.key ? "rgba(255,255,255,0.7)" : C.sub, fontSize: 10, marginTop: 2 }}>{m.desc}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -41801,13 +41801,13 @@ async function importJSON() {
                 <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>📊 태그 통계</Text>
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
                   <View style={{ backgroundColor: isDark ? "#14532d" : "#dcfce7", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
-                    <Text style={{ color: isDark ? "#86efac" : "#166534", fontSize: 12 }}>기본 대장르 {MAJOR_GENRES.length}</Text>
+                    <Text style={{ color: isDark ? "#86efac" : "#166534", fontSize: 12 }}>기본 대장르 {FACTORY_MAJOR_GENRES.length}</Text>
                   </View>
                   <View style={{ backgroundColor: isDark ? "#14532d" : "#f0fdf4", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
-                    <Text style={{ color: isDark ? "#4ade80" : "#15803d", fontSize: 12 }}>기본 부장르 {SUB_GENRES.length}</Text>
+                    <Text style={{ color: isDark ? "#4ade80" : "#15803d", fontSize: 12 }}>기본 부장르 {FACTORY_SUB_GENRES.length}</Text>
                   </View>
                   <View style={{ backgroundColor: isDark ? "#1e1b4b" : "#e0e7ff", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
-                    <Text style={{ color: isDark ? "#a5b4fc" : "#3730a3", fontSize: 12 }}>기본 일반 {ALL_DEFAULT_TAGS.length}</Text>
+                    <Text style={{ color: isDark ? "#a5b4fc" : "#3730a3", fontSize: 12 }}>기본 일반 {Object.values(FACTORY_GENERAL_TAGS).flat().length}</Text>
                   </View>
                   <View style={{ backgroundColor: C.chip, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}>
                     <Text style={{ color: C.text, fontSize: 12 }}>커스텀 {customTags.length}</Text>
