@@ -31317,7 +31317,7 @@ function AppContent() {
           ],
         },
         {
-          sql: `INSERT INTO matches (id,a_id,b_id,winner_id,decided_by,gap_when_matched,k_factor_used,created_at)
+          sql: `INSERT OR IGNORE INTO matches (id,a_id,b_id,winner_id,decided_by,gap_when_matched,k_factor_used,created_at)
                 VALUES (?,?,?,?,?,?,?,?)`,
           params: [
             mid,
