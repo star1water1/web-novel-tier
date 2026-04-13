@@ -18197,8 +18197,8 @@ const AwardsScreen = memo(({
     result.sort((a, b) => b.rating - a.rating);
     
     return result;
-  }, [candidates, awardFilter, currentYearAwards]);
-  
+  }, [candidates, awardFilter, currentYearAwards, tierSystemConfig]);
+
   // 해당 연도 수상작 수집
   const awardWinners = useMemo(() => {
     const winners = {};
@@ -25386,6 +25386,11 @@ function AppContent() {
   // 📁 v3.5.15d: 슬롯 전환 함수 (전체 state 리셋 + 새 DB 초기화 + 재로드)
   const performSlotSwitch = async (newSlotId) => {
     if (newSlotId === activeSlotId || slotSwitching) return;
+    // 🔧 자동매칭 중 슬롯 전환 방지 (DB 참조 교체 시 in-flight 매칭 데이터 오염 방지)
+    if (isAutoMatchingRef.current || isAutoMatchingActive) {
+      Alert.alert("슬롯 전환 불가", "자동 매칭을 먼저 중지해주세요.");
+      return;
+    }
     Breadcrumbs.action("slot_switch", `${activeSlotId} → ${newSlotId}`);
     const previousSlotId = activeSlotId; // 🔧 롤백용 백업
     setSlotSwitching(true);
