@@ -25995,6 +25995,7 @@ function AppContent() {
       if (_pt) PerfMonitor.trackFunc("savePlannedEdit", Date.now() - _pt); // 🔬
       setPlannedEditOpen(false);
       updatePlannedEditItem(null);
+      setPlannedEditQuotes([]); // 🏆 v3.12.2
       await loadPlannedList();
     } catch (e) {
       if (_pt) PerfMonitor.logError("savePlannedEdit", e); // 🔬
@@ -26962,9 +26963,10 @@ function AppContent() {
 
   async function addGalleryImages(novelId) {
     try {
-      // 작품 존재 확인 (삭제된 작품 방어)
+      // 작품 존재 확인 (삭제된 작품 방어) — 🏆 v3.12.2: 예정작도 지원
       const novelExists = await first("SELECT id FROM novels WHERE id=?", [novelId]);
-      if (!novelExists) {
+      const plannedExists = !novelExists ? await first("SELECT id FROM planned_novels WHERE id=?", [novelId]) : null;
+      if (!novelExists && !plannedExists) {
         Alert.alert("오류", "선택한 작품이 삭제되었습니다. 다시 선택해주세요.");
         setGalleryRegNovel(null);
         return;
@@ -33129,6 +33131,7 @@ async function exportJSON() {
         sn: p.similar_novels || "",
         wi: p.why_interested || "",
         td: p.tag_data || "", // 🔧 v3.5.9: tag_data 백업
+        mq: p.memorable_quote || "", // 🏆 v3.12.2: 인상깊은 문장
       }));
     }
     
@@ -33753,9 +33756,9 @@ async function importJSON() {
                 await exec("DELETE FROM planned_novels;");
                 
                 const plannedQueries = data.PL.map(p => ({
-                  sql: `INSERT INTO planned_novels 
-                    (id, title, author, tags, platforms, note, total_episodes, cover_image, link, work_status, major_genre, sub_genre, priority, created_at, expected_rating, expected_tier, interest_level, discovery_source, first_chapter_read, scheduled_start_date, similar_novels, why_interested, tag_data)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                  sql: `INSERT INTO planned_novels
+                    (id, title, author, tags, platforms, note, total_episodes, cover_image, link, work_status, major_genre, sub_genre, priority, created_at, expected_rating, expected_tier, interest_level, discovery_source, first_chapter_read, scheduled_start_date, similar_novels, why_interested, tag_data, memorable_quote)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
                   params: [
                     uuid(),
                     p.t || "",
@@ -33781,6 +33784,7 @@ async function importJSON() {
                     p.sn || "",
                     p.wi || "",
                     p.td || "", // 🔧 v3.5.9: tag_data 복원
+                    p.mq || "", // 🏆 v3.12.2: 인상깊은 문장 복원
                   ],
                 }));
                 
@@ -46806,6 +46810,7 @@ async function importJSON() {
                     onPress={() => {
                       setPlannedEditOpen(false);
                       updatePlannedEditItem(null);
+                      setPlannedEditQuotes([]); // 🏆 v3.12.2
                     }}
                     style={{ flex: 1 }}
                   />
