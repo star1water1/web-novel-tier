@@ -28901,38 +28901,44 @@ function AppContent() {
         });
       }
 
-      // 🏆 v3.12.4: 대장르 속성 변경
+      // 🏆 v3.12.4: 대장르 속성 변경 — 리스트 기본값과 일치하면 override 삭제(clean)
       if (changes.isMajor !== undefined) {
         setTagAttributes(prev => {
-          const current = !!(prev[tag]?.isMajor);
-          if (changes.isMajor === current) return prev;
+          const listIsMajor = listHasTag(MAJOR_GENRES, tag) || listHasTag(userMajorGenres, tag);
+          const effectiveCurrent = prev[tag]?.isMajor !== undefined ? !!prev[tag].isMajor : listIsMajor;
+          if (changes.isMajor === effectiveCurrent) return prev; // 효과 상태 동일 → 변경 없음
           const attrs = { ...prev };
-          if (changes.isMajor) {
-            attrs[tag] = { ...(attrs[tag] || {}), isMajor: true };
-          } else {
+          if (changes.isMajor === listIsMajor) {
+            // 최종 상태가 리스트 기본값과 같음 → override 삭제
             if (attrs[tag]) {
+              attrs[tag] = { ...attrs[tag] };
               delete attrs[tag].isMajor;
               if (Object.keys(attrs[tag]).length === 0) delete attrs[tag];
             }
+          } else {
+            // 리스트 기본값과 다름 → explicit override 저장 (true/false)
+            attrs[tag] = { ...(attrs[tag] || {}), isMajor: changes.isMajor };
           }
           safeDefer(() => setAppMeta("tag_attributes", attrs));
           return attrs;
         });
       }
 
-      // 🏆 v3.12.4: 부장르 속성 변경
+      // 🏆 v3.12.4: 부장르 속성 변경 — 리스트 기본값과 일치하면 override 삭제(clean)
       if (changes.isSub !== undefined) {
         setTagAttributes(prev => {
-          const current = !!(prev[tag]?.isSub);
-          if (changes.isSub === current) return prev;
+          const listIsSub = listHasTag(SUB_GENRES, tag) || listHasTag(userSubGenres, tag);
+          const effectiveCurrent = prev[tag]?.isSub !== undefined ? !!prev[tag].isSub : listIsSub;
+          if (changes.isSub === effectiveCurrent) return prev;
           const attrs = { ...prev };
-          if (changes.isSub) {
-            attrs[tag] = { ...(attrs[tag] || {}), isSub: true };
-          } else {
+          if (changes.isSub === listIsSub) {
             if (attrs[tag]) {
+              attrs[tag] = { ...attrs[tag] };
               delete attrs[tag].isSub;
               if (Object.keys(attrs[tag]).length === 0) delete attrs[tag];
             }
+          } else {
+            attrs[tag] = { ...(attrs[tag] || {}), isSub: changes.isSub };
           }
           safeDefer(() => setAppMeta("tag_attributes", attrs));
           return attrs;
@@ -28947,8 +28953,9 @@ function AppContent() {
   function openTagChipEdit(tag, currentIntensity, onSaveIntensity) {
     setTagChipEditTag(tag);
     setTagChipEditIntensity(Number.isFinite(currentIntensity) && currentIntensity >= 1 && currentIntensity <= 5 ? currentIntensity : 3);
-    setTagChipEditIsMajor(!!(tagAttributes[tag]?.isMajor));
-    setTagChipEditIsSub(!!(tagAttributes[tag]?.isSub));
+    // 🔧 v3.12.4 버그 수정: 리스트 기본값 포함한 "효과 상태"로 표시 (칩 색상과 일치)
+    setTagChipEditIsMajor(isTagMajor(tag, tagAttributes, userMajorGenres));
+    setTagChipEditIsSub(isTagSub(tag, tagAttributes, userSubGenres));
     setTagChipEditIsTitle(!!(tagAttributes[tag]?.isTitle));
     setTagChipEditSentiment(tagSentiments[tag] || null);
     setTagChipEditPinned(pinnedTags.some(t => isSameTag(t, tag)));
