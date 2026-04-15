@@ -2,9 +2,30 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.12.4                                                                  ║
+ * ║  버전: 3.13.0                                                                  ║
  * ║  최종 수정: 2026-04-13                                                        ║
  * ║  총 라인 수: 약 47,000줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📋 v3.13.0 예정탭 편집 모달 전면 리팩터 (2026-04-13)                            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [제거] 사용 안 하는 필드 4개 DB 컬럼까지 완전 삭제                              ║
+ * ║ • expected_rating (예상 레이팅 숫자 — 기능 중복)                                ║
+ * ║ • similar_novels (비슷한 작품 — 복잡 저활용)                                    ║
+ * ║ • scheduled_start_date (읽기 예정일 — 스케줄 시스템 없음)                       ║
+ * ║ • discovery_source (발견 경로 — 관심 이유와 중복, why_interested에 통합)        ║
+ * ║                                                                              ║
+ * ║ [레이아웃] 3섹션 고정 분할                                                      ║
+ * ║ • 📋 기본 정보 — 제목/작가/플랫폼/연재상태/편수/우선순위/표지/링크/태그          ║
+ * ║ • ✨ 등록 전 메타 — 관심도/예상티어/1화읽음/연도/관심이유/메모                   ║
+ * ║ • 💬 문장 & 🎨 갤러리 — 명대사/갤러리 이미지                                    ║
+ * ║                                                                              ║
+ * ║ [마이그레이션] migratePlannedNovelsCleanup — DROP COLUMN × 4 (idempotent)      ║
+ * ║ [설정 UI 정리] "📋 예정탭 확장 필드" Section 제거 (3개 Switch 삭제)             ║
+ * ║ [백업] PL 맵에서 er/ds/ss/sn 키 제거, 구 백업 import 호환 유지                  ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -4609,14 +4630,10 @@ async function initDb() {
     created_at INTEGER
   );`);
   
-  // 🆕 v3.4: planned_novels 필드 확장 (홈탭 수준으로)
-  await ensureColumn("planned_novels", "expected_rating", "REAL", "1500");
+  // 🆕 v3.4: planned_novels 필드 확장 (🏆 v3.13.0: expected_rating, discovery_source, scheduled_start_date, similar_novels 제거)
   await ensureColumn("planned_novels", "expected_tier", "TEXT", "''");
   await ensureColumn("planned_novels", "interest_level", "INTEGER", "3");
-  await ensureColumn("planned_novels", "discovery_source", "TEXT", "''");
   await ensureColumn("planned_novels", "first_chapter_read", "INTEGER", "0");
-  await ensureColumn("planned_novels", "scheduled_start_date", "INTEGER", "0");
-  await ensureColumn("planned_novels", "similar_novels", "TEXT", "''");
   await ensureColumn("planned_novels", "why_interested", "TEXT", "''");
   await ensureColumn("planned_novels", "tag_data", "TEXT", "''");
   await ensureColumn("planned_novels", "memorable_quote", "TEXT", "''"); // 🏆 v3.12.1: 인상깊은 문장
@@ -5301,6 +5318,22 @@ async function migrateStartEndYear() {
     console.log(`연재 연도 마이그레이션 완료: ${count}개 작품 업데이트`);
   } catch (e) {
     console.warn("연재 연도 마이그레이션 오류:", e);
+  }
+}
+
+// 🏆 v3.13.0: 예정작 사용 안 하는 컬럼 4개 완전 삭제 (idempotent)
+async function migratePlannedNovelsCleanup() {
+  const legacyCols = ["expected_rating", "discovery_source", "scheduled_start_date", "similar_novels"];
+  for (const col of legacyCols) {
+    try {
+      const exists = await columnExists("planned_novels", col);
+      if (exists) {
+        await exec(`ALTER TABLE planned_novels DROP COLUMN ${col};`);
+        console.log(`[migrate v3.13.0] dropped planned_novels.${col}`);
+      }
+    } catch (e) {
+      console.warn(`[migrate v3.13.0] drop ${col} 실패 (무시):`, e.message);
+    }
   }
 }
 
@@ -9997,7 +10030,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "3.12.4";
+const APP_VERSION = "3.13.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -10023,6 +10056,16 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "3.13.0", date: "2026-04-13",
+    title: "예정탭 편집 모달 정리 + 안 쓰는 필드 제거",
+    highlights: [
+      { type: "improve", text: "📋 편집 모달을 기본정보 / 등록 전 메타 / 문장·갤러리 3섹션으로 재구성" },
+      { type: "fix", text: "사용 안 하던 예상 레이팅·비슷한 작품·읽기 예정일·발견 경로 4개 필드 제거" },
+      { type: "improve", text: "발견 경로 → 관심 이유로 통합 (중복 제거)" },
+      { type: "improve", text: "설정의 '예정탭 확장 필드' 토글 섹션 제거 (불필요)" },
+    ],
+  },
   {
     version: "3.12.4", date: "2026-04-13",
     title: "태그칩 꾹 눌러 속성까지 한번에 편집",
@@ -22532,12 +22575,7 @@ const DEFAULT_SETTINGS = {
   recentChanges: {
     retentionDays: 30,               // 기록 유지 기간 (일)
   },
-  // 📋 예정탭 확장 필드 설정 (v3.4)
-  plannedFields: {
-    showExpectedRating: false,       // 예상 레이팅 (숫자 입력)
-    showScheduledStart: true,        // 읽기 시작 예정일
-    showSimilarNovels: false,        // 비슷한 작품 (고급)
-  },
+  // 🏆 v3.13.0: plannedFields 토글 제거 (4개 필드 자체가 사라져 토글 불필요)
   // 🖼️ 표지 라이브러리 설정 (v3.4.5)
   coverLibrary: {
     compressionLevel: "light",       // "original" | "light" | "medium" | "heavy"
@@ -24147,14 +24185,10 @@ function AppContent() {
   const [plannedMajorGenre, setPlannedMajorGenre] = useState([]);
   const [plannedSubGenre, setPlannedSubGenre] = useState([]);
   const [plannedPriority, setPlannedPriority] = useState(3); // 1~5 (5가 가장 높음)
-  // 🆕 v3.4: 예정탭 확장 필드
-  const [plannedExpectedRating, setPlannedExpectedRating] = useState("1500");
+  // 🆕 v3.4: 예정탭 확장 필드 (🏆 v3.13.0: expected_rating, discovery_source, scheduled_start_date, similar_novels 제거)
   const [plannedExpectedTier, setPlannedExpectedTier] = useState("");
   const [plannedInterestLevel, setPlannedInterestLevel] = useState(3); // 1~5
-  const [plannedDiscoverySource, setPlannedDiscoverySource] = useState("");
   const [plannedFirstChapterRead, setPlannedFirstChapterRead] = useState(false);
-  const [plannedScheduledStart, setPlannedScheduledStart] = useState("");
-  const [plannedSimilarNovels, setPlannedSimilarNovels] = useState([]);
   const [plannedWhyInterested, setPlannedWhyInterested] = useState("");
   const [plannedStartYear, setPlannedStartYear] = useState(0); // 🏆 v3.12.3: 연재 시작 연도
   const [plannedEndYear, setPlannedEndYear] = useState(0); // 🏆 v3.12.3: 연재 종료 연도
@@ -24977,6 +25011,8 @@ function AppContent() {
 
           // 🏆 v3.12.0: 연재 연도 마이그레이션 (태그/메모 → start_year/end_year)
           await migrateStartEndYear();
+          // 🏆 v3.13.0: 예정탭 사용 안 하는 컬럼 4개 DROP
+          await migratePlannedNovelsCleanup();
 
           // 🔧 v3.6.0: Tag Registry 로드 (없으면 FACTORY에서 시드 + 기존 사용자 데이터 병합)
           // 🔧 v3.6.1: registry 반환값 보존 — useEffect 내에서는 React state가 배치 업데이트 전이므로
@@ -25077,9 +25113,6 @@ function AppContent() {
             }
             if (savedSettings.recentChanges) {
               merged.recentChanges = { ...DEFAULT_SETTINGS.recentChanges, ...savedSettings.recentChanges };
-            }
-            if (savedSettings.plannedFields) {
-              merged.plannedFields = { ...DEFAULT_SETTINGS.plannedFields, ...savedSettings.plannedFields };
             }
             if (savedSettings.coverLibrary) {
               merged.coverLibrary = { ...DEFAULT_SETTINGS.coverLibrary, ...savedSettings.coverLibrary };
@@ -25475,6 +25508,7 @@ function AppContent() {
       await initDb();
       await migrateTagSystem();
       await migrateStartEndYear(); // 🏆 v3.12.0
+      await migratePlannedNovelsCleanup(); // 🏆 v3.13.0
       const slotRegistry = await loadTagRegistry(); // 🔧 v3.6.1: 반환값 보존
       await loadPlatformRegistry(); // 🆕 플랫폼 레지스트리 로드
 
@@ -25643,7 +25677,6 @@ function AppContent() {
         const merged = { ...DEFAULT_SETTINGS, ...savedSettings };
         if (savedSettings.supplement) merged.supplement = { ...DEFAULT_SETTINGS.supplement, ...savedSettings.supplement };
         if (savedSettings.recentChanges) merged.recentChanges = { ...DEFAULT_SETTINGS.recentChanges, ...savedSettings.recentChanges };
-        if (savedSettings.plannedFields) merged.plannedFields = { ...DEFAULT_SETTINGS.plannedFields, ...savedSettings.plannedFields };
         if (savedSettings.coverLibrary) merged.coverLibrary = { ...DEFAULT_SETTINGS.coverLibrary, ...savedSettings.coverLibrary };
         // 🆕 v6.0: tierSystemConfig 마이그레이션 (슬롯 전환 시에도 적용)
         if (!savedSettings.tierSystemConfig && merged.tierThresholds) {
@@ -25920,8 +25953,8 @@ function AppContent() {
       const now = Date.now();
       
       await exec(
-        `INSERT INTO planned_novels (id,title,author,tags,platforms,note,total_episodes,cover_image,link,work_status,major_genre,sub_genre,priority,created_at,expected_rating,expected_tier,interest_level,discovery_source,first_chapter_read,scheduled_start_date,similar_novels,why_interested,tag_data,memorable_quote,start_year,end_year)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+        `INSERT INTO planned_novels (id,title,author,tags,platforms,note,total_episodes,cover_image,link,work_status,major_genre,sub_genre,priority,created_at,expected_tier,interest_level,first_chapter_read,why_interested,tag_data,memorable_quote,start_year,end_year)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
         [
           id,
           t,
@@ -25937,25 +25970,15 @@ function AppContent() {
           plannedSubGenre.length > 0 ? JSON.stringify(plannedSubGenre) : "",
           plannedPriority,
           now,
-          // 🆕 v3.4: 새 필드들
-          Number(plannedExpectedRating) || 1500,
+          // 🏆 v3.13.0: expected_rating, discovery_source, scheduled_start_date, similar_novels 제거
           plannedExpectedTier || "",
           plannedInterestLevel,
-          plannedDiscoverySource.trim(),
           plannedFirstChapterRead ? 1 : 0,
-          (() => {
-            if (!plannedScheduledStart) return 0;
-            try {
-              const ts = new Date(plannedScheduledStart).getTime();
-              return isNaN(ts) ? 0 : ts;
-            } catch { return 0; }
-          })(),
-          plannedSimilarNovels.length > 0 ? JSON.stringify(plannedSimilarNovels) : "",
           plannedWhyInterested.trim(),
-          "", // 🔧 v3.9.2: tag_data 누락 수정 (UPDATE에는 있으나 INSERT에 빠져있었음)
+          "", // tag_data
           "", // memorable_quote (등록 시 빈값)
-          plannedStartYear, // 🏆 v3.12.3: 연재 시작 연도
-          plannedEndYear, // 🏆 v3.12.3: 연재 종료 연도
+          plannedStartYear, // 🏆 v3.12.3
+          plannedEndYear, // 🏆 v3.12.3
         ]
       );
 
@@ -25975,14 +25998,10 @@ function AppContent() {
       setPlannedMajorGenre([]);
       setPlannedSubGenre([]);
       setPlannedPriority(3);
-      // 🆕 v3.4: 새 필드 초기화
-      setPlannedExpectedRating("1500");
+      // 🆕 v3.4 (🏆 v3.13.0: expected_rating, discovery_source, scheduled_start_date, similar_novels 제거)
       setPlannedExpectedTier("");
       setPlannedInterestLevel(3);
-      setPlannedDiscoverySource("");
       setPlannedFirstChapterRead(false);
-      setPlannedScheduledStart("");
-      setPlannedSimilarNovels([]);
       setPlannedWhyInterested("");
       setPlannedStartYear(0); // 🏆 v3.12.3
       setPlannedEndYear(0); // 🏆 v3.12.3
@@ -26066,7 +26085,7 @@ function AppContent() {
       const newCover = n.cover_image || "";
       
       await exec(
-        `UPDATE planned_novels SET title=?, author=?, tags=?, platforms=?, note=?, total_episodes=?, cover_image=?, link=?, work_status=?, major_genre=?, sub_genre=?, priority=?, expected_rating=?, expected_tier=?, interest_level=?, discovery_source=?, first_chapter_read=?, scheduled_start_date=?, similar_novels=?, why_interested=?, tag_data=?, memorable_quote=?, start_year=?, end_year=? WHERE id=?;`,
+        `UPDATE planned_novels SET title=?, author=?, tags=?, platforms=?, note=?, total_episodes=?, cover_image=?, link=?, work_status=?, major_genre=?, sub_genre=?, priority=?, expected_tier=?, interest_level=?, first_chapter_read=?, why_interested=?, tag_data=?, memorable_quote=?, start_year=?, end_year=? WHERE id=?;`,
         [
           newTitle,
           n.author?.trim() || "",
@@ -26080,19 +26099,15 @@ function AppContent() {
           n.major_genre || "",
           n.sub_genre || "",
           Number(n.priority) || 3,
-          // 🆕 v3.4: 새 필드들
-          Number(n.expected_rating) || 1500,
+          // 🏆 v3.13.0: expected_rating, discovery_source, scheduled_start_date, similar_novels 제거
           n.expected_tier || "",
           Number(n.interest_level) || 3,
-          n.discovery_source || "",
           n.first_chapter_read ? 1 : 0,
-          n.scheduled_start_date || 0,
-          n.similar_novels || "",
           n.why_interested || "",
-          n.tag_data || "", // 🔧 v3.5.9: tag_data 저장 누락 수정
-          serializeQuotes(plannedEditQuotes), // 🏆 v3.12.1: 인상깊은 문장
-          Number(n.start_year) || 0, // 🏆 v3.12.3: 연재 시작 연도
-          Number(n.end_year) || 0, // 🏆 v3.12.3: 연재 종료 연도
+          n.tag_data || "", // 🔧 v3.5.9
+          serializeQuotes(plannedEditQuotes), // 🏆 v3.12.1
+          Number(n.start_year) || 0, // 🏆 v3.12.3
+          Number(n.end_year) || 0, // 🏆 v3.12.3
           n.id,
         ]
       );
@@ -26149,44 +26164,18 @@ function AppContent() {
               let enhancedNote = planned.note || "";
               const noteAdditions = [];
               
-              // 관심 갖게 된 이유
+              // 🏆 v3.13.0: 관심 이유 (발견 경로 통합) / 예상 티어 / 관심도만 메모로 병합
+              // (기존 발견 경로·읽기 예정일·비슷한 작품 컬럼 제거)
               if (planned.why_interested) {
                 noteAdditions.push(`[관심 이유] ${planned.why_interested}`);
               }
-              // 발견 경로
-              if (planned.discovery_source) {
-                noteAdditions.push(`[발견 경로] ${planned.discovery_source}`);
-              }
-              // 예상 티어
               if (planned.expected_tier) {
                 noteAdditions.push(`[예상 티어] ${planned.expected_tier}`);
               }
-              // 관심도
               if (planned.interest_level && planned.interest_level !== 3) {
                 noteAdditions.push(`[등록 전 관심도] ${"★".repeat(planned.interest_level)}${"☆".repeat(5 - planned.interest_level)}`);
               }
-              // 읽기 시작 예정일
-              if (planned.scheduled_start_date && planned.scheduled_start_date > 0) {
-                try {
-                  const dateStr = new Date(planned.scheduled_start_date).toLocaleDateString();
-                  noteAdditions.push(`[읽기 예정일] ${dateStr}`);
-                } catch {}
-              }
-              // 비슷한 작품 정보
-              if (planned.similar_novels) {
-                try {
-                  const similarIds = JSON.parse(planned.similar_novels);
-                  if (Array.isArray(similarIds) && similarIds.length > 0) {
-                    const similarTitles = similarIds
-                      .map(sid => listMap.get(sid)?.title)
-                      .filter(Boolean);
-                    if (similarTitles.length > 0) {
-                      noteAdditions.push(`[비슷한 작품] ${similarTitles.join(", ")}`);
-                    }
-                  }
-                } catch {}
-              }
-              
+
               if (noteAdditions.length > 0) {
                 enhancedNote = enhancedNote 
                   ? `${enhancedNote}\n\n--- 예정작품 정보 ---\n${noteAdditions.join("\n")}`
@@ -29484,7 +29473,7 @@ function AppContent() {
       const merged = { ...prev };
 
       for (const key of Object.keys(newSettings)) {
-        if (key === 'plannedFields' || key === 'supplement' || key === 'recentChanges' || key === 'coverLibrary' || key === 'tierSystemConfig') {
+        if (key === 'supplement' || key === 'recentChanges' || key === 'coverLibrary' || key === 'tierSystemConfig') {
           // nested object는 deep merge (prev 기준 — stale closure 아닌 최신 state)
           merged[key] = { ...(prev[key] || {}), ...newSettings[key] };
           // 🆕 v6.0: tierSystemConfig의 tiers 배열은 교체 (merge 아님)
@@ -33061,16 +33050,8 @@ async function buildExtendedBackup(novels, matches, settings, tierHist, coverIma
   if (settings.undoStackSize !== DEFAULT_SETTINGS.undoStackSize) settingsDiff.us = settings.undoStackSize;
   
   // 🆕 v3.4: 예정탭 확장 필드 설정
-  if (settings.plannedFields) {
-    const pf = settings.plannedFields;
-    const defPf = DEFAULT_SETTINGS.plannedFields;
-    const pfDiff = {};
-    if (pf.showExpectedRating !== defPf.showExpectedRating) pfDiff.er = pf.showExpectedRating ? 1 : 0;
-    if (pf.showScheduledStart !== defPf.showScheduledStart) pfDiff.ss = pf.showScheduledStart ? 1 : 0;
-    if (pf.showSimilarNovels !== defPf.showSimilarNovels) pfDiff.sn = pf.showSimilarNovels ? 1 : 0;
-    if (Object.keys(pfDiff).length > 0) settingsDiff.pf = pfDiff;
-  }
-  
+  // 🏆 v3.13.0: plannedFields 백업 제거 (필드 자체 삭제)
+
   // 🆕 v6.0: tierSystemConfig 백업 (기본값과 다를 때)
   if (settings.tierSystemConfig) {
     const tsc = settings.tierSystemConfig;
@@ -33319,14 +33300,10 @@ async function exportJSON() {
         sg: p.sub_genre || "",
         pr: Number(p.priority) || 3,
         ca: Math.floor((p.created_at || Date.now()) / 1000) - BASE_TIMESTAMP,
-        // 🆕 v3.4: 새 필드들
-        er: Number(p.expected_rating) || 1500,
+        // 🏆 v3.13.0: er/ds/ss/sn 제거 (DB 컬럼 삭제)
         et: p.expected_tier || "",
         il: Number(p.interest_level) || 3,
-        ds: p.discovery_source || "",
         fc: p.first_chapter_read ? 1 : 0,
-        ss: p.scheduled_start_date ? Math.floor(p.scheduled_start_date / 1000) - BASE_TIMESTAMP : 0,
-        sn: p.similar_novels || "",
         wi: p.why_interested || "",
         td: p.tag_data || "", // 🔧 v3.5.9: tag_data 백업
         mq: p.memorable_quote || "", // 🏆 v3.12.2: 인상깊은 문장
@@ -33774,13 +33751,7 @@ async function importJSON() {
                 if (s.rb === 0) restored.showReviewBanner = false;
                 if (s.us !== undefined) restored.undoStackSize = s.us;
                 
-                // 🆕 v3.4: 예정탭 확장 필드 설정 복원
-                if (s.pf && typeof s.pf === "object") {
-                  restored.plannedFields = { ...DEFAULT_SETTINGS.plannedFields };
-                  if (s.pf.er !== undefined) restored.plannedFields.showExpectedRating = s.pf.er === 1;
-                  if (s.pf.ss !== undefined) restored.plannedFields.showScheduledStart = s.pf.ss === 1;
-                  if (s.pf.sn !== undefined) restored.plannedFields.showSimilarNovels = s.pf.sn === 1;
-                }
+                // 🏆 v3.13.0: 예정탭 확장 필드 설정 복원 제거 (필드 자체 삭제, 구 백업의 s.pf 자동 무시)
                 // 🆕 v6.0: tierSystemConfig 복원
                 if (s.tc && typeof s.tc === "object" && Array.isArray(s.tc.tiers)) {
                   restored.tierSystemConfig = s.tc;
@@ -33957,8 +33928,8 @@ async function importJSON() {
                 
                 const plannedQueries = data.PL.map(p => ({
                   sql: `INSERT INTO planned_novels
-                    (id, title, author, tags, platforms, note, total_episodes, cover_image, link, work_status, major_genre, sub_genre, priority, created_at, expected_rating, expected_tier, interest_level, discovery_source, first_chapter_read, scheduled_start_date, similar_novels, why_interested, tag_data, memorable_quote, start_year, end_year)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                    (id, title, author, tags, platforms, note, total_episodes, cover_image, link, work_status, major_genre, sub_genre, priority, created_at, expected_tier, interest_level, first_chapter_read, why_interested, tag_data, memorable_quote, start_year, end_year)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
                   params: [
                     uuid(),
                     p.t || "",
@@ -33974,14 +33945,10 @@ async function importJSON() {
                     p.sg || "",
                     Number(p.pr) || 3,
                     p.ca ? (baseTs + p.ca) * 1000 : Date.now(),
-                    // 🆕 v3.4: 새 필드들 (없으면 기본값)
-                    Number(p.er) || 1500,
+                    // 🏆 v3.13.0: er/ds/ss/sn 제거 (구 백업의 해당 키 자동 무시)
                     p.et || "",
                     Number(p.il) || 3,
-                    p.ds || "",
                     p.fc ? 1 : 0,
-                    p.ss ? (baseTs + p.ss) * 1000 : 0,
-                    p.sn || "",
                     p.wi || "",
                     p.td || "", // 🔧 v3.5.9: tag_data 복원
                     p.mq || "", // 🏆 v3.12.2: 인상깊은 문장 복원
@@ -41796,60 +41763,6 @@ async function importJSON() {
               </View>
             </Section>
             
-            {/* 📋 예정탭 확장 필드 설정 (v3.4) */}
-            <Section title="📋 예정탭 확장 필드">
-              <Text style={{ color: C.sub, marginBottom: 12 }}>
-                예정 작품 등록/편집 시 표시할 추가 필드를 선택합니다.
-              </Text>
-              <View style={{ gap: 12 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ color: C.text, fontWeight: "600" }}>📅 읽기 시작 예정일</Text>
-                    <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>언제부터 읽을 예정인지 날짜 설정</Text>
-                  </View>
-                  <Switch
-                    value={appSettings.plannedFields?.showScheduledStart !== false}
-                    onValueChange={(v) => saveAppSettings({ 
-                      plannedFields: { 
-                        ...appSettings.plannedFields, 
-                        showScheduledStart: v 
-                      } 
-                    })}
-                  />
-                </View>
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ color: C.text, fontWeight: "600" }}>📊 예상 레이팅 (숫자)</Text>
-                    <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>예상 티어 대신 직접 숫자로 입력</Text>
-                  </View>
-                  <Switch
-                    value={appSettings.plannedFields?.showExpectedRating === true}
-                    onValueChange={(v) => saveAppSettings({ 
-                      plannedFields: { 
-                        ...appSettings.plannedFields, 
-                        showExpectedRating: v 
-                      } 
-                    })}
-                  />
-                </View>
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ color: C.text, fontWeight: "600" }}>📚 비슷한 작품</Text>
-                    <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>본 목록에서 유사 작품 선택 (고급)</Text>
-                  </View>
-                  <Switch
-                    value={appSettings.plannedFields?.showSimilarNovels === true}
-                    onValueChange={(v) => saveAppSettings({ 
-                      plannedFields: { 
-                        ...appSettings.plannedFields, 
-                        showSimilarNovels: v 
-                      } 
-                    })}
-                  />
-                </View>
-              </View>
-            </Section>
-
             {/* ↩️ 되돌리기 (v2.6) */}
             {undoStack.length > 0 && (
               <Section title="↩️ 되돌리기">
@@ -46651,18 +46564,26 @@ async function importJSON() {
             </Text>
             {plannedEditItem && (
               <ScrollView key={`planned-scroll-${modalScrollKey.planned || 0}`} showsVerticalScrollIndicator={true} style={{ flex: 1 }}>
+
+                {/* ═══════════════════════════════════════════ */}
+                {/* 📋 v3.13.0 §1: 기본 정보                   */}
+                {/* ═══════════════════════════════════════════ */}
+                <Text style={{ fontSize: 14, fontWeight: "800", color: C.sub, marginBottom: 12 }}>
+                  📋 기본 정보
+                </Text>
+
                 <Label>제목 *</Label>
                 <Input
                   value={plannedEditItem.title || ""}
                   onChangeText={(t) => updatePlannedEditItem(prev => prev ? { ...prev, title: t } : null)}
                 />
-                
+
                 <Label style={{ marginTop: 10 }}>작가</Label>
                 <Input
                   value={plannedEditItem.author || ""}
                   onChangeText={(t) => updatePlannedEditItem(prev => prev ? { ...prev, author: t } : null)}
                 />
-                
+
                 <Label style={{ marginTop: 10 }}>연재처</Label>
                 <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
                   {(() => {
@@ -46679,7 +46600,7 @@ async function importJSON() {
                     );
                   })()}
                 </View>
-                
+
                 <Label style={{ marginTop: 10 }}>작품 상태</Label>
                 <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
                   {WORK_STATUS_OPTIONS.map((opt) => (
@@ -46691,14 +46612,14 @@ async function importJSON() {
                     />
                   ))}
                 </View>
-                
+
                 <Label style={{ marginTop: 10 }}>전체 회차 수</Label>
                 <Input
                   value={String(plannedEditItem.total_episodes || "")}
                   onChangeText={(t) => updatePlannedEditItem(prev => prev ? { ...prev, total_episodes: t } : null)}
                   keyboardType="number-pad"
                 />
-                
+
                 <Label style={{ marginTop: 10 }}>읽기 우선순위</Label>
                 <View style={{ flexDirection: "row", gap: 8 }}>
                   {[1, 2, 3, 4, 5].map((p) => (
@@ -46713,8 +46634,8 @@ async function importJSON() {
                         alignItems: "center",
                       }}
                     >
-                      <Text style={{ 
-                        color: (plannedEditItem.priority || 3) === p ? "#fff" : C.text, 
+                      <Text style={{
+                        color: (plannedEditItem.priority || 3) === p ? "#fff" : C.text,
                         fontWeight: "700",
                         fontSize: 12,
                       }}>
@@ -46723,7 +46644,7 @@ async function importJSON() {
                     </TouchableOpacity>
                   ))}
                 </View>
-                
+
                 <Label style={{ marginTop: 10 }}>표지 이미지</Label>
                 <View style={{ flexDirection: "row", gap: 12, marginBottom: 8, alignItems: "center", flexWrap: "wrap" }}>
                   {plannedEditItem.cover_image ? (
@@ -46737,26 +46658,26 @@ async function importJSON() {
                       <Text style={{ color: C.sub, fontSize: 10 }}>없음</Text>
                     </View>
                   )}
-                  <OutlineButton 
-                    title="갤러리" 
+                  <OutlineButton
+                    title="갤러리"
                     onPress={() => pickImageFromGallery((uri) => {
                       updatePlannedEditItem(prev => prev ? { ...prev, cover_image: uri } : null);
-                    })} 
+                    })}
                     style={{ minWidth: 70 }}
                   />
-                  <OutlineButton 
-                    title="라이브러리" 
+                  <OutlineButton
+                    title="라이브러리"
                     onPress={() => {
                       setCoverSelectTarget("plannedEdit");
-                      deferOpen(setCoverSelectModalOpen); // 🔧 v3.5.8
-                    }} 
+                      deferOpen(setCoverSelectModalOpen);
+                    }}
                     color={C.primary}
                     style={{ minWidth: 90 }}
                   />
                   {plannedEditItem.cover_image && (
-                    <OutlineButton 
-                      title="삭제" 
-                      onPress={() => updatePlannedEditItem(prev => prev ? { ...prev, cover_image: "" } : null)} 
+                    <OutlineButton
+                      title="삭제"
+                      onPress={() => updatePlannedEditItem(prev => prev ? { ...prev, cover_image: "" } : null)}
                       color={C.warn}
                       style={{ minWidth: 60 }}
                     />
@@ -46767,14 +46688,14 @@ async function importJSON() {
                   onChangeText={(t) => updatePlannedEditItem(prev => prev ? { ...prev, cover_image: t } : null)}
                   placeholder="URL 직접 입력"
                 />
-                
+
                 <Label style={{ marginTop: 10 }}>작품 링크</Label>
                 <Input
                   value={plannedEditItem.link || ""}
                   onChangeText={(t) => updatePlannedEditItem(prev => prev ? { ...prev, link: t } : null)}
                 />
-                
-                {/* 🆕 v3.5.8: 태그 칩 뷰 (예정작 수정) */}
+
+                {/* 태그 칩 뷰 (예정작 수정) */}
                 <View style={{ marginTop: 10, marginBottom: 8 }}>
                   <TagChipView
                     tags={plannedEditItem.tags}
@@ -46783,7 +46704,6 @@ async function importJSON() {
                     userSubGenres={userSubGenres}
                     tagAttributes={tagAttributes}
                     onRemoveTag={(tag) => {
-                      // 🔧 v3.5.9 BUG FIX: 함수형 업데이트로 prev.tags 사용
                       updatePlannedEditItem(prev => {
                         if (!prev) return null;
                         const result = removeTagAndSyncGenres(prev.tags, tag, userMajorGenres, userSubGenres, prev.tag_data, tagAttributes);
@@ -46792,8 +46712,8 @@ async function importJSON() {
                     }}
                     onOpenTagModal={() => {
                       const currentTags = (plannedEditItem.tags || "").split(",").map(t => t.trim()).filter(Boolean);
-                      const allMajor = getAllMajorTags(tagAttributes, userMajorGenres); // 🔧 v3.5.11: tagAttributes 반영
-                      const allSub = getAllSubTags(tagAttributes, userSubGenres); // 🔧 v3.5.11: tagAttributes 반영
+                      const allMajor = getAllMajorTags(tagAttributes, userMajorGenres);
+                      const allSub = getAllSubTags(tagAttributes, userSubGenres);
                       const majorTags = currentTags.filter(tag => allMajor.some(m => isSameTag(m, tag)))
                         .map(tag => findSameTag(allMajor, tag) || tag);
                       const subTags = currentTags.filter(tag => allSub.some(s => isSameTag(s, tag)))
@@ -46809,10 +46729,9 @@ async function importJSON() {
                       );
                     }}
                     onTagsTextChange={(t) => {
-                      // 🔧 v3.5.9 BUG FIX: 예정작 수정 텍스트 모드 태그 편집 시 장르 동기화
                       const inputTags = t.split(",").map(tag => tag.trim()).filter(Boolean);
-                      const allMajor = getAllMajorTags(tagAttributes, userMajorGenres); // 🔧 v3.5.11: tagAttributes 반영
-                      const allSub = getAllSubTags(tagAttributes, userSubGenres); // 🔧 v3.5.11: tagAttributes 반영
+                      const allMajor = getAllMajorTags(tagAttributes, userMajorGenres);
+                      const allSub = getAllSubTags(tagAttributes, userSubGenres);
                       const normalizedMajor = inputTags.filter(tag => allMajor.some(m => isSameTag(m, tag)))
                         .map(tag => findSameTag(allMajor, tag) || tag);
                       const normalizedSub = inputTags.filter(tag => allSub.some(m => isSameTag(m, tag)))
@@ -46832,7 +46751,7 @@ async function importJSON() {
                           ...prev, tags: t,
                           major_genre: normalizedMajor.length > 0 ? JSON.stringify(normalizedMajor) : "",
                           sub_genre: normalizedSub.length > 0 ? JSON.stringify(normalizedSub) : "",
-                          tag_data: syncedTagData, // 🔧 v3.5.9: 제거된 태그의 tag_data 동기 삭제
+                          tag_data: syncedTagData,
                         };
                       });
                     }}
@@ -46840,9 +46759,16 @@ async function importJSON() {
                     theme={C}
                   />
                 </View>
-                
-                {/* 🆕 v3.4: 확장 필드들 */}
-                <Label style={{ marginTop: 10 }}>관심도</Label>
+
+                {/* ═══════════════════════════════════════════ */}
+                {/* ✨ v3.13.0 §2: 등록 전 메타                  */}
+                {/* ═══════════════════════════════════════════ */}
+                <View style={{ height: 1, backgroundColor: C.line, marginVertical: 16 }} />
+                <Text style={{ fontSize: 14, fontWeight: "800", color: C.sub, marginBottom: 12 }}>
+                  ✨ 등록 전 메타
+                </Text>
+
+                <Label>관심도</Label>
                 <View style={{ flexDirection: "row", gap: 8 }}>
                   {[1, 2, 3, 4, 5].map((p) => (
                     <TouchableOpacity
@@ -46856,8 +46782,8 @@ async function importJSON() {
                         alignItems: "center",
                       }}
                     >
-                      <Text style={{ 
-                        color: (plannedEditItem.interest_level || 3) === p ? "#fff" : C.text, 
+                      <Text style={{
+                        color: (plannedEditItem.interest_level || 3) === p ? "#fff" : C.text,
                         fontWeight: "700",
                         fontSize: 12,
                       }}>
@@ -46866,7 +46792,7 @@ async function importJSON() {
                     </TouchableOpacity>
                   ))}
                 </View>
-                
+
                 <Label style={{ marginTop: 10 }}>예상 티어</Label>
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
                   {["", ...getActiveTierOrder(globalTierConfig)].map((tier) => (
@@ -46877,13 +46803,13 @@ async function importJSON() {
                         paddingVertical: 8,
                         paddingHorizontal: 14,
                         borderRadius: 8,
-                        backgroundColor: (plannedEditItem.expected_tier || "") === tier 
-                          ? (tier ? getTierColor(tier) : C.primary) 
+                        backgroundColor: (plannedEditItem.expected_tier || "") === tier
+                          ? (tier ? getTierColor(tier) : C.primary)
                           : C.chip,
                       }}
                     >
-                      <Text style={{ 
-                        color: (plannedEditItem.expected_tier || "") === tier ? "#fff" : C.text, 
+                      <Text style={{
+                        color: (plannedEditItem.expected_tier || "") === tier ? "#fff" : C.text,
                         fontWeight: "700",
                         fontSize: 13,
                       }}>
@@ -46892,31 +46818,7 @@ async function importJSON() {
                     </TouchableOpacity>
                   ))}
                 </View>
-                
-                <Label style={{ marginTop: 10 }}>발견 경로</Label>
-                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-                  {["", "추천", "검색", "광고", "랭킹", "친구", "커뮤니티", "SNS", "기타"].map((src) => (
-                    <TouchableOpacity
-                      key={src || "none"}
-                      onPress={() => updatePlannedEditItem(prev => prev ? { ...prev, discovery_source: src } : null)}
-                      style={{
-                        paddingVertical: 6,
-                        paddingHorizontal: 10,
-                        borderRadius: 999,
-                        backgroundColor: (plannedEditItem.discovery_source || "") === src ? C.primary : C.chip,
-                      }}
-                    >
-                      <Text style={{ 
-                        color: (plannedEditItem.discovery_source || "") === src ? "#fff" : C.text, 
-                        fontWeight: "600",
-                        fontSize: 12,
-                      }}>
-                        {src || "미선택"}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                
+
                 <Label style={{ marginTop: 10 }}>1화 읽음 여부</Label>
                 <View style={{ flexDirection: "row", gap: 12 }}>
                   <TouchableOpacity
@@ -46929,8 +46831,8 @@ async function importJSON() {
                       alignItems: "center",
                     }}
                   >
-                    <Text style={{ 
-                      color: !plannedEditItem.first_chapter_read ? "#fff" : C.text, 
+                    <Text style={{
+                      color: !plannedEditItem.first_chapter_read ? "#fff" : C.text,
                       fontWeight: "700",
                     }}>
                       📖 안 읽음
@@ -46946,48 +46848,15 @@ async function importJSON() {
                       alignItems: "center",
                     }}
                   >
-                    <Text style={{ 
-                      color: plannedEditItem.first_chapter_read ? "#fff" : C.text, 
+                    <Text style={{
+                      color: plannedEditItem.first_chapter_read ? "#fff" : C.text,
                       fontWeight: "700",
                     }}>
                       ✅ 1화 읽음
                     </Text>
                   </TouchableOpacity>
                 </View>
-                
-                {/* 📅 읽기 시작 예정일 (설정 기반) */}
-                {appSettings.plannedFields?.showScheduledStart !== false && (
-                  <>
-                    <Label style={{ marginTop: 10 }}>읽기 시작 예정일</Label>
-                    <Input
-                      value={(() => {
-                        const ts = plannedEditItem.scheduled_start_date;
-                        if (!ts || ts <= 0) return "";
-                        try {
-                          return new Date(ts).toISOString().split('T')[0];
-                        } catch { return ""; }
-                      })()}
-                      onChangeText={(t) => {
-                        let timestamp = 0;
-                        if (t && t.trim()) {
-                          try {
-                            const parsed = new Date(t);
-                            if (!isNaN(parsed.getTime())) {
-                              timestamp = parsed.getTime();
-                            }
-                          } catch {}
-                        }
-                        updatePlannedEditItem(prev => prev ? { 
-                          ...prev, 
-                          scheduled_start_date: timestamp 
-                        } : null);
-                      }}
-                      placeholder="예: 2025-02-01 (선택사항)"
-                    />
-                  </>
-                )}
-                
-                {/* 🏆 v3.12.3: 연재 연도 */}
+
                 <Label style={{ marginTop: 10 }}>연재 연도</Label>
                 <Text style={{ color: C.sub, fontSize: 11, marginBottom: 6 }}>
                   등록전환 시 본작에 자동 반영됩니다.
@@ -47011,98 +46880,14 @@ async function importJSON() {
                   </View>
                 </View>
 
-                {/* 📊 예상 레이팅 (설정 기반) */}
-                {appSettings.plannedFields?.showExpectedRating === true && (
-                  <>
-                    <Label style={{ marginTop: 10 }}>예상 레이팅 (숫자)</Label>
-                    <Input
-                      value={String(plannedEditItem.expected_rating || 1500)}
-                      onChangeText={(t) => updatePlannedEditItem(prev => prev ? { 
-                        ...prev, 
-                        expected_rating: Number(t) || 1500 
-                      } : null)}
-                      placeholder="예: 1700"
-                      keyboardType="number-pad"
-                    />
-                  </>
-                )}
-                
-                {/* 📚 비슷한 작품 (설정 기반) */}
-                {appSettings.plannedFields?.showSimilarNovels === true && (
-                  <>
-                    <Label style={{ marginTop: 10 }}>비슷한 작품</Label>
-                    <Text style={{ color: C.sub, fontSize: 11, marginBottom: 6 }}>
-                      {(() => {
-                        try {
-                          const ids = JSON.parse(plannedEditItem.similar_novels || "[]");
-                          if (!Array.isArray(ids) || ids.length === 0) return "선택된 작품 없음";
-                          return ids.map(id => {
-                            const found = listMap.get(id);
-                            return found ? found.title : "";
-                          }).filter(Boolean).join(", ") || "선택된 작품 없음";
-                        } catch { return "선택된 작품 없음"; }
-                      })()}
-                    </Text>
-                    <TouchableOpacity
-                      onPress={() => {
-                        const topNovels = [...list]
-                          .sort((a, b) => (b.rating || 1500) - (a.rating || 1500))
-                          .slice(0, 10);
-                        
-                        Alert.alert(
-                          "비슷한 작품 선택",
-                          "상위 10작품 중 선택하세요. (취소로 초기화)",
-                          [
-                            { 
-                              text: "취소 (초기화)", 
-                              onPress: () => updatePlannedEditItem(prev => prev ? { ...prev, similar_novels: "[]" } : null)
-                            },
-                            ...topNovels.map(n => ({
-                              text: n.title?.substring(0, 20) || "?",
-                              onPress: () => {
-                                // 🔧 v3.5.8: 함수형 업데이트
-                                updatePlannedEditItem(prev => {
-                                  if (!prev) return null;
-                                  try {
-                                    const current = JSON.parse(prev.similar_novels || "[]");
-                                    if (!current.includes(n.id)) {
-                                      const updated = [...current, n.id].slice(0, 3);
-                                      return { ...prev, similar_novels: JSON.stringify(updated) };
-                                    }
-                                    return prev;
-                                  } catch {
-                                    return { ...prev, similar_novels: JSON.stringify([n.id]) };
-                                  }
-                                });
-                              }
-                            })),
-                          ]
-                        );
-                      }}
-                      style={{
-                        padding: 10,
-                        borderRadius: 8,
-                        borderWidth: 1,
-                        borderColor: C.line,
-                        borderStyle: "dashed",
-                        alignItems: "center",
-                      }}
-                    >
-                      <Text style={{ color: C.primary, fontWeight: "600" }}>
-                        + 비슷한 작품 추가 (최대 3개)
-                      </Text>
-                    </TouchableOpacity>
-                  </>
-                )}
-                
-                <Label style={{ marginTop: 10 }}>왜 관심 갖게 되었나요?</Label>
+                <Label style={{ marginTop: 10 }}>관심 이유</Label>
                 <Input
                   value={plannedEditItem.why_interested || ""}
                   onChangeText={(t) => updatePlannedEditItem(prev => prev ? { ...prev, why_interested: t } : null)}
-                  placeholder="예: 설정이 참신해서, 추천 많이 받아서..."
+                  placeholder="추천받은 곳, 끌린 이유 등"
                   multiline
                 />
-                
+
                 <Label style={{ marginTop: 10 }}>메모</Label>
                 <Input
                   value={plannedEditItem.note || ""}
@@ -47110,8 +46895,16 @@ async function importJSON() {
                   multiline
                 />
 
-                {/* 🏆 v3.12.1: 인상깊은 문장 (예정작) */}
-                <Label style={{ marginTop: 10 }}>💬 인상깊은 문장 ({plannedEditQuotes.length})</Label>
+                {/* ═══════════════════════════════════════════ */}
+                {/* 💬 v3.13.0 §3: 문장 · 갤러리                 */}
+                {/* ═══════════════════════════════════════════ */}
+                <View style={{ height: 1, backgroundColor: C.line, marginVertical: 16 }} />
+                <Text style={{ fontSize: 14, fontWeight: "800", color: C.sub, marginBottom: 12 }}>
+                  💬 문장 · 🎨 갤러리
+                </Text>
+
+                {/* 인상깊은 문장 (예정작) */}
+                <Label>💬 인상깊은 문장 ({plannedEditQuotes.length})</Label>
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
                   <TouchableOpacity
                     onPress={() => setPlannedEditQuotes([...plannedEditQuotes, ""])}
@@ -47158,7 +46951,7 @@ async function importJSON() {
                   </View>
                 ))}
 
-                {/* 🏆 v3.12.1: 갤러리 이미지 관리 */}
+                {/* 갤러리 이미지 관리 */}
                 <Label style={{ marginTop: 10 }}>🎨 갤러리</Label>
                 <TouchableOpacity
                   onPress={() => addGalleryImages(plannedEditItem.id)}
@@ -47178,7 +46971,7 @@ async function importJSON() {
                     onPress={() => {
                       setPlannedEditOpen(false);
                       updatePlannedEditItem(null);
-                      setPlannedEditQuotes([]); // 🏆 v3.12.2
+                      setPlannedEditQuotes([]);
                     }}
                     style={{ flex: 1 }}
                   />
