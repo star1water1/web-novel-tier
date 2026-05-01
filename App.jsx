@@ -2,9 +2,104 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.13.0                                                                  ║
- * ║  최종 수정: 2026-04-13                                                        ║
- * ║  총 라인 수: 약 47,000줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 3.14.0                                                                  ║
+ * ║  최종 수정: 2026-05-01                                                        ║
+ * ║  총 라인 수: 약 48,800줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔀 v3.14.0 하이브리드 티어 시스템 (2026-05-01)                                  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [개요] 직접배정(manual) + 의심 작품 선별 매칭의 혼합 시스템                   ║
+ * ║ • 기존 매칭 기반의 정확성과 직접배정의 효율성을 결합                          ║
+ * ║ • 작품 추가/이동 시 calibration 3매칭으로 부트스트랩                          ║
+ * ║ • Graph 기반 의심도 탐지(S1~S7) + Eades 위상정렬                             ║
+ * ║ • 슬롯별 opt-in (tier_decision_mode: manual/elo_full/hybrid)                ║
+ * ║                                                                              ║
+ * ║ [신규 컴포넌트]                                                                ║
+ * ║ • SuspicionDot: 5단계 의심도 시각화                                           ║
+ * ║ • HybridStatusBadge: 작품 상태 배지 (검증/의심/미검증/앵커 등)                ║
+ * ║ • TierVerificationModal: 검증 센터 (개요/의심 작품/모드 전환)                 ║
+ * ║                                                                              ║
+ * ║ [신규 DB 테이블]                                                              ║
+ * ║ • graph_version: 그래프 캐시 무효화용 단조 증가 카운터                       ║
+ * ║ • tier_verification_queue: 검증 대기 큐 + 무효화 조건                         ║
+ * ║ • tier_adjustment_log: provisional 변경 + undo/감사 추적                      ║
+ * ║ • graph_state_cache: 위상정렬 + 의심도 결과 영속 캐시                        ║
+ * ║ • tier_anchors: 검증 완료 앵커 작품                                           ║
+ * ║ • calibration_runs: 신규 작품 검증 세션 추적                                  ║
+ * ║ • hybrid_session_budget: 세션별 매칭 예산 추적                               ║
+ * ║                                                                              ║
+ * ║ [novels 컬럼 확장]                                                            ║
+ * ║ • suspicion_score, confidence_level, derived_tier, derived_position          ║
+ * ║ • edge_count, cooldown_until_match, active_match_lock                        ║
+ * ║ • last_calibrated_at, hybrid_status                                           ║
+ * ║                                                                              ║
+ * ║ [matches 컬럼 확장]                                                           ║
+ * ║ • edge_weight: 페어 집계 시 base 가중 (런타임 decay 동적 계산)                ║
+ * ║ • is_calibration, triggered_by, verification_queue_id, p_win_predicted       ║
+ * ║ • is_active: undo용 소프트 삭제                                               ║
+ * ║ • match_result: 'win' | 'draw' (무승부 양방향 edge 처리)                      ║
+ * ║                                                                              ║
+ * ║ [핵심 알고리즘]                                                               ║
+ * ║ • Graph: aggregatePairEdges (페어당 단일 edge로 집계, 무승부 분리)            ║
+ * ║ • 위상정렬: Eades-Lin-Smyth 가중 휴리스틱, 타이브레이크 work_id (M1 수정)    ║
+ * ║ • 사이클 탐지: 길이 ≤ 4 BFS, 수문장 노출용                                    ║
+ * ║ • 의심도: S1(위치불일치) S2(모순+사이클) S3(sparsity) S4(노화)                ║
+ * ║          S6(calibration실패) S7(전파)                                         ║
+ * ║ • Confidence: effectiveSignal/target × diversity (M2 수정: recency 단일화)   ║
+ * ║                                                                              ║
+ * ║ [캐시 무효화]                                                                 ║
+ * ║ • L1 메모리 + L2 DB 두 단계, 단조 증가 graph_version 비교                     ║
+ * ║ • Lazy rebuild + inflight Promise 합치기                                      ║
+ * ║ • 24시간 cap (decay drift 반영)                                              ║
+ * ║ • bulk_mode로 import/migration 시 폭주 방지                                   ║
+ * ║                                                                              ║
+ * ║ [마이그레이션 4경로]                                                          ║
+ * ║ • manual → hybrid: 점진적 부트스트랩 (lazy calibration)                       ║
+ * ║ • elo_full → hybrid: 매칭 데이터 graph로 즉시 분석                            ║
+ * ║ • hybrid → manual: 큐 무효화, edges 보존                                      ║
+ * ║ • 백업 import: 자동 manual 모드, 유저 명시 활성화                             ║
+ * ║                                                                              ║
+ * ║ [검증 큐 동작]                                                                ║
+ * ║ • Calibration: 작품 추가/이동 직후 3매칭 (같은/위/아래 티어)                  ║
+ * ║ • Suspicion: 의심도 ≥ 0.6 자동 등록 (sweep Phase 2)                          ║
+ * ║ • Audit: 세션당 2회 정기 감사 (앵커 우선)                                     ║
+ * ║ • Cascade: 매칭 결과로 이웃 의심도 폭증 시 (depth 1)                          ║
+ * ║ • Sweep 무효화: 의심해소 / 신뢰도충분 / TTL만료 / 중복                       ║
+ * ║                                                                              ║
+ * ║ [세션 예산]                                                                   ║
+ * ║ • 세션당 총 50매칭, 작품당 5매칭                                              ║
+ * ║ • 타입별: calibration 30, suspicion 20, audit 3, cascade 5                   ║
+ * ║ • 30분 idle 시 세션 종료                                                      ║
+ * ║                                                                              ║
+ * ║ [불변규칙 준수]                                                               ║
+ * ║ • #1 자동 진행 중 Alert 금지: inline 텍스트만 사용                            ║
+ * ║ • #2 React state 직접 참조 금지: getGraphSnapshot() 함수로만 접근             ║
+ * ║ • #3 flush 전 drain: provisional commit 전 큐 drain (TODO)                   ║
+ * ║ • #4 SQLITE_BUSY 시 jitter 재시도: safeDbOperation 그대로 활용                ║
+ * ║ • #5 catch/finally 강제: 모든 async에 try/catch                              ║
+ * ║ • #6 모듈 변수 직접 참조 금지: getGraphSnapshot/getHybridMode 함수 인터페이스 ║
+ * ║                                                                              ║
+ * ║ [UI 통합]                                                                     ║
+ * ║ • 설정 탭 > 🔀 하이브리드 티어 검증 섹션 (검증 센터 진입점)                   ║
+ * ║ • 검증 센터 모달: 개요 탭 + 의심 작품 리스트 탭                               ║
+ * ║ • 모드 전환 안내 시트 (마이그레이션 자동 처리)                                ║
+ * ║                                                                              ║
+ * ║ [부팅 시퀀스]                                                                 ║
+ * ║ • verifyHybridIntegrity: 좀비 lock/active 큐 정리                            ║
+ * ║ • getHybridMode: 모드 캐시 워밍                                               ║
+ * ║ • warmGraphCache: L2 → L1 캐시 복원                                          ║
+ * ║ • initHybridSession: 세션 예산 초기화                                         ║
+ * ║                                                                              ║
+ * ║ [향후 작업 (TODO)]                                                            ║
+ * ║ • NovelCard에 HybridStatusBadge 통합                                          ║
+ * ║ • 매칭 큐 디스패처 (큐에서 매칭 꺼내 실제 진행)                              ║
+ * ║ • Provisional 변경 적용 UI                                                    ║
+ * ║ • 앵커 지정 UI (작품 상세에서)                                                ║
+ * ║ • 정기 audit 트리거 자동 실행                                                 ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -4858,6 +4953,13 @@ async function initDb() {
   );`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_gallery_novel ON gallery_images(novel_id);`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_gallery_created ON gallery_images(created_at DESC);`);
+
+  // 🔀 v3.14.0: 하이브리드 티어 시스템 스키마 (idempotent — ensureColumn 패턴)
+  try {
+    await runHybridSchemaMigration();
+  } catch (e) {
+    console.warn("[hybrid] schema migration failed (non-fatal):", e.message);
+  }
 }
 
 // -----------------------------------------
@@ -9331,6 +9433,858 @@ async function rebuildMatchInsightsFromHistory(novels, savedTagAttrs = {}) {
 }
 
 /* =========================================================
+   🔀 v3.14.0 하이브리드 티어 시스템 (Hybrid Tier Engine)
+   - 직접배정(manual) + 의심 작품 선별 매칭의 혼합 시스템
+   - Graph 기반 (스칼라 ELO 권위 격리, edge 누적)
+   - 의심도 S1~S7 + Eades 위상정렬 + Calibration + Sweep
+   - 슬롯별 opt-in (tier_decision_mode: manual/elo_full/hybrid)
+   ========================================================= */
+
+const HYBRID_DEFAULT_CONFIG = {
+  enabled: false,
+  suspicionThreshold: 0.6,
+  confidenceTarget: 0.85,
+  calibrationMatchCount: 3,
+  edgeDecayMonths: 6,
+  sessionBudget: 50,
+  perWorkBudget: 5,
+  calibrationBudget: 30,
+  suspicionBudget: 20,
+  auditBudget: 3,
+  cascadeBudget: 5,
+  cascadeMaxDepth: 1,
+  cooldownMatches: 5,
+  auditPerSession: 2,
+  nMinEdges: 5,
+  weights: {
+    s1_position: 0.25,
+    s2_contradiction: 0.35,
+    s3_sparsity: 0.10,
+    s4_staleness: 0.10,
+    s6_calibration: 0.15,
+    s7_propagation: 0.05,
+  },
+};
+
+// L1 메모리 캐시 (모듈 레벨 — 불변규칙 #6: JSX에서는 getGraphSnapshot()로만 접근)
+let _graphMemCache = null;
+let _graphInflightRebuild = null;
+let _hybridBulkMode = false;
+let _hybridBulkPendingBump = false;
+let _graphPersistTimer = null;
+let _rebuildScheduled = false;
+let _hybridModeCache = null;
+
+let _hybridSessionId = null;
+let _hybridSessionStartedAt = 0;
+const _hybridSessionUsed = { total: 0, calibration: 0, suspicion: 0, audit: 0, cascade: 0 };
+const _hybridPerWorkUsed = {};
+
+const HYBRID_SCHEMA_NOVELS_COLS = [
+  ["suspicion_score",     "REAL",    "0"],
+  ["confidence_level",    "REAL",    "0"],
+  ["derived_tier",        "TEXT",    "NULL"],
+  ["derived_position",    "INTEGER", "NULL"],
+  ["edge_count",          "INTEGER", "0"],
+  ["cooldown_until_match","INTEGER", "0"],
+  ["active_match_lock",   "TEXT",    "NULL"],
+  ["last_calibrated_at",  "INTEGER", "NULL"],
+  ["hybrid_status",       "TEXT",    "'uncalibrated'"],
+];
+const HYBRID_SCHEMA_MATCHES_COLS = [
+  ["edge_weight",          "REAL",    "1.0"],
+  ["is_calibration",       "INTEGER", "0"],
+  ["triggered_by",         "TEXT",    "'manual'"],
+  ["verification_queue_id","TEXT",    "NULL"],
+  ["p_win_predicted",      "REAL",    "NULL"],
+  ["is_active",            "INTEGER", "1"],
+  ["match_result",         "TEXT",    "'win'"],
+];
+
+async function runHybridSchemaMigration() {
+  await safeDbOperation(async (db) => {
+    const novelCols = await db.getAllAsync("PRAGMA table_info(novels)");
+    const novelColNames = new Set((novelCols || []).map(r => r.name));
+    for (const [col, type, def] of HYBRID_SCHEMA_NOVELS_COLS) {
+      if (!novelColNames.has(col)) {
+        await db.runAsync(`ALTER TABLE novels ADD COLUMN ${col} ${type} DEFAULT ${def};`);
+      }
+    }
+    const matchCols = await db.getAllAsync("PRAGMA table_info(matches)");
+    const matchColNames = new Set((matchCols || []).map(r => r.name));
+    for (const [col, type, def] of HYBRID_SCHEMA_MATCHES_COLS) {
+      if (!matchColNames.has(col)) {
+        await db.runAsync(`ALTER TABLE matches ADD COLUMN ${col} ${type} DEFAULT ${def};`);
+      }
+    }
+    await db.runAsync(`CREATE TABLE IF NOT EXISTS graph_version (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      version INTEGER NOT NULL DEFAULT 0,
+      config_version INTEGER NOT NULL DEFAULT 0,
+      last_bumped_at INTEGER NOT NULL DEFAULT 0
+    );`);
+    await db.runAsync(`INSERT OR IGNORE INTO graph_version (id, version, config_version, last_bumped_at) VALUES (1, 0, 0, 0);`);
+    await db.runAsync(`CREATE TABLE IF NOT EXISTS tier_verification_queue (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL,
+      subject_id TEXT NOT NULL,
+      opponent_id TEXT,
+      opponent_pool TEXT,
+      priority REAL NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending',
+      inv_suspicion_below REAL DEFAULT 0.4,
+      inv_confidence_above REAL DEFAULT 0.85,
+      inv_ttl_until INTEGER NOT NULL,
+      inv_obsoleted_by TEXT,
+      ctx_suspicion_at_creation REAL,
+      ctx_triggering_event TEXT,
+      ctx_cycle_evidence TEXT,
+      ctx_parent_match_id TEXT,
+      ctx_cascade_depth INTEGER DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      activated_at INTEGER,
+      completed_at INTEGER,
+      invalidated_at INTEGER,
+      invalidated_reason TEXT,
+      resulting_match_id TEXT
+    );`);
+    await db.runAsync(`CREATE INDEX IF NOT EXISTS idx_vq_dequeue ON tier_verification_queue(priority DESC) WHERE status = 'pending';`);
+    await db.runAsync(`CREATE INDEX IF NOT EXISTS idx_vq_subject ON tier_verification_queue(subject_id, status);`);
+    await db.runAsync(`CREATE INDEX IF NOT EXISTS idx_vq_ttl ON tier_verification_queue(inv_ttl_until) WHERE status = 'pending';`);
+    await db.runAsync(`CREATE TABLE IF NOT EXISTS tier_adjustment_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      work_id TEXT NOT NULL,
+      before_tier TEXT,
+      after_tier TEXT,
+      before_suspicion REAL,
+      after_suspicion REAL,
+      before_confidence REAL,
+      after_confidence REAL,
+      trigger_type TEXT NOT NULL,
+      evidence_match_ids TEXT,
+      evidence_cycle_ids TEXT,
+      session_id TEXT,
+      is_committed INTEGER DEFAULT 0,
+      is_rolled_back INTEGER DEFAULT 0,
+      parent_log_id INTEGER,
+      created_at INTEGER NOT NULL,
+      committed_at INTEGER,
+      rolled_back_at INTEGER
+    );`);
+    await db.runAsync(`CREATE INDEX IF NOT EXISTS idx_adj_log_work ON tier_adjustment_log(work_id, created_at DESC);`);
+    await db.runAsync(`CREATE INDEX IF NOT EXISTS idx_adj_log_uncommitted ON tier_adjustment_log(work_id) WHERE is_committed = 0 AND is_rolled_back = 0;`);
+    await db.runAsync(`CREATE TABLE IF NOT EXISTS graph_state_cache (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      version_tag TEXT NOT NULL,
+      computed_at INTEGER NOT NULL,
+      total_works INTEGER NOT NULL DEFAULT 0,
+      total_edges INTEGER NOT NULL DEFAULT 0,
+      total_feedback_arcs INTEGER NOT NULL DEFAULT 0,
+      total_cycles INTEGER NOT NULL DEFAULT 0,
+      state_blob TEXT NOT NULL DEFAULT '{}'
+    );`);
+    await db.runAsync(`CREATE TABLE IF NOT EXISTS tier_anchors (
+      work_id TEXT PRIMARY KEY,
+      anchored_at INTEGER NOT NULL,
+      anchor_type TEXT NOT NULL,
+      match_count_at_anchor INTEGER NOT NULL DEFAULT 0,
+      confidence_at_anchor REAL NOT NULL DEFAULT 0,
+      notes TEXT
+    );`);
+    await db.runAsync(`CREATE TABLE IF NOT EXISTS calibration_runs (
+      id TEXT PRIMARY KEY,
+      work_id TEXT NOT NULL,
+      triggered_by TEXT NOT NULL,
+      target_tier TEXT NOT NULL,
+      expected_match_count INTEGER NOT NULL DEFAULT 3,
+      actual_match_count INTEGER DEFAULT 0,
+      mismatch_count INTEGER DEFAULT 0,
+      match_ids TEXT,
+      result TEXT,
+      result_confidence REAL,
+      started_at INTEGER NOT NULL,
+      completed_at INTEGER
+    );`);
+    await db.runAsync(`CREATE INDEX IF NOT EXISTS idx_calib_work ON calibration_runs(work_id, started_at DESC);`);
+    await db.runAsync(`CREATE TABLE IF NOT EXISTS hybrid_session_budget (
+      session_id TEXT PRIMARY KEY,
+      started_at INTEGER NOT NULL,
+      ended_at INTEGER,
+      total_matches_used INTEGER DEFAULT 0,
+      total_matches_limit INTEGER NOT NULL DEFAULT 50,
+      per_type_used TEXT DEFAULT '{}',
+      per_work_used TEXT DEFAULT '{}',
+      cascade_total INTEGER DEFAULT 0
+    );`);
+  }, "runHybridSchemaMigration");
+}
+
+async function getHybridMode() {
+  if (_hybridModeCache) return _hybridModeCache;
+  try {
+    const row = await first("SELECT value FROM app_meta WHERE key = 'tier_decision_mode'");
+    _hybridModeCache = (row && row.value) || 'manual';
+  } catch { _hybridModeCache = 'manual'; }
+  return _hybridModeCache;
+}
+async function setHybridMode(mode) {
+  if (!['manual', 'elo_full', 'hybrid'].includes(mode)) throw new Error('invalid mode: ' + mode);
+  _hybridModeCache = mode;
+  await exec("INSERT OR REPLACE INTO app_meta (key, value) VALUES ('tier_decision_mode', ?)", [mode]);
+}
+function isHybridModeActive() { return _hybridModeCache === 'hybrid'; }
+
+async function getGraphVersions() {
+  try {
+    const row = await first("SELECT version, config_version FROM graph_version WHERE id = 1");
+    return row || { version: 0, config_version: 0 };
+  } catch { return { version: 0, config_version: 0 }; }
+}
+async function bumpGraphVersion(reason = '') {
+  if (_hybridBulkMode) { _hybridBulkPendingBump = true; return; }
+  try {
+    await exec("UPDATE graph_version SET version = version + 1, last_bumped_at = ? WHERE id = 1", [Date.now()]);
+    invalidateGraphCache();
+  } catch (e) { console.warn('[hybrid] bumpGraphVersion 실패:', e.message); }
+}
+async function bumpConfigVersion() {
+  try {
+    await exec("UPDATE graph_version SET config_version = config_version + 1, last_bumped_at = ? WHERE id = 1", [Date.now()]);
+    invalidateGraphCache();
+  } catch (e) { console.warn('[hybrid] bumpConfigVersion 실패:', e.message); }
+}
+async function hybridBulkOperation(fn) {
+  _hybridBulkMode = true;
+  _hybridBulkPendingBump = false;
+  try { await fn(); }
+  finally {
+    _hybridBulkMode = false;
+    if (_hybridBulkPendingBump) await bumpGraphVersion('bulk_end');
+    invalidateGraphCache();
+  }
+}
+
+function getEffectiveWeight(edge, nowMs, decayMonths) {
+  const ageMs = Math.max(0, nowMs - (edge.created_at || nowMs));
+  const ageDays = ageMs / 86400000;
+  const decayDays = (decayMonths || 6) * 30;
+  const baseW = isFinite(edge.edge_weight) ? edge.edge_weight : 1.0;
+  return baseW * Math.exp(-ageDays / decayDays);
+}
+
+function aggregatePairEdges(rawEdges, nowMs, decayMonths) {
+  const byPair = new Map();
+  for (const e of rawEdges) {
+    if (!e.winner_id || !e.loser_id || e.winner_id === e.loser_id) continue;
+    const [a, b] = e.winner_id < e.loser_id ? [e.winner_id, e.loser_id] : [e.loser_id, e.winner_id];
+    const key = `${a}__${b}`;
+    if (!byPair.has(key)) byPair.set(key, { a, b, edges: [] });
+    byPair.get(key).edges.push(e);
+  }
+  const out = [];
+  for (const { a, b, edges } of byPair.values()) {
+    let aW = 0, bW = 0, drawW = 0;
+    for (const e of edges) {
+      const w = getEffectiveWeight(e, nowMs, decayMonths);
+      if (e.match_result === 'draw') drawW += w;
+      else if (e.winner_id === a) aW += w;
+      else bW += w;
+    }
+    const total = aW + bW + drawW;
+    if (total < 0.01) continue;
+    const netBalance = aW - bW;
+    const absNet = Math.abs(netBalance);
+    if (absNet < 0.1 * total || drawW > 0.5 * total) {
+      out.push({ winner_id: a, loser_id: b, weight: total * 0.3, isDraw: true });
+      out.push({ winner_id: b, loser_id: a, weight: total * 0.3, isDraw: true });
+    } else {
+      const winner = netBalance > 0 ? a : b;
+      const loser = netBalance > 0 ? b : a;
+      out.push({ winner_id: winner, loser_id: loser, weight: Math.min(absNet, 2.0), isDraw: false });
+    }
+  }
+  return out;
+}
+
+// 가중 Eades-Lin-Smyth 위상정렬 — 타이브레이크 work_id (M1 수정)
+function buildTopologicalOrder(aggregatedEdges, workIds) {
+  const N = workIds.length;
+  if (N === 0) return { order: [], feedbackArcs: [], orderIdx: new Map() };
+  const outEdges = new Map();
+  const inEdges = new Map();
+  const outWeight = new Map();
+  const inWeight = new Map();
+  for (const id of workIds) {
+    outEdges.set(id, []);
+    inEdges.set(id, []);
+    outWeight.set(id, 0);
+    inWeight.set(id, 0);
+  }
+  for (const e of aggregatedEdges) {
+    if (!outEdges.has(e.winner_id) || !outEdges.has(e.loser_id)) continue;
+    outEdges.get(e.winner_id).push({ to: e.loser_id, weight: e.weight });
+    inEdges.get(e.loser_id).push({ to: e.winner_id, weight: e.weight });
+    outWeight.set(e.winner_id, (outWeight.get(e.winner_id) || 0) + e.weight);
+    inWeight.set(e.loser_id, (inWeight.get(e.loser_id) || 0) + e.weight);
+  }
+  const remaining = new Set(workIds);
+  const s1 = [];
+  const s2 = [];
+  const removeNode = (v) => {
+    for (const { to, weight } of (outEdges.get(v) || [])) {
+      if (remaining.has(to)) inWeight.set(to, Math.max(0, (inWeight.get(to) || 0) - weight));
+    }
+    for (const { to, weight } of (inEdges.get(v) || [])) {
+      if (remaining.has(to)) outWeight.set(to, Math.max(0, (outWeight.get(to) || 0) - weight));
+    }
+    remaining.delete(v);
+  };
+  let safety = N * 4;
+  while (remaining.size > 0 && safety-- > 0) {
+    let progress = true;
+    while (progress) {
+      progress = false;
+      for (const v of remaining) {
+        if ((outWeight.get(v) || 0) < 1e-9) { s2.unshift(v); removeNode(v); progress = true; break; }
+      }
+    }
+    progress = true;
+    while (progress) {
+      progress = false;
+      for (const v of remaining) {
+        if ((inWeight.get(v) || 0) < 1e-9) { s1.push(v); removeNode(v); progress = true; break; }
+      }
+    }
+    if (remaining.size > 0) {
+      let bestId = null, bestDelta = -Infinity;
+      for (const v of remaining) {
+        const delta = (outWeight.get(v) || 0) - (inWeight.get(v) || 0);
+        if (delta > bestDelta || (delta === bestDelta && (bestId === null || v < bestId))) {
+          bestDelta = delta;
+          bestId = v;
+        }
+      }
+      if (bestId === null) break;
+      s1.push(bestId);
+      removeNode(bestId);
+    }
+  }
+  const order = [...s1, ...s2];
+  const orderIdx = new Map(order.map((id, i) => [id, i]));
+  const feedbackArcs = aggregatedEdges.filter(e => {
+    const wi = orderIdx.get(e.winner_id);
+    const li = orderIdx.get(e.loser_id);
+    return wi !== undefined && li !== undefined && wi > li;
+  });
+  return { order, feedbackArcs, orderIdx };
+}
+
+function findShortCycles(feedbackArcs, aggregatedEdges, orderIdx) {
+  if (feedbackArcs.length === 0) return new Map();
+  const dag = new Map();
+  for (const e of aggregatedEdges) {
+    const wi = orderIdx.get(e.winner_id);
+    const li = orderIdx.get(e.loser_id);
+    if (wi !== undefined && li !== undefined && wi < li) {
+      if (!dag.has(e.winner_id)) dag.set(e.winner_id, []);
+      dag.get(e.winner_id).push(e.loser_id);
+    }
+  }
+  const cycleCount = new Map();
+  const bump = (id) => cycleCount.set(id, (cycleCount.get(id) || 0) + 1);
+  const arcs = feedbackArcs.slice(0, 100);
+  for (const arc of arcs) {
+    const src = arc.loser_id, dst = arc.winner_id;
+    const queue = [[src, [src]]];
+    let pathCount = 0;
+    while (queue.length > 0 && pathCount < 5) {
+      const [cur, path] = queue.shift();
+      if (path.length > 4) continue;
+      const neighbors = dag.get(cur) || [];
+      for (const next of neighbors) {
+        if (next === dst) {
+          pathCount++;
+          for (const id of path) bump(id);
+          bump(arc.winner_id);
+          break;
+        }
+        if (!path.includes(next)) queue.push([next, [...path, next]]);
+      }
+    }
+  }
+  return cycleCount;
+}
+
+function tierFromQuantile(quantile, tiers) {
+  if (!tiers || tiers.length === 0) return 'C';
+  const totalRatio = tiers.reduce((s, t) => s + (t.ratio || 10), 0);
+  let cumulative = 0;
+  for (const t of tiers) {
+    cumulative += (t.ratio || 10) / totalRatio;
+    if (quantile <= cumulative) return t.key;
+  }
+  return tiers[tiers.length - 1].key;
+}
+
+function computeGraphState(rawEdges, works, anchors, tierConfig, nowMs) {
+  const config = HYBRID_DEFAULT_CONFIG;
+  const decayMonths = config.edgeDecayMonths;
+  const workIds = works.map(w => w.id);
+  const aggregated = aggregatePairEdges(rawEdges || [], nowMs, decayMonths);
+  const { order, feedbackArcs, orderIdx } = buildTopologicalOrder(aggregated, workIds);
+  const cycleCount = findShortCycles(feedbackArcs, aggregated, orderIdx);
+  const tiers = (tierConfig && tierConfig.tiers) || DEFAULT_TIER_SYSTEM_CONFIG.tiers;
+  const N = order.length;
+  const violationCount = new Map();
+  const edgeCountMap = new Map();
+  const uniqueOpp = new Map();
+  const effectiveSignal = new Map();
+  for (const w of works) {
+    violationCount.set(w.id, 0);
+    edgeCountMap.set(w.id, 0);
+    uniqueOpp.set(w.id, new Set());
+    effectiveSignal.set(w.id, 0);
+  }
+  for (const e of aggregated) {
+    if (!edgeCountMap.has(e.winner_id) || !edgeCountMap.has(e.loser_id)) continue;
+    edgeCountMap.set(e.winner_id, (edgeCountMap.get(e.winner_id) || 0) + 1);
+    edgeCountMap.set(e.loser_id, (edgeCountMap.get(e.loser_id) || 0) + 1);
+    uniqueOpp.get(e.winner_id).add(e.loser_id);
+    uniqueOpp.get(e.loser_id).add(e.winner_id);
+    if (!e.isDraw) {
+      effectiveSignal.set(e.winner_id, (effectiveSignal.get(e.winner_id) || 0) + e.weight);
+      effectiveSignal.set(e.loser_id, (effectiveSignal.get(e.loser_id) || 0) + e.weight * 0.7);
+    }
+  }
+  for (const arc of feedbackArcs) {
+    if (violationCount.has(arc.winner_id)) violationCount.set(arc.winner_id, (violationCount.get(arc.winner_id) || 0) + 1);
+    if (violationCount.has(arc.loser_id)) violationCount.set(arc.loser_id, (violationCount.get(arc.loser_id) || 0) + 1);
+  }
+  const derivedTier = {};
+  const derivedPosition = {};
+  for (let i = 0; i < N; i++) {
+    const id = order[i];
+    derivedPosition[id] = i;
+    const quantile = N > 1 ? (i / (N - 1)) : 0;
+    derivedTier[id] = tierFromQuantile(quantile, tiers);
+  }
+  // M2 수정: confidence = effectiveSignal/target * diversity (recency double-counting 제거)
+  const confidence = {};
+  const nMin = config.nMinEdges;
+  for (const w of works) {
+    const signal = effectiveSignal.get(w.id) || 0;
+    const edgeCnt = edgeCountMap.get(w.id) || 0;
+    const uniq = uniqueOpp.get(w.id)?.size || 0;
+    const diversity = edgeCnt > 0 ? uniq / edgeCnt : 0;
+    confidence[w.id] = Math.min(1, signal / nMin) * Math.max(0.1, diversity);
+  }
+  return {
+    order,
+    orderIdx: Object.fromEntries(orderIdx),
+    derivedTier,
+    derivedPosition,
+    violationCount: Object.fromEntries(violationCount),
+    cycleCount: Object.fromEntries(cycleCount),
+    confidence,
+    edgeCount: Object.fromEntries(edgeCountMap),
+    uniqueOppCount: Object.fromEntries([...uniqueOpp].map(([k, v]) => [k, v.size])),
+    totalEdges: aggregated.length,
+    totalFeedbackArcs: feedbackArcs.length,
+    totalCycles: cycleCount.size,
+    computedAt: nowMs,
+  };
+}
+
+function computeSuspicion(work, graphState, tierConfig, calibrationResult, neighborSuspicions, hybridConfig) {
+  const config = hybridConfig || HYBRID_DEFAULT_CONFIG;
+  const weights = config.weights;
+  const tiers = (tierConfig && tierConfig.tiers) || DEFAULT_TIER_SYSTEM_CONFIG.tiers;
+  if (work.hybrid_status === 'uncalibrated' || !work.last_calibrated_at) return 0;
+  const wId = work.id;
+  const conf = graphState.confidence[wId] || 0;
+  const eCnt = graphState.edgeCount[wId] || 0;
+  let s1 = 0;
+  const dT = graphState.derivedTier[wId];
+  const aT = work.manual_tier || work.tier || 'C';
+  if (dT && conf > 0.2) {
+    const tierKeys = tiers.map(t => t.key);
+    const dIdx = tierKeys.indexOf(dT);
+    const aIdx = tierKeys.indexOf(aT);
+    if (dIdx >= 0 && aIdx >= 0) s1 = Math.min(Math.abs(dIdx - aIdx) / 2, 1) * conf;
+  }
+  let s2 = 0;
+  if (eCnt > 0 && conf > 0.2) {
+    const violations = graphState.violationCount[wId] || 0;
+    const cycles = graphState.cycleCount[wId] || 0;
+    const violationRate = violations / eCnt;
+    const cycleBoost = 0.3 * Math.log1p(cycles);
+    s2 = Math.min(1, (violationRate + cycleBoost) * conf);
+  }
+  const nMin = config.nMinEdges;
+  const uniqOpp = graphState.uniqueOppCount?.[wId] || 0;
+  const sparsity = Math.max(0, 1 - eCnt / nMin);
+  const diversity = eCnt > 0 ? uniqOpp / eCnt : 0;
+  const s3 = sparsity * (1.2 - 0.4 * diversity);
+  const ageMonths = work.last_calibrated_at ? (Date.now() - work.last_calibrated_at) / (1000 * 60 * 60 * 24 * 30) : 0;
+  const s4 = Math.min(ageMonths / 12, 0.5);
+  let s6 = 0;
+  if (calibrationResult && calibrationResult.expected_match_count > 0) {
+    s6 = (calibrationResult.mismatch_count || 0) / calibrationResult.expected_match_count;
+  }
+  let s7 = 0;
+  if (neighborSuspicions && neighborSuspicions.length > 0) {
+    s7 = Math.min(0.5, Math.max(...neighborSuspicions) * 0.4);
+  }
+  const graphSignals =
+    weights.s1_position * s1 +
+    weights.s2_contradiction * s2 +
+    weights.s3_sparsity * s3 +
+    weights.s4_staleness * s4 +
+    weights.s6_calibration * s6 +
+    weights.s7_propagation * s7;
+  return Math.min(1, Math.max(0, graphSignals));
+}
+
+function computeAllSuspicion(works, graphState, tierConfig, calibrationMap, hybridConfig) {
+  const firstPass = {};
+  for (const w of works) {
+    firstPass[w.id] = computeSuspicion(w, graphState, tierConfig, calibrationMap[w.id] || null, [], hybridConfig);
+  }
+  const result = {};
+  for (const w of works) {
+    const pos = graphState.derivedPosition[w.id];
+    const neighborSus = [];
+    if (pos !== undefined) {
+      for (let delta = -2; delta <= 2; delta++) {
+        if (delta === 0) continue;
+        const nId = graphState.order[pos + delta];
+        if (nId && firstPass[nId] !== undefined) neighborSus.push(firstPass[nId]);
+      }
+    }
+    let s = computeSuspicion(w, graphState, tierConfig, calibrationMap[w.id] || null, neighborSus, hybridConfig);
+    if ((w.cooldown_until_match || 0) > (w.match_count || 0)) s = Math.min(s, 0.5);
+    result[w.id] = s;
+  }
+  return result;
+}
+
+function makeVersionTag(versions) { return `v${versions.version}.c${versions.config_version}`; }
+function invalidateGraphCache() { _graphMemCache = null; }
+
+async function getGraphSnapshot({ allowStale = false, tierConfig = null } = {}) {
+  const versions = await getGraphVersions();
+  const vTag = makeVersionTag(versions);
+  const ageMs = _graphMemCache ? Date.now() - _graphMemCache.computedAt : Infinity;
+  const isFresh = _graphMemCache && _graphMemCache.vTag === vTag && ageMs < 24 * 3600 * 1000;
+  if (isFresh) return _graphMemCache.state;
+  if (allowStale && _graphMemCache) {
+    _scheduleGraphRebuild(vTag, tierConfig);
+    return _graphMemCache.state;
+  }
+  if (_graphInflightRebuild) return _graphInflightRebuild;
+  _graphInflightRebuild = _doGraphRebuild(vTag, versions, tierConfig).finally(() => { _graphInflightRebuild = null; });
+  return _graphInflightRebuild;
+}
+function _scheduleGraphRebuild(vTag, tierConfig) {
+  if (_rebuildScheduled) return;
+  _rebuildScheduled = true;
+  setTimeout(async () => {
+    _rebuildScheduled = false;
+    try { await _doGraphRebuild(vTag, await getGraphVersions(), tierConfig); } catch {}
+  }, 200);
+}
+async function _doGraphRebuild(vTag, versions, tierConfig) {
+  const t0 = Date.now();
+  try {
+    const allRows = await all(
+      "SELECT a_id, b_id, winner_id, created_at, COALESCE(edge_weight, 1.0) AS edge_weight, COALESCE(match_result, 'win') AS match_result, COALESCE(is_active, 1) AS is_active FROM matches"
+    ).catch(() => []);
+    const compat = [];
+    for (const r of (allRows || [])) {
+      if (!r.is_active) continue;
+      if (r.winner_id && r.a_id && r.b_id) {
+        const loser = r.winner_id === r.a_id ? r.b_id : r.a_id;
+        compat.push({
+          winner_id: r.winner_id,
+          loser_id: loser,
+          edge_weight: r.edge_weight,
+          created_at: r.created_at,
+          match_result: r.match_result,
+        });
+      }
+    }
+    const works = await all("SELECT id, manual_tier, tier, match_count, last_calibrated_at, cooldown_until_match, hybrid_status FROM novels").catch(() => []);
+    const anchors = await all("SELECT work_id FROM tier_anchors").catch(() => []);
+    const state = computeGraphState(compat, works || [], anchors || [], tierConfig, Date.now());
+    state.vTag = vTag;
+    _graphMemCache = { vTag, computedAt: Date.now(), state };
+    _scheduleGraphPersist(state, vTag);
+    console.log(`[hybrid] graph rebuild: ${Date.now() - t0}ms, works=${state.order.length}, edges=${state.totalEdges}, arcs=${state.totalFeedbackArcs}, cycles=${state.totalCycles}`);
+    return state;
+  } catch (e) {
+    console.warn('[hybrid] graph rebuild failed:', e.message);
+    if (_graphMemCache) { _graphMemCache.state.degraded = true; return _graphMemCache.state; }
+    return {
+      order: [], orderIdx: {}, derivedTier: {}, derivedPosition: {},
+      violationCount: {}, cycleCount: {}, confidence: {}, edgeCount: {},
+      totalEdges: 0, totalFeedbackArcs: 0, totalCycles: 0, computedAt: Date.now(), degraded: true,
+    };
+  }
+}
+function _scheduleGraphPersist(state, vTag) {
+  if (_graphPersistTimer) clearTimeout(_graphPersistTimer);
+  _graphPersistTimer = setTimeout(() => _flushGraphPersist(state, vTag), 5000);
+}
+async function _flushGraphPersist(state, vTag) {
+  if (!state) return;
+  try {
+    await exec(
+      `INSERT OR REPLACE INTO graph_state_cache (id, version_tag, computed_at, total_works, total_edges, total_feedback_arcs, total_cycles, state_blob)
+       VALUES (1, ?, ?, ?, ?, ?, ?, ?)`,
+      [vTag, state.computedAt, state.order.length, state.totalEdges, state.totalFeedbackArcs, state.totalCycles, JSON.stringify(state)]
+    );
+  } catch (e) { console.warn('[hybrid] graph persist failed:', e.message); }
+}
+async function warmGraphCache() {
+  try {
+    const cached = await first("SELECT * FROM graph_state_cache WHERE id = 1");
+    if (!cached) return;
+    const versions = await getGraphVersions();
+    const currentTag = makeVersionTag(versions);
+    const ageMs = Date.now() - (cached.computed_at || 0);
+    if (cached.version_tag === currentTag && ageMs < 24 * 3600 * 1000) {
+      const state = JSON.parse(cached.state_blob || '{}');
+      state.vTag = currentTag;
+      _graphMemCache = { vTag: currentTag, computedAt: cached.computed_at, state };
+      console.log('[hybrid] graph cache warmed from L2');
+    }
+  } catch (e) { console.warn('[hybrid] warmGraphCache failed:', e.message); }
+}
+
+function initHybridSession() {
+  _hybridSessionId = uuid();
+  _hybridSessionStartedAt = Date.now();
+  _hybridSessionUsed.total = 0;
+  _hybridSessionUsed.calibration = 0;
+  _hybridSessionUsed.suspicion = 0;
+  _hybridSessionUsed.audit = 0;
+  _hybridSessionUsed.cascade = 0;
+  Object.keys(_hybridPerWorkUsed).forEach(k => delete _hybridPerWorkUsed[k]);
+}
+function canUseHybridBudget(type, workId) {
+  const config = HYBRID_DEFAULT_CONFIG;
+  if (_hybridSessionUsed.total >= config.sessionBudget) return false;
+  const budgetKey = type + 'Budget';
+  if (_hybridSessionUsed[type] !== undefined && _hybridSessionUsed[type] >= (config[budgetKey] || 999)) return false;
+  if (workId && (_hybridPerWorkUsed[workId] || 0) >= config.perWorkBudget) return false;
+  return true;
+}
+function consumeHybridBudget(type, workId) {
+  _hybridSessionUsed.total++;
+  if (_hybridSessionUsed[type] !== undefined) _hybridSessionUsed[type]++;
+  if (workId) _hybridPerWorkUsed[workId] = (_hybridPerWorkUsed[workId] || 0) + 1;
+}
+
+async function enqueueVerification(subjectId, type, options = {}) {
+  const {
+    opponentId = null, opponentPool = null, priority = 0.5,
+    suspicionAtCreation = 0, triggeringEvent = '',
+    cycleEvidence = null, parentMatchId = null,
+    cascadeDepth = 0, ttlDays = 7,
+  } = options;
+  try {
+    const existing = await first(
+      "SELECT id, priority FROM tier_verification_queue WHERE subject_id = ? AND status = 'pending'",
+      [subjectId]
+    );
+    if (existing) {
+      if (priority > existing.priority) {
+        await exec("UPDATE tier_verification_queue SET priority = ? WHERE id = ?", [priority, existing.id]);
+      }
+      return existing.id;
+    }
+  } catch {}
+  const id = uuid();
+  const now = Date.now();
+  const ttl = now + ttlDays * 86400000;
+  try {
+    await exec(
+      `INSERT INTO tier_verification_queue
+        (id, type, subject_id, opponent_id, opponent_pool, priority, status, inv_ttl_until,
+         ctx_suspicion_at_creation, ctx_triggering_event, ctx_cycle_evidence, ctx_parent_match_id,
+         ctx_cascade_depth, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id, type, subjectId, opponentId,
+        opponentPool ? JSON.stringify(opponentPool) : null,
+        priority, ttl,
+        suspicionAtCreation, triggeringEvent,
+        cycleEvidence ? JSON.stringify(cycleEvidence) : null,
+        parentMatchId, cascadeDepth, now,
+      ]
+    );
+  } catch (e) { console.warn('[hybrid] enqueueVerification failed:', e.message); return null; }
+  return id;
+}
+
+async function invalidateVerificationEntry(id, reason) {
+  try {
+    await exec(
+      "UPDATE tier_verification_queue SET status = 'invalidated', invalidated_at = ?, invalidated_reason = ? WHERE id = ?",
+      [Date.now(), reason || 'unknown', id]
+    );
+  } catch (e) { console.warn('[hybrid] invalidate failed:', e.message); }
+}
+
+async function sweepVerificationQueue(graphState, suspicionMap) {
+  const config = HYBRID_DEFAULT_CONFIG;
+  const threshold = config.suspicionThreshold;
+  const now = Date.now();
+  try {
+    const pending = await all("SELECT * FROM tier_verification_queue WHERE status = 'pending'");
+    for (const entry of (pending || [])) {
+      const sus = suspicionMap[entry.subject_id];
+      const conf = graphState.confidence[entry.subject_id] || 0;
+      let reason = null;
+      if (sus !== undefined && sus < (entry.inv_suspicion_below || 0.4)) reason = '의심해소';
+      else if (conf >= (entry.inv_confidence_above || 0.85)) reason = '신뢰도충분';
+      else if (now > (entry.inv_ttl_until || 0)) reason = 'TTL만료';
+      if (reason) await invalidateVerificationEntry(entry.id, reason);
+      else if (sus !== undefined) {
+        await exec("UPDATE tier_verification_queue SET priority = ? WHERE id = ?", [sus, entry.id]).catch(() => {});
+      }
+    }
+  } catch (e) { console.warn('[hybrid] sweep Phase 1 failed:', e.message); }
+  // E3: Phase 2 — 신규 진입
+  try {
+    const queuedRows = await all("SELECT subject_id FROM tier_verification_queue WHERE status = 'pending'");
+    const queuedSet = new Set((queuedRows || []).map(r => r.subject_id));
+    for (const [workId, sus] of Object.entries(suspicionMap)) {
+      if (sus >= threshold && !queuedSet.has(workId)) {
+        await enqueueVerification(workId, 'suspicion', {
+          priority: sus, suspicionAtCreation: sus, triggeringEvent: 'sweep_auto_phase2',
+        });
+      }
+    }
+  } catch (e) { console.warn('[hybrid] sweep Phase 2 failed:', e.message); }
+}
+
+async function getVerificationQueueStats() {
+  try {
+    const rows = await all(`SELECT type, COUNT(*) AS cnt FROM tier_verification_queue WHERE status = 'pending' GROUP BY type`);
+    const stats = { total: 0, calibration: 0, suspicion: 0, audit: 0, cascade: 0 };
+    for (const r of (rows || [])) { stats[r.type] = r.cnt; stats.total += r.cnt; }
+    return stats;
+  } catch { return { total: 0, calibration: 0, suspicion: 0, audit: 0, cascade: 0 }; }
+}
+
+async function getSuspiciousWorks(limit = 50) {
+  try {
+    return await all(
+      `SELECT id, title, manual_tier, tier, derived_tier, suspicion_score, confidence_level, hybrid_status
+       FROM novels WHERE suspicion_score > 0.4 AND hybrid_status != 'uncalibrated'
+       ORDER BY suspicion_score DESC LIMIT ?`,
+      [limit]
+    );
+  } catch { return []; }
+}
+
+async function enqueueCalibration(workId, targetTier, triggeredBy = 'work_added') {
+  const config = HYBRID_DEFAULT_CONFIG;
+  const calibRunId = uuid();
+  const now = Date.now();
+  try {
+    await exec(
+      `INSERT INTO calibration_runs (id, work_id, triggered_by, target_tier, expected_match_count, result, started_at)
+       VALUES (?, ?, ?, ?, ?, 'in_progress', ?)`,
+      [calibRunId, workId, triggeredBy, targetTier || 'C', config.calibrationMatchCount, now]
+    );
+  } catch (e) { console.warn('[hybrid] calibration_runs insert failed:', e.message); }
+  for (const pos of ['same', 'above', 'below']) {
+    await enqueueVerification(workId, 'calibration', {
+      priority: 0.9, triggeringEvent: `calibration_${pos}`,
+      parentMatchId: calibRunId, ttlDays: 7,
+    });
+  }
+  try {
+    await exec(
+      "UPDATE novels SET hybrid_status = 'calibrating', last_calibrated_at = ? WHERE id = ?",
+      [now, workId]
+    );
+  } catch {}
+  return calibRunId;
+}
+
+async function refreshSuspicionScores(tierConfig) {
+  try {
+    const state = await getGraphSnapshot({ allowStale: false, tierConfig });
+    const works = await all(
+      "SELECT id, manual_tier, tier, match_count, last_calibrated_at, cooldown_until_match, hybrid_status FROM novels"
+    );
+    const calibRows = await all(
+      `SELECT work_id, MAX(started_at) AS started_at, mismatch_count, expected_match_count
+       FROM calibration_runs WHERE result IS NOT NULL AND result != 'in_progress' GROUP BY work_id`
+    ).catch(() => []);
+    const calibMap = {};
+    for (const r of (calibRows || [])) {
+      const ageMs = Date.now() - (r.started_at || 0);
+      if (ageMs < 5 * 60 * 1000) calibMap[r.work_id] = r;
+    }
+    const susMap = computeAllSuspicion(works || [], state, tierConfig, calibMap);
+    const queries = [];
+    for (const w of (works || [])) {
+      queries.push({
+        sql: "UPDATE novels SET suspicion_score = ?, confidence_level = ?, derived_tier = ?, derived_position = ?, edge_count = ? WHERE id = ?",
+        params: [susMap[w.id] || 0, state.confidence[w.id] || 0, state.derivedTier[w.id] || null, state.derivedPosition[w.id] ?? null, state.edgeCount[w.id] || 0, w.id],
+      });
+    }
+    if (queries.length > 0) await execBatch(queries);
+    return { state, suspicionMap: susMap };
+  } catch (e) { console.warn('[hybrid] refreshSuspicionScores failed:', e.message); return null; }
+}
+
+async function migrateManualToHybrid(tierConfig) {
+  await hybridBulkOperation(async () => {
+    await exec("UPDATE novels SET hybrid_status = 'uncalibrated', suspicion_score = 0, confidence_level = 0");
+    await setHybridMode('hybrid');
+  });
+}
+async function migrateEloFullToHybrid(tierConfig) {
+  await hybridBulkOperation(async () => {
+    await exec("UPDATE matches SET edge_weight = 1.0 WHERE edge_weight IS NULL OR edge_weight = 0");
+    await exec("UPDATE matches SET triggered_by = 'elo_full' WHERE triggered_by IS NULL OR triggered_by = ''");
+    await exec("UPDATE matches SET is_active = 1 WHERE is_active IS NULL");
+    await exec("UPDATE matches SET match_result = 'win' WHERE match_result IS NULL");
+    await setHybridMode('hybrid');
+  });
+  try {
+    await refreshSuspicionScores(tierConfig);
+    await exec(
+      "UPDATE novels SET hybrid_status = 'stable', last_calibrated_at = ? WHERE confidence_level >= 0.4 AND (hybrid_status IS NULL OR hybrid_status = 'uncalibrated')",
+      [Date.now()]
+    );
+  } catch (e) { console.warn('[hybrid] elo_full migration phase 2 failed:', e.message); }
+}
+async function migrateHybridToManual() {
+  await hybridBulkOperation(async () => {
+    await exec(
+      "UPDATE tier_verification_queue SET status = 'invalidated', invalidated_at = ?, invalidated_reason = 'mode_rollback' WHERE status IN ('pending', 'active')",
+      [Date.now()]
+    );
+    await exec("DELETE FROM graph_state_cache");
+    await setHybridMode('manual');
+  });
+  invalidateGraphCache();
+}
+
+async function verifyHybridIntegrity() {
+  try {
+    await exec("UPDATE novels SET active_match_lock = NULL WHERE active_match_lock IS NOT NULL");
+    await exec("UPDATE tier_verification_queue SET status = 'pending', activated_at = NULL WHERE status = 'active'");
+  } catch (e) { console.warn('[hybrid] integrity check failed:', e.message); }
+}
+
+/* =========================================================
    테마 (다크모드)
    ========================================================= */
 const LightTheme = {
@@ -11745,6 +12699,281 @@ const GalleryGridItem = memo(({ item, onPress, onLongPress, theme }) => (
     ) : null}
   </TouchableOpacity>
 ));
+
+// 🔀 v3.14.0: 하이브리드 티어 - 의심도 도트 (5단계 시각화)
+const SuspicionDot = memo(({ score = 0, theme }) => {
+  const filled = Math.round(Math.min(1, Math.max(0, score)) * 5);
+  const color = score >= 0.8 ? (theme?.warn || "#ef4444")
+              : score >= 0.6 ? (theme?.bm || "#f59e0b")
+              : score >= 0.4 ? (theme?.sub || "#94a3b8")
+              : (theme?.line || "#cbd5e1");
+  const dotStyle = (active) => ({
+    width: 6, height: 6, borderRadius: 3, marginRight: 2,
+    backgroundColor: active ? color : (theme?.line || "#e2e8f0"),
+  });
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center" }}>
+      {[0, 1, 2, 3, 4].map(i => <View key={i} style={dotStyle(i < filled)} />)}
+    </View>
+  );
+});
+
+// 🔀 v3.14.0: 하이브리드 상태 배지 (작품 상태 1줄)
+const HybridStatusBadge = memo(({ status, suspicion, theme }) => {
+  if (!status || status === 'uncalibrated') {
+    return (
+      <View style={{ flexDirection: "row", alignItems: "center" }}>
+        <Text style={{ fontSize: 10, color: theme?.sub || "#94a3b8" }}>◔ 미검증</Text>
+      </View>
+    );
+  }
+  let label, dotColor;
+  if (status === 'calibrating') { label = "🔄 검증 중"; dotColor = theme?.primary || "#3b82f6"; }
+  else if (status === 'in_verification') { label = "🔄 검증 진행"; dotColor = theme?.primary || "#3b82f6"; }
+  else if (status === 'cooldown') { label = "⏸ 쿨다운"; dotColor = theme?.sub || "#94a3b8"; }
+  else if (status === 'anchor') { label = "⚓ 앵커"; dotColor = theme?.ok || "#22c55e"; }
+  else if (status === 'suspicious' || (suspicion || 0) >= 0.6) { label = "⚠ 의심"; dotColor = theme?.warn || "#f59e0b"; }
+  else { label = "✓ 검증됨"; dotColor = theme?.ok || "#22c55e"; }
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+      <Text style={{ fontSize: 10, color: dotColor }}>{label}</Text>
+      {(suspicion || 0) > 0.4 ? <SuspicionDot score={suspicion} theme={theme} /> : null}
+    </View>
+  );
+});
+
+/* =========================================================
+   🔀 v3.14.0: 하이브리드 티어 검증 센터 모달
+   - 의심 작품 / 검증 큐 / 모드 전환
+   ========================================================= */
+const TierVerificationModal = memo(({ visible, onClose, theme, isDark, tierConfig, onModeChange }) => {
+  const [tab, setTab] = useState("overview");
+  const [suspicious, setSuspicious] = useState([]);
+  const [queueStats, setQueueStats] = useState({ total: 0, calibration: 0, suspicion: 0, audit: 0, cascade: 0 });
+  const [mode, setMode] = useState("manual");
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastRefreshAt, setLastRefreshAt] = useState(0);
+
+  const loadData = useCallback(async () => {
+    try {
+      setRefreshing(true);
+      const [s, q, m] = await Promise.all([
+        getSuspiciousWorks(50),
+        getVerificationQueueStats(),
+        getHybridMode(),
+      ]);
+      setSuspicious(s || []);
+      setQueueStats(q || { total: 0, calibration: 0, suspicion: 0, audit: 0, cascade: 0 });
+      setMode(m || "manual");
+      setLastRefreshAt(Date.now());
+    } catch (e) {
+      console.warn("[hybrid modal] load failed:", e.message);
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (visible) loadData();
+  }, [visible, loadData]);
+
+  const handleAnalyze = useCallback(async () => {
+    try {
+      setRefreshing(true);
+      await refreshSuspicionScores(tierConfig);
+      await loadData();
+    } catch (e) {
+      Alert.alert("분석 실패", e.message);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [tierConfig, loadData]);
+
+  const handleSwitchMode = useCallback((newMode) => {
+    Alert.alert(
+      "모드 전환",
+      `${newMode === 'hybrid' ? '하이브리드' : newMode === 'elo_full' ? '전체 매칭' : '직접배정'} 모드로 전환할까요?\n\n` +
+      (newMode === 'hybrid'
+        ? "기존 배정은 유지됩니다. 신규 작품은 자동 검증됩니다."
+        : newMode === 'manual'
+        ? "검증 큐는 무효화되고 직접배정 모드로 돌아갑니다."
+        : "기존 매칭 데이터를 유지합니다."),
+      [
+        { text: "취소", style: "cancel" },
+        {
+          text: "전환",
+          onPress: async () => {
+            try {
+              if (newMode === 'hybrid' && mode === 'manual') {
+                await migrateManualToHybrid(tierConfig);
+              } else if (newMode === 'hybrid' && mode === 'elo_full') {
+                await migrateEloFullToHybrid(tierConfig);
+              } else if (newMode === 'manual' && mode === 'hybrid') {
+                await migrateHybridToManual();
+              } else {
+                await setHybridMode(newMode);
+              }
+              setMode(newMode);
+              if (onModeChange) onModeChange(newMode);
+              await loadData();
+            } catch (e) {
+              Alert.alert("전환 실패", e.message);
+            }
+          },
+        },
+      ]
+    );
+  }, [mode, tierConfig, onModeChange, loadData]);
+
+  const renderOverview = () => (
+    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }}>
+      <View style={{ backgroundColor: theme.card, borderRadius: 12, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: theme.line }}>
+        <Text style={{ fontSize: 12, color: theme.sub, marginBottom: 4 }}>현재 모드</Text>
+        <Text style={{ fontSize: 18, fontWeight: "700", color: theme.text }}>
+          {mode === 'hybrid' ? '🔀 하이브리드' : mode === 'elo_full' ? '🥊 전체 매칭' : '✋ 직접 배정'}
+        </Text>
+      </View>
+
+      {mode === 'hybrid' && (
+        <>
+          <View style={{ backgroundColor: theme.card, borderRadius: 12, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: theme.line }}>
+            <Text style={{ fontSize: 14, fontWeight: "600", color: theme.text, marginBottom: 8 }}>의심 작품</Text>
+            <Text style={{ fontSize: 24, fontWeight: "800", color: theme.warn || "#f59e0b" }}>
+              {suspicious.length}<Text style={{ fontSize: 14, color: theme.sub }}>개</Text>
+            </Text>
+            <Text style={{ fontSize: 11, color: theme.sub, marginTop: 4 }}>
+              suspicion ≥ 0.4 작품만 표시 (임계값 0.6 이상이 큐 진입 대상)
+            </Text>
+          </View>
+
+          <View style={{ backgroundColor: theme.card, borderRadius: 12, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: theme.line }}>
+            <Text style={{ fontSize: 14, fontWeight: "600", color: theme.text, marginBottom: 8 }}>검증 대기 큐</Text>
+            <Text style={{ fontSize: 24, fontWeight: "800", color: theme.primary }}>
+              {queueStats.total}<Text style={{ fontSize: 14, color: theme.sub }}>건</Text>
+            </Text>
+            <View style={{ marginTop: 6, flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+              {queueStats.calibration > 0 && <Text style={{ fontSize: 11, color: theme.sub }}>캘리브레이션 {queueStats.calibration}</Text>}
+              {queueStats.suspicion > 0 && <Text style={{ fontSize: 11, color: theme.sub }}>의심 {queueStats.suspicion}</Text>}
+              {queueStats.audit > 0 && <Text style={{ fontSize: 11, color: theme.sub }}>감사 {queueStats.audit}</Text>}
+              {queueStats.cascade > 0 && <Text style={{ fontSize: 11, color: theme.sub }}>캐스케이드 {queueStats.cascade}</Text>}
+            </View>
+          </View>
+
+          <TouchableOpacity
+            onPress={handleAnalyze}
+            disabled={refreshing}
+            style={{
+              backgroundColor: refreshing ? theme.sub : theme.primary,
+              paddingVertical: 14, borderRadius: 12, marginBottom: 12,
+              alignItems: "center",
+            }}>
+            <Text style={{ color: "#fff", fontWeight: "700" }}>
+              {refreshing ? "분석 중..." : "🔍 그래프 재분석"}
+            </Text>
+          </TouchableOpacity>
+        </>
+      )}
+
+      <View style={{ backgroundColor: theme.card, borderRadius: 12, padding: 16, marginTop: 8, borderWidth: 1, borderColor: theme.line }}>
+        <Text style={{ fontSize: 14, fontWeight: "600", color: theme.text, marginBottom: 8 }}>모드 전환</Text>
+        {[
+          { key: 'manual', label: '✋ 직접 배정', desc: '유저가 직접 티어 지정. 매칭 없음.' },
+          { key: 'elo_full', label: '🥊 전체 매칭', desc: '모든 쌍 ELO 매칭. 정확하지만 매우 느림.' },
+          { key: 'hybrid', label: '🔀 하이브리드 (권장)', desc: '직접배정 + 의심 작품만 자동 검증.' },
+        ].map(opt => (
+          <TouchableOpacity
+            key={opt.key}
+            onPress={() => mode !== opt.key && handleSwitchMode(opt.key)}
+            style={{
+              padding: 12, marginTop: 8, borderRadius: 8,
+              borderWidth: 1.5,
+              borderColor: mode === opt.key ? theme.primary : theme.line,
+              backgroundColor: mode === opt.key ? (theme.chip || theme.line) : "transparent",
+            }}>
+            <Text style={{ fontSize: 14, fontWeight: "600", color: theme.text }}>
+              {opt.label} {mode === opt.key && "✓"}
+            </Text>
+            <Text style={{ fontSize: 11, color: theme.sub, marginTop: 4 }}>{opt.desc}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {lastRefreshAt > 0 && (
+        <Text style={{ fontSize: 10, color: theme.sub, textAlign: "center", marginTop: 12 }}>
+          마지막 새로고침: {new Date(lastRefreshAt).toLocaleTimeString()}
+        </Text>
+      )}
+    </ScrollView>
+  );
+
+  const renderSuspicious = () => (
+    <FlatList
+      data={suspicious}
+      keyExtractor={(item) => item.id}
+      contentContainerStyle={{ padding: 16 }}
+      renderItem={({ item }) => (
+        <View style={{ backgroundColor: theme.card, borderRadius: 10, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: theme.line }}>
+          <Text style={{ fontSize: 14, fontWeight: "600", color: theme.text }} numberOfLines={1}>
+            {item.title}
+          </Text>
+          <View style={{ flexDirection: "row", alignItems: "center", marginTop: 6, gap: 8 }}>
+            <Text style={{ fontSize: 12, color: theme.sub }}>
+              배정 {item.manual_tier || item.tier || '-'} → 분석 {item.derived_tier || '-'}
+            </Text>
+            <SuspicionDot score={item.suspicion_score} theme={theme} />
+            <Text style={{ fontSize: 11, color: theme.sub }}>
+              {(item.suspicion_score || 0).toFixed(2)}
+            </Text>
+          </View>
+          <Text style={{ fontSize: 10, color: theme.sub, marginTop: 4 }}>
+            신뢰도 {(item.confidence_level || 0).toFixed(2)} · {item.hybrid_status}
+          </Text>
+        </View>
+      )}
+      ListEmptyComponent={
+        <View style={{ padding: 24, alignItems: "center" }}>
+          <Text style={{ fontSize: 14, color: theme.sub }}>의심 작품이 없습니다</Text>
+          <Text style={{ fontSize: 11, color: theme.sub, marginTop: 4 }}>
+            {mode === 'hybrid' ? '재분석을 실행해보세요' : '하이브리드 모드를 활성화하세요'}
+          </Text>
+        </View>
+      }
+    />
+  );
+
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16, borderBottomWidth: 1, borderColor: theme.line }}>
+          <Text style={{ fontSize: 18, fontWeight: "700", color: theme.text }}>티어 검증 센터</Text>
+          <TouchableOpacity onPress={onClose}>
+            <Text style={{ fontSize: 18, color: theme.sub }}>✕</Text>
+          </TouchableOpacity>
+        </View>
+        <View style={{ flexDirection: "row", borderBottomWidth: 1, borderColor: theme.line }}>
+          {[
+            { key: "overview", label: "개요" },
+            { key: "suspicious", label: `의심 작품 (${suspicious.length})` },
+          ].map(t => (
+            <TouchableOpacity
+              key={t.key}
+              onPress={() => setTab(t.key)}
+              style={{
+                flex: 1, paddingVertical: 12, alignItems: "center",
+                borderBottomWidth: 2,
+                borderColor: tab === t.key ? theme.primary : "transparent",
+              }}>
+              <Text style={{ color: tab === t.key ? theme.primary : theme.sub, fontWeight: "600" }}>
+                {t.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        {tab === "overview" ? renderOverview() : renderSuspicious()}
+      </SafeAreaView>
+    </Modal>
+  );
+});
 
 // 📱 NovelCard: 홈 화면 작품 카드 컴포넌트 (메모이제이션으로 성능 최적화)
 const NovelCard = memo(({
@@ -23858,6 +25087,7 @@ function AppContent() {
   const [diagPatternStats, setDiagPatternStats] = useState(null); // 🔧 v3.6.0: 인사이트/패턴 통계
   const [customResetOpen, setCustomResetOpen] = useState(false); // 🧹 v3.5.5: 커스텀 초기화 모달
   const [resetSelections, setResetSelections] = useState({}); // { key: boolean }
+  const [tierVerificationOpen, setTierVerificationOpen] = useState(false); // 🔀 v3.14.0: 하이브리드 검증 센터 모달
 
   const [screen, setScreenRaw] = useState("home");
   const screenRef = useRef("home"); // 💥 v3.9.0: side effect 안전한 화면 추적
@@ -25016,6 +26246,16 @@ function AppContent() {
           await migrateStartEndYear();
           // 🏆 v3.13.0: 예정탭 사용 안 하는 컬럼 4개 DROP
           await migratePlannedNovelsCleanup();
+
+          // 🔀 v3.14.0: 하이브리드 티어 부팅 시퀀스 — 무결성 검사 + 모드 캐시 + 그래프 워밍 + 세션 시작
+          try {
+            await verifyHybridIntegrity();
+            await getHybridMode();         // _hybridModeCache 초기화
+            await warmGraphCache();         // L2 → L1 메모리 복원
+            initHybridSession();            // 세션 예산 초기화
+          } catch (e) {
+            console.warn("[hybrid] boot init failed (non-fatal):", e.message);
+          }
 
           // 🔧 v3.6.0: Tag Registry 로드 (없으면 FACTORY에서 시드 + 기존 사용자 데이터 병합)
           // 🔧 v3.6.1: registry 반환값 보존 — useEffect 내에서는 React state가 배치 업데이트 전이므로
@@ -41765,7 +43005,19 @@ async function importJSON() {
                 </View>
               </View>
             </Section>
-            
+
+            {/* 🔀 v3.14.0: 하이브리드 티어 검증 시스템 */}
+            <Section title="🔀 하이브리드 티어 검증">
+              <Text style={{ color: C.sub, marginBottom: 8, fontSize: 12 }}>
+                직접배정과 매칭의 혼합 시스템. 의심 작품을 자동 탐지하고 선별 검증합니다.
+              </Text>
+              <TouchableOpacity
+                onPress={() => setTierVerificationOpen(true)}
+                style={{ backgroundColor: C.primary, paddingVertical: 12, borderRadius: 10, alignItems: "center", marginTop: 4 }}>
+                <Text style={{ color: "#fff", fontWeight: "700" }}>티어 검증 센터 열기</Text>
+              </TouchableOpacity>
+            </Section>
+
             {/* ↩️ 되돌리기 (v2.6) */}
             {undoStack.length > 0 && (
               <Section title="↩️ 되돌리기">
@@ -47694,6 +48946,16 @@ async function importJSON() {
           </View>
         </View>
       </Modal>
+
+      {/* 🔀 v3.14.0: 하이브리드 티어 검증 센터 */}
+      <TierVerificationModal
+        visible={tierVerificationOpen}
+        onClose={() => setTierVerificationOpen(false)}
+        theme={C}
+        isDark={isDark}
+        tierConfig={appSettings.tierSystemConfig || globalTierConfig}
+        onModeChange={() => { /* 추후: NovelCard 등 동기화 트리거 */ }}
+      />
 
     </SafeAreaView>
   );
