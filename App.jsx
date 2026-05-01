@@ -27871,8 +27871,19 @@ function AppContent() {
                 majorGenre: majorGenreText,
                 fromPlanned: true,
               });
-              
-              const infoMsg = noteAdditions.length > 0 
+
+              // 🆕 v3.14.1: 하이브리드 모드 — 예정→본 등록 시 calibration 자동 등록
+              if ((appSettings.tierSystemConfig || globalTierConfig)?.mode === 'hybrid') {
+                try {
+                  const tsc = appSettings.tierSystemConfig || globalTierConfig;
+                  const targetTier = (planned.expected_tier && getActiveTierOrder(tsc).includes(planned.expected_tier))
+                    ? planned.expected_tier
+                    : (tsc.defaultTier || 'C');
+                  await enqueueCalibration(id, targetTier, 'work_added');
+                } catch (hybridE) { console.warn('[hybrid] auto-calibration enqueue failed (planned→novel):', hybridE.message); }
+              }
+
+              const infoMsg = noteAdditions.length > 0
                 ? `\n\n예정작품 정보(${noteAdditions.length}건)가 메모에 추가되었습니다.`
                 : "";
               Alert.alert("완료", `"${planned.title}"이(가) 본 목록에 등록되었습니다.${infoMsg}`);
@@ -34885,32 +34896,44 @@ async function exportJSON() {
     }
 
     // 🔀 v3.14.1: 하이브리드 데이터 백업 (HY = Hybrid)
+    // 실제 스키마: tier_anchors(work_id, anchored_at, anchor_type, match_count_at_anchor,
+    //   confidence_at_anchor, notes)
+    // tier_adjustment_log(id, work_id, before_tier, after_tier, trigger_type, is_committed,
+    //   created_at, ...)
+    // ※ 검증 큐는 런타임 sweep으로 재생성되므로 백업 제외 (영구 데이터만 백업)
     try {
       const hyData = {};
-      const hyAnchors = await all("SELECT work_id, tier, position, locked, created_at FROM tier_anchors").catch(() => []);
+      const hyAnchors = await all(
+        "SELECT work_id, anchored_at, anchor_type, match_count_at_anchor, confidence_at_anchor, notes FROM tier_anchors"
+      ).catch(() => []);
       if (hyAnchors?.length) {
         hyData.a = hyAnchors.map(r => ({
-          w: r.work_id, t: r.tier,
-          p: r.position != null ? r.position : null,
-          l: r.locked || 0,
-          c: Math.floor((r.created_at || 0) / 1000) - BASE_TIMESTAMP,
+          w: r.work_id,
+          at: Math.floor((r.anchored_at || 0) / 1000) - BASE_TIMESTAMP,
+          ty: r.anchor_type,
+          mc: r.match_count_at_anchor || 0,
+          cf: r.confidence_at_anchor || 0,
+          n: r.notes || '',
         }));
       }
       const hyLog = await all(
-        "SELECT work_id, type, from_tier, to_tier, reason, created_at FROM tier_adjustment_log ORDER BY created_at DESC LIMIT 200"
+        "SELECT work_id, before_tier, after_tier, trigger_type, is_committed, created_at FROM tier_adjustment_log ORDER BY created_at DESC LIMIT 200"
       ).catch(() => []);
       if (hyLog?.length) {
         hyData.l = hyLog.map(r => ({
-          w: r.work_id, tp: r.type, f: r.from_tier, t: r.to_tier,
-          r: r.reason || '',
+          w: r.work_id,
+          bt: r.before_tier || '',
+          at_: r.after_tier || '',
+          tt: r.trigger_type || '',
+          ic: r.is_committed || 0,
           c: Math.floor((r.created_at || 0) / 1000) - BASE_TIMESTAMP,
         }));
       }
-      const hyQueue = await all(
-        "SELECT id, subject_id, type, priority, status, ctx_target_tier, ctx_triggering_event, ctx_parent_match_id, enqueued_at FROM tier_verification_queue WHERE status IN ('pending','in_progress')"
-      ).catch(() => []);
-      if (hyQueue?.length) hyData.q = hyQueue;
-      if (Object.keys(hyData).length > 0) payload.HY = hyData;
+      // NID(소설 old ID 목록)이 없으면 work_id remap 불가 → 보장
+      if (Object.keys(hyData).length > 0) {
+        payload.HY = hyData;
+        if (!payload.NID) payload.NID = novels.map(n => n.id);
+      }
     } catch (hyErr) { console.warn("hybrid 데이터 백업 실패:", hyErr); }
 
     // 📂 v3.7.0: 폴더 백업 (FD = Folders, NF = Novel-Folders)
@@ -35716,38 +35739,72 @@ async function importJSON() {
               }
               
               // 🔀 v3.14.1: 하이브리드 데이터 복원
+              // ⚠️ work_id는 import 시 remap되므로 remapNovelId 통과 필수
+              //    NID 매핑 실패한 항목은 dangling reference 방지를 위해 스킵
               let hybridDataRestored = false;
+              let hybridAnchorsRestored = 0;
               if (data.HY && typeof data.HY === "object") {
                 try {
                   await execBatch([
                     { sql: "DELETE FROM tier_anchors;", params: [] },
                     { sql: "DELETE FROM tier_adjustment_log;", params: [] },
-                    { sql: "DELETE FROM tier_verification_queue WHERE status IN ('pending','in_progress');", params: [] },
+                    { sql: "DELETE FROM tier_verification_queue;", params: [] },
+                    { sql: "DELETE FROM calibration_runs;", params: [] },
                   ]);
+                  // anchors 복원
                   if (Array.isArray(data.HY.a) && data.HY.a.length > 0) {
-                    const anchorQ = data.HY.a.map(r => ({
-                      sql: "INSERT OR IGNORE INTO tier_anchors (work_id, tier, position, locked, created_at) VALUES (?,?,?,?,?)",
-                      params: [r.w, r.t, r.p != null ? r.p : null, r.l || 0, ((r.c || 0) + BASE_TIMESTAMP) * 1000],
-                    }));
-                    await execBatch(anchorQ);
+                    const anchorQ = [];
+                    for (const r of data.HY.a) {
+                      const newWid = oldIdToNewId[r.w];
+                      if (!newWid) continue; // 매핑 실패 → 작품이 import에서 누락됨
+                      anchorQ.push({
+                        sql: "INSERT OR IGNORE INTO tier_anchors (work_id, anchored_at, anchor_type, match_count_at_anchor, confidence_at_anchor, notes) VALUES (?,?,?,?,?,?)",
+                        params: [
+                          newWid,
+                          ((r.at || 0) + BASE_TIMESTAMP) * 1000,
+                          r.ty || 'manual',
+                          r.mc || 0,
+                          r.cf || 0,
+                          r.n || '',
+                        ],
+                      });
+                    }
+                    if (anchorQ.length > 0) {
+                      await execBatch(anchorQ);
+                      hybridAnchorsRestored = anchorQ.length;
+                    }
                   }
+                  // adjustment_log 복원 (id는 AUTOINCREMENT이므로 생략)
                   if (Array.isArray(data.HY.l) && data.HY.l.length > 0) {
-                    const adjQ = data.HY.l.map(r => ({
-                      sql: "INSERT OR IGNORE INTO tier_adjustment_log (id, work_id, type, from_tier, to_tier, reason, created_at) VALUES (?,?,?,?,?,?,?)",
-                      params: [uuid(), r.w, r.tp, r.f, r.t, r.r || '', ((r.c || 0) + BASE_TIMESTAMP) * 1000],
-                    }));
-                    await execBatch(adjQ);
+                    const adjQ = [];
+                    for (const r of data.HY.l) {
+                      const newWid = oldIdToNewId[r.w];
+                      if (!newWid) continue;
+                      adjQ.push({
+                        sql: "INSERT INTO tier_adjustment_log (work_id, before_tier, after_tier, trigger_type, is_committed, created_at) VALUES (?,?,?,?,?,?)",
+                        params: [
+                          newWid,
+                          r.bt || null,
+                          r.at_ || null,
+                          r.tt || 'restore',
+                          r.ic || 0,
+                          ((r.c || 0) + BASE_TIMESTAMP) * 1000,
+                        ],
+                      });
+                    }
+                    if (adjQ.length > 0) await execBatch(adjQ);
                   }
                   // 그래프 캐시 무효화 — 복원 후 위상정렬 재계산
                   _graphMemCache = null;
                   hybridDataRestored = true;
                 } catch (hyErr) { console.warn("hybrid 데이터 복원 실패:", hyErr); }
               } else {
-                // v9~v11 백업: 하이브리드 테이블만 초기화 (stale 상태 방지)
+                // v9~v11 백업: 하이브리드 테이블 클리어 (stale 상태 방지)
                 try {
                   await execBatch([
                     { sql: "DELETE FROM tier_anchors;", params: [] },
                     { sql: "DELETE FROM tier_verification_queue;", params: [] },
+                    { sql: "DELETE FROM calibration_runs;", params: [] },
                   ]);
                   _graphMemCache = null;
                 } catch {}
@@ -35809,7 +35866,7 @@ async function importJSON() {
               const plannedInfo = plannedRestored ? `\n(예정 작품 ${data.PL.length}개 복원)` : "";
               const patternInfo = patternsRestored ? `\n(학습 패턴 ${data.PP.length}개 복원)` : "";
               const pcInfo = platformCoversRestored ? "\n(플랫폼 표지 복원됨)" : "";
-              const hybridInfo = hybridDataRestored ? `\n(하이브리드 앵커 ${(data.HY?.a?.length || 0)}개 복원)` : "";
+              const hybridInfo = hybridDataRestored ? `\n(하이브리드 앵커 ${hybridAnchorsRestored}개 복원)` : "";
               // 🔧 v3.5.8: 복원 검증 결과 포함
               const verifyInfo = insertedCount < lenN ? `\n⚠️ 주의: ${lenN}개 중 ${insertedCount}개만 복원됨` : "";
               if (_pt) PerfMonitor.trackFunc("importJSON", Date.now() - _pt); // 🔬
