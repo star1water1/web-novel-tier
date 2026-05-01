@@ -2,12 +2,27 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.14.0                                                                  ║
+ * ║  버전: 3.14.1                                                                  ║
  * ║  최종 수정: 2026-05-01                                                        ║
- * ║  총 라인 수: 약 48,800줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 49,400줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔀 v3.14.1 하이브리드 버그 수정 (2026-05-01)                                   ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [수정 1] addNovel: 하이브리드 모드에서 신규 작품 calibration 자동 등록 누락    ║
+ * ║ • 작품 추가 완료 직후 enqueueCalibration() 호출 추가                          ║
+ * ║ • targetTier = newManualTier || tsc.defaultTier || 'C'                       ║
+ * ║                                                                              ║
+ * ║ [수정 2] 백업 포맷 v11 → v12: 하이브리드 테이블 누락 문제                     ║
+ * ║ • export: tier_anchors, tier_adjustment_log(최근200), 활성 queue 포함        ║
+ * ║ • import v12: 앵커/조정로그/큐 복원 (ID 재매핑 없이 그대로)                   ║
+ * ║ • import v9~v11: 하이브리드 테이블 클리어 (stale 상태 방지)                   ║
+ * ║ • doClearAll: 하이브리드 5개 테이블 포함 (완전 초기화)                        ║
+ * ║ • validateBackupData: v12 인식, HY 피처 플래그 + 요약 표시                   ║
+ * ║                                                                              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 🔀 v3.14.0 하이브리드 티어 시스템 (2026-05-01)                                  ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║                                                                              ║
@@ -11294,6 +11309,27 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "3.14.1", date: "2026-05-01",
+    title: "하이브리드 시스템 버그 수정",
+    highlights: [
+      { type: "fix", text: "🔀 신규 작품 등록 시 하이브리드 모드에서 calibration 큐 자동 등록 누락 수정" },
+      { type: "fix", text: "💾 백업 포맷 v12 — 앵커·조정 로그·검증 큐 포함 (기존 v11은 hybrid 데이터 유실)" },
+      { type: "fix", text: "📥 복원 시 v9~v11 백업이면 하이브리드 테이블 초기화 (stale 상태 방지)" },
+      { type: "fix", text: "🗑️ 전체 초기화(복원) 시 하이브리드 5개 테이블도 함께 삭제" },
+    ],
+  },
+  {
+    version: "3.14.0", date: "2026-05-01",
+    title: "하이브리드 티어 시스템",
+    highlights: [
+      { type: "new", text: "🔀 직접배정 + 의심 작품 선별 매칭 혼합 시스템" },
+      { type: "new", text: "Graph 기반 의심도 탐지(S1~S7) + Eades 위상정렬" },
+      { type: "new", text: "수문장(gatekeeper) 자동 식별 — 사이클·모순 집중 탐지" },
+      { type: "new", text: "검증 큐: calibration / suspicion / audit / cascade 4종" },
+      { type: "new", text: "TierVerificationModal: 검증 센터 UI (개요 + 의심 작품 리스트)" },
+    ],
+  },
   {
     version: "3.13.0", date: "2026-04-13",
     title: "예정탭 편집 모달 정리 + 안 쓰는 필드 제거",
@@ -31795,11 +31831,21 @@ function AppContent() {
           if (Array.isArray(parsed)) majorGenreText = parsed.join(", ");
         }
       } catch {}
-      await addRecentChange(id, t, "new", { 
+      await addRecentChange(id, t, "new", {
         author: author.trim() || "-",
         majorGenre: majorGenreText
       });
-      
+
+      // 🆕 v3.14.1: 하이브리드 모드 — 신규 작품 calibration 자동 등록
+      // newManualTier는 setNewManualTier("") 이후에도 현 클로저에서 유효한 원본 값
+      if ((appSettings.tierSystemConfig || globalTierConfig)?.mode === 'hybrid') {
+        try {
+          const tsc = appSettings.tierSystemConfig || globalTierConfig;
+          const targetTier = newManualTier || tsc.defaultTier || 'C';
+          await enqueueCalibration(id, targetTier, 'work_added');
+        } catch (hybridE) { console.warn('[hybrid] auto-calibration enqueue failed:', hybridE.message); }
+      }
+
       if (_pt) PerfMonitor.trackFunc("addNovel", Date.now() - _pt); // 🔬
       Alert.alert("완료", "작품이 추가되었습니다.");
     } catch (e) {
@@ -34595,7 +34641,7 @@ async function buildUltraCompactBackup(novels, matches, coverImages = null) {
   }
 
   return {
-    v: 11, // 📐 v3.2.0: tag_coordinate_systems 포함
+    v: 12, // 🔀 v3.14.1: 하이브리드 tier 데이터(HY) 포함
     b: BASE_TIMESTAMP,
     T: tagDict,
     P: platDict,
@@ -34838,6 +34884,35 @@ async function exportJSON() {
       payload.PR = platformRegistry;
     }
 
+    // 🔀 v3.14.1: 하이브리드 데이터 백업 (HY = Hybrid)
+    try {
+      const hyData = {};
+      const hyAnchors = await all("SELECT work_id, tier, position, locked, created_at FROM tier_anchors").catch(() => []);
+      if (hyAnchors?.length) {
+        hyData.a = hyAnchors.map(r => ({
+          w: r.work_id, t: r.tier,
+          p: r.position != null ? r.position : null,
+          l: r.locked || 0,
+          c: Math.floor((r.created_at || 0) / 1000) - BASE_TIMESTAMP,
+        }));
+      }
+      const hyLog = await all(
+        "SELECT work_id, type, from_tier, to_tier, reason, created_at FROM tier_adjustment_log ORDER BY created_at DESC LIMIT 200"
+      ).catch(() => []);
+      if (hyLog?.length) {
+        hyData.l = hyLog.map(r => ({
+          w: r.work_id, tp: r.type, f: r.from_tier, t: r.to_tier,
+          r: r.reason || '',
+          c: Math.floor((r.created_at || 0) / 1000) - BASE_TIMESTAMP,
+        }));
+      }
+      const hyQueue = await all(
+        "SELECT id, subject_id, type, priority, status, ctx_target_tier, ctx_triggering_event, ctx_parent_match_id, enqueued_at FROM tier_verification_queue WHERE status IN ('pending','in_progress')"
+      ).catch(() => []);
+      if (hyQueue?.length) hyData.q = hyQueue;
+      if (Object.keys(hyData).length > 0) payload.HY = hyData;
+    } catch (hyErr) { console.warn("hybrid 데이터 백업 실패:", hyErr); }
+
     // 📂 v3.7.0: 폴더 백업 (FD = Folders, NF = Novel-Folders)
     // 🔧 v3.9.1: NID(소설 ID 목록) 추가 — NF/GI 복원 시 old→new ID 매핑용
     const foldersData = await all("SELECT * FROM folders ORDER BY sort_order;");
@@ -34988,12 +35063,13 @@ function validateImportData(text) {
     return result;
   }
 
-  // v9/v10/v11 극한 압축 포맷 (v10: tag_data, aliases / v11: 좌표계 포함)
-  if (data && [9, 10, 11].includes(data.v) && Array.isArray(data.N) && typeof data.M === "string") {
+  // v9/v10/v11/v12 극한 압축 포맷 (v12: 하이브리드 데이터 포함)
+  if (data && [9, 10, 11, 12].includes(data.v) && Array.isArray(data.N) && typeof data.M === "string") {
     result.valid = true;
     result.version = data.v;
-    result.format = data.v === 11 ? "v11 극한 압축 (좌표계 포함)" 
-                  : data.v === 10 ? "v10 극한 압축 (태그 v5.0)" 
+    result.format = data.v === 12 ? "v12 극한 압축 (하이브리드 포함)"
+                  : data.v === 11 ? "v11 극한 압축 (좌표계 포함)"
+                  : data.v === 10 ? "v10 극한 압축 (태그 v5.0)"
                   : "v9 극한 압축";
     result.novelCount = data.N.length;
     
@@ -35052,6 +35128,13 @@ function validateImportData(text) {
       result.features.hasGallery = true;
     }
 
+    // 🔀 v3.14.1: 하이브리드 데이터 확인
+    if (data.HY && typeof data.HY === "object") {
+      result.features.hasHybridData = true;
+      if (Array.isArray(data.HY.a)) result.hybridAnchorCount = data.HY.a.length;
+      if (Array.isArray(data.HY.q)) result.hybridQueueCount = data.HY.q.length;
+    }
+
     // 요약 생성
     const extras = [];
     if (result.features.hasCoverImage) extras.push("표지 이미지");
@@ -35061,6 +35144,7 @@ function validateImportData(text) {
     if (result.features.hasPlannedNovels) extras.push(`예정 작품 ${result.plannedCount}개`);
     if (result.features.hasPatterns) extras.push(`학습 패턴 ${data.PP.length}개`);
     if (result.features.hasPlatformCovers) extras.push("플랫폼 표지");
+    if (result.features.hasHybridData) extras.push(`하이브리드 데이터 (앵커 ${result.hybridAnchorCount || 0}개)`);
     
     result.summary = `✅ v${data.v} 포맷\n• Elo 데이터 완전 복원\n• 재계산 불필요`;
     if (extras.length > 0) {
@@ -35083,7 +35167,7 @@ function validateImportData(text) {
     return result;
   }
 
-  result.errors.push("지원하지 않는 백업 형식입니다.\nv9~v11 형식만 지원됩니다.");
+  result.errors.push("지원하지 않는 백업 형식입니다.\nv9~v12 형식만 지원됩니다.");
   return result;
 }
 
@@ -35116,6 +35200,12 @@ async function importJSON() {
         { sql: "DELETE FROM folders;", params: [] },
         { sql: "DELETE FROM novel_folders;", params: [] },
         { sql: "DELETE FROM gallery_images;", params: [] }, // 🎨 v3.8.0
+        // 🔀 v3.14.1: 하이브리드 관련 테이블 초기화
+        { sql: "DELETE FROM tier_anchors;", params: [] },
+        { sql: "DELETE FROM tier_verification_queue;", params: [] },
+        { sql: "DELETE FROM tier_adjustment_log;", params: [] },
+        { sql: "DELETE FROM calibration_runs;", params: [] },
+        { sql: "DELETE FROM graph_state_cache;", params: [] },
       ]);
       invalidatePatternCache(); // 🔧 v3.5.14
       invalidateWeightsCache(); // 🔧 v3.5.14
@@ -35129,9 +35219,9 @@ async function importJSON() {
     };
 
     // -------------------------------
-    // ➊ v9/v10/v11 극한 압축 포맷 (v10: tag_data, aliases / v11: 좌표계 포함)
+    // ➊ v9/v10/v11/v12 극한 압축 포맷 (v12: 하이브리드 데이터 포함)
     // -------------------------------
-    if (data && [9, 10, 11].includes(data.v) && Array.isArray(data.N) && typeof data.M === "string") {
+    if (data && [9, 10, 11, 12].includes(data.v) && Array.isArray(data.N) && typeof data.M === "string") {
       const tagDict = Array.isArray(data.T) ? data.T : [];
       const platDict = Array.isArray(data.P) ? data.P : [];
       const authorDict = Array.isArray(data.A) ? data.A : [];
@@ -35625,6 +35715,44 @@ async function importJSON() {
                 }
               }
               
+              // 🔀 v3.14.1: 하이브리드 데이터 복원
+              let hybridDataRestored = false;
+              if (data.HY && typeof data.HY === "object") {
+                try {
+                  await execBatch([
+                    { sql: "DELETE FROM tier_anchors;", params: [] },
+                    { sql: "DELETE FROM tier_adjustment_log;", params: [] },
+                    { sql: "DELETE FROM tier_verification_queue WHERE status IN ('pending','in_progress');", params: [] },
+                  ]);
+                  if (Array.isArray(data.HY.a) && data.HY.a.length > 0) {
+                    const anchorQ = data.HY.a.map(r => ({
+                      sql: "INSERT OR IGNORE INTO tier_anchors (work_id, tier, position, locked, created_at) VALUES (?,?,?,?,?)",
+                      params: [r.w, r.t, r.p != null ? r.p : null, r.l || 0, ((r.c || 0) + BASE_TIMESTAMP) * 1000],
+                    }));
+                    await execBatch(anchorQ);
+                  }
+                  if (Array.isArray(data.HY.l) && data.HY.l.length > 0) {
+                    const adjQ = data.HY.l.map(r => ({
+                      sql: "INSERT OR IGNORE INTO tier_adjustment_log (id, work_id, type, from_tier, to_tier, reason, created_at) VALUES (?,?,?,?,?,?,?)",
+                      params: [uuid(), r.w, r.tp, r.f, r.t, r.r || '', ((r.c || 0) + BASE_TIMESTAMP) * 1000],
+                    }));
+                    await execBatch(adjQ);
+                  }
+                  // 그래프 캐시 무효화 — 복원 후 위상정렬 재계산
+                  _graphMemCache = null;
+                  hybridDataRestored = true;
+                } catch (hyErr) { console.warn("hybrid 데이터 복원 실패:", hyErr); }
+              } else {
+                // v9~v11 백업: 하이브리드 테이블만 초기화 (stale 상태 방지)
+                try {
+                  await execBatch([
+                    { sql: "DELETE FROM tier_anchors;", params: [] },
+                    { sql: "DELETE FROM tier_verification_queue;", params: [] },
+                  ]);
+                  _graphMemCache = null;
+                } catch {}
+              }
+
               // 📷 v3.5.5: 플랫폼 기본 표지 복원
               let platformCoversRestored = false;
               if (data.PC && typeof data.PC === "object" && Object.keys(data.PC).length > 0) {
@@ -35681,11 +35809,12 @@ async function importJSON() {
               const plannedInfo = plannedRestored ? `\n(예정 작품 ${data.PL.length}개 복원)` : "";
               const patternInfo = patternsRestored ? `\n(학습 패턴 ${data.PP.length}개 복원)` : "";
               const pcInfo = platformCoversRestored ? "\n(플랫폼 표지 복원됨)" : "";
+              const hybridInfo = hybridDataRestored ? `\n(하이브리드 앵커 ${(data.HY?.a?.length || 0)}개 복원)` : "";
               // 🔧 v3.5.8: 복원 검증 결과 포함
               const verifyInfo = insertedCount < lenN ? `\n⚠️ 주의: ${lenN}개 중 ${insertedCount}개만 복원됨` : "";
               if (_pt) PerfMonitor.trackFunc("importJSON", Date.now() - _pt); // 🔬
               importBackupRef.current = ""; // 🔧 v3.5.9: 성공 시 메모리 해제
-              Alert.alert("완료", `데이터를 성공적으로 가져왔습니다!\n(Elo 데이터 완전 복원)${verifyInfo}${extraInfo}${histInfo}${analysisInfo}${comboInfo}${tagMetaInfo}${plannedInfo}${patternInfo}${pcInfo}`);
+              Alert.alert("완료", `데이터를 성공적으로 가져왔습니다!\n(Elo 데이터 완전 복원)${verifyInfo}${extraInfo}${histInfo}${analysisInfo}${comboInfo}${tagMetaInfo}${plannedInfo}${patternInfo}${pcInfo}${hybridInfo}`);
               } catch (restoreErr) {
                 // 🔧 v3.5.9: 복원 실패 시 자동 재시도 옵션 제공
                 if (_pt) PerfMonitor.logError("importJSON", restoreErr); // 🔬
@@ -35730,8 +35859,8 @@ async function importJSON() {
       return;
     }
 
-    // v9~v11 외의 포맷은 지원하지 않음
-    Alert.alert("오류", "지원하지 않는 백업 형식입니다.\nv9~v11 형식만 지원됩니다.");
+    // v9~v12 외의 포맷은 지원하지 않음
+    Alert.alert("오류", "지원하지 않는 백업 형식입니다.\nv9~v12 형식만 지원됩니다.");
 
   } catch (e) {
     console.warn(e);
@@ -47280,7 +47409,7 @@ async function importJSON() {
                 onPress={async () => {
                   try {
                     await Share.share({
-                      title: "웹소설 티어 백업(v9)",
+                      title: "웹소설 티어 백업(v12)",
                       message: exportFullJsonRef.current,
                     });
                   } catch (e) {
