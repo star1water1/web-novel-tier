@@ -10235,6 +10235,8 @@ async function enqueueCalibration(workId, targetTier, triggeredBy = 'work_added'
       [now, workId]
     );
   } catch {}
+  // 🔀 v3.14.1: 신규 작품/이동 → 그래프 work set 변경 → 캐시 무효화
+  try { await bumpGraphVersion('calibration_enqueue'); } catch {}
   return calibRunId;
 }
 
@@ -31923,8 +31925,15 @@ function AppContent() {
               { sql: "DELETE FROM matches WHERE a_id=? OR b_id=?", params: [id, id] },
               { sql: "DELETE FROM novel_folders WHERE novel_id=?", params: [id] },
               { sql: "DELETE FROM gallery_images WHERE novel_id=?", params: [id] }, // 🎨 v3.8.0
+              // 🔀 v3.14.1: 하이브리드 데이터 cascade 정리 (orphan 방지)
+              { sql: "DELETE FROM tier_anchors WHERE work_id=?", params: [id] },
+              { sql: "DELETE FROM tier_verification_queue WHERE subject_id=? OR opponent_id=?", params: [id, id] },
+              { sql: "DELETE FROM tier_adjustment_log WHERE work_id=?", params: [id] },
+              { sql: "DELETE FROM calibration_runs WHERE work_id=?", params: [id] },
               { sql: "DELETE FROM novels WHERE id=?", params: [id] },
             ]);
+            // 그래프 캐시 무효화 (작품 변동 → 위상정렬 영향)
+            try { await bumpGraphVersion('novel_delete'); } catch {}
             // 🔧 v3.5.15e: 미플러시 choiceLog에서도 삭제 대상 제거 (고아 재삽입 방지)
             choiceLogQueue.pending = choiceLogQueue.pending.filter(l => l.winner_id !== id && l.loser_id !== id);
             
@@ -34403,12 +34412,19 @@ function AppContent() {
                 sql: "DELETE FROM novel_folders WHERE novel_id=?",
                 params: [id],
               });
+              // 🔀 v3.14.1: 하이브리드 데이터 cascade 정리 (orphan 방지)
+              queries.push({ sql: "DELETE FROM tier_anchors WHERE work_id=?", params: [id] });
+              queries.push({ sql: "DELETE FROM tier_verification_queue WHERE subject_id=? OR opponent_id=?", params: [id, id] });
+              queries.push({ sql: "DELETE FROM tier_adjustment_log WHERE work_id=?", params: [id] });
+              queries.push({ sql: "DELETE FROM calibration_runs WHERE work_id=?", params: [id] });
               queries.push({
                 sql: "DELETE FROM novels WHERE id=?",
                 params: [id],
               });
             }
             await execBatch(queries, (cur, tot) => setLoadingProgress({ current: cur, total: tot, label: "작품 삭제 중..." }));
+            // 그래프 캐시 무효화
+            try { await bumpGraphVersion('batch_delete'); } catch {}
             await loadNovelFolderMap();
             // 🔧 v3.5.15e: 미플러시 choiceLog에서도 삭제 대상 제거 (고아 재삽입 방지)
             const deletedSet = new Set(ids);
