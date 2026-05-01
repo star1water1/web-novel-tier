@@ -3677,6 +3677,14 @@ async function switchSlotDb(newSlotId) {
   invalidateMatchCache();
   invalidatePatternCache();
   invalidateWeightsCache();
+  // 🔀 v3.14.0: 하이브리드 모듈 캐시 초기화 (슬롯별 격리 보장)
+  try {
+    _graphMemCache = null;
+    _hybridModeCache = null;
+    _graphInflightRebuild = null;
+    if (_graphPersistTimer) { clearTimeout(_graphPersistTimer); _graphPersistTimer = null; }
+    initHybridSession();
+  } catch (e) { console.warn("[hybrid] slot cache reset failed:", e.message); }
   if (typeof genreMatchupCacheRef !== "undefined") {
     // genreMatchupCacheRef는 컴포넌트 스코프라 여기서 접근 불가 — 컴포넌트에서 처리
   }
@@ -10284,6 +10292,282 @@ async function verifyHybridIntegrity() {
   } catch (e) { console.warn('[hybrid] integrity check failed:', e.message); }
 }
 
+// ── opponent 동적 선정 ─────────────────────────────────────
+// calibration / suspicion 매칭에서 상대를 동적으로 결정
+//  - 인접 티어 풀에서 confidence 높고 cooldown 아닌 작품 우선
+//  - 최근 5매칭 동일 상대 강제 제외 (다양성 하드 룰)
+async function pickVerificationOpponent(subjectId, options = {}) {
+  const { excludePool = [], position = 'same' } = options;
+  try {
+    const subject = await first("SELECT id, manual_tier, tier FROM novels WHERE id = ?", [subjectId]);
+    if (!subject) return null;
+    const subjectTier = subject.manual_tier || subject.tier || 'C';
+
+    // 최근 매칭 상대 5명 (다양성 하드 룰)
+    const recentRows = await all(
+      "SELECT a_id, b_id FROM matches WHERE (a_id = ? OR b_id = ?) AND is_active = 1 ORDER BY created_at DESC LIMIT 5",
+      [subjectId, subjectId]
+    ).catch(() => []);
+    const recentOpponents = new Set();
+    for (const r of (recentRows || [])) {
+      recentOpponents.add(r.a_id === subjectId ? r.b_id : r.a_id);
+    }
+
+    // 티어 인덱스 계산
+    const tiers = (globalTierConfig && globalTierConfig.tiers) || DEFAULT_TIER_SYSTEM_CONFIG.tiers;
+    const tierKeys = tiers.map(t => t.key);
+    const subjectIdx = tierKeys.indexOf(subjectTier);
+    let targetTiers;
+    if (position === 'above' && subjectIdx > 0) {
+      targetTiers = [tierKeys[subjectIdx - 1]];
+    } else if (position === 'below' && subjectIdx < tierKeys.length - 1) {
+      targetTiers = [tierKeys[subjectIdx + 1]];
+    } else {
+      targetTiers = [subjectTier]; // 같은 티어 또는 fallback
+    }
+
+    // 후보 풀 조회
+    const placeholders = targetTiers.map(() => '?').join(',');
+    const candidates = await all(
+      `SELECT id, confidence_level, match_count
+       FROM novels
+       WHERE id != ?
+         AND (active_match_lock IS NULL OR active_match_lock = '')
+         AND COALESCE(manual_tier, tier) IN (${placeholders})
+       ORDER BY confidence_level DESC, match_count DESC
+       LIMIT 30`,
+      [subjectId, ...targetTiers]
+    ).catch(() => []);
+
+    // 필터링: exclude pool + 최근 매칭 상대 + cooldown
+    const filtered = (candidates || []).filter(c => {
+      if (excludePool.includes(c.id)) return false;
+      if (recentOpponents.has(c.id)) return false;
+      return true;
+    });
+
+    if (filtered.length === 0) {
+      // fallback: 같은 티어 어디라도 (다양성 룰 완화)
+      const fallback = (candidates || []).filter(c => !excludePool.includes(c.id));
+      if (fallback.length === 0) return null;
+      return fallback[0].id;
+    }
+    return filtered[0].id;
+  } catch (e) {
+    console.warn('[hybrid] pickVerificationOpponent failed:', e.message);
+    return null;
+  }
+}
+
+// ── 검증 큐 디스패처 ──────────────────────────────────────
+// 큐에서 우선순위 가장 높은 항목을 꺼내 매칭으로 진행
+//  - 호출자가 결과(winner)를 결정 → recordVerificationMatch로 기록
+// 반환: { entry, subject, opponent } 또는 null
+async function dequeueNextVerification() {
+  try {
+    const entry = await first(
+      `SELECT * FROM tier_verification_queue
+       WHERE status = 'pending' AND inv_ttl_until > ?
+       ORDER BY priority DESC, created_at ASC LIMIT 1`,
+      [Date.now()]
+    );
+    if (!entry) return null;
+    if (!canUseHybridBudget(entry.type, entry.subject_id)) {
+      console.log('[hybrid] 예산 소진, dequeue 보류:', entry.type);
+      return null;
+    }
+
+    // opponent 동적 선정 (이미 정해져 있지 않으면)
+    let opponentId = entry.opponent_id;
+    if (!opponentId) {
+      // calibration의 경우 ctx_triggering_event에서 position 추출
+      let position = 'same';
+      const evt = entry.ctx_triggering_event || '';
+      if (evt.includes('above')) position = 'above';
+      else if (evt.includes('below')) position = 'below';
+      opponentId = await pickVerificationOpponent(entry.subject_id, { position });
+    }
+    if (!opponentId) {
+      // 상대 못 찾으면 무효화
+      await invalidateVerificationEntry(entry.id, 'no_opponent');
+      return null;
+    }
+
+    // active 마킹 + lock
+    await exec(
+      "UPDATE tier_verification_queue SET status = 'active', activated_at = ?, opponent_id = ? WHERE id = ?",
+      [Date.now(), opponentId, entry.id]
+    );
+    await exec(
+      "UPDATE novels SET active_match_lock = ? WHERE id IN (?, ?)",
+      [entry.id, entry.subject_id, opponentId]
+    ).catch(() => {});
+
+    const [subject, opponent] = await Promise.all([
+      first("SELECT * FROM novels WHERE id = ?", [entry.subject_id]),
+      first("SELECT * FROM novels WHERE id = ?", [opponentId]),
+    ]);
+    if (!subject || !opponent) {
+      await invalidateVerificationEntry(entry.id, 'work_missing');
+      return null;
+    }
+    return { entry, subject, opponent };
+  } catch (e) {
+    console.warn('[hybrid] dequeueNextVerification failed:', e.message);
+    return null;
+  }
+}
+
+// 검증 매칭 결과 기록
+//  - matches에 edge 추가 (is_calibration, triggered_by, verification_queue_id 메타 포함)
+//  - calibration이면 calibration_runs 갱신 (mismatch 카운트)
+//  - 큐 항목 completed로 마킹, lock 해제
+//  - graph version bump → sweep
+async function recordVerificationMatch({ entry, subject, opponent, winnerId, kFactor = 32 }) {
+  try {
+    const isCalib = entry.type === 'calibration';
+    const matchId = uuid();
+    const aIsWinner = winnerId === subject.id;
+    const A = normalizeNovel ? normalizeNovel(subject) : subject;
+    const B = normalizeNovel ? normalizeNovel(opponent) : opponent;
+    const eloOut = applyElo(A, B, aIsWinner);
+    const tiersBefore = (globalTierConfig && globalTierConfig.tiers) || DEFAULT_TIER_SYSTEM_CONFIG.tiers;
+
+    // calibration mismatch 판정: 예상(같은=비등, 위=짐, 아래=이김) vs 실제
+    let isMismatch = false;
+    if (isCalib) {
+      const evt = entry.ctx_triggering_event || '';
+      const subjectWon = aIsWinner;
+      if (evt.includes('above') && subjectWon) isMismatch = true; // 위 티어를 이기면 의외
+      else if (evt.includes('below') && !subjectWon) isMismatch = true; // 아래 티어에 지면 의외
+      // 'same' 매칭은 어느 쪽 결과도 정상 (mismatch 0)
+    }
+
+    await execBatch([
+      {
+        sql: `UPDATE novels SET rating=?, rd=?, wins=?, losses=?, match_count=? WHERE id=?`,
+        params: [eloOut.newA.rating, eloOut.newA.rd, eloOut.newA.wins, eloOut.newA.losses, eloOut.newA.match_count, subject.id],
+      },
+      {
+        sql: `UPDATE novels SET rating=?, rd=?, wins=?, losses=?, match_count=? WHERE id=?`,
+        params: [eloOut.newB.rating, eloOut.newB.rd, eloOut.newB.wins, eloOut.newB.losses, eloOut.newB.match_count, opponent.id],
+      },
+      {
+        sql: `INSERT OR IGNORE INTO matches
+              (id, a_id, b_id, winner_id, decided_by, gap_when_matched, k_factor_used, created_at,
+               edge_weight, is_calibration, triggered_by, verification_queue_id, is_active, match_result)
+              VALUES (?, ?, ?, ?, 'verification', ?, ?, ?, ?, ?, ?, ?, 1, 'win')`,
+        params: [
+          matchId, subject.id, opponent.id, winnerId,
+          Math.abs(A.rating - B.rating), kFactor, Date.now(),
+          isCalib ? 1.5 : 1.0,
+          isCalib ? 1 : 0,
+          entry.type,
+          entry.id,
+        ],
+      },
+      {
+        sql: `UPDATE tier_verification_queue SET status = 'completed', completed_at = ?, resulting_match_id = ? WHERE id = ?`,
+        params: [Date.now(), matchId, entry.id],
+      },
+      {
+        sql: `UPDATE novels SET active_match_lock = NULL WHERE active_match_lock = ?`,
+        params: [entry.id],
+      },
+    ]);
+
+    // calibration_runs 갱신
+    if (isCalib && entry.ctx_parent_match_id) {
+      try {
+        const run = await first("SELECT * FROM calibration_runs WHERE id = ?", [entry.ctx_parent_match_id]);
+        if (run) {
+          const actual = (run.actual_match_count || 0) + 1;
+          const mismatch = (run.mismatch_count || 0) + (isMismatch ? 1 : 0);
+          const isComplete = actual >= run.expected_match_count;
+          let result = run.result;
+          if (isComplete) {
+            result = mismatch >= 2 ? 'failed' : (mismatch === 1 ? 'partial' : 'confirmed');
+          }
+          const matchIds = run.match_ids ? JSON.parse(run.match_ids) : [];
+          matchIds.push(matchId);
+          await exec(
+            `UPDATE calibration_runs
+             SET actual_match_count = ?, mismatch_count = ?, match_ids = ?, result = ?, completed_at = ?
+             WHERE id = ?`,
+            [actual, mismatch, JSON.stringify(matchIds), result, isComplete ? Date.now() : null, run.id]
+          );
+          // 전체 calibration 완료 시 hybrid_status 갱신
+          if (isComplete) {
+            const newStatus = result === 'confirmed' ? 'stable' : (result === 'failed' ? 'suspicious' : 'stable');
+            await exec(
+              "UPDATE novels SET hybrid_status = ?, last_calibrated_at = ? WHERE id = ?",
+              [newStatus, Date.now(), run.work_id]
+            ).catch(() => {});
+          }
+        }
+      } catch (e) { console.warn('[hybrid] calibration_runs update failed:', e.message); }
+    }
+
+    consumeHybridBudget(entry.type, entry.subject_id);
+    await bumpGraphVersion('verification_complete');
+    return { matchId, isMismatch, eloOut };
+  } catch (e) {
+    console.warn('[hybrid] recordVerificationMatch failed:', e.message);
+    // 락 해제 best-effort
+    try {
+      await exec("UPDATE novels SET active_match_lock = NULL WHERE active_match_lock = ?", [entry.id]);
+      await exec("UPDATE tier_verification_queue SET status = 'pending', activated_at = NULL WHERE id = ?", [entry.id]);
+    } catch {}
+    throw e;
+  }
+}
+
+// 검증 큐 일괄 처리 (유저가 "검증 시작" 버튼 누름)
+//  - 예산 한도 내에서 큐 소진
+//  - 호출자에 상대 결정을 요청 (콜백)
+//  - 결과는 recordVerificationMatch로 기록
+async function processVerificationQueue(decideCallback, { maxIterations = 50 } = {}) {
+  if (!decideCallback || typeof decideCallback !== 'function') {
+    throw new Error('decideCallback required');
+  }
+  const results = { processed: 0, completed: 0, skipped: 0, errors: 0 };
+  for (let i = 0; i < maxIterations; i++) {
+    if (_hybridSessionUsed.total >= HYBRID_DEFAULT_CONFIG.sessionBudget) {
+      console.log('[hybrid] 세션 예산 도달, 큐 처리 중단');
+      break;
+    }
+    const dequeued = await dequeueNextVerification();
+    if (!dequeued) break;
+    results.processed++;
+    try {
+      const winnerId = await decideCallback(dequeued);
+      if (winnerId === null || winnerId === undefined) {
+        // 유저가 skip
+        await exec(
+          "UPDATE tier_verification_queue SET status = 'invalidated', invalidated_at = ?, invalidated_reason = 'user_skip' WHERE id = ?",
+          [Date.now(), dequeued.entry.id]
+        ).catch(() => {});
+        await exec("UPDATE novels SET active_match_lock = NULL WHERE active_match_lock = ?", [dequeued.entry.id]).catch(() => {});
+        results.skipped++;
+        continue;
+      }
+      await recordVerificationMatch({ ...dequeued, winnerId });
+      results.completed++;
+    } catch (e) {
+      console.warn('[hybrid] 큐 처리 항목 실패:', e.message);
+      results.errors++;
+    }
+  }
+  // 완료 후 sweep + 의심도 갱신
+  try {
+    const refreshed = await refreshSuspicionScores(globalTierConfig);
+    if (refreshed) {
+      await sweepVerificationQueue(refreshed.state, refreshed.suspicionMap);
+    }
+  } catch (e) { console.warn('[hybrid] post-process refresh failed:', e.message); }
+  return results;
+}
+
 /* =========================================================
    테마 (다크모드)
    ========================================================= */
@@ -12789,6 +13073,37 @@ const TierVerificationModal = memo(({ visible, onClose, theme, isDark, tierConfi
     }
   }, [tierConfig, loadData]);
 
+  // 🔀 v3.14.0: 검증 큐 일괄 진행 — 유저에게 매번 승자 선택 요청
+  // (Alert는 자동 진행이 아니므로 #1 위반 아님 — 유저 인터랙션 시점)
+  const handleStartVerification = useCallback(async () => {
+    try {
+      setRefreshing(true);
+      const decideCallback = (dequeued) => new Promise((resolve) => {
+        const { subject, opponent, entry } = dequeued;
+        const ctx = entry.type === 'calibration' ? '캘리브레이션' :
+                    entry.type === 'suspicion' ? '의심 검증' :
+                    entry.type === 'audit' ? '감사' : '검증';
+        Alert.alert(
+          `${ctx} 매칭`,
+          `어느 작품이 더 좋은가요?\n\n• ${subject.title}\n• ${opponent.title}`,
+          [
+            { text: subject.title, onPress: () => resolve(subject.id) },
+            { text: opponent.title, onPress: () => resolve(opponent.id) },
+            { text: "건너뛰기", style: "cancel", onPress: () => resolve(null) },
+          ],
+          { cancelable: false }
+        );
+      });
+      const res = await processVerificationQueue(decideCallback, { maxIterations: 20 });
+      Alert.alert("검증 완료", `처리 ${res.processed} / 완료 ${res.completed} / 건너뜀 ${res.skipped} / 오류 ${res.errors}`);
+      await loadData();
+    } catch (e) {
+      Alert.alert("검증 실패", e.message);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadData]);
+
   const handleSwitchMode = useCallback((newMode) => {
     Alert.alert(
       "모드 전환",
@@ -12864,13 +13179,28 @@ const TierVerificationModal = memo(({ visible, onClose, theme, isDark, tierConfi
             disabled={refreshing}
             style={{
               backgroundColor: refreshing ? theme.sub : theme.primary,
-              paddingVertical: 14, borderRadius: 12, marginBottom: 12,
+              paddingVertical: 14, borderRadius: 12, marginBottom: 8,
               alignItems: "center",
             }}>
             <Text style={{ color: "#fff", fontWeight: "700" }}>
               {refreshing ? "분석 중..." : "🔍 그래프 재분석"}
             </Text>
           </TouchableOpacity>
+
+          {queueStats.total > 0 && (
+            <TouchableOpacity
+              onPress={handleStartVerification}
+              disabled={refreshing}
+              style={{
+                backgroundColor: refreshing ? theme.sub : (theme.ok || "#22c55e"),
+                paddingVertical: 14, borderRadius: 12, marginBottom: 12,
+                alignItems: "center",
+              }}>
+              <Text style={{ color: "#fff", fontWeight: "700" }}>
+                {refreshing ? "진행 중..." : `▶ 검증 시작 (${queueStats.total}건)`}
+              </Text>
+            </TouchableOpacity>
+          )}
         </>
       )}
 
@@ -32722,10 +33052,15 @@ function AppContent() {
         },
       ]);
       setLastMatchId(mid);
-      
+
       // 🔧 v3.5.15: 캐시 내 novels 레이팅 증분 업데이트 (다음 매칭 시 최신 데이터 반영)
       updateMatchCacheNovel(newA.id, { rating: newA.rating, rd: newA.rd, wins: newA.wins, losses: newA.losses, match_count: newA.match_count });
       updateMatchCacheNovel(newB.id, { rating: newB.rating, rd: newB.rd, wins: newB.wins, losses: newB.losses, match_count: newB.match_count });
+
+      // 🔀 v3.14.0: 하이브리드 그래프 무효화 (매 매칭마다 edge 추가됨)
+      try {
+        await bumpGraphVersion('match_complete');
+      } catch (e) { console.warn("[hybrid] post-match bump failed:", e.message); }
       
       // 📰 v3.0.2: 자동 티어 변동 추적 (manual_tier가 없는 경우만)
       if (!A.manual_tier) {
