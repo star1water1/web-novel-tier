@@ -26704,7 +26704,10 @@ function AppContent() {
           ]);
           
           if (!mounted) return;
-          
+
+          // 🔧 v3.14.1: 부팅 init loadList에 명시 전달할 정렬 값 (state는 비동기 → closure stale)
+          let bootSortKey = null, bootSortDir = null;
+
           // 다크모드
           if (savedDarkMode !== null && savedDarkMode !== undefined) {
             setDarkModeState(savedDarkMode);
@@ -26840,9 +26843,12 @@ function AppContent() {
           if (savedTagPreviewExpanded === true) setTagPreviewExpanded(true);
 
           // 🏆 v3.12.1: 홈 정렬/필터 설정 복원
+          // 🔧 v3.14.1: 복원된 sortKey/sortDir을 부팅 loadList("init")에 명시 전달
+          //   이유: setHomeSortKey()는 비동기 → 같은 tick의 loadList는 default 값으로 실행됨
+          //         결과적으로 저장된 정렬이 무시되고 "rating DESC" 기본값으로 로딩되던 버그
           if (savedHomeSortSettings && typeof savedHomeSortSettings === "object") {
-            if (savedHomeSortSettings.sortKey) setHomeSortKey(savedHomeSortSettings.sortKey);
-            if (savedHomeSortSettings.sortDir) setHomeSortDir(savedHomeSortSettings.sortDir);
+            if (savedHomeSortSettings.sortKey) { setHomeSortKey(savedHomeSortSettings.sortKey); bootSortKey = savedHomeSortSettings.sortKey; }
+            if (savedHomeSortSettings.sortDir) { setHomeSortDir(savedHomeSortSettings.sortDir); bootSortDir = savedHomeSortSettings.sortDir; }
             if (savedHomeSortSettings.filterTier) setFilterTier(savedHomeSortSettings.filterTier);
             if (savedHomeSortSettings.filterPlatform) setFilterPlatform(savedHomeSortSettings.filterPlatform);
             if (savedHomeSortSettings.filterGenre) setFilterGenre(savedHomeSortSettings.filterGenre);
@@ -26956,7 +26962,7 @@ function AppContent() {
             setCoordinateSystems(savedCoordinateSystems);
           }
           
-          await loadList(undefined, undefined, "init");
+          await loadList(bootSortKey || undefined, bootSortDir || undefined, "init");
           
           // 📋 v3.3.0: 예정 작품 목록 로드
           await loadPlannedList();
