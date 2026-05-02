@@ -19792,6 +19792,8 @@ const AwardsScreen = memo(({
   onModalShow,
   // 🔧 v3.9.4: tierSystemConfig prop 추가 — module 변수 변경 시 memo 재렌더 트리거
   tierSystemConfig,
+  // 🔧 v3.14.2: 명언 이미지 탭 → 전체화면 뷰어
+  onImagePress,
 }) => {
   PerfMonitor.trackRender("AwardsScreen"); // 🔬
   const C = theme;
@@ -20838,7 +20840,9 @@ const AwardsScreen = memo(({
                             borderLeftColor: award.color,
                           }}>
                             {isImageQuote(firstItem) ? (
-                              <ExpoImage source={{ uri: firstItem.uri }} style={{ width: "100%", height: 100, borderRadius: 8 }} contentFit="contain" cachePolicy="disk" />
+                              <TouchableOpacity activeOpacity={0.85} onPress={() => onImagePress && onImagePress(firstItem.uri)}>
+                                <ExpoImage source={{ uri: firstItem.uri }} style={{ width: "100%", height: 100, borderRadius: 8 }} contentFit="contain" cachePolicy="disk" />
+                              </TouchableOpacity>
                             ) : (
                               <Text style={{
                                 fontStyle: "italic",
@@ -37453,7 +37457,9 @@ async function importJSON() {
                     }}>
                       {isImageQuote(quote) ? (
                         <View>
-                          <ExpoImage source={{ uri: quote.uri }} style={{ width: "100%", height: 200, borderRadius: 8 }} contentFit="contain" cachePolicy="disk" />
+                          <TouchableOpacity activeOpacity={0.85} onPress={() => setCoverViewerUri(quote.uri)}>
+                            <ExpoImage source={{ uri: quote.uri }} style={{ width: "100%", height: 200, borderRadius: 8 }} contentFit="contain" cachePolicy="disk" />
+                          </TouchableOpacity>
                           {quote.caption ? (
                             <Text style={{ fontStyle: "italic", fontSize: 13, color: isDark ? "#fef3c7" : "#78350f", marginTop: 6, textAlign: "center" }}>
                               {quote.caption}
@@ -38589,6 +38595,7 @@ async function importJSON() {
             setAwardFilter={setAwardFilter}
             theme={C}
             tierSystemConfig={appSettings.tierSystemConfig}
+            onImagePress={setCoverViewerUri}
             onGiveAward={async (novelId, awardId, year) => {
               // 수상 부여
               const novel = listMap.get(novelId);
@@ -49236,7 +49243,8 @@ async function importJSON() {
       <Modal
         visible={!!galleryExpandImg}
         animationType="fade"
-        transparent
+        transparent={true}
+        statusBarTranslucent={true}
         onRequestClose={() => setGalleryExpandImg(null)}
       >
         <TouchableOpacity
@@ -49255,7 +49263,7 @@ async function importJSON() {
                 source={{ uri: galleryExpandImg.file_path }}
                 style={{ width: "92%", height: "72%", borderRadius: 12 }}
                 contentFit="contain"
-                cachePolicy="disk"
+                cachePolicy="memory-disk"
                 transition={200}
               />
               {galleryExpandImg.caption ? (
