@@ -2,12 +2,40 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.14.1                                                                  ║
- * ║  최종 수정: 2026-05-01                                                        ║
+ * ║  버전: 3.14.3                                                                  ║
+ * ║  최종 수정: 2026-05-03                                                        ║
  * ║  총 라인 수: 약 49,400줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔀 v3.14.3 하이브리드 큐 처리 버그 수정 (2026-05-03)                           ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [수정 1] dequeueNextVerification: 큐 기아(starvation) 방지                   ║
+ * ║ • 최상위 항목이 canUseHybridBudget 실패 시 즉시 null 반환 → 하위 항목 차단   ║
+ * ║ • 수정: 최대 20개 후보 조회 후 예산 통과 첫 항목 선택 (건너뛰기)             ║
+ * ║                                                                              ║
+ * ║ [수정 2] dequeueNextVerification: work_missing 시 active_match_lock 미해제  ║
+ * ║ • lock 설정 후 subject/opponent 미존재 확인 → invalidate만 하고 lock 잔존    ║
+ * ║ • 수정: invalidateVerificationEntry 직후 lock 즉시 해제                      ║
+ * ║                                                                              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 🔀 v3.14.2 이미지 탭 확대 + 정렬 복원 버그 수정 (2026-05-02)                  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [수정 1] 명언 이미지 탭-투-확대 누락                                          ║
+ * ║ • NovelCard 확장 뷰 명언 이미지에 TouchableOpacity 추가 → setCoverViewerUri  ║
+ * ║ • AwardsScreen: onImagePress prop 추가, 갤러리 이미지 동일 패턴 적용          ║
+ * ║                                                                              ║
+ * ║ [수정 2] 갤러리 탭 이미지 모달 흐려지는 문제                                  ║
+ * ║ • statusBarTranslucent={true} 추가 (Android 상태바 클리핑 방지)              ║
+ * ║ • cachePolicy "disk" → "memory-disk" (재디코딩 깜빡임 방지)                  ║
+ * ║                                                                              ║
+ * ║ [수정 3] 앱 시작 시 정렬 상태 기본값으로 초기화되는 버그                      ║
+ * ║ • setHomeSortKey/Dir 비동기 → 같은 틱의 loadList가 stale 값 읽음             ║
+ * ║ • 수정: bootSortKey/bootSortDir 로컬 변수로 저장 후 loadList에 직접 전달     ║
+ * ║                                                                              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 🔀 v3.14.1 하이브리드 버그 수정 (2026-05-01)                                   ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║                                                                              ║
@@ -10382,15 +10410,23 @@ async function pickVerificationOpponent(subjectId, options = {}) {
 // 반환: { entry, subject, opponent } 또는 null
 async function dequeueNextVerification() {
   try {
-    const entry = await first(
+    // 상위 항목이 예산 소진 상태여도 하위 항목 처리 가능 — 최대 20개 후보 검색
+    const entries = await all(
       `SELECT * FROM tier_verification_queue
        WHERE status = 'pending' AND inv_ttl_until > ?
-       ORDER BY priority DESC, created_at ASC LIMIT 1`,
+       ORDER BY priority DESC, created_at ASC LIMIT 20`,
       [Date.now()]
     );
-    if (!entry) return null;
-    if (!canUseHybridBudget(entry.type, entry.subject_id)) {
-      console.log('[hybrid] 예산 소진, dequeue 보류:', entry.type);
+    if (!entries || entries.length === 0) return null;
+    let entry = null;
+    for (const candidate of entries) {
+      if (canUseHybridBudget(candidate.type, candidate.subject_id)) {
+        entry = candidate;
+        break;
+      }
+    }
+    if (!entry) {
+      console.log('[hybrid] 예산 소진, 모든 후보 보류');
       return null;
     }
 
@@ -10426,6 +10462,8 @@ async function dequeueNextVerification() {
     ]);
     if (!subject || !opponent) {
       await invalidateVerificationEntry(entry.id, 'work_missing');
+      // 위에서 설정한 active_match_lock 반드시 해제
+      await exec("UPDATE novels SET active_match_lock = NULL WHERE active_match_lock = ?", [entry.id]).catch(() => {});
       return null;
     }
     return { entry, subject, opponent };
