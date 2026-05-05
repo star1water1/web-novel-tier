@@ -18678,14 +18678,27 @@ const HeatmapRow = memo(({ data, theme }) => {
 /* =========================================================
    🎯 취향 분석 화면 컴포넌트
    ========================================================= */
-const TasteAnalysisScreen = memo(({ 
-  list, 
-  C, 
-  H, 
-  Section, 
-  isDark, 
-  matchInsights = [], 
-  upsetFactors = { factors: [] }, 
+// 🆕 v6.2: 섹션 그룹 정의 (사용자 답변: 카테고리 그룹화 리팩터링)
+// 13개 활성 섹션을 4그룹으로 묶어 모바일에서 길이 부담 완화
+// 기본: stats 그룹만 펼침. 사용자 펼침 상태는 app_meta 영속화 (slot별 자동 분리)
+const SECTION_GROUPS = [
+  { key: "stats",    label: "📊 통계",       sections: ["basicStats", "categoryAnalysis", "anomalies"] },
+  { key: "genreTag", label: "🏷️ 장르·태그",  sections: ["majorGenre", "subGenre", "coordPref", "spectrum"] },
+  { key: "matching", label: "⚔️ 매칭 행동",  sections: ["matchAnalysis", "matchBehavior", "matchConsist", "simGroupConsist"] },
+  { key: "advanced", label: "🔬 심화",       sections: ["upsets", "factors"] },
+];
+const ALL_SECTION_KEYS = SECTION_GROUPS.flatMap(g => g.sections);
+const ALL_GROUP_KEYS = SECTION_GROUPS.map(g => g.key);
+const META_KEY_GROUPS = "tasteAnalysisExpandedGroups";
+
+const TasteAnalysisScreen = memo(({
+  list,
+  C,
+  H,
+  Section,
+  isDark,
+  matchInsights = [],
+  upsetFactors = { factors: [] },
   tagRelations = { groups: {}, tagToGroup: {} },
   tagCoOccurrences = {},  // 🆕 v3.2.1: 공동 출현 통계
   coordinateSystems = null,  // 🆕 v3.2.1: 사용자 정의 좌표계
@@ -18699,6 +18712,40 @@ const TasteAnalysisScreen = memo(({
   // 🆕 v3.4: 여러 섹션 동시 펼침 가능 (Set 사용)
   const [expandedSections, setExpandedSections] = useState(new Set());
   const [errorMsg, setErrorMsg] = useState(null);
+  // 🆕 v6.2: 그룹 단위 펼침 상태 (기본: stats만)
+  const [expandedGroups, setExpandedGroups] = useState(new Set(["stats"]));
+
+  // 🆕 v6.2: 첫 마운트 시 영속 상태 로드 (slot별 자동 분리: app_meta는 slot DB 격리)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const saved = await getAppMeta(META_KEY_GROUPS);
+        if (!cancelled && Array.isArray(saved) && saved.length > 0) {
+          // 유효 키만 필터 (그룹 키 변경 대비)
+          const valid = saved.filter(k => ALL_GROUP_KEYS.includes(k));
+          setExpandedGroups(new Set(valid));
+        }
+      } catch (e) {
+        // 로드 실패 시 기본값 유지
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // 🆕 v6.2: 그룹 토글 + 영속화
+  const toggleGroup = useCallback((key) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      // fire-and-forget: UI 응답성 우선
+      setAppMeta(META_KEY_GROUPS, Array.from(next)).catch(() => {});
+      return next;
+    });
+  }, []);
+
+  const isGroupExpanded = useCallback((key) => expandedGroups.has(key), [expandedGroups]);
 
   // 🆕 v3.4: 섹션 토글 함수
   const toggleSection = useCallback((key) => {
@@ -18716,20 +18763,17 @@ const TasteAnalysisScreen = memo(({
   // 🆕 v3.4: 섹션 펼침 여부 확인
   const isExpanded = useCallback((key) => expandedSections.has(key), [expandedSections]);
 
-  // 🆕 v3.4: 전체 펼침/접기
+  // 🆕 v3.4: 전체 펼침/접기 (v6.2: 그룹도 함께 동기화)
   const expandAll = useCallback(() => {
-    const allKeys = [
-      "basicStats", "majorGenre", "subGenre", "tagAnalysis", "comboAnalysis",
-      "spectrum", "oppositeTag", "coOccurrence", "coordPref", "matchConsist",
-      "simGroupConsist", "platform", "readPattern", "author", "matchAnalysis",
-      "trend", "hiddenPattern", "avoid", "recommend", "anomalies", "upsets", "factors",
-      "matchBehavior"
-    ];
-    setExpandedSections(new Set(allKeys));
+    setExpandedSections(new Set(ALL_SECTION_KEYS));
+    setExpandedGroups(new Set(ALL_GROUP_KEYS));
+    setAppMeta(META_KEY_GROUPS, ALL_GROUP_KEYS).catch(() => {});
   }, []);
 
   const collapseAll = useCallback(() => {
     setExpandedSections(new Set());
+    setExpandedGroups(new Set());
+    setAppMeta(META_KEY_GROUPS, []).catch(() => {});
   }, []);
 
   // 🔮 v3.0.3: 이변(Upset) 분석 데이터 계산
@@ -19433,6 +19477,32 @@ const TasteAnalysisScreen = memo(({
         </TouchableOpacity>
       </View>
 
+      {/* 🆕 v6.2: 그룹 단위 펼침 토글 칩 (4그룹) */}
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+        {SECTION_GROUPS.map(g => {
+          const open = isGroupExpanded(g.key);
+          return (
+            <TouchableOpacity
+              key={g.key}
+              onPress={() => toggleGroup(g.key)}
+              activeOpacity={0.7}
+              style={{
+                backgroundColor: open ? C.primary : C.chip,
+                paddingHorizontal: 10,
+                paddingVertical: 6,
+                borderRadius: 16,
+                borderWidth: 1,
+                borderColor: open ? C.primary : C.line,
+              }}
+            >
+              <Text style={{ color: open ? "#fff" : C.sub, fontSize: 12, fontWeight: "700" }}>
+                {g.label} {open ? "▼" : "▶"}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
       {/* ═══════════════════════════════════════════════════════════════
          🌟 핵심 요약 카드 (항상 펼침) - 한눈에 파악
          ═══════════════════════════════════════════════════════════════ */}
@@ -19525,7 +19595,8 @@ const TasteAnalysisScreen = memo(({
          📊 세부 분석 섹션들 (기본 접힘)
          ═══════════════════════════════════════════════════════════════ */}
 
-      {/* 📊 기본 통계 */}
+      {/* 📊 기본 통계 (그룹: stats) */}
+      {isGroupExpanded("stats") && (
       <TouchableOpacity onPress={() => toggleSection("basicStats")} activeOpacity={0.7}>
         <Section title={`📊 기본 통계 ${isExpanded("basicStats") ? "▼" : "▶"}`}>
           {isExpanded("basicStats") ? (
@@ -19556,8 +19627,10 @@ const TasteAnalysisScreen = memo(({
           )}
         </Section>
       </TouchableOpacity>
+      )}
 
-      {/* 대장르 분석 */}
+      {/* 대장르 분석 (그룹: genreTag) */}
+      {isGroupExpanded("genreTag") && (
       <TouchableOpacity onPress={() => toggleSection("majorGenre")}>
         <Section title={`📚 대장르 선호도 ${isExpanded("majorGenre") ? "▼" : "▶"}`}>
           <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
@@ -19596,8 +19669,10 @@ const TasteAnalysisScreen = memo(({
           )}
         </Section>
       </TouchableOpacity>
+      )}
 
-      {/* 부장르/태그 분석 */}
+      {/* 부장르/태그 분석 (그룹: genreTag) */}
+      {isGroupExpanded("genreTag") && (
       <TouchableOpacity onPress={() => toggleSection("subGenre")}>
         <Section title={`🏷️ 부장르 선호도 TOP 10 ${isExpanded("subGenre") ? "▼" : "▶"}`}>
           {subGenreAnalysis.slice(0, isExpanded("subGenre") ? 20 : 10).map((g, i) => (
@@ -19616,9 +19691,10 @@ const TasteAnalysisScreen = memo(({
           ))}
         </Section>
       </TouchableOpacity>
+      )}
 
-      {/* 🆕 v3.5.9: 카테고리별 태그 분석 */}
-      {categoryStats.length > 0 && (
+      {/* 🆕 v3.5.9: 카테고리별 태그 분석 (그룹: stats) */}
+      {isGroupExpanded("stats") && categoryStats.length > 0 && (
         <TouchableOpacity onPress={() => toggleSection("categoryAnalysis")}>
           <Section title={`📂 카테고리별 선호도 ${isExpanded("categoryAnalysis") ? "▼" : "▶"}`}>
             <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
@@ -19812,7 +19888,7 @@ const TasteAnalysisScreen = memo(({
       )}
 
       {/* 🆕 v3.2.1: 좌표계 기반 취향 분포 */}
-      {coordinatePreferenceAnalysis && coordinatePreferenceAnalysis.length > 0 && (
+      {isGroupExpanded("genreTag") && coordinatePreferenceAnalysis && coordinatePreferenceAnalysis.length > 0 && (
         <TouchableOpacity onPress={() => toggleSection("coordPref")}>
           <Section title={`📐 취향 좌표 분석 ${isExpanded("coordPref") ? "▼" : "▶"}`}>
             <Text style={{ color: C.sub, fontSize: 12, marginBottom: 12 }}>
@@ -19943,7 +20019,7 @@ const TasteAnalysisScreen = memo(({
       )}
 
       {/* 🆕 v3.2.1: 매칭 일관성 분석 */}
-      {matchConsistencyAnalysis && (
+      {isGroupExpanded("matching") && matchConsistencyAnalysis && (
         <TouchableOpacity onPress={() => toggleSection("matchConsist")}>
           <Section title={`🎯 매칭 일관성 분석 ${isExpanded("matchConsist") ? "▼" : "▶"}`}>
             {/* 요약 통계 */}
@@ -20040,7 +20116,7 @@ const TasteAnalysisScreen = memo(({
       )}
 
       {/* 🆕 v3.2.1: 유사 그룹 일관성 분석 */}
-      {similarGroupConsistency && similarGroupConsistency.length > 0 && (
+      {isGroupExpanded("matching") && similarGroupConsistency && similarGroupConsistency.length > 0 && (
         <TouchableOpacity onPress={() => toggleSection("simGroupConsist")}>
           <Section title={`🔗 유사 태그 일관성 ${isExpanded("simGroupConsist") ? "▼" : "▶"}`}>
             <Text style={{ color: C.sub, fontSize: 12, marginBottom: 12 }}>
@@ -20270,7 +20346,7 @@ const TasteAnalysisScreen = memo(({
       )}
 
       {/* 매칭 패턴 */}
-      {matchAnalysis.total > 0 && (
+      {isGroupExpanded("matching") && matchAnalysis.total > 0 && (
         <TouchableOpacity onPress={() => toggleSection("matchAnalysis")}>
           <Section title={`⚔️ 매칭 패턴 분석 ${isExpanded("matchAnalysis") ? "▼" : "▶"}`}>
             <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
@@ -20344,7 +20420,7 @@ const TasteAnalysisScreen = memo(({
       )}
 
       {/* 🎯 v3.1.2 스펙트럼 분석 UI */}
-      {spectrumAnalysis && Object.keys(spectrumAnalysis).length > 0 && (
+      {isGroupExpanded("genreTag") && spectrumAnalysis && Object.keys(spectrumAnalysis).length > 0 && (
         <TouchableOpacity onPress={() => toggleSection("spectrum")}>
           <Section title={`📊 취향 스펙트럼 ${isExpanded("spectrum") ? "▼" : "▶"}`}>
             <Text style={{ color: C.sub, fontSize: 12, marginBottom: 12 }}>
@@ -20640,7 +20716,8 @@ const TasteAnalysisScreen = memo(({
         )}
       </Section>
 
-      {/* 이상치 */}
+      {/* 이상치 (그룹: stats) */}
+      {isGroupExpanded("stats") && (
       <TouchableOpacity onPress={() => toggleSection("anomalies")}>
         <Section title={`🔬 데이터 품질 점검 ${isExpanded("anomalies") ? "▼" : "▶"}`}>
           <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
@@ -20743,9 +20820,10 @@ const TasteAnalysisScreen = memo(({
           )}
         </Section>
       </TouchableOpacity>
+      )}
 
-      {/* 🔮 v3.0.3: 이변(Upset) 분석 */}
-      {upsetAnalysis && upsetAnalysis.total > 0 && (
+      {/* 🔮 v3.0.3: 이변(Upset) 분석 (그룹: advanced) */}
+      {isGroupExpanded("advanced") && upsetAnalysis && upsetAnalysis.total > 0 && (
         <TouchableOpacity onPress={() => toggleSection("upsets")}>
           <Section title={`🔮 이변 분석 ${isExpanded("upsets") ? "▼" : "▶"}`}>
             <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
@@ -20847,7 +20925,7 @@ const TasteAnalysisScreen = memo(({
       )}
       
       {/* 🔮 v3.0.3: 이변 요인 분석 (누적 학습 데이터) */}
-      {factorAnalysis && factorAnalysis.total > 0 && (
+      {isGroupExpanded("advanced") && factorAnalysis && factorAnalysis.total > 0 && (
         <TouchableOpacity 
           onPress={() => toggleSection("factors")}
           activeOpacity={0.7}
@@ -20966,7 +21044,7 @@ const TasteAnalysisScreen = memo(({
       )}
 
       {/* 🧠 v3.5.4: 매칭 행동 분석 — preference_patterns 기반 에이전트 인사이트 */}
-      {analysis?.matchBehavior && (
+      {isGroupExpanded("matching") && analysis?.matchBehavior && (
         <TouchableOpacity onPress={() => toggleSection("matchBehavior")} activeOpacity={0.7}>
           <Section title={`🧠 매칭 행동 분석 (${analysis.matchBehavior.totalPatterns}개 패턴)`}>
             {isExpanded("matchBehavior") ? (
