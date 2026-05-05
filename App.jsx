@@ -2,9 +2,50 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.0.0 (Stage 1~5 전체 구현)                                             ║
+ * ║  버전: 7.0.1 (Stage 1~5 + 검토 보고서 13건 수정)                               ║
  * ║  최종 수정: 2026-05-05                                                        ║
- * ║  총 라인 수: 약 46,900줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 47,000줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.0.1 검토 보고서 13건 수정 (2026-05-05)                                  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ v7.0.0 직후 검토에서 식별된 Critical 3 + Major 3 + Minor 7 일괄 수정.         ║
+ * ║                                                                              ║
+ * ║ [Critical]                                                                    ║
+ * ║ • C1 (computeNewPosition): manual_order 충돌/gap 압축 차단                    ║
+ * ║   - rebalanceTierOrder 헬퍼 추가 (gap=100 invariant 복원 reflow)              ║
+ * ║   - finalize 후 source/dest tier 양쪽 reflow 호출                             ║
+ * ║   - passed.order === blocker.order 시 ±1 임시값 → reflow가 정합성 회복         ║
+ * ║ • C2 (saveEdit hybrid trigger): from=null 시 baseline을 oldTier(getDisplayTier ║
+ * ║   ELO fallback 결과)로 사용 → manual_tier 첫 부여 시 방향 판정 정확            ║
+ * ║ • C3 (swapRating 충돌 분기): oA===oB(같은 manual_order) 시 idA가 -50으로 위로  ║
+ * ║   이동하는데 suspicion이 overrated로 잘못 인입되던 모순 수정 → underrated 고정 ║
+ * ║                                                                              ║
+ * ║ [Major]                                                                       ║
+ * ║ • M1 (enqueueVerification): 1초 silent debounce → UPSERT (작품당 pending 1건  ║
+ * ║   보장 + 최신 trigger/suspicion 반영, priority는 max 유지)                    ║
+ * ║ • M2 (switchSlotDb reset): hybrid v7 state 6종 추가 누락 수정                  ║
+ * ║   (verificationSession/Stats/Gatekeeper/Modal + 2 ref) — 슬롯 누수 차단        ║
+ * ║ • M3 (performUndo): tier_change/tier_batch 되돌리기 시 hybrid 큐 cancel        ║
+ * ║                                                                              ║
+ * ║ [Minor]                                                                       ║
+ * ║ • N1 (시퀀스 중단): startVerificationSession() 호출 추가 — 다음 큐 자동 진행   ║
+ * ║ • N2 (decide/autoMatch): hybrid mode early-return 방어 추가                   ║
+ * ║ • N3 (AwardsScreen): tierMode prop 전달 → memo 리렌더 보장                    ║
+ * ║ • N4 (TasteAnalysisScreen): hybrid에서 matches 로드/분석 스킵 (CPU 절감)      ║
+ * ║ • N5 (backup): tier_repositioning_session(blocker_id 포함) export/import      ║
+ * ║   — 수문장 누적 통계 보존                                                       ║
+ * ║ • N6 (addNovel): manual_order = (같은 tier MAX) + 100 부여 — 신규 충돌 방지    ║
+ * ║ • N7 (검토 탭): hybrid 모드에서 검토 숨김 + 진입 시 redirect (manual과 통일)   ║
+ * ║                                                                              ║
+ * ║ [영향 없음 / 추후 개선]                                                         ║
+ * ║ • finalize 트리거 루프 우려: SQL 트리거 부재 + 시스템 path는 enqueue 호출 X    ║
+ * ║   → 영향 없음으로 확정                                                         ║
+ * ║ • blocker_id가 가리키는 작품 삭제 시: getGatekeeperCandidates의 INNER 매핑이   ║
+ * ║   .filter(r => r.id)로 누락분 제거 → 영향 없음                                 ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -17086,6 +17127,7 @@ const AwardsScreen = memo(({
   awardFilter,
   setAwardFilter,
   theme,
+  tierMode, // 🆕 v7.0.1 (N3 fix): hybrid mode 변경 시 memo invalidation
   onGiveAward,
   onRemoveAward,
   onSaveSettings,
@@ -17104,7 +17146,8 @@ const AwardsScreen = memo(({
   const [expandedCandidates, setExpandedCandidates] = useState({});
 
   // 🆕 v7.0: hybrid 모드 — manual_tier+manual_order 기준 정렬, 그 외(match)는 rating 기준
-  const isHybrid = globalTierConfig.mode === "hybrid";
+  // v7.0.1 (N3 fix): tierMode prop 우선 (memo 리렌더 보장), 미전달 시 globalTierConfig fallback
+  const isHybrid = (tierMode || globalTierConfig.mode) === "hybrid";
   const compareNovels = useCallback((a, b) => {
     if (isHybrid) {
       const tierOrder = getActiveTierOrder(globalTierConfig);
@@ -19188,8 +19231,10 @@ const TasteAnalysisScreen = memo(({
       console.log("Starting analysis, list length:", list?.length);
       // 🆕 v6.2: 최근 5000건만 로드 (LIMIT 없을 때 매칭 1만+ 메모리 부담)
       // matches는 analyzePreferences 내부에서 iteration용 (순서 무관, all()이 safeDbOperation 내장)
-      const matches = await all("SELECT * FROM matches ORDER BY created_at DESC LIMIT 5000");
-      console.log("Matches loaded:", matches?.length);
+      // v7.0.1 (N4 fix): hybrid 모드는 매칭 의존 분석 UI 미표시 → matches 로드/분석 스킵 (CPU 절감)
+      const isHybridSkip = globalTierConfig.mode === "hybrid";
+      const matches = isHybridSkip ? [] : await all("SELECT * FROM matches ORDER BY created_at DESC LIMIT 5000");
+      console.log("Matches loaded:", matches?.length, isHybridSkip ? "(hybrid skip)" : "");
       const result = await analyzePreferences(list, matches);
       console.log("Analysis complete:", result?.basicStats?.total);
       setAnalysis(result);
@@ -21608,22 +21653,31 @@ const VERIFICATION_PRIORITY = {
   new: 2,
   meta_edit: 1,
 };
-const _enqueueDebounce = new Map(); // novelId → last enqueue timestamp (1초 디바운스)
 
+// v7.0.1 (M1 fix): 1초 디바운스 silent drop → UPSERT (작품당 pending 1건 보장 + 최신 의도 반영)
 async function enqueueVerification(novelId, triggerType, suspicionType) {
   if (!novelId || !triggerType || !suspicionType) return;
   const now = Date.now();
-  // 디바운스: 같은 작품 1초 내 다중 변경은 1건만
-  const last = _enqueueDebounce.get(novelId) || 0;
-  if (now - last < 1000) return;
-  _enqueueDebounce.set(novelId, now);
-
   const priority = VERIFICATION_PRIORITY[triggerType] || 0;
   try {
-    await exec(
-      `INSERT INTO tier_verification_queue (id, novel_id, trigger_type, suspicion_type, priority, state, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
-      [uuid(), novelId, triggerType, suspicionType, priority, now]
+    // 동일 novel_id의 pending 엔트리가 이미 있으면 최신 trigger/suspicion으로 UPDATE
+    const existing = await first(
+      `SELECT id, priority FROM tier_verification_queue WHERE novel_id=? AND state='pending' LIMIT 1`,
+      [novelId]
     );
+    if (existing) {
+      // priority는 더 높은 쪽 유지 (gatekeeper 등 우선 신호 보존)
+      const finalPriority = Math.max(priority, Number(existing.priority) || 0);
+      await exec(
+        `UPDATE tier_verification_queue SET trigger_type=?, suspicion_type=?, priority=?, created_at=? WHERE id=?`,
+        [triggerType, suspicionType, finalPriority, now, existing.id]
+      );
+    } else {
+      await exec(
+        `INSERT INTO tier_verification_queue (id, novel_id, trigger_type, suspicion_type, priority, state, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+        [uuid(), novelId, triggerType, suspicionType, priority, now]
+      );
+    }
   } catch (e) {
     console.warn("enqueueVerification 오류:", e?.message);
   }
@@ -21796,24 +21850,26 @@ function computeNewPosition(suspicionNovel, candidates, responses, suspicionType
   }
 
   // 두 후보 사이 — 같은 tier면 단순 사이값, 다른 tier면 passed의 tier 끝/시작
+  // v7.0.1 (C1 fix): collision/gap 압축 위험은 finalize 후 rebalanceTierOrder로 복구
+  const passedOrder = Number(passedCand.manual_order) || 0;
+  const blockerOrder = Number(blockerCand.manual_order) || 0;
   if (suspicionType === "underrated") {
     // 위쪽으로 이동: passed보다 아래, blocker보다 위에 위치
     if (passedCand.manual_tier === blockerCand.manual_tier) {
-      const order = Math.floor((Number(passedCand.manual_order) + Number(blockerCand.manual_order)) / 2);
+      // 충돌 시(같은 order)는 일단 passed-1로 두고 finalize의 rebalance가 정합성 회복
+      const order = passedOrder === blockerOrder ? passedOrder - 1 : Math.floor((passedOrder + blockerOrder) / 2);
       return { tier: passedCand.manual_tier, order, blockerId: blockerCand.id, action: "moved" };
     } else {
-      // tier가 다르면 passed의 tier로 이동 (passed보다 약간 아래)
-      const order = (Number(passedCand.manual_order) || 0) + 50;
-      return { tier: passedCand.manual_tier, order, blockerId: blockerCand.id, action: "moved" };
+      // tier가 다르면 passed의 tier로 이동 (passed보다 약간 아래) — gap은 rebalance가 복구
+      return { tier: passedCand.manual_tier, order: passedOrder + 50, blockerId: blockerCand.id, action: "moved" };
     }
   } else {
     // overrated: 아래쪽으로 이동: passed보다 위, blocker보다 아래
     if (passedCand.manual_tier === blockerCand.manual_tier) {
-      const order = Math.floor((Number(passedCand.manual_order) + Number(blockerCand.manual_order)) / 2);
+      const order = passedOrder === blockerOrder ? passedOrder + 1 : Math.floor((passedOrder + blockerOrder) / 2);
       return { tier: passedCand.manual_tier, order, blockerId: blockerCand.id, action: "moved" };
     } else {
-      const order = (Number(passedCand.manual_order) || 0) - 50;
-      return { tier: passedCand.manual_tier, order, blockerId: blockerCand.id, action: "moved" };
+      return { tier: passedCand.manual_tier, order: passedOrder - 50, blockerId: blockerCand.id, action: "moved" };
     }
   }
 }
@@ -21852,6 +21908,14 @@ async function finalizeVerificationSession(queueRow, suspicionNovel, candidates,
       } else {
         await exec("UPDATE novels SET manual_order=? WHERE id=?", [newPos.order, suspicionNovel.id]);
       }
+      // v7.0.1 (C1 fix): 자리 재배치 후 manual_order gap=100 invariant 회복
+      if (newPos.tier) {
+        await rebalanceTierOrder(newPos.tier);
+      }
+      // 떠난 tier도 구멍 메우기 (티어 이동 시)
+      if (tierChanged && suspicionNovel.manual_tier) {
+        await rebalanceTierOrder(suspicionNovel.manual_tier);
+      }
     }
 
     // 3. tier_verification_queue 처리 완료
@@ -21883,6 +21947,29 @@ async function logVerificationMatch(sessionId, suspicionId, candidateId, suspici
     );
   } catch (e) {
     console.warn("[v7.0] logVerificationMatch 오류:", e?.message);
+  }
+}
+
+// 🆕 v7.0.1 (C1 fix): tier 그룹 manual_order 재정렬 — gap=100 invariant 복원
+// 시퀀스 finalize 후 호출하여 충돌/gap 압축 누적을 차단.
+async function rebalanceTierOrder(tier) {
+  if (!tier) return;
+  try {
+    const rows = await all(
+      `SELECT id FROM novels WHERE manual_tier = ? ORDER BY manual_order ASC, created_at ASC`,
+      [tier]
+    );
+    if (!rows || rows.length === 0) return;
+    const queries = [];
+    for (let i = 0; i < rows.length; i++) {
+      queries.push({
+        sql: `UPDATE novels SET manual_order = ? WHERE id = ?`,
+        params: [(i + 1) * 100, rows[i].id],
+      });
+    }
+    if (queries.length > 0) await execBatch(queries);
+  } catch (e) {
+    console.warn("[v7.0] rebalanceTierOrder 오류:", e?.message);
   }
 }
 
@@ -24673,6 +24760,13 @@ function AppContent() {
       setUpsetFactors({ factors: [], lastUpdated: 0 });
       setTagRelations({ groups: {}, tagToGroup: {} });
       setTagCoOccurrences({});
+      // v7.0.1 (M2 fix): hybrid 검증 state도 슬롯 격리 (이전 슬롯 sessionId/응답 누수 방지)
+      setVerificationSession(null);
+      setVerificationStats({ pending: 0, resolved: 0 });
+      setGatekeeperCandidates([]);
+      setGatekeeperModalOpen(false);
+      verificationSessionIdRef.current = null;
+      verificationLoadingRef.current = false;
       // 🔧 v6.0.1: 새 슬롯의 registry를 그대로 사용 (사용자 정의 태그 보존)
       // 🔧 슬롯 전환: slotRegistry가 null이면 팩토리 기본값으로 초기화 (이전 슬롯 데이터 잔류 방지)
       if (slotRegistry) {
@@ -28604,6 +28698,13 @@ function AppContent() {
             item.payload.id
           ]);
           addTierHistoryEntry(item.payload.id, item.payload.title, item.payload.newTier, item.payload.prevTier);
+          // v7.0.1 (M3 fix): hybrid에서 큐 정합성 — 변경된 적 없는 상태로 복귀하므로 pending 큐 cancel
+          if (globalTierConfig.mode === "hybrid") {
+            await exec(
+              `UPDATE tier_verification_queue SET state='cancelled', processed_at=? WHERE novel_id=? AND state='pending'`,
+              [Date.now(), item.payload.id]
+            );
+          }
           break;
 
         case 'tier_batch':
@@ -28613,6 +28714,15 @@ function AppContent() {
               isGatedTier(change.prevTier, globalTierConfig) ? change.prevTier : null,
               change.id
             ]);
+          }
+          // v7.0.1 (M3 fix): hybrid 큐 정합성
+          if (globalTierConfig.mode === "hybrid" && item.payload.changes.length > 0) {
+            const ids = item.payload.changes.map(c => c.id);
+            const placeholders = ids.map(() => "?").join(",");
+            await exec(
+              `UPDATE tier_verification_queue SET state='cancelled', processed_at=? WHERE novel_id IN (${placeholders}) AND state='pending'`,
+              [Date.now(), ...ids]
+            );
           }
           break;
           
@@ -29109,13 +29219,36 @@ function AppContent() {
       const now = Date.now();
       
       // 🏷️ v5.0: tag_data 생성
-      const tagDataJson = newTagData && newTagData.length > 0 
-        ? JSON.stringify(newTagData) 
+      const tagDataJson = newTagData && newTagData.length > 0
+        ? JSON.stringify(newTagData)
         : "";
-      
+
+      // 🆕 v6.0: 모드별 manual_tier 결정 (한 번 계산하여 INSERT + manual_order 산출에 재사용)
+      const initialManualTier = (() => {
+        if (globalTierConfig.mode === "manual") return newManualTier || globalTierConfig.defaultTier;
+        if (globalTierConfig.mode === "hybrid" && newManualTier) return newManualTier;
+        if (globalTierConfig.mode === "match" && globalTierConfig.allowRegistrationTier && newManualTier) return newManualTier;
+        return null;
+      })();
+
+      // 🆕 v7.0.1 (N6 fix): 신규 작품 manual_order = 같은 tier 최대 + 100 (collision 방지)
+      let initialManualOrder = 0;
+      try {
+        if (initialManualTier) {
+          const maxRow = await first("SELECT MAX(manual_order) AS m FROM novels WHERE manual_tier=?", [initialManualTier]);
+          initialManualOrder = (Number(maxRow?.m) || 0) + 100;
+        } else {
+          // manual_tier 미설정 시 NULL 그룹 (Unrated) 안에서 max+100
+          const maxRow = await first("SELECT MAX(manual_order) AS m FROM novels WHERE manual_tier IS NULL OR manual_tier=''");
+          initialManualOrder = (Number(maxRow?.m) || 0) + 100;
+        }
+      } catch (e) {
+        console.warn("[v7.0] addNovel manual_order 계산 실패:", e?.message);
+      }
+
       await exec(
-        `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+        `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
         [
           id,
           t,
@@ -29148,13 +29281,8 @@ function AppContent() {
           tagDataJson, // 🏷️ v5.0
           serializeQuotes(memorableQuote), // 💬 인상깊은 문장 (텍스트+이미지)
           "", // aliases (빈 값)
-          // 🆕 v6.0: 모드별 manual_tier 설정
-          (() => {
-            if (globalTierConfig.mode === "manual") return newManualTier || globalTierConfig.defaultTier;
-            if (globalTierConfig.mode === "hybrid" && newManualTier) return newManualTier;
-            if (globalTierConfig.mode === "match" && globalTierConfig.allowRegistrationTier && newManualTier) return newManualTier;
-            return null;
-          })(),
+          initialManualTier,
+          initialManualOrder, // 🆕 v7.0.1 (N6 fix)
         ]
       );
       // 🔧 v3.5.9: 텍스트 입력 태그 → customTags 동기화 (태그 관리 모달 연동)
@@ -29932,7 +30060,9 @@ function AppContent() {
 
       // 🆕 v6.0: manual_tier 업데이트 (manual/hybrid 모드에서만)
       // 🆕 v7.0: hybrid 모드 — manual_tier 변경 시 검증 큐 트리거 (방향 따라 suspicion 결정)
-      let _v7TierChanged = null; // {from, to} for hybrid trigger
+      // v7.0.1 (C2 fix): manual_tier=null이면 ELO fallback tier(getDisplayTier)를 baseline으로 사용
+      //                  사용자 시점에서 보던 표시 티어 기준으로 방향 판정해야 정확함
+      let _v7TierChanged = null; // {fromDisplayTier, to} for hybrid trigger
       if (globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid") {
         const newMt = editManualTier || null;
         if (newMt !== n.manual_tier) {
@@ -29942,7 +30072,7 @@ function AppContent() {
             addTierHistoryEntry(n.id, n.title, oldTier, newMt);
           }
           if (globalTierConfig.mode === "hybrid" && newMt) {
-            _v7TierChanged = { from: n.manual_tier || null, to: newMt };
+            _v7TierChanged = { fromDisplayTier: oldTier, to: newMt };
           }
         }
       }
@@ -30051,15 +30181,15 @@ function AppContent() {
       }
 
       // 🆕 v7.0: hybrid 모드 — manual_tier/메타 편집 검증 큐 트리거
+      // v7.0.1 (C2 fix): fromDisplayTier 기반 방향 판정 (manual_tier=null이어도 ELO fallback 반영)
       if (globalTierConfig.mode === "hybrid") {
         try {
           if (_v7TierChanged) {
-            // 새 티어 → 검증할 방향 결정 (위로 이동=underrated, 아래로 이동=overrated)
             const order = getActiveTierOrder(globalTierConfig);
-            const fromIdx = _v7TierChanged.from ? order.indexOf(_v7TierChanged.from) : order.length;
+            const fromIdx = order.indexOf(_v7TierChanged.fromDisplayTier);
             const toIdx = order.indexOf(_v7TierChanged.to);
-            // 작은 idx = 높은 티어
-            const suspicion = toIdx < fromIdx ? "underrated" : "overrated";
+            // fromIdx 미정시 (이전 표시 티어가 active 목록에 없음) — 신중하게 underrated 기본값
+            const suspicion = fromIdx === -1 ? "underrated" : (toIdx < fromIdx ? "underrated" : "overrated");
             await enqueueVerification(n.id, "tier_change", suspicion);
           } else if (n.manual_tier) {
             // 메타 편집 (제목/태그/작가 등 변경) — manual_tier 있는 작품만 큐 인입
@@ -30569,8 +30699,13 @@ function AppContent() {
       const tierBeforeB = getDisplayTier(B, globalTierConfig);
 
       // 🆕 v6.0: manual 모드에서는 Elo 계산 스킵 (매칭 자체가 비활성화되어야 하지만 안전장치)
+      // 🆕 v7.0.1 (N2 fix): hybrid 모드도 ELO 갱신 비활성 — 검증 시퀀스가 자체적으로 manual_order/tier 갱신
       if (globalTierConfig.mode === "manual") {
         console.warn("decide: manual 모드에서 매칭 호출됨 (무시)");
+        return;
+      }
+      if (globalTierConfig.mode === "hybrid") {
+        console.warn("decide: hybrid 모드에서 매칭 호출됨 (무시 — 검증 시퀀스를 사용하세요)");
         return;
       }
 
@@ -30897,6 +31032,8 @@ function AppContent() {
   useEffect(() => {
     // ref 기반 동기 guard
     if (isAutoMatchingRef.current) return;
+    // v7.0.1 (N2 fix): hybrid 모드에서는 자동매칭 useEffect 비활성 (검증 시퀀스가 별도 시스템)
+    if (globalTierConfig.mode === "hybrid") return;
     if (!autoEnabled || !pair || !matchAnalysis) return;
     
     // 🔧 v3.5.15: pair 일치 검증 — matchAnalysis가 현재 pair에 대한 것인지 확인
@@ -31840,21 +31977,24 @@ function AppContent() {
       const rowB = await first("SELECT manual_order FROM novels WHERE id=?", [idB]);
       const oA = Number(rowA?.manual_order) || 0;
       const oB = Number(rowB?.manual_order) || 0;
+      // v7.0.1 (C3 fix): 충돌 분기에서 idA는 명시적으로 UP(-50) 이동 → suspicion도 underrated 고정
+      let suspicionForHybrid;
       if (oA === oB) {
         await execBatch([
           { sql: "UPDATE novels SET manual_order=? WHERE id=?", params: [oB - 50, idA] },
         ]);
+        suspicionForHybrid = "underrated"; // -50 = 위로 이동
       } else {
         await execBatch([
           { sql: "UPDATE novels SET manual_order=? WHERE id=?", params: [oB, idA] },
           { sql: "UPDATE novels SET manual_order=? WHERE id=?", params: [oA, idB] },
         ]);
+        suspicionForHybrid = oA > oB ? "underrated" : "overrated"; // 작은 order = 위
       }
-      // 🆕 v7.0: hybrid 모드 — 사용자 path 트리거 (idA가 위로 이동했으면 underrated, 아래로 이동했으면 overrated)
+      // 🆕 v7.0: hybrid 모드 — 사용자 path 트리거
       if (mode === "hybrid") {
-        const suspicion = oA > oB ? "underrated" : "overrated"; // 작은 order = 위
         try {
-          await enqueueVerification(idA, "order_change", suspicion);
+          await enqueueVerification(idA, "order_change", suspicionForHybrid);
         } catch (e) {
           console.warn("검증 큐 INSERT 실패:", e?.message);
         }
@@ -32449,6 +32589,29 @@ async function exportJSON() {
       }
     } catch (giErr) {
       console.warn("gallery_images 백업 실패:", giErr);
+    }
+
+    // 🆕 v7.0.1 (N5 fix): tier_repositioning_session 백업 (RS = Repositioning Sessions)
+    // 수문장 식별 누적 통계(blocker_id COUNT≥5) 보존을 위해 결과 row 자체 보존
+    try {
+      const rsRows = await all(
+        `SELECT novel_id, suspicion_type, trigger_type, state, result_tier, result_order, result_action, total_responses, blocker_id, created_at, completed_at
+         FROM tier_repositioning_session
+         WHERE state='completed' AND blocker_id IS NOT NULL
+         ORDER BY created_at DESC LIMIT 500`
+      );
+      if (rsRows && rsRows.length > 0) {
+        // 압축: novel_id/blocker_id는 NID 매핑으로 복원 시 remap
+        payload.RS = rsRows.map(r => ({
+          n: r.novel_id, st: r.suspicion_type, tt: r.trigger_type || "",
+          s: r.state, rt: r.result_tier || "", ro: r.result_order != null ? r.result_order : null,
+          ra: r.result_action || "", tr: r.total_responses || 0, b: r.blocker_id || "",
+          c: r.created_at, cp: r.completed_at || r.created_at,
+        }));
+        if (!payload.NID) payload.NID = novels.map(n => n.id);
+      }
+    } catch (rsErr) {
+      console.warn("tier_repositioning_session 백업 실패:", rsErr);
     }
 
     // 📋 v3.3.0: 예정 작품 백업 (PL = Planned List)
@@ -33178,6 +33341,30 @@ async function importJSON() {
                 console.warn("폴더 복원 실패:", fdErr);
               }
 
+              // 🆕 v7.0.1 (N5 fix): 시퀀스 결과(수문장 통계) 복원
+              if (Array.isArray(data.RS) && data.RS.length > 0) {
+                try {
+                  const rsQueries = [];
+                  for (const r of data.RS) {
+                    const novelId = remapNovelId(r.n);
+                    const blockerId = remapNovelId(r.b);
+                    rsQueries.push({
+                      sql: `INSERT OR IGNORE INTO tier_repositioning_session
+                            (id, novel_id, suspicion_type, trigger_type, state, result_tier, result_order, result_action, total_responses, blocker_id, created_at, completed_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                      params: [
+                        uuid(), novelId, r.st, r.tt || null, r.s || "completed",
+                        r.rt || null, r.ro != null ? r.ro : null, r.ra || "moved",
+                        r.tr || 0, blockerId || null, r.c || Date.now(), r.cp || r.c || Date.now(),
+                      ],
+                    });
+                  }
+                  if (rsQueries.length > 0) await execBatch(rsQueries);
+                } catch (rsErr) {
+                  console.warn("repositioning_session 복원 실패:", rsErr);
+                }
+              }
+
               // 🎨 v3.8.0: 갤러리 이미지 복원
               if (Array.isArray(data.GI) && data.GI.length > 0) {
                 try {
@@ -33689,7 +33876,12 @@ async function importJSON() {
     const plannedCount = plannedList?.length || 0;
     
     // 🆕 v6.0: manual 모드에서 매칭/리뷰 탭 숨김
+    // 🆕 v7.0.1 (N7 fix): hybrid 모드도 검토 탭(ELO 권장값 기반) 숨김 + 배정 노출
+    //                     매칭 탭은 검증 시퀀스로 변형되므로 hybrid에서 그대로 노출
     const isManualMode = globalTierConfig.mode === "manual";
+    const isHybridMode = globalTierConfig.mode === "hybrid";
+    const showReview = !isManualMode && !isHybridMode; // match 모드에서만
+    const showTierManage = isManualMode || isHybridMode;
 
     return (
     <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
@@ -33699,11 +33891,12 @@ async function importJSON() {
         ["📰최신", "recent"],
         ["순위", "rank"],
         ["🏆수상", "awards"],
-        ...(!isManualMode ? [["검토", "review"]] : [["🏷️배정", "tierManage"]]),
+        ...(showReview ? [["검토", "review"]] : []),
+        ...(showTierManage ? [["🏷️배정", "tierManage"]] : []),
         ["보충", "supplement"],
         ["취향", "taste"],
         ["추천", "reco"],
-        ...(!isManualMode ? [["매칭", "match"]] : []),
+        ...(!isManualMode ? [["매칭", "match"]] : []), // hybrid는 검증 시퀀스로 변형 (유지)
         ["분석", "analysis"],
         ["대량", "bulk"],
         ["🖼️표지", "covers"], // 🆕 v3.4.5
@@ -35947,6 +36140,7 @@ async function importJSON() {
             awardFilter={awardFilter}
             setAwardFilter={setAwardFilter}
             theme={C}
+            tierMode={globalTierConfig.mode}
             onGiveAward={async (novelId, awardId, year) => {
               // 수상 부여
               const novel = listMap.get(novelId);
@@ -36140,14 +36334,15 @@ async function importJSON() {
                         <OutlineButton
                           title="시퀀스 중단"
                           onPress={() => {
-                            Alert.alert("확인", "현재 시퀀스를 중단할까요? 누적 응답이 폐기됩니다.", [
+                            Alert.alert("확인", "현재 시퀀스를 중단할까요? 누적 응답이 폐기되고 다음 의심작으로 진행합니다.", [
                               { text: "취소" },
                               {
                                 text: "중단", style: "destructive",
                                 onPress: async () => {
-                                  // 큐 항목은 다시 pending으로 (재시도 가능)
+                                  // v7.0.1 (N1 fix): 큐 항목은 pending 유지(재시도 가능) + 다음 큐로 자동 진행
                                   setVerificationSession(null);
                                   verificationSessionIdRef.current = null;
+                                  startVerificationSession();
                                 },
                               },
                             ]);
@@ -40790,7 +40985,10 @@ async function importJSON() {
                             }
                             saveAppSettings({ tierSystemConfig: newConfig });
                             // 🆕 v6.1: 모드 전환 시 화면 리다이렉트 (숨겨지는 탭 대응)
+                            // v7.0.1 (N7 fix): hybrid 진입 시 review 탭 숨김 → 리다이렉트
                             if (m.key === "manual" && (screen === "match" || screen === "review")) {
+                              setScreen("tierManage");
+                            } else if (m.key === "hybrid" && screen === "review") {
                               setScreen("tierManage");
                             } else if (m.key === "match" && screen === "tierManage") {
                               setScreen("home");
