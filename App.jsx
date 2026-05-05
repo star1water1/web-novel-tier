@@ -2,9 +2,88 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.9.3                                                                   ║
+ * ║  버전: 6.2.0                                                                   ║
  * ║  최종 수정: 2026-05-05                                                        ║
- * ║  총 라인 수: 약 45,500줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 45,700줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v6.2 티어 모드 / 취향 분석 시스템 개선 (2026-05-05)                        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ 사용자 요청에 따른 하이브리드 모드·취향 분석 메타 검토 후 4 phase 구현.       ║
+ * ║ 각 phase는 별도 commit (b93add3, 6b5abb0, c6d6594, c07b279).                 ║
+ * ║                                                                              ║
+ * ║ [정책 결정 — 사용자 답변 반영]                                                 ║
+ * ║ • manual_tier: 모드 전환 시 보존 (match에서 무시되지만 hybrid/manual 복귀 시  ║
+ * ║   부활). 절대 NULL 강제 안 함.                                                ║
+ * ║ • 취향 분석: 탭 진입/list 변동 시 800ms 디바운스 후 재분석 (stale 방지)       ║
+ * ║ • 23개 섹션 UI → 4그룹 카테고리 리팩터링 (모바일 길이 부담 완화)              ║
+ * ║ • 자동매칭 진행 중: 모드 버튼 완전 잠금                                       ║
+ * ║                                                                              ║
+ * ║ [Phase 1] 정합성 버그 수정 + 메모리 부담 완화                                  ║
+ * ║ • 프리셋 match 적용 시 manual_tier 손실 수정 (App.jsx:39516)                 ║
+ * ║   - 이전: gated 외 모든 manual_tier NULL → 사용자 의도 손실                   ║
+ * ║   - 변경: 새 tier 키 집합에 없는 키만 마이그레이션, 그 외 보존               ║
+ * ║ • 자동매칭 중 모드 변경 차단 + 다중 클릭 race 방지 (App.jsx:39418)            ║
+ * ║   - modeChangingRef useRef + isAutoMatching disabled + opacity 0.4           ║
+ * ║   - 안내 Alert은 매칭 큐 외부 호출 (불변규칙 #1 안전)                         ║
+ * ║   - try/finally로 가드 자동 해제                                              ║
+ * ║ • 취향 분석 matches LIMIT 5000 (App.jsx:18840)                                ║
+ * ║   - ORDER BY DESC LIMIT 5000, iteration용이라 순서 무관                       ║
+ * ║                                                                              ║
+ * ║ [Phase 2] 자동 갱신 + UX 개선                                                 ║
+ * ║ • ActualTierTag 신규 작품 미평가 라벨 (App.jsx:9737)                          ║
+ * ║   - match/hybrid + manual_tier 미설정 + match_count==0 → "미평가" 칩         ║
+ * ║   - default rating 1500이 의미 없는 티어로 표시되던 문제 해결                 ║
+ * ║ • TasteAnalysisScreen 디바운스 자동 재분석 (App.jsx:18866)                    ║
+ * ║   - listSignature(작품수+match_count합+rating합) 변화 감지 시 800ms          ║
+ * ║   - 기존 !analysis 가드는 첫 진입 후 영원히 stale 가능                        ║
+ * ║ • hybrid 모드 자동매칭 시작 시 안내 (App.jsx:35072)                            ║
+ * ║   - Switch onValueChange wrapper로 manual_tier 우선 정책 명시                ║
+ * ║ • hybrid 진입 자동 백필 제거 (App.jsx:39478, 39548)                          ║
+ * ║   - 이전: 진입 시점 ELO가 박제되어 이후 매칭 결과 미반영                      ║
+ * ║   - 변경: getDisplayTier의 ELO fallback에 위임 (manual 모드만 백필)           ║
+ * ║                                                                              ║
+ * ║ [Phase 3] 취향 분석 4그룹 카테고리화                                           ║
+ * ║ • SECTION_GROUPS 4그룹 정의 (13개 활성 섹션) (App.jsx:18681)                  ║
+ * ║   - stats(3): basicStats, categoryAnalysis, anomalies                        ║
+ * ║   - genreTag(4): majorGenre, subGenre, coordPref, spectrum                  ║
+ * ║   - matching(4): matchAnalysis, matchBehavior, matchConsist, simGroup       ║
+ * ║   - advanced(2): upsets, factors                                             ║
+ * ║ • expandedGroups state + app_meta 영속화 (slot DB 격리, slot별 자동 분리)     ║
+ * ║ • 4개 그룹 토글 칩 UI (핵심 요약 카드 직전)                                    ║
+ * ║ • 13개 섹션에 isGroupExpanded 가드 (9 AND 결합 + 4 wrapping)                ║
+ * ║ • expandAll/collapseAll 그룹 동기화                                           ║
+ * ║ • 23개 섹션 키 중 사용 안 되던 11개 dead code 제거                             ║
+ * ║                                                                              ║
+ * ║ [Phase 4] 백업 v9 tierSystemConfig 호환성                                     ║
+ * ║ • buildExtendedBackup — tierSystemConfig 항상 저장 (App.jsx:31311)            ║
+ * ║   - 이전: default와 동일하면 미저장 → cross-slot import 시 manual_tier      ║
+ * ║     키 불일치 위험                                                            ║
+ * ║   - 변경: 항상 저장 (~200B 추가). import 시 globalTierConfig 자동 동기화     ║
+ * ║ • import 시 manual_tier 키 검증 (App.jsx:31864, 31904)                       ║
+ * ║   - validTierKeys Set 캐시 (행 루프 비용 O(1))                                ║
+ * ║   - 현재 globalTierConfig에 없는 키는 NULL (구버전/손상 백업 안전망)         ║
+ * ║                                                                              ║
+ * ║ [메타 검토 — plan 자기 수정]                                                   ║
+ * ║ • 1차 plan의 "safeDbOperation 일관성" 작업 폐기                               ║
+ * ║   - all()/first()/exec()는 이미 내부에서 safeDbOperation 호출                 ║
+ * ║   - 추가 래핑은 이중 retry (5×5=25회) + PerfMonitor 중복 추적                ║
+ * ║ • 1차 plan의 "matches ASC + LIMIT 5000" 폐기                                 ║
+ * ║   - ASC + LIMIT은 가장 오래된 5000건만 → trend/matchAnalysis 오염             ║
+ * ║   - 변경: DESC + LIMIT (최근 5000건)                                          ║
+ * ║                                                                              ║
+ * ║ [불변규칙 검증]                                                                ║
+ * ║ • #1 자동매칭 중 Alert 호출 금지: 모드 변경/자동매칭 안내 Alert은 모두 매칭   ║
+ * ║   큐 외부 호출 (사용자 토글 진입 직전) — 안전                                 ║
+ * ║ • #2~5: 두 시스템 모두 매칭 큐 외부, 직접 위반 없음                           ║
+ * ║                                                                              ║
+ * ║ [버전 점프 사유]                                                               ║
+ * ║ • v3.9.3 (갤러리 확대 수정) → v6.2로 점프                                     ║
+ * ║ • v6.0~6.1이 티어 시스템 메이저였으므로 본 변경(티어 모드 + 취향 분석)도      ║
+ * ║   v6.x 라인을 따름. v3.x → v6.x 통합 (사용자 결정).                          ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
