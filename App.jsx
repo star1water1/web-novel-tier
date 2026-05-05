@@ -2,23 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.0.0-alpha (Stage 1+2 부분 구현)                                       ║
+ * ║  버전: 7.0.0 (Stage 1~5 전체 구현)                                             ║
  * ║  최종 수정: 2026-05-05                                                        ║
- * ║  총 라인 수: 약 45,900줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 46,900줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
- * ║ 🆕 v7.0 하이브리드 모드 동적 자리 탐색 시스템 (2026-05-05)                    ║
+ * ║ 🆕 v7.0 하이브리드 모드 동적 자리 탐색 시스템 (2026-05-05) — Stage 3~5 완료    ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║                                                                              ║
- * ║ 사용자 의도 7+ 차례 통합 후 plan v13 승인 → 점진 구현 시작.                    ║
+ * ║ 사용자 의도 7+ 차례 통합 후 plan v13 승인 → 전 단계 완료.                      ║
  * ║                                                                              ║
  * ║ [패러다임 변경]                                                                ║
  * ║ • mode === "hybrid"는 기존 ELO/자동매칭/점수 시스템과 분리된 새 시스템.       ║
  * ║   manual_tier + manual_order가 "잠정 truth", 사용자 편집 행위가 검증 트리거.  ║
  * ║ • 동적 탐색 시퀀스: 변곡점(승패 변동) 알고리즘으로 자리 결정 + 수문장 식별.    ║
  * ║                                                                              ║
- * ║ [Stage 1+2: DB 인프라 + manual_order — 본 커밋]                                ║
+ * ║ [Stage 1+2: DB 인프라 + manual_order — 이전 커밋]                              ║
  * ║ • novels.manual_order 컬럼 추가 (gap 100, 백필 1회 실행)                      ║
  * ║ • 신규 테이블 3개: tier_verification_queue, tier_validation_log,              ║
  * ║   tier_repositioning_session                                                  ║
@@ -30,11 +30,54 @@
  * ║ • ▲/▼ 가드: hybrid 모드에서도 활성                                            ║
  * ║ • 백업/복원: manual_order 항상 저장 (opt.mo)                                  ║
  * ║                                                                              ║
- * ║ [Stage 3-5: 후속 작업]                                                         ║
- * ║ • Stage 3: 트리거 hook (작품 CRUD 연결) + HybridVerificationView UI +         ║
- * ║   시퀀스 엔진 (변곡점 알고리즘, K=2 추가 매칭, max=7)                         ║
- * ║ • Stage 4: 수문장 식별 SQL + 제안 모달                                        ║
- * ║ • Stage 5: TasteAnalysisScreen + AwardsScreen hybrid 전용 재설계              ║
+ * ║ [Stage 3a: CRUD 트리거 hook — 본 커밋]                                         ║
+ * ║ • addNovel: manual_tier 설정된 신규 등록 → enqueueVerification("new",         ║
+ * ║   "underrated") priority=2                                                    ║
+ * ║ • saveEdit: manual_tier 변경 → 방향 판정(상승=underrated, 강등=overrated) →   ║
+ * ║   enqueueVerification("tier_change", suspicion) priority=4                    ║
+ * ║ • saveEdit: 메타 변경(manual_tier 동일) + manual_tier 보유 →                  ║
+ * ║   enqueueVerification("meta_edit", "underrated") priority=1                   ║
+ * ║ • batchSetTier: 작품별 prev → 방향 판정 후 작품별 enqueueVerification         ║
+ * ║ • 인라인 티어 칩(순위 탭): 사용자 티어 변경 시 hybrid 트리거 추가              ║
+ * ║                                                                              ║
+ * ║ [Stage 3b: 시퀀스 엔진 — 본 커밋]                                              ║
+ * ║ • VERIFICATION_MAX_RESPONSES = 7, K_AFTER_INFLECTION = 2                      ║
+ * ║ • findInflectionPoint: suspicionWon 시퀀스에서 첫 가설 부정 인덱스 반환        ║
+ * ║ • evaluateSequenceProgress: max | decisive | no_inflection | continue 판정    ║
+ * ║ • computeNewPosition: 변곡점 직전(passed) 후보와 변곡점(blocker) 후보 사이로   ║
+ * ║   manual_tier/manual_order 산출 — 같은 tier면 사이값, 다른 tier면 passed쪽    ║
+ * ║ • finalizeVerificationSession: 시스템 path UPDATE(트리거 X) + queue resolved + ║
+ * ║   tier_repositioning_session INSERT (blocker_id 기록)                         ║
+ * ║ • logVerificationMatch: tier_validation_log 매 응답 INSERT                    ║
+ * ║ • getNextVerificationTarget: pending+priority DESC 큐 fetch (1초 cutoff)      ║
+ * ║ • getGatekeeperCandidates: blocker_id COUNT≥5 작품 누적 후보 조회             ║
+ * ║                                                                              ║
+ * ║ [Stage 3c: HybridVerificationView UI — 본 커밋]                                ║
+ * ║ • {screen=="match" && mode=="hybrid"}: 새 검증 시퀀스 화면으로 분기            ║
+ * ║ • {screen=="match" && mode!="hybrid"}: 기존 ELO 매칭 화면 유지                ║
+ * ║ • 의심작 vs 후보 1:1 매칭 UI (의심작 라벨/티어 칩 표시)                       ║
+ * ║ • 진행도 바 (currentIdx/MAX) + 변곡점 발견 인디케이터 + K 잔여 카운트          ║
+ * ║ • 시퀀스 중단 / 작품 건너뛰기 컨트롤                                            ║
+ * ║ • 자동 시작 useEffect (screen 진입 + mode === hybrid)                          ║
+ * ║ • verificationLoadingRef: 재진입 가드 (state 배칭 회피)                       ║
+ * ║ • setTimeout 재시도 패턴: no_candidates / 작품 삭제 시 다음 큐 자동 처리      ║
+ * ║                                                                              ║
+ * ║ [Stage 4: 수문장 후보 + 제안 모달 — 본 커밋]                                   ║
+ * ║ • 매칭 화면 헤더: 수문장 후보 수 인디케이터 (5개 누적 시)                     ║
+ * ║ • 모달: 작품별 변곡점 등장 횟수 + 1단계 위/아래 티어 변경 버튼                ║
+ * ║ • 수문장 티어 변경 → enqueueVerification("gatekeeper", suspicion) priority=5  ║
+ * ║                                                                              ║
+ * ║ [Stage 5: TasteAnalysisScreen + AwardsScreen 재설계 — 본 커밋]                 ║
+ * ║ • TasteAnalysisScreen: hybrid 모드 안내 배너 추가                             ║
+ * ║   - 매칭/심화 그룹(matching, advanced) 토글 칩 미표시                         ║
+ * ║   - 6개 매칭 기반 섹션 렌더 가드(!isHybridMode &&)                            ║
+ * ║   - 통계/장르태그/좌표계/스펙트럼은 그대로 동작                               ║
+ * ║ • AwardsScreen: hybrid 모드 안내 배너 추가                                    ║
+ * ║   - compareNovels: hybrid에서 manual_tier(idx asc) → manual_order(asc) 정렬   ║
+ * ║   - 4개 sort 콜백 모두 compareNovels로 통일                                   ║
+ * ║   - calculateNovelScore: hybrid에서 ELO rating 점수 비활성, 티어×30 + order   ║
+ * ║   - 승률(#7) 가산 hybrid에서 비활성                                           ║
+ * ║   - rating.toFixed(0)점 → hybrid에선 "{tier} #{order}" 표시                  ║
  * ║                                                                              ║
  * ║ [정책 결정 — 사용자 7+ 차례 답변 통합]                                          ║
  * ║ • 자동매칭: hybrid 비활성. 매칭 탭은 검증 시퀀스 UI로 변형                     ║
@@ -17056,9 +17099,25 @@ const AwardsScreen = memo(({
   const [newTagInput, setNewTagInput] = useState("");
   const [editingAwardId, setEditingAwardId] = useState(null);
   const [settingsScrollKey, setSettingsScrollKey] = useState(0); // 🔧 v3.5.8: onShow 리마운트
-  
+
   // 🆕 v3.2.1: 후보작 목록 접힘 상태 (수상별)
   const [expandedCandidates, setExpandedCandidates] = useState({});
+
+  // 🆕 v7.0: hybrid 모드 — manual_tier+manual_order 기준 정렬, 그 외(match)는 rating 기준
+  const isHybrid = globalTierConfig.mode === "hybrid";
+  const compareNovels = useCallback((a, b) => {
+    if (isHybrid) {
+      const tierOrder = getActiveTierOrder(globalTierConfig);
+      const ta = a.manual_tier ? tierOrder.indexOf(a.manual_tier) : tierOrder.length;
+      const tb = b.manual_tier ? tierOrder.indexOf(b.manual_tier) : tierOrder.length;
+      if (ta !== tb) return ta - tb; // 높은 티어(작은 idx) 우선
+      const oa = Number(a.manual_order) || 0;
+      const ob = Number(b.manual_order) || 0;
+      if (oa !== ob) return oa - ob; // 같은 tier 내 순위 (작은 manual_order 우선)
+      return (b.rating || 0) - (a.rating || 0); // 마지막 fallback
+    }
+    return (b.rating || 0) - (a.rating || 0);
+  }, [isHybrid]);
   
   // 연도 목록 (2024년부터 현재+1년까지)
   const years = useMemo(() => getAwardYears(), []);
@@ -17155,11 +17214,11 @@ const AwardsScreen = memo(({
       }
     }
     
-    // 레이팅 순 정렬
-    result.sort((a, b) => b.rating - a.rating);
-    
+    // 정렬 — hybrid: manual_tier+order, match: rating
+    result.sort(compareNovels);
+
     return result;
-  }, [candidates, awardFilter, currentYearAwards]);
+  }, [candidates, awardFilter, currentYearAwards, compareNovels]);
   
   // 해당 연도 수상작 수집
   const awardWinners = useMemo(() => {
@@ -17175,13 +17234,13 @@ const AwardsScreen = memo(({
       }
     }
     
-    // 각 상별로 레이팅 순 정렬
+    // 각 상별로 정렬 (hybrid: manual_tier+order, match: rating)
     for (const key in winners) {
-      winners[key].sort((a, b) => b.rating - a.rating);
+      winners[key].sort(compareNovels);
     }
-    
+
     return winners;
-  }, [list, awardSelectedYear, awardSystemSettings]);
+  }, [list, awardSelectedYear, awardSystemSettings, compareNovels]);
   
   // 수상 여부 확인
   const getNovelAwardsForYear = useCallback((novel) => {
@@ -17192,8 +17251,8 @@ const AwardsScreen = memo(({
   // 미수상 후보작 (수상 결과 탭용)
   const nonWinnerCandidates = useMemo(() => {
     const winnerIds = new Set(Object.values(awardWinners).flat().map(n => n.id));
-    return candidates.filter(n => !winnerIds.has(n.id)).sort((a, b) => b.rating - a.rating);
-  }, [candidates, awardWinners]);
+    return candidates.filter(n => !winnerIds.has(n.id)).sort(compareNovels);
+  }, [candidates, awardWinners, compareNovels]);
   
   // 🆕 v3.2.2: 수상 확률 계산 (개선된 알고리즘)
   // - 모든 후보작에 동일한 보정 로직 적용
@@ -17207,16 +17266,27 @@ const AwardsScreen = memo(({
     const totalNovelCount = list.length;
 
     // 개별 작품 점수 계산 함수
+    // 🆕 v7.0: hybrid 모드 — ELO rating 점수 비활성, manual_tier+manual_order 위주
     const calculateNovelScore = (n) => {
       let score = 0;
 
-      // 1. 기본 레이팅 (정규화: 1500 기준으로 차이를 점수화)
-      score += (n.rating - 1400) * 0.5;  // 레이팅 1500이면 50점, 1800이면 200점
+      if (isHybrid) {
+        // hybrid: 티어 점수만 (rating 무시) + 같은 티어 내 manual_order 미세 가산
+        const tier = getDisplayTier(n, globalTierConfig);
+        const tierIndex = tierOrder.indexOf(tier);
+        score += (tierOrder.length - tierIndex) * 30; // 티어당 30점
+        // manual_order 작을수록(상위) 약간 가산 — 최대 ±15점
+        const order = Number(n.manual_order) || 0;
+        score += Math.max(0, 15 - order / 200);
+      } else {
+        // 1. 기본 레이팅 (정규화: 1500 기준으로 차이를 점수화)
+        score += (n.rating - 1400) * 0.5;  // 레이팅 1500이면 50점, 1800이면 200점
 
-      // 2. 티어 보정 (S:100, A:80, B+:60, B:40, B-:20, C:0)
-      const tier = getDisplayTier(n, globalTierConfig);
-      const tierIndex = tierOrder.indexOf(tier);
-      score += (5 - tierIndex) * 20;
+        // 2. 티어 보정 (S:100, A:80, B+:60, B:40, B-:20, C:0)
+        const tier = getDisplayTier(n, globalTierConfig);
+        const tierIndex = tierOrder.indexOf(tier);
+        score += (5 - tierIndex) * 20;
+      }
       
       // 3. 태그 매칭 보정 (상의 matchTags와 얼마나 일치하는지)
       if (award.matchTags && award.matchTags.length > 0 && !award.matchTags.includes("__ANY__")) {
@@ -17265,13 +17335,15 @@ const AwardsScreen = memo(({
         }
       }
       
-      // 7. 승률 반영 (매칭에서 이긴 비율)
-      const totalMatches = (n.wins || 0) + (n.losses || 0);
-      if (totalMatches >= 5) {  // 최소 5경기 이상
-        const winRate = n.wins / totalMatches;
-        score += (winRate - 0.5) * 20;  // 승률 50%면 0점, 80%면 +6점, 20%면 -6점
+      // 7. 승률 반영 (매칭에서 이긴 비율) — hybrid에서는 무시 (ELO 비활성)
+      if (!isHybrid) {
+        const totalMatches = (n.wins || 0) + (n.losses || 0);
+        if (totalMatches >= 5) {  // 최소 5경기 이상
+          const winRate = n.wins / totalMatches;
+          score += (winRate - 0.5) * 20;  // 승률 50%면 0점, 80%면 +6점, 20%면 -6점
+        }
       }
-      
+
       return Math.max(0, score);  // 최소 0점
     };
     
@@ -17297,10 +17369,10 @@ const AwardsScreen = memo(({
     if (!novelExpScore || sumExp === 0) return 0;
     
     const probability = (novelExpScore.exp / sumExp) * 100;
-    
+
     // 범위 제한 (1% ~ 99%)
     return Math.min(99, Math.max(1, probability));
-  }, [list.length]);
+  }, [list.length, isHybrid]);
   
   // 🆕 v3.2.1: 상별 후보작 목록 계산
   const getCandidatesForAward = useCallback((award) => {
@@ -17338,9 +17410,9 @@ const AwardsScreen = memo(({
     const winnersForThisAward = awardWinners[award.id] || [];
     const winnerIds = new Set(winnersForThisAward.map(w => w.id));
     result = result.filter(n => !winnerIds.has(n.id));
-    
-    return result.sort((a, b) => b.rating - a.rating);
-  }, [candidates, awardWinners]);
+
+    return result.sort(compareNovels);
+  }, [candidates, awardWinners, compareNovels]);
   
   // 상 추가
   const addNewAward = () => {
@@ -17412,7 +17484,16 @@ const AwardsScreen = memo(({
   return (
     <>
       <H>🏆 {awardSelectedYear}년 시상식</H>
-      
+
+      {/* 🆕 v7.0: hybrid 모드 안내 */}
+      {isHybrid && (
+        <View style={{ backgroundColor: isDark ? "#1e1b4b" : "#eff6ff", padding: 10, borderRadius: 10, marginBottom: 12, borderLeftWidth: 4, borderLeftColor: "#3b82f6" }}>
+          <Text style={{ color: isDark ? "#93c5fd" : "#1d4ed8", fontSize: 12, fontWeight: "700" }}>
+            ⚙️ Hybrid 모드: 후보 정렬·확률 산출이 manual_tier + manual_order 기준으로 동작합니다 (ELO rating 비활성).
+          </Text>
+        </View>
+      )}
+
       {/* 연도 선택 */}
       <Section title="📅 연도 선택">
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -17747,7 +17828,7 @@ const AwardsScreen = memo(({
                             {novel.author || "-"}
                           </Text>
                           <Text style={{ color: C.text, fontSize: 13, fontWeight: "700" }}>
-                            {novel.rating.toFixed(0)}점
+                            {isHybrid ? `${getTierLabel(novel.manual_tier || "")} #${novel.manual_order || 0}` : `${(novel.rating || 0).toFixed(0)}점`}
                           </Text>
                         </View>
                         
@@ -19648,9 +19729,24 @@ const TasteAnalysisScreen = memo(({
     { label: "장편(400+)", value: readingPattern.lengthPreference.long.count },
   ].filter(d => d.value > 0);
 
+  // 🆕 v7.0: hybrid 모드 — 매칭 기반 분석 비활성 (ELO 갱신 안 함)
+  const isHybridMode = globalTierConfig.mode === "hybrid";
+
   return (
     <>
       <H>🎯 취향 분석</H>
+
+      {/* 🆕 v7.0: hybrid 모드 안내 */}
+      {isHybridMode && (
+        <View style={{ backgroundColor: isDark ? "#1e1b4b" : "#eff6ff", padding: 10, borderRadius: 10, marginBottom: 12, borderLeftWidth: 4, borderLeftColor: "#3b82f6" }}>
+          <Text style={{ color: isDark ? "#93c5fd" : "#1d4ed8", fontSize: 12, fontWeight: "700", marginBottom: 4 }}>
+            ⚙️ Hybrid 모드 안내
+          </Text>
+          <Text style={{ color: isDark ? "#bfdbfe" : "#1e3a8a", fontSize: 11, lineHeight: 15 }}>
+            매칭 기반 인사이트(예측 정확도, 매칭 행동, 일관성, 이변, 결정 요인)는 ELO 시스템과 연동되어 hybrid 모드에서는 표시되지 않습니다. 통계·장르/태그·좌표계·스펙트럼 분석은 그대로 동작합니다.
+          </Text>
+        </View>
+      )}
 
       {/* 🆕 v3.4: 전체 펼침/접기 컨트롤 */}
       <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
@@ -19693,8 +19789,9 @@ const TasteAnalysisScreen = memo(({
       </View>
 
       {/* 🆕 v6.2: 그룹 단위 펼침 토글 칩 (4그룹) */}
+      {/* 🆕 v7.0: hybrid 모드는 매칭/심화 그룹 비활성 (ELO 기반) */}
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
-        {SECTION_GROUPS.map(g => {
+        {SECTION_GROUPS.filter(g => !isHybridMode || (g.key !== "matching" && g.key !== "advanced")).map(g => {
           const open = isGroupExpanded(g.key);
           return (
             <TouchableOpacity
@@ -20234,7 +20331,7 @@ const TasteAnalysisScreen = memo(({
       )}
 
       {/* 🆕 v3.2.1: 매칭 일관성 분석 */}
-      {isGroupExpanded("matching") && matchConsistencyAnalysis && (
+      {!isHybridMode && isGroupExpanded("matching") && matchConsistencyAnalysis && (
         <TouchableOpacity onPress={() => toggleSection("matchConsist")}>
           <Section title={`🎯 매칭 일관성 분석 ${isExpanded("matchConsist") ? "▼" : "▶"}`}>
             {/* 요약 통계 */}
@@ -20331,7 +20428,7 @@ const TasteAnalysisScreen = memo(({
       )}
 
       {/* 🆕 v3.2.1: 유사 그룹 일관성 분석 */}
-      {isGroupExpanded("matching") && similarGroupConsistency && similarGroupConsistency.length > 0 && (
+      {!isHybridMode && isGroupExpanded("matching") && similarGroupConsistency && similarGroupConsistency.length > 0 && (
         <TouchableOpacity onPress={() => toggleSection("simGroupConsist")}>
           <Section title={`🔗 유사 태그 일관성 ${isExpanded("simGroupConsist") ? "▼" : "▶"}`}>
             <Text style={{ color: C.sub, fontSize: 12, marginBottom: 12 }}>
@@ -20561,7 +20658,7 @@ const TasteAnalysisScreen = memo(({
       )}
 
       {/* 매칭 패턴 */}
-      {isGroupExpanded("matching") && matchAnalysis.total > 0 && (
+      {!isHybridMode && isGroupExpanded("matching") && matchAnalysis.total > 0 && (
         <TouchableOpacity onPress={() => toggleSection("matchAnalysis")}>
           <Section title={`⚔️ 매칭 패턴 분석 ${isExpanded("matchAnalysis") ? "▼" : "▶"}`}>
             <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
@@ -21038,7 +21135,7 @@ const TasteAnalysisScreen = memo(({
       )}
 
       {/* 🔮 v3.0.3: 이변(Upset) 분석 (그룹: advanced) */}
-      {isGroupExpanded("advanced") && upsetAnalysis && upsetAnalysis.total > 0 && (
+      {!isHybridMode && isGroupExpanded("advanced") && upsetAnalysis && upsetAnalysis.total > 0 && (
         <TouchableOpacity onPress={() => toggleSection("upsets")}>
           <Section title={`🔮 이변 분석 ${isExpanded("upsets") ? "▼" : "▶"}`}>
             <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
@@ -21140,7 +21237,7 @@ const TasteAnalysisScreen = memo(({
       )}
       
       {/* 🔮 v3.0.3: 이변 요인 분석 (누적 학습 데이터) */}
-      {isGroupExpanded("advanced") && factorAnalysis && factorAnalysis.total > 0 && (
+      {!isHybridMode && isGroupExpanded("advanced") && factorAnalysis && factorAnalysis.total > 0 && (
         <TouchableOpacity 
           onPress={() => toggleSection("factors")}
           activeOpacity={0.7}
@@ -21259,7 +21356,7 @@ const TasteAnalysisScreen = memo(({
       )}
 
       {/* 🧠 v3.5.4: 매칭 행동 분석 — preference_patterns 기반 에이전트 인사이트 */}
-      {isGroupExpanded("matching") && analysis?.matchBehavior && (
+      {!isHybridMode && isGroupExpanded("matching") && analysis?.matchBehavior && (
         <TouchableOpacity onPress={() => toggleSection("matchBehavior")} activeOpacity={0.7}>
           <Section title={`🧠 매칭 행동 분석 (${analysis.matchBehavior.totalPatterns}개 패턴)`}>
             {isExpanded("matchBehavior") ? (
@@ -21573,6 +21670,253 @@ async function getCandidatesForVerification(novelId, suspicionType, limit = 10) 
   }
   scored.sort((a, b) => a._distance - b._distance);
   return scored.slice(0, limit);
+}
+
+// 🆕 v7.0: 검증 시퀀스 상수 — 변곡점 알고리즘 / K=2 추가 매칭 / max=7
+const VERIFICATION_MAX_RESPONSES = 7;
+const VERIFICATION_K_AFTER_INFLECTION = 2;
+
+// 🆕 v7.0: 검증 큐에서 다음 처리 대상 작품 fetch (priority DESC, 디바운스 1초 적용)
+async function getNextVerificationTarget() {
+  try {
+    const cutoff = Date.now() - 1000; // 1초 디바운스 (생성 직후는 제외)
+    const row = await first(
+      `SELECT q.*, n.id as novel_exists, n.title, n.manual_tier, n.manual_order
+       FROM tier_verification_queue q
+       LEFT JOIN novels n ON n.id = q.novel_id
+       WHERE q.state='pending' AND q.created_at < ?
+       ORDER BY q.priority DESC, q.created_at ASC
+       LIMIT 1`,
+      [cutoff]
+    );
+    if (!row || !row.novel_exists) {
+      // 작품 삭제된 경우 큐 항목도 정리
+      if (row && !row.novel_exists) {
+        await exec(`UPDATE tier_verification_queue SET state='cancelled', processed_at=? WHERE id=?`, [Date.now(), row.id]);
+      }
+      return null;
+    }
+    return row;
+  } catch (e) {
+    console.warn("[v7.0] getNextVerificationTarget 오류:", e?.message);
+    return null;
+  }
+}
+
+// 🆕 v7.0: 변곡점(inflection point) 판정
+// responses: [{candidateId, suspicionWon}] — suspicionWon=true면 의심작이 후보를 이김
+// underrated 의심 → 의심작이 후보를 이기는 것이 "예상" (manual_order/tier 위반 발견)
+// overrated 의심 → 의심작이 후보에게 지는 것이 "예상" (manual_order/tier 위반 발견)
+// 변곡점 = 첫 번째 "예상 이탈" 인덱스 (-1이면 미발견)
+function findInflectionPoint(responses, suspicionType) {
+  if (!responses || responses.length === 0) return -1;
+  // expected: 의심작이 어느 방향으로 이동해야 한다는 가설을 검증
+  // underrated: 의심작이 위로 가야 함 → 의심작 이김 = 가설 강화, 짐 = 가설 부정 (변곡점)
+  // overrated: 의심작이 아래로 가야 함 → 의심작 짐 = 가설 강화, 이김 = 가설 부정 (변곡점)
+  for (let i = 0; i < responses.length; i++) {
+    const r = responses[i];
+    if (suspicionType === "underrated" && !r.suspicionWon) return i;
+    if (suspicionType === "overrated" && r.suspicionWon) return i;
+  }
+  return -1;
+}
+
+// 🆕 v7.0: 시퀀스 종료 판정
+// returns: { shouldStop, reason }
+// reason: "max" | "decisive" | "no_inflection" | "continue"
+function evaluateSequenceProgress(responses, suspicionType) {
+  if (responses.length >= VERIFICATION_MAX_RESPONSES) {
+    return { shouldStop: true, reason: "max" };
+  }
+  const infIdx = findInflectionPoint(responses, suspicionType);
+  if (infIdx === -1) {
+    // 변곡점 미발견 — max까지 계속
+    return { shouldStop: false, reason: "no_inflection" };
+  }
+  // 변곡점 발견 후 K=2 추가 매칭 필요
+  const afterInflection = responses.length - 1 - infIdx;
+  if (afterInflection >= VERIFICATION_K_AFTER_INFLECTION) {
+    return { shouldStop: true, reason: "decisive" };
+  }
+  return { shouldStop: false, reason: "continue" };
+}
+
+// 🆕 v7.0: 시퀀스 종료 시 새 자리 산출 (system path — 트리거 X)
+// 변곡점 = "이 후보까지는 의심작이 이동해야 함"의 경계
+// blocker = 변곡점 인덱스의 후보 (수문장 후보)
+function computeNewPosition(suspicionNovel, candidates, responses, suspicionType, tierConfig) {
+  const cfg = tierConfig || globalTierConfig;
+  const tierOrder = getActiveTierOrder(cfg);
+  const infIdx = findInflectionPoint(responses, suspicionType);
+  const ownTierIdx = tierOrder.indexOf(suspicionNovel.manual_tier);
+  const ownOrder = Number(suspicionNovel.manual_order) || 0;
+
+  // 변곡점 미발견 (모든 응답이 가설 방향)
+  if (infIdx === -1) {
+    // 가장 멀리 있는 응답 후보의 위치까지 이동
+    const lastIdx = responses.length - 1;
+    if (lastIdx < 0) {
+      return { tier: suspicionNovel.manual_tier, order: ownOrder, blockerId: null, action: "no_change" };
+    }
+    const lastResp = responses[lastIdx];
+    const lastCand = candidates.find(c => c.id === lastResp.candidateId);
+    if (!lastCand) {
+      return { tier: suspicionNovel.manual_tier, order: ownOrder, blockerId: null, action: "no_change" };
+    }
+    // suspicionType에 따라 "넘어선" 위치
+    if (suspicionType === "underrated") {
+      // 위쪽 후보 → 그 후보 바로 위로
+      const newOrder = (Number(lastCand.manual_order) || 0) - 50;
+      return { tier: lastCand.manual_tier, order: newOrder, blockerId: null, action: "moved" };
+    } else {
+      // 아래쪽 후보 → 그 후보 바로 아래로
+      const newOrder = (Number(lastCand.manual_order) || 0) + 50;
+      return { tier: lastCand.manual_tier, order: newOrder, blockerId: null, action: "moved" };
+    }
+  }
+
+  // 변곡점 발견 — blocker = responses[infIdx].candidateId
+  const blockerResp = responses[infIdx];
+  const blockerCand = candidates.find(c => c.id === blockerResp.candidateId);
+  if (!blockerCand) {
+    return { tier: suspicionNovel.manual_tier, order: ownOrder, blockerId: null, action: "no_change" };
+  }
+
+  // 변곡점 직전(infIdx-1)까지의 후보들을 넘어섬, blocker에게 막힘
+  if (infIdx === 0) {
+    // 첫 매치부터 가설 부정 → 의심 무효
+    return { tier: suspicionNovel.manual_tier, order: ownOrder, blockerId: blockerCand.id, action: "no_change" };
+  }
+
+  // 변곡점 직전 후보(passedCand) 위치 + blocker 사이로 자리 결정
+  const passedResp = responses[infIdx - 1];
+  const passedCand = candidates.find(c => c.id === passedResp.candidateId);
+  if (!passedCand) {
+    return { tier: suspicionNovel.manual_tier, order: ownOrder, blockerId: blockerCand.id, action: "no_change" };
+  }
+
+  // 두 후보 사이 — 같은 tier면 단순 사이값, 다른 tier면 passed의 tier 끝/시작
+  if (suspicionType === "underrated") {
+    // 위쪽으로 이동: passed보다 아래, blocker보다 위에 위치
+    if (passedCand.manual_tier === blockerCand.manual_tier) {
+      const order = Math.floor((Number(passedCand.manual_order) + Number(blockerCand.manual_order)) / 2);
+      return { tier: passedCand.manual_tier, order, blockerId: blockerCand.id, action: "moved" };
+    } else {
+      // tier가 다르면 passed의 tier로 이동 (passed보다 약간 아래)
+      const order = (Number(passedCand.manual_order) || 0) + 50;
+      return { tier: passedCand.manual_tier, order, blockerId: blockerCand.id, action: "moved" };
+    }
+  } else {
+    // overrated: 아래쪽으로 이동: passed보다 위, blocker보다 아래
+    if (passedCand.manual_tier === blockerCand.manual_tier) {
+      const order = Math.floor((Number(passedCand.manual_order) + Number(blockerCand.manual_order)) / 2);
+      return { tier: passedCand.manual_tier, order, blockerId: blockerCand.id, action: "moved" };
+    } else {
+      const order = (Number(passedCand.manual_order) || 0) - 50;
+      return { tier: passedCand.manual_tier, order, blockerId: blockerCand.id, action: "moved" };
+    }
+  }
+}
+
+// 🆕 v7.0: 시퀀스 finalize — 검증 큐 마감 + 자리 UPDATE (시스템 path, 트리거 X) + 세션 INSERT
+async function finalizeVerificationSession(queueRow, suspicionNovel, candidates, responses, suspicionType, stopReason) {
+  const sessionId = uuid();
+  const now = Date.now();
+  const newPos = computeNewPosition(suspicionNovel, candidates, responses, suspicionType, globalTierConfig);
+
+  try {
+    // 1. tier_repositioning_session INSERT
+    await exec(
+      `INSERT INTO tier_repositioning_session (id, novel_id, suspicion_type, trigger_type, state, result_tier, result_order, result_action, total_responses, blocker_id, created_at, completed_at)
+       VALUES (?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        sessionId,
+        suspicionNovel.id,
+        suspicionType,
+        queueRow.trigger_type || null,
+        newPos.tier || null,
+        newPos.order != null ? newPos.order : null,
+        newPos.action,
+        responses.length,
+        newPos.blockerId || null,
+        now,
+        now,
+      ]
+    );
+
+    // 2. 시스템 path UPDATE (트리거 X — debounce/큐 인입 안 됨)
+    if (newPos.action === "moved") {
+      const tierChanged = newPos.tier && newPos.tier !== suspicionNovel.manual_tier;
+      if (tierChanged) {
+        await exec("UPDATE novels SET manual_tier=?, manual_order=? WHERE id=?", [newPos.tier, newPos.order, suspicionNovel.id]);
+      } else {
+        await exec("UPDATE novels SET manual_order=? WHERE id=?", [newPos.order, suspicionNovel.id]);
+      }
+    }
+
+    // 3. tier_verification_queue 처리 완료
+    await exec(`UPDATE tier_verification_queue SET state='resolved', processed_at=? WHERE id=?`, [now, queueRow.id]);
+
+    return { sessionId, ...newPos, stopReason };
+  } catch (e) {
+    console.warn("[v7.0] finalizeVerificationSession 오류:", e?.message);
+    // 실패 시 큐는 다음 시도에 다시 잡히도록 pending 유지 (단, 무한 루프 방지를 위해 attempt count 같은 가드는 추후 도입 가능)
+    throw e;
+  }
+}
+
+// 🆕 v7.0: 시퀀스 도중 매칭 응답 1건 저장
+async function logVerificationMatch(sessionId, suspicionId, candidateId, suspicionWon, violationType) {
+  try {
+    await exec(
+      `INSERT INTO tier_validation_log (id, session_id, novel_a_id, novel_b_id, user_choice, violation_type, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        uuid(),
+        sessionId,
+        suspicionId,
+        candidateId,
+        suspicionWon ? "a" : "b", // a=의심작 승, b=후보 승
+        violationType || "none",
+        Date.now(),
+      ]
+    );
+  } catch (e) {
+    console.warn("[v7.0] logVerificationMatch 오류:", e?.message);
+  }
+}
+
+// 🆕 v7.0: 수문장 식별 — 최근 N개 세션의 blocker_id 누적 통계
+// 5개 누적 시 수문장 후보로 제안
+async function getGatekeeperCandidates(threshold = 5) {
+  try {
+    const rows = await all(
+      `SELECT blocker_id, COUNT(*) as block_count
+       FROM tier_repositioning_session
+       WHERE state='completed' AND blocker_id IS NOT NULL AND result_action='moved'
+       GROUP BY blocker_id
+       HAVING block_count >= ?
+       ORDER BY block_count DESC
+       LIMIT 20`,
+      [threshold]
+    );
+    if (!rows || rows.length === 0) return [];
+
+    // 작품 정보 join
+    const ids = rows.map(r => r.blocker_id);
+    const placeholders = ids.map(() => "?").join(",");
+    const novels = await all(
+      `SELECT id, title, manual_tier, manual_order, rating FROM novels WHERE id IN (${placeholders})`,
+      ids
+    );
+    const byId = new Map(novels.map(n => [n.id, n]));
+    return rows
+      .map(r => ({ ...byId.get(r.blocker_id), block_count: r.block_count }))
+      .filter(r => r.id);
+  } catch (e) {
+    console.warn("[v7.0] getGatekeeperCandidates 오류:", e?.message);
+    return [];
+  }
 }
 
 // 🆕 v6.0: 모드별 표시 티어 계산
@@ -23046,6 +23390,17 @@ function AppContent() {
   // 특정 작품 고정 매칭용
   const [focusMatchNovel, setFocusMatchNovel] = useState(null);
   const [focusMatchQuery, setFocusMatchQuery] = useState("");
+
+  // 🆕 v7.0: hybrid 모드 — 검증 시퀀스 상태
+  // session: { queueRow, suspicionNovel, candidates, responses, currentIdx, suspicionType }
+  const [verificationSession, setVerificationSession] = useState(null);
+  const [verificationLoading, setVerificationLoading] = useState(false);
+  const [verificationStats, setVerificationStats] = useState({ pending: 0, resolved: 0 });
+  // Stage 4: 수문장 후보 (5개 누적 시 제안 모달)
+  const [gatekeeperCandidates, setGatekeeperCandidates] = useState([]);
+  const [gatekeeperModalOpen, setGatekeeperModalOpen] = useState(false);
+  const verificationSessionIdRef = useRef(null); // 매 시퀀스 고유 sessionId (응답 로그 묶음용)
+  const verificationLoadingRef = useRef(false); // 🆕 v7.0: 재진입 가드 (state는 React 배칭 → 동기 가드 필요)
 
   // 🆕 v3.5.11: 매치 필터링 — 정보 충실도 높은 작품 우선 매칭
   const [matchFilterEnabled, setMatchFilterEnabled] = useState(false);
@@ -28842,11 +29197,20 @@ function AppContent() {
           if (Array.isArray(parsed)) majorGenreText = parsed.join(", ");
         }
       } catch {}
-      await addRecentChange(id, t, "new", { 
+      await addRecentChange(id, t, "new", {
         author: author.trim() || "-",
         majorGenre: majorGenreText
       });
-      
+
+      // 🆕 v7.0: hybrid 모드 — 신규 등록 작품을 검증 큐에 추가 (manual_tier 설정된 경우만)
+      if (globalTierConfig.mode === "hybrid" && newManualTier) {
+        try {
+          await enqueueVerification(id, "new", "underrated");
+        } catch (e) {
+          console.warn("[v7.0] new 검증 큐 INSERT 실패:", e?.message);
+        }
+      }
+
       if (_pt) PerfMonitor.trackFunc("addNovel", Date.now() - _pt); // 🔬
       Alert.alert("완료", "작품이 추가되었습니다.");
     } catch (e) {
@@ -29567,6 +29931,8 @@ function AppContent() {
       }
 
       // 🆕 v6.0: manual_tier 업데이트 (manual/hybrid 모드에서만)
+      // 🆕 v7.0: hybrid 모드 — manual_tier 변경 시 검증 큐 트리거 (방향 따라 suspicion 결정)
+      let _v7TierChanged = null; // {from, to} for hybrid trigger
       if (globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid") {
         const newMt = editManualTier || null;
         if (newMt !== n.manual_tier) {
@@ -29574,6 +29940,9 @@ function AppContent() {
           await exec("UPDATE novels SET manual_tier=? WHERE id=?", [newMt, n.id]);
           if (newMt && oldTier !== newMt) {
             addTierHistoryEntry(n.id, n.title, oldTier, newMt);
+          }
+          if (globalTierConfig.mode === "hybrid" && newMt) {
+            _v7TierChanged = { from: n.manual_tier || null, to: newMt };
           }
         }
       }
@@ -29679,6 +30048,26 @@ function AppContent() {
       // 🎨 v3.8.0: 갤러리 이미지 메타데이터 갱신 (제목/작가 변경 반영)
       if (galleryCount > 0) {
         loadGalleryImages().catch(() => {});
+      }
+
+      // 🆕 v7.0: hybrid 모드 — manual_tier/메타 편집 검증 큐 트리거
+      if (globalTierConfig.mode === "hybrid") {
+        try {
+          if (_v7TierChanged) {
+            // 새 티어 → 검증할 방향 결정 (위로 이동=underrated, 아래로 이동=overrated)
+            const order = getActiveTierOrder(globalTierConfig);
+            const fromIdx = _v7TierChanged.from ? order.indexOf(_v7TierChanged.from) : order.length;
+            const toIdx = order.indexOf(_v7TierChanged.to);
+            // 작은 idx = 높은 티어
+            const suspicion = toIdx < fromIdx ? "underrated" : "overrated";
+            await enqueueVerification(n.id, "tier_change", suspicion);
+          } else if (n.manual_tier) {
+            // 메타 편집 (제목/태그/작가 등 변경) — manual_tier 있는 작품만 큐 인입
+            await enqueueVerification(n.id, "meta_edit", "underrated");
+          }
+        } catch (e) {
+          console.warn("[v7.0] saveEdit 검증 큐 INSERT 실패:", e?.message);
+        }
       }
     } catch (e) {
       if (_pt) PerfMonitor.logError("saveEdit", e); // 🔬
@@ -29889,13 +30278,161 @@ function AppContent() {
     }
   };
 
-  // 매칭 화면 진입 시 자동 매칭 1개 생성
+  // 매칭 화면 진입 시 자동 매칭 1개 생성 (hybrid 모드는 제외 — 검증 시퀀스 사용)
   useEffect(() => {
-    if (screen === "match" && !pair) {
+    if (screen === "match" && !pair && globalTierConfig.mode !== "hybrid") {
       invalidateMatchCache(); // 🔧 v3.5.15: 매칭 화면 진입 시 캐시 갱신
       pickRandomUnseenPair();
     }
-  }, [screen, pair]);
+  }, [screen, pair, globalTierConfig.mode]);
+
+  // 🆕 v7.0: hybrid 모드 — 매칭 화면 진입 시 검증 시퀀스 자동 로드 + 통계 갱신
+  const loadVerificationStats = useCallback(async () => {
+    try {
+      const pendingRow = await first(`SELECT COUNT(*) as cnt FROM tier_verification_queue WHERE state='pending'`);
+      const resolvedRow = await first(`SELECT COUNT(*) as cnt FROM tier_verification_queue WHERE state='resolved'`);
+      setVerificationStats({ pending: pendingRow?.cnt || 0, resolved: resolvedRow?.cnt || 0 });
+    } catch (e) {
+      console.warn("[v7.0] loadVerificationStats 오류:", e?.message);
+    }
+  }, []);
+
+  const startVerificationSession = useCallback(async () => {
+    // ref 기반 동기 가드 (state는 배칭 → 재귀 호출 시 stale 위험)
+    if (verificationLoadingRef.current) return;
+    verificationLoadingRef.current = true;
+    setVerificationLoading(true);
+    let shouldRetry = false;
+    try {
+      const queueRow = await getNextVerificationTarget();
+      if (!queueRow) {
+        setVerificationSession(null);
+        await loadVerificationStats();
+        return;
+      }
+      // 의심작 + 후보 풀 fetch
+      const suspicionNovel = await first(
+        "SELECT id, title, author, manual_tier, manual_order, rating, cover_image, platforms, major_genre, sub_genre FROM novels WHERE id=?",
+        [queueRow.novel_id]
+      );
+      if (!suspicionNovel) {
+        // 작품 삭제됨 → 큐 cancel
+        await exec(`UPDATE tier_verification_queue SET state='cancelled', processed_at=? WHERE id=?`, [Date.now(), queueRow.id]);
+        setVerificationSession(null);
+        await loadVerificationStats();
+        shouldRetry = true; // 다음 큐 항목 자동 시도
+        return;
+      }
+      const candidates = await getCandidatesForVerification(queueRow.novel_id, queueRow.suspicion_type, 10);
+      if (!candidates || candidates.length === 0) {
+        // 후보 부족 → 자동 finalize (no_change)
+        const sessionId = uuid();
+        const now = Date.now();
+        await exec(
+          `INSERT INTO tier_repositioning_session (id, novel_id, suspicion_type, trigger_type, state, result_action, total_responses, created_at, completed_at)
+           VALUES (?, ?, ?, ?, 'completed', 'no_candidates', 0, ?, ?)`,
+          [sessionId, queueRow.novel_id, queueRow.suspicion_type, queueRow.trigger_type, now, now]
+        );
+        await exec(`UPDATE tier_verification_queue SET state='resolved', processed_at=? WHERE id=?`, [now, queueRow.id]);
+        await loadVerificationStats();
+        shouldRetry = true; // 다음 큐 항목 자동 시도
+        return;
+      }
+      verificationSessionIdRef.current = uuid();
+      setVerificationSession({
+        queueRow,
+        suspicionNovel,
+        candidates,
+        responses: [], // [{candidateId, suspicionWon, violationType}]
+        currentIdx: 0,
+        suspicionType: queueRow.suspicion_type,
+      });
+    } catch (e) {
+      console.warn("[v7.0] startVerificationSession 오류:", e?.message);
+      Alert.alert("오류", "검증 시퀀스 시작 중 오류가 발생했습니다.\n\n" + (e.message || ""));
+    } finally {
+      verificationLoadingRef.current = false;
+      setVerificationLoading(false);
+      if (shouldRetry) {
+        // ref 가 false 로 풀린 후 재시도 (다음 tick 에서)
+        setTimeout(() => { startVerificationSession(); }, 0);
+      }
+    }
+  }, [loadVerificationStats]);
+
+  // 🆕 v7.0: 검증 응답 처리 — 의심작 vs 후보 매칭 결과 기록 + 종료 판정
+  const respondVerificationMatch = useCallback(async (suspicionWon) => {
+    if (!verificationSession) return;
+    const { queueRow, suspicionNovel, candidates, responses, currentIdx, suspicionType } = verificationSession;
+    const candidate = candidates[currentIdx];
+    if (!candidate) return;
+
+    // violation_type 산출
+    const choice = suspicionWon ? "a" : "b";
+    const violation = detectViolation(suspicionNovel, candidate, choice, globalTierConfig);
+
+    // 매칭 로그 INSERT
+    await logVerificationMatch(verificationSessionIdRef.current, suspicionNovel.id, candidate.id, suspicionWon, violation);
+
+    const newResponses = [...responses, { candidateId: candidate.id, suspicionWon, violationType: violation }];
+    const progress = evaluateSequenceProgress(newResponses, suspicionType);
+
+    if (progress.shouldStop) {
+      // 시퀀스 종료 — finalize
+      try {
+        await finalizeVerificationSession(queueRow, suspicionNovel, candidates, newResponses, suspicionType, progress.reason);
+      } catch (e) {
+        console.warn("[v7.0] finalize 실패:", e?.message);
+      }
+      setVerificationSession(null);
+      verificationSessionIdRef.current = null;
+      await loadList(undefined, undefined, "v7-finalize");
+      await loadVerificationStats();
+      // Stage 4: 수문장 후보 갱신 (5개 누적 시 모달 트리거)
+      try {
+        const gks = await getGatekeeperCandidates(5);
+        setGatekeeperCandidates(gks);
+        if (gks.length > 0 && !gatekeeperModalOpen) {
+          // 자동으로는 띄우지 않음 — 헤더 인디케이터로만 표시 (사용자 클릭 시 모달)
+        }
+      } catch {}
+      // 다음 큐 항목 자동 시작
+      startVerificationSession();
+    } else {
+      // 다음 후보로 이동
+      const nextIdx = currentIdx + 1;
+      if (nextIdx >= candidates.length) {
+        // 후보 풀 소진 → 강제 finalize
+        try {
+          await finalizeVerificationSession(queueRow, suspicionNovel, candidates, newResponses, suspicionType, "exhausted");
+        } catch (e) {
+          console.warn("[v7.0] finalize 실패:", e?.message);
+        }
+        setVerificationSession(null);
+        verificationSessionIdRef.current = null;
+        await loadList(undefined, undefined, "v7-finalize");
+        await loadVerificationStats();
+        startVerificationSession();
+      } else {
+        setVerificationSession({ ...verificationSession, responses: newResponses, currentIdx: nextIdx });
+      }
+    }
+  }, [verificationSession, gatekeeperModalOpen, loadVerificationStats, startVerificationSession]);
+
+  // 🆕 v7.0: 검증 세션 자동 시작 (매칭 화면 진입 시 hybrid 모드일 때)
+  useEffect(() => {
+    if (screen === "match" && globalTierConfig.mode === "hybrid" && !verificationSession && !verificationLoading) {
+      loadVerificationStats();
+      startVerificationSession();
+    }
+  }, [screen, globalTierConfig.mode]); // verificationSession 의존성 제외 (startVerificationSession 내부에서 setState하면 재진입 방지)
+
+  // 🆕 v7.0: 매칭 화면 진입 시 수문장 후보 사전 로드 (hybrid)
+  useEffect(() => {
+    if (screen === "match" && globalTierConfig.mode === "hybrid") {
+      getGatekeeperCandidates(5).then(setGatekeeperCandidates).catch(() => {});
+    }
+  }, [screen, globalTierConfig.mode, verificationStats.resolved]);
 
   // 🧠 v3.5.0: 분석 탭 진입 시 인사이트 자동 로드
   useEffect(() => {
@@ -31243,6 +31780,7 @@ function AppContent() {
   }, []);
 
   // 🆕 v6.1: 티어 일괄 변경 (manual/hybrid 모드)
+  // 🆕 v7.0: hybrid 모드에서 사용자 path → 검증 큐 트리거 (작품별 방향 판정)
   const batchSetTier = useCallback(async (tierKey) => {
     const ids = selectedIdsRef.current;
     if (!ids.length) {
@@ -31250,11 +31788,42 @@ function AppContent() {
       return;
     }
     if (!tierKey) return;
+
+    // 🆕 v7.0: hybrid 모드 — 변경 전 기존 manual_tier 캡처 (방향 판정용)
+    let _v7Prev = null;
+    if (globalTierConfig.mode === "hybrid") {
+      try {
+        const placeholders = ids.map(() => "?").join(",");
+        const rows = await all(`SELECT id, manual_tier FROM novels WHERE id IN (${placeholders})`, ids);
+        _v7Prev = new Map(rows.map(r => [r.id, r.manual_tier]));
+      } catch (e) {
+        console.warn("[v7.0] batchSetTier 사전 캡처 실패:", e?.message);
+      }
+    }
+
     const queries = ids.map((id) => ({
       sql: "UPDATE novels SET manual_tier=? WHERE id=?",
       params: [tierKey, id],
     }));
     await execBatch(queries);
+
+    // 🆕 v7.0: hybrid 모드 — 작품별 방향 판정 후 enqueueVerification 호출
+    if (globalTierConfig.mode === "hybrid" && _v7Prev) {
+      try {
+        const order = getActiveTierOrder(globalTierConfig);
+        const toIdx = order.indexOf(tierKey);
+        for (const id of ids) {
+          const fromTier = _v7Prev.get(id);
+          if (fromTier === tierKey) continue; // 변경 없음
+          const fromIdx = fromTier ? order.indexOf(fromTier) : order.length;
+          const suspicion = toIdx < fromIdx ? "underrated" : "overrated";
+          await enqueueVerification(id, "tier_change", suspicion);
+        }
+      } catch (e) {
+        console.warn("[v7.0] batchSetTier 검증 큐 INSERT 실패:", e?.message);
+      }
+    }
+
     await loadList(undefined, undefined, "batch");
     Alert.alert("완료", `${ids.length}개 작품의 티어를 ${getTierLabel(tierKey)}(으)로 변경했습니다.`);
   }, []);
@@ -35437,8 +36006,295 @@ async function importJSON() {
           />
         )}
 
-        {/* MATCH */}
-        {screen === "match" && (
+        {/* MATCH (hybrid 모드: 검증 시퀀스 UI) */}
+        {screen === "match" && globalTierConfig.mode === "hybrid" && (
+          <>
+            <H>🧭 자리 검증 시퀀스 (Hybrid)</H>
+
+            {/* 검증 안내 + 통계 + 수문장 인디케이터 */}
+            <Section title="현황">
+              <Text style={{ color: C.sub, marginBottom: 6, fontSize: 12 }}>
+                manual_tier/순위가 patrick truth. 사용자 편집 행위로 의심작이 큐에 등록되며, 인접 후보와 점진 매칭하여 변곡점이 발견되면 자리를 자동 결정합니다 (max {VERIFICATION_MAX_RESPONSES}회).
+              </Text>
+              <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+                <View style={{ backgroundColor: isDark ? "#1f2937" : "#eef2ff", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 }}>
+                  <Text style={{ color: C.sub, fontSize: 11 }}>대기</Text>
+                  <Text style={{ color: C.text, fontWeight: "800", fontSize: 18 }}>{verificationStats.pending}</Text>
+                </View>
+                <View style={{ backgroundColor: isDark ? "#1e3a3a" : "#dcfce7", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 }}>
+                  <Text style={{ color: isDark ? "#86efac" : "#166534", fontSize: 11 }}>완료</Text>
+                  <Text style={{ color: isDark ? "#bbf7d0" : "#14532d", fontWeight: "800", fontSize: 18 }}>{verificationStats.resolved}</Text>
+                </View>
+                {gatekeeperCandidates.length > 0 && (
+                  <TouchableOpacity
+                    onPress={() => setGatekeeperModalOpen(true)}
+                    style={{
+                      backgroundColor: isDark ? "#422006" : "#fef3c7",
+                      paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10,
+                      borderWidth: 1, borderColor: isDark ? "#f59e0b" : "#fcd34d",
+                    }}
+                  >
+                    <Text style={{ color: isDark ? "#fcd34d" : "#92400e", fontSize: 11 }}>🛡️ 수문장 후보</Text>
+                    <Text style={{ color: isDark ? "#fde68a" : "#78350f", fontWeight: "800", fontSize: 18 }}>{gatekeeperCandidates.length}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </Section>
+
+            {/* 검증 시퀀스 본체 */}
+            {verificationSession ? (
+              <Section title={`검증 진행 — ${verificationSession.suspicionType === "underrated" ? "위로 이동 검증" : "아래로 이동 검증"} (${verificationSession.responses.length + 1}/${VERIFICATION_MAX_RESPONSES})`}>
+                {/* 진행도 바 */}
+                <View style={{ height: 8, backgroundColor: isDark ? "#1e1e3a" : "#eef2ff", borderRadius: 999, overflow: "hidden", marginBottom: 12 }}>
+                  <View style={{
+                    width: `${Math.min(100, (verificationSession.responses.length / VERIFICATION_MAX_RESPONSES) * 100)}%`,
+                    height: "100%",
+                    backgroundColor: C.primary,
+                  }} />
+                </View>
+
+                {/* 변곡점 표시 */}
+                {(() => {
+                  const infIdx = findInflectionPoint(verificationSession.responses, verificationSession.suspicionType);
+                  if (infIdx === -1) return null;
+                  const remaining = Math.max(0, VERIFICATION_K_AFTER_INFLECTION - (verificationSession.responses.length - 1 - infIdx));
+                  return (
+                    <View style={{ backgroundColor: isDark ? "#422006" : "#fef3c7", padding: 8, borderRadius: 8, marginBottom: 10 }}>
+                      <Text style={{ color: isDark ? "#fcd34d" : "#92400e", fontSize: 12, fontWeight: "700" }}>
+                        🔍 변곡점 발견 (#{infIdx + 1}) — 추가 검증 {remaining}회
+                      </Text>
+                    </View>
+                  );
+                })()}
+
+                {(() => {
+                  const cand = verificationSession.candidates[verificationSession.currentIdx];
+                  const susp = verificationSession.suspicionNovel;
+                  if (!cand || !susp) return <Text style={{ color: C.sub }}>후보 없음</Text>;
+                  return (
+                    <>
+                      <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
+                        둘 중 더 좋은 작품을 선택하세요. 결과로 자리가 자동 결정됩니다.
+                      </Text>
+
+                      {/* 작품 A — 의심작 */}
+                      <TouchableOpacity
+                        onPress={() => respondVerificationMatch(true)}
+                        style={{
+                          borderWidth: 3, borderColor: C.ok, backgroundColor: C.card,
+                          borderRadius: 16, padding: 14, marginBottom: 6,
+                        }}
+                      >
+                        <View style={{ flexDirection: "row" }}>
+                          <CoverImage uri={susp.cover_image} platforms={susp.platforms} platformCovers={platformCovers} size={70} theme={C} />
+                          <View style={{ flex: 1 }}>
+                            <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
+                              <Text style={{ fontSize: 16, fontWeight: "800", color: C.text, flex: 1 }} numberOfLines={1}>
+                                {susp.title}
+                              </Text>
+                              <View style={{ backgroundColor: getTierColor(susp.manual_tier || ""), paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+                                <Text style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}>{getTierLabel(susp.manual_tier || "")}</Text>
+                              </View>
+                            </View>
+                            <Text style={{ color: C.sub, fontSize: 12 }} numberOfLines={1}>
+                              {susp.author || "작가 미상"}
+                              {getFirstGenre(susp.major_genre) && <Text style={{ color: C.sub }}> · {getFirstGenre(susp.major_genre)}</Text>}
+                            </Text>
+                            <View style={{ marginTop: 4, backgroundColor: isDark ? "#1e1b4b" : "#eff6ff", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, alignSelf: "flex-start" }}>
+                              <Text style={{ color: isDark ? "#93c5fd" : "#1d4ed8", fontSize: 10, fontWeight: "700" }}>의심작 (검증 대상)</Text>
+                            </View>
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+
+                      <Text style={{ textAlign: "center", color: C.sub, fontSize: 11, marginVertical: 4 }}>vs</Text>
+
+                      {/* 작품 B — 후보 */}
+                      <TouchableOpacity
+                        onPress={() => respondVerificationMatch(false)}
+                        style={{
+                          borderWidth: 3, borderColor: C.warn, backgroundColor: C.card,
+                          borderRadius: 16, padding: 14, marginBottom: 6,
+                        }}
+                      >
+                        <View style={{ flexDirection: "row" }}>
+                          <CoverImage uri={cand.cover_image} platforms={cand.platforms} platformCovers={platformCovers} size={70} theme={C} />
+                          <View style={{ flex: 1 }}>
+                            <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
+                              <Text style={{ fontSize: 16, fontWeight: "800", color: C.text, flex: 1 }} numberOfLines={1}>
+                                {cand.title}
+                              </Text>
+                              <View style={{ backgroundColor: getTierColor(cand.manual_tier || ""), paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+                                <Text style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}>{getTierLabel(cand.manual_tier || "")}</Text>
+                              </View>
+                            </View>
+                            <Text style={{ color: C.sub, fontSize: 12 }} numberOfLines={1}>
+                              순위 #{cand.manual_order || 0}
+                            </Text>
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+
+                      {/* 컨트롤 */}
+                      <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                        <OutlineButton
+                          title="시퀀스 중단"
+                          onPress={() => {
+                            Alert.alert("확인", "현재 시퀀스를 중단할까요? 누적 응답이 폐기됩니다.", [
+                              { text: "취소" },
+                              {
+                                text: "중단", style: "destructive",
+                                onPress: async () => {
+                                  // 큐 항목은 다시 pending으로 (재시도 가능)
+                                  setVerificationSession(null);
+                                  verificationSessionIdRef.current = null;
+                                },
+                              },
+                            ]);
+                          }}
+                          style={{ flex: 1 }}
+                        />
+                        <OutlineButton
+                          title="이 작품 건너뛰기"
+                          onPress={async () => {
+                            // 현재 큐 항목 cancel + 다음 큐로
+                            try {
+                              await exec(`UPDATE tier_verification_queue SET state='skipped', processed_at=? WHERE id=?`, [Date.now(), verificationSession.queueRow.id]);
+                            } catch {}
+                            setVerificationSession(null);
+                            verificationSessionIdRef.current = null;
+                            await loadVerificationStats();
+                            startVerificationSession();
+                          }}
+                          style={{ flex: 1 }}
+                        />
+                      </View>
+                    </>
+                  );
+                })()}
+              </Section>
+            ) : (
+              <Section title="검증 대기">
+                {verificationLoading ? (
+                  <View style={{ alignItems: "center", padding: 16 }}>
+                    <ActivityIndicator size="large" color={C.primary} />
+                    <Text style={{ color: C.sub, marginTop: 8 }}>다음 의심작 로드 중...</Text>
+                  </View>
+                ) : verificationStats.pending === 0 ? (
+                  <View style={{ alignItems: "center", padding: 16 }}>
+                    <Text style={{ fontSize: 32, marginBottom: 8 }}>✨</Text>
+                    <Text style={{ color: C.text, fontWeight: "700", fontSize: 15, marginBottom: 4 }}>모든 검증이 완료되었습니다</Text>
+                    <Text style={{ color: C.sub, fontSize: 12, textAlign: "center" }}>
+                      작품을 추가하거나 티어/순위를 변경하면 의심작이 큐에 등록됩니다.
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={{ alignItems: "center", padding: 8 }}>
+                    <Text style={{ color: C.sub, marginBottom: 12 }}>대기 중인 의심작 {verificationStats.pending}개</Text>
+                    <PrimaryButton title="검증 시작" onPress={startVerificationSession} />
+                  </View>
+                )}
+              </Section>
+            )}
+
+            {/* 수문장 후보 모달 */}
+            <Modal visible={gatekeeperModalOpen} transparent animationType="slide" onRequestClose={() => setGatekeeperModalOpen(false)}>
+              <View style={{ flex: 1, backgroundColor: C.modal, justifyContent: "flex-end" }}>
+                <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: "80%" }}>
+                  <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: C.line, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                    <Text style={{ color: C.text, fontSize: 18, fontWeight: "800" }}>🛡️ 수문장 후보</Text>
+                    <TouchableOpacity onPress={() => setGatekeeperModalOpen(false)}>
+                      <Text style={{ color: C.sub, fontSize: 22 }}>×</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <ScrollView style={{ padding: 16 }}>
+                    <Text style={{ color: C.sub, fontSize: 12, marginBottom: 12 }}>
+                      여러 시퀀스에서 변곡점으로 등장한 작품들입니다. 이 작품들의 manual_tier를 조정하면 검증 효율이 올라갑니다.
+                    </Text>
+                    {gatekeeperCandidates.length === 0 ? (
+                      <Text style={{ color: C.sub, textAlign: "center", padding: 16 }}>현재 누적된 수문장 후보가 없습니다.</Text>
+                    ) : gatekeeperCandidates.map(g => (
+                      <View key={g.id} style={{ backgroundColor: C.bg, padding: 12, borderRadius: 10, marginBottom: 8, borderWidth: 1, borderColor: C.line }}>
+                        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                          <Text style={{ color: C.text, fontWeight: "700", flex: 1 }} numberOfLines={1}>{g.title}</Text>
+                          <View style={{ backgroundColor: getTierColor(g.manual_tier || ""), paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+                            <Text style={{ color: "#fff", fontSize: 11, fontWeight: "700" }}>{getTierLabel(g.manual_tier || "")}</Text>
+                          </View>
+                        </View>
+                        <Text style={{ color: C.sub, fontSize: 11 }}>
+                          변곡점 등장 횟수: {g.block_count}회 · 순위 #{g.manual_order || 0}
+                        </Text>
+                        <View style={{ flexDirection: "row", gap: 6, marginTop: 8 }}>
+                          {(() => {
+                            const order = getActiveTierOrder(globalTierConfig);
+                            const idx = order.indexOf(g.manual_tier);
+                            const higher = idx > 0 ? order[idx - 1] : null;
+                            const lower = idx >= 0 && idx < order.length - 1 ? order[idx + 1] : null;
+                            return (
+                              <>
+                                {higher && (
+                                  <TouchableOpacity
+                                    onPress={() => {
+                                      Alert.alert("티어 승급", `${g.title}을(를) ${getTierLabel(higher)} 티어로 변경할까요?`, [
+                                        { text: "취소" },
+                                        {
+                                          text: "변경",
+                                          onPress: async () => {
+                                            try {
+                                              await exec("UPDATE novels SET manual_tier=? WHERE id=?", [higher, g.id]);
+                                              await enqueueVerification(g.id, "gatekeeper", "underrated");
+                                              await loadList(undefined, undefined, "v7-gatekeeper");
+                                              const gks = await getGatekeeperCandidates(5);
+                                              setGatekeeperCandidates(gks);
+                                            } catch (e) { console.warn(e); }
+                                          },
+                                        },
+                                      ]);
+                                    }}
+                                    style={{ backgroundColor: getTierColor(higher), paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
+                                  >
+                                    <Text style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}>⬆️ {getTierLabel(higher)}</Text>
+                                  </TouchableOpacity>
+                                )}
+                                {lower && (
+                                  <TouchableOpacity
+                                    onPress={() => {
+                                      Alert.alert("티어 강등", `${g.title}을(를) ${getTierLabel(lower)} 티어로 변경할까요?`, [
+                                        { text: "취소" },
+                                        {
+                                          text: "변경",
+                                          onPress: async () => {
+                                            try {
+                                              await exec("UPDATE novels SET manual_tier=? WHERE id=?", [lower, g.id]);
+                                              await enqueueVerification(g.id, "gatekeeper", "overrated");
+                                              await loadList(undefined, undefined, "v7-gatekeeper");
+                                              const gks = await getGatekeeperCandidates(5);
+                                              setGatekeeperCandidates(gks);
+                                            } catch (e) { console.warn(e); }
+                                          },
+                                        },
+                                      ]);
+                                    }}
+                                    style={{ backgroundColor: getTierColor(lower), paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
+                                  >
+                                    <Text style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}>⬇️ {getTierLabel(lower)}</Text>
+                                  </TouchableOpacity>
+                                )}
+                              </>
+                            );
+                          })()}
+                        </View>
+                      </View>
+                    ))}
+                  </ScrollView>
+                </View>
+              </View>
+            </Modal>
+          </>
+        )}
+
+        {/* MATCH (match 모드: 기존 ELO 매칭) */}
+        {screen === "match" && globalTierConfig.mode !== "hybrid" && (
           <>
             <H>자동 매칭(미대전 우선 · 랜덤)</H>
 
@@ -37160,6 +38016,14 @@ async function importJSON() {
                                 try {
                                   await exec("UPDATE novels SET manual_tier=? WHERE id=?", [tk, item.id]);
                                   addTierHistoryEntry(item.id, item.title, oldTier, tk);
+                                  // 🆕 v7.0: hybrid 모드 — 사용자 path 트리거
+                                  if (globalTierConfig.mode === "hybrid") {
+                                    const order = getActiveTierOrder(globalTierConfig);
+                                    const fromIdx = oldTier ? order.indexOf(oldTier) : order.length;
+                                    const toIdx = order.indexOf(tk);
+                                    const suspicion = toIdx < fromIdx ? "underrated" : "overrated";
+                                    enqueueVerification(item.id, "tier_change", suspicion).catch(() => {});
+                                  }
                                   setExpandedNovelId(null);
                                   await loadList(undefined, undefined, "tierManage");
                                 } catch (e) {

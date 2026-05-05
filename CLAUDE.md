@@ -5,21 +5,37 @@ ELO 매칭 시스템으로 작품 간 대전을 통해 자동으로 티어를 �
 
 ## 아키텍처
 
-- **단일 파일 구조**: `App.jsx` (~45,900줄) 하나에 모든 로직이 들어있음
+- **단일 파일 구조**: `App.jsx` (~46,900줄) 하나에 모든 로직이 들어있음
 - **SQLite** (expo-sqlite, WAL 모드) — 33+ 테이블 (v7.0: tier_verification_queue, tier_validation_log, tier_repositioning_session 추가)
 - **다중 슬롯**: 최대 10개 독립 데이터셋, 슬롯별 별도 DB 파일
 
-## v7.0 하이브리드 모드 동적 자리 탐색 시스템 (점진 구현 중)
+## v7.0 하이브리드 모드 동적 자리 탐색 시스템 (Stage 1~5 완료)
 
 `globalTierConfig.mode === "hybrid"`일 때 활성. 기존 ELO/자동매칭과 분리된 패러다임:
 
 - **patrick truth**: 사용자 manual_tier + manual_order
 - **검증 트리거**: 사용자 편집 행위 (작품 추가/메타 변경/티어 변경/순위 변경) → 검증 큐 INSERT
 - **자동 탐색 시퀀스**: 의심작 인접 후보 점진 매칭 → 변곡점(승패 변동) 발견 → K=2 추가 검증 → 자리 결정
-- **수문장 식별**: 시퀀스 내 첫 변곡점 작품 + 5개 누적 시퀀스 통계
+- **수문장 식별**: 시퀀스 내 첫 변곡점 작품 + 5개 누적 시퀀스 통계 → 제안 모달 (1단계 위/아래 변경 버튼)
 - **시스템/사용자 path 분리**: finalize의 manual_order/tier UPDATE는 트리거 X (무한 루프 방지)
+- **매칭 탭 분기**: hybrid → HybridVerificationView (검증 시퀀스 UI), 그 외 → 기존 ELO 매칭
 
-신규 헬퍼 함수: `detectViolation`, `enqueueVerification`, `getCandidatesForVerification`, `backfillManualOrder`
+신규 헬퍼 함수:
+- DB/판정: `detectViolation`, `enqueueVerification`, `getCandidatesForVerification`, `backfillManualOrder`, `getNextVerificationTarget`
+- 시퀀스: `findInflectionPoint`, `evaluateSequenceProgress`, `computeNewPosition`, `finalizeVerificationSession`, `logVerificationMatch`, `getGatekeeperCandidates`
+
+신규 상수: `VERIFICATION_MAX_RESPONSES = 7`, `VERIFICATION_K_AFTER_INFLECTION = 2`, `VERIFICATION_PRIORITY` (gatekeeper=5, tier_change=4, order_change=3, new=2, meta_edit=1)
+
+CRUD 트리거 hook 위치 (App.jsx, hybrid 모드만):
+- `addNovel` (manual_tier 설정 시): `new` / `underrated`
+- `saveEdit`: manual_tier 변경 시 방향 판정으로 `tier_change`, 그 외 메타 변경 시 `meta_edit`
+- `batchSetTier`: 작품별 prev 캡처 후 방향 판정으로 `tier_change`
+- 인라인 티어 칩(순위 탭): `tier_change`
+- `swapRating(▲/▼)`: `order_change`
+
+Stage 5 모드별 동작:
+- TasteAnalysisScreen: 매칭/심화 그룹 비활성 (`!isHybridMode && isGroupExpanded(...)`), 통계/장르/좌표계/스펙트럼만 표시
+- AwardsScreen: hybrid에서 `compareNovels` (manual_tier+order) 정렬, 점수에서 ELO rating 항 비활성, 표시도 "{tier} #{order}"
 
 ## 빌드/실행
 
