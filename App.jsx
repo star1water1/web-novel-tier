@@ -2,9 +2,155 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.9.2                                                                   ║
- * ║  최종 수정: 2026-04-05                                                        ║
- * ║  총 라인 수: 약 45,500줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 7.0.0-alpha (Stage 1+2 부분 구현)                                       ║
+ * ║  최종 수정: 2026-05-05                                                        ║
+ * ║  총 라인 수: 약 45,900줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.0 하이브리드 모드 동적 자리 탐색 시스템 (2026-05-05)                    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ 사용자 의도 7+ 차례 통합 후 plan v13 승인 → 점진 구현 시작.                    ║
+ * ║                                                                              ║
+ * ║ [패러다임 변경]                                                                ║
+ * ║ • mode === "hybrid"는 기존 ELO/자동매칭/점수 시스템과 분리된 새 시스템.       ║
+ * ║   manual_tier + manual_order가 "잠정 truth", 사용자 편집 행위가 검증 트리거.  ║
+ * ║ • 동적 탐색 시퀀스: 변곡점(승패 변동) 알고리즘으로 자리 결정 + 수문장 식별.    ║
+ * ║                                                                              ║
+ * ║ [Stage 1+2: DB 인프라 + manual_order — 본 커밋]                                ║
+ * ║ • novels.manual_order 컬럼 추가 (gap 100, 백필 1회 실행)                      ║
+ * ║ • 신규 테이블 3개: tier_verification_queue, tier_validation_log,              ║
+ * ║   tier_repositioning_session                                                  ║
+ * ║ • detectViolation 헬퍼: manual_tier/manual_order 위반 판정                    ║
+ * ║ • enqueueVerification 헬퍼: 검증 큐 INSERT (디바운스 1초)                     ║
+ * ║ • getCandidatesForVerification 헬퍼: 시퀀스 후보 풀 조회                      ║
+ * ║ • swapRating(▲/▼) hybrid 분기: manual_order swap + 트리거 큐                  ║
+ * ║ • tierManageEntries 정렬: manual/hybrid에서 manual_order asc 우선             ║
+ * ║ • ▲/▼ 가드: hybrid 모드에서도 활성                                            ║
+ * ║ • 백업/복원: manual_order 항상 저장 (opt.mo)                                  ║
+ * ║                                                                              ║
+ * ║ [Stage 3-5: 후속 작업]                                                         ║
+ * ║ • Stage 3: 트리거 hook (작품 CRUD 연결) + HybridVerificationView UI +         ║
+ * ║   시퀀스 엔진 (변곡점 알고리즘, K=2 추가 매칭, max=7)                         ║
+ * ║ • Stage 4: 수문장 식별 SQL + 제안 모달                                        ║
+ * ║ • Stage 5: TasteAnalysisScreen + AwardsScreen hybrid 전용 재설계              ║
+ * ║                                                                              ║
+ * ║ [정책 결정 — 사용자 7+ 차례 답변 통합]                                          ║
+ * ║ • 자동매칭: hybrid 비활성. 매칭 탭은 검증 시퀀스 UI로 변형                     ║
+ * ║ • ELO 점수: hybrid 갱신 X, UI 비표시                                           ║
+ * ║ • confidence/의심 UI: novels 표시 X — 매칭 탭에서만                           ║
+ * ║ • 자리 재배치: manual_order 자동, manual_tier 제안 모달                       ║
+ * ║ • 시퀀스: 변곡점 후 K=2 추가 매칭 일관 / max 7                                ║
+ * ║ • 후보 정렬: 의심작 인접부터 점진                                              ║
+ * ║ • 수문장: 시퀀스 내 첫 변곡점 + 5개 누적 통계                                  ║
+ * ║ • Unrated: manual_tier 미설정 작품, 검증 시퀀스 후보 제외                     ║
+ * ║ • 무한 세션 방지: cooldown 없음, 디바운스 1초만                                ║
+ * ║ • 시스템/사용자 path 분리: finalize는 시스템 path (트리거 X)                  ║
+ * ║                                                                              ║
+ * ║ [기존 시스템 영향]                                                             ║
+ * ║ • 5대 불변규칙 무관 (검증 시퀀스는 자동매칭 시스템과 분리)                    ║
+ * ║ • match 모드 동작 유지 (기존 ELO 시스템 그대로)                                ║
+ * ║ • manual 모드 ▲/▼: rating 교환 → manual_order 교환 (의미 명확화)               ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v6.2 티어 모드 / 취향 분석 시스템 개선 (2026-05-05)                        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ 사용자 요청에 따른 하이브리드 모드·취향 분석 메타 검토 후 4 phase 구현.       ║
+ * ║ 각 phase는 별도 commit (b93add3, 6b5abb0, c6d6594, c07b279).                 ║
+ * ║                                                                              ║
+ * ║ [정책 결정 — 사용자 답변 반영]                                                 ║
+ * ║ • manual_tier: 모드 전환 시 보존 (match에서 무시되지만 hybrid/manual 복귀 시  ║
+ * ║   부활). 절대 NULL 강제 안 함.                                                ║
+ * ║ • 취향 분석: 탭 진입/list 변동 시 800ms 디바운스 후 재분석 (stale 방지)       ║
+ * ║ • 23개 섹션 UI → 4그룹 카테고리 리팩터링 (모바일 길이 부담 완화)              ║
+ * ║ • 자동매칭 진행 중: 모드 버튼 완전 잠금                                       ║
+ * ║                                                                              ║
+ * ║ [Phase 1] 정합성 버그 수정 + 메모리 부담 완화                                  ║
+ * ║ • 프리셋 match 적용 시 manual_tier 손실 수정 (App.jsx:39516)                 ║
+ * ║   - 이전: gated 외 모든 manual_tier NULL → 사용자 의도 손실                   ║
+ * ║   - 변경: 새 tier 키 집합에 없는 키만 마이그레이션, 그 외 보존               ║
+ * ║ • 자동매칭 중 모드 변경 차단 + 다중 클릭 race 방지 (App.jsx:39418)            ║
+ * ║   - modeChangingRef useRef + isAutoMatching disabled + opacity 0.4           ║
+ * ║   - 안내 Alert은 매칭 큐 외부 호출 (불변규칙 #1 안전)                         ║
+ * ║   - try/finally로 가드 자동 해제                                              ║
+ * ║ • 취향 분석 matches LIMIT 5000 (App.jsx:18840)                                ║
+ * ║   - ORDER BY DESC LIMIT 5000, iteration용이라 순서 무관                       ║
+ * ║                                                                              ║
+ * ║ [Phase 2] 자동 갱신 + UX 개선                                                 ║
+ * ║ • ActualTierTag 신규 작품 미평가 라벨 (App.jsx:9737)                          ║
+ * ║   - match/hybrid + manual_tier 미설정 + match_count==0 → "미평가" 칩         ║
+ * ║   - default rating 1500이 의미 없는 티어로 표시되던 문제 해결                 ║
+ * ║ • TasteAnalysisScreen 디바운스 자동 재분석 (App.jsx:18866)                    ║
+ * ║   - listSignature(작품수+match_count합+rating합) 변화 감지 시 800ms          ║
+ * ║   - 기존 !analysis 가드는 첫 진입 후 영원히 stale 가능                        ║
+ * ║ • hybrid 모드 자동매칭 시작 시 안내 (App.jsx:35072)                            ║
+ * ║   - Switch onValueChange wrapper로 manual_tier 우선 정책 명시                ║
+ * ║ • hybrid 진입 자동 백필 제거 (App.jsx:39478, 39548)                          ║
+ * ║   - 이전: 진입 시점 ELO가 박제되어 이후 매칭 결과 미반영                      ║
+ * ║   - 변경: getDisplayTier의 ELO fallback에 위임 (manual 모드만 백필)           ║
+ * ║                                                                              ║
+ * ║ [Phase 3] 취향 분석 4그룹 카테고리화                                           ║
+ * ║ • SECTION_GROUPS 4그룹 정의 (13개 활성 섹션) (App.jsx:18681)                  ║
+ * ║   - stats(3): basicStats, categoryAnalysis, anomalies                        ║
+ * ║   - genreTag(4): majorGenre, subGenre, coordPref, spectrum                  ║
+ * ║   - matching(4): matchAnalysis, matchBehavior, matchConsist, simGroup       ║
+ * ║   - advanced(2): upsets, factors                                             ║
+ * ║ • expandedGroups state + app_meta 영속화 (slot DB 격리, slot별 자동 분리)     ║
+ * ║ • 4개 그룹 토글 칩 UI (핵심 요약 카드 직전)                                    ║
+ * ║ • 13개 섹션에 isGroupExpanded 가드 (9 AND 결합 + 4 wrapping)                ║
+ * ║ • expandAll/collapseAll 그룹 동기화                                           ║
+ * ║ • 23개 섹션 키 중 사용 안 되던 11개 dead code 제거                             ║
+ * ║                                                                              ║
+ * ║ [Phase 4] 백업 v9 tierSystemConfig 호환성                                     ║
+ * ║ • buildExtendedBackup — tierSystemConfig 항상 저장 (App.jsx:31311)            ║
+ * ║   - 이전: default와 동일하면 미저장 → cross-slot import 시 manual_tier      ║
+ * ║     키 불일치 위험                                                            ║
+ * ║   - 변경: 항상 저장 (~200B 추가). import 시 globalTierConfig 자동 동기화     ║
+ * ║ • import 시 manual_tier 키 검증 (App.jsx:31864, 31904)                       ║
+ * ║   - validTierKeys Set 캐시 (행 루프 비용 O(1))                                ║
+ * ║   - 현재 globalTierConfig에 없는 키는 NULL (구버전/손상 백업 안전망)         ║
+ * ║                                                                              ║
+ * ║ [메타 검토 — plan 자기 수정]                                                   ║
+ * ║ • 1차 plan의 "safeDbOperation 일관성" 작업 폐기                               ║
+ * ║   - all()/first()/exec()는 이미 내부에서 safeDbOperation 호출                 ║
+ * ║   - 추가 래핑은 이중 retry (5×5=25회) + PerfMonitor 중복 추적                ║
+ * ║ • 1차 plan의 "matches ASC + LIMIT 5000" 폐기                                 ║
+ * ║   - ASC + LIMIT은 가장 오래된 5000건만 → trend/matchAnalysis 오염             ║
+ * ║   - 변경: DESC + LIMIT (최근 5000건)                                          ║
+ * ║                                                                              ║
+ * ║ [불변규칙 검증]                                                                ║
+ * ║ • #1 자동매칭 중 Alert 호출 금지: 모드 변경/자동매칭 안내 Alert은 모두 매칭   ║
+ * ║   큐 외부 호출 (사용자 토글 진입 직전) — 안전                                 ║
+ * ║ • #2~5: 두 시스템 모두 매칭 큐 외부, 직접 위반 없음                           ║
+ * ║                                                                              ║
+ * ║ [버전 점프 사유]                                                               ║
+ * ║ • v3.9.3 (갤러리 확대 수정) → v6.2로 점프                                     ║
+ * ║ • v6.0~6.1이 티어 시스템 메이저였으므로 본 변경(티어 모드 + 취향 분석)도      ║
+ * ║   v6.x 라인을 따름. v3.x → v6.x 통합 (사용자 결정).                          ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🐛 v3.9.3 갤러리 확대 이미지 깨짐 수정 (2026-05-05)                           ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [버그 수정] 🔴 갤러리 탭 이미지 확대 모달 렌더 깨짐                           ║
+ * ║ • 증상: 갤러리(쇼츠/관리) 탭에서 이미지 탭 → 확대 모달이 심하게 깨짐         ║
+ * ║   (이전 이미지 잔상, 픽셀 깨짐, 부분 렌더 등 — 단순 렉이 아닌 시각 오염)     ║
+ * ║ • 원인: [버그 수정 12]와 동일 패턴 — ExpoImage recyclingKey 미설정           ║
+ * ║   1) 모달은 visible 토글로 동작, ExpoImage 인스턴스 React 트리에 잔존        ║
+ * ║   2) 다른 이미지 탭 시 source.uri만 교체 → Glide 내부 상태 오염 (Android)   ║
+ * ║   3) cachePolicy="disk"는 메모리 캐시 미사용 → 매번 디스크 디코딩 부담        ║
+ * ║ • 수정:                                                                      ║
+ * ║   (1) recyclingKey={galleryExpandImg.id} 추가                                ║
+ * ║       → 이미지 교체 시 ExpoImage 내부 상태 완전 리셋                         ║
+ * ║   (2) cachePolicy "disk" → "memory-disk" (작동하는 표지 뷰어와 동일)          ║
+ * ║   (3) Modal에 statusBarTranslucent={true} 추가 (레이아웃 일관성)             ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -3907,6 +4053,7 @@ async function initDb() {
     ["gaiden_read_count", "INTEGER", "0"],
     ["gaiden_total_episodes", "INTEGER", "0"],
     ["manual_tier", "TEXT", "NULL"],
+    ["manual_order", "INTEGER", "0"], // 🆕 v7.0: 같은 manual_tier 내 사용자 지정 순서 (gap 100)
     ["reread_count", "INTEGER", "1"], // 📚 v3.0.4: 다회독 카운트 (기본 1회)
     // 🏷️ v5.0 태그 시스템
     ["tag_data", "TEXT", "''"],      // JSON: [{tag, intensity}, ...]
@@ -4177,6 +4324,93 @@ async function initDb() {
   );`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_gallery_novel ON gallery_images(novel_id);`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_gallery_created ON gallery_images(created_at DESC);`);
+
+  // 🆕 v7.0: 하이브리드 모드 — 동적 자리 탐색 시스템 (검증 큐 + 매칭 로그 + 시퀀스 결과)
+  // 트리거: 사용자 편집 행위 (작품 추가/메타 변경/티어/순위 변경) → 의심작 큐 INSERT
+  // 시퀀스: 변곡점 알고리즘 (인접 후보 점진 매칭, 변곡점 후 K=2 추가 검증)
+  await database.runAsync(`CREATE TABLE IF NOT EXISTS tier_verification_queue (
+    id TEXT PRIMARY KEY NOT NULL,
+    novel_id TEXT NOT NULL,
+    trigger_type TEXT NOT NULL,
+    suspicion_type TEXT NOT NULL,
+    priority INTEGER DEFAULT 0,
+    state TEXT DEFAULT 'pending',
+    created_at INTEGER NOT NULL,
+    processed_at INTEGER
+  );`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tvq_state ON tier_verification_queue(state, priority DESC, created_at);`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tvq_novel ON tier_verification_queue(novel_id);`);
+
+  await database.runAsync(`CREATE TABLE IF NOT EXISTS tier_validation_log (
+    id TEXT PRIMARY KEY NOT NULL,
+    session_id TEXT,
+    novel_a_id TEXT NOT NULL,
+    novel_b_id TEXT NOT NULL,
+    user_choice TEXT NOT NULL,
+    violation_type TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tvl_session ON tier_validation_log(session_id);`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tvl_a ON tier_validation_log(novel_a_id);`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tvl_b ON tier_validation_log(novel_b_id);`);
+
+  await database.runAsync(`CREATE TABLE IF NOT EXISTS tier_repositioning_session (
+    id TEXT PRIMARY KEY NOT NULL,
+    novel_id TEXT NOT NULL,
+    suspicion_type TEXT NOT NULL,
+    trigger_type TEXT,
+    state TEXT NOT NULL,
+    result_tier TEXT,
+    result_order INTEGER,
+    result_action TEXT,
+    total_responses INTEGER DEFAULT 0,
+    blocker_id TEXT,
+    created_at INTEGER NOT NULL,
+    completed_at INTEGER
+  );`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_trs_blocker ON tier_repositioning_session(blocker_id, state);`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_trs_novel ON tier_repositioning_session(novel_id);`);
+
+  // manual_order 인덱스 (티어 그룹별 정렬 빠르게)
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_novels_manual_order ON novels(manual_tier, manual_order);`);
+
+  // manual_order 백필 (1회만 — app_meta로 가드)
+  await backfillManualOrder(database);
+}
+
+// 🆕 v7.0: manual_order 백필 — 기존 작품들에 티어 그룹별 순차 manual_order 부여
+async function backfillManualOrder(database) {
+  try {
+    const metaRow = await database.getFirstAsync(`SELECT value FROM app_meta WHERE key='manual_order_backfilled'`);
+    if (metaRow && metaRow.value === '"1"') return; // 이미 백필됨
+
+    // manual_tier 그룹별로 정렬 후 0부터 gap 100으로 부여
+    // manual_tier가 NULL이거나 빈 문자열인 작품(Unrated)도 동일 그룹으로 묶어 부여
+    const rows = await database.getAllAsync(
+      `SELECT id, manual_tier, rating, created_at FROM novels ORDER BY
+       COALESCE(manual_tier, '') ASC, rating DESC, created_at ASC`
+    );
+    const groups = {};
+    for (const r of rows) {
+      const key = r.manual_tier || '';
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(r.id);
+    }
+    for (const [, ids] of Object.entries(groups)) {
+      for (let i = 0; i < ids.length; i++) {
+        await database.runAsync(
+          `UPDATE novels SET manual_order=? WHERE id=?`,
+          [(i + 1) * 100, ids[i]]
+        );
+      }
+    }
+    await database.runAsync(
+      `INSERT OR REPLACE INTO app_meta (key, value) VALUES ('manual_order_backfilled', ?)`,
+      [JSON.stringify("1")]
+    );
+  } catch (e) {
+    console.warn("manual_order 백필 오류:", e);
+  }
 }
 
 // -----------------------------------------
@@ -9717,6 +9951,9 @@ const ActualTierTag = memo(({ novel, showDiff = false, showWarning = true }) => 
   const recommended = isMatchMode ? tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg) : actual;
   const isForced = showWarning && isMatchMode && novel.manual_tier && tierRank(tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg), cfg) > tierRank(novel.manual_tier, cfg);
   const hasDiff = actual !== recommended;
+  // 🆕 v6.2: match/hybrid 모드 + manual_tier 미설정 + 매칭 0회 → 미평가
+  // (default rating 1500이라 의미 없는 티어가 표시되는 문제 해결)
+  const isUnrated = isMatchMode && !novel.manual_tier && (Number(novel.match_count) || 0) === 0;
 
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
@@ -9728,13 +9965,19 @@ const ActualTierTag = memo(({ novel, showDiff = false, showWarning = true }) => 
           borderRadius: 999,
           borderWidth: isForced ? 2 : 0,
           borderColor: "#fef3c7",
+          opacity: isUnrated ? 0.5 : 1,
         }}
       >
         <Text style={{ color: "#fff", fontWeight: "800" }}>
           {isForced ? "⚠️" : ""}{label}
         </Text>
       </View>
-      {showDiff && hasDiff && (
+      {isUnrated && (
+        <View style={{ backgroundColor: "#9ca3af", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 }}>
+          <Text style={{ color: "#fff", fontSize: 10, fontWeight: "700" }}>미평가</Text>
+        </View>
+      )}
+      {showDiff && hasDiff && !isUnrated && (
         <Text style={{ color: "#6b7280", fontSize: 11 }}>
           ({getTierLabel(recommended, cfg)} 권장)
         </Text>
@@ -18650,14 +18893,27 @@ const HeatmapRow = memo(({ data, theme }) => {
 /* =========================================================
    🎯 취향 분석 화면 컴포넌트
    ========================================================= */
-const TasteAnalysisScreen = memo(({ 
-  list, 
-  C, 
-  H, 
-  Section, 
-  isDark, 
-  matchInsights = [], 
-  upsetFactors = { factors: [] }, 
+// 🆕 v6.2: 섹션 그룹 정의 (사용자 답변: 카테고리 그룹화 리팩터링)
+// 13개 활성 섹션을 4그룹으로 묶어 모바일에서 길이 부담 완화
+// 기본: stats 그룹만 펼침. 사용자 펼침 상태는 app_meta 영속화 (slot별 자동 분리)
+const SECTION_GROUPS = [
+  { key: "stats",    label: "📊 통계",       sections: ["basicStats", "categoryAnalysis", "anomalies"] },
+  { key: "genreTag", label: "🏷️ 장르·태그",  sections: ["majorGenre", "subGenre", "coordPref", "spectrum"] },
+  { key: "matching", label: "⚔️ 매칭 행동",  sections: ["matchAnalysis", "matchBehavior", "matchConsist", "simGroupConsist"] },
+  { key: "advanced", label: "🔬 심화",       sections: ["upsets", "factors"] },
+];
+const ALL_SECTION_KEYS = SECTION_GROUPS.flatMap(g => g.sections);
+const ALL_GROUP_KEYS = SECTION_GROUPS.map(g => g.key);
+const META_KEY_GROUPS = "tasteAnalysisExpandedGroups";
+
+const TasteAnalysisScreen = memo(({
+  list,
+  C,
+  H,
+  Section,
+  isDark,
+  matchInsights = [],
+  upsetFactors = { factors: [] },
   tagRelations = { groups: {}, tagToGroup: {} },
   tagCoOccurrences = {},  // 🆕 v3.2.1: 공동 출현 통계
   coordinateSystems = null,  // 🆕 v3.2.1: 사용자 정의 좌표계
@@ -18671,6 +18927,40 @@ const TasteAnalysisScreen = memo(({
   // 🆕 v3.4: 여러 섹션 동시 펼침 가능 (Set 사용)
   const [expandedSections, setExpandedSections] = useState(new Set());
   const [errorMsg, setErrorMsg] = useState(null);
+  // 🆕 v6.2: 그룹 단위 펼침 상태 (기본: stats만)
+  const [expandedGroups, setExpandedGroups] = useState(new Set(["stats"]));
+
+  // 🆕 v6.2: 첫 마운트 시 영속 상태 로드 (slot별 자동 분리: app_meta는 slot DB 격리)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const saved = await getAppMeta(META_KEY_GROUPS);
+        if (!cancelled && Array.isArray(saved) && saved.length > 0) {
+          // 유효 키만 필터 (그룹 키 변경 대비)
+          const valid = saved.filter(k => ALL_GROUP_KEYS.includes(k));
+          setExpandedGroups(new Set(valid));
+        }
+      } catch (e) {
+        // 로드 실패 시 기본값 유지
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // 🆕 v6.2: 그룹 토글 + 영속화
+  const toggleGroup = useCallback((key) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      // fire-and-forget: UI 응답성 우선
+      setAppMeta(META_KEY_GROUPS, Array.from(next)).catch(() => {});
+      return next;
+    });
+  }, []);
+
+  const isGroupExpanded = useCallback((key) => expandedGroups.has(key), [expandedGroups]);
 
   // 🆕 v3.4: 섹션 토글 함수
   const toggleSection = useCallback((key) => {
@@ -18688,20 +18978,17 @@ const TasteAnalysisScreen = memo(({
   // 🆕 v3.4: 섹션 펼침 여부 확인
   const isExpanded = useCallback((key) => expandedSections.has(key), [expandedSections]);
 
-  // 🆕 v3.4: 전체 펼침/접기
+  // 🆕 v3.4: 전체 펼침/접기 (v6.2: 그룹도 함께 동기화)
   const expandAll = useCallback(() => {
-    const allKeys = [
-      "basicStats", "majorGenre", "subGenre", "tagAnalysis", "comboAnalysis",
-      "spectrum", "oppositeTag", "coOccurrence", "coordPref", "matchConsist",
-      "simGroupConsist", "platform", "readPattern", "author", "matchAnalysis",
-      "trend", "hiddenPattern", "avoid", "recommend", "anomalies", "upsets", "factors",
-      "matchBehavior"
-    ];
-    setExpandedSections(new Set(allKeys));
+    setExpandedSections(new Set(ALL_SECTION_KEYS));
+    setExpandedGroups(new Set(ALL_GROUP_KEYS));
+    setAppMeta(META_KEY_GROUPS, ALL_GROUP_KEYS).catch(() => {});
   }, []);
 
   const collapseAll = useCallback(() => {
     setExpandedSections(new Set());
+    setExpandedGroups(new Set());
+    setAppMeta(META_KEY_GROUPS, []).catch(() => {});
   }, []);
 
   // 🔮 v3.0.3: 이변(Upset) 분석 데이터 계산
@@ -18818,7 +19105,9 @@ const TasteAnalysisScreen = memo(({
     setErrorMsg(null);
     try {
       console.log("Starting analysis, list length:", list?.length);
-      const matches = await all("SELECT * FROM matches ORDER BY created_at ASC;");
+      // 🆕 v6.2: 최근 5000건만 로드 (LIMIT 없을 때 매칭 1만+ 메모리 부담)
+      // matches는 analyzePreferences 내부에서 iteration용 (순서 무관, all()이 safeDbOperation 내장)
+      const matches = await all("SELECT * FROM matches ORDER BY created_at DESC LIMIT 5000");
       console.log("Matches loaded:", matches?.length);
       const result = await analyzePreferences(list, matches);
       console.log("Analysis complete:", result?.basicStats?.total);
@@ -18833,11 +19122,26 @@ const TasteAnalysisScreen = memo(({
     setLoading(false);
   }, [list]);
 
-  useEffect(() => {
-    if (list && list.length > 0 && !analysis) {
-      runAnalysis();
+  // 🆕 v6.2: list 또는 매칭 변화 감지용 시그니처 (정렬만 바뀐 경우는 동일)
+  const listSignature = useMemo(() => {
+    if (!list || list.length === 0) return "0";
+    let mc = 0, rs = 0;
+    for (const n of list) {
+      mc += Number(n.match_count) || 0;
+      rs += Math.round(Number(n.rating) || 1500);
     }
+    return `${list.length}|${mc}|${rs}`;
   }, [list]);
+
+  // 🆕 v6.2: 디바운스 자동 재분석 (사용자 답변 정책)
+  // 기존 `!analysis` 가드는 첫 진입 후 영원히 stale 가능 → list/매칭 변동 시 800ms 후 재실행
+  // 화면 전환 시 cleanup으로 중복 분석 방지
+  useEffect(() => {
+    if (!list || list.length === 0) return;
+    const timer = setTimeout(() => { runAnalysis(); }, 800);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listSignature]);
 
   // 🎯 v3.1.2: 상반 태그 관계 분석
   const oppositeTagAnalysis = useMemo(() => {
@@ -19388,6 +19692,32 @@ const TasteAnalysisScreen = memo(({
         </TouchableOpacity>
       </View>
 
+      {/* 🆕 v6.2: 그룹 단위 펼침 토글 칩 (4그룹) */}
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+        {SECTION_GROUPS.map(g => {
+          const open = isGroupExpanded(g.key);
+          return (
+            <TouchableOpacity
+              key={g.key}
+              onPress={() => toggleGroup(g.key)}
+              activeOpacity={0.7}
+              style={{
+                backgroundColor: open ? C.primary : C.chip,
+                paddingHorizontal: 10,
+                paddingVertical: 6,
+                borderRadius: 16,
+                borderWidth: 1,
+                borderColor: open ? C.primary : C.line,
+              }}
+            >
+              <Text style={{ color: open ? "#fff" : C.sub, fontSize: 12, fontWeight: "700" }}>
+                {g.label} {open ? "▼" : "▶"}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
       {/* ═══════════════════════════════════════════════════════════════
          🌟 핵심 요약 카드 (항상 펼침) - 한눈에 파악
          ═══════════════════════════════════════════════════════════════ */}
@@ -19480,7 +19810,8 @@ const TasteAnalysisScreen = memo(({
          📊 세부 분석 섹션들 (기본 접힘)
          ═══════════════════════════════════════════════════════════════ */}
 
-      {/* 📊 기본 통계 */}
+      {/* 📊 기본 통계 (그룹: stats) */}
+      {isGroupExpanded("stats") && (
       <TouchableOpacity onPress={() => toggleSection("basicStats")} activeOpacity={0.7}>
         <Section title={`📊 기본 통계 ${isExpanded("basicStats") ? "▼" : "▶"}`}>
           {isExpanded("basicStats") ? (
@@ -19511,8 +19842,10 @@ const TasteAnalysisScreen = memo(({
           )}
         </Section>
       </TouchableOpacity>
+      )}
 
-      {/* 대장르 분석 */}
+      {/* 대장르 분석 (그룹: genreTag) */}
+      {isGroupExpanded("genreTag") && (
       <TouchableOpacity onPress={() => toggleSection("majorGenre")}>
         <Section title={`📚 대장르 선호도 ${isExpanded("majorGenre") ? "▼" : "▶"}`}>
           <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
@@ -19551,8 +19884,10 @@ const TasteAnalysisScreen = memo(({
           )}
         </Section>
       </TouchableOpacity>
+      )}
 
-      {/* 부장르/태그 분석 */}
+      {/* 부장르/태그 분석 (그룹: genreTag) */}
+      {isGroupExpanded("genreTag") && (
       <TouchableOpacity onPress={() => toggleSection("subGenre")}>
         <Section title={`🏷️ 부장르 선호도 TOP 10 ${isExpanded("subGenre") ? "▼" : "▶"}`}>
           {subGenreAnalysis.slice(0, isExpanded("subGenre") ? 20 : 10).map((g, i) => (
@@ -19571,9 +19906,10 @@ const TasteAnalysisScreen = memo(({
           ))}
         </Section>
       </TouchableOpacity>
+      )}
 
-      {/* 🆕 v3.5.9: 카테고리별 태그 분석 */}
-      {categoryStats.length > 0 && (
+      {/* 🆕 v3.5.9: 카테고리별 태그 분석 (그룹: stats) */}
+      {isGroupExpanded("stats") && categoryStats.length > 0 && (
         <TouchableOpacity onPress={() => toggleSection("categoryAnalysis")}>
           <Section title={`📂 카테고리별 선호도 ${isExpanded("categoryAnalysis") ? "▼" : "▶"}`}>
             <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
@@ -19767,7 +20103,7 @@ const TasteAnalysisScreen = memo(({
       )}
 
       {/* 🆕 v3.2.1: 좌표계 기반 취향 분포 */}
-      {coordinatePreferenceAnalysis && coordinatePreferenceAnalysis.length > 0 && (
+      {isGroupExpanded("genreTag") && coordinatePreferenceAnalysis && coordinatePreferenceAnalysis.length > 0 && (
         <TouchableOpacity onPress={() => toggleSection("coordPref")}>
           <Section title={`📐 취향 좌표 분석 ${isExpanded("coordPref") ? "▼" : "▶"}`}>
             <Text style={{ color: C.sub, fontSize: 12, marginBottom: 12 }}>
@@ -19898,7 +20234,7 @@ const TasteAnalysisScreen = memo(({
       )}
 
       {/* 🆕 v3.2.1: 매칭 일관성 분석 */}
-      {matchConsistencyAnalysis && (
+      {isGroupExpanded("matching") && matchConsistencyAnalysis && (
         <TouchableOpacity onPress={() => toggleSection("matchConsist")}>
           <Section title={`🎯 매칭 일관성 분석 ${isExpanded("matchConsist") ? "▼" : "▶"}`}>
             {/* 요약 통계 */}
@@ -19995,7 +20331,7 @@ const TasteAnalysisScreen = memo(({
       )}
 
       {/* 🆕 v3.2.1: 유사 그룹 일관성 분석 */}
-      {similarGroupConsistency && similarGroupConsistency.length > 0 && (
+      {isGroupExpanded("matching") && similarGroupConsistency && similarGroupConsistency.length > 0 && (
         <TouchableOpacity onPress={() => toggleSection("simGroupConsist")}>
           <Section title={`🔗 유사 태그 일관성 ${isExpanded("simGroupConsist") ? "▼" : "▶"}`}>
             <Text style={{ color: C.sub, fontSize: 12, marginBottom: 12 }}>
@@ -20225,7 +20561,7 @@ const TasteAnalysisScreen = memo(({
       )}
 
       {/* 매칭 패턴 */}
-      {matchAnalysis.total > 0 && (
+      {isGroupExpanded("matching") && matchAnalysis.total > 0 && (
         <TouchableOpacity onPress={() => toggleSection("matchAnalysis")}>
           <Section title={`⚔️ 매칭 패턴 분석 ${isExpanded("matchAnalysis") ? "▼" : "▶"}`}>
             <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
@@ -20299,7 +20635,7 @@ const TasteAnalysisScreen = memo(({
       )}
 
       {/* 🎯 v3.1.2 스펙트럼 분석 UI */}
-      {spectrumAnalysis && Object.keys(spectrumAnalysis).length > 0 && (
+      {isGroupExpanded("genreTag") && spectrumAnalysis && Object.keys(spectrumAnalysis).length > 0 && (
         <TouchableOpacity onPress={() => toggleSection("spectrum")}>
           <Section title={`📊 취향 스펙트럼 ${isExpanded("spectrum") ? "▼" : "▶"}`}>
             <Text style={{ color: C.sub, fontSize: 12, marginBottom: 12 }}>
@@ -20595,7 +20931,8 @@ const TasteAnalysisScreen = memo(({
         )}
       </Section>
 
-      {/* 이상치 */}
+      {/* 이상치 (그룹: stats) */}
+      {isGroupExpanded("stats") && (
       <TouchableOpacity onPress={() => toggleSection("anomalies")}>
         <Section title={`🔬 데이터 품질 점검 ${isExpanded("anomalies") ? "▼" : "▶"}`}>
           <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
@@ -20698,9 +21035,10 @@ const TasteAnalysisScreen = memo(({
           )}
         </Section>
       </TouchableOpacity>
+      )}
 
-      {/* 🔮 v3.0.3: 이변(Upset) 분석 */}
-      {upsetAnalysis && upsetAnalysis.total > 0 && (
+      {/* 🔮 v3.0.3: 이변(Upset) 분석 (그룹: advanced) */}
+      {isGroupExpanded("advanced") && upsetAnalysis && upsetAnalysis.total > 0 && (
         <TouchableOpacity onPress={() => toggleSection("upsets")}>
           <Section title={`🔮 이변 분석 ${isExpanded("upsets") ? "▼" : "▶"}`}>
             <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
@@ -20802,7 +21140,7 @@ const TasteAnalysisScreen = memo(({
       )}
       
       {/* 🔮 v3.0.3: 이변 요인 분석 (누적 학습 데이터) */}
-      {factorAnalysis && factorAnalysis.total > 0 && (
+      {isGroupExpanded("advanced") && factorAnalysis && factorAnalysis.total > 0 && (
         <TouchableOpacity 
           onPress={() => toggleSection("factors")}
           activeOpacity={0.7}
@@ -20921,7 +21259,7 @@ const TasteAnalysisScreen = memo(({
       )}
 
       {/* 🧠 v3.5.4: 매칭 행동 분석 — preference_patterns 기반 에이전트 인사이트 */}
-      {analysis?.matchBehavior && (
+      {isGroupExpanded("matching") && analysis?.matchBehavior && (
         <TouchableOpacity onPress={() => toggleSection("matchBehavior")} activeOpacity={0.7}>
           <Section title={`🧠 매칭 행동 분석 (${analysis.matchBehavior.totalPatterns}개 패턴)`}>
             {isExpanded("matchBehavior") ? (
@@ -21148,6 +21486,93 @@ function tierRank(tier, config) {
   const order = config ? getActiveTierOrder(config) : getActiveTierOrder(globalTierConfig);
   const idx = order.indexOf(tier);
   return idx === -1 ? order.length : idx;
+}
+
+// 🆕 v7.0: 하이브리드 모드 검증 — 두 작품 manual 순서와 사용자 선택 비교, 위반 종류 반환
+// "tier" = manual_tier 위반, "order" = 같은 tier 내 manual_order 위반, "none" = 일치 (의심작이 짐)
+function detectViolation(novelA, novelB, choice, tierConfig) {
+  const cfg = tierConfig || globalTierConfig;
+  const tIA = tierRank(novelA.manual_tier, cfg);
+  const tIB = tierRank(novelB.manual_tier, cfg);
+  if (tIA < tIB) return choice === "b" ? "tier" : "none";
+  if (tIA > tIB) return choice === "a" ? "tier" : "none";
+  const oA = Number(novelA.manual_order) || 0;
+  const oB = Number(novelB.manual_order) || 0;
+  if (oA < oB) return choice === "b" ? "order" : "none";
+  if (oA > oB) return choice === "a" ? "order" : "none";
+  return "none";
+}
+
+// 🆕 v7.0: 검증 큐 INSERT — 사용자 편집 행위 발생 시 호출. 시스템 변경(finalize)은 호출 X
+const VERIFICATION_PRIORITY = {
+  gatekeeper: 5,
+  tier_change: 4,
+  order_change: 3,
+  new: 2,
+  meta_edit: 1,
+};
+const _enqueueDebounce = new Map(); // novelId → last enqueue timestamp (1초 디바운스)
+
+async function enqueueVerification(novelId, triggerType, suspicionType) {
+  if (!novelId || !triggerType || !suspicionType) return;
+  const now = Date.now();
+  // 디바운스: 같은 작품 1초 내 다중 변경은 1건만
+  const last = _enqueueDebounce.get(novelId) || 0;
+  if (now - last < 1000) return;
+  _enqueueDebounce.set(novelId, now);
+
+  const priority = VERIFICATION_PRIORITY[triggerType] || 0;
+  try {
+    await exec(
+      `INSERT INTO tier_verification_queue (id, novel_id, trigger_type, suspicion_type, priority, state, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+      [uuid(), novelId, triggerType, suspicionType, priority, now]
+    );
+  } catch (e) {
+    console.warn("enqueueVerification 오류:", e?.message);
+  }
+}
+
+// 🆕 v7.0: 시퀀스 후보 풀 fetch — 의심작 인접 정렬, Unrated/자기 자신 제외
+async function getCandidatesForVerification(novelId, suspicionType, limit = 10) {
+  const novel = await first("SELECT id, manual_tier, manual_order FROM novels WHERE id=?", [novelId]);
+  if (!novel) return [];
+  const mt = novel.manual_tier || "";
+  const mo = Number(novel.manual_order) || 0;
+
+  // underrated: 위쪽 작품 (manual_tier가 더 높거나, 같은 tier에서 manual_order 더 작음)
+  // overrated: 아래쪽 작품 (반대)
+  const tierOrder = getActiveTierOrder(globalTierConfig);
+  const ownTierIdx = tierOrder.indexOf(mt);
+
+  const allRows = await all(
+    `SELECT id, title, manual_tier, manual_order, rating FROM novels
+     WHERE id != ? AND manual_tier IS NOT NULL AND manual_tier != ''`,
+    [novelId]
+  );
+
+  const scored = [];
+  for (const r of allRows) {
+    const rTierIdx = tierOrder.indexOf(r.manual_tier);
+    const rOrder = Number(r.manual_order) || 0;
+    let isAbove, distance;
+    if (rTierIdx < ownTierIdx) {
+      isAbove = true;
+      distance = (ownTierIdx - rTierIdx) * 10000 + rOrder;
+    } else if (rTierIdx > ownTierIdx) {
+      isAbove = false;
+      distance = (rTierIdx - ownTierIdx) * 10000 + rOrder;
+    } else {
+      // 같은 tier
+      if (rOrder < mo) { isAbove = true; distance = mo - rOrder; }
+      else if (rOrder > mo) { isAbove = false; distance = rOrder - mo; }
+      else continue; // 같은 자리 무시
+    }
+    if (suspicionType === "underrated" && !isAbove) continue;
+    if (suspicionType === "overrated" && isAbove) continue;
+    scored.push({ ...r, _distance: distance });
+  }
+  scored.sort((a, b) => a._distance - b._distance);
+  return scored.slice(0, limit);
 }
 
 // 🆕 v6.0: 모드별 표시 티어 계산
@@ -22499,6 +22924,7 @@ function AppContent() {
   const [isAutoMatching, setIsAutoMatching] = useState(false); // 🔧 v3.4.6: 자동 승패 처리 중 플래그
   const isAutoMatchingRef = useRef(false); // 🔧 v3.5.14: ref 기반 동기 guard (state 배칭 우회 방지)
   const needsListRefreshRef = useRef(false); // 🔧 v3.5.15: 자동매칭 종료 후 loadList 지연 실행 플래그
+  const modeChangingRef = useRef(false); // 🆕 v6.2: 티어 모드 변경 in-flight 가드 (Alert 큐잉/중복 실행 방지)
   
   // 🎯 v3.0.4: 확장된 자동승패 설정
   const [autoMatchSettings, setAutoMatchSettings] = useState({
@@ -30441,9 +30867,12 @@ function AppContent() {
   }, [list, rankQuery, rankTier, screen]);
 
   // 🆕 v6.1: 티어 관리 탭 데이터 (manual/hybrid 모드)
+  // 🆕 v7.0: manual/hybrid에서는 manual_order asc 우선 정렬 (사용자 지정 순서)
   const tierManageEntries = useMemo(() => {
     if (screen !== "tierManage") return [];
     if (!list || list.length === 0) return [];
+
+    const isManualOrHybrid = globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid";
 
     const sorted = [...list].sort((a, b) => {
       const tierA = getDisplayTier(a, globalTierConfig);
@@ -30451,6 +30880,11 @@ function AppContent() {
       const tierRankA = tierRank(tierA, globalTierConfig);
       const tierRankB = tierRank(tierB, globalTierConfig);
       if (tierRankA !== tierRankB) return tierRankA - tierRankB;
+      if (isManualOrHybrid) {
+        const oA = Number(a.manual_order) || 0;
+        const oB = Number(b.manual_order) || 0;
+        if (oA !== oB) return oA - oB;
+      }
       if (b.rating !== a.rating) return b.rating - a.rating;
       const ac = a.created_at || 0;
       const bc = b.created_at || 0;
@@ -30826,17 +31260,48 @@ function AppContent() {
   }, []);
 
   // 🆕 v6.1: 티어 내 순위 교환 (manual 모드 전용)
+  // 🆕 v7.0: hybrid 모드에서는 manual_order swap, 사용자 path → 검증 큐 트리거
   async function swapRating(idA, ratingA, idB, ratingB) {
     if (idA === idB) return; // 동일 작품 방어 (빠른 연타 시)
-    if (ratingA === ratingB) {
-      await execBatch([
-        { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingB + 1, idA] },
-      ]);
+    const mode = globalTierConfig.mode;
+
+    if (mode === "manual" || mode === "hybrid") {
+      // manual_order 교환
+      const rowA = await first("SELECT manual_order FROM novels WHERE id=?", [idA]);
+      const rowB = await first("SELECT manual_order FROM novels WHERE id=?", [idB]);
+      const oA = Number(rowA?.manual_order) || 0;
+      const oB = Number(rowB?.manual_order) || 0;
+      if (oA === oB) {
+        await execBatch([
+          { sql: "UPDATE novels SET manual_order=? WHERE id=?", params: [oB - 50, idA] },
+        ]);
+      } else {
+        await execBatch([
+          { sql: "UPDATE novels SET manual_order=? WHERE id=?", params: [oB, idA] },
+          { sql: "UPDATE novels SET manual_order=? WHERE id=?", params: [oA, idB] },
+        ]);
+      }
+      // 🆕 v7.0: hybrid 모드 — 사용자 path 트리거 (idA가 위로 이동했으면 underrated, 아래로 이동했으면 overrated)
+      if (mode === "hybrid") {
+        const suspicion = oA > oB ? "underrated" : "overrated"; // 작은 order = 위
+        try {
+          await enqueueVerification(idA, "order_change", suspicion);
+        } catch (e) {
+          console.warn("검증 큐 INSERT 실패:", e?.message);
+        }
+      }
     } else {
-      await execBatch([
-        { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingB, idA] },
-        { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingA, idB] },
-      ]);
+      // match 모드: 기존 ELO rating 교환
+      if (ratingA === ratingB) {
+        await execBatch([
+          { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingB + 1, idA] },
+        ]);
+      } else {
+        await execBatch([
+          { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingB, idA] },
+          { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingA, idB] },
+        ]);
+      }
     }
     await loadList(undefined, undefined, "tierManage");
   }
@@ -31065,6 +31530,9 @@ async function buildUltraCompactBackup(novels, matches, coverImages = null) {
     if (gaidenTotalEp) opt.ge = gaidenTotalEp;
     // 🏆 수동 티어 지정 (v6.0: 동적 — 문자열 key 저장)
     if (n.manual_tier) opt.mt = n.manual_tier;
+    // 🆕 v7.0: 같은 manual_tier 내 사용자 지정 순서 (gap 100, 0 외만 저장)
+    const manualOrder = Number(n.manual_order) || 0;
+    if (manualOrder !== 0) opt.mo = manualOrder;
     
     // 📚 v3.0.4: 다회독 카운트 (기본 1, 1보다 큰 경우에만 저장)
     const rereadCount = Math.max(1, Number(n.reread_count) || 1);
@@ -31184,14 +31652,13 @@ async function buildExtendedBackup(novels, matches, settings, tierHist, coverIma
     if (Object.keys(pfDiff).length > 0) settingsDiff.pf = pfDiff;
   }
   
-  // 🆕 v6.0: tierSystemConfig 백업 (기본값과 다를 때)
+  // 🆕 v6.2: tierSystemConfig는 항상 백업 (이전: default와 동일하면 미저장)
+  // 이유: default 백업 → custom 슬롯 import 시 globalTierConfig 미적용 →
+  //       manual_tier 키가 현재 시스템과 불일치 → invalid 키 잔류 위험
+  // 항상 저장하면 import 시 globalTierConfig가 백업 시스템으로 강제 동기화되어
+  // manual_tier 키 호환성이 자가 보장됨. 크기 부담 미미 (~200B/백업)
   if (settings.tierSystemConfig) {
-    const tsc = settings.tierSystemConfig;
-    const defTsc = DEFAULT_TIER_SYSTEM_CONFIG;
-    if (tsc.mode !== defTsc.mode || JSON.stringify(tsc.tiers) !== JSON.stringify(defTsc.tiers) ||
-        tsc.defaultTier !== defTsc.defaultTier || tsc.allowRegistrationTier !== defTsc.allowRegistrationTier) {
-      settingsDiff.tc = tsc; // 전체 tierSystemConfig 저장
-    }
+    settingsDiff.tc = settings.tierSystemConfig;
   }
 
   if (Object.keys(settingsDiff).length > 0) {
@@ -31737,6 +32204,10 @@ async function importJSON() {
               const novelQueries = [];
               const idList = [];
               const defaultDate = Date.now();
+              // 🆕 v6.2: manual_tier 키 검증용 캐시 (tc 누락 백업 안전망)
+              // tc가 적용됐으면 globalTierConfig는 이미 백업 시스템과 동일하지만,
+              // 누락 백업의 경우 현재 슬롯 시스템 기준 유효 키만 통과
+              const validTierKeys = new Set(getActiveTierOrder(globalTierConfig));
 
               for (let i = 0; i < lenN; i++) {
                 const row = Nrows[i] || [];
@@ -31774,7 +32245,11 @@ async function importJSON() {
                 const gaidenReadCount = opt.gr || 0;
                 const gaidenTotalEpisodes = opt.ge || 0;
                 // 🏆 수동 티어 지정 (v6.0: 레거시 숫자 + 새 문자열 호환)
-                const manualTier = typeof opt.mt === 'string' ? opt.mt : (opt.mt === 1 ? 'S' : (opt.mt === 2 ? 'A' : null));
+                let manualTier = typeof opt.mt === 'string' ? opt.mt : (opt.mt === 1 ? 'S' : (opt.mt === 2 ? 'A' : null));
+                // 🆕 v6.2: 현재 globalTierConfig에 없는 키 차단 (구버전/손상 백업 호환)
+                if (manualTier && !validTierKeys.has(manualTier)) manualTier = null;
+                // 🆕 v7.0: manual_order (없으면 0, 백필이 알아서 부여)
+                const manualOrder = Number(opt.mo) || 0;
                 // 📚 v3.0.4: 다회독 카운트
                 const rereadCount = Math.max(1, opt.rr != null ? Number(opt.rr) : 1);
                 // 🏷️ v5.0: tag_data, aliases
@@ -31817,9 +32292,9 @@ async function importJSON() {
                 idList.push(id);
 
                 novelQueries.push({
-                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,reread_count,tag_data,aliases,memorable_quote)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, rereadCount, tagData, aliases, memorableQuote],
+                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, manualOrder, rereadCount, tagData, aliases, memorableQuote],
                 });
               }
 
@@ -35023,7 +35498,21 @@ async function importJSON() {
                   <Text style={{ fontWeight: "700", color: C.text }}>자동 승패 활성화</Text>
                   <Text style={{ color: C.sub, fontSize: 11 }}>설정한 기준에 따라 자동으로 승패 결정</Text>
                 </View>
-                <Switch value={autoEnabled} onValueChange={setAutoEnabled} />
+                <Switch value={autoEnabled} onValueChange={(v) => {
+                  // 🆕 v6.2: hybrid 모드에서 자동매칭 시작 시 manual_tier 우선 정책 안내
+                  if (v && globalTierConfig.mode === "hybrid") {
+                    Alert.alert(
+                      "혼합 모드 안내",
+                      "manual_tier가 설정된 작품은 매칭 결과가 표시 티어에 즉시 반영되지 않습니다.\n\nELO 레이팅은 정상 갱신되지만, 표시 티어는 manual_tier가 우선합니다.\n\n자동매칭을 계속하시겠습니까?",
+                      [
+                        { text: "취소" },
+                        { text: "시작", onPress: () => setAutoEnabled(true) },
+                      ]
+                    );
+                    return;
+                  }
+                  setAutoEnabled(v);
+                }} />
               </View>
               
               {/* 🔧 v3.5.11: 세부 설정은 항상 표시 — 자동매칭 OFF 상태에서도 미리 설정 가능 */}
@@ -36569,7 +37058,8 @@ async function importJSON() {
                   if (!item) return null;
                   const tierColor = getTierColor(tier);
                   const isExpanded = expandedNovelId === item.id;
-                  const isManualOnly = globalTierConfig.mode === "manual";
+                  // 🆕 v7.0: hybrid 모드에서도 ▲/▼ 활성 (manual_order swap)
+                  const isManualOnly = globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid";
                   const hasQuery = tierManageQuery.trim().length > 0;
 
                   // 같은 티어 내 인접 항목 찾기 (▲/▼용)
@@ -39395,18 +39885,29 @@ async function importJSON() {
                 ].map(m => (
                   <TouchableOpacity
                     key={m.key}
+                    disabled={isAutoMatching}
                     onPress={() => {
                       if (m.key === globalTierConfig.mode) return;
+                      // 🆕 v6.2: 자동매칭 중 모드 변경 차단 (매칭 큐 외부 호출이므로 불변규칙 #1 안전)
+                      if (isAutoMatchingRef.current) {
+                        Alert.alert("자동매칭 진행 중", "자동매칭 종료 후 모드를 변경해주세요.");
+                        return;
+                      }
+                      // 🆕 v6.2: 다중 클릭 / Alert 큐잉 race 방지
+                      if (modeChangingRef.current) return;
                       Alert.alert(
                         "모드 변경",
                         `"${m.label}" 모드로 변경하시겠습니까?\n\n${m.desc}\n\n${m.key === "manual" ? "기존 레이팅 기반 티어가 manual_tier에 자동 저장됩니다." : ""}`,
                         [
                           { text: "취소" },
                           { text: "변경", onPress: async () => {
+                            modeChangingRef.current = true; // 🆕 v6.2: in-flight 가드 진입
+                            try {
                             // 🔧 v6.0: await 전에 현재 config 캡처 (stale closure 방지)
                             const oldConfig = { ...globalTierConfig };
-                            // 🔴 Critical: match→manual 전환 시 백필
-                            if (m.key === "manual" || m.key === "hybrid") {
+                            // 🆕 v6.2: manual 모드만 백필 (hybrid는 manual_tier 미설정 시 getDisplayTier가 ELO로 fallback)
+                            // 이전: hybrid도 백필 → 진입 시점 ELO가 박제되어 이후 매칭 결과 미반영 (사용자 의도 위반)
+                            if (m.key === "manual") {
                               const novels = await all("SELECT id, rating, manual_tier FROM novels");
                               const queries = [];
                               for (const n of (novels || [])) {
@@ -39432,6 +39933,9 @@ async function importJSON() {
                             }
                             await loadList(undefined, undefined, "settings");
                             Alert.alert("완료", `${m.label} 모드로 변경되었습니다.`);
+                            } finally {
+                              modeChangingRef.current = false; // 🆕 v6.2: in-flight 가드 해제
+                            }
                           }},
                         ]
                       );
@@ -39444,6 +39948,7 @@ async function importJSON() {
                       borderWidth: 1,
                       borderColor: globalTierConfig.mode === m.key ? C.primary : C.line,
                       alignItems: "center",
+                      opacity: isAutoMatching ? 0.4 : 1, // 🆕 v6.2: 자동매칭 중 시각적 비활성
                     }}
                   >
                     <Text style={{ color: globalTierConfig.mode === m.key ? "#fff" : C.text, fontWeight: "700", fontSize: 13 }}>{m.label}</Text>
@@ -39469,8 +39974,8 @@ async function importJSON() {
                               const newConfig = JSON.parse(JSON.stringify(preset.config));
                               // 🔧 v6.0: await 전에 현재 config 캡처 (stale closure 방지)
                               const oldConfig = { ...globalTierConfig };
-                              // manual/hybrid 모드 전환 시 백필
-                              if (newConfig.mode === "manual" || newConfig.mode === "hybrid") {
+                              // 🆕 v6.2: manual 프리셋만 백필 (hybrid는 ELO fallback)
+                              if (newConfig.mode === "manual") {
                                 const novels = await all("SELECT id, rating, manual_tier FROM novels");
                                 const queries = [];
                                 for (const n of (novels || [])) {
@@ -39479,19 +39984,32 @@ async function importJSON() {
                                   queries.push({ sql: "UPDATE novels SET manual_tier=? WHERE id=?", params: [mappedTier, n.id] });
                                 }
                                 if (queries.length > 0) await execBatch(queries);
-                              } else if (oldConfig.mode !== "match") {
-                                // match 모드로 돌아갈 때 manual_tier 중 유효하지 않은 것 정리
+                              } else if (newConfig.mode === "hybrid") {
+                                // 🆕 v6.2: hybrid 프리셋 — 마이그레이션만 (백필 없음, getDisplayTier가 ELO fallback)
+                                // 새 tier 시스템에 없는 manual_tier만 변환
                                 const novels = await all("SELECT id, manual_tier FROM novels");
                                 const newOrder = getActiveTierOrder(newConfig);
-                                const gated = newConfig.tiers.filter(t => t.gated).map(t => t.key);
                                 const queries = [];
                                 for (const n of (novels || [])) {
-                                  if (n.manual_tier && !gated.includes(n.manual_tier)) {
-                                    queries.push({ sql: "UPDATE novels SET manual_tier=NULL WHERE id=?", params: [n.id] });
-                                  } else if (n.manual_tier && !newOrder.includes(n.manual_tier)) {
+                                  if (n.manual_tier && !newOrder.includes(n.manual_tier)) {
                                     const mapped = migrateTierKey(n.manual_tier, oldConfig, newConfig);
-                                    queries.push({ sql: "UPDATE novels SET manual_tier=? WHERE id=?", params: [gated.includes(mapped) ? mapped : null, n.id] });
+                                    queries.push({ sql: "UPDATE novels SET manual_tier=? WHERE id=?", params: [mapped, n.id] });
                                   }
+                                }
+                                if (queries.length > 0) await execBatch(queries);
+                              } else if (oldConfig.mode !== "match") {
+                                // 🆕 v6.2: match 프리셋 적용 시 manual_tier 보존 정책
+                                // match 모드에선 표시되지 않지만, hybrid/manual 복귀 시 부활
+                                // 새 tier 시스템 키 집합에 없는 키만 마이그레이션, 그 외는 그대로 둠
+                                const novels = await all("SELECT id, manual_tier FROM novels");
+                                const newOrder = getActiveTierOrder(newConfig);
+                                const queries = [];
+                                for (const n of (novels || [])) {
+                                  if (n.manual_tier && !newOrder.includes(n.manual_tier)) {
+                                    const mapped = migrateTierKey(n.manual_tier, oldConfig, newConfig);
+                                    queries.push({ sql: "UPDATE novels SET manual_tier=? WHERE id=?", params: [mapped, n.id] });
+                                  }
+                                  // 유효한 manual_tier는 보존
                                 }
                                 if (queries.length > 0) await execBatch(queries);
                               }
@@ -45314,6 +45832,7 @@ async function importJSON() {
         visible={!!galleryExpandImg}
         animationType="fade"
         transparent
+        statusBarTranslucent={true}
         onRequestClose={() => setGalleryExpandImg(null)}
       >
         <TouchableOpacity
@@ -45330,9 +45849,10 @@ async function importJSON() {
             <>
               <ExpoImage
                 source={{ uri: galleryExpandImg.file_path }}
+                recyclingKey={galleryExpandImg.id}
                 style={{ width: "92%", height: "72%", borderRadius: 12 }}
                 contentFit="contain"
-                cachePolicy="disk"
+                cachePolicy="memory-disk"
                 transition={200}
               />
               {galleryExpandImg.caption ? (

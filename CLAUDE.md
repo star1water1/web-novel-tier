@@ -5,9 +5,21 @@ ELO 매칭 시스템으로 작품 간 대전을 통해 자동으로 티어를 �
 
 ## 아키텍처
 
-- **단일 파일 구조**: `App.jsx` (~41,000줄) 하나에 모든 로직이 들어있음
-- **SQLite** (expo-sqlite, WAL 모드) — 30+ 테이블
+- **단일 파일 구조**: `App.jsx` (~45,900줄) 하나에 모든 로직이 들어있음
+- **SQLite** (expo-sqlite, WAL 모드) — 33+ 테이블 (v7.0: tier_verification_queue, tier_validation_log, tier_repositioning_session 추가)
 - **다중 슬롯**: 최대 10개 독립 데이터셋, 슬롯별 별도 DB 파일
+
+## v7.0 하이브리드 모드 동적 자리 탐색 시스템 (점진 구현 중)
+
+`globalTierConfig.mode === "hybrid"`일 때 활성. 기존 ELO/자동매칭과 분리된 패러다임:
+
+- **patrick truth**: 사용자 manual_tier + manual_order
+- **검증 트리거**: 사용자 편집 행위 (작품 추가/메타 변경/티어 변경/순위 변경) → 검증 큐 INSERT
+- **자동 탐색 시퀀스**: 의심작 인접 후보 점진 매칭 → 변곡점(승패 변동) 발견 → K=2 추가 검증 → 자리 결정
+- **수문장 식별**: 시퀀스 내 첫 변곡점 작품 + 5개 누적 시퀀스 통계
+- **시스템/사용자 path 분리**: finalize의 manual_order/tier UPDATE는 트리거 X (무한 루프 방지)
+
+신규 헬퍼 함수: `detectViolation`, `enqueueVerification`, `getCandidatesForVerification`, `backfillManualOrder`
 
 ## 빌드/실행
 
@@ -23,18 +35,18 @@ eas build -p android --profile preview  # APK 빌드
 
 | 줄 범위 (약) | 섹션 | 검색 키워드 |
 |---|---|---|
-| 1-2388 | 헤더 문서 (버전 히스토리, 불변규칙, 버그 수정 기록) | `╔══`, `불변조건` |
-| 2391-2420 | import 선언 | `import React` |
-| 2420-2510 | 글로벌 변수/ErrorBoundary/슬롯 시스템 | `ErrorBoundary`, `slotSystem` |
-| 2510-2730 | 슬롯 CRUD, DB 슬롯 전환, flush | `슬롯 생성`, `슬롯 전환` |
-| 2730-2830 | DB 초기화 (openDb, initDb) | `데이터베이스 초기화`, `openDb` |
-| 2830-3100 | 성능 모니터링 시스템 | `Performance Monitor`, `perfMonitor` |
-| 3100-3400 | safeDbOperation + 매칭 큐 시스템 | `safeDbOperation`, `matchQueue` |
-| 3400-3870 | DB 유틸리티 (exec, all, first, execBatch, 마이그레이션) | `ensureColumn`, `migration` |
-| 3870-4470 | 취향 분석 시스템 (analyzePreferences, preference_patterns) | `analyzePreferences`, `preference_patterns` |
-| 4470-4620 | 티어 시스템 상수 (TIER_ORDER, DEFAULT_TIER_SYSTEM_CONFIG, TIER_PRESETS) | `TIER_ORDER`, `TIER_PRESETS` |
-| 4620-4730 | 티어 헬퍼 함수 (getTierColor, tierFromRating 등) | `getTierColor`, `tierFromRating` |
-| 4730-4950 | 순수 유틸리티 (uuid, safeParseJSON, parsePlatforms 등) | `uuid()`, `safeParseJSON` |
+| 1-2440 | 헤더 문서 (v7.0 + v6.2 + ... 버전 히스토리, 불변규칙, 버그 수정 기록) | `╔══`, `불변조건` |
+| 2441-2470 | import 선언 | `import React` |
+| 2470-2560 | 글로벌 변수/ErrorBoundary/슬롯 시스템 | `ErrorBoundary`, `slotSystem` |
+| 2560-2780 | 슬롯 CRUD, DB 슬롯 전환, flush | `슬롯 생성`, `슬롯 전환` |
+| 2780-2880 | DB 초기화 (openDb, initDb), backfillManualOrder | `데이터베이스 초기화`, `openDb`, `backfillManualOrder` |
+| 2880-3150 | 성능 모니터링 시스템 | `Performance Monitor`, `perfMonitor` |
+| 3150-3450 | safeDbOperation + 매칭 큐 시스템 | `safeDbOperation`, `matchQueue` |
+| 3450-3920 | DB 유틸리티 (exec, all, first, execBatch, 마이그레이션) | `ensureColumn`, `migration` |
+| 3920-4520 | 취향 분석 시스템 (analyzePreferences, preference_patterns) | `analyzePreferences`, `preference_patterns` |
+| 4520-4670 | 티어 시스템 상수 (TIER_ORDER, DEFAULT_TIER_SYSTEM_CONFIG, TIER_PRESETS) | `TIER_ORDER`, `TIER_PRESETS` |
+| 4670-4810 | 티어 헬퍼 함수 (getTierColor, tierFromRating, **detectViolation**, **enqueueVerification**, **getCandidatesForVerification**) | `detectViolation`, `enqueueVerification` |
+| 4810-5030 | 순수 유틸리티 (uuid, safeParseJSON, parsePlatforms 등) | `uuid()`, `safeParseJSON` |
 | 4950-5090 | 장르/태그 파싱, 통계 헬퍼 | `getWinRate`, `wilsonConfidence` |
 | 5090-5360 | 색상 상수(C), 플랫폼/상태 옵션, 대형 장르 상수 | `const C =`, `PLATFORM_OPTIONS` |
 | 5360-5870 | 태그 상수 (MAJOR_GENRES, SUB_GENRES, ALL_GENERAL_TAGS) | `MAJOR_GENRES`, `SUB_GENRES` |
