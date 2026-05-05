@@ -9461,7 +9461,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "3.6.2";
+const APP_VERSION = "7.0.3";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -9487,6 +9487,178 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.0.3", date: "2026-05-05",
+    title: "하이브리드 모드 심층 감사 — 알고리즘/통합/UX 14건 수정",
+    highlights: [
+      { type: "fix", text: "검증 시퀀스 cross-tier 자리 산출 방향 반전 수정 — 의심작이 잘못된 위치로 이동되던 알고리즘 버그" },
+      { type: "fix", text: "후보 풀 정렬 — 상위 tier 탐색이 TOP부터가 아닌 경계(BOTTOM)부터 walk-up으로 수정" },
+      { type: "fix", text: "수문장 모달 피드백 루프 해소 — 수락 시 누적 통계 자동 소비로 같은 작품 반복 등장 방지" },
+      { type: "fix", text: "시퀀스 중단 시 같은 의심작 즉시 재인입되던 무한 루프 수정" },
+      { type: "fix", text: "모드 전환(hybrid → 다른 모드) 시 in-flight 세션 누수 + pending 큐 정리" },
+      { type: "fix", text: "수상 점수에서 비활성 tier 작품이 S 위로 점프하던 -1 부스트 버그 수정" },
+    ],
+    details: [
+      { type: "fix", text: "computeNewPosition cross-tier 부호 — underrated는 passed-50, overrated는 passed+50" },
+      { type: "fix", text: "respondVerificationMatch 더블탭 ref 가드 (tier_validation_log 중복 방지)" },
+      { type: "fix", text: "evaluateSequenceProgress infIdx=0 즉시 종료 — 무의미한 K 추가 질문 회피" },
+      { type: "fix", text: "finalizeVerificationSession candidates fresh fetch — 세션 중 변경된 manual_tier/order 반영" },
+      { type: "fix", text: "프리셋 스위치(hybrid) — 마이그레이션 후 영향 tier 별 rebalance" },
+      { type: "fix", text: "undo + in-flight 세션 — 같은 novel_id 세션 abort" },
+      { type: "fix", text: "addNovel 최상위 tier — overrated 방향으로 큐잉" },
+      { type: "fix", text: "doClearAll v7.0 테이블(TVQ/TVL/TRS) 누락 수정" },
+      { type: "fix", text: "v8 백업 import 후 manual_order 강제 reflow" },
+    ],
+  },
+  {
+    version: "7.0.2", date: "2026-05-05",
+    title: "멀티 에이전트 코드 감사 — Critical/Major/Minor 17건 수정",
+    highlights: [
+      { type: "fix", text: "작품 삭제 시 검증 큐/log/세션 고아 데이터 정리" },
+      { type: "fix", text: "tierFromRating threshold 정렬 보장 (커스텀 프리셋 안전)" },
+      { type: "fix", text: "compareNovels(hybrid) 비활성 tier 정렬 처리 — 프리셋 전환 후 순위 깨짐 수정" },
+      { type: "fix", text: "swapRating(▲/▼) idB 검증 큐 누락 수정" },
+      { type: "fix", text: "수문장 모달 ⬆️/⬇️ — manual_order MAX+100 + 히스토리 + 되돌리기 추가" },
+      { type: "fix", text: "saveEdit manual_tier 클리어 path 분리 (잘못된 meta_edit 트리거 수정)" },
+    ],
+    details: [
+      { type: "fix", text: "finalizeVerificationSession 단일 트랜잭션 묶음 — 부분 commit 시 자리 중복 이동 방지" },
+      { type: "fix", text: "AppState 포그라운드 복귀 — PerfMonitor 비활성 시에도 lastBackgroundTime 추적" },
+      { type: "fix", text: "슬롯 전환 시 verificationLoading state 리셋" },
+      { type: "fix", text: "NovelCard memo — match_count + manual_order 비교 추가" },
+      { type: "fix", text: "TasteAnalysisScreen tierMode prop — mode 토글 시 memo invalidate" },
+      { type: "fix", text: "표지 확대 모달 ExpoImage recyclingKey — 이미지 잔상 수정" },
+      { type: "fix", text: "AwardsScreen 후보 표지 recyclingKey + 수상 확률 배지 다크모드" },
+      { type: "fix", text: "performUndo(novel_delete) manual_order 컬럼 누락 보강" },
+    ],
+  },
+  {
+    version: "7.0.1", date: "2026-05-05",
+    title: "v7.0.0 직후 검토 보고서 13건 수정",
+    highlights: [
+      { type: "fix", text: "computeNewPosition manual_order 충돌/gap 압축 차단 — rebalance 헬퍼 추가" },
+      { type: "fix", text: "saveEdit hybrid 트리거 — manual_tier=null이어도 ELO fallback 기준 방향 판정" },
+      { type: "fix", text: "swapRating 충돌 분기 — suspicion 방향 일치성 보장" },
+      { type: "fix", text: "enqueueVerification — 1초 silent debounce 대신 UPSERT (작품당 pending 1건)" },
+    ],
+    details: [
+      { type: "fix", text: "switchSlotDb hybrid v7 state 누수 차단 (verificationSession 등 6종)" },
+      { type: "fix", text: "performUndo tier_change/tier_batch — hybrid 큐 cancel 추가" },
+      { type: "fix", text: "AwardsScreen tierMode prop 전달 — memo 리렌더 보장" },
+      { type: "fix", text: "백업 v9 — tier_repositioning_session(blocker_id) export/import" },
+      { type: "fix", text: "addNovel manual_order = 같은 tier MAX+100 (신규 충돌 방지)" },
+    ],
+  },
+  {
+    version: "7.0.0", date: "2026-05-05",
+    title: "🆕 하이브리드 모드 동적 자리 탐색 시스템",
+    highlights: [
+      { type: "new", text: "🎯 하이브리드 모드 — manual_tier + manual_order가 잠정 truth, 사용자 편집이 검증 트리거" },
+      { type: "new", text: "🔬 변곡점(inflection point) 알고리즘 — 의심작 인접 후보부터 점진 매칭, K=2 추가 검증" },
+      { type: "new", text: "🛡️ 수문장(gatekeeper) 식별 — 5개 누적 시퀀스 통계 → 1단계 위/아래 티어 변경 제안 모달" },
+      { type: "new", text: "📊 매칭 탭 모드별 분기 — hybrid는 검증 시퀀스 UI, 그 외는 기존 ELO 매칭" },
+    ],
+    details: [
+      { type: "new", text: "manual_order 컬럼 + 백필 (gap=100 invariant)" },
+      { type: "new", text: "tier_verification_queue / tier_validation_log / tier_repositioning_session 3개 테이블" },
+      { type: "new", text: "CRUD 트리거 hook — addNovel/saveEdit/batchSetTier/swapRating/인라인 칩" },
+      { type: "improve", text: "AwardsScreen — hybrid에서 manual_tier+order 기준 정렬, ELO 점수 비활성" },
+      { type: "improve", text: "TasteAnalysisScreen — hybrid에서 매칭 기반 섹션 자동 비활성 + 안내 배너" },
+    ],
+  },
+  {
+    version: "6.2.0", date: "2026-05-05",
+    title: "티어 모드 / 취향 분석 시스템 개선",
+    highlights: [
+      { type: "improve", text: "manual_tier — 모드 전환 시 보존 (match에서 무시되지만 hybrid/manual 복귀 시 부활)" },
+      { type: "improve", text: "취향 분석 — 탭 진입/list 변동 시 800ms 디바운스 자동 재분석 (stale 방지)" },
+      { type: "improve", text: "23개 섹션 UI → 4그룹 카테고리 리팩터링 (모바일 길이 부담 완화)" },
+    ],
+    details: [
+      { type: "fix", text: "프리셋 match 적용 시 manual_tier 손실 수정" },
+      { type: "fix", text: "자동매칭 중 모드 변경 차단 + 다중 클릭 race 방지" },
+      { type: "new", text: "ActualTierTag 신규 작품 미평가 라벨 (default 1500 의미 없는 티어 표시 해결)" },
+      { type: "new", text: "백업 v9 tierSystemConfig 항상 저장 (cross-slot import 안전)" },
+    ],
+  },
+  {
+    version: "6.0.0", date: "2026-04-20",
+    title: "🆕 티어 시스템 메이저 — 모드 + 프리셋 + 커스텀 티어",
+    highlights: [
+      { type: "new", text: "🎯 3가지 티어 모드 — match(ELO), manual(수동), hybrid(혼합)" },
+      { type: "new", text: "🎨 티어 프리셋 — 5tier/3tier/9tier 등 미리 정의된 시스템 + 커스텀" },
+      { type: "new", text: "🏷️ 동적 티어 키 — S/A/B/C 하드코딩 제거, 프리셋별 키 집합" },
+      { type: "new", text: "✅ 자동 승인 — 매칭 데이터 충분 시 권장 티어로 자동 승급" },
+    ],
+    details: [
+      { type: "improve", text: "tierFromRating / getDisplayTier — config 기반 동적 티어 산출" },
+      { type: "improve", text: "TierTag / ActualTierTag — 모든 표시 컴포넌트 동적 키 사용" },
+      { type: "new", text: "검토 탭 — 권장 vs 실제 차이 작품 식별, 강제지정 해제 가능" },
+    ],
+  },
+  {
+    version: "3.9.3", date: "2026-05-05",
+    title: "갤러리 확대 이미지 깨짐 수정",
+    highlights: [
+      { type: "fix", text: "🔴 갤러리/쇼츠 이미지 확대 모달 잔상/픽셀 깨짐 수정 — recyclingKey 추가" },
+    ],
+    details: [
+      { type: "fix", text: "ExpoImage recyclingKey 누락으로 Glide 내부 상태 오염" },
+      { type: "improve", text: "cachePolicy disk → memory-disk (디코딩 부담 완화)" },
+    ],
+  },
+  {
+    version: "3.9.2", date: "2026-04-05",
+    title: "코드 전반 버그 수정 11건",
+    highlights: [
+      { type: "fix", text: "DB/데이터 무결성 4건 (planned tag_data, import 타임스탬프 등)" },
+      { type: "fix", text: "로직/기능 오류 3건 (analyzePreferences 0 나누기, awardProbability -Infinity, tierFromRating undefined)" },
+      { type: "fix", text: "성능/안정성 5건 (stale closure, memo areEqual, FlatList extraData)" },
+    ],
+    details: [],
+  },
+  {
+    version: "3.9.1", date: "2026-04-05",
+    title: "코드 전반 버그 수정 15건",
+    highlights: [
+      { type: "fix", text: "switchSlotDb 세대 증가 순서 — 지연 쓰기 데이터 손실 수정" },
+      { type: "fix", text: "Import — NF/GI 복원 시 novel_id 매핑(NID) 추가, 고아 데이터 방지" },
+      { type: "fix", text: "CoordinateGridView X/Y축 라벨 위치 교환 수정" },
+      { type: "fix", text: "다수 하드코딩 색상 → isDark 분기 적용" },
+    ],
+    details: [
+      { type: "fix", text: "calculatePredictionAccuracy / migrateExistingMatchesToPatterns null 크래시" },
+      { type: "fix", text: "analyzeSpectrum normalizedScore 분모 정정" },
+      { type: "fix", text: "combo_tags 커스텀 초기화 RESET_CATEGORIES 누락" },
+    ],
+  },
+  {
+    version: "3.9.0", date: "2026-04-05",
+    title: "💥 크래시 진단 시스템",
+    highlights: [
+      { type: "new", text: "📊 크래시/에러 자동 수집 + Breadcrumbs 액션 추적" },
+      { type: "new", text: "🔬 PerfMonitor — DB/함수/렌더링/이벤트 통계 옵트인" },
+    ],
+    details: [],
+  },
+  {
+    version: "3.8.0", date: "2026-03-25",
+    title: "🎨 갤러리 시스템",
+    highlights: [
+      { type: "new", text: "🖼️ 작품별 이미지 갤러리 — 표지 외 추가 이미지 첨부 + 캡션" },
+      { type: "new", text: "📷 갤러리 통합 뷰 + 쇼츠 스타일 감상" },
+    ],
+    details: [],
+  },
+  {
+    version: "3.7.0", date: "2026-03-15",
+    title: "📂 폴더 시스템",
+    highlights: [
+      { type: "new", text: "📁 작품 폴더 — 색상/아이콘/순서 커스터마이징 가능" },
+      { type: "new", text: "🔖 다중 폴더 분류 + 폴더별 작품 보기" },
+    ],
+    details: [],
+  },
   {
     version: "3.6.2", date: "2026-04-05",
     title: "UI 레이아웃 + 태그 관리 UX 개선",
@@ -9951,12 +10123,13 @@ const GUIDE_CONTENT = [
         ],
       },
       {
-        title: "티어 시스템 이해하기", icon: "🏅", tabs: [],
-        description: "작품은 레이팅(Elo 점수)에 따라 SS·S·A·B·C·D 티어가 자동 부여됩니다. 매칭에서 이기면 점수가 오르고, 지면 내려갑니다.",
+        title: "티어 시스템 — 3가지 모드", icon: "🏅", tabs: [],
+        description: "v6.0+: match(자동 ELO), manual(완전 수동), hybrid(혼합) 중 선택할 수 있습니다. 프리셋(5tier/3tier/9tier 등)과 커스텀 티어 키도 지원해요.",
         tips: [
-          "매칭을 많이 할수록 순위가 정확해져요 (신뢰도↑).",
-          "수동 모드에서는 직접 티어를 지정할 수 있어요.",
-          "설정에서 티어 경계값을 원하는 대로 조정할 수 있어요.",
+          "🎯 match — 매칭 결과로 자동 티어 산출 (전통 방식)",
+          "✋ manual — 직접 티어를 지정 + ▲/▼로 순위 조정",
+          "🔬 hybrid — manual_tier가 잠정 truth + 검증 시퀀스로 자리 동적 탐색",
+          "프리셋은 설정 탭에서 변경 — manual_tier는 모드 전환 시 보존돼요.",
         ],
       },
       {
@@ -10035,11 +10208,39 @@ const GUIDE_CONTENT = [
         ],
       },
       {
+        title: "🆕 하이브리드 검증 시퀀스", icon: "🔬", tabs: ["매칭"], tabKey: "match",
+        description: "v7.0+ hybrid 모드에서 작품을 추가하거나 티어/순위를 변경하면 '의심작'으로 큐에 등록됩니다. 매칭 탭은 검증 시퀀스 UI로 변신 — 의심작 인접 후보를 점진적으로 비교해 진짜 자리를 찾아요.",
+        tips: [
+          "최대 7번 응답으로 자리가 결정 — 변곡점(승패 변동) 발견 후 K=2 추가 확인",
+          "사용자 편집(작품 추가, 메타 변경, 티어/순위 변경)이 검증 트리거예요.",
+          "'시퀀스 중단' = 다음 의심작으로 진행 / '이 작품 건너뛰기' = 큐에서 제외",
+          "여러 시퀀스에서 변곡점으로 등장한 작품은 🛡️ 수문장 후보로 표시 — 모달에서 ⬆️/⬇️ 1단계 티어 변경 가능",
+        ],
+      },
+      {
+        title: "🆕 수동 순위 조정", icon: "✋", tabs: ["순위"], tabKey: "rank",
+        description: "manual/hybrid 모드에서는 순위 탭에서 ▲/▼ 버튼으로 같은 티어 내 순위를 직접 바꿀 수 있어요. 인라인 티어 칩으로 작품의 티어도 즉시 변경 가능합니다.",
+        tips: [
+          "▲/▼는 manual_order를 swap — gap=100 invariant로 충돌 방지",
+          "hybrid 모드에서 순위/티어를 바꾸면 자동으로 검증 큐에 등록돼요.",
+          "인라인 칩으로 ELO fallback 티어를 그대로 lock 처리 가능",
+        ],
+      },
+      {
         title: "S/A 티어 검토 큐", icon: "✅", tabs: ["검토"], tabKey: "review",
         requiresMatchMode: true,
         description: "S·A 상위 티어 작품이 정말 그 자리에 걸맞은지 검토합니다. 승급이 필요하거나 강등이 필요한 작품을 한눈에 확인하세요.",
         tips: [
           "매칭 데이터가 쌓인 후 검토하면 더 정확해요.",
+          "hybrid 모드에서는 매칭 탭 검증 시퀀스가 이 역할을 대신해요.",
+        ],
+      },
+      {
+        title: "되돌리기 (Undo)", icon: "↩️", tabs: ["설정"],
+        description: "직전 티어 변경, 작품 삭제, 매칭 결과 등을 되돌릴 수 있습니다. 설정 탭의 '마지막 작업 되돌리기' 버튼으로 즉시 복구하세요.",
+        tips: [
+          "최대 30개까지 스택에 보관 (설정에서 조정 가능)",
+          "hybrid에서 undo하면 in-flight 검증 세션도 함께 정리돼요.",
         ],
       },
     ],
@@ -10088,6 +10289,22 @@ const GUIDE_CONTENT = [
           "정렬 기준을 바꿔가며 작업하면 더 효율적이에요.",
         ],
       },
+      {
+        title: "📂 폴더로 작품 분류", icon: "📁", tabs: ["순위"],
+        description: "v3.7.0+: 색상·아이콘·순서가 있는 폴더를 만들어 작품을 분류합니다. 한 작품이 여러 폴더에 속할 수 있어요.",
+        tips: [
+          "작품 카드를 길게 눌러 폴더 추가/제거 가능",
+          "폴더별 보기로 카테고리 단위 라이브러리 운영",
+        ],
+      },
+      {
+        title: "🎨 작품 갤러리", icon: "🖼️", tabs: ["🖼️표지", "🎨갤러리"],
+        description: "v3.8.0+: 표지 외에도 작품별 추가 이미지를 갤러리로 등록합니다. 캡션과 함께 보관하고, 쇼츠처럼 감상해요.",
+        tips: [
+          "이미지 탭으로 확대 모달 진입 — 좌우 스와이프로 다른 이미지로 이동",
+          "원본 파일은 앱 데이터 폴더에 저장돼 백업/복원 시 함께 이동",
+        ],
+      },
     ],
   },
   {
@@ -10102,10 +10319,20 @@ const GUIDE_CONTENT = [
       },
       {
         title: "슬롯으로 데이터셋 분리", icon: "📁", tabs: ["설정"],
-        description: "최대 10개의 독립 데이터셋(슬롯)을 만들어 다른 취향·목적별로 분리 관리할 수 있습니다.",
+        description: "최대 10개의 독립 데이터셋(슬롯)을 만들어 다른 취향·목적별로 분리 관리할 수 있습니다. 각 슬롯은 별도 DB 파일이라 데이터가 완전히 격리돼요.",
         tips: [
           "슬롯 전환 시 모든 데이터가 독립적으로 관리돼요.",
           "슬롯 이름을 지정하면 구분이 쉬워요.",
+          "장르별/플랫폼별/시즌별 등 다양한 기준으로 활용 가능",
+        ],
+      },
+      {
+        title: "🆕 티어 모드 변경", icon: "🎯", tabs: ["설정"],
+        description: "match(자동 ELO) / manual(수동) / hybrid(혼합) 3가지 모드를 자유롭게 전환합니다. 모드 변경 시 manual_tier는 보존되며 자동매칭 진행 중에는 변경이 차단돼요.",
+        tips: [
+          "hybrid → 다른 모드 전환 시 진행 중인 검증 세션은 자동 정리",
+          "match로 돌아오면 ELO 재계산이 자동 실행돼요.",
+          "프리셋(5tier/3tier/9tier 등)으로 티어 키 집합 변경 가능",
         ],
       },
       {
