@@ -2,9 +2,28 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 3.9.2                                                                   ║
- * ║  최종 수정: 2026-04-05                                                        ║
+ * ║  버전: 3.9.3                                                                   ║
+ * ║  최종 수정: 2026-05-05                                                        ║
  * ║  총 라인 수: 약 45,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🐛 v3.9.3 갤러리 확대 이미지 깨짐 수정 (2026-05-05)                           ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [버그 수정] 🔴 갤러리 탭 이미지 확대 모달 렌더 깨짐                           ║
+ * ║ • 증상: 갤러리(쇼츠/관리) 탭에서 이미지 탭 → 확대 모달이 심하게 깨짐         ║
+ * ║   (이전 이미지 잔상, 픽셀 깨짐, 부분 렌더 등 — 단순 렉이 아닌 시각 오염)     ║
+ * ║ • 원인: [버그 수정 12]와 동일 패턴 — ExpoImage recyclingKey 미설정           ║
+ * ║   1) 모달은 visible 토글로 동작, ExpoImage 인스턴스 React 트리에 잔존        ║
+ * ║   2) 다른 이미지 탭 시 source.uri만 교체 → Glide 내부 상태 오염 (Android)   ║
+ * ║   3) cachePolicy="disk"는 메모리 캐시 미사용 → 매번 디스크 디코딩 부담        ║
+ * ║ • 수정:                                                                      ║
+ * ║   (1) recyclingKey={galleryExpandImg.id} 추가                                ║
+ * ║       → 이미지 교체 시 ExpoImage 내부 상태 완전 리셋                         ║
+ * ║   (2) cachePolicy "disk" → "memory-disk" (작동하는 표지 뷰어와 동일)          ║
+ * ║   (3) Modal에 statusBarTranslucent={true} 추가 (레이아웃 일관성)             ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -45314,6 +45333,7 @@ async function importJSON() {
         visible={!!galleryExpandImg}
         animationType="fade"
         transparent
+        statusBarTranslucent={true}
         onRequestClose={() => setGalleryExpandImg(null)}
       >
         <TouchableOpacity
@@ -45330,9 +45350,10 @@ async function importJSON() {
             <>
               <ExpoImage
                 source={{ uri: galleryExpandImg.file_path }}
+                recyclingKey={galleryExpandImg.id}
                 style={{ width: "92%", height: "72%", borderRadius: 12 }}
                 contentFit="contain"
-                cachePolicy="disk"
+                cachePolicy="memory-disk"
                 transition={200}
               />
               {galleryExpandImg.caption ? (
