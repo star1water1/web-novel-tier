@@ -31308,14 +31308,13 @@ async function buildExtendedBackup(novels, matches, settings, tierHist, coverIma
     if (Object.keys(pfDiff).length > 0) settingsDiff.pf = pfDiff;
   }
   
-  // 🆕 v6.0: tierSystemConfig 백업 (기본값과 다를 때)
+  // 🆕 v6.2: tierSystemConfig는 항상 백업 (이전: default와 동일하면 미저장)
+  // 이유: default 백업 → custom 슬롯 import 시 globalTierConfig 미적용 →
+  //       manual_tier 키가 현재 시스템과 불일치 → invalid 키 잔류 위험
+  // 항상 저장하면 import 시 globalTierConfig가 백업 시스템으로 강제 동기화되어
+  // manual_tier 키 호환성이 자가 보장됨. 크기 부담 미미 (~200B/백업)
   if (settings.tierSystemConfig) {
-    const tsc = settings.tierSystemConfig;
-    const defTsc = DEFAULT_TIER_SYSTEM_CONFIG;
-    if (tsc.mode !== defTsc.mode || JSON.stringify(tsc.tiers) !== JSON.stringify(defTsc.tiers) ||
-        tsc.defaultTier !== defTsc.defaultTier || tsc.allowRegistrationTier !== defTsc.allowRegistrationTier) {
-      settingsDiff.tc = tsc; // 전체 tierSystemConfig 저장
-    }
+    settingsDiff.tc = settings.tierSystemConfig;
   }
 
   if (Object.keys(settingsDiff).length > 0) {
@@ -31861,6 +31860,10 @@ async function importJSON() {
               const novelQueries = [];
               const idList = [];
               const defaultDate = Date.now();
+              // 🆕 v6.2: manual_tier 키 검증용 캐시 (tc 누락 백업 안전망)
+              // tc가 적용됐으면 globalTierConfig는 이미 백업 시스템과 동일하지만,
+              // 누락 백업의 경우 현재 슬롯 시스템 기준 유효 키만 통과
+              const validTierKeys = new Set(getActiveTierOrder(globalTierConfig));
 
               for (let i = 0; i < lenN; i++) {
                 const row = Nrows[i] || [];
@@ -31898,7 +31901,9 @@ async function importJSON() {
                 const gaidenReadCount = opt.gr || 0;
                 const gaidenTotalEpisodes = opt.ge || 0;
                 // 🏆 수동 티어 지정 (v6.0: 레거시 숫자 + 새 문자열 호환)
-                const manualTier = typeof opt.mt === 'string' ? opt.mt : (opt.mt === 1 ? 'S' : (opt.mt === 2 ? 'A' : null));
+                let manualTier = typeof opt.mt === 'string' ? opt.mt : (opt.mt === 1 ? 'S' : (opt.mt === 2 ? 'A' : null));
+                // 🆕 v6.2: 현재 globalTierConfig에 없는 키 차단 (구버전/손상 백업 호환)
+                if (manualTier && !validTierKeys.has(manualTier)) manualTier = null;
                 // 📚 v3.0.4: 다회독 카운트
                 const rereadCount = Math.max(1, opt.rr != null ? Number(opt.rr) : 1);
                 // 🏷️ v5.0: tag_data, aliases
