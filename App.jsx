@@ -20370,16 +20370,22 @@ const TasteAnalysisScreen = memo(({
               <Text style={{ color: C.ok, fontSize: 12, fontWeight: "600" }}>+{tag}</Text>
             </View>
           ))}
-          {insights.avoidFactors?.slice(0, 2).map((factor, i) => (
-            <View key={`avoid-${i}`} style={{ 
-              backgroundColor: C.warn + "20", 
-              paddingHorizontal: 10, 
-              paddingVertical: 5, 
-              borderRadius: 12 
-            }}>
-              <Text style={{ color: C.warn, fontSize: 12, fontWeight: "600" }}>-{factor.split(" ")[0]}</Text>
-            </View>
-          ))}
+          {insights.avoidFactors?.slice(0, 2).map((factor, i) => {
+            // 🔧 v7.0.4 polish: 라벨이 "이름 (상세)" 형식이면 괄호 앞부분 전체를 추출
+            // (이전: split(" ")[0] 은 공백 포함 작가명을 첫 단어로 잘랐음 — 예: "J. K. Rowling" → "J.")
+            const parenIdx = factor.indexOf(" (");
+            const label = parenIdx > 0 ? factor.slice(0, parenIdx) : factor;
+            return (
+              <View key={`avoid-${i}`} style={{
+                backgroundColor: C.warn + "20",
+                paddingHorizontal: 10,
+                paddingVertical: 5,
+                borderRadius: 12
+              }}>
+                <Text style={{ color: C.warn, fontSize: 12, fontWeight: "600" }}>-{label}</Text>
+              </View>
+            );
+          })}
         </View>
 
         {/* 취향 변화 감지 */}
@@ -21557,9 +21563,17 @@ const TasteAnalysisScreen = memo(({
                     높은 레이팅 but 거의 안 읽음 ({anomalies.highRatingLowRead.length}개)
                   </Text>
                   {anomalies.highRatingLowRead.slice(0, 3).map((n, i) => (
-                    <Text key={i} style={{ color: C.sub, fontSize: 12 }}>
-                      • {n.title} ({n.rating.toFixed(0)}점, {((n.readRatio || 0) * 100).toFixed(0)}% 읽음)
-                    </Text>
+                    <View key={i} style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", marginBottom: 2 }}>
+                      <Text style={{ color: C.sub, fontSize: 12 }}>
+                        • {n.title} ({n.rating.toFixed(0)}점, {((n.readRatio || 0) * 100).toFixed(0)}% 읽음)
+                      </Text>
+                      {/* 🔧 v7.0.4 polish: causes 칩 일관성 — 5개 카테고리 모두 동일하게 표시 */}
+                      {(n.causes || []).includes("discontinued") && (
+                        <View style={{ marginLeft: 6, backgroundColor: isDark ? "#7f1d1d" : "#fee2e2", paddingHorizontal: 6, paddingVertical: 1, borderRadius: 8 }}>
+                          <Text style={{ color: isDark ? "#fca5a5" : "#b91c1c", fontSize: 10, fontWeight: "700" }}>📺 연중</Text>
+                        </View>
+                      )}
+                    </View>
                   ))}
                 </View>
               )}
@@ -21591,9 +21605,16 @@ const TasteAnalysisScreen = memo(({
                     매칭 부족한 고레이팅 ({anomalies.noMatchHighRating.length}개)
                   </Text>
                   {anomalies.noMatchHighRating.slice(0, 3).map((n, i) => (
-                    <Text key={i} style={{ color: C.sub, fontSize: 12 }}>
-                      • {n.title} ({n.rating.toFixed(0)}점, {n.matchCount}회 매칭)
-                    </Text>
+                    <View key={i} style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", marginBottom: 2 }}>
+                      <Text style={{ color: C.sub, fontSize: 12 }}>
+                        • {n.title} ({n.rating.toFixed(0)}점, {n.matchCount}회 매칭)
+                      </Text>
+                      {(n.causes || []).includes("discontinued") && (
+                        <View style={{ marginLeft: 6, backgroundColor: isDark ? "#7f1d1d" : "#fee2e2", paddingHorizontal: 6, paddingVertical: 1, borderRadius: 8 }}>
+                          <Text style={{ color: isDark ? "#fca5a5" : "#b91c1c", fontSize: 10, fontWeight: "700" }}>📺 연중</Text>
+                        </View>
+                      )}
+                    </View>
                   ))}
                 </View>
               )}
@@ -21650,9 +21671,16 @@ const TasteAnalysisScreen = memo(({
                     높은 레이팅이지만 신뢰도가 낮음 - 매칭/읽기 정보 추가 필요
                   </Text>
                   {anomalies.lowInfoQuality.slice(0, 3).map((n, i) => (
-                    <Text key={i} style={{ color: C.sub, fontSize: 12 }}>
-                      • {n.title} ({n.rating.toFixed(0)}점, 신뢰도 {Math.round(n.reliability)}%)
-                    </Text>
+                    <View key={i} style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", marginBottom: 2 }}>
+                      <Text style={{ color: C.sub, fontSize: 12 }}>
+                        • {n.title} ({n.rating.toFixed(0)}점, 신뢰도 {Math.round(n.reliability)}%)
+                      </Text>
+                      {(n.causes || []).includes("discontinued") && (
+                        <View style={{ marginLeft: 6, backgroundColor: isDark ? "#7f1d1d" : "#fee2e2", paddingHorizontal: 6, paddingVertical: 1, borderRadius: 8 }}>
+                          <Text style={{ color: isDark ? "#fca5a5" : "#b91c1c", fontSize: 10, fontWeight: "700" }}>📺 연중</Text>
+                        </View>
+                      )}
+                    </View>
                   ))}
                 </View>
               )}
@@ -23145,11 +23173,13 @@ async function analyzePreferences(novels, matches) {
       ongoing: reliable.filter(n => n.work_status === "ongoing"),
     },
     // 🆕 v7.0.4: work_status 기반 분류 — 연중(dropped/discontinued) 작품을 별도 그룹으로 분리하여 평가 패턴 분석에 포함
+    // 🔧 v7.0.4 polish: hiatus(휴재)도 별도 버킷으로 분리 (이전: 모든 4 버킷에서 누락 → counts 합 ≠ reliable.length)
     byWorkStatus: {
       completed: reliable.filter(n => n.work_status === "completed"),
       ongoing: reliable.filter(n => n.work_status === "ongoing"),
       dropped: reliable.filter(n => n.work_status === "dropped"),
       discontinued: reliable.filter(n => n.work_status === "discontinued"),
+      hiatus: reliable.filter(n => n.work_status === "hiatus"),
     },
     droppedNovels: reliable.filter(n => n.status === "dropped").map(n => ({
       title: n.title,
@@ -23161,42 +23191,36 @@ async function analyzePreferences(novels, matches) {
 
   // 🆕 v7.0.4: 연중(dropped/discontinued) 작품의 평가 패턴 — 완결작 평균 대비 격차 산출
   // 작품 단위로 "이 작품은 연중이라서 저평가됐을 수 있다"는 원인 surface의 근거
+  // 🔧 v7.0.4 polish: completedRows 비어있으면 delta=null + isSignificant=false (방어). affectedTitles 제거(미사용 dead data)
   const discontinuedRows = [
     ...readingPattern.byWorkStatus.dropped,
     ...readingPattern.byWorkStatus.discontinued,
   ];
   const completedRows = readingPattern.byWorkStatus.completed;
-  const completedAvgRating = avg(completedRows.map(n => n.rating));
-  const discontinuedAvgRating = avg(discontinuedRows.map(n => n.rating));
-  const discontinuedDelta = (completedAvgRating || 0) - (discontinuedAvgRating || 0);
+  const completedAvgRating = completedRows.length > 0 ? avg(completedRows.map(n => n.rating)) : null;
+  const discontinuedAvgRating = discontinuedRows.length > 0 ? avg(discontinuedRows.map(n => n.rating)) : null;
+  const discontinuedDelta = (completedAvgRating != null && discontinuedAvgRating != null)
+    ? completedAvgRating - discontinuedAvgRating
+    : null;
   const discontinuedAnalysis = {
     counts: {
       completed: completedRows.length,
       ongoing: readingPattern.byWorkStatus.ongoing.length,
       dropped: readingPattern.byWorkStatus.dropped.length,
       discontinued: readingPattern.byWorkStatus.discontinued.length,
+      hiatus: readingPattern.byWorkStatus.hiatus.length,
       total: reliable.length,
     },
     avgRating: {
       completed: completedAvgRating,
       droppedDiscontinued: discontinuedAvgRating,
     },
-    delta: discontinuedDelta, // 양수 = 연중 작품 평가가 완결보다 낮음
+    delta: discontinuedDelta, // 양수 = 연중 작품 평가가 완결보다 낮음, null = 비교 불가
     isSignificant:
       reliable.length >= 10 &&
       discontinuedRows.length >= 3 &&
+      discontinuedDelta != null &&
       discontinuedDelta >= 80,
-    affectedTitles: discontinuedRows
-      .filter(n => (n.rating || 0) < (basicStats.avgRating - 100))
-      .sort((a, b) => (a.rating || 0) - (b.rating || 0))
-      .slice(0, 10)
-      .map(n => ({
-        id: n.id,
-        title: n.title,
-        rating: n.rating,
-        work_status: n.work_status,
-        gapVsCompleted: completedAvgRating ? completedAvgRating - n.rating : 0,
-      })),
   };
 
   // 10. 매칭 분석
@@ -23437,9 +23461,11 @@ async function analyzePreferences(novels, matches) {
 
   // 14. 종합 인사이트 생성
   // 🆕 v7.0.4: discontinuedAnalysis 전달 — generateInsights가 연중을 원인으로 surface
+  // 🔧 v7.0.4 polish: UI에 표시되는 top10과 동일 슬라이스 전달 — avoidFactors의 작가가 화면에 안 보이는 모순 방지
+  const loyalAuthorsTop10 = loyalAuthors.slice(0, 10);
   const insights = generateInsights({
     basicStats, majorGenreAnalysis, subGenreAnalysis, tagAnalysis,
-    comboAnalysis, platformAnalysis, loyalAuthors, readingPattern,
+    comboAnalysis, platformAnalysis, loyalAuthors: loyalAuthorsTop10, readingPattern,
     matchAnalysis, trendAnalysis, anomalies, reliable,
     discontinuedAnalysis,
   });
@@ -23730,6 +23756,12 @@ function generateInsights(data) {
   // 기피 요소
   const avoidFactors = [];
 
+  // 🆕 v7.0.4: 연중 비율 높은 작가 — 강한 신호 → 최우선 push (이전: 마지막에 push 되어 slice(0,3) 시 항상 잘림)
+  const highDiscontinuedAuthors = (loyalAuthors || []).filter(a => a.tooManyDiscontinued).slice(0, 2);
+  for (const a of highDiscontinuedAuthors) {
+    avoidFactors.push(`${a.author} (연중 ${a.discontinuedCount}/${a.count} · ${(a.discontinuedRate * 100).toFixed(0)}%)`);
+  }
+
   // 드롭률 높은 태그
   const highDropTags = [...subGenreAnalysis, ...tagAnalysis]
     .filter(t => t.dropRate > 0.3 && t.count >= 3)
@@ -23742,12 +23774,6 @@ function generateInsights(data) {
   const lowRatedGenres = majorGenreAnalysis.filter(g => g.avgRating < basicStats.avgRating - 80);
   for (const g of lowRatedGenres.slice(0, 2)) {
     avoidFactors.push(`${g.genre} (평균 대비 -${(basicStats.avgRating - g.avgRating).toFixed(0)}점)`);
-  }
-
-  // 🆕 v7.0.4: 연중 비율 높은 작가 — avoidFactors로 surface (통상 1~2건은 무시, 3건+ AND 40%+만)
-  const highDiscontinuedAuthors = (loyalAuthors || []).filter(a => a.tooManyDiscontinued).slice(0, 2);
-  for (const a of highDiscontinuedAuthors) {
-    avoidFactors.push(`${a.author} (연중 ${a.discontinuedCount}/${a.count} · ${(a.discontinuedRate * 100).toFixed(0)}%)`);
   }
   
   // 추천 조건
