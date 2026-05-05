@@ -9736,6 +9736,9 @@ const ActualTierTag = memo(({ novel, showDiff = false, showWarning = true }) => 
   const recommended = isMatchMode ? tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg) : actual;
   const isForced = showWarning && isMatchMode && novel.manual_tier && tierRank(tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg), cfg) > tierRank(novel.manual_tier, cfg);
   const hasDiff = actual !== recommended;
+  // 🆕 v6.2: match/hybrid 모드 + manual_tier 미설정 + 매칭 0회 → 미평가
+  // (default rating 1500이라 의미 없는 티어가 표시되는 문제 해결)
+  const isUnrated = isMatchMode && !novel.manual_tier && (Number(novel.match_count) || 0) === 0;
 
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
@@ -9747,13 +9750,19 @@ const ActualTierTag = memo(({ novel, showDiff = false, showWarning = true }) => 
           borderRadius: 999,
           borderWidth: isForced ? 2 : 0,
           borderColor: "#fef3c7",
+          opacity: isUnrated ? 0.5 : 1,
         }}
       >
         <Text style={{ color: "#fff", fontWeight: "800" }}>
           {isForced ? "⚠️" : ""}{label}
         </Text>
       </View>
-      {showDiff && hasDiff && (
+      {isUnrated && (
+        <View style={{ backgroundColor: "#9ca3af", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 }}>
+          <Text style={{ color: "#fff", fontSize: 10, fontWeight: "700" }}>미평가</Text>
+        </View>
+      )}
+      {showDiff && hasDiff && !isUnrated && (
         <Text style={{ color: "#6b7280", fontSize: 11 }}>
           ({getTierLabel(recommended, cfg)} 권장)
         </Text>
@@ -18854,11 +18863,26 @@ const TasteAnalysisScreen = memo(({
     setLoading(false);
   }, [list]);
 
-  useEffect(() => {
-    if (list && list.length > 0 && !analysis) {
-      runAnalysis();
+  // 🆕 v6.2: list 또는 매칭 변화 감지용 시그니처 (정렬만 바뀐 경우는 동일)
+  const listSignature = useMemo(() => {
+    if (!list || list.length === 0) return "0";
+    let mc = 0, rs = 0;
+    for (const n of list) {
+      mc += Number(n.match_count) || 0;
+      rs += Math.round(Number(n.rating) || 1500);
     }
+    return `${list.length}|${mc}|${rs}`;
   }, [list]);
+
+  // 🆕 v6.2: 디바운스 자동 재분석 (사용자 답변 정책)
+  // 기존 `!analysis` 가드는 첫 진입 후 영원히 stale 가능 → list/매칭 변동 시 800ms 후 재실행
+  // 화면 전환 시 cleanup으로 중복 분석 방지
+  useEffect(() => {
+    if (!list || list.length === 0) return;
+    const timer = setTimeout(() => { runAnalysis(); }, 800);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listSignature]);
 
   // 🎯 v3.1.2: 상반 태그 관계 분석
   const oppositeTagAnalysis = useMemo(() => {
@@ -35045,7 +35069,21 @@ async function importJSON() {
                   <Text style={{ fontWeight: "700", color: C.text }}>자동 승패 활성화</Text>
                   <Text style={{ color: C.sub, fontSize: 11 }}>설정한 기준에 따라 자동으로 승패 결정</Text>
                 </View>
-                <Switch value={autoEnabled} onValueChange={setAutoEnabled} />
+                <Switch value={autoEnabled} onValueChange={(v) => {
+                  // 🆕 v6.2: hybrid 모드에서 자동매칭 시작 시 manual_tier 우선 정책 안내
+                  if (v && globalTierConfig.mode === "hybrid") {
+                    Alert.alert(
+                      "혼합 모드 안내",
+                      "manual_tier가 설정된 작품은 매칭 결과가 표시 티어에 즉시 반영되지 않습니다.\n\nELO 레이팅은 정상 갱신되지만, 표시 티어는 manual_tier가 우선합니다.\n\n자동매칭을 계속하시겠습니까?",
+                      [
+                        { text: "취소" },
+                        { text: "시작", onPress: () => setAutoEnabled(true) },
+                      ]
+                    );
+                    return;
+                  }
+                  setAutoEnabled(v);
+                }} />
               </View>
               
               {/* 🔧 v3.5.11: 세부 설정은 항상 표시 — 자동매칭 OFF 상태에서도 미리 설정 가능 */}
@@ -39437,8 +39475,9 @@ async function importJSON() {
                             try {
                             // 🔧 v6.0: await 전에 현재 config 캡처 (stale closure 방지)
                             const oldConfig = { ...globalTierConfig };
-                            // 🔴 Critical: match→manual 전환 시 백필
-                            if (m.key === "manual" || m.key === "hybrid") {
+                            // 🆕 v6.2: manual 모드만 백필 (hybrid는 manual_tier 미설정 시 getDisplayTier가 ELO로 fallback)
+                            // 이전: hybrid도 백필 → 진입 시점 ELO가 박제되어 이후 매칭 결과 미반영 (사용자 의도 위반)
+                            if (m.key === "manual") {
                               const novels = await all("SELECT id, rating, manual_tier FROM novels");
                               const queries = [];
                               for (const n of (novels || [])) {
@@ -39505,14 +39544,27 @@ async function importJSON() {
                               const newConfig = JSON.parse(JSON.stringify(preset.config));
                               // 🔧 v6.0: await 전에 현재 config 캡처 (stale closure 방지)
                               const oldConfig = { ...globalTierConfig };
-                              // manual/hybrid 모드 전환 시 백필
-                              if (newConfig.mode === "manual" || newConfig.mode === "hybrid") {
+                              // 🆕 v6.2: manual 프리셋만 백필 (hybrid는 ELO fallback)
+                              if (newConfig.mode === "manual") {
                                 const novels = await all("SELECT id, rating, manual_tier FROM novels");
                                 const queries = [];
                                 for (const n of (novels || [])) {
                                   const currentTier = getDisplayTier(n, oldConfig);
                                   const mappedTier = migrateTierKey(currentTier, oldConfig, newConfig);
                                   queries.push({ sql: "UPDATE novels SET manual_tier=? WHERE id=?", params: [mappedTier, n.id] });
+                                }
+                                if (queries.length > 0) await execBatch(queries);
+                              } else if (newConfig.mode === "hybrid") {
+                                // 🆕 v6.2: hybrid 프리셋 — 마이그레이션만 (백필 없음, getDisplayTier가 ELO fallback)
+                                // 새 tier 시스템에 없는 manual_tier만 변환
+                                const novels = await all("SELECT id, manual_tier FROM novels");
+                                const newOrder = getActiveTierOrder(newConfig);
+                                const queries = [];
+                                for (const n of (novels || [])) {
+                                  if (n.manual_tier && !newOrder.includes(n.manual_tier)) {
+                                    const mapped = migrateTierKey(n.manual_tier, oldConfig, newConfig);
+                                    queries.push({ sql: "UPDATE novels SET manual_tier=? WHERE id=?", params: [mapped, n.id] });
+                                  }
                                 }
                                 if (queries.length > 0) await execBatch(queries);
                               } else if (oldConfig.mode !== "match") {
