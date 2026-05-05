@@ -2,9 +2,68 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.0.2 (멀티 에이전트 코드 감사 17건 수정)                                ║
+ * ║  버전: 7.0.3 (하이브리드 모드 심층 감사 — 알고리즘/통합/UX 14건 수정)            ║
  * ║  최종 수정: 2026-05-05                                                        ║
  * ║  총 라인 수: 약 47,000줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.0.3 하이브리드 모드 심층 감사 — 14건 수정 (2026-05-05)                  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ 3개 병렬 에이전트(end-to-end flow / 알고리즘 정확성 / 통합 경계) 감사 결과     ║
+ * ║ 종합. 사용자 시나리오 트레이스 + 수학적 정합성 검증 + 백업/슬롯/모드 전환 등    ║
+ * ║ 시스템 경계 점검에서 발견된 실제 버그만 채택.                                  ║
+ * ║                                                                              ║
+ * ║ [Critical — 알고리즘/데이터 정합성 깨짐]                                        ║
+ * ║ • computeNewPosition cross-tier 방향 반전 — passedOrder ± 50 부호 오류로       ║
+ * ║   suspicion이 passed에게 졌다는 의미가 되어 hypothesis와 모순. underrated는    ║
+ * ║   passed 위(passedOrder-50), overrated는 passed 아래(passedOrder+50)로 수정. ║
+ * ║ • getCandidatesForVerification cross-tier 순서 — 상위 tier 후보를 TOP부터     ║
+ * ║   walk하던 문제 → BOTTOM(경계 가까움)부터 walk-up으로 수정. BIG=1e6 기반       ║
+ * ║   거리 산출로 same-tier와 cross-tier 분리 보장.                               ║
+ * ║ • calculateNovelScore(AwardsScreen) tierIndex=-1 부스트 — 비활성 tier 작품이  ║
+ * ║   (length+1)*30로 S 위로 점프하던 버그 → -1 → length로 정규화                 ║
+ * ║ • doClearAll v7.0 테이블 누락 — import 시 tier_verification_queue/log/session ║
+ * ║   고아 누적 → 통계 오염, 추가 DELETE 추가                                      ║
+ * ║ • backfillManualOrder 일회성 가드 — v8 백업 import 시 모든 row가 0 그룹으로    ║
+ * ║   묶이던 문제. forceReflow=true 옵션 추가, import 후 강제 reflow 호출         ║
+ * ║                                                                              ║
+ * ║ [Major — 모드/세션 lifecycle 버그]                                             ║
+ * ║ • 모드 토글(hybrid → 다른 모드) 세션 누수 — verificationSession + ref 정리     ║
+ * ║   + pending 큐 cancel 추가 (이전: 다시 hybrid 진입 시 stale candidates로       ║
+ * ║   finalize → 자리 잘못 이동)                                                  ║
+ * ║ • 프리셋 스위치(hybrid) — 5→3 tier 압축 등 마이그레이션 후 영향 tier 별로      ║
+ * ║   rebalanceTierOrder 호출 (gap=100 invariant 보존)                            ║
+ * ║ • undo + in-flight 세션 동시 진행 시 finalize가 undo 결과 덮어쓰기 — 같은      ║
+ * ║   novel_id의 세션이 살아있으면 undo가 세션 abort 추가                         ║
+ * ║ • 시퀀스 중단 무한 루프 — pending 유지 시 같은 row가 즉시 재인입되어 같은      ║
+ * ║   의심작이 반복 표시. 'skipped'로 마감하여 다음 row로 진행                    ║
+ * ║ • addNovel 최상위 tier — underrated 후보 풀 비어 즉시 no_candidates finalize. ║
+ * ║   최상위 → overrated 방향, 단일 tier → enqueue 생략으로 수정                  ║
+ * ║ • 수문장 모달 피드백 루프 — 사용자가 ⬆️/⬇️ 수락해도 과거 blocker_id 5+        ║
+ * ║   누적이 안 빠져 같은 작품 반복 등장. UPDATE blocker_id=NULL로 누적 통계 소비 ║
+ * ║                                                                              ║
+ * ║ [Major — 데이터 정합성 보강]                                                   ║
+ * ║ • respondVerificationMatch 동시 진입 가드 — 빠른 더블탭으로 같은 응답이        ║
+ * ║   중복 INSERT되던 tier_validation_log 오염 + finalize 중복 호출 방지          ║
+ * ║ • evaluateSequenceProgress infIdx=0 즉시 종료 — 첫 매치부터 가설 부정 시      ║
+ * ║   K=2 더 물어봐도 placement는 no_change → 무의미한 추가 질문 회피             ║
+ * ║ • finalizeVerificationSession candidates fresh fetch — 세션 도중 다른 경로가  ║
+ * ║   manual_tier/order 변경 시 stale snapshot으로 finalize되던 문제. 응답된      ║
+ * ║   candidate ID들을 DB에서 재조회하여 newPos 산출                              ║
+ * ║                                                                              ║
+ * ║ [Minor — UX/일관성]                                                            ║
+ * ║ • 수문장 ⬆️/⬇️ 수락 후 loadVerificationStats() 호출 — 대기 카운터 즉시 갱신    ║
+ * ║                                                                              ║
+ * ║ [의도 확인 후 미수정]                                                           ║
+ * ║ • 후기 inflection(idx ≥ 5) K-confirm < 2 — 이상값이지만 max stop이 우선       ║
+ * ║   적용되는 의도된 트레이드오프. 추후 result_quality 플래그 도입 가능           ║
+ * ║ • TVQ pending 백업 export — feature add, 본 패치 범위 외                      ║
+ * ║ • 수문장 모달 ±1 tier 한정 — UI 재설계 필요, 본 패치 범위 외                  ║
+ * ║ • saveEdit/batchSetTier/inline chip pushUndo 누락 — 큰 surface area, 별도   ║
+ * ║   패치로 분리 (gatekeeper 모달은 v7.0.2에서 이미 추가됨)                      ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -4522,10 +4581,13 @@ async function initDb() {
 }
 
 // 🆕 v7.0: manual_order 백필 — 기존 작품들에 티어 그룹별 순차 manual_order 부여
-async function backfillManualOrder(database) {
+// 🆕 v7.0.3: forceReflow=true 시 백필 메타 무시하고 강제 재정렬 (import 직후 호출용)
+async function backfillManualOrder(database, forceReflow = false) {
   try {
-    const metaRow = await database.getFirstAsync(`SELECT value FROM app_meta WHERE key='manual_order_backfilled'`);
-    if (metaRow && metaRow.value === '"1"') return; // 이미 백필됨
+    if (!forceReflow) {
+      const metaRow = await database.getFirstAsync(`SELECT value FROM app_meta WHERE key='manual_order_backfilled'`);
+      if (metaRow && metaRow.value === '"1"') return; // 이미 백필됨
+    }
 
     // manual_tier 그룹별로 정렬 후 0부터 gap 100으로 부여
     // manual_tier가 NULL이거나 빈 문자열인 작품(Unrated)도 동일 그룹으로 묶어 부여
@@ -17377,10 +17439,12 @@ const AwardsScreen = memo(({
     const calculateNovelScore = (n) => {
       let score = 0;
 
+      // 🆕 v7.0.3: 비활성 tier(indexOf=-1) 처리 — 이전: -1 → length+1 부스트로 inactive 작품이 S 위로 점프
       if (isHybrid) {
         // hybrid: 티어 점수만 (rating 무시) + 같은 티어 내 manual_order 미세 가산
         const tier = getDisplayTier(n, globalTierConfig);
-        const tierIndex = tierOrder.indexOf(tier);
+        const rawIdx = tierOrder.indexOf(tier);
+        const tierIndex = rawIdx === -1 ? tierOrder.length : rawIdx;
         score += (tierOrder.length - tierIndex) * 30; // 티어당 30점
         // manual_order 작을수록(상위) 약간 가산 — 최대 ±15점
         const order = Number(n.manual_order) || 0;
@@ -17389,10 +17453,11 @@ const AwardsScreen = memo(({
         // 1. 기본 레이팅 (정규화: 1500 기준으로 차이를 점수화)
         score += (n.rating - 1400) * 0.5;  // 레이팅 1500이면 50점, 1800이면 200점
 
-        // 2. 티어 보정 (S:100, A:80, B+:60, B:40, B-:20, C:0)
+        // 2. 티어 보정 (활성 티어 수 기준 동적, 5 하드코딩 제거)
         const tier = getDisplayTier(n, globalTierConfig);
-        const tierIndex = tierOrder.indexOf(tier);
-        score += (5 - tierIndex) * 20;
+        const rawIdx = tierOrder.indexOf(tier);
+        const tierIndex = rawIdx === -1 ? tierOrder.length : rawIdx;
+        score += Math.max(0, (tierOrder.length - 1 - tierIndex)) * 20;
       }
       
       // 3. 태그 매칭 보정 (상의 matchTags와 얼마나 일치하는지)
@@ -21783,17 +21848,24 @@ async function getCandidatesForVerification(novelId, suspicionType, limit = 10) 
     [novelId]
   );
 
+  // 🆕 v7.0.3: 거리 산출은 항상 "tier 경계에서 시작해서 멀어지는 방향"으로 정렬
+  // (이전 버그: underrated cross-tier에서 rTierIdx=0(상위) 후보를 rOrder ASC로 정렬 → 상위 tier의 TOP부터
+  // 매칭하던 문제. 정상은 tier 경계에 가까운 BOTTOM부터 walk-up이어야 알고리즘 일관성 보장.)
+  const BIG = 1_000_000; // tier 간 분리 기준값 (rOrder 최대치를 충분히 초과)
   const scored = [];
   for (const r of allRows) {
     const rTierIdx = tierOrder.indexOf(r.manual_tier);
+    if (rTierIdx === -1) continue; // 비활성 tier 후보 제외
     const rOrder = Number(r.manual_order) || 0;
     let isAbove, distance;
     if (rTierIdx < ownTierIdx) {
+      // 상위 tier 후보(underrated 후보) — BOTTOM(큰 rOrder, 경계에 가까움) 부터 walk
       isAbove = true;
-      distance = (ownTierIdx - rTierIdx) * 10000 + rOrder;
+      distance = (ownTierIdx - rTierIdx) * BIG + (BIG - rOrder);
     } else if (rTierIdx > ownTierIdx) {
+      // 하위 tier 후보(overrated 후보) — TOP(작은 rOrder, 경계에 가까움) 부터 walk
       isAbove = false;
-      distance = (rTierIdx - ownTierIdx) * 10000 + rOrder;
+      distance = (rTierIdx - ownTierIdx) * BIG + rOrder;
     } else {
       // 같은 tier
       if (rOrder < mo) { isAbove = true; distance = mo - rOrder; }
@@ -21869,6 +21941,11 @@ function evaluateSequenceProgress(responses, suspicionType) {
     // 변곡점 미발견 — max까지 계속
     return { shouldStop: false, reason: "no_inflection" };
   }
+  // 🆕 v7.0.3: 첫 매치(idx=0)부터 가설 부정 → K=2 더 물어봐도 placement는 no_change
+  // 즉시 종료하여 사용자에게 무의미한 추가 질문을 막음 (computeNewPosition에서 no_change 반환)
+  if (infIdx === 0) {
+    return { shouldStop: true, reason: "rejected" };
+  }
   // 변곡점 발견 후 K=2 추가 매칭 필요
   const afterInflection = responses.length - 1 - infIdx;
   if (afterInflection >= VERIFICATION_K_AFTER_INFLECTION) {
@@ -21935,23 +22012,28 @@ function computeNewPosition(suspicionNovel, candidates, responses, suspicionType
   // v7.0.1 (C1 fix): collision/gap 압축 위험은 finalize 후 rebalanceTierOrder로 복구
   const passedOrder = Number(passedCand.manual_order) || 0;
   const blockerOrder = Number(blockerCand.manual_order) || 0;
+  // 🆕 v7.0.3: cross-tier 방향 수정 — 이전 버그: passed보다 "약간 아래(+50)"로 배치하여
+  // suspicion이 passed에게 졌다는 의미가 되어 hypothesis(suspicion이 passed 위)와 모순.
+  // underrated: suspicion이 passed를 이김 → passed 위, blocker 아래(다른 tier).
+  // overrated: suspicion이 passed에게 짐 → passed 아래, blocker 위(다른 tier).
   if (suspicionType === "underrated") {
-    // 위쪽으로 이동: passed보다 아래, blocker보다 위에 위치
+    // 위쪽으로 이동: passed보다 위(작은 order), blocker보다 아래(큰 order, blocker tier가 더 위면 무관)
     if (passedCand.manual_tier === blockerCand.manual_tier) {
-      // 충돌 시(같은 order)는 일단 passed-1로 두고 finalize의 rebalance가 정합성 회복
+      // 같은 tier이면 두 사이값. 충돌 시 passed-1로 두고 finalize의 rebalance가 stable-sort로 정합성 회복
       const order = passedOrder === blockerOrder ? passedOrder - 1 : Math.floor((passedOrder + blockerOrder) / 2);
       return { tier: passedCand.manual_tier, order, blockerId: blockerCand.id, action: "moved" };
     } else {
-      // tier가 다르면 passed의 tier로 이동 (passed보다 약간 아래) — gap은 rebalance가 복구
-      return { tier: passedCand.manual_tier, order: passedOrder + 50, blockerId: blockerCand.id, action: "moved" };
+      // 다른 tier — passed의 tier에서 passed 위(passedOrder - 50)
+      return { tier: passedCand.manual_tier, order: passedOrder - 50, blockerId: blockerCand.id, action: "moved" };
     }
   } else {
-    // overrated: 아래쪽으로 이동: passed보다 위, blocker보다 아래
+    // overrated: 아래쪽으로 이동: passed보다 아래(큰 order), blocker보다 위
     if (passedCand.manual_tier === blockerCand.manual_tier) {
       const order = passedOrder === blockerOrder ? passedOrder + 1 : Math.floor((passedOrder + blockerOrder) / 2);
       return { tier: passedCand.manual_tier, order, blockerId: blockerCand.id, action: "moved" };
     } else {
-      return { tier: passedCand.manual_tier, order: passedOrder - 50, blockerId: blockerCand.id, action: "moved" };
+      // 다른 tier — passed의 tier에서 passed 아래(passedOrder + 50)
+      return { tier: passedCand.manual_tier, order: passedOrder + 50, blockerId: blockerCand.id, action: "moved" };
     }
   }
 }
@@ -21960,7 +22042,26 @@ function computeNewPosition(suspicionNovel, candidates, responses, suspicionType
 async function finalizeVerificationSession(queueRow, suspicionNovel, candidates, responses, suspicionType, stopReason) {
   const sessionId = uuid();
   const now = Date.now();
-  const newPos = computeNewPosition(suspicionNovel, candidates, responses, suspicionType, globalTierConfig);
+  // 🆕 v7.0.3: passed/blocker 후보를 DB에서 fresh fetch — 세션 동안 다른 경로가 manual_tier/order를
+  // 변경했을 가능성 차단 (stale snapshot으로 finalize → 잘못된 자리 산출 방지)
+  const refreshedCandidates = [...candidates];
+  try {
+    const refIds = responses.map(r => r.candidateId).filter(Boolean);
+    if (refIds.length > 0) {
+      const placeholders = refIds.map(() => "?").join(",");
+      const fresh = await all(
+        `SELECT id, manual_tier, manual_order FROM novels WHERE id IN (${placeholders})`,
+        refIds
+      );
+      const freshById = new Map((fresh || []).map(r => [r.id, r]));
+      for (let i = 0; i < refreshedCandidates.length; i++) {
+        const c = refreshedCandidates[i];
+        const upd = freshById.get(c.id);
+        if (upd) refreshedCandidates[i] = { ...c, manual_tier: upd.manual_tier, manual_order: upd.manual_order };
+      }
+    }
+  } catch (e) { console.warn("[v7.0.3] finalize refresh 실패:", e?.message); }
+  const newPos = computeNewPosition(suspicionNovel, refreshedCandidates, responses, suspicionType, globalTierConfig);
 
   try {
     // 🆕 v7.0.2: session INSERT + novel UPDATE + queue UPDATE를 단일 트랜잭션으로 묶어 원자성 보장
@@ -23584,6 +23685,7 @@ function AppContent() {
   const [gatekeeperModalOpen, setGatekeeperModalOpen] = useState(false);
   const verificationSessionIdRef = useRef(null); // 매 시퀀스 고유 sessionId (응답 로그 묶음용)
   const verificationLoadingRef = useRef(false); // 🆕 v7.0: 재진입 가드 (state는 React 배칭 → 동기 가드 필요)
+  const respondingRef = useRef(false); // 🆕 v7.0.3: respondVerificationMatch 동시 진입 가드 (빠른 더블탭 시 중복 log/finalize 방지)
 
   // 🆕 v3.5.11: 매치 필터링 — 정보 충실도 높은 작품 우선 매칭
   const [matchFilterEnabled, setMatchFilterEnabled] = useState(false);
@@ -28809,6 +28911,11 @@ function AppContent() {
               `UPDATE tier_verification_queue SET state='cancelled', processed_at=? WHERE novel_id=? AND state='pending'`,
               [Date.now(), item.payload.id]
             );
+            // 🆕 v7.0.3: in-flight 세션이 같은 작품에 대한 것이면 abort (이전: undo 후 finalize가 자리 재이동시킴)
+            if (verificationSession && verificationSession.queueRow?.novel_id === item.payload.id) {
+              setVerificationSession(null);
+              verificationSessionIdRef.current = null;
+            }
           }
           break;
 
@@ -28828,6 +28935,11 @@ function AppContent() {
               `UPDATE tier_verification_queue SET state='cancelled', processed_at=? WHERE novel_id IN (${placeholders}) AND state='pending'`,
               [Date.now(), ...ids]
             );
+            // 🆕 v7.0.3: 일괄 undo도 in-flight 세션 abort
+            if (verificationSession && ids.includes(verificationSession.queueRow?.novel_id)) {
+              setVerificationSession(null);
+              verificationSessionIdRef.current = null;
+            }
           }
           break;
           
@@ -29437,9 +29549,20 @@ function AppContent() {
       });
 
       // 🆕 v7.0: hybrid 모드 — 신규 등록 작품을 검증 큐에 추가 (manual_tier 설정된 경우만)
+      // 🆕 v7.0.3: 최상위 tier에 등록 시 underrated 후보 풀이 비어 무의미한 no_candidates 즉시 finalize
+      // → 의미있는 방향(overrated, 아래쪽 검증)으로 큐잉. 단, 단일 tier 시스템이면 enqueue 자체 생략.
       if (globalTierConfig.mode === "hybrid" && newManualTier) {
         try {
-          await enqueueVerification(id, "new", "underrated");
+          const order = getActiveTierOrder(globalTierConfig);
+          const idx = order.indexOf(newManualTier);
+          if (idx === 0 && order.length > 1) {
+            // 최상위 tier — 위쪽 비교 불가, 아래쪽으로 검증
+            await enqueueVerification(id, "new", "overrated");
+          } else if (idx >= 0 && idx < order.length - 1) {
+            // 중간/최하위 tier — 위쪽으로 검증 (default)
+            await enqueueVerification(id, "new", "underrated");
+          }
+          // idx === -1(비활성) 또는 단일 tier 시스템 → enqueue 생략
         } catch (e) {
           console.warn("[v7.0] new 검증 큐 INSERT 실패:", e?.message);
         }
@@ -30613,7 +30736,11 @@ function AppContent() {
 
   // 🆕 v7.0: 검증 응답 처리 — 의심작 vs 후보 매칭 결과 기록 + 종료 판정
   const respondVerificationMatch = useCallback(async (suspicionWon) => {
+    // 🆕 v7.0.3: 동시 진입 가드 — 빠른 더블탭으로 같은 응답이 두 번 INSERT되어 tier_validation_log 중복 + finalize 중복 호출 방지
+    if (respondingRef.current) return;
     if (!verificationSession) return;
+    respondingRef.current = true;
+    try {
     const { queueRow, suspicionNovel, candidates, responses, currentIdx, suspicionType } = verificationSession;
     const candidate = candidates[currentIdx];
     if (!candidate) return;
@@ -30667,6 +30794,9 @@ function AppContent() {
       } else {
         setVerificationSession({ ...verificationSession, responses: newResponses, currentIdx: nextIdx });
       }
+    }
+    } finally {
+      respondingRef.current = false; // 🆕 v7.0.3
     }
   }, [verificationSession, gatekeeperModalOpen, loadVerificationStats, startVerificationSession]);
 
@@ -32996,6 +33126,10 @@ async function importJSON() {
         { sql: "DELETE FROM folders;", params: [] },
         { sql: "DELETE FROM novel_folders;", params: [] },
         { sql: "DELETE FROM gallery_images;", params: [] }, // 🎨 v3.8.0
+        // 🆕 v7.0.3: 하이브리드 검증 테이블도 import 시 초기화 (이전: 고아 큐/log/세션이 누적되어 통계 오염)
+        { sql: "DELETE FROM tier_verification_queue;", params: [] },
+        { sql: "DELETE FROM tier_validation_log;", params: [] },
+        { sql: "DELETE FROM tier_repositioning_session;", params: [] },
       ]);
       invalidatePatternCache(); // 🔧 v3.5.14
       invalidateWeightsCache(); // 🔧 v3.5.14
@@ -33429,6 +33563,15 @@ async function importJSON() {
               }
 
               // v9는 Elo 데이터 포함 → 재계산 불필요!
+
+              // 🆕 v7.0.3: import 후 manual_order 강제 재반영 — v8 (pre-hybrid) 백업이거나 일부 row만 mo
+              // 보유한 경우 backfill 메타 가드 때문에 모든 행이 0 그룹으로 묶여 hybrid 정렬 망가지는 문제 방지
+              try {
+                const dbForBackfill = await openDb();
+                await backfillManualOrder(dbForBackfill, true);
+              } catch (e) {
+                console.warn("[v7.0.3] import 후 manual_order reflow 실패:", e?.message);
+              }
 
               // 🔧 v3.9.1: old→new 소설 ID 매핑 구축 (NF/GI 복원용)
               const oldIdToNewId = {};
@@ -36465,9 +36608,17 @@ async function importJSON() {
                               {
                                 text: "중단", style: "destructive",
                                 onPress: async () => {
-                                  // v7.0.1 (N1 fix): 큐 항목은 pending 유지(재시도 가능) + 다음 큐로 자동 진행
+                                  // 🆕 v7.0.3: 'pending' 유지 시 다음 fetch에서 같은 row 재인입(무한 루프) — 'skipped'로 마감
+                                  // (편집/추가 등 사용자 후속 행동이 enqueueVerification으로 새 row를 만들면 다시 검증됨)
+                                  try {
+                                    await exec(
+                                      `UPDATE tier_verification_queue SET state='skipped', processed_at=? WHERE id=?`,
+                                      [Date.now(), verificationSession.queueRow.id]
+                                    );
+                                  } catch {}
                                   setVerificationSession(null);
                                   verificationSessionIdRef.current = null;
+                                  await loadVerificationStats();
                                   startVerificationSession();
                                 },
                               },
@@ -36568,8 +36719,11 @@ async function importJSON() {
                                               await exec("UPDATE novels SET manual_tier=?, manual_order=? WHERE id=?", [higher, newOrder, g.id]);
                                               addTierHistoryEntry(g.id, g.title, g.manual_tier, higher);
                                               pushUndo('tier_change', { id: g.id, title: g.title, prevTier: g.manual_tier, newTier: higher }, `수문장 승급: ${g.title} → ${higher}`);
+                                              // 🆕 v7.0.3: 누적 통계 소비 — 과거 blocker_id 기록 NULL 처리 (이전: 5+ 누적이 안 빠져 같은 작품이 모달에 영원히 재등장)
+                                              await exec("UPDATE tier_repositioning_session SET blocker_id=NULL WHERE blocker_id=?", [g.id]);
                                               await enqueueVerification(g.id, "gatekeeper", "underrated");
                                               await loadList(undefined, undefined, "v7-gatekeeper");
+                                              await loadVerificationStats(); // 🆕 v7.0.3: pending 카운터 즉시 갱신
                                               const gks = await getGatekeeperCandidates(5);
                                               setGatekeeperCandidates(gks);
                                             } catch (e) { console.warn(e); }
@@ -36597,8 +36751,11 @@ async function importJSON() {
                                               await exec("UPDATE novels SET manual_tier=?, manual_order=? WHERE id=?", [lower, newOrder, g.id]);
                                               addTierHistoryEntry(g.id, g.title, g.manual_tier, lower);
                                               pushUndo('tier_change', { id: g.id, title: g.title, prevTier: g.manual_tier, newTier: lower }, `수문장 강등: ${g.title} → ${lower}`);
+                                              // 🆕 v7.0.3: 누적 통계 소비
+                                              await exec("UPDATE tier_repositioning_session SET blocker_id=NULL WHERE blocker_id=?", [g.id]);
                                               await enqueueVerification(g.id, "gatekeeper", "overrated");
                                               await loadList(undefined, undefined, "v7-gatekeeper");
+                                              await loadVerificationStats(); // 🆕 v7.0.3
                                               const gks = await getGatekeeperCandidates(5);
                                               setGatekeeperCandidates(gks);
                                             } catch (e) { console.warn(e); }
@@ -41103,6 +41260,22 @@ async function importJSON() {
                             try {
                             // 🔧 v6.0: await 전에 현재 config 캡처 (stale closure 방지)
                             const oldConfig = { ...globalTierConfig };
+                            // 🆕 v7.0.3: hybrid → 다른 모드 전환 시 in-flight 검증 세션 + pending 큐 정리
+                            // (이전: 세션 state가 살아있어 다시 hybrid 들어오면 stale candidates로 finalize)
+                            if (oldConfig.mode === "hybrid" && m.key !== "hybrid") {
+                              setVerificationSession(null);
+                              verificationSessionIdRef.current = null;
+                              setVerificationLoading(false);
+                              verificationLoadingRef.current = false;
+                              setGatekeeperCandidates([]);
+                              setGatekeeperModalOpen(false);
+                              try {
+                                await exec(
+                                  `UPDATE tier_verification_queue SET state='cancelled', processed_at=? WHERE state='pending'`,
+                                  [Date.now()]
+                                );
+                              } catch (e) { console.warn("[v7.0.3] mode change 큐 cancel 실패:", e?.message); }
+                            }
                             // 🆕 v6.2: manual 모드만 백필 (hybrid는 manual_tier 미설정 시 getDisplayTier가 ELO로 fallback)
                             // 이전: hybrid도 백필 → 진입 시점 ELO가 박제되어 이후 매칭 결과 미반영 (사용자 의도 위반)
                             if (m.key === "manual") {
@@ -41191,13 +41364,20 @@ async function importJSON() {
                                 const novels = await all("SELECT id, manual_tier FROM novels");
                                 const newOrder = getActiveTierOrder(newConfig);
                                 const queries = [];
+                                const affectedTiers = new Set();
                                 for (const n of (novels || [])) {
                                   if (n.manual_tier && !newOrder.includes(n.manual_tier)) {
                                     const mapped = migrateTierKey(n.manual_tier, oldConfig, newConfig);
                                     queries.push({ sql: "UPDATE novels SET manual_tier=? WHERE id=?", params: [mapped, n.id] });
+                                    if (mapped) affectedTiers.add(mapped);
                                   }
                                 }
                                 if (queries.length > 0) await execBatch(queries);
+                                // 🆕 v7.0.3: 5→3 tier 압축처럼 마이그레이션이 여러 tier를 한 그룹에 합칠 때
+                                // gap=100 invariant가 깨짐 → 영향받은 tier 모두 reflow
+                                for (const tk of affectedTiers) {
+                                  await rebalanceTierOrder(tk);
+                                }
                               } else if (oldConfig.mode !== "match") {
                                 // 🆕 v6.2: match 프리셋 적용 시 manual_tier 보존 정책
                                 // match 모드에선 표시되지 않지만, hybrid/manual 복귀 시 부활
