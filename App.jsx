@@ -18837,7 +18837,9 @@ const TasteAnalysisScreen = memo(({
     setErrorMsg(null);
     try {
       console.log("Starting analysis, list length:", list?.length);
-      const matches = await all("SELECT * FROM matches ORDER BY created_at ASC;");
+      // 🆕 v6.2: 최근 5000건만 로드 (LIMIT 없을 때 매칭 1만+ 메모리 부담)
+      // matches는 analyzePreferences 내부에서 iteration용 (순서 무관, all()이 safeDbOperation 내장)
+      const matches = await all("SELECT * FROM matches ORDER BY created_at DESC LIMIT 5000");
       console.log("Matches loaded:", matches?.length);
       const result = await analyzePreferences(list, matches);
       console.log("Analysis complete:", result?.basicStats?.total);
@@ -22518,6 +22520,7 @@ function AppContent() {
   const [isAutoMatching, setIsAutoMatching] = useState(false); // 🔧 v3.4.6: 자동 승패 처리 중 플래그
   const isAutoMatchingRef = useRef(false); // 🔧 v3.5.14: ref 기반 동기 guard (state 배칭 우회 방지)
   const needsListRefreshRef = useRef(false); // 🔧 v3.5.15: 자동매칭 종료 후 loadList 지연 실행 플래그
+  const modeChangingRef = useRef(false); // 🆕 v6.2: 티어 모드 변경 in-flight 가드 (Alert 큐잉/중복 실행 방지)
   
   // 🎯 v3.0.4: 확장된 자동승패 설정
   const [autoMatchSettings, setAutoMatchSettings] = useState({
@@ -39414,14 +39417,24 @@ async function importJSON() {
                 ].map(m => (
                   <TouchableOpacity
                     key={m.key}
+                    disabled={isAutoMatching}
                     onPress={() => {
                       if (m.key === globalTierConfig.mode) return;
+                      // 🆕 v6.2: 자동매칭 중 모드 변경 차단 (매칭 큐 외부 호출이므로 불변규칙 #1 안전)
+                      if (isAutoMatchingRef.current) {
+                        Alert.alert("자동매칭 진행 중", "자동매칭 종료 후 모드를 변경해주세요.");
+                        return;
+                      }
+                      // 🆕 v6.2: 다중 클릭 / Alert 큐잉 race 방지
+                      if (modeChangingRef.current) return;
                       Alert.alert(
                         "모드 변경",
                         `"${m.label}" 모드로 변경하시겠습니까?\n\n${m.desc}\n\n${m.key === "manual" ? "기존 레이팅 기반 티어가 manual_tier에 자동 저장됩니다." : ""}`,
                         [
                           { text: "취소" },
                           { text: "변경", onPress: async () => {
+                            modeChangingRef.current = true; // 🆕 v6.2: in-flight 가드 진입
+                            try {
                             // 🔧 v6.0: await 전에 현재 config 캡처 (stale closure 방지)
                             const oldConfig = { ...globalTierConfig };
                             // 🔴 Critical: match→manual 전환 시 백필
@@ -39451,6 +39464,9 @@ async function importJSON() {
                             }
                             await loadList(undefined, undefined, "settings");
                             Alert.alert("완료", `${m.label} 모드로 변경되었습니다.`);
+                            } finally {
+                              modeChangingRef.current = false; // 🆕 v6.2: in-flight 가드 해제
+                            }
                           }},
                         ]
                       );
@@ -39463,6 +39479,7 @@ async function importJSON() {
                       borderWidth: 1,
                       borderColor: globalTierConfig.mode === m.key ? C.primary : C.line,
                       alignItems: "center",
+                      opacity: isAutoMatching ? 0.4 : 1, // 🆕 v6.2: 자동매칭 중 시각적 비활성
                     }}
                   >
                     <Text style={{ color: globalTierConfig.mode === m.key ? "#fff" : C.text, fontWeight: "700", fontSize: 13 }}>{m.label}</Text>
@@ -39499,18 +39516,18 @@ async function importJSON() {
                                 }
                                 if (queries.length > 0) await execBatch(queries);
                               } else if (oldConfig.mode !== "match") {
-                                // match 모드로 돌아갈 때 manual_tier 중 유효하지 않은 것 정리
+                                // 🆕 v6.2: match 프리셋 적용 시 manual_tier 보존 정책
+                                // match 모드에선 표시되지 않지만, hybrid/manual 복귀 시 부활
+                                // 새 tier 시스템 키 집합에 없는 키만 마이그레이션, 그 외는 그대로 둠
                                 const novels = await all("SELECT id, manual_tier FROM novels");
                                 const newOrder = getActiveTierOrder(newConfig);
-                                const gated = newConfig.tiers.filter(t => t.gated).map(t => t.key);
                                 const queries = [];
                                 for (const n of (novels || [])) {
-                                  if (n.manual_tier && !gated.includes(n.manual_tier)) {
-                                    queries.push({ sql: "UPDATE novels SET manual_tier=NULL WHERE id=?", params: [n.id] });
-                                  } else if (n.manual_tier && !newOrder.includes(n.manual_tier)) {
+                                  if (n.manual_tier && !newOrder.includes(n.manual_tier)) {
                                     const mapped = migrateTierKey(n.manual_tier, oldConfig, newConfig);
-                                    queries.push({ sql: "UPDATE novels SET manual_tier=? WHERE id=?", params: [gated.includes(mapped) ? mapped : null, n.id] });
+                                    queries.push({ sql: "UPDATE novels SET manual_tier=? WHERE id=?", params: [mapped, n.id] });
                                   }
+                                  // 유효한 manual_tier는 보존
                                 }
                                 if (queries.length > 0) await execBatch(queries);
                               }
