@@ -2,9 +2,57 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 6.2.0                                                                   ║
+ * ║  버전: 7.0.0-alpha (Stage 1+2 부분 구현)                                       ║
  * ║  최종 수정: 2026-05-05                                                        ║
- * ║  총 라인 수: 약 45,700줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 45,900줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.0 하이브리드 모드 동적 자리 탐색 시스템 (2026-05-05)                    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ 사용자 의도 7+ 차례 통합 후 plan v13 승인 → 점진 구현 시작.                    ║
+ * ║                                                                              ║
+ * ║ [패러다임 변경]                                                                ║
+ * ║ • mode === "hybrid"는 기존 ELO/자동매칭/점수 시스템과 분리된 새 시스템.       ║
+ * ║   manual_tier + manual_order가 "잠정 truth", 사용자 편집 행위가 검증 트리거.  ║
+ * ║ • 동적 탐색 시퀀스: 변곡점(승패 변동) 알고리즘으로 자리 결정 + 수문장 식별.    ║
+ * ║                                                                              ║
+ * ║ [Stage 1+2: DB 인프라 + manual_order — 본 커밋]                                ║
+ * ║ • novels.manual_order 컬럼 추가 (gap 100, 백필 1회 실행)                      ║
+ * ║ • 신규 테이블 3개: tier_verification_queue, tier_validation_log,              ║
+ * ║   tier_repositioning_session                                                  ║
+ * ║ • detectViolation 헬퍼: manual_tier/manual_order 위반 판정                    ║
+ * ║ • enqueueVerification 헬퍼: 검증 큐 INSERT (디바운스 1초)                     ║
+ * ║ • getCandidatesForVerification 헬퍼: 시퀀스 후보 풀 조회                      ║
+ * ║ • swapRating(▲/▼) hybrid 분기: manual_order swap + 트리거 큐                  ║
+ * ║ • tierManageEntries 정렬: manual/hybrid에서 manual_order asc 우선             ║
+ * ║ • ▲/▼ 가드: hybrid 모드에서도 활성                                            ║
+ * ║ • 백업/복원: manual_order 항상 저장 (opt.mo)                                  ║
+ * ║                                                                              ║
+ * ║ [Stage 3-5: 후속 작업]                                                         ║
+ * ║ • Stage 3: 트리거 hook (작품 CRUD 연결) + HybridVerificationView UI +         ║
+ * ║   시퀀스 엔진 (변곡점 알고리즘, K=2 추가 매칭, max=7)                         ║
+ * ║ • Stage 4: 수문장 식별 SQL + 제안 모달                                        ║
+ * ║ • Stage 5: TasteAnalysisScreen + AwardsScreen hybrid 전용 재설계              ║
+ * ║                                                                              ║
+ * ║ [정책 결정 — 사용자 7+ 차례 답변 통합]                                          ║
+ * ║ • 자동매칭: hybrid 비활성. 매칭 탭은 검증 시퀀스 UI로 변형                     ║
+ * ║ • ELO 점수: hybrid 갱신 X, UI 비표시                                           ║
+ * ║ • confidence/의심 UI: novels 표시 X — 매칭 탭에서만                           ║
+ * ║ • 자리 재배치: manual_order 자동, manual_tier 제안 모달                       ║
+ * ║ • 시퀀스: 변곡점 후 K=2 추가 매칭 일관 / max 7                                ║
+ * ║ • 후보 정렬: 의심작 인접부터 점진                                              ║
+ * ║ • 수문장: 시퀀스 내 첫 변곡점 + 5개 누적 통계                                  ║
+ * ║ • Unrated: manual_tier 미설정 작품, 검증 시퀀스 후보 제외                     ║
+ * ║ • 무한 세션 방지: cooldown 없음, 디바운스 1초만                                ║
+ * ║ • 시스템/사용자 path 분리: finalize는 시스템 path (트리거 X)                  ║
+ * ║                                                                              ║
+ * ║ [기존 시스템 영향]                                                             ║
+ * ║ • 5대 불변규칙 무관 (검증 시퀀스는 자동매칭 시스템과 분리)                    ║
+ * ║ • match 모드 동작 유지 (기존 ELO 시스템 그대로)                                ║
+ * ║ • manual 모드 ▲/▼: rating 교환 → manual_order 교환 (의미 명확화)               ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -4005,6 +4053,7 @@ async function initDb() {
     ["gaiden_read_count", "INTEGER", "0"],
     ["gaiden_total_episodes", "INTEGER", "0"],
     ["manual_tier", "TEXT", "NULL"],
+    ["manual_order", "INTEGER", "0"], // 🆕 v7.0: 같은 manual_tier 내 사용자 지정 순서 (gap 100)
     ["reread_count", "INTEGER", "1"], // 📚 v3.0.4: 다회독 카운트 (기본 1회)
     // 🏷️ v5.0 태그 시스템
     ["tag_data", "TEXT", "''"],      // JSON: [{tag, intensity}, ...]
@@ -4275,6 +4324,93 @@ async function initDb() {
   );`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_gallery_novel ON gallery_images(novel_id);`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_gallery_created ON gallery_images(created_at DESC);`);
+
+  // 🆕 v7.0: 하이브리드 모드 — 동적 자리 탐색 시스템 (검증 큐 + 매칭 로그 + 시퀀스 결과)
+  // 트리거: 사용자 편집 행위 (작품 추가/메타 변경/티어/순위 변경) → 의심작 큐 INSERT
+  // 시퀀스: 변곡점 알고리즘 (인접 후보 점진 매칭, 변곡점 후 K=2 추가 검증)
+  await database.runAsync(`CREATE TABLE IF NOT EXISTS tier_verification_queue (
+    id TEXT PRIMARY KEY NOT NULL,
+    novel_id TEXT NOT NULL,
+    trigger_type TEXT NOT NULL,
+    suspicion_type TEXT NOT NULL,
+    priority INTEGER DEFAULT 0,
+    state TEXT DEFAULT 'pending',
+    created_at INTEGER NOT NULL,
+    processed_at INTEGER
+  );`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tvq_state ON tier_verification_queue(state, priority DESC, created_at);`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tvq_novel ON tier_verification_queue(novel_id);`);
+
+  await database.runAsync(`CREATE TABLE IF NOT EXISTS tier_validation_log (
+    id TEXT PRIMARY KEY NOT NULL,
+    session_id TEXT,
+    novel_a_id TEXT NOT NULL,
+    novel_b_id TEXT NOT NULL,
+    user_choice TEXT NOT NULL,
+    violation_type TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tvl_session ON tier_validation_log(session_id);`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tvl_a ON tier_validation_log(novel_a_id);`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tvl_b ON tier_validation_log(novel_b_id);`);
+
+  await database.runAsync(`CREATE TABLE IF NOT EXISTS tier_repositioning_session (
+    id TEXT PRIMARY KEY NOT NULL,
+    novel_id TEXT NOT NULL,
+    suspicion_type TEXT NOT NULL,
+    trigger_type TEXT,
+    state TEXT NOT NULL,
+    result_tier TEXT,
+    result_order INTEGER,
+    result_action TEXT,
+    total_responses INTEGER DEFAULT 0,
+    blocker_id TEXT,
+    created_at INTEGER NOT NULL,
+    completed_at INTEGER
+  );`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_trs_blocker ON tier_repositioning_session(blocker_id, state);`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_trs_novel ON tier_repositioning_session(novel_id);`);
+
+  // manual_order 인덱스 (티어 그룹별 정렬 빠르게)
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_novels_manual_order ON novels(manual_tier, manual_order);`);
+
+  // manual_order 백필 (1회만 — app_meta로 가드)
+  await backfillManualOrder(database);
+}
+
+// 🆕 v7.0: manual_order 백필 — 기존 작품들에 티어 그룹별 순차 manual_order 부여
+async function backfillManualOrder(database) {
+  try {
+    const metaRow = await database.getFirstAsync(`SELECT value FROM app_meta WHERE key='manual_order_backfilled'`);
+    if (metaRow && metaRow.value === '"1"') return; // 이미 백필됨
+
+    // manual_tier 그룹별로 정렬 후 0부터 gap 100으로 부여
+    // manual_tier가 NULL이거나 빈 문자열인 작품(Unrated)도 동일 그룹으로 묶어 부여
+    const rows = await database.getAllAsync(
+      `SELECT id, manual_tier, rating, created_at FROM novels ORDER BY
+       COALESCE(manual_tier, '') ASC, rating DESC, created_at ASC`
+    );
+    const groups = {};
+    for (const r of rows) {
+      const key = r.manual_tier || '';
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(r.id);
+    }
+    for (const [, ids] of Object.entries(groups)) {
+      for (let i = 0; i < ids.length; i++) {
+        await database.runAsync(
+          `UPDATE novels SET manual_order=? WHERE id=?`,
+          [(i + 1) * 100, ids[i]]
+        );
+      }
+    }
+    await database.runAsync(
+      `INSERT OR REPLACE INTO app_meta (key, value) VALUES ('manual_order_backfilled', ?)`,
+      [JSON.stringify("1")]
+    );
+  } catch (e) {
+    console.warn("manual_order 백필 오류:", e);
+  }
 }
 
 // -----------------------------------------
@@ -21352,6 +21488,93 @@ function tierRank(tier, config) {
   return idx === -1 ? order.length : idx;
 }
 
+// 🆕 v7.0: 하이브리드 모드 검증 — 두 작품 manual 순서와 사용자 선택 비교, 위반 종류 반환
+// "tier" = manual_tier 위반, "order" = 같은 tier 내 manual_order 위반, "none" = 일치 (의심작이 짐)
+function detectViolation(novelA, novelB, choice, tierConfig) {
+  const cfg = tierConfig || globalTierConfig;
+  const tIA = tierRank(novelA.manual_tier, cfg);
+  const tIB = tierRank(novelB.manual_tier, cfg);
+  if (tIA < tIB) return choice === "b" ? "tier" : "none";
+  if (tIA > tIB) return choice === "a" ? "tier" : "none";
+  const oA = Number(novelA.manual_order) || 0;
+  const oB = Number(novelB.manual_order) || 0;
+  if (oA < oB) return choice === "b" ? "order" : "none";
+  if (oA > oB) return choice === "a" ? "order" : "none";
+  return "none";
+}
+
+// 🆕 v7.0: 검증 큐 INSERT — 사용자 편집 행위 발생 시 호출. 시스템 변경(finalize)은 호출 X
+const VERIFICATION_PRIORITY = {
+  gatekeeper: 5,
+  tier_change: 4,
+  order_change: 3,
+  new: 2,
+  meta_edit: 1,
+};
+const _enqueueDebounce = new Map(); // novelId → last enqueue timestamp (1초 디바운스)
+
+async function enqueueVerification(novelId, triggerType, suspicionType) {
+  if (!novelId || !triggerType || !suspicionType) return;
+  const now = Date.now();
+  // 디바운스: 같은 작품 1초 내 다중 변경은 1건만
+  const last = _enqueueDebounce.get(novelId) || 0;
+  if (now - last < 1000) return;
+  _enqueueDebounce.set(novelId, now);
+
+  const priority = VERIFICATION_PRIORITY[triggerType] || 0;
+  try {
+    await exec(
+      `INSERT INTO tier_verification_queue (id, novel_id, trigger_type, suspicion_type, priority, state, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+      [uuid(), novelId, triggerType, suspicionType, priority, now]
+    );
+  } catch (e) {
+    console.warn("enqueueVerification 오류:", e?.message);
+  }
+}
+
+// 🆕 v7.0: 시퀀스 후보 풀 fetch — 의심작 인접 정렬, Unrated/자기 자신 제외
+async function getCandidatesForVerification(novelId, suspicionType, limit = 10) {
+  const novel = await first("SELECT id, manual_tier, manual_order FROM novels WHERE id=?", [novelId]);
+  if (!novel) return [];
+  const mt = novel.manual_tier || "";
+  const mo = Number(novel.manual_order) || 0;
+
+  // underrated: 위쪽 작품 (manual_tier가 더 높거나, 같은 tier에서 manual_order 더 작음)
+  // overrated: 아래쪽 작품 (반대)
+  const tierOrder = getActiveTierOrder(globalTierConfig);
+  const ownTierIdx = tierOrder.indexOf(mt);
+
+  const allRows = await all(
+    `SELECT id, title, manual_tier, manual_order, rating FROM novels
+     WHERE id != ? AND manual_tier IS NOT NULL AND manual_tier != ''`,
+    [novelId]
+  );
+
+  const scored = [];
+  for (const r of allRows) {
+    const rTierIdx = tierOrder.indexOf(r.manual_tier);
+    const rOrder = Number(r.manual_order) || 0;
+    let isAbove, distance;
+    if (rTierIdx < ownTierIdx) {
+      isAbove = true;
+      distance = (ownTierIdx - rTierIdx) * 10000 + rOrder;
+    } else if (rTierIdx > ownTierIdx) {
+      isAbove = false;
+      distance = (rTierIdx - ownTierIdx) * 10000 + rOrder;
+    } else {
+      // 같은 tier
+      if (rOrder < mo) { isAbove = true; distance = mo - rOrder; }
+      else if (rOrder > mo) { isAbove = false; distance = rOrder - mo; }
+      else continue; // 같은 자리 무시
+    }
+    if (suspicionType === "underrated" && !isAbove) continue;
+    if (suspicionType === "overrated" && isAbove) continue;
+    scored.push({ ...r, _distance: distance });
+  }
+  scored.sort((a, b) => a._distance - b._distance);
+  return scored.slice(0, limit);
+}
+
 // 🆕 v6.0: 모드별 표시 티어 계산
 function getDisplayTier(novel, config) {
   const cfg = config || globalTierConfig;
@@ -30644,9 +30867,12 @@ function AppContent() {
   }, [list, rankQuery, rankTier, screen]);
 
   // 🆕 v6.1: 티어 관리 탭 데이터 (manual/hybrid 모드)
+  // 🆕 v7.0: manual/hybrid에서는 manual_order asc 우선 정렬 (사용자 지정 순서)
   const tierManageEntries = useMemo(() => {
     if (screen !== "tierManage") return [];
     if (!list || list.length === 0) return [];
+
+    const isManualOrHybrid = globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid";
 
     const sorted = [...list].sort((a, b) => {
       const tierA = getDisplayTier(a, globalTierConfig);
@@ -30654,6 +30880,11 @@ function AppContent() {
       const tierRankA = tierRank(tierA, globalTierConfig);
       const tierRankB = tierRank(tierB, globalTierConfig);
       if (tierRankA !== tierRankB) return tierRankA - tierRankB;
+      if (isManualOrHybrid) {
+        const oA = Number(a.manual_order) || 0;
+        const oB = Number(b.manual_order) || 0;
+        if (oA !== oB) return oA - oB;
+      }
       if (b.rating !== a.rating) return b.rating - a.rating;
       const ac = a.created_at || 0;
       const bc = b.created_at || 0;
@@ -31029,17 +31260,48 @@ function AppContent() {
   }, []);
 
   // 🆕 v6.1: 티어 내 순위 교환 (manual 모드 전용)
+  // 🆕 v7.0: hybrid 모드에서는 manual_order swap, 사용자 path → 검증 큐 트리거
   async function swapRating(idA, ratingA, idB, ratingB) {
     if (idA === idB) return; // 동일 작품 방어 (빠른 연타 시)
-    if (ratingA === ratingB) {
-      await execBatch([
-        { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingB + 1, idA] },
-      ]);
+    const mode = globalTierConfig.mode;
+
+    if (mode === "manual" || mode === "hybrid") {
+      // manual_order 교환
+      const rowA = await first("SELECT manual_order FROM novels WHERE id=?", [idA]);
+      const rowB = await first("SELECT manual_order FROM novels WHERE id=?", [idB]);
+      const oA = Number(rowA?.manual_order) || 0;
+      const oB = Number(rowB?.manual_order) || 0;
+      if (oA === oB) {
+        await execBatch([
+          { sql: "UPDATE novels SET manual_order=? WHERE id=?", params: [oB - 50, idA] },
+        ]);
+      } else {
+        await execBatch([
+          { sql: "UPDATE novels SET manual_order=? WHERE id=?", params: [oB, idA] },
+          { sql: "UPDATE novels SET manual_order=? WHERE id=?", params: [oA, idB] },
+        ]);
+      }
+      // 🆕 v7.0: hybrid 모드 — 사용자 path 트리거 (idA가 위로 이동했으면 underrated, 아래로 이동했으면 overrated)
+      if (mode === "hybrid") {
+        const suspicion = oA > oB ? "underrated" : "overrated"; // 작은 order = 위
+        try {
+          await enqueueVerification(idA, "order_change", suspicion);
+        } catch (e) {
+          console.warn("검증 큐 INSERT 실패:", e?.message);
+        }
+      }
     } else {
-      await execBatch([
-        { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingB, idA] },
-        { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingA, idB] },
-      ]);
+      // match 모드: 기존 ELO rating 교환
+      if (ratingA === ratingB) {
+        await execBatch([
+          { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingB + 1, idA] },
+        ]);
+      } else {
+        await execBatch([
+          { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingB, idA] },
+          { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingA, idB] },
+        ]);
+      }
     }
     await loadList(undefined, undefined, "tierManage");
   }
@@ -31268,6 +31530,9 @@ async function buildUltraCompactBackup(novels, matches, coverImages = null) {
     if (gaidenTotalEp) opt.ge = gaidenTotalEp;
     // 🏆 수동 티어 지정 (v6.0: 동적 — 문자열 key 저장)
     if (n.manual_tier) opt.mt = n.manual_tier;
+    // 🆕 v7.0: 같은 manual_tier 내 사용자 지정 순서 (gap 100, 0 외만 저장)
+    const manualOrder = Number(n.manual_order) || 0;
+    if (manualOrder !== 0) opt.mo = manualOrder;
     
     // 📚 v3.0.4: 다회독 카운트 (기본 1, 1보다 큰 경우에만 저장)
     const rereadCount = Math.max(1, Number(n.reread_count) || 1);
@@ -31983,6 +32248,8 @@ async function importJSON() {
                 let manualTier = typeof opt.mt === 'string' ? opt.mt : (opt.mt === 1 ? 'S' : (opt.mt === 2 ? 'A' : null));
                 // 🆕 v6.2: 현재 globalTierConfig에 없는 키 차단 (구버전/손상 백업 호환)
                 if (manualTier && !validTierKeys.has(manualTier)) manualTier = null;
+                // 🆕 v7.0: manual_order (없으면 0, 백필이 알아서 부여)
+                const manualOrder = Number(opt.mo) || 0;
                 // 📚 v3.0.4: 다회독 카운트
                 const rereadCount = Math.max(1, opt.rr != null ? Number(opt.rr) : 1);
                 // 🏷️ v5.0: tag_data, aliases
@@ -32025,9 +32292,9 @@ async function importJSON() {
                 idList.push(id);
 
                 novelQueries.push({
-                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,reread_count,tag_data,aliases,memorable_quote)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, rereadCount, tagData, aliases, memorableQuote],
+                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, manualOrder, rereadCount, tagData, aliases, memorableQuote],
                 });
               }
 
@@ -36791,7 +37058,8 @@ async function importJSON() {
                   if (!item) return null;
                   const tierColor = getTierColor(tier);
                   const isExpanded = expandedNovelId === item.id;
-                  const isManualOnly = globalTierConfig.mode === "manual";
+                  // 🆕 v7.0: hybrid 모드에서도 ▲/▼ 활성 (manual_order swap)
+                  const isManualOnly = globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid";
                   const hasQuery = tierManageQuery.trim().length > 0;
 
                   // 같은 티어 내 인접 항목 찾기 (▲/▼용)
