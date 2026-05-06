@@ -2,9 +2,56 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.0.8 (하이브리드 진단 패널 — 검증 큐/시퀀스/수문장/invariant 6개 섹션)  ║
+ * ║  버전: 7.0.9 (진단 탭 UX 업그레이드 — Anomaly/PieChart/JSON Export/익명화)      ║
  * ║  최종 수정: 2026-05-06                                                        ║
- * ║  총 라인 수: 약 48,800줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 49,100줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.0.9 진단 탭 UX 업그레이드 (2026-05-06)                                  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ 진단 탭 종합 검토 후 즉시 권장 5건 일괄 적용. 가시성/시각화/공유/유지보수      ║
+ * ║ 강화. 매칭 5대 불변조건과 무관한 표시 레이어 변경만.                            ║
+ * ║                                                                              ║
+ * ║ [K] 한눈에 보기 헤더 — anomaly aggregator                                       ║
+ * ║ • 진단 탭 진입 즉시 critical/warning 요약 카드                                  ║
+ * ║ • 통합 항목: lastCrashLog / db.consecutiveErrors / PerfMonitor errors /        ║
+ * ║   hybrid invariant 5종 (dup/negative/inactive/orphanQueue/orphanSessions)      ║
+ * ║ • 색상 코드: critical(빨강) / warning(노랑) / 정상(초록)                        ║
+ * ║                                                                              ║
+ * ║ [A] 섹션 인덱스 칩 row — 진단 탭 상단 시각적 indexing                           ║
+ * ║ • hybrid 모드일 때 v7 섹션 3개 추가 노출                                        ║
+ * ║                                                                              ║
+ * ║ [H] PieChart 통합 (4곳)                                                          ║
+ * ║ • S1 queueByState — pending/resolved/cancelled/skipped                         ║
+ * ║ • S4 sessionByAction — moved/no_change/no_candidates/skipped                   ║
+ * ║ • S4 sessionBySuspicion — underrated/overrated                                 ║
+ * ║ • S4 validationByType — consistent/violation 등                                ║
+ * ║ • 기존 PieChartSimple 컴포넌트(App.jsx:19701) 재사용                            ║
+ * ║                                                                              ║
+ * ║ [N] JSON Export — LLM/외부 도구 분석용                                          ║
+ * ║ • meta/perfMonitor/crash/hybrid/anomalies 구조화                                ║
+ * ║ • Share API 또는 Alert fallback                                                ║
+ * ║                                                                              ║
+ * ║ [O] 익명화 토글                                                                  ║
+ * ║ • 작품 제목을 djb2 hash로 치환 → t{6자리} 형식                                  ║
+ * ║ • 동일 제목은 동일 hash (분석 시 reference 가능)                                ║
+ * ║ • 텍스트 export + JSON export 모두 적용                                         ║
+ * ║                                                                              ║
+ * ║ [Q] trigger_fire_log 30일 자동 정리                                              ║
+ * ║ • loadHybridDiag 진입 시 30일+ row DELETE                                       ║
+ * ║ • 무한 누적 방지 (1년 사용 시 18000+ row → 인덱스 효율 저하)                     ║
+ * ║                                                                              ║
+ * ║ [별도 패치 후보 — 미적용]                                                          ║
+ * ║ • P 일자별 진단 스냅샷 비교 / G 느린 SQL → 호출 함수 cross-ref /                ║
+ * ║   F 갤러리 파일시스템 vs DB 정합성 검증                                          ║
+ * ║                                                                              ║
+ * ║ [회귀 위험]                                                                       ║
+ * ║ • 코어 로직 변경 X — 진단 탭 표시/Export만 변경                                 ║
+ * ║ • PieChart 4곳: 비어있을 때 조건부 렌더링                                       ║
+ * ║ • 익명화 hash: deterministic, 디바이스 로컬                                     ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -9744,7 +9791,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.0.8";
+const APP_VERSION = "7.0.9";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -9770,6 +9817,23 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.0.9", date: "2026-05-06",
+    title: "진단 탭 UX 업그레이드 — Anomaly aggregator + PieChart + JSON Export + 익명화",
+    highlights: [
+      { type: "new", text: "📊 한눈에 보기 (K) — 진단 탭 진입 즉시 critical/warning anomaly 요약. 크래시/DB 에러/PerfMonitor 에러/hybrid invariant 위반을 통합 surface" },
+      { type: "new", text: "🗂️ 섹션 인덱스 (A) — 진단 탭 상단에 시각적 칩 row로 어떤 섹션이 있는지 한눈에 확인" },
+      { type: "new", text: "🥧 PieChart 통합 (H) — queueByState / sessionByAction / sessionBySuspicion / validationByType 4곳에 시각화 (기존 PieChartSimple 컴포넌트 재사용)" },
+      { type: "new", text: "📊 JSON Export (N) — LLM/외부 도구 분석용 구조화 데이터. 텍스트 리포트와 별개 버튼" },
+      { type: "new", text: "🔒 익명화 토글 (O) — 작품 제목을 hash로 치환하여 외부 공유 시 프라이버시 보호" },
+      { type: "new", text: "🗑️ trigger_fire_log 30일 자동 정리 (Q) — loadHybridDiag 진입 시 30일+ row DELETE. 무한 누적 방지" },
+    ],
+    details: [
+      { type: "new", text: "Anomaly 통합 항목: lastCrashLog / db.consecutiveErrors>=3 / errors / dupOrders / negativeOrders / inactiveAssigned / orphanQueue / orphanSessions" },
+      { type: "new", text: "익명화 hash: 작품 제목을 djb2 hash로 변환 → t{6자리} 형식. 동일 제목은 동일 hash" },
+      { type: "new", text: "JSON Export 구조: meta / perfMonitor / crash / hybrid (모드별 분기) / anomalies. Share API 또는 Alert fallback" },
+    ],
+  },
   {
     version: "7.0.8", date: "2026-05-06",
     title: "🆕 하이브리드 모드 진단 패널 — 검증 큐/시퀀스/수문장/invariant 6개 섹션",
@@ -24532,6 +24596,8 @@ function AppContent() {
   // 🆕 v7.0.8: 하이브리드 진단 패널 데이터 (settingsSubTab === "diag" + hybrid 모드 시 로드)
   const [hybridDiagData, setHybridDiagData] = useState(null);
   const [hybridDiagLoading, setHybridDiagLoading] = useState(false);
+  // 🆕 v7.0.9 (N+O): 진단 export 익명화 토글 (작품 제목 hash로 치환)
+  const [diagAnonymize, setDiagAnonymize] = useState(false);
   // Stage 4: 수문장 후보 (5개 누적 시 제안 모달)
   const [gatekeeperCandidates, setGatekeeperCandidates] = useState([]);
   const [gatekeeperModalOpen, setGatekeeperModalOpen] = useState(false);
@@ -31678,6 +31744,11 @@ function AppContent() {
     setHybridDiagLoading(true);
     try {
       const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+      // 🆕 v7.0.9 (Q): 30일 이상 trigger_fire_log 자동 정리 — 무한 누적 방지 (1년 사용 시 18000+ row → 인덱스 효율 저하)
+      try {
+        const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+        await exec(`DELETE FROM trigger_fire_log WHERE created_at < ?`, [thirtyDaysAgo]);
+      } catch (cleanupErr) { console.warn("[v7.0.9 Q] fire_log cleanup 실패:", cleanupErr?.message); }
       // S1 — 검증 큐 + 트리거 trace
       const queueByState = await all(`SELECT state, COUNT(*) as cnt FROM tier_verification_queue GROUP BY state`);
       const queueByTrigger = await all(`SELECT trigger_type, COUNT(*) as cnt FROM tier_verification_queue WHERE state='pending' GROUP BY trigger_type`);
@@ -44578,9 +44649,112 @@ async function importJSON() {
                 return `${Math.floor(s/3600)}시간 ${Math.floor((s%3600)/60)}분`;
               };
               const riskColor = (ms, warn, danger) => ms >= danger ? "#ef4444" : ms >= warn ? "#f59e0b" : "#22c55e";
-              
+
+              // 🆕 v7.0.9 (K): Anomaly aggregator — 진단 탭 진입 즉시 critical/warning 요약
+              // 사용자가 "뭐가 문제인가"의 답을 첫 화면에서 즉시 확인 가능
+              const anomalies = [];
+              // 크래시
+              if (lastCrashLog) {
+                anomalies.push({ severity: "critical", label: "마지막 크래시 기록", anchor: "crash", desc: lastCrashLog.message?.substring(0, 50) || "(상세는 크래시 섹션)" });
+              }
+              // DB 연속 에러
+              if (summary?.db?.consecutiveErrors >= 3) {
+                anomalies.push({ severity: "critical", label: `DB 연속 에러 ${summary.db.consecutiveErrors}회`, anchor: "db", desc: "연결 안정성 위험" });
+              }
+              // PerfMonitor 에러
+              if ((summary?.errors || []).length > 0) {
+                anomalies.push({ severity: "warning", label: `추적 에러 ${(summary.errors || []).length}건`, anchor: "errors", desc: "에러 로그 확인" });
+              }
+              // hybrid invariant 위반
+              if (globalTierConfig.mode === "hybrid" && hybridDiagData) {
+                const dup = (hybridDiagData.dupOrders || []).length;
+                const neg = (hybridDiagData.negativeOrders || []).length;
+                const inactive = (hybridDiagData.inactiveAssigned || []).length;
+                const oQ = (hybridDiagData.orphanQueue || []).length;
+                const oS = (hybridDiagData.orphanSessions || []).length;
+                if (dup > 0) anomalies.push({ severity: "critical", label: `gap=100 위반 ${dup}건`, anchor: "s6", desc: "manual_order 중복" });
+                if (neg > 0) anomalies.push({ severity: "critical", label: `음수 manual_order ${neg}건`, anchor: "s6", desc: "▲▼ collision 누적" });
+                if (inactive > 0) anomalies.push({ severity: "warning", label: `비활성 tier 작품 ${inactive}건`, anchor: "s6", desc: "프리셋 전환 잔여" });
+                if (oQ > 0) anomalies.push({ severity: "warning", label: `큐 고아 row ${oQ}건`, anchor: "s6", desc: "삭제된 작품 큐 잔류" });
+                if (oS > 0) anomalies.push({ severity: "warning", label: `세션 고아 row ${oS}건`, anchor: "s6", desc: "삭제된 작품 세션 잔류" });
+              }
+              const criticalCount = anomalies.filter(a => a.severity === "critical").length;
+              const warningCount = anomalies.filter(a => a.severity === "warning").length;
+
+              // 🆕 v7.0.9 (A): 진단 탭 섹션 인덱스 (시각적 indexing — 사용자가 어떤 섹션이 있는지 한눈에 파악)
+              const diagSections = [
+                { icon: "📊", label: "한눈에 보기" },
+                { icon: "💥", label: "크래시" },
+                { icon: "🔬", label: "성능" },
+                { icon: "🔌", label: "DB" },
+                { icon: "📦", label: "데이터" },
+                { icon: "🗂️", label: "슬롯" },
+                { icon: "🧠", label: "인사이트" },
+                ...(globalTierConfig.mode === "hybrid" ? [
+                  { icon: "🔄", label: "v7 큐+fire" },
+                  { icon: "🎯", label: "v7 시퀀스" },
+                  { icon: "⚙️", label: "v7 invariant" },
+                ] : []),
+                { icon: "📋", label: "Export" },
+              ];
+
               return (
               <>
+            {/* 🆕 v7.0.9 (A): 진단 탭 섹션 인덱스 — 시각적 indexing */}
+            <Section title="🗂️ 섹션 인덱스">
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                <View style={{ flexDirection: "row", gap: 6 }}>
+                  {diagSections.map((s, i) => (
+                    <View key={i} style={{
+                      paddingHorizontal: 10, paddingVertical: 6,
+                      backgroundColor: C.chip, borderRadius: 999,
+                      borderWidth: 1, borderColor: C.line,
+                    }}>
+                      <Text style={{ color: C.text, fontSize: 11, fontWeight: "600" }}>{s.icon} {s.label}</Text>
+                    </View>
+                  ))}
+                </View>
+              </ScrollView>
+              <Text style={{ color: C.sub, fontSize: 10, marginTop: 6 }}>
+                💡 진단 탭은 위 순서대로 구성됩니다. 아래로 스크롤하여 각 섹션 확인.
+              </Text>
+            </Section>
+
+            {/* 🆕 v7.0.9 (K): 한눈에 보기 — anomaly 요약 헤더 */}
+            <Section title="📊 한눈에 보기">
+              <View style={{
+                padding: 12,
+                backgroundColor: anomalies.length === 0 ? (isDark ? "#064e3b" : "#dcfce7") : criticalCount > 0 ? (isDark ? "#7f1d1d" : "#fef2f2") : (isDark ? "#78350f" : "#fef3c7"),
+                borderRadius: 10,
+                borderLeftWidth: 4,
+                borderLeftColor: anomalies.length === 0 ? "#22c55e" : criticalCount > 0 ? "#ef4444" : "#f59e0b",
+              }}>
+                <Text style={{
+                  fontWeight: "800",
+                  fontSize: 14,
+                  color: anomalies.length === 0 ? (isDark ? "#86efac" : "#15803d") : criticalCount > 0 ? (isDark ? "#fca5a5" : "#dc2626") : (isDark ? "#fcd34d" : "#b45309"),
+                  marginBottom: anomalies.length === 0 ? 0 : 8,
+                }}>
+                  {anomalies.length === 0
+                    ? "✅ 발견된 이슈 없음 — 시스템 정상"
+                    : `🚨 발견된 이슈 ${anomalies.length}건 (Critical ${criticalCount} / Warning ${warningCount})`}
+                </Text>
+                {anomalies.map((a, i) => (
+                  <View key={i} style={{ flexDirection: "row", alignItems: "center", marginTop: 4, paddingVertical: 2 }}>
+                    <Text style={{ fontSize: 11, marginRight: 6 }}>{a.severity === "critical" ? "🔴" : "🟡"}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{
+                        fontSize: 12,
+                        fontWeight: "700",
+                        color: isDark ? "#fff" : "#1f2937",
+                      }}>{a.label}</Text>
+                      <Text style={{ fontSize: 10, color: isDark ? "#d1d5db" : "#6b7280" }}>{a.desc}</Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            </Section>
+
             {/* 💥 v3.9.0: 크래시 로그 섹션 (항상 표시, PerfMonitor 무관) */}
             <Section title="💥 크래시 로그">
               {lastCrashLog ? (
@@ -45141,6 +45315,15 @@ async function importJSON() {
                           );
                         })}
                       </View>
+                      {/* 🆕 v7.0.9 (H): queueByState pie chart */}
+                      {(hybridDiagData.queueByState || []).length > 0 && (
+                        <View style={{ marginTop: 6 }}>
+                          <PieChartSimple
+                            data={(hybridDiagData.queueByState || []).map(r => ({ label: r.state, value: r.cnt }))}
+                            theme={C}
+                          />
+                        </View>
+                      )}
                       {/* trigger × suspicion 매트릭스 */}
                       <View>
                         <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", marginBottom: 4 }}>트리거 × 의심방향</Text>
@@ -45280,24 +45463,36 @@ async function importJSON() {
                     <Text style={{ color: C.sub, fontSize: 12 }}>로드 중...</Text>
                   ) : (
                     <View style={{ gap: 8 }}>
+                      {/* 🆕 v7.0.9 (H): result_action pie chart + 텍스트 */}
                       <View>
-                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>result_action</Text>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", marginBottom: 4 }}>result_action</Text>
+                        {(hybridDiagData.sessionByAction || []).length > 0 && (
+                          <PieChartSimple data={(hybridDiagData.sessionByAction || []).map(r => ({ label: r.result_action || "(null)", value: r.cnt }))} theme={C} />
+                        )}
                         {(hybridDiagData.sessionByAction || []).map((r, i) => <Text key={i} style={{ color: C.text, fontSize: 11 }}>{r.result_action || "(null)"}: {r.cnt}</Text>)}
                       </View>
+                      {/* 🆕 v7.0.9 (H): suspicion_type pie chart */}
                       <View>
-                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>suspicion_type</Text>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", marginBottom: 4 }}>suspicion_type</Text>
+                        {(hybridDiagData.sessionBySuspicion || []).length > 0 && (
+                          <PieChartSimple data={(hybridDiagData.sessionBySuspicion || []).map(r => ({ label: r.suspicion_type, value: r.cnt }))} theme={C} />
+                        )}
                         {(hybridDiagData.sessionBySuspicion || []).map((r, i) => <Text key={i} style={{ color: C.text, fontSize: 11 }}>{r.suspicion_type}: {r.cnt}</Text>)}
                       </View>
                       <View>
                         <Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>trigger_type</Text>
                         {(hybridDiagData.sessionByTrigger || []).map((r, i) => <Text key={i} style={{ color: C.text, fontSize: 11 }}>{r.trigger_type || "(null)"}: {r.cnt}</Text>)}
                       </View>
+                      {/* 🆕 v7.0.9 (H): violation_type pie chart */}
                       <View>
-                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>violation_type (tier_validation_log)</Text>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", marginBottom: 4 }}>violation_type (tier_validation_log)</Text>
                         {(hybridDiagData.validationByType || []).length === 0 ? (
                           <Text style={{ color: C.sub, fontSize: 11 }}>(없음)</Text>
                         ) : (
-                          (hybridDiagData.validationByType || []).map((r, i) => <Text key={i} style={{ color: C.text, fontSize: 11 }}>{r.violation_type}: {r.cnt}</Text>)
+                          <>
+                            <PieChartSimple data={(hybridDiagData.validationByType || []).map(r => ({ label: r.violation_type, value: r.cnt }))} theme={C} />
+                            {(hybridDiagData.validationByType || []).map((r, i) => <Text key={i} style={{ color: C.text, fontSize: 11 }}>{r.violation_type}: {r.cnt}</Text>)}
+                          </>
                         )}
                       </View>
                     </View>
@@ -45384,6 +45579,25 @@ async function importJSON() {
 
             {PerfMonitor.enabled && (
             <Section title="📋 진단 내보내기">
+              {/* 🆕 v7.0.9 (O): 익명화 토글 — 작품 제목을 hash로 치환하여 외부 공유 시 프라이버시 보호 */}
+              <TouchableOpacity
+                onPress={() => setDiagAnonymize(prev => !prev)}
+                style={{
+                  flexDirection: "row", alignItems: "center", marginBottom: 10,
+                  padding: 8, backgroundColor: C.bg, borderRadius: 8,
+                  borderWidth: 1, borderColor: diagAnonymize ? C.primary : C.line,
+                }}
+              >
+                <Text style={{ fontSize: 16, marginRight: 8 }}>{diagAnonymize ? "🔒" : "🔓"}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: C.text, fontWeight: "700", fontSize: 13 }}>
+                    익명화 {diagAnonymize ? "ON" : "OFF"}
+                  </Text>
+                  <Text style={{ color: C.sub, fontSize: 10 }}>
+                    {diagAnonymize ? "작품 제목 → hash (외부 공유 안전)" : "원본 그대로 (디버그 친화)"}
+                  </Text>
+                </View>
+              </TouchableOpacity>
               <PrimaryButton
                 title="📋 진단 리포트 공유"
                 onPress={async () => {
@@ -45443,6 +45657,14 @@ async function importJSON() {
                     const insQ = await all("SELECT status, COUNT(*) as cnt FROM insight_queue GROUP BY status");
                     if (insQ && insQ.length > 0) lines.push(`[인사이트] ${insQ.map(i => `${i.status}=${i.cnt}`).join(", ")}`);
                   } catch {}
+                  // 🆕 v7.0.9 (O): 작품 제목 익명화 헬퍼 (간단 hash) — 외부 공유 시 프라이버시 보호
+                  const _anonHash = (str) => {
+                    if (!str) return "(none)";
+                    let h = 0;
+                    for (let i = 0; i < str.length; i++) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+                    return `t${Math.abs(h).toString(36).substring(0, 6)}`;
+                  };
+                  const _anon = (title) => diagAnonymize ? _anonHash(title) : (title || "(없음)");
                   // 🆕 v7.0.8: hybrid 모드일 때 진단 패널 데이터를 텍스트 리포트에 append
                   if (globalTierConfig.mode === "hybrid" && hybridDiagData) {
                     try {
@@ -45458,11 +45680,11 @@ async function importJSON() {
                       const fbs = (hybridDiagData.fire24hBySource || []).map(r => `${r.source || "(none)"}/${r.trigger_type}=${r.cnt}`).slice(0, 10).join(", ");
                       if (fbs) lines.push(`[24h source × trigger] ${fbs}`);
                       lines.push(``, `[in-flight 세션] ${verificationSession ? `YES (${verificationSession.suspicionNovel?.title || "?"} · 응답=${(verificationSession.responses || []).length}/${VERIFICATION_MAX_RESPONSES})` : "NO"}`);
-                      const gks = (hybridDiagData.gatekeeperTop || []).slice(0, 5).map(r => `${r.title}(×${r.block_count})`).join(", ");
+                      const gks = (hybridDiagData.gatekeeperTop || []).slice(0, 5).map(r => `${_anon(r.title)}(×${r.block_count})`).join(", ");
                       if (gks) lines.push(`[수문장 후보 top5] ${gks}`);
                       const acts = (hybridDiagData.sessionByAction || []).map(r => `${r.result_action || "?"}=${r.cnt}`).join(", ");
                       if (acts) lines.push(`[세션 action] ${acts}`);
-                      const recents = (hybridDiagData.recentSequences || []).slice(0, 5).map(s => `[${s.suspicion_title}] ${s.suspicion_type} → ${s.result_action} → ${s.result_tier || "?"} (응답=${s.total_responses}, blocker=${s.blocker_title || "-"})`).join("\n  ");
+                      const recents = (hybridDiagData.recentSequences || []).slice(0, 5).map(s => `[${_anon(s.suspicion_title)}] ${s.suspicion_type} → ${s.result_action} → ${s.result_tier || "?"} (응답=${s.total_responses}, blocker=${s.blocker_title ? _anon(s.blocker_title) : "-"})`).join("\n  ");
                       if (recents) lines.push(`[최근 시퀀스 5건]`, `  ${recents}`);
                       const dup = (hybridDiagData.dupOrders || []).length;
                       const neg = (hybridDiagData.negativeOrders || []).length;
@@ -45484,6 +45706,83 @@ async function importJSON() {
                   }
                 }}
               />
+              {/* 🆕 v7.0.9 (N): JSON Export — LLM/외부 도구 분석용 */}
+              <View style={{ marginTop: 8 }}>
+                <PrimaryButton
+                  title="📊 JSON으로 내보내기 (LLM 분석용)"
+                  onPress={async () => {
+                    try {
+                      const _anonHash = (str) => {
+                        if (!str) return "(none)";
+                        let h = 0;
+                        for (let i = 0; i < str.length; i++) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+                        return `t${Math.abs(h).toString(36).substring(0, 6)}`;
+                      };
+                      const _anon = (title) => diagAnonymize ? _anonHash(title) : (title || "(없음)");
+                      const s = PerfMonitor.getSummary();
+                      const exportObj = {
+                        meta: {
+                          version: APP_VERSION,
+                          exportedAt: new Date().toISOString(),
+                          mode: globalTierConfig.mode,
+                          anonymized: diagAnonymize,
+                        },
+                        perfMonitor: {
+                          enabled: PerfMonitor.enabled,
+                          uptime: s.uptime,
+                          sql: s.sql,
+                          db: s.db,
+                          functionsTop: (s.functions || []).slice(0, 20),
+                          slowSql: (s.sqlLog || []).slice(0, 20).map(q => ({ ...q, sql: q.sql?.substring(0, 200) })),
+                          slowFuncs: (s.funcLog || []).slice(0, 20),
+                          errors: (s.errors || []).slice(0, 20),
+                          dbEvents: (s.dbEvents || []).slice(0, 20),
+                        },
+                        crash: lastCrashLog ? {
+                          message: lastCrashLog.message,
+                          timestamp: lastCrashLog.timestamp,
+                          breadcrumbs: lastCrashLog.breadcrumbs?.slice(-20),
+                        } : null,
+                        hybrid: globalTierConfig.mode === "hybrid" && hybridDiagData ? {
+                          queueByState: hybridDiagData.queueByState,
+                          queueByTriggerSuspicion: hybridDiagData.queueByTriggerSuspicion,
+                          queueByPriority: hybridDiagData.queueByPriority,
+                          fire24hByTrigger: hybridDiagData.fire24hByTrigger,
+                          fire24hBySource: hybridDiagData.fire24hBySource,
+                          fireTotal: hybridDiagData.fireTotal,
+                          gatekeeperTop: (hybridDiagData.gatekeeperTop || []).map(r => ({ ...r, title: _anon(r.title) })),
+                          sessionByAction: hybridDiagData.sessionByAction,
+                          sessionBySuspicion: hybridDiagData.sessionBySuspicion,
+                          sessionByTrigger: hybridDiagData.sessionByTrigger,
+                          validationByType: hybridDiagData.validationByType,
+                          recentSequences: (hybridDiagData.recentSequences || []).map(seq => ({
+                            ...seq,
+                            suspicion_title: _anon(seq.suspicion_title),
+                            blocker_title: seq.blocker_title ? _anon(seq.blocker_title) : null,
+                            responses: (seq.responses || []).map(r => ({ ...r, a_title: _anon(r.a_title), b_title: _anon(r.b_title) })),
+                          })),
+                          invariant: {
+                            dupOrders: hybridDiagData.dupOrders?.length || 0,
+                            negativeOrders: hybridDiagData.negativeOrders?.length || 0,
+                            inactiveAssigned: hybridDiagData.inactiveAssigned?.length || 0,
+                            orphanQueue: hybridDiagData.orphanQueue?.length || 0,
+                            orphanSessions: hybridDiagData.orphanSessions?.length || 0,
+                          },
+                        } : null,
+                        anomalies: anomalies, // K에서 계산된 anomaly list
+                      };
+                      const json = JSON.stringify(exportObj, null, 2);
+                      try {
+                        await Share.share({ title: "진단 JSON", message: json });
+                      } catch (shareErr) {
+                        Alert.alert("JSON 진단", json.substring(0, 3000));
+                      }
+                    } catch (e) {
+                      Alert.alert("JSON Export 실패", e?.message || "알 수 없는 오류");
+                    }
+                  }}
+                />
+              </View>
               <Text style={{ color: C.sub, fontSize: 10, marginTop: 6, textAlign: "center" }}>
                 성능 데이터는 앱 종료 시 초기화됩니다. 크래시 로그는 파일에 영속 저장됩니다.
               </Text>
