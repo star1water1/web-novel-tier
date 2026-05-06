@@ -2,9 +2,53 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.0.6 (모드 전수 감사 종합 수정 — 17건)                                  ║
+ * ║  버전: 7.0.7 (v7.0.6 사후 검증 후속 — Critical 2 + Major 5)                     ║
  * ║  최종 수정: 2026-05-06                                                        ║
- * ║  총 라인 수: 약 48,200줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 48,400줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.0.7 v7.0.6 사후 검증 후속 — Critical 2 + Major 5 (2026-05-06)            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ v7.0.6 patch 사후 검증(3 병렬 에이전트)에서 발견된 결함 7건 일괄 수정.        ║
+ * ║                                                                              ║
+ * ║ [Critical — 즉시 수정 필요]                                                     ║
+ * ║ • CRIT-1 saveEdit snapshot 라이프사이클: editOriginalSnapshotRef.current가    ║
+ * ║   31100에서 nullify되는데 31171의 C1 비교 블록이 같은 ref를 읽어서 항상        ║
+ * ║   snapshot=null. metaChanged 항상 false → tier+meta 동시 변경 시에도          ║
+ * ║   tier_change push (non_undoable marker가 saveEdit 경로에서 dead code).       ║
+ * ║   사용자 결정한 정책 자체가 미작동 — 로컬 변수 _v7SnapshotForUndo로 진입 시   ║
+ * ║   캐싱하여 해결.                                                               ║
+ * ║ • CRIT-2 performUndo case 'non_undoable' break → switch 후 공통 success alert ║
+ * ║   "되돌렸습니다"로 fallthrough → "되돌릴 수 없음" → "되돌렸습니다" 이중 alert ║
+ * ║   모순 UX. setUndoStack(slice(1)) + return으로 차단.                           ║
+ * ║                                                                              ║
+ * ║ [Major — Stage 4 (C1) 보강]                                                     ║
+ * ║ • MAJ-1 awards year 타입 정규화: snapshot.awards는 year=String("2024")로,     ║
+ * ║   awardsPayload는 year=Number(2024)로 만들어져 비교 시 항상 다름. CRIT-1       ║
+ * ║   해결 후 활성화되면 모든 tier 변경이 non_undoable로 잘못 분류될 위험.         ║
+ * ║   JSON 파싱 + Number 정규화 함수로 비교 통일.                                  ║
+ * ║ • MAJ-2 snapshot 누락 4컬럼 추가: major_genre, sub_genre, aliases,            ║
+ * ║   memorable_quote. saveEdit이 UPDATE하는 컬럼인데 snapshot에는 없어서         ║
+ * ║   metaChanged 미감지. C1 분기 정확성을 위해 필수.                              ║
+ * ║                                                                              ║
+ * ║ [Major — UI/일관성/race]                                                        ║
+ * ║ • MAJ-3 AwardsScreen 시상 통계 '후보작 평균 rating' 표시 hybrid/manual에서    ║
+ * ║   비활성 (m5 의도와 일치). 19077 isManualOrHybrid 분기 추가.                  ║
+ * ║ • MAJ-4 calculateWinProbability deps에 isManualOrHybrid 추가 — match→manual  ║
+ * ║   라이브 전환 시 stale closure 방지.                                           ║
+ * ║ • MAJ-5 analyzeMatchResult/analyzeUpsetCauses에 tagAttributes 인자 전달 —     ║
+ * ║   m3가 tagRelations만 캡처했는데 analyzeUpsetCauses 내부 isTagTitle은         ║
+ * ║   tagAttributes closure 참조. 동일한 stale 위험 잔존. 인자로 함께 전달하여    ║
+ * ║   불변규칙 #2 완전 충족.                                                       ║
+ * ║                                                                              ║
+ * ║ [평가 후 변경 없음]                                                             ║
+ * ║ • Stage 2/3는 정상 — M5b 트랜잭션 부재(소규모 안전), M7 rebalance tie-break   ║
+ * ║   created_at(자기 치유), M4b 광범위 cleanup(비용 무시 가능)                    ║
+ * ║ • m1 자동매칭 IIFE .catch — defense-in-depth 수준, 비용 zero                  ║
+ * ║ • m2 매칭 탭 이탈 시 자동매칭 중단 — 사용자 의도 반영(백그라운드 누적 차단)   ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -9624,7 +9668,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.0.6";
+const APP_VERSION = "7.0.7";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -9650,6 +9694,21 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.0.7", date: "2026-05-06",
+    title: "v7.0.6 사후 검증 후속 수정 — Critical 2 + Major 5",
+    highlights: [
+      { type: "fix", text: "🔴 saveEdit C1 snapshot 라이프사이클 결함 — editOriginalSnapshotRef.current가 비교 시점에 항상 null로 정리되어 'tier+meta 동시 변경 시 non_undoable marker' 정책이 saveEdit 경로에서 미작동하던 문제. saveEdit 진입 시 로컬 변수 _v7SnapshotForUndo로 캐싱하여 정상 동작" },
+      { type: "fix", text: "🔴 performUndo case 'non_undoable' 이중 alert — break 후 fallthrough로 '되돌릴 수 없음' → '되돌렸습니다' 모순 UX. setUndoStack pop + return으로 차단" },
+      { type: "fix", text: "saveEdit snapshot 4컬럼 추가 (major_genre/sub_genre/aliases/memorable_quote) — 누락 시 metaChanged 미감지로 부분 복원 혼란" },
+      { type: "fix", text: "saveEdit awards year 타입 정규화 — snapshot은 String, current(awardsPayload)는 Number로 불일치하여 false metaChanged 발생. JSON 파싱 후 Number 정규화로 비교" },
+    ],
+    details: [
+      { type: "fix", text: "MAJ-3 AwardsScreen 시상 통계 '후보작 평균: {rating}점'에 isManualOrHybrid 분기 — hybrid/manual에서는 표시 자체 비활성 (m5 의도와 일치)" },
+      { type: "fix", text: "MAJ-4 calculateWinProbability deps에 isManualOrHybrid 추가 — match→manual 라이브 전환 시 stale closure 방지" },
+      { type: "fix", text: "MAJ-5 analyzeMatchResult/analyzeUpsetCauses에 tagAttributes 인자 전달 — 큐 task 지연 중 closure stale 회피 (불변규칙 #2 완전 충족)" },
+    ],
+  },
   {
     version: "7.0.6", date: "2026-05-06",
     title: "모드 전수 감사 종합 수정 — 17건 (Critical 1 / Major 11 / Minor 5)",
@@ -17993,7 +18052,9 @@ const AwardsScreen = memo(({
 
     // 범위 제한 (1% ~ 99%)
     return Math.min(99, Math.max(1, probability));
-  }, [list.length, isHybrid]);
+    // 🔧 v7.0.7 (MAJ-4): isManualOrHybrid 추가 — manual↔match 라이브 전환 시 stale closure 방지
+    // (이전: isHybrid만 deps → match→manual 변경 시 isHybrid는 false→false 불변, isManualOrHybrid가 false→true이지만 invalidate 안 됨)
+  }, [list.length, isHybrid, isManualOrHybrid]);
   
   // 🆕 v3.2.1: 상별 후보작 목록 계산
   const getCandidatesForAward = useCallback((award) => {
@@ -19093,17 +19154,20 @@ const AwardsScreen = memo(({
                       <Text style={{ color: C.sub, fontSize: 12 }}>후보작</Text>
                     </View>
                   </View>
-                  <View style={{ 
-                    backgroundColor: C.bg, 
-                    padding: 12, 
+                  <View style={{
+                    backgroundColor: C.bg,
+                    padding: 12,
                     borderRadius: 10,
                     flexDirection: "row",
                     justifyContent: "center",
                     gap: 20,
                   }}>
-                    <Text style={{ color: C.sub, fontSize: 12 }}>
-                      후보작 평균: <Text style={{ color: C.text, fontWeight: "700" }}>{avgRating}점</Text>
-                    </Text>
+                    {/* 🔧 v7.0.7 (MAJ-3): hybrid/manual에서는 ELO rating 평균 비활성 — 모드 의도(수동 정렬)와 모순되는 표시 제거 */}
+                    {!isManualOrHybrid && (
+                      <Text style={{ color: C.sub, fontSize: 12 }}>
+                        후보작 평균: <Text style={{ color: C.text, fontWeight: "700" }}>{avgRating}점</Text>
+                      </Text>
+                    )}
                     <Text style={{ color: C.sub, fontSize: 12 }}>
                       수상률: <Text style={{ color: C.text, fontWeight: "700" }}>
                         {candidates.length > 0 ? Math.round((uniqueWinners / candidates.length) * 100) : 0}%
@@ -27519,7 +27583,8 @@ function AppContent() {
 
   // 매치 결과 분석 및 인사이트 생성
   // 🆕 v7.0.6 (m3): tagRelationsSnapshot 인자 추가 — decide() 진입 시 캡처된 스냅샷 사용으로 큐 task 내부 stale closure 회피
-  async function analyzeMatchResult(A, B, winnerId, prediction, tagRelationsSnapshot) {
+  // 🔧 v7.0.7 (MAJ-5): tagAttributesSnapshot도 함께 받음 — analyzeUpsetCauses 내부에서 tagAttributes 클로저 참조하므로 동일한 stale 위험
+  async function analyzeMatchResult(A, B, winnerId, prediction, tagRelationsSnapshot, tagAttributesSnapshot) {
     if (!prediction) return null;
 
     const winner = winnerId === A.id ? "A" : "B";
@@ -27535,9 +27600,10 @@ function AppContent() {
 
     // 🔮 v3.0.3: 이변 원인 분석
     // 🆕 v7.0.6 (m3): 인자로 받은 snapshot 우선 사용 (대비: 큐 지연 중 tagRelations state 변경)
+    // 🔧 v7.0.7 (MAJ-5): tagAttributesSnapshot도 analyzeUpsetCauses에 전달 (불변규칙 #2 완전 충족)
     let upsetCauses = [];
     if (isUpset) {
-      upsetCauses = analyzeUpsetCauses(winnerNovel, loserNovel, tagRelationsSnapshot || tagRelations);
+      upsetCauses = analyzeUpsetCauses(winnerNovel, loserNovel, tagRelationsSnapshot || tagRelations, tagAttributesSnapshot || tagAttributes);
     }
     
     // 인사이트 생성
@@ -27579,13 +27645,15 @@ function AppContent() {
 
   // 🔮 v3.0.3: 이변 원인 분석 함수
   // 🎯 v3.1.2: 농도 가중치를 적용한 이변 분석
-  function analyzeUpsetCauses(winner, loser, relations) {
+  // 🔧 v7.0.7 (MAJ-5): tagAttrs 인자 추가 — 큐 task 지연 중 tagAttributes state 변경 시 stale closure 회피 (불변규칙 #2)
+  function analyzeUpsetCauses(winner, loser, relations, tagAttrs) {
     const causes = [];
-    
+    const _tagAttrs = tagAttrs || tagAttributes; // backward compat: 인자 미전달 시 closure fallback
+
     // 1. 태그 차이 분석 (🏷️ v3.1.2: 농도 포함)
     // 🆕 v3.5.8: 작품명 태그 제외
-    const winnerTags = new Set((winner.tags || "").split(",").map(t => t.trim()).filter(t => t && !isTagTitle(t, tagAttributes)));
-    const loserTags = new Set((loser.tags || "").split(",").map(t => t.trim()).filter(t => t && !isTagTitle(t, tagAttributes)));
+    const winnerTags = new Set((winner.tags || "").split(",").map(t => t.trim()).filter(t => t && !isTagTitle(t, _tagAttrs)));
+    const loserTags = new Set((loser.tags || "").split(",").map(t => t.trim()).filter(t => t && !isTagTitle(t, _tagAttrs)));
     
     // tag_data에서 농도 맵 생성
     let winnerIntensity = {};
@@ -29632,13 +29700,15 @@ function AppContent() {
 
         // 🆕 v7.0.6 (C1): 사용자 결정 — saveEdit이 tier+meta 동시 변경 시 부분 복원의 혼란 회피.
         // 동시 변경 시 marker push → 사용자가 undo 시도하면 명시적 안내 표시 후 stack에서 pop만 수행.
+        // 🔧 v7.0.7 (CRIT-2): 이전 break은 switch 이후 공통 success alert("되돌렸습니다")로 fallthrough되어
+        // "되돌릴 수 없음" → "되돌렸습니다" 이중 모순 alert 발생. 직접 stack pop 후 return으로 차단.
         case 'non_undoable':
           Alert.alert(
             "되돌릴 수 없음",
             item.payload?.reason || "되돌리기가 불가능한 변경이 포함되어 있습니다."
           );
-          // marker 자체는 복원 동작 없음. 호출자에서 stack pop.
-          break;
+          setUndoStack(prev => prev.slice(1));
+          return;
 
         case 'novel_delete':
           // 작품 삭제 되돌리기 (복원)
@@ -30939,7 +31009,12 @@ function AppContent() {
       created_at: formatDateLocal(n.created_at),
       read_count_updated_at: formatDateLocal(n.read_count_updated_at),
       quotes: JSON.stringify(parseQuotes(n.memorable_quote)),
-      awards: JSON.stringify(parsed), // parsed는 바로 위에서 생성된 editAwards 초기값
+      awards: JSON.stringify(parsed), // parsed는 바로 위에서 생성된 editAwards 초기값 (year=String — saveEdit MAJ-1 fix는 비교 시 정규화로 처리)
+      // 🔧 v7.0.7 (MAJ-2): saveEdit이 UPDATE하는 누락 컬럼 추가 — C1 metaChanged 판정에 필수
+      major_genre: n.major_genre || "",
+      sub_genre: n.sub_genre || "",
+      aliases: n.aliases || "",
+      memorable_quote: n.memorable_quote || "",
     };
 
     // 🔧 v3.5.7: Android transparent Modal ScrollView 버그 대응
@@ -30962,8 +31037,14 @@ function AppContent() {
       return;
     }
 
+    // 🔧 v7.0.7 (CRIT-1): saveEdit 도중 editOriginalSnapshotRef.current가 null로 정리되므로
+    // C1 metaChanged 비교를 위해 로컬 변수에 미리 캐싱. 이전 (v7.0.6): 31100 nullify가 31171 비교보다
+    // 먼저 실행되어 snapshot이 항상 null → metaChanged 항상 false → tier+meta 동시 변경 시에도
+    // tier_change push (non_undoable marker dead code).
+    const _v7SnapshotForUndo = editOriginalSnapshotRef.current;
+
     setIsLoading(true);
-    
+
     try {
       // 🔧 v3.5.9: 본 목록 + 예정 목록 양쪽 중복 체크
       const dup = await first(
@@ -31167,11 +31248,13 @@ function AppContent() {
       // 🆕 v7.0.6 (C1): 사용자 결정 — saveEdit undo는 tier 단독 변경 시에만 정상 push.
       // tier+메타 동시 변경 시 부분 복원 혼란 회피 — non_undoable marker push로 사용자에게 명시적 안내.
       // 메타만 변경(이전 동작): undo push 없음 (snapshot 변화 없는 saveEdit도 마찬가지).
+      // 🔧 v7.0.7 (CRIT-1): saveEdit 진입 시 캐싱한 _v7SnapshotForUndo 사용 (31100 nullify 이후라도 비교 가능)
+      // 🔧 v7.0.7 (MAJ-2): snapshot에 누락됐던 major_genre/sub_genre/aliases/memorable_quote 비교 추가 (saveEdit이 UPDATE하므로 메타 변경 감지에 필수)
+      // 🔧 v7.0.7 (MAJ-1): awards year 타입 정규화 — snapshot/current 모두 Number 기반으로 통일
       if (_v7TierActuallyChanged) {
-        const snapshot = editOriginalSnapshotRef.current;
         let metaChanged = false;
-        if (snapshot) {
-          // saveEdit이 UPDATE 하는 모든 컬럼을 snapshot과 비교
+        if (_v7SnapshotForUndo) {
+          // saveEdit이 UPDATE 하는 모든 컬럼을 snapshot과 비교 (rating은 UPDATE 안 하므로 제외)
           const current = {
             title: newTitle,
             author: n.author?.trim() || "",
@@ -31192,13 +31275,31 @@ function AppContent() {
             created_at: editCreatedAt,
             read_count_updated_at: editReadCountUpdatedAt,
             quotes: JSON.stringify(editQuotes),
-            awards: awardsPayload, // saveEdit 내부에서 생성된 JSON string
-            // rating은 saveEdit이 직접 UPDATE하지 않으므로 snapshot.rating은 비교에서 제외
+            // 🔧 v7.0.7 (MAJ-2): 누락 4개 컬럼 추가
+            major_genre: n.major_genre || "",
+            sub_genre: n.sub_genre || "",
+            aliases: n.aliases || "",
+            memorable_quote: serializeQuotes(editQuotes), // saveEdit이 memorable_quote에 serializeQuotes 결과 저장
           };
-          for (const k of Object.keys(current)) {
-            if (snapshot[k] !== undefined && snapshot[k] !== current[k]) {
-              metaChanged = true;
-              break;
+          // 🔧 v7.0.7 (MAJ-1): awards 비교 — year 타입 통일 후 stringify
+          // snapshot.awards는 String year로 만들어졌고(openEdit:30890), saveEdit current(awardsPayload)는 Number year.
+          // 비교 시 양쪽을 Number 기준 정규화.
+          const normalizeAwards = (jsonStr) => {
+            try {
+              const arr = JSON.parse(jsonStr || "[]");
+              return JSON.stringify((arr || []).map(a => ({ year: Number(a.year) || 0, type: a.type || "" })));
+            } catch { return ""; }
+          };
+          const snapAwardsNorm = normalizeAwards(_v7SnapshotForUndo.awards);
+          const currAwardsNorm = normalizeAwards(awardsPayload);
+          if (snapAwardsNorm !== currAwardsNorm) {
+            metaChanged = true;
+          } else {
+            for (const k of Object.keys(current)) {
+              if (_v7SnapshotForUndo[k] !== undefined && _v7SnapshotForUndo[k] !== current[k]) {
+                metaChanged = true;
+                break;
+              }
             }
           }
         }
@@ -31833,9 +31934,10 @@ function AppContent() {
         (async () => {
           // 🔧 v3.5.15d: capturedAnalysis 사용 (호출 시점 스냅샷)
           // 🆕 v7.0.6 (m3): capturedTagRelations 인자 전달 — 큐 task 지연 중 tagRelations 변경 시 stale closure 회피
+          // 🔧 v7.0.7 (MAJ-5): capturedTagAttributes도 전달 — analyzeUpsetCauses의 isTagTitle 클로저 stale 방지
           if (capturedAnalysis) {
             try {
-              await analyzeMatchResult(A, B, winnerId, capturedAnalysis, capturedTagRelations);
+              await analyzeMatchResult(A, B, winnerId, capturedAnalysis, capturedTagRelations, capturedTagAttributes);
             } catch (e) {
               console.warn("[decide] analyzeMatchResult 오류:", e);
             }
