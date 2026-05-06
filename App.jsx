@@ -2,9 +2,65 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.0.7 (v7.0.6 사후 검증 후속 — Critical 2 + Major 5)                     ║
+ * ║  버전: 7.0.8 (하이브리드 진단 패널 — 검증 큐/시퀀스/수문장/invariant 6개 섹션)  ║
  * ║  최종 수정: 2026-05-06                                                        ║
- * ║  총 라인 수: 약 48,400줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 48,800줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.0.8 하이브리드 진단 패널 + trigger_fire_log (2026-05-06)                 ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ 추가 패치의 정확한 근거 데이터를 수집하기 위해 진단 탭에 하이브리드 모드        ║
+ * ║ 전용 진단 패널 6개 섹션을 추가. 사용자가 의심도 변동 흐름 + 트리거 적용 정확   ║
+ * ║ 도 + invariant 위반을 즉시 데이터로 확인 가능.                                 ║
+ * ║                                                                              ║
+ * ║ [신규 테이블 1개]                                                                ║
+ * ║ • trigger_fire_log — enqueueVerification 모든 호출 추적 (UPSERT 무관 정확     ║
+ * ║   fire 카운트). 컬럼: id/trigger_type/novel_id/suspicion_type/source/         ║
+ * ║   created_at + 3개 인덱스 + v7.0.5 ensureColumn 안전장치                      ║
+ * ║                                                                              ║
+ * ║ [enqueueVerification 시그니처 확장]                                              ║
+ * ║ • 4번째 인자 source 추가 (backward compat: omit 시 NULL).                     ║
+ * ║ • 9개 호출 사이트 갱신:                                                        ║
+ * ║   - addNovel ×2 (overrated/underrated) → "addNovel"                           ║
+ * ║   - saveEdit ×2 (tier_change/cleared) → "saveEdit"                            ║
+ * ║   - batchSetTier → "batchSetTier"                                             ║
+ * ║   - swapRating ×2 (idA/idB) → "swapRating_idA"/"swapRating_idB"               ║
+ * ║   - gatekeeper ⬆️/⬇️ → "gatekeeper_up"/"gatekeeper_down"                       ║
+ * ║   - inline tier chip → "inline_chip"                                          ║
+ * ║                                                                              ║
+ * ║ [진단 패널 6개 섹션 — 진단 탭 → "📋 진단 내보내기" 직전 위치]                  ║
+ * ║ • S1 검증 큐 + 트리거 trace                                                    ║
+ * ║   - state 카드 (pending/resolved/cancelled/skipped)                           ║
+ * ║   - trigger × suspicion 매트릭스 (방향 판정 정확성)                            ║
+ * ║   - priority 분포                                                              ║
+ * ║   - 24h trigger fire (정확, fire_log) + source × trigger 매트릭스             ║
+ * ║   - 최근 fire trail 20 + 현재 pending top 10                                   ║
+ * ║ • S2 진행 중 시퀀스 — in-flight responses trail + 변곡점 마커 + 다음 단계      ║
+ * ║ • S3 수문장 누적 후보 top 10 (5+ 강조)                                         ║
+ * ║ • S4 세션 결과 분포 (action/suspicion/trigger/violation_type)                  ║
+ * ║ • S5 최근 5개 시퀀스 응답 trace — JOIN 재구성 + blocker 마커                  ║
+ * ║ • S6 invariant 검증 — gap=100 위반/음수 order/비활성 tier/고아 row             ║
+ * ║                                                                              ║
+ * ║ [모드 가드 / 상태 관리]                                                          ║
+ * ║ • hybrid 모드일 때만 6개 섹션 노출, 그 외 단일 안내 카드                       ║
+ * ║ • mode 변경 시 hybridDiagData reset (stale 방지)                               ║
+ * ║ • 진단 탭 진입 시 자동 로드 + 새로고침 버튼 (수동 갱신)                        ║
+ * ║                                                                              ║
+ * ║ [정합성]                                                                         ║
+ * ║ • doClearAll에 trigger_fire_log DELETE 추가 (import 시 fresh 시작)             ║
+ * ║ • removeNovel execBatch에 trigger_fire_log WHERE novel_id=? DELETE 추가        ║
+ * ║                                                                              ║
+ * ║ [export 확장]                                                                    ║
+ * ║ • 기존 진단 리포트 텍스트에 v7.0 하이브리드 진단 섹션 append                   ║
+ * ║ • mode !== 'hybrid' 시 "(현재 모드: ... — 하이브리드 미사용)" 1줄              ║
+ * ║                                                                              ║
+ * ║ [평가]                                                                           ║
+ * ║ • read-only 데이터 노출 — 코어 로직 변경 X                                     ║
+ * ║ • enqueueVerification에 INSERT 1회 추가 (~1ms, 무음 catch)                    ║
+ * ║ • 기존 사용자: ensureColumn 패턴으로 부분 스키마 회복 가능                     ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -4779,6 +4835,26 @@ async function initDb() {
   await ensureColumn("tier_repositioning_session", "completed_at", "INTEGER", null);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_trs_blocker ON tier_repositioning_session(blocker_id, state);`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_trs_novel ON tier_repositioning_session(novel_id);`);
+
+  // 🆕 v7.0.8: trigger_fire_log — enqueueVerification 모든 호출 추적 (UPSERT 동작과 무관하게 fire 횟수 정확 기록)
+  // 진단 탭에서 "트리거가 잘 적용되는지", "어떤 호출자(source)가 어떤 트리거를 발동하는지" 검증용
+  await database.runAsync(`CREATE TABLE IF NOT EXISTS trigger_fire_log (
+    id TEXT PRIMARY KEY NOT NULL,
+    trigger_type TEXT NOT NULL,
+    novel_id TEXT,
+    suspicion_type TEXT,
+    source TEXT,
+    created_at INTEGER NOT NULL
+  );`);
+  // v7.0.5와 동일한 안전장치: 부분 스키마로 남은 DB도 회복 가능하도록 ensureColumn 적용
+  await ensureColumn("trigger_fire_log", "trigger_type", "TEXT", "''");
+  await ensureColumn("trigger_fire_log", "novel_id", "TEXT", null);
+  await ensureColumn("trigger_fire_log", "suspicion_type", "TEXT", null);
+  await ensureColumn("trigger_fire_log", "source", "TEXT", null);
+  await ensureColumn("trigger_fire_log", "created_at", "INTEGER", "0");
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tfl_created ON trigger_fire_log(created_at DESC);`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tfl_trigger ON trigger_fire_log(trigger_type);`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tfl_source ON trigger_fire_log(source);`);
 
   // manual_order 인덱스 (티어 그룹별 정렬 빠르게)
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_novels_manual_order ON novels(manual_tier, manual_order);`);
@@ -9668,7 +9744,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.0.7";
+const APP_VERSION = "7.0.8";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -9694,6 +9770,24 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.0.8", date: "2026-05-06",
+    title: "🆕 하이브리드 모드 진단 패널 — 검증 큐/시퀀스/수문장/invariant 6개 섹션",
+    highlights: [
+      { type: "new", text: "🔄 진단 탭에 하이브리드 모드 전용 진단 패널 추가 (모드 전환·새로고침 자동 갱신). 추가 패치의 정확한 근거 데이터 수집용" },
+      { type: "new", text: "📊 trigger_fire_log 신규 테이블 — enqueueVerification 모든 호출을 source(addNovel/saveEdit/batchSetTier/swapRating/inline_chip/gatekeeper_*)와 함께 기록. UPSERT 무관 정확 fire 카운트" },
+      { type: "new", text: "S1 검증 큐 + 트리거 trace — 24h fire 카운트 + source × trigger 매트릭스 + trigger × suspicion 분포 + 최근 fire 20개 trail" },
+      { type: "new", text: "S2 진행 중 시퀀스 — in-flight 응답 trail + 변곡점 마커 + evaluateSequenceProgress 다음 단계" },
+      { type: "new", text: "S3 수문장 누적 후보 (5+ 강조) · S4 세션 결과 분포 · S5 최근 5개 시퀀스 응답 trace · S6 invariant 검증 (gap=100/음수 order/비활성 tier/고아 row)" },
+    ],
+    details: [
+      { type: "new", text: "trigger_fire_log: id/trigger_type/novel_id/suspicion_type/source/created_at + 3개 인덱스 + ensureColumn 안전장치 (v7.0.5 패턴)" },
+      { type: "new", text: "enqueueVerification 시그니처 확장 — 4번째 인자 source. backward compat: omit 시 NULL 저장" },
+      { type: "new", text: "9개 호출 사이트에 source 인자 추가 (addNovel ×2 / saveEdit ×2 / batchSetTier / swapRating ×2 / gatekeeper ×2 / inline_chip)" },
+      { type: "new", text: "doClearAll + removeNovel에 trigger_fire_log 정리 추가 (orphan 방지)" },
+      { type: "new", text: "진단 리포트 export에 v7.0 하이브리드 섹션 텍스트 append (mode === 'hybrid' 시)" },
+    ],
+  },
   {
     version: "7.0.7", date: "2026-05-06",
     title: "v7.0.6 사후 검증 후속 수정 — Critical 2 + Major 5",
@@ -22419,10 +22513,21 @@ const VERIFICATION_PRIORITY = {
 };
 
 // v7.0.1 (M1 fix): 1초 디바운스 silent drop → UPSERT (작품당 pending 1건 보장 + 최신 의도 반영)
-async function enqueueVerification(novelId, triggerType, suspicionType) {
+// 🆕 v7.0.8: source 인자 추가 — 호출자(addNovel/saveEdit/batchSetTier/swapRating/inline_chip/gatekeeper_up/gatekeeper_down) 추적
+// backward compat: source 미전달 시 NULL 저장 (legacy 호출 그대로 동작)
+async function enqueueVerification(novelId, triggerType, suspicionType, source) {
   if (!novelId || !triggerType || !suspicionType) return;
   const now = Date.now();
   const priority = VERIFICATION_PRIORITY[triggerType] || 0;
+  // 🆕 v7.0.8: trigger_fire_log INSERT — UPSERT 동작과 무관하게 모든 enqueueVerification 호출 기록
+  // 진단 탭에서 source × trigger 매트릭스 + 24h fire 카운트 등에 사용
+  // 실패는 무음 — 진단 데이터 손실 < 사용자 작업 차단
+  try {
+    await exec(
+      `INSERT INTO trigger_fire_log (id, trigger_type, novel_id, suspicion_type, source, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      [uuid(), triggerType, novelId, suspicionType, source || null, now]
+    );
+  } catch (logErr) { /* 무음 */ }
   try {
     // 동일 novel_id의 pending 엔트리가 이미 있으면 최신 trigger/suspicion으로 UPDATE
     const existing = await first(
@@ -24424,6 +24529,9 @@ function AppContent() {
   const [verificationSession, setVerificationSession] = useState(null);
   const [verificationLoading, setVerificationLoading] = useState(false);
   const [verificationStats, setVerificationStats] = useState({ pending: 0, resolved: 0 });
+  // 🆕 v7.0.8: 하이브리드 진단 패널 데이터 (settingsSubTab === "diag" + hybrid 모드 시 로드)
+  const [hybridDiagData, setHybridDiagData] = useState(null);
+  const [hybridDiagLoading, setHybridDiagLoading] = useState(false);
   // Stage 4: 수문장 후보 (5개 누적 시 제안 모달)
   const [gatekeeperCandidates, setGatekeeperCandidates] = useState([]);
   const [gatekeeperModalOpen, setGatekeeperModalOpen] = useState(false);
@@ -30326,10 +30434,10 @@ function AppContent() {
           const idx = order.indexOf(newManualTier);
           if (idx === 0 && order.length > 1) {
             // 최상위 tier — 위쪽 비교 불가, 아래쪽으로 검증
-            await enqueueVerification(id, "new", "overrated");
+            await enqueueVerification(id, "new", "overrated", "addNovel");
           } else if (idx > 0) {
             // 중간/최하위 tier — 위쪽으로 검증 (default). idx===order.length-1 (최하위)도 포함.
-            await enqueueVerification(id, "new", "underrated");
+            await enqueueVerification(id, "new", "underrated", "addNovel");
           }
           // idx === -1(비활성) 또는 단일 tier(idx===0 && length===1) 시스템 → enqueue 생략
         } catch (e) {
@@ -30408,6 +30516,8 @@ function AppContent() {
               { sql: "DELETE FROM tier_validation_log WHERE novel_a_id=? OR novel_b_id=?", params: [id, id] },
               { sql: "DELETE FROM tier_repositioning_session WHERE novel_id=?", params: [id] },
               { sql: "UPDATE tier_repositioning_session SET blocker_id=NULL WHERE blocker_id=?", params: [id] },
+              // 🆕 v7.0.8: trigger_fire_log 고아 정리
+              { sql: "DELETE FROM trigger_fire_log WHERE novel_id=?", params: [id] },
               { sql: "DELETE FROM novels WHERE id=?", params: [id] },
             ]);
             // 🔧 v3.5.15e: 미플러시 choiceLog에서도 삭제 대상 제거 (고아 재삽입 방지)
@@ -31226,10 +31336,10 @@ function AppContent() {
             const toIdx = order.indexOf(_v7TierChanged.to);
             // fromIdx 미정시 (이전 표시 티어가 active 목록에 없음) — 신중하게 underrated 기본값
             const suspicion = fromIdx === -1 ? "underrated" : (toIdx < fromIdx ? "underrated" : "overrated");
-            await enqueueVerification(n.id, "tier_change", suspicion);
+            await enqueueVerification(n.id, "tier_change", suspicion, "saveEdit");
           } else if (_v7TierCleared) {
             // manual_tier → null: 더 이상 잠정 truth 없음, 자리 검증 불필요. 오버레이트 가능성을 가벼운 신호로만 인입
-            await enqueueVerification(n.id, "tier_change", "overrated");
+            await enqueueVerification(n.id, "tier_change", "overrated", "saveEdit");
           }
           // (m6 제거) meta_edit 트리거 삭제 — 메타 편집(제목/태그/note 등)은 검증 큐에 영향 X
         } catch (e) {
@@ -31561,6 +31671,103 @@ function AppContent() {
       console.warn("[v7.0] loadVerificationStats 오류:", e?.message);
     }
   }, []);
+
+  // 🆕 v7.0.8: 하이브리드 진단 패널 통합 데이터 로드 — 진단 탭 진입 시 + 새로고침 버튼
+  const loadHybridDiag = useCallback(async () => {
+    if (hybridDiagLoading) return;
+    setHybridDiagLoading(true);
+    try {
+      const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+      // S1 — 검증 큐 + 트리거 trace
+      const queueByState = await all(`SELECT state, COUNT(*) as cnt FROM tier_verification_queue GROUP BY state`);
+      const queueByTrigger = await all(`SELECT trigger_type, COUNT(*) as cnt FROM tier_verification_queue WHERE state='pending' GROUP BY trigger_type`);
+      const queueByPriority = await all(`SELECT priority, COUNT(*) as cnt FROM tier_verification_queue WHERE state='pending' GROUP BY priority ORDER BY priority DESC`);
+      const queueByTriggerSuspicion = await all(`SELECT trigger_type, suspicion_type, COUNT(*) as cnt FROM tier_verification_queue GROUP BY trigger_type, suspicion_type ORDER BY trigger_type, suspicion_type`);
+      const recentPending = await all(`SELECT q.id, q.priority, q.trigger_type, q.suspicion_type, q.created_at, n.title, n.manual_tier, n.manual_order FROM tier_verification_queue q LEFT JOIN novels n ON n.id=q.novel_id WHERE q.state='pending' ORDER BY q.priority DESC, q.created_at ASC LIMIT 10`);
+      // S1 — trigger_fire_log (정확)
+      const fire24hByTrigger = await all(`SELECT trigger_type, COUNT(*) as cnt FROM trigger_fire_log WHERE created_at > ? GROUP BY trigger_type ORDER BY cnt DESC`, [dayAgo]);
+      const fire24hBySource = await all(`SELECT source, trigger_type, COUNT(*) as cnt FROM trigger_fire_log WHERE created_at > ? GROUP BY source, trigger_type ORDER BY source, trigger_type`, [dayAgo]);
+      const recentFires = await all(`SELECT t.id, t.trigger_type, t.suspicion_type, t.source, t.created_at, t.novel_id, n.title FROM trigger_fire_log t LEFT JOIN novels n ON n.id=t.novel_id ORDER BY t.created_at DESC LIMIT 20`);
+      const fireTotal = await first(`SELECT COUNT(*) as cnt FROM trigger_fire_log`);
+      // S3 — 수문장 후보 (직접 SQL — getGatekeeperCandidates 함수도 가능하나 threshold 미만 후보 노출 위해 직접)
+      const gatekeeperTop = await all(`SELECT b.id, b.title, b.manual_tier, b.manual_order, COUNT(*) as block_count FROM tier_repositioning_session s INNER JOIN novels b ON b.id=s.blocker_id WHERE s.state='completed' AND s.blocker_id IS NOT NULL AND s.result_action='moved' GROUP BY b.id ORDER BY block_count DESC LIMIT 10`);
+      // S4 — 세션 결과 분포
+      const sessionByAction = await all(`SELECT result_action, COUNT(*) as cnt FROM tier_repositioning_session WHERE state='completed' GROUP BY result_action`);
+      const sessionBySuspicion = await all(`SELECT suspicion_type, COUNT(*) as cnt FROM tier_repositioning_session WHERE state='completed' GROUP BY suspicion_type`);
+      const sessionByTrigger = await all(`SELECT trigger_type, COUNT(*) as cnt FROM tier_repositioning_session WHERE state='completed' GROUP BY trigger_type`);
+      const validationByType = await all(`SELECT violation_type, COUNT(*) as cnt FROM tier_validation_log GROUP BY violation_type`);
+      // S5 — 최근 5개 시퀀스 + 응답 trail (join)
+      const recentSequencesRaw = await all(`SELECT r.id as session_id, r.suspicion_type, r.trigger_type, r.result_action, r.result_tier, r.result_order, r.total_responses, r.blocker_id, r.completed_at, sus.title as suspicion_title, sus.manual_tier as suspicion_tier, blk.title as blocker_title, vl.novel_a_id, vl.novel_b_id, vl.user_choice, vl.violation_type, vl.created_at as resp_at, na.title as a_title, nb.title as b_title FROM (SELECT id, novel_id, suspicion_type, trigger_type, result_action, result_tier, result_order, total_responses, blocker_id, completed_at FROM tier_repositioning_session WHERE state='completed' ORDER BY completed_at DESC LIMIT 5) r LEFT JOIN novels sus ON sus.id=r.novel_id LEFT JOIN novels blk ON blk.id=r.blocker_id LEFT JOIN tier_validation_log vl ON vl.session_id=r.id LEFT JOIN novels na ON na.id=vl.novel_a_id LEFT JOIN novels nb ON nb.id=vl.novel_b_id ORDER BY r.completed_at DESC, vl.created_at ASC`);
+      // S5 후처리: session_id로 grouping
+      const sessionsMap = new Map();
+      for (const row of (recentSequencesRaw || [])) {
+        if (!sessionsMap.has(row.session_id)) {
+          sessionsMap.set(row.session_id, {
+            session_id: row.session_id,
+            suspicion_type: row.suspicion_type,
+            suspicion_title: row.suspicion_title || "(삭제됨)",
+            suspicion_tier: row.suspicion_tier,
+            trigger_type: row.trigger_type,
+            result_action: row.result_action,
+            result_tier: row.result_tier,
+            result_order: row.result_order,
+            total_responses: row.total_responses || 0,
+            blocker_id: row.blocker_id,
+            blocker_title: row.blocker_title,
+            completed_at: row.completed_at,
+            responses: [],
+          });
+        }
+        if (row.user_choice) {
+          sessionsMap.get(row.session_id).responses.push({
+            a_title: row.a_title || "(삭제됨)",
+            b_title: row.b_title || "(삭제됨)",
+            user_choice: row.user_choice,
+            violation_type: row.violation_type,
+            resp_at: row.resp_at,
+          });
+        }
+      }
+      const recentSequences = Array.from(sessionsMap.values());
+      // S6 — invariant 검증
+      const dupOrders = await all(`SELECT manual_tier, manual_order, COUNT(*) as dup_count, GROUP_CONCAT(title, ' | ') as titles FROM novels WHERE manual_tier IS NOT NULL GROUP BY manual_tier, manual_order HAVING dup_count > 1 LIMIT 20`);
+      const negativeOrders = await all(`SELECT id, title, manual_tier, manual_order FROM novels WHERE manual_order < 0 LIMIT 20`);
+      const orphanQueue = await all(`SELECT q.id, q.novel_id FROM tier_verification_queue q LEFT JOIN novels n ON n.id=q.novel_id WHERE n.id IS NULL LIMIT 10`);
+      const orphanSessions = await all(`SELECT s.id, s.novel_id FROM tier_repositioning_session s LEFT JOIN novels n ON n.id=s.novel_id WHERE n.id IS NULL LIMIT 10`);
+      // 비활성 tier 작품 — JS 측 비교
+      const activeTiers = new Set(getActiveTierOrder(globalTierConfig));
+      const allAssigned = await all(`SELECT id, title, manual_tier FROM novels WHERE manual_tier IS NOT NULL`);
+      const inactiveAssigned = (allAssigned || []).filter(n => !activeTiers.has(n.manual_tier)).slice(0, 20);
+
+      setHybridDiagData({
+        queueByState, queueByTrigger, queueByPriority, queueByTriggerSuspicion,
+        recentPending, fire24hByTrigger, fire24hBySource, recentFires, fireTotal: fireTotal?.cnt || 0,
+        gatekeeperTop,
+        sessionByAction, sessionBySuspicion, sessionByTrigger, validationByType,
+        recentSequences,
+        dupOrders, negativeOrders, orphanQueue, orphanSessions, inactiveAssigned,
+        loadedAt: Date.now(),
+      });
+    } catch (e) {
+      console.warn("[v7.0.8] loadHybridDiag 오류:", e?.message);
+    } finally {
+      setHybridDiagLoading(false);
+    }
+  }, [hybridDiagLoading]);
+
+  // 🆕 v7.0.8: 진단 탭 진입 시 + hybrid 모드일 때 자동 로드
+  useEffect(() => {
+    if (settingsSubTab === "diag" && globalTierConfig.mode === "hybrid" && !hybridDiagData) {
+      loadHybridDiag();
+    }
+  }, [settingsSubTab, globalTierConfig.mode]);
+
+  // 🆕 v7.0.8: 모드 변경 시 stale 진단 데이터 reset
+  useEffect(() => {
+    if (globalTierConfig.mode !== "hybrid") {
+      setHybridDiagData(null);
+    }
+  }, [globalTierConfig.mode]);
 
   const startVerificationSession = useCallback(async () => {
     // ref 기반 동기 가드 (state는 배칭 → 재귀 호출 시 stale 위험)
@@ -33144,7 +33351,7 @@ function AppContent() {
           if (fromTier === tierKey) continue; // 변경 없음
           const fromIdx = fromTier ? order.indexOf(fromTier) : order.length;
           const suspicion = toIdx < fromIdx ? "underrated" : "overrated";
-          await enqueueVerification(id, "tier_change", suspicion);
+          await enqueueVerification(id, "tier_change", suspicion, "batchSetTier");
         }
       } catch (e) {
         console.warn("[v7.0] batchSetTier 검증 큐 INSERT 실패:", e?.message);
@@ -33205,10 +33412,10 @@ function AppContent() {
       // 🆕 v7.0.2: idB도 함께 enqueue (역방향 의심) — 양쪽이 모두 변위했으므로 양쪽 검증 필요
       if (mode === "hybrid") {
         try {
-          await enqueueVerification(idA, "order_change", suspicionForHybrid);
+          await enqueueVerification(idA, "order_change", suspicionForHybrid, "swapRating_idA");
           if (idA !== idB) {
             const inverseSuspicion = suspicionForHybrid === "underrated" ? "overrated" : "underrated";
-            await enqueueVerification(idB, "order_change", inverseSuspicion);
+            await enqueueVerification(idB, "order_change", inverseSuspicion, "swapRating_idB");
           }
         } catch (e) {
           console.warn("검증 큐 INSERT 실패:", e?.message);
@@ -34089,6 +34296,8 @@ async function importJSON() {
         { sql: "DELETE FROM tier_verification_queue;", params: [] },
         { sql: "DELETE FROM tier_validation_log;", params: [] },
         { sql: "DELETE FROM tier_repositioning_session;", params: [] },
+        // 🆕 v7.0.8: trigger_fire_log도 import 시 초기화 (진단용 로그, fresh 시작)
+        { sql: "DELETE FROM trigger_fire_log;", params: [] },
       ]);
       invalidatePatternCache(); // 🔧 v3.5.14
       invalidateWeightsCache(); // 🔧 v3.5.14
@@ -37689,7 +37898,7 @@ async function importJSON() {
                                               pushUndo('tier_change', { id: g.id, title: g.title, prevTier: g.manual_tier, newTier: higher, prevManualOrder: Number(g.manual_order) || 0 }, `수문장 승급: ${g.title} → ${higher}`);
                                               // 🆕 v7.0.3: 누적 통계 소비 — 과거 blocker_id 기록 NULL 처리 (이전: 5+ 누적이 안 빠져 같은 작품이 모달에 영원히 재등장)
                                               await exec("UPDATE tier_repositioning_session SET blocker_id=NULL WHERE blocker_id=?", [g.id]);
-                                              await enqueueVerification(g.id, "gatekeeper", "underrated");
+                                              await enqueueVerification(g.id, "gatekeeper", "underrated", "gatekeeper_up");
                                               await loadList(undefined, undefined, "v7-gatekeeper");
                                               await loadVerificationStats(); // 🆕 v7.0.3: pending 카운터 즉시 갱신
                                               const gks = await getGatekeeperCandidates(5);
@@ -37725,7 +37934,7 @@ async function importJSON() {
                                               pushUndo('tier_change', { id: g.id, title: g.title, prevTier: g.manual_tier, newTier: lower, prevManualOrder: Number(g.manual_order) || 0 }, `수문장 강등: ${g.title} → ${lower}`);
                                               // 🆕 v7.0.3: 누적 통계 소비
                                               await exec("UPDATE tier_repositioning_session SET blocker_id=NULL WHERE blocker_id=?", [g.id]);
-                                              await enqueueVerification(g.id, "gatekeeper", "overrated");
+                                              await enqueueVerification(g.id, "gatekeeper", "overrated", "gatekeeper_down");
                                               await loadList(undefined, undefined, "v7-gatekeeper");
                                               await loadVerificationStats(); // 🆕 v7.0.3
                                               const gks = await getGatekeeperCandidates(5);
@@ -39499,7 +39708,7 @@ async function importJSON() {
                                     const fromIdx = oldTier ? order.indexOf(oldTier) : order.length;
                                     const toIdx = order.indexOf(tk);
                                     const suspicion = toIdx < fromIdx ? "underrated" : "overrated";
-                                    enqueueVerification(item.id, "tier_change", suspicion).catch(() => {});
+                                    enqueueVerification(item.id, "tier_change", suspicion, "inline_chip").catch(() => {});
                                   }
                                   setExpandedNovelId(null);
                                   await loadList(undefined, undefined, "tierManage");
@@ -44877,6 +45086,302 @@ async function importJSON() {
               )}
             </Section>
 
+            {/* ═══════════════════════════════════════════════════════════════════
+                🆕 v7.0.8: 하이브리드 모드 진단 패널 (6개 섹션)
+                ─ S1 검증 큐 + 트리거 trace
+                ─ S2 진행 중 시퀀스 (in-flight)
+                ─ S3 수문장 후보
+                ─ S4 세션 결과 분포
+                ─ S5 최근 시퀀스 응답 trace
+                ─ S6 invariant 검증 (anomaly 감지)
+                ═══════════════════════════════════════════════════════════════════ */}
+            {globalTierConfig.mode !== "hybrid" ? (
+              <Section title="🔄 v7.0 하이브리드 진단">
+                <View style={{ padding: 12, backgroundColor: C.bg, borderRadius: 8 }}>
+                  <Text style={{ color: C.sub, fontSize: 13 }}>하이브리드 모드 전용입니다. 모드 전환 후 다시 확인해주세요.</Text>
+                </View>
+              </Section>
+            ) : (
+              <>
+                {/* 새로고침 버튼 + 마지막 갱신 시각 */}
+                <Section title="🔄 v7.0 하이브리드 진단">
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                    <Text style={{ color: C.sub, fontSize: 11 }}>
+                      {hybridDiagData?.loadedAt
+                        ? `📅 갱신: ${new Date(hybridDiagData.loadedAt).toLocaleString("ko-KR")}`
+                        : "데이터 로드 중..."}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => loadHybridDiag()}
+                      disabled={hybridDiagLoading}
+                      style={{ paddingHorizontal: 10, paddingVertical: 5, backgroundColor: C.primary, borderRadius: 8, opacity: hybridDiagLoading ? 0.5 : 1 }}
+                    >
+                      <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>{hybridDiagLoading ? "로딩..." : "🔄 새로고침"}</Text>
+                    </TouchableOpacity>
+                  </View>
+                </Section>
+
+                {/* S1 — 검증 큐 + 트리거 trace */}
+                <Section title="🔄 S1. 검증 큐 + 트리거 trace">
+                  {!hybridDiagData ? (
+                    <Text style={{ color: C.sub, fontSize: 12 }}>로드 중...</Text>
+                  ) : (
+                    <View style={{ gap: 10 }}>
+                      {/* state 카드 */}
+                      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                        {["pending", "resolved", "cancelled", "skipped"].map(st => {
+                          const row = (hybridDiagData.queueByState || []).find(r => r.state === st);
+                          const cnt = row?.cnt || 0;
+                          const color = st === "pending" ? "#f59e0b" : st === "resolved" ? "#22c55e" : st === "cancelled" ? "#94a3b8" : "#6366f1";
+                          return (
+                            <View key={st} style={{ borderLeftWidth: 3, borderLeftColor: color, padding: 8, backgroundColor: C.bg, borderRadius: 6, minWidth: 80 }}>
+                              <Text style={{ color: C.sub, fontSize: 10 }}>{st}</Text>
+                              <Text style={{ color, fontSize: 18, fontWeight: "800" }}>{cnt}</Text>
+                            </View>
+                          );
+                        })}
+                      </View>
+                      {/* trigger × suspicion 매트릭스 */}
+                      <View>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", marginBottom: 4 }}>트리거 × 의심방향</Text>
+                        {(hybridDiagData.queueByTriggerSuspicion || []).length === 0 ? (
+                          <Text style={{ color: C.sub, fontSize: 11 }}>(데이터 없음)</Text>
+                        ) : (
+                          (hybridDiagData.queueByTriggerSuspicion || []).map((r, i) => (
+                            <View key={i} style={{ flexDirection: "row", paddingVertical: 3 }}>
+                              <Text style={{ flex: 2, color: C.text, fontSize: 11 }}>{r.trigger_type}</Text>
+                              <Text style={{ flex: 2, color: r.suspicion_type === "underrated" ? "#22c55e" : "#ef4444", fontSize: 11 }}>{r.suspicion_type}</Text>
+                              <Text style={{ flex: 1, textAlign: "right", color: C.text, fontSize: 11, fontWeight: "700" }}>{r.cnt}</Text>
+                            </View>
+                          ))
+                        )}
+                      </View>
+                      {/* priority 분포 */}
+                      <View>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", marginBottom: 4 }}>pending priority 분포</Text>
+                        {(hybridDiagData.queueByPriority || []).length === 0 ? (
+                          <Text style={{ color: C.sub, fontSize: 11 }}>(없음)</Text>
+                        ) : (
+                          (hybridDiagData.queueByPriority || []).map((r, i) => (
+                            <Text key={i} style={{ color: C.text, fontSize: 11 }}>priority={r.priority} → {r.cnt}건</Text>
+                          ))
+                        )}
+                      </View>
+                      {/* 24h trigger fire (정확) */}
+                      <View>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", marginBottom: 4 }}>최근 24h 트리거 fire (정확, fire_log 기반)</Text>
+                        <Text style={{ color: C.sub, fontSize: 10, marginBottom: 4 }}>총 누적 fire: {hybridDiagData.fireTotal}회</Text>
+                        {(hybridDiagData.fire24hByTrigger || []).length === 0 ? (
+                          <Text style={{ color: C.sub, fontSize: 11 }}>최근 24h 동안 트리거 fire 없음</Text>
+                        ) : (
+                          (hybridDiagData.fire24hByTrigger || []).map((r, i) => (
+                            <Text key={i} style={{ color: C.text, fontSize: 11 }}>{r.trigger_type}: {r.cnt}회</Text>
+                          ))
+                        )}
+                      </View>
+                      {/* source × trigger 매트릭스 */}
+                      <View>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", marginBottom: 4 }}>최근 24h source × trigger 매트릭스</Text>
+                        {(hybridDiagData.fire24hBySource || []).length === 0 ? (
+                          <Text style={{ color: C.sub, fontSize: 11 }}>(데이터 없음)</Text>
+                        ) : (
+                          (hybridDiagData.fire24hBySource || []).map((r, i) => (
+                            <View key={i} style={{ flexDirection: "row", paddingVertical: 2 }}>
+                              <Text style={{ flex: 2, color: C.text, fontSize: 11 }}>{r.source || "(none)"}</Text>
+                              <Text style={{ flex: 2, color: C.sub, fontSize: 11 }}>{r.trigger_type}</Text>
+                              <Text style={{ flex: 1, textAlign: "right", color: C.text, fontSize: 11, fontWeight: "700" }}>{r.cnt}</Text>
+                            </View>
+                          ))
+                        )}
+                      </View>
+                      {/* 최근 fire 20개 trail */}
+                      <View>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", marginBottom: 4 }}>최근 fire trail (20)</Text>
+                        {(hybridDiagData.recentFires || []).length === 0 ? (
+                          <Text style={{ color: C.sub, fontSize: 11 }}>(없음)</Text>
+                        ) : (
+                          (hybridDiagData.recentFires || []).map((r, i) => (
+                            <View key={i} style={{ paddingVertical: 3, borderBottomWidth: 0.5, borderBottomColor: C.line }}>
+                              <Text style={{ color: C.text, fontSize: 11 }}>{r.title || "(작품 없음)"} · {r.source || "?"} → {r.trigger_type}/{r.suspicion_type}</Text>
+                              <Text style={{ color: C.sub, fontSize: 10 }}>{new Date(r.created_at).toLocaleString("ko-KR")}</Text>
+                            </View>
+                          ))
+                        )}
+                      </View>
+                      {/* 최근 pending 10개 */}
+                      <View>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", marginBottom: 4 }}>현재 pending 큐 상위 10</Text>
+                        {(hybridDiagData.recentPending || []).length === 0 ? (
+                          <Text style={{ color: C.sub, fontSize: 11 }}>(비어있음)</Text>
+                        ) : (
+                          (hybridDiagData.recentPending || []).map((r, i) => (
+                            <View key={i} style={{ paddingVertical: 3, borderBottomWidth: 0.5, borderBottomColor: C.line }}>
+                              <Text style={{ color: C.text, fontSize: 11 }}>{r.title || "(없음)"} · p{r.priority}</Text>
+                              <Text style={{ color: C.sub, fontSize: 10 }}>{r.trigger_type}/{r.suspicion_type} · tier={r.manual_tier || "-"} #{r.manual_order || 0}</Text>
+                            </View>
+                          ))
+                        )}
+                      </View>
+                    </View>
+                  )}
+                </Section>
+
+                {/* S2 — 진행 중 시퀀스 */}
+                <Section title="📊 S2. 진행 중 시퀀스 (in-flight)">
+                  {!verificationSession ? (
+                    <Text style={{ color: C.sub, fontSize: 12 }}>현재 진행 중 시퀀스 없음.</Text>
+                  ) : (() => {
+                    const responses = verificationSession.responses || [];
+                    const infIdx = responses.length ? findInflectionPoint(responses, verificationSession.suspicionType) : -1;
+                    const eval_ = responses.length ? evaluateSequenceProgress(responses, verificationSession.suspicionType) : null;
+                    const sus = verificationSession.suspicionNovel;
+                    return (
+                      <View style={{ gap: 8 }}>
+                        <View style={{ padding: 8, backgroundColor: C.bg, borderRadius: 6 }}>
+                          <Text style={{ color: C.text, fontWeight: "700" }}>{sus?.title || "?"} · tier={sus?.manual_tier || "-"} #{sus?.manual_order || 0}</Text>
+                          <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>의심방향: {verificationSession.suspicionType} · 후보 풀: {(verificationSession.candidates || []).length} · 응답: {responses.length}/{VERIFICATION_MAX_RESPONSES}</Text>
+                          {infIdx >= 0 && <Text style={{ color: "#f59e0b", fontSize: 11, marginTop: 2 }}>변곡점 idx: {infIdx}</Text>}
+                          {eval_ && <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>다음 단계: shouldStop={String(eval_.shouldStop)} reason={eval_.reason}</Text>}
+                        </View>
+                        {/* 응답 trail */}
+                        {responses.map((r, i) => (
+                          <View key={i} style={{ flexDirection: "row", paddingVertical: 3, borderBottomWidth: 0.5, borderBottomColor: C.line, backgroundColor: i === infIdx ? "rgba(245,158,11,0.15)" : "transparent" }}>
+                            <Text style={{ width: 24, color: C.sub, fontSize: 11 }}>{i}</Text>
+                            <Text style={{ flex: 1, color: C.text, fontSize: 11 }}>cand {r.candidateId?.substring(0, 8) || "?"}…</Text>
+                            <Text style={{ width: 70, color: r.suspicionWon ? "#22c55e" : "#ef4444", fontSize: 11 }}>{r.suspicionWon ? "의심승" : "의심패"}</Text>
+                            <Text style={{ width: 80, color: C.sub, fontSize: 10 }}>{r.violationType || ""}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    );
+                  })()}
+                </Section>
+
+                {/* S3 — 수문장 후보 */}
+                <Section title="🚫 S3. 수문장 누적 후보 (top 10)">
+                  {!hybridDiagData ? (
+                    <Text style={{ color: C.sub, fontSize: 12 }}>로드 중...</Text>
+                  ) : (hybridDiagData.gatekeeperTop || []).length === 0 ? (
+                    <Text style={{ color: C.sub, fontSize: 12 }}>아직 누적된 수문장 없음.</Text>
+                  ) : (
+                    (hybridDiagData.gatekeeperTop || []).map((r, i) => (
+                      <View key={i} style={{ flexDirection: "row", paddingVertical: 4, borderBottomWidth: 0.5, borderBottomColor: C.line }}>
+                        <Text style={{ flex: 3, color: r.block_count >= 5 ? "#ef4444" : C.text, fontSize: 11, fontWeight: r.block_count >= 5 ? "700" : "400" }}>{r.title}</Text>
+                        <Text style={{ width: 60, color: C.sub, fontSize: 10 }}>{r.manual_tier} #{r.manual_order}</Text>
+                        <Text style={{ width: 50, textAlign: "right", color: r.block_count >= 5 ? "#ef4444" : C.text, fontSize: 11, fontWeight: "700" }}>×{r.block_count}</Text>
+                      </View>
+                    ))
+                  )}
+                </Section>
+
+                {/* S4 — 세션 결과 분포 */}
+                <Section title="📈 S4. 세션 결과 분포">
+                  {!hybridDiagData ? (
+                    <Text style={{ color: C.sub, fontSize: 12 }}>로드 중...</Text>
+                  ) : (
+                    <View style={{ gap: 8 }}>
+                      <View>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>result_action</Text>
+                        {(hybridDiagData.sessionByAction || []).map((r, i) => <Text key={i} style={{ color: C.text, fontSize: 11 }}>{r.result_action || "(null)"}: {r.cnt}</Text>)}
+                      </View>
+                      <View>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>suspicion_type</Text>
+                        {(hybridDiagData.sessionBySuspicion || []).map((r, i) => <Text key={i} style={{ color: C.text, fontSize: 11 }}>{r.suspicion_type}: {r.cnt}</Text>)}
+                      </View>
+                      <View>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>trigger_type</Text>
+                        {(hybridDiagData.sessionByTrigger || []).map((r, i) => <Text key={i} style={{ color: C.text, fontSize: 11 }}>{r.trigger_type || "(null)"}: {r.cnt}</Text>)}
+                      </View>
+                      <View>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>violation_type (tier_validation_log)</Text>
+                        {(hybridDiagData.validationByType || []).length === 0 ? (
+                          <Text style={{ color: C.sub, fontSize: 11 }}>(없음)</Text>
+                        ) : (
+                          (hybridDiagData.validationByType || []).map((r, i) => <Text key={i} style={{ color: C.text, fontSize: 11 }}>{r.violation_type}: {r.cnt}</Text>)
+                        )}
+                      </View>
+                    </View>
+                  )}
+                </Section>
+
+                {/* S5 — 최근 시퀀스 trace */}
+                <Section title="🎯 S5. 최근 시퀀스 응답 trace (5)">
+                  {!hybridDiagData ? (
+                    <Text style={{ color: C.sub, fontSize: 12 }}>로드 중...</Text>
+                  ) : (hybridDiagData.recentSequences || []).length === 0 ? (
+                    <Text style={{ color: C.sub, fontSize: 12 }}>완료된 시퀀스 없음.</Text>
+                  ) : (
+                    (hybridDiagData.recentSequences || []).map((s, i) => (
+                      <View key={i} style={{ marginBottom: 12, padding: 8, backgroundColor: C.bg, borderRadius: 6 }}>
+                        <Text style={{ color: C.text, fontWeight: "700", fontSize: 12 }}>{s.suspicion_title} · {s.suspicion_type}</Text>
+                        <Text style={{ color: C.sub, fontSize: 10, marginTop: 2 }}>
+                          trigger={s.trigger_type || "?"} · action={s.result_action || "?"} · result_tier={s.result_tier || "-"} · 응답 {s.total_responses}회
+                        </Text>
+                        {s.blocker_title && <Text style={{ color: "#f59e0b", fontSize: 10 }}>변곡점(blocker): {s.blocker_title}</Text>}
+                        {s.responses.map((r, j) => {
+                          const isBlocker = (r.a_title === s.blocker_title) || (r.b_title === s.blocker_title);
+                          return (
+                            <View key={j} style={{ flexDirection: "row", paddingVertical: 2, marginTop: 2, backgroundColor: isBlocker ? "rgba(245,158,11,0.15)" : "transparent" }}>
+                              <Text style={{ width: 20, color: C.sub, fontSize: 10 }}>{j}</Text>
+                              <Text style={{ flex: 1, color: C.text, fontSize: 10 }}>{r.a_title} vs {r.b_title}</Text>
+                              <Text style={{ width: 70, color: C.sub, fontSize: 10 }}>{r.violation_type}</Text>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    ))
+                  )}
+                </Section>
+
+                {/* S6 — invariant */}
+                <Section title="⚙️ S6. invariant 검증">
+                  {!hybridDiagData ? (
+                    <Text style={{ color: C.sub, fontSize: 12 }}>로드 중...</Text>
+                  ) : (() => {
+                    const dup = (hybridDiagData.dupOrders || []).length;
+                    const neg = (hybridDiagData.negativeOrders || []).length;
+                    const inactive = (hybridDiagData.inactiveAssigned || []).length;
+                    const oQ = (hybridDiagData.orphanQueue || []).length;
+                    const oS = (hybridDiagData.orphanSessions || []).length;
+                    const total = dup + neg + inactive + oQ + oS;
+                    return (
+                      <View style={{ gap: 8 }}>
+                        <Text style={{ color: total === 0 ? "#22c55e" : "#ef4444", fontSize: 12, fontWeight: "700" }}>
+                          {total === 0 ? "✅ 모든 invariant 정상" : `⚠️ 위반 ${total}건 발견`}
+                        </Text>
+                        {dup > 0 && (
+                          <View>
+                            <Text style={{ color: "#ef4444", fontSize: 11, fontWeight: "700" }}>gap=100 위반 (중복 manual_order): {dup}건</Text>
+                            {(hybridDiagData.dupOrders || []).slice(0, 5).map((r, i) => (
+                              <Text key={i} style={{ color: C.sub, fontSize: 10 }}>{r.manual_tier} #{r.manual_order} ×{r.dup_count}: {r.titles?.substring(0, 60)}</Text>
+                            ))}
+                          </View>
+                        )}
+                        {neg > 0 && (
+                          <View>
+                            <Text style={{ color: "#ef4444", fontSize: 11, fontWeight: "700" }}>음수 manual_order: {neg}건</Text>
+                            {(hybridDiagData.negativeOrders || []).slice(0, 5).map((r, i) => (
+                              <Text key={i} style={{ color: C.sub, fontSize: 10 }}>{r.title} ({r.manual_tier} {r.manual_order})</Text>
+                            ))}
+                          </View>
+                        )}
+                        {inactive > 0 && (
+                          <View>
+                            <Text style={{ color: "#ef4444", fontSize: 11, fontWeight: "700" }}>비활성 tier 작품: {inactive}건</Text>
+                            {(hybridDiagData.inactiveAssigned || []).slice(0, 5).map((r, i) => (
+                              <Text key={i} style={{ color: C.sub, fontSize: 10 }}>{r.title} (manual_tier={r.manual_tier})</Text>
+                            ))}
+                          </View>
+                        )}
+                        {oQ > 0 && <Text style={{ color: "#ef4444", fontSize: 11 }}>큐 고아 row: {oQ}건</Text>}
+                        {oS > 0 && <Text style={{ color: "#ef4444", fontSize: 11 }}>세션 고아 row: {oS}건</Text>}
+                      </View>
+                    );
+                  })()}
+                </Section>
+              </>
+            )}
+
             {PerfMonitor.enabled && (
             <Section title="📋 진단 내보내기">
               <PrimaryButton
@@ -44938,6 +45443,39 @@ async function importJSON() {
                     const insQ = await all("SELECT status, COUNT(*) as cnt FROM insight_queue GROUP BY status");
                     if (insQ && insQ.length > 0) lines.push(`[인사이트] ${insQ.map(i => `${i.status}=${i.cnt}`).join(", ")}`);
                   } catch {}
+                  // 🆕 v7.0.8: hybrid 모드일 때 진단 패널 데이터를 텍스트 리포트에 append
+                  if (globalTierConfig.mode === "hybrid" && hybridDiagData) {
+                    try {
+                      lines.push(``, `=== v7.0 하이브리드 진단 ===`);
+                      const qs = (hybridDiagData.queueByState || []).map(r => `${r.state}=${r.cnt}`).join(", ");
+                      lines.push(`[검증 큐 상태] ${qs || "(빈 큐)"}`);
+                      const tt = (hybridDiagData.queueByTrigger || []).map(r => `${r.trigger_type}=${r.cnt}`).join(", ");
+                      if (tt) lines.push(`[pending trigger 분포] ${tt}`);
+                      const pp = (hybridDiagData.queueByPriority || []).map(r => `${r.priority}=${r.cnt}`).join(", ");
+                      if (pp) lines.push(`[pending priority 분포] ${pp}`);
+                      const fire24 = (hybridDiagData.fire24hByTrigger || []).map(r => `${r.trigger_type}=${r.cnt}`).join(", ");
+                      lines.push(`[24h trigger fire] ${fire24 || "없음"} (총 누적 ${hybridDiagData.fireTotal || 0}회)`);
+                      const fbs = (hybridDiagData.fire24hBySource || []).map(r => `${r.source || "(none)"}/${r.trigger_type}=${r.cnt}`).slice(0, 10).join(", ");
+                      if (fbs) lines.push(`[24h source × trigger] ${fbs}`);
+                      lines.push(``, `[in-flight 세션] ${verificationSession ? `YES (${verificationSession.suspicionNovel?.title || "?"} · 응답=${(verificationSession.responses || []).length}/${VERIFICATION_MAX_RESPONSES})` : "NO"}`);
+                      const gks = (hybridDiagData.gatekeeperTop || []).slice(0, 5).map(r => `${r.title}(×${r.block_count})`).join(", ");
+                      if (gks) lines.push(`[수문장 후보 top5] ${gks}`);
+                      const acts = (hybridDiagData.sessionByAction || []).map(r => `${r.result_action || "?"}=${r.cnt}`).join(", ");
+                      if (acts) lines.push(`[세션 action] ${acts}`);
+                      const recents = (hybridDiagData.recentSequences || []).slice(0, 5).map(s => `[${s.suspicion_title}] ${s.suspicion_type} → ${s.result_action} → ${s.result_tier || "?"} (응답=${s.total_responses}, blocker=${s.blocker_title || "-"})`).join("\n  ");
+                      if (recents) lines.push(`[최근 시퀀스 5건]`, `  ${recents}`);
+                      const dup = (hybridDiagData.dupOrders || []).length;
+                      const neg = (hybridDiagData.negativeOrders || []).length;
+                      const inactive = (hybridDiagData.inactiveAssigned || []).length;
+                      const oQ = (hybridDiagData.orphanQueue || []).length;
+                      const oS = (hybridDiagData.orphanSessions || []).length;
+                      lines.push(`[invariant] gap위반=${dup} / 음수order=${neg} / 비활성tier=${inactive} / 큐고아=${oQ} / 세션고아=${oS}`);
+                    } catch (hyErr) {
+                      lines.push(`[v7.0 하이브리드 진단 export 실패: ${hyErr?.message}]`);
+                    }
+                  } else if (globalTierConfig.mode !== "hybrid") {
+                    lines.push(``, `=== v7.0 하이브리드 진단 ===`, `(현재 모드: ${globalTierConfig.mode} — 하이브리드 미사용)`);
+                  }
                   const report = lines.join("\n");
                   try {
                     await Share.share({ title: "성능 진단 리포트", message: report });
