@@ -2,9 +2,254 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.0.4 (취향 분석 — 연중/미완을 저평가 원인으로 인식)                       ║
- * ║  최종 수정: 2026-05-05                                                        ║
- * ║  총 라인 수: 약 47,000줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 7.0.9 (진단 탭 UX 업그레이드 — Anomaly/PieChart/JSON Export/익명화)      ║
+ * ║  최종 수정: 2026-05-06                                                        ║
+ * ║  총 라인 수: 약 49,100줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.0.9 진단 탭 UX 업그레이드 (2026-05-06)                                  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ 진단 탭 종합 검토 후 즉시 권장 5건 일괄 적용. 가시성/시각화/공유/유지보수      ║
+ * ║ 강화. 매칭 5대 불변조건과 무관한 표시 레이어 변경만.                            ║
+ * ║                                                                              ║
+ * ║ [K] 한눈에 보기 헤더 — anomaly aggregator                                       ║
+ * ║ • 진단 탭 진입 즉시 critical/warning 요약 카드                                  ║
+ * ║ • 통합 항목: lastCrashLog / db.consecutiveErrors / PerfMonitor errors /        ║
+ * ║   hybrid invariant 5종 (dup/negative/inactive/orphanQueue/orphanSessions)      ║
+ * ║ • 색상 코드: critical(빨강) / warning(노랑) / 정상(초록)                        ║
+ * ║                                                                              ║
+ * ║ [A] 섹션 인덱스 칩 row — 진단 탭 상단 시각적 indexing                           ║
+ * ║ • hybrid 모드일 때 v7 섹션 3개 추가 노출                                        ║
+ * ║                                                                              ║
+ * ║ [H] PieChart 통합 (4곳)                                                          ║
+ * ║ • S1 queueByState — pending/resolved/cancelled/skipped                         ║
+ * ║ • S4 sessionByAction — moved/no_change/no_candidates/skipped                   ║
+ * ║ • S4 sessionBySuspicion — underrated/overrated                                 ║
+ * ║ • S4 validationByType — consistent/violation 등                                ║
+ * ║ • 기존 PieChartSimple 컴포넌트(App.jsx:19701) 재사용                            ║
+ * ║                                                                              ║
+ * ║ [N] JSON Export — LLM/외부 도구 분석용                                          ║
+ * ║ • meta/perfMonitor/crash/hybrid/anomalies 구조화                                ║
+ * ║ • Share API 또는 Alert fallback                                                ║
+ * ║                                                                              ║
+ * ║ [O] 익명화 토글                                                                  ║
+ * ║ • 작품 제목을 djb2 hash로 치환 → t{6자리} 형식                                  ║
+ * ║ • 동일 제목은 동일 hash (분석 시 reference 가능)                                ║
+ * ║ • 텍스트 export + JSON export 모두 적용                                         ║
+ * ║                                                                              ║
+ * ║ [Q] trigger_fire_log 30일 자동 정리                                              ║
+ * ║ • loadHybridDiag 진입 시 30일+ row DELETE                                       ║
+ * ║ • 무한 누적 방지 (1년 사용 시 18000+ row → 인덱스 효율 저하)                     ║
+ * ║                                                                              ║
+ * ║ [별도 패치 후보 — 미적용]                                                          ║
+ * ║ • P 일자별 진단 스냅샷 비교 / G 느린 SQL → 호출 함수 cross-ref /                ║
+ * ║   F 갤러리 파일시스템 vs DB 정합성 검증                                          ║
+ * ║                                                                              ║
+ * ║ [회귀 위험]                                                                       ║
+ * ║ • 코어 로직 변경 X — 진단 탭 표시/Export만 변경                                 ║
+ * ║ • PieChart 4곳: 비어있을 때 조건부 렌더링                                       ║
+ * ║ • 익명화 hash: deterministic, 디바이스 로컬                                     ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.0.8 하이브리드 진단 패널 + trigger_fire_log (2026-05-06)                 ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ 추가 패치의 정확한 근거 데이터를 수집하기 위해 진단 탭에 하이브리드 모드        ║
+ * ║ 전용 진단 패널 6개 섹션을 추가. 사용자가 의심도 변동 흐름 + 트리거 적용 정확   ║
+ * ║ 도 + invariant 위반을 즉시 데이터로 확인 가능.                                 ║
+ * ║                                                                              ║
+ * ║ [신규 테이블 1개]                                                                ║
+ * ║ • trigger_fire_log — enqueueVerification 모든 호출 추적 (UPSERT 무관 정확     ║
+ * ║   fire 카운트). 컬럼: id/trigger_type/novel_id/suspicion_type/source/         ║
+ * ║   created_at + 3개 인덱스 + v7.0.5 ensureColumn 안전장치                      ║
+ * ║                                                                              ║
+ * ║ [enqueueVerification 시그니처 확장]                                              ║
+ * ║ • 4번째 인자 source 추가 (backward compat: omit 시 NULL).                     ║
+ * ║ • 9개 호출 사이트 갱신:                                                        ║
+ * ║   - addNovel ×2 (overrated/underrated) → "addNovel"                           ║
+ * ║   - saveEdit ×2 (tier_change/cleared) → "saveEdit"                            ║
+ * ║   - batchSetTier → "batchSetTier"                                             ║
+ * ║   - swapRating ×2 (idA/idB) → "swapRating_idA"/"swapRating_idB"               ║
+ * ║   - gatekeeper ⬆️/⬇️ → "gatekeeper_up"/"gatekeeper_down"                       ║
+ * ║   - inline tier chip → "inline_chip"                                          ║
+ * ║                                                                              ║
+ * ║ [진단 패널 6개 섹션 — 진단 탭 → "📋 진단 내보내기" 직전 위치]                  ║
+ * ║ • S1 검증 큐 + 트리거 trace                                                    ║
+ * ║   - state 카드 (pending/resolved/cancelled/skipped)                           ║
+ * ║   - trigger × suspicion 매트릭스 (방향 판정 정확성)                            ║
+ * ║   - priority 분포                                                              ║
+ * ║   - 24h trigger fire (정확, fire_log) + source × trigger 매트릭스             ║
+ * ║   - 최근 fire trail 20 + 현재 pending top 10                                   ║
+ * ║ • S2 진행 중 시퀀스 — in-flight responses trail + 변곡점 마커 + 다음 단계      ║
+ * ║ • S3 수문장 누적 후보 top 10 (5+ 강조)                                         ║
+ * ║ • S4 세션 결과 분포 (action/suspicion/trigger/violation_type)                  ║
+ * ║ • S5 최근 5개 시퀀스 응답 trace — JOIN 재구성 + blocker 마커                  ║
+ * ║ • S6 invariant 검증 — gap=100 위반/음수 order/비활성 tier/고아 row             ║
+ * ║                                                                              ║
+ * ║ [모드 가드 / 상태 관리]                                                          ║
+ * ║ • hybrid 모드일 때만 6개 섹션 노출, 그 외 단일 안내 카드                       ║
+ * ║ • mode 변경 시 hybridDiagData reset (stale 방지)                               ║
+ * ║ • 진단 탭 진입 시 자동 로드 + 새로고침 버튼 (수동 갱신)                        ║
+ * ║                                                                              ║
+ * ║ [정합성]                                                                         ║
+ * ║ • doClearAll에 trigger_fire_log DELETE 추가 (import 시 fresh 시작)             ║
+ * ║ • removeNovel execBatch에 trigger_fire_log WHERE novel_id=? DELETE 추가        ║
+ * ║                                                                              ║
+ * ║ [export 확장]                                                                    ║
+ * ║ • 기존 진단 리포트 텍스트에 v7.0 하이브리드 진단 섹션 append                   ║
+ * ║ • mode !== 'hybrid' 시 "(현재 모드: ... — 하이브리드 미사용)" 1줄              ║
+ * ║                                                                              ║
+ * ║ [평가]                                                                           ║
+ * ║ • read-only 데이터 노출 — 코어 로직 변경 X                                     ║
+ * ║ • enqueueVerification에 INSERT 1회 추가 (~1ms, 무음 catch)                    ║
+ * ║ • 기존 사용자: ensureColumn 패턴으로 부분 스키마 회복 가능                     ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.0.7 v7.0.6 사후 검증 후속 — Critical 2 + Major 5 (2026-05-06)            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ v7.0.6 patch 사후 검증(3 병렬 에이전트)에서 발견된 결함 7건 일괄 수정.        ║
+ * ║                                                                              ║
+ * ║ [Critical — 즉시 수정 필요]                                                     ║
+ * ║ • CRIT-1 saveEdit snapshot 라이프사이클: editOriginalSnapshotRef.current가    ║
+ * ║   31100에서 nullify되는데 31171의 C1 비교 블록이 같은 ref를 읽어서 항상        ║
+ * ║   snapshot=null. metaChanged 항상 false → tier+meta 동시 변경 시에도          ║
+ * ║   tier_change push (non_undoable marker가 saveEdit 경로에서 dead code).       ║
+ * ║   사용자 결정한 정책 자체가 미작동 — 로컬 변수 _v7SnapshotForUndo로 진입 시   ║
+ * ║   캐싱하여 해결.                                                               ║
+ * ║ • CRIT-2 performUndo case 'non_undoable' break → switch 후 공통 success alert ║
+ * ║   "되돌렸습니다"로 fallthrough → "되돌릴 수 없음" → "되돌렸습니다" 이중 alert ║
+ * ║   모순 UX. setUndoStack(slice(1)) + return으로 차단.                           ║
+ * ║                                                                              ║
+ * ║ [Major — Stage 4 (C1) 보강]                                                     ║
+ * ║ • MAJ-1 awards year 타입 정규화: snapshot.awards는 year=String("2024")로,     ║
+ * ║   awardsPayload는 year=Number(2024)로 만들어져 비교 시 항상 다름. CRIT-1       ║
+ * ║   해결 후 활성화되면 모든 tier 변경이 non_undoable로 잘못 분류될 위험.         ║
+ * ║   JSON 파싱 + Number 정규화 함수로 비교 통일.                                  ║
+ * ║ • MAJ-2 snapshot 누락 4컬럼 추가: major_genre, sub_genre, aliases,            ║
+ * ║   memorable_quote. saveEdit이 UPDATE하는 컬럼인데 snapshot에는 없어서         ║
+ * ║   metaChanged 미감지. C1 분기 정확성을 위해 필수.                              ║
+ * ║                                                                              ║
+ * ║ [Major — UI/일관성/race]                                                        ║
+ * ║ • MAJ-3 AwardsScreen 시상 통계 '후보작 평균 rating' 표시 hybrid/manual에서    ║
+ * ║   비활성 (m5 의도와 일치). 19077 isManualOrHybrid 분기 추가.                  ║
+ * ║ • MAJ-4 calculateWinProbability deps에 isManualOrHybrid 추가 — match→manual  ║
+ * ║   라이브 전환 시 stale closure 방지.                                           ║
+ * ║ • MAJ-5 analyzeMatchResult/analyzeUpsetCauses에 tagAttributes 인자 전달 —     ║
+ * ║   m3가 tagRelations만 캡처했는데 analyzeUpsetCauses 내부 isTagTitle은         ║
+ * ║   tagAttributes closure 참조. 동일한 stale 위험 잔존. 인자로 함께 전달하여    ║
+ * ║   불변규칙 #2 완전 충족.                                                       ║
+ * ║                                                                              ║
+ * ║ [평가 후 변경 없음]                                                             ║
+ * ║ • Stage 2/3는 정상 — M5b 트랜잭션 부재(소규모 안전), M7 rebalance tie-break   ║
+ * ║   created_at(자기 치유), M4b 광범위 cleanup(비용 무시 가능)                    ║
+ * ║ • m1 자동매칭 IIFE .catch — defense-in-depth 수준, 비용 zero                  ║
+ * ║ • m2 매칭 탭 이탈 시 자동매칭 중단 — 사용자 의도 반영(백그라운드 누적 차단)   ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.0.6 모드 전수 감사 — 17건 종합 수정 (2026-05-06)                        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ 3개 병렬 에이전트 모드 전수 감사 결과 17건 결함 발견 (Critical 1, Major 11,   ║
+ * ║ Minor 5). 사용자 결정으로 4건 추가 의사결정 반영. 5단계 stage commit으로 진행.║
+ * ║                                                                              ║
+ * ║ [Critical — saveEdit/batchSetTier/inline chip undo 누락]                       ║
+ * ║ • C1 (Stage 4): 사용자 결정 — tier 단독 변경 시만 정상 push. tier+메타 동시   ║
+ * ║   변경 시 non_undoable marker → 사용자가 undo 시도하면 명시적 안내. saveEdit  ║
+ * ║   에서 editOriginalSnapshotRef.current 와 비교해 metaChanged 판정             ║
+ * ║                                                                              ║
+ * ║ [Major — 데이터 정합성 (manual_order invariant)]                                ║
+ * ║ • M5 setNovelTierAtomic 헬퍼 신규 — single statement sub-select + UPDATE로    ║
+ * ║   race-free MAX+100. saveEdit/batchSetTier/inline chip 일관 적용              ║
+ * ║ • M7 ▲▼ collision 분기에서 즉시 rebalanceTierOrder 호출 — gap=100 회복. 이    ║
+ * ║   fix가 사용자 결정 M10 skip(매칭→수동 백필 안 함)의 안전망 역할              ║
+ * ║ • M8 swapRating fresh fetch + tier 일관성 검증 — race 시 abort                ║
+ * ║ • M11 pushUndo payload에 prevManualOrder 추가, performUndo 복원도 manual_order║
+ * ║                                                                              ║
+ * ║ [Major — UX / 가시성 / 안전성]                                                  ║
+ * ║ • M1 수문장 ⬆️/⬇️ Alert 더블탭 가드 (gatekeeperRespondingRef)                  ║
+ * ║ • M2 AwardsScreen 빅 카드 + 썸네일 hybrid에서 ELO rating → '{tier} #{order}'  ║
+ * ║ • M3 RS import: 'moved'/'completed' fallback 강제 → 누락 row skip + warn      ║
+ * ║ • M4 TIER_PRESETS 적용 시 검증 state 정리 — clearVerificationStateOnModeExit  ║
+ * ║   헬퍼 추출. 케이스 3종 (hybrid→다른 / 다른→hybrid / hybrid→hybrid 5tier→3tier)║
+ * ║ • M6 addNovel 최하위 tier enqueueVerification — idx>0 조건 (이전: 최하위 누락) ║
+ * ║ • M9 사용자 결정 — saveEdit/batchSetTier/inline chip 가드는 tier 변경에만,    ║
+ * ║   메타 편집은 자유 (tier UPDATE만 skip + 안내)                                ║
+ * ║                                                                              ║
+ * ║ [Minor]                                                                          ║
+ * ║ • m1 자동매칭 IIFE .catch (unhandled rejection 차단)                           ║
+ * ║ • m2 자동매칭 useEffect screen deps + 진입 가드 (탭 이탈 시 중단)              ║
+ * ║ • m3 analyzeMatchResult tagRelations 스냅샷 인자 전달 (불변규칙 #2)            ║
+ * ║ • m5 AwardsScreen compareNovels/calculateNovelScore 'manual' 모드도 분기      ║
+ * ║ • m6 사용자 결정 — meta_edit 트리거 자체 제거 (priority=1 실효 X, 노이즈 제거)║
+ * ║                                                                              ║
+ * ║ [사용자 의사결정 명세]                                                          ║
+ * ║ • M9: tier 변경 분기에만 가드 (메타 편집 자유)                                ║
+ * ║ • M10: skip — manual_order 모드 전환 시 보존 (M7 자동 정규화로 충분)          ║
+ * ║ • C1: 조건부 — tier 단독 변경 시만 정상 push, 동시 변경 시 non_undoable       ║
+ * ║ • m6: 트리거 자체 제거 — priority=1로 다른 트리거에 밀려 실효 X                ║
+ * ║                                                                              ║
+ * ║ [m4 / m7 검토 후 skip]                                                          ║
+ * ║ • m4 cross-tier ±50 압축: rebalanceTierOrder가 finalize마다 흡수, 영향 없음   ║
+ * ║ • m7 manual→hybrid 큐 일괄 인입: 신규 편집부터 검증하는 게 의도된 동작        ║
+ * ║                                                                              ║
+ * ║ [신규 헬퍼 3개]                                                                ║
+ * ║ • setNovelTierAtomic(novelId, newTier) — App.jsx 22645                          ║
+ * ║ • clearVerificationStateOnModeExit() — App.jsx 31275                            ║
+ * ║ • gatekeeperRespondingRef — App.jsx 24260                                       ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.0.5 'no such column: state' 크래시 수정 (2026-05-06)                    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ 사용자 보고: 앱 시작 시 "데이터베이스 오류 — 앱을 다시 시작해주세요. 오류:        ║
+ * ║ Call to function 'NativeDatabase.prepareAsync' has been rejected. → Caused   ║
+ * ║ by: Error code : no such column: state" 모달 표시되며 사용 불가.                ║
+ * ║                                                                              ║
+ * ║ 근본 원인: v7.0 신규 테이블 3개(tier_verification_queue, tier_validation_log, ║
+ * ║ tier_repositioning_session) 도입 시 ensureColumn 마이그레이션 후속이 빠짐.    ║
+ * ║ 다른 테이블(novels/preference_patterns/insight_queue)은 모두 CREATE TABLE +   ║
+ * ║ ensureColumn 패턴인데, v7.0 테이블만 CREATE TABLE만 있어 부분 스키마로 남은   ║
+ * ║ DB(이전 dev/alpha 빌드에서 다른 컬럼 셋으로 생성된 테이블 등)를 복구할 수      ║
+ * ║ 없음. CREATE TABLE IF NOT EXISTS는 기존 테이블에 컬럼을 추가하지 않으므로,    ║
+ * ║ 직후 실행되는 CREATE INDEX … (state, …)가 'no such column: state'로 실패하고  ║
+ * ║ initDb 전체가 throw → 3회 재시도 모두 실패 → 알림 모달 노출.                   ║
+ * ║                                                                              ║
+ * ║ [수정]                                                                          ║
+ * ║ • tier_verification_queue: ensureColumn 3건 추가 — state(DEFAULT 'pending'),  ║
+ * ║   priority(0), processed_at. CREATE INDEX idx_tvq_state 직전에 위치하여        ║
+ * ║   부분 스키마 DB도 복구 가능.                                                  ║
+ * ║ • tier_repositioning_session: ensureColumn 8건 추가 — state, trigger_type,    ║
+ * ║   result_tier, result_order, result_action, total_responses(0), blocker_id,  ║
+ * ║   completed_at. CREATE INDEX idx_trs_blocker 직전에 위치.                      ║
+ * ║                                                                              ║
+ * ║ [영향 범위]                                                                     ║
+ * ║ • 정상 스키마 사용자: ensureColumn은 columnExists 체크 후 no-op (PRAGMA만 호출,║
+ * ║   ~10ms 1회/슬롯/실행). 동작/데이터 변화 없음.                                  ║
+ * ║ • 부분 스키마 사용자: 누락 컬럼이 ALTER TABLE로 추가되며 initDb 성공.           ║
+ * ║   tier_repositioning_session.state는 NOT NULL → NULLABLE DEFAULT로 변경되나   ║
+ * ║   모든 INSERT 사이트에서 state 명시적으로 제공하므로 런타임 영향 없음.          ║
+ * ║                                                                              ║
+ * ║ [원리 — 왜 다른 테이블은 안전했나]                                                ║
+ * ║ • novels/preference_patterns/insight_queue는 처음부터 ensureColumn으로 매       ║
+ * ║   버전마다 컬럼이 추가되었음. v7.0 테이블만 "신규 테이블이라 마이그레이션      ║
+ * ║   불필요"로 잘못 판단되어 CREATE TABLE 1회만 실행됨.                          ║
+ * ║                                                                              ║
+ * ║ [향후 가이드]                                                                    ║
+ * ║ • 새 테이블 추가 시: CREATE TABLE 직후 모든 nullable/default 컬럼에 대해      ║
+ * ║   ensureColumn 호출 (CREATE INDEX 전에). 설령 이번 릴리스에서는 no-op라도      ║
+ * ║   향후 컬럼 추가/스키마 변경 시 부분 스키마 복구 경로가 유지됨.                ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -4589,6 +4834,12 @@ async function initDb() {
     created_at INTEGER NOT NULL,
     processed_at INTEGER
   );`);
+  // 🔧 v7.0.5: 기존 DB 스키마 보강 — CREATE TABLE IF NOT EXISTS는 기존 테이블에
+  // 컬럼을 추가하지 않으므로, 부분 스키마로 남은 DB가 아래 CREATE INDEX에서
+  // "no such column: state" 크래시를 일으키는 것을 방지한다.
+  await ensureColumn("tier_verification_queue", "state", "TEXT", "'pending'");
+  await ensureColumn("tier_verification_queue", "priority", "INTEGER", "0");
+  await ensureColumn("tier_verification_queue", "processed_at", "INTEGER", null);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tvq_state ON tier_verification_queue(state, priority DESC, created_at);`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tvq_novel ON tier_verification_queue(novel_id);`);
 
@@ -4619,8 +4870,38 @@ async function initDb() {
     created_at INTEGER NOT NULL,
     completed_at INTEGER
   );`);
+  // 🔧 v7.0.5: 기존 DB 스키마 보강 — 위와 같은 이유로 idx_trs_blocker가 참조하는
+  // state, blocker_id 등을 ensureColumn으로 보강. trigger_type 등 nullable 컬럼도 함께.
+  await ensureColumn("tier_repositioning_session", "state", "TEXT", "'pending'");
+  await ensureColumn("tier_repositioning_session", "trigger_type", "TEXT", null);
+  await ensureColumn("tier_repositioning_session", "result_tier", "TEXT", null);
+  await ensureColumn("tier_repositioning_session", "result_order", "INTEGER", null);
+  await ensureColumn("tier_repositioning_session", "result_action", "TEXT", null);
+  await ensureColumn("tier_repositioning_session", "total_responses", "INTEGER", "0");
+  await ensureColumn("tier_repositioning_session", "blocker_id", "TEXT", null);
+  await ensureColumn("tier_repositioning_session", "completed_at", "INTEGER", null);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_trs_blocker ON tier_repositioning_session(blocker_id, state);`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_trs_novel ON tier_repositioning_session(novel_id);`);
+
+  // 🆕 v7.0.8: trigger_fire_log — enqueueVerification 모든 호출 추적 (UPSERT 동작과 무관하게 fire 횟수 정확 기록)
+  // 진단 탭에서 "트리거가 잘 적용되는지", "어떤 호출자(source)가 어떤 트리거를 발동하는지" 검증용
+  await database.runAsync(`CREATE TABLE IF NOT EXISTS trigger_fire_log (
+    id TEXT PRIMARY KEY NOT NULL,
+    trigger_type TEXT NOT NULL,
+    novel_id TEXT,
+    suspicion_type TEXT,
+    source TEXT,
+    created_at INTEGER NOT NULL
+  );`);
+  // v7.0.5와 동일한 안전장치: 부분 스키마로 남은 DB도 회복 가능하도록 ensureColumn 적용
+  await ensureColumn("trigger_fire_log", "trigger_type", "TEXT", "''");
+  await ensureColumn("trigger_fire_log", "novel_id", "TEXT", null);
+  await ensureColumn("trigger_fire_log", "suspicion_type", "TEXT", null);
+  await ensureColumn("trigger_fire_log", "source", "TEXT", null);
+  await ensureColumn("trigger_fire_log", "created_at", "INTEGER", "0");
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tfl_created ON trigger_fire_log(created_at DESC);`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tfl_trigger ON trigger_fire_log(trigger_type);`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tfl_source ON trigger_fire_log(source);`);
 
   // manual_order 인덱스 (티어 그룹별 정렬 빠르게)
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_novels_manual_order ON novels(manual_tier, manual_order);`);
@@ -9510,7 +9791,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.0.4";
+const APP_VERSION = "7.0.9";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -9536,6 +9817,94 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.0.9", date: "2026-05-06",
+    title: "진단 탭 UX 업그레이드 — Anomaly aggregator + PieChart + JSON Export + 익명화",
+    highlights: [
+      { type: "new", text: "📊 한눈에 보기 (K) — 진단 탭 진입 즉시 critical/warning anomaly 요약. 크래시/DB 에러/PerfMonitor 에러/hybrid invariant 위반을 통합 surface" },
+      { type: "new", text: "🗂️ 섹션 인덱스 (A) — 진단 탭 상단에 시각적 칩 row로 어떤 섹션이 있는지 한눈에 확인" },
+      { type: "new", text: "🥧 PieChart 통합 (H) — queueByState / sessionByAction / sessionBySuspicion / validationByType 4곳에 시각화 (기존 PieChartSimple 컴포넌트 재사용)" },
+      { type: "new", text: "📊 JSON Export (N) — LLM/외부 도구 분석용 구조화 데이터. 텍스트 리포트와 별개 버튼" },
+      { type: "new", text: "🔒 익명화 토글 (O) — 작품 제목을 hash로 치환하여 외부 공유 시 프라이버시 보호" },
+      { type: "new", text: "🗑️ trigger_fire_log 30일 자동 정리 (Q) — loadHybridDiag 진입 시 30일+ row DELETE. 무한 누적 방지" },
+    ],
+    details: [
+      { type: "new", text: "Anomaly 통합 항목: lastCrashLog / db.consecutiveErrors>=3 / errors / dupOrders / negativeOrders / inactiveAssigned / orphanQueue / orphanSessions" },
+      { type: "new", text: "익명화 hash: 작품 제목을 djb2 hash로 변환 → t{6자리} 형식. 동일 제목은 동일 hash" },
+      { type: "new", text: "JSON Export 구조: meta / perfMonitor / crash / hybrid (모드별 분기) / anomalies. Share API 또는 Alert fallback" },
+    ],
+  },
+  {
+    version: "7.0.8", date: "2026-05-06",
+    title: "🆕 하이브리드 모드 진단 패널 — 검증 큐/시퀀스/수문장/invariant 6개 섹션",
+    highlights: [
+      { type: "new", text: "🔄 진단 탭에 하이브리드 모드 전용 진단 패널 추가 (모드 전환·새로고침 자동 갱신). 추가 패치의 정확한 근거 데이터 수집용" },
+      { type: "new", text: "📊 trigger_fire_log 신규 테이블 — enqueueVerification 모든 호출을 source(addNovel/saveEdit/batchSetTier/swapRating/inline_chip/gatekeeper_*)와 함께 기록. UPSERT 무관 정확 fire 카운트" },
+      { type: "new", text: "S1 검증 큐 + 트리거 trace — 24h fire 카운트 + source × trigger 매트릭스 + trigger × suspicion 분포 + 최근 fire 20개 trail" },
+      { type: "new", text: "S2 진행 중 시퀀스 — in-flight 응답 trail + 변곡점 마커 + evaluateSequenceProgress 다음 단계" },
+      { type: "new", text: "S3 수문장 누적 후보 (5+ 강조) · S4 세션 결과 분포 · S5 최근 5개 시퀀스 응답 trace · S6 invariant 검증 (gap=100/음수 order/비활성 tier/고아 row)" },
+    ],
+    details: [
+      { type: "new", text: "trigger_fire_log: id/trigger_type/novel_id/suspicion_type/source/created_at + 3개 인덱스 + ensureColumn 안전장치 (v7.0.5 패턴)" },
+      { type: "new", text: "enqueueVerification 시그니처 확장 — 4번째 인자 source. backward compat: omit 시 NULL 저장" },
+      { type: "new", text: "9개 호출 사이트에 source 인자 추가 (addNovel ×2 / saveEdit ×2 / batchSetTier / swapRating ×2 / gatekeeper ×2 / inline_chip)" },
+      { type: "new", text: "doClearAll + removeNovel에 trigger_fire_log 정리 추가 (orphan 방지)" },
+      { type: "new", text: "진단 리포트 export에 v7.0 하이브리드 섹션 텍스트 append (mode === 'hybrid' 시)" },
+    ],
+  },
+  {
+    version: "7.0.7", date: "2026-05-06",
+    title: "v7.0.6 사후 검증 후속 수정 — Critical 2 + Major 5",
+    highlights: [
+      { type: "fix", text: "🔴 saveEdit C1 snapshot 라이프사이클 결함 — editOriginalSnapshotRef.current가 비교 시점에 항상 null로 정리되어 'tier+meta 동시 변경 시 non_undoable marker' 정책이 saveEdit 경로에서 미작동하던 문제. saveEdit 진입 시 로컬 변수 _v7SnapshotForUndo로 캐싱하여 정상 동작" },
+      { type: "fix", text: "🔴 performUndo case 'non_undoable' 이중 alert — break 후 fallthrough로 '되돌릴 수 없음' → '되돌렸습니다' 모순 UX. setUndoStack pop + return으로 차단" },
+      { type: "fix", text: "saveEdit snapshot 4컬럼 추가 (major_genre/sub_genre/aliases/memorable_quote) — 누락 시 metaChanged 미감지로 부분 복원 혼란" },
+      { type: "fix", text: "saveEdit awards year 타입 정규화 — snapshot은 String, current(awardsPayload)는 Number로 불일치하여 false metaChanged 발생. JSON 파싱 후 Number 정규화로 비교" },
+    ],
+    details: [
+      { type: "fix", text: "MAJ-3 AwardsScreen 시상 통계 '후보작 평균: {rating}점'에 isManualOrHybrid 분기 — hybrid/manual에서는 표시 자체 비활성 (m5 의도와 일치)" },
+      { type: "fix", text: "MAJ-4 calculateWinProbability deps에 isManualOrHybrid 추가 — match→manual 라이브 전환 시 stale closure 방지" },
+      { type: "fix", text: "MAJ-5 analyzeMatchResult/analyzeUpsetCauses에 tagAttributes 인자 전달 — 큐 task 지연 중 closure stale 회피 (불변규칙 #2 완전 충족)" },
+    ],
+  },
+  {
+    version: "7.0.6", date: "2026-05-06",
+    title: "모드 전수 감사 종합 수정 — 17건 (Critical 1 / Major 11 / Minor 5)",
+    highlights: [
+      { type: "fix", text: "🔴 saveEdit/batchSetTier/inline tier chip undo 지원 (C1) — 사용자 결정: tier 단독 변경 시만 정상 push, tier+메타 동시 변경 시 'non_undoable' marker로 명시적 안내" },
+      { type: "fix", text: "manual_tier 변경 시 manual_order 동시 갱신 (M5) — atomic SQL setNovelTierAtomic 헬퍼로 race-free MAX+100 산출. saveEdit/batchSetTier/inline chip 일관 적용" },
+      { type: "fix", text: "수문장 ⬆️/⬇️ Alert 더블탭 가드 (M1) — gatekeeperRespondingRef 추가, manual_order +100 중복 적용 방지" },
+      { type: "fix", text: "AwardsScreen 하이브리드/수동 모드 ELO rating 표시 → manual_tier #order 분기 (M2/m5) — 빅 카드/썸네일/제목 칸 3개 사이트" },
+      { type: "fix", text: "▲▼ collision 분기 자동 rebalance (M7) — gap=100 invariant 즉시 회복, 매칭→수동 전환 후 첫 ▲▼에서 자동 정규화" },
+      { type: "fix", text: "TIER_PRESETS 적용 시 hybrid in-flight 세션/큐 정리 (M4) — clearVerificationStateOnModeExit 헬퍼 추출 + 모드 토글과 동일 처리" },
+      { type: "fix", text: "검증 시퀀스 진행 중 tier 변경 차단 (M9) — 사용자 결정: 메타 편집은 자유, tier 변경만 abort + 안내" },
+      { type: "fix", text: "addNovel 최하위 tier enqueueVerification 누락 (M6) — 5tier에서 D 등록 시 검증 사이클 통째 누락 수정" },
+    ],
+    details: [
+      { type: "fix", text: "M3 RS import fallback 강제 제거 — 외부 변조 JSON 시 NOT NULL 누락 row skip + warn (이전: 'moved'/'completed' 강제로 통계 오염 위험)" },
+      { type: "fix", text: "M8 swapRating tier 일관성 사전 검증 — race(동시 finalize) 시 다른 tier order만 swap 차단" },
+      { type: "fix", text: "M11 undo가 manual_order 복원 — pushUndo payload에 prevManualOrder 추가, performUndo case 'tier_change'/'tier_batch'에서 함께 SET" },
+      { type: "fix", text: "m1 자동매칭 IIFE unhandled rejection 차단 (.catch 추가)" },
+      { type: "fix", text: "m2 자동매칭 useEffect screen deps + 진입 가드 — 매칭 탭 이탈 시 백그라운드 자동매칭 중단" },
+      { type: "fix", text: "m3 analyzeMatchResult tagRelations closure 제거 — decide() 진입 시 캡처된 snapshot 인자 전달 (불변규칙 #2)" },
+      { type: "fix", text: "m6 saveEdit meta_edit 트리거 자체 제거 — priority=1로 다른 트리거에 항상 밀려 실효 X, 큐 노이즈 제거 (사용자 결정)" },
+      { type: "fix", text: "M10 manual_order 백필 — 사용자 결정으로 skip (M7 자동 정규화로 충분, 사용자 정렬 보존)" },
+      { type: "fix", text: "m4 / m7 검토 후 skip — 영향 없음 또는 의도된 동작" },
+    ],
+  },
+  {
+    version: "7.0.5", date: "2026-05-06",
+    title: "v7.0 테이블 스키마 마이그레이션 누락 수정 — 'no such column: state' 크래시 해결",
+    highlights: [
+      { type: "fix", text: "🔴 앱 시작 시 '데이터베이스 오류 — no such column: state' 크래시 수정 — initDb의 CREATE INDEX가 부분 스키마(state 컬럼 누락) 테이블에서 실패하던 문제" },
+      { type: "fix", text: "tier_verification_queue / tier_repositioning_session — CREATE TABLE 직후 ensureColumn 호출로 누락 컬럼 자동 보강 (다른 테이블과 동일한 마이그레이션 패턴 적용)" },
+    ],
+    details: [
+      { type: "fix", text: "tier_verification_queue: state(DEFAULT 'pending'), priority(0), processed_at — 3개 컬럼 ensureColumn 추가" },
+      { type: "fix", text: "tier_repositioning_session: state(DEFAULT 'pending'), trigger_type, result_tier, result_order, result_action, total_responses(0), blocker_id, completed_at — 8개 컬럼 ensureColumn 추가" },
+      { type: "fix", text: "근본 원인 — v7.0 신규 테이블 3개 도입 시 ensureColumn 마이그레이션 후속이 빠져, 부분 스키마 DB가 후속 CREATE INDEX에서 prepareAsync 실패로 크래시" },
+    ],
+  },
   {
     version: "7.0.4", date: "2026-05-05",
     title: "취향 분석 — 연중/미완 작품을 저평가 원인(factor)으로 인식",
@@ -17563,9 +17932,12 @@ const AwardsScreen = memo(({
 
   // 🆕 v7.0: hybrid 모드 — manual_tier+manual_order 기준 정렬, 그 외(match)는 rating 기준
   // v7.0.1 (N3 fix): tierMode prop 우선 (memo 리렌더 보장), 미전달 시 globalTierConfig fallback
-  const isHybrid = (tierMode || globalTierConfig.mode) === "hybrid";
+  const effectiveMode = (tierMode || globalTierConfig.mode);
+  const isHybrid = effectiveMode === "hybrid";
+  // 🆕 v7.0.6 (m5): manual 모드도 manual_tier+order 기준 정렬/점수 — 이전 isHybrid만 분기 시 manual 사용자에게 rating 기반 표시되어 모드 의도와 모순
+  const isManualOrHybrid = effectiveMode === "hybrid" || effectiveMode === "manual";
   const compareNovels = useCallback((a, b) => {
-    if (isHybrid) {
+    if (isManualOrHybrid) {
       const tierOrder = getActiveTierOrder(globalTierConfig);
       // 🆕 v7.0.2: 비활성 티어(프리셋 전환 잔여)는 -1 → 최하단(tierOrder.length)으로 처리
       const idxA = a.manual_tier ? tierOrder.indexOf(a.manual_tier) : -1;
@@ -17576,10 +17948,10 @@ const AwardsScreen = memo(({
       const oa = Number(a.manual_order) || 0;
       const ob = Number(b.manual_order) || 0;
       if (oa !== ob) return oa - ob; // 같은 tier 내 순위 (작은 manual_order 우선)
-      return (b.rating || 0) - (a.rating || 0); // 마지막 fallback
+      return (b.rating || 0) - (a.rating || 0); // 마지막 fallback (manual_order=0 동률 시)
     }
     return (b.rating || 0) - (a.rating || 0);
-  }, [isHybrid]);
+  }, [isManualOrHybrid]);
   
   // 연도 목록 (2024년부터 현재+1년까지)
   const years = useMemo(() => getAwardYears(), []);
@@ -17729,17 +18101,18 @@ const AwardsScreen = memo(({
 
     // 개별 작품 점수 계산 함수
     // 🆕 v7.0: hybrid 모드 — ELO rating 점수 비활성, manual_tier+manual_order 위주
+    // 🆕 v7.0.6 (m5): manual 모드도 hybrid와 동일 점수 산출 — 사용자 의도(수동 정렬 우선)와 일치
     const calculateNovelScore = (n) => {
       let score = 0;
 
       // 🆕 v7.0.3: 비활성 tier(indexOf=-1) 처리 — 이전: -1 → length+1 부스트로 inactive 작품이 S 위로 점프
-      if (isHybrid) {
-        // hybrid: 티어 점수만 (rating 무시) + 같은 티어 내 manual_order 미세 가산
+      if (isManualOrHybrid) {
+        // hybrid/manual: 티어 점수만 (rating 무시) + 같은 티어 내 manual_order 미세 가산
         const tier = getDisplayTier(n, globalTierConfig);
         const rawIdx = tierOrder.indexOf(tier);
         const tierIndex = rawIdx === -1 ? tierOrder.length : rawIdx;
         score += (tierOrder.length - tierIndex) * 30; // 티어당 30점
-        // manual_order 작을수록(상위) 약간 가산 — 최대 ±15점
+        // manual_order 작을수록(상위) 약간 가산 — 최대 ±15점. manual_order=0(legacy)는 자연 fallback
         const order = Number(n.manual_order) || 0;
         score += Math.max(0, 15 - order / 200);
       } else {
@@ -17800,8 +18173,8 @@ const AwardsScreen = memo(({
         }
       }
       
-      // 7. 승률 반영 (매칭에서 이긴 비율) — hybrid에서는 무시 (ELO 비활성)
-      if (!isHybrid) {
+      // 7. 승률 반영 (매칭에서 이긴 비율) — hybrid/manual에서는 무시 (ELO 비활성)
+      if (!isManualOrHybrid) {
         const totalMatches = (n.wins || 0) + (n.losses || 0);
         if (totalMatches >= 5) {  // 최소 5경기 이상
           const winRate = n.wins / totalMatches;
@@ -17837,7 +18210,9 @@ const AwardsScreen = memo(({
 
     // 범위 제한 (1% ~ 99%)
     return Math.min(99, Math.max(1, probability));
-  }, [list.length, isHybrid]);
+    // 🔧 v7.0.7 (MAJ-4): isManualOrHybrid 추가 — manual↔match 라이브 전환 시 stale closure 방지
+    // (이전: isHybrid만 deps → match→manual 변경 시 isHybrid는 false→false 불변, isManualOrHybrid가 false→true이지만 invalidate 안 됨)
+  }, [list.length, isHybrid, isManualOrHybrid]);
   
   // 🆕 v3.2.1: 상별 후보작 목록 계산
   const getCandidatesForAward = useCallback((award) => {
@@ -18294,7 +18669,8 @@ const AwardsScreen = memo(({
                             {novel.author || "-"}
                           </Text>
                           <Text style={{ color: C.text, fontSize: 13, fontWeight: "700" }}>
-                            {isHybrid ? `${getTierLabel(novel.manual_tier || "")} #${novel.manual_order || 0}` : `${(novel.rating || 0).toFixed(0)}점`}
+                            {/* 🆕 v7.0.6 (m5): manual 모드도 manual_tier #order 표시 */}
+                            {isManualOrHybrid ? `${getTierLabel(novel.manual_tier || "")} #${novel.manual_order || 0}` : `${(novel.rating || 0).toFixed(0)}점`}
                           </Text>
                         </View>
                         
@@ -18531,7 +18907,8 @@ const AwardsScreen = memo(({
                               <View style={{ flexDirection: "row", alignItems: "center" }}>
                                 <Text style={{ fontSize: 13 }}>📊</Text>
                                 <Text style={{ color: C.text, fontSize: 13, fontWeight: "700", marginLeft: 4 }}>
-                                  {novel.rating.toFixed(1)}점
+                                  {/* 🆕 v7.0.6 (M2/m5): hybrid/manual 모드는 ELO rating 비활성 — manual_tier #order 표시 */}
+                                  {isManualOrHybrid ? `${getTierLabel(novel.manual_tier || "")} #${novel.manual_order || 0}` : `${novel.rating.toFixed(1)}점`}
                                 </Text>
                               </View>
                               <View style={{ flexDirection: "row", alignItems: "center" }}>
@@ -18890,11 +19267,12 @@ const AwardsScreen = memo(({
                         
                         {/* 점수 */}
                         <Text style={{ 
-                          color: C.sub, 
-                          fontSize: 9, 
+                          color: C.sub,
+                          fontSize: 9,
                           marginTop: 2,
                         }}>
-                          {novel.rating.toFixed(0)}점
+                          {/* 🆕 v7.0.6 (M2/m5): hybrid/manual 모드는 ELO rating 비활성 — manual_tier #order 표시 */}
+                          {isManualOrHybrid ? `${getTierLabel(novel.manual_tier || "")} #${novel.manual_order || 0}` : `${novel.rating.toFixed(0)}점`}
                         </Text>
                       </View>
                     );
@@ -18934,17 +19312,20 @@ const AwardsScreen = memo(({
                       <Text style={{ color: C.sub, fontSize: 12 }}>후보작</Text>
                     </View>
                   </View>
-                  <View style={{ 
-                    backgroundColor: C.bg, 
-                    padding: 12, 
+                  <View style={{
+                    backgroundColor: C.bg,
+                    padding: 12,
                     borderRadius: 10,
                     flexDirection: "row",
                     justifyContent: "center",
                     gap: 20,
                   }}>
-                    <Text style={{ color: C.sub, fontSize: 12 }}>
-                      후보작 평균: <Text style={{ color: C.text, fontWeight: "700" }}>{avgRating}점</Text>
-                    </Text>
+                    {/* 🔧 v7.0.7 (MAJ-3): hybrid/manual에서는 ELO rating 평균 비활성 — 모드 의도(수동 정렬)와 모순되는 표시 제거 */}
+                    {!isManualOrHybrid && (
+                      <Text style={{ color: C.sub, fontSize: 12 }}>
+                        후보작 평균: <Text style={{ color: C.text, fontWeight: "700" }}>{avgRating}점</Text>
+                      </Text>
+                    )}
                     <Text style={{ color: C.sub, fontSize: 12 }}>
                       수상률: <Text style={{ color: C.text, fontWeight: "700" }}>
                         {candidates.length > 0 ? Math.round((uniqueWinners / candidates.length) * 100) : 0}%
@@ -22196,10 +22577,21 @@ const VERIFICATION_PRIORITY = {
 };
 
 // v7.0.1 (M1 fix): 1초 디바운스 silent drop → UPSERT (작품당 pending 1건 보장 + 최신 의도 반영)
-async function enqueueVerification(novelId, triggerType, suspicionType) {
+// 🆕 v7.0.8: source 인자 추가 — 호출자(addNovel/saveEdit/batchSetTier/swapRating/inline_chip/gatekeeper_up/gatekeeper_down) 추적
+// backward compat: source 미전달 시 NULL 저장 (legacy 호출 그대로 동작)
+async function enqueueVerification(novelId, triggerType, suspicionType, source) {
   if (!novelId || !triggerType || !suspicionType) return;
   const now = Date.now();
   const priority = VERIFICATION_PRIORITY[triggerType] || 0;
+  // 🆕 v7.0.8: trigger_fire_log INSERT — UPSERT 동작과 무관하게 모든 enqueueVerification 호출 기록
+  // 진단 탭에서 source × trigger 매트릭스 + 24h fire 카운트 등에 사용
+  // 실패는 무음 — 진단 데이터 손실 < 사용자 작업 차단
+  try {
+    await exec(
+      `INSERT INTO trigger_fire_log (id, trigger_type, novel_id, suspicion_type, source, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      [uuid(), triggerType, novelId, suspicionType, source || null, now]
+    );
+  } catch (logErr) { /* 무음 */ }
   try {
     // 동일 novel_id의 pending 엔트리가 이미 있으면 최신 trigger/suspicion으로 UPDATE
     const existing = await first(
@@ -22567,6 +22959,29 @@ async function rebalanceTierOrder(tier) {
   } catch (e) {
     console.warn("[v7.0] rebalanceTierOrder 오류:", e?.message);
   }
+}
+
+// 🆕 v7.0.6 (M5): manual_tier + manual_order 동시 갱신 헬퍼.
+// SQLite single statement 내 sub-select와 UPDATE가 atomic이므로 동시 saveEdit 시 동일 MAX 산출 race를 회피.
+// 이전: saveEdit/batchSetTier/inline chip이 manual_tier만 UPDATE하여 새 tier에서 manual_order=0 충돌 또는 잔여 order 잔류.
+async function setNovelTierAtomic(novelId, newTier) {
+  if (!novelId) return;
+  if (!newTier) {
+    // tier 클리어 — manual_order도 0으로
+    await exec(
+      "UPDATE novels SET manual_tier=NULL, manual_order=0 WHERE id=?",
+      [novelId]
+    );
+    return;
+  }
+  // sub-select는 UPDATE 시점 *이전*의 데이터를 참조 (SQLite 기본 동작)
+  // → novel이 newTier에 이미 속해있어도 sub-select가 자기 자신 포함 가능 (이 경우 +100으로 자연 증가)
+  await exec(
+    `UPDATE novels SET manual_tier=?,
+      manual_order=(SELECT COALESCE(MAX(manual_order), 0) + 100 FROM novels WHERE manual_tier=?)
+     WHERE id=?`,
+    [newTier, newTier, novelId]
+  );
 }
 
 // 🆕 v7.0: 수문장 식별 — 최근 N개 세션의 blocker_id 누적 통계
@@ -24178,12 +24593,18 @@ function AppContent() {
   const [verificationSession, setVerificationSession] = useState(null);
   const [verificationLoading, setVerificationLoading] = useState(false);
   const [verificationStats, setVerificationStats] = useState({ pending: 0, resolved: 0 });
+  // 🆕 v7.0.8: 하이브리드 진단 패널 데이터 (settingsSubTab === "diag" + hybrid 모드 시 로드)
+  const [hybridDiagData, setHybridDiagData] = useState(null);
+  const [hybridDiagLoading, setHybridDiagLoading] = useState(false);
+  // 🆕 v7.0.9 (N+O): 진단 export 익명화 토글 (작품 제목 hash로 치환)
+  const [diagAnonymize, setDiagAnonymize] = useState(false);
   // Stage 4: 수문장 후보 (5개 누적 시 제안 모달)
   const [gatekeeperCandidates, setGatekeeperCandidates] = useState([]);
   const [gatekeeperModalOpen, setGatekeeperModalOpen] = useState(false);
   const verificationSessionIdRef = useRef(null); // 매 시퀀스 고유 sessionId (응답 로그 묶음용)
   const verificationLoadingRef = useRef(false); // 🆕 v7.0: 재진입 가드 (state는 React 배칭 → 동기 가드 필요)
   const respondingRef = useRef(false); // 🆕 v7.0.3: respondVerificationMatch 동시 진입 가드 (빠른 더블탭 시 중복 log/finalize 방지)
+  const gatekeeperRespondingRef = useRef(false); // 🆕 v7.0.6: 수문장 ⬆️/⬇️ Alert "변경" 더블탭 가드 (manual_order +100 중복 적용 방지)
 
   // 🆕 v3.5.11: 매치 필터링 — 정보 충실도 높은 작품 우선 매칭
   const [matchFilterEnabled, setMatchFilterEnabled] = useState(false);
@@ -27335,9 +27756,11 @@ function AppContent() {
   }
 
   // 매치 결과 분석 및 인사이트 생성
-  async function analyzeMatchResult(A, B, winnerId, prediction) {
+  // 🆕 v7.0.6 (m3): tagRelationsSnapshot 인자 추가 — decide() 진입 시 캡처된 스냅샷 사용으로 큐 task 내부 stale closure 회피
+  // 🔧 v7.0.7 (MAJ-5): tagAttributesSnapshot도 함께 받음 — analyzeUpsetCauses 내부에서 tagAttributes 클로저 참조하므로 동일한 stale 위험
+  async function analyzeMatchResult(A, B, winnerId, prediction, tagRelationsSnapshot, tagAttributesSnapshot) {
     if (!prediction) return null;
-    
+
     const winner = winnerId === A.id ? "A" : "B";
     const winnerNovel = winner === "A" ? A : B;
     const loserNovel = winner === "A" ? B : A;
@@ -27345,14 +27768,16 @@ function AppContent() {
       (winner === "A" && prediction.predictedWinRateA < prediction.upsetThreshold) ||
       (winner === "B" && prediction.predictedWinRateB < prediction.upsetThreshold)
     );
-    
+
     // 예측 정확도
     const wasCorrect = prediction.predictedWinner === winner;
-    
+
     // 🔮 v3.0.3: 이변 원인 분석
+    // 🆕 v7.0.6 (m3): 인자로 받은 snapshot 우선 사용 (대비: 큐 지연 중 tagRelations state 변경)
+    // 🔧 v7.0.7 (MAJ-5): tagAttributesSnapshot도 analyzeUpsetCauses에 전달 (불변규칙 #2 완전 충족)
     let upsetCauses = [];
     if (isUpset) {
-      upsetCauses = analyzeUpsetCauses(winnerNovel, loserNovel, tagRelations);
+      upsetCauses = analyzeUpsetCauses(winnerNovel, loserNovel, tagRelationsSnapshot || tagRelations, tagAttributesSnapshot || tagAttributes);
     }
     
     // 인사이트 생성
@@ -27394,13 +27819,15 @@ function AppContent() {
 
   // 🔮 v3.0.3: 이변 원인 분석 함수
   // 🎯 v3.1.2: 농도 가중치를 적용한 이변 분석
-  function analyzeUpsetCauses(winner, loser, relations) {
+  // 🔧 v7.0.7 (MAJ-5): tagAttrs 인자 추가 — 큐 task 지연 중 tagAttributes state 변경 시 stale closure 회피 (불변규칙 #2)
+  function analyzeUpsetCauses(winner, loser, relations, tagAttrs) {
     const causes = [];
-    
+    const _tagAttrs = tagAttrs || tagAttributes; // backward compat: 인자 미전달 시 closure fallback
+
     // 1. 태그 차이 분석 (🏷️ v3.1.2: 농도 포함)
     // 🆕 v3.5.8: 작품명 태그 제외
-    const winnerTags = new Set((winner.tags || "").split(",").map(t => t.trim()).filter(t => t && !isTagTitle(t, tagAttributes)));
-    const loserTags = new Set((loser.tags || "").split(",").map(t => t.trim()).filter(t => t && !isTagTitle(t, tagAttributes)));
+    const winnerTags = new Set((winner.tags || "").split(",").map(t => t.trim()).filter(t => t && !isTagTitle(t, _tagAttrs)));
+    const loserTags = new Set((loser.tags || "").split(",").map(t => t.trim()).filter(t => t && !isTagTitle(t, _tagAttrs)));
     
     // tag_data에서 농도 맵 생성
     let winnerIntensity = {};
@@ -29398,8 +29825,10 @@ function AppContent() {
       switch (item.type) {
         case 'tier_change':
           // 티어 변경 되돌리기 (gated 티어가 아니면 null로 복원)
-          await exec("UPDATE novels SET manual_tier=? WHERE id=?", [
+          // 🆕 v7.0.6 (M11): manual_order도 함께 복원 — 페이로드 누락 시 fallback 0 (backward compat)
+          await exec("UPDATE novels SET manual_tier=?, manual_order=? WHERE id=?", [
             isGatedTier(item.payload.prevTier, globalTierConfig) ? item.payload.prevTier : null,
+            Number(item.payload.prevManualOrder) || 0,
             item.payload.id
           ]);
           addTierHistoryEntry(item.payload.id, item.payload.title, item.payload.newTier, item.payload.prevTier);
@@ -29419,9 +29848,11 @@ function AppContent() {
 
         case 'tier_batch':
           // 일괄 티어 변경 되돌리기
+          // 🆕 v7.0.6 (M11): manual_order도 함께 복원 — 페이로드 누락 시 fallback 0 (backward compat)
           for (const change of item.payload.changes) {
-            await exec("UPDATE novels SET manual_tier=? WHERE id=?", [
+            await exec("UPDATE novels SET manual_tier=?, manual_order=? WHERE id=?", [
               isGatedTier(change.prevTier, globalTierConfig) ? change.prevTier : null,
+              Number(change.prevManualOrder) || 0,
               change.id
             ]);
           }
@@ -29440,7 +29871,19 @@ function AppContent() {
             }
           }
           break;
-          
+
+        // 🆕 v7.0.6 (C1): 사용자 결정 — saveEdit이 tier+meta 동시 변경 시 부분 복원의 혼란 회피.
+        // 동시 변경 시 marker push → 사용자가 undo 시도하면 명시적 안내 표시 후 stack에서 pop만 수행.
+        // 🔧 v7.0.7 (CRIT-2): 이전 break은 switch 이후 공통 success alert("되돌렸습니다")로 fallthrough되어
+        // "되돌릴 수 없음" → "되돌렸습니다" 이중 모순 alert 발생. 직접 stack pop 후 return으로 차단.
+        case 'non_undoable':
+          Alert.alert(
+            "되돌릴 수 없음",
+            item.payload?.reason || "되돌리기가 불가능한 변경이 포함되어 있습니다."
+          );
+          setUndoStack(prev => prev.slice(1));
+          return;
+
         case 'novel_delete':
           // 작품 삭제 되돌리기 (복원)
           // 🆕 v7.0.2: manual_order 컬럼 누락 보강 — 미포함 시 hybrid 정렬에서 0 그룹으로 떨어져 gap=100 invariant 깨짐
@@ -30049,18 +30492,20 @@ function AppContent() {
       // 🆕 v7.0: hybrid 모드 — 신규 등록 작품을 검증 큐에 추가 (manual_tier 설정된 경우만)
       // 🆕 v7.0.3: 최상위 tier에 등록 시 underrated 후보 풀이 비어 무의미한 no_candidates 즉시 finalize
       // → 의미있는 방향(overrated, 아래쪽 검증)으로 큐잉. 단, 단일 tier 시스템이면 enqueue 자체 생략.
+      // 🆕 v7.0.6 (M6): 최하위 tier(idx===order.length-1)도 underrated 큐잉 — 이전 idx<order.length-1 조건이
+      // 최하위를 제외해 검증 사이클 통째 누락. 위쪽으로 비교는 가능하므로 underrated가 정상 의미.
       if (globalTierConfig.mode === "hybrid" && newManualTier) {
         try {
           const order = getActiveTierOrder(globalTierConfig);
           const idx = order.indexOf(newManualTier);
           if (idx === 0 && order.length > 1) {
             // 최상위 tier — 위쪽 비교 불가, 아래쪽으로 검증
-            await enqueueVerification(id, "new", "overrated");
-          } else if (idx >= 0 && idx < order.length - 1) {
-            // 중간/최하위 tier — 위쪽으로 검증 (default)
-            await enqueueVerification(id, "new", "underrated");
+            await enqueueVerification(id, "new", "overrated", "addNovel");
+          } else if (idx > 0) {
+            // 중간/최하위 tier — 위쪽으로 검증 (default). idx===order.length-1 (최하위)도 포함.
+            await enqueueVerification(id, "new", "underrated", "addNovel");
           }
-          // idx === -1(비활성) 또는 단일 tier 시스템 → enqueue 생략
+          // idx === -1(비활성) 또는 단일 tier(idx===0 && length===1) 시스템 → enqueue 생략
         } catch (e) {
           console.warn("[v7.0] new 검증 큐 INSERT 실패:", e?.message);
         }
@@ -30137,6 +30582,8 @@ function AppContent() {
               { sql: "DELETE FROM tier_validation_log WHERE novel_a_id=? OR novel_b_id=?", params: [id, id] },
               { sql: "DELETE FROM tier_repositioning_session WHERE novel_id=?", params: [id] },
               { sql: "UPDATE tier_repositioning_session SET blocker_id=NULL WHERE blocker_id=?", params: [id] },
+              // 🆕 v7.0.8: trigger_fire_log 고아 정리
+              { sql: "DELETE FROM trigger_fire_log WHERE novel_id=?", params: [id] },
               { sql: "DELETE FROM novels WHERE id=?", params: [id] },
             ]);
             // 🔧 v3.5.15e: 미플러시 choiceLog에서도 삭제 대상 제거 (고아 재삽입 방지)
@@ -30738,7 +31185,12 @@ function AppContent() {
       created_at: formatDateLocal(n.created_at),
       read_count_updated_at: formatDateLocal(n.read_count_updated_at),
       quotes: JSON.stringify(parseQuotes(n.memorable_quote)),
-      awards: JSON.stringify(parsed), // parsed는 바로 위에서 생성된 editAwards 초기값
+      awards: JSON.stringify(parsed), // parsed는 바로 위에서 생성된 editAwards 초기값 (year=String — saveEdit MAJ-1 fix는 비교 시 정규화로 처리)
+      // 🔧 v7.0.7 (MAJ-2): saveEdit이 UPDATE하는 누락 컬럼 추가 — C1 metaChanged 판정에 필수
+      major_genre: n.major_genre || "",
+      sub_genre: n.sub_genre || "",
+      aliases: n.aliases || "",
+      memorable_quote: n.memorable_quote || "",
     };
 
     // 🔧 v3.5.7: Android transparent Modal ScrollView 버그 대응
@@ -30761,8 +31213,14 @@ function AppContent() {
       return;
     }
 
+    // 🔧 v7.0.7 (CRIT-1): saveEdit 도중 editOriginalSnapshotRef.current가 null로 정리되므로
+    // C1 metaChanged 비교를 위해 로컬 변수에 미리 캐싱. 이전 (v7.0.6): 31100 nullify가 31171 비교보다
+    // 먼저 실행되어 snapshot이 항상 null → metaChanged 항상 false → tier+meta 동시 변경 시에도
+    // tier_change push (non_undoable marker dead code).
+    const _v7SnapshotForUndo = editOriginalSnapshotRef.current;
+
     setIsLoading(true);
-    
+
     try {
       // 🔧 v3.5.9: 본 목록 + 예정 목록 양쪽 중복 체크
       const dup = await first(
@@ -30796,20 +31254,33 @@ function AppContent() {
       //                  사용자 시점에서 보던 표시 티어 기준으로 방향 판정해야 정확함
       let _v7TierChanged = null; // {fromDisplayTier, to} for hybrid trigger
       let _v7TierCleared = false; // 🆕 v7.0.2: manual_tier → null 전환 (강등성 의심으로 처리)
+      let _v7PrevManualOrder = Number(n.manual_order) || 0; // 🆕 v7.0.6 (M11/C1): undo 페이로드용
+      let _v7TierBlockedByVerification = false; // 🆕 v7.0.6 (M9a): 검증 진행 중 tier 변경 차단 플래그
+      let _v7TierActuallyChanged = false; // 🆕 v7.0.6 (C1): undo push 판정용 (가드/skip이 아니라 실제 UPDATE 수행 여부)
+      let _v7PrevTier = n.manual_tier; // 🆕 v7.0.6 (C1): undo 페이로드용
       if (globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid") {
         const newMt = editManualTier || null;
         if (newMt !== n.manual_tier) {
-          const oldTier = getDisplayTier(n, globalTierConfig);
-          await exec("UPDATE novels SET manual_tier=? WHERE id=?", [newMt, n.id]);
-          if (oldTier !== (newMt || oldTier)) {
-            // 🆕 v7.0.2: 티어 클리어(newMt=null)도 히스토리 기록 — 이전: newMt 진실값 시에만 기록되어 클리어 이력 누락
-            addTierHistoryEntry(n.id, n.title, oldTier, newMt || "(미설정)");
-          }
-          if (globalTierConfig.mode === "hybrid") {
-            if (newMt) {
-              _v7TierChanged = { fromDisplayTier: oldTier, to: newMt };
-            } else if (n.manual_tier) {
-              _v7TierCleared = true; // 🆕 v7.0.2: 클리어는 별도 트리거(overrated 의심)
+          // 🆕 v7.0.6 (M9a): 사용자 결정 — tier 변경 시에만 in-flight 세션 가드 적용. 메타 편집은 자유.
+          // 같은 작품이 검증 시퀀스 진행 중이면 manual_tier UPDATE skip + 플래그 set. 다른 메타 UPDATE(통합 UPDATE 30918+)는 정상 진행.
+          if (verificationSession && verificationSession.queueRow?.novel_id === n.id) {
+            _v7TierBlockedByVerification = true;
+          } else {
+            const oldTier = getDisplayTier(n, globalTierConfig);
+            // 🆕 v7.0.6 (M5): manual_tier + manual_order 원자적 갱신 — 이전 단순 manual_tier UPDATE는
+            // 새 tier에서 manual_order=0 충돌 또는 잔여 order 잔류로 gap=100 invariant 손상.
+            await setNovelTierAtomic(n.id, newMt);
+            _v7TierActuallyChanged = true; // 🆕 v7.0.6 (C1)
+            if (oldTier !== (newMt || oldTier)) {
+              // 🆕 v7.0.2: 티어 클리어(newMt=null)도 히스토리 기록 — 이전: newMt 진실값 시에만 기록되어 클리어 이력 누락
+              addTierHistoryEntry(n.id, n.title, oldTier, newMt || "(미설정)");
+            }
+            if (globalTierConfig.mode === "hybrid") {
+              if (newMt) {
+                _v7TierChanged = { fromDisplayTier: oldTier, to: newMt };
+              } else if (n.manual_tier) {
+                _v7TierCleared = true; // 🆕 v7.0.2: 클리어는 별도 트리거(overrated 의심)
+              }
             }
           }
         }
@@ -30918,9 +31389,11 @@ function AppContent() {
         loadGalleryImages().catch(() => {});
       }
 
-      // 🆕 v7.0: hybrid 모드 — manual_tier/메타 편집 검증 큐 트리거
+      // 🆕 v7.0: hybrid 모드 — manual_tier 편집 검증 큐 트리거
       // v7.0.1 (C2 fix): fromDisplayTier 기반 방향 판정 (manual_tier=null이어도 ELO fallback 반영)
       // 🆕 v7.0.2: 클리어 path 분리 — meta_edit(잘못된 underrated) 대신 tier_change(overrated)
+      // 🆕 v7.0.6 (m6): meta_edit 트리거 제거 — priority=1로 다른 트리거(gatekeeper=5/tier_change=4/order_change=3/new=2)에 항상 밀려 실효 X.
+      // 매 saveEdit마다 큐에 인입되어 노이즈만 누적. tier 변경 시에는 _v7TierChanged 분기가 처리.
       if (globalTierConfig.mode === "hybrid") {
         try {
           if (_v7TierChanged) {
@@ -30929,16 +31402,95 @@ function AppContent() {
             const toIdx = order.indexOf(_v7TierChanged.to);
             // fromIdx 미정시 (이전 표시 티어가 active 목록에 없음) — 신중하게 underrated 기본값
             const suspicion = fromIdx === -1 ? "underrated" : (toIdx < fromIdx ? "underrated" : "overrated");
-            await enqueueVerification(n.id, "tier_change", suspicion);
+            await enqueueVerification(n.id, "tier_change", suspicion, "saveEdit");
           } else if (_v7TierCleared) {
             // manual_tier → null: 더 이상 잠정 truth 없음, 자리 검증 불필요. 오버레이트 가능성을 가벼운 신호로만 인입
-            await enqueueVerification(n.id, "tier_change", "overrated");
-          } else if (n.manual_tier) {
-            // 메타 편집 (제목/태그/작가 등 변경) — manual_tier 있는 작품만 큐 인입
-            await enqueueVerification(n.id, "meta_edit", "underrated");
+            await enqueueVerification(n.id, "tier_change", "overrated", "saveEdit");
           }
+          // (m6 제거) meta_edit 트리거 삭제 — 메타 편집(제목/태그/note 등)은 검증 큐에 영향 X
         } catch (e) {
           console.warn("[v7.0] saveEdit 검증 큐 INSERT 실패:", e?.message);
+        }
+      }
+
+      // 🆕 v7.0.6 (M9a): 검증 진행 중이라 tier 변경이 차단된 경우 사용자 안내
+      if (_v7TierBlockedByVerification) {
+        Alert.alert(
+          "검증 진행 중",
+          "이 작품은 검증 시퀀스 진행 중이라 티어 변경은 적용되지 않았습니다 (기존 티어 유지). 다른 정보(제목/태그 등)는 정상 저장되었습니다."
+        );
+      }
+
+      // 🆕 v7.0.6 (C1): 사용자 결정 — saveEdit undo는 tier 단독 변경 시에만 정상 push.
+      // tier+메타 동시 변경 시 부분 복원 혼란 회피 — non_undoable marker push로 사용자에게 명시적 안내.
+      // 메타만 변경(이전 동작): undo push 없음 (snapshot 변화 없는 saveEdit도 마찬가지).
+      // 🔧 v7.0.7 (CRIT-1): saveEdit 진입 시 캐싱한 _v7SnapshotForUndo 사용 (31100 nullify 이후라도 비교 가능)
+      // 🔧 v7.0.7 (MAJ-2): snapshot에 누락됐던 major_genre/sub_genre/aliases/memorable_quote 비교 추가 (saveEdit이 UPDATE하므로 메타 변경 감지에 필수)
+      // 🔧 v7.0.7 (MAJ-1): awards year 타입 정규화 — snapshot/current 모두 Number 기반으로 통일
+      if (_v7TierActuallyChanged) {
+        let metaChanged = false;
+        if (_v7SnapshotForUndo) {
+          // saveEdit이 UPDATE 하는 모든 컬럼을 snapshot과 비교 (rating은 UPDATE 안 하므로 제외)
+          const current = {
+            title: newTitle,
+            author: n.author?.trim() || "",
+            tags: n.tags || "",
+            note: n.note?.trim() || "",
+            read_count: String(newReadCount),
+            total_episodes: String(Number(n.total_episodes) || 0),
+            cover_image: editCoverImage || "",
+            tag_data: n.tag_data || "",
+            platforms: JSON.stringify(editPlatforms),
+            status: editStatus,
+            work_status: editWorkStatus,
+            link: editLink.trim() || "",
+            reread_count: String(Math.max(1, Number(editRereadCount) || 1)),
+            gaiden_status: editGaidenStatus,
+            gaiden_read_count: String(Number(editGaidenReadCount) || 0),
+            gaiden_total_episodes: String(Number(editGaidenTotalEpisodes) || 0),
+            created_at: editCreatedAt,
+            read_count_updated_at: editReadCountUpdatedAt,
+            quotes: JSON.stringify(editQuotes),
+            // 🔧 v7.0.7 (MAJ-2): 누락 4개 컬럼 추가
+            major_genre: n.major_genre || "",
+            sub_genre: n.sub_genre || "",
+            aliases: n.aliases || "",
+            memorable_quote: serializeQuotes(editQuotes), // saveEdit이 memorable_quote에 serializeQuotes 결과 저장
+          };
+          // 🔧 v7.0.7 (MAJ-1): awards 비교 — year 타입 통일 후 stringify
+          // snapshot.awards는 String year로 만들어졌고(openEdit:30890), saveEdit current(awardsPayload)는 Number year.
+          // 비교 시 양쪽을 Number 기준 정규화.
+          const normalizeAwards = (jsonStr) => {
+            try {
+              const arr = JSON.parse(jsonStr || "[]");
+              return JSON.stringify((arr || []).map(a => ({ year: Number(a.year) || 0, type: a.type || "" })));
+            } catch { return ""; }
+          };
+          const snapAwardsNorm = normalizeAwards(_v7SnapshotForUndo.awards);
+          const currAwardsNorm = normalizeAwards(awardsPayload);
+          if (snapAwardsNorm !== currAwardsNorm) {
+            metaChanged = true;
+          } else {
+            for (const k of Object.keys(current)) {
+              if (_v7SnapshotForUndo[k] !== undefined && _v7SnapshotForUndo[k] !== current[k]) {
+                metaChanged = true;
+                break;
+              }
+            }
+          }
+        }
+        if (!metaChanged) {
+          // tier만 단독 변경 → 정상 undo push
+          pushUndo("tier_change", {
+            id: n.id, title: newTitle,
+            prevTier: _v7PrevTier, newTier: editManualTier || null,
+            prevManualOrder: _v7PrevManualOrder,
+          }, `${newTitle} 티어 변경 (편집)`);
+        } else {
+          // tier + 메타 동시 변경 → non_undoable marker
+          pushUndo("non_undoable", {
+            reason: "티어 변경과 다른 정보 변경이 함께 이루어져 되돌릴 수 없습니다.",
+          }, `${newTitle} 편집 (되돌리기 불가)`);
         }
       }
     } catch (e) {
@@ -31158,6 +31710,23 @@ function AppContent() {
     }
   }, [screen, pair, globalTierConfig.mode]);
 
+  // 🆕 v7.0.6 (M4): hybrid → 다른 모드 전환 시 검증 state/ref/큐 정리.
+  // 기존 mode toggle(41934-41947) 인라인 코드를 헬퍼로 추출하여 TIER_PRESETS 적용 경로에서도 재사용.
+  const clearVerificationStateOnModeExit = useCallback(async () => {
+    setVerificationSession(null);
+    verificationSessionIdRef.current = null;
+    setVerificationLoading(false);
+    verificationLoadingRef.current = false;
+    setGatekeeperCandidates([]);
+    setGatekeeperModalOpen(false);
+    try {
+      await exec(
+        `UPDATE tier_verification_queue SET state='cancelled', processed_at=? WHERE state='pending'`,
+        [Date.now()]
+      );
+    } catch (e) { console.warn("[v7.0.6] mode change 큐 cancel 실패:", e?.message); }
+  }, []);
+
   // 🆕 v7.0: hybrid 모드 — 매칭 화면 진입 시 검증 시퀀스 자동 로드 + 통계 갱신
   const loadVerificationStats = useCallback(async () => {
     try {
@@ -31168,6 +31737,108 @@ function AppContent() {
       console.warn("[v7.0] loadVerificationStats 오류:", e?.message);
     }
   }, []);
+
+  // 🆕 v7.0.8: 하이브리드 진단 패널 통합 데이터 로드 — 진단 탭 진입 시 + 새로고침 버튼
+  const loadHybridDiag = useCallback(async () => {
+    if (hybridDiagLoading) return;
+    setHybridDiagLoading(true);
+    try {
+      const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+      // 🆕 v7.0.9 (Q): 30일 이상 trigger_fire_log 자동 정리 — 무한 누적 방지 (1년 사용 시 18000+ row → 인덱스 효율 저하)
+      try {
+        const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+        await exec(`DELETE FROM trigger_fire_log WHERE created_at < ?`, [thirtyDaysAgo]);
+      } catch (cleanupErr) { console.warn("[v7.0.9 Q] fire_log cleanup 실패:", cleanupErr?.message); }
+      // S1 — 검증 큐 + 트리거 trace
+      const queueByState = await all(`SELECT state, COUNT(*) as cnt FROM tier_verification_queue GROUP BY state`);
+      const queueByTrigger = await all(`SELECT trigger_type, COUNT(*) as cnt FROM tier_verification_queue WHERE state='pending' GROUP BY trigger_type`);
+      const queueByPriority = await all(`SELECT priority, COUNT(*) as cnt FROM tier_verification_queue WHERE state='pending' GROUP BY priority ORDER BY priority DESC`);
+      const queueByTriggerSuspicion = await all(`SELECT trigger_type, suspicion_type, COUNT(*) as cnt FROM tier_verification_queue GROUP BY trigger_type, suspicion_type ORDER BY trigger_type, suspicion_type`);
+      const recentPending = await all(`SELECT q.id, q.priority, q.trigger_type, q.suspicion_type, q.created_at, n.title, n.manual_tier, n.manual_order FROM tier_verification_queue q LEFT JOIN novels n ON n.id=q.novel_id WHERE q.state='pending' ORDER BY q.priority DESC, q.created_at ASC LIMIT 10`);
+      // S1 — trigger_fire_log (정확)
+      const fire24hByTrigger = await all(`SELECT trigger_type, COUNT(*) as cnt FROM trigger_fire_log WHERE created_at > ? GROUP BY trigger_type ORDER BY cnt DESC`, [dayAgo]);
+      const fire24hBySource = await all(`SELECT source, trigger_type, COUNT(*) as cnt FROM trigger_fire_log WHERE created_at > ? GROUP BY source, trigger_type ORDER BY source, trigger_type`, [dayAgo]);
+      const recentFires = await all(`SELECT t.id, t.trigger_type, t.suspicion_type, t.source, t.created_at, t.novel_id, n.title FROM trigger_fire_log t LEFT JOIN novels n ON n.id=t.novel_id ORDER BY t.created_at DESC LIMIT 20`);
+      const fireTotal = await first(`SELECT COUNT(*) as cnt FROM trigger_fire_log`);
+      // S3 — 수문장 후보 (직접 SQL — getGatekeeperCandidates 함수도 가능하나 threshold 미만 후보 노출 위해 직접)
+      const gatekeeperTop = await all(`SELECT b.id, b.title, b.manual_tier, b.manual_order, COUNT(*) as block_count FROM tier_repositioning_session s INNER JOIN novels b ON b.id=s.blocker_id WHERE s.state='completed' AND s.blocker_id IS NOT NULL AND s.result_action='moved' GROUP BY b.id ORDER BY block_count DESC LIMIT 10`);
+      // S4 — 세션 결과 분포
+      const sessionByAction = await all(`SELECT result_action, COUNT(*) as cnt FROM tier_repositioning_session WHERE state='completed' GROUP BY result_action`);
+      const sessionBySuspicion = await all(`SELECT suspicion_type, COUNT(*) as cnt FROM tier_repositioning_session WHERE state='completed' GROUP BY suspicion_type`);
+      const sessionByTrigger = await all(`SELECT trigger_type, COUNT(*) as cnt FROM tier_repositioning_session WHERE state='completed' GROUP BY trigger_type`);
+      const validationByType = await all(`SELECT violation_type, COUNT(*) as cnt FROM tier_validation_log GROUP BY violation_type`);
+      // S5 — 최근 5개 시퀀스 + 응답 trail (join)
+      const recentSequencesRaw = await all(`SELECT r.id as session_id, r.suspicion_type, r.trigger_type, r.result_action, r.result_tier, r.result_order, r.total_responses, r.blocker_id, r.completed_at, sus.title as suspicion_title, sus.manual_tier as suspicion_tier, blk.title as blocker_title, vl.novel_a_id, vl.novel_b_id, vl.user_choice, vl.violation_type, vl.created_at as resp_at, na.title as a_title, nb.title as b_title FROM (SELECT id, novel_id, suspicion_type, trigger_type, result_action, result_tier, result_order, total_responses, blocker_id, completed_at FROM tier_repositioning_session WHERE state='completed' ORDER BY completed_at DESC LIMIT 5) r LEFT JOIN novels sus ON sus.id=r.novel_id LEFT JOIN novels blk ON blk.id=r.blocker_id LEFT JOIN tier_validation_log vl ON vl.session_id=r.id LEFT JOIN novels na ON na.id=vl.novel_a_id LEFT JOIN novels nb ON nb.id=vl.novel_b_id ORDER BY r.completed_at DESC, vl.created_at ASC`);
+      // S5 후처리: session_id로 grouping
+      const sessionsMap = new Map();
+      for (const row of (recentSequencesRaw || [])) {
+        if (!sessionsMap.has(row.session_id)) {
+          sessionsMap.set(row.session_id, {
+            session_id: row.session_id,
+            suspicion_type: row.suspicion_type,
+            suspicion_title: row.suspicion_title || "(삭제됨)",
+            suspicion_tier: row.suspicion_tier,
+            trigger_type: row.trigger_type,
+            result_action: row.result_action,
+            result_tier: row.result_tier,
+            result_order: row.result_order,
+            total_responses: row.total_responses || 0,
+            blocker_id: row.blocker_id,
+            blocker_title: row.blocker_title,
+            completed_at: row.completed_at,
+            responses: [],
+          });
+        }
+        if (row.user_choice) {
+          sessionsMap.get(row.session_id).responses.push({
+            a_title: row.a_title || "(삭제됨)",
+            b_title: row.b_title || "(삭제됨)",
+            user_choice: row.user_choice,
+            violation_type: row.violation_type,
+            resp_at: row.resp_at,
+          });
+        }
+      }
+      const recentSequences = Array.from(sessionsMap.values());
+      // S6 — invariant 검증
+      const dupOrders = await all(`SELECT manual_tier, manual_order, COUNT(*) as dup_count, GROUP_CONCAT(title, ' | ') as titles FROM novels WHERE manual_tier IS NOT NULL GROUP BY manual_tier, manual_order HAVING dup_count > 1 LIMIT 20`);
+      const negativeOrders = await all(`SELECT id, title, manual_tier, manual_order FROM novels WHERE manual_order < 0 LIMIT 20`);
+      const orphanQueue = await all(`SELECT q.id, q.novel_id FROM tier_verification_queue q LEFT JOIN novels n ON n.id=q.novel_id WHERE n.id IS NULL LIMIT 10`);
+      const orphanSessions = await all(`SELECT s.id, s.novel_id FROM tier_repositioning_session s LEFT JOIN novels n ON n.id=s.novel_id WHERE n.id IS NULL LIMIT 10`);
+      // 비활성 tier 작품 — JS 측 비교
+      const activeTiers = new Set(getActiveTierOrder(globalTierConfig));
+      const allAssigned = await all(`SELECT id, title, manual_tier FROM novels WHERE manual_tier IS NOT NULL`);
+      const inactiveAssigned = (allAssigned || []).filter(n => !activeTiers.has(n.manual_tier)).slice(0, 20);
+
+      setHybridDiagData({
+        queueByState, queueByTrigger, queueByPriority, queueByTriggerSuspicion,
+        recentPending, fire24hByTrigger, fire24hBySource, recentFires, fireTotal: fireTotal?.cnt || 0,
+        gatekeeperTop,
+        sessionByAction, sessionBySuspicion, sessionByTrigger, validationByType,
+        recentSequences,
+        dupOrders, negativeOrders, orphanQueue, orphanSessions, inactiveAssigned,
+        loadedAt: Date.now(),
+      });
+    } catch (e) {
+      console.warn("[v7.0.8] loadHybridDiag 오류:", e?.message);
+    } finally {
+      setHybridDiagLoading(false);
+    }
+  }, [hybridDiagLoading]);
+
+  // 🆕 v7.0.8: 진단 탭 진입 시 + hybrid 모드일 때 자동 로드
+  useEffect(() => {
+    if (settingsSubTab === "diag" && globalTierConfig.mode === "hybrid" && !hybridDiagData) {
+      loadHybridDiag();
+    }
+  }, [settingsSubTab, globalTierConfig.mode]);
+
+  // 🆕 v7.0.8: 모드 변경 시 stale 진단 데이터 reset
+  useEffect(() => {
+    if (globalTierConfig.mode !== "hybrid") {
+      setHybridDiagData(null);
+    }
+  }, [globalTierConfig.mode]);
 
   const startVerificationSession = useCallback(async () => {
     // ref 기반 동기 가드 (state는 배칭 → 재귀 호출 시 stale 위험)
@@ -31417,6 +32088,8 @@ function AppContent() {
     const capturedAnalysis = matchAnalysis;
     // 🔧 v3.9.2: tagAttributes도 캡처 (saveChoiceLog에서 참조 — 불변규칙 #2)
     const capturedTagAttributes = tagAttributes;
+    // 🆕 v7.0.6 (m3): tagRelations 캡처 — analyzeMatchResult가 큐 task 내부에서 호출되므로 stale closure 방지 (불변규칙 #2)
+    const capturedTagRelations = tagRelations;
     
     // 🔄 v3.4.6: 이미 큐에서 처리 중인 조합이면 무시
     if (isMatchPending(currentPair.A.id, currentPair.B.id)) {
@@ -31538,9 +32211,11 @@ function AppContent() {
       setTimeout(() => {
         (async () => {
           // 🔧 v3.5.15d: capturedAnalysis 사용 (호출 시점 스냅샷)
+          // 🆕 v7.0.6 (m3): capturedTagRelations 인자 전달 — 큐 task 지연 중 tagRelations 변경 시 stale closure 회피
+          // 🔧 v7.0.7 (MAJ-5): capturedTagAttributes도 전달 — analyzeUpsetCauses의 isTagTitle 클로저 stale 방지
           if (capturedAnalysis) {
             try {
-              await analyzeMatchResult(A, B, winnerId, capturedAnalysis);
+              await analyzeMatchResult(A, B, winnerId, capturedAnalysis, capturedTagRelations, capturedTagAttributes);
             } catch (e) {
               console.warn("[decide] analyzeMatchResult 오류:", e);
             }
@@ -31783,6 +32458,8 @@ function AppContent() {
     if (isAutoMatchingRef.current) return;
     // v7.0.1 (N2 fix): hybrid 모드에서는 자동매칭 useEffect 비활성 (검증 시퀀스가 별도 시스템)
     if (globalTierConfig.mode === "hybrid") return;
+    // 🆕 v7.0.6 (m2): 매칭 탭 이탈 시 자동매칭 중단 — 사용자가 다른 탭(설정/홈/통계 등)에서 작업 중일 때 백그라운드에서 의도하지 않은 매칭 결과 누적 방지
+    if (screen !== "match") return;
     if (!autoEnabled || !pair || !matchAnalysis) return;
     
     // 🔧 v3.5.15: pair 일치 검증 — matchAnalysis가 현재 pair에 대한 것인지 확인
@@ -31824,7 +32501,7 @@ function AppContent() {
         Breadcrumbs.action("autoMatch_stop");
         isAutoMatchingRef.current = false;
         setIsAutoMatching(false);
-        
+
         // 🔧 v3.5.15: 자동매칭 종료 후 지연된 loadList 실행
         if (needsListRefreshRef.current) {
           needsListRefreshRef.current = false;
@@ -31832,8 +32509,10 @@ function AppContent() {
           invalidateMatchCache(); // 다음 매칭 세션을 위해 캐시도 갱신
         }
       }
-    })();
-  }, [pair, autoEnabled, autoMatchSettings, matchAnalysis, evaluateAutoMatch]);
+    })().catch((e) => console.warn("[자동매칭 m1] unhandled rejection:", e?.message || e));
+    // 🆕 v7.0.6 (m1): IIFE 외부 .catch — finally 내부 setState/loadList가 throw할 이론적 가능성 대응 (unhandled rejection 차단)
+  }, [pair, autoEnabled, autoMatchSettings, matchAnalysis, evaluateAutoMatch, screen]);
+  // 🆕 v7.0.6 (m2): deps에 screen 추가 — 매칭 탭 이탈 시 자동매칭 effect 재진입에서 조기 리턴되도록
   
   // 자동승패 설정 저장
   const saveAutoMatchSettings = useCallback((updates) => {
@@ -32668,30 +33347,68 @@ function AppContent() {
   // 🆕 v6.1: 티어 일괄 변경 (manual/hybrid 모드)
   // 🆕 v7.0: hybrid 모드에서 사용자 path → 검증 큐 트리거 (작품별 방향 판정)
   const batchSetTier = useCallback(async (tierKey) => {
-    const ids = selectedIdsRef.current;
+    let ids = selectedIdsRef.current;
     if (!ids.length) {
       Alert.alert("알림", "먼저 작품을 선택해주세요.");
       return;
     }
     if (!tierKey) return;
 
+    // 🆕 v7.0.6 (M9b): in-flight 검증 세션의 작품은 batch에서 제외
+    const sessionNovelId = verificationSession?.queueRow?.novel_id;
+    if (sessionNovelId && ids.includes(sessionNovelId)) {
+      ids = ids.filter(id => id !== sessionNovelId);
+      Alert.alert(
+        "검증 진행 중 작품 1건 제외",
+        "선택 항목 중 검증 시퀀스 진행 중인 작품 1건은 일괄 변경에서 제외됩니다. 다른 작품은 정상 처리됩니다."
+      );
+      if (ids.length === 0) return; // 모두 제외되면 abort
+    }
+
     // 🆕 v7.0: hybrid 모드 — 변경 전 기존 manual_tier 캡처 (방향 판정용)
+    // 🆕 v7.0.6 (M5b/M11/C1): 모든 모드에서 manual_tier+order 캡처 (undo 페이로드, 정합성 검증)
     let _v7Prev = null;
-    if (globalTierConfig.mode === "hybrid") {
+    try {
+      const placeholders = ids.map(() => "?").join(",");
+      const rows = await all(
+        `SELECT id, title, manual_tier, manual_order FROM novels WHERE id IN (${placeholders})`,
+        ids
+      );
+      _v7Prev = new Map(rows.map(r => [r.id, {
+        manual_tier: r.manual_tier,
+        manual_order: Number(r.manual_order) || 0,
+        title: r.title,
+      }]));
+    } catch (e) {
+      console.warn("[v7.0] batchSetTier 사전 캡처 실패:", e?.message);
+    }
+
+    // 🆕 v7.0.6 (M5b): setNovelTierAtomic 순차 호출 — 작품마다 manual_tier + manual_order 원자적 갱신.
+    // 이전 단일 execBatch UPDATE(manual_tier만)는 새 tier에서 manual_order 충돌(0 또는 잔여값) 유발.
+    for (const id of ids) {
       try {
-        const placeholders = ids.map(() => "?").join(",");
-        const rows = await all(`SELECT id, manual_tier FROM novels WHERE id IN (${placeholders})`, ids);
-        _v7Prev = new Map(rows.map(r => [r.id, r.manual_tier]));
+        await setNovelTierAtomic(id, tierKey);
       } catch (e) {
-        console.warn("[v7.0] batchSetTier 사전 캡처 실패:", e?.message);
+        console.warn("[v7.0.6 M5b] batchSetTier 작품 단위 UPDATE 실패:", e?.message, id);
       }
     }
 
-    const queries = ids.map((id) => ({
-      sql: "UPDATE novels SET manual_tier=? WHERE id=?",
-      params: [tierKey, id],
-    }));
-    await execBatch(queries);
+    // 🆕 v7.0.6 (C1): batchSetTier는 tier만 단독 변경하므로 항상 정상 undo push 가능
+    if (_v7Prev) {
+      const changes = [];
+      for (const id of ids) {
+        const prev = _v7Prev.get(id);
+        if (!prev || prev.manual_tier === tierKey) continue; // 변경 없음
+        changes.push({
+          id, title: prev.title || "",
+          prevTier: prev.manual_tier, newTier: tierKey,
+          prevManualOrder: prev.manual_order,
+        });
+      }
+      if (changes.length > 0) {
+        pushUndo("tier_batch", { changes }, `${changes.length}개 작품 티어 일괄 변경`);
+      }
+    }
 
     // 🆕 v7.0: hybrid 모드 — 작품별 방향 판정 후 enqueueVerification 호출
     if (globalTierConfig.mode === "hybrid" && _v7Prev) {
@@ -32699,11 +33416,13 @@ function AppContent() {
         const order = getActiveTierOrder(globalTierConfig);
         const toIdx = order.indexOf(tierKey);
         for (const id of ids) {
-          const fromTier = _v7Prev.get(id);
+          // 🆕 v7.0.6: _v7Prev 객체 구조 변경 — { manual_tier, manual_order, title }
+          const prev = _v7Prev.get(id);
+          const fromTier = prev?.manual_tier;
           if (fromTier === tierKey) continue; // 변경 없음
           const fromIdx = fromTier ? order.indexOf(fromTier) : order.length;
           const suspicion = toIdx < fromIdx ? "underrated" : "overrated";
-          await enqueueVerification(id, "tier_change", suspicion);
+          await enqueueVerification(id, "tier_change", suspicion, "batchSetTier");
         }
       } catch (e) {
         console.warn("[v7.0] batchSetTier 검증 큐 INSERT 실패:", e?.message);
@@ -32721,9 +33440,23 @@ function AppContent() {
     const mode = globalTierConfig.mode;
 
     if (mode === "manual" || mode === "hybrid") {
-      // manual_order 교환
-      const rowA = await first("SELECT manual_order FROM novels WHERE id=?", [idA]);
-      const rowB = await first("SELECT manual_order FROM novels WHERE id=?", [idB]);
+      // 🆕 v7.0.6 (M8): tier 일관성 사전 검증 — race(예: 동시 finalize가 tier 변경) 시 다른 tier의 manual_order만 swap되어 정렬이 무너지는 것을 방지.
+      // UI(sameTierEntries)는 보통 같은 tier 작품끼리만 swap 호출하나, 비동기 race에서는 변경 가능.
+      const rows = await all(
+        "SELECT id, manual_tier, manual_order FROM novels WHERE id IN (?, ?)",
+        [idA, idB]
+      );
+      if (rows.length !== 2) {
+        console.warn("[v7.0.6 M8] swapRating: 작품 미존재", idA, idB);
+        return;
+      }
+      const rowA = rows.find(r => r.id === idA);
+      const rowB = rows.find(r => r.id === idB);
+      if (rowA.manual_tier !== rowB.manual_tier) {
+        console.warn("[v7.0.6 M8] swapRating: tier 불일치 (race) — abort", rowA.manual_tier, rowB.manual_tier);
+        return;
+      }
+      const sharedTier = rowA.manual_tier;
       const oA = Number(rowA?.manual_order) || 0;
       const oB = Number(rowB?.manual_order) || 0;
       // v7.0.1 (C3 fix): 충돌 분기에서 idA는 명시적으로 UP(-50) 이동 → suspicion도 underrated 고정
@@ -32733,6 +33466,12 @@ function AppContent() {
           { sql: "UPDATE novels SET manual_order=? WHERE id=?", params: [oB - 50, idA] },
         ]);
         suspicionForHybrid = "underrated"; // -50 = 위로 이동
+        // 🆕 v7.0.6 (M7): collision 분기에서 즉시 같은 tier rebalance — gap=100 invariant 회복.
+        // -50된 idA가 manual_order ASC 정렬에서 가장 위에 위치하므로 사용자 의도(▲로 위)와 일치.
+        // 이 호출이 매칭→수동 전환 후 첫 ▲▼에서도 자동 정규화하므로 M10(전환 시 백필) skip 가능.
+        if (sharedTier) {
+          await rebalanceTierOrder(sharedTier);
+        }
       } else {
         await execBatch([
           { sql: "UPDATE novels SET manual_order=? WHERE id=?", params: [oB, idA] },
@@ -32744,10 +33483,10 @@ function AppContent() {
       // 🆕 v7.0.2: idB도 함께 enqueue (역방향 의심) — 양쪽이 모두 변위했으므로 양쪽 검증 필요
       if (mode === "hybrid") {
         try {
-          await enqueueVerification(idA, "order_change", suspicionForHybrid);
+          await enqueueVerification(idA, "order_change", suspicionForHybrid, "swapRating_idA");
           if (idA !== idB) {
             const inverseSuspicion = suspicionForHybrid === "underrated" ? "overrated" : "underrated";
-            await enqueueVerification(idB, "order_change", inverseSuspicion);
+            await enqueueVerification(idB, "order_change", inverseSuspicion, "swapRating_idB");
           }
         } catch (e) {
           console.warn("검증 큐 INSERT 실패:", e?.message);
@@ -33628,6 +34367,8 @@ async function importJSON() {
         { sql: "DELETE FROM tier_verification_queue;", params: [] },
         { sql: "DELETE FROM tier_validation_log;", params: [] },
         { sql: "DELETE FROM tier_repositioning_session;", params: [] },
+        // 🆕 v7.0.8: trigger_fire_log도 import 시 초기화 (진단용 로그, fresh 시작)
+        { sql: "DELETE FROM trigger_fire_log;", params: [] },
       ]);
       invalidatePatternCache(); // 🔧 v3.5.14
       invalidateWeightsCache(); // 🔧 v3.5.14
@@ -34112,7 +34853,12 @@ async function importJSON() {
               if (Array.isArray(data.RS) && data.RS.length > 0) {
                 try {
                   const rsQueries = [];
+                  let rsSkipped = 0;
                   for (const r of data.RS) {
+                    // 🆕 v7.0.6 (M3): NOT NULL 컬럼 필수값 검증 — 외부 변조 JSON 시 r.st 또는 r.s 누락 가능.
+                    // 이전: r.s||"completed", r.ra||"moved" 강제 fallback → 누락된 값을 임의로 강제하여 수문장 통계 오염.
+                    // 변경: NOT NULL 필수값(suspicion_type, state) 누락 시 row skip + warn. NULLABLE 컬럼(result_action 등)은 NULL 허용.
+                    if (!r.st || !r.s) { rsSkipped++; continue; }
                     const novelId = remapNovelId(r.n);
                     const blockerId = remapNovelId(r.b);
                     rsQueries.push({
@@ -34120,12 +34866,13 @@ async function importJSON() {
                             (id, novel_id, suspicion_type, trigger_type, state, result_tier, result_order, result_action, total_responses, blocker_id, created_at, completed_at)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                       params: [
-                        uuid(), novelId, r.st, r.tt || null, r.s || "completed",
-                        r.rt || null, r.ro != null ? r.ro : null, r.ra || "moved",
+                        uuid(), novelId, r.st, r.tt || null, r.s,
+                        r.rt || null, r.ro != null ? r.ro : null, r.ra || null,
                         r.tr || 0, blockerId || null, r.c || Date.now(), r.cp || r.c || Date.now(),
                       ],
                     });
                   }
+                  if (rsSkipped > 0) console.warn(`[v7.0.6 M3] RS import: ${rsSkipped} row(s) skipped (필수값 누락)`);
                   if (rsQueries.length > 0) await execBatch(rsQueries);
                 } catch (rsErr) {
                   console.warn("repositioning_session 복원 실패:", rsErr);
@@ -37210,21 +37957,25 @@ async function importJSON() {
                                         {
                                           text: "변경",
                                           onPress: async () => {
+                                            // 🆕 v7.0.6 (M1): 더블탭 가드 — Alert "변경" 빠른 두 번 탭 시 manual_order +100 중복 적용 방지
+                                            if (gatekeeperRespondingRef.current) return;
+                                            gatekeeperRespondingRef.current = true;
                                             try {
                                               // 🆕 v7.0.2: gap=100 invariant 보존 — 새 티어 MAX+100으로 manual_order 재설정 (이전 tier의 order가 잔류하면 새 tier에서 충돌)
                                               const maxRow = await first("SELECT MAX(manual_order) AS m FROM novels WHERE manual_tier=?", [higher]);
                                               const newOrder = ((Number(maxRow?.m) || 0) + 100);
                                               await exec("UPDATE novels SET manual_tier=?, manual_order=? WHERE id=?", [higher, newOrder, g.id]);
                                               addTierHistoryEntry(g.id, g.title, g.manual_tier, higher);
-                                              pushUndo('tier_change', { id: g.id, title: g.title, prevTier: g.manual_tier, newTier: higher }, `수문장 승급: ${g.title} → ${higher}`);
+                                              pushUndo('tier_change', { id: g.id, title: g.title, prevTier: g.manual_tier, newTier: higher, prevManualOrder: Number(g.manual_order) || 0 }, `수문장 승급: ${g.title} → ${higher}`);
                                               // 🆕 v7.0.3: 누적 통계 소비 — 과거 blocker_id 기록 NULL 처리 (이전: 5+ 누적이 안 빠져 같은 작품이 모달에 영원히 재등장)
                                               await exec("UPDATE tier_repositioning_session SET blocker_id=NULL WHERE blocker_id=?", [g.id]);
-                                              await enqueueVerification(g.id, "gatekeeper", "underrated");
+                                              await enqueueVerification(g.id, "gatekeeper", "underrated", "gatekeeper_up");
                                               await loadList(undefined, undefined, "v7-gatekeeper");
                                               await loadVerificationStats(); // 🆕 v7.0.3: pending 카운터 즉시 갱신
                                               const gks = await getGatekeeperCandidates(5);
                                               setGatekeeperCandidates(gks);
                                             } catch (e) { console.warn(e); }
+                                            finally { gatekeeperRespondingRef.current = false; } // 🆕 v7.0.6
                                           },
                                         },
                                       ]);
@@ -37242,21 +37993,25 @@ async function importJSON() {
                                         {
                                           text: "변경",
                                           onPress: async () => {
+                                            // 🆕 v7.0.6 (M1): 더블탭 가드
+                                            if (gatekeeperRespondingRef.current) return;
+                                            gatekeeperRespondingRef.current = true;
                                             try {
                                               // 🆕 v7.0.2: 강등도 동일하게 새 티어 MAX+100 부여 (gap=100 invariant 보존)
                                               const maxRow = await first("SELECT MAX(manual_order) AS m FROM novels WHERE manual_tier=?", [lower]);
                                               const newOrder = ((Number(maxRow?.m) || 0) + 100);
                                               await exec("UPDATE novels SET manual_tier=?, manual_order=? WHERE id=?", [lower, newOrder, g.id]);
                                               addTierHistoryEntry(g.id, g.title, g.manual_tier, lower);
-                                              pushUndo('tier_change', { id: g.id, title: g.title, prevTier: g.manual_tier, newTier: lower }, `수문장 강등: ${g.title} → ${lower}`);
+                                              pushUndo('tier_change', { id: g.id, title: g.title, prevTier: g.manual_tier, newTier: lower, prevManualOrder: Number(g.manual_order) || 0 }, `수문장 강등: ${g.title} → ${lower}`);
                                               // 🆕 v7.0.3: 누적 통계 소비
                                               await exec("UPDATE tier_repositioning_session SET blocker_id=NULL WHERE blocker_id=?", [g.id]);
-                                              await enqueueVerification(g.id, "gatekeeper", "overrated");
+                                              await enqueueVerification(g.id, "gatekeeper", "overrated", "gatekeeper_down");
                                               await loadList(undefined, undefined, "v7-gatekeeper");
                                               await loadVerificationStats(); // 🆕 v7.0.3
                                               const gks = await getGatekeeperCandidates(5);
                                               setGatekeeperCandidates(gks);
                                             } catch (e) { console.warn(e); }
+                                            finally { gatekeeperRespondingRef.current = false; } // 🆕 v7.0.6
                                           },
                                         },
                                       ]);
@@ -39000,17 +39755,31 @@ async function importJSON() {
                                 // 🆕 v7.0.2: tier(displayTier, ELO fallback 가능) 대신 item.manual_tier로 비교
                                 // — manual_tier=null인데 displayTier=tk인 경우 사용자가 그 티어를 명시적 lock하려는 의도 보존
                                 if (tk === item.manual_tier) { setExpandedNovelId(null); return; }
+                                // 🆕 v7.0.6 (M9c): 검증 시퀀스 진행 중인 작품은 tier 변경 차단
+                                if (verificationSession && verificationSession.queueRow?.novel_id === item.id) {
+                                  Alert.alert("검증 진행 중", "이 작품은 검증 시퀀스 진행 중이라 티어 변경은 시퀀스 종료 후 다시 시도해주세요.");
+                                  setExpandedNovelId(null);
+                                  return;
+                                }
                                 const oldTier = tier;
+                                const prevManualOrder = Number(item.manual_order) || 0; // 🆕 v7.0.6 (M11/C1)
                                 try {
-                                  await exec("UPDATE novels SET manual_tier=? WHERE id=?", [tk, item.id]);
+                                  // 🆕 v7.0.6 (M5c): manual_tier + manual_order 원자적 갱신 (이전 단순 manual_tier UPDATE는 새 tier collision 유발)
+                                  await setNovelTierAtomic(item.id, tk);
                                   addTierHistoryEntry(item.id, item.title, oldTier, tk);
+                                  // 🆕 v7.0.6 (C1): inline chip은 tier만 단독 변경 → 정상 undo push
+                                  pushUndo('tier_change', {
+                                    id: item.id, title: item.title,
+                                    prevTier: item.manual_tier, newTier: tk,
+                                    prevManualOrder,
+                                  }, `${item.title} 티어 변경 (인라인)`);
                                   // 🆕 v7.0: hybrid 모드 — 사용자 path 트리거
                                   if (globalTierConfig.mode === "hybrid") {
                                     const order = getActiveTierOrder(globalTierConfig);
                                     const fromIdx = oldTier ? order.indexOf(oldTier) : order.length;
                                     const toIdx = order.indexOf(tk);
                                     const suspicion = toIdx < fromIdx ? "underrated" : "overrated";
-                                    enqueueVerification(item.id, "tier_change", suspicion).catch(() => {});
+                                    enqueueVerification(item.id, "tier_change", suspicion, "inline_chip").catch(() => {});
                                   }
                                   setExpandedNovelId(null);
                                   await loadList(undefined, undefined, "tierManage");
@@ -41759,20 +42528,9 @@ async function importJSON() {
                             // 🔧 v6.0: await 전에 현재 config 캡처 (stale closure 방지)
                             const oldConfig = { ...globalTierConfig };
                             // 🆕 v7.0.3: hybrid → 다른 모드 전환 시 in-flight 검증 세션 + pending 큐 정리
-                            // (이전: 세션 state가 살아있어 다시 hybrid 들어오면 stale candidates로 finalize)
+                            // 🆕 v7.0.6 (M4a): clearVerificationStateOnModeExit 헬퍼 호출로 통일 — TIER_PRESETS 적용과 같은 코드 사용
                             if (oldConfig.mode === "hybrid" && m.key !== "hybrid") {
-                              setVerificationSession(null);
-                              verificationSessionIdRef.current = null;
-                              setVerificationLoading(false);
-                              verificationLoadingRef.current = false;
-                              setGatekeeperCandidates([]);
-                              setGatekeeperModalOpen(false);
-                              try {
-                                await exec(
-                                  `UPDATE tier_verification_queue SET state='cancelled', processed_at=? WHERE state='pending'`,
-                                  [Date.now()]
-                                );
-                              } catch (e) { console.warn("[v7.0.3] mode change 큐 cancel 실패:", e?.message); }
+                              await clearVerificationStateOnModeExit();
                             }
                             // 🆕 v6.2: manual 모드만 백필 (hybrid는 manual_tier 미설정 시 getDisplayTier가 ELO로 fallback)
                             // 이전: hybrid도 백필 → 진입 시점 ELO가 박제되어 이후 매칭 결과 미반영 (사용자 의도 위반)
@@ -41846,6 +42604,11 @@ async function importJSON() {
                               const newConfig = JSON.parse(JSON.stringify(preset.config));
                               // 🔧 v6.0: await 전에 현재 config 캡처 (stale closure 방지)
                               const oldConfig = { ...globalTierConfig };
+                              // 🆕 v7.0.6 (M4b): hybrid 진입/이탈 또는 hybrid → hybrid (tier 셋 변경) 시 검증 state/큐 정리
+                              // 케이스 3종 모두 커버: (1) hybrid → 다른 모드 (2) 다른 모드 → hybrid (stale ref 방어) (3) hybrid → hybrid 5tier→3tier 압축 등
+                              if (oldConfig.mode === "hybrid" || newConfig.mode === "hybrid") {
+                                await clearVerificationStateOnModeExit();
+                              }
                               // 🆕 v6.2: manual 프리셋만 백필 (hybrid는 ELO fallback)
                               if (newConfig.mode === "manual") {
                                 const novels = await all("SELECT id, rating, manual_tier FROM novels");
@@ -43886,9 +44649,112 @@ async function importJSON() {
                 return `${Math.floor(s/3600)}시간 ${Math.floor((s%3600)/60)}분`;
               };
               const riskColor = (ms, warn, danger) => ms >= danger ? "#ef4444" : ms >= warn ? "#f59e0b" : "#22c55e";
-              
+
+              // 🆕 v7.0.9 (K): Anomaly aggregator — 진단 탭 진입 즉시 critical/warning 요약
+              // 사용자가 "뭐가 문제인가"의 답을 첫 화면에서 즉시 확인 가능
+              const anomalies = [];
+              // 크래시
+              if (lastCrashLog) {
+                anomalies.push({ severity: "critical", label: "마지막 크래시 기록", anchor: "crash", desc: lastCrashLog.message?.substring(0, 50) || "(상세는 크래시 섹션)" });
+              }
+              // DB 연속 에러
+              if (summary?.db?.consecutiveErrors >= 3) {
+                anomalies.push({ severity: "critical", label: `DB 연속 에러 ${summary.db.consecutiveErrors}회`, anchor: "db", desc: "연결 안정성 위험" });
+              }
+              // PerfMonitor 에러
+              if ((summary?.errors || []).length > 0) {
+                anomalies.push({ severity: "warning", label: `추적 에러 ${(summary.errors || []).length}건`, anchor: "errors", desc: "에러 로그 확인" });
+              }
+              // hybrid invariant 위반
+              if (globalTierConfig.mode === "hybrid" && hybridDiagData) {
+                const dup = (hybridDiagData.dupOrders || []).length;
+                const neg = (hybridDiagData.negativeOrders || []).length;
+                const inactive = (hybridDiagData.inactiveAssigned || []).length;
+                const oQ = (hybridDiagData.orphanQueue || []).length;
+                const oS = (hybridDiagData.orphanSessions || []).length;
+                if (dup > 0) anomalies.push({ severity: "critical", label: `gap=100 위반 ${dup}건`, anchor: "s6", desc: "manual_order 중복" });
+                if (neg > 0) anomalies.push({ severity: "critical", label: `음수 manual_order ${neg}건`, anchor: "s6", desc: "▲▼ collision 누적" });
+                if (inactive > 0) anomalies.push({ severity: "warning", label: `비활성 tier 작품 ${inactive}건`, anchor: "s6", desc: "프리셋 전환 잔여" });
+                if (oQ > 0) anomalies.push({ severity: "warning", label: `큐 고아 row ${oQ}건`, anchor: "s6", desc: "삭제된 작품 큐 잔류" });
+                if (oS > 0) anomalies.push({ severity: "warning", label: `세션 고아 row ${oS}건`, anchor: "s6", desc: "삭제된 작품 세션 잔류" });
+              }
+              const criticalCount = anomalies.filter(a => a.severity === "critical").length;
+              const warningCount = anomalies.filter(a => a.severity === "warning").length;
+
+              // 🆕 v7.0.9 (A): 진단 탭 섹션 인덱스 (시각적 indexing — 사용자가 어떤 섹션이 있는지 한눈에 파악)
+              const diagSections = [
+                { icon: "📊", label: "한눈에 보기" },
+                { icon: "💥", label: "크래시" },
+                { icon: "🔬", label: "성능" },
+                { icon: "🔌", label: "DB" },
+                { icon: "📦", label: "데이터" },
+                { icon: "🗂️", label: "슬롯" },
+                { icon: "🧠", label: "인사이트" },
+                ...(globalTierConfig.mode === "hybrid" ? [
+                  { icon: "🔄", label: "v7 큐+fire" },
+                  { icon: "🎯", label: "v7 시퀀스" },
+                  { icon: "⚙️", label: "v7 invariant" },
+                ] : []),
+                { icon: "📋", label: "Export" },
+              ];
+
               return (
               <>
+            {/* 🆕 v7.0.9 (A): 진단 탭 섹션 인덱스 — 시각적 indexing */}
+            <Section title="🗂️ 섹션 인덱스">
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                <View style={{ flexDirection: "row", gap: 6 }}>
+                  {diagSections.map((s, i) => (
+                    <View key={i} style={{
+                      paddingHorizontal: 10, paddingVertical: 6,
+                      backgroundColor: C.chip, borderRadius: 999,
+                      borderWidth: 1, borderColor: C.line,
+                    }}>
+                      <Text style={{ color: C.text, fontSize: 11, fontWeight: "600" }}>{s.icon} {s.label}</Text>
+                    </View>
+                  ))}
+                </View>
+              </ScrollView>
+              <Text style={{ color: C.sub, fontSize: 10, marginTop: 6 }}>
+                💡 진단 탭은 위 순서대로 구성됩니다. 아래로 스크롤하여 각 섹션 확인.
+              </Text>
+            </Section>
+
+            {/* 🆕 v7.0.9 (K): 한눈에 보기 — anomaly 요약 헤더 */}
+            <Section title="📊 한눈에 보기">
+              <View style={{
+                padding: 12,
+                backgroundColor: anomalies.length === 0 ? (isDark ? "#064e3b" : "#dcfce7") : criticalCount > 0 ? (isDark ? "#7f1d1d" : "#fef2f2") : (isDark ? "#78350f" : "#fef3c7"),
+                borderRadius: 10,
+                borderLeftWidth: 4,
+                borderLeftColor: anomalies.length === 0 ? "#22c55e" : criticalCount > 0 ? "#ef4444" : "#f59e0b",
+              }}>
+                <Text style={{
+                  fontWeight: "800",
+                  fontSize: 14,
+                  color: anomalies.length === 0 ? (isDark ? "#86efac" : "#15803d") : criticalCount > 0 ? (isDark ? "#fca5a5" : "#dc2626") : (isDark ? "#fcd34d" : "#b45309"),
+                  marginBottom: anomalies.length === 0 ? 0 : 8,
+                }}>
+                  {anomalies.length === 0
+                    ? "✅ 발견된 이슈 없음 — 시스템 정상"
+                    : `🚨 발견된 이슈 ${anomalies.length}건 (Critical ${criticalCount} / Warning ${warningCount})`}
+                </Text>
+                {anomalies.map((a, i) => (
+                  <View key={i} style={{ flexDirection: "row", alignItems: "center", marginTop: 4, paddingVertical: 2 }}>
+                    <Text style={{ fontSize: 11, marginRight: 6 }}>{a.severity === "critical" ? "🔴" : "🟡"}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{
+                        fontSize: 12,
+                        fontWeight: "700",
+                        color: isDark ? "#fff" : "#1f2937",
+                      }}>{a.label}</Text>
+                      <Text style={{ fontSize: 10, color: isDark ? "#d1d5db" : "#6b7280" }}>{a.desc}</Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            </Section>
+
             {/* 💥 v3.9.0: 크래시 로그 섹션 (항상 표시, PerfMonitor 무관) */}
             <Section title="💥 크래시 로그">
               {lastCrashLog ? (
@@ -44394,8 +45260,344 @@ async function importJSON() {
               )}
             </Section>
 
+            {/* ═══════════════════════════════════════════════════════════════════
+                🆕 v7.0.8: 하이브리드 모드 진단 패널 (6개 섹션)
+                ─ S1 검증 큐 + 트리거 trace
+                ─ S2 진행 중 시퀀스 (in-flight)
+                ─ S3 수문장 후보
+                ─ S4 세션 결과 분포
+                ─ S5 최근 시퀀스 응답 trace
+                ─ S6 invariant 검증 (anomaly 감지)
+                ═══════════════════════════════════════════════════════════════════ */}
+            {globalTierConfig.mode !== "hybrid" ? (
+              <Section title="🔄 v7.0 하이브리드 진단">
+                <View style={{ padding: 12, backgroundColor: C.bg, borderRadius: 8 }}>
+                  <Text style={{ color: C.sub, fontSize: 13 }}>하이브리드 모드 전용입니다. 모드 전환 후 다시 확인해주세요.</Text>
+                </View>
+              </Section>
+            ) : (
+              <>
+                {/* 새로고침 버튼 + 마지막 갱신 시각 */}
+                <Section title="🔄 v7.0 하이브리드 진단">
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                    <Text style={{ color: C.sub, fontSize: 11 }}>
+                      {hybridDiagData?.loadedAt
+                        ? `📅 갱신: ${new Date(hybridDiagData.loadedAt).toLocaleString("ko-KR")}`
+                        : "데이터 로드 중..."}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => loadHybridDiag()}
+                      disabled={hybridDiagLoading}
+                      style={{ paddingHorizontal: 10, paddingVertical: 5, backgroundColor: C.primary, borderRadius: 8, opacity: hybridDiagLoading ? 0.5 : 1 }}
+                    >
+                      <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>{hybridDiagLoading ? "로딩..." : "🔄 새로고침"}</Text>
+                    </TouchableOpacity>
+                  </View>
+                </Section>
+
+                {/* S1 — 검증 큐 + 트리거 trace */}
+                <Section title="🔄 S1. 검증 큐 + 트리거 trace">
+                  {!hybridDiagData ? (
+                    <Text style={{ color: C.sub, fontSize: 12 }}>로드 중...</Text>
+                  ) : (
+                    <View style={{ gap: 10 }}>
+                      {/* state 카드 */}
+                      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                        {["pending", "resolved", "cancelled", "skipped"].map(st => {
+                          const row = (hybridDiagData.queueByState || []).find(r => r.state === st);
+                          const cnt = row?.cnt || 0;
+                          const color = st === "pending" ? "#f59e0b" : st === "resolved" ? "#22c55e" : st === "cancelled" ? "#94a3b8" : "#6366f1";
+                          return (
+                            <View key={st} style={{ borderLeftWidth: 3, borderLeftColor: color, padding: 8, backgroundColor: C.bg, borderRadius: 6, minWidth: 80 }}>
+                              <Text style={{ color: C.sub, fontSize: 10 }}>{st}</Text>
+                              <Text style={{ color, fontSize: 18, fontWeight: "800" }}>{cnt}</Text>
+                            </View>
+                          );
+                        })}
+                      </View>
+                      {/* 🆕 v7.0.9 (H): queueByState pie chart */}
+                      {(hybridDiagData.queueByState || []).length > 0 && (
+                        <View style={{ marginTop: 6 }}>
+                          <PieChartSimple
+                            data={(hybridDiagData.queueByState || []).map(r => ({ label: r.state, value: r.cnt }))}
+                            theme={C}
+                          />
+                        </View>
+                      )}
+                      {/* trigger × suspicion 매트릭스 */}
+                      <View>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", marginBottom: 4 }}>트리거 × 의심방향</Text>
+                        {(hybridDiagData.queueByTriggerSuspicion || []).length === 0 ? (
+                          <Text style={{ color: C.sub, fontSize: 11 }}>(데이터 없음)</Text>
+                        ) : (
+                          (hybridDiagData.queueByTriggerSuspicion || []).map((r, i) => (
+                            <View key={i} style={{ flexDirection: "row", paddingVertical: 3 }}>
+                              <Text style={{ flex: 2, color: C.text, fontSize: 11 }}>{r.trigger_type}</Text>
+                              <Text style={{ flex: 2, color: r.suspicion_type === "underrated" ? "#22c55e" : "#ef4444", fontSize: 11 }}>{r.suspicion_type}</Text>
+                              <Text style={{ flex: 1, textAlign: "right", color: C.text, fontSize: 11, fontWeight: "700" }}>{r.cnt}</Text>
+                            </View>
+                          ))
+                        )}
+                      </View>
+                      {/* priority 분포 */}
+                      <View>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", marginBottom: 4 }}>pending priority 분포</Text>
+                        {(hybridDiagData.queueByPriority || []).length === 0 ? (
+                          <Text style={{ color: C.sub, fontSize: 11 }}>(없음)</Text>
+                        ) : (
+                          (hybridDiagData.queueByPriority || []).map((r, i) => (
+                            <Text key={i} style={{ color: C.text, fontSize: 11 }}>priority={r.priority} → {r.cnt}건</Text>
+                          ))
+                        )}
+                      </View>
+                      {/* 24h trigger fire (정확) */}
+                      <View>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", marginBottom: 4 }}>최근 24h 트리거 fire (정확, fire_log 기반)</Text>
+                        <Text style={{ color: C.sub, fontSize: 10, marginBottom: 4 }}>총 누적 fire: {hybridDiagData.fireTotal}회</Text>
+                        {(hybridDiagData.fire24hByTrigger || []).length === 0 ? (
+                          <Text style={{ color: C.sub, fontSize: 11 }}>최근 24h 동안 트리거 fire 없음</Text>
+                        ) : (
+                          (hybridDiagData.fire24hByTrigger || []).map((r, i) => (
+                            <Text key={i} style={{ color: C.text, fontSize: 11 }}>{r.trigger_type}: {r.cnt}회</Text>
+                          ))
+                        )}
+                      </View>
+                      {/* source × trigger 매트릭스 */}
+                      <View>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", marginBottom: 4 }}>최근 24h source × trigger 매트릭스</Text>
+                        {(hybridDiagData.fire24hBySource || []).length === 0 ? (
+                          <Text style={{ color: C.sub, fontSize: 11 }}>(데이터 없음)</Text>
+                        ) : (
+                          (hybridDiagData.fire24hBySource || []).map((r, i) => (
+                            <View key={i} style={{ flexDirection: "row", paddingVertical: 2 }}>
+                              <Text style={{ flex: 2, color: C.text, fontSize: 11 }}>{r.source || "(none)"}</Text>
+                              <Text style={{ flex: 2, color: C.sub, fontSize: 11 }}>{r.trigger_type}</Text>
+                              <Text style={{ flex: 1, textAlign: "right", color: C.text, fontSize: 11, fontWeight: "700" }}>{r.cnt}</Text>
+                            </View>
+                          ))
+                        )}
+                      </View>
+                      {/* 최근 fire 20개 trail */}
+                      <View>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", marginBottom: 4 }}>최근 fire trail (20)</Text>
+                        {(hybridDiagData.recentFires || []).length === 0 ? (
+                          <Text style={{ color: C.sub, fontSize: 11 }}>(없음)</Text>
+                        ) : (
+                          (hybridDiagData.recentFires || []).map((r, i) => (
+                            <View key={i} style={{ paddingVertical: 3, borderBottomWidth: 0.5, borderBottomColor: C.line }}>
+                              <Text style={{ color: C.text, fontSize: 11 }}>{r.title || "(작품 없음)"} · {r.source || "?"} → {r.trigger_type}/{r.suspicion_type}</Text>
+                              <Text style={{ color: C.sub, fontSize: 10 }}>{new Date(r.created_at).toLocaleString("ko-KR")}</Text>
+                            </View>
+                          ))
+                        )}
+                      </View>
+                      {/* 최근 pending 10개 */}
+                      <View>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", marginBottom: 4 }}>현재 pending 큐 상위 10</Text>
+                        {(hybridDiagData.recentPending || []).length === 0 ? (
+                          <Text style={{ color: C.sub, fontSize: 11 }}>(비어있음)</Text>
+                        ) : (
+                          (hybridDiagData.recentPending || []).map((r, i) => (
+                            <View key={i} style={{ paddingVertical: 3, borderBottomWidth: 0.5, borderBottomColor: C.line }}>
+                              <Text style={{ color: C.text, fontSize: 11 }}>{r.title || "(없음)"} · p{r.priority}</Text>
+                              <Text style={{ color: C.sub, fontSize: 10 }}>{r.trigger_type}/{r.suspicion_type} · tier={r.manual_tier || "-"} #{r.manual_order || 0}</Text>
+                            </View>
+                          ))
+                        )}
+                      </View>
+                    </View>
+                  )}
+                </Section>
+
+                {/* S2 — 진행 중 시퀀스 */}
+                <Section title="📊 S2. 진행 중 시퀀스 (in-flight)">
+                  {!verificationSession ? (
+                    <Text style={{ color: C.sub, fontSize: 12 }}>현재 진행 중 시퀀스 없음.</Text>
+                  ) : (() => {
+                    const responses = verificationSession.responses || [];
+                    const infIdx = responses.length ? findInflectionPoint(responses, verificationSession.suspicionType) : -1;
+                    const eval_ = responses.length ? evaluateSequenceProgress(responses, verificationSession.suspicionType) : null;
+                    const sus = verificationSession.suspicionNovel;
+                    return (
+                      <View style={{ gap: 8 }}>
+                        <View style={{ padding: 8, backgroundColor: C.bg, borderRadius: 6 }}>
+                          <Text style={{ color: C.text, fontWeight: "700" }}>{sus?.title || "?"} · tier={sus?.manual_tier || "-"} #{sus?.manual_order || 0}</Text>
+                          <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>의심방향: {verificationSession.suspicionType} · 후보 풀: {(verificationSession.candidates || []).length} · 응답: {responses.length}/{VERIFICATION_MAX_RESPONSES}</Text>
+                          {infIdx >= 0 && <Text style={{ color: "#f59e0b", fontSize: 11, marginTop: 2 }}>변곡점 idx: {infIdx}</Text>}
+                          {eval_ && <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>다음 단계: shouldStop={String(eval_.shouldStop)} reason={eval_.reason}</Text>}
+                        </View>
+                        {/* 응답 trail */}
+                        {responses.map((r, i) => (
+                          <View key={i} style={{ flexDirection: "row", paddingVertical: 3, borderBottomWidth: 0.5, borderBottomColor: C.line, backgroundColor: i === infIdx ? "rgba(245,158,11,0.15)" : "transparent" }}>
+                            <Text style={{ width: 24, color: C.sub, fontSize: 11 }}>{i}</Text>
+                            <Text style={{ flex: 1, color: C.text, fontSize: 11 }}>cand {r.candidateId?.substring(0, 8) || "?"}…</Text>
+                            <Text style={{ width: 70, color: r.suspicionWon ? "#22c55e" : "#ef4444", fontSize: 11 }}>{r.suspicionWon ? "의심승" : "의심패"}</Text>
+                            <Text style={{ width: 80, color: C.sub, fontSize: 10 }}>{r.violationType || ""}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    );
+                  })()}
+                </Section>
+
+                {/* S3 — 수문장 후보 */}
+                <Section title="🚫 S3. 수문장 누적 후보 (top 10)">
+                  {!hybridDiagData ? (
+                    <Text style={{ color: C.sub, fontSize: 12 }}>로드 중...</Text>
+                  ) : (hybridDiagData.gatekeeperTop || []).length === 0 ? (
+                    <Text style={{ color: C.sub, fontSize: 12 }}>아직 누적된 수문장 없음.</Text>
+                  ) : (
+                    (hybridDiagData.gatekeeperTop || []).map((r, i) => (
+                      <View key={i} style={{ flexDirection: "row", paddingVertical: 4, borderBottomWidth: 0.5, borderBottomColor: C.line }}>
+                        <Text style={{ flex: 3, color: r.block_count >= 5 ? "#ef4444" : C.text, fontSize: 11, fontWeight: r.block_count >= 5 ? "700" : "400" }}>{r.title}</Text>
+                        <Text style={{ width: 60, color: C.sub, fontSize: 10 }}>{r.manual_tier} #{r.manual_order}</Text>
+                        <Text style={{ width: 50, textAlign: "right", color: r.block_count >= 5 ? "#ef4444" : C.text, fontSize: 11, fontWeight: "700" }}>×{r.block_count}</Text>
+                      </View>
+                    ))
+                  )}
+                </Section>
+
+                {/* S4 — 세션 결과 분포 */}
+                <Section title="📈 S4. 세션 결과 분포">
+                  {!hybridDiagData ? (
+                    <Text style={{ color: C.sub, fontSize: 12 }}>로드 중...</Text>
+                  ) : (
+                    <View style={{ gap: 8 }}>
+                      {/* 🆕 v7.0.9 (H): result_action pie chart + 텍스트 */}
+                      <View>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", marginBottom: 4 }}>result_action</Text>
+                        {(hybridDiagData.sessionByAction || []).length > 0 && (
+                          <PieChartSimple data={(hybridDiagData.sessionByAction || []).map(r => ({ label: r.result_action || "(null)", value: r.cnt }))} theme={C} />
+                        )}
+                        {(hybridDiagData.sessionByAction || []).map((r, i) => <Text key={i} style={{ color: C.text, fontSize: 11 }}>{r.result_action || "(null)"}: {r.cnt}</Text>)}
+                      </View>
+                      {/* 🆕 v7.0.9 (H): suspicion_type pie chart */}
+                      <View>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", marginBottom: 4 }}>suspicion_type</Text>
+                        {(hybridDiagData.sessionBySuspicion || []).length > 0 && (
+                          <PieChartSimple data={(hybridDiagData.sessionBySuspicion || []).map(r => ({ label: r.suspicion_type, value: r.cnt }))} theme={C} />
+                        )}
+                        {(hybridDiagData.sessionBySuspicion || []).map((r, i) => <Text key={i} style={{ color: C.text, fontSize: 11 }}>{r.suspicion_type}: {r.cnt}</Text>)}
+                      </View>
+                      <View>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>trigger_type</Text>
+                        {(hybridDiagData.sessionByTrigger || []).map((r, i) => <Text key={i} style={{ color: C.text, fontSize: 11 }}>{r.trigger_type || "(null)"}: {r.cnt}</Text>)}
+                      </View>
+                      {/* 🆕 v7.0.9 (H): violation_type pie chart */}
+                      <View>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", marginBottom: 4 }}>violation_type (tier_validation_log)</Text>
+                        {(hybridDiagData.validationByType || []).length === 0 ? (
+                          <Text style={{ color: C.sub, fontSize: 11 }}>(없음)</Text>
+                        ) : (
+                          <>
+                            <PieChartSimple data={(hybridDiagData.validationByType || []).map(r => ({ label: r.violation_type, value: r.cnt }))} theme={C} />
+                            {(hybridDiagData.validationByType || []).map((r, i) => <Text key={i} style={{ color: C.text, fontSize: 11 }}>{r.violation_type}: {r.cnt}</Text>)}
+                          </>
+                        )}
+                      </View>
+                    </View>
+                  )}
+                </Section>
+
+                {/* S5 — 최근 시퀀스 trace */}
+                <Section title="🎯 S5. 최근 시퀀스 응답 trace (5)">
+                  {!hybridDiagData ? (
+                    <Text style={{ color: C.sub, fontSize: 12 }}>로드 중...</Text>
+                  ) : (hybridDiagData.recentSequences || []).length === 0 ? (
+                    <Text style={{ color: C.sub, fontSize: 12 }}>완료된 시퀀스 없음.</Text>
+                  ) : (
+                    (hybridDiagData.recentSequences || []).map((s, i) => (
+                      <View key={i} style={{ marginBottom: 12, padding: 8, backgroundColor: C.bg, borderRadius: 6 }}>
+                        <Text style={{ color: C.text, fontWeight: "700", fontSize: 12 }}>{s.suspicion_title} · {s.suspicion_type}</Text>
+                        <Text style={{ color: C.sub, fontSize: 10, marginTop: 2 }}>
+                          trigger={s.trigger_type || "?"} · action={s.result_action || "?"} · result_tier={s.result_tier || "-"} · 응답 {s.total_responses}회
+                        </Text>
+                        {s.blocker_title && <Text style={{ color: "#f59e0b", fontSize: 10 }}>변곡점(blocker): {s.blocker_title}</Text>}
+                        {s.responses.map((r, j) => {
+                          const isBlocker = (r.a_title === s.blocker_title) || (r.b_title === s.blocker_title);
+                          return (
+                            <View key={j} style={{ flexDirection: "row", paddingVertical: 2, marginTop: 2, backgroundColor: isBlocker ? "rgba(245,158,11,0.15)" : "transparent" }}>
+                              <Text style={{ width: 20, color: C.sub, fontSize: 10 }}>{j}</Text>
+                              <Text style={{ flex: 1, color: C.text, fontSize: 10 }}>{r.a_title} vs {r.b_title}</Text>
+                              <Text style={{ width: 70, color: C.sub, fontSize: 10 }}>{r.violation_type}</Text>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    ))
+                  )}
+                </Section>
+
+                {/* S6 — invariant */}
+                <Section title="⚙️ S6. invariant 검증">
+                  {!hybridDiagData ? (
+                    <Text style={{ color: C.sub, fontSize: 12 }}>로드 중...</Text>
+                  ) : (() => {
+                    const dup = (hybridDiagData.dupOrders || []).length;
+                    const neg = (hybridDiagData.negativeOrders || []).length;
+                    const inactive = (hybridDiagData.inactiveAssigned || []).length;
+                    const oQ = (hybridDiagData.orphanQueue || []).length;
+                    const oS = (hybridDiagData.orphanSessions || []).length;
+                    const total = dup + neg + inactive + oQ + oS;
+                    return (
+                      <View style={{ gap: 8 }}>
+                        <Text style={{ color: total === 0 ? "#22c55e" : "#ef4444", fontSize: 12, fontWeight: "700" }}>
+                          {total === 0 ? "✅ 모든 invariant 정상" : `⚠️ 위반 ${total}건 발견`}
+                        </Text>
+                        {dup > 0 && (
+                          <View>
+                            <Text style={{ color: "#ef4444", fontSize: 11, fontWeight: "700" }}>gap=100 위반 (중복 manual_order): {dup}건</Text>
+                            {(hybridDiagData.dupOrders || []).slice(0, 5).map((r, i) => (
+                              <Text key={i} style={{ color: C.sub, fontSize: 10 }}>{r.manual_tier} #{r.manual_order} ×{r.dup_count}: {r.titles?.substring(0, 60)}</Text>
+                            ))}
+                          </View>
+                        )}
+                        {neg > 0 && (
+                          <View>
+                            <Text style={{ color: "#ef4444", fontSize: 11, fontWeight: "700" }}>음수 manual_order: {neg}건</Text>
+                            {(hybridDiagData.negativeOrders || []).slice(0, 5).map((r, i) => (
+                              <Text key={i} style={{ color: C.sub, fontSize: 10 }}>{r.title} ({r.manual_tier} {r.manual_order})</Text>
+                            ))}
+                          </View>
+                        )}
+                        {inactive > 0 && (
+                          <View>
+                            <Text style={{ color: "#ef4444", fontSize: 11, fontWeight: "700" }}>비활성 tier 작품: {inactive}건</Text>
+                            {(hybridDiagData.inactiveAssigned || []).slice(0, 5).map((r, i) => (
+                              <Text key={i} style={{ color: C.sub, fontSize: 10 }}>{r.title} (manual_tier={r.manual_tier})</Text>
+                            ))}
+                          </View>
+                        )}
+                        {oQ > 0 && <Text style={{ color: "#ef4444", fontSize: 11 }}>큐 고아 row: {oQ}건</Text>}
+                        {oS > 0 && <Text style={{ color: "#ef4444", fontSize: 11 }}>세션 고아 row: {oS}건</Text>}
+                      </View>
+                    );
+                  })()}
+                </Section>
+              </>
+            )}
+
             {PerfMonitor.enabled && (
             <Section title="📋 진단 내보내기">
+              {/* 🆕 v7.0.9 (O): 익명화 토글 — 작품 제목을 hash로 치환하여 외부 공유 시 프라이버시 보호 */}
+              <TouchableOpacity
+                onPress={() => setDiagAnonymize(prev => !prev)}
+                style={{
+                  flexDirection: "row", alignItems: "center", marginBottom: 10,
+                  padding: 8, backgroundColor: C.bg, borderRadius: 8,
+                  borderWidth: 1, borderColor: diagAnonymize ? C.primary : C.line,
+                }}
+              >
+                <Text style={{ fontSize: 16, marginRight: 8 }}>{diagAnonymize ? "🔒" : "🔓"}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: C.text, fontWeight: "700", fontSize: 13 }}>
+                    익명화 {diagAnonymize ? "ON" : "OFF"}
+                  </Text>
+                  <Text style={{ color: C.sub, fontSize: 10 }}>
+                    {diagAnonymize ? "작품 제목 → hash (외부 공유 안전)" : "원본 그대로 (디버그 친화)"}
+                  </Text>
+                </View>
+              </TouchableOpacity>
               <PrimaryButton
                 title="📋 진단 리포트 공유"
                 onPress={async () => {
@@ -44455,6 +45657,47 @@ async function importJSON() {
                     const insQ = await all("SELECT status, COUNT(*) as cnt FROM insight_queue GROUP BY status");
                     if (insQ && insQ.length > 0) lines.push(`[인사이트] ${insQ.map(i => `${i.status}=${i.cnt}`).join(", ")}`);
                   } catch {}
+                  // 🆕 v7.0.9 (O): 작품 제목 익명화 헬퍼 (간단 hash) — 외부 공유 시 프라이버시 보호
+                  const _anonHash = (str) => {
+                    if (!str) return "(none)";
+                    let h = 0;
+                    for (let i = 0; i < str.length; i++) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+                    return `t${Math.abs(h).toString(36).substring(0, 6)}`;
+                  };
+                  const _anon = (title) => diagAnonymize ? _anonHash(title) : (title || "(없음)");
+                  // 🆕 v7.0.8: hybrid 모드일 때 진단 패널 데이터를 텍스트 리포트에 append
+                  if (globalTierConfig.mode === "hybrid" && hybridDiagData) {
+                    try {
+                      lines.push(``, `=== v7.0 하이브리드 진단 ===`);
+                      const qs = (hybridDiagData.queueByState || []).map(r => `${r.state}=${r.cnt}`).join(", ");
+                      lines.push(`[검증 큐 상태] ${qs || "(빈 큐)"}`);
+                      const tt = (hybridDiagData.queueByTrigger || []).map(r => `${r.trigger_type}=${r.cnt}`).join(", ");
+                      if (tt) lines.push(`[pending trigger 분포] ${tt}`);
+                      const pp = (hybridDiagData.queueByPriority || []).map(r => `${r.priority}=${r.cnt}`).join(", ");
+                      if (pp) lines.push(`[pending priority 분포] ${pp}`);
+                      const fire24 = (hybridDiagData.fire24hByTrigger || []).map(r => `${r.trigger_type}=${r.cnt}`).join(", ");
+                      lines.push(`[24h trigger fire] ${fire24 || "없음"} (총 누적 ${hybridDiagData.fireTotal || 0}회)`);
+                      const fbs = (hybridDiagData.fire24hBySource || []).map(r => `${r.source || "(none)"}/${r.trigger_type}=${r.cnt}`).slice(0, 10).join(", ");
+                      if (fbs) lines.push(`[24h source × trigger] ${fbs}`);
+                      lines.push(``, `[in-flight 세션] ${verificationSession ? `YES (${verificationSession.suspicionNovel?.title || "?"} · 응답=${(verificationSession.responses || []).length}/${VERIFICATION_MAX_RESPONSES})` : "NO"}`);
+                      const gks = (hybridDiagData.gatekeeperTop || []).slice(0, 5).map(r => `${_anon(r.title)}(×${r.block_count})`).join(", ");
+                      if (gks) lines.push(`[수문장 후보 top5] ${gks}`);
+                      const acts = (hybridDiagData.sessionByAction || []).map(r => `${r.result_action || "?"}=${r.cnt}`).join(", ");
+                      if (acts) lines.push(`[세션 action] ${acts}`);
+                      const recents = (hybridDiagData.recentSequences || []).slice(0, 5).map(s => `[${_anon(s.suspicion_title)}] ${s.suspicion_type} → ${s.result_action} → ${s.result_tier || "?"} (응답=${s.total_responses}, blocker=${s.blocker_title ? _anon(s.blocker_title) : "-"})`).join("\n  ");
+                      if (recents) lines.push(`[최근 시퀀스 5건]`, `  ${recents}`);
+                      const dup = (hybridDiagData.dupOrders || []).length;
+                      const neg = (hybridDiagData.negativeOrders || []).length;
+                      const inactive = (hybridDiagData.inactiveAssigned || []).length;
+                      const oQ = (hybridDiagData.orphanQueue || []).length;
+                      const oS = (hybridDiagData.orphanSessions || []).length;
+                      lines.push(`[invariant] gap위반=${dup} / 음수order=${neg} / 비활성tier=${inactive} / 큐고아=${oQ} / 세션고아=${oS}`);
+                    } catch (hyErr) {
+                      lines.push(`[v7.0 하이브리드 진단 export 실패: ${hyErr?.message}]`);
+                    }
+                  } else if (globalTierConfig.mode !== "hybrid") {
+                    lines.push(``, `=== v7.0 하이브리드 진단 ===`, `(현재 모드: ${globalTierConfig.mode} — 하이브리드 미사용)`);
+                  }
                   const report = lines.join("\n");
                   try {
                     await Share.share({ title: "성능 진단 리포트", message: report });
@@ -44463,6 +45706,83 @@ async function importJSON() {
                   }
                 }}
               />
+              {/* 🆕 v7.0.9 (N): JSON Export — LLM/외부 도구 분석용 */}
+              <View style={{ marginTop: 8 }}>
+                <PrimaryButton
+                  title="📊 JSON으로 내보내기 (LLM 분석용)"
+                  onPress={async () => {
+                    try {
+                      const _anonHash = (str) => {
+                        if (!str) return "(none)";
+                        let h = 0;
+                        for (let i = 0; i < str.length; i++) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+                        return `t${Math.abs(h).toString(36).substring(0, 6)}`;
+                      };
+                      const _anon = (title) => diagAnonymize ? _anonHash(title) : (title || "(없음)");
+                      const s = PerfMonitor.getSummary();
+                      const exportObj = {
+                        meta: {
+                          version: APP_VERSION,
+                          exportedAt: new Date().toISOString(),
+                          mode: globalTierConfig.mode,
+                          anonymized: diagAnonymize,
+                        },
+                        perfMonitor: {
+                          enabled: PerfMonitor.enabled,
+                          uptime: s.uptime,
+                          sql: s.sql,
+                          db: s.db,
+                          functionsTop: (s.functions || []).slice(0, 20),
+                          slowSql: (s.sqlLog || []).slice(0, 20).map(q => ({ ...q, sql: q.sql?.substring(0, 200) })),
+                          slowFuncs: (s.funcLog || []).slice(0, 20),
+                          errors: (s.errors || []).slice(0, 20),
+                          dbEvents: (s.dbEvents || []).slice(0, 20),
+                        },
+                        crash: lastCrashLog ? {
+                          message: lastCrashLog.message,
+                          timestamp: lastCrashLog.timestamp,
+                          breadcrumbs: lastCrashLog.breadcrumbs?.slice(-20),
+                        } : null,
+                        hybrid: globalTierConfig.mode === "hybrid" && hybridDiagData ? {
+                          queueByState: hybridDiagData.queueByState,
+                          queueByTriggerSuspicion: hybridDiagData.queueByTriggerSuspicion,
+                          queueByPriority: hybridDiagData.queueByPriority,
+                          fire24hByTrigger: hybridDiagData.fire24hByTrigger,
+                          fire24hBySource: hybridDiagData.fire24hBySource,
+                          fireTotal: hybridDiagData.fireTotal,
+                          gatekeeperTop: (hybridDiagData.gatekeeperTop || []).map(r => ({ ...r, title: _anon(r.title) })),
+                          sessionByAction: hybridDiagData.sessionByAction,
+                          sessionBySuspicion: hybridDiagData.sessionBySuspicion,
+                          sessionByTrigger: hybridDiagData.sessionByTrigger,
+                          validationByType: hybridDiagData.validationByType,
+                          recentSequences: (hybridDiagData.recentSequences || []).map(seq => ({
+                            ...seq,
+                            suspicion_title: _anon(seq.suspicion_title),
+                            blocker_title: seq.blocker_title ? _anon(seq.blocker_title) : null,
+                            responses: (seq.responses || []).map(r => ({ ...r, a_title: _anon(r.a_title), b_title: _anon(r.b_title) })),
+                          })),
+                          invariant: {
+                            dupOrders: hybridDiagData.dupOrders?.length || 0,
+                            negativeOrders: hybridDiagData.negativeOrders?.length || 0,
+                            inactiveAssigned: hybridDiagData.inactiveAssigned?.length || 0,
+                            orphanQueue: hybridDiagData.orphanQueue?.length || 0,
+                            orphanSessions: hybridDiagData.orphanSessions?.length || 0,
+                          },
+                        } : null,
+                        anomalies: anomalies, // K에서 계산된 anomaly list
+                      };
+                      const json = JSON.stringify(exportObj, null, 2);
+                      try {
+                        await Share.share({ title: "진단 JSON", message: json });
+                      } catch (shareErr) {
+                        Alert.alert("JSON 진단", json.substring(0, 3000));
+                      }
+                    } catch (e) {
+                      Alert.alert("JSON Export 실패", e?.message || "알 수 없는 오류");
+                    }
+                  }}
+                />
+              </View>
               <Text style={{ color: C.sub, fontSize: 10, marginTop: 6, textAlign: "center" }}>
                 성능 데이터는 앱 종료 시 초기화됩니다. 크래시 로그는 파일에 영속 저장됩니다.
               </Text>
