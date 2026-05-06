@@ -30907,22 +30907,29 @@ function AppContent() {
       let _v7TierChanged = null; // {fromDisplayTier, to} for hybrid trigger
       let _v7TierCleared = false; // 🆕 v7.0.2: manual_tier → null 전환 (강등성 의심으로 처리)
       let _v7PrevManualOrder = Number(n.manual_order) || 0; // 🆕 v7.0.6 (M11/C1): undo 페이로드용
+      let _v7TierBlockedByVerification = false; // 🆕 v7.0.6 (M9a): 검증 진행 중 tier 변경 차단 플래그
       if (globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid") {
         const newMt = editManualTier || null;
         if (newMt !== n.manual_tier) {
-          const oldTier = getDisplayTier(n, globalTierConfig);
-          // 🆕 v7.0.6 (M5): manual_tier + manual_order 원자적 갱신 — 이전 단순 manual_tier UPDATE는
-          // 새 tier에서 manual_order=0 충돌 또는 잔여 order 잔류로 gap=100 invariant 손상.
-          await setNovelTierAtomic(n.id, newMt);
-          if (oldTier !== (newMt || oldTier)) {
-            // 🆕 v7.0.2: 티어 클리어(newMt=null)도 히스토리 기록 — 이전: newMt 진실값 시에만 기록되어 클리어 이력 누락
-            addTierHistoryEntry(n.id, n.title, oldTier, newMt || "(미설정)");
-          }
-          if (globalTierConfig.mode === "hybrid") {
-            if (newMt) {
-              _v7TierChanged = { fromDisplayTier: oldTier, to: newMt };
-            } else if (n.manual_tier) {
-              _v7TierCleared = true; // 🆕 v7.0.2: 클리어는 별도 트리거(overrated 의심)
+          // 🆕 v7.0.6 (M9a): 사용자 결정 — tier 변경 시에만 in-flight 세션 가드 적용. 메타 편집은 자유.
+          // 같은 작품이 검증 시퀀스 진행 중이면 manual_tier UPDATE skip + 플래그 set. 다른 메타 UPDATE(통합 UPDATE 30918+)는 정상 진행.
+          if (verificationSession && verificationSession.queueRow?.novel_id === n.id) {
+            _v7TierBlockedByVerification = true;
+          } else {
+            const oldTier = getDisplayTier(n, globalTierConfig);
+            // 🆕 v7.0.6 (M5): manual_tier + manual_order 원자적 갱신 — 이전 단순 manual_tier UPDATE는
+            // 새 tier에서 manual_order=0 충돌 또는 잔여 order 잔류로 gap=100 invariant 손상.
+            await setNovelTierAtomic(n.id, newMt);
+            if (oldTier !== (newMt || oldTier)) {
+              // 🆕 v7.0.2: 티어 클리어(newMt=null)도 히스토리 기록 — 이전: newMt 진실값 시에만 기록되어 클리어 이력 누락
+              addTierHistoryEntry(n.id, n.title, oldTier, newMt || "(미설정)");
+            }
+            if (globalTierConfig.mode === "hybrid") {
+              if (newMt) {
+                _v7TierChanged = { fromDisplayTier: oldTier, to: newMt };
+              } else if (n.manual_tier) {
+                _v7TierCleared = true; // 🆕 v7.0.2: 클리어는 별도 트리거(overrated 의심)
+              }
             }
           }
         }
@@ -31053,6 +31060,14 @@ function AppContent() {
         } catch (e) {
           console.warn("[v7.0] saveEdit 검증 큐 INSERT 실패:", e?.message);
         }
+      }
+
+      // 🆕 v7.0.6 (M9a): 검증 진행 중이라 tier 변경이 차단된 경우 사용자 안내
+      if (_v7TierBlockedByVerification) {
+        Alert.alert(
+          "검증 진행 중",
+          "이 작품은 검증 시퀀스 진행 중이라 티어 변경은 적용되지 않았습니다 (기존 티어 유지). 다른 정보(제목/태그 등)는 정상 저장되었습니다."
+        );
       }
     } catch (e) {
       if (_pt) PerfMonitor.logError("saveEdit", e); // 🔬
@@ -31270,6 +31285,23 @@ function AppContent() {
       pickRandomUnseenPair();
     }
   }, [screen, pair, globalTierConfig.mode]);
+
+  // 🆕 v7.0.6 (M4): hybrid → 다른 모드 전환 시 검증 state/ref/큐 정리.
+  // 기존 mode toggle(41934-41947) 인라인 코드를 헬퍼로 추출하여 TIER_PRESETS 적용 경로에서도 재사용.
+  const clearVerificationStateOnModeExit = useCallback(async () => {
+    setVerificationSession(null);
+    verificationSessionIdRef.current = null;
+    setVerificationLoading(false);
+    verificationLoadingRef.current = false;
+    setGatekeeperCandidates([]);
+    setGatekeeperModalOpen(false);
+    try {
+      await exec(
+        `UPDATE tier_verification_queue SET state='cancelled', processed_at=? WHERE state='pending'`,
+        [Date.now()]
+      );
+    } catch (e) { console.warn("[v7.0.6] mode change 큐 cancel 실패:", e?.message); }
+  }, []);
 
   // 🆕 v7.0: hybrid 모드 — 매칭 화면 진입 시 검증 시퀀스 자동 로드 + 통계 갱신
   const loadVerificationStats = useCallback(async () => {
@@ -32785,12 +32817,23 @@ function AppContent() {
   // 🆕 v6.1: 티어 일괄 변경 (manual/hybrid 모드)
   // 🆕 v7.0: hybrid 모드에서 사용자 path → 검증 큐 트리거 (작품별 방향 판정)
   const batchSetTier = useCallback(async (tierKey) => {
-    const ids = selectedIdsRef.current;
+    let ids = selectedIdsRef.current;
     if (!ids.length) {
       Alert.alert("알림", "먼저 작품을 선택해주세요.");
       return;
     }
     if (!tierKey) return;
+
+    // 🆕 v7.0.6 (M9b): in-flight 검증 세션의 작품은 batch에서 제외
+    const sessionNovelId = verificationSession?.queueRow?.novel_id;
+    if (sessionNovelId && ids.includes(sessionNovelId)) {
+      ids = ids.filter(id => id !== sessionNovelId);
+      Alert.alert(
+        "검증 진행 중 작품 1건 제외",
+        "선택 항목 중 검증 시퀀스 진행 중인 작품 1건은 일괄 변경에서 제외됩니다. 다른 작품은 정상 처리됩니다."
+      );
+      if (ids.length === 0) return; // 모두 제외되면 abort
+    }
 
     // 🆕 v7.0: hybrid 모드 — 변경 전 기존 manual_tier 캡처 (방향 판정용)
     // 🆕 v7.0.6 (M5b/M11/C1): 모든 모드에서 manual_tier+order 캡처 (undo 페이로드, 정합성 검증)
@@ -39163,6 +39206,12 @@ async function importJSON() {
                                 // 🆕 v7.0.2: tier(displayTier, ELO fallback 가능) 대신 item.manual_tier로 비교
                                 // — manual_tier=null인데 displayTier=tk인 경우 사용자가 그 티어를 명시적 lock하려는 의도 보존
                                 if (tk === item.manual_tier) { setExpandedNovelId(null); return; }
+                                // 🆕 v7.0.6 (M9c): 검증 시퀀스 진행 중인 작품은 tier 변경 차단
+                                if (verificationSession && verificationSession.queueRow?.novel_id === item.id) {
+                                  Alert.alert("검증 진행 중", "이 작품은 검증 시퀀스 진행 중이라 티어 변경은 시퀀스 종료 후 다시 시도해주세요.");
+                                  setExpandedNovelId(null);
+                                  return;
+                                }
                                 const oldTier = tier;
                                 const prevManualOrder = Number(item.manual_order) || 0; // 🆕 v7.0.6 (M11/C1)
                                 try {
@@ -41930,20 +41979,9 @@ async function importJSON() {
                             // 🔧 v6.0: await 전에 현재 config 캡처 (stale closure 방지)
                             const oldConfig = { ...globalTierConfig };
                             // 🆕 v7.0.3: hybrid → 다른 모드 전환 시 in-flight 검증 세션 + pending 큐 정리
-                            // (이전: 세션 state가 살아있어 다시 hybrid 들어오면 stale candidates로 finalize)
+                            // 🆕 v7.0.6 (M4a): clearVerificationStateOnModeExit 헬퍼 호출로 통일 — TIER_PRESETS 적용과 같은 코드 사용
                             if (oldConfig.mode === "hybrid" && m.key !== "hybrid") {
-                              setVerificationSession(null);
-                              verificationSessionIdRef.current = null;
-                              setVerificationLoading(false);
-                              verificationLoadingRef.current = false;
-                              setGatekeeperCandidates([]);
-                              setGatekeeperModalOpen(false);
-                              try {
-                                await exec(
-                                  `UPDATE tier_verification_queue SET state='cancelled', processed_at=? WHERE state='pending'`,
-                                  [Date.now()]
-                                );
-                              } catch (e) { console.warn("[v7.0.3] mode change 큐 cancel 실패:", e?.message); }
+                              await clearVerificationStateOnModeExit();
                             }
                             // 🆕 v6.2: manual 모드만 백필 (hybrid는 manual_tier 미설정 시 getDisplayTier가 ELO로 fallback)
                             // 이전: hybrid도 백필 → 진입 시점 ELO가 박제되어 이후 매칭 결과 미반영 (사용자 의도 위반)
@@ -42017,6 +42055,11 @@ async function importJSON() {
                               const newConfig = JSON.parse(JSON.stringify(preset.config));
                               // 🔧 v6.0: await 전에 현재 config 캡처 (stale closure 방지)
                               const oldConfig = { ...globalTierConfig };
+                              // 🆕 v7.0.6 (M4b): hybrid 진입/이탈 또는 hybrid → hybrid (tier 셋 변경) 시 검증 state/큐 정리
+                              // 케이스 3종 모두 커버: (1) hybrid → 다른 모드 (2) 다른 모드 → hybrid (stale ref 방어) (3) hybrid → hybrid 5tier→3tier 압축 등
+                              if (oldConfig.mode === "hybrid" || newConfig.mode === "hybrid") {
+                                await clearVerificationStateOnModeExit();
+                              }
                               // 🆕 v6.2: manual 프리셋만 백필 (hybrid는 ELO fallback)
                               if (newConfig.mode === "manual") {
                                 const novels = await all("SELECT id, rating, manual_tier FROM novels");
