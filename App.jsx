@@ -2,9 +2,53 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.0.4 (취향 분석 — 연중/미완을 저평가 원인으로 인식)                       ║
- * ║  최종 수정: 2026-05-05                                                        ║
+ * ║  버전: 7.0.5 (v7.0 테이블 스키마 마이그레이션 누락 수정)                          ║
+ * ║  최종 수정: 2026-05-06                                                        ║
  * ║  총 라인 수: 약 47,000줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.0.5 'no such column: state' 크래시 수정 (2026-05-06)                    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ 사용자 보고: 앱 시작 시 "데이터베이스 오류 — 앱을 다시 시작해주세요. 오류:        ║
+ * ║ Call to function 'NativeDatabase.prepareAsync' has been rejected. → Caused   ║
+ * ║ by: Error code : no such column: state" 모달 표시되며 사용 불가.                ║
+ * ║                                                                              ║
+ * ║ 근본 원인: v7.0 신규 테이블 3개(tier_verification_queue, tier_validation_log, ║
+ * ║ tier_repositioning_session) 도입 시 ensureColumn 마이그레이션 후속이 빠짐.    ║
+ * ║ 다른 테이블(novels/preference_patterns/insight_queue)은 모두 CREATE TABLE +   ║
+ * ║ ensureColumn 패턴인데, v7.0 테이블만 CREATE TABLE만 있어 부분 스키마로 남은   ║
+ * ║ DB(이전 dev/alpha 빌드에서 다른 컬럼 셋으로 생성된 테이블 등)를 복구할 수      ║
+ * ║ 없음. CREATE TABLE IF NOT EXISTS는 기존 테이블에 컬럼을 추가하지 않으므로,    ║
+ * ║ 직후 실행되는 CREATE INDEX … (state, …)가 'no such column: state'로 실패하고  ║
+ * ║ initDb 전체가 throw → 3회 재시도 모두 실패 → 알림 모달 노출.                   ║
+ * ║                                                                              ║
+ * ║ [수정]                                                                          ║
+ * ║ • tier_verification_queue: ensureColumn 3건 추가 — state(DEFAULT 'pending'),  ║
+ * ║   priority(0), processed_at. CREATE INDEX idx_tvq_state 직전에 위치하여        ║
+ * ║   부분 스키마 DB도 복구 가능.                                                  ║
+ * ║ • tier_repositioning_session: ensureColumn 8건 추가 — state, trigger_type,    ║
+ * ║   result_tier, result_order, result_action, total_responses(0), blocker_id,  ║
+ * ║   completed_at. CREATE INDEX idx_trs_blocker 직전에 위치.                      ║
+ * ║                                                                              ║
+ * ║ [영향 범위]                                                                     ║
+ * ║ • 정상 스키마 사용자: ensureColumn은 columnExists 체크 후 no-op (PRAGMA만 호출,║
+ * ║   ~10ms 1회/슬롯/실행). 동작/데이터 변화 없음.                                  ║
+ * ║ • 부분 스키마 사용자: 누락 컬럼이 ALTER TABLE로 추가되며 initDb 성공.           ║
+ * ║   tier_repositioning_session.state는 NOT NULL → NULLABLE DEFAULT로 변경되나   ║
+ * ║   모든 INSERT 사이트에서 state 명시적으로 제공하므로 런타임 영향 없음.          ║
+ * ║                                                                              ║
+ * ║ [원리 — 왜 다른 테이블은 안전했나]                                                ║
+ * ║ • novels/preference_patterns/insight_queue는 처음부터 ensureColumn으로 매       ║
+ * ║   버전마다 컬럼이 추가되었음. v7.0 테이블만 "신규 테이블이라 마이그레이션      ║
+ * ║   불필요"로 잘못 판단되어 CREATE TABLE 1회만 실행됨.                          ║
+ * ║                                                                              ║
+ * ║ [향후 가이드]                                                                    ║
+ * ║ • 새 테이블 추가 시: CREATE TABLE 직후 모든 nullable/default 컬럼에 대해      ║
+ * ║   ensureColumn 호출 (CREATE INDEX 전에). 설령 이번 릴리스에서는 no-op라도      ║
+ * ║   향후 컬럼 추가/스키마 변경 시 부분 스키마 복구 경로가 유지됨.                ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -4589,6 +4633,12 @@ async function initDb() {
     created_at INTEGER NOT NULL,
     processed_at INTEGER
   );`);
+  // 🔧 v7.0.5: 기존 DB 스키마 보강 — CREATE TABLE IF NOT EXISTS는 기존 테이블에
+  // 컬럼을 추가하지 않으므로, 부분 스키마로 남은 DB가 아래 CREATE INDEX에서
+  // "no such column: state" 크래시를 일으키는 것을 방지한다.
+  await ensureColumn("tier_verification_queue", "state", "TEXT", "'pending'");
+  await ensureColumn("tier_verification_queue", "priority", "INTEGER", "0");
+  await ensureColumn("tier_verification_queue", "processed_at", "INTEGER", null);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tvq_state ON tier_verification_queue(state, priority DESC, created_at);`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tvq_novel ON tier_verification_queue(novel_id);`);
 
@@ -4619,6 +4669,16 @@ async function initDb() {
     created_at INTEGER NOT NULL,
     completed_at INTEGER
   );`);
+  // 🔧 v7.0.5: 기존 DB 스키마 보강 — 위와 같은 이유로 idx_trs_blocker가 참조하는
+  // state, blocker_id 등을 ensureColumn으로 보강. trigger_type 등 nullable 컬럼도 함께.
+  await ensureColumn("tier_repositioning_session", "state", "TEXT", "'pending'");
+  await ensureColumn("tier_repositioning_session", "trigger_type", "TEXT", null);
+  await ensureColumn("tier_repositioning_session", "result_tier", "TEXT", null);
+  await ensureColumn("tier_repositioning_session", "result_order", "INTEGER", null);
+  await ensureColumn("tier_repositioning_session", "result_action", "TEXT", null);
+  await ensureColumn("tier_repositioning_session", "total_responses", "INTEGER", "0");
+  await ensureColumn("tier_repositioning_session", "blocker_id", "TEXT", null);
+  await ensureColumn("tier_repositioning_session", "completed_at", "INTEGER", null);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_trs_blocker ON tier_repositioning_session(blocker_id, state);`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_trs_novel ON tier_repositioning_session(novel_id);`);
 
@@ -9510,7 +9570,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.0.4";
+const APP_VERSION = "7.0.5";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -9536,6 +9596,19 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.0.5", date: "2026-05-06",
+    title: "v7.0 테이블 스키마 마이그레이션 누락 수정 — 'no such column: state' 크래시 해결",
+    highlights: [
+      { type: "fix", text: "🔴 앱 시작 시 '데이터베이스 오류 — no such column: state' 크래시 수정 — initDb의 CREATE INDEX가 부분 스키마(state 컬럼 누락) 테이블에서 실패하던 문제" },
+      { type: "fix", text: "tier_verification_queue / tier_repositioning_session — CREATE TABLE 직후 ensureColumn 호출로 누락 컬럼 자동 보강 (다른 테이블과 동일한 마이그레이션 패턴 적용)" },
+    ],
+    details: [
+      { type: "fix", text: "tier_verification_queue: state(DEFAULT 'pending'), priority(0), processed_at — 3개 컬럼 ensureColumn 추가" },
+      { type: "fix", text: "tier_repositioning_session: state(DEFAULT 'pending'), trigger_type, result_tier, result_order, result_action, total_responses(0), blocker_id, completed_at — 8개 컬럼 ensureColumn 추가" },
+      { type: "fix", text: "근본 원인 — v7.0 신규 테이블 3개 도입 시 ensureColumn 마이그레이션 후속이 빠져, 부분 스키마 DB가 후속 CREATE INDEX에서 prepareAsync 실패로 크래시" },
+    ],
+  },
   {
     version: "7.0.4", date: "2026-05-05",
     title: "취향 분석 — 연중/미완 작품을 저평가 원인(factor)으로 인식",
