@@ -22649,6 +22649,29 @@ async function rebalanceTierOrder(tier) {
   }
 }
 
+// 🆕 v7.0.6 (M5): manual_tier + manual_order 동시 갱신 헬퍼.
+// SQLite single statement 내 sub-select와 UPDATE가 atomic이므로 동시 saveEdit 시 동일 MAX 산출 race를 회피.
+// 이전: saveEdit/batchSetTier/inline chip이 manual_tier만 UPDATE하여 새 tier에서 manual_order=0 충돌 또는 잔여 order 잔류.
+async function setNovelTierAtomic(novelId, newTier) {
+  if (!novelId) return;
+  if (!newTier) {
+    // tier 클리어 — manual_order도 0으로
+    await exec(
+      "UPDATE novels SET manual_tier=NULL, manual_order=0 WHERE id=?",
+      [novelId]
+    );
+    return;
+  }
+  // sub-select는 UPDATE 시점 *이전*의 데이터를 참조 (SQLite 기본 동작)
+  // → novel이 newTier에 이미 속해있어도 sub-select가 자기 자신 포함 가능 (이 경우 +100으로 자연 증가)
+  await exec(
+    `UPDATE novels SET manual_tier=?,
+      manual_order=(SELECT COALESCE(MAX(manual_order), 0) + 100 FROM novels WHERE manual_tier=?)
+     WHERE id=?`,
+    [newTier, newTier, novelId]
+  );
+}
+
 // 🆕 v7.0: 수문장 식별 — 최근 N개 세션의 blocker_id 누적 통계
 // 5개 누적 시 수문장 후보로 제안
 async function getGatekeeperCandidates(threshold = 5) {
@@ -29479,8 +29502,10 @@ function AppContent() {
       switch (item.type) {
         case 'tier_change':
           // 티어 변경 되돌리기 (gated 티어가 아니면 null로 복원)
-          await exec("UPDATE novels SET manual_tier=? WHERE id=?", [
+          // 🆕 v7.0.6 (M11): manual_order도 함께 복원 — 페이로드 누락 시 fallback 0 (backward compat)
+          await exec("UPDATE novels SET manual_tier=?, manual_order=? WHERE id=?", [
             isGatedTier(item.payload.prevTier, globalTierConfig) ? item.payload.prevTier : null,
+            Number(item.payload.prevManualOrder) || 0,
             item.payload.id
           ]);
           addTierHistoryEntry(item.payload.id, item.payload.title, item.payload.newTier, item.payload.prevTier);
@@ -29500,9 +29525,11 @@ function AppContent() {
 
         case 'tier_batch':
           // 일괄 티어 변경 되돌리기
+          // 🆕 v7.0.6 (M11): manual_order도 함께 복원 — 페이로드 누락 시 fallback 0 (backward compat)
           for (const change of item.payload.changes) {
-            await exec("UPDATE novels SET manual_tier=? WHERE id=?", [
+            await exec("UPDATE novels SET manual_tier=?, manual_order=? WHERE id=?", [
               isGatedTier(change.prevTier, globalTierConfig) ? change.prevTier : null,
+              Number(change.prevManualOrder) || 0,
               change.id
             ]);
           }
@@ -30879,11 +30906,14 @@ function AppContent() {
       //                  사용자 시점에서 보던 표시 티어 기준으로 방향 판정해야 정확함
       let _v7TierChanged = null; // {fromDisplayTier, to} for hybrid trigger
       let _v7TierCleared = false; // 🆕 v7.0.2: manual_tier → null 전환 (강등성 의심으로 처리)
+      let _v7PrevManualOrder = Number(n.manual_order) || 0; // 🆕 v7.0.6 (M11/C1): undo 페이로드용
       if (globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid") {
         const newMt = editManualTier || null;
         if (newMt !== n.manual_tier) {
           const oldTier = getDisplayTier(n, globalTierConfig);
-          await exec("UPDATE novels SET manual_tier=? WHERE id=?", [newMt, n.id]);
+          // 🆕 v7.0.6 (M5): manual_tier + manual_order 원자적 갱신 — 이전 단순 manual_tier UPDATE는
+          // 새 tier에서 manual_order=0 충돌 또는 잔여 order 잔류로 gap=100 invariant 손상.
+          await setNovelTierAtomic(n.id, newMt);
           if (oldTier !== (newMt || oldTier)) {
             // 🆕 v7.0.2: 티어 클리어(newMt=null)도 히스토리 기록 — 이전: newMt 진실값 시에만 기록되어 클리어 이력 누락
             addTierHistoryEntry(n.id, n.title, oldTier, newMt || "(미설정)");
@@ -32763,22 +32793,32 @@ function AppContent() {
     if (!tierKey) return;
 
     // 🆕 v7.0: hybrid 모드 — 변경 전 기존 manual_tier 캡처 (방향 판정용)
+    // 🆕 v7.0.6 (M5b/M11/C1): 모든 모드에서 manual_tier+order 캡처 (undo 페이로드, 정합성 검증)
     let _v7Prev = null;
-    if (globalTierConfig.mode === "hybrid") {
-      try {
-        const placeholders = ids.map(() => "?").join(",");
-        const rows = await all(`SELECT id, manual_tier FROM novels WHERE id IN (${placeholders})`, ids);
-        _v7Prev = new Map(rows.map(r => [r.id, r.manual_tier]));
-      } catch (e) {
-        console.warn("[v7.0] batchSetTier 사전 캡처 실패:", e?.message);
-      }
+    try {
+      const placeholders = ids.map(() => "?").join(",");
+      const rows = await all(
+        `SELECT id, title, manual_tier, manual_order FROM novels WHERE id IN (${placeholders})`,
+        ids
+      );
+      _v7Prev = new Map(rows.map(r => [r.id, {
+        manual_tier: r.manual_tier,
+        manual_order: Number(r.manual_order) || 0,
+        title: r.title,
+      }]));
+    } catch (e) {
+      console.warn("[v7.0] batchSetTier 사전 캡처 실패:", e?.message);
     }
 
-    const queries = ids.map((id) => ({
-      sql: "UPDATE novels SET manual_tier=? WHERE id=?",
-      params: [tierKey, id],
-    }));
-    await execBatch(queries);
+    // 🆕 v7.0.6 (M5b): setNovelTierAtomic 순차 호출 — 작품마다 manual_tier + manual_order 원자적 갱신.
+    // 이전 단일 execBatch UPDATE(manual_tier만)는 새 tier에서 manual_order 충돌(0 또는 잔여값) 유발.
+    for (const id of ids) {
+      try {
+        await setNovelTierAtomic(id, tierKey);
+      } catch (e) {
+        console.warn("[v7.0.6 M5b] batchSetTier 작품 단위 UPDATE 실패:", e?.message, id);
+      }
+    }
 
     // 🆕 v7.0: hybrid 모드 — 작품별 방향 판정 후 enqueueVerification 호출
     if (globalTierConfig.mode === "hybrid" && _v7Prev) {
@@ -32786,7 +32826,9 @@ function AppContent() {
         const order = getActiveTierOrder(globalTierConfig);
         const toIdx = order.indexOf(tierKey);
         for (const id of ids) {
-          const fromTier = _v7Prev.get(id);
+          // 🆕 v7.0.6: _v7Prev 객체 구조 변경 — { manual_tier, manual_order, title }
+          const prev = _v7Prev.get(id);
+          const fromTier = prev?.manual_tier;
           if (fromTier === tierKey) continue; // 변경 없음
           const fromIdx = fromTier ? order.indexOf(fromTier) : order.length;
           const suspicion = toIdx < fromIdx ? "underrated" : "overrated";
@@ -32808,9 +32850,23 @@ function AppContent() {
     const mode = globalTierConfig.mode;
 
     if (mode === "manual" || mode === "hybrid") {
-      // manual_order 교환
-      const rowA = await first("SELECT manual_order FROM novels WHERE id=?", [idA]);
-      const rowB = await first("SELECT manual_order FROM novels WHERE id=?", [idB]);
+      // 🆕 v7.0.6 (M8): tier 일관성 사전 검증 — race(예: 동시 finalize가 tier 변경) 시 다른 tier의 manual_order만 swap되어 정렬이 무너지는 것을 방지.
+      // UI(sameTierEntries)는 보통 같은 tier 작품끼리만 swap 호출하나, 비동기 race에서는 변경 가능.
+      const rows = await all(
+        "SELECT id, manual_tier, manual_order FROM novels WHERE id IN (?, ?)",
+        [idA, idB]
+      );
+      if (rows.length !== 2) {
+        console.warn("[v7.0.6 M8] swapRating: 작품 미존재", idA, idB);
+        return;
+      }
+      const rowA = rows.find(r => r.id === idA);
+      const rowB = rows.find(r => r.id === idB);
+      if (rowA.manual_tier !== rowB.manual_tier) {
+        console.warn("[v7.0.6 M8] swapRating: tier 불일치 (race) — abort", rowA.manual_tier, rowB.manual_tier);
+        return;
+      }
+      const sharedTier = rowA.manual_tier;
       const oA = Number(rowA?.manual_order) || 0;
       const oB = Number(rowB?.manual_order) || 0;
       // v7.0.1 (C3 fix): 충돌 분기에서 idA는 명시적으로 UP(-50) 이동 → suspicion도 underrated 고정
@@ -32820,6 +32876,12 @@ function AppContent() {
           { sql: "UPDATE novels SET manual_order=? WHERE id=?", params: [oB - 50, idA] },
         ]);
         suspicionForHybrid = "underrated"; // -50 = 위로 이동
+        // 🆕 v7.0.6 (M7): collision 분기에서 즉시 같은 tier rebalance — gap=100 invariant 회복.
+        // -50된 idA가 manual_order ASC 정렬에서 가장 위에 위치하므로 사용자 의도(▲로 위)와 일치.
+        // 이 호출이 매칭→수동 전환 후 첫 ▲▼에서도 자동 정규화하므로 M10(전환 시 백필) skip 가능.
+        if (sharedTier) {
+          await rebalanceTierOrder(sharedTier);
+        }
       } else {
         await execBatch([
           { sql: "UPDATE novels SET manual_order=? WHERE id=?", params: [oB, idA] },
@@ -39102,9 +39164,17 @@ async function importJSON() {
                                 // — manual_tier=null인데 displayTier=tk인 경우 사용자가 그 티어를 명시적 lock하려는 의도 보존
                                 if (tk === item.manual_tier) { setExpandedNovelId(null); return; }
                                 const oldTier = tier;
+                                const prevManualOrder = Number(item.manual_order) || 0; // 🆕 v7.0.6 (M11/C1)
                                 try {
-                                  await exec("UPDATE novels SET manual_tier=? WHERE id=?", [tk, item.id]);
+                                  // 🆕 v7.0.6 (M5c): manual_tier + manual_order 원자적 갱신 (이전 단순 manual_tier UPDATE는 새 tier collision 유발)
+                                  await setNovelTierAtomic(item.id, tk);
                                   addTierHistoryEntry(item.id, item.title, oldTier, tk);
+                                  // 🆕 v7.0.6 (C1): inline chip은 tier만 단독 변경 → 정상 undo push
+                                  pushUndo('tier_change', {
+                                    id: item.id, title: item.title,
+                                    prevTier: item.manual_tier, newTier: tk,
+                                    prevManualOrder,
+                                  }, `${item.title} 티어 변경 (인라인)`);
                                   // 🆕 v7.0: hybrid 모드 — 사용자 path 트리거
                                   if (globalTierConfig.mode === "hybrid") {
                                     const order = getActiveTierOrder(globalTierConfig);
