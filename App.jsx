@@ -27439,9 +27439,10 @@ function AppContent() {
   }
 
   // 매치 결과 분석 및 인사이트 생성
-  async function analyzeMatchResult(A, B, winnerId, prediction) {
+  // 🆕 v7.0.6 (m3): tagRelationsSnapshot 인자 추가 — decide() 진입 시 캡처된 스냅샷 사용으로 큐 task 내부 stale closure 회피
+  async function analyzeMatchResult(A, B, winnerId, prediction, tagRelationsSnapshot) {
     if (!prediction) return null;
-    
+
     const winner = winnerId === A.id ? "A" : "B";
     const winnerNovel = winner === "A" ? A : B;
     const loserNovel = winner === "A" ? B : A;
@@ -27449,14 +27450,15 @@ function AppContent() {
       (winner === "A" && prediction.predictedWinRateA < prediction.upsetThreshold) ||
       (winner === "B" && prediction.predictedWinRateB < prediction.upsetThreshold)
     );
-    
+
     // 예측 정확도
     const wasCorrect = prediction.predictedWinner === winner;
-    
+
     // 🔮 v3.0.3: 이변 원인 분석
+    // 🆕 v7.0.6 (m3): 인자로 받은 snapshot 우선 사용 (대비: 큐 지연 중 tagRelations state 변경)
     let upsetCauses = [];
     if (isUpset) {
-      upsetCauses = analyzeUpsetCauses(winnerNovel, loserNovel, tagRelations);
+      upsetCauses = analyzeUpsetCauses(winnerNovel, loserNovel, tagRelationsSnapshot || tagRelations);
     }
     
     // 인사이트 생성
@@ -31628,6 +31630,8 @@ function AppContent() {
     const capturedAnalysis = matchAnalysis;
     // 🔧 v3.9.2: tagAttributes도 캡처 (saveChoiceLog에서 참조 — 불변규칙 #2)
     const capturedTagAttributes = tagAttributes;
+    // 🆕 v7.0.6 (m3): tagRelations 캡처 — analyzeMatchResult가 큐 task 내부에서 호출되므로 stale closure 방지 (불변규칙 #2)
+    const capturedTagRelations = tagRelations;
     
     // 🔄 v3.4.6: 이미 큐에서 처리 중인 조합이면 무시
     if (isMatchPending(currentPair.A.id, currentPair.B.id)) {
@@ -31749,9 +31753,10 @@ function AppContent() {
       setTimeout(() => {
         (async () => {
           // 🔧 v3.5.15d: capturedAnalysis 사용 (호출 시점 스냅샷)
+          // 🆕 v7.0.6 (m3): capturedTagRelations 인자 전달 — 큐 task 지연 중 tagRelations 변경 시 stale closure 회피
           if (capturedAnalysis) {
             try {
-              await analyzeMatchResult(A, B, winnerId, capturedAnalysis);
+              await analyzeMatchResult(A, B, winnerId, capturedAnalysis, capturedTagRelations);
             } catch (e) {
               console.warn("[decide] analyzeMatchResult 오류:", e);
             }
