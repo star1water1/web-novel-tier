@@ -2,9 +2,63 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.0.5 (v7.0 테이블 스키마 마이그레이션 누락 수정)                          ║
+ * ║  버전: 7.0.6 (모드 전수 감사 종합 수정 — 17건)                                  ║
  * ║  최종 수정: 2026-05-06                                                        ║
- * ║  총 라인 수: 약 47,000줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 48,200줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.0.6 모드 전수 감사 — 17건 종합 수정 (2026-05-06)                        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ 3개 병렬 에이전트 모드 전수 감사 결과 17건 결함 발견 (Critical 1, Major 11,   ║
+ * ║ Minor 5). 사용자 결정으로 4건 추가 의사결정 반영. 5단계 stage commit으로 진행.║
+ * ║                                                                              ║
+ * ║ [Critical — saveEdit/batchSetTier/inline chip undo 누락]                       ║
+ * ║ • C1 (Stage 4): 사용자 결정 — tier 단독 변경 시만 정상 push. tier+메타 동시   ║
+ * ║   변경 시 non_undoable marker → 사용자가 undo 시도하면 명시적 안내. saveEdit  ║
+ * ║   에서 editOriginalSnapshotRef.current 와 비교해 metaChanged 판정             ║
+ * ║                                                                              ║
+ * ║ [Major — 데이터 정합성 (manual_order invariant)]                                ║
+ * ║ • M5 setNovelTierAtomic 헬퍼 신규 — single statement sub-select + UPDATE로    ║
+ * ║   race-free MAX+100. saveEdit/batchSetTier/inline chip 일관 적용              ║
+ * ║ • M7 ▲▼ collision 분기에서 즉시 rebalanceTierOrder 호출 — gap=100 회복. 이    ║
+ * ║   fix가 사용자 결정 M10 skip(매칭→수동 백필 안 함)의 안전망 역할              ║
+ * ║ • M8 swapRating fresh fetch + tier 일관성 검증 — race 시 abort                ║
+ * ║ • M11 pushUndo payload에 prevManualOrder 추가, performUndo 복원도 manual_order║
+ * ║                                                                              ║
+ * ║ [Major — UX / 가시성 / 안전성]                                                  ║
+ * ║ • M1 수문장 ⬆️/⬇️ Alert 더블탭 가드 (gatekeeperRespondingRef)                  ║
+ * ║ • M2 AwardsScreen 빅 카드 + 썸네일 hybrid에서 ELO rating → '{tier} #{order}'  ║
+ * ║ • M3 RS import: 'moved'/'completed' fallback 강제 → 누락 row skip + warn      ║
+ * ║ • M4 TIER_PRESETS 적용 시 검증 state 정리 — clearVerificationStateOnModeExit  ║
+ * ║   헬퍼 추출. 케이스 3종 (hybrid→다른 / 다른→hybrid / hybrid→hybrid 5tier→3tier)║
+ * ║ • M6 addNovel 최하위 tier enqueueVerification — idx>0 조건 (이전: 최하위 누락) ║
+ * ║ • M9 사용자 결정 — saveEdit/batchSetTier/inline chip 가드는 tier 변경에만,    ║
+ * ║   메타 편집은 자유 (tier UPDATE만 skip + 안내)                                ║
+ * ║                                                                              ║
+ * ║ [Minor]                                                                          ║
+ * ║ • m1 자동매칭 IIFE .catch (unhandled rejection 차단)                           ║
+ * ║ • m2 자동매칭 useEffect screen deps + 진입 가드 (탭 이탈 시 중단)              ║
+ * ║ • m3 analyzeMatchResult tagRelations 스냅샷 인자 전달 (불변규칙 #2)            ║
+ * ║ • m5 AwardsScreen compareNovels/calculateNovelScore 'manual' 모드도 분기      ║
+ * ║ • m6 사용자 결정 — meta_edit 트리거 자체 제거 (priority=1 실효 X, 노이즈 제거)║
+ * ║                                                                              ║
+ * ║ [사용자 의사결정 명세]                                                          ║
+ * ║ • M9: tier 변경 분기에만 가드 (메타 편집 자유)                                ║
+ * ║ • M10: skip — manual_order 모드 전환 시 보존 (M7 자동 정규화로 충분)          ║
+ * ║ • C1: 조건부 — tier 단독 변경 시만 정상 push, 동시 변경 시 non_undoable       ║
+ * ║ • m6: 트리거 자체 제거 — priority=1로 다른 트리거에 밀려 실효 X                ║
+ * ║                                                                              ║
+ * ║ [m4 / m7 검토 후 skip]                                                          ║
+ * ║ • m4 cross-tier ±50 압축: rebalanceTierOrder가 finalize마다 흡수, 영향 없음   ║
+ * ║ • m7 manual→hybrid 큐 일괄 인입: 신규 편집부터 검증하는 게 의도된 동작        ║
+ * ║                                                                              ║
+ * ║ [신규 헬퍼 3개]                                                                ║
+ * ║ • setNovelTierAtomic(novelId, newTier) — App.jsx 22645                          ║
+ * ║ • clearVerificationStateOnModeExit() — App.jsx 31275                            ║
+ * ║ • gatekeeperRespondingRef — App.jsx 24260                                       ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -9570,7 +9624,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.0.5";
+const APP_VERSION = "7.0.6";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -9596,6 +9650,31 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.0.6", date: "2026-05-06",
+    title: "모드 전수 감사 종합 수정 — 17건 (Critical 1 / Major 11 / Minor 5)",
+    highlights: [
+      { type: "fix", text: "🔴 saveEdit/batchSetTier/inline tier chip undo 지원 (C1) — 사용자 결정: tier 단독 변경 시만 정상 push, tier+메타 동시 변경 시 'non_undoable' marker로 명시적 안내" },
+      { type: "fix", text: "manual_tier 변경 시 manual_order 동시 갱신 (M5) — atomic SQL setNovelTierAtomic 헬퍼로 race-free MAX+100 산출. saveEdit/batchSetTier/inline chip 일관 적용" },
+      { type: "fix", text: "수문장 ⬆️/⬇️ Alert 더블탭 가드 (M1) — gatekeeperRespondingRef 추가, manual_order +100 중복 적용 방지" },
+      { type: "fix", text: "AwardsScreen 하이브리드/수동 모드 ELO rating 표시 → manual_tier #order 분기 (M2/m5) — 빅 카드/썸네일/제목 칸 3개 사이트" },
+      { type: "fix", text: "▲▼ collision 분기 자동 rebalance (M7) — gap=100 invariant 즉시 회복, 매칭→수동 전환 후 첫 ▲▼에서 자동 정규화" },
+      { type: "fix", text: "TIER_PRESETS 적용 시 hybrid in-flight 세션/큐 정리 (M4) — clearVerificationStateOnModeExit 헬퍼 추출 + 모드 토글과 동일 처리" },
+      { type: "fix", text: "검증 시퀀스 진행 중 tier 변경 차단 (M9) — 사용자 결정: 메타 편집은 자유, tier 변경만 abort + 안내" },
+      { type: "fix", text: "addNovel 최하위 tier enqueueVerification 누락 (M6) — 5tier에서 D 등록 시 검증 사이클 통째 누락 수정" },
+    ],
+    details: [
+      { type: "fix", text: "M3 RS import fallback 강제 제거 — 외부 변조 JSON 시 NOT NULL 누락 row skip + warn (이전: 'moved'/'completed' 강제로 통계 오염 위험)" },
+      { type: "fix", text: "M8 swapRating tier 일관성 사전 검증 — race(동시 finalize) 시 다른 tier order만 swap 차단" },
+      { type: "fix", text: "M11 undo가 manual_order 복원 — pushUndo payload에 prevManualOrder 추가, performUndo case 'tier_change'/'tier_batch'에서 함께 SET" },
+      { type: "fix", text: "m1 자동매칭 IIFE unhandled rejection 차단 (.catch 추가)" },
+      { type: "fix", text: "m2 자동매칭 useEffect screen deps + 진입 가드 — 매칭 탭 이탈 시 백그라운드 자동매칭 중단" },
+      { type: "fix", text: "m3 analyzeMatchResult tagRelations closure 제거 — decide() 진입 시 캡처된 snapshot 인자 전달 (불변규칙 #2)" },
+      { type: "fix", text: "m6 saveEdit meta_edit 트리거 자체 제거 — priority=1로 다른 트리거에 항상 밀려 실효 X, 큐 노이즈 제거 (사용자 결정)" },
+      { type: "fix", text: "M10 manual_order 백필 — 사용자 결정으로 skip (M7 자동 정규화로 충분, 사용자 정렬 보존)" },
+      { type: "fix", text: "m4 / m7 검토 후 skip — 영향 없음 또는 의도된 동작" },
+    ],
+  },
   {
     version: "7.0.5", date: "2026-05-06",
     title: "v7.0 테이블 스키마 마이그레이션 누락 수정 — 'no such column: state' 크래시 해결",
