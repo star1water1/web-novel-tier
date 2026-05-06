@@ -29548,7 +29548,17 @@ function AppContent() {
             }
           }
           break;
-          
+
+        // 🆕 v7.0.6 (C1): 사용자 결정 — saveEdit이 tier+meta 동시 변경 시 부분 복원의 혼란 회피.
+        // 동시 변경 시 marker push → 사용자가 undo 시도하면 명시적 안내 표시 후 stack에서 pop만 수행.
+        case 'non_undoable':
+          Alert.alert(
+            "되돌릴 수 없음",
+            item.payload?.reason || "되돌리기가 불가능한 변경이 포함되어 있습니다."
+          );
+          // marker 자체는 복원 동작 없음. 호출자에서 stack pop.
+          break;
+
         case 'novel_delete':
           // 작품 삭제 되돌리기 (복원)
           // 🆕 v7.0.2: manual_order 컬럼 누락 보강 — 미포함 시 hybrid 정렬에서 0 그룹으로 떨어져 gap=100 invariant 깨짐
@@ -30908,6 +30918,8 @@ function AppContent() {
       let _v7TierCleared = false; // 🆕 v7.0.2: manual_tier → null 전환 (강등성 의심으로 처리)
       let _v7PrevManualOrder = Number(n.manual_order) || 0; // 🆕 v7.0.6 (M11/C1): undo 페이로드용
       let _v7TierBlockedByVerification = false; // 🆕 v7.0.6 (M9a): 검증 진행 중 tier 변경 차단 플래그
+      let _v7TierActuallyChanged = false; // 🆕 v7.0.6 (C1): undo push 판정용 (가드/skip이 아니라 실제 UPDATE 수행 여부)
+      let _v7PrevTier = n.manual_tier; // 🆕 v7.0.6 (C1): undo 페이로드용
       if (globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid") {
         const newMt = editManualTier || null;
         if (newMt !== n.manual_tier) {
@@ -30920,6 +30932,7 @@ function AppContent() {
             // 🆕 v7.0.6 (M5): manual_tier + manual_order 원자적 갱신 — 이전 단순 manual_tier UPDATE는
             // 새 tier에서 manual_order=0 충돌 또는 잔여 order 잔류로 gap=100 invariant 손상.
             await setNovelTierAtomic(n.id, newMt);
+            _v7TierActuallyChanged = true; // 🆕 v7.0.6 (C1)
             if (oldTier !== (newMt || oldTier)) {
               // 🆕 v7.0.2: 티어 클리어(newMt=null)도 히스토리 기록 — 이전: newMt 진실값 시에만 기록되어 클리어 이력 누락
               addTierHistoryEntry(n.id, n.title, oldTier, newMt || "(미설정)");
@@ -31068,6 +31081,59 @@ function AppContent() {
           "검증 진행 중",
           "이 작품은 검증 시퀀스 진행 중이라 티어 변경은 적용되지 않았습니다 (기존 티어 유지). 다른 정보(제목/태그 등)는 정상 저장되었습니다."
         );
+      }
+
+      // 🆕 v7.0.6 (C1): 사용자 결정 — saveEdit undo는 tier 단독 변경 시에만 정상 push.
+      // tier+메타 동시 변경 시 부분 복원 혼란 회피 — non_undoable marker push로 사용자에게 명시적 안내.
+      // 메타만 변경(이전 동작): undo push 없음 (snapshot 변화 없는 saveEdit도 마찬가지).
+      if (_v7TierActuallyChanged) {
+        const snapshot = editOriginalSnapshotRef.current;
+        let metaChanged = false;
+        if (snapshot) {
+          // saveEdit이 UPDATE 하는 모든 컬럼을 snapshot과 비교
+          const current = {
+            title: newTitle,
+            author: n.author?.trim() || "",
+            tags: n.tags || "",
+            note: n.note?.trim() || "",
+            read_count: String(newReadCount),
+            total_episodes: String(Number(n.total_episodes) || 0),
+            cover_image: editCoverImage || "",
+            tag_data: n.tag_data || "",
+            platforms: JSON.stringify(editPlatforms),
+            status: editStatus,
+            work_status: editWorkStatus,
+            link: editLink.trim() || "",
+            reread_count: String(Math.max(1, Number(editRereadCount) || 1)),
+            gaiden_status: editGaidenStatus,
+            gaiden_read_count: String(Number(editGaidenReadCount) || 0),
+            gaiden_total_episodes: String(Number(editGaidenTotalEpisodes) || 0),
+            created_at: editCreatedAt,
+            read_count_updated_at: editReadCountUpdatedAt,
+            quotes: JSON.stringify(editQuotes),
+            awards: awardsPayload, // saveEdit 내부에서 생성된 JSON string
+            // rating은 saveEdit이 직접 UPDATE하지 않으므로 snapshot.rating은 비교에서 제외
+          };
+          for (const k of Object.keys(current)) {
+            if (snapshot[k] !== undefined && snapshot[k] !== current[k]) {
+              metaChanged = true;
+              break;
+            }
+          }
+        }
+        if (!metaChanged) {
+          // tier만 단독 변경 → 정상 undo push
+          pushUndo("tier_change", {
+            id: n.id, title: newTitle,
+            prevTier: _v7PrevTier, newTier: editManualTier || null,
+            prevManualOrder: _v7PrevManualOrder,
+          }, `${newTitle} 티어 변경 (편집)`);
+        } else {
+          // tier + 메타 동시 변경 → non_undoable marker
+          pushUndo("non_undoable", {
+            reason: "티어 변경과 다른 정보 변경이 함께 이루어져 되돌릴 수 없습니다.",
+          }, `${newTitle} 편집 (되돌리기 불가)`);
+        }
       }
     } catch (e) {
       if (_pt) PerfMonitor.logError("saveEdit", e); // 🔬
@@ -32860,6 +32926,23 @@ function AppContent() {
         await setNovelTierAtomic(id, tierKey);
       } catch (e) {
         console.warn("[v7.0.6 M5b] batchSetTier 작품 단위 UPDATE 실패:", e?.message, id);
+      }
+    }
+
+    // 🆕 v7.0.6 (C1): batchSetTier는 tier만 단독 변경하므로 항상 정상 undo push 가능
+    if (_v7Prev) {
+      const changes = [];
+      for (const id of ids) {
+        const prev = _v7Prev.get(id);
+        if (!prev || prev.manual_tier === tierKey) continue; // 변경 없음
+        changes.push({
+          id, title: prev.title || "",
+          prevTier: prev.manual_tier, newTier: tierKey,
+          prevManualOrder: prev.manual_order,
+        });
+      }
+      if (changes.length > 0) {
+        pushUndo("tier_batch", { changes }, `${changes.length}개 작품 티어 일괄 변경`);
       }
     }
 
