@@ -2,9 +2,57 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.0.14 (배정탭 ▲▼ 크래시 가드 + 진단 export 상시 노출 + 수상탭 확대)║
+ * ║  버전: 7.0.15 (read_count +30 시 의심작 자동 등록 — read_progress 트리거)    ║
  * ║  최종 수정: 2026-05-07                                                        ║
- * ║  총 라인 수: 약 50,290줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 50,310줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.0.15 read_count 변경을 의심작 트리거로 추가 (2026-05-07)                ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [Context]                                                                       ║
+ * ║ • 사용자 보고: "어떤 작품의 회차수를 50화 넘게 올렸는데도 의심작 선정이 안     ║
+ * ║   됐다. 의심도는 어디서 확인하나?"                                            ║
+ * ║ • v7.0.6 m6에서 meta_edit 트리거 제거 — priority=1로 항상 밀려 노이즈만        ║
+ * ║   누적. read_count 변경은 meta_edit 일부였으므로 함께 사라짐. 결과: tier/      ║
+ * ║   순위 명시 변경만 의심작이 됨.                                                ║
+ * ║                                                                              ║
+ * ║ [신규 트리거 read_progress]                                                     ║
+ * ║ • saveEdit에서 read_count delta >= VERIFICATION_READ_COUNT_THRESHOLD(=30) 시  ║
+ * ║   "underrated" 의심으로 enqueueVerification 호출.                             ║
+ * ║ • 사용자가 "더 읽었다 = 더 좋아한다" implicit signal — order_change와 의미     ║
+ * ║   동급이므로 priority=3.                                                       ║
+ * ║ • delta < 0(정정 케이스) 무시. 단일 saveEdit 내 delta 기준(누적 X).             ║
+ * ║                                                                              ║
+ * ║ [m6와의 차이 — 노이즈 회피 설계]                                                  ║
+ * ║ • m6: 모든 메타 변경 트리거 + priority=1 → 매 saveEdit마다 큐 인입 + 항상 밀림  ║
+ * ║ • v7.0.15: read_count 한정 + delta >= 30 임계치 + priority=3                  ║
+ * ║   → 필터링으로 노이즈 차단, m6 제거 사유에 다시 빠지지 않음.                  ║
+ * ║                                                                              ║
+ * ║ [tier_change와의 충돌 — else-if로 양보]                                        ║
+ * ║ • enqueueVerification UPSERT는 trigger_type/suspicion_type을 나중 호출이      ║
+ * ║   덮어쓰는 동작. tier_change(overrated) 후 read_progress(underrated) 호출 시  ║
+ * ║   사용자 강등 의도가 underrated로 뒤집힘.                                      ║
+ * ║ • 해결: read_progress 분기를 else-if로 — _v7TierChanged/_v7TierCleared가      ║
+ * ║   둘 다 falsy일 때만 진입. 명시적 사용자 액션(tier 변경) > implicit 시그널.    ║
+ * ║                                                                              ║
+ * ║ [의심도 확인 위치 — 사용자 안내]                                                  ║
+ * ║ • 매칭 탭(hybrid 모드): "검증 대기" 카운트 + 진행 중 시퀀스 UI                 ║
+ * ║ • 진단 탭 → 🔄 S1. 검증 큐 + 트리거 trace → "현재 pending 큐 상위 10"          ║
+ * ║   (작품명·priority·trigger_type/suspicion·tier 표시)                          ║
+ * ║                                                                              ║
+ * ║ [회귀 위험]                                                                       ║
+ * ║ • VERIFICATION_PRIORITY 키 1개 추가 — 기존 5개 키엔 영향 0.                    ║
+ * ║ • 새 trigger_type "read_progress" — 진단 표시/export가 GROUP BY trigger_type  ║
+ * ║   이라 자동 호환.                                                              ║
+ * ║ • saveEdit else-if 분기 추가 — 기존 분기 변경 X. tier 변경 우선.              ║
+ * ║ • manual/match 모드, import/restore/convertPlannedToNovel은 모두 미발화.      ║
+ * ║                                                                              ║
+ * ║ [향후 확장 — out of scope]                                                       ║
+ * ║ • reread_count(다회독) / gaiden_read_count(외전) 트리거                       ║
+ * ║ • 임계치 사용자 설정화 / NovelCard 인디케이터                                  ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -10410,7 +10458,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.0.14";
+const APP_VERSION = "7.0.15";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -10436,6 +10484,21 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.0.15", date: "2026-05-07",
+    title: "회차수 +30화 이상 증가 시 자동 의심작 등록 (read_progress 트리거)",
+    highlights: [
+      { type: "new", text: "🆕 read_progress 트리거 추가 — saveEdit에서 read_count delta >= 30 시 'underrated' 의심으로 검증 큐에 자동 등록. 사용자가 '더 읽었다 = 더 좋아한다' 신호를 자동 인식" },
+      { type: "improve", text: "📍 의심도 확인 위치 안내 — 매칭 탭 '검증 대기' 카운트 또는 진단 탭 → S1. 검증 큐 → '현재 pending 큐 상위 10'에서 어떤 작품이 어떤 trigger/suspicion으로 등록됐는지 확인 가능" },
+      { type: "fix", text: "🛡️ tier 변경 + read_count +30 동시 발생 시 충돌 회피 — else-if 구조로 read_progress가 tier_change suspicion을 덮어쓰지 않도록. 사용자 강등(overrated)을 underrated로 뒤집는 사고 방지" },
+    ],
+    details: [
+      { type: "new", text: "App.jsx:23358 VERIFICATION_PRIORITY에 read_progress: 3 추가 (order_change와 동일 — 둘 다 사용자 행동에서 드러난 선호 변화 시그널). m6 제거된 meta_edit(priority=1)과 달리 임계치 필터로 노이즈 회피" },
+      { type: "new", text: "App.jsx:23470 VERIFICATION_READ_COUNT_THRESHOLD = 30 상수 신설" },
+      { type: "new", text: "App.jsx:32294 saveEdit hybrid 블록에 else-if (readCountChanged && delta >= 30) 분기 추가. enqueueVerification(n.id, 'read_progress', 'underrated', 'saveEdit_readcount')" },
+      { type: "fix", text: "delta < 0(레거시 데이터 정정) 무시. 단일 saveEdit 내 delta 기준이라 청크 저장(+15, +20)은 트리거 X — 노이즈 회피" },
+    ],
+  },
   {
     version: "7.0.14", date: "2026-05-07",
     title: "사용자 보고 3건 — 배정탭 ▲▼ 크래시/진단 export/수상탭 확대",
@@ -23355,10 +23418,14 @@ function detectViolation(novelA, novelB, choice, tierConfig) {
 }
 
 // 🆕 v7.0: 검증 큐 INSERT — 사용자 편집 행위 발생 시 호출. 시스템 변경(finalize)은 호출 X
+// 🆕 v7.0.15: read_progress 추가 — read_count 일정 이상 증가 시 underrated 의심.
+// order_change와 동일 priority(3) — 둘 다 사용자 행동에서 드러난 선호 변화 시그널.
+// m6 제거된 meta_edit(priority=1)과 달리 임계치 필터 + 충분히 높은 priority로 노이즈 회피.
 const VERIFICATION_PRIORITY = {
   gatekeeper: 5,
   tier_change: 4,
   order_change: 3,
+  read_progress: 3,
   new: 2,
   meta_edit: 1,
 };
@@ -23461,6 +23528,11 @@ async function getCandidatesForVerification(novelId, suspicionType, limit = 10) 
 // 🆕 v7.0: 검증 시퀀스 상수 — 변곡점 알고리즘 / K=2 추가 매칭 / max=7
 const VERIFICATION_MAX_RESPONSES = 7;
 const VERIFICATION_K_AFTER_INFLECTION = 2;
+
+// 🆕 v7.0.15: saveEdit에서 read_count 증가가 이 값 이상이면 read_progress 트리거 (underrated)
+// — 사용자 보고: 회차수 50화 이상 올렸는데도 의심작 미선정 → 자동 트리거 추가.
+// — 단일 saveEdit 내 delta 기준 (누적 X). 작은 청크 저장은 노이즈 회피로 트리거 안 됨.
+const VERIFICATION_READ_COUNT_THRESHOLD = 30;
 
 // 🆕 v7.0: 검증 큐에서 다음 처리 대상 작품 fetch (priority DESC, 디바운스 1초 적용)
 async function getNextVerificationTarget() {
@@ -32291,6 +32363,10 @@ function AppContent() {
       // 🆕 v7.0.2: 클리어 path 분리 — meta_edit(잘못된 underrated) 대신 tier_change(overrated)
       // 🆕 v7.0.6 (m6): meta_edit 트리거 제거 — priority=1로 다른 트리거(gatekeeper=5/tier_change=4/order_change=3/new=2)에 항상 밀려 실효 X.
       // 매 saveEdit마다 큐에 인입되어 노이즈만 누적. tier 변경 시에는 _v7TierChanged 분기가 처리.
+      // 🆕 v7.0.15: read_count delta >= VERIFICATION_READ_COUNT_THRESHOLD 시 read_progress 트리거.
+      // tier 변경이 동시에 일어나면 그쪽이 우선 (else-if) — 명시적 액션 > 함묵적 시그널.
+      // UPSERT 동작 상 read_progress가 뒤에 와도 trigger_type/suspicion_type을 덮어쓰므로
+      // 사용자 강등(overrated)을 underrated로 뒤집는 사고 방지를 위해 mutually exclusive 분기.
       if (globalTierConfig.mode === "hybrid") {
         try {
           if (_v7TierChanged) {
@@ -32303,6 +32379,13 @@ function AppContent() {
           } else if (_v7TierCleared) {
             // manual_tier → null: 더 이상 잠정 truth 없음, 자리 검증 불필요. 오버레이트 가능성을 가벼운 신호로만 인입
             await enqueueVerification(n.id, "tier_change", "overrated", "saveEdit");
+          } else if (
+            readCountChanged &&
+            (newReadCount - editOriginalReadCount) >= VERIFICATION_READ_COUNT_THRESHOLD
+          ) {
+            // 🆕 v7.0.15: 회차수 +N화 이상 증가 = "더 읽었다 = 더 좋아한다" implicit 신호 → underrated 의심
+            // delta < 0 (정정) 무시. tier 변경 동반 시 위 분기가 처리하므로 여기 진입 안 함.
+            await enqueueVerification(n.id, "read_progress", "underrated", "saveEdit_readcount");
           }
           // (m6 제거) meta_edit 트리거 삭제 — 메타 편집(제목/태그/note 등)은 검증 큐에 영향 X
         } catch (e) {
