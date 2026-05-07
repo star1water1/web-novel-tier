@@ -3825,16 +3825,33 @@ async function duplicateSlot(srcSlotId, newName) {
     try { await FileSystem.deleteAsync(dstPath + "-shm", { idempotent: true }); } catch {}
 
     // VACUUM INTO 실행
+    // 🛡️ v7.0.11 review fix: 파라미터 바인딩 대신 string concat 사용.
+    // SQLite spec상 VACUUM INTO는 파라미터를 받지만 일부 driver wrapper가 DDL로
+    // 분류해 bind 거부할 수 있음. 경로는 내부 생성(getNativeSlotDbPath), 사용자
+    // 입력 아님 → SQL injection 우려 X. single-quote escape만 처리.
+    const escapedDst = dstNativePath.replace(/'/g, "''");
     let srcDb = null;
     try {
       if (isActive) {
         // 현재 활성 connection (db) 사용
         if (!db) await openDb();
-        await db.runAsync(`VACUUM INTO ?;`, [dstNativePath]);
+        await db.runAsync(`VACUUM INTO '${escapedDst}';`);
+        // 🛡️ active connection health-check — VACUUM 후 handle stale 방지(paranoid).
+        // 실패 시 reset+reopen으로 후속 safeDbOperation 호출이 SQLITE_CANTOPEN
+        // 으로 전파되는 것을 차단.
+        try {
+          await db.runAsync("SELECT 1;");
+        } catch (healthErr) {
+          console.warn("VACUUM INTO 후 active connection 비정상 — 재오픈:", healthErr?.message);
+          try { await resetDbConnection(); } catch {}
+          try { await openDb(); } catch (reopenErr) {
+            console.warn("VACUUM 후 active connection 재오픈 실패:", reopenErr?.message);
+          }
+        }
       } else {
         // 비활성 슬롯: 임시 connection
         srcDb = await SQLite.openDatabaseAsync(getSlotDbFilename(srcSlotId));
-        await srcDb.runAsync(`VACUUM INTO ?;`, [dstNativePath]);
+        await srcDb.runAsync(`VACUUM INTO '${escapedDst}';`);
       }
     } catch (e) {
       // dst 잔재 정리
