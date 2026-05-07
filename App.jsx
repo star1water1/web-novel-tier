@@ -2,56 +2,69 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.0.15 (read_count +30 시 의심작 자동 등록 — read_progress 트리거)    ║
+ * ║  버전: 7.0.15 (read_count 누적 +30화 시 의심작 자동 등록 — read_progress)    ║
  * ║  최종 수정: 2026-05-07                                                        ║
- * ║  총 라인 수: 약 50,310줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 50,400줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
- * ║ 🆕 v7.0.15 read_count 변경을 의심작 트리거로 추가 (2026-05-07)                ║
+ * ║ 🆕 v7.0.15 read_count 누적 변경을 의심작 트리거로 (cumulative tracking)       ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║                                                                              ║
- * ║ [Context]                                                                       ║
- * ║ • 사용자 보고: "어떤 작품의 회차수를 50화 넘게 올렸는데도 의심작 선정이 안     ║
- * ║   됐다. 의심도는 어디서 확인하나?"                                            ║
- * ║ • v7.0.6 m6에서 meta_edit 트리거 제거 — priority=1로 항상 밀려 노이즈만        ║
- * ║   누적. read_count 변경은 meta_edit 일부였으므로 함께 사라짐. 결과: tier/      ║
- * ║   순위 명시 변경만 의심작이 됨.                                                ║
+ * ║ [Context — 사용자 보고 2건]                                                       ║
+ * ║ 1) "회차수 50화 넘게 올렸는데도 의심작 선정이 안 됐다. 의심도는 어디서 확인?" ║
+ * ║ 2) "한 번에 30 안 올라도 누적되면 평가 변할 수 있는 거 아니야?"               ║
  * ║                                                                              ║
- * ║ [신규 트리거 read_progress]                                                     ║
- * ║ • saveEdit에서 read_count delta >= VERIFICATION_READ_COUNT_THRESHOLD(=30) 시  ║
- * ║   "underrated" 의심으로 enqueueVerification 호출.                             ║
- * ║ • 사용자가 "더 읽었다 = 더 좋아한다" implicit signal — order_change와 의미     ║
- * ║   동급이므로 priority=3.                                                       ║
- * ║ • delta < 0(정정 케이스) 무시. 단일 saveEdit 내 delta 기준(누적 X).             ║
+ * ║ [원인]                                                                          ║
+ * ║ • v7.0.6 m6에서 meta_edit 트리거 제거 — priority=1로 항상 밀려 노이즈만 누적. ║
+ * ║   read_count 변경은 meta_edit 일부였으므로 함께 사라짐. tier/순위 명시 변경    ║
+ * ║   만 의심작이 됨.                                                              ║
+ * ║ • per-edit threshold(첫 패치 시도)는 단일 saveEdit delta에만 반응 → 5화×10번  ║
+ * ║   나눠 저장(누적 +50) 시 미발화. 사용자 의도와 어긋남.                         ║
+ * ║                                                                              ║
+ * ║ [신규 트리거 read_progress + 누적 트래킹]                                       ║
+ * ║ • novels.read_count_baseline INTEGER 컬럼 추가. last-fire 시점 read_count.    ║
+ * ║ • saveEdit/batchIncReadCount에서 (newRead − baseline) >= 30 시 fire +         ║
+ * ║   baseline reset to newRead. 다음 +30 누적 시작점.                             ║
+ * ║ • priority=3 (order_change와 동급, m6의 1보다 충분히 높음).                    ║
  * ║                                                                              ║
  * ║ [m6와의 차이 — 노이즈 회피 설계]                                                  ║
- * ║ • m6: 모든 메타 변경 트리거 + priority=1 → 매 saveEdit마다 큐 인입 + 항상 밀림  ║
- * ║ • v7.0.15: read_count 한정 + delta >= 30 임계치 + priority=3                  ║
+ * ║ • m6: 모든 메타 변경 트리거 + priority=1 → 매 saveEdit마다 큐 인입 + 항상 밀림 ║
+ * ║ • v7.0.15: read_count 한정 + 누적 임계치 30 + priority=3                      ║
  * ║   → 필터링으로 노이즈 차단, m6 제거 사유에 다시 빠지지 않음.                  ║
  * ║                                                                              ║
- * ║ [tier_change와의 충돌 — else-if로 양보]                                        ║
- * ║ • enqueueVerification UPSERT는 trigger_type/suspicion_type을 나중 호출이      ║
- * ║   덮어쓰는 동작. tier_change(overrated) 후 read_progress(underrated) 호출 시  ║
- * ║   사용자 강등 의도가 underrated로 뒤집힘.                                      ║
+ * ║ [tier_change와의 충돌 — else-if로 양보 (saveEdit)]                              ║
+ * ║ • UPSERT는 trigger_type/suspicion_type을 나중 호출이 덮어씀. tier_change      ║
+ * ║   (overrated) 후 read_progress(underrated) 시 강등 의도 뒤집힘 위험.            ║
  * ║ • 해결: read_progress 분기를 else-if로 — _v7TierChanged/_v7TierCleared가      ║
- * ║   둘 다 falsy일 때만 진입. 명시적 사용자 액션(tier 변경) > implicit 시그널.    ║
+ * ║   둘 다 falsy일 때만 진입. 명시적 사용자 액션 > implicit 시그널.               ║
+ * ║                                                                              ║
+ * ║ [강등→읽기 처리 — 사용자 결정: 최신 신호 우선]                                    ║
+ * ║ • 강등(overrated pending) 직후 +30 누적 시 read_progress가 underrated로       ║
+ * ║   덮어씀 (UPSERT 동작 그대로 유지). 사용자가 verification에서 재결정.           ║
+ * ║                                                                              ║
+ * ║ [Lifecycle — baseline 갱신 시점]                                                 ║
+ * ║ • addNovel/convertPlannedToNovel: post-INSERT UPDATE baseline=초기 read_count ║
+ * ║ • importJSON: post-bulk-INSERT UPDATE baseline=read_count                     ║
+ * ║ • saveEdit (any 트리거 발화): baseline = newReadCount                         ║
+ * ║ • batchIncReadCount (per id, 발화 시): baseline = newReadCount                ║
+ * ║ • 마이그레이션: 기존 row baseline = 현재 read_count (mass-fire 회피, 트랜잭션) ║
+ * ║                                                                              ║
+ * ║ [defer to v7.0.16+]                                                              ║
+ * ║ • batchSetTier/gatekeeper/finalize 후 baseline reset (정합성 강화)            ║
+ * ║ • 백업 v9.1 포맷에 baseline 보존                                              ║
+ * ║ • 임계치 사용자 설정화                                                         ║
  * ║                                                                              ║
  * ║ [의심도 확인 위치 — 사용자 안내]                                                  ║
  * ║ • 매칭 탭(hybrid 모드): "검증 대기" 카운트 + 진행 중 시퀀스 UI                 ║
  * ║ • 진단 탭 → 🔄 S1. 검증 큐 + 트리거 trace → "현재 pending 큐 상위 10"          ║
- * ║   (작품명·priority·trigger_type/suspicion·tier 표시)                          ║
  * ║                                                                              ║
  * ║ [회귀 위험]                                                                       ║
- * ║ • VERIFICATION_PRIORITY 키 1개 추가 — 기존 5개 키엔 영향 0.                    ║
- * ║ • 새 trigger_type "read_progress" — 진단 표시/export가 GROUP BY trigger_type  ║
- * ║   이라 자동 호환.                                                              ║
- * ║ • saveEdit else-if 분기 추가 — 기존 분기 변경 X. tier 변경 우선.              ║
- * ║ • manual/match 모드, import/restore/convertPlannedToNovel은 모두 미발화.      ║
- * ║                                                                              ║
- * ║ [향후 확장 — out of scope]                                                       ║
- * ║ • reread_count(다회독) / gaiden_read_count(외전) 트리거                       ║
- * ║ • 임계치 사용자 설정화 / NovelCard 인디케이터                                  ║
+ * ║ • read_count_baseline 컬럼 추가 — 기존 컬럼/INSERT/SELECT 영향 0.              ║
+ * ║ • 마이그레이션 backfill 1회 (트랜잭션 안전).                                   ║
+ * ║ • saveEdit/batchIncReadCount 추가 SELECT 1건 — hybrid 모드 시만.              ║
+ * ║ • VERIFICATION_PRIORITY 키 1개 추가 — 기존 5개 영향 0.                         ║
+ * ║ • manual/match 모드 — `mode === "hybrid"` 가드 안. 미적용.                    ║
  * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
@@ -5146,6 +5159,26 @@ async function initDb() {
       await database.runAsync(
         `ALTER TABLE novels ADD COLUMN ${name} ${type}${defaultExpr ? " DEFAULT " + defaultExpr : ""};`
       );
+    }
+  }
+
+  // 🆕 v7.0.15: read_count_baseline column + 일회성 backfill (transaction)
+  // — 누적 read_count 추적용. saveEdit/batchIncReadCount에서 (현재 read_count - baseline) >= 30 시 read_progress fire.
+  // — column DEFAULT 0이 그대로면 마이그레이션 직후 첫 saveEdit에서 mass-fire 발생 → backfill 필수.
+  // — ALTER + UPDATE 트랜잭션 묶어 부분 실패 시 ROLLBACK 보장.
+  if (!existingNames.has("read_count_baseline")) {
+    try {
+      await database.withTransactionAsync(async () => {
+        await database.runAsync(
+          `ALTER TABLE novels ADD COLUMN read_count_baseline INTEGER DEFAULT 0;`
+        );
+        await database.runAsync(
+          `UPDATE novels SET read_count_baseline = read_count;`
+        );
+      });
+    } catch (e) {
+      console.warn("[v7.0.15] read_count_baseline 마이그레이션 실패:", e?.message);
+      // 트랜잭션 ROLLBACK으로 column 추가도 취소됨 → 다음 실행에서 재시도
     }
   }
 
@@ -10486,17 +10519,24 @@ function compareVersions(a, b) {
 const CHANGELOG_DATA = [
   {
     version: "7.0.15", date: "2026-05-07",
-    title: "회차수 +30화 이상 증가 시 자동 의심작 등록 (read_progress 트리거)",
+    title: "회차수 누적 +30화 시 자동 의심작 등록 (read_progress, cumulative tracking)",
     highlights: [
-      { type: "new", text: "🆕 read_progress 트리거 추가 — saveEdit에서 read_count delta >= 30 시 'underrated' 의심으로 검증 큐에 자동 등록. 사용자가 '더 읽었다 = 더 좋아한다' 신호를 자동 인식" },
-      { type: "improve", text: "📍 의심도 확인 위치 안내 — 매칭 탭 '검증 대기' 카운트 또는 진단 탭 → S1. 검증 큐 → '현재 pending 큐 상위 10'에서 어떤 작품이 어떤 trigger/suspicion으로 등록됐는지 확인 가능" },
-      { type: "fix", text: "🛡️ tier 변경 + read_count +30 동시 발생 시 충돌 회피 — else-if 구조로 read_progress가 tier_change suspicion을 덮어쓰지 않도록. 사용자 강등(overrated)을 underrated로 뒤집는 사고 방지" },
+      { type: "new", text: "🆕 read_progress 트리거 추가 — last-fire 이후 누적 read_count 증가 >= 30 시 'underrated' 의심으로 검증 큐에 자동 등록. '더 읽었다 = 더 좋아한다' implicit signal 인식" },
+      { type: "new", text: "📚 누적 트래킹 — novels.read_count_baseline 컬럼 추가. 청크 분할 저장(5화×10번=50)도 누적으로 잡힘. 단순 per-edit 임계치였다면 매번 delta=5로 미발화" },
+      { type: "new", text: "🔁 일괄 증가(배정탭 batchIncReadCount)도 동일 누적 로직 — 여러 작품에 +N 일괄 시 작품별로 누적 +30 만족 시 fire" },
+      { type: "improve", text: "📍 의심도 확인 위치 안내 — 매칭 탭 '검증 대기' 카운트 또는 진단 탭 → S1. 검증 큐 → '현재 pending 큐 상위 10'에서 작품별 trigger/suspicion 확인 가능" },
+      { type: "fix", text: "🛡️ tier 변경 + read_count +30 동시 발생 시 else-if로 양보 (saveEdit) — 명시적 액션 우선, read_progress가 tier_change suspicion을 덮어쓰지 않음" },
     ],
     details: [
-      { type: "new", text: "App.jsx:23358 VERIFICATION_PRIORITY에 read_progress: 3 추가 (order_change와 동일 — 둘 다 사용자 행동에서 드러난 선호 변화 시그널). m6 제거된 meta_edit(priority=1)과 달리 임계치 필터로 노이즈 회피" },
-      { type: "new", text: "App.jsx:23470 VERIFICATION_READ_COUNT_THRESHOLD = 30 상수 신설" },
-      { type: "new", text: "App.jsx:32294 saveEdit hybrid 블록에 else-if (readCountChanged && delta >= 30) 분기 추가. enqueueVerification(n.id, 'read_progress', 'underrated', 'saveEdit_readcount')" },
-      { type: "fix", text: "delta < 0(레거시 데이터 정정) 무시. 단일 saveEdit 내 delta 기준이라 청크 저장(+15, +20)은 트리거 X — 노이즈 회피" },
+      { type: "new", text: "App.jsx:23358 VERIFICATION_PRIORITY에 read_progress: 3 추가 (order_change와 동일 — 사용자 행동에서 드러난 선호 변화). m6 제거된 meta_edit(priority=1) 사고 회피 — read_count 한정 + 임계치 30" },
+      { type: "new", text: "App.jsx:23470 VERIFICATION_READ_COUNT_THRESHOLD = 30 (누적 기준)" },
+      { type: "new", text: "App.jsx:novels 테이블에 read_count_baseline INTEGER DEFAULT 0 컬럼 추가. 트랜잭션 마이그레이션(ALTER + backfill UPDATE)으로 기존 row의 baseline = 현재 read_count로 안전 backfill (mass-fire 회피)" },
+      { type: "new", text: "App.jsx:31360 addNovel + App.jsx:27535 convertPlannedToNovel: post-INSERT UPDATE baseline = 초기 read_count" },
+      { type: "new", text: "App.jsx:35599 importJSON: post-bulk-INSERT UPDATE baseline = read_count (백업 v9 포맷 미포함 대응)" },
+      { type: "new", text: "App.jsx:32294 saveEdit hybrid 블록 — else-if read_progress + 모든 트리거 발화 시 baseline = newReadCount로 reset" },
+      { type: "new", text: "App.jsx:34267 batchIncReadCount — UPDATE 전 (read_count, baseline) 캡처 + UPDATE + per-id 누적 검사 + fire/baseline reset" },
+      { type: "fix", text: "delta < 0(레거시 정정) 무시. SQL MAX(0, ...)와 일치하도록 newRead = Math.max(0, pre.read_count + d)로 clamp" },
+      { type: "fix", text: "사용자 결정 '최신 신호 우선' — 강등 후 누적 +30 시 read_progress가 underrated로 UPSERT (verification에서 재결정)" },
     ],
   },
   {
@@ -23529,9 +23569,10 @@ async function getCandidatesForVerification(novelId, suspicionType, limit = 10) 
 const VERIFICATION_MAX_RESPONSES = 7;
 const VERIFICATION_K_AFTER_INFLECTION = 2;
 
-// 🆕 v7.0.15: saveEdit에서 read_count 증가가 이 값 이상이면 read_progress 트리거 (underrated)
-// — 사용자 보고: 회차수 50화 이상 올렸는데도 의심작 미선정 → 자동 트리거 추가.
-// — 단일 saveEdit 내 delta 기준 (누적 X). 작은 청크 저장은 노이즈 회피로 트리거 안 됨.
+// 🆕 v7.0.15: read_count 누적 임계치 — (현재 read_count − read_count_baseline) >= 이 값이면 read_progress fire (underrated).
+// — 사용자 보고: "회차수 50화 넘게 올렸는데도 의심작 미선정. 한 번에 30 안 올라도 누적되면 평가 변할 수 있지 않나?"
+// — 누적 트래킹: read_count_baseline은 last-fire 시점 read_count. 청크 분할 저장(5화×10번=50)도 동일하게 잡힘.
+// — m6 제거된 meta_edit(priority=1)과 달리 임계치 필터 + priority=3로 노이즈 회피.
 const VERIFICATION_READ_COUNT_THRESHOLD = 30;
 
 // 🆕 v7.0: 검증 큐에서 다음 처리 대상 작품 fetch (priority DESC, 디바운스 1초 적용)
@@ -27551,7 +27592,9 @@ function AppContent() {
                   initialManualOrder, // 🆕 v7.0.12: hybrid invariant 보존
                 ]
               );
-              
+              // 🆕 v7.0.15: read_count_baseline = 초기 read_count (누적 트래킹 시작점)
+              await exec("UPDATE novels SET read_count_baseline=read_count WHERE id=?", [id]);
+
               // 예정 목록에서 삭제
               await exec("DELETE FROM planned_novels WHERE id=?", [planned.id]);
               
@@ -31395,6 +31438,8 @@ function AppContent() {
           initialManualOrder, // 🆕 v7.0.1 (N6 fix)
         ]
       );
+      // 🆕 v7.0.15: read_count_baseline = 초기 read_count (누적 트래킹 시작점)
+      await exec("UPDATE novels SET read_count_baseline=read_count WHERE id=?", [id]);
       // 🔧 v3.5.9: 텍스트 입력 태그 → customTags 동기화 (태그 관리 모달 연동)
       syncTagsToCustom(tags.trim());
       setTitle("");
@@ -32363,12 +32408,16 @@ function AppContent() {
       // 🆕 v7.0.2: 클리어 path 분리 — meta_edit(잘못된 underrated) 대신 tier_change(overrated)
       // 🆕 v7.0.6 (m6): meta_edit 트리거 제거 — priority=1로 다른 트리거(gatekeeper=5/tier_change=4/order_change=3/new=2)에 항상 밀려 실효 X.
       // 매 saveEdit마다 큐에 인입되어 노이즈만 누적. tier 변경 시에는 _v7TierChanged 분기가 처리.
-      // 🆕 v7.0.15: read_count delta >= VERIFICATION_READ_COUNT_THRESHOLD 시 read_progress 트리거.
+      // 🆕 v7.0.15: read_count 누적 트래킹 — (현재 read_count − read_count_baseline) >= 30 시 read_progress 트리거.
+      // baseline은 last-fire 시점 read_count. 청크 분할 저장(5화×10번=50)도 누적으로 잡힘.
       // tier 변경이 동시에 일어나면 그쪽이 우선 (else-if) — 명시적 액션 > 함묵적 시그널.
       // UPSERT 동작 상 read_progress가 뒤에 와도 trigger_type/suspicion_type을 덮어쓰므로
-      // 사용자 강등(overrated)을 underrated로 뒤집는 사고 방지를 위해 mutually exclusive 분기.
+      // tier 변경 동반 시 사용자 강등(overrated)을 underrated로 뒤집지 않도록 mutually exclusive 분기.
+      // 어떤 트리거든 발화 시 baseline = newReadCount로 reset (다음 누적 시작점).
       if (globalTierConfig.mode === "hybrid") {
         try {
+          let firedAnyTrigger = false;
+
           if (_v7TierChanged) {
             const order = getActiveTierOrder(globalTierConfig);
             const fromIdx = order.indexOf(_v7TierChanged.fromDisplayTier);
@@ -32376,16 +32425,30 @@ function AppContent() {
             // fromIdx 미정시 (이전 표시 티어가 active 목록에 없음) — 신중하게 underrated 기본값
             const suspicion = fromIdx === -1 ? "underrated" : (toIdx < fromIdx ? "underrated" : "overrated");
             await enqueueVerification(n.id, "tier_change", suspicion, "saveEdit");
+            firedAnyTrigger = true;
           } else if (_v7TierCleared) {
             // manual_tier → null: 더 이상 잠정 truth 없음, 자리 검증 불필요. 오버레이트 가능성을 가벼운 신호로만 인입
             await enqueueVerification(n.id, "tier_change", "overrated", "saveEdit");
-          } else if (
-            readCountChanged &&
-            (newReadCount - editOriginalReadCount) >= VERIFICATION_READ_COUNT_THRESHOLD
-          ) {
-            // 🆕 v7.0.15: 회차수 +N화 이상 증가 = "더 읽었다 = 더 좋아한다" implicit 신호 → underrated 의심
-            // delta < 0 (정정) 무시. tier 변경 동반 시 위 분기가 처리하므로 여기 진입 안 함.
-            await enqueueVerification(n.id, "read_progress", "underrated", "saveEdit_readcount");
+            firedAnyTrigger = true;
+          } else if (readCountChanged) {
+            // 🆕 v7.0.15: 누적 트래킹 — last-fire 이후 누적 +30화 이상 읽었으면 fire
+            const baseRow = await first(
+              "SELECT read_count_baseline FROM novels WHERE id=?",
+              [n.id]
+            );
+            const baseline = Number(baseRow?.read_count_baseline) || 0;
+            if ((newReadCount - baseline) >= VERIFICATION_READ_COUNT_THRESHOLD) {
+              await enqueueVerification(n.id, "read_progress", "underrated", "saveEdit_readcount");
+              firedAnyTrigger = true;
+            }
+          }
+
+          // 🆕 v7.0.15: 어떤 트리거든 발화 시 baseline = newReadCount로 reset (다음 누적 시작점)
+          if (firedAnyTrigger) {
+            await exec(
+              "UPDATE novels SET read_count_baseline=? WHERE id=?",
+              [newReadCount, n.id]
+            );
           }
           // (m6 제거) meta_edit 트리거 삭제 — 메타 편집(제목/태그/note 등)은 검증 큐에 영향 X
         } catch (e) {
@@ -34264,6 +34327,7 @@ function AppContent() {
   }, [userMajorGenres, userSubGenres, tagAttributes]); // 🔧 v3.5.13: tagAttributes dep 추가
 
   // 🔧 v3.5.1: useCallback으로 변경 (stale closure 방지)
+  // 🆕 v7.0.15: hybrid 모드에서 누적 트래킹 — 작품별 (newReadCount − baseline) >= 30 시 read_progress fire
   const batchIncReadCount = useCallback(async (delta) => {
     const d = Number(delta) || 0;
     if (!d) {
@@ -34277,11 +34341,49 @@ function AppContent() {
       return;
     }
     const now = Date.now();
+
+    // 🆕 v7.0.15: hybrid 모드에선 UPDATE 전에 (read_count, baseline) 캡처
+    // — UPDATE 후엔 read_count가 이미 변경되어 baseline 비교 불가능
+    let preState = null;
+    if (globalTierConfig.mode === "hybrid") {
+      try {
+        const placeholders = ids.map(() => "?").join(",");
+        const rows = await all(
+          `SELECT id, read_count, read_count_baseline FROM novels WHERE id IN (${placeholders})`,
+          ids
+        );
+        preState = new Map((rows || []).map(r => [r.id, {
+          read_count: Number(r.read_count) || 0,
+          baseline: Number(r.read_count_baseline) || 0,
+        }]));
+      } catch (e) {
+        console.warn("[v7.0.15] batchIncReadCount preState 캡처 실패:", e?.message);
+      }
+    }
+
     const queries = ids.map((id) => ({
       sql: "UPDATE novels SET read_count = MAX(0, read_count + ?), read_count_updated_at = ? WHERE id=?",
       params: [d, now, id],
     }));
     await execBatch(queries);
+
+    // 🆕 v7.0.15: 작품별 누적 +30 만족 시 read_progress fire + baseline reset
+    if (globalTierConfig.mode === "hybrid" && preState) {
+      for (const id of ids) {
+        const pre = preState.get(id);
+        if (!pre) continue;
+        const newRead = Math.max(0, pre.read_count + d); // SQL MAX(0, ...) clamp 일치
+        if ((newRead - pre.baseline) >= VERIFICATION_READ_COUNT_THRESHOLD) {
+          try {
+            await enqueueVerification(id, "read_progress", "underrated", "batchIncReadCount");
+            await exec("UPDATE novels SET read_count_baseline=? WHERE id=?", [newRead, id]);
+          } catch (e) {
+            console.warn("[v7.0.15] batchIncReadCount read_progress 실패:", e?.message);
+          }
+        }
+      }
+    }
+
     await loadList(undefined, undefined, "batch");
     Alert.alert("완료", `${ids.length}개 작품에 읽은 회차 ${d > 0 ? '+' : ''}${d} 적용했습니다.`);
   }, []);
@@ -35572,7 +35674,16 @@ async function importJSON() {
               }
 
               if (novelQueries.length > 0) await execBatch(novelQueries);
-              
+
+              // 🆕 v7.0.15: import된 novel들의 read_count_baseline = read_count로 backfill
+              // 백업 v9 포맷에 read_count_baseline 미포함 → DEFAULT 0이 그대로면 첫 saveEdit에서 mass-fire.
+              // import 직전 모든 novels DELETE되므로 (line 35399 영역) 단순 bulk UPDATE로 안전.
+              try {
+                await exec(`UPDATE novels SET read_count_baseline = read_count;`);
+              } catch (e) {
+                console.warn("[v7.0.15] importJSON read_count_baseline backfill 실패:", e?.message);
+              }
+
               // 🔧 v3.5.8: 복원 직후 삽입 검증
               const insertedCheck = await first("SELECT COUNT(*) as cnt FROM novels");
               const insertedCount = insertedCheck?.cnt || 0;
