@@ -2,9 +2,57 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.0.12 (코드 전수 검토 — v7.0 정합성/stale closure/고아 정리 9건 수정) ║
+ * ║  버전: 7.0.13 (슬롯 복구 효력 강화 — v7.0 테이블 ensureColumn 완전 적용)    ║
  * ║  최종 수정: 2026-05-07                                                        ║
- * ║  총 라인 수: 약 49,950줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 50,150줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.0.13 슬롯 복구 효력 강화 — v7.0 테이블 ensureColumn 완전 적용 (2026-05-07)║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [Context]                                                                       ║
+ * ║ • 사용자가 다른 알파/베타 빌드(예: claude/add-slot-duplication, v3.15.0)에서  ║
+ * ║   만든 슬롯 DB가 stable 빌드(v7.0.x)로 교체된 후 진입 시 "no such column:    ║
+ * ║   novel_id" 등 prepareAsync rejected. [🩹 복구 시도] 눌러도 "(-wal 캐시 없음)"║
+ * ║   만 표시 후 같은 오류 반복 — recoverSlotDb의 quick_check는 무결성만 보고     ║
+ * ║   스키마 완전성은 검증 안 함.                                                  ║
+ * ║                                                                              ║
+ * ║ [원인]                                                                          ║
+ * ║ • v7.0 신규 테이블 4종 중 trigger_fire_log(v7.0.8)만 모든 컬럼에              ║
+ * ║   ensureColumn 안전망 갖춤. TVQ/TVL/TRS는 일부 누락:                          ║
+ * ║   - TVQ: state/priority/processed_at만 보강(v7.0.5). novel_id 등 누락.       ║
+ * ║   - TVL: ensureColumn 한 줄도 없음 — 가장 취약.                               ║
+ * ║   - TRS: state 등 8개 보강. novel_id/suspicion_type 누락.                    ║
+ * ║ • CREATE TABLE IF NOT EXISTS는 기존 테이블에 컬럼 추가 안 하므로 부분 스키마  ║
+ * ║   DB가 CREATE INDEX(novel_id 등)에서 prepareAsync rejected → initDb throw.   ║
+ * ║                                                                              ║
+ * ║ [수정]                                                                          ║
+ * ║ • TVQ: novel_id/trigger_type/suspicion_type 3개 ensureColumn 추가.            ║
+ * ║ • TVL: 신규 보강 블록 6개 (session_id/novel_a_id/novel_b_id/user_choice/      ║
+ * ║   violation_type/created_at).                                                ║
+ * ║ • TRS: novel_id/suspicion_type 2개 ensureColumn 추가.                         ║
+ * ║ • 모두 trigger_fire_log v7.0.8 컨벤션 일치 — TEXT NOT NULL→'', INTEGER       ║
+ * ║   NOT NULL→0, nullable→null. PRIMARY KEY 컬럼은 ALTER 불가라 제외.            ║
+ * ║                                                                              ║
+ * ║ [UX]                                                                            ║
+ * ║ • 복구 완료(no_wal_to_clean) 메시지에 "슬롯을 다시 탭하면 스키마 자가 치유    ║
+ * ║   (initDb)가 한 번 더 시도됩니다." 안내 한 줄 추가. 이전엔 사용자가 무엇이    ║
+ * ║   복구됐는지 알기 어려웠음.                                                    ║
+ * ║                                                                              ║
+ * ║ [복구 함수 자체는 변경 없음]                                                    ║
+ * ║ • recoverSlotDb의 "메인 DB 절대 건드리지 않음" 설계 의도(3986 주석) 유지.     ║
+ * ║   스키마 자가 치유는 initDb의 책임 — 사용자가 슬롯 재탭 시 자동 적용.          ║
+ * ║                                                                              ║
+ * ║ [정책 노트 — 향후 신규 테이블 도입 시]                                          ║
+ * ║ • CREATE TABLE 직후, CREATE INDEX 이전에 모든 컬럼(PRIMARY KEY 제외)에       ║
+ * ║   ensureColumn 안전망 의무. 알파/베타 빌드와 stable 간 스키마 호환성 보장.   ║
+ * ║ • 안전망 없는 컬럼이 인덱스 대상이면 부분 스키마 DB에서 크래시.                ║
+ * ║                                                                              ║
+ * ║ [회귀 위험]                                                                       ║
+ * ║ • ensureColumn은 컬럼 존재 시 no-op이라 정상 슬롯엔 영향 없음.                 ║
+ * ║ • ALTER TABLE ADD COLUMN은 DEFAULT만 추가 (NOT NULL 강제 안 함) — 옛 DB의    ║
+ * ║   기존 row가 빈 문자열을 받지만 인덱스/INSERT 경로엔 무해.                     ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -5287,9 +5335,13 @@ async function initDb() {
     created_at INTEGER NOT NULL,
     processed_at INTEGER
   );`);
-  // 🔧 v7.0.5: 기존 DB 스키마 보강 — CREATE TABLE IF NOT EXISTS는 기존 테이블에
+  // 🔧 v7.0.5/v7.0.13: 기존 DB 스키마 보강 — CREATE TABLE IF NOT EXISTS는 기존 테이블에
   // 컬럼을 추가하지 않으므로, 부분 스키마로 남은 DB가 아래 CREATE INDEX에서
-  // "no such column: state" 크래시를 일으키는 것을 방지한다.
+  // "no such column: state/novel_id" 크래시를 일으키는 것을 방지한다.
+  // v7.0.13: 알파/베타 빌드 부분 스키마 대비 — NOT NULL 컬럼(novel_id 등)도 추가 보강.
+  await ensureColumn("tier_verification_queue", "novel_id", "TEXT", "''");
+  await ensureColumn("tier_verification_queue", "trigger_type", "TEXT", "''");
+  await ensureColumn("tier_verification_queue", "suspicion_type", "TEXT", "''");
   await ensureColumn("tier_verification_queue", "state", "TEXT", "'pending'");
   await ensureColumn("tier_verification_queue", "priority", "INTEGER", "0");
   await ensureColumn("tier_verification_queue", "processed_at", "INTEGER", null);
@@ -5305,6 +5357,13 @@ async function initDb() {
     violation_type TEXT NOT NULL,
     created_at INTEGER NOT NULL
   );`);
+  // 🔧 v7.0.13: 알파/베타 빌드 부분 스키마 대비 — 인덱스 생성 컬럼 보강
+  await ensureColumn("tier_validation_log", "session_id", "TEXT", null);
+  await ensureColumn("tier_validation_log", "novel_a_id", "TEXT", "''");
+  await ensureColumn("tier_validation_log", "novel_b_id", "TEXT", "''");
+  await ensureColumn("tier_validation_log", "user_choice", "TEXT", "''");
+  await ensureColumn("tier_validation_log", "violation_type", "TEXT", "''");
+  await ensureColumn("tier_validation_log", "created_at", "INTEGER", "0");
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tvl_session ON tier_validation_log(session_id);`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tvl_a ON tier_validation_log(novel_a_id);`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tvl_b ON tier_validation_log(novel_b_id);`);
@@ -5323,8 +5382,11 @@ async function initDb() {
     created_at INTEGER NOT NULL,
     completed_at INTEGER
   );`);
-  // 🔧 v7.0.5: 기존 DB 스키마 보강 — 위와 같은 이유로 idx_trs_blocker가 참조하는
+  // 🔧 v7.0.5/v7.0.13: 기존 DB 스키마 보강 — 위와 같은 이유로 idx_trs_blocker가 참조하는
   // state, blocker_id 등을 ensureColumn으로 보강. trigger_type 등 nullable 컬럼도 함께.
+  // v7.0.13: 알파/베타 빌드 부분 스키마 대비 — NOT NULL 컬럼(novel_id, suspicion_type)도 추가.
+  await ensureColumn("tier_repositioning_session", "novel_id", "TEXT", "''");
+  await ensureColumn("tier_repositioning_session", "suspicion_type", "TEXT", "''");
   await ensureColumn("tier_repositioning_session", "state", "TEXT", "'pending'");
   await ensureColumn("tier_repositioning_session", "trigger_type", "TEXT", null);
   await ensureColumn("tier_repositioning_session", "result_tier", "TEXT", null);
@@ -26776,7 +26838,7 @@ function AppContent() {
                             "슬롯을 다시 탭해주세요.\n\n" +
                             (result.recovered === "wal_renamed"
                               ? "(-wal/-shm은 .bak로 보존되어 SQLite 디렉터리에 남아있습니다.)"
-                              : "(-wal 캐시가 없어 정리할 항목이 없었습니다.)")
+                              : "(-wal 캐시가 없어 정리할 항목이 없었습니다.\n슬롯을 다시 탭하면 스키마 자가 치유(initDb)가 한 번 더 시도됩니다.)")
                           );
                         } else {
                           Alert.alert(
