@@ -2,9 +2,42 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.0.13 (슬롯 복구 효력 강화 — v7.0 테이블 ensureColumn 완전 적용)    ║
+ * ║  버전: 7.0.14 (배정탭 ▲▼ 크래시 가드 + 진단 export 상시 노출 + 수상탭 확대)║
  * ║  최종 수정: 2026-05-07                                                        ║
- * ║  총 라인 수: 약 50,150줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 50,290줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.0.14 사용자 보고 3건 수정 (2026-05-07)                                  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [Fix-1 Critical] 배정탭 ▲/▼ 순위 변경 버튼 크래시                              ║
+ * ║ • swapRating은 onPress(()=>swapRating(...))로 await 미적용 호출 — 내부        ║
+ * ║   await all/execBatch가 throw하면 unhandled rejection으로 빠져 앱 크래시.     ║
+ * ║ • 최상위 try/catch로 감싸 사용자에게 Alert 표시 (자동매칭 중이면 #1 불변조건  ║
+ * ║   준수해 Alert 차단). hybrid 검증 세션 in-flight 작품의 ▲▼는 차단 (M9c       ║
+ * ║   inline_chip 패턴과 일치 — 시퀀스 진행 중 manual_order 변경은 finalize와    ║
+ * ║   충돌해 자리 예측 오작동).                                                    ║
+ * ║                                                                              ║
+ * ║ [Fix-2 Major] 진단 탭 export 항시 노출                                          ║
+ * ║ • 기존: PerfMonitor.enabled === false 시 "📋 진단 내보내기" Section 자체가     ║
+ * ║   숨겨져 사용자가 export 불가. PerfMonitor OFF가 기본값이라 사실상 항상 숨김. ║
+ * ║ • 수정: 게이트 제거 + OFF 안내 텍스트 추가. PerfMonitor 통계는 빈 값으로      ║
+ * ║   export되지만 DB 테이블 규모/슬롯/하이브리드 진단/크래시 데이터는 정상 포함. ║
+ * ║                                                                              ║
+ * ║ [Fix-3 Minor] 수상 탭 표지/명대사 풀스크린 확대                                ║
+ * ║ • 빅 수상 카드의 70x100 표지와 짧게 잘린 명대사 (이미지/텍스트)을 탭하면      ║
+ * ║   풀스크린 확대 모달 표시. 갤러리 확대 모달(49876) 패턴 재사용.               ║
+ * ║ • expandedView state 추가 (image|quote 분기). ScrollView로 긴 명대사도       ║
+ * ║   스크롤 가능. 탭하면 닫기.                                                    ║
+ * ║                                                                              ║
+ * ║ [회귀 위험]                                                                       ║
+ * ║ • Fix-1: try/catch 추가만, 정상 흐름은 기존과 동일. verificationSession        ║
+ * ║   가드는 inline_chip(40545)과 동일 패턴이라 회귀 위험 0.                      ║
+ * ║ • Fix-2: 표시 게이트만 변경, 익명화/공유/JSON 로직은 무변경.                   ║
+ * ║ • Fix-3: 기존 ExpoImage/Text 위에 TouchableOpacity 래핑만, 표시 위치/크기     ║
+ * ║   동일. setExpandedView는 AwardsScreen 내부 state라 외부 영향 없음.           ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -10377,7 +10410,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.0.12";
+const APP_VERSION = "7.0.14";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -10403,6 +10436,22 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.0.14", date: "2026-05-07",
+    title: "사용자 보고 3건 — 배정탭 ▲▼ 크래시/진단 export/수상탭 확대",
+    highlights: [
+      { type: "fix", text: "🛠️ 배정탭 ▲/▼ 순위 변경 버튼 크래시 — swapRating은 onPress(()=>swap(...))로 await 없이 호출되어 내부 DB 에러가 unhandled rejection으로 빠져 앱 크래시. 최상위 try/catch + Alert로 복구. 자동매칭 중이면 #1 불변조건 따라 Alert 차단" },
+      { type: "fix", text: "🔒 hybrid 검증 세션 in-flight 작품의 ▲▼ 차단 — 시퀀스 진행 중 manual_order 변경은 finalize와 충돌해 자리 예측 오작동 (M9c inline_chip과 동일 패턴)" },
+      { type: "improve", text: "📋 진단 탭 export 항시 노출 — 기존엔 PerfMonitor.enabled === false 시 \"진단 내보내기\" Section 자체가 숨겨져 사실상 항상 안 보였음. PerfMonitor OFF 안내 텍스트 + 게이트 제거" },
+      { type: "new", text: "🔍 수상탭 표지/명대사 풀스크린 확대 — 빅 수상 카드의 70x100 표지와 짧게 잘린 명대사를 탭하면 풀스크린 모달. 이미지/텍스트 분기, 갤러리 확대 모달 패턴 재사용" },
+    ],
+    details: [
+      { type: "fix", text: "App.jsx:34188 swapRating — 최상위 try/catch + verificationSessionRef 가드. catch에서 isAutoMatchingRef.current 검사 후 Alert.alert(\"순위 변경 실패\")" },
+      { type: "improve", text: "App.jsx:46426 진단 내보내기 Section — {PerfMonitor.enabled && (...)} 게이트 제거. !PerfMonitor.enabled 시 OFF 안내 박스 표시" },
+      { type: "new", text: "App.jsx:18570 AwardsScreen expandedView state ({type: image|quote, ...}) + Modal at end of component (49876 갤러리 모달 패턴 재사용)" },
+      { type: "new", text: "App.jsx:19515 표지 ExpoImage → TouchableOpacity 래핑, App.jsx:19614 명대사 View → TouchableOpacity 래핑. onPress에서 setExpandedView" },
+    ],
+  },
   {
     version: "7.0.12", date: "2026-05-07",
     title: "코드 전수 검토 — v7.0 정합성/stale closure/고아 정리 9건 수정",
@@ -18568,6 +18617,10 @@ const AwardsScreen = memo(({
   // 🆕 v3.2.1: 후보작 목록 접힘 상태 (수상별)
   const [expandedCandidates, setExpandedCandidates] = useState({});
 
+  // 🆕 v7.0.14: 수상작 카드의 표지/명대사 확대 모달 — 작은 썸네일/짧게 잘린 텍스트를 풀스크린으로
+  // expandedView: { type: "image", uri, title, author } | { type: "quote", text, title } | null
+  const [expandedView, setExpandedView] = useState(null);
+
   // 🆕 v7.0: hybrid 모드 — manual_tier+manual_order 기준 정렬, 그 외(match)는 rating 기준
   // v7.0.1 (N3 fix): tierMode prop 우선 (memo 리렌더 보장), 미전달 시 globalTierConfig fallback
   const effectiveMode = (tierMode || globalTierConfig.mode);
@@ -19513,13 +19566,23 @@ const AwardsScreen = memo(({
                         {/* 표지 + 기본 정보 */}
                         <View style={{ flexDirection: "row", marginTop: 8 }}>
                           {novel.cover_image && (
-                            <View style={{ marginRight: 14 }}>
-                              <ExpoImage 
-                                source={{ uri: novel.cover_image }} 
+                            // 🆕 v7.0.14: 표지 탭 시 풀스크린 확대
+                            <TouchableOpacity
+                              activeOpacity={0.85}
+                              onPress={() => setExpandedView({
+                                type: "image",
+                                uri: novel.cover_image,
+                                title: novel.title,
+                                author: novel.author,
+                              })}
+                              style={{ marginRight: 14 }}
+                            >
+                              <ExpoImage
+                                source={{ uri: novel.cover_image }}
                                 style={{ width: 70, height: 100, borderRadius: 10 }}
                                 contentFit="cover"
                               />
-                            </View>
+                            </TouchableOpacity>
                           )}
                           <View style={{ flex: 1 }}>
                             <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 6 }}>
@@ -19612,22 +19675,38 @@ const AwardsScreen = memo(({
                         </View>
                         
                         {/* 💬 인상깊은 문장 (텍스트 우선, 이미지는 썸네일) */}
+                        {/* 🆕 v7.0.14: 탭 시 풀스크린 확대 — 이미지/긴 텍스트 모두 가독성 개선 */}
                         {(() => {
                           const awardQuotes = parseQuotes(novel.memorable_quote);
                           // 텍스트 인용구 우선, 없으면 첫 번째 항목
                           const firstText = awardQuotes.find(q => typeof q === "string");
                           const firstItem = firstText || awardQuotes[0];
                           if (!firstItem) return null;
+                          const isImg = isImageQuote(firstItem);
                           return (
-                          <View style={{
-                            marginTop: 14,
-                            padding: isImageQuote(firstItem) ? 8 : 14,
-                            backgroundColor: isDark ? "#1e293b" : "#fffbeb",
-                            borderRadius: 12,
-                            borderLeftWidth: 4,
-                            borderLeftColor: award.color,
-                          }}>
-                            {isImageQuote(firstItem) ? (
+                          <TouchableOpacity
+                            activeOpacity={0.85}
+                            onPress={() => setExpandedView(isImg ? {
+                              type: "image",
+                              uri: firstItem.uri,
+                              title: novel.title,
+                              author: novel.author,
+                            } : {
+                              type: "quote",
+                              text: firstItem,
+                              title: novel.title,
+                              author: novel.author,
+                            })}
+                            style={{
+                              marginTop: 14,
+                              padding: isImg ? 8 : 14,
+                              backgroundColor: isDark ? "#1e293b" : "#fffbeb",
+                              borderRadius: 12,
+                              borderLeftWidth: 4,
+                              borderLeftColor: award.color,
+                            }}
+                          >
+                            {isImg ? (
                               <ExpoImage source={{ uri: firstItem.uri }} style={{ width: "100%", height: 100, borderRadius: 8 }} contentFit="contain" cachePolicy="disk" />
                             ) : (
                               <Text style={{
@@ -19639,7 +19718,7 @@ const AwardsScreen = memo(({
                                 {firstItem}
                               </Text>
                             )}
-                          </View>
+                          </TouchableOpacity>
                         );
                         })()}
                       </View>
@@ -20338,6 +20417,76 @@ const AwardsScreen = memo(({
             </TouchableOpacity>
           </View>
         </View>
+      </Modal>
+
+      {/* 🆕 v7.0.14: 수상작 표지/명대사 풀스크린 확대 모달 */}
+      <Modal
+        visible={!!expandedView}
+        animationType="fade"
+        transparent
+        statusBarTranslucent={true}
+        onRequestClose={() => setExpandedView(null)}
+      >
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => setExpandedView(null)}
+          style={{
+            flex: 1,
+            backgroundColor: "rgba(0,0,0,0.92)",
+            justifyContent: "center",
+            alignItems: "center",
+            padding: 16,
+          }}
+        >
+          {expandedView?.type === "image" && (
+            <ExpoImage
+              source={{ uri: expandedView.uri }}
+              style={{ width: "92%", height: "72%", borderRadius: 12 }}
+              contentFit="contain"
+              cachePolicy="memory-disk"
+              transition={200}
+            />
+          )}
+          {expandedView?.type === "quote" && (
+            <ScrollView
+              style={{ maxHeight: "75%", width: "100%" }}
+              contentContainerStyle={{ justifyContent: "center", flexGrow: 1 }}
+              showsVerticalScrollIndicator={false}
+            >
+              <Text style={{
+                color: "#fef3c7",
+                fontSize: 22,
+                fontStyle: "italic",
+                lineHeight: 36,
+                textAlign: "center",
+                paddingHorizontal: 12,
+              }}>
+                {expandedView.text}
+              </Text>
+            </ScrollView>
+          )}
+          {expandedView?.title ? (
+            <Text style={{
+              color: "rgba(255,255,255,0.7)",
+              fontSize: 14,
+              marginTop: 16,
+              textAlign: "center",
+            }}>
+              {expandedView.title}{expandedView.author ? ` · ${expandedView.author}` : ""}
+            </Text>
+          ) : null}
+          <View style={{
+            position: "absolute",
+            bottom: 36,
+            alignSelf: "center",
+            backgroundColor: "rgba(255,255,255,0.15)",
+            paddingHorizontal: 20,
+            paddingVertical: 8,
+            borderRadius: 20,
+          }}>
+            <Text style={{ color: "rgba(255,255,255,0.8)", fontSize: 13 }}>탭하여 닫기</Text>
+          </View>
+        </TouchableOpacity>
       </Modal>
     </>
   );
@@ -34185,77 +34334,101 @@ function AppContent() {
 
   // 🆕 v6.1: 티어 내 순위 교환 (manual 모드 전용)
   // 🆕 v7.0: hybrid 모드에서는 manual_order swap, 사용자 path → 검증 큐 트리거
+  // 🛠️ v7.0.14: 최상위 try/catch 추가 — onPress(()=>swapRating(...))로 호출되어 await 미적용 시
+  // DB 에러가 unhandled rejection으로 빠져 앱 크래시. 검증 세션 in-flight 가드도 함께 추가.
   async function swapRating(idA, ratingA, idB, ratingB) {
     if (idA === idB) return; // 동일 작품 방어 (빠른 연타 시)
     const mode = globalTierConfig.mode;
 
-    if (mode === "manual" || mode === "hybrid") {
-      // 🆕 v7.0.6 (M8): tier 일관성 사전 검증 — race(예: 동시 finalize가 tier 변경) 시 다른 tier의 manual_order만 swap되어 정렬이 무너지는 것을 방지.
-      // UI(sameTierEntries)는 보통 같은 tier 작품끼리만 swap 호출하나, 비동기 race에서는 변경 가능.
-      const rows = await all(
-        "SELECT id, manual_tier, manual_order FROM novels WHERE id IN (?, ?)",
-        [idA, idB]
-      );
-      if (rows.length !== 2) {
-        console.warn("[v7.0.6 M8] swapRating: 작품 미존재", idA, idB);
+    // 🆕 v7.0.14: hybrid 검증 세션 in-flight 작품의 ▲/▼는 차단 (M9c 패턴 — inline chip과 동일)
+    // 시퀀스 진행 중 manual_order 변경은 finalize와 충돌 → 자리 예측 오작동
+    if (mode === "hybrid") {
+      const sessionNovelId = verificationSessionRef.current?.queueRow?.novel_id;
+      if (sessionNovelId && (sessionNovelId === idA || sessionNovelId === idB)) {
+        Alert.alert(
+          "검증 진행 중",
+          "검증 시퀀스 진행 중인 작품은 시퀀스 종료 후 다시 시도해주세요."
+        );
         return;
-      }
-      const rowA = rows.find(r => r.id === idA);
-      const rowB = rows.find(r => r.id === idB);
-      if (rowA.manual_tier !== rowB.manual_tier) {
-        console.warn("[v7.0.6 M8] swapRating: tier 불일치 (race) — abort", rowA.manual_tier, rowB.manual_tier);
-        return;
-      }
-      const sharedTier = rowA.manual_tier;
-      const oA = Number(rowA?.manual_order) || 0;
-      const oB = Number(rowB?.manual_order) || 0;
-      // v7.0.1 (C3 fix): 충돌 분기에서 idA는 명시적으로 UP(-50) 이동 → suspicion도 underrated 고정
-      let suspicionForHybrid;
-      if (oA === oB) {
-        await execBatch([
-          { sql: "UPDATE novels SET manual_order=? WHERE id=?", params: [oB - 50, idA] },
-        ]);
-        suspicionForHybrid = "underrated"; // -50 = 위로 이동
-        // 🆕 v7.0.6 (M7): collision 분기에서 즉시 같은 tier rebalance — gap=100 invariant 회복.
-        // -50된 idA가 manual_order ASC 정렬에서 가장 위에 위치하므로 사용자 의도(▲로 위)와 일치.
-        // 이 호출이 매칭→수동 전환 후 첫 ▲▼에서도 자동 정규화하므로 M10(전환 시 백필) skip 가능.
-        if (sharedTier) {
-          await rebalanceTierOrder(sharedTier);
-        }
-      } else {
-        await execBatch([
-          { sql: "UPDATE novels SET manual_order=? WHERE id=?", params: [oB, idA] },
-          { sql: "UPDATE novels SET manual_order=? WHERE id=?", params: [oA, idB] },
-        ]);
-        suspicionForHybrid = oA > oB ? "underrated" : "overrated"; // 작은 order = 위
-      }
-      // 🆕 v7.0: hybrid 모드 — 사용자 path 트리거
-      // 🆕 v7.0.2: idB도 함께 enqueue (역방향 의심) — 양쪽이 모두 변위했으므로 양쪽 검증 필요
-      if (mode === "hybrid") {
-        try {
-          await enqueueVerification(idA, "order_change", suspicionForHybrid, "swapRating_idA");
-          if (idA !== idB) {
-            const inverseSuspicion = suspicionForHybrid === "underrated" ? "overrated" : "underrated";
-            await enqueueVerification(idB, "order_change", inverseSuspicion, "swapRating_idB");
-          }
-        } catch (e) {
-          console.warn("검증 큐 INSERT 실패:", e?.message);
-        }
-      }
-    } else {
-      // match 모드: 기존 ELO rating 교환
-      if (ratingA === ratingB) {
-        await execBatch([
-          { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingB + 1, idA] },
-        ]);
-      } else {
-        await execBatch([
-          { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingB, idA] },
-          { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingA, idB] },
-        ]);
       }
     }
-    await loadList(undefined, undefined, "tierManage");
+
+    try {
+      if (mode === "manual" || mode === "hybrid") {
+        // 🆕 v7.0.6 (M8): tier 일관성 사전 검증 — race(예: 동시 finalize가 tier 변경) 시 다른 tier의 manual_order만 swap되어 정렬이 무너지는 것을 방지.
+        // UI(sameTierEntries)는 보통 같은 tier 작품끼리만 swap 호출하나, 비동기 race에서는 변경 가능.
+        const rows = await all(
+          "SELECT id, manual_tier, manual_order FROM novels WHERE id IN (?, ?)",
+          [idA, idB]
+        );
+        if (rows.length !== 2) {
+          console.warn("[v7.0.6 M8] swapRating: 작품 미존재", idA, idB);
+          return;
+        }
+        const rowA = rows.find(r => r.id === idA);
+        const rowB = rows.find(r => r.id === idB);
+        if (rowA.manual_tier !== rowB.manual_tier) {
+          console.warn("[v7.0.6 M8] swapRating: tier 불일치 (race) — abort", rowA.manual_tier, rowB.manual_tier);
+          return;
+        }
+        const sharedTier = rowA.manual_tier;
+        const oA = Number(rowA?.manual_order) || 0;
+        const oB = Number(rowB?.manual_order) || 0;
+        // v7.0.1 (C3 fix): 충돌 분기에서 idA는 명시적으로 UP(-50) 이동 → suspicion도 underrated 고정
+        let suspicionForHybrid;
+        if (oA === oB) {
+          await execBatch([
+            { sql: "UPDATE novels SET manual_order=? WHERE id=?", params: [oB - 50, idA] },
+          ]);
+          suspicionForHybrid = "underrated"; // -50 = 위로 이동
+          // 🆕 v7.0.6 (M7): collision 분기에서 즉시 같은 tier rebalance — gap=100 invariant 회복.
+          // -50된 idA가 manual_order ASC 정렬에서 가장 위에 위치하므로 사용자 의도(▲로 위)와 일치.
+          // 이 호출이 매칭→수동 전환 후 첫 ▲▼에서도 자동 정규화하므로 M10(전환 시 백필) skip 가능.
+          if (sharedTier) {
+            await rebalanceTierOrder(sharedTier);
+          }
+        } else {
+          await execBatch([
+            { sql: "UPDATE novels SET manual_order=? WHERE id=?", params: [oB, idA] },
+            { sql: "UPDATE novels SET manual_order=? WHERE id=?", params: [oA, idB] },
+          ]);
+          suspicionForHybrid = oA > oB ? "underrated" : "overrated"; // 작은 order = 위
+        }
+        // 🆕 v7.0: hybrid 모드 — 사용자 path 트리거
+        // 🆕 v7.0.2: idB도 함께 enqueue (역방향 의심) — 양쪽이 모두 변위했으므로 양쪽 검증 필요
+        if (mode === "hybrid") {
+          try {
+            await enqueueVerification(idA, "order_change", suspicionForHybrid, "swapRating_idA");
+            if (idA !== idB) {
+              const inverseSuspicion = suspicionForHybrid === "underrated" ? "overrated" : "underrated";
+              await enqueueVerification(idB, "order_change", inverseSuspicion, "swapRating_idB");
+            }
+          } catch (e) {
+            console.warn("검증 큐 INSERT 실패:", e?.message);
+          }
+        }
+      } else {
+        // match 모드: 기존 ELO rating 교환
+        if (ratingA === ratingB) {
+          await execBatch([
+            { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingB + 1, idA] },
+          ]);
+        } else {
+          await execBatch([
+            { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingB, idA] },
+            { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingA, idB] },
+          ]);
+        }
+      }
+      await loadList(undefined, undefined, "tierManage");
+    } catch (e) {
+      // 🛠️ v7.0.14: 외부 caller가 await 미적용으로 호출하므로 여기서 swallow.
+      // 사용자에게 표시 + 콘솔에 로그. 자동매칭 중이면 Alert 차단 (불변조건 #1).
+      console.warn("[v7.0.14] swapRating 오류:", e?.message);
+      if (!isAutoMatchingRef.current) {
+        Alert.alert("순위 변경 실패", e?.message ? `오류: ${e.message}` : "잠시 후 다시 시도해주세요.");
+      }
+    }
   }
 
   // 🔧 v3.5.1: useCallback으로 변경 (stale closure 방지)
@@ -46423,8 +46596,21 @@ async function importJSON() {
               </>
             )}
 
-            {PerfMonitor.enabled && (
+            {/* 🛠️ v7.0.14: PerfMonitor.enabled 게이트 제거 — 성능 모니터 OFF 상태에서도
+                DB 테이블 규모/슬롯/하이브리드 진단 데이터는 export 가능. PerfMonitor 통계는
+                꺼져있을 때 0/빈 배열로 export되며 메시지로 OFF 안내. */}
             <Section title="📋 진단 내보내기">
+              {!PerfMonitor.enabled && (
+                <View style={{
+                  padding: 8, marginBottom: 10, backgroundColor: C.bg, borderRadius: 8,
+                  borderWidth: 1, borderColor: C.line,
+                }}>
+                  <Text style={{ color: C.sub, fontSize: 11 }}>
+                    💡 성능 모니터 OFF — 성능 통계(SQL/함수/렌더)는 빈 값으로 export됩니다.
+                    DB 테이블/슬롯/하이브리드/크래시 데이터는 정상 포함됩니다.
+                  </Text>
+                </View>
+              )}
               {/* 🆕 v7.0.9 (O): 익명화 토글 — 작품 제목을 hash로 치환하여 외부 공유 시 프라이버시 보호 */}
               <TouchableOpacity
                 onPress={() => setDiagAnonymize(prev => !prev)}
@@ -46633,7 +46819,6 @@ async function importJSON() {
                 성능 데이터는 앱 종료 시 초기화됩니다. 크래시 로그는 파일에 영속 저장됩니다.
               </Text>
             </Section>
-            )}
               </>
               );
             })()}
