@@ -2,9 +2,71 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.0.15 (read_count 누적 +30화 시 의심작 자동 등록 — read_progress)    ║
+ * ║  버전: 7.1.0 (취향 분석 모드 인식 재설계 — Tier-Aware Taste Analysis)      ║
  * ║  최종 수정: 2026-05-07                                                        ║
- * ║  총 라인 수: 약 50,400줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 51,000줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.1.0 취향 분석 모드 인식 재설계 (2026-05-07)                              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [Context]                                                                       ║
+ * ║ • 사용자 보고: "최근 티어 배정 다각화/하이브리드 도입으로 취향 분석 인사이트   ║
+ * ║   가 약화됨. 점수는 안 쓰면서 점수 기준으로 태그 강세/작가 선호 재고 있음."    ║
+ * ║ • 진단: analyzePreferences가 모든 분석에서 n.rating(ELO)을 1차 신호로 사용.   ║
+ * ║   hybrid/manual에선 매칭이 거의 없어 rating이 1500 평탄 → 모든 평균/편차/     ║
+ * ║   세그먼트 분석 무의미.                                                        ║
+ * ║                                                                              ║
+ * ║ [핵심 설계 — Option 1 (사용자 결정)]                                            ║
+ * ║ • getPrefScore(novel, config): 모드 인식 통합 스코어                          ║
+ * ║   - match: ELO rating 그대로 (회귀 0)                                         ║
+ * ║   - hybrid/manual: tier_rank * 200 + manual_order 미세 조정                   ║
+ * ║   - getDisplayTier 사용 → manual_tier=null 작품도 ELO fallback으로 인클루시브 ║
+ * ║ • formatPrefScore(score, config): UI 표시 (fraction-based 안정 라벨링)        ║
+ * ║   - match: "1720점", hybrid/manual: "평균 B+ 티어" (round 진동 회피)          ║
+ * ║ • computeTierStratification: 엔티티×티어 분포 매트릭스                        ║
+ * ║   - intensity 가중 (tag 1=0.33, 5=1.67), Wilson CI, Shannon entropy           ║
+ * ║                                                                              ║
+ * ║ [analyzePreferences 리팩토링 — per-line 카테고리 판정 (~30곳)]                  ║
+ * ║ • Category 1 (match-only): wins/losses/match_count → 그대로, match에서만 노출 ║
+ * ║ • Category 2 (score-aggregation): n.rating → n.prefScore                     ║
+ * ║   basicStats avg/median/stdDev, 장르/하위장르/태그/combo/platform/작가 평균,   ║
+ * ║   length groups, completed/discontinued, trend, spectrum 모두 자동 적응       ║
+ * ║ • Category 3 (anomaly): 절대 임계치(1500/1700) → mean±std 기반 (mode-aware)  ║
+ * ║                                                                              ║
+ * ║ [신규 분석 5종]                                                                 ║
+ * ║ 1. tierStratification — 엔티티×티어 매트릭스 (장르/하위장르/태그/작가)       ║
+ * ║ 2. tierConcentration — 상위 티어 집중 TOP K (sample_size 임계치 적용)         ║
+ * ║ 3. tierEntropy — 강한 선호(낮은 entropy) vs 균등 분산 그룹화                  ║
+ * ║ 4. tierInversion — 다회독≥4 OR readRatio≥0.9 + 하위 티어 disconnect (보수적)  ║
+ * ║ 5. awardTierCorrelation — 수상 ≥5건 가드, 티어 분포 + 공통 태그 패턴          ║
+ * ║                                                                              ║
+ * ║ [영속화 (사용자 결정)]                                                          ║
+ * ║ • preference_patterns에 신규 카테고리 UPSERT (스키마 변경 X, category 임의값) ║
+ * ║   - tier_concentration / tier_inversion / award_tier                          ║
+ * ║ • insight_queue에 notable 항목 INSERT — 홈/추천 탭에서도 surface              ║
+ * ║                                                                              ║
+ * ║ [UI 변경 (TasteAnalysisScreen)]                                                ║
+ * ║ • SECTION_GROUPS에 "🏆 티어 인사이트" 그룹 추가 (6개 섹션)                    ║
+ * ║   - TierDistribution / Concentration / StratificationHeatmap /                 ║
+ * ║     Entropy / Inversion / AwardTier                                            ║
+ * ║ • 모드별 노출:                                                                  ║
+ * ║   - match: stats / genreTag / matching / advanced (티어 그룹 숨김)            ║
+ * ║   - hybrid/manual: stats / genreTag / tier (매칭/심화는 매치 데이터 있을 시)   ║
+ * ║ • basicStats avgRating 표시: formatPrefScore로 모드별 적응                    ║
+ * ║                                                                              ║
+ * ║ [회귀 위험]                                                                       ║
+ * ║ • match 모드: prefScore === rating identity → 100% 보존, 티어 그룹 숨김       ║
+ * ║ • hybrid/manual: 분석 결과 의미 변경 (의도된 개선)                            ║
+ * ║ • DB 스키마 변경 없음 (preference_patterns category 임의값 활용)              ║
+ * ║ • API/외부 인터페이스 변경 없음                                                ║
+ * ║                                                                              ║
+ * ║ [향후 확장 — out of scope]                                                       ║
+ * ║ • composite preference strength (reread/award/pinned 합성)                    ║
+ * ║ • 시계열 티어 변동 트렌드 / 모드 비교 view                                    ║
+ * ║ • 태그 동의어 정비 / 임계치 사용자 설정화                                      ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -10491,7 +10553,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.0.15";
+const APP_VERSION = "7.1.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -10517,6 +10579,29 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.1.0", date: "2026-05-07",
+    title: "취향 분석 모드 인식 재설계 — Tier-Aware Taste Analysis",
+    highlights: [
+      { type: "new", text: "🎯 모드 인식 통합 스코어 — getPrefScore: match=ELO, hybrid/manual=tier 기반. 모든 분석(장르/태그/작가/스펙트럼/anomaly) 자동 모드 적응. 점수 안 쓰던 hybrid에서도 의미 있는 평균/편차/트렌드" },
+      { type: "new", text: "🏆 신규 '티어 인사이트' 그룹 (hybrid/manual 전용 6개 섹션) — 티어 분포 / 상위 집중도 / 엔티티×티어 매트릭스 / 강한 선호 vs 균등 분산 / 다회독 disconnect / 수상-티어 상관" },
+      { type: "new", text: "📊 엔티티×티어 스트라티피케이션 — 매칭 시대 불가능했던 새 차원. '판타지 70%가 S~A' 같은 분포 인사이트. tag intensity 가중 + Wilson CI + Shannon entropy" },
+      { type: "improve", text: "🔬 Anomaly 임계치 mean±std 동적 적응 — 절대치(1500/1700) 대신 prefScore 분포 기반. mode 무관 작동" },
+      { type: "improve", text: "💾 영속화 — tier_concentration/tier_inversion/award_tier를 preference_patterns + insight_queue에 저장. 홈/추천 탭에서도 surface" },
+    ],
+    details: [
+      { type: "new", text: "App.jsx ~24126 getPrefScore(novel, config) — match=ELO identity, hybrid/manual=tier_rank * 200 - manual_order_adj. getDisplayTier로 ELO fallback 인클루시브" },
+      { type: "new", text: "App.jsx ~24165 formatPrefScore(score, config) — fraction-based 안정 라벨링 ('S~A 사이' 표현으로 round 진동 회피)" },
+      { type: "new", text: "App.jsx ~24200 computeTierStratification(novels, getEntityKeys, config, opts) — intensity 가중 + Wilson CI + Shannon entropy" },
+      { type: "new", text: "App.jsx ~24270 calcInversionScore — reread≥4 OR readRatio≥0.9, 하위 1/2 티어 (보수적)" },
+      { type: "improve", text: "App.jsx 24127-25064 analyzePreferences — n.rating 30곳 → n.prefScore (Category 2). anomaly mean±std 기반 (Category 3). match-only signals(wins/losses) 그대로 유지 (Category 1)" },
+      { type: "new", text: "App.jsx 25055-25217 analyzePreferences 끝부분에 5종 분석 + 6종 반환 필드 (tierStratification/Concentration/Entropy/Inversion/AwardTierCorrelation/Distribution)" },
+      { type: "new", text: "App.jsx 25219-25320 preference_patterns + insight_queue UPSERT (hybrid/manual에서만, match는 그룹 숨김이라 저장 X)" },
+      { type: "new", text: "App.jsx ~20730 SECTION_GROUPS에 'tier' 그룹 추가, ~21566 mode-aware filter (match에선 tier 숨김, hybrid/manual에선 표시)" },
+      { type: "new", text: "App.jsx ~22119 6개 신규 UI 섹션 (TierDistribution/Concentration/StratificationHeatmap/Entropy/Inversion/AwardTier) — hybrid/manual에서 표시" },
+      { type: "improve", text: "App.jsx ~21623, ~21728 basicStats avgRating 표시를 formatPrefScore로 mode-aware 변환" },
+    ],
+  },
   {
     version: "7.0.15", date: "2026-05-07",
     title: "회차수 누적 +30화 시 자동 의심작 등록 (read_progress, cumulative tracking)",
@@ -20723,9 +20808,11 @@ const HeatmapRow = memo(({ data, theme }) => {
 // 🆕 v6.2: 섹션 그룹 정의 (사용자 답변: 카테고리 그룹화 리팩터링)
 // 13개 활성 섹션을 4그룹으로 묶어 모바일에서 길이 부담 완화
 // 기본: stats 그룹만 펼침. 사용자 펼침 상태는 app_meta 영속화 (slot별 자동 분리)
+// 🆕 v7.1: "🏆 티어 인사이트" 그룹 추가 — hybrid/manual에서만 노출 (mode-aware filter)
 const SECTION_GROUPS = [
   { key: "stats",    label: "📊 통계",       sections: ["basicStats", "categoryAnalysis", "anomalies"] },
   { key: "genreTag", label: "🏷️ 장르·태그",  sections: ["majorGenre", "subGenre", "coordPref", "spectrum"] },
+  { key: "tier",     label: "🏆 티어 인사이트", sections: ["tierDistribution", "tierConcentration", "tierStratificationHeatmap", "tierEntropy", "tierInversion", "awardTier"] },
   { key: "matching", label: "⚔️ 매칭 행동",  sections: ["matchAnalysis", "matchBehavior", "matchConsist", "simGroupConsist"] },
   { key: "advanced", label: "🔬 심화",       sections: ["upsets", "factors"] },
 ];
@@ -21471,7 +21558,10 @@ const TasteAnalysisScreen = memo(({
 
   const { basicStats, majorGenreAnalysis, subGenreAnalysis, tagAnalysis,
           comboAnalysis, platformAnalysis, loyalAuthors, readingPattern,
-          matchAnalysis, trendAnalysis, anomalies, insights, spectrumAnalysis } = analysis;
+          matchAnalysis, trendAnalysis, anomalies, insights, spectrumAnalysis,
+          // 🆕 v7.1: 티어 인사이트
+          tierStratification, tierConcentration, tierEntropy, tierInversion,
+          awardTierCorrelation, tierDistribution } = analysis;
 
   // 차트 데이터 준비
   const genreChartData = majorGenreAnalysis.slice(0, 8).map(g => ({
@@ -21501,6 +21591,8 @@ const TasteAnalysisScreen = memo(({
 
   // 🆕 v7.0: hybrid 모드 — 매칭 기반 분석 비활성 (ELO 갱신 안 함)
   const isHybridMode = globalTierConfig.mode === "hybrid";
+  // 🆕 v7.1: hybrid 또는 manual — 두 모드 모두 티어 인사이트 그룹 노출 대상
+  const isHybridOrManualMode = globalTierConfig.mode === "hybrid" || globalTierConfig.mode === "manual";
 
   return (
     <>
@@ -21558,10 +21650,15 @@ const TasteAnalysisScreen = memo(({
         </TouchableOpacity>
       </View>
 
-      {/* 🆕 v6.2: 그룹 단위 펼침 토글 칩 (4그룹) */}
+      {/* 🆕 v6.2: 그룹 단위 펼침 토글 칩 (5그룹) */}
       {/* 🆕 v7.0: hybrid 모드는 매칭/심화 그룹 비활성 (ELO 기반) */}
+      {/* 🆕 v7.1: hybrid/manual은 "tier" 그룹 노출, match는 숨김 (모드별 분리) */}
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
-        {SECTION_GROUPS.filter(g => !isHybridMode || (g.key !== "matching" && g.key !== "advanced")).map(g => {
+        {SECTION_GROUPS.filter(g => {
+          if (g.key === "tier") return isHybridOrManualMode; // 🆕 v7.1: hybrid/manual에만
+          if (isHybridOrManualMode && (g.key === "matching" || g.key === "advanced")) return false;
+          return true;
+        }).map(g => {
           const open = isGroupExpanded(g.key);
           return (
             <TouchableOpacity
@@ -21608,8 +21705,11 @@ const TasteAnalysisScreen = memo(({
             <Text style={{ color: C.sub, fontSize: 11 }}>총 작품</Text>
           </View>
           <View style={{ flex: 1, backgroundColor: C.card, padding: 12, borderRadius: 12, alignItems: "center" }}>
-            <Text style={{ color: C.ok, fontSize: 22, fontWeight: "800" }}>{basicStats.avgRating.toFixed(0)}</Text>
-            <Text style={{ color: C.sub, fontSize: 11 }}>평균 레이팅</Text>
+            {/* 🆕 v7.1: mode-aware 표시 — match는 점수, hybrid/manual은 평균 티어 */}
+            <Text style={{ color: C.ok, fontSize: isHybridOrManualMode ? 14 : 22, fontWeight: "800", textAlign: "center" }}>
+              {isHybridOrManualMode ? formatPrefScore(basicStats.avgRating, globalTierConfig) : basicStats.avgRating.toFixed(0)}
+            </Text>
+            <Text style={{ color: C.sub, fontSize: 11 }}>{isHybridOrManualMode ? "평균 선호도" : "평균 레이팅"}</Text>
           </View>
           <View style={{ flex: 1, backgroundColor: C.card, padding: 12, borderRadius: 12, alignItems: "center" }}>
             <Text style={{ color: "#f59e0b", fontSize: 22, fontWeight: "800" }}>{(basicStats.totalReadCount / 1000).toFixed(1)}k</Text>
@@ -21710,7 +21810,8 @@ const TasteAnalysisScreen = memo(({
             </>
           ) : (
             <Text style={{ color: C.sub, fontSize: 12 }}>
-              {basicStats.total}작 · 평균 {basicStats.avgRating.toFixed(0)}점 · 총 {(basicStats.totalReadCount / 1000).toFixed(1)}k회 읽음
+              {/* 🆕 v7.1: mode-aware avgRating 표시 */}
+              {basicStats.total}작 · {isHybridOrManualMode ? formatPrefScore(basicStats.avgRating, globalTierConfig) : `평균 ${basicStats.avgRating.toFixed(0)}점`} · 총 {(basicStats.totalReadCount / 1000).toFixed(1)}k회 읽음
             </Text>
           )}
         </Section>
@@ -22102,6 +22203,286 @@ const TasteAnalysisScreen = memo(({
                 </View>
               );
             })}
+          </Section>
+        </TouchableOpacity>
+      )}
+
+      {/* 🆕 v7.1: 티어 인사이트 그룹 (hybrid/manual에서 활성) */}
+      {/* ════ 1. TierDistribution — 전체 티어 분포 ════ */}
+      {isHybridOrManualMode && isGroupExpanded("tier") && tierDistribution && (
+        <TouchableOpacity onPress={() => toggleSection("tierDistribution")}>
+          <Section title={`📊 티어 분포 ${isExpanded("tierDistribution") ? "▼" : "▶"}`}>
+            <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
+              내 작품들의 티어별 분포 (전체 {tierDistribution.total}건, 미배정 {tierDistribution.unrated}건)
+            </Text>
+            {isExpanded("tierDistribution") && (() => {
+              const tierOrder = getActiveTierOrder(globalTierConfig);
+              const total = tierDistribution.total || 1;
+              return (
+                <View style={{ gap: 6 }}>
+                  {tierOrder.map((t) => {
+                    const count = tierDistribution.counts[t] || 0;
+                    const ratio = count / total;
+                    const color = getTierColor(t);
+                    return (
+                      <View key={t} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                        <View style={{ width: 32, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: color }}>
+                          <Text style={{ color: "#fff", fontWeight: "800", fontSize: 11, textAlign: "center" }}>
+                            {getTierLabel(t, globalTierConfig)}
+                          </Text>
+                        </View>
+                        <View style={{ flex: 1, height: 14, backgroundColor: C.bg, borderRadius: 7, overflow: "hidden" }}>
+                          <View style={{ width: `${Math.max(2, ratio * 100)}%`, height: "100%", backgroundColor: color, opacity: 0.7 }} />
+                        </View>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", width: 60, textAlign: "right" }}>
+                          {count}건 ({(ratio * 100).toFixed(0)}%)
+                        </Text>
+                      </View>
+                    );
+                  })}
+                  {tierDistribution.unrated > 0 && (
+                    <Text style={{ color: C.sub, fontSize: 11, marginTop: 4 }}>
+                      ⓘ 미배정 {tierDistribution.unrated}건은 분포에서 제외 — 티어 인사이트 정확도 ↑를 위해 편집 권장
+                    </Text>
+                  )}
+                </View>
+              );
+            })()}
+          </Section>
+        </TouchableOpacity>
+      )}
+
+      {/* ════ 2. TierConcentration — 상위 티어 집중도 ════ */}
+      {isHybridOrManualMode && isGroupExpanded("tier") && tierConcentration && (
+        <TouchableOpacity onPress={() => toggleSection("tierConcentration")}>
+          <Section title={`🏆 상위 티어 집중도 ${isExpanded("tierConcentration") ? "▼" : "▶"}`}>
+            <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
+              내 상위 티어에 가장 많이 등장하는 작가/태그/장르
+            </Text>
+            {isExpanded("tierConcentration") && (
+              <View style={{ gap: 14 }}>
+                {/* 작가 TOP */}
+                {tierConcentration.topAuthors.length > 0 && (
+                  <View>
+                    <Text style={{ color: C.text, fontWeight: "700", marginBottom: 6 }}>작가 TOP {tierConcentration.topAuthors.length}</Text>
+                    {tierConcentration.topAuthors.map((s, i) => (
+                      <View key={i} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 4, borderBottomWidth: 0.5, borderBottomColor: C.line + "40" }}>
+                        <Text style={{ color: C.text, fontSize: 13, flex: 1 }} numberOfLines={1}>
+                          {i + 1}. {s.key}
+                        </Text>
+                        <Text style={{ color: C.sub, fontSize: 11 }}>
+                          상위 {(s.topTierRatio * 100).toFixed(0)}% (N={s.totalCount})
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+                {/* 태그 TOP */}
+                {tierConcentration.topTags.length > 0 && (
+                  <View>
+                    <Text style={{ color: C.text, fontWeight: "700", marginBottom: 6 }}>태그 TOP {tierConcentration.topTags.length}</Text>
+                    {tierConcentration.topTags.map((s, i) => (
+                      <View key={i} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 4, borderBottomWidth: 0.5, borderBottomColor: C.line + "40" }}>
+                        <Text style={{ color: C.text, fontSize: 13, flex: 1 }} numberOfLines={1}>
+                          {i + 1}. {s.key}
+                        </Text>
+                        <Text style={{ color: C.sub, fontSize: 11 }}>
+                          상위 {(s.topTierRatio * 100).toFixed(0)}% (N={s.totalCount})
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+                {/* 장르 TOP */}
+                {tierConcentration.topGenres.length > 0 && (
+                  <View>
+                    <Text style={{ color: C.text, fontWeight: "700", marginBottom: 6 }}>대장르 TOP {tierConcentration.topGenres.length}</Text>
+                    {tierConcentration.topGenres.map((s, i) => (
+                      <View key={i} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 4, borderBottomWidth: 0.5, borderBottomColor: C.line + "40" }}>
+                        <Text style={{ color: C.text, fontSize: 13, flex: 1 }} numberOfLines={1}>
+                          {i + 1}. {s.key}
+                        </Text>
+                        <Text style={{ color: C.sub, fontSize: 11 }}>
+                          상위 {(s.topTierRatio * 100).toFixed(0)}% (N={s.totalCount})
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+                {tierConcentration.topAuthors.length === 0 && tierConcentration.topTags.length === 0 && tierConcentration.topGenres.length === 0 && (
+                  <Text style={{ color: C.sub, fontSize: 12, textAlign: "center", padding: 12 }}>
+                    티어 데이터 부족 — 작품을 더 등록하거나 티어 배정 후 다시 확인하세요.
+                  </Text>
+                )}
+              </View>
+            )}
+          </Section>
+        </TouchableOpacity>
+      )}
+
+      {/* ════ 3. TierStratificationHeatmap — 엔티티 × 티어 매트릭스 ════ */}
+      {isHybridOrManualMode && isGroupExpanded("tier") && tierStratification && (
+        <TouchableOpacity onPress={() => toggleSection("tierStratificationHeatmap")}>
+          <Section title={`🗺️ 티어×엔티티 매트릭스 ${isExpanded("tierStratificationHeatmap") ? "▼" : "▶"}`}>
+            <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
+              각 엔티티가 어느 티어에 분포하는지 한눈에. 상위 5건만 표시.
+            </Text>
+            {isExpanded("tierStratificationHeatmap") && (() => {
+              const tierOrder = getActiveTierOrder(globalTierConfig);
+              const renderRow = (label, list) => {
+                if (!list || list.length === 0) return null;
+                const visible = list
+                  .filter(s => s.totalCount >= 3)
+                  .sort((a, b) => b.totalCount - a.totalCount)
+                  .slice(0, 5);
+                if (visible.length === 0) return null;
+                return (
+                  <View style={{ marginBottom: 12 }}>
+                    <Text style={{ color: C.text, fontWeight: "700", marginBottom: 4 }}>{label}</Text>
+                    {visible.map((s, i) => (
+                      <View key={i} style={{ marginBottom: 4 }}>
+                        <Text style={{ color: C.sub, fontSize: 11 }} numberOfLines={1}>{s.key} (N={s.totalCount})</Text>
+                        <View style={{ flexDirection: "row", height: 18, marginTop: 2, borderRadius: 4, overflow: "hidden" }}>
+                          {tierOrder.map((t) => {
+                            const c = s.byTierWeight ? s.byTierWeight[t] : (s.byTier ? s.byTier[t] : 0);
+                            const w = (s.totalWeight && s.totalWeight > 0) ? c / s.totalWeight : 0;
+                            const tcolor = getTierColor(t);
+                            if (w === 0) return <View key={t} style={{ flex: 0.001, backgroundColor: C.bg }} />;
+                            return (
+                              <View key={t} style={{ flex: w, backgroundColor: tcolor, justifyContent: "center", alignItems: "center" }}>
+                                {w > 0.15 && (
+                                  <Text style={{ color: "#fff", fontSize: 9, fontWeight: "700" }}>
+                                    {(w * 100).toFixed(0)}%
+                                  </Text>
+                                )}
+                              </View>
+                            );
+                          })}
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                );
+              };
+              return (
+                <View>
+                  {renderRow("📚 대장르", tierStratification.byMajorGenre)}
+                  {renderRow("📖 부장르", tierStratification.bySubGenre)}
+                  {renderRow("🏷️ 태그 (intensity 가중)", tierStratification.byTag)}
+                  {renderRow("✍️ 작가", tierStratification.byAuthor)}
+                </View>
+              );
+            })()}
+          </Section>
+        </TouchableOpacity>
+      )}
+
+      {/* ════ 4. TierEntropyView — 강한 선호 vs 균등 분산 ════ */}
+      {isHybridOrManualMode && isGroupExpanded("tier") && tierEntropy && (tierEntropy.strong.length > 0 || tierEntropy.dispersed.length > 0) && (
+        <TouchableOpacity onPress={() => toggleSection("tierEntropy")}>
+          <Section title={`🎯 강한 선호 vs 균등 분산 ${isExpanded("tierEntropy") ? "▼" : "▶"}`}>
+            <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
+              티어 분산도(entropy) 기반 — 한 티어에 몰리면 강한 신호, 모든 티어에 고르면 약한 신호.
+            </Text>
+            {isExpanded("tierEntropy") && (
+              <View style={{ gap: 12 }}>
+                {tierEntropy.strong.length > 0 && (
+                  <View>
+                    <Text style={{ color: C.ok, fontWeight: "700", marginBottom: 6 }}>🎯 강한 선호 (집중)</Text>
+                    {tierEntropy.strong.slice(0, 7).map((s, i) => (
+                      <View key={i} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 3 }}>
+                        <Text style={{ color: C.text, fontSize: 12, flex: 1 }} numberOfLines={1}>
+                          {s.kind === "tag" ? "🏷️" : s.kind === "author" ? "✍️" : "📚"} {s.key}
+                        </Text>
+                        <Text style={{ color: C.sub, fontSize: 11 }}>상위 {(s.topTierRatio * 100).toFixed(0)}%</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+                {tierEntropy.dispersed.length > 0 && (
+                  <View>
+                    <Text style={{ color: C.warn, fontWeight: "700", marginBottom: 6 }}>🌀 균등 분산 (시그널 약함)</Text>
+                    {tierEntropy.dispersed.slice(0, 5).map((s, i) => (
+                      <View key={i} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 3 }}>
+                        <Text style={{ color: C.text, fontSize: 12, flex: 1 }} numberOfLines={1}>
+                          {s.kind === "tag" ? "🏷️" : s.kind === "author" ? "✍️" : "📚"} {s.key}
+                        </Text>
+                        <Text style={{ color: C.sub, fontSize: 11 }}>모든 티어 산재</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+            )}
+          </Section>
+        </TouchableOpacity>
+      )}
+
+      {/* ════ 5. TierInversionView — disconnect 카드 (보수적, dismissable) ════ */}
+      {isHybridOrManualMode && isGroupExpanded("tier") && tierInversion && tierInversion.items.length > 0 && (
+        <TouchableOpacity onPress={() => toggleSection("tierInversion")}>
+          <Section title={`🔍 다회독·완독 vs 티어 disconnect ${isExpanded("tierInversion") ? "▼" : "▶"}`}>
+            <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
+              많이 읽었지만 낮은 티어 — 티어 재고 권유 (강제 X, 참고용)
+            </Text>
+            {isExpanded("tierInversion") && (
+              <View style={{ gap: 8 }}>
+                {tierInversion.items.map((item, i) => (
+                  <View key={i} style={{ backgroundColor: isDark ? "#451a03" : "#fef9c3", padding: 10, borderRadius: 8, borderLeftWidth: 3, borderLeftColor: "#f59e0b" }}>
+                    <Text style={{ color: C.text, fontWeight: "700", fontSize: 13 }} numberOfLines={1}>
+                      {item.title}{item.author ? ` · ${item.author}` : ""}
+                    </Text>
+                    <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>
+                      현재: {getTierLabel(item.tier, globalTierConfig)} 티어 · {item.rereadCount}회독
+                      {item.readRatio !== null && item.readRatio > 0 ? ` · ${(item.readRatio * 100).toFixed(0)}% 진행` : ""}
+                    </Text>
+                    <Text style={{ color: isDark ? "#fde68a" : "#92400e", fontSize: 12, marginTop: 4, fontStyle: "italic" }}>
+                      💡 {item.message}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </Section>
+        </TouchableOpacity>
+      )}
+
+      {/* ════ 6. AwardTierView — 수상-티어 상관 ════ */}
+      {isHybridOrManualMode && isGroupExpanded("tier") && awardTierCorrelation !== undefined && (
+        <TouchableOpacity onPress={() => toggleSection("awardTier")}>
+          <Section title={`🏅 수상×티어 상관 ${isExpanded("awardTier") ? "▼" : "▶"}`}>
+            <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
+              {awardTierCorrelation === null
+                ? "수상 작품 5개 이상 등록 시 분석 표시"
+                : `수상 작품의 티어 분포 + 공통 태그 패턴`}
+            </Text>
+            {isExpanded("awardTier") && awardTierCorrelation && awardTierCorrelation.byAward && (
+              <View style={{ gap: 12 }}>
+                {Object.entries(awardTierCorrelation.byAward).map(([key, stat]) => (
+                  <View key={key} style={{ backgroundColor: C.bg, padding: 10, borderRadius: 8 }}>
+                    <Text style={{ color: C.text, fontWeight: "700" }}>🏆 {key} ({stat.count}건)</Text>
+                    {stat.avgPrefScore != null && (
+                      <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>
+                        평균 — {formatPrefScore(stat.avgPrefScore, globalTierConfig)}
+                      </Text>
+                    )}
+                    {stat.topTags && stat.topTags.length > 0 && (
+                      <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>
+                        공통 태그: {stat.topTags.map(t => `${t.tag}(${t.count})`).join(", ")}
+                      </Text>
+                    )}
+                  </View>
+                ))}
+                {awardTierCorrelation.sharedTags && awardTierCorrelation.sharedTags.length > 0 && (
+                  <View style={{ marginTop: 4, paddingTop: 8, borderTopWidth: 1, borderTopColor: C.line }}>
+                    <Text style={{ color: C.text, fontWeight: "700", fontSize: 12 }}>전체 수상작 공통 패턴</Text>
+                    <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>
+                      {awardTierCorrelation.sharedTags.slice(0, 5).map(t => `${t.tag} (${(t.ratio * 100).toFixed(0)}%)`).join(", ")}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            )}
           </Section>
         </TouchableOpacity>
       )}
@@ -24123,6 +24504,166 @@ const stdDev = (arr) => {
   return Math.sqrt(arr.reduce((sum, v) => sum + (v - m) ** 2, 0) / arr.length);
 };
 
+/* ═══════════════════════════════════════════════════════════════════════
+   🆕 v7.1: 모드 인식 취향 분석 헬퍼 (Tier-Aware Taste Analysis)
+   ═══════════════════════════════════════════════════════════════════════
+   - getPrefScore: match=ELO, hybrid/manual=tier-derived 스코어 (단일 파이프라인)
+   - formatPrefScore: 표시용 — match는 점수, hybrid/manual은 티어 라벨 (fraction-based)
+   - computeTierStratification: 엔티티×티어 분포 매트릭스 (intensity 가중 + entropy + Wilson CI)
+   - calcInversionScore: 다회독↑ + 티어↓ disconnect 감지
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * 🆕 v7.1: 모드 인식 통합 취향 스코어
+ * - match 모드: 기존 ELO rating 그대로 (회귀 0)
+ * - hybrid/manual: tier_rank 기반 + manual_order 미세 조정
+ * - getDisplayTier 사용 → manual_tier 미배정 작품도 ELO fallback으로 인클루시브
+ */
+function getPrefScore(novel, config) {
+  const mode = config?.mode || 'match';
+  const rating = Number(novel.rating) || 1500;
+  if (mode === 'match') return rating;
+
+  const tierOrder = getActiveTierOrder(config);
+  const displayTier = getDisplayTier(novel, config);
+  const tierRank = displayTier ? tierOrder.indexOf(displayTier) : -1;
+
+  if (tierRank === -1) {
+    // 비활성 tier(프리셋 잔여) 또는 미정: hybrid는 ELO fallback, manual은 중립
+    return mode === 'hybrid' ? rating : 1500;
+  }
+
+  const tierCount = tierOrder.length;
+  // S=2000, bottom=1000 (linear). 5-tier: [2000, 1750, 1500, 1250, 1000]
+  const tierBase = 2000 - (tierRank / Math.max(1, tierCount - 1)) * 1000;
+  // manual_order 미세 조정 (cap 80 — 티어 경계 침범 방지)
+  const orderAdj = -Math.min(80, Math.max(0, Number(novel.manual_order) || 0) / 100 * 10);
+  return Math.round(tierBase + orderAdj);
+}
+
+/**
+ * 🆕 v7.1: 표시용 변환 — fraction-based 안정 라벨링 (round 진동 회피)
+ */
+function formatPrefScore(score, config) {
+  const mode = config?.mode || 'match';
+  if (mode === 'match') return `${Math.round(score)}점`;
+
+  const tierOrder = getActiveTierOrder(config);
+  const tierCount = tierOrder.length;
+  if (tierCount === 0) return `${Math.round(score)}`;
+
+  const exact = Math.max(0, Math.min(tierCount - 1, (2000 - score) / 1000 * (tierCount - 1)));
+  const lower = Math.max(0, Math.min(tierCount - 1, Math.floor(exact)));
+  const upper = Math.max(0, Math.min(tierCount - 1, Math.ceil(exact)));
+
+  if (lower === upper) return `평균 ${getTierLabel(tierOrder[lower], config)}`;
+  const fraction = exact - lower;
+  if (fraction < 0.25) return `평균 ${getTierLabel(tierOrder[lower], config)}`;
+  if (fraction > 0.75) return `평균 ${getTierLabel(tierOrder[upper], config)}`;
+  return `평균 ${getTierLabel(tierOrder[lower], config)}~${getTierLabel(tierOrder[upper], config)}`;
+}
+
+/**
+ * 🆕 v7.1: 엔티티×티어 스트라티피케이션 매트릭스
+ * - getEntityKeys: (novel) => ["key1", ...] 또는 [{key, intensity}, ...]
+ * - options.useIntensity: tag intensity(1-5) 가중치 적용 (1=0.33, 3=1.0, 5=1.67)
+ * - 반환 stat: { totalCount, totalWeight, byTier, byTierWeight, topTierRatio, topTierCI, entropy, entropyNormalized, entropyLabel }
+ */
+function computeTierStratification(novels, getEntityKeys, config, options = {}) {
+  const useIntensity = options.useIntensity || false;
+  const tierOrder = getActiveTierOrder(config);
+  const result = new Map();
+  if (!tierOrder || tierOrder.length === 0) return result;
+
+  for (const n of novels) {
+    const tier = getDisplayTier(n, config);
+    if (!tier || !tierOrder.includes(tier)) continue;
+    const keys = getEntityKeys(n) || [];
+    for (const k of keys) {
+      const key = typeof k === 'string' ? k : k?.key;
+      if (!key) continue;
+      const weight = (typeof k === 'object' && useIntensity)
+        ? Math.max(0.33, Math.min(1.67, (Number(k.intensity) || 3) / 3))
+        : 1.0;
+      if (!result.has(key)) {
+        result.set(key, {
+          key,
+          totalCount: 0,
+          totalWeight: 0,
+          byTier: Object.fromEntries(tierOrder.map(t => [t, 0])),
+          byTierWeight: Object.fromEntries(tierOrder.map(t => [t, 0])),
+        });
+      }
+      const stat = result.get(key);
+      stat.totalCount++;
+      stat.totalWeight += weight;
+      stat.byTier[tier]++;
+      stat.byTierWeight[tier] += weight;
+    }
+  }
+
+  // Post-process: ratios + Wilson CI + entropy + 라벨
+  const tierCount = tierOrder.length;
+  const topTierKeys = tierOrder.slice(0, Math.max(1, Math.ceil(tierCount / 3)));
+  const maxEntropy = Math.log2(Math.max(2, tierCount));
+
+  for (const stat of result.values()) {
+    if (stat.totalWeight === 0) continue;
+    let topWeight = 0;
+    for (const t of topTierKeys) topWeight += stat.byTierWeight[t];
+    stat.topTierRatio = topWeight / stat.totalWeight;
+    // Wilson CI (재사용: wilsonConfidenceInterval 기존 헬퍼)
+    stat.topTierCI = wilsonConfidenceInterval(
+      Math.round(topWeight),
+      Math.max(1, Math.round(stat.totalWeight))
+    );
+    let H = 0;
+    for (const t of tierOrder) {
+      const p = stat.byTierWeight[t] / stat.totalWeight;
+      if (p > 0) H -= p * Math.log2(p);
+    }
+    stat.entropy = H;
+    stat.entropyNormalized = maxEntropy > 0 ? H / maxEntropy : 0;
+    stat.entropyLabel =
+      stat.entropyNormalized < 1 / 3 ? "강한 선호" :
+      stat.entropyNormalized > 2 / 3 ? "균등 분산" : "중간";
+  }
+
+  return result;
+}
+
+/**
+ * 🆕 v7.1: 티어 inversion 점수 — 다회독↑ + 티어↓ disconnect 감지
+ * 보수적 임계치: reread ≥ 4 OR readRatio ≥ 0.9, 하위 1/2 티어
+ * 반환: 0 = no inversion, > 0 = inversion 강도
+ */
+function calcInversionScore(novel, config) {
+  const tierOrder = getActiveTierOrder(config);
+  if (!tierOrder || tierOrder.length === 0) return 0;
+  const tier = getDisplayTier(novel, config);
+  const tierRank = tier ? tierOrder.indexOf(tier) : -1;
+  if (tierRank === -1) return 0;
+
+  // 하위 1/2 티어
+  if (tierRank < Math.ceil(tierOrder.length / 2)) return 0;
+
+  const reread = Number(novel.reread_count) || 1;
+  const readCount = Number(novel.read_count) || 0;
+  const total = Number(novel.total_episodes) || 0;
+  const readRatio = total > 0 ? readCount / total : 0;
+
+  // 보수적 트리거
+  const rereadHit = reread >= 4;
+  const readRatioHit = readRatio >= 0.9 && readCount >= 30; // 너무 짧은 작품 제외
+
+  if (!rereadHit && !readRatioHit) return 0;
+
+  // 강도: 하위 티어 깊이 + 다회독/완독률
+  const depthFactor = (tierRank - Math.ceil(tierOrder.length / 2) + 1) / Math.max(1, tierOrder.length / 2);
+  const signalFactor = Math.min(1, (rereadHit ? reread / 4 : 0) + (readRatioHit ? readRatio : 0));
+  return Math.round(depthFactor * signalFactor * 100);
+}
+
 // 메인 분석 함수
 async function analyzePreferences(novels, matches) {
   try {
@@ -24170,8 +24711,8 @@ async function analyzePreferences(novels, matches) {
       return {
         ...n,
         reliability: calcNovelReliabilityScore(n, totalCount),
-        readRatio: (Number(n.total_episodes) > 0) 
-          ? Number(n.read_count) / Number(n.total_episodes) 
+        readRatio: (Number(n.total_episodes) > 0)
+          ? Number(n.read_count) / Number(n.total_episodes)
           : null,
         majorGenres,
         subGenres,
@@ -24180,6 +24721,9 @@ async function analyzePreferences(novels, matches) {
         platList: (() => { try { return JSON.parse(n.platforms || "[]"); } catch { return []; } })(),
         daysSinceCreated: (now - (n.created_at || now)) / (1000 * 60 * 60 * 24),
         rating: Number(n.rating) || 1500,
+        // 🆕 v7.1: 모드 인식 통합 스코어 — match=ELO, hybrid/manual=tier-derived
+        // 모든 score-aggregation 분석은 prefScore 사용. n.rating은 match-only 신호용으로 보존.
+        prefScore: getPrefScore(n, globalTierConfig),
         rereadCount: Math.max(1, Number(n.reread_count) || 1), // 📚 v3.0.4: 다회독 카운트
         // 📚 v3.4: 다회독 가중치 강화 (1회독=1, 2회독=1.7, 3회독=2.2, 5회독=3)
         rereadWeight: 1 + Math.sqrt(Math.max(1, Number(n.reread_count) || 1) - 1) * 0.7,
@@ -24201,14 +24745,16 @@ async function analyzePreferences(novels, matches) {
     }
   
   // 2. 기본 통계
+  // 🆕 v7.1: avgRating은 mode-aware prefScore로 교체. match에선 ELO 그대로(identity), hybrid/manual은 tier-derived.
+  // UI는 formatPrefScore로 모드별 표시 (match='1720점', hybrid='평균 B+ 티어').
   const basicStats = {
     total: totalCount,
     highReliability: highReliability.length,
     mediumReliability: mediumReliability.length,
     lowReliability: lowReliability.length,
-    avgRating: avg(reliable.map(n => n.rating)),
-    medianRating: median(reliable.map(n => n.rating)),
-    stdDevRating: stdDev(reliable.map(n => n.rating)),
+    avgRating: avg(reliable.map(n => n.prefScore)),
+    medianRating: median(reliable.map(n => n.prefScore)),
+    stdDevRating: stdDev(reliable.map(n => n.prefScore)),
     avgReadCount: avg(reliable.filter(n => n.read_count > 0).map(n => Number(n.read_count))),
     totalReadCount: reliable.reduce((sum, n) => sum + (Number(n.read_count) || 0), 0),
     completedCount: reliable.filter(n => n.status === "completed").length,
@@ -24232,7 +24778,8 @@ async function analyzePreferences(novels, matches) {
       const rereadWeight = n.rereadWeight || (1 + Math.sqrt(n.rereadCount - 1) * 0.7);
       stat.count++;
       stat.weightedCount += rereadWeight;
-      stat.ratings.push(n.rating);
+      // 🆕 v7.1: prefScore (mode-aware)
+      stat.ratings.push(n.prefScore);
       if (n.readRatio !== null) stat.readRatios.push(n.readRatio);
       stat.readCounts.push(Number(n.read_count) || 0);
       if (n.status === "completed") stat.completed++;
@@ -24269,7 +24816,7 @@ async function analyzePreferences(novels, matches) {
       const rereadWeight = n.rereadWeight || (1 + Math.sqrt(n.rereadCount - 1) * 0.7);
       subGenreStats[g].count++;
       subGenreStats[g].weightedCount += rereadWeight;
-      subGenreStats[g].ratings.push(n.rating);
+      subGenreStats[g].ratings.push(n.prefScore);
       if (n.status === "completed") subGenreStats[g].completed++;
       if (n.status === "dropped") subGenreStats[g].dropped++;
       subGenreStats[g].rereadSum += n.rereadCount;
@@ -24301,7 +24848,7 @@ async function analyzePreferences(novels, matches) {
       
       tagStats[tag].count++;
       tagStats[tag].weightedCount += rereadWeight * intensityWeight;
-      tagStats[tag].ratings.push(n.rating);
+      tagStats[tag].ratings.push(n.prefScore);
       tagStats[tag].intensitySum += intensity;
       if (n.status === "dropped") tagStats[tag].dropped++;
     }
@@ -24328,7 +24875,7 @@ async function analyzePreferences(novels, matches) {
         const key = [allTags[i], allTags[j]].sort().join(" + ");
         if (!combos[key]) combos[key] = { count: 0, ratings: [] };
         combos[key].count++;
-        combos[key].ratings.push(n.rating);
+        combos[key].ratings.push(n.prefScore);
       }
     }
   }
@@ -24351,7 +24898,7 @@ async function analyzePreferences(novels, matches) {
         platStats[p] = { count: 0, ratings: [], readRatios: [], completed: 0, dropped: 0 };
       }
       platStats[p].count++;
-      platStats[p].ratings.push(n.rating);
+      platStats[p].ratings.push(n.prefScore);
       if (n.readRatio !== null) platStats[p].readRatios.push(n.readRatio);
       if (n.status === "completed") platStats[p].completed++;
       if (n.status === "dropped") platStats[p].dropped++;
@@ -24391,8 +24938,9 @@ async function analyzePreferences(novels, matches) {
       };
     }
     authorStats[author].count++;
-    authorStats[author].ratings.push(n.rating);
-    authorStats[author].novels.push({ title: n.title, rating: n.rating });
+    authorStats[author].ratings.push(n.prefScore);
+    // 🆕 v7.1: novels 배열의 rating은 표시용으로 prefScore (mode-aware) 저장
+    authorStats[author].novels.push({ title: n.title, rating: n.prefScore });
     authorStats[author].genres.push(...n.majorGenres);
     authorStats[author].subGenres.push(...n.subGenres);
     authorStats[author].tags.push(...n.tagList);
@@ -24476,15 +25024,15 @@ async function analyzePreferences(novels, matches) {
   
   const readingPattern = {
     lengthPreference: {
-      short: { count: lengthGroups.short.length, avgRating: avg(lengthGroups.short.map(n => n.rating)) },
-      medium: { count: lengthGroups.medium.length, avgRating: avg(lengthGroups.medium.map(n => n.rating)) },
-      long: { count: lengthGroups.long.length, avgRating: avg(lengthGroups.long.map(n => n.rating)) },
+      short: { count: lengthGroups.short.length, avgRating: avg(lengthGroups.short.map(n => n.prefScore)) },
+      medium: { count: lengthGroups.medium.length, avgRating: avg(lengthGroups.medium.map(n => n.prefScore)) },
+      long: { count: lengthGroups.long.length, avgRating: avg(lengthGroups.long.map(n => n.prefScore)) },
     },
     preferredLength: (() => {
       const lens = [
-        { key: "short", rating: avg(lengthGroups.short.map(n => n.rating)) || 0 },
-        { key: "medium", rating: avg(lengthGroups.medium.map(n => n.rating)) || 0 },
-        { key: "long", rating: avg(lengthGroups.long.map(n => n.rating)) || 0 },
+        { key: "short", rating: avg(lengthGroups.short.map(n => n.prefScore)) || 0 },
+        { key: "medium", rating: avg(lengthGroups.medium.map(n => n.prefScore)) || 0 },
+        { key: "long", rating: avg(lengthGroups.long.map(n => n.prefScore)) || 0 },
       ];
       return lens.sort((a, b) => b.rating - a.rating)[0]?.key || "unknown";
     })(),
@@ -24517,8 +25065,8 @@ async function analyzePreferences(novels, matches) {
     ...readingPattern.byWorkStatus.discontinued,
   ];
   const completedRows = readingPattern.byWorkStatus.completed;
-  const completedAvgRating = completedRows.length > 0 ? avg(completedRows.map(n => n.rating)) : null;
-  const discontinuedAvgRating = discontinuedRows.length > 0 ? avg(discontinuedRows.map(n => n.rating)) : null;
+  const completedAvgRating = completedRows.length > 0 ? avg(completedRows.map(n => n.prefScore)) : null;
+  const discontinuedAvgRating = discontinuedRows.length > 0 ? avg(discontinuedRows.map(n => n.prefScore)) : null;
   const discontinuedDelta = (completedAvgRating != null && discontinuedAvgRating != null)
     ? completedAvgRating - discontinuedAvgRating
     : null;
@@ -24604,7 +25152,7 @@ async function analyzePreferences(novels, matches) {
   const trendAnalysis = {
     recent: {
       count: recent.length,
-      avgRating: avg(recent.map(n => n.rating)),
+      avgRating: avg(recent.map(n => n.prefScore)),
       topGenres: (() => {
         const gc = {};
         for (const n of recent) {
@@ -24615,7 +25163,7 @@ async function analyzePreferences(novels, matches) {
     },
     older: {
       count: older.length,
-      avgRating: avg(older.map(n => n.rating)),
+      avgRating: avg(older.map(n => n.prefScore)),
       topGenres: (() => {
         const gc = {};
         for (const n of older) {
@@ -24634,39 +25182,47 @@ async function analyzePreferences(novels, matches) {
     if (n.work_status === "dropped" || n.work_status === "discontinued") causes.push("discontinued");
     return causes;
   };
+  // 🆕 v7.1: anomaly 임계치 mean ± std 기반 (mode-aware 자동 적응)
+  // 기존 절대치 1500/1700/1550/1600은 ELO 가정. hybrid의 prefScore 분포는 다름 → 동적 σ 기반.
+  const _prefMean = basicStats.avgRating || 1500;
+  const _prefStd = Math.max(50, basicStats.stdDevRating || 100); // 최소 50 (분산 0 회피)
+  const HIGH_THRESHOLD = _prefMean + _prefStd;       // ≈ 1σ 위 (예: ELO ~1700)
+  const LOW_THRESHOLD = _prefMean - _prefStd;        // ≈ 1σ 아래 (예: ELO ~1300)
+  const MID_LOW_THRESHOLD = _prefMean - 0.5 * _prefStd;  // ≈ 0.5σ 아래
+  const MID_HIGH_THRESHOLD = _prefMean + 0.5 * _prefStd; // ≈ 0.5σ 위
   const anomalies = {
-    // 고평가 but 적게 읽음: 30% 미만으로 완화
+    // 고평가 but 적게 읽음
     highRatingLowRead: reliable.filter(n =>
-      n.rating >= 1700 && n.readRatio !== null && n.readRatio < 0.3
-    ).map(n => ({ title: n.title, rating: n.rating, readRatio: n.readRatio, work_status: n.work_status, causes: buildCauses(n) })),
-    // 저평가 but 많이 읽음: 60% 이상으로 완화
+      n.prefScore >= HIGH_THRESHOLD && n.readRatio !== null && n.readRatio < 0.3
+    ).map(n => ({ title: n.title, rating: n.prefScore, readRatio: n.readRatio, work_status: n.work_status, causes: buildCauses(n) })),
+    // 저평가 but 많이 읽음
     lowRatingHighRead: reliable.filter(n =>
-      n.rating < 1500 && n.readRatio !== null && n.readRatio > 0.6
-    ).map(n => ({ title: n.title, rating: n.rating, readRatio: n.readRatio, work_status: n.work_status, causes: buildCauses(n) })),
-    // 매칭 부족한 고레이팅
+      n.prefScore < LOW_THRESHOLD && n.readRatio !== null && n.readRatio > 0.6
+    ).map(n => ({ title: n.title, rating: n.prefScore, readRatio: n.readRatio, work_status: n.work_status, causes: buildCauses(n) })),
+    // 매칭 부족한 고레이팅 (match-only — 다른 모드에선 결과 0)
     noMatchHighRating: enriched.filter(n =>
-      (Number(n.match_count) || 0) <= 2 && n.rating >= 1700
-    ).map(n => ({ title: n.title, rating: n.rating, matchCount: n.match_count, work_status: n.work_status, causes: buildCauses(n) })),
+      (Number(n.match_count) || 0) <= 2 && n.prefScore >= HIGH_THRESHOLD
+    ).map(n => ({ title: n.title, rating: n.prefScore, matchCount: n.match_count, work_status: n.work_status, causes: buildCauses(n) })),
     // 🆕 v3.4: 다회독 but 저평가 (숨겨진 명작 후보)
     rereadButLowRating: enriched.filter(n =>
-      (Number(n.reread_count) || 1) >= 2 && n.rating < 1550
-    ).map(n => ({ title: n.title, rating: n.rating, rereadCount: Number(n.reread_count) || 1, work_status: n.work_status, causes: buildCauses(n) })),
-    // 🆕 v3.4: 정보 불완전 (신뢰도 낮음) - enriched에 이미 reliability 계산됨
+      (Number(n.reread_count) || 1) >= 2 && n.prefScore < MID_LOW_THRESHOLD
+    ).map(n => ({ title: n.title, rating: n.prefScore, rereadCount: Number(n.reread_count) || 1, work_status: n.work_status, causes: buildCauses(n) })),
+    // 🆕 v3.4: 정보 불완전 (신뢰도 낮음)
     lowInfoQuality: enriched.filter(n =>
-      n.reliability < 25 && n.rating >= 1600
-    ).map(n => ({ title: n.title, rating: n.rating, reliability: n.reliability, work_status: n.work_status, causes: buildCauses(n) })),
-    // 🆕 v7.0.4: 연중/서비스종료로 인한 저평가 작품 모음 (강한 신호)
+      n.reliability < 25 && n.prefScore >= MID_HIGH_THRESHOLD
+    ).map(n => ({ title: n.title, rating: n.prefScore, reliability: n.reliability, work_status: n.work_status, causes: buildCauses(n) })),
+    // 🆕 v7.0.4: 연중/서비스종료 저평가 작품
     discontinuedLowRating: reliable
       .filter(n =>
         (n.work_status === "dropped" || n.work_status === "discontinued") &&
-        (n.rating || 0) < (basicStats.avgRating - 100)
+        (n.prefScore || 0) < (_prefMean - 0.7 * _prefStd)
       )
-      .sort((a, b) => (a.rating || 0) - (b.rating || 0))
+      .sort((a, b) => (a.prefScore || 0) - (b.prefScore || 0))
       .map(n => ({
         title: n.title,
-        rating: n.rating,
+        rating: n.prefScore,
         work_status: n.work_status,
-        gapVsAvg: basicStats.avgRating - n.rating,
+        gapVsAvg: _prefMean - n.prefScore,
         causes: ["discontinued"],
       })),
   };
@@ -24713,7 +25269,8 @@ async function analyzePreferences(novels, matches) {
           novelAnalyses.push({
             id: n.id,
             title: n.title,
-            rating: n.rating,
+            // 🆕 v7.1: prefScore (mode-aware)
+            rating: n.prefScore,
             position: avgPosition,
             normalizedPosition,
             tags: matches.map(m => m.tag),
@@ -24727,8 +25284,8 @@ async function analyzePreferences(novels, matches) {
       const positions = novelAnalyses.map(n => n.normalizedPosition);
       const avgPos = positions.reduce((a, b) => a + b, 0) / positions.length;
       
-      // 고평점 작품의 평균 위치
-      const highRated = novelAnalyses.filter(n => n.rating >= 1700);
+      // 고평점 작품의 평균 위치 — 🆕 v7.1: mean+1σ 기반 (mode-aware)
+      const highRated = novelAnalyses.filter(n => n.rating >= HIGH_THRESHOLD);
       const highRatedAvgPos = highRated.length > 0 
         ? highRated.reduce((sum, n) => sum + n.normalizedPosition, 0) / highRated.length 
         : avgPos;
@@ -24863,6 +25420,325 @@ async function analyzePreferences(novels, matches) {
     console.warn("[analyzePreferences] matchBehavior 분석 오류:", mbErr.message);
   }
 
+  // 🆕 v7.1: 티어 인사이트 (hybrid/manual 모드 강화) — match 모드에선 UI에서 그룹 숨김
+  // ─────────────────────────────────────────────────────────────────
+  const _isHybridOrManual = (globalTierConfig?.mode === "hybrid" || globalTierConfig?.mode === "manual");
+
+  // 1. 엔티티×티어 스트라티피케이션 (intensity 가중)
+  const tierStratification = {
+    byMajorGenre: computeTierStratification(
+      enriched,
+      (n) => n.majorGenres,
+      globalTierConfig
+    ),
+    bySubGenre: computeTierStratification(
+      enriched,
+      (n) => n.subGenres,
+      globalTierConfig
+    ),
+    byTag: computeTierStratification(
+      enriched,
+      (n) => {
+        const items = [];
+        for (const tag of n.tagList) {
+          const intensity = (n.tagDataMap && n.tagDataMap[tag]) || 3;
+          items.push({ key: tag, intensity });
+        }
+        return items;
+      },
+      globalTierConfig,
+      { useIntensity: true }
+    ),
+    byAuthor: computeTierStratification(
+      enriched,
+      (n) => (n.author && n.author.trim()) ? [n.author.trim()] : [],
+      globalTierConfig
+    ),
+  };
+
+  // 2. 상위 티어 집중도 (sample_size 임계치 적용)
+  const _toSortedArray = (map, sampleThreshold) =>
+    Array.from(map.values())
+      .filter(s => s.totalCount >= sampleThreshold)
+      .sort((a, b) => b.topTierRatio - a.topTierRatio);
+
+  const tierConcentration = {
+    topGenres: _toSortedArray(tierStratification.byMajorGenre, 2).slice(0, 5),
+    topSubGenres: _toSortedArray(tierStratification.bySubGenre, 2).slice(0, 5),
+    topTags: _toSortedArray(tierStratification.byTag, 3).slice(0, 10),
+    topAuthors: _toSortedArray(tierStratification.byAuthor, 3).slice(0, 5),
+  };
+
+  // 3. 티어 분산도 (entropy 기반 — 강한 선호 vs 균등 분산)
+  const _allEntities = [
+    ...Array.from(tierStratification.byMajorGenre.values()).map(s => ({ ...s, kind: "majorGenre" })),
+    ...Array.from(tierStratification.bySubGenre.values()).map(s => ({ ...s, kind: "subGenre" })),
+    ...Array.from(tierStratification.byTag.values()).map(s => ({ ...s, kind: "tag" })),
+    ...Array.from(tierStratification.byAuthor.values()).map(s => ({ ...s, kind: "author" })),
+  ].filter(s => s.totalCount >= 3);
+  const tierEntropy = {
+    strong: _allEntities
+      .filter(s => s.entropyLabel === "강한 선호")
+      .sort((a, b) => a.entropyNormalized - b.entropyNormalized)
+      .slice(0, 10),
+    dispersed: _allEntities
+      .filter(s => s.entropyLabel === "균등 분산")
+      .sort((a, b) => b.entropyNormalized - a.entropyNormalized)
+      .slice(0, 10),
+  };
+
+  // 4. 티어 inversion (보수적 임계치 + 부드러운 톤)
+  const tierInversion = {
+    items: enriched
+      .map(n => ({ novel: n, score: calcInversionScore(n, globalTierConfig) }))
+      .filter(x => x.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5)
+      .map(x => ({
+        id: x.novel.id,
+        title: x.novel.title,
+        author: x.novel.author,
+        tier: getDisplayTier(x.novel, globalTierConfig),
+        rereadCount: Number(x.novel.reread_count) || 1,
+        readRatio: x.novel.readRatio,
+        score: x.score,
+        message: `이 작품을 ${Number(x.novel.reread_count) || 1}회독 했지만 ${getTierLabel(getDisplayTier(x.novel, globalTierConfig), globalTierConfig)} 티어 — 한 번 재고해보세요`,
+      })),
+  };
+
+  // 5. Award-Tier 상관 (수상 ≥5건 가드)
+  const awardTierCorrelation = (() => {
+    const allAwardWinners = [];
+    for (const n of enriched) {
+      if (!n.awards) continue;
+      try {
+        const awards = JSON.parse(n.awards);
+        if (Array.isArray(awards) && awards.length > 0) {
+          for (const aw of awards) {
+            if (aw && aw.type) allAwardWinners.push({ novel: n, award: aw });
+          }
+        }
+      } catch {}
+    }
+    if (allAwardWinners.length < 5) return null;
+
+    const tierOrder = getActiveTierOrder(globalTierConfig);
+    const byAward = {};
+    for (const { novel, award } of allAwardWinners) {
+      const key = award.type;
+      if (!byAward[key]) {
+        byAward[key] = {
+          awardId: key,
+          count: 0,
+          byTier: Object.fromEntries(tierOrder.map(t => [t, 0])),
+          prefScores: [],
+          tagFreq: {},
+        };
+      }
+      const stat = byAward[key];
+      stat.count++;
+      const tier = getDisplayTier(novel, globalTierConfig);
+      if (tier && tierOrder.includes(tier)) stat.byTier[tier]++;
+      if (typeof novel.prefScore === "number") stat.prefScores.push(novel.prefScore);
+      for (const tag of (novel.tagList || [])) {
+        stat.tagFreq[tag] = (stat.tagFreq[tag] || 0) + 1;
+      }
+    }
+    // post-process
+    const result = { byAward: {}, sharedTags: [] };
+    for (const [key, stat] of Object.entries(byAward)) {
+      const sortedTags = Object.entries(stat.tagFreq)
+        .filter(([, c]) => c >= 2)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([t, c]) => ({ tag: t, count: c }));
+      result.byAward[key] = {
+        awardId: key,
+        count: stat.count,
+        byTier: stat.byTier,
+        avgPrefScore: stat.prefScores.length > 0 ? avg(stat.prefScores) : null,
+        topTags: sortedTags,
+      };
+    }
+    // 전체 수상작에서 공통적으로 자주 등장하는 태그
+    const allTagFreq = {};
+    for (const { novel } of allAwardWinners) {
+      for (const tag of (novel.tagList || [])) {
+        allTagFreq[tag] = (allTagFreq[tag] || 0) + 1;
+      }
+    }
+    result.sharedTags = Object.entries(allTagFreq)
+      .filter(([, c]) => c >= Math.max(2, Math.floor(allAwardWinners.length * 0.3)))
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([t, c]) => ({ tag: t, count: c, ratio: c / allAwardWinners.length }));
+    return result;
+  })();
+
+  // 6. 전체 티어 분포 (UI TierDistribution용)
+  const tierDistribution = (() => {
+    const tierOrder = getActiveTierOrder(globalTierConfig);
+    const counts = Object.fromEntries(tierOrder.map(t => [t, 0]));
+    let unrated = 0;
+    for (const n of enriched) {
+      const tier = getDisplayTier(n, globalTierConfig);
+      if (tier && tierOrder.includes(tier)) counts[tier]++;
+      else unrated++;
+    }
+    return { counts, unrated, total: enriched.length };
+  })();
+
+  // ─────────────────────────────────────────────────────────────────
+  // 🆕 v7.1: preference_patterns + insight_queue 영속화 (사용자 결정대로)
+  // hybrid/manual 모드일 때만 저장 (match는 그룹 숨김)
+  // ─────────────────────────────────────────────────────────────────
+  if (_isHybridOrManual) {
+    try {
+      const upserts = [];
+      const queueInserts = [];
+      const _now = Date.now();
+
+      // tier_concentration 패턴 (top entity별)
+      const _addConcentrationRow = (entityKind, stat, sampleThreshold) => {
+        if (stat.totalCount < sampleThreshold) return;
+        const isNotable = stat.topTierRatio >= 0.6;
+        const ciHalf = (stat.topTierCI?.upper - stat.topTierCI?.lower) / 2;
+        const detailsObj = {
+          byTier: stat.byTier,
+          byTierWeight: stat.byTierWeight,
+          topTierCI: stat.topTierCI,
+          entropyLabel: stat.entropyLabel,
+          entropyNormalized: stat.entropyNormalized,
+          totalWeight: stat.totalWeight,
+        };
+        upserts.push({
+          category: "tier_concentration",
+          pattern_key: `${entityKind}:${stat.key}`,
+          sample_size: stat.totalCount,
+          static_metric: "topTierRatio",
+          static_value: stat.topTierRatio,
+          static_deviation: ciHalf,
+          details: JSON.stringify(detailsObj),
+          is_notable: isNotable ? 1 : 0,
+          insight_level: Math.round(stat.topTierRatio * 50),
+          insight_title: isNotable ? `${stat.key} 강세 (상위 티어 ${Math.round(stat.topTierRatio * 100)}%)` : null,
+          insight_description: isNotable ? `${entityKind === "tag" ? "태그" : entityKind === "author" ? "작가" : "장르"} '${stat.key}' 작품의 ${Math.round(stat.topTierRatio * 100)}%가 상위 티어 — ${stat.entropyLabel} 시그널` : null,
+        });
+      };
+      tierConcentration.topGenres.forEach(s => _addConcentrationRow("majorGenre", s, 2));
+      tierConcentration.topSubGenres.forEach(s => _addConcentrationRow("subGenre", s, 2));
+      tierConcentration.topTags.forEach(s => _addConcentrationRow("tag", s, 3));
+      tierConcentration.topAuthors.forEach(s => _addConcentrationRow("author", s, 3));
+
+      // tier_inversion 패턴
+      for (const item of tierInversion.items) {
+        upserts.push({
+          category: "tier_inversion",
+          pattern_key: `novel:${item.id}`,
+          sample_size: 1,
+          static_metric: "inversionScore",
+          static_value: item.score,
+          static_deviation: 0,
+          details: JSON.stringify({
+            title: item.title,
+            tier: item.tier,
+            rereadCount: item.rereadCount,
+            readRatio: item.readRatio,
+          }),
+          is_notable: 1,
+          insight_level: 50,
+          insight_title: `${item.title} — 티어 재고 권유`,
+          insight_description: item.message,
+        });
+      }
+
+      // award_tier 패턴
+      if (awardTierCorrelation && awardTierCorrelation.byAward) {
+        for (const stat of Object.values(awardTierCorrelation.byAward)) {
+          if (stat.count < 5) continue;
+          upserts.push({
+            category: "award_tier",
+            pattern_key: `award:${stat.awardId}`,
+            sample_size: stat.count,
+            static_metric: "winnersAvgScore",
+            static_value: stat.avgPrefScore || 0,
+            static_deviation: 0,
+            details: JSON.stringify({
+              byTier: stat.byTier,
+              topTags: stat.topTags,
+              sharedTags: awardTierCorrelation.sharedTags,
+            }),
+            is_notable: 1,
+            insight_level: 30,
+            insight_title: `${stat.awardId} 수상 패턴`,
+            insight_description: `${stat.count}건 수상작 분석 — 공통 태그 ${stat.topTags.slice(0, 3).map(t => t.tag).join(", ")}`,
+          });
+        }
+      }
+
+      // UPSERT into preference_patterns
+      for (const row of upserts) {
+        try {
+          await exec(
+            `INSERT INTO preference_patterns
+             (id, category, pattern_key, sample_size, win_count, win_rate, confidence_lower, confidence_upper, significance,
+              static_metric, static_value, static_deviation, details, is_notable, insight_level, insight_title, insight_description,
+              first_seen_at, last_updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(category, pattern_key) DO UPDATE SET
+               sample_size=excluded.sample_size,
+               static_metric=excluded.static_metric,
+               static_value=excluded.static_value,
+               static_deviation=excluded.static_deviation,
+               details=excluded.details,
+               is_notable=excluded.is_notable,
+               insight_level=excluded.insight_level,
+               insight_title=excluded.insight_title,
+               insight_description=excluded.insight_description,
+               last_updated_at=excluded.last_updated_at`,
+            [
+              uuid(),
+              row.category, row.pattern_key,
+              row.sample_size, 0, null, null, null, null,
+              row.static_metric, row.static_value, row.static_deviation, row.details,
+              row.is_notable,
+              String(row.insight_level || ""),       // schema: TEXT
+              row.insight_title, row.insight_description,
+              _now, _now,
+            ]
+          );
+          if (row.is_notable) queueInserts.push(row);
+        } catch (e) {
+          // upsert 실패 시 개별 row만 skip — 전체 분석 차단 X
+        }
+      }
+
+      // insight_queue에 notable 항목 surface
+      for (const row of queueInserts) {
+        try {
+          await exec(
+            `INSERT INTO insight_queue
+             (id, source, insight_type, priority, confidence, title, description, content, status, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+            [
+              uuid(),
+              "v7.1_tier_analysis",
+              row.category,
+              Number(row.insight_level) || 30,
+              0.7,                       // 보수적 confidence
+              row.insight_title || row.category,
+              row.insight_description || "",
+              JSON.stringify({ pattern_key: row.pattern_key, category: row.category }),
+              _now,
+            ]
+          );
+        } catch (e) {}
+      }
+    } catch (persistErr) {
+      console.warn("[v7.1] tier 인사이트 영속화 실패:", persistErr?.message);
+    }
+  }
+
   return {
     timestamp: now,
     basicStats,
@@ -24878,8 +25754,21 @@ async function analyzePreferences(novels, matches) {
     anomalies,
     spectrumAnalysis, // 🎯 v3.1.2: 스펙트럼 분석
     matchBehavior, // 🧠 v3.5.4: 매칭 행동 분석
-    discontinuedAnalysis, // 🆕 v7.0.4: 연중 원인 분석 (UI factorAnalysis 합성 factor에서 참조)
+    discontinuedAnalysis, // 🆕 v7.0.4: 연중 원인 분석
     insights,
+    // 🆕 v7.1: tier-aware 분석 (hybrid/manual에서 주로 의미, match에선 UI 숨김)
+    tierStratification: {
+      // Map → Array 변환 (직렬화 용이)
+      byMajorGenre: Array.from(tierStratification.byMajorGenre.values()),
+      bySubGenre: Array.from(tierStratification.bySubGenre.values()),
+      byTag: Array.from(tierStratification.byTag.values()),
+      byAuthor: Array.from(tierStratification.byAuthor.values()),
+    },
+    tierConcentration,
+    tierEntropy,
+    tierInversion,
+    awardTierCorrelation,
+    tierDistribution,
   };
   } catch (e) {
     console.warn("analyzePreferences error:", e);
@@ -25055,8 +25944,8 @@ function generateInsights(data) {
   }
   
   // 완결작 vs 연재중 선호
-  const completedAvg = avg(readingPattern.completedVsOngoing.completed.map(n => n.rating));
-  const ongoingAvg = avg(readingPattern.completedVsOngoing.ongoing.map(n => n.rating));
+  const completedAvg = avg(readingPattern.completedVsOngoing.completed.map(n => n.prefScore));
+  const ongoingAvg = avg(readingPattern.completedVsOngoing.ongoing.map(n => n.prefScore));
   if (Math.abs(completedAvg - ongoingAvg) > 30) {
     if (completedAvg > ongoingAvg) {
       hiddenPatterns.push(`완결작을 연재중 작품보다 평균 +${(completedAvg - ongoingAvg).toFixed(0)}점 높게 평가`);
