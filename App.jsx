@@ -2,9 +2,55 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.0.9 (진단 탭 UX 업그레이드 — Anomaly/PieChart/JSON Export/익명화)      ║
- * ║  최종 수정: 2026-05-06                                                        ║
- * ║  총 라인 수: 약 49,100줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 7.0.10 (코드 전수 검토 — same-tier no-op + 진단 탭 unmount 가드)       ║
+ * ║  최종 수정: 2026-05-07                                                        ║
+ * ║  총 라인 수: 약 49,300줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.0.10 코드 전수 검토 — 검증 후 2건 수정 (2026-05-07)                     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ 5개 카테고리(async/null/SQL/hooks/logic) 병렬 코드 스캔 후 검증된 2건 수정.    ║
+ * ║ 보고된 다른 항목(예: enqueueVerification UPSERT race, addNovel MAX+100 race,  ║
+ * ║ swapRating tier 불일치 race)은 단일 사용자 모바일 환경에서 동시 발생 확률     ║
+ * ║ 극히 낮고 기존 가드(rebalanceTierOrder/abort 분기 등)로 자기 치유되어 skip.    ║
+ * ║                                                                              ║
+ * ║ [Fix-1] setNovelTierAtomic 동일 tier 재할당 reorder 버그                       ║
+ * ║ • UPDATE 시 sub-select가 novel 자기 자신 포함 → MAX(self+others)+100 산출 →   ║
+ * ║   같은 tier에 이미 속한 작품에 setNovelTierAtomic 호출 시 manual_order가      ║
+ * ║   반복 호출마다 누적 증가. 결과적으로 작품이 의도치 않게 tier 하단으로 이동.   ║
+ * ║ • saveEdit (App.jsx:31263)와 inline chip (App.jsx:39757)은 caller가 미리      ║
+ * ║   tier diff 가드. 그러나 batchSetTier (App.jsx:33388)는 ids 전체 순회 중      ║
+ * ║   같은 tier 작품 가드 없음. 사용자가 "이 작품들 모두 B티어" 적용 시 이미      ║
+ * ║   B티어인 작품이 매번 bottom으로 밀림.                                        ║
+ * ║ • 수정: setNovelTierAtomic 내부에서 cur.manual_tier === newTier 단축 처리.    ║
+ * ║                                                                              ║
+ * ║ [Fix-2] 진단 탭 비동기 IIFE setState after unmount 경고                        ║
+ * ║ • App.jsx:25116 진단 탭 useEffect에서 (async () => {...})() 직접 호출 + 여러  ║
+ * ║   await 후 setDiagTableStats/setDiagPatternStats 호출. 사용자가 데이터 로드   ║
+ * ║   중 다른 탭/스크린으로 이동하면 unmounted component에 setState되어 React가   ║
+ * ║   경고 출력 + 미세 메모리 누수.                                                ║
+ * ║ • 수정: let mounted=true + 각 setState 직전 mounted 가드 + cleanup에서 false. ║
+ * ║                                                                              ║
+ * ║ [skip한 보고 — 근거]                                                            ║
+ * ║ • enqueueVerification UPSERT 2-step: SELECT pending 후 INSERT/UPDATE.         ║
+ * ║   동일 novel_id에 대한 동시 enqueue가 단일 UI thread에서 발생할 가능성 거의   ║
+ * ║   없음. 발생해도 duplicate pending row는 다음 finalize에서 cancelled 처리.    ║
+ * ║ • addNovel MAX+100 race: 사용자가 단일 폼에서 작품 추가 — 동시 호출 X.        ║
+ * ║ • rebalanceTierOrder 삭제 race: SELECT 시점 이미 삭제된 row는 SELECT 결과에    ║
+ * ║   없음 → gap 없음. 동시 삭제는 단일 UI thread에서 발생 X.                     ║
+ * ║ • swapRating tier 불일치: 이미 검출하고 abort + warn (UI 상태는 다음 loadList ║
+ * ║   에서 자기 치유).                                                              ║
+ * ║ • startVerificationSession setTimeout 재귀: verificationLoadingRef 동기 가드   ║
+ * ║   존재. ref 기반 reentry 방지로 의도된 패턴.                                  ║
+ * ║                                                                              ║
+ * ║ [회귀 위험]                                                                       ║
+ * ║ • Fix-1: setNovelTierAtomic에 SELECT 1회 추가 (~수ms). UPDATE 1회는 보존.    ║
+ * ║   기존 캐스케이드(addTierHistoryEntry/pushUndo/enqueueVerification)는 caller  ║
+ * ║   에서 처리되므로 영향 없음.                                                  ║
+ * ║ • Fix-2: 일반 흐름은 기존과 동일, mounted false인 경우만 추가 setState skip. ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -9791,7 +9837,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.0.9";
+const APP_VERSION = "7.0.10";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -9817,6 +9863,18 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.0.10", date: "2026-05-07",
+    title: "코드 전수 검토 — setNovelTierAtomic 동일 tier 재할당 no-op + 진단 탭 unmount 가드",
+    highlights: [
+      { type: "fix", text: "🛠️ setNovelTierAtomic 동일 tier 재할당 시 no-op — sub-select가 자기 자신을 포함해 manual_order가 매번 +100되던 race가 batchSetTier에서 발생. saveEdit/inline chip은 caller가 가드했으나 batchSetTier는 미가드. 함수 내부에서 cur.manual_tier === newTier 단축 처리." },
+      { type: "fix", text: "🔒 진단 탭 비동기 데이터 로드에 mounted 가드 추가 — 비동기 쿼리 도중 탭 전환/언마운트 시 setDiagTableStats/setDiagPatternStats가 unmounted component에 setState되는 경고/잠재 메모리 누수 방지" },
+    ],
+    details: [
+      { type: "fix", text: "App.jsx:22967 setNovelTierAtomic — manual_tier SELECT 후 동일 tier면 즉시 return. 비활성 tier 조정/order rebalancing 책임은 별도 헬퍼(rebalanceTierOrder)로 유지" },
+      { type: "fix", text: "App.jsx:25116 진단 탭 useEffect — let mounted=true + 각 setState 직전 가드 + cleanup return으로 일관 처리" },
+    ],
+  },
   {
     version: "7.0.9", date: "2026-05-06",
     title: "진단 탭 UX 업그레이드 — Anomaly aggregator + PieChart + JSON Export + 익명화",
@@ -22974,8 +23032,13 @@ async function setNovelTierAtomic(novelId, newTier) {
     );
     return;
   }
+  // 🛠️ v7.0.10: 같은 tier 재할당은 no-op으로 단축. 이전: sub-select가 자기 자신을 포함하여
+  // MAX(self+others)+100을 산출 → novel이 이미 그 tier에 있으면 manual_order가 매번 늘어남
+  // (batchSetTier가 이미 그 tier에 속한 작품에 적용되면 의도치 않게 bottom으로 밀림).
+  // saveEdit/inline chip은 caller에서 tier diff를 가드하지만 batchSetTier는 그렇지 않음.
+  const cur = await first("SELECT manual_tier FROM novels WHERE id=?", [novelId]);
+  if (cur && cur.manual_tier === newTier) return;
   // sub-select는 UPDATE 시점 *이전*의 데이터를 참조 (SQLite 기본 동작)
-  // → novel이 newTier에 이미 속해있어도 sub-select가 자기 자신 포함 가능 (이 경우 +100으로 자연 증가)
   await exec(
     `UPDATE novels SET manual_tier=?,
       manual_order=(SELECT COALESCE(MAX(manual_order), 0) + 100 FROM novels WHERE manual_tier=?)
@@ -25113,8 +25176,10 @@ function AppContent() {
   }, [galleryCards]);
 
   // 🔧 v3.6.0: 진단탭 비동기 데이터 로드 (조건부 IIFE 내 hooks 금지 → 최상위 useEffect로 이동)
+  // 🛠️ v7.0.10: mounted 가드 추가 — 비동기 쿼리 도중 언마운트/탭전환 시 setState after unmount 방지
   useEffect(() => {
     if (settingsSubTab !== "diag") return;
+    let mounted = true;
     (async () => {
       try {
         // DB 테이블 규모
@@ -25123,11 +25188,13 @@ function AppContent() {
         for (const t of tables) {
           try { const r = await first(`SELECT COUNT(*) as cnt FROM ${t}`); counts[t] = r?.cnt ?? "?"; } catch { counts[t] = "N/A"; }
         }
+        if (!mounted) return;
         let dbSize = "?";
         try {
           const pc = await first("PRAGMA page_count"); const ps = await first("PRAGMA page_size");
           if (pc && ps) { const bytes = (pc.page_count || pc[0]) * (ps.page_size || ps[0]); dbSize = bytes > 1048576 ? `${(bytes / 1048576).toFixed(1)}MB` : `${(bytes / 1024).toFixed(0)}KB`; }
         } catch {}
+        if (!mounted) return;
         setDiagTableStats({ counts, dbSize });
         // 인사이트/패턴 통계
         const cats = await all("SELECT category, COUNT(*) as cnt FROM preference_patterns GROUP BY category");
@@ -25139,9 +25206,11 @@ function AppContent() {
           const diff = Date.now() - new Date(oldestPending.oldest).getTime();
           oldestAge = diff > 86400000 ? `${Math.floor(diff / 86400000)}일` : diff > 3600000 ? `${Math.floor(diff / 3600000)}시간` : `${Math.floor(diff / 60000)}분`;
         }
+        if (!mounted) return;
         setDiagPatternStats({ categories: cats || [], totalPatterns, insights: insights || [], oldestAge });
       } catch {}
     })();
+    return () => { mounted = false; };
   }, [settingsSubTab, refreshKey]);
 
   // 갤러리 탭 진입 시 자동 셔플 + 데이터 로드
