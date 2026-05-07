@@ -2,9 +2,114 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.0.9 (진단 탭 UX 업그레이드 — Anomaly/PieChart/JSON Export/익명화)      ║
- * ║  최종 수정: 2026-05-06                                                        ║
- * ║  총 라인 수: 약 49,100줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 7.0.11 (슬롯 복제 + 손상 슬롯 복구 — VACUUM INTO + .bak rename)        ║
+ * ║  최종 수정: 2026-05-07                                                        ║
+ * ║  총 라인 수: 약 49,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.0.11 슬롯 복제 이식 + 손상 슬롯 복구 (2026-05-07)                       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [Context]                                                                       ║
+ * ║ • 사용자가 다른 브랜치(claude/add-slot-duplication-7DO2B, v3.15.0)에서        ║
+ * ║   슬롯 복제 후 현재 브랜치 빌드로 교체 → 원본/복제본 둘 다 "DB 오류" + "슬롯  ║
+ * ║   전환 실패". v3.15.0 duplicateSlot이 active connection 유지한 채             ║
+ * ║   wal_checkpoint(FULL) → 메인+ -wal+ -shm을 OS-level copy → SHM 락 스냅샷과   ║
+ * ║   stale -wal로 inconsistent 상태가 되었던 것이 원인.                          ║
+ * ║                                                                              ║
+ * ║ [핵심 설계 — VACUUM INTO 단일 경로]                                             ║
+ * ║ • SQLite 공식 권장 atomic snapshot. expo-sqlite 16.0.10 (SQLite 3.45+) 호환.  ║
+ * ║ • 다운타임 0 / race 0 / -wal+-shm 처리 불필요 / safeDbOperation 자동 retry와  ║
+ * ║   충돌 없음. close-reopen + 파일 copy fallback은 safeDbOperation race(매      ║
+ * ║   retry마다 자동 openDb) + reopen 실패 시 deadlock 위험 대비 이득 없어 제거.  ║
+ * ║                                                                              ║
+ * ║ [Part A — duplicateSlot()]                                                     ║
+ * ║ • 사전 가드: MAX_SLOTS / 원본 존재 / 다음 빈 ID 할당 / _slotDuplicating 차단  ║
+ * ║ • 활성 슬롯이면 flushAllPendingWrites + _slotGeneration++ (safeDefer 무효화)  ║
+ * ║ • dst 잔재 idempotent 삭제 (메인 + -wal + -shm)                                ║
+ * ║ • db.runAsync("VACUUM INTO ?;", [dstNativePath]) — 활성/비활성 통합            ║
+ * ║ • 사후 paranoid: transient connection으로 PRAGMA quick_check + COUNT(*)        ║
+ * ║   캡처 → 메타에 실 novelCount 저장                                             ║
+ * ║ • finally에서 active connection 끊긴 race 대비 db === null이면 openDb()       ║
+ * ║                                                                              ║
+ * ║ [Part B — recoverSlotDb()]                                                     ║
+ * ║ • module-level _recoveryAttempted Set으로 세션 슬롯당 1회 제한                 ║
+ * ║ • 메인 DB 존재 확인 (없으면 슬롯 삭제 권장 안내)                                ║
+ * ║ • 활성 슬롯이면 _slotGeneration++ + resetDbConnection                          ║
+ * ║ • -wal/-shm을 .bak.<timestamp>로 rename (idempotent)                           ║
+ * ║ • transient connection에서 PRAGMA quick_check + getFirstAsync                  ║
+ * ║ • 성공 → .bak 유지, 활성 슬롯이면 openDb 재오픈, 사용자에게 "슬롯 다시 탭" 안내 ║
+ * ║ • 실패 → .bak 역방향 복원으로 사용자 데이터 보호 + integrity 결과 안내         ║
+ * ║                                                                              ║
+ * ║ [Part C — 슬롯 전환 실패 모달에 [🩹 복구 시도] 버튼]                             ║
+ * ║ • performSlotSwitch catch에서 기존 1-button Alert → 2-button.                   ║
+ * ║ • _recoveryAttempted.has(slotId)면 [복구] 버튼 비활성 + "이미 시도함" 안내      ║
+ * ║ • confirm Alert로 .bak rename 영향 안내 후에만 recoverSlotDb 실행              ║
+ * ║ • 자동 재시도 X — 사용자가 명시적으로 슬롯 다시 탭 (사용자 결정)                ║
+ * ║                                                                              ║
+ * ║ [Part D — UI: 슬롯 카드 [복제] 버튼 + 오버레이 분기]                             ║
+ * ║ • 슬롯 카드에 [복제] 항상 노출 (가시성). 가득/자동매칭 ON 시 Alert로 차단      ║
+ * ║ • slotSwitching 오버레이 패턴 재사용해 slotDuplicating/slotRecovering 텍스트   ║
+ * ║   분기 — "슬롯 복제 중..." / "슬롯 복구 중..." / "슬롯 전환 중..."             ║
+ * ║                                                                              ║
+ * ║ [5대 불변조건 정합]                                                             ║
+ * ║ • #1 자동매칭 중 Alert 금지: caller(UI)에서 isAutoMatchingRef.current 선검사   ║
+ * ║ • #3 큐 drain: flushAllPendingWrites가 waitForMatchQueueDrain 호출             ║
+ * ║ • #4 SQLITE_BUSY 자동 reset 금지: VACUUM INTO 경로는 reset 미호출. recovery는 ║
+ * ║   사용자 명시 액션이라 별도 경로 (BUSY 아님)                                  ║
+ * ║                                                                              ║
+ * ║ [회귀 위험]                                                                       ║
+ * ║ • 기존 슬롯 전환/생성/삭제/이름변경 흐름에 변경 없음                            ║
+ * ║ • 백업 v9는 active DB 단위라 영향 없음                                          ║
+ * ║ • duplicateSlot은 신규 추가 함수이고 호출은 사용자 명시 [복제] 버튼에만 연결    ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.0.10 코드 전수 검토 — 검증 후 2건 수정 (2026-05-07)                     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ 5개 카테고리(async/null/SQL/hooks/logic) 병렬 코드 스캔 후 검증된 2건 수정.    ║
+ * ║ 보고된 다른 항목(예: enqueueVerification UPSERT race, addNovel MAX+100 race,  ║
+ * ║ swapRating tier 불일치 race)은 단일 사용자 모바일 환경에서 동시 발생 확률     ║
+ * ║ 극히 낮고 기존 가드(rebalanceTierOrder/abort 분기 등)로 자기 치유되어 skip.    ║
+ * ║                                                                              ║
+ * ║ [Fix-1] setNovelTierAtomic 동일 tier 재할당 reorder 버그                       ║
+ * ║ • UPDATE 시 sub-select가 novel 자기 자신 포함 → MAX(self+others)+100 산출 →   ║
+ * ║   같은 tier에 이미 속한 작품에 setNovelTierAtomic 호출 시 manual_order가      ║
+ * ║   반복 호출마다 누적 증가. 결과적으로 작품이 의도치 않게 tier 하단으로 이동.   ║
+ * ║ • saveEdit (App.jsx:31263)와 inline chip (App.jsx:39757)은 caller가 미리      ║
+ * ║   tier diff 가드. 그러나 batchSetTier (App.jsx:33388)는 ids 전체 순회 중      ║
+ * ║   같은 tier 작품 가드 없음. 사용자가 "이 작품들 모두 B티어" 적용 시 이미      ║
+ * ║   B티어인 작품이 매번 bottom으로 밀림.                                        ║
+ * ║ • 수정: setNovelTierAtomic 내부에서 cur.manual_tier === newTier 단축 처리.    ║
+ * ║                                                                              ║
+ * ║ [Fix-2] 진단 탭 비동기 IIFE setState after unmount 경고                        ║
+ * ║ • App.jsx:25116 진단 탭 useEffect에서 (async () => {...})() 직접 호출 + 여러  ║
+ * ║   await 후 setDiagTableStats/setDiagPatternStats 호출. 사용자가 데이터 로드   ║
+ * ║   중 다른 탭/스크린으로 이동하면 unmounted component에 setState되어 React가   ║
+ * ║   경고 출력 + 미세 메모리 누수.                                                ║
+ * ║ • 수정: let mounted=true + 각 setState 직전 mounted 가드 + cleanup에서 false. ║
+ * ║                                                                              ║
+ * ║ [skip한 보고 — 근거]                                                            ║
+ * ║ • enqueueVerification UPSERT 2-step: SELECT pending 후 INSERT/UPDATE.         ║
+ * ║   동일 novel_id에 대한 동시 enqueue가 단일 UI thread에서 발생할 가능성 거의   ║
+ * ║   없음. 발생해도 duplicate pending row는 다음 finalize에서 cancelled 처리.    ║
+ * ║ • addNovel MAX+100 race: 사용자가 단일 폼에서 작품 추가 — 동시 호출 X.        ║
+ * ║ • rebalanceTierOrder 삭제 race: SELECT 시점 이미 삭제된 row는 SELECT 결과에    ║
+ * ║   없음 → gap 없음. 동시 삭제는 단일 UI thread에서 발생 X.                     ║
+ * ║ • swapRating tier 불일치: 이미 검출하고 abort + warn (UI 상태는 다음 loadList ║
+ * ║   에서 자기 치유).                                                              ║
+ * ║ • startVerificationSession setTimeout 재귀: verificationLoadingRef 동기 가드   ║
+ * ║   존재. ref 기반 reentry 방지로 의도된 패턴.                                  ║
+ * ║                                                                              ║
+ * ║ [회귀 위험]                                                                       ║
+ * ║ • Fix-1: setNovelTierAtomic에 SELECT 1회 추가 (~수ms). UPDATE 1회는 보존.    ║
+ * ║   기존 캐스케이드(addTierHistoryEntry/pushUndo/enqueueVerification)는 caller  ║
+ * ║   에서 처리되므로 영향 없음.                                                  ║
+ * ║ • Fix-2: 일반 흐름은 기존과 동일, mounted false인 경우만 추가 setState skip. ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -3509,6 +3614,19 @@ function getSlotDbFilename(slotId) {
   return `novel_tiers_slot${slotId}.db`;
 }
 
+// 🆕 v7.0.11: VACUUM INTO 인자용 native 파일 경로 (file:// prefix 제거)
+// expo-FileSystem.documentDirectory는 file:// URI를 반환하나 SQLite VACUUM INTO는
+// native filesystem 경로를 요구. 슬롯 복제·복구의 transient connection 경로 산출에 공통 사용.
+function getNativeSlotDbPath(slotId) {
+  const p = FileSystem.documentDirectory + "SQLite/" + getSlotDbFilename(slotId);
+  return p.replace(/^file:\/\//, "");
+}
+
+// 🆕 v7.0.11: 슬롯 복제 동시 진입 차단 (state는 React 비동기 → module ref로 이중 가드)
+let _slotDuplicating = false;
+// 🆕 v7.0.11: 세션 슬롯당 [🩹 복구] 1회 제한 — 신구 .bak 누적 방지
+const _recoveryAttempted = new Set();
+
 // 현재 활성 슬롯 ID (모듈 레벨 — openDb에서 참조)
 let activeSlotId = 0;
 // 🔧 슬롯 세대 카운터: setTimeout 기반 지연 쓰기가 슬롯 전환 후 잘못된 DB에 기록되는 것 방지
@@ -3641,6 +3759,279 @@ async function updateSlotNovelCount(slotId, count) {
       await saveSlotMeta(meta);
     }
   } catch {}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🆕 v7.0.11: 슬롯 복제 (VACUUM INTO 단일 경로)
+// SQLite 공식 권장 atomic snapshot. expo-sqlite 16.0.10 (SQLite 3.45+) 호환.
+// - 활성 connection 유지 → 다운타임 0, race 0
+// - -wal/-shm 처리 불필요 (output은 self-contained 단일 파일)
+// - safeDbOperation 자동 retry와 충돌 없음
+// 전제: caller(UI)에서 isAutoMatchingRef.current 가드 후 호출 (CLAUDE.md #1)
+// ─────────────────────────────────────────────────────────────────────────────
+async function duplicateSlot(srcSlotId, newName) {
+  if (_slotDuplicating) {
+    return { success: false, error: "이미 복제 작업이 진행 중입니다." };
+  }
+
+  const meta = await loadSlotMeta();
+  if (meta.slots.length >= MAX_SLOTS) {
+    return { success: false, error: `최대 ${MAX_SLOTS}개 슬롯까지 생성 가능합니다.` };
+  }
+  const srcSlot = meta.slots.find(s => s.id === srcSlotId);
+  if (!srcSlot) {
+    return { success: false, error: "원본 슬롯을 찾을 수 없습니다." };
+  }
+
+  // 다음 빈 ID 할당 (createSlot 패턴 동일)
+  const usedIds = new Set(meta.slots.map(s => s.id));
+  let newId = -1;
+  for (let i = 0; i < MAX_SLOTS; i++) {
+    if (!usedIds.has(i)) { newId = i; break; }
+  }
+  if (newId === -1) {
+    return { success: false, error: "사용 가능한 슬롯 ID가 없습니다." };
+  }
+
+  _slotDuplicating = true;
+  Breadcrumbs.action("slot_duplicate_start", `${srcSlotId} → ${newId}`);
+
+  const isActive = srcSlotId === activeSlotId;
+  const sqliteDir = FileSystem.documentDirectory + "SQLite/";
+  const dstDbName = getSlotDbFilename(newId);
+  const dstPath = sqliteDir + dstDbName;
+  const dstNativePath = getNativeSlotDbPath(newId);
+
+  try {
+    // 활성 슬롯이면 메모리/큐 변경분 commit 보장
+    if (isActive) {
+      try { await flushAllPendingWrites(); } catch (e) {
+        console.warn("슬롯 복제 전 flush 실패:", e?.message);
+      }
+      _slotGeneration++; // safeDefer 무효화
+    }
+
+    // SQLite 디렉토리 보장
+    try {
+      const dirInfo = await FileSystem.getInfoAsync(sqliteDir);
+      if (!dirInfo.exists) {
+        await FileSystem.makeDirectoryAsync(sqliteDir, { intermediates: true });
+      }
+    } catch {}
+
+    // dst 잔재 idempotent 삭제 (메인 + -wal + -shm)
+    try { await FileSystem.deleteAsync(dstPath, { idempotent: true }); } catch {}
+    try { await FileSystem.deleteAsync(dstPath + "-wal", { idempotent: true }); } catch {}
+    try { await FileSystem.deleteAsync(dstPath + "-shm", { idempotent: true }); } catch {}
+
+    // VACUUM INTO 실행
+    // 🛡️ v7.0.11 review fix: 파라미터 바인딩 대신 string concat 사용.
+    // SQLite spec상 VACUUM INTO는 파라미터를 받지만 일부 driver wrapper가 DDL로
+    // 분류해 bind 거부할 수 있음. 경로는 내부 생성(getNativeSlotDbPath), 사용자
+    // 입력 아님 → SQL injection 우려 X. single-quote escape만 처리.
+    const escapedDst = dstNativePath.replace(/'/g, "''");
+    let srcDb = null;
+    try {
+      if (isActive) {
+        // 현재 활성 connection (db) 사용
+        if (!db) await openDb();
+        await db.runAsync(`VACUUM INTO '${escapedDst}';`);
+        // 🛡️ active connection health-check — VACUUM 후 handle stale 방지(paranoid).
+        // 실패 시 reset+reopen으로 후속 safeDbOperation 호출이 SQLITE_CANTOPEN
+        // 으로 전파되는 것을 차단.
+        try {
+          await db.runAsync("SELECT 1;");
+        } catch (healthErr) {
+          console.warn("VACUUM INTO 후 active connection 비정상 — 재오픈:", healthErr?.message);
+          try { await resetDbConnection(); } catch {}
+          try { await openDb(); } catch (reopenErr) {
+            console.warn("VACUUM 후 active connection 재오픈 실패:", reopenErr?.message);
+          }
+        }
+      } else {
+        // 비활성 슬롯: 임시 connection
+        srcDb = await SQLite.openDatabaseAsync(getSlotDbFilename(srcSlotId));
+        await srcDb.runAsync(`VACUUM INTO '${escapedDst}';`);
+      }
+    } catch (e) {
+      // dst 잔재 정리
+      try { await FileSystem.deleteAsync(dstPath, { idempotent: true }); } catch {}
+      console.warn("VACUUM INTO 실패:", e?.message);
+      return { success: false, error: "DB 복제 실패: " + (e?.message || "unknown") };
+    } finally {
+      if (srcDb) {
+        try { await srcDb.closeAsync(); } catch {}
+      }
+    }
+
+    // 사후 paranoid 검증 (PRAGMA quick_check) + 실 novelCount 캡처
+    let realCount = srcSlot.novelCount || 0;
+    try {
+      const tmp = await SQLite.openDatabaseAsync(dstDbName);
+      try {
+        const qcRow = await tmp.getFirstAsync("PRAGMA quick_check;");
+        // 결과 row는 { quick_check: 'ok' } 형태 또는 컬럼명 변형 가능
+        const qc = qcRow && (qcRow.quick_check || qcRow["quick_check"] || Object.values(qcRow)[0]);
+        if (qc !== "ok") {
+          await tmp.closeAsync();
+          try { await FileSystem.deleteAsync(dstPath, { idempotent: true }); } catch {}
+          return { success: false, error: "복제 후 무결성 검증 실패: " + qc };
+        }
+        // 실제 novelCount 캡처 (srcSlot 캐시값 대신)
+        try {
+          const cntRow = await tmp.getFirstAsync("SELECT COUNT(*) AS c FROM novels;");
+          realCount = Number(cntRow?.c) || 0;
+        } catch {}
+      } finally {
+        try { await tmp.closeAsync(); } catch {}
+      }
+    } catch (e) {
+      try { await FileSystem.deleteAsync(dstPath, { idempotent: true }); } catch {}
+      return { success: false, error: "복제 후 검증 실패: " + (e?.message || "unknown") };
+    }
+
+    // 메타에 새 슬롯 추가 (검증 통과 후)
+    const newSlot = {
+      id: newId,
+      name: newName || `${srcSlot.name} 복사본`,
+      createdAt: Date.now(),
+      novelCount: realCount,
+      lastAccessed: 0,
+    };
+    meta.slots.push(newSlot);
+    meta.slots.sort((a, b) => a.id - b.id);
+    await saveSlotMeta(meta);
+    Breadcrumbs.action("slot_duplicate_done", `${srcSlotId} → ${newId} (novels=${realCount})`);
+    return { success: true, slot: newSlot };
+  } catch (e) {
+    console.warn("duplicateSlot 오류:", e);
+    return { success: false, error: e?.message || "알 수 없는 오류" };
+  } finally {
+    _slotDuplicating = false;
+    // 활성 슬롯에서 race로 connection이 끊긴 케이스 재오픈 시도
+    if (isActive && !db) {
+      try { await openDb(); } catch (reopenErr) {
+        console.warn("duplicateSlot 후 재오픈 실패:", reopenErr?.message);
+      }
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🆕 v7.0.11: 손상 슬롯 복구 헬퍼 (.bak rename 보존)
+// 절차: -wal/-shm을 .bak.<ts>로 rename → 메인 DB 단독 quick_check →
+//       성공 시 .bak 유지하고 안내, 실패 시 .bak 복원.
+// 사용자 데이터 보호: 메인 DB는 절대 건드리지 않음.
+// 세션 슬롯당 1회 제한 (_recoveryAttempted Set).
+// ─────────────────────────────────────────────────────────────────────────────
+async function recoverSlotDb(slotId) {
+  if (_recoveryAttempted.has(slotId)) {
+    return { success: false, error: "이 슬롯은 이번 세션에 이미 복구를 시도했습니다." };
+  }
+  _recoveryAttempted.add(slotId);
+
+  const sqliteDir = FileSystem.documentDirectory + "SQLite/";
+  const dbName = getSlotDbFilename(slotId);
+  const mainPath = sqliteDir + dbName;
+  const walPath = mainPath + "-wal";
+  const shmPath = mainPath + "-shm";
+  const ts = Date.now();
+  const walBak = walPath + ".bak." + ts;
+  const shmBak = shmPath + ".bak." + ts;
+  const isActive = slotId === activeSlotId;
+
+  Breadcrumbs.action("slot_recover_start", `slot ${slotId}`);
+
+  // 1. 메인 DB 존재 확인
+  try {
+    const info = await FileSystem.getInfoAsync(mainPath);
+    if (!info.exists) {
+      return { success: false, error: "DB 파일이 존재하지 않습니다 — 슬롯 삭제를 권장합니다." };
+    }
+  } catch (e) {
+    return { success: false, error: "DB 파일 상태 확인 실패: " + (e?.message || "unknown") };
+  }
+
+  // 2. 활성 슬롯이면 connection close
+  if (isActive) {
+    _slotGeneration++;
+    try { await resetDbConnection(); } catch {}
+  }
+
+  // 3. -wal/-shm을 .bak로 rename (idempotent: 없으면 skip)
+  let walRenamed = false;
+  let shmRenamed = false;
+  try {
+    const walInfo = await FileSystem.getInfoAsync(walPath);
+    if (walInfo.exists) {
+      await FileSystem.moveAsync({ from: walPath, to: walBak });
+      walRenamed = true;
+    }
+  } catch (e) {
+    console.warn("recoverSlotDb -wal rename 실패:", e?.message);
+  }
+  try {
+    const shmInfo = await FileSystem.getInfoAsync(shmPath);
+    if (shmInfo.exists) {
+      await FileSystem.moveAsync({ from: shmPath, to: shmBak });
+      shmRenamed = true;
+    }
+  } catch (e) {
+    console.warn("recoverSlotDb -shm rename 실패:", e?.message);
+  }
+
+  // 4. 메인 DB 단독 quick_check
+  let qc = null;
+  let openErr = null;
+  let tmp = null;
+  try {
+    tmp = await SQLite.openDatabaseAsync(dbName);
+    const row = await tmp.getFirstAsync("PRAGMA quick_check;");
+    qc = row && (row.quick_check || row["quick_check"] || Object.values(row)[0]);
+  } catch (e) {
+    openErr = e?.message || "unknown";
+  } finally {
+    if (tmp) {
+      try { await tmp.closeAsync(); } catch {}
+    }
+  }
+
+  // 5. 분기
+  if (qc === "ok") {
+    // 성공 — .bak 유지
+    if (isActive) {
+      try { await openDb(); } catch (e) {
+        console.warn("recoverSlotDb 후 재오픈 실패:", e?.message);
+      }
+    }
+    Breadcrumbs.action("slot_recover_ok", `slot ${slotId} (wal=${walRenamed}, shm=${shmRenamed})`);
+    return {
+      success: true,
+      recovered: (walRenamed || shmRenamed) ? "wal_renamed" : "no_wal_to_clean",
+      integrityResult: "ok",
+    };
+  }
+
+  // 실패 — .bak 역방향 복원 (사용자 데이터 보호)
+  if (walRenamed) {
+    try { await FileSystem.moveAsync({ from: walBak, to: walPath }); } catch (e) {
+      console.warn("recoverSlotDb -wal 복원 실패:", e?.message);
+    }
+  }
+  if (shmRenamed) {
+    try { await FileSystem.moveAsync({ from: shmBak, to: shmPath }); } catch (e) {
+      console.warn("recoverSlotDb -shm 복원 실패:", e?.message);
+    }
+  }
+  if (isActive) {
+    try { await openDb(); } catch {}
+  }
+  Breadcrumbs.action("slot_recover_fail", `slot ${slotId} (qc=${qc}, openErr=${openErr})`);
+  return {
+    success: false,
+    integrityResult: qc || openErr || "unknown",
+    error: qc ? "메인 DB 무결성 실패: " + qc : "DB 열기 실패: " + (openErr || "unknown"),
+  };
 }
 
 // 모든 지연 쓰기 강제 flush (슬롯 전환 전 필수)
@@ -9791,7 +10182,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.0.9";
+const APP_VERSION = "7.0.11";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -9817,6 +10208,34 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.0.11", date: "2026-05-07",
+    title: "슬롯 복제 + 손상 슬롯 복구 (VACUUM INTO 기반)",
+    highlights: [
+      { type: "new", text: "📁 슬롯 복제 — VACUUM INTO 단일 atomic 경로. 활성 슬롯도 다운타임/race 없이 안전 복사" },
+      { type: "new", text: "🩹 손상 슬롯 복구 — 슬롯 전환 실패 시 모달에 [복구 시도] 버튼. -wal/-shm을 .bak로 보존 후 메인 DB 단독 quick_check" },
+      { type: "fix", text: "v3.15.0 슬롯 복제(claude/add-slot-duplication-7DO2B)에서 -wal/-shm까지 OS-level copy하여 inconsistent 상태로 클론되던 버그 해소. 새 코드는 VACUUM INTO로 self-contained 단일 파일 출력만 사용" },
+    ],
+    details: [
+      { type: "new", text: "duplicateSlot(): 활성 슬롯이면 flushAllPendingWrites + _slotGeneration++ → VACUUM INTO → quick_check + COUNT(*)로 실 novelCount 캡처 → 메타 저장" },
+      { type: "new", text: "recoverSlotDb(): 메인 DB 존재 확인 → -wal/-shm을 .bak.<timestamp>로 rename → transient connection으로 PRAGMA quick_check → 성공 시 .bak 보존, 실패 시 .bak 역방향 복원" },
+      { type: "new", text: "슬롯 카드에 [복제] 버튼 추가 (자동매칭 ON/MAX_SLOTS 도달 시 차단). 진행 오버레이는 기존 slotSwitching 패턴 재사용해 텍스트 분기" },
+      { type: "fix", text: "복구 횟수 module-level Set으로 세션 슬롯당 1회 제한 — 신구 .bak 누적 차단" },
+      { type: "fix", text: "VACUUM INTO 인자용 native 경로 helper(getNativeSlotDbPath)로 file:// prefix 제거" },
+    ],
+  },
+  {
+    version: "7.0.10", date: "2026-05-07",
+    title: "코드 전수 검토 — setNovelTierAtomic 동일 tier 재할당 no-op + 진단 탭 unmount 가드",
+    highlights: [
+      { type: "fix", text: "🛠️ setNovelTierAtomic 동일 tier 재할당 시 no-op — sub-select가 자기 자신을 포함해 manual_order가 매번 +100되던 race가 batchSetTier에서 발생. saveEdit/inline chip은 caller가 가드했으나 batchSetTier는 미가드. 함수 내부에서 cur.manual_tier === newTier 단축 처리." },
+      { type: "fix", text: "🔒 진단 탭 비동기 데이터 로드에 mounted 가드 추가 — 비동기 쿼리 도중 탭 전환/언마운트 시 setDiagTableStats/setDiagPatternStats가 unmounted component에 setState되는 경고/잠재 메모리 누수 방지" },
+    ],
+    details: [
+      { type: "fix", text: "App.jsx:22967 setNovelTierAtomic — manual_tier SELECT 후 동일 tier면 즉시 return. 비활성 tier 조정/order rebalancing 책임은 별도 헬퍼(rebalanceTierOrder)로 유지" },
+      { type: "fix", text: "App.jsx:25116 진단 탭 useEffect — let mounted=true + 각 setState 직전 가드 + cleanup return으로 일관 처리" },
+    ],
+  },
   {
     version: "7.0.9", date: "2026-05-06",
     title: "진단 탭 UX 업그레이드 — Anomaly aggregator + PieChart + JSON Export + 익명화",
@@ -22974,8 +23393,13 @@ async function setNovelTierAtomic(novelId, newTier) {
     );
     return;
   }
+  // 🛠️ v7.0.10: 같은 tier 재할당은 no-op으로 단축. 이전: sub-select가 자기 자신을 포함하여
+  // MAX(self+others)+100을 산출 → novel이 이미 그 tier에 있으면 manual_order가 매번 늘어남
+  // (batchSetTier가 이미 그 tier에 속한 작품에 적용되면 의도치 않게 bottom으로 밀림).
+  // saveEdit/inline chip은 caller에서 tier diff를 가드하지만 batchSetTier는 그렇지 않음.
+  const cur = await first("SELECT manual_tier FROM novels WHERE id=?", [novelId]);
+  if (cur && cur.manual_tier === newTier) return;
   // sub-select는 UPDATE 시점 *이전*의 데이터를 참조 (SQLite 기본 동작)
-  // → novel이 newTier에 이미 속해있어도 sub-select가 자기 자신 포함 가능 (이 경우 +100으로 자연 증가)
   await exec(
     `UPDATE novels SET manual_tier=?,
       manual_order=(SELECT COALESCE(MAX(manual_order), 0) + 100 FROM novels WHERE manual_tier=?)
@@ -24856,6 +25280,9 @@ function AppContent() {
   // 📁 v3.5.15d: 슬롯 시스템 상태
   const [slotMeta, setSlotMeta] = useState(null); // { activeSlotId, slots: [...] }
   const [slotSwitching, setSlotSwitching] = useState(false); // 전환 중 로딩
+  // 🆕 v7.0.11: 슬롯 복제/복구 오버레이 상태
+  const [slotDuplicating, setSlotDuplicating] = useState(false);
+  const [slotRecovering, setSlotRecovering] = useState(false);
   const [slotRenameTarget, setSlotRenameTarget] = useState(null); // 이름변경 대상 슬롯 id
   const [slotRenameInput, setSlotRenameInput] = useState(""); // 이름변경 입력
 
@@ -25113,8 +25540,10 @@ function AppContent() {
   }, [galleryCards]);
 
   // 🔧 v3.6.0: 진단탭 비동기 데이터 로드 (조건부 IIFE 내 hooks 금지 → 최상위 useEffect로 이동)
+  // 🛠️ v7.0.10: mounted 가드 추가 — 비동기 쿼리 도중 언마운트/탭전환 시 setState after unmount 방지
   useEffect(() => {
     if (settingsSubTab !== "diag") return;
+    let mounted = true;
     (async () => {
       try {
         // DB 테이블 규모
@@ -25123,11 +25552,13 @@ function AppContent() {
         for (const t of tables) {
           try { const r = await first(`SELECT COUNT(*) as cnt FROM ${t}`); counts[t] = r?.cnt ?? "?"; } catch { counts[t] = "N/A"; }
         }
+        if (!mounted) return;
         let dbSize = "?";
         try {
           const pc = await first("PRAGMA page_count"); const ps = await first("PRAGMA page_size");
           if (pc && ps) { const bytes = (pc.page_count || pc[0]) * (ps.page_size || ps[0]); dbSize = bytes > 1048576 ? `${(bytes / 1048576).toFixed(1)}MB` : `${(bytes / 1024).toFixed(0)}KB`; }
         } catch {}
+        if (!mounted) return;
         setDiagTableStats({ counts, dbSize });
         // 인사이트/패턴 통계
         const cats = await all("SELECT category, COUNT(*) as cnt FROM preference_patterns GROUP BY category");
@@ -25139,9 +25570,11 @@ function AppContent() {
           const diff = Date.now() - new Date(oldestPending.oldest).getTime();
           oldestAge = diff > 86400000 ? `${Math.floor(diff / 86400000)}일` : diff > 3600000 ? `${Math.floor(diff / 3600000)}시간` : `${Math.floor(diff / 60000)}분`;
         }
+        if (!mounted) return;
         setDiagPatternStats({ categories: cats || [], totalPatterns, insights: insights || [], oldestAge });
       } catch {}
     })();
+    return () => { mounted = false; };
   }, [settingsSubTab, refreshKey]);
 
   // 갤러리 탭 진입 시 자동 셔플 + 데이터 로드
@@ -26153,7 +26586,60 @@ function AppContent() {
         meta.activeSlotId = previousSlotId;
         await saveSlotMeta(meta);
         setSlotMeta(meta);
-        Alert.alert("슬롯 전환 실패", "이전 슬롯으로 복원되었습니다.\n\n" + e.message);
+        // 🆕 v7.0.11: broken 슬롯에 [🩹 복구 시도] 진입점 (사용자 명시 confirm 후 실행)
+        // 1회 제한: 같은 슬롯에 대해 세션당 1회만 시도 가능 (_recoveryAttempted Set).
+        // 자동 재시도 X — 복구 후 사용자가 직접 슬롯을 다시 탭해야 함 (사용자 결정).
+        const alreadyTried = _recoveryAttempted.has(newSlotId);
+        const buttons = [{ text: "확인" }];
+        if (!alreadyTried) {
+          buttons.push({
+            text: "🩹 복구 시도",
+            onPress: () => {
+              Alert.alert(
+                "슬롯 복구 시도",
+                "이 슬롯의 -wal/-shm 캐시를 .bak로 보존한 뒤 메인 DB 무결성을 점검합니다.\n\n마지막 미반영 변경이 있다면 .bak 파일에 보존되며, 메인 DB는 절대 변경되지 않습니다.",
+                [
+                  { text: "취소" },
+                  {
+                    text: "복구 시작",
+                    onPress: async () => {
+                      setSlotRecovering(true);
+                      try {
+                        const result = await recoverSlotDb(newSlotId);
+                        if (result.success) {
+                          Alert.alert(
+                            "복구 완료",
+                            "슬롯을 다시 탭해주세요.\n\n" +
+                            (result.recovered === "wal_renamed"
+                              ? "(-wal/-shm은 .bak로 보존되어 SQLite 디렉터리에 남아있습니다.)"
+                              : "(-wal 캐시가 없어 정리할 항목이 없었습니다.)")
+                          );
+                        } else {
+                          Alert.alert(
+                            "복구 실패",
+                            (result.error || "알 수 없는 오류") +
+                            "\n\n백업 export → 새 슬롯에 import를 권장합니다."
+                          );
+                        }
+                      } catch (recErr) {
+                        console.warn("recoverSlotDb 호출 오류:", recErr);
+                        Alert.alert("오류", "복구 중 오류가 발생했습니다.\n\n" + (recErr?.message || ""));
+                      } finally {
+                        setSlotRecovering(false);
+                      }
+                    },
+                  },
+                ]
+              );
+            },
+          });
+        }
+        Alert.alert(
+          "슬롯 전환 실패",
+          "이전 슬롯으로 복원되었습니다.\n\n" + e.message +
+          (alreadyTried ? "\n\n(이 슬롯은 이번 세션에 이미 복구를 시도했습니다.)" : ""),
+          buttons
+        );
       } catch (rollbackErr) {
         console.error("슬롯 롤백도 실패:", rollbackErr);
         Alert.alert("심각한 오류", "슬롯 전환 및 복원에 모두 실패했습니다.\n앱을 재시작해주세요.\n\n" + e.message);
@@ -44303,6 +44789,58 @@ async function importJSON() {
                         >
                           <Text style={{ color: C.text, fontSize: 12 }}>이름</Text>
                         </TouchableOpacity>
+                        {/* 🆕 v7.0.11: 슬롯 복제 버튼 (VACUUM INTO 기반) */}
+                        <TouchableOpacity
+                          onPress={() => {
+                            if (slotDuplicating || slotSwitching || slotRecovering) return;
+                            if (slotMeta && slotMeta.slots.length >= MAX_SLOTS) {
+                              Alert.alert("복제 불가", `슬롯이 가득 찼습니다 (${MAX_SLOTS}/${MAX_SLOTS}). 사용하지 않는 슬롯을 먼저 삭제해주세요.`);
+                              return;
+                            }
+                            if (isAutoMatchingRef.current) {
+                              Alert.alert("복제 불가", "자동 매칭을 먼저 중지해주세요.");
+                              return;
+                            }
+                            const activeNote = isActive
+                              ? "\n\n활성 슬롯이라 약간의 일시 정지가 있을 수 있습니다."
+                              : "";
+                            Alert.alert(
+                              "슬롯 복제",
+                              `"${slot.name}"을 복제하시겠습니까?\n\n작품·매칭·태그·설정 등 모든 데이터가 새 슬롯으로 복사됩니다.${activeNote}`,
+                              [
+                                { text: "취소" },
+                                {
+                                  text: "복제",
+                                  onPress: async () => {
+                                    if (isAutoMatchingRef.current) {
+                                      Alert.alert("복제 불가", "자동 매칭을 먼저 중지해주세요.");
+                                      return;
+                                    }
+                                    setSlotDuplicating(true);
+                                    try {
+                                      const result = await duplicateSlot(slot.id, null);
+                                      if (result.success) {
+                                        const meta = await loadSlotMeta();
+                                        setSlotMeta(meta);
+                                        Alert.alert("완료", `"${result.slot.name}" 슬롯으로 복제되었습니다.`);
+                                      } else {
+                                        Alert.alert("오류", result.error || "슬롯 복제 실패");
+                                      }
+                                    } catch (e) {
+                                      console.warn("슬롯 복제 오류:", e);
+                                      Alert.alert("오류", "슬롯 복제 중 오류가 발생했습니다.\n\n" + (e?.message || ""));
+                                    } finally {
+                                      setSlotDuplicating(false);
+                                    }
+                                  },
+                                },
+                              ]
+                            );
+                          }}
+                          style={{ backgroundColor: isDark ? "#1e3a8a" : "#dbeafe", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
+                        >
+                          <Text style={{ color: isDark ? "#bfdbfe" : "#1e40af", fontSize: 12 }}>복제</Text>
+                        </TouchableOpacity>
                         {!isActive && (
                           <TouchableOpacity
                             onPress={() => {
@@ -44415,8 +44953,8 @@ async function importJSON() {
               )}
             </Section>
             
-            {/* 슬롯 전환 중 오버레이 */}
-            {slotSwitching && (
+            {/* 슬롯 전환/복제/복구 중 오버레이 (v7.0.11) */}
+            {(slotSwitching || slotDuplicating || slotRecovering) && (
               <View style={{
                 position: "absolute", top: 0, left: 0, right: 0, bottom: 0,
                 backgroundColor: "rgba(0,0,0,0.5)",
@@ -44425,8 +44963,16 @@ async function importJSON() {
               }}>
                 <View style={{ backgroundColor: C.card, padding: 24, borderRadius: 16, alignItems: "center" }}>
                   <ActivityIndicator size="large" color="#3b82f6" />
-                  <Text style={{ color: C.text, marginTop: 12, fontWeight: "700" }}>슬롯 전환 중...</Text>
-                  <Text style={{ color: C.sub, fontSize: 12, marginTop: 4 }}>데이터를 저장하고 새 슬롯을 불러오는 중</Text>
+                  <Text style={{ color: C.text, marginTop: 12, fontWeight: "700" }}>
+                    {slotDuplicating ? "슬롯 복제 중..." : slotRecovering ? "슬롯 복구 중..." : "슬롯 전환 중..."}
+                  </Text>
+                  <Text style={{ color: C.sub, fontSize: 12, marginTop: 4 }}>
+                    {slotDuplicating
+                      ? "VACUUM INTO로 안전하게 복사하는 중"
+                      : slotRecovering
+                      ? "-wal/-shm 캐시를 .bak로 보존하고 무결성 검증 중"
+                      : "데이터를 저장하고 새 슬롯을 불러오는 중"}
+                  </Text>
                 </View>
               </View>
             )}
