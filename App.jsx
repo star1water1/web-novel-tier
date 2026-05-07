@@ -2,9 +2,71 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.0.11 (슬롯 복제 + 손상 슬롯 복구 — VACUUM INTO + .bak rename)        ║
+ * ║  버전: 7.0.12 (코드 전수 검토 — v7.0 정합성/stale closure/고아 정리 9건 수정) ║
  * ║  최종 수정: 2026-05-07                                                        ║
- * ║  총 라인 수: 약 49,500줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 49,950줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.0.12 코드 전수 검토 — 5개 카테고리 병렬 스캔 후 9건 수정 (2026-05-07)   ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ async/null/SQL/hooks/logic 5개 카테고리 병렬 코드 스캔 후 검증된 9건 수정.    ║
+ * ║ 모두 v7.0 신규 테이블 4종(TVQ/TVL/TRS/TFL) 도입 후 누락된 정합성 경로 또는     ║
+ * ║ useCallback([]) stale closure 등 단일 사용자 모바일 환경에서도 실제 발생하는  ║
+ * ║ 결함. 매칭 5대 불변조건과 충돌 없음.                                          ║
+ * ║                                                                              ║
+ * ║ [Fix-1 Critical] convertPlannedToNovel manual_order 누락                        ║
+ * ║ • INSERT 컬럼 32개 중 manual_order 빠짐 → 기본값 0 → hybrid invariant gap=100 ║
+ * ║   위반. addNovel(N6 fix)/import(35012)는 정상이나 변환 경로만 누락.            ║
+ * ║ • 같은 manual_tier 내 MAX+100 산출 후 INSERT (addNovel과 동일 패턴).           ║
+ * ║                                                                              ║
+ * ║ [Fix-2 Critical] resetAll v7.0 테이블 + folders/planned_novels 누락             ║
+ * ║ • execBatch에 7개 테이블 추가: folders/novel_folders/planned_novels +          ║
+ * ║   tier_verification_queue/tier_validation_log/tier_repositioning_session/      ║
+ * ║   trigger_fire_log. 이전: novels 삭제 후 고아 row 잔존 → hybrid 통계 오염.    ║
+ * ║                                                                              ║
+ * ║ [Fix-3 Major] batchDelete v7.0 테이블 + 갤러리 파일 누락                       ║
+ * ║ • 단일 removeNovel(31061)은 정합성 OK, 일괄 batchDelete(34038)만 누락.         ║
+ * ║ • DB 삭제 전 gallery_images.file_path → deleteCoverFromLibrary 파일 정리.      ║
+ * ║ • execBatch에 5개 테이블 추가: gallery_images/TVQ/TVL/TRS(+blocker_id NULL)/  ║
+ * ║   trigger_fire_log per-id.                                                    ║
+ * ║                                                                              ║
+ * ║ [Fix-4 Major] customResetAll v7.0 테이블 누락                                  ║
+ * ║ • effectiveSel.novels 시 v7.0 테이블 4개 함께 정리.                            ║
+ * ║ • effectiveSel.matches 단독 시 검증 로그/세션 함께 정리 (대진 기록 의존).      ║
+ * ║                                                                              ║
+ * ║ [Fix-5 Major] batchSetTier useCallback([]) stale closure                       ║
+ * ║ • 33920 useCallback 빈 deps라 verificationSession이 첫 렌더 null 영구 캡처 →  ║
+ * ║   M9b in-flight 가드 무동작 (검증 진행 중 작품 일괄 변경 차단 안 됨).         ║
+ * ║ • verificationSessionRef 추가 + 매 렌더 .current 동기화. saveEdit/swapRating  ║
+ * ║   은 plain async function이라 영향 없음 (renaming 없는 최소 침입 패치).        ║
+ * ║                                                                              ║
+ * ║ [Fix-6 Major] verifyDataIntegrity v7.0 고아 미감지                              ║
+ * ║ • 기존: matches/choice_logs 고아만 감지. 추가: gallery_images/novel_folders/  ║
+ * ║   TVQ/TVL/TRS(+blocker_id)/TFL 7종. removeNovel은 정상이나 batchDelete/        ║
+ * ║   customResetAll/resetAll 누락 경로 누적 row 자가 치유 가능.                  ║
+ * ║                                                                              ║
+ * ║ [Fix-7 Major] parseAwards year 타입 정규화 (display 경로)                      ║
+ * ║ • v7.0.7 MAJ-1은 saveEdit 비교 경로만 수정. parseAwards(11533)는 a.year 그대로 ║
+ * ║   반환 → AwardsScreen 18483/18501 award.year === Number(...) 비교 시 string  ║
+ * ║   year(레거시 데이터/import) 항상 false → 수상작 미표시.                      ║
+ * ║ • year: Number(a.year) || 0으로 정규화.                                       ║
+ * ║                                                                              ║
+ * ║ [Fix-8 Minor] 진단 탭 테이블 카운트에 v7.0 4종 추가                             ║
+ * ║ • TVQ/TVL/TRS/TFL이 누락되어 orphan 누적이 진단에 보이지 않던 문제.            ║
+ * ║                                                                              ║
+ * ║ [Fix-9 Minor] init useEffect setTimeout mounted 가드                           ║
+ * ║ • 26155(2000ms)/26165(100ms)에 mounted 체크 추가. setState/DB write가          ║
+ * ║   언마운트 후 실행되어도 안전하도록 — 26228(WhatsNew)는 이미 가드 존재.        ║
+ * ║                                                                              ║
+ * ║ [회귀 위험]                                                                       ║
+ * ║ • Fix-1: addNovel과 동일 패턴이라 회귀 0.                                     ║
+ * ║ • Fix-2~6: DELETE/UPDATE 추가만, 기존 정상 row에 영향 없음.                   ║
+ * ║ • Fix-5: ref pattern은 selectedIdsRef/verificationLoadingRef 등과 동일 컨벤션. ║
+ * ║ • Fix-7: 정상 데이터(Number year)는 Number(num)===num이라 변경 없음. 0/NaN→  ║
+ * ║   filter 단계에서 !a.year로 제외되므로 표시 누락 위험 없음.                   ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -5988,7 +6050,78 @@ async function verifyDataIntegrity(options = {}) {
       }
       addLog("고아로그", `삭제된 작품 참조 choice_log ${orphanLogs.length}건 정리`);
     }
-    
+
+    // ─── 🆕 v7.0.12: v7.0 하이브리드 / 갤러리 / 폴더 고아 정리 ───
+    // (이전: removeNovel은 정리하지만 batchDelete/customResetAll/resetAll 누락 경로로 누적된 고아 row가
+    //  detectViolation/getCandidatesForVerification/getNextVerificationTarget 통계를 오염시킴)
+    try {
+      const orphanGalleryImages = await all(
+        "SELECT id FROM gallery_images WHERE novel_id NOT IN (SELECT id FROM novels)"
+      );
+      if (orphanGalleryImages && orphanGalleryImages.length > 0) {
+        for (const g of orphanGalleryImages) {
+          queries.push({ sql: "DELETE FROM gallery_images WHERE id=?", params: [g.id] });
+        }
+        addLog("고아갤러리", `삭제된 작품 참조 gallery_images ${orphanGalleryImages.length}건 정리`);
+      }
+      const orphanNovelFolders = await all(
+        "SELECT rowid FROM novel_folders WHERE novel_id NOT IN (SELECT id FROM novels)"
+      );
+      if (orphanNovelFolders && orphanNovelFolders.length > 0) {
+        for (const nf of orphanNovelFolders) {
+          queries.push({ sql: "DELETE FROM novel_folders WHERE rowid=?", params: [nf.rowid] });
+        }
+        addLog("고아폴더매핑", `삭제된 작품 참조 novel_folders ${orphanNovelFolders.length}건 정리`);
+      }
+      const orphanTvq = await all(
+        "SELECT id FROM tier_verification_queue WHERE novel_id NOT IN (SELECT id FROM novels)"
+      );
+      if (orphanTvq && orphanTvq.length > 0) {
+        for (const t of orphanTvq) {
+          queries.push({ sql: "DELETE FROM tier_verification_queue WHERE id=?", params: [t.id] });
+        }
+        addLog("고아검증큐", `삭제된 작품 참조 tier_verification_queue ${orphanTvq.length}건 정리`);
+      }
+      const orphanTvl = await all(
+        "SELECT id FROM tier_validation_log WHERE novel_a_id NOT IN (SELECT id FROM novels) OR novel_b_id NOT IN (SELECT id FROM novels)"
+      );
+      if (orphanTvl && orphanTvl.length > 0) {
+        for (const t of orphanTvl) {
+          queries.push({ sql: "DELETE FROM tier_validation_log WHERE id=?", params: [t.id] });
+        }
+        addLog("고아검증로그", `삭제된 작품 참조 tier_validation_log ${orphanTvl.length}건 정리`);
+      }
+      const orphanTrs = await all(
+        "SELECT id FROM tier_repositioning_session WHERE novel_id NOT IN (SELECT id FROM novels)"
+      );
+      if (orphanTrs && orphanTrs.length > 0) {
+        for (const t of orphanTrs) {
+          queries.push({ sql: "DELETE FROM tier_repositioning_session WHERE id=?", params: [t.id] });
+        }
+        addLog("고아세션", `삭제된 작품 참조 tier_repositioning_session ${orphanTrs.length}건 정리`);
+      }
+      const orphanTrsBlocker = await all(
+        "SELECT id FROM tier_repositioning_session WHERE blocker_id IS NOT NULL AND blocker_id NOT IN (SELECT id FROM novels)"
+      );
+      if (orphanTrsBlocker && orphanTrsBlocker.length > 0) {
+        for (const t of orphanTrsBlocker) {
+          queries.push({ sql: "UPDATE tier_repositioning_session SET blocker_id=NULL WHERE id=?", params: [t.id] });
+        }
+        addLog("수문장정리", `삭제된 작품 참조 blocker_id ${orphanTrsBlocker.length}건 NULL 처리`);
+      }
+      const orphanTfl = await all(
+        "SELECT id FROM trigger_fire_log WHERE novel_id IS NOT NULL AND novel_id NOT IN (SELECT id FROM novels)"
+      );
+      if (orphanTfl && orphanTfl.length > 0) {
+        for (const t of orphanTfl) {
+          queries.push({ sql: "DELETE FROM trigger_fire_log WHERE id=?", params: [t.id] });
+        }
+        addLog("고아트리거", `삭제된 작품 참조 trigger_fire_log ${orphanTfl.length}건 정리`);
+      }
+    } catch (e) {
+      console.warn("[v7.0.12] v7.0 고아 검증 실패:", e?.message);
+    }
+
     // ─── 실행 ───
     if (queries.length > 0) {
       await execBatch(queries);
@@ -10182,7 +10315,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.0.11";
+const APP_VERSION = "7.0.12";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -10208,6 +10341,28 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.0.12", date: "2026-05-07",
+    title: "코드 전수 검토 — v7.0 정합성/stale closure/고아 정리 9건 수정",
+    highlights: [
+      { type: "fix", text: "🛠️ convertPlannedToNovel manual_order 누락 수정 — 예정 작품→본 목록 변환 시 manual_order=0 INSERT로 hybrid invariant gap=100 위반. addNovel과 동일하게 같은 tier MAX+100 산출" },
+      { type: "fix", text: "🛠️ resetAll/customResetAll/batchDelete v7.0 하이브리드 테이블 4종(TVQ/TVL/TRS/TFL) 누락 정리 추가 — 기존 removeNovel은 정상이나 일괄/전체 경로에서 고아 row 누적되어 통계 오염" },
+      { type: "fix", text: "🛠️ batchSetTier useCallback([]) stale closure — verificationSession이 첫 렌더 null 영구 캡처되어 v7.0.6 M9b in-flight 가드가 무동작. verificationSessionRef 추가" },
+      { type: "fix", text: "🛠️ verifyDataIntegrity v7.0 고아 7종 추가 (gallery/novel_folders/TVQ/TVL/TRS+blocker_id/TFL) — 누락 경로 누적 row 자가 치유" },
+      { type: "fix", text: "🛠️ parseAwards year 타입 정규화 — v7.0.7 MAJ-1은 saveEdit 비교만 수정. display 경로(AwardsScreen 18483/18501)에서 string year 레거시 데이터가 strict equality fail하여 수상작 미표시되던 버그" },
+    ],
+    details: [
+      { type: "fix", text: "App.jsx:27049 convertPlannedToNovel — initialManualOrder = MAX+100 산출 후 INSERT 컬럼 33번째로 추가" },
+      { type: "fix", text: "App.jsx:31420 resetAll execBatch — folders/novel_folders/planned_novels/TVQ/TVL/TRS/TFL DELETE 7개 추가" },
+      { type: "fix", text: "App.jsx:31203 customResetAll — effectiveSel.novels 시 v7.0 4종 정리, matches 단독 시 TVL/TRS 정리" },
+      { type: "fix", text: "App.jsx:34038 batchDelete — DB 삭제 전 gallery_images.file_path → deleteCoverFromLibrary, per-id execBatch에 v7.0 5종 추가" },
+      { type: "fix", text: "App.jsx:25104 verificationSessionRef 추가 + 매 렌더 .current 동기화. App.jsx:33960 batchSetTier가 ref 사용" },
+      { type: "fix", text: "App.jsx:5992 verifyDataIntegrity — gallery_images/novel_folders/TVQ/TVL/TRS(novel_id+blocker_id)/TFL 고아 SELECT + DELETE/UPDATE" },
+      { type: "fix", text: "App.jsx:11538 parseAwards — year: Number(a.year) || 0으로 변경. 정상 number year는 영향 없음, 레거시 string year만 정규화" },
+      { type: "fix", text: "App.jsx:25550 진단 탭 테이블 카운트 배열에 v7.0 4종(TVQ/TVL/TRS/TFL) 추가" },
+      { type: "fix", text: "App.jsx:26155/26165 init useEffect setTimeout(2000ms/100ms) 콜백에 mounted 가드 추가 — 초기화 직후 슬롯 전환/언마운트 시 stale DB write 방지" },
+    ],
+  },
   {
     version: "7.0.11", date: "2026-05-07",
     title: "슬롯 복제 + 손상 슬롯 복구 (VACUUM INTO 기반)",
@@ -11537,7 +11692,9 @@ function parseAwards(json, awardSystemSettings = null) {
     if (!Array.isArray(arr)) return [];
     return arr
       .map((a) => ({
-        year: a.year,
+        // 🛠️ v7.0.12: year 타입 정규화 — 레거시 데이터(String "2024") 호환성 보장
+        // (이전: AwardsScreen 18483/18501에서 award.year === Number(...) 비교 시 string year 항상 false → 수상작 미표시)
+        year: Number(a.year) || 0,
         type: a.type,
       }))
       .filter((a) => {
@@ -25027,6 +25184,9 @@ function AppContent() {
   const [gatekeeperModalOpen, setGatekeeperModalOpen] = useState(false);
   const verificationSessionIdRef = useRef(null); // 매 시퀀스 고유 sessionId (응답 로그 묶음용)
   const verificationLoadingRef = useRef(false); // 🆕 v7.0: 재진입 가드 (state는 React 배칭 → 동기 가드 필요)
+  // 🛠️ v7.0.12: batchSetTier가 useCallback([])이라 verificationSession state stale capture 발생 → ref로 최신값 동기 노출
+  const verificationSessionRef = useRef(null);
+  verificationSessionRef.current = verificationSession;
   const respondingRef = useRef(false); // 🆕 v7.0.3: respondVerificationMatch 동시 진입 가드 (빠른 더블탭 시 중복 log/finalize 방지)
   const gatekeeperRespondingRef = useRef(false); // 🆕 v7.0.6: 수문장 ⬆️/⬇️ Alert "변경" 더블탭 가드 (manual_order +100 중복 적용 방지)
 
@@ -25547,7 +25707,8 @@ function AppContent() {
     (async () => {
       try {
         // DB 테이블 규모
-        const tables = ["novels", "matches", "choice_logs", "cover_library", "novel_folders", "folders", "gallery_images", "planned_novels", "preference_patterns", "insight_queue"];
+        // 🛠️ v7.0.12: 진단 탭 테이블 카운트에 v7.0 하이브리드 테이블 추가 (이전: 누락되어 orphan 누적이 진단에 안 보임)
+        const tables = ["novels", "matches", "choice_logs", "cover_library", "novel_folders", "folders", "gallery_images", "planned_novels", "preference_patterns", "insight_queue", "tier_verification_queue", "tier_validation_log", "tier_repositioning_session", "trigger_fire_log"];
         const counts = {};
         for (const t of tables) {
           try { const r = await first(`SELECT COUNT(*) as cnt FROM ${t}`); counts[t] = r?.cnt ?? "?"; } catch { counts[t] = "N/A"; }
@@ -26151,18 +26312,21 @@ function AppContent() {
 
           // 🧠 v3.5.0: 취향 발견 시스템 마이그레이션 (기존 매칭 데이터에서 패턴 추출)
           // 🆕 v3.5.8: savedTagAttributes 전달 (작품명 태그 제외)
+          // 🛠️ v7.0.12: mounted 가드 추가 — 100ms/2000ms 사이 슬롯 전환/언마운트 발생 시 stale DB write 방지
           const migrateTagAttrs = savedTagAttributes || {};
           setTimeout(async () => {
+            if (!mounted) return;
             try {
               await migrateExistingMatchesToPatterns(migrateTagAttrs);
             } catch (e) {
               console.warn("취향 발견 시스템 마이그레이션 오류:", e);
             }
           }, 2000); // 초기 로딩 완료 후 실행
-          
+
           // 🏷️ 태그 자동 수집 (비동기 - UI 블로킹 없음)
           // 🔧 v3.6.1: loadedRegistry 직접 사용 (stale closure 방지)
           setTimeout(async () => {
+            if (!mounted) return;
             try {
               const novels = await all("SELECT tags, major_genre, sub_genre FROM novels;");
               if (!novels || novels.length === 0) return;
@@ -27045,10 +27209,28 @@ function AppContent() {
               // 우선순위 → pinned (4 이상이면 고정)
               const shouldPin = (planned.priority || 3) >= 4 ? 1 : 0;
               
+              // 🆕 v7.0.12: convertPlannedToNovel manual_order 누락 수정 — addNovel과 동일 패턴
+              // (이전: INSERT에 manual_order 미포함 → 기본값 0 부여 → hybrid invariant gap=100 위반)
+              const initialManualTier =
+                (globalTierConfig.mode !== "match" && planned.expected_tier && getActiveTierOrder(globalTierConfig).includes(planned.expected_tier))
+                  ? planned.expected_tier : null;
+              let initialManualOrder = 0;
+              try {
+                if (initialManualTier) {
+                  const maxRow = await first("SELECT MAX(manual_order) AS m FROM novels WHERE manual_tier=?", [initialManualTier]);
+                  initialManualOrder = (Number(maxRow?.m) || 0) + 100;
+                } else {
+                  const maxRow = await first("SELECT MAX(manual_order) AS m FROM novels WHERE manual_tier IS NULL OR manual_tier=''");
+                  initialManualOrder = (Number(maxRow?.m) || 0) + 100;
+                }
+              } catch (e) {
+                console.warn("[v7.0.12] convertPlannedToNovel manual_order 계산 실패:", e?.message);
+              }
+
               // 본 목록에 등록 (모든 필드 이전)
               await exec(
-                `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
                 [
                   id,
                   planned.title,
@@ -27082,8 +27264,8 @@ function AppContent() {
                   "", // memorable_quote
                   "", // aliases
                   // 🆕 v6.0: manual/hybrid 모드에서 expected_tier를 manual_tier로 활용
-                  (globalTierConfig.mode !== "match" && planned.expected_tier && getActiveTierOrder(globalTierConfig).includes(planned.expected_tier))
-                    ? planned.expected_tier : null,
+                  initialManualTier,
+                  initialManualOrder, // 🆕 v7.0.12: hybrid invariant 보존
                 ]
               );
               
@@ -31206,9 +31388,19 @@ function AppContent() {
                 batch.push({ sql: "DELETE FROM novel_folders;" });
                 // 표지 상태도 리셋
                 batch.push({ sql: "UPDATE cover_library SET status='unused', novel_id=NULL" });
+                // 🆕 v7.0.12: novels 삭제 시 v7.0 하이브리드 테이블도 함께 정리 (이전: 고아 row 누적 → 통계 오염)
+                batch.push({ sql: "DELETE FROM tier_verification_queue;" });
+                batch.push({ sql: "DELETE FROM tier_validation_log;" });
+                batch.push({ sql: "DELETE FROM tier_repositioning_session;" });
+                batch.push({ sql: "DELETE FROM trigger_fire_log;" });
               }
               if (effectiveSel.matches) {
                 batch.push({ sql: "DELETE FROM matches;" });
+                // 🆕 v7.0.12: matches 단독 삭제 시에도 검증 로그/세션 함께 정리 (대진 기록 의존)
+                if (!effectiveSel.novels) {
+                  batch.push({ sql: "DELETE FROM tier_validation_log;" });
+                  batch.push({ sql: "DELETE FROM tier_repositioning_session;" });
+                }
               }
               if (effectiveSel.planned) {
                 batch.push({ sql: "DELETE FROM planned_novels;" });
@@ -31425,6 +31617,14 @@ function AppContent() {
                         { sql: "DELETE FROM preference_patterns;" },
                         { sql: "DELETE FROM insight_queue;" },
                         { sql: "DELETE FROM gallery_images;" }, // 🎨 v3.8.0
+                        // 🆕 v7.0.12: 폴더/예정작품/하이브리드 테이블 누락 수정 (이전: 고아 row 잔존 → 통계 오염)
+                        { sql: "DELETE FROM folders;" },
+                        { sql: "DELETE FROM novel_folders;" },
+                        { sql: "DELETE FROM planned_novels;" },
+                        { sql: "DELETE FROM tier_verification_queue;" },
+                        { sql: "DELETE FROM tier_validation_log;" },
+                        { sql: "DELETE FROM tier_repositioning_session;" },
+                        { sql: "DELETE FROM trigger_fire_log;" },
                       ]);
 
                       // 🖼️ v3.4.5: 모든 표지를 미사용 상태로 변경
@@ -33841,7 +34041,9 @@ function AppContent() {
     if (!tierKey) return;
 
     // 🆕 v7.0.6 (M9b): in-flight 검증 세션의 작품은 batch에서 제외
-    const sessionNovelId = verificationSession?.queueRow?.novel_id;
+    // 🛠️ v7.0.12: useCallback([]) stale closure 수정 — verificationSessionRef로 최신값 참조
+    // (이전: verificationSession이 useState인데 deps=[]로 첫 렌더 null 영구 캡처 → M9b 가드 무동작)
+    const sessionNovelId = verificationSessionRef.current?.queueRow?.novel_id;
     if (sessionNovelId && ids.includes(sessionNovelId)) {
       ids = ids.filter(id => id !== sessionNovelId);
       Alert.alert(
@@ -34035,6 +34237,17 @@ function AppContent() {
               ids
             );
 
+            // 🆕 v7.0.12: 갤러리 이미지 파일 삭제 (DB 삭제 전 파일시스템 정리)
+            try {
+              const gImgs = await all(
+                `SELECT file_path FROM gallery_images WHERE novel_id IN (${placeholders})`,
+                ids
+              );
+              for (const g of (gImgs || [])) {
+                await deleteCoverFromLibrary(g.file_path).catch(() => {});
+              }
+            } catch (gErr) { console.warn("batchDelete gallery cleanup:", gErr); }
+
             const queries = [];
             for (const id of ids) {
               // 🔧 v3.5.8: choice_logs도 함께 삭제 (고아 방지)
@@ -34048,6 +34261,31 @@ function AppContent() {
               });
               queries.push({
                 sql: "DELETE FROM novel_folders WHERE novel_id=?",
+                params: [id],
+              });
+              // 🆕 v7.0.12: removeNovel과 동일하게 v7.0 하이브리드 + 갤러리 고아 정리 추가
+              queries.push({
+                sql: "DELETE FROM gallery_images WHERE novel_id=?",
+                params: [id],
+              });
+              queries.push({
+                sql: "DELETE FROM tier_verification_queue WHERE novel_id=?",
+                params: [id],
+              });
+              queries.push({
+                sql: "DELETE FROM tier_validation_log WHERE novel_a_id=? OR novel_b_id=?",
+                params: [id, id],
+              });
+              queries.push({
+                sql: "DELETE FROM tier_repositioning_session WHERE novel_id=?",
+                params: [id],
+              });
+              queries.push({
+                sql: "UPDATE tier_repositioning_session SET blocker_id=NULL WHERE blocker_id=?",
+                params: [id],
+              });
+              queries.push({
+                sql: "DELETE FROM trigger_fire_log WHERE novel_id=?",
                 params: [id],
               });
               queries.push({
