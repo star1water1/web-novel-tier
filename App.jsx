@@ -21061,14 +21061,20 @@ const TasteAnalysisScreen = memo(({
   }, [list]);
 
   // 🆕 v6.2: list 또는 매칭 변화 감지용 시그니처 (정렬만 바뀐 경우는 동일)
+  // 🆕 v7.1: mode/tier 변경도 시그니처에 포함 — 모드 토글 시 prefScore 재계산 + tier 인사이트 재생성
   const listSignature = useMemo(() => {
-    if (!list || list.length === 0) return "0";
-    let mc = 0, rs = 0;
+    if (!list || list.length === 0) return `0|${globalTierConfig.mode || "match"}`;
+    let mc = 0, rs = 0, tc = 0; // tc: manual_tier 시그니처 (mode 토글 후 재배정 감지)
     for (const n of list) {
       mc += Number(n.match_count) || 0;
       rs += Math.round(Number(n.rating) || 1500);
+      // manual_tier 변경(예: 사용자가 일괄 배정)도 감지하기 위해 단순 hash 누적
+      if (n.manual_tier) tc += n.manual_tier.charCodeAt(0);
+      tc += Number(n.manual_order) || 0;
     }
-    return `${list.length}|${mc}|${rs}`;
+    const modeKey = globalTierConfig.mode || "match";
+    const tierKey = (globalTierConfig.tiers || []).map(t => t.key).join(",");
+    return `${list.length}|${mc}|${rs}|${tc}|${modeKey}|${tierKey}`;
   }, [list]);
 
   // 🆕 v6.2: 디바운스 자동 재분석 (사용자 답변 정책)
@@ -25199,10 +25205,10 @@ async function analyzePreferences(novels, matches) {
     lowRatingHighRead: reliable.filter(n =>
       n.prefScore < LOW_THRESHOLD && n.readRatio !== null && n.readRatio > 0.6
     ).map(n => ({ title: n.title, rating: n.prefScore, readRatio: n.readRatio, work_status: n.work_status, causes: buildCauses(n) })),
-    // 매칭 부족한 고레이팅 (match-only — 다른 모드에선 결과 0)
-    noMatchHighRating: enriched.filter(n =>
+    // 매칭 부족한 고레이팅 — match 모드에서만 의미 (hybrid는 매치 X로 모든 작품이 해당 → noise)
+    noMatchHighRating: (globalTierConfig?.mode === "match") ? enriched.filter(n =>
       (Number(n.match_count) || 0) <= 2 && n.prefScore >= HIGH_THRESHOLD
-    ).map(n => ({ title: n.title, rating: n.prefScore, matchCount: n.match_count, work_status: n.work_status, causes: buildCauses(n) })),
+    ).map(n => ({ title: n.title, rating: n.prefScore, matchCount: n.match_count, work_status: n.work_status, causes: buildCauses(n) })) : [],
     // 🆕 v3.4: 다회독 but 저평가 (숨겨진 명작 후보)
     rereadButLowRating: enriched.filter(n =>
       (Number(n.reread_count) || 1) >= 2 && n.prefScore < MID_LOW_THRESHOLD
@@ -25594,6 +25600,20 @@ async function analyzePreferences(novels, matches) {
   // ─────────────────────────────────────────────────────────────────
   if (_isHybridOrManual) {
     try {
+      // 🆕 v7.1: 신규 분석 기준으로 stale tier_* row 정리 (deleted novel 등)
+      // — 기존 tier_concentration/tier_inversion/award_tier 모두 삭제 후 재생성
+      // — UPSERT만 하면 사라진 entity의 row가 영구 잔존하기 때문
+      try {
+        await exec(
+          `DELETE FROM preference_patterns WHERE category IN ('tier_concentration','tier_inversion','award_tier')`
+        );
+        await exec(
+          `DELETE FROM insight_queue WHERE source = 'v7.1_tier_analysis' AND status = 'pending'`
+        );
+      } catch (cleanErr) {
+        console.warn("[v7.1] tier_* row 정리 실패 (계속 진행):", cleanErr?.message);
+      }
+
       const upserts = [];
       const queueInserts = [];
       const _now = Date.now();
