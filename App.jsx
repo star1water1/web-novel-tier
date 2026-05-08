@@ -2,9 +2,67 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.1.0 (취향 분석 모드 인식 재설계 — Tier-Aware Taste Analysis)      ║
+ * ║  버전: 7.2.0 (가등록 ↔ 진등록 양방향 전환 + 가등록 스키마 확장)             ║
  * ║  최종 수정: 2026-05-07                                                        ║
- * ║  총 라인 수: 약 51,000줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 51,200줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.2.0 가등록 ↔ 진등록 양방향 전환 + 스키마 확장 (2026-05-07)             ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [Context — 사용자 요청 3건]                                                       ║
+ * ║ 1. planned_novels 스키마 확장 (novels의 모든 필드 보유 가능)                  ║
+ * ║ 2. 진등록 → 가등록 역전환 기능 (현재 forward만 존재)                          ║
+ * ║ 3. 일괄편집 탭에 가등록 일괄 전환 추가                                         ║
+ * ║                                                                              ║
+ * ║ [핵심 설계 — id 보존 + round-trip 데이터 보존]                                  ║
+ * ║ • planned.id ↔ novel.id 동일 값 유지 (forward & reverse 모두)                  ║
+ * ║ • matches/gallery_images/novel_folders/tier_verification_queue/v7.0 row들이   ║
+ * ║   novel_id로 참조하므로 id 보존만으로 자동 살아남음 → 추가 마이그레이션 X     ║
+ * ║                                                                              ║
+ * ║ [planned_novels 스키마 확장 16종 (ensureColumn)]                                ║
+ * ║ • status / pinned / read_count / rating / rd / wins / losses / match_count   ║
+ * ║ • gaiden_status / gaiden_read_count / gaiden_total_episodes                    ║
+ * ║ • manual_tier / manual_order / reread_count                                    ║
+ * ║ • aliases / memorable_quote / awards                                           ║
+ * ║ • read_count_updated_at / read_count_baseline (v7.0.15)                        ║
+ * ║                                                                              ║
+ * ║ [신규 함수]                                                                     ║
+ * ║ • convertNovelToPlanned(novel) — title 충돌 체크, verification 정리,          ║
+ * ║   id 보존 INSERT, DELETE FROM novels, recent_changes 로그                     ║
+ * ║ • batchConvertToPlanned (useCallback) — 일괄편집용 루프 + skip 카운트         ║
+ * ║                                                                              ║
+ * ║ [convertPlannedToNovel 개선]                                                    ║
+ * ║ • const id = planned.id || uuid() — round-trip id 일관성                      ║
+ * ║ • INSERT params: hardcoded 1500/0/"" → planned 우선 (rating, awards, quote,   ║
+ * ║   aliases, manual_tier, gaiden_*, reread_count, wins/losses 등 16종)         ║
+ * ║ • read_count_baseline = planned.read_count_baseline 우선                       ║
+ * ║                                                                              ║
+ * ║ [UI 변경]                                                                       ║
+ * ║ • 편집 모달 헤더: "📋 가등록" 버튼 (삭제 옆) — confirm Alert + convert        ║
+ * ║ • NovelCard long-press: 3-button Alert (폴더 배정 / 가등록 전환 / 확인)       ║
+ * ║ • 일괄편집 탭: "선택 작품을 가등록으로 전환" 버튼 (작업 메뉴 끝부분)            ║
+ * ║ • 가등록 편집 모달: aliases / memorable_quote 입력 + awards 카운트 배지       ║
+ * ║                                                                              ║
+ * ║ [백업/복원 호환성]                                                              ║
+ * ║ • payload.PL에 19개 신규 단축키 추가 (st/pn/rc/rt/rdv/wn/ls/mc/gs/gr/ge/      ║
+ * ║   mt/mo/rr/al/mq/aw/ru/rb) — default 값은 omit (백업 크기 절감)              ║
+ * ║ • import는 누락 키 default 처리 (구버전 백업 호환)                             ║
+ * ║ • id 보존 — payload.PL에 row.id 추가, import 시 사용                          ║
+ * ║                                                                              ║
+ * ║ [회귀 위험]                                                                       ║
+ * ║ • novels 테이블 무변경 ✓                                                       ║
+ * ║ • addPlannedNovel/savePlannedEdit 기존 필드 무변경 (신규 default) ✓           ║
+ * ║ • convertPlannedToNovel hardcoded → 조건부: planned default 시 동일 동작 ✓    ║
+ * ║ • id 변경: addPlannedNovel은 uuid() 그대로, convertPlannedToNovel만 planned.id║
+ * ║   사용. legacy planned는 fallback uuid()                                      ║
+ * ║                                                                              ║
+ * ║ [defer to v7.3+]                                                                ║
+ * ║ • manual_tier/reread_count/pinned/status 등 가등록 편집 폼 추가 노출           ║
+ * ║ • memorable_quote 이미지 첨부 (가등록에서)                                     ║
+ * ║ • 가등록 → 진등록 일괄 전환 (대칭, 일괄편집)                                   ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -5278,7 +5336,29 @@ async function initDb() {
   await ensureColumn("planned_novels", "similar_novels", "TEXT", "''");
   await ensureColumn("planned_novels", "why_interested", "TEXT", "''");
   await ensureColumn("planned_novels", "tag_data", "TEXT", "''");
-  
+
+  // 🆕 v7.2.0: round-trip 데이터 보존을 위한 16개 컬럼 (novels 스키마 정합)
+  // 가등록 입력 폼은 일부만 노출, 나머지는 reverse 전환(convertNovelToPlanned)에서 채워짐
+  await ensureColumn("planned_novels", "status", "TEXT", "'reading'");
+  await ensureColumn("planned_novels", "pinned", "INTEGER", "0");
+  await ensureColumn("planned_novels", "read_count", "INTEGER", "0");
+  await ensureColumn("planned_novels", "rating", "REAL", "1500");
+  await ensureColumn("planned_novels", "rd", "REAL", "350");
+  await ensureColumn("planned_novels", "wins", "INTEGER", "0");
+  await ensureColumn("planned_novels", "losses", "INTEGER", "0");
+  await ensureColumn("planned_novels", "match_count", "INTEGER", "0");
+  await ensureColumn("planned_novels", "gaiden_status", "TEXT", "'none'");
+  await ensureColumn("planned_novels", "gaiden_read_count", "INTEGER", "0");
+  await ensureColumn("planned_novels", "gaiden_total_episodes", "INTEGER", "0");
+  await ensureColumn("planned_novels", "manual_tier", "TEXT", "NULL");
+  await ensureColumn("planned_novels", "manual_order", "INTEGER", "0");
+  await ensureColumn("planned_novels", "reread_count", "INTEGER", "1");
+  await ensureColumn("planned_novels", "aliases", "TEXT", "''");
+  await ensureColumn("planned_novels", "memorable_quote", "TEXT", "''");
+  await ensureColumn("planned_novels", "awards", "TEXT", "''");
+  await ensureColumn("planned_novels", "read_count_updated_at", "INTEGER", "0");
+  await ensureColumn("planned_novels", "read_count_baseline", "INTEGER", "0");
+
   // 🖼️ v3.4.5: 표지 라이브러리 테이블
   await database.runAsync(`CREATE TABLE IF NOT EXISTS cover_library (
     id TEXT PRIMARY KEY NOT NULL,
@@ -10553,7 +10633,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.1.0";
+const APP_VERSION = "7.2.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -10579,6 +10659,31 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.2.0", date: "2026-05-07",
+    title: "가등록 ↔ 진등록 양방향 전환 + 가등록 스키마 확장",
+    highlights: [
+      { type: "new", text: "🔄 진등록 → 가등록 역전환 — 편집 모달 헤더 \"📋 가등록\" 버튼, NovelCard long-press 메뉴, 일괄편집 탭 모두 지원. id 보존으로 매칭/갤러리/폴더/티어 등 모든 데이터 자동 살아남음. round-trip 가능" },
+      { type: "new", text: "📊 planned_novels 스키마 16개 컬럼 확장 — status/pinned/read_count/rating/rd/wins/losses/match_count/gaiden_*/manual_tier/manual_order/reread_count/aliases/memorable_quote/awards/read_count_updated_at/read_count_baseline. round-trip 시 진등록의 모든 데이터가 가등록에 보존됨" },
+      { type: "new", text: "📦 일괄편집 탭에 \"선택 작품을 가등록으로 전환\" 추가 — 일괄 전환 + skip 카운트 (title 충돌 시)" },
+      { type: "improve", text: "✏️ 가등록 편집 모달에 aliases / memorable_quote 입력 필드 추가 + awards 카운트 배지 (read-only). 진등록 후 awards 편집 안내" },
+      { type: "improve", text: "🔁 convertPlannedToNovel — hardcoded default → planned 값 우선. round-trip 시 manual_tier/awards/quote/reread/wins/losses 등 모든 데이터 보존" },
+    ],
+    details: [
+      { type: "new", text: "App.jsx:5281 initDb — planned_novels 16개 ensureColumn 추가 (idempotent, 기존 row default)" },
+      { type: "new", text: "App.jsx:28583 신규 convertNovelToPlanned(novel) — title 충돌 체크 + verification 세션 abort + pending 큐 cancel + id 보존 INSERT + DELETE FROM novels + recent_changes 로그" },
+      { type: "new", text: "App.jsx 신규 batchConvertToPlanned useCallback — 일괄 전환 + per-id Alert 카운트" },
+      { type: "improve", text: "App.jsx:28414 const id = planned.id || uuid() — round-trip id 일관성. legacy planned도 fallback uuid()로 안전" },
+      { type: "improve", text: "App.jsx:28489-28533 INSERT params: hardcoded 1500/0/\"\" → planned 우선 (rating, rd, wins, losses, match_count, awards, status, pinned, read_count, gaiden_*, reread_count, memorable_quote, aliases, manual_tier, read_count_updated_at, read_count_baseline)" },
+      { type: "new", text: "App.jsx:43375 일괄편집 탭 — 작업 메뉴에 가등록 일괄 전환 버튼 + 안내" },
+      { type: "new", text: "App.jsx:38339 NovelCard onLongPress — 3-button Alert에 \"📋 가등록 전환\" 추가 (폴더 배정 / 가등록 전환 / 확인)" },
+      { type: "new", text: "App.jsx:48480 편집 모달 헤더 — \"📋 가등록\" 버튼 (삭제 옆) — confirm Alert + convert" },
+      { type: "new", text: "App.jsx:50917 가등록 편집 모달 — aliases / memorable_quote 입력 + awards 카운트 배지 섹션" },
+      { type: "improve", text: "App.jsx:28342 savePlannedEdit UPDATE — aliases / memorable_quote 추가 (awards는 read-only)" },
+      { type: "new", text: "App.jsx:36340 backup payload.PL — 19개 신규 단축키 (id 포함, default 값은 omit으로 크기 절감)" },
+      { type: "improve", text: "App.jsx:37029 importJSON PL 복원 — 신규 단축키 + default fallback (구버전 백업 호환)" },
+    ],
+  },
   {
     version: "7.1.0", date: "2026-05-07",
     title: "취향 분석 모드 인식 재설계 — Tier-Aware Taste Analysis",
@@ -28316,8 +28421,9 @@ function AppContent() {
       const oldCover = originalPlanned?.cover_image || "";
       const newCover = n.cover_image || "";
       
+      // 🆕 v7.2.0: aliases/memorable_quote 새 편집 필드 포함 (awards는 read-only — 편집 X)
       await exec(
-        `UPDATE planned_novels SET title=?, author=?, tags=?, platforms=?, note=?, total_episodes=?, cover_image=?, link=?, work_status=?, major_genre=?, sub_genre=?, priority=?, expected_rating=?, expected_tier=?, interest_level=?, discovery_source=?, first_chapter_read=?, scheduled_start_date=?, similar_novels=?, why_interested=?, tag_data=? WHERE id=?;`,
+        `UPDATE planned_novels SET title=?, author=?, tags=?, platforms=?, note=?, total_episodes=?, cover_image=?, link=?, work_status=?, major_genre=?, sub_genre=?, priority=?, expected_rating=?, expected_tier=?, interest_level=?, discovery_source=?, first_chapter_read=?, scheduled_start_date=?, similar_novels=?, why_interested=?, tag_data=?, aliases=?, memorable_quote=? WHERE id=?;`,
         [
           newTitle,
           n.author?.trim() || "",
@@ -28341,6 +28447,8 @@ function AppContent() {
           n.similar_novels || "",
           n.why_interested || "",
           n.tag_data || "", // 🔧 v3.5.9: tag_data 저장 누락 수정
+          n.aliases || "",                  // 🆕 v7.2.0
+          n.memorable_quote || "",          // 🆕 v7.2.0
           n.id,
         ]
       );
@@ -28389,9 +28497,11 @@ function AppContent() {
                 return;
               }
               
-              const id = uuid();
+              // 🆕 v7.2.0: id 보존 — round-trip(novels↔planned) 시 matches/gallery/folders/tier_*
+              // 등 연관 row의 novel_id 참조가 자동 유지. fallback은 신규 uuid (legacy planned 호환).
+              const id = planned.id || uuid();
               const now = Date.now();
-              
+
               // 🆕 v3.4.1 #13: 예정작품의 추가 정보를 메모에 병합
               let enhancedNote = planned.note || "";
               const noteAdditions = [];
@@ -28465,6 +28575,8 @@ function AppContent() {
               }
 
               // 본 목록에 등록 (모든 필드 이전)
+              // 🆕 v7.2.0: hardcoded default → planned 값 우선. round-trip(reverse 후 forward)
+              // 시 manual_tier/awards/quote/reread/aliases/wins/losses 등 모든 데이터 보존.
               await exec(
                 `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order)
                  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
@@ -28475,38 +28587,41 @@ function AppContent() {
                   planned.tags || "",
                   planned.platforms || "[]",
                   enhancedNote, // 🆕 강화된 메모
-                  initialReadCount, // 🆕 1화 읽었으면 1회차로 시작
-                  1500, // rating
-                  350, // rd
-                  0, // wins
-                  0, // losses
-                  0, // match_count
+                  // 🆕 v7.2.0: planned.read_count 우선 (reverse에서 보존), 없으면 first_chapter_read fallback
+                  Number(planned.read_count) || initialReadCount,
+                  Number(planned.rating) || 1500,                                  // 🆕 v7.2.0
+                  Number(planned.rd) || 350,                                       // 🆕 v7.2.0
+                  Number(planned.wins) || 0,                                       // 🆕 v7.2.0
+                  Number(planned.losses) || 0,                                     // 🆕 v7.2.0
+                  Number(planned.match_count) || 0,                                // 🆕 v7.2.0
                   globalTierConfig.defaultTier || "C", // 🔧 v6.0.1: 동적 기본 티어
                   now,
-                  "", // awards
+                  planned.awards || "",                                            // 🆕 v7.2.0 (was "")
                   Number(planned.total_episodes) || 0,
-                  "reading", // status
-                  shouldPin, // 🆕 우선순위 높으면 고정
+                  planned.status || "reading",                                     // 🆕 v7.2.0
+                  // 🆕 v7.2.0: planned.pinned 우선 (reverse 보존), 없으면 priority>=4 fallback
+                  Number(planned.pinned) || shouldPin,
                   planned.cover_image || "",
                   planned.link || "",
                   planned.work_status || "ongoing",
-                  now, // read_count_updated_at
+                  Number(planned.read_count_updated_at) || now,                    // 🆕 v7.2.0
                   planned.major_genre || "",
                   planned.sub_genre || "",
-                  "none", // gaiden_status
-                  0, // gaiden_read_count
-                  0, // gaiden_total_episodes
-                  1, // reread_count
+                  planned.gaiden_status || "none",                                 // 🆕 v7.2.0
+                  Number(planned.gaiden_read_count) || 0,                          // 🆕 v7.2.0
+                  Number(planned.gaiden_total_episodes) || 0,                      // 🆕 v7.2.0
+                  Math.max(1, Number(planned.reread_count) || 1),                  // 🆕 v7.2.0
                   planned.tag_data || "", // 🆕 태그 데이터 이전
-                  "", // memorable_quote
-                  "", // aliases
-                  // 🆕 v6.0: manual/hybrid 모드에서 expected_tier를 manual_tier로 활용
-                  initialManualTier,
+                  planned.memorable_quote || "",                                   // 🆕 v7.2.0 (was "")
+                  planned.aliases || "",                                           // 🆕 v7.2.0 (was "")
+                  // 🆕 v7.2.0: planned.manual_tier 우선 (reverse 보존), 없으면 expected_tier fallback
+                  planned.manual_tier || initialManualTier,
                   initialManualOrder, // 🆕 v7.0.12: hybrid invariant 보존
                 ]
               );
-              // 🆕 v7.0.15: read_count_baseline = 초기 read_count (누적 트래킹 시작점)
-              await exec("UPDATE novels SET read_count_baseline=read_count WHERE id=?", [id]);
+              // 🆕 v7.0.15 + v7.2.0: read_count_baseline 우선 (reverse 보존), 없으면 read_count fallback
+              const _baselineToRestore = Number(planned.read_count_baseline) || (Number(planned.read_count) || initialReadCount);
+              await exec("UPDATE novels SET read_count_baseline=? WHERE id=?", [_baselineToRestore, id]);
 
               // 예정 목록에서 삭제
               await exec("DELETE FROM planned_novels WHERE id=?", [planned.id]);
@@ -28550,6 +28665,144 @@ function AppContent() {
       ]
     );
   }
+
+  // 🆕 v7.2.0: novels → planned_novels 역전환 (단건)
+  // - id 보존: matches/gallery/folders/tier_verification_queue/v7.0 row 자동 살아남음
+  // - title 충돌 시 abort + Alert
+  // - in-flight verification 세션 abort + pending 큐 cancel
+  // - recent_changes 로그
+  // - return: true/false (성공 여부) — caller가 후처리(loadList/loadPlannedList) 결정
+  async function convertNovelToPlanned(novel) {
+    if (!novel || !novel.id) return false;
+
+    // 1. title 충돌 체크 (자기 자신 제외 — id 동일하면 OK)
+    try {
+      const dup = await first(
+        "SELECT id FROM planned_novels WHERE title=? AND id!=?",
+        [novel.title, novel.id]
+      );
+      if (dup) {
+        Alert.alert("전환 불가", `"${novel.title}"이(가) 이미 가등록 목록에 있습니다.\n제목을 변경 후 다시 시도하세요.`);
+        return false;
+      }
+    } catch (e) {
+      console.warn("[v7.2.0] convertNovelToPlanned 중복 체크 실패:", e?.message);
+    }
+
+    const now = Date.now();
+    try {
+      // 2. INSERT planned_novels — id 보존, 모든 필드 이전
+      await exec(
+        `INSERT INTO planned_novels (
+          id, title, author, tags, platforms, note,
+          total_episodes, cover_image, link, work_status,
+          major_genre, sub_genre, priority, created_at,
+          expected_rating, expected_tier, interest_level,
+          discovery_source, first_chapter_read, scheduled_start_date,
+          similar_novels, why_interested, tag_data,
+          status, pinned, read_count, rating, rd, wins, losses, match_count,
+          gaiden_status, gaiden_read_count, gaiden_total_episodes,
+          manual_tier, manual_order, reread_count,
+          aliases, memorable_quote, awards,
+          read_count_updated_at, read_count_baseline
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          novel.id, novel.title, novel.author || "",
+          novel.tags || "", novel.platforms || "[]", novel.note || "",
+          Number(novel.total_episodes) || 0, novel.cover_image || "",
+          novel.link || "", novel.work_status || "ongoing",
+          novel.major_genre || "", novel.sub_genre || "",
+          // priority: pinned=1 → 5(최고), 그 외 → 3(기본)
+          novel.pinned ? 5 : 3, novel.created_at || now,
+          // expected_*: 현 ELO/manual_tier 보존을 위한 best-effort 매핑
+          Number(novel.rating) || 1500, novel.manual_tier || "", 3,
+          "", novel.read_count > 0 ? 1 : 0, 0, "", "", novel.tag_data || "",
+          // 🆕 v7.2.0 round-trip 보존 필드 (16종)
+          novel.status || "reading", Number(novel.pinned) || 0,
+          Number(novel.read_count) || 0,
+          Number(novel.rating) || 1500, Number(novel.rd) || 350,
+          Number(novel.wins) || 0, Number(novel.losses) || 0,
+          Number(novel.match_count) || 0,
+          novel.gaiden_status || "none",
+          Number(novel.gaiden_read_count) || 0,
+          Number(novel.gaiden_total_episodes) || 0,
+          novel.manual_tier || null, Number(novel.manual_order) || 0,
+          Math.max(1, Number(novel.reread_count) || 1),
+          novel.aliases || "", novel.memorable_quote || "", novel.awards || "",
+          Number(novel.read_count_updated_at) || 0,
+          Number(novel.read_count_baseline) || 0,
+        ]
+      );
+
+      // 3. v7.0 hybrid: 진행 중 verification 세션 abort
+      try {
+        if (verificationSessionRef?.current?.queueRow?.novel_id === novel.id) {
+          setVerificationSession(null);
+          if (verificationSessionIdRef) verificationSessionIdRef.current = null;
+        }
+        // pending 큐 cancel — 가등록 작품은 verification 의미 없음
+        await exec(
+          `UPDATE tier_verification_queue SET state='cancelled', processed_at=? WHERE novel_id=? AND state='pending'`,
+          [now, novel.id]
+        );
+      } catch (e) {
+        console.warn("[v7.2.0] verification 정리 실패 (계속 진행):", e?.message);
+      }
+
+      // 4. DELETE FROM novels (id 보존이라 matches/gallery/folders 등은 자동 살아남음)
+      await exec("DELETE FROM novels WHERE id=?", [novel.id]);
+
+      // 5. recent_changes 로그
+      try {
+        await addRecentChange(novel.id, novel.title, "demote_to_planned", {
+          fromTier: novel.manual_tier || novel.tier || "",
+        });
+      } catch {}
+
+      return true;
+    } catch (e) {
+      console.warn("[v7.2.0] convertNovelToPlanned 오류:", e?.message);
+      Alert.alert("전환 실패", e?.message || "알 수 없는 오류");
+      return false;
+    }
+  }
+
+  // 🆕 v7.2.0: 일괄 가등록 전환 (일괄편집 탭용)
+  const batchConvertToPlanned = useCallback(async () => {
+    const ids = selectedIdsRef.current;
+    if (!ids || ids.length === 0) {
+      Alert.alert("알림", "먼저 작품을 선택해주세요.");
+      return;
+    }
+    Alert.alert(
+      "가등록 일괄 전환",
+      `선택 ${ids.length}작품을 가등록으로 전환할까요?\n\n매칭/갤러리/폴더 등 모든 데이터는 보존됩니다 (id 유지). title 충돌 시 해당 작품만 skip.`,
+      [
+        { text: "취소" },
+        {
+          text: "전환",
+          style: "destructive",
+          onPress: async () => {
+            setIsLoading(true);
+            try {
+              let success = 0, skipped = 0;
+              for (const id of ids) {
+                const novel = list.find(n => n.id === id);
+                if (!novel) { skipped++; continue; }
+                const ok = await convertNovelToPlanned(novel);
+                if (ok) success++; else skipped++;
+              }
+              await loadList(undefined, undefined, "batch_demote");
+              await loadPlannedList();
+              Alert.alert("완료", `전환 ${success}건${skipped > 0 ? ` · skip ${skipped}건` : ""}`);
+            } finally {
+              setIsLoading(false);
+            }
+          },
+        },
+      ]
+    );
+  }, [list]);
 
   // -----------------------------------------
   // 🎯 v3.3.0: 오늘의 추천 웹소설 계산
@@ -36166,32 +36419,58 @@ async function exportJSON() {
 
     // 📋 v3.3.0: 예정 작품 백업 (PL = Planned List)
     // 🆕 v3.4: 확장 필드 추가
+    // 🆕 v7.2.0: round-trip 보존 19개 신규 키 추가 (id 포함, default 값은 원치 않으면 omit)
     if (plannedNovels && plannedNovels.length > 0) {
-      payload.PL = plannedNovels.map(p => ({
-        t: p.title,
-        a: p.author || "",
-        tg: p.tags || "",
-        pl: p.platforms || "[]",
-        n: p.note || "",
-        te: Number(p.total_episodes) || 0,
-        ci: p.cover_image || "",
-        lk: p.link || "",
-        ws: p.work_status || "ongoing",
-        mg: p.major_genre || "",
-        sg: p.sub_genre || "",
-        pr: Number(p.priority) || 3,
-        ca: Math.floor((p.created_at || Date.now()) / 1000) - BASE_TIMESTAMP,
-        // 🆕 v3.4: 새 필드들
-        er: Number(p.expected_rating) || 1500,
-        et: p.expected_tier || "",
-        il: Number(p.interest_level) || 3,
-        ds: p.discovery_source || "",
-        fc: p.first_chapter_read ? 1 : 0,
-        ss: p.scheduled_start_date ? Math.floor(p.scheduled_start_date / 1000) - BASE_TIMESTAMP : 0,
-        sn: p.similar_novels || "",
-        wi: p.why_interested || "",
-        td: p.tag_data || "", // 🔧 v3.5.9: tag_data 백업
-      }));
+      payload.PL = plannedNovels.map(p => {
+        const row = {
+          t: p.title,
+          a: p.author || "",
+          tg: p.tags || "",
+          pl: p.platforms || "[]",
+          n: p.note || "",
+          te: Number(p.total_episodes) || 0,
+          ci: p.cover_image || "",
+          lk: p.link || "",
+          ws: p.work_status || "ongoing",
+          mg: p.major_genre || "",
+          sg: p.sub_genre || "",
+          pr: Number(p.priority) || 3,
+          ca: Math.floor((p.created_at || Date.now()) / 1000) - BASE_TIMESTAMP,
+          // 🆕 v3.4: 새 필드들
+          er: Number(p.expected_rating) || 1500,
+          et: p.expected_tier || "",
+          il: Number(p.interest_level) || 3,
+          ds: p.discovery_source || "",
+          fc: p.first_chapter_read ? 1 : 0,
+          ss: p.scheduled_start_date ? Math.floor(p.scheduled_start_date / 1000) - BASE_TIMESTAMP : 0,
+          sn: p.similar_novels || "",
+          wi: p.why_interested || "",
+          td: p.tag_data || "", // 🔧 v3.5.9: tag_data 백업
+        };
+        // 🆕 v7.2.0: id 보존 — round-trip 후 reverse로 들어온 row의 id 복원에 필요
+        if (p.id) row.id = p.id;
+        // 🆕 v7.2.0: 새 16개 필드 — default 값은 omit (백업 크기 절감, import 시 default 적용)
+        if (p.status && p.status !== "reading") row.st = p.status;
+        if (Number(p.pinned)) row.pn = Number(p.pinned);
+        if (Number(p.read_count)) row.rc = Number(p.read_count);
+        if (Number(p.rating) && Number(p.rating) !== 1500) row.rt = Number(p.rating);
+        if (Number(p.rd) && Number(p.rd) !== 350) row.rdv = Number(p.rd);
+        if (Number(p.wins)) row.wn = Number(p.wins);
+        if (Number(p.losses)) row.ls = Number(p.losses);
+        if (Number(p.match_count)) row.mc = Number(p.match_count);
+        if (p.gaiden_status && p.gaiden_status !== "none") row.gs = p.gaiden_status;
+        if (Number(p.gaiden_read_count)) row.gr = Number(p.gaiden_read_count);
+        if (Number(p.gaiden_total_episodes)) row.ge = Number(p.gaiden_total_episodes);
+        if (p.manual_tier) row.mt = p.manual_tier;
+        if (Number(p.manual_order)) row.mo = Number(p.manual_order);
+        if (Number(p.reread_count) && Number(p.reread_count) !== 1) row.rr = Number(p.reread_count);
+        if (p.aliases) row.al = p.aliases;
+        if (p.memorable_quote) row.mq = p.memorable_quote;
+        if (p.awards) row.aw = p.awards;
+        if (Number(p.read_count_updated_at)) row.ru = Number(p.read_count_updated_at);
+        if (Number(p.read_count_baseline)) row.rb = Number(p.read_count_baseline);
+        return row;
+      });
     }
     
     const json = JSON.stringify(payload);
@@ -36830,12 +37109,13 @@ async function importJSON() {
                 // 기존 예정 작품 삭제
                 await exec("DELETE FROM planned_novels;");
                 
+                // 🆕 v7.2.0: round-trip 보존 19개 신규 필드 + id 보존 (있으면 사용, 없으면 신규 uuid)
                 const plannedQueries = data.PL.map(p => ({
-                  sql: `INSERT INTO planned_novels 
-                    (id, title, author, tags, platforms, note, total_episodes, cover_image, link, work_status, major_genre, sub_genre, priority, created_at, expected_rating, expected_tier, interest_level, discovery_source, first_chapter_read, scheduled_start_date, similar_novels, why_interested, tag_data)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                  sql: `INSERT INTO planned_novels
+                    (id, title, author, tags, platforms, note, total_episodes, cover_image, link, work_status, major_genre, sub_genre, priority, created_at, expected_rating, expected_tier, interest_level, discovery_source, first_chapter_read, scheduled_start_date, similar_novels, why_interested, tag_data, status, pinned, read_count, rating, rd, wins, losses, match_count, gaiden_status, gaiden_read_count, gaiden_total_episodes, manual_tier, manual_order, reread_count, aliases, memorable_quote, awards, read_count_updated_at, read_count_baseline)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
                   params: [
-                    uuid(),
+                    p.id || uuid(),                                      // 🆕 v7.2.0: id 보존
                     p.t || "",
                     p.a || "",
                     p.tg || "",
@@ -36859,6 +37139,26 @@ async function importJSON() {
                     p.sn || "",
                     p.wi || "",
                     p.td || "", // 🔧 v3.5.9: tag_data 복원
+                    // 🆕 v7.2.0: round-trip 보존 16개 (default fallback)
+                    p.st || "reading",
+                    Number(p.pn) || 0,
+                    Number(p.rc) || 0,
+                    Number(p.rt) || 1500,
+                    Number(p.rdv) || 350,
+                    Number(p.wn) || 0,
+                    Number(p.ls) || 0,
+                    Number(p.mc) || 0,
+                    p.gs || "none",
+                    Number(p.gr) || 0,
+                    Number(p.ge) || 0,
+                    p.mt || null,
+                    Number(p.mo) || 0,
+                    Math.max(1, Number(p.rr) || 1),
+                    p.al || "",
+                    p.mq || "",
+                    p.aw || "",
+                    Number(p.ru) || 0,
+                    Number(p.rb) || 0,
                   ],
                 }));
                 
@@ -38343,6 +38643,24 @@ async function importJSON() {
                         `작가: ${item.author || "-"}\n${folderNames ? `📂 폴더: ${folderNames}\n` : ""}\n${item.note || "(메모 없음)"}`,
                         [
                           { text: "📂 폴더 배정", onPress: () => { setFolderAssignTarget(item.id); deferOpen(setFolderAssignModalOpen); } },
+                          // 🆕 v7.2.0: 가등록 전환
+                          { text: "📋 가등록 전환", style: "destructive", onPress: () => {
+                            Alert.alert(
+                              "가등록 전환",
+                              `"${item.title}"을(를) 가등록으로 되돌릴까요?\n\n매칭/갤러리/폴더 등 모든 데이터가 보존됩니다 (id 유지). 다시 진등록 전환 시 복원됩니다.`,
+                              [
+                                { text: "취소" },
+                                { text: "전환", style: "destructive", onPress: async () => {
+                                  const ok = await convertNovelToPlanned(item);
+                                  if (ok) {
+                                    await loadList(undefined, undefined, "demote");
+                                    await loadPlannedList();
+                                    Alert.alert("완료", "가등록으로 전환되었습니다.");
+                                  }
+                                }},
+                              ]
+                            );
+                          }},
                           { text: "확인" },
                         ]
                       );
@@ -43191,6 +43509,20 @@ async function importJSON() {
                   </View>
                 </>
               )}
+
+              {/* 🆕 v7.2.0: 가등록 일괄 전환 */}
+              <View style={{ height: 12 }} />
+              <View>
+                <Text style={{ color: C.text, fontWeight: "700", marginBottom: 6 }}>📋 가등록 전환</Text>
+                <OutlineButton
+                  title="선택 작품을 가등록으로 전환"
+                  onPress={batchConvertToPlanned}
+                  style={{ alignSelf: "stretch" }}
+                />
+                <Text style={{ color: C.sub, fontSize: 11, marginTop: 4 }}>
+                  매칭/갤러리/폴더/티어 등 모든 데이터 보존 (id 유지). 다시 진등록 전환 시 복원됩니다.
+                </Text>
+              </View>
 
               <View style={{ height: 12 }} />
               <View style={{ flexDirection: "row", gap: 8 }}>
@@ -48278,6 +48610,34 @@ async function importJSON() {
                 작품 수정
               </Text>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              {/* 🆕 v7.2.0: 가등록 전환 (편집 모달 헤더) */}
+              {editItem && (
+                <TouchableOpacity
+                  onPress={() => {
+                    Alert.alert(
+                      "가등록 전환",
+                      `"${editItem.title}"을(를) 가등록으로 되돌릴까요?\n\n매칭/갤러리/폴더 등 모든 데이터가 보존됩니다 (id 유지). 다시 진등록 전환 시 복원됩니다.`,
+                      [
+                        { text: "취소" },
+                        { text: "전환", style: "destructive", onPress: async () => {
+                          const ok = await convertNovelToPlanned(editItem);
+                          if (ok) {
+                            editOriginalSnapshotRef.current = null;
+                            setEditOpen(false);
+                            updateEditItem(null);
+                            await loadList(undefined, undefined, "demote");
+                            await loadPlannedList();
+                            Alert.alert("완료", "가등록으로 전환되었습니다.");
+                          }
+                        }},
+                      ]
+                    );
+                  }}
+                  style={{ padding: 6 }}
+                >
+                  <Text style={{ color: "#3b82f6", fontSize: 13 }}>📋 가등록</Text>
+                </TouchableOpacity>
+              )}
               {editItem && (
                 <TouchableOpacity
                   onPress={() => {
@@ -50690,7 +51050,50 @@ async function importJSON() {
                   onChangeText={(t) => updatePlannedEditItem(prev => prev ? { ...prev, note: t } : null)}
                   multiline
                 />
-                
+
+                {/* 🆕 v7.2.0: 가등록 확장 필드 (round-trip 보존 + 사전 입력) */}
+                <View style={{ marginTop: 16, padding: 10, borderRadius: 10, borderWidth: 1, borderColor: C.line, backgroundColor: C.bg }}>
+                  <Text style={{ color: C.text, fontWeight: "700", marginBottom: 6 }}>📚 추가 정보 (선택)</Text>
+                  <Text style={{ color: C.sub, fontSize: 11, marginBottom: 8 }}>
+                    진등록 전환 시 이 정보가 그대로 이전됩니다. round-trip 시 보존.
+                  </Text>
+
+                  <Label style={{ marginTop: 4 }}>별명 (aliases)</Label>
+                  <Input
+                    value={plannedEditItem.aliases || ""}
+                    onChangeText={(t) => updatePlannedEditItem(prev => prev ? { ...prev, aliases: t } : null)}
+                    placeholder="예: 별명1, 별명2"
+                  />
+
+                  <Label style={{ marginTop: 10 }}>인상깊은 문장 (memorable_quote)</Label>
+                  <Input
+                    value={plannedEditItem.memorable_quote || ""}
+                    onChangeText={(t) => updatePlannedEditItem(prev => prev ? { ...prev, memorable_quote: t } : null)}
+                    placeholder="텍스트 입력 (이미지 첨부는 진등록 후 가능)"
+                    multiline
+                  />
+
+                  {/* 수상 정보: read-only 카운트 — 진등록 후 편집 가능 */}
+                  {(() => {
+                    let awardCount = 0;
+                    try {
+                      const arr = JSON.parse(plannedEditItem.awards || "[]");
+                      if (Array.isArray(arr)) awardCount = arr.length;
+                    } catch {}
+                    if (awardCount === 0) return null;
+                    return (
+                      <View style={{ marginTop: 10, flexDirection: "row", alignItems: "center", gap: 8 }}>
+                        <View style={{ backgroundColor: "#fef3c7", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999 }}>
+                          <Text style={{ color: "#92400e", fontSize: 12, fontWeight: "700" }}>🏆 수상 {awardCount}건</Text>
+                        </View>
+                        <Text style={{ color: C.sub, fontSize: 11, flex: 1 }}>
+                          진등록 후 수상탭에서 편집 가능
+                        </Text>
+                      </View>
+                    );
+                  })()}
+                </View>
+
                 <View style={{ flexDirection: "row", gap: 8, marginTop: 16 }}>
                   <PrimaryButton
                     title="저장"
