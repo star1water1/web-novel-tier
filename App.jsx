@@ -32769,6 +32769,12 @@ function AppContent() {
             if (selectedIdsRef.current.includes(id)) {
               setSelectedIds(prev => prev.filter(x => x !== id));
             }
+            // 🆕 v7.2.3: 진행 중 verification 세션이 삭제 대상이면 abort
+            // (이전: 세션이 deleted novel 참조 → 다음 decide() 시 candidate 미존재로 잠재 크래시)
+            if (verificationSessionRef.current?.queueRow?.novel_id === id) {
+              setVerificationSession(null);
+              verificationSessionIdRef.current = null;
+            }
             
             // 🔧 v3.5.8: choice_logs도 함께 삭제 (고아 방지)
             // 🎨 v3.8.0: 갤러리 이미지 파일 삭제 (DB 삭제 전)
@@ -35859,6 +35865,12 @@ function AppContent() {
             }
             if (focusMatchNovel && ids.includes(focusMatchNovel.id)) {
               setFocusMatchNovel(null);
+            }
+            // 🆕 v7.2.3: 진행 중 verification 세션이 삭제 대상이면 abort
+            const _vsId = verificationSessionRef.current?.queueRow?.novel_id;
+            if (_vsId && ids.includes(_vsId)) {
+              setVerificationSession(null);
+              verificationSessionIdRef.current = null;
             }
 
             // 🔧 v3.5.8: 삭제 전 표지 정보 수집
