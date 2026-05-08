@@ -2,9 +2,67 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.3.2 (코드 전수 검토 — 6건 실제 버그 수정)                            ║
+ * ║  버전: 7.3.3 (7대 실사용 시나리오 검토 — 4건 실제 버그 수정)                  ║
  * ║  최종 수정: 2026-05-08                                                        ║
- * ║  총 라인 수: 약 52,600줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 52,670줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.3.3 7대 실사용 시나리오 검토 — 4건 실제 버그 수정 (2026-05-08)          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [Context — 7대 시나리오 다각도 검토]                                              ║
+ * ║ 1. 신규 사용자 첫 진입 + 작품 등록                                              ║
+ * ║ 2. 하이브리드 모드 검증 사이클 (트리거 → 시퀀스 → finalize)                   ║
+ * ║ 3. 자동매칭 중 동시 작업 (#1 불변조건 가드)                                    ║
+ * ║ 4. 백업 import + 1만+ 작품 마이그레이션                                         ║
+ * ║ 5. 백그라운드/포그라운드 전환 + DB 재연결                                       ║
+ * ║ 6. 가등록 ↔ 진등록 round-trip 일관성                                            ║
+ * ║ 7. 장시간 사용 + 메모리 누수 + cleanup                                          ║
+ * ║                                                                              ║
+ * ║ 3개 카테고리 병렬 에이전트 + 직접 검증 → 대부분 false positive (이미 수정/    ║
+ * ║ try-catch 보호/의도된 동작). 4개 실제 버그만 수정.                              ║
+ * ║                                                                              ║
+ * ║ [Fix-A Major] removeNovel candidate 삭제 시 verification session abort 누락    ║
+ * ║ • 기존: queueRow.novel_id === id 만 체크 (suspicion 작품만)                    ║
+ * ║ • 사용자가 검증 시퀀스 진행 중 다른 탭에서 후보(candidates 배열) 작품 삭제하면 ║
+ * ║   세션이 stale candidate 계속 참조 → finalize에서 blocker_id orphan +          ║
+ * ║   tier_validation_log orphan + computeNewPosition 잘못된 자리 산출.            ║
+ * ║ • 수정: candidates.some(c => c.id === id) 추가 체크.                          ║
+ * ║                                                                              ║
+ * ║ [Fix-B Major] batchDelete candidate 삭제 시 동일 누락                           ║
+ * ║ • Set 기반 ids 배열에 candidates 포함 여부 체크 추가.                          ║
+ * ║                                                                              ║
+ * ║ [Fix-C Major] convertNovelToPlanned candidate 변환 시 동일 누락                 ║
+ * ║ • 후보가 가등록으로 변환되면 novels에서 사라져 stale candidate 참조 발생.       ║
+ * ║ • 동일 패턴 체크 추가.                                                         ║
+ * ║                                                                              ║
+ * ║ [Fix-D Major] importJSON read_count_baseline 별도 UPDATE 트랜잭션 분리          ║
+ * ║ • 기존: bulk INSERT → 별도 bulk UPDATE SET read_count_baseline = read_count   ║
+ * ║   → execBatch 트랜잭션 외부. UPDATE 실패 시 모든 row baseline=0 잔존 →        ║
+ * ║   import 후 첫 saveEdit에서 mass-fire (read_count - 0 ≥ 30 즉시 트리거).      ║
+ * ║ • 수정: INSERT에 read_count_baseline 컬럼 직접 추가 (readCount 동일 값) +     ║
+ * ║   별도 UPDATE 제거. addNovel(v7.3.2) / convertPlannedToNovel(v7.3.1) 동일     ║
+ * ║   패턴 통일.                                                                    ║
+ * ║                                                                              ║
+ * ║ [false positive로 판정된 주요 보고]                                              ║
+ * ║ • verificationSession on slot switch: 이미 line 27979-27985 cleanup 존재.     ║
+ * ║ • batchDelete preference_patterns/insight_queue/trigger_fire_log: 이미 v7.3.0 ║
+ * ║   에서 추가됨 (line 36369-36389).                                              ║
+ * ║ • trigger_fire_log unbounded growth: 이미 30-day 자동 정리 (loadHybridDiag).   ║
+ * ║ • recent_changes/tier_history/undoStack growth: 모두 이미 cap 처리.            ║
+ * ║ • setNovelTierAtomic same-tier race: 이미 v7.0.10 short-circuit.              ║
+ * ║ • convertNovelToPlanned baseline missing: 이미 line 29183/29209에 포함.       ║
+ * ║ • insight_queue novel_id cleanup: insight_queue에 novel_id 컬럼 자체 없음.    ║
+ * ║                                                                              ║
+ * ║ [회귀 위험]                                                                       ║
+ * ║ • Fix-A~C: 기존 suspicion 체크 ‖ candidates 체크. 정상 흐름은 영향 없음.       ║
+ * ║   candidate 변경/삭제 빈도 낮아 false-abort 위험 미미. abort 후 useEffect가    ║
+ * ║   다음 큐 항목 자동 시작.                                                      ║
+ * ║ • Fix-D: INSERT 컬럼 33→34개 (read_count_baseline 추가). VALUES 자리표시자    ║
+ * ║   33→34로 일치. 별도 UPDATE 제거. v9 백업의 baseline 미포함이라 readCount     ║
+ * ║   동일 값 보존 (이전 동작과 의미 동일).                                       ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -29222,7 +29280,9 @@ function AppContent() {
       ]);
 
       // verification 세션 React state는 트랜잭션 외 (UI state라 DB 트랜잭션과 무관)
-      if (verificationSessionRef?.current?.queueRow?.novel_id === novel.id) {
+      // 🛠️ v7.3.3: candidate 변환도 abort 대상에 추가 (planned 전환 시 후보가 novels에서 사라짐 → stale 참조 방지)
+      const _vsConv = verificationSessionRef?.current;
+      if (_vsConv && (_vsConv.queueRow?.novel_id === novel.id || _vsConv.candidates?.some(c => c.id === novel.id))) {
         setVerificationSession(null);
         if (verificationSessionIdRef) verificationSessionIdRef.current = null;
       }
@@ -33219,11 +33279,14 @@ function AppContent() {
             }
             // 🆕 v7.2.3: 진행 중 verification 세션이 삭제 대상이면 abort
             // (이전: 세션이 deleted novel 참조 → 다음 decide() 시 candidate 미존재로 잠재 크래시)
-            if (verificationSessionRef.current?.queueRow?.novel_id === id) {
+            // 🛠️ v7.3.3: candidate 삭제도 abort 대상에 추가 — 기존엔 suspicion novel만 체크 → 후보 삭제 시
+            // 시퀀스가 stale candidate를 계속 참조 → finalize blocker_id orphan + tier_validation_log orphan
+            const _vs = verificationSessionRef.current;
+            if (_vs && (_vs.queueRow?.novel_id === id || _vs.candidates?.some(c => c.id === id))) {
               setVerificationSession(null);
               verificationSessionIdRef.current = null;
             }
-            
+
             // 🔧 v3.5.8: choice_logs도 함께 삭제 (고아 방지)
             // 🎨 v3.8.0: 갤러리 이미지 파일 삭제 (DB 삭제 전)
             try {
@@ -36318,8 +36381,11 @@ function AppContent() {
               setFocusMatchNovel(null);
             }
             // 🆕 v7.2.3: 진행 중 verification 세션이 삭제 대상이면 abort
-            const _vsId = verificationSessionRef.current?.queueRow?.novel_id;
-            if (_vsId && ids.includes(_vsId)) {
+            // 🛠️ v7.3.3: candidate 삭제도 abort 대상에 추가 (suspicion 외 후보 삭제 시 stale 참조 방지)
+            const _vs2 = verificationSessionRef.current;
+            const _vsId = _vs2?.queueRow?.novel_id;
+            const _idsSet = new Set(ids);
+            if (_vs2 && ((_vsId && _idsSet.has(_vsId)) || _vs2.candidates?.some(c => _idsSet.has(c.id)))) {
               setVerificationSession(null);
               verificationSessionIdRef.current = null;
             }
@@ -37372,22 +37438,16 @@ async function importJSON() {
                 idList.push(id);
 
                 novelQueries.push({
-                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, manualOrder, rereadCount, tagData, aliases, memorableQuote],
+                  // 🛠️ v7.3.3: read_count_baseline을 INSERT에 직접 포함 (이전: 별도 bulk UPDATE → 부분 실패 시
+                  // baseline=0 잔존하여 첫 saveEdit에서 mass-fire). 백업 v9에 baseline 미포함이라 readCount 동일 값.
+                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,read_count_baseline)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, manualOrder, rereadCount, tagData, aliases, memorableQuote, readCount],
                 });
               }
 
               if (novelQueries.length > 0) await execBatch(novelQueries);
-
-              // 🆕 v7.0.15: import된 novel들의 read_count_baseline = read_count로 backfill
-              // 백업 v9 포맷에 read_count_baseline 미포함 → DEFAULT 0이 그대로면 첫 saveEdit에서 mass-fire.
-              // import 직전 모든 novels DELETE되므로 (line 35399 영역) 단순 bulk UPDATE로 안전.
-              try {
-                await exec(`UPDATE novels SET read_count_baseline = read_count;`);
-              } catch (e) {
-                console.warn("[v7.0.15] importJSON read_count_baseline backfill 실패:", e?.message);
-              }
+              // 🛠️ v7.3.3: 별도 bulk UPDATE 제거 — INSERT에 baseline 포함으로 트랜잭션 일관성 확보
 
               // 🔧 v3.5.8: 복원 직후 삽입 검증
               const insertedCheck = await first("SELECT COUNT(*) as cnt FROM novels");
