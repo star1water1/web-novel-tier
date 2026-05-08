@@ -4,7 +4,7 @@
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║  버전: 7.4.1 (v7.4.0 사후 검토 9건 — race/double-tap/Bitmap 한계 등 안전 강화) ║
  * ║  최종 수정: 2026-05-08                                                        ║
- * ║  총 라인 수: 약 53,319줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 53,356줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11026,7 +11026,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.3.0";
+const APP_VERSION = "7.4.1";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -11052,6 +11052,32 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.4.1", date: "2026-05-08",
+    title: "📷 순위 탭 티어표 이미지 내보내기 — 블로그 업로드용 갤러리 저장",
+    highlights: [
+      { type: "new", text: "📷 순위 탭 \"이미지로 내보내기\" 버튼 — 티어 리스트를 폰 화면 높이에 맞춰 카드 단위로 분할해 갤러리에 저장 (블로그 업로드용)" },
+      { type: "new", text: "🎯 카드 경계 스냅 분할 — 작품 카드가 페이지 중간에 잘리지 않도록 가장 가까운 카드 끝에서 끊음" },
+      { type: "new", text: "🎚️ 내보내기 시 \"보이는 것만 / 전체\" 선택 모달 — 검색·티어 필터 적용 결과만 추출 가능" },
+      { type: "improve", text: "🛡️ 작품 수 20개 초과 시 사전 안내 (Android 이미지 크기 한계 회피)" },
+      { type: "improve", text: "🔒 갤러리 저장 권한은 writeOnly로 요청 — 갤러리 읽기 권한은 받지 않음 (privacy)" },
+      { type: "improve", text: "⏸️ 진행 모달 + 취소 버튼 — 페이지별 \"X / Y\" 표시" },
+    ],
+    details: [
+      { type: "new", text: "App.jsx imports — react-native-view-shot의 captureRef + expo-media-library + PixelRatio + UIManager/findNodeHandle + Image as RNImage 추가" },
+      { type: "new", text: "App.jsx App() — itemLayoutsRef, cardRefsRef, isExportingRef, exportProgress, isExportRendering 신규 + rankedEntriesRef 미러 (stale closure 회피)" },
+      { type: "new", text: "App.jsx exportTierImages — captureRef → ImageManipulator crop (카드 끝점 스냅) → MediaLibrary.saveToLibraryAsync 시퀀스. tmp 파일 finally 정리" },
+      { type: "new", text: "App.jsx FlatList — isExportRendering=true 동안 initialNumToRender/maxToRenderPerBatch/windowSize 부스트로 가상화 한시 해제 + 카드 ref 등록 폴링" },
+      { type: "new", text: "App.jsx measureAllCards — UIManager.measureLayout(findNodeHandle, ...)로 각 카드의 tierImageRef 기준 절대 Y 측정. cardRefsRef Map 스냅샷으로 unmount race 차단" },
+      { type: "new", text: "App.jsx waitForRankedEntriesCount — 필터 silent 해제 후 rankedEntriesRef 길이 폴링 (timing-only 의존 회피)" },
+      { type: "new", text: "App.jsx getImageSizeRobust — RNImage.getSize 4초 timeout + ImageManipulator 무액션 fallback (Android file:// hang 회피)" },
+      { type: "new", text: "App.jsx 진행 모달 — SafeAreaView 직속 (캡처 미포함). PrimaryButton 취소 → isExportingRef.current=false 다음 iter break" },
+      { type: "fix", text: "더블탭 윈도 — isExportingRef.current=true를 함수 진입 즉시 설정 (permission 체크 후 X). 동일 세션 중복 실행 차단" },
+      { type: "fix", text: "캡처 결과 0x0 또는 numPages<=0 시 throw — \"0/0 저장됨\" 오인 알림 방지" },
+      { type: "new", text: "Breadcrumbs.add(\"export\", ...) 단계별 진단 — start/capture_done/save_done/error" },
+      { type: "new", text: "package.json — expo-media-library ~18.2 추가. app.json plugins에 photosPermission/savePhotosPermission 메시지" },
+    ],
+  },
   {
     version: "7.3.0", date: "2026-05-07",
     title: "가등록 시스템 강화 + 잔여 기술부채 청산 (예정탭 sub-tab + 일괄편집 외 5건)",
@@ -11984,6 +12010,17 @@ const GUIDE_CONTENT = [
         tips: [
           "티어 필터를 누르면 특정 티어만 볼 수 있어요.",
           "검색은 제목, 작가, 태그를 모두 포함해 찾아줘요.",
+        ],
+      },
+      {
+        title: "🆕 티어표 이미지 내보내기", icon: "📷", tabs: ["순위"], tabKey: "rank",
+        description: "순위 탭의 티어 리스트를 폰 화면 높이에 맞춰 여러 장의 이미지로 분할해 갤러리에 저장합니다. 블로그·SNS 업로드용으로 한 번에 불러올 수 있어요.",
+        tips: [
+          "검색·티어 필터를 먼저 걸어두면 \"보이는 것만\" 옵션으로 원하는 부분만 내보낼 수 있어요.",
+          "\"전체\" 선택 시 필터가 자동 해제됩니다 (복원 안 됨).",
+          "작품 카드가 페이지 중간에 잘리지 않도록 카드 경계에 맞춰 자동 스냅돼요.",
+          "20작 초과 시 사전 안내 — 일부 안드로이드 기기는 이미지 크기 한계로 실패할 수 있으니 티어 필터로 좁혀서 내보내는 걸 권합니다.",
+          "갤러리 저장 권한은 \"쓰기만\" 요청해서 사진 라이브러리 읽기 권한은 받지 않아요.",
         ],
       },
       {
