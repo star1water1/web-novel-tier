@@ -2,9 +2,73 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.3.4 (추가 7대 시나리오 — 3건 파일시스템 누수 수정)                   ║
+ * ║  버전: 7.3.5 (3차 추가 시나리오 — 1건 critical round-trip 데이터 손실 수정)   ║
  * ║  최종 수정: 2026-05-08                                                        ║
- * ║  총 라인 수: 약 52,720줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 52,820줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.3.5 3차 추가 시나리오 — 1건 critical round-trip 데이터 손실 (2026-05-08)║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [Context — 3차 추가 7대 시나리오]                                                ║
+ * ║ 15. 자동매칭 cancel/재시작 (큐 cleanup, race)                                 ║
+ * ║ 16. 표지/이미지 lifecycle (cover_library 동기화)                               ║
+ * ║ 17. 추천/보충탭 (dailyReco, supplement)                                        ║
+ * ║ 18. 편집 모달 saveEdit (트랜잭션 atomicity)                                    ║
+ * ║ 19. 태그 일괄 + customTags 동기화                                              ║
+ * ║ 20. 분석 캐싱 + invalidation                                                   ║
+ * ║ 21. DB 복구 + slot recovery                                                    ║
+ * ║                                                                              ║
+ * ║ 또다시 대부분 false positive. 직접 verifyDataIntegrity 코드 분석 중            ║
+ * ║ critical round-trip 데이터 손실 버그 발견.                                    ║
+ * ║                                                                              ║
+ * ║ [Fix-I Critical] verifyDataIntegrity 9건 orphan 체크가 planned_novels 미고려  ║
+ * ║ • convertNovelToPlanned 설계 원칙: id 보존 → matches/gallery/folders/v7.0     ║
+ * ║   hybrid 데이터는 round-trip 시 자동 살아남음 (line 29275 주석 명시).          ║
+ * ║ • 그런데 verifyDataIntegrity의 9개 orphan 체크가 `NOT IN (SELECT id FROM      ║
+ * ║   novels)`만 검사 → planned_novels에 있는 id를 모두 orphan으로 판정 → DELETE!  ║
+ * ║                                                                              ║
+ * ║ [영향 받는 9개 체크]                                                            ║
+ * ║ 1. matches (a_id, b_id) — 매칭 기록 손실                                      ║
+ * ║ 2. choice_logs (winner_id, loser_id) — 선택 학습 데이터 손실                  ║
+ * ║ 3. gallery_images (novel_id) — 갤러리 이미지 손실                              ║
+ * ║ 4. novel_folders (novel_id) — 폴더 매핑 손실                                  ║
+ * ║ 5. tier_verification_queue (novel_id) — 검증 큐 손실                          ║
+ * ║ 6. tier_validation_log (novel_a_id, novel_b_id) — 검증 로그 손실               ║
+ * ║ 7. tier_repositioning_session (novel_id) — 재배치 세션 손실                    ║
+ * ║ 8. tier_repositioning_session (blocker_id) — 수문장 정보 손실                 ║
+ * ║ 9. trigger_fire_log (novel_id) — 트리거 발화 기록 손실                        ║
+ * ║                                                                              ║
+ * ║ [재현 시나리오]                                                                  ║
+ * ║ 1. 사용자가 작품 A를 진등록 후 매칭/갤러리/폴더 데이터 누적                   ║
+ * ║ 2. 작품 A를 가등록으로 전환 (convertNovelToPlanned)                           ║
+ * ║ 3. verifyDataIntegrity 자동 실행 (앱 진입 시 또는 사용자 수동 트리거)           ║
+ * ║ 4. A의 matches/gallery/folders/v7.0 hybrid 데이터 모두 DELETE!                 ║
+ * ║ 5. 사용자가 가등록 → 진등록 다시 변환 시 모든 데이터 손실 발견                 ║
+ * ║                                                                              ║
+ * ║ [수정]                                                                          ║
+ * ║ • `NOT IN (SELECT id FROM novels)`                                             ║
+ * ║   → `NOT IN (SELECT id FROM novels UNION SELECT id FROM planned_novels)`     ║
+ * ║ • cover_library는 이미 양 테이블 검사 (line 6557-6586) — 변경 없음.           ║
+ * ║                                                                              ║
+ * ║ [false positive로 판정된 주요 보고]                                              ║
+ * ║ • 자동매칭 cancel race: finally가 graceful stop, useEffect re-trigger 시      ║
+ * ║   autoEnabled=false로 즉시 종료. matchQueue/pendingMatchPairs는 task별        ║
+ * ║   finally에서 정리.                                                            ║
+ * ║ • savePlannedEdit cover_library 동기화 누락: line 28744-28753에서 이미 처리.  ║
+ * ║ • supplementCurrentNovel stale: useEffect (line 38395-38427)가 supplementList ║
+ * ║   변경 + screen 진입 시 자동 갱신.                                            ║
+ * ║ • orphan cover_library: verifyDataIntegrity가 사후 자가 치유.                  ║
+ * ║ • base64 fallback 무한 재시도: 명시적 ext='original' 분기는 1회만.            ║
+ * ║ • supplementList 갱신 경합: useMemo 동기 재계산, race 없음.                    ║
+ * ║                                                                              ║
+ * ║ [회귀 위험]                                                                       ║
+ * ║ • Fix-I: SQL 표현 변경만, 정상 흐름 영향 없음. UNION이 약간의 성능 부담이지만  ║
+ * ║   verifyDataIntegrity는 진단/마이그레이션 시에만 호출되어 영향 미미.           ║
+ * ║ • 기존 데이터 정합성: planned_novels에 있는 id를 가진 행을 더 이상 삭제 안 함  ║
+ * ║   (round-trip 데이터 보존).                                                    ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -6540,8 +6604,10 @@ async function verifyDataIntegrity(options = {}) {
     }
     
     // ─── 2. 고아 매치 정리 (삭제된 작품 참조) ───
+    // 🛠️ v7.3.5: planned_novels UNION 추가 — convertNovelToPlanned 후 id가 보존되어 planned_novels에
+    // 있는데 novels에는 없는 경우 round-trip 보존 데이터를 잘못 삭제하던 문제. 모든 orphan 체크에 동일 적용.
     const orphanMatches = await all(
-      "SELECT id, a_id, b_id FROM matches WHERE a_id NOT IN (SELECT id FROM novels) OR b_id NOT IN (SELECT id FROM novels)"
+      "SELECT id, a_id, b_id FROM matches WHERE a_id NOT IN (SELECT id FROM novels UNION SELECT id FROM planned_novels) OR b_id NOT IN (SELECT id FROM novels UNION SELECT id FROM planned_novels)"
     );
     if (orphanMatches && orphanMatches.length > 0) {
       for (const m of orphanMatches) {
@@ -6586,8 +6652,9 @@ async function verifyDataIntegrity(options = {}) {
     }
     
     // ─── 4. 고아 choice_logs 정리 ───
+    // 🛠️ v7.3.5: planned_novels UNION (round-trip 보존)
     const orphanLogs = await all(
-      "SELECT id FROM choice_logs WHERE winner_id NOT IN (SELECT id FROM novels) OR loser_id NOT IN (SELECT id FROM novels)"
+      "SELECT id FROM choice_logs WHERE winner_id NOT IN (SELECT id FROM novels UNION SELECT id FROM planned_novels) OR loser_id NOT IN (SELECT id FROM novels UNION SELECT id FROM planned_novels)"
     );
     if (orphanLogs && orphanLogs.length > 0) {
       for (const cl of orphanLogs) {
@@ -6603,8 +6670,11 @@ async function verifyDataIntegrity(options = {}) {
     // (이전: removeNovel은 정리하지만 batchDelete/customResetAll/resetAll 누락 경로로 누적된 고아 row가
     //  detectViolation/getCandidatesForVerification/getNextVerificationTarget 통계를 오염시킴)
     try {
+      // 🛠️ v7.3.5: 모든 orphan 체크에 planned_novels UNION 추가 — convertNovelToPlanned 후 id 보존 round-trip
+      // 보존 원칙(line 29275 주석)을 verifyDataIntegrity가 위반하여 gallery/folders/v7.0 hybrid 데이터 삭제하던 critical 버그.
+      const ALIVE = "(SELECT id FROM novels UNION SELECT id FROM planned_novels)";
       const orphanGalleryImages = await all(
-        "SELECT id FROM gallery_images WHERE novel_id NOT IN (SELECT id FROM novels)"
+        `SELECT id FROM gallery_images WHERE novel_id NOT IN ${ALIVE}`
       );
       if (orphanGalleryImages && orphanGalleryImages.length > 0) {
         for (const g of orphanGalleryImages) {
@@ -6613,7 +6683,7 @@ async function verifyDataIntegrity(options = {}) {
         addLog("고아갤러리", `삭제된 작품 참조 gallery_images ${orphanGalleryImages.length}건 정리`);
       }
       const orphanNovelFolders = await all(
-        "SELECT rowid FROM novel_folders WHERE novel_id NOT IN (SELECT id FROM novels)"
+        `SELECT rowid FROM novel_folders WHERE novel_id NOT IN ${ALIVE}`
       );
       if (orphanNovelFolders && orphanNovelFolders.length > 0) {
         for (const nf of orphanNovelFolders) {
@@ -6622,7 +6692,7 @@ async function verifyDataIntegrity(options = {}) {
         addLog("고아폴더매핑", `삭제된 작품 참조 novel_folders ${orphanNovelFolders.length}건 정리`);
       }
       const orphanTvq = await all(
-        "SELECT id FROM tier_verification_queue WHERE novel_id NOT IN (SELECT id FROM novels)"
+        `SELECT id FROM tier_verification_queue WHERE novel_id NOT IN ${ALIVE}`
       );
       if (orphanTvq && orphanTvq.length > 0) {
         for (const t of orphanTvq) {
@@ -6631,7 +6701,7 @@ async function verifyDataIntegrity(options = {}) {
         addLog("고아검증큐", `삭제된 작품 참조 tier_verification_queue ${orphanTvq.length}건 정리`);
       }
       const orphanTvl = await all(
-        "SELECT id FROM tier_validation_log WHERE novel_a_id NOT IN (SELECT id FROM novels) OR novel_b_id NOT IN (SELECT id FROM novels)"
+        `SELECT id FROM tier_validation_log WHERE novel_a_id NOT IN ${ALIVE} OR novel_b_id NOT IN ${ALIVE}`
       );
       if (orphanTvl && orphanTvl.length > 0) {
         for (const t of orphanTvl) {
@@ -6640,7 +6710,7 @@ async function verifyDataIntegrity(options = {}) {
         addLog("고아검증로그", `삭제된 작품 참조 tier_validation_log ${orphanTvl.length}건 정리`);
       }
       const orphanTrs = await all(
-        "SELECT id FROM tier_repositioning_session WHERE novel_id NOT IN (SELECT id FROM novels)"
+        `SELECT id FROM tier_repositioning_session WHERE novel_id NOT IN ${ALIVE}`
       );
       if (orphanTrs && orphanTrs.length > 0) {
         for (const t of orphanTrs) {
@@ -6649,7 +6719,7 @@ async function verifyDataIntegrity(options = {}) {
         addLog("고아세션", `삭제된 작품 참조 tier_repositioning_session ${orphanTrs.length}건 정리`);
       }
       const orphanTrsBlocker = await all(
-        "SELECT id FROM tier_repositioning_session WHERE blocker_id IS NOT NULL AND blocker_id NOT IN (SELECT id FROM novels)"
+        `SELECT id FROM tier_repositioning_session WHERE blocker_id IS NOT NULL AND blocker_id NOT IN ${ALIVE}`
       );
       if (orphanTrsBlocker && orphanTrsBlocker.length > 0) {
         for (const t of orphanTrsBlocker) {
@@ -6658,7 +6728,7 @@ async function verifyDataIntegrity(options = {}) {
         addLog("수문장정리", `삭제된 작품 참조 blocker_id ${orphanTrsBlocker.length}건 NULL 처리`);
       }
       const orphanTfl = await all(
-        "SELECT id FROM trigger_fire_log WHERE novel_id IS NOT NULL AND novel_id NOT IN (SELECT id FROM novels)"
+        `SELECT id FROM trigger_fire_log WHERE novel_id IS NOT NULL AND novel_id NOT IN ${ALIVE}`
       );
       if (orphanTfl && orphanTfl.length > 0) {
         for (const t of orphanTfl) {
