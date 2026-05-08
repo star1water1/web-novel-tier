@@ -28496,10 +28496,22 @@ function AppContent() {
                 Alert.alert("중복 알림", `"${planned.title}"이(가) 본 목록에 이미 있습니다.\n\n제목을 변경한 후 다시 시도하세요.`);
                 return;
               }
-              
+
               // 🆕 v7.2.0: id 보존 — round-trip(novels↔planned) 시 matches/gallery/folders/tier_*
               // 등 연관 row의 novel_id 참조가 자동 유지. fallback은 신규 uuid (legacy planned 호환).
-              const id = planned.id || uuid();
+              // 단, planned.id가 이미 novels에 있으면 (희박 — 부분 실패 잔재) 신규 uuid로 fallback.
+              let id = planned.id || uuid();
+              if (planned.id) {
+                try {
+                  const idCollision = await first("SELECT 1 FROM novels WHERE id=?", [planned.id]);
+                  if (idCollision) {
+                    console.warn("[v7.2.0] planned.id 충돌 (novels에 이미 존재) → 신규 uuid fallback:", planned.id);
+                    id = uuid();
+                  }
+                } catch (e) {
+                  console.warn("[v7.2.0] id 충돌 체크 실패 (계속 진행):", e?.message);
+                }
+              }
               const now = Date.now();
 
               // 🆕 v3.4.1 #13: 예정작품의 추가 정보를 메모에 병합
@@ -28668,11 +28680,12 @@ function AppContent() {
 
   // 🆕 v7.2.0: novels → planned_novels 역전환 (단건)
   // - id 보존: matches/gallery/folders/tier_verification_queue/v7.0 row 자동 살아남음
-  // - title 충돌 시 abort + Alert
+  // - title 충돌 시 abort (silent=true 시 Alert skip — 일괄 호출용)
   // - in-flight verification 세션 abort + pending 큐 cancel
   // - recent_changes 로그
   // - return: true/false (성공 여부) — caller가 후처리(loadList/loadPlannedList) 결정
-  async function convertNovelToPlanned(novel) {
+  async function convertNovelToPlanned(novel, opts = {}) {
+    const silent = !!opts.silent;
     if (!novel || !novel.id) return false;
 
     // 1. title 충돌 체크 (자기 자신 제외 — id 동일하면 OK)
@@ -28682,11 +28695,30 @@ function AppContent() {
         [novel.title, novel.id]
       );
       if (dup) {
-        Alert.alert("전환 불가", `"${novel.title}"이(가) 이미 가등록 목록에 있습니다.\n제목을 변경 후 다시 시도하세요.`);
+        if (!silent) Alert.alert("전환 불가", `"${novel.title}"이(가) 이미 가등록 목록에 있습니다.\n제목을 변경 후 다시 시도하세요.`);
         return false;
       }
     } catch (e) {
       console.warn("[v7.2.0] convertNovelToPlanned 중복 체크 실패:", e?.message);
+    }
+
+    // 1-b. id 충돌 체크 (희박 — 부분 실패 잔재로 planned에 같은 id 존재 가능)
+    // 충돌 시 partial 상태로 판단, INSERT skip하고 DELETE FROM novels로 정리만 수행
+    try {
+      const idDup = await first("SELECT 1 FROM planned_novels WHERE id=?", [novel.id]);
+      if (idDup) {
+        console.warn("[v7.2.0] novel.id가 planned_novels에 이미 존재 (partial state) → INSERT skip + DELETE 정리만:", novel.id);
+        try {
+          await exec("DELETE FROM novels WHERE id=?", [novel.id]);
+        } catch (delErr) {
+          console.warn("[v7.2.0] DELETE FROM novels 실패:", delErr?.message);
+          if (!silent) Alert.alert("전환 실패", "데이터 정리 중 오류");
+          return false;
+        }
+        return true;
+      }
+    } catch (e) {
+      console.warn("[v7.2.0] id 충돌 체크 실패 (계속 진행):", e?.message);
     }
 
     const now = Date.now();
@@ -28762,12 +28794,14 @@ function AppContent() {
       return true;
     } catch (e) {
       console.warn("[v7.2.0] convertNovelToPlanned 오류:", e?.message);
-      Alert.alert("전환 실패", e?.message || "알 수 없는 오류");
+      if (!silent) Alert.alert("전환 실패", e?.message || "알 수 없는 오류");
       return false;
     }
   }
 
   // 🆕 v7.2.0: 일괄 가등록 전환 (일괄편집 탭용)
+  // — silent=true로 per-item Alert 억제 (배치에서는 결과 요약만 표시)
+  // — setLoadingProgress로 진행도 표시 (대용량 batch 대응)
   const batchConvertToPlanned = useCallback(async () => {
     const ids = selectedIdsRef.current;
     if (!ids || ids.length === 0) {
@@ -28784,18 +28818,23 @@ function AppContent() {
           style: "destructive",
           onPress: async () => {
             setIsLoading(true);
+            setLoadingProgress({ current: 0, total: ids.length, label: "가등록 전환 중..." });
             try {
               let success = 0, skipped = 0;
-              for (const id of ids) {
+              for (let i = 0; i < ids.length; i++) {
+                const id = ids[i];
                 const novel = list.find(n => n.id === id);
                 if (!novel) { skipped++; continue; }
-                const ok = await convertNovelToPlanned(novel);
+                // silent=true — per-item Alert 억제
+                const ok = await convertNovelToPlanned(novel, { silent: true });
                 if (ok) success++; else skipped++;
+                setLoadingProgress({ current: i + 1, total: ids.length, label: "가등록 전환 중..." });
               }
               await loadList(undefined, undefined, "batch_demote");
               await loadPlannedList();
-              Alert.alert("완료", `전환 ${success}건${skipped > 0 ? ` · skip ${skipped}건` : ""}`);
+              Alert.alert("완료", `전환 ${success}건${skipped > 0 ? ` · skip ${skipped}건 (title 충돌 등)` : ""}`);
             } finally {
+              setLoadingProgress(null);
               setIsLoading(false);
             }
           },
@@ -39680,6 +39719,8 @@ async function importJSON() {
             read_count: { icon: "📖", label: "읽음", color: "#06b6d4", bg: isDark ? "rgba(6,182,212,0.12)" : "#cffafe" },
             title_change: { icon: "✏️", label: "제목", color: "#ec4899", bg: isDark ? "rgba(236,72,153,0.12)" : "#fce7f3" },
             auto_tier: { icon: "⚡", label: "자동", color: "#6366f1", bg: isDark ? "rgba(99,102,241,0.12)" : "#e0e7ff" },
+            // 🆕 v7.2.0: 가등록 전환 이벤트
+            demote_to_planned: { icon: "📋", label: "가등록", color: "#0ea5e9", bg: isDark ? "rgba(14,165,233,0.12)" : "#e0f2fe" },
           };
           
           const retentionDays = appSettings.recentChanges?.retentionDays || 30;
@@ -39755,6 +39796,10 @@ async function importJSON() {
               const first = changes[changes.length - 1];
               const last = changes[0];
               return `${first.details?.from || "?"} → ${last.details?.to || "?"} (${changes.length}회)`;
+            } else if (type === "demote_to_planned") {
+              // 🆕 v7.2.0: 가등록 전환 — fromTier 표시 (있을 시)
+              const fromTier = changes[0]?.details?.fromTier;
+              return fromTier ? `${fromTier} → 가등록` : "진등록 → 가등록";
             }
             return "";
           };
@@ -48616,11 +48661,23 @@ async function importJSON() {
                   onPress={() => {
                     Alert.alert(
                       "가등록 전환",
-                      `"${editItem.title}"을(를) 가등록으로 되돌릴까요?\n\n매칭/갤러리/폴더 등 모든 데이터가 보존됩니다 (id 유지). 다시 진등록 전환 시 복원됩니다.`,
+                      `"${editItem.title}"을(를) 가등록으로 되돌릴까요?\n\n매칭/갤러리/폴더 등 모든 데이터가 보존됩니다 (id 유지). 다시 진등록 전환 시 복원됩니다.\n\n※ 편집 모달의 미저장 변경사항은 무시되고 DB의 현재 상태가 가등록으로 옮겨집니다.`,
                       [
                         { text: "취소" },
                         { text: "전환", style: "destructive", onPress: async () => {
-                          const ok = await convertNovelToPlanned(editItem);
+                          // 🆕 v7.2.0: 편집 모달의 stale state 회피 — DB에서 fresh fetch
+                          let freshNovel;
+                          try {
+                            freshNovel = await first("SELECT * FROM novels WHERE id=?", [editItem.id]);
+                          } catch (e) {
+                            console.warn("[v7.2.0] fresh fetch 실패, editItem fallback:", e?.message);
+                            freshNovel = editItem;
+                          }
+                          if (!freshNovel) {
+                            Alert.alert("전환 불가", "작품을 찾을 수 없습니다.");
+                            return;
+                          }
+                          const ok = await convertNovelToPlanned(freshNovel);
                           if (ok) {
                             editOriginalSnapshotRef.current = null;
                             setEditOpen(false);
