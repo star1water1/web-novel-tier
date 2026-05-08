@@ -20629,10 +20629,14 @@ const AwardsScreen = memo(({
           {expandedView?.type === "image" && (
             <ExpoImage
               source={{ uri: expandedView.uri }}
+              /* 🛠️ v7.1.2: 썸네일과 다른 recyclingKey + transition=0 + priority=high
+                 → 첫 확대 시 저해상도 비트맵 재활용으로 흐릿하게 보이는 문제 회피 */
+              recyclingKey={`expand-award-${expandedView.uri}`}
               style={{ width: "92%", height: "72%", borderRadius: 12 }}
               contentFit="contain"
               cachePolicy="memory-disk"
-              transition={200}
+              priority="high"
+              transition={0}
             />
           )}
           {expandedView?.type === "quote" && (
@@ -51183,11 +51187,15 @@ async function importJSON() {
             <>
               <ExpoImage
                 source={{ uri: galleryExpandImg.file_path }}
-                recyclingKey={galleryExpandImg.id}
+                /* 🛠️ v7.1.2: recyclingKey 분리 — 썸네일과 같은 key 쓰면 expo-image가
+                   썸네일의 저해상도 비트맵을 재활용해 첫 확대 시 흐릿하게 보임.
+                   `expand-` prefix로 모달용 인스턴스를 구분 → 풀 해상도 디코드 강제. */
+                recyclingKey={`expand-${galleryExpandImg.id}`}
                 style={{ width: "92%", height: "72%", borderRadius: 12 }}
                 contentFit="contain"
                 cachePolicy="memory-disk"
-                transition={200}
+                priority="high"
+                transition={0}
               />
               {galleryExpandImg.caption ? (
                 <Text style={{
