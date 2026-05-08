@@ -21171,19 +21171,25 @@ const TasteAnalysisScreen = memo(({
 
   // 🆕 v6.2: list 또는 매칭 변화 감지용 시그니처 (정렬만 바뀐 경우는 동일)
   // 🆕 v7.1: mode/tier 변경도 시그니처에 포함 — 모드 토글 시 prefScore 재계산 + tier 인사이트 재생성
+  // 🆕 v7.2.2: 추가 — reread_count(tier_inversion), read_count(누적 트래킹), awards(award_tier 분석)
+  // 변경 시 자동 재분석. saveEdit 후 listSignature 변동 → 800ms 디바운스 후 runAnalysis 발화.
   const listSignature = useMemo(() => {
     if (!list || list.length === 0) return `0|${globalTierConfig.mode || "match"}`;
-    let mc = 0, rs = 0, tc = 0; // tc: manual_tier 시그니처 (mode 토글 후 재배정 감지)
+    let mc = 0, rs = 0, tc = 0, rr = 0, rc = 0, aw = 0;
     for (const n of list) {
       mc += Number(n.match_count) || 0;
       rs += Math.round(Number(n.rating) || 1500);
-      // manual_tier 변경(예: 사용자가 일괄 배정)도 감지하기 위해 단순 hash 누적
       if (n.manual_tier) tc += n.manual_tier.charCodeAt(0);
       tc += Number(n.manual_order) || 0;
+      // 🆕 v7.2.2: tier_inversion / read_progress / award_tier 신호
+      rr += Number(n.reread_count) || 1;
+      rc += Number(n.read_count) || 0;
+      // awards JSON 길이만으로 충돌 회피 (정확 비교 X, 변경 감지용)
+      if (n.awards) aw += String(n.awards).length;
     }
     const modeKey = globalTierConfig.mode || "match";
     const tierKey = (globalTierConfig.tiers || []).map(t => t.key).join(",");
-    return `${list.length}|${mc}|${rs}|${tc}|${modeKey}|${tierKey}`;
+    return `${list.length}|${mc}|${rs}|${tc}|${rr}|${rc}|${aw}|${modeKey}|${tierKey}`;
   }, [list]);
 
   // 🆕 v6.2: 디바운스 자동 재분석 (사용자 답변 정책)
