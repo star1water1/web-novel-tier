@@ -2,9 +2,70 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.2.0 (가등록 ↔ 진등록 양방향 전환 + 가등록 스키마 확장)             ║
+ * ║  버전: 7.3.0 (가등록 시스템 강화 + 잔여 기술부채 청산 6건)                   ║
  * ║  최종 수정: 2026-05-07                                                        ║
- * ║  총 라인 수: 약 51,200줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 52,000줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.3.0 가등록 시스템 강화 + 잔여 기술부채 청산 (2026-05-07)                ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [Context — v7.2 사후 검토 6건 청산]                                              ║
+ * ║ 1. 가등록 manual_tier가 프리셋 변경 시 마이그레이션 누락 (시나리오 10)        ║
+ * ║ 2. convertNovelToPlanned 자동매칭 중 가드 부재 (시나리오 11)                  ║
+ * ║ 3. removeNovel/batchDelete가 v7.1 tier_inversion preference_patterns 정리 X   ║
+ * ║ 4. 1만+ 작품 첫 마이그레이션 progress 미표시 (시나리오 14)                    ║
+ * ║ 5. 가등록 카드 awards/quote/gallery 인디케이터 부재                            ║
+ * ║ 6. 예정탭 sub-tab + 일괄편집 — 사용자 명시 설계                                ║
+ * ║                                                                              ║
+ * ║ [핵심 변경 — A부터 F까지 6항목]                                                  ║
+ * ║                                                                              ║
+ * ║ A. 프리셋 변경 시 planned_novels.manual_tier 마이그레이션                     ║
+ * ║   • novels와 동일 패턴: newOrder에 없는 키만 migrateTierKey로 변환             ║
+ * ║   • mode 무관 적용 (planned은 항상 데이터 보존)                                ║
+ * ║                                                                              ║
+ * ║ B. 자동매칭 가드 (불변조건 #1 strict)                                          ║
+ * ║   • convertNovelToPlanned: 함수 진입부 silent abort (Alert X)                 ║
+ * ║   • convertPlannedToNovel: 사용자 액션 직후 button-level Alert 가드           ║
+ * ║   • 편집 모달 "📋 가등록" 버튼: opacity:0.4 + disabled (시각 차단)             ║
+ * ║   • NovelCard long-press: 가등록 옵션에 isAutoMatching 분기 Alert            ║
+ * ║                                                                              ║
+ * ║ C. preference_patterns 고아 정리                                                ║
+ * ║   • removeNovel/batchDelete execBatch에                                       ║
+ * ║     `DELETE FROM preference_patterns WHERE pattern_key='novel:{id}'` 추가      ║
+ * ║   • v7.1 tier_inversion category만 id-keyed (다른 category는 entity-keyed)    ║
+ * ║                                                                              ║
+ * ║ D. initDb 마이그레이션 progress 표시                                            ║
+ * ║   • initDb에 progressCb 옵션 파라미터 추가                                     ║
+ * ║   • AppContent 두 호출 사이트 모두 setLoadingProgress 콜백 전달               ║
+ * ║   • 단계별 라벨: "스키마 업데이트", "v7.0.15 백필", "v7.2 가등록 확장" 등     ║
+ * ║                                                                              ║
+ * ║ E. 가등록 카드 3종 배지                                                         ║
+ * ║   • loadPlannedList: 별도 SELECT로 gallery_count Map 빌드 후 attach           ║
+ * ║   • 카드 JSX: 작가/플랫폼 줄과 메모 사이에 🏆/💬/🎨 배지 row (passive)        ║
+ * ║                                                                              ║
+ * ║ F. 예정탭 sub-tab (사용자 명시 설계)                                            ║
+ * ║   • plannedSubTab state: "list" | "bulk"                                       ║
+ * ║   • 신규 plannedSelectedIds + ref + plannedBulkSearch state                   ║
+ * ║   • bulk sub-tab UI: 검색 + 선택 + 6종 작업 + 다중선택 카드 리스트            ║
+ * ║   • 6종 batch 함수 신규: batchConvertPlannedToNovels, batchDeletePlanned,    ║
+ * ║     batchAddPlannedTag, batchRemovePlannedTag, batchSetPlannedPlatforms,      ║
+ * ║     batchSetPlannedPriority, batchSetPlannedWorkStatus                       ║
+ * ║   • convertPlannedToNovel 리팩토링: _doConvertPlannedToNovel 헬퍼 분리,       ║
+ * ║     convertPlannedToNovelSilent 신규 (Alert 없는 batch용)                     ║
+ * ║                                                                              ║
+ * ║ [회귀 위험]                                                                       ║
+ * ║ • 모든 변경: 추가 패턴 또는 옵션 파라미터. 기존 호출 사이트 무영향.            ║
+ * ║ • DB 스키마 변경 0 (v7.2.0 16개 컬럼 기 적용).                                ║
+ * ║ • API 변경 0.                                                                  ║
+ * ║                                                                              ║
+ * ║ [defer to v7.4+]                                                                ║
+ * ║ • 자동매칭 일시정지 + 작업 후 재개 패턴                                       ║
+ * ║ • insight_queue novel_id 직접 참조 + cleanup                                   ║
+ * ║ • 가등록 sub-tab "통계" — 우선순위/상태별 분포                                ║
+ * ║ • 일괄 메모/링크 prefix/suffix                                                ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -5200,7 +5261,10 @@ function uuid() {
   return `${timestamp}${counter}-${random}`;
 }
 
-async function initDb() {
+// 🆕 v7.3.0: progressCb 옵션 — initDb 진행 단계를 UI overlay에 표시.
+// progressCb({ label: "..." }) 형태로 호출. null/undefined 시 무시.
+async function initDb(progressCb) {
+  if (progressCb) progressCb({ label: "데이터베이스 연결 중..." });
   // DB 연결 확보
   const database = await openDb();
   
@@ -5274,6 +5338,7 @@ async function initDb() {
   ];
   
   // 필요한 마이그레이션만 실행
+  if (progressCb) progressCb({ label: "스키마 업데이트 중..." });
   for (const [name, type, defaultExpr] of migrations) {
     if (!existingNames.has(name)) {
       await database.runAsync(
@@ -5287,6 +5352,7 @@ async function initDb() {
   // — column DEFAULT 0이 그대로면 마이그레이션 직후 첫 saveEdit에서 mass-fire 발생 → backfill 필수.
   // — ALTER + UPDATE 트랜잭션 묶어 부분 실패 시 ROLLBACK 보장.
   if (!existingNames.has("read_count_baseline")) {
+    if (progressCb) progressCb({ label: "v7.0.15 read_count_baseline 백필 중..." });
     try {
       await database.withTransactionAsync(async () => {
         await database.runAsync(
@@ -5337,6 +5403,7 @@ async function initDb() {
   await ensureColumn("planned_novels", "why_interested", "TEXT", "''");
   await ensureColumn("planned_novels", "tag_data", "TEXT", "''");
 
+  if (progressCb) progressCb({ label: "v7.2 가등록 스키마 확장 중..." });
   // 🆕 v7.2.0: round-trip 데이터 보존을 위한 16개 컬럼 (novels 스키마 정합)
   // 가등록 입력 폼은 일부만 노출, 나머지는 reverse 전환(convertNovelToPlanned)에서 채워짐
   await ensureColumn("planned_novels", "status", "TEXT", "'reading'");
@@ -10633,7 +10700,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.2.0";
+const APP_VERSION = "7.3.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -10659,6 +10726,33 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.3.0", date: "2026-05-07",
+    title: "가등록 시스템 강화 + 잔여 기술부채 청산 (예정탭 sub-tab + 일괄편집 외 5건)",
+    highlights: [
+      { type: "new", text: "✏️ 예정탭 sub-tab 도입 — '📋 목록' / '✏️ 일괄편집' 분리. 일괄편집에서 6종 작업 (진등록 전환, 삭제, 태그 추가/삭제, 플랫폼 설정, 우선순위, 작품상태)" },
+      { type: "new", text: "🏆💬🎨 가등록 카드 round-trip 배지 — awards/quote/gallery 카운트 표시 (passive)" },
+      { type: "new", text: "📊 1만+ 작품 첫 마이그레이션 progress overlay — initDb 단계별 라벨 표시" },
+      { type: "fix", text: "🔄 프리셋 변경 시 planned_novels.manual_tier도 함께 마이그레이션 (round-trip 정합성)" },
+      { type: "fix", text: "🛡️ convertNovelToPlanned 자동매칭 가드 — 함수 silent abort + button 시각 disabled" },
+      { type: "fix", text: "🧹 removeNovel/batchDelete가 v7.1 tier_inversion preference_patterns 고아 정리" },
+    ],
+    details: [
+      { type: "fix", text: "App.jsx:43425 영역 — 프리셋 변경 onPress의 manual/hybrid/match 분기 후 planned_novels.manual_tier 마이그레이션 루프 추가 (mode 무관)" },
+      { type: "fix", text: "App.jsx convertNovelToPlanned 진입부 — isAutoMatchingRef.current 시 console.warn + return false (Alert X)" },
+      { type: "fix", text: "App.jsx batchConvertToPlanned 진입부 — Alert + early return (button-level)" },
+      { type: "fix", text: "App.jsx 편집 모달 '📋 가등록' 버튼 — disabled={isAutoMatching} + opacity:0.4. tap 시 Alert 안내" },
+      { type: "fix", text: "App.jsx NovelCard long-press '📋 가등록 전환' — onPress 진입부 isAutoMatchingRef 가드" },
+      { type: "fix", text: "App.jsx removeNovel + batchDelete execBatch — `DELETE FROM preference_patterns WHERE pattern_key='novel:{id}'` 추가" },
+      { type: "new", text: "App.jsx initDb(progressCb) — 단계별 라벨 progressCb 호출 (4-5 단계). AppContent init/switch 두 호출 사이트가 setLoadingProgress 콜백 전달" },
+      { type: "new", text: "App.jsx loadPlannedList — 별도 SELECT로 gallery_images COUNT Map 빌드, plannedList 각 row에 gallery_count attach" },
+      { type: "new", text: "App.jsx 가등록 카드 — awards(parseAwards)/quote(parseQuotes)/gallery_count 계산 후 🏆/💬/🎨 배지 row 조건부 렌더" },
+      { type: "new", text: "App.jsx _doConvertPlannedToNovel 헬퍼 추출 — 사전 검증 + INSERT/UPDATE/DELETE/recent_changes 핵심 logic. {ok, reason, message} 반환" },
+      { type: "new", text: "App.jsx convertPlannedToNovelSilent — Alert 없이 _doConvertPlannedToNovel 호출 (batch용)" },
+      { type: "new", text: "App.jsx 신규 6종 batch 함수: batchConvertPlannedToNovels, batchDeletePlanned, batchAddPlannedTag, batchRemovePlannedTag, batchSetPlannedPlatforms, batchSetPlannedPriority, batchSetPlannedWorkStatus" },
+      { type: "new", text: "App.jsx 예정탭 JSX — sub-tab Chip row + list/bulk 분기 렌더. bulk 분기는 검색/선택/작업/다중선택 카드 리스트 4 섹션" },
+    ],
+  },
   {
     version: "7.2.0", date: "2026-05-07",
     title: "가등록 ↔ 진등록 양방향 전환 + 가등록 스키마 확장",
@@ -26471,6 +26565,14 @@ function AppContent() {
   const [plannedSortKey, setPlannedSortKey] = useState("created"); // created, title, priority
   const [plannedSortDir, setPlannedSortDir] = useState("DESC");
   const [plannedFilterPlatform, setPlannedFilterPlatform] = useState("ALL"); // 🆕 v3.4.2 플랫폼 필터
+  // 🆕 v7.3.0: 예정탭 sub-tab + 일괄편집 multi-select
+  const [plannedSubTab, setPlannedSubTab] = useState("list"); // "list" | "bulk"
+  const [plannedSelectedIds, setPlannedSelectedIds] = useState([]);
+  const plannedSelectedIdsRef = useRef([]);
+  plannedSelectedIdsRef.current = plannedSelectedIds; // 매 렌더 동기화 (stale closure 방지)
+  const [plannedBulkSearch, setPlannedBulkSearch] = useState("");
+  const [plannedBulkTagInput, setPlannedBulkTagInput] = useState("");
+  const [plannedBulkTagIntensity, setPlannedBulkTagIntensity] = useState(3);
   // 예정 작품 등록 폼
   const [plannedTitle, setPlannedTitle] = useState("");
   const [plannedAuthor, setPlannedAuthor] = useState("");
@@ -27314,12 +27416,15 @@ function AppContent() {
       }
       
       const maxRetries = 3;
-      
+
+      // 🆕 v7.3.0: initDb 진행 상태를 ProgressOverlay에 노출 (대규모 마이그레이션 안내)
+      setLoadingProgress({ label: "데이터베이스 초기화 중..." });
       for (let attempt = 0; attempt < maxRetries; attempt++) {
         try {
-          await initDb();
-          
+          await initDb((p) => setLoadingProgress(p));
+
           // 🏷️ v5.0 태그 시스템 마이그레이션
+          setLoadingProgress({ label: "태그 시스템 마이그레이션 중..." });
           await migrateTagSystem();
 
           // 🔧 v3.6.0: Tag Registry 로드 (없으면 FACTORY에서 시드 + 기존 사용자 데이터 병합)
@@ -27746,18 +27851,20 @@ function AppContent() {
             }
           } catch (e) { console.warn("What's New check error:", e); }
 
+          setLoadingProgress(null);  // 🆕 v7.3.0: 초기화 진행도 클리어
           setIsLoading(false);
           return; // 성공하면 종료
-          
+
         } catch (e) {
           console.warn(`앱 초기화 오류 (시도 ${attempt + 1}/${maxRetries}):`, e);
           await resetDbConnection();
           
           if (attempt === maxRetries - 1) {
             if (mounted) {
+              setLoadingProgress(null);  // 🆕 v7.3.0
               setIsLoading(false);
               Alert.alert(
-                "데이터베이스 오류", 
+                "데이터베이스 오류",
                 "앱을 다시 시작해주세요.\n\n오류: " + e.message,
                 [{ text: "확인" }]
               );
@@ -27799,9 +27906,11 @@ function AppContent() {
     try {
       // 1. DB 레벨 전환 (flush → close → open new)
       await switchSlotDb(newSlotId);
-      
-      // 2. 새 DB 초기화 (테이블 생성 등)
-      await initDb();
+
+      // 2. 새 DB 초기화 (테이블 생성 등) — 🆕 v7.3.0: progress 콜백
+      setLoadingProgress({ label: "슬롯 DB 초기화 중..." });
+      await initDb((p) => setLoadingProgress(p));
+      setLoadingProgress({ label: "태그 시스템 마이그레이션 중..." });
       await migrateTagSystem();
       const slotRegistry = await loadTagRegistry(); // 🔧 v3.6.1: 반환값 보존
       await loadPlatformRegistry(); // 🆕 플랫폼 레지스트리 로드
@@ -28262,7 +28371,17 @@ function AppContent() {
         orderBy = `priority ${safeDir}, created_at DESC`;
       }
       const rows = await all(`SELECT * FROM planned_novels ORDER BY ${orderBy};`);
-      setPlannedList(rows || []);
+      // 🆕 v7.3.0: 가등록 카드 갤러리 카운트 배지용 — 별도 쿼리로 Map 빌드 (가독성 우선)
+      let galleryCounts = new Map();
+      try {
+        const cnts = await all("SELECT novel_id, COUNT(*) AS cnt FROM gallery_images GROUP BY novel_id");
+        galleryCounts = new Map((cnts || []).map(r => [r.novel_id, Number(r.cnt) || 0]));
+      } catch (e) { console.warn("[v7.3.0] gallery_count 로드 실패:", e?.message); }
+      const enriched = (rows || []).map(p => ({
+        ...p,
+        gallery_count: galleryCounts.get(p.id) || 0,
+      }));
+      setPlannedList(enriched);
       if (_pt) PerfMonitor.trackFunc("loadPlannedList", Date.now() - _pt); // 🔬
     } catch (e) {
       console.warn("loadPlannedList 오류:", e);
@@ -28484,7 +28603,167 @@ function AppContent() {
   }
   
   // 예정 → 본 목록으로 등록 전환
+  // 🆕 v7.3.0: 핵심 로직 분리 — silent (Alert X) 호출 가능. batch에서 재사용.
+  // 반환: { ok: true, id, noteAdditions } 또는 { ok: false, reason: "duplicate_title"|"error", message }
+  async function _doConvertPlannedToNovel(planned) {
+    if (!planned || !planned.title) return { ok: false, reason: "no_input" };
+    try {
+      // 본 목록 중복 체크
+      const dupInMain = await first("SELECT id FROM novels WHERE title=?", [planned.title]);
+      if (dupInMain) return { ok: false, reason: "duplicate_title", message: planned.title };
+
+      // 🆕 v7.2.0: id 보존 — round-trip 시 matches/gallery/folders/tier_* 자동 살아남음.
+      // planned.id가 이미 novels에 있으면 (희박 — 부분 실패 잔재) 신규 uuid fallback.
+      let id = planned.id || uuid();
+      if (planned.id) {
+        try {
+          const idCollision = await first("SELECT 1 FROM novels WHERE id=?", [planned.id]);
+          if (idCollision) {
+            console.warn("[v7.3.0] planned.id 충돌 → 신규 uuid fallback:", planned.id);
+            id = uuid();
+          }
+        } catch (e) {
+          console.warn("[v7.3.0] id 충돌 체크 실패 (계속 진행):", e?.message);
+        }
+      }
+      const now = Date.now();
+
+      // 예정작품 정보를 메모에 병합
+      let enhancedNote = planned.note || "";
+      const noteAdditions = [];
+      if (planned.why_interested) noteAdditions.push(`[관심 이유] ${planned.why_interested}`);
+      if (planned.discovery_source) noteAdditions.push(`[발견 경로] ${planned.discovery_source}`);
+      if (planned.expected_tier) noteAdditions.push(`[예상 티어] ${planned.expected_tier}`);
+      if (planned.interest_level && planned.interest_level !== 3) {
+        noteAdditions.push(`[등록 전 관심도] ${"★".repeat(planned.interest_level)}${"☆".repeat(5 - planned.interest_level)}`);
+      }
+      if (planned.scheduled_start_date && planned.scheduled_start_date > 0) {
+        try {
+          const dateStr = new Date(planned.scheduled_start_date).toLocaleDateString();
+          noteAdditions.push(`[읽기 예정일] ${dateStr}`);
+        } catch {}
+      }
+      if (planned.similar_novels) {
+        try {
+          const similarIds = JSON.parse(planned.similar_novels);
+          if (Array.isArray(similarIds) && similarIds.length > 0) {
+            const similarTitles = similarIds.map(sid => listMap.get(sid)?.title).filter(Boolean);
+            if (similarTitles.length > 0) noteAdditions.push(`[비슷한 작품] ${similarTitles.join(", ")}`);
+          }
+        } catch {}
+      }
+      if (noteAdditions.length > 0) {
+        enhancedNote = enhancedNote
+          ? `${enhancedNote}\n\n--- 예정작품 정보 ---\n${noteAdditions.join("\n")}`
+          : `--- 예정작품 정보 ---\n${noteAdditions.join("\n")}`;
+      }
+
+      const initialReadCount = planned.first_chapter_read ? 1 : 0;
+      const shouldPin = (planned.priority || 3) >= 4 ? 1 : 0;
+
+      // 🆕 v7.0.12: hybrid invariant gap=100 보존
+      const initialManualTier =
+        (globalTierConfig.mode !== "match" && planned.expected_tier && getActiveTierOrder(globalTierConfig).includes(planned.expected_tier))
+          ? planned.expected_tier : null;
+      let initialManualOrder = 0;
+      try {
+        if (initialManualTier) {
+          const maxRow = await first("SELECT MAX(manual_order) AS m FROM novels WHERE manual_tier=?", [initialManualTier]);
+          initialManualOrder = (Number(maxRow?.m) || 0) + 100;
+        } else {
+          const maxRow = await first("SELECT MAX(manual_order) AS m FROM novels WHERE manual_tier IS NULL OR manual_tier=''");
+          initialManualOrder = (Number(maxRow?.m) || 0) + 100;
+        }
+      } catch (e) {
+        console.warn("[v7.3.0] convertPlannedToNovel manual_order 계산 실패:", e?.message);
+      }
+
+      // 🆕 v7.2.0: hardcoded → planned 값 우선 (round-trip 데이터 보존)
+      await exec(
+        `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+        [
+          id,
+          planned.title,
+          planned.author || "",
+          planned.tags || "",
+          planned.platforms || "[]",
+          enhancedNote,
+          Number(planned.read_count) || initialReadCount,
+          Number(planned.rating) || 1500,
+          Number(planned.rd) || 350,
+          Number(planned.wins) || 0,
+          Number(planned.losses) || 0,
+          Number(planned.match_count) || 0,
+          globalTierConfig.defaultTier || "C",
+          now,
+          planned.awards || "",
+          Number(planned.total_episodes) || 0,
+          planned.status || "reading",
+          Number(planned.pinned) || shouldPin,
+          planned.cover_image || "",
+          planned.link || "",
+          planned.work_status || "ongoing",
+          Number(planned.read_count_updated_at) || now,
+          planned.major_genre || "",
+          planned.sub_genre || "",
+          planned.gaiden_status || "none",
+          Number(planned.gaiden_read_count) || 0,
+          Number(planned.gaiden_total_episodes) || 0,
+          Math.max(1, Number(planned.reread_count) || 1),
+          planned.tag_data || "",
+          planned.memorable_quote || "",
+          planned.aliases || "",
+          planned.manual_tier || initialManualTier,
+          initialManualOrder,
+        ]
+      );
+      const _baselineToRestore = Number(planned.read_count_baseline) || (Number(planned.read_count) || initialReadCount);
+      await exec("UPDATE novels SET read_count_baseline=? WHERE id=?", [_baselineToRestore, id]);
+      await exec("DELETE FROM planned_novels WHERE id=?", [planned.id]);
+      syncTagsToCustom(planned.tags || "");
+
+      // 표지 라이브러리 동기화
+      if (planned.cover_image) {
+        try { await applyNovelCover(id, planned.cover_image, null); } catch {}
+      }
+
+      // 📰 최신 변화 기록
+      let majorGenreText = "-";
+      if (planned.major_genre) {
+        try {
+          const genres = JSON.parse(planned.major_genre);
+          if (Array.isArray(genres)) majorGenreText = genres.join(", ");
+        } catch {}
+      }
+      try {
+        await addRecentChange(id, planned.title, "new", {
+          author: planned.author || "-",
+          majorGenre: majorGenreText,
+          fromPlanned: true,
+        });
+      } catch {}
+
+      return { ok: true, id, noteAdditions };
+    } catch (e) {
+      console.warn("[v7.3.0] _doConvertPlannedToNovel 오류:", e?.message);
+      return { ok: false, reason: "error", message: e?.message || "알 수 없는 오류" };
+    }
+  }
+
+  // 🆕 v7.3.0: silent 호출 가능 (Alert X, 일괄 batch에서 재사용)
+  async function convertPlannedToNovelSilent(planned) {
+    // 🆕 v7.3.0: 자동매칭 가드 (caller에서 사전 체크 권장 — 여기서는 방어적으로 한 번 더)
+    if (isAutoMatchingRef.current) return { ok: false, reason: "auto_matching" };
+    return await _doConvertPlannedToNovel(planned);
+  }
+
   async function convertPlannedToNovel(planned) {
+    // 🆕 v7.3.0: 자동매칭 중 차단 (Alert로 사용자에게 안내, button-level 가드)
+    if (isAutoMatchingRef.current) {
+      Alert.alert("자동매칭 중", "자동매칭이 진행 중입니다.\n매칭을 멈춘 후 다시 시도하세요.");
+      return;
+    }
     Alert.alert(
       "등록 전환",
       `"${planned.title}"을(를) 본 목록으로 등록할까요?\n\n예정 목록의 모든 정보가 이전됩니다.`,
@@ -28495,194 +28774,252 @@ function AppContent() {
           onPress: async () => {
             setIsLoading(true);
             try {
-              // 🔧 v3.5.9: 본 목록 중복 체크 (예정→본편 전환 시)
-              const dupInMain = await first("SELECT id FROM novels WHERE title=?", [planned.title]);
-              if (dupInMain) {
-                setIsLoading(false);
-                Alert.alert("중복 알림", `"${planned.title}"이(가) 본 목록에 이미 있습니다.\n\n제목을 변경한 후 다시 시도하세요.`);
-                return;
+              const r = await _doConvertPlannedToNovel(planned);
+              if (r.ok) {
+                await loadPlannedList();
+                await loadList(undefined, undefined, "supplement");
+                if (planned.cover_image) await loadCoverLibrary();
+                const infoMsg = (r.noteAdditions && r.noteAdditions.length > 0)
+                  ? `\n\n예정작품 정보(${r.noteAdditions.length}건)가 메모에 추가되었습니다.`
+                  : "";
+                Alert.alert("완료", `"${planned.title}"이(가) 본 목록에 등록되었습니다.${infoMsg}`);
+              } else if (r.reason === "duplicate_title") {
+                Alert.alert("중복 알림", `"${r.message}"이(가) 본 목록에 이미 있습니다.\n\n제목을 변경한 후 다시 시도하세요.`);
+              } else {
+                Alert.alert("오류", `등록 전환 중 오류가 발생했습니다.\n\n${r.message || ""}`);
               }
-
-              // 🆕 v7.2.0: id 보존 — round-trip(novels↔planned) 시 matches/gallery/folders/tier_*
-              // 등 연관 row의 novel_id 참조가 자동 유지. fallback은 신규 uuid (legacy planned 호환).
-              // 단, planned.id가 이미 novels에 있으면 (희박 — 부분 실패 잔재) 신규 uuid로 fallback.
-              let id = planned.id || uuid();
-              if (planned.id) {
-                try {
-                  const idCollision = await first("SELECT 1 FROM novels WHERE id=?", [planned.id]);
-                  if (idCollision) {
-                    console.warn("[v7.2.0] planned.id 충돌 (novels에 이미 존재) → 신규 uuid fallback:", planned.id);
-                    id = uuid();
-                  }
-                } catch (e) {
-                  console.warn("[v7.2.0] id 충돌 체크 실패 (계속 진행):", e?.message);
-                }
-              }
-              const now = Date.now();
-
-              // 🆕 v3.4.1 #13: 예정작품의 추가 정보를 메모에 병합
-              let enhancedNote = planned.note || "";
-              const noteAdditions = [];
-              
-              // 관심 갖게 된 이유
-              if (planned.why_interested) {
-                noteAdditions.push(`[관심 이유] ${planned.why_interested}`);
-              }
-              // 발견 경로
-              if (planned.discovery_source) {
-                noteAdditions.push(`[발견 경로] ${planned.discovery_source}`);
-              }
-              // 예상 티어
-              if (planned.expected_tier) {
-                noteAdditions.push(`[예상 티어] ${planned.expected_tier}`);
-              }
-              // 관심도
-              if (planned.interest_level && planned.interest_level !== 3) {
-                noteAdditions.push(`[등록 전 관심도] ${"★".repeat(planned.interest_level)}${"☆".repeat(5 - planned.interest_level)}`);
-              }
-              // 읽기 시작 예정일
-              if (planned.scheduled_start_date && planned.scheduled_start_date > 0) {
-                try {
-                  const dateStr = new Date(planned.scheduled_start_date).toLocaleDateString();
-                  noteAdditions.push(`[읽기 예정일] ${dateStr}`);
-                } catch {}
-              }
-              // 비슷한 작품 정보
-              if (planned.similar_novels) {
-                try {
-                  const similarIds = JSON.parse(planned.similar_novels);
-                  if (Array.isArray(similarIds) && similarIds.length > 0) {
-                    const similarTitles = similarIds
-                      .map(sid => listMap.get(sid)?.title)
-                      .filter(Boolean);
-                    if (similarTitles.length > 0) {
-                      noteAdditions.push(`[비슷한 작품] ${similarTitles.join(", ")}`);
-                    }
-                  }
-                } catch {}
-              }
-              
-              if (noteAdditions.length > 0) {
-                enhancedNote = enhancedNote 
-                  ? `${enhancedNote}\n\n--- 예정작품 정보 ---\n${noteAdditions.join("\n")}`
-                  : `--- 예정작품 정보 ---\n${noteAdditions.join("\n")}`;
-              }
-              
-              // 1화 읽음 여부 → read_count
-              const initialReadCount = planned.first_chapter_read ? 1 : 0;
-              
-              // 우선순위 → pinned (4 이상이면 고정)
-              const shouldPin = (planned.priority || 3) >= 4 ? 1 : 0;
-              
-              // 🆕 v7.0.12: convertPlannedToNovel manual_order 누락 수정 — addNovel과 동일 패턴
-              // (이전: INSERT에 manual_order 미포함 → 기본값 0 부여 → hybrid invariant gap=100 위반)
-              const initialManualTier =
-                (globalTierConfig.mode !== "match" && planned.expected_tier && getActiveTierOrder(globalTierConfig).includes(planned.expected_tier))
-                  ? planned.expected_tier : null;
-              let initialManualOrder = 0;
-              try {
-                if (initialManualTier) {
-                  const maxRow = await first("SELECT MAX(manual_order) AS m FROM novels WHERE manual_tier=?", [initialManualTier]);
-                  initialManualOrder = (Number(maxRow?.m) || 0) + 100;
-                } else {
-                  const maxRow = await first("SELECT MAX(manual_order) AS m FROM novels WHERE manual_tier IS NULL OR manual_tier=''");
-                  initialManualOrder = (Number(maxRow?.m) || 0) + 100;
-                }
-              } catch (e) {
-                console.warn("[v7.0.12] convertPlannedToNovel manual_order 계산 실패:", e?.message);
-              }
-
-              // 본 목록에 등록 (모든 필드 이전)
-              // 🆕 v7.2.0: hardcoded default → planned 값 우선. round-trip(reverse 후 forward)
-              // 시 manual_tier/awards/quote/reread/aliases/wins/losses 등 모든 데이터 보존.
-              await exec(
-                `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-                [
-                  id,
-                  planned.title,
-                  planned.author || "",
-                  planned.tags || "",
-                  planned.platforms || "[]",
-                  enhancedNote, // 🆕 강화된 메모
-                  // 🆕 v7.2.0: planned.read_count 우선 (reverse에서 보존), 없으면 first_chapter_read fallback
-                  Number(planned.read_count) || initialReadCount,
-                  Number(planned.rating) || 1500,                                  // 🆕 v7.2.0
-                  Number(planned.rd) || 350,                                       // 🆕 v7.2.0
-                  Number(planned.wins) || 0,                                       // 🆕 v7.2.0
-                  Number(planned.losses) || 0,                                     // 🆕 v7.2.0
-                  Number(planned.match_count) || 0,                                // 🆕 v7.2.0
-                  globalTierConfig.defaultTier || "C", // 🔧 v6.0.1: 동적 기본 티어
-                  now,
-                  planned.awards || "",                                            // 🆕 v7.2.0 (was "")
-                  Number(planned.total_episodes) || 0,
-                  planned.status || "reading",                                     // 🆕 v7.2.0
-                  // 🆕 v7.2.0: planned.pinned 우선 (reverse 보존), 없으면 priority>=4 fallback
-                  Number(planned.pinned) || shouldPin,
-                  planned.cover_image || "",
-                  planned.link || "",
-                  planned.work_status || "ongoing",
-                  Number(planned.read_count_updated_at) || now,                    // 🆕 v7.2.0
-                  planned.major_genre || "",
-                  planned.sub_genre || "",
-                  planned.gaiden_status || "none",                                 // 🆕 v7.2.0
-                  Number(planned.gaiden_read_count) || 0,                          // 🆕 v7.2.0
-                  Number(planned.gaiden_total_episodes) || 0,                      // 🆕 v7.2.0
-                  Math.max(1, Number(planned.reread_count) || 1),                  // 🆕 v7.2.0
-                  planned.tag_data || "", // 🆕 태그 데이터 이전
-                  planned.memorable_quote || "",                                   // 🆕 v7.2.0 (was "")
-                  planned.aliases || "",                                           // 🆕 v7.2.0 (was "")
-                  // 🆕 v7.2.0: planned.manual_tier 우선 (reverse 보존), 없으면 expected_tier fallback
-                  planned.manual_tier || initialManualTier,
-                  initialManualOrder, // 🆕 v7.0.12: hybrid invariant 보존
-                ]
-              );
-              // 🆕 v7.0.15 + v7.2.0: read_count_baseline 우선 (reverse 보존), 없으면 read_count fallback
-              const _baselineToRestore = Number(planned.read_count_baseline) || (Number(planned.read_count) || initialReadCount);
-              await exec("UPDATE novels SET read_count_baseline=? WHERE id=?", [_baselineToRestore, id]);
-
-              // 예정 목록에서 삭제
-              await exec("DELETE FROM planned_novels WHERE id=?", [planned.id]);
-              
-              syncTagsToCustom(planned.tags || ""); // 🔧 v3.5.9: 태그 동기화
-              await loadPlannedList();
-              await loadList(undefined, undefined, "supplement");
-              
-              // 🖼️ v3.4.5: 표지가 있으면 라이브러리 상태 업데이트
-              if (planned.cover_image) {
-                await applyNovelCover(id, planned.cover_image, null);
-                await loadCoverLibrary();
-              }
-              
-              // 📰 최신 변화 기록
-              let majorGenreText = "-";
-              if (planned.major_genre) {
-                try {
-                  const genres = JSON.parse(planned.major_genre);
-                  if (Array.isArray(genres)) majorGenreText = genres.join(", ");
-                } catch {}
-              }
-              
-              await addRecentChange(id, planned.title, "new", {
-                author: planned.author || "-",
-                majorGenre: majorGenreText,
-                fromPlanned: true,
-              });
-              
-              const infoMsg = noteAdditions.length > 0 
-                ? `\n\n예정작품 정보(${noteAdditions.length}건)가 메모에 추가되었습니다.`
-                : "";
-              Alert.alert("완료", `"${planned.title}"이(가) 본 목록에 등록되었습니다.${infoMsg}`);
-            } catch (e) {
-              console.warn("convertPlannedToNovel 오류:", e);
-              Alert.alert("오류", "등록 전환 중 오류가 발생했습니다.\n\n" + e.message);
+            } finally {
+              setIsLoading(false);
             }
-            setIsLoading(false);
           },
         },
       ]
     );
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 🆕 v7.3.0: 가등록 일괄편집 sub-tab — 6종 batch 함수
+  // selectedIds 대신 plannedSelectedIdsRef 사용 (메인 bulk와 분리)
+  // 자동매칭 가드 + setLoadingProgress + skip 카운트 패턴 일관 적용
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const togglePlannedSelected = useCallback((id) => {
+    setPlannedSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  }, []);
+
+  // 🆕 v7.3.0: 가등록 → 진등록 일괄 전환 (대칭 op)
+  const batchConvertPlannedToNovels = useCallback(async () => {
+    const ids = plannedSelectedIdsRef.current;
+    if (!ids || ids.length === 0) {
+      Alert.alert("알림", "먼저 가등록 작품을 선택해주세요.");
+      return;
+    }
+    if (isAutoMatchingRef.current) {
+      Alert.alert("자동매칭 중", "자동매칭이 진행 중입니다.\n매칭을 멈춘 후 다시 시도하세요.");
+      return;
+    }
+    Alert.alert(
+      "일괄 진등록 전환",
+      `선택 ${ids.length}개 가등록 작품을 진등록으로 전환할까요?\n\n title 충돌 시 해당 작품만 skip됩니다.`,
+      [
+        { text: "취소" },
+        {
+          text: "전환",
+          onPress: async () => {
+            setIsLoading(true);
+            setLoadingProgress({ current: 0, total: ids.length, label: "진등록 전환 중..." });
+            let success = 0, skipped = 0;
+            try {
+              for (let i = 0; i < ids.length; i++) {
+                const planned = plannedList.find(p => p.id === ids[i]);
+                if (!planned) { skipped++; continue; }
+                const r = await convertPlannedToNovelSilent(planned);
+                if (r && r.ok) success++; else skipped++;
+                setLoadingProgress({ current: i + 1, total: ids.length, label: "진등록 전환 중..." });
+              }
+              await loadPlannedList();
+              await loadList(undefined, undefined, "batch_promote");
+              await loadCoverLibrary();
+              setPlannedSelectedIds([]);
+            } finally {
+              setLoadingProgress(null);
+              setIsLoading(false);
+            }
+            Alert.alert("완료", `진등록 전환 ${success}건${skipped > 0 ? ` · skip ${skipped}건 (title 충돌 등)` : ""}`);
+          },
+        },
+      ]
+    );
+  }, [plannedList]);
+
+  // 🆕 v7.3.0: 가등록 일괄 삭제
+  const batchDeletePlanned = useCallback(async () => {
+    const ids = plannedSelectedIdsRef.current;
+    if (!ids || ids.length === 0) {
+      Alert.alert("알림", "먼저 가등록 작품을 선택해주세요.");
+      return;
+    }
+    Alert.alert(
+      "일괄 삭제",
+      `선택 ${ids.length}개 가등록 작품을 삭제할까요?\n\n작품 round-trip 데이터(awards/quote/gallery)도 함께 삭제됩니다.`,
+      [
+        { text: "취소" },
+        {
+          text: "삭제",
+          style: "destructive",
+          onPress: async () => {
+            setIsLoading(true);
+            setLoadingProgress({ current: 0, total: ids.length, label: "삭제 중..." });
+            try {
+              const placeholders = ids.map(() => "?").join(",");
+              // 🆕 v7.3.0: 표지 라이브러리 정리 (used → unused)
+              try {
+                const planned = await all(`SELECT id, cover_image FROM planned_novels WHERE id IN (${placeholders})`, ids);
+                for (const p of (planned || [])) {
+                  if (p.cover_image) {
+                    await updateCoverStatus(p.cover_image, null, "unused").catch(() => {});
+                  }
+                }
+              } catch (e) { console.warn("[v7.3.0] 가등록 일괄 표지 정리 실패:", e?.message); }
+
+              // 갤러리 이미지(round-trip 보존)도 정리
+              try {
+                await exec(`DELETE FROM gallery_images WHERE novel_id IN (${placeholders})`, ids);
+              } catch (e) { console.warn("[v7.3.0] gallery_images 정리 실패:", e?.message); }
+
+              await exec(`DELETE FROM planned_novels WHERE id IN (${placeholders})`, ids);
+              await loadPlannedList();
+              await loadCoverLibrary();
+              setPlannedSelectedIds([]);
+            } finally {
+              setLoadingProgress(null);
+              setIsLoading(false);
+            }
+            Alert.alert("완료", `${ids.length}개 가등록 삭제됨.`);
+          },
+        },
+      ]
+    );
+  }, [plannedList]);
+
+  // 🆕 v7.3.0: 일괄 태그 추가 — tag_data intensity 함께 (메인 batchAddTag 패턴)
+  const batchAddPlannedTag = useCallback(async () => {
+    const tag = (plannedBulkTagInput || "").trim();
+    if (!tag) { Alert.alert("알림", "추가할 태그를 입력하세요."); return; }
+    const ids = plannedSelectedIdsRef.current;
+    if (!ids || ids.length === 0) {
+      Alert.alert("알림", "먼저 가등록 작품을 선택해주세요.");
+      return;
+    }
+    setIsLoading(true);
+    setLoadingProgress({ current: 0, total: ids.length, label: "태그 추가 중..." });
+    try {
+      for (let i = 0; i < ids.length; i++) {
+        const id = ids[i];
+        const p = plannedList.find(x => x.id === id);
+        if (!p) continue;
+        // tags (CSV) — 중복 회피
+        const existingTags = (p.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+        if (!existingTags.includes(tag)) existingTags.push(tag);
+        const newTags = existingTags.join(", ");
+        // tag_data — intensity 추가/갱신
+        let td = [];
+        try { td = JSON.parse(p.tag_data || "[]"); if (!Array.isArray(td)) td = []; } catch {}
+        const existingIdx = td.findIndex(x => x.tag === tag);
+        if (existingIdx >= 0) td[existingIdx].intensity = plannedBulkTagIntensity;
+        else td.push({ tag, intensity: plannedBulkTagIntensity });
+        await exec("UPDATE planned_novels SET tags=?, tag_data=? WHERE id=?", [newTags, JSON.stringify(td), id]);
+        setLoadingProgress({ current: i + 1, total: ids.length, label: "태그 추가 중..." });
+      }
+      syncTagsToCustom(tag);
+      await loadPlannedList();
+      Alert.alert("완료", `${ids.length}개 가등록에 "${tag}" 태그 추가됨 (intensity ${plannedBulkTagIntensity}).`);
+    } finally {
+      setLoadingProgress(null);
+      setIsLoading(false);
+    }
+  }, [plannedList, plannedBulkTagInput, plannedBulkTagIntensity]);
+
+  // 🆕 v7.3.0: 일괄 태그 삭제
+  const batchRemovePlannedTag = useCallback(async () => {
+    const tag = (plannedBulkTagInput || "").trim();
+    if (!tag) { Alert.alert("알림", "삭제할 태그를 입력하세요."); return; }
+    const ids = plannedSelectedIdsRef.current;
+    if (!ids || ids.length === 0) {
+      Alert.alert("알림", "먼저 가등록 작품을 선택해주세요.");
+      return;
+    }
+    setIsLoading(true);
+    setLoadingProgress({ current: 0, total: ids.length, label: "태그 삭제 중..." });
+    try {
+      for (let i = 0; i < ids.length; i++) {
+        const id = ids[i];
+        const p = plannedList.find(x => x.id === id);
+        if (!p) continue;
+        const remaining = (p.tags || "").split(",").map(t => t.trim()).filter(t => t && t !== tag);
+        const newTags = remaining.join(", ");
+        let td = [];
+        try { td = JSON.parse(p.tag_data || "[]"); if (!Array.isArray(td)) td = []; } catch {}
+        td = td.filter(x => x.tag !== tag);
+        await exec("UPDATE planned_novels SET tags=?, tag_data=? WHERE id=?", [newTags, JSON.stringify(td), id]);
+        setLoadingProgress({ current: i + 1, total: ids.length, label: "태그 삭제 중..." });
+      }
+      await loadPlannedList();
+      Alert.alert("완료", `${ids.length}개 가등록에서 "${tag}" 태그 삭제됨.`);
+    } finally {
+      setLoadingProgress(null);
+      setIsLoading(false);
+    }
+  }, [plannedList, plannedBulkTagInput]);
+
+  // 🆕 v7.3.0: 일괄 플랫폼 설정 (선택된 플랫폼으로 통일)
+  const batchSetPlannedPlatforms = useCallback(async (newPlatforms) => {
+    const ids = plannedSelectedIdsRef.current;
+    if (!ids || ids.length === 0) {
+      Alert.alert("알림", "먼저 가등록 작품을 선택해주세요.");
+      return;
+    }
+    const placeholders = ids.map(() => "?").join(",");
+    await exec(
+      `UPDATE planned_novels SET platforms=? WHERE id IN (${placeholders})`,
+      [JSON.stringify(newPlatforms || []), ...ids]
+    );
+    await loadPlannedList();
+    Alert.alert("완료", `${ids.length}개 가등록 플랫폼 설정됨.`);
+  }, []);
+
+  // 🆕 v7.3.0: 일괄 우선순위 변경
+  const batchSetPlannedPriority = useCallback(async (priority) => {
+    const ids = plannedSelectedIdsRef.current;
+    if (!ids || ids.length === 0) {
+      Alert.alert("알림", "먼저 가등록 작품을 선택해주세요.");
+      return;
+    }
+    const p = Math.max(1, Math.min(5, Number(priority) || 3));
+    const placeholders = ids.map(() => "?").join(",");
+    await exec(
+      `UPDATE planned_novels SET priority=? WHERE id IN (${placeholders})`,
+      [p, ...ids]
+    );
+    await loadPlannedList();
+    Alert.alert("완료", `${ids.length}개 가등록 우선순위 ${p}로 설정됨.`);
+  }, []);
+
+  // 🆕 v7.3.0: 일괄 작품상태 변경
+  const batchSetPlannedWorkStatus = useCallback(async (status) => {
+    const ids = plannedSelectedIdsRef.current;
+    if (!ids || ids.length === 0) {
+      Alert.alert("알림", "먼저 가등록 작품을 선택해주세요.");
+      return;
+    }
+    const placeholders = ids.map(() => "?").join(",");
+    await exec(
+      `UPDATE planned_novels SET work_status=? WHERE id IN (${placeholders})`,
+      [status || "ongoing", ...ids]
+    );
+    await loadPlannedList();
+    Alert.alert("완료", `${ids.length}개 가등록 작품상태 변경됨.`);
+  }, []);
 
   // 🆕 v7.2.0: novels → planned_novels 역전환 (단건)
   // - id 보존: matches/gallery/folders/tier_verification_queue/v7.0 row 자동 살아남음
@@ -28693,6 +29030,12 @@ function AppContent() {
   async function convertNovelToPlanned(novel, opts = {}) {
     const silent = !!opts.silent;
     if (!novel || !novel.id) return false;
+
+    // 🆕 v7.3.0: 자동매칭 중 차단 (#1 불변조건 strict — Alert X)
+    if (isAutoMatchingRef.current) {
+      console.warn("[v7.3.0] convertNovelToPlanned: 자동매칭 중 — silent abort", novel.id);
+      return false;
+    }
 
     // 1. title 충돌 체크 (자기 자신 제외 — id 동일하면 OK)
     try {
@@ -28808,10 +29151,16 @@ function AppContent() {
   // 🆕 v7.2.0: 일괄 가등록 전환 (일괄편집 탭용)
   // — silent=true로 per-item Alert 억제 (배치에서는 결과 요약만 표시)
   // — setLoadingProgress로 진행도 표시 (대용량 batch 대응)
+  // — 🆕 v7.3.0: 자동매칭 중 silent abort
   const batchConvertToPlanned = useCallback(async () => {
     const ids = selectedIdsRef.current;
     if (!ids || ids.length === 0) {
       Alert.alert("알림", "먼저 작품을 선택해주세요.");
+      return;
+    }
+    // 🆕 v7.3.0: 자동매칭 중 차단 (Alert는 사용자 액션 직후라 button-level 가드)
+    if (isAutoMatchingRef.current) {
+      Alert.alert("자동매칭 중", "자동매칭이 진행 중입니다.\n매칭을 멈춘 후 다시 시도하세요.");
       return;
     }
     Alert.alert(
@@ -32797,6 +33146,9 @@ function AppContent() {
               { sql: "UPDATE tier_repositioning_session SET blocker_id=NULL WHERE blocker_id=?", params: [id] },
               // 🆕 v7.0.8: trigger_fire_log 고아 정리
               { sql: "DELETE FROM trigger_fire_log WHERE novel_id=?", params: [id] },
+              // 🆕 v7.3.0: v7.1 tier_inversion 패턴(novel:{id})은 id 참조 → 함께 정리
+              // (다른 카테고리 tag/author/genre/award는 entity-keyed라 무관)
+              { sql: "DELETE FROM preference_patterns WHERE pattern_key=?", params: [`novel:${id}`] },
               { sql: "DELETE FROM novels WHERE id=?", params: [id] },
             ]);
             // 🔧 v3.5.15e: 미플러시 choiceLog에서도 삭제 대상 제거 (고아 재삽입 방지)
@@ -35931,6 +36283,11 @@ function AppContent() {
                 sql: "DELETE FROM trigger_fire_log WHERE novel_id=?",
                 params: [id],
               });
+              // 🆕 v7.3.0: v7.1 tier_inversion 패턴 정리 (id-keyed)
+              queries.push({
+                sql: "DELETE FROM preference_patterns WHERE pattern_key=?",
+                params: [`novel:${id}`],
+              });
               queries.push({
                 sql: "DELETE FROM novels WHERE id=?",
                 params: [id],
@@ -38701,7 +39058,12 @@ async function importJSON() {
                         [
                           { text: "📂 폴더 배정", onPress: () => { setFolderAssignTarget(item.id); deferOpen(setFolderAssignModalOpen); } },
                           // 🆕 v7.2.0: 가등록 전환
+                          // 🆕 v7.3.0: 자동매칭 중 안내 (선택지는 표시하되 클릭 시 차단)
                           { text: "📋 가등록 전환", style: "destructive", onPress: () => {
+                            if (isAutoMatchingRef.current) {
+                              Alert.alert("자동매칭 중", "자동매칭이 진행 중입니다.\n매칭을 멈춘 후 다시 시도하세요.");
+                              return;
+                            }
                             Alert.alert(
                               "가등록 전환",
                               `"${item.title}"을(를) 가등록으로 되돌릴까요?\n\n매칭/갤러리/폴더 등 모든 데이터가 보존됩니다 (id 유지). 다시 진등록 전환 시 복원됩니다.`,
@@ -39306,7 +39668,34 @@ async function importJSON() {
         {screen === "planned" && (
           <>
             <H>📋 예정 작품</H>
-            
+
+            {/* 🆕 v7.3.0: sub-tab Chip row */}
+            <View style={{ flexDirection: "row", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+              {[
+                { key: "list", label: "📋 목록" },
+                { key: "bulk", label: "✏️ 일괄편집" },
+              ].map(t => (
+                <TouchableOpacity
+                  key={t.key}
+                  onPress={() => setPlannedSubTab(t.key)}
+                  style={{
+                    backgroundColor: plannedSubTab === t.key ? C.primary : C.chip,
+                    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999,
+                    borderWidth: 1,
+                    borderColor: plannedSubTab === t.key ? C.primary : C.line,
+                  }}
+                >
+                  <Text style={{
+                    color: plannedSubTab === t.key ? "#fff" : C.text,
+                    fontWeight: "700", fontSize: 13,
+                  }}>{t.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* ════ list sub-tab (기존 폼 + 카드) ════ */}
+            {plannedSubTab === "list" && (<>
+
             {/* 안내 문구 */}
             <View style={{
               backgroundColor: isDark ? "#1e3a5f" : "#eff6ff",
@@ -39322,7 +39711,7 @@ async function importJSON() {
                 '등록전환' 버튼을 눌러 실제로 읽기 시작하면 본 목록으로 이동하세요.
               </Text>
             </View>
-            
+
             {/* 예정 작품 등록 폼 (v3.4.2 간소화) */}
             <Section title="예정 작품 추가">
               <Label>제목 *</Label>
@@ -39693,7 +40082,38 @@ async function importJSON() {
                                 {item.author || "작가 미상"} · {plats.length ? plats.join(", ") : "-"}
                                 {item.total_episodes > 0 && ` · ${item.total_episodes}화`}
                               </Text>
-                              
+
+                              {/* 🆕 v7.3.0: 가등록 round-trip 데이터 배지 (awards/quote/gallery) */}
+                              {(() => {
+                                let awardCount = 0;
+                                try {
+                                  const a = JSON.parse(item.awards || "[]");
+                                  if (Array.isArray(a)) awardCount = a.length;
+                                } catch {}
+                                const quoteCount = parseQuotes(item.memorable_quote || "").length;
+                                const galleryCount = Number(item.gallery_count) || 0;
+                                if (awardCount === 0 && quoteCount === 0 && galleryCount === 0) return null;
+                                return (
+                                  <View style={{ flexDirection: "row", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+                                    {awardCount > 0 && (
+                                      <View style={{ backgroundColor: isDark ? "rgba(245,158,11,0.18)" : "#fef3c7", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 }}>
+                                        <Text style={{ color: isDark ? "#fde68a" : "#92400e", fontSize: 10, fontWeight: "700" }}>🏆 {awardCount}</Text>
+                                      </View>
+                                    )}
+                                    {quoteCount > 0 && (
+                                      <View style={{ backgroundColor: isDark ? "rgba(59,130,246,0.18)" : "#dbeafe", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 }}>
+                                        <Text style={{ color: isDark ? "#93c5fd" : "#1d4ed8", fontSize: 10, fontWeight: "700" }}>💬 {quoteCount}</Text>
+                                      </View>
+                                    )}
+                                    {galleryCount > 0 && (
+                                      <View style={{ backgroundColor: isDark ? "rgba(236,72,153,0.18)" : "#fce7f3", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 }}>
+                                        <Text style={{ color: isDark ? "#f9a8d4" : "#a21caf", fontSize: 10, fontWeight: "700" }}>🎨 {galleryCount}</Text>
+                                      </View>
+                                    )}
+                                  </View>
+                                );
+                              })()}
+
                               {/* 메모 */}
                               {item.note && (
                                 <Text style={{ color: C.sub, fontSize: 12, marginTop: 4 }} numberOfLines={1}>
@@ -39702,7 +40122,7 @@ async function importJSON() {
                               )}
                             </View>
                           </View>
-                          
+
                           {/* 버튼 */}
                           <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
                             <PrimaryButton
@@ -39724,6 +40144,216 @@ async function importJSON() {
                 );
               })()}
             </Section>
+            {/* ════ /list sub-tab ════ */}
+            </>)}
+
+            {/* ════ 🆕 v7.3.0: bulk sub-tab (일괄편집) ════ */}
+            {plannedSubTab === "bulk" && (() => {
+              // 검색 필터링
+              const q = (plannedBulkSearch || "").toLowerCase().trim();
+              const filtered = q
+                ? plannedList.filter(p =>
+                    (p.title || "").toLowerCase().includes(q) ||
+                    (p.author || "").toLowerCase().includes(q)
+                  )
+                : plannedList;
+              return (
+              <>
+                {/* 안내 */}
+                <View style={{
+                  backgroundColor: isDark ? "#1e3a5f" : "#eff6ff",
+                  padding: 10, borderRadius: 10, marginBottom: 12,
+                  borderLeftWidth: 4, borderLeftColor: "#8b5cf6",
+                }}>
+                  <Text style={{ color: isDark ? "#93c5fd" : "#1e40af", fontSize: 12 }}>
+                    ✏️ 가등록 작품 일괄편집. 다중 선택 후 작업 적용.
+                  </Text>
+                </View>
+
+                {/* 검색 */}
+                <Section title="🔍 검색">
+                  <Input
+                    value={plannedBulkSearch}
+                    onChangeText={setPlannedBulkSearch}
+                    placeholder="제목/작가 검색"
+                  />
+                </Section>
+
+                {/* 선택 */}
+                <Section title={`✓ 선택 (${plannedSelectedIds.length}개)`}>
+                  <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
+                    필터 결과 {filtered.length}개 / 전체 {plannedList.length}개
+                  </Text>
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    <OutlineButton
+                      title="필터 전체 선택"
+                      onPress={() => setPlannedSelectedIds(filtered.map(p => p.id))}
+                      style={{ flex: 1 }}
+                    />
+                    <OutlineButton
+                      title="선택 해제"
+                      onPress={() => setPlannedSelectedIds([])}
+                      style={{ flex: 1 }}
+                    />
+                  </View>
+                </Section>
+
+                {/* 작업 메뉴 */}
+                <Section title="📋 작업">
+                  {/* 진등록 전환 */}
+                  <View style={{ marginBottom: 12 }}>
+                    <Text style={{ color: C.text, fontWeight: "700", marginBottom: 4 }}>📥 일괄 진등록 전환</Text>
+                    <PrimaryButton
+                      title="선택 가등록을 진등록으로 전환"
+                      onPress={batchConvertPlannedToNovels}
+                      style={{ backgroundColor: "#8b5cf6" }}
+                    />
+                  </View>
+
+                  {/* 우선순위 */}
+                  <View style={{ marginBottom: 12 }}>
+                    <Text style={{ color: C.text, fontWeight: "700", marginBottom: 4 }}>⭐ 일괄 우선순위</Text>
+                    <View style={{ flexDirection: "row", gap: 6 }}>
+                      {[1, 2, 3, 4, 5].map(n => (
+                        <TouchableOpacity
+                          key={n}
+                          onPress={() => batchSetPlannedPriority(n)}
+                          style={{
+                            flex: 1, backgroundColor: C.chip, padding: 8, borderRadius: 8,
+                            alignItems: "center", borderWidth: 1, borderColor: C.line,
+                          }}
+                        >
+                          <Text style={{ color: C.text, fontWeight: "700" }}>{"⭐".repeat(n)}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+
+                  {/* 작품상태 */}
+                  <View style={{ marginBottom: 12 }}>
+                    <Text style={{ color: C.text, fontWeight: "700", marginBottom: 4 }}>📺 일괄 작품상태</Text>
+                    <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
+                      {[
+                        { k: "ongoing", l: "연재중" },
+                        { k: "completed", l: "완결" },
+                        { k: "hiatus", l: "휴재" },
+                        { k: "dropped", l: "연중" },
+                        { k: "discontinued", l: "서비스종료" },
+                      ].map(s => (
+                        <TouchableOpacity
+                          key={s.k}
+                          onPress={() => batchSetPlannedWorkStatus(s.k)}
+                          style={{
+                            backgroundColor: C.chip, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8,
+                            borderWidth: 1, borderColor: C.line,
+                          }}
+                        >
+                          <Text style={{ color: C.text, fontSize: 12, fontWeight: "600" }}>{s.l}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+
+                  {/* 플랫폼 */}
+                  <View style={{ marginBottom: 12 }}>
+                    <Text style={{ color: C.text, fontWeight: "700", marginBottom: 4 }}>📱 일괄 플랫폼 (선택 항목으로 통일)</Text>
+                    <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
+                      {(PLATFORM_OPTIONS || []).slice(0, 8).map(p => (
+                        <TouchableOpacity
+                          key={p}
+                          onPress={() => batchSetPlannedPlatforms([p])}
+                          style={{
+                            backgroundColor: C.chip, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8,
+                            borderWidth: 1, borderColor: C.line,
+                          }}
+                        >
+                          <Text style={{ color: C.text, fontSize: 12 }}>{p}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                    <Text style={{ color: C.sub, fontSize: 10, marginTop: 4 }}>탭 한 플랫폼으로 모두 교체됩니다 (덮어쓰기).</Text>
+                  </View>
+
+                  {/* 태그 */}
+                  <View style={{ marginBottom: 12 }}>
+                    <Text style={{ color: C.text, fontWeight: "700", marginBottom: 4 }}>🏷️ 일괄 태그 추가/삭제</Text>
+                    <Input
+                      value={plannedBulkTagInput}
+                      onChangeText={setPlannedBulkTagInput}
+                      placeholder="태그명"
+                    />
+                    <Text style={{ color: C.sub, fontSize: 11, marginTop: 6 }}>강도 (intensity 1-5):</Text>
+                    <View style={{ flexDirection: "row", gap: 6, marginTop: 4 }}>
+                      {[1, 2, 3, 4, 5].map(n => (
+                        <TouchableOpacity
+                          key={n}
+                          onPress={() => setPlannedBulkTagIntensity(n)}
+                          style={{
+                            flex: 1, backgroundColor: plannedBulkTagIntensity === n ? C.primary : C.chip,
+                            padding: 6, borderRadius: 6, alignItems: "center",
+                          }}
+                        >
+                          <Text style={{ color: plannedBulkTagIntensity === n ? "#fff" : C.text, fontWeight: "700" }}>{n}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                    <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                      <PrimaryButton title="추가" onPress={batchAddPlannedTag} style={{ flex: 1 }} />
+                      <OutlineButton title="삭제" onPress={batchRemovePlannedTag} color={C.warn} style={{ flex: 1 }} />
+                    </View>
+                  </View>
+
+                  {/* 일괄 삭제 */}
+                  <View style={{ marginTop: 8, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.line }}>
+                    <OutlineButton
+                      title="🗑 선택 일괄 삭제"
+                      color={C.warn}
+                      onPress={batchDeletePlanned}
+                    />
+                  </View>
+                </Section>
+
+                {/* 다중선택 카드 리스트 */}
+                <Section title={`목록 (${filtered.length})`}>
+                  <FlatList
+                    data={filtered}
+                    keyExtractor={(item, i) => item?.id || `pb-${i}`}
+                    extraData={plannedSelectedIds}
+                    scrollEnabled={false}
+                    initialNumToRender={15}
+                    maxToRenderPerBatch={10}
+                    windowSize={5}
+                    renderItem={({ item: p }) => {
+                      const selected = plannedSelectedIds.includes(p.id);
+                      return (
+                        <TouchableOpacity
+                          onPress={() => togglePlannedSelected(p.id)}
+                          style={{
+                            flexDirection: "row", alignItems: "center", padding: 10, marginBottom: 6,
+                            backgroundColor: selected ? (isDark ? "rgba(139,92,246,0.18)" : "#ede9fe") : C.card,
+                            borderWidth: 1, borderColor: selected ? "#8b5cf6" : C.line, borderRadius: 10,
+                          }}
+                        >
+                          <View style={{ width: 28, alignItems: "center" }}>
+                            <Text style={{ fontSize: 18 }}>{selected ? "☑" : "☐"}</Text>
+                          </View>
+                          <View style={{ flex: 1, marginLeft: 6 }}>
+                            <Text style={{ color: C.text, fontWeight: "700", fontSize: 14 }} numberOfLines={1}>
+                              {p.title}
+                            </Text>
+                            <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }} numberOfLines={1}>
+                              {p.author || "-"} · {"⭐".repeat(p.priority || 3)}
+                              {p.work_status && p.work_status !== "ongoing" ? ` · ${p.work_status}` : ""}
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    }}
+                  />
+                </Section>
+              </>
+              );
+            })()}
           </>
         )}
 
@@ -45116,6 +45746,23 @@ async function importJSON() {
                                 }
                                 if (queries.length > 0) await execBatch(queries);
                               }
+
+                              // 🆕 v7.3.0: planned_novels.manual_tier도 동일 마이그레이션 (round-trip 보존 정합성)
+                              // novels와 동일하게 newOrder에 없는 키만 변환. mode 무관 (planned은 항상 데이터 보존)
+                              try {
+                                const newOrder2 = getActiveTierOrder(newConfig);
+                                const planned = await all("SELECT id, manual_tier FROM planned_novels WHERE manual_tier IS NOT NULL AND manual_tier != ''");
+                                const pQueries = [];
+                                for (const p of (planned || [])) {
+                                  if (p.manual_tier && !newOrder2.includes(p.manual_tier)) {
+                                    const mapped = migrateTierKey(p.manual_tier, oldConfig, newConfig);
+                                    pQueries.push({ sql: "UPDATE planned_novels SET manual_tier=? WHERE id=?", params: [mapped, p.id] });
+                                  }
+                                }
+                                if (pQueries.length > 0) await execBatch(pQueries);
+                              } catch (e) {
+                                console.warn("[v7.3.0] planned manual_tier 마이그레이션 실패:", e?.message);
+                              }
                               saveAppSettings({ tierSystemConfig: newConfig });
                               await loadList(undefined, undefined, "settings");
                               Alert.alert("완료", `"${preset.name}" 프리셋이 적용되었습니다.`);
@@ -48676,7 +49323,13 @@ async function importJSON() {
               {/* 🆕 v7.2.0: 가등록 전환 (편집 모달 헤더) */}
               {editItem && (
                 <TouchableOpacity
+                  disabled={isAutoMatching}
                   onPress={() => {
+                    // 🆕 v7.3.0: 자동매칭 중 차단 — 시각적 disabled + 가드
+                    if (isAutoMatchingRef.current) {
+                      Alert.alert("자동매칭 중", "자동매칭이 진행 중입니다.\n매칭을 멈춘 후 다시 시도하세요.");
+                      return;
+                    }
                     Alert.alert(
                       "가등록 전환",
                       `"${editItem.title}"을(를) 가등록으로 되돌릴까요?\n\n매칭/갤러리/폴더 등 모든 데이터가 보존됩니다 (id 유지). 다시 진등록 전환 시 복원됩니다.\n\n※ 편집 모달의 미저장 변경사항은 무시되고 DB의 현재 상태가 가등록으로 옮겨집니다.`,
@@ -48708,7 +49361,7 @@ async function importJSON() {
                       ]
                     );
                   }}
-                  style={{ padding: 6 }}
+                  style={{ padding: 6, opacity: isAutoMatching ? 0.4 : 1 }}
                 >
                   <Text style={{ color: "#3b82f6", fontSize: 13 }}>📋 가등록</Text>
                 </TouchableOpacity>
