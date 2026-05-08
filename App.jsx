@@ -2,9 +2,52 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.3.0 (가등록 시스템 강화 + 잔여 기술부채 청산 6건)                   ║
- * ║  최종 수정: 2026-05-07                                                        ║
- * ║  총 라인 수: 약 52,000줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 7.3.2 (코드 전수 검토 — 6건 실제 버그 수정)                            ║
+ * ║  최종 수정: 2026-05-08                                                        ║
+ * ║  총 라인 수: 약 52,600줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.3.2 코드 전수 검토 — 6건 실제 버그 수정 (2026-05-08)                    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [Context — 5개 카테고리 병렬 스캔 후 false positive 필터링]                     ║
+ * ║ async/null/SQL/hooks/logic/memory 6개 영역 병렬 탐색 결과 67건 보고 →            ║
+ * ║ 검증 결과 대부분 false positive(이미 수정됨, try/catch로 보호됨, 의도된 dead   ║
+ * ║ code, 또는 잘못된 분석). 실제 버그 6건만 수정.                                ║
+ * ║                                                                              ║
+ * ║ [Fix-1~5 Major] v7.3.0 신규 batch 함수 5건 try/catch 누락                       ║
+ * ║ • batchSetPlannedPlatforms / batchSetPlannedPriority / batchSetPlannedWorkStatus║
+ * ║   — onPress(()=>batch...())로 await 미적용 호출 → SQL 오류 시 unhandled        ║
+ * ║   rejection. swapRating(v7.0.14)와 동일 패턴.                                 ║
+ * ║ • batchAddPlannedTag / batchRemovePlannedTag — try/finally만 있고 catch 누락. ║
+ * ║   루프 중 SQL 오류 시 사용자 피드백 없이 부분 진행 상태로 종료.               ║
+ * ║ • 수정: 최상위 try/catch 추가 + Alert("오류") + 부분 실패 시 successCount/    ║
+ * ║   total 표시. swapRating의 v7.0.14 패턴과 동일.                              ║
+ * ║                                                                              ║
+ * ║ [Fix-6 Minor] addNovel INSERT + read_count_baseline UPDATE 트랜잭션 분리       ║
+ * ║ • 이전: INSERT INTO novels (...)  → exec; UPDATE SET read_count_baseline=...  ║
+ * ║   → exec — 두 단계 분리. INSERT 성공 후 UPDATE가 SQLITE_BUSY로 실패 시         ║
+ * ║   baseline=0 (DEFAULT)로 잔존 → 다음 saveEdit에서 read_count - 0 ≥ 30 즉시   ║
+ * ║   underrated 트리거 가능 (mass-fire 위험).                                    ║
+ * ║ • 수정: INSERT 컬럼에 read_count_baseline 직접 추가 + execBatch로 트랜잭션화. ║
+ * ║   convertPlannedToNovel(v7.3.1) 동일 패턴.                                    ║
+ * ║                                                                              ║
+ * ║ [false positive로 판정된 주요 보고]                                              ║
+ * ║ • importJSON read_count_baseline 누락: 실제로는 line 37299에 backfill 존재.    ║
+ * ║ • respondVerificationMatch finally: 이미 try-finally로 ref 정리.              ║
+ * ║ • AppState listener cleanup: subscription.remove() 정상.                      ║
+ * ║ • calcInversionScore tier boundary: tierRank < ceil(len/2) 정상 (upper half  ║
+ * ║   skip). 에이전트가 tierRank 의미 잘못 해석.                                  ║
+ * ║ • setNovelTierAtomic 동일 tier 재할당: 이미 v7.0.10에서 short-circuit 처리.   ║
+ * ║ • undo 'novel_delete' baseline: removeNovel pushUndo 미호출이라 dead code      ║
+ * ║   (header line 907 명시).                                                     ║
+ * ║                                                                              ║
+ * ║ [회귀 위험]                                                                       ║
+ * ║ • Fix-1~5: try/catch 추가만, 정상 흐름은 기존과 동일.                          ║
+ * ║ • Fix-6: addNovel INSERT 컬럼 33→34개 (read_count_baseline 추가). VALUES 자리 ║
+ * ║   표시자도 33→34로 일치. 별도 UPDATE 제거. 정상 등록 흐름은 변경 없음.        ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -28913,6 +28956,7 @@ function AppContent() {
   }, [plannedList]);
 
   // 🆕 v7.3.0: 일괄 태그 추가 — tag_data intensity 함께 (메인 batchAddTag 패턴)
+  // 🛠️ v7.3.2: catch 추가 — 루프 중 SQL 오류 시 부분 진행 상태에서 사용자 안내
   const batchAddPlannedTag = useCallback(async () => {
     const tag = (plannedBulkTagInput || "").trim();
     if (!tag) { Alert.alert("알림", "추가할 태그를 입력하세요."); return; }
@@ -28923,6 +28967,8 @@ function AppContent() {
     }
     setIsLoading(true);
     setLoadingProgress({ current: 0, total: ids.length, label: "태그 추가 중..." });
+    let successCount = 0;
+    let failed = false;
     try {
       for (let i = 0; i < ids.length; i++) {
         const id = ids[i];
@@ -28939,18 +28985,27 @@ function AppContent() {
         if (existingIdx >= 0) td[existingIdx].intensity = plannedBulkTagIntensity;
         else td.push({ tag, intensity: plannedBulkTagIntensity });
         await exec("UPDATE planned_novels SET tags=?, tag_data=? WHERE id=?", [newTags, JSON.stringify(td), id]);
+        successCount++;
         setLoadingProgress({ current: i + 1, total: ids.length, label: "태그 추가 중..." });
       }
       syncTagsToCustom(tag);
       await loadPlannedList();
-      Alert.alert("완료", `${ids.length}개 가등록에 "${tag}" 태그 추가됨 (intensity ${plannedBulkTagIntensity}).`);
+    } catch (e) {
+      failed = true;
+      console.warn("[v7.3.2] batchAddPlannedTag 오류:", e?.message);
+      try { await loadPlannedList(); } catch {}
+      Alert.alert("부분 실패", `태그 일괄 추가 중 오류 (${successCount}/${ids.length}건 성공): ${e?.message || "알 수 없는 오류"}`);
     } finally {
       setLoadingProgress(null);
       setIsLoading(false);
     }
+    if (!failed) {
+      Alert.alert("완료", `${ids.length}개 가등록에 "${tag}" 태그 추가됨 (intensity ${plannedBulkTagIntensity}).`);
+    }
   }, [plannedList, plannedBulkTagInput, plannedBulkTagIntensity]);
 
   // 🆕 v7.3.0: 일괄 태그 삭제
+  // 🛠️ v7.3.2: catch 추가 — 루프 중 SQL 오류 시 부분 진행 상태에서 사용자 안내
   const batchRemovePlannedTag = useCallback(async () => {
     const tag = (plannedBulkTagInput || "").trim();
     if (!tag) { Alert.alert("알림", "삭제할 태그를 입력하세요."); return; }
@@ -28961,6 +29016,8 @@ function AppContent() {
     }
     setIsLoading(true);
     setLoadingProgress({ current: 0, total: ids.length, label: "태그 삭제 중..." });
+    let successCount = 0;
+    let failed = false;
     try {
       for (let i = 0; i < ids.length; i++) {
         const id = ids[i];
@@ -28972,33 +29029,48 @@ function AppContent() {
         try { td = JSON.parse(p.tag_data || "[]"); if (!Array.isArray(td)) td = []; } catch {}
         td = td.filter(x => x.tag !== tag);
         await exec("UPDATE planned_novels SET tags=?, tag_data=? WHERE id=?", [newTags, JSON.stringify(td), id]);
+        successCount++;
         setLoadingProgress({ current: i + 1, total: ids.length, label: "태그 삭제 중..." });
       }
       await loadPlannedList();
-      Alert.alert("완료", `${ids.length}개 가등록에서 "${tag}" 태그 삭제됨.`);
+    } catch (e) {
+      failed = true;
+      console.warn("[v7.3.2] batchRemovePlannedTag 오류:", e?.message);
+      try { await loadPlannedList(); } catch {}
+      Alert.alert("부분 실패", `태그 일괄 삭제 중 오류 (${successCount}/${ids.length}건 성공): ${e?.message || "알 수 없는 오류"}`);
     } finally {
       setLoadingProgress(null);
       setIsLoading(false);
     }
+    if (!failed) {
+      Alert.alert("완료", `${ids.length}개 가등록에서 "${tag}" 태그 삭제됨.`);
+    }
   }, [plannedList, plannedBulkTagInput]);
 
   // 🆕 v7.3.0: 일괄 플랫폼 설정 (선택된 플랫폼으로 통일)
+  // 🛠️ v7.3.2: 최상위 try/catch 추가 — onPress(()=>batch...)로 await 미적용 호출되어 SQL 오류 시 unhandled rejection
   const batchSetPlannedPlatforms = useCallback(async (newPlatforms) => {
     const ids = plannedSelectedIdsRef.current;
     if (!ids || ids.length === 0) {
       Alert.alert("알림", "먼저 가등록 작품을 선택해주세요.");
       return;
     }
-    const placeholders = ids.map(() => "?").join(",");
-    await exec(
-      `UPDATE planned_novels SET platforms=? WHERE id IN (${placeholders})`,
-      [JSON.stringify(newPlatforms || []), ...ids]
-    );
-    await loadPlannedList();
-    Alert.alert("완료", `${ids.length}개 가등록 플랫폼 설정됨.`);
+    try {
+      const placeholders = ids.map(() => "?").join(",");
+      await exec(
+        `UPDATE planned_novels SET platforms=? WHERE id IN (${placeholders})`,
+        [JSON.stringify(newPlatforms || []), ...ids]
+      );
+      await loadPlannedList();
+      Alert.alert("완료", `${ids.length}개 가등록 플랫폼 설정됨.`);
+    } catch (e) {
+      console.warn("[v7.3.2] batchSetPlannedPlatforms 오류:", e?.message);
+      Alert.alert("오류", "플랫폼 일괄 설정에 실패했습니다: " + (e?.message || "알 수 없는 오류"));
+    }
   }, []);
 
   // 🆕 v7.3.0: 일괄 우선순위 변경
+  // 🛠️ v7.3.2: 최상위 try/catch 추가
   const batchSetPlannedPriority = useCallback(async (priority) => {
     const ids = plannedSelectedIdsRef.current;
     if (!ids || ids.length === 0) {
@@ -29006,29 +29078,40 @@ function AppContent() {
       return;
     }
     const p = Math.max(1, Math.min(5, Number(priority) || 3));
-    const placeholders = ids.map(() => "?").join(",");
-    await exec(
-      `UPDATE planned_novels SET priority=? WHERE id IN (${placeholders})`,
-      [p, ...ids]
-    );
-    await loadPlannedList();
-    Alert.alert("완료", `${ids.length}개 가등록 우선순위 ${p}로 설정됨.`);
+    try {
+      const placeholders = ids.map(() => "?").join(",");
+      await exec(
+        `UPDATE planned_novels SET priority=? WHERE id IN (${placeholders})`,
+        [p, ...ids]
+      );
+      await loadPlannedList();
+      Alert.alert("완료", `${ids.length}개 가등록 우선순위 ${p}로 설정됨.`);
+    } catch (e) {
+      console.warn("[v7.3.2] batchSetPlannedPriority 오류:", e?.message);
+      Alert.alert("오류", "우선순위 일괄 변경에 실패했습니다: " + (e?.message || "알 수 없는 오류"));
+    }
   }, []);
 
   // 🆕 v7.3.0: 일괄 작품상태 변경
+  // 🛠️ v7.3.2: 최상위 try/catch 추가
   const batchSetPlannedWorkStatus = useCallback(async (status) => {
     const ids = plannedSelectedIdsRef.current;
     if (!ids || ids.length === 0) {
       Alert.alert("알림", "먼저 가등록 작품을 선택해주세요.");
       return;
     }
-    const placeholders = ids.map(() => "?").join(",");
-    await exec(
-      `UPDATE planned_novels SET work_status=? WHERE id IN (${placeholders})`,
-      [status || "ongoing", ...ids]
-    );
-    await loadPlannedList();
-    Alert.alert("완료", `${ids.length}개 가등록 작품상태 변경됨.`);
+    try {
+      const placeholders = ids.map(() => "?").join(",");
+      await exec(
+        `UPDATE planned_novels SET work_status=? WHERE id IN (${placeholders})`,
+        [status || "ongoing", ...ids]
+      );
+      await loadPlannedList();
+      Alert.alert("완료", `${ids.length}개 가등록 작품상태 변경됨.`);
+    } catch (e) {
+      console.warn("[v7.3.2] batchSetPlannedWorkStatus 오류:", e?.message);
+      Alert.alert("오류", "작품상태 일괄 변경에 실패했습니다: " + (e?.message || "알 수 없는 오류"));
+    }
   }, []);
 
   // 🆕 v7.2.0: novels → planned_novels 역전환 (단건)
@@ -32970,47 +33053,52 @@ function AppContent() {
         console.warn("[v7.0] addNovel manual_order 계산 실패:", e?.message);
       }
 
-      await exec(
-        `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-        [
-          id,
-          t,
-          author.trim(),
-          deduplicateTagString(tags) || "", // 🔧 v3.5.14: 작품 내 태그 중복 제거
-          JSON.stringify(platforms),
-          note.trim(),
-          Number(readCount) || 0,
-          globalTierConfig.defaultRating || 1500, // 🆕 v6.0: config 기반 기본 레이팅
-          350,
-          0,
-          0,
-          0,
-          globalTierConfig.defaultTier || "C", // 🆕 v6.0: config 기반 기본 티어
-          now,
-          "",
-          Number(totalEpisodes) || 0,
-          newStatus,
-          0,
-          newCoverImage,
-          newLink.trim(),
-          newWorkStatus,
-          now,
-          finalMajorGenre,
-          finalSubGenre,
-          newGaidenStatus,
-          Number(newGaidenReadCount) || 0,
-          Number(newGaidenTotalEpisodes) || 0,
-          Math.max(1, Number(rereadCount) || 1), // 📚 다회독 카운트
-          tagDataJson, // 🏷️ v5.0
-          serializeQuotes(memorableQuote), // 💬 인상깊은 문장 (텍스트+이미지)
-          "", // aliases (빈 값)
-          initialManualTier,
-          initialManualOrder, // 🆕 v7.0.1 (N6 fix)
-        ]
-      );
-      // 🆕 v7.0.15: read_count_baseline = 초기 read_count (누적 트래킹 시작점)
-      await exec("UPDATE novels SET read_count_baseline=read_count WHERE id=?", [id]);
+      // 🛠️ v7.3.2: INSERT + read_count_baseline UPDATE를 단일 트랜잭션으로 묶음
+      // 이전: 두 단계 exec 사이에 SQLITE_BUSY 발생 시 baseline=0 잔존 → 누적 트래킹 mass-fire 위험.
+      // convertPlannedToNovel(v7.3.1) 패턴과 일치.
+      const _initialReadCount = Number(readCount) || 0;
+      await execBatch([
+        {
+          sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order,read_count_baseline)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+          params: [
+            id,
+            t,
+            author.trim(),
+            deduplicateTagString(tags) || "", // 🔧 v3.5.14: 작품 내 태그 중복 제거
+            JSON.stringify(platforms),
+            note.trim(),
+            _initialReadCount,
+            globalTierConfig.defaultRating || 1500, // 🆕 v6.0: config 기반 기본 레이팅
+            350,
+            0,
+            0,
+            0,
+            globalTierConfig.defaultTier || "C", // 🆕 v6.0: config 기반 기본 티어
+            now,
+            "",
+            Number(totalEpisodes) || 0,
+            newStatus,
+            0,
+            newCoverImage,
+            newLink.trim(),
+            newWorkStatus,
+            now,
+            finalMajorGenre,
+            finalSubGenre,
+            newGaidenStatus,
+            Number(newGaidenReadCount) || 0,
+            Number(newGaidenTotalEpisodes) || 0,
+            Math.max(1, Number(rereadCount) || 1), // 📚 다회독 카운트
+            tagDataJson, // 🏷️ v5.0
+            serializeQuotes(memorableQuote), // 💬 인상깊은 문장 (텍스트+이미지)
+            "", // aliases (빈 값)
+            initialManualTier,
+            initialManualOrder, // 🆕 v7.0.1 (N6 fix)
+            _initialReadCount, // 🆕 v7.0.15: read_count_baseline = 초기 read_count
+          ],
+        },
+      ]);
       // 🔧 v3.5.9: 텍스트 입력 태그 → customTags 동기화 (태그 관리 모달 연동)
       syncTagsToCustom(tags.trim());
       setTitle("");
