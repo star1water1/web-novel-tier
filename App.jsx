@@ -2,9 +2,284 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.0.13 (슬롯 복구 효력 강화 — v7.0 테이블 ensureColumn 완전 적용)    ║
+ * ║  버전: 7.3.0 (가등록 시스템 강화 + 잔여 기술부채 청산 6건)                   ║
  * ║  최종 수정: 2026-05-07                                                        ║
- * ║  총 라인 수: 약 50,150줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 52,000줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.3.0 가등록 시스템 강화 + 잔여 기술부채 청산 (2026-05-07)                ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [Context — v7.2 사후 검토 6건 청산]                                              ║
+ * ║ 1. 가등록 manual_tier가 프리셋 변경 시 마이그레이션 누락 (시나리오 10)        ║
+ * ║ 2. convertNovelToPlanned 자동매칭 중 가드 부재 (시나리오 11)                  ║
+ * ║ 3. removeNovel/batchDelete가 v7.1 tier_inversion preference_patterns 정리 X   ║
+ * ║ 4. 1만+ 작품 첫 마이그레이션 progress 미표시 (시나리오 14)                    ║
+ * ║ 5. 가등록 카드 awards/quote/gallery 인디케이터 부재                            ║
+ * ║ 6. 예정탭 sub-tab + 일괄편집 — 사용자 명시 설계                                ║
+ * ║                                                                              ║
+ * ║ [핵심 변경 — A부터 F까지 6항목]                                                  ║
+ * ║                                                                              ║
+ * ║ A. 프리셋 변경 시 planned_novels.manual_tier 마이그레이션                     ║
+ * ║   • novels와 동일 패턴: newOrder에 없는 키만 migrateTierKey로 변환             ║
+ * ║   • mode 무관 적용 (planned은 항상 데이터 보존)                                ║
+ * ║                                                                              ║
+ * ║ B. 자동매칭 가드 (불변조건 #1 strict)                                          ║
+ * ║   • convertNovelToPlanned: 함수 진입부 silent abort (Alert X)                 ║
+ * ║   • convertPlannedToNovel: 사용자 액션 직후 button-level Alert 가드           ║
+ * ║   • 편집 모달 "📋 가등록" 버튼: opacity:0.4 + disabled (시각 차단)             ║
+ * ║   • NovelCard long-press: 가등록 옵션에 isAutoMatching 분기 Alert            ║
+ * ║                                                                              ║
+ * ║ C. preference_patterns 고아 정리                                                ║
+ * ║   • removeNovel/batchDelete execBatch에                                       ║
+ * ║     `DELETE FROM preference_patterns WHERE pattern_key='novel:{id}'` 추가      ║
+ * ║   • v7.1 tier_inversion category만 id-keyed (다른 category는 entity-keyed)    ║
+ * ║                                                                              ║
+ * ║ D. initDb 마이그레이션 progress 표시                                            ║
+ * ║   • initDb에 progressCb 옵션 파라미터 추가                                     ║
+ * ║   • AppContent 두 호출 사이트 모두 setLoadingProgress 콜백 전달               ║
+ * ║   • 단계별 라벨: "스키마 업데이트", "v7.0.15 백필", "v7.2 가등록 확장" 등     ║
+ * ║                                                                              ║
+ * ║ E. 가등록 카드 3종 배지                                                         ║
+ * ║   • loadPlannedList: 별도 SELECT로 gallery_count Map 빌드 후 attach           ║
+ * ║   • 카드 JSX: 작가/플랫폼 줄과 메모 사이에 🏆/💬/🎨 배지 row (passive)        ║
+ * ║                                                                              ║
+ * ║ F. 예정탭 sub-tab (사용자 명시 설계)                                            ║
+ * ║   • plannedSubTab state: "list" | "bulk"                                       ║
+ * ║   • 신규 plannedSelectedIds + ref + plannedBulkSearch state                   ║
+ * ║   • bulk sub-tab UI: 검색 + 선택 + 6종 작업 + 다중선택 카드 리스트            ║
+ * ║   • 6종 batch 함수 신규: batchConvertPlannedToNovels, batchDeletePlanned,    ║
+ * ║     batchAddPlannedTag, batchRemovePlannedTag, batchSetPlannedPlatforms,      ║
+ * ║     batchSetPlannedPriority, batchSetPlannedWorkStatus                       ║
+ * ║   • convertPlannedToNovel 리팩토링: _doConvertPlannedToNovel 헬퍼 분리,       ║
+ * ║     convertPlannedToNovelSilent 신규 (Alert 없는 batch용)                     ║
+ * ║                                                                              ║
+ * ║ [회귀 위험]                                                                       ║
+ * ║ • 모든 변경: 추가 패턴 또는 옵션 파라미터. 기존 호출 사이트 무영향.            ║
+ * ║ • DB 스키마 변경 0 (v7.2.0 16개 컬럼 기 적용).                                ║
+ * ║ • API 변경 0.                                                                  ║
+ * ║                                                                              ║
+ * ║ [defer to v7.4+]                                                                ║
+ * ║ • 자동매칭 일시정지 + 작업 후 재개 패턴                                       ║
+ * ║ • insight_queue novel_id 직접 참조 + cleanup                                   ║
+ * ║ • 가등록 sub-tab "통계" — 우선순위/상태별 분포                                ║
+ * ║ • 일괄 메모/링크 prefix/suffix                                                ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.2.0 가등록 ↔ 진등록 양방향 전환 + 스키마 확장 (2026-05-07)             ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [Context — 사용자 요청 3건]                                                       ║
+ * ║ 1. planned_novels 스키마 확장 (novels의 모든 필드 보유 가능)                  ║
+ * ║ 2. 진등록 → 가등록 역전환 기능 (현재 forward만 존재)                          ║
+ * ║ 3. 일괄편집 탭에 가등록 일괄 전환 추가                                         ║
+ * ║                                                                              ║
+ * ║ [핵심 설계 — id 보존 + round-trip 데이터 보존]                                  ║
+ * ║ • planned.id ↔ novel.id 동일 값 유지 (forward & reverse 모두)                  ║
+ * ║ • matches/gallery_images/novel_folders/tier_verification_queue/v7.0 row들이   ║
+ * ║   novel_id로 참조하므로 id 보존만으로 자동 살아남음 → 추가 마이그레이션 X     ║
+ * ║                                                                              ║
+ * ║ [planned_novels 스키마 확장 16종 (ensureColumn)]                                ║
+ * ║ • status / pinned / read_count / rating / rd / wins / losses / match_count   ║
+ * ║ • gaiden_status / gaiden_read_count / gaiden_total_episodes                    ║
+ * ║ • manual_tier / manual_order / reread_count                                    ║
+ * ║ • aliases / memorable_quote / awards                                           ║
+ * ║ • read_count_updated_at / read_count_baseline (v7.0.15)                        ║
+ * ║                                                                              ║
+ * ║ [신규 함수]                                                                     ║
+ * ║ • convertNovelToPlanned(novel) — title 충돌 체크, verification 정리,          ║
+ * ║   id 보존 INSERT, DELETE FROM novels, recent_changes 로그                     ║
+ * ║ • batchConvertToPlanned (useCallback) — 일괄편집용 루프 + skip 카운트         ║
+ * ║                                                                              ║
+ * ║ [convertPlannedToNovel 개선]                                                    ║
+ * ║ • const id = planned.id || uuid() — round-trip id 일관성                      ║
+ * ║ • INSERT params: hardcoded 1500/0/"" → planned 우선 (rating, awards, quote,   ║
+ * ║   aliases, manual_tier, gaiden_*, reread_count, wins/losses 등 16종)         ║
+ * ║ • read_count_baseline = planned.read_count_baseline 우선                       ║
+ * ║                                                                              ║
+ * ║ [UI 변경]                                                                       ║
+ * ║ • 편집 모달 헤더: "📋 가등록" 버튼 (삭제 옆) — confirm Alert + convert        ║
+ * ║ • NovelCard long-press: 3-button Alert (폴더 배정 / 가등록 전환 / 확인)       ║
+ * ║ • 일괄편집 탭: "선택 작품을 가등록으로 전환" 버튼 (작업 메뉴 끝부분)            ║
+ * ║ • 가등록 편집 모달: aliases / memorable_quote 입력 + awards 카운트 배지       ║
+ * ║                                                                              ║
+ * ║ [백업/복원 호환성]                                                              ║
+ * ║ • payload.PL에 19개 신규 단축키 추가 (st/pn/rc/rt/rdv/wn/ls/mc/gs/gr/ge/      ║
+ * ║   mt/mo/rr/al/mq/aw/ru/rb) — default 값은 omit (백업 크기 절감)              ║
+ * ║ • import는 누락 키 default 처리 (구버전 백업 호환)                             ║
+ * ║ • id 보존 — payload.PL에 row.id 추가, import 시 사용                          ║
+ * ║                                                                              ║
+ * ║ [회귀 위험]                                                                       ║
+ * ║ • novels 테이블 무변경 ✓                                                       ║
+ * ║ • addPlannedNovel/savePlannedEdit 기존 필드 무변경 (신규 default) ✓           ║
+ * ║ • convertPlannedToNovel hardcoded → 조건부: planned default 시 동일 동작 ✓    ║
+ * ║ • id 변경: addPlannedNovel은 uuid() 그대로, convertPlannedToNovel만 planned.id║
+ * ║   사용. legacy planned는 fallback uuid()                                      ║
+ * ║                                                                              ║
+ * ║ [defer to v7.3+]                                                                ║
+ * ║ • manual_tier/reread_count/pinned/status 등 가등록 편집 폼 추가 노출           ║
+ * ║ • memorable_quote 이미지 첨부 (가등록에서)                                     ║
+ * ║ • 가등록 → 진등록 일괄 전환 (대칭, 일괄편집)                                   ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.1.0 취향 분석 모드 인식 재설계 (2026-05-07)                              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [Context]                                                                       ║
+ * ║ • 사용자 보고: "최근 티어 배정 다각화/하이브리드 도입으로 취향 분석 인사이트   ║
+ * ║   가 약화됨. 점수는 안 쓰면서 점수 기준으로 태그 강세/작가 선호 재고 있음."    ║
+ * ║ • 진단: analyzePreferences가 모든 분석에서 n.rating(ELO)을 1차 신호로 사용.   ║
+ * ║   hybrid/manual에선 매칭이 거의 없어 rating이 1500 평탄 → 모든 평균/편차/     ║
+ * ║   세그먼트 분석 무의미.                                                        ║
+ * ║                                                                              ║
+ * ║ [핵심 설계 — Option 1 (사용자 결정)]                                            ║
+ * ║ • getPrefScore(novel, config): 모드 인식 통합 스코어                          ║
+ * ║   - match: ELO rating 그대로 (회귀 0)                                         ║
+ * ║   - hybrid/manual: tier_rank * 200 + manual_order 미세 조정                   ║
+ * ║   - getDisplayTier 사용 → manual_tier=null 작품도 ELO fallback으로 인클루시브 ║
+ * ║ • formatPrefScore(score, config): UI 표시 (fraction-based 안정 라벨링)        ║
+ * ║   - match: "1720점", hybrid/manual: "평균 B+ 티어" (round 진동 회피)          ║
+ * ║ • computeTierStratification: 엔티티×티어 분포 매트릭스                        ║
+ * ║   - intensity 가중 (tag 1=0.33, 5=1.67), Wilson CI, Shannon entropy           ║
+ * ║                                                                              ║
+ * ║ [analyzePreferences 리팩토링 — per-line 카테고리 판정 (~30곳)]                  ║
+ * ║ • Category 1 (match-only): wins/losses/match_count → 그대로, match에서만 노출 ║
+ * ║ • Category 2 (score-aggregation): n.rating → n.prefScore                     ║
+ * ║   basicStats avg/median/stdDev, 장르/하위장르/태그/combo/platform/작가 평균,   ║
+ * ║   length groups, completed/discontinued, trend, spectrum 모두 자동 적응       ║
+ * ║ • Category 3 (anomaly): 절대 임계치(1500/1700) → mean±std 기반 (mode-aware)  ║
+ * ║                                                                              ║
+ * ║ [신규 분석 5종]                                                                 ║
+ * ║ 1. tierStratification — 엔티티×티어 매트릭스 (장르/하위장르/태그/작가)       ║
+ * ║ 2. tierConcentration — 상위 티어 집중 TOP K (sample_size 임계치 적용)         ║
+ * ║ 3. tierEntropy — 강한 선호(낮은 entropy) vs 균등 분산 그룹화                  ║
+ * ║ 4. tierInversion — 다회독≥4 OR readRatio≥0.9 + 하위 티어 disconnect (보수적)  ║
+ * ║ 5. awardTierCorrelation — 수상 ≥5건 가드, 티어 분포 + 공통 태그 패턴          ║
+ * ║                                                                              ║
+ * ║ [영속화 (사용자 결정)]                                                          ║
+ * ║ • preference_patterns에 신규 카테고리 UPSERT (스키마 변경 X, category 임의값) ║
+ * ║   - tier_concentration / tier_inversion / award_tier                          ║
+ * ║ • insight_queue에 notable 항목 INSERT — 홈/추천 탭에서도 surface              ║
+ * ║                                                                              ║
+ * ║ [UI 변경 (TasteAnalysisScreen)]                                                ║
+ * ║ • SECTION_GROUPS에 "🏆 티어 인사이트" 그룹 추가 (6개 섹션)                    ║
+ * ║   - TierDistribution / Concentration / StratificationHeatmap /                 ║
+ * ║     Entropy / Inversion / AwardTier                                            ║
+ * ║ • 모드별 노출:                                                                  ║
+ * ║   - match: stats / genreTag / matching / advanced (티어 그룹 숨김)            ║
+ * ║   - hybrid/manual: stats / genreTag / tier (매칭/심화는 매치 데이터 있을 시)   ║
+ * ║ • basicStats avgRating 표시: formatPrefScore로 모드별 적응                    ║
+ * ║                                                                              ║
+ * ║ [회귀 위험]                                                                       ║
+ * ║ • match 모드: prefScore === rating identity → 100% 보존, 티어 그룹 숨김       ║
+ * ║ • hybrid/manual: 분석 결과 의미 변경 (의도된 개선)                            ║
+ * ║ • DB 스키마 변경 없음 (preference_patterns category 임의값 활용)              ║
+ * ║ • API/외부 인터페이스 변경 없음                                                ║
+ * ║                                                                              ║
+ * ║ [향후 확장 — out of scope]                                                       ║
+ * ║ • composite preference strength (reread/award/pinned 합성)                    ║
+ * ║ • 시계열 티어 변동 트렌드 / 모드 비교 view                                    ║
+ * ║ • 태그 동의어 정비 / 임계치 사용자 설정화                                      ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.0.15 read_count 누적 변경을 의심작 트리거로 (cumulative tracking)       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [Context — 사용자 보고 2건]                                                       ║
+ * ║ 1) "회차수 50화 넘게 올렸는데도 의심작 선정이 안 됐다. 의심도는 어디서 확인?" ║
+ * ║ 2) "한 번에 30 안 올라도 누적되면 평가 변할 수 있는 거 아니야?"               ║
+ * ║                                                                              ║
+ * ║ [원인]                                                                          ║
+ * ║ • v7.0.6 m6에서 meta_edit 트리거 제거 — priority=1로 항상 밀려 노이즈만 누적. ║
+ * ║   read_count 변경은 meta_edit 일부였으므로 함께 사라짐. tier/순위 명시 변경    ║
+ * ║   만 의심작이 됨.                                                              ║
+ * ║ • per-edit threshold(첫 패치 시도)는 단일 saveEdit delta에만 반응 → 5화×10번  ║
+ * ║   나눠 저장(누적 +50) 시 미발화. 사용자 의도와 어긋남.                         ║
+ * ║                                                                              ║
+ * ║ [신규 트리거 read_progress + 누적 트래킹]                                       ║
+ * ║ • novels.read_count_baseline INTEGER 컬럼 추가. last-fire 시점 read_count.    ║
+ * ║ • saveEdit/batchIncReadCount에서 (newRead − baseline) >= 30 시 fire +         ║
+ * ║   baseline reset to newRead. 다음 +30 누적 시작점.                             ║
+ * ║ • priority=3 (order_change와 동급, m6의 1보다 충분히 높음).                    ║
+ * ║                                                                              ║
+ * ║ [m6와의 차이 — 노이즈 회피 설계]                                                  ║
+ * ║ • m6: 모든 메타 변경 트리거 + priority=1 → 매 saveEdit마다 큐 인입 + 항상 밀림 ║
+ * ║ • v7.0.15: read_count 한정 + 누적 임계치 30 + priority=3                      ║
+ * ║   → 필터링으로 노이즈 차단, m6 제거 사유에 다시 빠지지 않음.                  ║
+ * ║                                                                              ║
+ * ║ [tier_change와의 충돌 — else-if로 양보 (saveEdit)]                              ║
+ * ║ • UPSERT는 trigger_type/suspicion_type을 나중 호출이 덮어씀. tier_change      ║
+ * ║   (overrated) 후 read_progress(underrated) 시 강등 의도 뒤집힘 위험.            ║
+ * ║ • 해결: read_progress 분기를 else-if로 — _v7TierChanged/_v7TierCleared가      ║
+ * ║   둘 다 falsy일 때만 진입. 명시적 사용자 액션 > implicit 시그널.               ║
+ * ║                                                                              ║
+ * ║ [강등→읽기 처리 — 사용자 결정: 최신 신호 우선]                                    ║
+ * ║ • 강등(overrated pending) 직후 +30 누적 시 read_progress가 underrated로       ║
+ * ║   덮어씀 (UPSERT 동작 그대로 유지). 사용자가 verification에서 재결정.           ║
+ * ║                                                                              ║
+ * ║ [Lifecycle — baseline 갱신 시점]                                                 ║
+ * ║ • addNovel/convertPlannedToNovel: post-INSERT UPDATE baseline=초기 read_count ║
+ * ║ • importJSON: post-bulk-INSERT UPDATE baseline=read_count                     ║
+ * ║ • saveEdit (any 트리거 발화): baseline = newReadCount                         ║
+ * ║ • batchIncReadCount (per id, 발화 시): baseline = newReadCount                ║
+ * ║ • 마이그레이션: 기존 row baseline = 현재 read_count (mass-fire 회피, 트랜잭션) ║
+ * ║                                                                              ║
+ * ║ [defer to v7.0.16+]                                                              ║
+ * ║ • batchSetTier/gatekeeper/finalize 후 baseline reset (정합성 강화)            ║
+ * ║ • 백업 v9.1 포맷에 baseline 보존                                              ║
+ * ║ • 임계치 사용자 설정화                                                         ║
+ * ║                                                                              ║
+ * ║ [의심도 확인 위치 — 사용자 안내]                                                  ║
+ * ║ • 매칭 탭(hybrid 모드): "검증 대기" 카운트 + 진행 중 시퀀스 UI                 ║
+ * ║ • 진단 탭 → 🔄 S1. 검증 큐 + 트리거 trace → "현재 pending 큐 상위 10"          ║
+ * ║                                                                              ║
+ * ║ [회귀 위험]                                                                       ║
+ * ║ • read_count_baseline 컬럼 추가 — 기존 컬럼/INSERT/SELECT 영향 0.              ║
+ * ║ • 마이그레이션 backfill 1회 (트랜잭션 안전).                                   ║
+ * ║ • saveEdit/batchIncReadCount 추가 SELECT 1건 — hybrid 모드 시만.              ║
+ * ║ • VERIFICATION_PRIORITY 키 1개 추가 — 기존 5개 영향 0.                         ║
+ * ║ • manual/match 모드 — `mode === "hybrid"` 가드 안. 미적용.                    ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.0.14 사용자 보고 3건 수정 (2026-05-07)                                  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [Fix-1 Critical] 배정탭 ▲/▼ 순위 변경 버튼 크래시                              ║
+ * ║ • swapRating은 onPress(()=>swapRating(...))로 await 미적용 호출 — 내부        ║
+ * ║   await all/execBatch가 throw하면 unhandled rejection으로 빠져 앱 크래시.     ║
+ * ║ • 최상위 try/catch로 감싸 사용자에게 Alert 표시 (자동매칭 중이면 #1 불변조건  ║
+ * ║   준수해 Alert 차단). hybrid 검증 세션 in-flight 작품의 ▲▼는 차단 (M9c       ║
+ * ║   inline_chip 패턴과 일치 — 시퀀스 진행 중 manual_order 변경은 finalize와    ║
+ * ║   충돌해 자리 예측 오작동).                                                    ║
+ * ║                                                                              ║
+ * ║ [Fix-2 Major] 진단 탭 export 항시 노출                                          ║
+ * ║ • 기존: PerfMonitor.enabled === false 시 "📋 진단 내보내기" Section 자체가     ║
+ * ║   숨겨져 사용자가 export 불가. PerfMonitor OFF가 기본값이라 사실상 항상 숨김. ║
+ * ║ • 수정: 게이트 제거 + OFF 안내 텍스트 추가. PerfMonitor 통계는 빈 값으로      ║
+ * ║   export되지만 DB 테이블 규모/슬롯/하이브리드 진단/크래시 데이터는 정상 포함. ║
+ * ║                                                                              ║
+ * ║ [Fix-3 Minor] 수상 탭 표지/명대사 풀스크린 확대                                ║
+ * ║ • 빅 수상 카드의 70x100 표지와 짧게 잘린 명대사 (이미지/텍스트)을 탭하면      ║
+ * ║   풀스크린 확대 모달 표시. 갤러리 확대 모달(49876) 패턴 재사용.               ║
+ * ║ • expandedView state 추가 (image|quote 분기). ScrollView로 긴 명대사도       ║
+ * ║   스크롤 가능. 탭하면 닫기.                                                    ║
+ * ║                                                                              ║
+ * ║ [회귀 위험]                                                                       ║
+ * ║ • Fix-1: try/catch 추가만, 정상 흐름은 기존과 동일. verificationSession        ║
+ * ║   가드는 inline_chip(40545)과 동일 패턴이라 회귀 위험 0.                      ║
+ * ║ • Fix-2: 표시 게이트만 변경, 익명화/공유/JSON 로직은 무변경.                   ║
+ * ║ • Fix-3: 기존 ExpoImage/Text 위에 TouchableOpacity 래핑만, 표시 위치/크기     ║
+ * ║   동일. setExpandedView는 AwardsScreen 내부 state라 외부 영향 없음.           ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -4986,7 +5261,10 @@ function uuid() {
   return `${timestamp}${counter}-${random}`;
 }
 
-async function initDb() {
+// 🆕 v7.3.0: progressCb 옵션 — initDb 진행 단계를 UI overlay에 표시.
+// progressCb({ label: "..." }) 형태로 호출. null/undefined 시 무시.
+async function initDb(progressCb) {
+  if (progressCb) progressCb({ label: "데이터베이스 연결 중..." });
   // DB 연결 확보
   const database = await openDb();
   
@@ -5060,11 +5338,33 @@ async function initDb() {
   ];
   
   // 필요한 마이그레이션만 실행
+  if (progressCb) progressCb({ label: "스키마 업데이트 중..." });
   for (const [name, type, defaultExpr] of migrations) {
     if (!existingNames.has(name)) {
       await database.runAsync(
         `ALTER TABLE novels ADD COLUMN ${name} ${type}${defaultExpr ? " DEFAULT " + defaultExpr : ""};`
       );
+    }
+  }
+
+  // 🆕 v7.0.15: read_count_baseline column + 일회성 backfill (transaction)
+  // — 누적 read_count 추적용. saveEdit/batchIncReadCount에서 (현재 read_count - baseline) >= 30 시 read_progress fire.
+  // — column DEFAULT 0이 그대로면 마이그레이션 직후 첫 saveEdit에서 mass-fire 발생 → backfill 필수.
+  // — ALTER + UPDATE 트랜잭션 묶어 부분 실패 시 ROLLBACK 보장.
+  if (!existingNames.has("read_count_baseline")) {
+    if (progressCb) progressCb({ label: "v7.0.15 read_count_baseline 백필 중..." });
+    try {
+      await database.withTransactionAsync(async () => {
+        await database.runAsync(
+          `ALTER TABLE novels ADD COLUMN read_count_baseline INTEGER DEFAULT 0;`
+        );
+        await database.runAsync(
+          `UPDATE novels SET read_count_baseline = read_count;`
+        );
+      });
+    } catch (e) {
+      console.warn("[v7.0.15] read_count_baseline 마이그레이션 실패:", e?.message);
+      // 트랜잭션 ROLLBACK으로 column 추가도 취소됨 → 다음 실행에서 재시도
     }
   }
 
@@ -5102,7 +5402,30 @@ async function initDb() {
   await ensureColumn("planned_novels", "similar_novels", "TEXT", "''");
   await ensureColumn("planned_novels", "why_interested", "TEXT", "''");
   await ensureColumn("planned_novels", "tag_data", "TEXT", "''");
-  
+
+  if (progressCb) progressCb({ label: "v7.2 가등록 스키마 확장 중..." });
+  // 🆕 v7.2.0: round-trip 데이터 보존을 위한 16개 컬럼 (novels 스키마 정합)
+  // 가등록 입력 폼은 일부만 노출, 나머지는 reverse 전환(convertNovelToPlanned)에서 채워짐
+  await ensureColumn("planned_novels", "status", "TEXT", "'reading'");
+  await ensureColumn("planned_novels", "pinned", "INTEGER", "0");
+  await ensureColumn("planned_novels", "read_count", "INTEGER", "0");
+  await ensureColumn("planned_novels", "rating", "REAL", "1500");
+  await ensureColumn("planned_novels", "rd", "REAL", "350");
+  await ensureColumn("planned_novels", "wins", "INTEGER", "0");
+  await ensureColumn("planned_novels", "losses", "INTEGER", "0");
+  await ensureColumn("planned_novels", "match_count", "INTEGER", "0");
+  await ensureColumn("planned_novels", "gaiden_status", "TEXT", "'none'");
+  await ensureColumn("planned_novels", "gaiden_read_count", "INTEGER", "0");
+  await ensureColumn("planned_novels", "gaiden_total_episodes", "INTEGER", "0");
+  await ensureColumn("planned_novels", "manual_tier", "TEXT", "NULL");
+  await ensureColumn("planned_novels", "manual_order", "INTEGER", "0");
+  await ensureColumn("planned_novels", "reread_count", "INTEGER", "1");
+  await ensureColumn("planned_novels", "aliases", "TEXT", "''");
+  await ensureColumn("planned_novels", "memorable_quote", "TEXT", "''");
+  await ensureColumn("planned_novels", "awards", "TEXT", "''");
+  await ensureColumn("planned_novels", "read_count_updated_at", "INTEGER", "0");
+  await ensureColumn("planned_novels", "read_count_baseline", "INTEGER", "0");
+
   // 🖼️ v3.4.5: 표지 라이브러리 테이블
   await database.runAsync(`CREATE TABLE IF NOT EXISTS cover_library (
     id TEXT PRIMARY KEY NOT NULL,
@@ -10377,7 +10700,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.0.12";
+const APP_VERSION = "7.3.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -10403,6 +10726,119 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.3.0", date: "2026-05-07",
+    title: "가등록 시스템 강화 + 잔여 기술부채 청산 (예정탭 sub-tab + 일괄편집 외 5건)",
+    highlights: [
+      { type: "new", text: "✏️ 예정탭 sub-tab 도입 — '📋 목록' / '✏️ 일괄편집' 분리. 일괄편집에서 6종 작업 (진등록 전환, 삭제, 태그 추가/삭제, 플랫폼 설정, 우선순위, 작품상태)" },
+      { type: "new", text: "🏆💬🎨 가등록 카드 round-trip 배지 — awards/quote/gallery 카운트 표시 (passive)" },
+      { type: "new", text: "📊 1만+ 작품 첫 마이그레이션 progress overlay — initDb 단계별 라벨 표시" },
+      { type: "fix", text: "🔄 프리셋 변경 시 planned_novels.manual_tier도 함께 마이그레이션 (round-trip 정합성)" },
+      { type: "fix", text: "🛡️ convertNovelToPlanned 자동매칭 가드 — 함수 silent abort + button 시각 disabled" },
+      { type: "fix", text: "🧹 removeNovel/batchDelete가 v7.1 tier_inversion preference_patterns 고아 정리" },
+    ],
+    details: [
+      { type: "fix", text: "App.jsx:43425 영역 — 프리셋 변경 onPress의 manual/hybrid/match 분기 후 planned_novels.manual_tier 마이그레이션 루프 추가 (mode 무관)" },
+      { type: "fix", text: "App.jsx convertNovelToPlanned 진입부 — isAutoMatchingRef.current 시 console.warn + return false (Alert X)" },
+      { type: "fix", text: "App.jsx batchConvertToPlanned 진입부 — Alert + early return (button-level)" },
+      { type: "fix", text: "App.jsx 편집 모달 '📋 가등록' 버튼 — disabled={isAutoMatching} + opacity:0.4. tap 시 Alert 안내" },
+      { type: "fix", text: "App.jsx NovelCard long-press '📋 가등록 전환' — onPress 진입부 isAutoMatchingRef 가드" },
+      { type: "fix", text: "App.jsx removeNovel + batchDelete execBatch — `DELETE FROM preference_patterns WHERE pattern_key='novel:{id}'` 추가" },
+      { type: "new", text: "App.jsx initDb(progressCb) — 단계별 라벨 progressCb 호출 (4-5 단계). AppContent init/switch 두 호출 사이트가 setLoadingProgress 콜백 전달" },
+      { type: "new", text: "App.jsx loadPlannedList — 별도 SELECT로 gallery_images COUNT Map 빌드, plannedList 각 row에 gallery_count attach" },
+      { type: "new", text: "App.jsx 가등록 카드 — awards(parseAwards)/quote(parseQuotes)/gallery_count 계산 후 🏆/💬/🎨 배지 row 조건부 렌더" },
+      { type: "new", text: "App.jsx _doConvertPlannedToNovel 헬퍼 추출 — 사전 검증 + INSERT/UPDATE/DELETE/recent_changes 핵심 logic. {ok, reason, message} 반환" },
+      { type: "new", text: "App.jsx convertPlannedToNovelSilent — Alert 없이 _doConvertPlannedToNovel 호출 (batch용)" },
+      { type: "new", text: "App.jsx 신규 6종 batch 함수: batchConvertPlannedToNovels, batchDeletePlanned, batchAddPlannedTag, batchRemovePlannedTag, batchSetPlannedPlatforms, batchSetPlannedPriority, batchSetPlannedWorkStatus" },
+      { type: "new", text: "App.jsx 예정탭 JSX — sub-tab Chip row + list/bulk 분기 렌더. bulk 분기는 검색/선택/작업/다중선택 카드 리스트 4 섹션" },
+    ],
+  },
+  {
+    version: "7.2.0", date: "2026-05-07",
+    title: "가등록 ↔ 진등록 양방향 전환 + 가등록 스키마 확장",
+    highlights: [
+      { type: "new", text: "🔄 진등록 → 가등록 역전환 — 편집 모달 헤더 \"📋 가등록\" 버튼, NovelCard long-press 메뉴, 일괄편집 탭 모두 지원. id 보존으로 매칭/갤러리/폴더/티어 등 모든 데이터 자동 살아남음. round-trip 가능" },
+      { type: "new", text: "📊 planned_novels 스키마 16개 컬럼 확장 — status/pinned/read_count/rating/rd/wins/losses/match_count/gaiden_*/manual_tier/manual_order/reread_count/aliases/memorable_quote/awards/read_count_updated_at/read_count_baseline. round-trip 시 진등록의 모든 데이터가 가등록에 보존됨" },
+      { type: "new", text: "📦 일괄편집 탭에 \"선택 작품을 가등록으로 전환\" 추가 — 일괄 전환 + skip 카운트 (title 충돌 시)" },
+      { type: "improve", text: "✏️ 가등록 편집 모달에 aliases / memorable_quote 입력 필드 추가 + awards 카운트 배지 (read-only). 진등록 후 awards 편집 안내" },
+      { type: "improve", text: "🔁 convertPlannedToNovel — hardcoded default → planned 값 우선. round-trip 시 manual_tier/awards/quote/reread/wins/losses 등 모든 데이터 보존" },
+    ],
+    details: [
+      { type: "new", text: "App.jsx:5281 initDb — planned_novels 16개 ensureColumn 추가 (idempotent, 기존 row default)" },
+      { type: "new", text: "App.jsx:28583 신규 convertNovelToPlanned(novel) — title 충돌 체크 + verification 세션 abort + pending 큐 cancel + id 보존 INSERT + DELETE FROM novels + recent_changes 로그" },
+      { type: "new", text: "App.jsx 신규 batchConvertToPlanned useCallback — 일괄 전환 + per-id Alert 카운트" },
+      { type: "improve", text: "App.jsx:28414 const id = planned.id || uuid() — round-trip id 일관성. legacy planned도 fallback uuid()로 안전" },
+      { type: "improve", text: "App.jsx:28489-28533 INSERT params: hardcoded 1500/0/\"\" → planned 우선 (rating, rd, wins, losses, match_count, awards, status, pinned, read_count, gaiden_*, reread_count, memorable_quote, aliases, manual_tier, read_count_updated_at, read_count_baseline)" },
+      { type: "new", text: "App.jsx:43375 일괄편집 탭 — 작업 메뉴에 가등록 일괄 전환 버튼 + 안내" },
+      { type: "new", text: "App.jsx:38339 NovelCard onLongPress — 3-button Alert에 \"📋 가등록 전환\" 추가 (폴더 배정 / 가등록 전환 / 확인)" },
+      { type: "new", text: "App.jsx:48480 편집 모달 헤더 — \"📋 가등록\" 버튼 (삭제 옆) — confirm Alert + convert" },
+      { type: "new", text: "App.jsx:50917 가등록 편집 모달 — aliases / memorable_quote 입력 + awards 카운트 배지 섹션" },
+      { type: "improve", text: "App.jsx:28342 savePlannedEdit UPDATE — aliases / memorable_quote 추가 (awards는 read-only)" },
+      { type: "new", text: "App.jsx:36340 backup payload.PL — 19개 신규 단축키 (id 포함, default 값은 omit으로 크기 절감)" },
+      { type: "improve", text: "App.jsx:37029 importJSON PL 복원 — 신규 단축키 + default fallback (구버전 백업 호환)" },
+    ],
+  },
+  {
+    version: "7.1.0", date: "2026-05-07",
+    title: "취향 분석 모드 인식 재설계 — Tier-Aware Taste Analysis",
+    highlights: [
+      { type: "new", text: "🎯 모드 인식 통합 스코어 — getPrefScore: match=ELO, hybrid/manual=tier 기반. 모든 분석(장르/태그/작가/스펙트럼/anomaly) 자동 모드 적응. 점수 안 쓰던 hybrid에서도 의미 있는 평균/편차/트렌드" },
+      { type: "new", text: "🏆 신규 '티어 인사이트' 그룹 (hybrid/manual 전용 6개 섹션) — 티어 분포 / 상위 집중도 / 엔티티×티어 매트릭스 / 강한 선호 vs 균등 분산 / 다회독 disconnect / 수상-티어 상관" },
+      { type: "new", text: "📊 엔티티×티어 스트라티피케이션 — 매칭 시대 불가능했던 새 차원. '판타지 70%가 S~A' 같은 분포 인사이트. tag intensity 가중 + Wilson CI + Shannon entropy" },
+      { type: "improve", text: "🔬 Anomaly 임계치 mean±std 동적 적응 — 절대치(1500/1700) 대신 prefScore 분포 기반. mode 무관 작동" },
+      { type: "improve", text: "💾 영속화 — tier_concentration/tier_inversion/award_tier를 preference_patterns + insight_queue에 저장. 홈/추천 탭에서도 surface" },
+    ],
+    details: [
+      { type: "new", text: "App.jsx ~24126 getPrefScore(novel, config) — match=ELO identity, hybrid/manual=tier_rank * 200 - manual_order_adj. getDisplayTier로 ELO fallback 인클루시브" },
+      { type: "new", text: "App.jsx ~24165 formatPrefScore(score, config) — fraction-based 안정 라벨링 ('S~A 사이' 표현으로 round 진동 회피)" },
+      { type: "new", text: "App.jsx ~24200 computeTierStratification(novels, getEntityKeys, config, opts) — intensity 가중 + Wilson CI + Shannon entropy" },
+      { type: "new", text: "App.jsx ~24270 calcInversionScore — reread≥4 OR readRatio≥0.9, 하위 1/2 티어 (보수적)" },
+      { type: "improve", text: "App.jsx 24127-25064 analyzePreferences — n.rating 30곳 → n.prefScore (Category 2). anomaly mean±std 기반 (Category 3). match-only signals(wins/losses) 그대로 유지 (Category 1)" },
+      { type: "new", text: "App.jsx 25055-25217 analyzePreferences 끝부분에 5종 분석 + 6종 반환 필드 (tierStratification/Concentration/Entropy/Inversion/AwardTierCorrelation/Distribution)" },
+      { type: "new", text: "App.jsx 25219-25320 preference_patterns + insight_queue UPSERT (hybrid/manual에서만, match는 그룹 숨김이라 저장 X)" },
+      { type: "new", text: "App.jsx ~20730 SECTION_GROUPS에 'tier' 그룹 추가, ~21566 mode-aware filter (match에선 tier 숨김, hybrid/manual에선 표시)" },
+      { type: "new", text: "App.jsx ~22119 6개 신규 UI 섹션 (TierDistribution/Concentration/StratificationHeatmap/Entropy/Inversion/AwardTier) — hybrid/manual에서 표시" },
+      { type: "improve", text: "App.jsx ~21623, ~21728 basicStats avgRating 표시를 formatPrefScore로 mode-aware 변환" },
+    ],
+  },
+  {
+    version: "7.0.15", date: "2026-05-07",
+    title: "회차수 누적 +30화 시 자동 의심작 등록 (read_progress, cumulative tracking)",
+    highlights: [
+      { type: "new", text: "🆕 read_progress 트리거 추가 — last-fire 이후 누적 read_count 증가 >= 30 시 'underrated' 의심으로 검증 큐에 자동 등록. '더 읽었다 = 더 좋아한다' implicit signal 인식" },
+      { type: "new", text: "📚 누적 트래킹 — novels.read_count_baseline 컬럼 추가. 청크 분할 저장(5화×10번=50)도 누적으로 잡힘. 단순 per-edit 임계치였다면 매번 delta=5로 미발화" },
+      { type: "new", text: "🔁 일괄 증가(배정탭 batchIncReadCount)도 동일 누적 로직 — 여러 작품에 +N 일괄 시 작품별로 누적 +30 만족 시 fire" },
+      { type: "improve", text: "📍 의심도 확인 위치 안내 — 매칭 탭 '검증 대기' 카운트 또는 진단 탭 → S1. 검증 큐 → '현재 pending 큐 상위 10'에서 작품별 trigger/suspicion 확인 가능" },
+      { type: "fix", text: "🛡️ tier 변경 + read_count +30 동시 발생 시 else-if로 양보 (saveEdit) — 명시적 액션 우선, read_progress가 tier_change suspicion을 덮어쓰지 않음" },
+    ],
+    details: [
+      { type: "new", text: "App.jsx:23358 VERIFICATION_PRIORITY에 read_progress: 3 추가 (order_change와 동일 — 사용자 행동에서 드러난 선호 변화). m6 제거된 meta_edit(priority=1) 사고 회피 — read_count 한정 + 임계치 30" },
+      { type: "new", text: "App.jsx:23470 VERIFICATION_READ_COUNT_THRESHOLD = 30 (누적 기준)" },
+      { type: "new", text: "App.jsx:novels 테이블에 read_count_baseline INTEGER DEFAULT 0 컬럼 추가. 트랜잭션 마이그레이션(ALTER + backfill UPDATE)으로 기존 row의 baseline = 현재 read_count로 안전 backfill (mass-fire 회피)" },
+      { type: "new", text: "App.jsx:31360 addNovel + App.jsx:27535 convertPlannedToNovel: post-INSERT UPDATE baseline = 초기 read_count" },
+      { type: "new", text: "App.jsx:35599 importJSON: post-bulk-INSERT UPDATE baseline = read_count (백업 v9 포맷 미포함 대응)" },
+      { type: "new", text: "App.jsx:32294 saveEdit hybrid 블록 — else-if read_progress + 모든 트리거 발화 시 baseline = newReadCount로 reset" },
+      { type: "new", text: "App.jsx:34267 batchIncReadCount — UPDATE 전 (read_count, baseline) 캡처 + UPDATE + per-id 누적 검사 + fire/baseline reset" },
+      { type: "fix", text: "delta < 0(레거시 정정) 무시. SQL MAX(0, ...)와 일치하도록 newRead = Math.max(0, pre.read_count + d)로 clamp" },
+      { type: "fix", text: "사용자 결정 '최신 신호 우선' — 강등 후 누적 +30 시 read_progress가 underrated로 UPSERT (verification에서 재결정)" },
+    ],
+  },
+  {
+    version: "7.0.14", date: "2026-05-07",
+    title: "사용자 보고 3건 — 배정탭 ▲▼ 크래시/진단 export/수상탭 확대",
+    highlights: [
+      { type: "fix", text: "🛠️ 배정탭 ▲/▼ 순위 변경 버튼 크래시 — swapRating은 onPress(()=>swap(...))로 await 없이 호출되어 내부 DB 에러가 unhandled rejection으로 빠져 앱 크래시. 최상위 try/catch + Alert로 복구. 자동매칭 중이면 #1 불변조건 따라 Alert 차단" },
+      { type: "fix", text: "🔒 hybrid 검증 세션 in-flight 작품의 ▲▼ 차단 — 시퀀스 진행 중 manual_order 변경은 finalize와 충돌해 자리 예측 오작동 (M9c inline_chip과 동일 패턴)" },
+      { type: "improve", text: "📋 진단 탭 export 항시 노출 — 기존엔 PerfMonitor.enabled === false 시 \"진단 내보내기\" Section 자체가 숨겨져 사실상 항상 안 보였음. PerfMonitor OFF 안내 텍스트 + 게이트 제거" },
+      { type: "new", text: "🔍 수상탭 표지/명대사 풀스크린 확대 — 빅 수상 카드의 70x100 표지와 짧게 잘린 명대사를 탭하면 풀스크린 모달. 이미지/텍스트 분기, 갤러리 확대 모달 패턴 재사용" },
+    ],
+    details: [
+      { type: "fix", text: "App.jsx:34188 swapRating — 최상위 try/catch + verificationSessionRef 가드. catch에서 isAutoMatchingRef.current 검사 후 Alert.alert(\"순위 변경 실패\")" },
+      { type: "improve", text: "App.jsx:46426 진단 내보내기 Section — {PerfMonitor.enabled && (...)} 게이트 제거. !PerfMonitor.enabled 시 OFF 안내 박스 표시" },
+      { type: "new", text: "App.jsx:18570 AwardsScreen expandedView state ({type: image|quote, ...}) + Modal at end of component (49876 갤러리 모달 패턴 재사용)" },
+      { type: "new", text: "App.jsx:19515 표지 ExpoImage → TouchableOpacity 래핑, App.jsx:19614 명대사 View → TouchableOpacity 래핑. onPress에서 setExpandedView" },
+    ],
+  },
   {
     version: "7.0.12", date: "2026-05-07",
     title: "코드 전수 검토 — v7.0 정합성/stale closure/고아 정리 9건 수정",
@@ -18568,6 +19004,10 @@ const AwardsScreen = memo(({
   // 🆕 v3.2.1: 후보작 목록 접힘 상태 (수상별)
   const [expandedCandidates, setExpandedCandidates] = useState({});
 
+  // 🆕 v7.0.14: 수상작 카드의 표지/명대사 확대 모달 — 작은 썸네일/짧게 잘린 텍스트를 풀스크린으로
+  // expandedView: { type: "image", uri, title, author } | { type: "quote", text, title } | null
+  const [expandedView, setExpandedView] = useState(null);
+
   // 🆕 v7.0: hybrid 모드 — manual_tier+manual_order 기준 정렬, 그 외(match)는 rating 기준
   // v7.0.1 (N3 fix): tierMode prop 우선 (memo 리렌더 보장), 미전달 시 globalTierConfig fallback
   const effectiveMode = (tierMode || globalTierConfig.mode);
@@ -19513,13 +19953,23 @@ const AwardsScreen = memo(({
                         {/* 표지 + 기본 정보 */}
                         <View style={{ flexDirection: "row", marginTop: 8 }}>
                           {novel.cover_image && (
-                            <View style={{ marginRight: 14 }}>
-                              <ExpoImage 
-                                source={{ uri: novel.cover_image }} 
+                            // 🆕 v7.0.14: 표지 탭 시 풀스크린 확대
+                            <TouchableOpacity
+                              activeOpacity={0.85}
+                              onPress={() => setExpandedView({
+                                type: "image",
+                                uri: novel.cover_image,
+                                title: novel.title,
+                                author: novel.author,
+                              })}
+                              style={{ marginRight: 14 }}
+                            >
+                              <ExpoImage
+                                source={{ uri: novel.cover_image }}
                                 style={{ width: 70, height: 100, borderRadius: 10 }}
                                 contentFit="cover"
                               />
-                            </View>
+                            </TouchableOpacity>
                           )}
                           <View style={{ flex: 1 }}>
                             <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 6 }}>
@@ -19612,22 +20062,38 @@ const AwardsScreen = memo(({
                         </View>
                         
                         {/* 💬 인상깊은 문장 (텍스트 우선, 이미지는 썸네일) */}
+                        {/* 🆕 v7.0.14: 탭 시 풀스크린 확대 — 이미지/긴 텍스트 모두 가독성 개선 */}
                         {(() => {
                           const awardQuotes = parseQuotes(novel.memorable_quote);
                           // 텍스트 인용구 우선, 없으면 첫 번째 항목
                           const firstText = awardQuotes.find(q => typeof q === "string");
                           const firstItem = firstText || awardQuotes[0];
                           if (!firstItem) return null;
+                          const isImg = isImageQuote(firstItem);
                           return (
-                          <View style={{
-                            marginTop: 14,
-                            padding: isImageQuote(firstItem) ? 8 : 14,
-                            backgroundColor: isDark ? "#1e293b" : "#fffbeb",
-                            borderRadius: 12,
-                            borderLeftWidth: 4,
-                            borderLeftColor: award.color,
-                          }}>
-                            {isImageQuote(firstItem) ? (
+                          <TouchableOpacity
+                            activeOpacity={0.85}
+                            onPress={() => setExpandedView(isImg ? {
+                              type: "image",
+                              uri: firstItem.uri,
+                              title: novel.title,
+                              author: novel.author,
+                            } : {
+                              type: "quote",
+                              text: firstItem,
+                              title: novel.title,
+                              author: novel.author,
+                            })}
+                            style={{
+                              marginTop: 14,
+                              padding: isImg ? 8 : 14,
+                              backgroundColor: isDark ? "#1e293b" : "#fffbeb",
+                              borderRadius: 12,
+                              borderLeftWidth: 4,
+                              borderLeftColor: award.color,
+                            }}
+                          >
+                            {isImg ? (
                               <ExpoImage source={{ uri: firstItem.uri }} style={{ width: "100%", height: 100, borderRadius: 8 }} contentFit="contain" cachePolicy="disk" />
                             ) : (
                               <Text style={{
@@ -19639,7 +20105,7 @@ const AwardsScreen = memo(({
                                 {firstItem}
                               </Text>
                             )}
-                          </View>
+                          </TouchableOpacity>
                         );
                         })()}
                       </View>
@@ -20339,6 +20805,80 @@ const AwardsScreen = memo(({
           </View>
         </View>
       </Modal>
+
+      {/* 🆕 v7.0.14: 수상작 표지/명대사 풀스크린 확대 모달 */}
+      <Modal
+        visible={!!expandedView}
+        animationType="fade"
+        transparent
+        statusBarTranslucent={true}
+        onRequestClose={() => setExpandedView(null)}
+      >
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => setExpandedView(null)}
+          style={{
+            flex: 1,
+            backgroundColor: "rgba(0,0,0,0.92)",
+            justifyContent: "center",
+            alignItems: "center",
+            padding: 16,
+          }}
+        >
+          {expandedView?.type === "image" && (
+            <ExpoImage
+              source={{ uri: expandedView.uri }}
+              /* 🛠️ v7.1.2: 썸네일과 다른 recyclingKey + transition=0 + priority=high
+                 → 첫 확대 시 저해상도 비트맵 재활용으로 흐릿하게 보이는 문제 회피 */
+              recyclingKey={`expand-award-${expandedView.uri}`}
+              style={{ width: "92%", height: "72%", borderRadius: 12 }}
+              contentFit="contain"
+              cachePolicy="memory-disk"
+              priority="high"
+              transition={0}
+            />
+          )}
+          {expandedView?.type === "quote" && (
+            <ScrollView
+              style={{ maxHeight: "75%", width: "100%" }}
+              contentContainerStyle={{ justifyContent: "center", flexGrow: 1 }}
+              showsVerticalScrollIndicator={false}
+            >
+              <Text style={{
+                color: "#fef3c7",
+                fontSize: 22,
+                fontStyle: "italic",
+                lineHeight: 36,
+                textAlign: "center",
+                paddingHorizontal: 12,
+              }}>
+                {expandedView.text}
+              </Text>
+            </ScrollView>
+          )}
+          {expandedView?.title ? (
+            <Text style={{
+              color: "rgba(255,255,255,0.7)",
+              fontSize: 14,
+              marginTop: 16,
+              textAlign: "center",
+            }}>
+              {expandedView.title}{expandedView.author ? ` · ${expandedView.author}` : ""}
+            </Text>
+          ) : null}
+          <View style={{
+            position: "absolute",
+            bottom: 36,
+            alignSelf: "center",
+            backgroundColor: "rgba(255,255,255,0.15)",
+            paddingHorizontal: 20,
+            paddingVertical: 8,
+            borderRadius: 20,
+          }}>
+            <Text style={{ color: "rgba(255,255,255,0.8)", fontSize: 13 }}>탭하여 닫기</Text>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </>
   );
 });
@@ -20471,9 +21011,11 @@ const HeatmapRow = memo(({ data, theme }) => {
 // 🆕 v6.2: 섹션 그룹 정의 (사용자 답변: 카테고리 그룹화 리팩터링)
 // 13개 활성 섹션을 4그룹으로 묶어 모바일에서 길이 부담 완화
 // 기본: stats 그룹만 펼침. 사용자 펼침 상태는 app_meta 영속화 (slot별 자동 분리)
+// 🆕 v7.1: "🏆 티어 인사이트" 그룹 추가 — hybrid/manual에서만 노출 (mode-aware filter)
 const SECTION_GROUPS = [
   { key: "stats",    label: "📊 통계",       sections: ["basicStats", "categoryAnalysis", "anomalies"] },
   { key: "genreTag", label: "🏷️ 장르·태그",  sections: ["majorGenre", "subGenre", "coordPref", "spectrum"] },
+  { key: "tier",     label: "🏆 티어 인사이트", sections: ["tierDistribution", "tierConcentration", "tierStratificationHeatmap", "tierEntropy", "tierInversion", "awardTier"] },
   { key: "matching", label: "⚔️ 매칭 행동",  sections: ["matchAnalysis", "matchBehavior", "matchConsist", "simGroupConsist"] },
   { key: "advanced", label: "🔬 심화",       sections: ["upsets", "factors"] },
 ];
@@ -20722,14 +21264,26 @@ const TasteAnalysisScreen = memo(({
   }, [list]);
 
   // 🆕 v6.2: list 또는 매칭 변화 감지용 시그니처 (정렬만 바뀐 경우는 동일)
+  // 🆕 v7.1: mode/tier 변경도 시그니처에 포함 — 모드 토글 시 prefScore 재계산 + tier 인사이트 재생성
+  // 🆕 v7.2.2: 추가 — reread_count(tier_inversion), read_count(누적 트래킹), awards(award_tier 분석)
+  // 변경 시 자동 재분석. saveEdit 후 listSignature 변동 → 800ms 디바운스 후 runAnalysis 발화.
   const listSignature = useMemo(() => {
-    if (!list || list.length === 0) return "0";
-    let mc = 0, rs = 0;
+    if (!list || list.length === 0) return `0|${globalTierConfig.mode || "match"}`;
+    let mc = 0, rs = 0, tc = 0, rr = 0, rc = 0, aw = 0;
     for (const n of list) {
       mc += Number(n.match_count) || 0;
       rs += Math.round(Number(n.rating) || 1500);
+      if (n.manual_tier) tc += n.manual_tier.charCodeAt(0);
+      tc += Number(n.manual_order) || 0;
+      // 🆕 v7.2.2: tier_inversion / read_progress / award_tier 신호
+      rr += Number(n.reread_count) || 1;
+      rc += Number(n.read_count) || 0;
+      // awards JSON 길이만으로 충돌 회피 (정확 비교 X, 변경 감지용)
+      if (n.awards) aw += String(n.awards).length;
     }
-    return `${list.length}|${mc}|${rs}`;
+    const modeKey = globalTierConfig.mode || "match";
+    const tierKey = (globalTierConfig.tiers || []).map(t => t.key).join(",");
+    return `${list.length}|${mc}|${rs}|${tc}|${rr}|${rc}|${aw}|${modeKey}|${tierKey}`;
   }, [list]);
 
   // 🆕 v6.2: 디바운스 자동 재분석 (사용자 답변 정책)
@@ -21219,7 +21773,10 @@ const TasteAnalysisScreen = memo(({
 
   const { basicStats, majorGenreAnalysis, subGenreAnalysis, tagAnalysis,
           comboAnalysis, platformAnalysis, loyalAuthors, readingPattern,
-          matchAnalysis, trendAnalysis, anomalies, insights, spectrumAnalysis } = analysis;
+          matchAnalysis, trendAnalysis, anomalies, insights, spectrumAnalysis,
+          // 🆕 v7.1: 티어 인사이트
+          tierStratification, tierConcentration, tierEntropy, tierInversion,
+          awardTierCorrelation, tierDistribution } = analysis;
 
   // 차트 데이터 준비
   const genreChartData = majorGenreAnalysis.slice(0, 8).map(g => ({
@@ -21249,6 +21806,8 @@ const TasteAnalysisScreen = memo(({
 
   // 🆕 v7.0: hybrid 모드 — 매칭 기반 분석 비활성 (ELO 갱신 안 함)
   const isHybridMode = globalTierConfig.mode === "hybrid";
+  // 🆕 v7.1: hybrid 또는 manual — 두 모드 모두 티어 인사이트 그룹 노출 대상
+  const isHybridOrManualMode = globalTierConfig.mode === "hybrid" || globalTierConfig.mode === "manual";
 
   return (
     <>
@@ -21306,10 +21865,15 @@ const TasteAnalysisScreen = memo(({
         </TouchableOpacity>
       </View>
 
-      {/* 🆕 v6.2: 그룹 단위 펼침 토글 칩 (4그룹) */}
+      {/* 🆕 v6.2: 그룹 단위 펼침 토글 칩 (5그룹) */}
       {/* 🆕 v7.0: hybrid 모드는 매칭/심화 그룹 비활성 (ELO 기반) */}
+      {/* 🆕 v7.1: hybrid/manual은 "tier" 그룹 노출, match는 숨김 (모드별 분리) */}
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
-        {SECTION_GROUPS.filter(g => !isHybridMode || (g.key !== "matching" && g.key !== "advanced")).map(g => {
+        {SECTION_GROUPS.filter(g => {
+          if (g.key === "tier") return isHybridOrManualMode; // 🆕 v7.1: hybrid/manual에만
+          if (isHybridOrManualMode && (g.key === "matching" || g.key === "advanced")) return false;
+          return true;
+        }).map(g => {
           const open = isGroupExpanded(g.key);
           return (
             <TouchableOpacity
@@ -21356,8 +21920,11 @@ const TasteAnalysisScreen = memo(({
             <Text style={{ color: C.sub, fontSize: 11 }}>총 작품</Text>
           </View>
           <View style={{ flex: 1, backgroundColor: C.card, padding: 12, borderRadius: 12, alignItems: "center" }}>
-            <Text style={{ color: C.ok, fontSize: 22, fontWeight: "800" }}>{basicStats.avgRating.toFixed(0)}</Text>
-            <Text style={{ color: C.sub, fontSize: 11 }}>평균 레이팅</Text>
+            {/* 🆕 v7.1: mode-aware 표시 — match는 점수, hybrid/manual은 평균 티어 */}
+            <Text style={{ color: C.ok, fontSize: isHybridOrManualMode ? 14 : 22, fontWeight: "800", textAlign: "center" }}>
+              {isHybridOrManualMode ? formatPrefScore(basicStats.avgRating, globalTierConfig) : basicStats.avgRating.toFixed(0)}
+            </Text>
+            <Text style={{ color: C.sub, fontSize: 11 }}>{isHybridOrManualMode ? "평균 선호도" : "평균 레이팅"}</Text>
           </View>
           <View style={{ flex: 1, backgroundColor: C.card, padding: 12, borderRadius: 12, alignItems: "center" }}>
             <Text style={{ color: "#f59e0b", fontSize: 22, fontWeight: "800" }}>{(basicStats.totalReadCount / 1000).toFixed(1)}k</Text>
@@ -21458,7 +22025,8 @@ const TasteAnalysisScreen = memo(({
             </>
           ) : (
             <Text style={{ color: C.sub, fontSize: 12 }}>
-              {basicStats.total}작 · 평균 {basicStats.avgRating.toFixed(0)}점 · 총 {(basicStats.totalReadCount / 1000).toFixed(1)}k회 읽음
+              {/* 🆕 v7.1: mode-aware avgRating 표시 */}
+              {basicStats.total}작 · {isHybridOrManualMode ? formatPrefScore(basicStats.avgRating, globalTierConfig) : `평균 ${basicStats.avgRating.toFixed(0)}점`} · 총 {(basicStats.totalReadCount / 1000).toFixed(1)}k회 읽음
             </Text>
           )}
         </Section>
@@ -21850,6 +22418,286 @@ const TasteAnalysisScreen = memo(({
                 </View>
               );
             })}
+          </Section>
+        </TouchableOpacity>
+      )}
+
+      {/* 🆕 v7.1: 티어 인사이트 그룹 (hybrid/manual에서 활성) */}
+      {/* ════ 1. TierDistribution — 전체 티어 분포 ════ */}
+      {isHybridOrManualMode && isGroupExpanded("tier") && tierDistribution && (
+        <TouchableOpacity onPress={() => toggleSection("tierDistribution")}>
+          <Section title={`📊 티어 분포 ${isExpanded("tierDistribution") ? "▼" : "▶"}`}>
+            <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
+              내 작품들의 티어별 분포 (전체 {tierDistribution.total}건, 미배정 {tierDistribution.unrated}건)
+            </Text>
+            {isExpanded("tierDistribution") && (() => {
+              const tierOrder = getActiveTierOrder(globalTierConfig);
+              const total = tierDistribution.total || 1;
+              return (
+                <View style={{ gap: 6 }}>
+                  {tierOrder.map((t) => {
+                    const count = tierDistribution.counts[t] || 0;
+                    const ratio = count / total;
+                    const color = getTierColor(t);
+                    return (
+                      <View key={t} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                        <View style={{ width: 32, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: color }}>
+                          <Text style={{ color: "#fff", fontWeight: "800", fontSize: 11, textAlign: "center" }}>
+                            {getTierLabel(t, globalTierConfig)}
+                          </Text>
+                        </View>
+                        <View style={{ flex: 1, height: 14, backgroundColor: C.bg, borderRadius: 7, overflow: "hidden" }}>
+                          <View style={{ width: `${Math.max(2, ratio * 100)}%`, height: "100%", backgroundColor: color, opacity: 0.7 }} />
+                        </View>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", width: 60, textAlign: "right" }}>
+                          {count}건 ({(ratio * 100).toFixed(0)}%)
+                        </Text>
+                      </View>
+                    );
+                  })}
+                  {tierDistribution.unrated > 0 && (
+                    <Text style={{ color: C.sub, fontSize: 11, marginTop: 4 }}>
+                      ⓘ 미배정 {tierDistribution.unrated}건은 분포에서 제외 — 티어 인사이트 정확도 ↑를 위해 편집 권장
+                    </Text>
+                  )}
+                </View>
+              );
+            })()}
+          </Section>
+        </TouchableOpacity>
+      )}
+
+      {/* ════ 2. TierConcentration — 상위 티어 집중도 ════ */}
+      {isHybridOrManualMode && isGroupExpanded("tier") && tierConcentration && (
+        <TouchableOpacity onPress={() => toggleSection("tierConcentration")}>
+          <Section title={`🏆 상위 티어 집중도 ${isExpanded("tierConcentration") ? "▼" : "▶"}`}>
+            <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
+              내 상위 티어에 가장 많이 등장하는 작가/태그/장르
+            </Text>
+            {isExpanded("tierConcentration") && (
+              <View style={{ gap: 14 }}>
+                {/* 작가 TOP */}
+                {tierConcentration.topAuthors.length > 0 && (
+                  <View>
+                    <Text style={{ color: C.text, fontWeight: "700", marginBottom: 6 }}>작가 TOP {tierConcentration.topAuthors.length}</Text>
+                    {tierConcentration.topAuthors.map((s, i) => (
+                      <View key={i} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 4, borderBottomWidth: 0.5, borderBottomColor: C.line + "40" }}>
+                        <Text style={{ color: C.text, fontSize: 13, flex: 1 }} numberOfLines={1}>
+                          {i + 1}. {s.key}
+                        </Text>
+                        <Text style={{ color: C.sub, fontSize: 11 }}>
+                          상위 {(s.topTierRatio * 100).toFixed(0)}% (N={s.totalCount})
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+                {/* 태그 TOP */}
+                {tierConcentration.topTags.length > 0 && (
+                  <View>
+                    <Text style={{ color: C.text, fontWeight: "700", marginBottom: 6 }}>태그 TOP {tierConcentration.topTags.length}</Text>
+                    {tierConcentration.topTags.map((s, i) => (
+                      <View key={i} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 4, borderBottomWidth: 0.5, borderBottomColor: C.line + "40" }}>
+                        <Text style={{ color: C.text, fontSize: 13, flex: 1 }} numberOfLines={1}>
+                          {i + 1}. {s.key}
+                        </Text>
+                        <Text style={{ color: C.sub, fontSize: 11 }}>
+                          상위 {(s.topTierRatio * 100).toFixed(0)}% (N={s.totalCount})
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+                {/* 장르 TOP */}
+                {tierConcentration.topGenres.length > 0 && (
+                  <View>
+                    <Text style={{ color: C.text, fontWeight: "700", marginBottom: 6 }}>대장르 TOP {tierConcentration.topGenres.length}</Text>
+                    {tierConcentration.topGenres.map((s, i) => (
+                      <View key={i} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 4, borderBottomWidth: 0.5, borderBottomColor: C.line + "40" }}>
+                        <Text style={{ color: C.text, fontSize: 13, flex: 1 }} numberOfLines={1}>
+                          {i + 1}. {s.key}
+                        </Text>
+                        <Text style={{ color: C.sub, fontSize: 11 }}>
+                          상위 {(s.topTierRatio * 100).toFixed(0)}% (N={s.totalCount})
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+                {tierConcentration.topAuthors.length === 0 && tierConcentration.topTags.length === 0 && tierConcentration.topGenres.length === 0 && (
+                  <Text style={{ color: C.sub, fontSize: 12, textAlign: "center", padding: 12 }}>
+                    티어 데이터 부족 — 작품을 더 등록하거나 티어 배정 후 다시 확인하세요.
+                  </Text>
+                )}
+              </View>
+            )}
+          </Section>
+        </TouchableOpacity>
+      )}
+
+      {/* ════ 3. TierStratificationHeatmap — 엔티티 × 티어 매트릭스 ════ */}
+      {isHybridOrManualMode && isGroupExpanded("tier") && tierStratification && (
+        <TouchableOpacity onPress={() => toggleSection("tierStratificationHeatmap")}>
+          <Section title={`🗺️ 티어×엔티티 매트릭스 ${isExpanded("tierStratificationHeatmap") ? "▼" : "▶"}`}>
+            <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
+              각 엔티티가 어느 티어에 분포하는지 한눈에. 상위 5건만 표시.
+            </Text>
+            {isExpanded("tierStratificationHeatmap") && (() => {
+              const tierOrder = getActiveTierOrder(globalTierConfig);
+              const renderRow = (label, list) => {
+                if (!list || list.length === 0) return null;
+                const visible = list
+                  .filter(s => s.totalCount >= 3)
+                  .sort((a, b) => b.totalCount - a.totalCount)
+                  .slice(0, 5);
+                if (visible.length === 0) return null;
+                return (
+                  <View style={{ marginBottom: 12 }}>
+                    <Text style={{ color: C.text, fontWeight: "700", marginBottom: 4 }}>{label}</Text>
+                    {visible.map((s, i) => (
+                      <View key={i} style={{ marginBottom: 4 }}>
+                        <Text style={{ color: C.sub, fontSize: 11 }} numberOfLines={1}>{s.key} (N={s.totalCount})</Text>
+                        <View style={{ flexDirection: "row", height: 18, marginTop: 2, borderRadius: 4, overflow: "hidden" }}>
+                          {tierOrder.map((t) => {
+                            const c = s.byTierWeight ? s.byTierWeight[t] : (s.byTier ? s.byTier[t] : 0);
+                            const w = (s.totalWeight && s.totalWeight > 0) ? c / s.totalWeight : 0;
+                            const tcolor = getTierColor(t);
+                            if (w === 0) return <View key={t} style={{ flex: 0.001, backgroundColor: C.bg }} />;
+                            return (
+                              <View key={t} style={{ flex: w, backgroundColor: tcolor, justifyContent: "center", alignItems: "center" }}>
+                                {w > 0.15 && (
+                                  <Text style={{ color: "#fff", fontSize: 9, fontWeight: "700" }}>
+                                    {(w * 100).toFixed(0)}%
+                                  </Text>
+                                )}
+                              </View>
+                            );
+                          })}
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                );
+              };
+              return (
+                <View>
+                  {renderRow("📚 대장르", tierStratification.byMajorGenre)}
+                  {renderRow("📖 부장르", tierStratification.bySubGenre)}
+                  {renderRow("🏷️ 태그 (intensity 가중)", tierStratification.byTag)}
+                  {renderRow("✍️ 작가", tierStratification.byAuthor)}
+                </View>
+              );
+            })()}
+          </Section>
+        </TouchableOpacity>
+      )}
+
+      {/* ════ 4. TierEntropyView — 강한 선호 vs 균등 분산 ════ */}
+      {isHybridOrManualMode && isGroupExpanded("tier") && tierEntropy && (tierEntropy.strong.length > 0 || tierEntropy.dispersed.length > 0) && (
+        <TouchableOpacity onPress={() => toggleSection("tierEntropy")}>
+          <Section title={`🎯 강한 선호 vs 균등 분산 ${isExpanded("tierEntropy") ? "▼" : "▶"}`}>
+            <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
+              티어 분산도(entropy) 기반 — 한 티어에 몰리면 강한 신호, 모든 티어에 고르면 약한 신호.
+            </Text>
+            {isExpanded("tierEntropy") && (
+              <View style={{ gap: 12 }}>
+                {tierEntropy.strong.length > 0 && (
+                  <View>
+                    <Text style={{ color: C.ok, fontWeight: "700", marginBottom: 6 }}>🎯 강한 선호 (집중)</Text>
+                    {tierEntropy.strong.slice(0, 7).map((s, i) => (
+                      <View key={i} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 3 }}>
+                        <Text style={{ color: C.text, fontSize: 12, flex: 1 }} numberOfLines={1}>
+                          {s.kind === "tag" ? "🏷️" : s.kind === "author" ? "✍️" : "📚"} {s.key}
+                        </Text>
+                        <Text style={{ color: C.sub, fontSize: 11 }}>상위 {(s.topTierRatio * 100).toFixed(0)}%</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+                {tierEntropy.dispersed.length > 0 && (
+                  <View>
+                    <Text style={{ color: C.warn, fontWeight: "700", marginBottom: 6 }}>🌀 균등 분산 (시그널 약함)</Text>
+                    {tierEntropy.dispersed.slice(0, 5).map((s, i) => (
+                      <View key={i} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 3 }}>
+                        <Text style={{ color: C.text, fontSize: 12, flex: 1 }} numberOfLines={1}>
+                          {s.kind === "tag" ? "🏷️" : s.kind === "author" ? "✍️" : "📚"} {s.key}
+                        </Text>
+                        <Text style={{ color: C.sub, fontSize: 11 }}>모든 티어 산재</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+            )}
+          </Section>
+        </TouchableOpacity>
+      )}
+
+      {/* ════ 5. TierInversionView — disconnect 카드 (보수적, dismissable) ════ */}
+      {isHybridOrManualMode && isGroupExpanded("tier") && tierInversion && tierInversion.items.length > 0 && (
+        <TouchableOpacity onPress={() => toggleSection("tierInversion")}>
+          <Section title={`🔍 다회독·완독 vs 티어 disconnect ${isExpanded("tierInversion") ? "▼" : "▶"}`}>
+            <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
+              많이 읽었지만 낮은 티어 — 티어 재고 권유 (강제 X, 참고용)
+            </Text>
+            {isExpanded("tierInversion") && (
+              <View style={{ gap: 8 }}>
+                {tierInversion.items.map((item, i) => (
+                  <View key={i} style={{ backgroundColor: isDark ? "#451a03" : "#fef9c3", padding: 10, borderRadius: 8, borderLeftWidth: 3, borderLeftColor: "#f59e0b" }}>
+                    <Text style={{ color: C.text, fontWeight: "700", fontSize: 13 }} numberOfLines={1}>
+                      {item.title}{item.author ? ` · ${item.author}` : ""}
+                    </Text>
+                    <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>
+                      현재: {getTierLabel(item.tier, globalTierConfig)} 티어 · {item.rereadCount}회독
+                      {item.readRatio !== null && item.readRatio > 0 ? ` · ${(item.readRatio * 100).toFixed(0)}% 진행` : ""}
+                    </Text>
+                    <Text style={{ color: isDark ? "#fde68a" : "#92400e", fontSize: 12, marginTop: 4, fontStyle: "italic" }}>
+                      💡 {item.message}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </Section>
+        </TouchableOpacity>
+      )}
+
+      {/* ════ 6. AwardTierView — 수상-티어 상관 ════ */}
+      {isHybridOrManualMode && isGroupExpanded("tier") && awardTierCorrelation !== undefined && (
+        <TouchableOpacity onPress={() => toggleSection("awardTier")}>
+          <Section title={`🏅 수상×티어 상관 ${isExpanded("awardTier") ? "▼" : "▶"}`}>
+            <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
+              {awardTierCorrelation === null
+                ? "수상 작품 5개 이상 등록 시 분석 표시"
+                : `수상 작품의 티어 분포 + 공통 태그 패턴`}
+            </Text>
+            {isExpanded("awardTier") && awardTierCorrelation && awardTierCorrelation.byAward && (
+              <View style={{ gap: 12 }}>
+                {Object.entries(awardTierCorrelation.byAward).map(([key, stat]) => (
+                  <View key={key} style={{ backgroundColor: C.bg, padding: 10, borderRadius: 8 }}>
+                    <Text style={{ color: C.text, fontWeight: "700" }}>🏆 {key} ({stat.count}건)</Text>
+                    {stat.avgPrefScore != null && (
+                      <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>
+                        평균 — {formatPrefScore(stat.avgPrefScore, globalTierConfig)}
+                      </Text>
+                    )}
+                    {stat.topTags && stat.topTags.length > 0 && (
+                      <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>
+                        공통 태그: {stat.topTags.map(t => `${t.tag}(${t.count})`).join(", ")}
+                      </Text>
+                    )}
+                  </View>
+                ))}
+                {awardTierCorrelation.sharedTags && awardTierCorrelation.sharedTags.length > 0 && (
+                  <View style={{ marginTop: 4, paddingTop: 8, borderTopWidth: 1, borderTopColor: C.line }}>
+                    <Text style={{ color: C.text, fontWeight: "700", fontSize: 12 }}>전체 수상작 공통 패턴</Text>
+                    <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>
+                      {awardTierCorrelation.sharedTags.slice(0, 5).map(t => `${t.tag} (${(t.ratio * 100).toFixed(0)}%)`).join(", ")}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            )}
           </Section>
         </TouchableOpacity>
       )}
@@ -23206,10 +24054,14 @@ function detectViolation(novelA, novelB, choice, tierConfig) {
 }
 
 // 🆕 v7.0: 검증 큐 INSERT — 사용자 편집 행위 발생 시 호출. 시스템 변경(finalize)은 호출 X
+// 🆕 v7.0.15: read_progress 추가 — read_count 일정 이상 증가 시 underrated 의심.
+// order_change와 동일 priority(3) — 둘 다 사용자 행동에서 드러난 선호 변화 시그널.
+// m6 제거된 meta_edit(priority=1)과 달리 임계치 필터 + 충분히 높은 priority로 노이즈 회피.
 const VERIFICATION_PRIORITY = {
   gatekeeper: 5,
   tier_change: 4,
   order_change: 3,
+  read_progress: 3,
   new: 2,
   meta_edit: 1,
 };
@@ -23312,6 +24164,12 @@ async function getCandidatesForVerification(novelId, suspicionType, limit = 10) 
 // 🆕 v7.0: 검증 시퀀스 상수 — 변곡점 알고리즘 / K=2 추가 매칭 / max=7
 const VERIFICATION_MAX_RESPONSES = 7;
 const VERIFICATION_K_AFTER_INFLECTION = 2;
+
+// 🆕 v7.0.15: read_count 누적 임계치 — (현재 read_count − read_count_baseline) >= 이 값이면 read_progress fire (underrated).
+// — 사용자 보고: "회차수 50화 넘게 올렸는데도 의심작 미선정. 한 번에 30 안 올라도 누적되면 평가 변할 수 있지 않나?"
+// — 누적 트래킹: read_count_baseline은 last-fire 시점 read_count. 청크 분할 저장(5화×10번=50)도 동일하게 잡힘.
+// — m6 제거된 meta_edit(priority=1)과 달리 임계치 필터 + priority=3로 노이즈 회피.
+const VERIFICATION_READ_COUNT_THRESHOLD = 30;
 
 // 🆕 v7.0: 검증 큐에서 다음 처리 대상 작품 fetch (priority DESC, 디바운스 1초 적용)
 async function getNextVerificationTarget() {
@@ -23861,6 +24719,166 @@ const stdDev = (arr) => {
   return Math.sqrt(arr.reduce((sum, v) => sum + (v - m) ** 2, 0) / arr.length);
 };
 
+/* ═══════════════════════════════════════════════════════════════════════
+   🆕 v7.1: 모드 인식 취향 분석 헬퍼 (Tier-Aware Taste Analysis)
+   ═══════════════════════════════════════════════════════════════════════
+   - getPrefScore: match=ELO, hybrid/manual=tier-derived 스코어 (단일 파이프라인)
+   - formatPrefScore: 표시용 — match는 점수, hybrid/manual은 티어 라벨 (fraction-based)
+   - computeTierStratification: 엔티티×티어 분포 매트릭스 (intensity 가중 + entropy + Wilson CI)
+   - calcInversionScore: 다회독↑ + 티어↓ disconnect 감지
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * 🆕 v7.1: 모드 인식 통합 취향 스코어
+ * - match 모드: 기존 ELO rating 그대로 (회귀 0)
+ * - hybrid/manual: tier_rank 기반 + manual_order 미세 조정
+ * - getDisplayTier 사용 → manual_tier 미배정 작품도 ELO fallback으로 인클루시브
+ */
+function getPrefScore(novel, config) {
+  const mode = config?.mode || 'match';
+  const rating = Number(novel.rating) || 1500;
+  if (mode === 'match') return rating;
+
+  const tierOrder = getActiveTierOrder(config);
+  const displayTier = getDisplayTier(novel, config);
+  const tierRank = displayTier ? tierOrder.indexOf(displayTier) : -1;
+
+  if (tierRank === -1) {
+    // 비활성 tier(프리셋 잔여) 또는 미정: hybrid는 ELO fallback, manual은 중립
+    return mode === 'hybrid' ? rating : 1500;
+  }
+
+  const tierCount = tierOrder.length;
+  // S=2000, bottom=1000 (linear). 5-tier: [2000, 1750, 1500, 1250, 1000]
+  const tierBase = 2000 - (tierRank / Math.max(1, tierCount - 1)) * 1000;
+  // manual_order 미세 조정 (cap 80 — 티어 경계 침범 방지)
+  const orderAdj = -Math.min(80, Math.max(0, Number(novel.manual_order) || 0) / 100 * 10);
+  return Math.round(tierBase + orderAdj);
+}
+
+/**
+ * 🆕 v7.1: 표시용 변환 — fraction-based 안정 라벨링 (round 진동 회피)
+ */
+function formatPrefScore(score, config) {
+  const mode = config?.mode || 'match';
+  if (mode === 'match') return `${Math.round(score)}점`;
+
+  const tierOrder = getActiveTierOrder(config);
+  const tierCount = tierOrder.length;
+  if (tierCount === 0) return `${Math.round(score)}`;
+
+  const exact = Math.max(0, Math.min(tierCount - 1, (2000 - score) / 1000 * (tierCount - 1)));
+  const lower = Math.max(0, Math.min(tierCount - 1, Math.floor(exact)));
+  const upper = Math.max(0, Math.min(tierCount - 1, Math.ceil(exact)));
+
+  if (lower === upper) return `평균 ${getTierLabel(tierOrder[lower], config)}`;
+  const fraction = exact - lower;
+  if (fraction < 0.25) return `평균 ${getTierLabel(tierOrder[lower], config)}`;
+  if (fraction > 0.75) return `평균 ${getTierLabel(tierOrder[upper], config)}`;
+  return `평균 ${getTierLabel(tierOrder[lower], config)}~${getTierLabel(tierOrder[upper], config)}`;
+}
+
+/**
+ * 🆕 v7.1: 엔티티×티어 스트라티피케이션 매트릭스
+ * - getEntityKeys: (novel) => ["key1", ...] 또는 [{key, intensity}, ...]
+ * - options.useIntensity: tag intensity(1-5) 가중치 적용 (1=0.33, 3=1.0, 5=1.67)
+ * - 반환 stat: { totalCount, totalWeight, byTier, byTierWeight, topTierRatio, topTierCI, entropy, entropyNormalized, entropyLabel }
+ */
+function computeTierStratification(novels, getEntityKeys, config, options = {}) {
+  const useIntensity = options.useIntensity || false;
+  const tierOrder = getActiveTierOrder(config);
+  const result = new Map();
+  if (!tierOrder || tierOrder.length === 0) return result;
+
+  for (const n of novels) {
+    const tier = getDisplayTier(n, config);
+    if (!tier || !tierOrder.includes(tier)) continue;
+    const keys = getEntityKeys(n) || [];
+    for (const k of keys) {
+      const key = typeof k === 'string' ? k : k?.key;
+      if (!key) continue;
+      const weight = (typeof k === 'object' && useIntensity)
+        ? Math.max(0.33, Math.min(1.67, (Number(k.intensity) || 3) / 3))
+        : 1.0;
+      if (!result.has(key)) {
+        result.set(key, {
+          key,
+          totalCount: 0,
+          totalWeight: 0,
+          byTier: Object.fromEntries(tierOrder.map(t => [t, 0])),
+          byTierWeight: Object.fromEntries(tierOrder.map(t => [t, 0])),
+        });
+      }
+      const stat = result.get(key);
+      stat.totalCount++;
+      stat.totalWeight += weight;
+      stat.byTier[tier]++;
+      stat.byTierWeight[tier] += weight;
+    }
+  }
+
+  // Post-process: ratios + Wilson CI + entropy + 라벨
+  const tierCount = tierOrder.length;
+  const topTierKeys = tierOrder.slice(0, Math.max(1, Math.ceil(tierCount / 3)));
+  const maxEntropy = Math.log2(Math.max(2, tierCount));
+
+  for (const stat of result.values()) {
+    if (stat.totalWeight === 0) continue;
+    let topWeight = 0;
+    for (const t of topTierKeys) topWeight += stat.byTierWeight[t];
+    stat.topTierRatio = topWeight / stat.totalWeight;
+    // Wilson CI (재사용: wilsonConfidenceInterval 기존 헬퍼)
+    stat.topTierCI = wilsonConfidenceInterval(
+      Math.round(topWeight),
+      Math.max(1, Math.round(stat.totalWeight))
+    );
+    let H = 0;
+    for (const t of tierOrder) {
+      const p = stat.byTierWeight[t] / stat.totalWeight;
+      if (p > 0) H -= p * Math.log2(p);
+    }
+    stat.entropy = H;
+    stat.entropyNormalized = maxEntropy > 0 ? H / maxEntropy : 0;
+    stat.entropyLabel =
+      stat.entropyNormalized < 1 / 3 ? "강한 선호" :
+      stat.entropyNormalized > 2 / 3 ? "균등 분산" : "중간";
+  }
+
+  return result;
+}
+
+/**
+ * 🆕 v7.1: 티어 inversion 점수 — 다회독↑ + 티어↓ disconnect 감지
+ * 보수적 임계치: reread ≥ 4 OR readRatio ≥ 0.9, 하위 1/2 티어
+ * 반환: 0 = no inversion, > 0 = inversion 강도
+ */
+function calcInversionScore(novel, config) {
+  const tierOrder = getActiveTierOrder(config);
+  if (!tierOrder || tierOrder.length === 0) return 0;
+  const tier = getDisplayTier(novel, config);
+  const tierRank = tier ? tierOrder.indexOf(tier) : -1;
+  if (tierRank === -1) return 0;
+
+  // 하위 1/2 티어
+  if (tierRank < Math.ceil(tierOrder.length / 2)) return 0;
+
+  const reread = Number(novel.reread_count) || 1;
+  const readCount = Number(novel.read_count) || 0;
+  const total = Number(novel.total_episodes) || 0;
+  const readRatio = total > 0 ? readCount / total : 0;
+
+  // 보수적 트리거
+  const rereadHit = reread >= 4;
+  const readRatioHit = readRatio >= 0.9 && readCount >= 30; // 너무 짧은 작품 제외
+
+  if (!rereadHit && !readRatioHit) return 0;
+
+  // 강도: 하위 티어 깊이 + 다회독/완독률
+  const depthFactor = (tierRank - Math.ceil(tierOrder.length / 2) + 1) / Math.max(1, tierOrder.length / 2);
+  const signalFactor = Math.min(1, (rereadHit ? reread / 4 : 0) + (readRatioHit ? readRatio : 0));
+  return Math.round(depthFactor * signalFactor * 100);
+}
+
 // 메인 분석 함수
 async function analyzePreferences(novels, matches) {
   try {
@@ -23908,8 +24926,8 @@ async function analyzePreferences(novels, matches) {
       return {
         ...n,
         reliability: calcNovelReliabilityScore(n, totalCount),
-        readRatio: (Number(n.total_episodes) > 0) 
-          ? Number(n.read_count) / Number(n.total_episodes) 
+        readRatio: (Number(n.total_episodes) > 0)
+          ? Number(n.read_count) / Number(n.total_episodes)
           : null,
         majorGenres,
         subGenres,
@@ -23918,6 +24936,9 @@ async function analyzePreferences(novels, matches) {
         platList: (() => { try { return JSON.parse(n.platforms || "[]"); } catch { return []; } })(),
         daysSinceCreated: (now - (n.created_at || now)) / (1000 * 60 * 60 * 24),
         rating: Number(n.rating) || 1500,
+        // 🆕 v7.1: 모드 인식 통합 스코어 — match=ELO, hybrid/manual=tier-derived
+        // 모든 score-aggregation 분석은 prefScore 사용. n.rating은 match-only 신호용으로 보존.
+        prefScore: getPrefScore(n, globalTierConfig),
         rereadCount: Math.max(1, Number(n.reread_count) || 1), // 📚 v3.0.4: 다회독 카운트
         // 📚 v3.4: 다회독 가중치 강화 (1회독=1, 2회독=1.7, 3회독=2.2, 5회독=3)
         rereadWeight: 1 + Math.sqrt(Math.max(1, Number(n.reread_count) || 1) - 1) * 0.7,
@@ -23939,14 +24960,16 @@ async function analyzePreferences(novels, matches) {
     }
   
   // 2. 기본 통계
+  // 🆕 v7.1: avgRating은 mode-aware prefScore로 교체. match에선 ELO 그대로(identity), hybrid/manual은 tier-derived.
+  // UI는 formatPrefScore로 모드별 표시 (match='1720점', hybrid='평균 B+ 티어').
   const basicStats = {
     total: totalCount,
     highReliability: highReliability.length,
     mediumReliability: mediumReliability.length,
     lowReliability: lowReliability.length,
-    avgRating: avg(reliable.map(n => n.rating)),
-    medianRating: median(reliable.map(n => n.rating)),
-    stdDevRating: stdDev(reliable.map(n => n.rating)),
+    avgRating: avg(reliable.map(n => n.prefScore)),
+    medianRating: median(reliable.map(n => n.prefScore)),
+    stdDevRating: stdDev(reliable.map(n => n.prefScore)),
     avgReadCount: avg(reliable.filter(n => n.read_count > 0).map(n => Number(n.read_count))),
     totalReadCount: reliable.reduce((sum, n) => sum + (Number(n.read_count) || 0), 0),
     completedCount: reliable.filter(n => n.status === "completed").length,
@@ -23970,7 +24993,8 @@ async function analyzePreferences(novels, matches) {
       const rereadWeight = n.rereadWeight || (1 + Math.sqrt(n.rereadCount - 1) * 0.7);
       stat.count++;
       stat.weightedCount += rereadWeight;
-      stat.ratings.push(n.rating);
+      // 🆕 v7.1: prefScore (mode-aware)
+      stat.ratings.push(n.prefScore);
       if (n.readRatio !== null) stat.readRatios.push(n.readRatio);
       stat.readCounts.push(Number(n.read_count) || 0);
       if (n.status === "completed") stat.completed++;
@@ -24007,7 +25031,7 @@ async function analyzePreferences(novels, matches) {
       const rereadWeight = n.rereadWeight || (1 + Math.sqrt(n.rereadCount - 1) * 0.7);
       subGenreStats[g].count++;
       subGenreStats[g].weightedCount += rereadWeight;
-      subGenreStats[g].ratings.push(n.rating);
+      subGenreStats[g].ratings.push(n.prefScore);
       if (n.status === "completed") subGenreStats[g].completed++;
       if (n.status === "dropped") subGenreStats[g].dropped++;
       subGenreStats[g].rereadSum += n.rereadCount;
@@ -24039,7 +25063,7 @@ async function analyzePreferences(novels, matches) {
       
       tagStats[tag].count++;
       tagStats[tag].weightedCount += rereadWeight * intensityWeight;
-      tagStats[tag].ratings.push(n.rating);
+      tagStats[tag].ratings.push(n.prefScore);
       tagStats[tag].intensitySum += intensity;
       if (n.status === "dropped") tagStats[tag].dropped++;
     }
@@ -24066,7 +25090,7 @@ async function analyzePreferences(novels, matches) {
         const key = [allTags[i], allTags[j]].sort().join(" + ");
         if (!combos[key]) combos[key] = { count: 0, ratings: [] };
         combos[key].count++;
-        combos[key].ratings.push(n.rating);
+        combos[key].ratings.push(n.prefScore);
       }
     }
   }
@@ -24089,7 +25113,7 @@ async function analyzePreferences(novels, matches) {
         platStats[p] = { count: 0, ratings: [], readRatios: [], completed: 0, dropped: 0 };
       }
       platStats[p].count++;
-      platStats[p].ratings.push(n.rating);
+      platStats[p].ratings.push(n.prefScore);
       if (n.readRatio !== null) platStats[p].readRatios.push(n.readRatio);
       if (n.status === "completed") platStats[p].completed++;
       if (n.status === "dropped") platStats[p].dropped++;
@@ -24129,8 +25153,9 @@ async function analyzePreferences(novels, matches) {
       };
     }
     authorStats[author].count++;
-    authorStats[author].ratings.push(n.rating);
-    authorStats[author].novels.push({ title: n.title, rating: n.rating });
+    authorStats[author].ratings.push(n.prefScore);
+    // 🆕 v7.1: novels 배열의 rating은 표시용으로 prefScore (mode-aware) 저장
+    authorStats[author].novels.push({ title: n.title, rating: n.prefScore });
     authorStats[author].genres.push(...n.majorGenres);
     authorStats[author].subGenres.push(...n.subGenres);
     authorStats[author].tags.push(...n.tagList);
@@ -24214,15 +25239,15 @@ async function analyzePreferences(novels, matches) {
   
   const readingPattern = {
     lengthPreference: {
-      short: { count: lengthGroups.short.length, avgRating: avg(lengthGroups.short.map(n => n.rating)) },
-      medium: { count: lengthGroups.medium.length, avgRating: avg(lengthGroups.medium.map(n => n.rating)) },
-      long: { count: lengthGroups.long.length, avgRating: avg(lengthGroups.long.map(n => n.rating)) },
+      short: { count: lengthGroups.short.length, avgRating: avg(lengthGroups.short.map(n => n.prefScore)) },
+      medium: { count: lengthGroups.medium.length, avgRating: avg(lengthGroups.medium.map(n => n.prefScore)) },
+      long: { count: lengthGroups.long.length, avgRating: avg(lengthGroups.long.map(n => n.prefScore)) },
     },
     preferredLength: (() => {
       const lens = [
-        { key: "short", rating: avg(lengthGroups.short.map(n => n.rating)) || 0 },
-        { key: "medium", rating: avg(lengthGroups.medium.map(n => n.rating)) || 0 },
-        { key: "long", rating: avg(lengthGroups.long.map(n => n.rating)) || 0 },
+        { key: "short", rating: avg(lengthGroups.short.map(n => n.prefScore)) || 0 },
+        { key: "medium", rating: avg(lengthGroups.medium.map(n => n.prefScore)) || 0 },
+        { key: "long", rating: avg(lengthGroups.long.map(n => n.prefScore)) || 0 },
       ];
       return lens.sort((a, b) => b.rating - a.rating)[0]?.key || "unknown";
     })(),
@@ -24255,8 +25280,8 @@ async function analyzePreferences(novels, matches) {
     ...readingPattern.byWorkStatus.discontinued,
   ];
   const completedRows = readingPattern.byWorkStatus.completed;
-  const completedAvgRating = completedRows.length > 0 ? avg(completedRows.map(n => n.rating)) : null;
-  const discontinuedAvgRating = discontinuedRows.length > 0 ? avg(discontinuedRows.map(n => n.rating)) : null;
+  const completedAvgRating = completedRows.length > 0 ? avg(completedRows.map(n => n.prefScore)) : null;
+  const discontinuedAvgRating = discontinuedRows.length > 0 ? avg(discontinuedRows.map(n => n.prefScore)) : null;
   const discontinuedDelta = (completedAvgRating != null && discontinuedAvgRating != null)
     ? completedAvgRating - discontinuedAvgRating
     : null;
@@ -24342,7 +25367,7 @@ async function analyzePreferences(novels, matches) {
   const trendAnalysis = {
     recent: {
       count: recent.length,
-      avgRating: avg(recent.map(n => n.rating)),
+      avgRating: avg(recent.map(n => n.prefScore)),
       topGenres: (() => {
         const gc = {};
         for (const n of recent) {
@@ -24353,7 +25378,7 @@ async function analyzePreferences(novels, matches) {
     },
     older: {
       count: older.length,
-      avgRating: avg(older.map(n => n.rating)),
+      avgRating: avg(older.map(n => n.prefScore)),
       topGenres: (() => {
         const gc = {};
         for (const n of older) {
@@ -24372,39 +25397,47 @@ async function analyzePreferences(novels, matches) {
     if (n.work_status === "dropped" || n.work_status === "discontinued") causes.push("discontinued");
     return causes;
   };
+  // 🆕 v7.1: anomaly 임계치 mean ± std 기반 (mode-aware 자동 적응)
+  // 기존 절대치 1500/1700/1550/1600은 ELO 가정. hybrid의 prefScore 분포는 다름 → 동적 σ 기반.
+  const _prefMean = basicStats.avgRating || 1500;
+  const _prefStd = Math.max(50, basicStats.stdDevRating || 100); // 최소 50 (분산 0 회피)
+  const HIGH_THRESHOLD = _prefMean + _prefStd;       // ≈ 1σ 위 (예: ELO ~1700)
+  const LOW_THRESHOLD = _prefMean - _prefStd;        // ≈ 1σ 아래 (예: ELO ~1300)
+  const MID_LOW_THRESHOLD = _prefMean - 0.5 * _prefStd;  // ≈ 0.5σ 아래
+  const MID_HIGH_THRESHOLD = _prefMean + 0.5 * _prefStd; // ≈ 0.5σ 위
   const anomalies = {
-    // 고평가 but 적게 읽음: 30% 미만으로 완화
+    // 고평가 but 적게 읽음
     highRatingLowRead: reliable.filter(n =>
-      n.rating >= 1700 && n.readRatio !== null && n.readRatio < 0.3
-    ).map(n => ({ title: n.title, rating: n.rating, readRatio: n.readRatio, work_status: n.work_status, causes: buildCauses(n) })),
-    // 저평가 but 많이 읽음: 60% 이상으로 완화
+      n.prefScore >= HIGH_THRESHOLD && n.readRatio !== null && n.readRatio < 0.3
+    ).map(n => ({ title: n.title, rating: n.prefScore, readRatio: n.readRatio, work_status: n.work_status, causes: buildCauses(n) })),
+    // 저평가 but 많이 읽음
     lowRatingHighRead: reliable.filter(n =>
-      n.rating < 1500 && n.readRatio !== null && n.readRatio > 0.6
-    ).map(n => ({ title: n.title, rating: n.rating, readRatio: n.readRatio, work_status: n.work_status, causes: buildCauses(n) })),
-    // 매칭 부족한 고레이팅
-    noMatchHighRating: enriched.filter(n =>
-      (Number(n.match_count) || 0) <= 2 && n.rating >= 1700
-    ).map(n => ({ title: n.title, rating: n.rating, matchCount: n.match_count, work_status: n.work_status, causes: buildCauses(n) })),
+      n.prefScore < LOW_THRESHOLD && n.readRatio !== null && n.readRatio > 0.6
+    ).map(n => ({ title: n.title, rating: n.prefScore, readRatio: n.readRatio, work_status: n.work_status, causes: buildCauses(n) })),
+    // 매칭 부족한 고레이팅 — match 모드에서만 의미 (hybrid는 매치 X로 모든 작품이 해당 → noise)
+    noMatchHighRating: (globalTierConfig?.mode === "match") ? enriched.filter(n =>
+      (Number(n.match_count) || 0) <= 2 && n.prefScore >= HIGH_THRESHOLD
+    ).map(n => ({ title: n.title, rating: n.prefScore, matchCount: n.match_count, work_status: n.work_status, causes: buildCauses(n) })) : [],
     // 🆕 v3.4: 다회독 but 저평가 (숨겨진 명작 후보)
     rereadButLowRating: enriched.filter(n =>
-      (Number(n.reread_count) || 1) >= 2 && n.rating < 1550
-    ).map(n => ({ title: n.title, rating: n.rating, rereadCount: Number(n.reread_count) || 1, work_status: n.work_status, causes: buildCauses(n) })),
-    // 🆕 v3.4: 정보 불완전 (신뢰도 낮음) - enriched에 이미 reliability 계산됨
+      (Number(n.reread_count) || 1) >= 2 && n.prefScore < MID_LOW_THRESHOLD
+    ).map(n => ({ title: n.title, rating: n.prefScore, rereadCount: Number(n.reread_count) || 1, work_status: n.work_status, causes: buildCauses(n) })),
+    // 🆕 v3.4: 정보 불완전 (신뢰도 낮음)
     lowInfoQuality: enriched.filter(n =>
-      n.reliability < 25 && n.rating >= 1600
-    ).map(n => ({ title: n.title, rating: n.rating, reliability: n.reliability, work_status: n.work_status, causes: buildCauses(n) })),
-    // 🆕 v7.0.4: 연중/서비스종료로 인한 저평가 작품 모음 (강한 신호)
+      n.reliability < 25 && n.prefScore >= MID_HIGH_THRESHOLD
+    ).map(n => ({ title: n.title, rating: n.prefScore, reliability: n.reliability, work_status: n.work_status, causes: buildCauses(n) })),
+    // 🆕 v7.0.4: 연중/서비스종료 저평가 작품
     discontinuedLowRating: reliable
       .filter(n =>
         (n.work_status === "dropped" || n.work_status === "discontinued") &&
-        (n.rating || 0) < (basicStats.avgRating - 100)
+        (n.prefScore || 0) < (_prefMean - 0.7 * _prefStd)
       )
-      .sort((a, b) => (a.rating || 0) - (b.rating || 0))
+      .sort((a, b) => (a.prefScore || 0) - (b.prefScore || 0))
       .map(n => ({
         title: n.title,
-        rating: n.rating,
+        rating: n.prefScore,
         work_status: n.work_status,
-        gapVsAvg: basicStats.avgRating - n.rating,
+        gapVsAvg: _prefMean - n.prefScore,
         causes: ["discontinued"],
       })),
   };
@@ -24451,7 +25484,8 @@ async function analyzePreferences(novels, matches) {
           novelAnalyses.push({
             id: n.id,
             title: n.title,
-            rating: n.rating,
+            // 🆕 v7.1: prefScore (mode-aware)
+            rating: n.prefScore,
             position: avgPosition,
             normalizedPosition,
             tags: matches.map(m => m.tag),
@@ -24465,8 +25499,8 @@ async function analyzePreferences(novels, matches) {
       const positions = novelAnalyses.map(n => n.normalizedPosition);
       const avgPos = positions.reduce((a, b) => a + b, 0) / positions.length;
       
-      // 고평점 작품의 평균 위치
-      const highRated = novelAnalyses.filter(n => n.rating >= 1700);
+      // 고평점 작품의 평균 위치 — 🆕 v7.1: mean+1σ 기반 (mode-aware)
+      const highRated = novelAnalyses.filter(n => n.rating >= HIGH_THRESHOLD);
       const highRatedAvgPos = highRated.length > 0 
         ? highRated.reduce((sum, n) => sum + n.normalizedPosition, 0) / highRated.length 
         : avgPos;
@@ -24601,6 +25635,339 @@ async function analyzePreferences(novels, matches) {
     console.warn("[analyzePreferences] matchBehavior 분석 오류:", mbErr.message);
   }
 
+  // 🆕 v7.1: 티어 인사이트 (hybrid/manual 모드 강화) — match 모드에선 UI에서 그룹 숨김
+  // ─────────────────────────────────────────────────────────────────
+  const _isHybridOrManual = (globalTierConfig?.mode === "hybrid" || globalTierConfig?.mode === "manual");
+
+  // 1. 엔티티×티어 스트라티피케이션 (intensity 가중)
+  const tierStratification = {
+    byMajorGenre: computeTierStratification(
+      enriched,
+      (n) => n.majorGenres,
+      globalTierConfig
+    ),
+    bySubGenre: computeTierStratification(
+      enriched,
+      (n) => n.subGenres,
+      globalTierConfig
+    ),
+    byTag: computeTierStratification(
+      enriched,
+      (n) => {
+        const items = [];
+        for (const tag of n.tagList) {
+          const intensity = (n.tagDataMap && n.tagDataMap[tag]) || 3;
+          items.push({ key: tag, intensity });
+        }
+        return items;
+      },
+      globalTierConfig,
+      { useIntensity: true }
+    ),
+    byAuthor: computeTierStratification(
+      enriched,
+      (n) => (n.author && n.author.trim()) ? [n.author.trim()] : [],
+      globalTierConfig
+    ),
+  };
+
+  // 2. 상위 티어 집중도 (sample_size 임계치 적용)
+  const _toSortedArray = (map, sampleThreshold) =>
+    Array.from(map.values())
+      .filter(s => s.totalCount >= sampleThreshold)
+      .sort((a, b) => b.topTierRatio - a.topTierRatio);
+
+  const tierConcentration = {
+    topGenres: _toSortedArray(tierStratification.byMajorGenre, 2).slice(0, 5),
+    topSubGenres: _toSortedArray(tierStratification.bySubGenre, 2).slice(0, 5),
+    topTags: _toSortedArray(tierStratification.byTag, 3).slice(0, 10),
+    topAuthors: _toSortedArray(tierStratification.byAuthor, 3).slice(0, 5),
+  };
+
+  // 3. 티어 분산도 (entropy 기반 — 강한 선호 vs 균등 분산)
+  const _allEntities = [
+    ...Array.from(tierStratification.byMajorGenre.values()).map(s => ({ ...s, kind: "majorGenre" })),
+    ...Array.from(tierStratification.bySubGenre.values()).map(s => ({ ...s, kind: "subGenre" })),
+    ...Array.from(tierStratification.byTag.values()).map(s => ({ ...s, kind: "tag" })),
+    ...Array.from(tierStratification.byAuthor.values()).map(s => ({ ...s, kind: "author" })),
+  ].filter(s => s.totalCount >= 3);
+  const tierEntropy = {
+    strong: _allEntities
+      .filter(s => s.entropyLabel === "강한 선호")
+      .sort((a, b) => a.entropyNormalized - b.entropyNormalized)
+      .slice(0, 10),
+    dispersed: _allEntities
+      .filter(s => s.entropyLabel === "균등 분산")
+      .sort((a, b) => b.entropyNormalized - a.entropyNormalized)
+      .slice(0, 10),
+  };
+
+  // 4. 티어 inversion (보수적 임계치 + 부드러운 톤)
+  const tierInversion = {
+    items: enriched
+      .map(n => ({ novel: n, score: calcInversionScore(n, globalTierConfig) }))
+      .filter(x => x.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5)
+      .map(x => ({
+        id: x.novel.id,
+        title: x.novel.title,
+        author: x.novel.author,
+        tier: getDisplayTier(x.novel, globalTierConfig),
+        rereadCount: Number(x.novel.reread_count) || 1,
+        readRatio: x.novel.readRatio,
+        score: x.score,
+        message: `이 작품을 ${Number(x.novel.reread_count) || 1}회독 했지만 ${getTierLabel(getDisplayTier(x.novel, globalTierConfig), globalTierConfig)} 티어 — 한 번 재고해보세요`,
+      })),
+  };
+
+  // 5. Award-Tier 상관 (수상 ≥5건 가드)
+  const awardTierCorrelation = (() => {
+    const allAwardWinners = [];
+    for (const n of enriched) {
+      if (!n.awards) continue;
+      try {
+        const awards = JSON.parse(n.awards);
+        if (Array.isArray(awards) && awards.length > 0) {
+          for (const aw of awards) {
+            if (aw && aw.type) allAwardWinners.push({ novel: n, award: aw });
+          }
+        }
+      } catch {}
+    }
+    if (allAwardWinners.length < 5) return null;
+
+    const tierOrder = getActiveTierOrder(globalTierConfig);
+    const byAward = {};
+    for (const { novel, award } of allAwardWinners) {
+      const key = award.type;
+      if (!byAward[key]) {
+        byAward[key] = {
+          awardId: key,
+          count: 0,
+          byTier: Object.fromEntries(tierOrder.map(t => [t, 0])),
+          prefScores: [],
+          tagFreq: {},
+        };
+      }
+      const stat = byAward[key];
+      stat.count++;
+      const tier = getDisplayTier(novel, globalTierConfig);
+      if (tier && tierOrder.includes(tier)) stat.byTier[tier]++;
+      if (typeof novel.prefScore === "number") stat.prefScores.push(novel.prefScore);
+      for (const tag of (novel.tagList || [])) {
+        stat.tagFreq[tag] = (stat.tagFreq[tag] || 0) + 1;
+      }
+    }
+    // post-process
+    const result = { byAward: {}, sharedTags: [] };
+    for (const [key, stat] of Object.entries(byAward)) {
+      const sortedTags = Object.entries(stat.tagFreq)
+        .filter(([, c]) => c >= 2)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([t, c]) => ({ tag: t, count: c }));
+      result.byAward[key] = {
+        awardId: key,
+        count: stat.count,
+        byTier: stat.byTier,
+        avgPrefScore: stat.prefScores.length > 0 ? avg(stat.prefScores) : null,
+        topTags: sortedTags,
+      };
+    }
+    // 전체 수상작에서 공통적으로 자주 등장하는 태그
+    const allTagFreq = {};
+    for (const { novel } of allAwardWinners) {
+      for (const tag of (novel.tagList || [])) {
+        allTagFreq[tag] = (allTagFreq[tag] || 0) + 1;
+      }
+    }
+    result.sharedTags = Object.entries(allTagFreq)
+      .filter(([, c]) => c >= Math.max(2, Math.floor(allAwardWinners.length * 0.3)))
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([t, c]) => ({ tag: t, count: c, ratio: c / allAwardWinners.length }));
+    return result;
+  })();
+
+  // 6. 전체 티어 분포 (UI TierDistribution용)
+  const tierDistribution = (() => {
+    const tierOrder = getActiveTierOrder(globalTierConfig);
+    const counts = Object.fromEntries(tierOrder.map(t => [t, 0]));
+    let unrated = 0;
+    for (const n of enriched) {
+      const tier = getDisplayTier(n, globalTierConfig);
+      if (tier && tierOrder.includes(tier)) counts[tier]++;
+      else unrated++;
+    }
+    return { counts, unrated, total: enriched.length };
+  })();
+
+  // ─────────────────────────────────────────────────────────────────
+  // 🆕 v7.1: preference_patterns + insight_queue 영속화 (사용자 결정대로)
+  // hybrid/manual 모드일 때만 저장 (match는 그룹 숨김)
+  // ─────────────────────────────────────────────────────────────────
+  if (_isHybridOrManual) {
+    try {
+      // 🆕 v7.1: 신규 분석 기준으로 stale tier_* row 정리 (deleted novel 등)
+      // — 기존 tier_concentration/tier_inversion/award_tier 모두 삭제 후 재생성
+      // — UPSERT만 하면 사라진 entity의 row가 영구 잔존하기 때문
+      try {
+        await exec(
+          `DELETE FROM preference_patterns WHERE category IN ('tier_concentration','tier_inversion','award_tier')`
+        );
+        await exec(
+          `DELETE FROM insight_queue WHERE source = 'v7.1_tier_analysis' AND status = 'pending'`
+        );
+      } catch (cleanErr) {
+        console.warn("[v7.1] tier_* row 정리 실패 (계속 진행):", cleanErr?.message);
+      }
+
+      const upserts = [];
+      const queueInserts = [];
+      const _now = Date.now();
+
+      // tier_concentration 패턴 (top entity별)
+      const _addConcentrationRow = (entityKind, stat, sampleThreshold) => {
+        if (stat.totalCount < sampleThreshold) return;
+        const isNotable = stat.topTierRatio >= 0.6;
+        const ciHalf = (stat.topTierCI?.upper - stat.topTierCI?.lower) / 2;
+        const detailsObj = {
+          byTier: stat.byTier,
+          byTierWeight: stat.byTierWeight,
+          topTierCI: stat.topTierCI,
+          entropyLabel: stat.entropyLabel,
+          entropyNormalized: stat.entropyNormalized,
+          totalWeight: stat.totalWeight,
+        };
+        upserts.push({
+          category: "tier_concentration",
+          pattern_key: `${entityKind}:${stat.key}`,
+          sample_size: stat.totalCount,
+          static_metric: "topTierRatio",
+          static_value: stat.topTierRatio,
+          static_deviation: ciHalf,
+          details: JSON.stringify(detailsObj),
+          is_notable: isNotable ? 1 : 0,
+          insight_level: Math.round(stat.topTierRatio * 50),
+          insight_title: isNotable ? `${stat.key} 강세 (상위 티어 ${Math.round(stat.topTierRatio * 100)}%)` : null,
+          insight_description: isNotable ? `${entityKind === "tag" ? "태그" : entityKind === "author" ? "작가" : "장르"} '${stat.key}' 작품의 ${Math.round(stat.topTierRatio * 100)}%가 상위 티어 — ${stat.entropyLabel} 시그널` : null,
+        });
+      };
+      tierConcentration.topGenres.forEach(s => _addConcentrationRow("majorGenre", s, 2));
+      tierConcentration.topSubGenres.forEach(s => _addConcentrationRow("subGenre", s, 2));
+      tierConcentration.topTags.forEach(s => _addConcentrationRow("tag", s, 3));
+      tierConcentration.topAuthors.forEach(s => _addConcentrationRow("author", s, 3));
+
+      // tier_inversion 패턴
+      for (const item of tierInversion.items) {
+        upserts.push({
+          category: "tier_inversion",
+          pattern_key: `novel:${item.id}`,
+          sample_size: 1,
+          static_metric: "inversionScore",
+          static_value: item.score,
+          static_deviation: 0,
+          details: JSON.stringify({
+            title: item.title,
+            tier: item.tier,
+            rereadCount: item.rereadCount,
+            readRatio: item.readRatio,
+          }),
+          is_notable: 1,
+          insight_level: 50,
+          insight_title: `${item.title} — 티어 재고 권유`,
+          insight_description: item.message,
+        });
+      }
+
+      // award_tier 패턴
+      if (awardTierCorrelation && awardTierCorrelation.byAward) {
+        for (const stat of Object.values(awardTierCorrelation.byAward)) {
+          if (stat.count < 5) continue;
+          upserts.push({
+            category: "award_tier",
+            pattern_key: `award:${stat.awardId}`,
+            sample_size: stat.count,
+            static_metric: "winnersAvgScore",
+            static_value: stat.avgPrefScore || 0,
+            static_deviation: 0,
+            details: JSON.stringify({
+              byTier: stat.byTier,
+              topTags: stat.topTags,
+              sharedTags: awardTierCorrelation.sharedTags,
+            }),
+            is_notable: 1,
+            insight_level: 30,
+            insight_title: `${stat.awardId} 수상 패턴`,
+            insight_description: `${stat.count}건 수상작 분석 — 공통 태그 ${stat.topTags.slice(0, 3).map(t => t.tag).join(", ")}`,
+          });
+        }
+      }
+
+      // UPSERT into preference_patterns
+      for (const row of upserts) {
+        try {
+          await exec(
+            `INSERT INTO preference_patterns
+             (id, category, pattern_key, sample_size, win_count, win_rate, confidence_lower, confidence_upper, significance,
+              static_metric, static_value, static_deviation, details, is_notable, insight_level, insight_title, insight_description,
+              first_seen_at, last_updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(category, pattern_key) DO UPDATE SET
+               sample_size=excluded.sample_size,
+               static_metric=excluded.static_metric,
+               static_value=excluded.static_value,
+               static_deviation=excluded.static_deviation,
+               details=excluded.details,
+               is_notable=excluded.is_notable,
+               insight_level=excluded.insight_level,
+               insight_title=excluded.insight_title,
+               insight_description=excluded.insight_description,
+               last_updated_at=excluded.last_updated_at`,
+            [
+              uuid(),
+              row.category, row.pattern_key,
+              row.sample_size, 0, null, null, null, null,
+              row.static_metric, row.static_value, row.static_deviation, row.details,
+              row.is_notable,
+              String(row.insight_level || ""),       // schema: TEXT
+              row.insight_title, row.insight_description,
+              _now, _now,
+            ]
+          );
+          if (row.is_notable) queueInserts.push(row);
+        } catch (e) {
+          // upsert 실패 시 개별 row만 skip — 전체 분석 차단 X
+        }
+      }
+
+      // insight_queue에 notable 항목 surface
+      for (const row of queueInserts) {
+        try {
+          await exec(
+            `INSERT INTO insight_queue
+             (id, source, insight_type, priority, confidence, title, description, content, status, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+            [
+              uuid(),
+              "v7.1_tier_analysis",
+              row.category,
+              Number(row.insight_level) || 30,
+              0.7,                       // 보수적 confidence
+              row.insight_title || row.category,
+              row.insight_description || "",
+              JSON.stringify({ pattern_key: row.pattern_key, category: row.category }),
+              _now,
+            ]
+          );
+        } catch (e) {}
+      }
+    } catch (persistErr) {
+      console.warn("[v7.1] tier 인사이트 영속화 실패:", persistErr?.message);
+    }
+  }
+
   return {
     timestamp: now,
     basicStats,
@@ -24616,8 +25983,21 @@ async function analyzePreferences(novels, matches) {
     anomalies,
     spectrumAnalysis, // 🎯 v3.1.2: 스펙트럼 분석
     matchBehavior, // 🧠 v3.5.4: 매칭 행동 분석
-    discontinuedAnalysis, // 🆕 v7.0.4: 연중 원인 분석 (UI factorAnalysis 합성 factor에서 참조)
+    discontinuedAnalysis, // 🆕 v7.0.4: 연중 원인 분석
     insights,
+    // 🆕 v7.1: tier-aware 분석 (hybrid/manual에서 주로 의미, match에선 UI 숨김)
+    tierStratification: {
+      // Map → Array 변환 (직렬화 용이)
+      byMajorGenre: Array.from(tierStratification.byMajorGenre.values()),
+      bySubGenre: Array.from(tierStratification.bySubGenre.values()),
+      byTag: Array.from(tierStratification.byTag.values()),
+      byAuthor: Array.from(tierStratification.byAuthor.values()),
+    },
+    tierConcentration,
+    tierEntropy,
+    tierInversion,
+    awardTierCorrelation,
+    tierDistribution,
   };
   } catch (e) {
     console.warn("analyzePreferences error:", e);
@@ -24793,8 +26173,8 @@ function generateInsights(data) {
   }
   
   // 완결작 vs 연재중 선호
-  const completedAvg = avg(readingPattern.completedVsOngoing.completed.map(n => n.rating));
-  const ongoingAvg = avg(readingPattern.completedVsOngoing.ongoing.map(n => n.rating));
+  const completedAvg = avg(readingPattern.completedVsOngoing.completed.map(n => n.prefScore));
+  const ongoingAvg = avg(readingPattern.completedVsOngoing.ongoing.map(n => n.prefScore));
   if (Math.abs(completedAvg - ongoingAvg) > 30) {
     if (completedAvg > ongoingAvg) {
       hiddenPatterns.push(`완결작을 연재중 작품보다 평균 +${(completedAvg - ongoingAvg).toFixed(0)}점 높게 평가`);
@@ -25185,6 +26565,14 @@ function AppContent() {
   const [plannedSortKey, setPlannedSortKey] = useState("created"); // created, title, priority
   const [plannedSortDir, setPlannedSortDir] = useState("DESC");
   const [plannedFilterPlatform, setPlannedFilterPlatform] = useState("ALL"); // 🆕 v3.4.2 플랫폼 필터
+  // 🆕 v7.3.0: 예정탭 sub-tab + 일괄편집 multi-select
+  const [plannedSubTab, setPlannedSubTab] = useState("list"); // "list" | "bulk"
+  const [plannedSelectedIds, setPlannedSelectedIds] = useState([]);
+  const plannedSelectedIdsRef = useRef([]);
+  plannedSelectedIdsRef.current = plannedSelectedIds; // 매 렌더 동기화 (stale closure 방지)
+  const [plannedBulkSearch, setPlannedBulkSearch] = useState("");
+  const [plannedBulkTagInput, setPlannedBulkTagInput] = useState("");
+  const [plannedBulkTagIntensity, setPlannedBulkTagIntensity] = useState(3);
   // 예정 작품 등록 폼
   const [plannedTitle, setPlannedTitle] = useState("");
   const [plannedAuthor, setPlannedAuthor] = useState("");
@@ -26028,12 +27416,15 @@ function AppContent() {
       }
       
       const maxRetries = 3;
-      
+
+      // 🆕 v7.3.0: initDb 진행 상태를 ProgressOverlay에 노출 (대규모 마이그레이션 안내)
+      setLoadingProgress({ label: "데이터베이스 초기화 중..." });
       for (let attempt = 0; attempt < maxRetries; attempt++) {
         try {
-          await initDb();
-          
+          await initDb((p) => setLoadingProgress(p));
+
           // 🏷️ v5.0 태그 시스템 마이그레이션
+          setLoadingProgress({ label: "태그 시스템 마이그레이션 중..." });
           await migrateTagSystem();
 
           // 🔧 v3.6.0: Tag Registry 로드 (없으면 FACTORY에서 시드 + 기존 사용자 데이터 병합)
@@ -26460,18 +27851,20 @@ function AppContent() {
             }
           } catch (e) { console.warn("What's New check error:", e); }
 
+          setLoadingProgress(null);  // 🆕 v7.3.0: 초기화 진행도 클리어
           setIsLoading(false);
           return; // 성공하면 종료
-          
+
         } catch (e) {
           console.warn(`앱 초기화 오류 (시도 ${attempt + 1}/${maxRetries}):`, e);
           await resetDbConnection();
           
           if (attempt === maxRetries - 1) {
             if (mounted) {
+              setLoadingProgress(null);  // 🆕 v7.3.0
               setIsLoading(false);
               Alert.alert(
-                "데이터베이스 오류", 
+                "데이터베이스 오류",
                 "앱을 다시 시작해주세요.\n\n오류: " + e.message,
                 [{ text: "확인" }]
               );
@@ -26513,9 +27906,11 @@ function AppContent() {
     try {
       // 1. DB 레벨 전환 (flush → close → open new)
       await switchSlotDb(newSlotId);
-      
-      // 2. 새 DB 초기화 (테이블 생성 등)
-      await initDb();
+
+      // 2. 새 DB 초기화 (테이블 생성 등) — 🆕 v7.3.0: progress 콜백
+      setLoadingProgress({ label: "슬롯 DB 초기화 중..." });
+      await initDb((p) => setLoadingProgress(p));
+      setLoadingProgress({ label: "태그 시스템 마이그레이션 중..." });
       await migrateTagSystem();
       const slotRegistry = await loadTagRegistry(); // 🔧 v3.6.1: 반환값 보존
       await loadPlatformRegistry(); // 🆕 플랫폼 레지스트리 로드
@@ -26976,7 +28371,17 @@ function AppContent() {
         orderBy = `priority ${safeDir}, created_at DESC`;
       }
       const rows = await all(`SELECT * FROM planned_novels ORDER BY ${orderBy};`);
-      setPlannedList(rows || []);
+      // 🆕 v7.3.0: 가등록 카드 갤러리 카운트 배지용 — 별도 쿼리로 Map 빌드 (가독성 우선)
+      let galleryCounts = new Map();
+      try {
+        const cnts = await all("SELECT novel_id, COUNT(*) AS cnt FROM gallery_images GROUP BY novel_id");
+        galleryCounts = new Map((cnts || []).map(r => [r.novel_id, Number(r.cnt) || 0]));
+      } catch (e) { console.warn("[v7.3.0] gallery_count 로드 실패:", e?.message); }
+      const enriched = (rows || []).map(p => ({
+        ...p,
+        gallery_count: galleryCounts.get(p.id) || 0,
+      }));
+      setPlannedList(enriched);
       if (_pt) PerfMonitor.trackFunc("loadPlannedList", Date.now() - _pt); // 🔬
     } catch (e) {
       console.warn("loadPlannedList 오류:", e);
@@ -27141,8 +28546,9 @@ function AppContent() {
       const oldCover = originalPlanned?.cover_image || "";
       const newCover = n.cover_image || "";
       
+      // 🆕 v7.2.0: aliases/memorable_quote 새 편집 필드 포함 (awards는 read-only — 편집 X)
       await exec(
-        `UPDATE planned_novels SET title=?, author=?, tags=?, platforms=?, note=?, total_episodes=?, cover_image=?, link=?, work_status=?, major_genre=?, sub_genre=?, priority=?, expected_rating=?, expected_tier=?, interest_level=?, discovery_source=?, first_chapter_read=?, scheduled_start_date=?, similar_novels=?, why_interested=?, tag_data=? WHERE id=?;`,
+        `UPDATE planned_novels SET title=?, author=?, tags=?, platforms=?, note=?, total_episodes=?, cover_image=?, link=?, work_status=?, major_genre=?, sub_genre=?, priority=?, expected_rating=?, expected_tier=?, interest_level=?, discovery_source=?, first_chapter_read=?, scheduled_start_date=?, similar_novels=?, why_interested=?, tag_data=?, aliases=?, memorable_quote=? WHERE id=?;`,
         [
           newTitle,
           n.author?.trim() || "",
@@ -27166,6 +28572,8 @@ function AppContent() {
           n.similar_novels || "",
           n.why_interested || "",
           n.tag_data || "", // 🔧 v3.5.9: tag_data 저장 누락 수정
+          n.aliases || "",                  // 🆕 v7.2.0
+          n.memorable_quote || "",          // 🆕 v7.2.0
           n.id,
         ]
       );
@@ -27195,7 +28603,177 @@ function AppContent() {
   }
   
   // 예정 → 본 목록으로 등록 전환
+  // 🆕 v7.3.0: 핵심 로직 분리 — silent (Alert X) 호출 가능. batch에서 재사용.
+  // 반환: { ok: true, id, noteAdditions } 또는 { ok: false, reason: "duplicate_title"|"error", message }
+  async function _doConvertPlannedToNovel(planned) {
+    if (!planned || !planned.title) return { ok: false, reason: "no_input" };
+    try {
+      // 본 목록 중복 체크
+      const dupInMain = await first("SELECT id FROM novels WHERE title=?", [planned.title]);
+      if (dupInMain) return { ok: false, reason: "duplicate_title", message: planned.title };
+
+      // 🆕 v7.2.0: id 보존 — round-trip 시 matches/gallery/folders/tier_* 자동 살아남음.
+      // planned.id가 이미 novels에 있으면 (희박 — 부분 실패 잔재) 신규 uuid fallback.
+      let id = planned.id || uuid();
+      if (planned.id) {
+        try {
+          const idCollision = await first("SELECT 1 FROM novels WHERE id=?", [planned.id]);
+          if (idCollision) {
+            console.warn("[v7.3.0] planned.id 충돌 → 신규 uuid fallback:", planned.id);
+            id = uuid();
+          }
+        } catch (e) {
+          console.warn("[v7.3.0] id 충돌 체크 실패 (계속 진행):", e?.message);
+        }
+      }
+      const now = Date.now();
+
+      // 예정작품 정보를 메모에 병합
+      let enhancedNote = planned.note || "";
+      const noteAdditions = [];
+      if (planned.why_interested) noteAdditions.push(`[관심 이유] ${planned.why_interested}`);
+      if (planned.discovery_source) noteAdditions.push(`[발견 경로] ${planned.discovery_source}`);
+      if (planned.expected_tier) noteAdditions.push(`[예상 티어] ${planned.expected_tier}`);
+      if (planned.interest_level && planned.interest_level !== 3) {
+        noteAdditions.push(`[등록 전 관심도] ${"★".repeat(planned.interest_level)}${"☆".repeat(5 - planned.interest_level)}`);
+      }
+      if (planned.scheduled_start_date && planned.scheduled_start_date > 0) {
+        try {
+          const dateStr = new Date(planned.scheduled_start_date).toLocaleDateString();
+          noteAdditions.push(`[읽기 예정일] ${dateStr}`);
+        } catch {}
+      }
+      if (planned.similar_novels) {
+        try {
+          const similarIds = JSON.parse(planned.similar_novels);
+          if (Array.isArray(similarIds) && similarIds.length > 0) {
+            const similarTitles = similarIds.map(sid => listMap.get(sid)?.title).filter(Boolean);
+            if (similarTitles.length > 0) noteAdditions.push(`[비슷한 작품] ${similarTitles.join(", ")}`);
+          }
+        } catch {}
+      }
+      if (noteAdditions.length > 0) {
+        enhancedNote = enhancedNote
+          ? `${enhancedNote}\n\n--- 예정작품 정보 ---\n${noteAdditions.join("\n")}`
+          : `--- 예정작품 정보 ---\n${noteAdditions.join("\n")}`;
+      }
+
+      const initialReadCount = planned.first_chapter_read ? 1 : 0;
+      const shouldPin = (planned.priority || 3) >= 4 ? 1 : 0;
+
+      // 🆕 v7.0.12: hybrid invariant gap=100 보존
+      const initialManualTier =
+        (globalTierConfig.mode !== "match" && planned.expected_tier && getActiveTierOrder(globalTierConfig).includes(planned.expected_tier))
+          ? planned.expected_tier : null;
+      let initialManualOrder = 0;
+      try {
+        if (initialManualTier) {
+          const maxRow = await first("SELECT MAX(manual_order) AS m FROM novels WHERE manual_tier=?", [initialManualTier]);
+          initialManualOrder = (Number(maxRow?.m) || 0) + 100;
+        } else {
+          const maxRow = await first("SELECT MAX(manual_order) AS m FROM novels WHERE manual_tier IS NULL OR manual_tier=''");
+          initialManualOrder = (Number(maxRow?.m) || 0) + 100;
+        }
+      } catch (e) {
+        console.warn("[v7.3.0] convertPlannedToNovel manual_order 계산 실패:", e?.message);
+      }
+
+      // 🆕 v7.2.0: hardcoded → planned 값 우선 (round-trip 데이터 보존)
+      // 🆕 v7.3.1: INSERT + UPDATE baseline + DELETE planned을 단일 트랜잭션으로 묶어
+      // 부분 실패 시 ROLLBACK (양 테이블 잔존 회피)
+      const _baselineToRestore = Number(planned.read_count_baseline) || (Number(planned.read_count) || initialReadCount);
+      await execBatch([
+        {
+          sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+          params: [
+            id,
+            planned.title,
+            planned.author || "",
+            planned.tags || "",
+            planned.platforms || "[]",
+            enhancedNote,
+            Number(planned.read_count) || initialReadCount,
+            Number(planned.rating) || 1500,
+            Number(planned.rd) || 350,
+            Number(planned.wins) || 0,
+            Number(planned.losses) || 0,
+            Number(planned.match_count) || 0,
+            globalTierConfig.defaultTier || "C",
+            now,
+            planned.awards || "",
+            Number(planned.total_episodes) || 0,
+            planned.status || "reading",
+            Number(planned.pinned) || shouldPin,
+            planned.cover_image || "",
+            planned.link || "",
+            planned.work_status || "ongoing",
+            Number(planned.read_count_updated_at) || now,
+            planned.major_genre || "",
+            planned.sub_genre || "",
+            planned.gaiden_status || "none",
+            Number(planned.gaiden_read_count) || 0,
+            Number(planned.gaiden_total_episodes) || 0,
+            Math.max(1, Number(planned.reread_count) || 1),
+            planned.tag_data || "",
+            planned.memorable_quote || "",
+            planned.aliases || "",
+            planned.manual_tier || initialManualTier,
+            initialManualOrder,
+          ],
+        },
+        {
+          sql: "UPDATE novels SET read_count_baseline=? WHERE id=?",
+          params: [_baselineToRestore, id],
+        },
+        {
+          sql: "DELETE FROM planned_novels WHERE id=?",
+          params: [planned.id],
+        },
+      ]);
+      syncTagsToCustom(planned.tags || "");
+
+      // 표지 라이브러리 동기화
+      if (planned.cover_image) {
+        try { await applyNovelCover(id, planned.cover_image, null); } catch {}
+      }
+
+      // 📰 최신 변화 기록
+      let majorGenreText = "-";
+      if (planned.major_genre) {
+        try {
+          const genres = JSON.parse(planned.major_genre);
+          if (Array.isArray(genres)) majorGenreText = genres.join(", ");
+        } catch {}
+      }
+      try {
+        await addRecentChange(id, planned.title, "new", {
+          author: planned.author || "-",
+          majorGenre: majorGenreText,
+          fromPlanned: true,
+        });
+      } catch {}
+
+      return { ok: true, id, noteAdditions };
+    } catch (e) {
+      console.warn("[v7.3.0] _doConvertPlannedToNovel 오류:", e?.message);
+      return { ok: false, reason: "error", message: e?.message || "알 수 없는 오류" };
+    }
+  }
+
+  // 🆕 v7.3.0: silent 호출 가능 (Alert X, 일괄 batch에서 재사용)
+  async function convertPlannedToNovelSilent(planned) {
+    // 🆕 v7.3.0: 자동매칭 가드 (caller에서 사전 체크 권장 — 여기서는 방어적으로 한 번 더)
+    if (isAutoMatchingRef.current) return { ok: false, reason: "auto_matching" };
+    return await _doConvertPlannedToNovel(planned);
+  }
+
   async function convertPlannedToNovel(planned) {
+    // 🆕 v7.3.0: 자동매칭 중 차단 (Alert로 사용자에게 안내, button-level 가드)
+    if (isAutoMatchingRef.current) {
+      Alert.alert("자동매칭 중", "자동매칭이 진행 중입니다.\n매칭을 멈춘 후 다시 시도하세요.");
+      return;
+    }
     Alert.alert(
       "등록 전환",
       `"${planned.title}"을(를) 본 목록으로 등록할까요?\n\n예정 목록의 모든 정보가 이전됩니다.`,
@@ -27206,173 +28784,430 @@ function AppContent() {
           onPress: async () => {
             setIsLoading(true);
             try {
-              // 🔧 v3.5.9: 본 목록 중복 체크 (예정→본편 전환 시)
-              const dupInMain = await first("SELECT id FROM novels WHERE title=?", [planned.title]);
-              if (dupInMain) {
-                setIsLoading(false);
-                Alert.alert("중복 알림", `"${planned.title}"이(가) 본 목록에 이미 있습니다.\n\n제목을 변경한 후 다시 시도하세요.`);
-                return;
+              const r = await _doConvertPlannedToNovel(planned);
+              if (r.ok) {
+                await loadPlannedList();
+                await loadList(undefined, undefined, "supplement");
+                if (planned.cover_image) await loadCoverLibrary();
+                const infoMsg = (r.noteAdditions && r.noteAdditions.length > 0)
+                  ? `\n\n예정작품 정보(${r.noteAdditions.length}건)가 메모에 추가되었습니다.`
+                  : "";
+                Alert.alert("완료", `"${planned.title}"이(가) 본 목록에 등록되었습니다.${infoMsg}`);
+              } else if (r.reason === "duplicate_title") {
+                Alert.alert("중복 알림", `"${r.message}"이(가) 본 목록에 이미 있습니다.\n\n제목을 변경한 후 다시 시도하세요.`);
+              } else {
+                Alert.alert("오류", `등록 전환 중 오류가 발생했습니다.\n\n${r.message || ""}`);
               }
-              
-              const id = uuid();
-              const now = Date.now();
-              
-              // 🆕 v3.4.1 #13: 예정작품의 추가 정보를 메모에 병합
-              let enhancedNote = planned.note || "";
-              const noteAdditions = [];
-              
-              // 관심 갖게 된 이유
-              if (planned.why_interested) {
-                noteAdditions.push(`[관심 이유] ${planned.why_interested}`);
-              }
-              // 발견 경로
-              if (planned.discovery_source) {
-                noteAdditions.push(`[발견 경로] ${planned.discovery_source}`);
-              }
-              // 예상 티어
-              if (planned.expected_tier) {
-                noteAdditions.push(`[예상 티어] ${planned.expected_tier}`);
-              }
-              // 관심도
-              if (planned.interest_level && planned.interest_level !== 3) {
-                noteAdditions.push(`[등록 전 관심도] ${"★".repeat(planned.interest_level)}${"☆".repeat(5 - planned.interest_level)}`);
-              }
-              // 읽기 시작 예정일
-              if (planned.scheduled_start_date && planned.scheduled_start_date > 0) {
-                try {
-                  const dateStr = new Date(planned.scheduled_start_date).toLocaleDateString();
-                  noteAdditions.push(`[읽기 예정일] ${dateStr}`);
-                } catch {}
-              }
-              // 비슷한 작품 정보
-              if (planned.similar_novels) {
-                try {
-                  const similarIds = JSON.parse(planned.similar_novels);
-                  if (Array.isArray(similarIds) && similarIds.length > 0) {
-                    const similarTitles = similarIds
-                      .map(sid => listMap.get(sid)?.title)
-                      .filter(Boolean);
-                    if (similarTitles.length > 0) {
-                      noteAdditions.push(`[비슷한 작품] ${similarTitles.join(", ")}`);
-                    }
-                  }
-                } catch {}
-              }
-              
-              if (noteAdditions.length > 0) {
-                enhancedNote = enhancedNote 
-                  ? `${enhancedNote}\n\n--- 예정작품 정보 ---\n${noteAdditions.join("\n")}`
-                  : `--- 예정작품 정보 ---\n${noteAdditions.join("\n")}`;
-              }
-              
-              // 1화 읽음 여부 → read_count
-              const initialReadCount = planned.first_chapter_read ? 1 : 0;
-              
-              // 우선순위 → pinned (4 이상이면 고정)
-              const shouldPin = (planned.priority || 3) >= 4 ? 1 : 0;
-              
-              // 🆕 v7.0.12: convertPlannedToNovel manual_order 누락 수정 — addNovel과 동일 패턴
-              // (이전: INSERT에 manual_order 미포함 → 기본값 0 부여 → hybrid invariant gap=100 위반)
-              const initialManualTier =
-                (globalTierConfig.mode !== "match" && planned.expected_tier && getActiveTierOrder(globalTierConfig).includes(planned.expected_tier))
-                  ? planned.expected_tier : null;
-              let initialManualOrder = 0;
-              try {
-                if (initialManualTier) {
-                  const maxRow = await first("SELECT MAX(manual_order) AS m FROM novels WHERE manual_tier=?", [initialManualTier]);
-                  initialManualOrder = (Number(maxRow?.m) || 0) + 100;
-                } else {
-                  const maxRow = await first("SELECT MAX(manual_order) AS m FROM novels WHERE manual_tier IS NULL OR manual_tier=''");
-                  initialManualOrder = (Number(maxRow?.m) || 0) + 100;
-                }
-              } catch (e) {
-                console.warn("[v7.0.12] convertPlannedToNovel manual_order 계산 실패:", e?.message);
-              }
-
-              // 본 목록에 등록 (모든 필드 이전)
-              await exec(
-                `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-                [
-                  id,
-                  planned.title,
-                  planned.author || "",
-                  planned.tags || "",
-                  planned.platforms || "[]",
-                  enhancedNote, // 🆕 강화된 메모
-                  initialReadCount, // 🆕 1화 읽었으면 1회차로 시작
-                  1500, // rating
-                  350, // rd
-                  0, // wins
-                  0, // losses
-                  0, // match_count
-                  globalTierConfig.defaultTier || "C", // 🔧 v6.0.1: 동적 기본 티어
-                  now,
-                  "", // awards
-                  Number(planned.total_episodes) || 0,
-                  "reading", // status
-                  shouldPin, // 🆕 우선순위 높으면 고정
-                  planned.cover_image || "",
-                  planned.link || "",
-                  planned.work_status || "ongoing",
-                  now, // read_count_updated_at
-                  planned.major_genre || "",
-                  planned.sub_genre || "",
-                  "none", // gaiden_status
-                  0, // gaiden_read_count
-                  0, // gaiden_total_episodes
-                  1, // reread_count
-                  planned.tag_data || "", // 🆕 태그 데이터 이전
-                  "", // memorable_quote
-                  "", // aliases
-                  // 🆕 v6.0: manual/hybrid 모드에서 expected_tier를 manual_tier로 활용
-                  initialManualTier,
-                  initialManualOrder, // 🆕 v7.0.12: hybrid invariant 보존
-                ]
-              );
-              
-              // 예정 목록에서 삭제
-              await exec("DELETE FROM planned_novels WHERE id=?", [planned.id]);
-              
-              syncTagsToCustom(planned.tags || ""); // 🔧 v3.5.9: 태그 동기화
-              await loadPlannedList();
-              await loadList(undefined, undefined, "supplement");
-              
-              // 🖼️ v3.4.5: 표지가 있으면 라이브러리 상태 업데이트
-              if (planned.cover_image) {
-                await applyNovelCover(id, planned.cover_image, null);
-                await loadCoverLibrary();
-              }
-              
-              // 📰 최신 변화 기록
-              let majorGenreText = "-";
-              if (planned.major_genre) {
-                try {
-                  const genres = JSON.parse(planned.major_genre);
-                  if (Array.isArray(genres)) majorGenreText = genres.join(", ");
-                } catch {}
-              }
-              
-              await addRecentChange(id, planned.title, "new", {
-                author: planned.author || "-",
-                majorGenre: majorGenreText,
-                fromPlanned: true,
-              });
-              
-              const infoMsg = noteAdditions.length > 0 
-                ? `\n\n예정작품 정보(${noteAdditions.length}건)가 메모에 추가되었습니다.`
-                : "";
-              Alert.alert("완료", `"${planned.title}"이(가) 본 목록에 등록되었습니다.${infoMsg}`);
-            } catch (e) {
-              console.warn("convertPlannedToNovel 오류:", e);
-              Alert.alert("오류", "등록 전환 중 오류가 발생했습니다.\n\n" + e.message);
+            } finally {
+              setIsLoading(false);
             }
-            setIsLoading(false);
           },
         },
       ]
     );
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 🆕 v7.3.0: 가등록 일괄편집 sub-tab — 6종 batch 함수
+  // selectedIds 대신 plannedSelectedIdsRef 사용 (메인 bulk와 분리)
+  // 자동매칭 가드 + setLoadingProgress + skip 카운트 패턴 일관 적용
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const togglePlannedSelected = useCallback((id) => {
+    setPlannedSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  }, []);
+
+  // 🆕 v7.3.0: 가등록 → 진등록 일괄 전환 (대칭 op)
+  const batchConvertPlannedToNovels = useCallback(async () => {
+    const ids = plannedSelectedIdsRef.current;
+    if (!ids || ids.length === 0) {
+      Alert.alert("알림", "먼저 가등록 작품을 선택해주세요.");
+      return;
+    }
+    if (isAutoMatchingRef.current) {
+      Alert.alert("자동매칭 중", "자동매칭이 진행 중입니다.\n매칭을 멈춘 후 다시 시도하세요.");
+      return;
+    }
+    Alert.alert(
+      "일괄 진등록 전환",
+      `선택 ${ids.length}개 가등록 작품을 진등록으로 전환할까요?\n\n title 충돌 시 해당 작품만 skip됩니다.`,
+      [
+        { text: "취소" },
+        {
+          text: "전환",
+          onPress: async () => {
+            setIsLoading(true);
+            setLoadingProgress({ current: 0, total: ids.length, label: "진등록 전환 중..." });
+            let success = 0, skipped = 0;
+            try {
+              for (let i = 0; i < ids.length; i++) {
+                const planned = plannedList.find(p => p.id === ids[i]);
+                if (!planned) { skipped++; continue; }
+                const r = await convertPlannedToNovelSilent(planned);
+                if (r && r.ok) success++; else skipped++;
+                setLoadingProgress({ current: i + 1, total: ids.length, label: "진등록 전환 중..." });
+              }
+              await loadPlannedList();
+              await loadList(undefined, undefined, "batch_promote");
+              await loadCoverLibrary();
+              setPlannedSelectedIds([]);
+            } finally {
+              setLoadingProgress(null);
+              setIsLoading(false);
+            }
+            Alert.alert("완료", `진등록 전환 ${success}건${skipped > 0 ? ` · skip ${skipped}건 (title 충돌 등)` : ""}`);
+          },
+        },
+      ]
+    );
+  }, [plannedList]);
+
+  // 🆕 v7.3.0: 가등록 일괄 삭제
+  const batchDeletePlanned = useCallback(async () => {
+    const ids = plannedSelectedIdsRef.current;
+    if (!ids || ids.length === 0) {
+      Alert.alert("알림", "먼저 가등록 작품을 선택해주세요.");
+      return;
+    }
+    Alert.alert(
+      "일괄 삭제",
+      `선택 ${ids.length}개 가등록 작품을 삭제할까요?\n\n작품 round-trip 데이터(awards/quote/gallery)도 함께 삭제됩니다.`,
+      [
+        { text: "취소" },
+        {
+          text: "삭제",
+          style: "destructive",
+          onPress: async () => {
+            setIsLoading(true);
+            setLoadingProgress({ current: 0, total: ids.length, label: "삭제 중..." });
+            try {
+              const placeholders = ids.map(() => "?").join(",");
+              // 🆕 v7.3.0: 표지 라이브러리 정리 (used → unused)
+              try {
+                const planned = await all(`SELECT id, cover_image FROM planned_novels WHERE id IN (${placeholders})`, ids);
+                for (const p of (planned || [])) {
+                  if (p.cover_image) {
+                    await updateCoverStatus(p.cover_image, null, "unused").catch(() => {});
+                  }
+                }
+              } catch (e) { console.warn("[v7.3.0] 가등록 일괄 표지 정리 실패:", e?.message); }
+
+              // 갤러리 이미지(round-trip 보존)도 정리
+              try {
+                await exec(`DELETE FROM gallery_images WHERE novel_id IN (${placeholders})`, ids);
+              } catch (e) { console.warn("[v7.3.0] gallery_images 정리 실패:", e?.message); }
+
+              await exec(`DELETE FROM planned_novels WHERE id IN (${placeholders})`, ids);
+              await loadPlannedList();
+              await loadCoverLibrary();
+              setPlannedSelectedIds([]);
+            } finally {
+              setLoadingProgress(null);
+              setIsLoading(false);
+            }
+            Alert.alert("완료", `${ids.length}개 가등록 삭제됨.`);
+          },
+        },
+      ]
+    );
+  }, [plannedList]);
+
+  // 🆕 v7.3.0: 일괄 태그 추가 — tag_data intensity 함께 (메인 batchAddTag 패턴)
+  const batchAddPlannedTag = useCallback(async () => {
+    const tag = (plannedBulkTagInput || "").trim();
+    if (!tag) { Alert.alert("알림", "추가할 태그를 입력하세요."); return; }
+    const ids = plannedSelectedIdsRef.current;
+    if (!ids || ids.length === 0) {
+      Alert.alert("알림", "먼저 가등록 작품을 선택해주세요.");
+      return;
+    }
+    setIsLoading(true);
+    setLoadingProgress({ current: 0, total: ids.length, label: "태그 추가 중..." });
+    try {
+      for (let i = 0; i < ids.length; i++) {
+        const id = ids[i];
+        const p = plannedList.find(x => x.id === id);
+        if (!p) continue;
+        // tags (CSV) — 중복 회피
+        const existingTags = (p.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+        if (!existingTags.includes(tag)) existingTags.push(tag);
+        const newTags = existingTags.join(", ");
+        // tag_data — intensity 추가/갱신
+        let td = [];
+        try { td = JSON.parse(p.tag_data || "[]"); if (!Array.isArray(td)) td = []; } catch {}
+        const existingIdx = td.findIndex(x => x.tag === tag);
+        if (existingIdx >= 0) td[existingIdx].intensity = plannedBulkTagIntensity;
+        else td.push({ tag, intensity: plannedBulkTagIntensity });
+        await exec("UPDATE planned_novels SET tags=?, tag_data=? WHERE id=?", [newTags, JSON.stringify(td), id]);
+        setLoadingProgress({ current: i + 1, total: ids.length, label: "태그 추가 중..." });
+      }
+      syncTagsToCustom(tag);
+      await loadPlannedList();
+      Alert.alert("완료", `${ids.length}개 가등록에 "${tag}" 태그 추가됨 (intensity ${plannedBulkTagIntensity}).`);
+    } finally {
+      setLoadingProgress(null);
+      setIsLoading(false);
+    }
+  }, [plannedList, plannedBulkTagInput, plannedBulkTagIntensity]);
+
+  // 🆕 v7.3.0: 일괄 태그 삭제
+  const batchRemovePlannedTag = useCallback(async () => {
+    const tag = (plannedBulkTagInput || "").trim();
+    if (!tag) { Alert.alert("알림", "삭제할 태그를 입력하세요."); return; }
+    const ids = plannedSelectedIdsRef.current;
+    if (!ids || ids.length === 0) {
+      Alert.alert("알림", "먼저 가등록 작품을 선택해주세요.");
+      return;
+    }
+    setIsLoading(true);
+    setLoadingProgress({ current: 0, total: ids.length, label: "태그 삭제 중..." });
+    try {
+      for (let i = 0; i < ids.length; i++) {
+        const id = ids[i];
+        const p = plannedList.find(x => x.id === id);
+        if (!p) continue;
+        const remaining = (p.tags || "").split(",").map(t => t.trim()).filter(t => t && t !== tag);
+        const newTags = remaining.join(", ");
+        let td = [];
+        try { td = JSON.parse(p.tag_data || "[]"); if (!Array.isArray(td)) td = []; } catch {}
+        td = td.filter(x => x.tag !== tag);
+        await exec("UPDATE planned_novels SET tags=?, tag_data=? WHERE id=?", [newTags, JSON.stringify(td), id]);
+        setLoadingProgress({ current: i + 1, total: ids.length, label: "태그 삭제 중..." });
+      }
+      await loadPlannedList();
+      Alert.alert("완료", `${ids.length}개 가등록에서 "${tag}" 태그 삭제됨.`);
+    } finally {
+      setLoadingProgress(null);
+      setIsLoading(false);
+    }
+  }, [plannedList, plannedBulkTagInput]);
+
+  // 🆕 v7.3.0: 일괄 플랫폼 설정 (선택된 플랫폼으로 통일)
+  const batchSetPlannedPlatforms = useCallback(async (newPlatforms) => {
+    const ids = plannedSelectedIdsRef.current;
+    if (!ids || ids.length === 0) {
+      Alert.alert("알림", "먼저 가등록 작품을 선택해주세요.");
+      return;
+    }
+    const placeholders = ids.map(() => "?").join(",");
+    await exec(
+      `UPDATE planned_novels SET platforms=? WHERE id IN (${placeholders})`,
+      [JSON.stringify(newPlatforms || []), ...ids]
+    );
+    await loadPlannedList();
+    Alert.alert("완료", `${ids.length}개 가등록 플랫폼 설정됨.`);
+  }, []);
+
+  // 🆕 v7.3.0: 일괄 우선순위 변경
+  const batchSetPlannedPriority = useCallback(async (priority) => {
+    const ids = plannedSelectedIdsRef.current;
+    if (!ids || ids.length === 0) {
+      Alert.alert("알림", "먼저 가등록 작품을 선택해주세요.");
+      return;
+    }
+    const p = Math.max(1, Math.min(5, Number(priority) || 3));
+    const placeholders = ids.map(() => "?").join(",");
+    await exec(
+      `UPDATE planned_novels SET priority=? WHERE id IN (${placeholders})`,
+      [p, ...ids]
+    );
+    await loadPlannedList();
+    Alert.alert("완료", `${ids.length}개 가등록 우선순위 ${p}로 설정됨.`);
+  }, []);
+
+  // 🆕 v7.3.0: 일괄 작품상태 변경
+  const batchSetPlannedWorkStatus = useCallback(async (status) => {
+    const ids = plannedSelectedIdsRef.current;
+    if (!ids || ids.length === 0) {
+      Alert.alert("알림", "먼저 가등록 작품을 선택해주세요.");
+      return;
+    }
+    const placeholders = ids.map(() => "?").join(",");
+    await exec(
+      `UPDATE planned_novels SET work_status=? WHERE id IN (${placeholders})`,
+      [status || "ongoing", ...ids]
+    );
+    await loadPlannedList();
+    Alert.alert("완료", `${ids.length}개 가등록 작품상태 변경됨.`);
+  }, []);
+
+  // 🆕 v7.2.0: novels → planned_novels 역전환 (단건)
+  // - id 보존: matches/gallery/folders/tier_verification_queue/v7.0 row 자동 살아남음
+  // - title 충돌 시 abort (silent=true 시 Alert skip — 일괄 호출용)
+  // - in-flight verification 세션 abort + pending 큐 cancel
+  // - recent_changes 로그
+  // - return: true/false (성공 여부) — caller가 후처리(loadList/loadPlannedList) 결정
+  async function convertNovelToPlanned(novel, opts = {}) {
+    const silent = !!opts.silent;
+    if (!novel || !novel.id) return false;
+
+    // 🆕 v7.3.0: 자동매칭 중 차단 (#1 불변조건 strict — Alert X)
+    if (isAutoMatchingRef.current) {
+      console.warn("[v7.3.0] convertNovelToPlanned: 자동매칭 중 — silent abort", novel.id);
+      return false;
+    }
+
+    // 1. title 충돌 체크 (자기 자신 제외 — id 동일하면 OK)
+    try {
+      const dup = await first(
+        "SELECT id FROM planned_novels WHERE title=? AND id!=?",
+        [novel.title, novel.id]
+      );
+      if (dup) {
+        if (!silent) Alert.alert("전환 불가", `"${novel.title}"이(가) 이미 가등록 목록에 있습니다.\n제목을 변경 후 다시 시도하세요.`);
+        return false;
+      }
+    } catch (e) {
+      console.warn("[v7.2.0] convertNovelToPlanned 중복 체크 실패:", e?.message);
+    }
+
+    // 1-b. id 충돌 체크 (희박 — 부분 실패 잔재로 planned에 같은 id 존재 가능)
+    // 충돌 시 partial 상태로 판단, INSERT skip하고 DELETE FROM novels로 정리만 수행
+    try {
+      const idDup = await first("SELECT 1 FROM planned_novels WHERE id=?", [novel.id]);
+      if (idDup) {
+        console.warn("[v7.2.0] novel.id가 planned_novels에 이미 존재 (partial state) → INSERT skip + DELETE 정리만:", novel.id);
+        try {
+          await exec("DELETE FROM novels WHERE id=?", [novel.id]);
+        } catch (delErr) {
+          console.warn("[v7.2.0] DELETE FROM novels 실패:", delErr?.message);
+          if (!silent) Alert.alert("전환 실패", "데이터 정리 중 오류");
+          return false;
+        }
+        return true;
+      }
+    } catch (e) {
+      console.warn("[v7.2.0] id 충돌 체크 실패 (계속 진행):", e?.message);
+    }
+
+    const now = Date.now();
+    try {
+      // 🆕 v7.3.1: INSERT planned + verification queue cancel + DELETE novels을 단일 트랜잭션으로
+      // 부분 실패 시 ROLLBACK (양 테이블 잔존 회피)
+      await execBatch([
+        {
+          sql: `INSERT INTO planned_novels (
+            id, title, author, tags, platforms, note,
+            total_episodes, cover_image, link, work_status,
+            major_genre, sub_genre, priority, created_at,
+            expected_rating, expected_tier, interest_level,
+            discovery_source, first_chapter_read, scheduled_start_date,
+            similar_novels, why_interested, tag_data,
+            status, pinned, read_count, rating, rd, wins, losses, match_count,
+            gaiden_status, gaiden_read_count, gaiden_total_episodes,
+            manual_tier, manual_order, reread_count,
+            aliases, memorable_quote, awards,
+            read_count_updated_at, read_count_baseline
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          params: [
+            novel.id, novel.title, novel.author || "",
+            novel.tags || "", novel.platforms || "[]", novel.note || "",
+            Number(novel.total_episodes) || 0, novel.cover_image || "",
+            novel.link || "", novel.work_status || "ongoing",
+            novel.major_genre || "", novel.sub_genre || "",
+            // priority: pinned=1 → 5(최고), 그 외 → 3(기본)
+            novel.pinned ? 5 : 3, novel.created_at || now,
+            // expected_*: 현 ELO/manual_tier 보존을 위한 best-effort 매핑
+            Number(novel.rating) || 1500, novel.manual_tier || "", 3,
+            "", novel.read_count > 0 ? 1 : 0, 0, "", "", novel.tag_data || "",
+            // 🆕 v7.2.0 round-trip 보존 필드 (16종)
+            novel.status || "reading", Number(novel.pinned) || 0,
+            Number(novel.read_count) || 0,
+            Number(novel.rating) || 1500, Number(novel.rd) || 350,
+            Number(novel.wins) || 0, Number(novel.losses) || 0,
+            Number(novel.match_count) || 0,
+            novel.gaiden_status || "none",
+            Number(novel.gaiden_read_count) || 0,
+            Number(novel.gaiden_total_episodes) || 0,
+            novel.manual_tier || null, Number(novel.manual_order) || 0,
+            Math.max(1, Number(novel.reread_count) || 1),
+            novel.aliases || "", novel.memorable_quote || "", novel.awards || "",
+            Number(novel.read_count_updated_at) || 0,
+            Number(novel.read_count_baseline) || 0,
+          ],
+        },
+        // pending verification 큐 cancel — 가등록 작품은 verification 의미 없음
+        {
+          sql: `UPDATE tier_verification_queue SET state='cancelled', processed_at=? WHERE novel_id=? AND state='pending'`,
+          params: [now, novel.id],
+        },
+        // DELETE FROM novels (id 보존이라 matches/gallery/folders 등은 자동 살아남음)
+        {
+          sql: "DELETE FROM novels WHERE id=?",
+          params: [novel.id],
+        },
+      ]);
+
+      // verification 세션 React state는 트랜잭션 외 (UI state라 DB 트랜잭션과 무관)
+      if (verificationSessionRef?.current?.queueRow?.novel_id === novel.id) {
+        setVerificationSession(null);
+        if (verificationSessionIdRef) verificationSessionIdRef.current = null;
+      }
+
+      // 5. recent_changes 로그
+      try {
+        await addRecentChange(novel.id, novel.title, "demote_to_planned", {
+          fromTier: novel.manual_tier || novel.tier || "",
+        });
+      } catch {}
+
+      return true;
+    } catch (e) {
+      console.warn("[v7.2.0] convertNovelToPlanned 오류:", e?.message);
+      if (!silent) Alert.alert("전환 실패", e?.message || "알 수 없는 오류");
+      return false;
+    }
+  }
+
+  // 🆕 v7.2.0: 일괄 가등록 전환 (일괄편집 탭용)
+  // — silent=true로 per-item Alert 억제 (배치에서는 결과 요약만 표시)
+  // — setLoadingProgress로 진행도 표시 (대용량 batch 대응)
+  // — 🆕 v7.3.0: 자동매칭 중 silent abort
+  const batchConvertToPlanned = useCallback(async () => {
+    const ids = selectedIdsRef.current;
+    if (!ids || ids.length === 0) {
+      Alert.alert("알림", "먼저 작품을 선택해주세요.");
+      return;
+    }
+    // 🆕 v7.3.0: 자동매칭 중 차단 (Alert는 사용자 액션 직후라 button-level 가드)
+    if (isAutoMatchingRef.current) {
+      Alert.alert("자동매칭 중", "자동매칭이 진행 중입니다.\n매칭을 멈춘 후 다시 시도하세요.");
+      return;
+    }
+    Alert.alert(
+      "가등록 일괄 전환",
+      `선택 ${ids.length}작품을 가등록으로 전환할까요?\n\n매칭/갤러리/폴더 등 모든 데이터는 보존됩니다 (id 유지). title 충돌 시 해당 작품만 skip.`,
+      [
+        { text: "취소" },
+        {
+          text: "전환",
+          style: "destructive",
+          onPress: async () => {
+            setIsLoading(true);
+            setLoadingProgress({ current: 0, total: ids.length, label: "가등록 전환 중..." });
+            try {
+              let success = 0, skipped = 0;
+              for (let i = 0; i < ids.length; i++) {
+                const id = ids[i];
+                const novel = list.find(n => n.id === id);
+                if (!novel) { skipped++; continue; }
+                // silent=true — per-item Alert 억제
+                const ok = await convertNovelToPlanned(novel, { silent: true });
+                if (ok) success++; else skipped++;
+                setLoadingProgress({ current: i + 1, total: ids.length, label: "가등록 전환 중..." });
+              }
+              await loadList(undefined, undefined, "batch_demote");
+              await loadPlannedList();
+              Alert.alert("완료", `전환 ${success}건${skipped > 0 ? ` · skip ${skipped}건 (title 충돌 등)` : ""}`);
+            } finally {
+              setLoadingProgress(null);
+              setIsLoading(false);
+            }
+          },
+        },
+      ]
+    );
+  }, [list]);
 
   // -----------------------------------------
   // 🎯 v3.3.0: 오늘의 추천 웹소설 계산
@@ -31174,6 +33009,8 @@ function AppContent() {
           initialManualOrder, // 🆕 v7.0.1 (N6 fix)
         ]
       );
+      // 🆕 v7.0.15: read_count_baseline = 초기 read_count (누적 트래킹 시작점)
+      await exec("UPDATE novels SET read_count_baseline=read_count WHERE id=?", [id]);
       // 🔧 v3.5.9: 텍스트 입력 태그 → customTags 동기화 (태그 관리 모달 연동)
       syncTagsToCustom(tags.trim());
       setTitle("");
@@ -31292,6 +33129,12 @@ function AppContent() {
             if (selectedIdsRef.current.includes(id)) {
               setSelectedIds(prev => prev.filter(x => x !== id));
             }
+            // 🆕 v7.2.3: 진행 중 verification 세션이 삭제 대상이면 abort
+            // (이전: 세션이 deleted novel 참조 → 다음 decide() 시 candidate 미존재로 잠재 크래시)
+            if (verificationSessionRef.current?.queueRow?.novel_id === id) {
+              setVerificationSession(null);
+              verificationSessionIdRef.current = null;
+            }
             
             // 🔧 v3.5.8: choice_logs도 함께 삭제 (고아 방지)
             // 🎨 v3.8.0: 갤러리 이미지 파일 삭제 (DB 삭제 전)
@@ -31314,6 +33157,9 @@ function AppContent() {
               { sql: "UPDATE tier_repositioning_session SET blocker_id=NULL WHERE blocker_id=?", params: [id] },
               // 🆕 v7.0.8: trigger_fire_log 고아 정리
               { sql: "DELETE FROM trigger_fire_log WHERE novel_id=?", params: [id] },
+              // 🆕 v7.3.0: v7.1 tier_inversion 패턴(novel:{id})은 id 참조 → 함께 정리
+              // (다른 카테고리 tag/author/genre/award는 entity-keyed라 무관)
+              { sql: "DELETE FROM preference_patterns WHERE pattern_key=?", params: [`novel:${id}`] },
               { sql: "DELETE FROM novels WHERE id=?", params: [id] },
             ]);
             // 🔧 v3.5.15e: 미플러시 choiceLog에서도 삭제 대상 제거 (고아 재삽입 방지)
@@ -32142,8 +33988,16 @@ function AppContent() {
       // 🆕 v7.0.2: 클리어 path 분리 — meta_edit(잘못된 underrated) 대신 tier_change(overrated)
       // 🆕 v7.0.6 (m6): meta_edit 트리거 제거 — priority=1로 다른 트리거(gatekeeper=5/tier_change=4/order_change=3/new=2)에 항상 밀려 실효 X.
       // 매 saveEdit마다 큐에 인입되어 노이즈만 누적. tier 변경 시에는 _v7TierChanged 분기가 처리.
+      // 🆕 v7.0.15: read_count 누적 트래킹 — (현재 read_count − read_count_baseline) >= 30 시 read_progress 트리거.
+      // baseline은 last-fire 시점 read_count. 청크 분할 저장(5화×10번=50)도 누적으로 잡힘.
+      // tier 변경이 동시에 일어나면 그쪽이 우선 (else-if) — 명시적 액션 > 함묵적 시그널.
+      // UPSERT 동작 상 read_progress가 뒤에 와도 trigger_type/suspicion_type을 덮어쓰므로
+      // tier 변경 동반 시 사용자 강등(overrated)을 underrated로 뒤집지 않도록 mutually exclusive 분기.
+      // 어떤 트리거든 발화 시 baseline = newReadCount로 reset (다음 누적 시작점).
       if (globalTierConfig.mode === "hybrid") {
         try {
+          let firedAnyTrigger = false;
+
           if (_v7TierChanged) {
             const order = getActiveTierOrder(globalTierConfig);
             const fromIdx = order.indexOf(_v7TierChanged.fromDisplayTier);
@@ -32151,9 +34005,30 @@ function AppContent() {
             // fromIdx 미정시 (이전 표시 티어가 active 목록에 없음) — 신중하게 underrated 기본값
             const suspicion = fromIdx === -1 ? "underrated" : (toIdx < fromIdx ? "underrated" : "overrated");
             await enqueueVerification(n.id, "tier_change", suspicion, "saveEdit");
+            firedAnyTrigger = true;
           } else if (_v7TierCleared) {
             // manual_tier → null: 더 이상 잠정 truth 없음, 자리 검증 불필요. 오버레이트 가능성을 가벼운 신호로만 인입
             await enqueueVerification(n.id, "tier_change", "overrated", "saveEdit");
+            firedAnyTrigger = true;
+          } else if (readCountChanged) {
+            // 🆕 v7.0.15: 누적 트래킹 — last-fire 이후 누적 +30화 이상 읽었으면 fire
+            const baseRow = await first(
+              "SELECT read_count_baseline FROM novels WHERE id=?",
+              [n.id]
+            );
+            const baseline = Number(baseRow?.read_count_baseline) || 0;
+            if ((newReadCount - baseline) >= VERIFICATION_READ_COUNT_THRESHOLD) {
+              await enqueueVerification(n.id, "read_progress", "underrated", "saveEdit_readcount");
+              firedAnyTrigger = true;
+            }
+          }
+
+          // 🆕 v7.0.15: 어떤 트리거든 발화 시 baseline = newReadCount로 reset (다음 누적 시작점)
+          if (firedAnyTrigger) {
+            await exec(
+              "UPDATE novels SET read_count_baseline=? WHERE id=?",
+              [newReadCount, n.id]
+            );
           }
           // (m6 제거) meta_edit 트리거 삭제 — 메타 편집(제목/태그/note 등)은 검증 큐에 영향 X
         } catch (e) {
@@ -34032,6 +35907,7 @@ function AppContent() {
   }, [userMajorGenres, userSubGenres, tagAttributes]); // 🔧 v3.5.13: tagAttributes dep 추가
 
   // 🔧 v3.5.1: useCallback으로 변경 (stale closure 방지)
+  // 🆕 v7.0.15: hybrid 모드에서 누적 트래킹 — 작품별 (newReadCount − baseline) >= 30 시 read_progress fire
   const batchIncReadCount = useCallback(async (delta) => {
     const d = Number(delta) || 0;
     if (!d) {
@@ -34045,11 +35921,49 @@ function AppContent() {
       return;
     }
     const now = Date.now();
+
+    // 🆕 v7.0.15: hybrid 모드에선 UPDATE 전에 (read_count, baseline) 캡처
+    // — UPDATE 후엔 read_count가 이미 변경되어 baseline 비교 불가능
+    let preState = null;
+    if (globalTierConfig.mode === "hybrid") {
+      try {
+        const placeholders = ids.map(() => "?").join(",");
+        const rows = await all(
+          `SELECT id, read_count, read_count_baseline FROM novels WHERE id IN (${placeholders})`,
+          ids
+        );
+        preState = new Map((rows || []).map(r => [r.id, {
+          read_count: Number(r.read_count) || 0,
+          baseline: Number(r.read_count_baseline) || 0,
+        }]));
+      } catch (e) {
+        console.warn("[v7.0.15] batchIncReadCount preState 캡처 실패:", e?.message);
+      }
+    }
+
     const queries = ids.map((id) => ({
       sql: "UPDATE novels SET read_count = MAX(0, read_count + ?), read_count_updated_at = ? WHERE id=?",
       params: [d, now, id],
     }));
     await execBatch(queries);
+
+    // 🆕 v7.0.15: 작품별 누적 +30 만족 시 read_progress fire + baseline reset
+    if (globalTierConfig.mode === "hybrid" && preState) {
+      for (const id of ids) {
+        const pre = preState.get(id);
+        if (!pre) continue;
+        const newRead = Math.max(0, pre.read_count + d); // SQL MAX(0, ...) clamp 일치
+        if ((newRead - pre.baseline) >= VERIFICATION_READ_COUNT_THRESHOLD) {
+          try {
+            await enqueueVerification(id, "read_progress", "underrated", "batchIncReadCount");
+            await exec("UPDATE novels SET read_count_baseline=? WHERE id=?", [newRead, id]);
+          } catch (e) {
+            console.warn("[v7.0.15] batchIncReadCount read_progress 실패:", e?.message);
+          }
+        }
+      }
+    }
+
     await loadList(undefined, undefined, "batch");
     Alert.alert("완료", `${ids.length}개 작품에 읽은 회차 ${d > 0 ? '+' : ''}${d} 적용했습니다.`);
   }, []);
@@ -34185,77 +36099,101 @@ function AppContent() {
 
   // 🆕 v6.1: 티어 내 순위 교환 (manual 모드 전용)
   // 🆕 v7.0: hybrid 모드에서는 manual_order swap, 사용자 path → 검증 큐 트리거
+  // 🛠️ v7.0.14: 최상위 try/catch 추가 — onPress(()=>swapRating(...))로 호출되어 await 미적용 시
+  // DB 에러가 unhandled rejection으로 빠져 앱 크래시. 검증 세션 in-flight 가드도 함께 추가.
   async function swapRating(idA, ratingA, idB, ratingB) {
     if (idA === idB) return; // 동일 작품 방어 (빠른 연타 시)
     const mode = globalTierConfig.mode;
 
-    if (mode === "manual" || mode === "hybrid") {
-      // 🆕 v7.0.6 (M8): tier 일관성 사전 검증 — race(예: 동시 finalize가 tier 변경) 시 다른 tier의 manual_order만 swap되어 정렬이 무너지는 것을 방지.
-      // UI(sameTierEntries)는 보통 같은 tier 작품끼리만 swap 호출하나, 비동기 race에서는 변경 가능.
-      const rows = await all(
-        "SELECT id, manual_tier, manual_order FROM novels WHERE id IN (?, ?)",
-        [idA, idB]
-      );
-      if (rows.length !== 2) {
-        console.warn("[v7.0.6 M8] swapRating: 작품 미존재", idA, idB);
+    // 🆕 v7.0.14: hybrid 검증 세션 in-flight 작품의 ▲/▼는 차단 (M9c 패턴 — inline chip과 동일)
+    // 시퀀스 진행 중 manual_order 변경은 finalize와 충돌 → 자리 예측 오작동
+    if (mode === "hybrid") {
+      const sessionNovelId = verificationSessionRef.current?.queueRow?.novel_id;
+      if (sessionNovelId && (sessionNovelId === idA || sessionNovelId === idB)) {
+        Alert.alert(
+          "검증 진행 중",
+          "검증 시퀀스 진행 중인 작품은 시퀀스 종료 후 다시 시도해주세요."
+        );
         return;
-      }
-      const rowA = rows.find(r => r.id === idA);
-      const rowB = rows.find(r => r.id === idB);
-      if (rowA.manual_tier !== rowB.manual_tier) {
-        console.warn("[v7.0.6 M8] swapRating: tier 불일치 (race) — abort", rowA.manual_tier, rowB.manual_tier);
-        return;
-      }
-      const sharedTier = rowA.manual_tier;
-      const oA = Number(rowA?.manual_order) || 0;
-      const oB = Number(rowB?.manual_order) || 0;
-      // v7.0.1 (C3 fix): 충돌 분기에서 idA는 명시적으로 UP(-50) 이동 → suspicion도 underrated 고정
-      let suspicionForHybrid;
-      if (oA === oB) {
-        await execBatch([
-          { sql: "UPDATE novels SET manual_order=? WHERE id=?", params: [oB - 50, idA] },
-        ]);
-        suspicionForHybrid = "underrated"; // -50 = 위로 이동
-        // 🆕 v7.0.6 (M7): collision 분기에서 즉시 같은 tier rebalance — gap=100 invariant 회복.
-        // -50된 idA가 manual_order ASC 정렬에서 가장 위에 위치하므로 사용자 의도(▲로 위)와 일치.
-        // 이 호출이 매칭→수동 전환 후 첫 ▲▼에서도 자동 정규화하므로 M10(전환 시 백필) skip 가능.
-        if (sharedTier) {
-          await rebalanceTierOrder(sharedTier);
-        }
-      } else {
-        await execBatch([
-          { sql: "UPDATE novels SET manual_order=? WHERE id=?", params: [oB, idA] },
-          { sql: "UPDATE novels SET manual_order=? WHERE id=?", params: [oA, idB] },
-        ]);
-        suspicionForHybrid = oA > oB ? "underrated" : "overrated"; // 작은 order = 위
-      }
-      // 🆕 v7.0: hybrid 모드 — 사용자 path 트리거
-      // 🆕 v7.0.2: idB도 함께 enqueue (역방향 의심) — 양쪽이 모두 변위했으므로 양쪽 검증 필요
-      if (mode === "hybrid") {
-        try {
-          await enqueueVerification(idA, "order_change", suspicionForHybrid, "swapRating_idA");
-          if (idA !== idB) {
-            const inverseSuspicion = suspicionForHybrid === "underrated" ? "overrated" : "underrated";
-            await enqueueVerification(idB, "order_change", inverseSuspicion, "swapRating_idB");
-          }
-        } catch (e) {
-          console.warn("검증 큐 INSERT 실패:", e?.message);
-        }
-      }
-    } else {
-      // match 모드: 기존 ELO rating 교환
-      if (ratingA === ratingB) {
-        await execBatch([
-          { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingB + 1, idA] },
-        ]);
-      } else {
-        await execBatch([
-          { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingB, idA] },
-          { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingA, idB] },
-        ]);
       }
     }
-    await loadList(undefined, undefined, "tierManage");
+
+    try {
+      if (mode === "manual" || mode === "hybrid") {
+        // 🆕 v7.0.6 (M8): tier 일관성 사전 검증 — race(예: 동시 finalize가 tier 변경) 시 다른 tier의 manual_order만 swap되어 정렬이 무너지는 것을 방지.
+        // UI(sameTierEntries)는 보통 같은 tier 작품끼리만 swap 호출하나, 비동기 race에서는 변경 가능.
+        const rows = await all(
+          "SELECT id, manual_tier, manual_order FROM novels WHERE id IN (?, ?)",
+          [idA, idB]
+        );
+        if (rows.length !== 2) {
+          console.warn("[v7.0.6 M8] swapRating: 작품 미존재", idA, idB);
+          return;
+        }
+        const rowA = rows.find(r => r.id === idA);
+        const rowB = rows.find(r => r.id === idB);
+        if (rowA.manual_tier !== rowB.manual_tier) {
+          console.warn("[v7.0.6 M8] swapRating: tier 불일치 (race) — abort", rowA.manual_tier, rowB.manual_tier);
+          return;
+        }
+        const sharedTier = rowA.manual_tier;
+        const oA = Number(rowA?.manual_order) || 0;
+        const oB = Number(rowB?.manual_order) || 0;
+        // v7.0.1 (C3 fix): 충돌 분기에서 idA는 명시적으로 UP(-50) 이동 → suspicion도 underrated 고정
+        let suspicionForHybrid;
+        if (oA === oB) {
+          await execBatch([
+            { sql: "UPDATE novels SET manual_order=? WHERE id=?", params: [oB - 50, idA] },
+          ]);
+          suspicionForHybrid = "underrated"; // -50 = 위로 이동
+          // 🆕 v7.0.6 (M7): collision 분기에서 즉시 같은 tier rebalance — gap=100 invariant 회복.
+          // -50된 idA가 manual_order ASC 정렬에서 가장 위에 위치하므로 사용자 의도(▲로 위)와 일치.
+          // 이 호출이 매칭→수동 전환 후 첫 ▲▼에서도 자동 정규화하므로 M10(전환 시 백필) skip 가능.
+          if (sharedTier) {
+            await rebalanceTierOrder(sharedTier);
+          }
+        } else {
+          await execBatch([
+            { sql: "UPDATE novels SET manual_order=? WHERE id=?", params: [oB, idA] },
+            { sql: "UPDATE novels SET manual_order=? WHERE id=?", params: [oA, idB] },
+          ]);
+          suspicionForHybrid = oA > oB ? "underrated" : "overrated"; // 작은 order = 위
+        }
+        // 🆕 v7.0: hybrid 모드 — 사용자 path 트리거
+        // 🆕 v7.0.2: idB도 함께 enqueue (역방향 의심) — 양쪽이 모두 변위했으므로 양쪽 검증 필요
+        if (mode === "hybrid") {
+          try {
+            await enqueueVerification(idA, "order_change", suspicionForHybrid, "swapRating_idA");
+            if (idA !== idB) {
+              const inverseSuspicion = suspicionForHybrid === "underrated" ? "overrated" : "underrated";
+              await enqueueVerification(idB, "order_change", inverseSuspicion, "swapRating_idB");
+            }
+          } catch (e) {
+            console.warn("검증 큐 INSERT 실패:", e?.message);
+          }
+        }
+      } else {
+        // match 모드: 기존 ELO rating 교환
+        if (ratingA === ratingB) {
+          await execBatch([
+            { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingB + 1, idA] },
+          ]);
+        } else {
+          await execBatch([
+            { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingB, idA] },
+            { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingA, idB] },
+          ]);
+        }
+      }
+      await loadList(undefined, undefined, "tierManage");
+    } catch (e) {
+      // 🛠️ v7.0.14: 외부 caller가 await 미적용으로 호출하므로 여기서 swallow.
+      // 사용자에게 표시 + 콘솔에 로그. 자동매칭 중이면 Alert 차단 (불변조건 #1).
+      console.warn("[v7.0.14] swapRating 오류:", e?.message);
+      if (!isAutoMatchingRef.current) {
+        Alert.alert("순위 변경 실패", e?.message ? `오류: ${e.message}` : "잠시 후 다시 시도해주세요.");
+      }
+    }
   }
 
   // 🔧 v3.5.1: useCallback으로 변경 (stale closure 방지)
@@ -34290,6 +36228,12 @@ function AppContent() {
             }
             if (focusMatchNovel && ids.includes(focusMatchNovel.id)) {
               setFocusMatchNovel(null);
+            }
+            // 🆕 v7.2.3: 진행 중 verification 세션이 삭제 대상이면 abort
+            const _vsId = verificationSessionRef.current?.queueRow?.novel_id;
+            if (_vsId && ids.includes(_vsId)) {
+              setVerificationSession(null);
+              verificationSessionIdRef.current = null;
             }
 
             // 🔧 v3.5.8: 삭제 전 표지 정보 수집
@@ -34349,6 +36293,11 @@ function AppContent() {
               queries.push({
                 sql: "DELETE FROM trigger_fire_log WHERE novel_id=?",
                 params: [id],
+              });
+              // 🆕 v7.3.0: v7.1 tier_inversion 패턴 정리 (id-keyed)
+              queries.push({
+                sql: "DELETE FROM preference_patterns WHERE pattern_key=?",
+                params: [`novel:${id}`],
               });
               queries.push({
                 sql: "DELETE FROM novels WHERE id=?",
@@ -34895,32 +36844,58 @@ async function exportJSON() {
 
     // 📋 v3.3.0: 예정 작품 백업 (PL = Planned List)
     // 🆕 v3.4: 확장 필드 추가
+    // 🆕 v7.2.0: round-trip 보존 19개 신규 키 추가 (id 포함, default 값은 원치 않으면 omit)
     if (plannedNovels && plannedNovels.length > 0) {
-      payload.PL = plannedNovels.map(p => ({
-        t: p.title,
-        a: p.author || "",
-        tg: p.tags || "",
-        pl: p.platforms || "[]",
-        n: p.note || "",
-        te: Number(p.total_episodes) || 0,
-        ci: p.cover_image || "",
-        lk: p.link || "",
-        ws: p.work_status || "ongoing",
-        mg: p.major_genre || "",
-        sg: p.sub_genre || "",
-        pr: Number(p.priority) || 3,
-        ca: Math.floor((p.created_at || Date.now()) / 1000) - BASE_TIMESTAMP,
-        // 🆕 v3.4: 새 필드들
-        er: Number(p.expected_rating) || 1500,
-        et: p.expected_tier || "",
-        il: Number(p.interest_level) || 3,
-        ds: p.discovery_source || "",
-        fc: p.first_chapter_read ? 1 : 0,
-        ss: p.scheduled_start_date ? Math.floor(p.scheduled_start_date / 1000) - BASE_TIMESTAMP : 0,
-        sn: p.similar_novels || "",
-        wi: p.why_interested || "",
-        td: p.tag_data || "", // 🔧 v3.5.9: tag_data 백업
-      }));
+      payload.PL = plannedNovels.map(p => {
+        const row = {
+          t: p.title,
+          a: p.author || "",
+          tg: p.tags || "",
+          pl: p.platforms || "[]",
+          n: p.note || "",
+          te: Number(p.total_episodes) || 0,
+          ci: p.cover_image || "",
+          lk: p.link || "",
+          ws: p.work_status || "ongoing",
+          mg: p.major_genre || "",
+          sg: p.sub_genre || "",
+          pr: Number(p.priority) || 3,
+          ca: Math.floor((p.created_at || Date.now()) / 1000) - BASE_TIMESTAMP,
+          // 🆕 v3.4: 새 필드들
+          er: Number(p.expected_rating) || 1500,
+          et: p.expected_tier || "",
+          il: Number(p.interest_level) || 3,
+          ds: p.discovery_source || "",
+          fc: p.first_chapter_read ? 1 : 0,
+          ss: p.scheduled_start_date ? Math.floor(p.scheduled_start_date / 1000) - BASE_TIMESTAMP : 0,
+          sn: p.similar_novels || "",
+          wi: p.why_interested || "",
+          td: p.tag_data || "", // 🔧 v3.5.9: tag_data 백업
+        };
+        // 🆕 v7.2.0: id 보존 — round-trip 후 reverse로 들어온 row의 id 복원에 필요
+        if (p.id) row.id = p.id;
+        // 🆕 v7.2.0: 새 16개 필드 — default 값은 omit (백업 크기 절감, import 시 default 적용)
+        if (p.status && p.status !== "reading") row.st = p.status;
+        if (Number(p.pinned)) row.pn = Number(p.pinned);
+        if (Number(p.read_count)) row.rc = Number(p.read_count);
+        if (Number(p.rating) && Number(p.rating) !== 1500) row.rt = Number(p.rating);
+        if (Number(p.rd) && Number(p.rd) !== 350) row.rdv = Number(p.rd);
+        if (Number(p.wins)) row.wn = Number(p.wins);
+        if (Number(p.losses)) row.ls = Number(p.losses);
+        if (Number(p.match_count)) row.mc = Number(p.match_count);
+        if (p.gaiden_status && p.gaiden_status !== "none") row.gs = p.gaiden_status;
+        if (Number(p.gaiden_read_count)) row.gr = Number(p.gaiden_read_count);
+        if (Number(p.gaiden_total_episodes)) row.ge = Number(p.gaiden_total_episodes);
+        if (p.manual_tier) row.mt = p.manual_tier;
+        if (Number(p.manual_order)) row.mo = Number(p.manual_order);
+        if (Number(p.reread_count) && Number(p.reread_count) !== 1) row.rr = Number(p.reread_count);
+        if (p.aliases) row.al = p.aliases;
+        if (p.memorable_quote) row.mq = p.memorable_quote;
+        if (p.awards) row.aw = p.awards;
+        if (Number(p.read_count_updated_at)) row.ru = Number(p.read_count_updated_at);
+        if (Number(p.read_count_baseline)) row.rb = Number(p.read_count_baseline);
+        return row;
+      });
     }
     
     const json = JSON.stringify(payload);
@@ -35316,7 +37291,16 @@ async function importJSON() {
               }
 
               if (novelQueries.length > 0) await execBatch(novelQueries);
-              
+
+              // 🆕 v7.0.15: import된 novel들의 read_count_baseline = read_count로 backfill
+              // 백업 v9 포맷에 read_count_baseline 미포함 → DEFAULT 0이 그대로면 첫 saveEdit에서 mass-fire.
+              // import 직전 모든 novels DELETE되므로 (line 35399 영역) 단순 bulk UPDATE로 안전.
+              try {
+                await exec(`UPDATE novels SET read_count_baseline = read_count;`);
+              } catch (e) {
+                console.warn("[v7.0.15] importJSON read_count_baseline backfill 실패:", e?.message);
+              }
+
               // 🔧 v3.5.8: 복원 직후 삽입 검증
               const insertedCheck = await first("SELECT COUNT(*) as cnt FROM novels");
               const insertedCount = insertedCheck?.cnt || 0;
@@ -35550,12 +37534,13 @@ async function importJSON() {
                 // 기존 예정 작품 삭제
                 await exec("DELETE FROM planned_novels;");
                 
+                // 🆕 v7.2.0: round-trip 보존 19개 신규 필드 + id 보존 (있으면 사용, 없으면 신규 uuid)
                 const plannedQueries = data.PL.map(p => ({
-                  sql: `INSERT INTO planned_novels 
-                    (id, title, author, tags, platforms, note, total_episodes, cover_image, link, work_status, major_genre, sub_genre, priority, created_at, expected_rating, expected_tier, interest_level, discovery_source, first_chapter_read, scheduled_start_date, similar_novels, why_interested, tag_data)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                  sql: `INSERT INTO planned_novels
+                    (id, title, author, tags, platforms, note, total_episodes, cover_image, link, work_status, major_genre, sub_genre, priority, created_at, expected_rating, expected_tier, interest_level, discovery_source, first_chapter_read, scheduled_start_date, similar_novels, why_interested, tag_data, status, pinned, read_count, rating, rd, wins, losses, match_count, gaiden_status, gaiden_read_count, gaiden_total_episodes, manual_tier, manual_order, reread_count, aliases, memorable_quote, awards, read_count_updated_at, read_count_baseline)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
                   params: [
-                    uuid(),
+                    p.id || uuid(),                                      // 🆕 v7.2.0: id 보존
                     p.t || "",
                     p.a || "",
                     p.tg || "",
@@ -35579,6 +37564,26 @@ async function importJSON() {
                     p.sn || "",
                     p.wi || "",
                     p.td || "", // 🔧 v3.5.9: tag_data 복원
+                    // 🆕 v7.2.0: round-trip 보존 16개 (default fallback)
+                    p.st || "reading",
+                    Number(p.pn) || 0,
+                    Number(p.rc) || 0,
+                    Number(p.rt) || 1500,
+                    Number(p.rdv) || 350,
+                    Number(p.wn) || 0,
+                    Number(p.ls) || 0,
+                    Number(p.mc) || 0,
+                    p.gs || "none",
+                    Number(p.gr) || 0,
+                    Number(p.ge) || 0,
+                    p.mt || null,
+                    Number(p.mo) || 0,
+                    Math.max(1, Number(p.rr) || 1),
+                    p.al || "",
+                    p.mq || "",
+                    p.aw || "",
+                    Number(p.ru) || 0,
+                    Number(p.rb) || 0,
                   ],
                 }));
                 
@@ -37058,11 +39063,33 @@ async function importJSON() {
                     onPress={compareMode ? () => toggleCompare(item.id) : () => openEdit({ ...item })}
                     onLongPress={() => {
                       const folderNames = (novelFolderMap.get(item.id) || []).map(fid => { const f = folders.find(x => x.id === fid); return f ? `${f.icon||'📂'} ${f.name}` : null; }).filter(Boolean).join(", ");
+                      // 🆕 v7.3.1: 자동매칭 중에는 가등록 전환 옵션 자체 숨김 (UX 일관성)
+                      const matching = isAutoMatchingRef.current;
                       Alert.alert(
                         item.title,
-                        `작가: ${item.author || "-"}\n${folderNames ? `📂 폴더: ${folderNames}\n` : ""}\n${item.note || "(메모 없음)"}`,
+                        `작가: ${item.author || "-"}\n${folderNames ? `📂 폴더: ${folderNames}\n` : ""}\n${item.note || "(메모 없음)"}${matching ? "\n\n⚠️ 자동매칭 중 — 가등록 전환 일시 비활성화" : ""}`,
                         [
                           { text: "📂 폴더 배정", onPress: () => { setFolderAssignTarget(item.id); deferOpen(setFolderAssignModalOpen); } },
+                          // 🆕 v7.2.0/v7.3.1: 자동매칭 중이면 옵션 자체 미표시
+                          ...(matching ? [] : [
+                            { text: "📋 가등록 전환", style: "destructive", onPress: () => {
+                              Alert.alert(
+                                "가등록 전환",
+                                `"${item.title}"을(를) 가등록으로 되돌릴까요?\n\n매칭/갤러리/폴더 등 모든 데이터가 보존됩니다 (id 유지). 다시 진등록 전환 시 복원됩니다.`,
+                                [
+                                  { text: "취소" },
+                                  { text: "전환", style: "destructive", onPress: async () => {
+                                    const ok = await convertNovelToPlanned(item);
+                                    if (ok) {
+                                      await loadList(undefined, undefined, "demote");
+                                      await loadPlannedList();
+                                      Alert.alert("완료", "가등록으로 전환되었습니다.");
+                                    }
+                                  }},
+                                ]
+                              );
+                            }},
+                          ]),
                           { text: "확인" },
                         ]
                       );
@@ -37651,7 +39678,34 @@ async function importJSON() {
         {screen === "planned" && (
           <>
             <H>📋 예정 작품</H>
-            
+
+            {/* 🆕 v7.3.0: sub-tab Chip row */}
+            <View style={{ flexDirection: "row", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+              {[
+                { key: "list", label: "📋 목록" },
+                { key: "bulk", label: "✏️ 일괄편집" },
+              ].map(t => (
+                <TouchableOpacity
+                  key={t.key}
+                  onPress={() => setPlannedSubTab(t.key)}
+                  style={{
+                    backgroundColor: plannedSubTab === t.key ? C.primary : C.chip,
+                    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999,
+                    borderWidth: 1,
+                    borderColor: plannedSubTab === t.key ? C.primary : C.line,
+                  }}
+                >
+                  <Text style={{
+                    color: plannedSubTab === t.key ? "#fff" : C.text,
+                    fontWeight: "700", fontSize: 13,
+                  }}>{t.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* ════ list sub-tab (기존 폼 + 카드) ════ */}
+            {plannedSubTab === "list" && (<>
+
             {/* 안내 문구 */}
             <View style={{
               backgroundColor: isDark ? "#1e3a5f" : "#eff6ff",
@@ -37667,7 +39721,7 @@ async function importJSON() {
                 '등록전환' 버튼을 눌러 실제로 읽기 시작하면 본 목록으로 이동하세요.
               </Text>
             </View>
-            
+
             {/* 예정 작품 등록 폼 (v3.4.2 간소화) */}
             <Section title="예정 작품 추가">
               <Label>제목 *</Label>
@@ -38038,7 +40092,38 @@ async function importJSON() {
                                 {item.author || "작가 미상"} · {plats.length ? plats.join(", ") : "-"}
                                 {item.total_episodes > 0 && ` · ${item.total_episodes}화`}
                               </Text>
-                              
+
+                              {/* 🆕 v7.3.0: 가등록 round-trip 데이터 배지 (awards/quote/gallery) */}
+                              {(() => {
+                                let awardCount = 0;
+                                try {
+                                  const a = JSON.parse(item.awards || "[]");
+                                  if (Array.isArray(a)) awardCount = a.length;
+                                } catch {}
+                                const quoteCount = parseQuotes(item.memorable_quote || "").length;
+                                const galleryCount = Number(item.gallery_count) || 0;
+                                if (awardCount === 0 && quoteCount === 0 && galleryCount === 0) return null;
+                                return (
+                                  <View style={{ flexDirection: "row", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+                                    {awardCount > 0 && (
+                                      <View style={{ backgroundColor: isDark ? "rgba(245,158,11,0.18)" : "#fef3c7", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 }}>
+                                        <Text style={{ color: isDark ? "#fde68a" : "#92400e", fontSize: 10, fontWeight: "700" }}>🏆 {awardCount}</Text>
+                                      </View>
+                                    )}
+                                    {quoteCount > 0 && (
+                                      <View style={{ backgroundColor: isDark ? "rgba(59,130,246,0.18)" : "#dbeafe", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 }}>
+                                        <Text style={{ color: isDark ? "#93c5fd" : "#1d4ed8", fontSize: 10, fontWeight: "700" }}>💬 {quoteCount}</Text>
+                                      </View>
+                                    )}
+                                    {galleryCount > 0 && (
+                                      <View style={{ backgroundColor: isDark ? "rgba(236,72,153,0.18)" : "#fce7f3", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 }}>
+                                        <Text style={{ color: isDark ? "#f9a8d4" : "#a21caf", fontSize: 10, fontWeight: "700" }}>🎨 {galleryCount}</Text>
+                                      </View>
+                                    )}
+                                  </View>
+                                );
+                              })()}
+
                               {/* 메모 */}
                               {item.note && (
                                 <Text style={{ color: C.sub, fontSize: 12, marginTop: 4 }} numberOfLines={1}>
@@ -38047,11 +40132,12 @@ async function importJSON() {
                               )}
                             </View>
                           </View>
-                          
+
                           {/* 버튼 */}
                           <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
                             <PrimaryButton
                               title="📥 등록전환"
+                              disabled={isAutoMatching}
                               onPress={() => convertPlannedToNovel(item)}
                               style={{ flex: 1, backgroundColor: "#8b5cf6", paddingVertical: 10 }}
                             />
@@ -38069,6 +40155,216 @@ async function importJSON() {
                 );
               })()}
             </Section>
+            {/* ════ /list sub-tab ════ */}
+            </>)}
+
+            {/* ════ 🆕 v7.3.0: bulk sub-tab (일괄편집) ════ */}
+            {plannedSubTab === "bulk" && (() => {
+              // 검색 필터링
+              const q = (plannedBulkSearch || "").toLowerCase().trim();
+              const filtered = q
+                ? plannedList.filter(p =>
+                    (p.title || "").toLowerCase().includes(q) ||
+                    (p.author || "").toLowerCase().includes(q)
+                  )
+                : plannedList;
+              return (
+              <>
+                {/* 안내 */}
+                <View style={{
+                  backgroundColor: isDark ? "#1e3a5f" : "#eff6ff",
+                  padding: 10, borderRadius: 10, marginBottom: 12,
+                  borderLeftWidth: 4, borderLeftColor: "#8b5cf6",
+                }}>
+                  <Text style={{ color: isDark ? "#93c5fd" : "#1e40af", fontSize: 12 }}>
+                    ✏️ 가등록 작품 일괄편집. 다중 선택 후 작업 적용.
+                  </Text>
+                </View>
+
+                {/* 검색 */}
+                <Section title="🔍 검색">
+                  <Input
+                    value={plannedBulkSearch}
+                    onChangeText={setPlannedBulkSearch}
+                    placeholder="제목/작가 검색"
+                  />
+                </Section>
+
+                {/* 선택 */}
+                <Section title={`✓ 선택 (${plannedSelectedIds.length}개)`}>
+                  <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
+                    필터 결과 {filtered.length}개 / 전체 {plannedList.length}개
+                  </Text>
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    <OutlineButton
+                      title="필터 전체 선택"
+                      onPress={() => setPlannedSelectedIds(filtered.map(p => p.id))}
+                      style={{ flex: 1 }}
+                    />
+                    <OutlineButton
+                      title="선택 해제"
+                      onPress={() => setPlannedSelectedIds([])}
+                      style={{ flex: 1 }}
+                    />
+                  </View>
+                </Section>
+
+                {/* 작업 메뉴 */}
+                <Section title="📋 작업">
+                  {/* 진등록 전환 */}
+                  <View style={{ marginBottom: 12 }}>
+                    <Text style={{ color: C.text, fontWeight: "700", marginBottom: 4 }}>📥 일괄 진등록 전환</Text>
+                    <PrimaryButton
+                      title="선택 가등록을 진등록으로 전환"
+                      onPress={batchConvertPlannedToNovels}
+                      style={{ backgroundColor: "#8b5cf6" }}
+                    />
+                  </View>
+
+                  {/* 우선순위 */}
+                  <View style={{ marginBottom: 12 }}>
+                    <Text style={{ color: C.text, fontWeight: "700", marginBottom: 4 }}>⭐ 일괄 우선순위</Text>
+                    <View style={{ flexDirection: "row", gap: 6 }}>
+                      {[1, 2, 3, 4, 5].map(n => (
+                        <TouchableOpacity
+                          key={n}
+                          onPress={() => batchSetPlannedPriority(n)}
+                          style={{
+                            flex: 1, backgroundColor: C.chip, padding: 8, borderRadius: 8,
+                            alignItems: "center", borderWidth: 1, borderColor: C.line,
+                          }}
+                        >
+                          <Text style={{ color: C.text, fontWeight: "700" }}>{"⭐".repeat(n)}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+
+                  {/* 작품상태 */}
+                  <View style={{ marginBottom: 12 }}>
+                    <Text style={{ color: C.text, fontWeight: "700", marginBottom: 4 }}>📺 일괄 작품상태</Text>
+                    <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
+                      {[
+                        { k: "ongoing", l: "연재중" },
+                        { k: "completed", l: "완결" },
+                        { k: "hiatus", l: "휴재" },
+                        { k: "dropped", l: "연중" },
+                        { k: "discontinued", l: "서비스종료" },
+                      ].map(s => (
+                        <TouchableOpacity
+                          key={s.k}
+                          onPress={() => batchSetPlannedWorkStatus(s.k)}
+                          style={{
+                            backgroundColor: C.chip, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8,
+                            borderWidth: 1, borderColor: C.line,
+                          }}
+                        >
+                          <Text style={{ color: C.text, fontSize: 12, fontWeight: "600" }}>{s.l}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+
+                  {/* 플랫폼 */}
+                  <View style={{ marginBottom: 12 }}>
+                    <Text style={{ color: C.text, fontWeight: "700", marginBottom: 4 }}>📱 일괄 플랫폼 (선택 항목으로 통일)</Text>
+                    <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
+                      {(PLATFORM_OPTIONS || []).slice(0, 8).map(p => (
+                        <TouchableOpacity
+                          key={p}
+                          onPress={() => batchSetPlannedPlatforms([p])}
+                          style={{
+                            backgroundColor: C.chip, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8,
+                            borderWidth: 1, borderColor: C.line,
+                          }}
+                        >
+                          <Text style={{ color: C.text, fontSize: 12 }}>{p}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                    <Text style={{ color: C.sub, fontSize: 10, marginTop: 4 }}>탭 한 플랫폼으로 모두 교체됩니다 (덮어쓰기).</Text>
+                  </View>
+
+                  {/* 태그 */}
+                  <View style={{ marginBottom: 12 }}>
+                    <Text style={{ color: C.text, fontWeight: "700", marginBottom: 4 }}>🏷️ 일괄 태그 추가/삭제</Text>
+                    <Input
+                      value={plannedBulkTagInput}
+                      onChangeText={setPlannedBulkTagInput}
+                      placeholder="태그명"
+                    />
+                    <Text style={{ color: C.sub, fontSize: 11, marginTop: 6 }}>강도 (intensity 1-5):</Text>
+                    <View style={{ flexDirection: "row", gap: 6, marginTop: 4 }}>
+                      {[1, 2, 3, 4, 5].map(n => (
+                        <TouchableOpacity
+                          key={n}
+                          onPress={() => setPlannedBulkTagIntensity(n)}
+                          style={{
+                            flex: 1, backgroundColor: plannedBulkTagIntensity === n ? C.primary : C.chip,
+                            padding: 6, borderRadius: 6, alignItems: "center",
+                          }}
+                        >
+                          <Text style={{ color: plannedBulkTagIntensity === n ? "#fff" : C.text, fontWeight: "700" }}>{n}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                    <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                      <PrimaryButton title="추가" onPress={batchAddPlannedTag} style={{ flex: 1 }} />
+                      <OutlineButton title="삭제" onPress={batchRemovePlannedTag} color={C.warn} style={{ flex: 1 }} />
+                    </View>
+                  </View>
+
+                  {/* 일괄 삭제 */}
+                  <View style={{ marginTop: 8, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.line }}>
+                    <OutlineButton
+                      title="🗑 선택 일괄 삭제"
+                      color={C.warn}
+                      onPress={batchDeletePlanned}
+                    />
+                  </View>
+                </Section>
+
+                {/* 다중선택 카드 리스트 */}
+                <Section title={`목록 (${filtered.length})`}>
+                  <FlatList
+                    data={filtered}
+                    keyExtractor={(item, i) => item?.id || `pb-${i}`}
+                    extraData={plannedSelectedIds}
+                    scrollEnabled={false}
+                    initialNumToRender={15}
+                    maxToRenderPerBatch={10}
+                    windowSize={5}
+                    renderItem={({ item: p }) => {
+                      const selected = plannedSelectedIds.includes(p.id);
+                      return (
+                        <TouchableOpacity
+                          onPress={() => togglePlannedSelected(p.id)}
+                          style={{
+                            flexDirection: "row", alignItems: "center", padding: 10, marginBottom: 6,
+                            backgroundColor: selected ? (isDark ? "rgba(139,92,246,0.18)" : "#ede9fe") : C.card,
+                            borderWidth: 1, borderColor: selected ? "#8b5cf6" : C.line, borderRadius: 10,
+                          }}
+                        >
+                          <View style={{ width: 28, alignItems: "center" }}>
+                            <Text style={{ fontSize: 18 }}>{selected ? "☑" : "☐"}</Text>
+                          </View>
+                          <View style={{ flex: 1, marginLeft: 6 }}>
+                            <Text style={{ color: C.text, fontWeight: "700", fontSize: 14 }} numberOfLines={1}>
+                              {p.title}
+                            </Text>
+                            <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }} numberOfLines={1}>
+                              {p.author || "-"} · {"⭐".repeat(p.priority || 3)}
+                              {p.work_status && p.work_status !== "ongoing" ? ` · ${p.work_status}` : ""}
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    }}
+                  />
+                </Section>
+              </>
+              );
+            })()}
           </>
         )}
 
@@ -38082,6 +40378,8 @@ async function importJSON() {
             read_count: { icon: "📖", label: "읽음", color: "#06b6d4", bg: isDark ? "rgba(6,182,212,0.12)" : "#cffafe" },
             title_change: { icon: "✏️", label: "제목", color: "#ec4899", bg: isDark ? "rgba(236,72,153,0.12)" : "#fce7f3" },
             auto_tier: { icon: "⚡", label: "자동", color: "#6366f1", bg: isDark ? "rgba(99,102,241,0.12)" : "#e0e7ff" },
+            // 🆕 v7.2.0: 가등록 전환 이벤트
+            demote_to_planned: { icon: "📋", label: "가등록", color: "#0ea5e9", bg: isDark ? "rgba(14,165,233,0.12)" : "#e0f2fe" },
           };
           
           const retentionDays = appSettings.recentChanges?.retentionDays || 30;
@@ -38157,6 +40455,10 @@ async function importJSON() {
               const first = changes[changes.length - 1];
               const last = changes[0];
               return `${first.details?.from || "?"} → ${last.details?.to || "?"} (${changes.length}회)`;
+            } else if (type === "demote_to_planned") {
+              // 🆕 v7.2.0: 가등록 전환 — fromTier 표시 (있을 시)
+              const fromTier = changes[0]?.details?.fromTier;
+              return fromTier ? `${fromTier} → 가등록` : "진등록 → 가등록";
             }
             return "";
           };
@@ -41912,6 +44214,20 @@ async function importJSON() {
                 </>
               )}
 
+              {/* 🆕 v7.2.0: 가등록 일괄 전환 */}
+              <View style={{ height: 12 }} />
+              <View>
+                <Text style={{ color: C.text, fontWeight: "700", marginBottom: 6 }}>📋 가등록 전환</Text>
+                <OutlineButton
+                  title="선택 작품을 가등록으로 전환"
+                  onPress={batchConvertToPlanned}
+                  style={{ alignSelf: "stretch" }}
+                />
+                <Text style={{ color: C.sub, fontSize: 11, marginTop: 4 }}>
+                  매칭/갤러리/폴더/티어 등 모든 데이터 보존 (id 유지). 다시 진등록 전환 시 복원됩니다.
+                </Text>
+              </View>
+
               <View style={{ height: 12 }} />
               <View style={{ flexDirection: "row", gap: 8 }}>
                 <OutlineButton
@@ -43440,6 +45756,23 @@ async function importJSON() {
                                   // 유효한 manual_tier는 보존
                                 }
                                 if (queries.length > 0) await execBatch(queries);
+                              }
+
+                              // 🆕 v7.3.0: planned_novels.manual_tier도 동일 마이그레이션 (round-trip 보존 정합성)
+                              // novels와 동일하게 newOrder에 없는 키만 변환. mode 무관 (planned은 항상 데이터 보존)
+                              try {
+                                const newOrder2 = getActiveTierOrder(newConfig);
+                                const planned = await all("SELECT id, manual_tier FROM planned_novels WHERE manual_tier IS NOT NULL AND manual_tier != ''");
+                                const pQueries = [];
+                                for (const p of (planned || [])) {
+                                  if (p.manual_tier && !newOrder2.includes(p.manual_tier)) {
+                                    const mapped = migrateTierKey(p.manual_tier, oldConfig, newConfig);
+                                    pQueries.push({ sql: "UPDATE planned_novels SET manual_tier=? WHERE id=?", params: [mapped, p.id] });
+                                  }
+                                }
+                                if (pQueries.length > 0) await execBatch(pQueries);
+                              } catch (e) {
+                                console.warn("[v7.3.0] planned manual_tier 마이그레이션 실패:", e?.message);
                               }
                               saveAppSettings({ tierSystemConfig: newConfig });
                               await loadList(undefined, undefined, "settings");
@@ -46423,8 +48756,21 @@ async function importJSON() {
               </>
             )}
 
-            {PerfMonitor.enabled && (
+            {/* 🛠️ v7.0.14: PerfMonitor.enabled 게이트 제거 — 성능 모니터 OFF 상태에서도
+                DB 테이블 규모/슬롯/하이브리드 진단 데이터는 export 가능. PerfMonitor 통계는
+                꺼져있을 때 0/빈 배열로 export되며 메시지로 OFF 안내. */}
             <Section title="📋 진단 내보내기">
+              {!PerfMonitor.enabled && (
+                <View style={{
+                  padding: 8, marginBottom: 10, backgroundColor: C.bg, borderRadius: 8,
+                  borderWidth: 1, borderColor: C.line,
+                }}>
+                  <Text style={{ color: C.sub, fontSize: 11 }}>
+                    💡 성능 모니터 OFF — 성능 통계(SQL/함수/렌더)는 빈 값으로 export됩니다.
+                    DB 테이블/슬롯/하이브리드/크래시 데이터는 정상 포함됩니다.
+                  </Text>
+                </View>
+              )}
               {/* 🆕 v7.0.9 (O): 익명화 토글 — 작품 제목을 hash로 치환하여 외부 공유 시 프라이버시 보호 */}
               <TouchableOpacity
                 onPress={() => setDiagAnonymize(prev => !prev)}
@@ -46633,7 +48979,6 @@ async function importJSON() {
                 성능 데이터는 앱 종료 시 초기화됩니다. 크래시 로그는 파일에 영속 저장됩니다.
               </Text>
             </Section>
-            )}
               </>
               );
             })()}
@@ -46986,6 +49331,52 @@ async function importJSON() {
                 작품 수정
               </Text>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              {/* 🆕 v7.2.0: 가등록 전환 (편집 모달 헤더) */}
+              {editItem && (
+                <TouchableOpacity
+                  disabled={isAutoMatching}
+                  onPress={() => {
+                    // 🆕 v7.3.0: 자동매칭 중 차단 — 시각적 disabled + 가드
+                    if (isAutoMatchingRef.current) {
+                      Alert.alert("자동매칭 중", "자동매칭이 진행 중입니다.\n매칭을 멈춘 후 다시 시도하세요.");
+                      return;
+                    }
+                    Alert.alert(
+                      "가등록 전환",
+                      `"${editItem.title}"을(를) 가등록으로 되돌릴까요?\n\n매칭/갤러리/폴더 등 모든 데이터가 보존됩니다 (id 유지). 다시 진등록 전환 시 복원됩니다.\n\n※ 편집 모달의 미저장 변경사항은 무시되고 DB의 현재 상태가 가등록으로 옮겨집니다.`,
+                      [
+                        { text: "취소" },
+                        { text: "전환", style: "destructive", onPress: async () => {
+                          // 🆕 v7.2.0: 편집 모달의 stale state 회피 — DB에서 fresh fetch
+                          let freshNovel;
+                          try {
+                            freshNovel = await first("SELECT * FROM novels WHERE id=?", [editItem.id]);
+                          } catch (e) {
+                            console.warn("[v7.2.0] fresh fetch 실패, editItem fallback:", e?.message);
+                            freshNovel = editItem;
+                          }
+                          if (!freshNovel) {
+                            Alert.alert("전환 불가", "작품을 찾을 수 없습니다.");
+                            return;
+                          }
+                          const ok = await convertNovelToPlanned(freshNovel);
+                          if (ok) {
+                            editOriginalSnapshotRef.current = null;
+                            setEditOpen(false);
+                            updateEditItem(null);
+                            await loadList(undefined, undefined, "demote");
+                            await loadPlannedList();
+                            Alert.alert("완료", "가등록으로 전환되었습니다.");
+                          }
+                        }},
+                      ]
+                    );
+                  }}
+                  style={{ padding: 6, opacity: isAutoMatching ? 0.4 : 1 }}
+                >
+                  <Text style={{ color: "#3b82f6", fontSize: 13 }}>📋 가등록</Text>
+                </TouchableOpacity>
+              )}
               {editItem && (
                 <TouchableOpacity
                   onPress={() => {
@@ -49398,7 +51789,50 @@ async function importJSON() {
                   onChangeText={(t) => updatePlannedEditItem(prev => prev ? { ...prev, note: t } : null)}
                   multiline
                 />
-                
+
+                {/* 🆕 v7.2.0: 가등록 확장 필드 (round-trip 보존 + 사전 입력) */}
+                <View style={{ marginTop: 16, padding: 10, borderRadius: 10, borderWidth: 1, borderColor: C.line, backgroundColor: C.bg }}>
+                  <Text style={{ color: C.text, fontWeight: "700", marginBottom: 6 }}>📚 추가 정보 (선택)</Text>
+                  <Text style={{ color: C.sub, fontSize: 11, marginBottom: 8 }}>
+                    진등록 전환 시 이 정보가 그대로 이전됩니다. round-trip 시 보존.
+                  </Text>
+
+                  <Label style={{ marginTop: 4 }}>별명 (aliases)</Label>
+                  <Input
+                    value={plannedEditItem.aliases || ""}
+                    onChangeText={(t) => updatePlannedEditItem(prev => prev ? { ...prev, aliases: t } : null)}
+                    placeholder="예: 별명1, 별명2"
+                  />
+
+                  <Label style={{ marginTop: 10 }}>인상깊은 문장 (memorable_quote)</Label>
+                  <Input
+                    value={plannedEditItem.memorable_quote || ""}
+                    onChangeText={(t) => updatePlannedEditItem(prev => prev ? { ...prev, memorable_quote: t } : null)}
+                    placeholder="텍스트 입력 (이미지 첨부는 진등록 후 가능)"
+                    multiline
+                  />
+
+                  {/* 수상 정보: read-only 카운트 — 진등록 후 편집 가능 */}
+                  {(() => {
+                    let awardCount = 0;
+                    try {
+                      const arr = JSON.parse(plannedEditItem.awards || "[]");
+                      if (Array.isArray(arr)) awardCount = arr.length;
+                    } catch {}
+                    if (awardCount === 0) return null;
+                    return (
+                      <View style={{ marginTop: 10, flexDirection: "row", alignItems: "center", gap: 8 }}>
+                        <View style={{ backgroundColor: "#fef3c7", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999 }}>
+                          <Text style={{ color: "#92400e", fontSize: 12, fontWeight: "700" }}>🏆 수상 {awardCount}건</Text>
+                        </View>
+                        <Text style={{ color: C.sub, fontSize: 11, flex: 1 }}>
+                          진등록 후 수상탭에서 편집 가능
+                        </Text>
+                      </View>
+                    );
+                  })()}
+                </View>
+
                 <View style={{ flexDirection: "row", gap: 8, marginTop: 16 }}>
                   <PrimaryButton
                     title="저장"
@@ -49895,11 +52329,15 @@ async function importJSON() {
             <>
               <ExpoImage
                 source={{ uri: galleryExpandImg.file_path }}
-                recyclingKey={galleryExpandImg.id}
+                /* 🛠️ v7.1.2: recyclingKey 분리 — 썸네일과 같은 key 쓰면 expo-image가
+                   썸네일의 저해상도 비트맵을 재활용해 첫 확대 시 흐릿하게 보임.
+                   `expand-` prefix로 모달용 인스턴스를 구분 → 풀 해상도 디코드 강제. */
+                recyclingKey={`expand-${galleryExpandImg.id}`}
                 style={{ width: "92%", height: "72%", borderRadius: 12 }}
                 contentFit="contain"
                 cachePolicy="memory-disk"
-                transition={200}
+                priority="high"
+                transition={0}
               />
               {galleryExpandImg.caption ? (
                 <Text style={{
