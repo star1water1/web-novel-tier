@@ -2,9 +2,236 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.3.0 (가등록 시스템 강화 + 잔여 기술부채 청산 6건)                   ║
- * ║  최종 수정: 2026-05-07                                                        ║
- * ║  총 라인 수: 약 52,000줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 7.3.5 (3차 추가 시나리오 — 1건 critical round-trip 데이터 손실 수정)   ║
+ * ║  최종 수정: 2026-05-08                                                        ║
+ * ║  총 라인 수: 약 52,820줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.3.5 3차 추가 시나리오 — 1건 critical round-trip 데이터 손실 (2026-05-08)║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [Context — 3차 추가 7대 시나리오]                                                ║
+ * ║ 15. 자동매칭 cancel/재시작 (큐 cleanup, race)                                 ║
+ * ║ 16. 표지/이미지 lifecycle (cover_library 동기화)                               ║
+ * ║ 17. 추천/보충탭 (dailyReco, supplement)                                        ║
+ * ║ 18. 편집 모달 saveEdit (트랜잭션 atomicity)                                    ║
+ * ║ 19. 태그 일괄 + customTags 동기화                                              ║
+ * ║ 20. 분석 캐싱 + invalidation                                                   ║
+ * ║ 21. DB 복구 + slot recovery                                                    ║
+ * ║                                                                              ║
+ * ║ 또다시 대부분 false positive. 직접 verifyDataIntegrity 코드 분석 중            ║
+ * ║ critical round-trip 데이터 손실 버그 발견.                                    ║
+ * ║                                                                              ║
+ * ║ [Fix-I Critical] verifyDataIntegrity 9건 orphan 체크가 planned_novels 미고려  ║
+ * ║ • convertNovelToPlanned 설계 원칙: id 보존 → matches/gallery/folders/v7.0     ║
+ * ║   hybrid 데이터는 round-trip 시 자동 살아남음 (line 29275 주석 명시).          ║
+ * ║ • 그런데 verifyDataIntegrity의 9개 orphan 체크가 `NOT IN (SELECT id FROM      ║
+ * ║   novels)`만 검사 → planned_novels에 있는 id를 모두 orphan으로 판정 → DELETE!  ║
+ * ║                                                                              ║
+ * ║ [영향 받는 9개 체크]                                                            ║
+ * ║ 1. matches (a_id, b_id) — 매칭 기록 손실                                      ║
+ * ║ 2. choice_logs (winner_id, loser_id) — 선택 학습 데이터 손실                  ║
+ * ║ 3. gallery_images (novel_id) — 갤러리 이미지 손실                              ║
+ * ║ 4. novel_folders (novel_id) — 폴더 매핑 손실                                  ║
+ * ║ 5. tier_verification_queue (novel_id) — 검증 큐 손실                          ║
+ * ║ 6. tier_validation_log (novel_a_id, novel_b_id) — 검증 로그 손실               ║
+ * ║ 7. tier_repositioning_session (novel_id) — 재배치 세션 손실                    ║
+ * ║ 8. tier_repositioning_session (blocker_id) — 수문장 정보 손실                 ║
+ * ║ 9. trigger_fire_log (novel_id) — 트리거 발화 기록 손실                        ║
+ * ║                                                                              ║
+ * ║ [재현 시나리오]                                                                  ║
+ * ║ 1. 사용자가 작품 A를 진등록 후 매칭/갤러리/폴더 데이터 누적                   ║
+ * ║ 2. 작품 A를 가등록으로 전환 (convertNovelToPlanned)                           ║
+ * ║ 3. verifyDataIntegrity 자동 실행 (앱 진입 시 또는 사용자 수동 트리거)           ║
+ * ║ 4. A의 matches/gallery/folders/v7.0 hybrid 데이터 모두 DELETE!                 ║
+ * ║ 5. 사용자가 가등록 → 진등록 다시 변환 시 모든 데이터 손실 발견                 ║
+ * ║                                                                              ║
+ * ║ [수정]                                                                          ║
+ * ║ • `NOT IN (SELECT id FROM novels)`                                             ║
+ * ║   → `NOT IN (SELECT id FROM novels UNION SELECT id FROM planned_novels)`     ║
+ * ║ • cover_library는 이미 양 테이블 검사 (line 6557-6586) — 변경 없음.           ║
+ * ║                                                                              ║
+ * ║ [false positive로 판정된 주요 보고]                                              ║
+ * ║ • 자동매칭 cancel race: finally가 graceful stop, useEffect re-trigger 시      ║
+ * ║   autoEnabled=false로 즉시 종료. matchQueue/pendingMatchPairs는 task별        ║
+ * ║   finally에서 정리.                                                            ║
+ * ║ • savePlannedEdit cover_library 동기화 누락: line 28744-28753에서 이미 처리.  ║
+ * ║ • supplementCurrentNovel stale: useEffect (line 38395-38427)가 supplementList ║
+ * ║   변경 + screen 진입 시 자동 갱신.                                            ║
+ * ║ • orphan cover_library: verifyDataIntegrity가 사후 자가 치유.                  ║
+ * ║ • base64 fallback 무한 재시도: 명시적 ext='original' 분기는 1회만.            ║
+ * ║ • supplementList 갱신 경합: useMemo 동기 재계산, race 없음.                    ║
+ * ║                                                                              ║
+ * ║ [회귀 위험]                                                                       ║
+ * ║ • Fix-I: SQL 표현 변경만, 정상 흐름 영향 없음. UNION이 약간의 성능 부담이지만  ║
+ * ║   verifyDataIntegrity는 진단/마이그레이션 시에만 호출되어 영향 미미.           ║
+ * ║ • 기존 데이터 정합성: planned_novels에 있는 id를 가진 행을 더 이상 삭제 안 함  ║
+ * ║   (round-trip 데이터 보존).                                                    ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.3.4 추가 7대 시나리오 — 3건 파일시스템 누수 수정 (2026-05-08)           ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [Context — 추가 7대 시나리오]                                                    ║
+ * ║ 8. 수상 시스템 (등록/자동적용/명대사 이미지 lifecycle)                         ║
+ * ║ 9. 태그/장르 마이그레이션 (alias/관계/동기화)                                  ║
+ * ║ 10. 티어 프리셋 변경 (마이그레이션/호환성)                                     ║
+ * ║ 11. 갤러리/폴더 시스템 (이미지/파일시스템 일관성)                              ║
+ * ║ 12. 다회독 트리거 + read_count_baseline 누적 추적                              ║
+ * ║ 13. 수문장 식별 + 인사이트/추천 시스템                                         ║
+ * ║ 14. 빠른 연타/swipe + 매칭 큐 처리                                              ║
+ * ║                                                                              ║
+ * ║ 3개 카테고리 병렬 에이전트 + 직접 검증 → 다시 한번 대부분 false positive       ║
+ * ║ (이미 수정/의도된 설계/edge case). 3건 실제 파일시스템 누수만 수정.            ║
+ * ║                                                                              ║
+ * ║ [Fix-E Major] batchDelete memorable_quote 이미지 파일 cleanup 누락             ║
+ * ║ • 기존: removeNovel은 memorable_quote 이미지 파일 삭제(line 33330-33334)       ║
+ * ║   하지만 batchDelete는 gallery_images만 처리, quote 이미지 누락.              ║
+ * ║ • 사용자가 명대사 이미지를 가진 작품 다수 일괄 삭제 시 GALLERY_DIR/COVER_DIR  ║
+ * ║   에 quote_*.jpg 파일 영구 누수.                                              ║
+ * ║ • 수정: removeNovel과 동일 패턴으로 parseQuotes + isImageQuote +              ║
+ * ║   FileSystem.deleteAsync 추가.                                                ║
+ * ║                                                                              ║
+ * ║ [Fix-F Major] batchDeletePlanned gallery_images 파일 cleanup 누락               ║
+ * ║ • 기존: DB row만 DELETE (line 28998), GALLERY_DIR 파일 누수.                   ║
+ * ║ • 가등록 round-trip 시 gallery 보존하지만 일괄 삭제 시에는 파일도 정리해야 함. ║
+ * ║ • 수정: SELECT file_path → deleteCoverFromLibrary loop 추가                   ║
+ * ║   (batchDelete v7.0.12 동일 패턴).                                             ║
+ * ║                                                                              ║
+ * ║ [Fix-G Major] batchDeletePlanned memorable_quote 이미지 cleanup 누락            ║
+ * ║ • 동일 — 가등록도 round-trip 보존 필드로 memorable_quote 이미지 보유 가능.    ║
+ * ║ • 일괄 삭제 시 quote 이미지 파일 누수.                                        ║
+ * ║ • 수정: planned_novels SELECT memorable_quote → parseQuotes loop +            ║
+ * ║   FileSystem.deleteAsync 추가.                                                ║
+ * ║                                                                              ║
+ * ║ [false positive로 판정된 주요 보고]                                              ║
+ * ║ • saveEdit else-if 분기 (tier_change vs read_progress): 의도된 설계 — UPSERT  ║
+ * ║   가 trigger_type을 덮어쓰므로 mutually exclusive (line 34145 주석 명시).     ║
+ * ║ • baseline reset 누락: 누적 트래킹은 last-fire 시점 기준. 미발화 시 baseline   ║
+ * ║   유지 정상 동작.                                                              ║
+ * ║ • migrateTierKey naive ratio: 비례 매핑은 design choice. 비정상 매핑 사례     ║
+ * ║   (예: "C"→"D") 확인 결과 정상 비례 산출.                                     ║
+ * ║ • migrateTagRenamesInTable NULL tag_data: 정상 — tags 문자열은 무관하게       ║
+ * ║   업데이트, tag_data는 null 시 스킵 (변경 없음).                               ║
+ * ║ • queueInsight duplicate INSERT: 단일 사용자 모바일 환경에서 동시성 X.        ║
+ * ║ • pendingMatchPairs leak / waitForMatchQueueDrain race: try/finally + 50ms    ║
+ * ║   polling으로 충분한 가드.                                                     ║
+ * ║ • verificationSession on slot switch: line 27979-27985에서 이미 cleanup.     ║
+ * ║ • cover_library status: verifyDataIntegrity가 두 테이블(novels +              ║
+ * ║   planned_novels) 모두 검사 (line 6499-6500).                                  ║
+ * ║                                                                              ║
+ * ║ [defer to v7.4+]                                                                ║
+ * ║ • loadGalleryImages가 novels만 LEFT JOIN — convertNovelToPlanned 후 gallery   ║
+ * ║   가 planned_novels를 참조하면 title NULL UX (id 보존 round-trip 의도와 충돌). ║
+ * ║                                                                              ║
+ * ║ [회귀 위험]                                                                       ║
+ * ║ • Fix-E~G: SELECT + 파일 삭제 추가만, DB 트랜잭션은 변경 없음. 정상 흐름      ║
+ * ║   영향 0. idempotent: true 옵션으로 파일 미존재 시도 안전.                    ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.3.3 7대 실사용 시나리오 검토 — 4건 실제 버그 수정 (2026-05-08)          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [Context — 7대 시나리오 다각도 검토]                                              ║
+ * ║ 1. 신규 사용자 첫 진입 + 작품 등록                                              ║
+ * ║ 2. 하이브리드 모드 검증 사이클 (트리거 → 시퀀스 → finalize)                   ║
+ * ║ 3. 자동매칭 중 동시 작업 (#1 불변조건 가드)                                    ║
+ * ║ 4. 백업 import + 1만+ 작품 마이그레이션                                         ║
+ * ║ 5. 백그라운드/포그라운드 전환 + DB 재연결                                       ║
+ * ║ 6. 가등록 ↔ 진등록 round-trip 일관성                                            ║
+ * ║ 7. 장시간 사용 + 메모리 누수 + cleanup                                          ║
+ * ║                                                                              ║
+ * ║ 3개 카테고리 병렬 에이전트 + 직접 검증 → 대부분 false positive (이미 수정/    ║
+ * ║ try-catch 보호/의도된 동작). 4개 실제 버그만 수정.                              ║
+ * ║                                                                              ║
+ * ║ [Fix-A Major] removeNovel candidate 삭제 시 verification session abort 누락    ║
+ * ║ • 기존: queueRow.novel_id === id 만 체크 (suspicion 작품만)                    ║
+ * ║ • 사용자가 검증 시퀀스 진행 중 다른 탭에서 후보(candidates 배열) 작품 삭제하면 ║
+ * ║   세션이 stale candidate 계속 참조 → finalize에서 blocker_id orphan +          ║
+ * ║   tier_validation_log orphan + computeNewPosition 잘못된 자리 산출.            ║
+ * ║ • 수정: candidates.some(c => c.id === id) 추가 체크.                          ║
+ * ║                                                                              ║
+ * ║ [Fix-B Major] batchDelete candidate 삭제 시 동일 누락                           ║
+ * ║ • Set 기반 ids 배열에 candidates 포함 여부 체크 추가.                          ║
+ * ║                                                                              ║
+ * ║ [Fix-C Major] convertNovelToPlanned candidate 변환 시 동일 누락                 ║
+ * ║ • 후보가 가등록으로 변환되면 novels에서 사라져 stale candidate 참조 발생.       ║
+ * ║ • 동일 패턴 체크 추가.                                                         ║
+ * ║                                                                              ║
+ * ║ [Fix-D Major] importJSON read_count_baseline 별도 UPDATE 트랜잭션 분리          ║
+ * ║ • 기존: bulk INSERT → 별도 bulk UPDATE SET read_count_baseline = read_count   ║
+ * ║   → execBatch 트랜잭션 외부. UPDATE 실패 시 모든 row baseline=0 잔존 →        ║
+ * ║   import 후 첫 saveEdit에서 mass-fire (read_count - 0 ≥ 30 즉시 트리거).      ║
+ * ║ • 수정: INSERT에 read_count_baseline 컬럼 직접 추가 (readCount 동일 값) +     ║
+ * ║   별도 UPDATE 제거. addNovel(v7.3.2) / convertPlannedToNovel(v7.3.1) 동일     ║
+ * ║   패턴 통일.                                                                    ║
+ * ║                                                                              ║
+ * ║ [false positive로 판정된 주요 보고]                                              ║
+ * ║ • verificationSession on slot switch: 이미 line 27979-27985 cleanup 존재.     ║
+ * ║ • batchDelete preference_patterns/insight_queue/trigger_fire_log: 이미 v7.3.0 ║
+ * ║   에서 추가됨 (line 36369-36389).                                              ║
+ * ║ • trigger_fire_log unbounded growth: 이미 30-day 자동 정리 (loadHybridDiag).   ║
+ * ║ • recent_changes/tier_history/undoStack growth: 모두 이미 cap 처리.            ║
+ * ║ • setNovelTierAtomic same-tier race: 이미 v7.0.10 short-circuit.              ║
+ * ║ • convertNovelToPlanned baseline missing: 이미 line 29183/29209에 포함.       ║
+ * ║ • insight_queue novel_id cleanup: insight_queue에 novel_id 컬럼 자체 없음.    ║
+ * ║                                                                              ║
+ * ║ [회귀 위험]                                                                       ║
+ * ║ • Fix-A~C: 기존 suspicion 체크 ‖ candidates 체크. 정상 흐름은 영향 없음.       ║
+ * ║   candidate 변경/삭제 빈도 낮아 false-abort 위험 미미. abort 후 useEffect가    ║
+ * ║   다음 큐 항목 자동 시작.                                                      ║
+ * ║ • Fix-D: INSERT 컬럼 33→34개 (read_count_baseline 추가). VALUES 자리표시자    ║
+ * ║   33→34로 일치. 별도 UPDATE 제거. v9 백업의 baseline 미포함이라 readCount     ║
+ * ║   동일 값 보존 (이전 동작과 의미 동일).                                       ║
+ * ║                                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.3.2 코드 전수 검토 — 6건 실제 버그 수정 (2026-05-08)                    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [Context — 5개 카테고리 병렬 스캔 후 false positive 필터링]                     ║
+ * ║ async/null/SQL/hooks/logic/memory 6개 영역 병렬 탐색 결과 67건 보고 →            ║
+ * ║ 검증 결과 대부분 false positive(이미 수정됨, try/catch로 보호됨, 의도된 dead   ║
+ * ║ code, 또는 잘못된 분석). 실제 버그 6건만 수정.                                ║
+ * ║                                                                              ║
+ * ║ [Fix-1~5 Major] v7.3.0 신규 batch 함수 5건 try/catch 누락                       ║
+ * ║ • batchSetPlannedPlatforms / batchSetPlannedPriority / batchSetPlannedWorkStatus║
+ * ║   — onPress(()=>batch...())로 await 미적용 호출 → SQL 오류 시 unhandled        ║
+ * ║   rejection. swapRating(v7.0.14)와 동일 패턴.                                 ║
+ * ║ • batchAddPlannedTag / batchRemovePlannedTag — try/finally만 있고 catch 누락. ║
+ * ║   루프 중 SQL 오류 시 사용자 피드백 없이 부분 진행 상태로 종료.               ║
+ * ║ • 수정: 최상위 try/catch 추가 + Alert("오류") + 부분 실패 시 successCount/    ║
+ * ║   total 표시. swapRating의 v7.0.14 패턴과 동일.                              ║
+ * ║                                                                              ║
+ * ║ [Fix-6 Minor] addNovel INSERT + read_count_baseline UPDATE 트랜잭션 분리       ║
+ * ║ • 이전: INSERT INTO novels (...)  → exec; UPDATE SET read_count_baseline=...  ║
+ * ║   → exec — 두 단계 분리. INSERT 성공 후 UPDATE가 SQLITE_BUSY로 실패 시         ║
+ * ║   baseline=0 (DEFAULT)로 잔존 → 다음 saveEdit에서 read_count - 0 ≥ 30 즉시   ║
+ * ║   underrated 트리거 가능 (mass-fire 위험).                                    ║
+ * ║ • 수정: INSERT 컬럼에 read_count_baseline 직접 추가 + execBatch로 트랜잭션화. ║
+ * ║   convertPlannedToNovel(v7.3.1) 동일 패턴.                                    ║
+ * ║                                                                              ║
+ * ║ [false positive로 판정된 주요 보고]                                              ║
+ * ║ • importJSON read_count_baseline 누락: 실제로는 line 37299에 backfill 존재.    ║
+ * ║ • respondVerificationMatch finally: 이미 try-finally로 ref 정리.              ║
+ * ║ • AppState listener cleanup: subscription.remove() 정상.                      ║
+ * ║ • calcInversionScore tier boundary: tierRank < ceil(len/2) 정상 (upper half  ║
+ * ║   skip). 에이전트가 tierRank 의미 잘못 해석.                                  ║
+ * ║ • setNovelTierAtomic 동일 tier 재할당: 이미 v7.0.10에서 short-circuit 처리.   ║
+ * ║ • undo 'novel_delete' baseline: removeNovel pushUndo 미호출이라 dead code      ║
+ * ║   (header line 907 명시).                                                     ║
+ * ║                                                                              ║
+ * ║ [회귀 위험]                                                                       ║
+ * ║ • Fix-1~5: try/catch 추가만, 정상 흐름은 기존과 동일.                          ║
+ * ║ • Fix-6: addNovel INSERT 컬럼 33→34개 (read_count_baseline 추가). VALUES 자리 ║
+ * ║   표시자도 33→34로 일치. 별도 UPDATE 제거. 정상 등록 흐름은 변경 없음.        ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -6377,8 +6604,10 @@ async function verifyDataIntegrity(options = {}) {
     }
     
     // ─── 2. 고아 매치 정리 (삭제된 작품 참조) ───
+    // 🛠️ v7.3.5: planned_novels UNION 추가 — convertNovelToPlanned 후 id가 보존되어 planned_novels에
+    // 있는데 novels에는 없는 경우 round-trip 보존 데이터를 잘못 삭제하던 문제. 모든 orphan 체크에 동일 적용.
     const orphanMatches = await all(
-      "SELECT id, a_id, b_id FROM matches WHERE a_id NOT IN (SELECT id FROM novels) OR b_id NOT IN (SELECT id FROM novels)"
+      "SELECT id, a_id, b_id FROM matches WHERE a_id NOT IN (SELECT id FROM novels UNION SELECT id FROM planned_novels) OR b_id NOT IN (SELECT id FROM novels UNION SELECT id FROM planned_novels)"
     );
     if (orphanMatches && orphanMatches.length > 0) {
       for (const m of orphanMatches) {
@@ -6423,8 +6652,9 @@ async function verifyDataIntegrity(options = {}) {
     }
     
     // ─── 4. 고아 choice_logs 정리 ───
+    // 🛠️ v7.3.5: planned_novels UNION (round-trip 보존)
     const orphanLogs = await all(
-      "SELECT id FROM choice_logs WHERE winner_id NOT IN (SELECT id FROM novels) OR loser_id NOT IN (SELECT id FROM novels)"
+      "SELECT id FROM choice_logs WHERE winner_id NOT IN (SELECT id FROM novels UNION SELECT id FROM planned_novels) OR loser_id NOT IN (SELECT id FROM novels UNION SELECT id FROM planned_novels)"
     );
     if (orphanLogs && orphanLogs.length > 0) {
       for (const cl of orphanLogs) {
@@ -6440,8 +6670,11 @@ async function verifyDataIntegrity(options = {}) {
     // (이전: removeNovel은 정리하지만 batchDelete/customResetAll/resetAll 누락 경로로 누적된 고아 row가
     //  detectViolation/getCandidatesForVerification/getNextVerificationTarget 통계를 오염시킴)
     try {
+      // 🛠️ v7.3.5: 모든 orphan 체크에 planned_novels UNION 추가 — convertNovelToPlanned 후 id 보존 round-trip
+      // 보존 원칙(line 29275 주석)을 verifyDataIntegrity가 위반하여 gallery/folders/v7.0 hybrid 데이터 삭제하던 critical 버그.
+      const ALIVE = "(SELECT id FROM novels UNION SELECT id FROM planned_novels)";
       const orphanGalleryImages = await all(
-        "SELECT id FROM gallery_images WHERE novel_id NOT IN (SELECT id FROM novels)"
+        `SELECT id FROM gallery_images WHERE novel_id NOT IN ${ALIVE}`
       );
       if (orphanGalleryImages && orphanGalleryImages.length > 0) {
         for (const g of orphanGalleryImages) {
@@ -6450,7 +6683,7 @@ async function verifyDataIntegrity(options = {}) {
         addLog("고아갤러리", `삭제된 작품 참조 gallery_images ${orphanGalleryImages.length}건 정리`);
       }
       const orphanNovelFolders = await all(
-        "SELECT rowid FROM novel_folders WHERE novel_id NOT IN (SELECT id FROM novels)"
+        `SELECT rowid FROM novel_folders WHERE novel_id NOT IN ${ALIVE}`
       );
       if (orphanNovelFolders && orphanNovelFolders.length > 0) {
         for (const nf of orphanNovelFolders) {
@@ -6459,7 +6692,7 @@ async function verifyDataIntegrity(options = {}) {
         addLog("고아폴더매핑", `삭제된 작품 참조 novel_folders ${orphanNovelFolders.length}건 정리`);
       }
       const orphanTvq = await all(
-        "SELECT id FROM tier_verification_queue WHERE novel_id NOT IN (SELECT id FROM novels)"
+        `SELECT id FROM tier_verification_queue WHERE novel_id NOT IN ${ALIVE}`
       );
       if (orphanTvq && orphanTvq.length > 0) {
         for (const t of orphanTvq) {
@@ -6468,7 +6701,7 @@ async function verifyDataIntegrity(options = {}) {
         addLog("고아검증큐", `삭제된 작품 참조 tier_verification_queue ${orphanTvq.length}건 정리`);
       }
       const orphanTvl = await all(
-        "SELECT id FROM tier_validation_log WHERE novel_a_id NOT IN (SELECT id FROM novels) OR novel_b_id NOT IN (SELECT id FROM novels)"
+        `SELECT id FROM tier_validation_log WHERE novel_a_id NOT IN ${ALIVE} OR novel_b_id NOT IN ${ALIVE}`
       );
       if (orphanTvl && orphanTvl.length > 0) {
         for (const t of orphanTvl) {
@@ -6477,7 +6710,7 @@ async function verifyDataIntegrity(options = {}) {
         addLog("고아검증로그", `삭제된 작품 참조 tier_validation_log ${orphanTvl.length}건 정리`);
       }
       const orphanTrs = await all(
-        "SELECT id FROM tier_repositioning_session WHERE novel_id NOT IN (SELECT id FROM novels)"
+        `SELECT id FROM tier_repositioning_session WHERE novel_id NOT IN ${ALIVE}`
       );
       if (orphanTrs && orphanTrs.length > 0) {
         for (const t of orphanTrs) {
@@ -6486,7 +6719,7 @@ async function verifyDataIntegrity(options = {}) {
         addLog("고아세션", `삭제된 작품 참조 tier_repositioning_session ${orphanTrs.length}건 정리`);
       }
       const orphanTrsBlocker = await all(
-        "SELECT id FROM tier_repositioning_session WHERE blocker_id IS NOT NULL AND blocker_id NOT IN (SELECT id FROM novels)"
+        `SELECT id FROM tier_repositioning_session WHERE blocker_id IS NOT NULL AND blocker_id NOT IN ${ALIVE}`
       );
       if (orphanTrsBlocker && orphanTrsBlocker.length > 0) {
         for (const t of orphanTrsBlocker) {
@@ -6495,7 +6728,7 @@ async function verifyDataIntegrity(options = {}) {
         addLog("수문장정리", `삭제된 작품 참조 blocker_id ${orphanTrsBlocker.length}건 NULL 처리`);
       }
       const orphanTfl = await all(
-        "SELECT id FROM trigger_fire_log WHERE novel_id IS NOT NULL AND novel_id NOT IN (SELECT id FROM novels)"
+        `SELECT id FROM trigger_fire_log WHERE novel_id IS NOT NULL AND novel_id NOT IN ${ALIVE}`
       );
       if (orphanTfl && orphanTfl.length > 0) {
         for (const t of orphanTfl) {
@@ -28892,10 +29125,39 @@ function AppContent() {
                 }
               } catch (e) { console.warn("[v7.3.0] 가등록 일괄 표지 정리 실패:", e?.message); }
 
-              // 갤러리 이미지(round-trip 보존)도 정리
+              // 🛠️ v7.3.4: 갤러리 이미지 파일 시스템 cleanup 추가 (이전: DB row만 삭제 → GALLERY_DIR 파일 누수)
+              try {
+                const gImgs = await all(
+                  `SELECT file_path FROM gallery_images WHERE novel_id IN (${placeholders})`,
+                  ids
+                );
+                for (const g of (gImgs || [])) {
+                  await deleteCoverFromLibrary(g.file_path).catch(() => {});
+                }
+              } catch (gErr) { console.warn("[v7.3.4] batchDeletePlanned gallery file cleanup:", gErr?.message); }
+
+              // 갤러리 이미지(round-trip 보존) DB row 정리
               try {
                 await exec(`DELETE FROM gallery_images WHERE novel_id IN (${placeholders})`, ids);
               } catch (e) { console.warn("[v7.3.0] gallery_images 정리 실패:", e?.message); }
+
+              // 🛠️ v7.3.4: memorable_quote 이미지 파일 cleanup 추가 (removeNovel/batchDelete와 동일 패턴)
+              try {
+                const qPlanned = await all(
+                  `SELECT memorable_quote FROM planned_novels WHERE id IN (${placeholders}) AND memorable_quote IS NOT NULL AND memorable_quote != ''`,
+                  ids
+                );
+                for (const p of (qPlanned || [])) {
+                  try {
+                    const quotes = parseQuotes(p.memorable_quote);
+                    for (const q of quotes) {
+                      if (isImageQuote(q) && q.uri) {
+                        FileSystem.deleteAsync(q.uri, { idempotent: true }).catch(() => {});
+                      }
+                    }
+                  } catch {}
+                }
+              } catch (qErr) { console.warn("[v7.3.4] batchDeletePlanned quote image cleanup:", qErr?.message); }
 
               await exec(`DELETE FROM planned_novels WHERE id IN (${placeholders})`, ids);
               await loadPlannedList();
@@ -28913,6 +29175,7 @@ function AppContent() {
   }, [plannedList]);
 
   // 🆕 v7.3.0: 일괄 태그 추가 — tag_data intensity 함께 (메인 batchAddTag 패턴)
+  // 🛠️ v7.3.2: catch 추가 — 루프 중 SQL 오류 시 부분 진행 상태에서 사용자 안내
   const batchAddPlannedTag = useCallback(async () => {
     const tag = (plannedBulkTagInput || "").trim();
     if (!tag) { Alert.alert("알림", "추가할 태그를 입력하세요."); return; }
@@ -28923,6 +29186,8 @@ function AppContent() {
     }
     setIsLoading(true);
     setLoadingProgress({ current: 0, total: ids.length, label: "태그 추가 중..." });
+    let successCount = 0;
+    let failed = false;
     try {
       for (let i = 0; i < ids.length; i++) {
         const id = ids[i];
@@ -28939,18 +29204,27 @@ function AppContent() {
         if (existingIdx >= 0) td[existingIdx].intensity = plannedBulkTagIntensity;
         else td.push({ tag, intensity: plannedBulkTagIntensity });
         await exec("UPDATE planned_novels SET tags=?, tag_data=? WHERE id=?", [newTags, JSON.stringify(td), id]);
+        successCount++;
         setLoadingProgress({ current: i + 1, total: ids.length, label: "태그 추가 중..." });
       }
       syncTagsToCustom(tag);
       await loadPlannedList();
-      Alert.alert("완료", `${ids.length}개 가등록에 "${tag}" 태그 추가됨 (intensity ${plannedBulkTagIntensity}).`);
+    } catch (e) {
+      failed = true;
+      console.warn("[v7.3.2] batchAddPlannedTag 오류:", e?.message);
+      try { await loadPlannedList(); } catch {}
+      Alert.alert("부분 실패", `태그 일괄 추가 중 오류 (${successCount}/${ids.length}건 성공): ${e?.message || "알 수 없는 오류"}`);
     } finally {
       setLoadingProgress(null);
       setIsLoading(false);
     }
+    if (!failed) {
+      Alert.alert("완료", `${ids.length}개 가등록에 "${tag}" 태그 추가됨 (intensity ${plannedBulkTagIntensity}).`);
+    }
   }, [plannedList, plannedBulkTagInput, plannedBulkTagIntensity]);
 
   // 🆕 v7.3.0: 일괄 태그 삭제
+  // 🛠️ v7.3.2: catch 추가 — 루프 중 SQL 오류 시 부분 진행 상태에서 사용자 안내
   const batchRemovePlannedTag = useCallback(async () => {
     const tag = (plannedBulkTagInput || "").trim();
     if (!tag) { Alert.alert("알림", "삭제할 태그를 입력하세요."); return; }
@@ -28961,6 +29235,8 @@ function AppContent() {
     }
     setIsLoading(true);
     setLoadingProgress({ current: 0, total: ids.length, label: "태그 삭제 중..." });
+    let successCount = 0;
+    let failed = false;
     try {
       for (let i = 0; i < ids.length; i++) {
         const id = ids[i];
@@ -28972,33 +29248,48 @@ function AppContent() {
         try { td = JSON.parse(p.tag_data || "[]"); if (!Array.isArray(td)) td = []; } catch {}
         td = td.filter(x => x.tag !== tag);
         await exec("UPDATE planned_novels SET tags=?, tag_data=? WHERE id=?", [newTags, JSON.stringify(td), id]);
+        successCount++;
         setLoadingProgress({ current: i + 1, total: ids.length, label: "태그 삭제 중..." });
       }
       await loadPlannedList();
-      Alert.alert("완료", `${ids.length}개 가등록에서 "${tag}" 태그 삭제됨.`);
+    } catch (e) {
+      failed = true;
+      console.warn("[v7.3.2] batchRemovePlannedTag 오류:", e?.message);
+      try { await loadPlannedList(); } catch {}
+      Alert.alert("부분 실패", `태그 일괄 삭제 중 오류 (${successCount}/${ids.length}건 성공): ${e?.message || "알 수 없는 오류"}`);
     } finally {
       setLoadingProgress(null);
       setIsLoading(false);
     }
+    if (!failed) {
+      Alert.alert("완료", `${ids.length}개 가등록에서 "${tag}" 태그 삭제됨.`);
+    }
   }, [plannedList, plannedBulkTagInput]);
 
   // 🆕 v7.3.0: 일괄 플랫폼 설정 (선택된 플랫폼으로 통일)
+  // 🛠️ v7.3.2: 최상위 try/catch 추가 — onPress(()=>batch...)로 await 미적용 호출되어 SQL 오류 시 unhandled rejection
   const batchSetPlannedPlatforms = useCallback(async (newPlatforms) => {
     const ids = plannedSelectedIdsRef.current;
     if (!ids || ids.length === 0) {
       Alert.alert("알림", "먼저 가등록 작품을 선택해주세요.");
       return;
     }
-    const placeholders = ids.map(() => "?").join(",");
-    await exec(
-      `UPDATE planned_novels SET platforms=? WHERE id IN (${placeholders})`,
-      [JSON.stringify(newPlatforms || []), ...ids]
-    );
-    await loadPlannedList();
-    Alert.alert("완료", `${ids.length}개 가등록 플랫폼 설정됨.`);
+    try {
+      const placeholders = ids.map(() => "?").join(",");
+      await exec(
+        `UPDATE planned_novels SET platforms=? WHERE id IN (${placeholders})`,
+        [JSON.stringify(newPlatforms || []), ...ids]
+      );
+      await loadPlannedList();
+      Alert.alert("완료", `${ids.length}개 가등록 플랫폼 설정됨.`);
+    } catch (e) {
+      console.warn("[v7.3.2] batchSetPlannedPlatforms 오류:", e?.message);
+      Alert.alert("오류", "플랫폼 일괄 설정에 실패했습니다: " + (e?.message || "알 수 없는 오류"));
+    }
   }, []);
 
   // 🆕 v7.3.0: 일괄 우선순위 변경
+  // 🛠️ v7.3.2: 최상위 try/catch 추가
   const batchSetPlannedPriority = useCallback(async (priority) => {
     const ids = plannedSelectedIdsRef.current;
     if (!ids || ids.length === 0) {
@@ -29006,29 +29297,40 @@ function AppContent() {
       return;
     }
     const p = Math.max(1, Math.min(5, Number(priority) || 3));
-    const placeholders = ids.map(() => "?").join(",");
-    await exec(
-      `UPDATE planned_novels SET priority=? WHERE id IN (${placeholders})`,
-      [p, ...ids]
-    );
-    await loadPlannedList();
-    Alert.alert("완료", `${ids.length}개 가등록 우선순위 ${p}로 설정됨.`);
+    try {
+      const placeholders = ids.map(() => "?").join(",");
+      await exec(
+        `UPDATE planned_novels SET priority=? WHERE id IN (${placeholders})`,
+        [p, ...ids]
+      );
+      await loadPlannedList();
+      Alert.alert("완료", `${ids.length}개 가등록 우선순위 ${p}로 설정됨.`);
+    } catch (e) {
+      console.warn("[v7.3.2] batchSetPlannedPriority 오류:", e?.message);
+      Alert.alert("오류", "우선순위 일괄 변경에 실패했습니다: " + (e?.message || "알 수 없는 오류"));
+    }
   }, []);
 
   // 🆕 v7.3.0: 일괄 작품상태 변경
+  // 🛠️ v7.3.2: 최상위 try/catch 추가
   const batchSetPlannedWorkStatus = useCallback(async (status) => {
     const ids = plannedSelectedIdsRef.current;
     if (!ids || ids.length === 0) {
       Alert.alert("알림", "먼저 가등록 작품을 선택해주세요.");
       return;
     }
-    const placeholders = ids.map(() => "?").join(",");
-    await exec(
-      `UPDATE planned_novels SET work_status=? WHERE id IN (${placeholders})`,
-      [status || "ongoing", ...ids]
-    );
-    await loadPlannedList();
-    Alert.alert("완료", `${ids.length}개 가등록 작품상태 변경됨.`);
+    try {
+      const placeholders = ids.map(() => "?").join(",");
+      await exec(
+        `UPDATE planned_novels SET work_status=? WHERE id IN (${placeholders})`,
+        [status || "ongoing", ...ids]
+      );
+      await loadPlannedList();
+      Alert.alert("완료", `${ids.length}개 가등록 작품상태 변경됨.`);
+    } catch (e) {
+      console.warn("[v7.3.2] batchSetPlannedWorkStatus 오류:", e?.message);
+      Alert.alert("오류", "작품상태 일괄 변경에 실패했습니다: " + (e?.message || "알 수 없는 오류"));
+    }
   }, []);
 
   // 🆕 v7.2.0: novels → planned_novels 역전환 (단건)
@@ -29139,7 +29441,9 @@ function AppContent() {
       ]);
 
       // verification 세션 React state는 트랜잭션 외 (UI state라 DB 트랜잭션과 무관)
-      if (verificationSessionRef?.current?.queueRow?.novel_id === novel.id) {
+      // 🛠️ v7.3.3: candidate 변환도 abort 대상에 추가 (planned 전환 시 후보가 novels에서 사라짐 → stale 참조 방지)
+      const _vsConv = verificationSessionRef?.current;
+      if (_vsConv && (_vsConv.queueRow?.novel_id === novel.id || _vsConv.candidates?.some(c => c.id === novel.id))) {
         setVerificationSession(null);
         if (verificationSessionIdRef) verificationSessionIdRef.current = null;
       }
@@ -32970,47 +33274,52 @@ function AppContent() {
         console.warn("[v7.0] addNovel manual_order 계산 실패:", e?.message);
       }
 
-      await exec(
-        `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-        [
-          id,
-          t,
-          author.trim(),
-          deduplicateTagString(tags) || "", // 🔧 v3.5.14: 작품 내 태그 중복 제거
-          JSON.stringify(platforms),
-          note.trim(),
-          Number(readCount) || 0,
-          globalTierConfig.defaultRating || 1500, // 🆕 v6.0: config 기반 기본 레이팅
-          350,
-          0,
-          0,
-          0,
-          globalTierConfig.defaultTier || "C", // 🆕 v6.0: config 기반 기본 티어
-          now,
-          "",
-          Number(totalEpisodes) || 0,
-          newStatus,
-          0,
-          newCoverImage,
-          newLink.trim(),
-          newWorkStatus,
-          now,
-          finalMajorGenre,
-          finalSubGenre,
-          newGaidenStatus,
-          Number(newGaidenReadCount) || 0,
-          Number(newGaidenTotalEpisodes) || 0,
-          Math.max(1, Number(rereadCount) || 1), // 📚 다회독 카운트
-          tagDataJson, // 🏷️ v5.0
-          serializeQuotes(memorableQuote), // 💬 인상깊은 문장 (텍스트+이미지)
-          "", // aliases (빈 값)
-          initialManualTier,
-          initialManualOrder, // 🆕 v7.0.1 (N6 fix)
-        ]
-      );
-      // 🆕 v7.0.15: read_count_baseline = 초기 read_count (누적 트래킹 시작점)
-      await exec("UPDATE novels SET read_count_baseline=read_count WHERE id=?", [id]);
+      // 🛠️ v7.3.2: INSERT + read_count_baseline UPDATE를 단일 트랜잭션으로 묶음
+      // 이전: 두 단계 exec 사이에 SQLITE_BUSY 발생 시 baseline=0 잔존 → 누적 트래킹 mass-fire 위험.
+      // convertPlannedToNovel(v7.3.1) 패턴과 일치.
+      const _initialReadCount = Number(readCount) || 0;
+      await execBatch([
+        {
+          sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order,read_count_baseline)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+          params: [
+            id,
+            t,
+            author.trim(),
+            deduplicateTagString(tags) || "", // 🔧 v3.5.14: 작품 내 태그 중복 제거
+            JSON.stringify(platforms),
+            note.trim(),
+            _initialReadCount,
+            globalTierConfig.defaultRating || 1500, // 🆕 v6.0: config 기반 기본 레이팅
+            350,
+            0,
+            0,
+            0,
+            globalTierConfig.defaultTier || "C", // 🆕 v6.0: config 기반 기본 티어
+            now,
+            "",
+            Number(totalEpisodes) || 0,
+            newStatus,
+            0,
+            newCoverImage,
+            newLink.trim(),
+            newWorkStatus,
+            now,
+            finalMajorGenre,
+            finalSubGenre,
+            newGaidenStatus,
+            Number(newGaidenReadCount) || 0,
+            Number(newGaidenTotalEpisodes) || 0,
+            Math.max(1, Number(rereadCount) || 1), // 📚 다회독 카운트
+            tagDataJson, // 🏷️ v5.0
+            serializeQuotes(memorableQuote), // 💬 인상깊은 문장 (텍스트+이미지)
+            "", // aliases (빈 값)
+            initialManualTier,
+            initialManualOrder, // 🆕 v7.0.1 (N6 fix)
+            _initialReadCount, // 🆕 v7.0.15: read_count_baseline = 초기 read_count
+          ],
+        },
+      ]);
       // 🔧 v3.5.9: 텍스트 입력 태그 → customTags 동기화 (태그 관리 모달 연동)
       syncTagsToCustom(tags.trim());
       setTitle("");
@@ -33131,11 +33440,14 @@ function AppContent() {
             }
             // 🆕 v7.2.3: 진행 중 verification 세션이 삭제 대상이면 abort
             // (이전: 세션이 deleted novel 참조 → 다음 decide() 시 candidate 미존재로 잠재 크래시)
-            if (verificationSessionRef.current?.queueRow?.novel_id === id) {
+            // 🛠️ v7.3.3: candidate 삭제도 abort 대상에 추가 — 기존엔 suspicion novel만 체크 → 후보 삭제 시
+            // 시퀀스가 stale candidate를 계속 참조 → finalize blocker_id orphan + tier_validation_log orphan
+            const _vs = verificationSessionRef.current;
+            if (_vs && (_vs.queueRow?.novel_id === id || _vs.candidates?.some(c => c.id === id))) {
               setVerificationSession(null);
               verificationSessionIdRef.current = null;
             }
-            
+
             // 🔧 v3.5.8: choice_logs도 함께 삭제 (고아 방지)
             // 🎨 v3.8.0: 갤러리 이미지 파일 삭제 (DB 삭제 전)
             try {
@@ -36230,8 +36542,11 @@ function AppContent() {
               setFocusMatchNovel(null);
             }
             // 🆕 v7.2.3: 진행 중 verification 세션이 삭제 대상이면 abort
-            const _vsId = verificationSessionRef.current?.queueRow?.novel_id;
-            if (_vsId && ids.includes(_vsId)) {
+            // 🛠️ v7.3.3: candidate 삭제도 abort 대상에 추가 (suspicion 외 후보 삭제 시 stale 참조 방지)
+            const _vs2 = verificationSessionRef.current;
+            const _vsId = _vs2?.queueRow?.novel_id;
+            const _idsSet = new Set(ids);
+            if (_vs2 && ((_vsId && _idsSet.has(_vsId)) || _vs2.candidates?.some(c => _idsSet.has(c.id)))) {
               setVerificationSession(null);
               verificationSessionIdRef.current = null;
             }
@@ -36253,6 +36568,24 @@ function AppContent() {
                 await deleteCoverFromLibrary(g.file_path).catch(() => {});
               }
             } catch (gErr) { console.warn("batchDelete gallery cleanup:", gErr); }
+
+            // 🛠️ v7.3.4: memorable_quote 이미지 파일 삭제 (removeNovel과 동일 패턴) — 일괄 삭제 시 파일시스템 누수 방지
+            try {
+              const qNovels = await all(
+                `SELECT memorable_quote FROM novels WHERE id IN (${placeholders}) AND memorable_quote IS NOT NULL AND memorable_quote != ''`,
+                ids
+              );
+              for (const n of (qNovels || [])) {
+                try {
+                  const quotes = parseQuotes(n.memorable_quote);
+                  for (const q of quotes) {
+                    if (isImageQuote(q) && q.uri) {
+                      FileSystem.deleteAsync(q.uri, { idempotent: true }).catch(() => {});
+                    }
+                  }
+                } catch {}
+              }
+            } catch (qErr) { console.warn("batchDelete quote image cleanup:", qErr?.message); }
 
             const queries = [];
             for (const id of ids) {
@@ -37284,22 +37617,16 @@ async function importJSON() {
                 idList.push(id);
 
                 novelQueries.push({
-                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, manualOrder, rereadCount, tagData, aliases, memorableQuote],
+                  // 🛠️ v7.3.3: read_count_baseline을 INSERT에 직접 포함 (이전: 별도 bulk UPDATE → 부분 실패 시
+                  // baseline=0 잔존하여 첫 saveEdit에서 mass-fire). 백업 v9에 baseline 미포함이라 readCount 동일 값.
+                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,read_count_baseline)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, manualOrder, rereadCount, tagData, aliases, memorableQuote, readCount],
                 });
               }
 
               if (novelQueries.length > 0) await execBatch(novelQueries);
-
-              // 🆕 v7.0.15: import된 novel들의 read_count_baseline = read_count로 backfill
-              // 백업 v9 포맷에 read_count_baseline 미포함 → DEFAULT 0이 그대로면 첫 saveEdit에서 mass-fire.
-              // import 직전 모든 novels DELETE되므로 (line 35399 영역) 단순 bulk UPDATE로 안전.
-              try {
-                await exec(`UPDATE novels SET read_count_baseline = read_count;`);
-              } catch (e) {
-                console.warn("[v7.0.15] importJSON read_count_baseline backfill 실패:", e?.message);
-              }
+              // 🛠️ v7.3.3: 별도 bulk UPDATE 제거 — INSERT에 baseline 포함으로 트랜잭션 일관성 확보
 
               // 🔧 v3.5.8: 복원 직후 삽입 검증
               const insertedCheck = await first("SELECT COUNT(*) as cnt FROM novels");
