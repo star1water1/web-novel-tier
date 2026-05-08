@@ -28679,48 +28679,58 @@ function AppContent() {
       }
 
       // 🆕 v7.2.0: hardcoded → planned 값 우선 (round-trip 데이터 보존)
-      await exec(
-        `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-        [
-          id,
-          planned.title,
-          planned.author || "",
-          planned.tags || "",
-          planned.platforms || "[]",
-          enhancedNote,
-          Number(planned.read_count) || initialReadCount,
-          Number(planned.rating) || 1500,
-          Number(planned.rd) || 350,
-          Number(planned.wins) || 0,
-          Number(planned.losses) || 0,
-          Number(planned.match_count) || 0,
-          globalTierConfig.defaultTier || "C",
-          now,
-          planned.awards || "",
-          Number(planned.total_episodes) || 0,
-          planned.status || "reading",
-          Number(planned.pinned) || shouldPin,
-          planned.cover_image || "",
-          planned.link || "",
-          planned.work_status || "ongoing",
-          Number(planned.read_count_updated_at) || now,
-          planned.major_genre || "",
-          planned.sub_genre || "",
-          planned.gaiden_status || "none",
-          Number(planned.gaiden_read_count) || 0,
-          Number(planned.gaiden_total_episodes) || 0,
-          Math.max(1, Number(planned.reread_count) || 1),
-          planned.tag_data || "",
-          planned.memorable_quote || "",
-          planned.aliases || "",
-          planned.manual_tier || initialManualTier,
-          initialManualOrder,
-        ]
-      );
+      // 🆕 v7.3.1: INSERT + UPDATE baseline + DELETE planned을 단일 트랜잭션으로 묶어
+      // 부분 실패 시 ROLLBACK (양 테이블 잔존 회피)
       const _baselineToRestore = Number(planned.read_count_baseline) || (Number(planned.read_count) || initialReadCount);
-      await exec("UPDATE novels SET read_count_baseline=? WHERE id=?", [_baselineToRestore, id]);
-      await exec("DELETE FROM planned_novels WHERE id=?", [planned.id]);
+      await execBatch([
+        {
+          sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+          params: [
+            id,
+            planned.title,
+            planned.author || "",
+            planned.tags || "",
+            planned.platforms || "[]",
+            enhancedNote,
+            Number(planned.read_count) || initialReadCount,
+            Number(planned.rating) || 1500,
+            Number(planned.rd) || 350,
+            Number(planned.wins) || 0,
+            Number(planned.losses) || 0,
+            Number(planned.match_count) || 0,
+            globalTierConfig.defaultTier || "C",
+            now,
+            planned.awards || "",
+            Number(planned.total_episodes) || 0,
+            planned.status || "reading",
+            Number(planned.pinned) || shouldPin,
+            planned.cover_image || "",
+            planned.link || "",
+            planned.work_status || "ongoing",
+            Number(planned.read_count_updated_at) || now,
+            planned.major_genre || "",
+            planned.sub_genre || "",
+            planned.gaiden_status || "none",
+            Number(planned.gaiden_read_count) || 0,
+            Number(planned.gaiden_total_episodes) || 0,
+            Math.max(1, Number(planned.reread_count) || 1),
+            planned.tag_data || "",
+            planned.memorable_quote || "",
+            planned.aliases || "",
+            planned.manual_tier || initialManualTier,
+            initialManualOrder,
+          ],
+        },
+        {
+          sql: "UPDATE novels SET read_count_baseline=? WHERE id=?",
+          params: [_baselineToRestore, id],
+        },
+        {
+          sql: "DELETE FROM planned_novels WHERE id=?",
+          params: [planned.id],
+        },
+      ]);
       syncTagsToCustom(planned.tags || "");
 
       // 표지 라이브러리 동기화
@@ -29072,66 +29082,67 @@ function AppContent() {
 
     const now = Date.now();
     try {
-      // 2. INSERT planned_novels — id 보존, 모든 필드 이전
-      await exec(
-        `INSERT INTO planned_novels (
-          id, title, author, tags, platforms, note,
-          total_episodes, cover_image, link, work_status,
-          major_genre, sub_genre, priority, created_at,
-          expected_rating, expected_tier, interest_level,
-          discovery_source, first_chapter_read, scheduled_start_date,
-          similar_novels, why_interested, tag_data,
-          status, pinned, read_count, rating, rd, wins, losses, match_count,
-          gaiden_status, gaiden_read_count, gaiden_total_episodes,
-          manual_tier, manual_order, reread_count,
-          aliases, memorable_quote, awards,
-          read_count_updated_at, read_count_baseline
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          novel.id, novel.title, novel.author || "",
-          novel.tags || "", novel.platforms || "[]", novel.note || "",
-          Number(novel.total_episodes) || 0, novel.cover_image || "",
-          novel.link || "", novel.work_status || "ongoing",
-          novel.major_genre || "", novel.sub_genre || "",
-          // priority: pinned=1 → 5(최고), 그 외 → 3(기본)
-          novel.pinned ? 5 : 3, novel.created_at || now,
-          // expected_*: 현 ELO/manual_tier 보존을 위한 best-effort 매핑
-          Number(novel.rating) || 1500, novel.manual_tier || "", 3,
-          "", novel.read_count > 0 ? 1 : 0, 0, "", "", novel.tag_data || "",
-          // 🆕 v7.2.0 round-trip 보존 필드 (16종)
-          novel.status || "reading", Number(novel.pinned) || 0,
-          Number(novel.read_count) || 0,
-          Number(novel.rating) || 1500, Number(novel.rd) || 350,
-          Number(novel.wins) || 0, Number(novel.losses) || 0,
-          Number(novel.match_count) || 0,
-          novel.gaiden_status || "none",
-          Number(novel.gaiden_read_count) || 0,
-          Number(novel.gaiden_total_episodes) || 0,
-          novel.manual_tier || null, Number(novel.manual_order) || 0,
-          Math.max(1, Number(novel.reread_count) || 1),
-          novel.aliases || "", novel.memorable_quote || "", novel.awards || "",
-          Number(novel.read_count_updated_at) || 0,
-          Number(novel.read_count_baseline) || 0,
-        ]
-      );
+      // 🆕 v7.3.1: INSERT planned + verification queue cancel + DELETE novels을 단일 트랜잭션으로
+      // 부분 실패 시 ROLLBACK (양 테이블 잔존 회피)
+      await execBatch([
+        {
+          sql: `INSERT INTO planned_novels (
+            id, title, author, tags, platforms, note,
+            total_episodes, cover_image, link, work_status,
+            major_genre, sub_genre, priority, created_at,
+            expected_rating, expected_tier, interest_level,
+            discovery_source, first_chapter_read, scheduled_start_date,
+            similar_novels, why_interested, tag_data,
+            status, pinned, read_count, rating, rd, wins, losses, match_count,
+            gaiden_status, gaiden_read_count, gaiden_total_episodes,
+            manual_tier, manual_order, reread_count,
+            aliases, memorable_quote, awards,
+            read_count_updated_at, read_count_baseline
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          params: [
+            novel.id, novel.title, novel.author || "",
+            novel.tags || "", novel.platforms || "[]", novel.note || "",
+            Number(novel.total_episodes) || 0, novel.cover_image || "",
+            novel.link || "", novel.work_status || "ongoing",
+            novel.major_genre || "", novel.sub_genre || "",
+            // priority: pinned=1 → 5(최고), 그 외 → 3(기본)
+            novel.pinned ? 5 : 3, novel.created_at || now,
+            // expected_*: 현 ELO/manual_tier 보존을 위한 best-effort 매핑
+            Number(novel.rating) || 1500, novel.manual_tier || "", 3,
+            "", novel.read_count > 0 ? 1 : 0, 0, "", "", novel.tag_data || "",
+            // 🆕 v7.2.0 round-trip 보존 필드 (16종)
+            novel.status || "reading", Number(novel.pinned) || 0,
+            Number(novel.read_count) || 0,
+            Number(novel.rating) || 1500, Number(novel.rd) || 350,
+            Number(novel.wins) || 0, Number(novel.losses) || 0,
+            Number(novel.match_count) || 0,
+            novel.gaiden_status || "none",
+            Number(novel.gaiden_read_count) || 0,
+            Number(novel.gaiden_total_episodes) || 0,
+            novel.manual_tier || null, Number(novel.manual_order) || 0,
+            Math.max(1, Number(novel.reread_count) || 1),
+            novel.aliases || "", novel.memorable_quote || "", novel.awards || "",
+            Number(novel.read_count_updated_at) || 0,
+            Number(novel.read_count_baseline) || 0,
+          ],
+        },
+        // pending verification 큐 cancel — 가등록 작품은 verification 의미 없음
+        {
+          sql: `UPDATE tier_verification_queue SET state='cancelled', processed_at=? WHERE novel_id=? AND state='pending'`,
+          params: [now, novel.id],
+        },
+        // DELETE FROM novels (id 보존이라 matches/gallery/folders 등은 자동 살아남음)
+        {
+          sql: "DELETE FROM novels WHERE id=?",
+          params: [novel.id],
+        },
+      ]);
 
-      // 3. v7.0 hybrid: 진행 중 verification 세션 abort
-      try {
-        if (verificationSessionRef?.current?.queueRow?.novel_id === novel.id) {
-          setVerificationSession(null);
-          if (verificationSessionIdRef) verificationSessionIdRef.current = null;
-        }
-        // pending 큐 cancel — 가등록 작품은 verification 의미 없음
-        await exec(
-          `UPDATE tier_verification_queue SET state='cancelled', processed_at=? WHERE novel_id=? AND state='pending'`,
-          [now, novel.id]
-        );
-      } catch (e) {
-        console.warn("[v7.2.0] verification 정리 실패 (계속 진행):", e?.message);
+      // verification 세션 React state는 트랜잭션 외 (UI state라 DB 트랜잭션과 무관)
+      if (verificationSessionRef?.current?.queueRow?.novel_id === novel.id) {
+        setVerificationSession(null);
+        if (verificationSessionIdRef) verificationSessionIdRef.current = null;
       }
-
-      // 4. DELETE FROM novels (id 보존이라 matches/gallery/folders 등은 자동 살아남음)
-      await exec("DELETE FROM novels WHERE id=?", [novel.id]);
 
       // 5. recent_changes 로그
       try {
@@ -39052,34 +39063,33 @@ async function importJSON() {
                     onPress={compareMode ? () => toggleCompare(item.id) : () => openEdit({ ...item })}
                     onLongPress={() => {
                       const folderNames = (novelFolderMap.get(item.id) || []).map(fid => { const f = folders.find(x => x.id === fid); return f ? `${f.icon||'📂'} ${f.name}` : null; }).filter(Boolean).join(", ");
+                      // 🆕 v7.3.1: 자동매칭 중에는 가등록 전환 옵션 자체 숨김 (UX 일관성)
+                      const matching = isAutoMatchingRef.current;
                       Alert.alert(
                         item.title,
-                        `작가: ${item.author || "-"}\n${folderNames ? `📂 폴더: ${folderNames}\n` : ""}\n${item.note || "(메모 없음)"}`,
+                        `작가: ${item.author || "-"}\n${folderNames ? `📂 폴더: ${folderNames}\n` : ""}\n${item.note || "(메모 없음)"}${matching ? "\n\n⚠️ 자동매칭 중 — 가등록 전환 일시 비활성화" : ""}`,
                         [
                           { text: "📂 폴더 배정", onPress: () => { setFolderAssignTarget(item.id); deferOpen(setFolderAssignModalOpen); } },
-                          // 🆕 v7.2.0: 가등록 전환
-                          // 🆕 v7.3.0: 자동매칭 중 안내 (선택지는 표시하되 클릭 시 차단)
-                          { text: "📋 가등록 전환", style: "destructive", onPress: () => {
-                            if (isAutoMatchingRef.current) {
-                              Alert.alert("자동매칭 중", "자동매칭이 진행 중입니다.\n매칭을 멈춘 후 다시 시도하세요.");
-                              return;
-                            }
-                            Alert.alert(
-                              "가등록 전환",
-                              `"${item.title}"을(를) 가등록으로 되돌릴까요?\n\n매칭/갤러리/폴더 등 모든 데이터가 보존됩니다 (id 유지). 다시 진등록 전환 시 복원됩니다.`,
-                              [
-                                { text: "취소" },
-                                { text: "전환", style: "destructive", onPress: async () => {
-                                  const ok = await convertNovelToPlanned(item);
-                                  if (ok) {
-                                    await loadList(undefined, undefined, "demote");
-                                    await loadPlannedList();
-                                    Alert.alert("완료", "가등록으로 전환되었습니다.");
-                                  }
-                                }},
-                              ]
-                            );
-                          }},
+                          // 🆕 v7.2.0/v7.3.1: 자동매칭 중이면 옵션 자체 미표시
+                          ...(matching ? [] : [
+                            { text: "📋 가등록 전환", style: "destructive", onPress: () => {
+                              Alert.alert(
+                                "가등록 전환",
+                                `"${item.title}"을(를) 가등록으로 되돌릴까요?\n\n매칭/갤러리/폴더 등 모든 데이터가 보존됩니다 (id 유지). 다시 진등록 전환 시 복원됩니다.`,
+                                [
+                                  { text: "취소" },
+                                  { text: "전환", style: "destructive", onPress: async () => {
+                                    const ok = await convertNovelToPlanned(item);
+                                    if (ok) {
+                                      await loadList(undefined, undefined, "demote");
+                                      await loadPlannedList();
+                                      Alert.alert("완료", "가등록으로 전환되었습니다.");
+                                    }
+                                  }},
+                                ]
+                              );
+                            }},
+                          ]),
                           { text: "확인" },
                         ]
                       );
@@ -40127,6 +40137,7 @@ async function importJSON() {
                           <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
                             <PrimaryButton
                               title="📥 등록전환"
+                              disabled={isAutoMatching}
                               onPress={() => convertPlannedToNovel(item)}
                               style={{ flex: 1, backgroundColor: "#8b5cf6", paddingVertical: 10 }}
                             />
