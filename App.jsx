@@ -2,9 +2,71 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.3.3 (7대 실사용 시나리오 검토 — 4건 실제 버그 수정)                  ║
+ * ║  버전: 7.3.4 (추가 7대 시나리오 — 3건 파일시스템 누수 수정)                   ║
  * ║  최종 수정: 2026-05-08                                                        ║
- * ║  총 라인 수: 약 52,670줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 52,720줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.3.4 추가 7대 시나리오 — 3건 파일시스템 누수 수정 (2026-05-08)           ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [Context — 추가 7대 시나리오]                                                    ║
+ * ║ 8. 수상 시스템 (등록/자동적용/명대사 이미지 lifecycle)                         ║
+ * ║ 9. 태그/장르 마이그레이션 (alias/관계/동기화)                                  ║
+ * ║ 10. 티어 프리셋 변경 (마이그레이션/호환성)                                     ║
+ * ║ 11. 갤러리/폴더 시스템 (이미지/파일시스템 일관성)                              ║
+ * ║ 12. 다회독 트리거 + read_count_baseline 누적 추적                              ║
+ * ║ 13. 수문장 식별 + 인사이트/추천 시스템                                         ║
+ * ║ 14. 빠른 연타/swipe + 매칭 큐 처리                                              ║
+ * ║                                                                              ║
+ * ║ 3개 카테고리 병렬 에이전트 + 직접 검증 → 다시 한번 대부분 false positive       ║
+ * ║ (이미 수정/의도된 설계/edge case). 3건 실제 파일시스템 누수만 수정.            ║
+ * ║                                                                              ║
+ * ║ [Fix-E Major] batchDelete memorable_quote 이미지 파일 cleanup 누락             ║
+ * ║ • 기존: removeNovel은 memorable_quote 이미지 파일 삭제(line 33330-33334)       ║
+ * ║   하지만 batchDelete는 gallery_images만 처리, quote 이미지 누락.              ║
+ * ║ • 사용자가 명대사 이미지를 가진 작품 다수 일괄 삭제 시 GALLERY_DIR/COVER_DIR  ║
+ * ║   에 quote_*.jpg 파일 영구 누수.                                              ║
+ * ║ • 수정: removeNovel과 동일 패턴으로 parseQuotes + isImageQuote +              ║
+ * ║   FileSystem.deleteAsync 추가.                                                ║
+ * ║                                                                              ║
+ * ║ [Fix-F Major] batchDeletePlanned gallery_images 파일 cleanup 누락               ║
+ * ║ • 기존: DB row만 DELETE (line 28998), GALLERY_DIR 파일 누수.                   ║
+ * ║ • 가등록 round-trip 시 gallery 보존하지만 일괄 삭제 시에는 파일도 정리해야 함. ║
+ * ║ • 수정: SELECT file_path → deleteCoverFromLibrary loop 추가                   ║
+ * ║   (batchDelete v7.0.12 동일 패턴).                                             ║
+ * ║                                                                              ║
+ * ║ [Fix-G Major] batchDeletePlanned memorable_quote 이미지 cleanup 누락            ║
+ * ║ • 동일 — 가등록도 round-trip 보존 필드로 memorable_quote 이미지 보유 가능.    ║
+ * ║ • 일괄 삭제 시 quote 이미지 파일 누수.                                        ║
+ * ║ • 수정: planned_novels SELECT memorable_quote → parseQuotes loop +            ║
+ * ║   FileSystem.deleteAsync 추가.                                                ║
+ * ║                                                                              ║
+ * ║ [false positive로 판정된 주요 보고]                                              ║
+ * ║ • saveEdit else-if 분기 (tier_change vs read_progress): 의도된 설계 — UPSERT  ║
+ * ║   가 trigger_type을 덮어쓰므로 mutually exclusive (line 34145 주석 명시).     ║
+ * ║ • baseline reset 누락: 누적 트래킹은 last-fire 시점 기준. 미발화 시 baseline   ║
+ * ║   유지 정상 동작.                                                              ║
+ * ║ • migrateTierKey naive ratio: 비례 매핑은 design choice. 비정상 매핑 사례     ║
+ * ║   (예: "C"→"D") 확인 결과 정상 비례 산출.                                     ║
+ * ║ • migrateTagRenamesInTable NULL tag_data: 정상 — tags 문자열은 무관하게       ║
+ * ║   업데이트, tag_data는 null 시 스킵 (변경 없음).                               ║
+ * ║ • queueInsight duplicate INSERT: 단일 사용자 모바일 환경에서 동시성 X.        ║
+ * ║ • pendingMatchPairs leak / waitForMatchQueueDrain race: try/finally + 50ms    ║
+ * ║   polling으로 충분한 가드.                                                     ║
+ * ║ • verificationSession on slot switch: line 27979-27985에서 이미 cleanup.     ║
+ * ║ • cover_library status: verifyDataIntegrity가 두 테이블(novels +              ║
+ * ║   planned_novels) 모두 검사 (line 6499-6500).                                  ║
+ * ║                                                                              ║
+ * ║ [defer to v7.4+]                                                                ║
+ * ║ • loadGalleryImages가 novels만 LEFT JOIN — convertNovelToPlanned 후 gallery   ║
+ * ║   가 planned_novels를 참조하면 title NULL UX (id 보존 round-trip 의도와 충돌). ║
+ * ║                                                                              ║
+ * ║ [회귀 위험]                                                                       ║
+ * ║ • Fix-E~G: SELECT + 파일 삭제 추가만, DB 트랜잭션은 변경 없음. 정상 흐름      ║
+ * ║   영향 0. idempotent: true 옵션으로 파일 미존재 시도 안전.                    ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -28993,10 +29055,39 @@ function AppContent() {
                 }
               } catch (e) { console.warn("[v7.3.0] 가등록 일괄 표지 정리 실패:", e?.message); }
 
-              // 갤러리 이미지(round-trip 보존)도 정리
+              // 🛠️ v7.3.4: 갤러리 이미지 파일 시스템 cleanup 추가 (이전: DB row만 삭제 → GALLERY_DIR 파일 누수)
+              try {
+                const gImgs = await all(
+                  `SELECT file_path FROM gallery_images WHERE novel_id IN (${placeholders})`,
+                  ids
+                );
+                for (const g of (gImgs || [])) {
+                  await deleteCoverFromLibrary(g.file_path).catch(() => {});
+                }
+              } catch (gErr) { console.warn("[v7.3.4] batchDeletePlanned gallery file cleanup:", gErr?.message); }
+
+              // 갤러리 이미지(round-trip 보존) DB row 정리
               try {
                 await exec(`DELETE FROM gallery_images WHERE novel_id IN (${placeholders})`, ids);
               } catch (e) { console.warn("[v7.3.0] gallery_images 정리 실패:", e?.message); }
+
+              // 🛠️ v7.3.4: memorable_quote 이미지 파일 cleanup 추가 (removeNovel/batchDelete와 동일 패턴)
+              try {
+                const qPlanned = await all(
+                  `SELECT memorable_quote FROM planned_novels WHERE id IN (${placeholders}) AND memorable_quote IS NOT NULL AND memorable_quote != ''`,
+                  ids
+                );
+                for (const p of (qPlanned || [])) {
+                  try {
+                    const quotes = parseQuotes(p.memorable_quote);
+                    for (const q of quotes) {
+                      if (isImageQuote(q) && q.uri) {
+                        FileSystem.deleteAsync(q.uri, { idempotent: true }).catch(() => {});
+                      }
+                    }
+                  } catch {}
+                }
+              } catch (qErr) { console.warn("[v7.3.4] batchDeletePlanned quote image cleanup:", qErr?.message); }
 
               await exec(`DELETE FROM planned_novels WHERE id IN (${placeholders})`, ids);
               await loadPlannedList();
@@ -36407,6 +36498,24 @@ function AppContent() {
                 await deleteCoverFromLibrary(g.file_path).catch(() => {});
               }
             } catch (gErr) { console.warn("batchDelete gallery cleanup:", gErr); }
+
+            // 🛠️ v7.3.4: memorable_quote 이미지 파일 삭제 (removeNovel과 동일 패턴) — 일괄 삭제 시 파일시스템 누수 방지
+            try {
+              const qNovels = await all(
+                `SELECT memorable_quote FROM novels WHERE id IN (${placeholders}) AND memorable_quote IS NOT NULL AND memorable_quote != ''`,
+                ids
+              );
+              for (const n of (qNovels || [])) {
+                try {
+                  const quotes = parseQuotes(n.memorable_quote);
+                  for (const q of quotes) {
+                    if (isImageQuote(q) && q.uri) {
+                      FileSystem.deleteAsync(q.uri, { idempotent: true }).catch(() => {});
+                    }
+                  }
+                } catch {}
+              }
+            } catch (qErr) { console.warn("batchDelete quote image cleanup:", qErr?.message); }
 
             const queries = [];
             for (const id of ids) {
