@@ -2,9 +2,96 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.3.5 (3차 추가 시나리오 — 1건 critical round-trip 데이터 손실 수정)   ║
+ * ║  버전: 7.4.1 (v7.4.0 사후 검토 9건 — race/double-tap/Bitmap 한계 등 안전 강화) ║
  * ║  최종 수정: 2026-05-08                                                        ║
- * ║  총 라인 수: 약 52,820줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 53,356줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.4.1 v7.4.0 사후 검토 9건 안전 강화 (2026-05-08)                        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [Critical 3건]                                                                  ║
+ * ║ • 필터 silent 해제 후 rankedEntriesRef 동기화 race — timing-only 의존에서      ║
+ * ║   waitForRankedEntriesCount 폴링으로 전환                                      ║
+ * ║ • 사전 경고 임계값 30 → 20 — Android Bitmap 한계 (~4096-8192px) 대비           ║
+ * ║   카드당 ~330-400px (PR=3 기준) 고려해 더 보수적                              ║
+ * ║ • 더블탭 윈도 — isExportingRef.current=true를 함수 진입 직후 즉시 설정         ║
+ * ║   (기존: permission 체크 후 설정 → 그 사이 중복 호출 가능)                    ║
+ * ║                                                                              ║
+ * ║ [High 3건]                                                                      ║
+ * ║ • measureAllCards: cardRefsRef.current 직접 사용 → 측정 직전 Map 스냅샷.       ║
+ * ║   FlatList 재렌더로 ref가 unmount 콜백으로 사라지는 race 차단                  ║
+ * ║ • measureLayout: cardNode.measureLayout(...) 직접 호출 → UIManager.            ║
+ * ║   measureLayout(findNodeHandle, ...) 사용. RN 0.81 Android 신뢰성 향상         ║
+ * ║ • FlatList windowSize: ceil(N/5)+2 → max(N, 50). viewport 단위라 작게 두면     ║
+ * ║   가상화가 살아남음. 큰 값으로 강제 전체 렌더                                   ║
+ * ║                                                                              ║
+ * ║ [Medium 3건]                                                                    ║
+ * ║ • MediaLibrary.requestPermissionsAsync() → (true) writeOnly 모드.              ║
+ * ║   Android 13+ 갤러리 읽기 권한 요청 회피 (privacy)                             ║
+ * ║ • RNImage.getSize: 직접 호출 → getImageSizeRobust(uri).                         ║
+ * ║   4초 timeout + ImageManipulator 무액션 fallback (file:// hang 회피)           ║
+ * ║ • 카드 ref 인라인 setter → useCallback registerCardRef.                        ║
+ * ║   매 render 새 함수 생성 → ref 재attach 비용 제거                              ║
+ * ║                                                                              ║
+ * ║ [추가 안전망]                                                                    ║
+ * ║ • Image.getSize 결과 0 또는 비정상 시 throw                                    ║
+ * ║ • numPages <= 0 (캡처 너무 작음) 시 throw — "0/0 저장됨" 오인 방지             ║
+ * ║                                                                              ║
+ * ║ [수정 파일] App.jsx (단일 파일, ~+70줄), 헤더 버전                              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.4.0 순위 탭 티어표 이미지 내보내기 (2026-05-08)                          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                              ║
+ * ║ [Why] 사용자가 순위 탭 티어 리스트를 블로그에 올리고 싶어함. 텍스트 공유는    ║
+ * ║ 이미 있지만 이미지가 없어 시각적 매력 부족. 한 장으로 뽑으면 너무 길어 가     ║
+ * ║ 독성이 떨어짐 → 폰 화면 높이에 가깝게 여러 장으로 분할해 갤러리에 저장.       ║
+ * ║                                                                              ║
+ * ║ [What]                                                                        ║
+ * ║ • 순위 탭 "티어표 공유" Section에 "이미지로 내보내기" 버튼 추가.              ║
+ * ║ • react-native-view-shot의 captureRef로 tierImageRef 영역 PNG/JPG 캡처.        ║
+ * ║ • 캡처된 이미지를 expo-image-manipulator로 폰 화면 높이 단위로 crop.           ║
+ * ║ • 카드 경계 스냅: 작품 카드가 페이지 중간에 잘리지 않도록 가장 가까운 카드    ║
+ * ║   끝에서 분할. measureLayout으로 각 카드의 tierImageRef 기준 절대 Y 측정.     ║
+ * ║ • expo-media-library의 saveToLibraryAsync로 갤러리(카메라 폴더)에 저장.        ║
+ * ║                                                                              ║
+ * ║ [User Decisions]                                                              ║
+ * ║ • 자르기: 카드 경계 스냅 (반잘림 방지)                                        ║
+ * ║ • 필터 처리: 내보내기 시 "보이는 것만 / 전체" Alert 모달로 선택                ║
+ * ║ • 전체 + 필터 활성: silent 해제 후 복원 안 함 (완료 알림에 안내)              ║
+ * ║ • 워터마크/페이지 번호: 없음 (깨끗한 티어표만)                                ║
+ * ║ • 앨범: 기본 카메라 폴더 (전용 앨범 X)                                        ║
+ * ║                                                                              ║
+ * ║ [Critical Issue 해결]                                                           ║
+ * ║ • FlatList 가상화 위험 — initialNumToRender=8, windowSize=3 때문에 작품이      ║
+ * ║   많을 때 일부만 렌더되어 캡처 누락 가능. → 캡처 동안 isExportRendering=true   ║
+ * ║   일 때 props 동적 부스트 + cardRefsRef.size 폴링으로 모든 카드 등록 확인.    ║
+ * ║ • Stale closure — setRankQuery("") 직후 rankedEntries는 옛 값. → ref 미러     ║
+ * ║   (rankedEntriesRef) + useEffect 동기화로 최신 값 보장.                       ║
+ * ║ • 사전 경고 — Android view-shot ~10000px 한계. 항목당 ~330px. → 30개 초과     ║
+ * ║   시 진행 여부 확인 Alert.                                                    ║
+ * ║                                                                              ║
+ * ║ [신규 의존성]                                                                   ║
+ * ║ • expo-media-library ~18.2 (갤러리 저장 권한 + saveToLibraryAsync)            ║
+ * ║                                                                              ║
+ * ║ [추가 안전 장치]                                                                 ║
+ * ║ • isExportingRef 중복 실행 가드 + 취소 플래그                                 ║
+ * ║ • isAutoMatchingRef 체크 (불변규칙 #1: 자동매칭 중 Alert 차단 차원)            ║
+ * ║ • screen !== "rank" 진입 가드 (rankedEntries는 다른 탭에서 [])                ║
+ * ║ • 진행 모달 + 취소 버튼 — 별도 Modal로 운영 (ProgressOverlay 재사용 시 캡처   ║
+ * ║   에 포함되거나 isLoading 글로벌 부작용 발생)                                 ║
+ * ║ • Breadcrumbs.add("export", ...)로 단계별 진단 기록 (start, capture_done,     ║
+ * ║   save_done, error)                                                           ║
+ * ║ • finally에서 임시 파일 cleanup (FileSystem.deleteAsync idempotent)           ║
+ * ║                                                                              ║
+ * ║ [수정 파일]                                                                     ║
+ * ║ • App.jsx: imports + state/refs + helper 함수 + FlatList props + ref 등록     ║
+ * ║   + UI 버튼 + Progress Modal + 헤더 버전                                      ║
+ * ║ • package.json: expo-media-library 추가                                       ║
+ * ║ • app.json: plugins 배열에 expo-media-library + 권한 메시지                   ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -3981,6 +4068,10 @@ import {
   Platform,
   AppState,
   Dimensions,
+  Image as RNImage,
+  PixelRatio,
+  UIManager,
+  findNodeHandle,
 } from "react-native";
 import { Image as ExpoImage } from "expo-image";
 import * as SQLite from "expo-sqlite";
@@ -3989,6 +4080,8 @@ import * as NavigationBar from "expo-navigation-bar";
 // 🔧 v3.4.7: 새 FileSystem API가 불안정하여 레거시 API 사용
 import * as FileSystem from "expo-file-system/legacy"; // 🔧 v3.5.3: SDK 54 신규 API 불안정 → 레거시 API 사용
 import * as ImageManipulator from "expo-image-manipulator"; // 📷 명대사 이미지 압축
+import * as MediaLibrary from "expo-media-library"; // 📷 v7.4.0 티어표 갤러리 저장
+import { captureRef } from "react-native-view-shot"; // 📷 v7.4.0 티어표 캡처
 
 /* =========================================================
    💥 v3.9.0: 크래시 로그 영속화 + Breadcrumbs
@@ -10933,7 +11026,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.3.0";
+const APP_VERSION = "7.4.1";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -10959,6 +11052,32 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.4.1", date: "2026-05-08",
+    title: "📷 순위 탭 티어표 이미지 내보내기 — 블로그 업로드용 갤러리 저장",
+    highlights: [
+      { type: "new", text: "📷 순위 탭 \"이미지로 내보내기\" 버튼 — 티어 리스트를 폰 화면 높이에 맞춰 카드 단위로 분할해 갤러리에 저장 (블로그 업로드용)" },
+      { type: "new", text: "🎯 카드 경계 스냅 분할 — 작품 카드가 페이지 중간에 잘리지 않도록 가장 가까운 카드 끝에서 끊음" },
+      { type: "new", text: "🎚️ 내보내기 시 \"보이는 것만 / 전체\" 선택 모달 — 검색·티어 필터 적용 결과만 추출 가능" },
+      { type: "improve", text: "🛡️ 작품 수 20개 초과 시 사전 안내 (Android 이미지 크기 한계 회피)" },
+      { type: "improve", text: "🔒 갤러리 저장 권한은 writeOnly로 요청 — 갤러리 읽기 권한은 받지 않음 (privacy)" },
+      { type: "improve", text: "⏸️ 진행 모달 + 취소 버튼 — 페이지별 \"X / Y\" 표시" },
+    ],
+    details: [
+      { type: "new", text: "App.jsx imports — react-native-view-shot의 captureRef + expo-media-library + PixelRatio + UIManager/findNodeHandle + Image as RNImage 추가" },
+      { type: "new", text: "App.jsx App() — itemLayoutsRef, cardRefsRef, isExportingRef, exportProgress, isExportRendering 신규 + rankedEntriesRef 미러 (stale closure 회피)" },
+      { type: "new", text: "App.jsx exportTierImages — captureRef → ImageManipulator crop (카드 끝점 스냅) → MediaLibrary.saveToLibraryAsync 시퀀스. tmp 파일 finally 정리" },
+      { type: "new", text: "App.jsx FlatList — isExportRendering=true 동안 initialNumToRender/maxToRenderPerBatch/windowSize 부스트로 가상화 한시 해제 + 카드 ref 등록 폴링" },
+      { type: "new", text: "App.jsx measureAllCards — UIManager.measureLayout(findNodeHandle, ...)로 각 카드의 tierImageRef 기준 절대 Y 측정. cardRefsRef Map 스냅샷으로 unmount race 차단" },
+      { type: "new", text: "App.jsx waitForRankedEntriesCount — 필터 silent 해제 후 rankedEntriesRef 길이 폴링 (timing-only 의존 회피)" },
+      { type: "new", text: "App.jsx getImageSizeRobust — RNImage.getSize 4초 timeout + ImageManipulator 무액션 fallback (Android file:// hang 회피)" },
+      { type: "new", text: "App.jsx 진행 모달 — SafeAreaView 직속 (캡처 미포함). PrimaryButton 취소 → isExportingRef.current=false 다음 iter break" },
+      { type: "fix", text: "더블탭 윈도 — isExportingRef.current=true를 함수 진입 즉시 설정 (permission 체크 후 X). 동일 세션 중복 실행 차단" },
+      { type: "fix", text: "캡처 결과 0x0 또는 numPages<=0 시 throw — \"0/0 저장됨\" 오인 알림 방지" },
+      { type: "new", text: "Breadcrumbs.add(\"export\", ...) 단계별 진단 — start/capture_done/save_done/error" },
+      { type: "new", text: "package.json — expo-media-library ~18.2 추가. app.json plugins에 photosPermission/savePhotosPermission 메시지" },
+    ],
+  },
   {
     version: "7.3.0", date: "2026-05-07",
     title: "가등록 시스템 강화 + 잔여 기술부채 청산 (예정탭 sub-tab + 일괄편집 외 5건)",
@@ -11891,6 +12010,17 @@ const GUIDE_CONTENT = [
         tips: [
           "티어 필터를 누르면 특정 티어만 볼 수 있어요.",
           "검색은 제목, 작가, 태그를 모두 포함해 찾아줘요.",
+        ],
+      },
+      {
+        title: "🆕 티어표 이미지 내보내기", icon: "📷", tabs: ["순위"], tabKey: "rank",
+        description: "순위 탭의 티어 리스트를 폰 화면 높이에 맞춰 여러 장의 이미지로 분할해 갤러리에 저장합니다. 블로그·SNS 업로드용으로 한 번에 불러올 수 있어요.",
+        tips: [
+          "검색·티어 필터를 먼저 걸어두면 \"보이는 것만\" 옵션으로 원하는 부분만 내보낼 수 있어요.",
+          "\"전체\" 선택 시 필터가 자동 해제됩니다 (복원 안 됨).",
+          "작품 카드가 페이지 중간에 잘리지 않도록 카드 경계에 맞춰 자동 스냅돼요.",
+          "20작 초과 시 사전 안내 — 일부 안드로이드 기기는 이미지 크기 한계로 실패할 수 있으니 티어 필터로 좁혀서 내보내는 걸 권합니다.",
+          "갤러리 저장 권한은 \"쓰기만\" 요청해서 사진 라이브러리 읽기 권한은 받지 않아요.",
         ],
       },
       {
@@ -26771,6 +26901,15 @@ function AppContent() {
   // 🆕 티어표 이미지 캡처용
   const tierImageRef = useRef(null);
 
+  // 🆕 v7.4.0 이미지 내보내기 — 카드 위치 추적 + 진행 상태
+  const itemLayoutsRef = useRef(new Map()); // Map<novelId, {y, height}> tierImageRef 기준 절대 Y
+  const cardRefsRef = useRef(new Map());    // Map<novelId, View ref> measureLayout용
+  const isExportingRef = useRef(false);     // 중복 실행 + 취소 플래그
+  const [exportProgress, setExportProgress] = useState(null);
+  // shape: null | { phase, current, total, label }
+  const [isExportRendering, setIsExportRendering] = useState(false);
+  // FlatList 가상화 한시적 해제용 — true면 모든 항목 즉시 렌더 강제
+
   // 검색/대량
   const [query, setQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState([]);
@@ -27231,6 +27370,271 @@ function AppContent() {
       });
     } catch (e) {
       Alert.alert("오류", "공유 실패: " + e.message);
+    }
+  }
+
+  /* =========================================================
+     🆕 v7.4.0 티어표 이미지 내보내기 (블로그 업로드용)
+     - 카드 경계 스냅: 폰 화면 높이에 가깝게, 작품 카드 중간 절단 방지
+     - 갤러리 저장 (expo-media-library)
+     - 내보내기 시 "보이는 것만 / 전체" 선택 모달
+     ========================================================= */
+  async function waitForAllCardsRendered(expectedIds, timeoutMs = 5000) {
+    const start = Date.now();
+    while (true) {
+      let missing = 0;
+      for (const id of expectedIds) {
+        if (!cardRefsRef.current.has(id)) missing++;
+      }
+      if (missing === 0) return;
+      if (Date.now() - start > timeoutMs) {
+        throw new Error(`카드 렌더 대기 타임아웃: ${missing}/${expectedIds.length}개 누락`);
+      }
+      await new Promise(r => setTimeout(r, 50));
+    }
+  }
+
+  // 🆕 v7.4.0 필터 해제 후 rankedEntriesRef 동기 폴링 (timing-only 회피)
+  async function waitForRankedEntriesCount(expectedCount, timeoutMs = 2000) {
+    const start = Date.now();
+    while (rankedEntriesRef.current.length !== expectedCount) {
+      if (Date.now() - start > timeoutMs) return; // 폴백: timing 무시하고 진행
+      await new Promise(r => setTimeout(r, 30));
+    }
+  }
+
+  async function measureAllCards(expectedIds) {
+    itemLayoutsRef.current.clear();
+    const tierNode = tierImageRef.current;
+    if (!tierNode) throw new Error("티어 영역 ref가 없습니다");
+    const tierHandle = findNodeHandle(tierNode);
+    if (!tierHandle) throw new Error("티어 영역 node handle 없음");
+
+    // 측정 도중 카드 unmount race 방지: 시작 시점 ref 스냅샷
+    const refsSnapshot = new Map(cardRefsRef.current);
+
+    const promises = [];
+    for (const id of expectedIds) {
+      const cardNode = refsSnapshot.get(id);
+      if (!cardNode) continue;
+      promises.push(new Promise((resolve) => {
+        try {
+          const cardHandle = findNodeHandle(cardNode);
+          if (!cardHandle) { resolve(); return; }
+          UIManager.measureLayout(
+            cardHandle,
+            tierHandle,
+            () => resolve(), // 실패 콜백
+            (x, y, w, h) => {
+              itemLayoutsRef.current.set(id, { y, height: h });
+              resolve();
+            }
+          );
+        } catch { resolve(); }
+      }));
+    }
+    await Promise.all(promises);
+  }
+
+  // 🆕 v7.4.0 카드 ref 등록자 — useCallback으로 stable, 매 render 재생성 방지
+  const registerCardRef = useCallback((id, node) => {
+    if (!id) return;
+    if (node) cardRefsRef.current.set(id, node);
+    else cardRefsRef.current.delete(id);
+  }, []);
+
+  // 🆕 v7.4.0 Image.getSize — Android에서 file:// URI hang 방지 + ImageManipulator fallback
+  async function getImageSizeRobust(uri) {
+    const primary = new Promise((resolve, reject) => {
+      RNImage.getSize(uri, (w, h) => resolve({ width: w, height: h }), reject);
+    });
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("Image.getSize timeout")), 4000)
+    );
+    try {
+      return await Promise.race([primary, timeout]);
+    } catch {
+      // Fallback: no-op manipulateAsync는 결과에 width/height 포함
+      const r = await ImageManipulator.manipulateAsync(uri, [], {
+        compress: 1,
+        format: ImageManipulator.SaveFormat.JPEG,
+      });
+      return { width: r.width, height: r.height };
+    }
+  }
+
+  function openExportScopeChoice() {
+    const visibleN = rankedEntries.length;
+    const totalN = (list || []).length;
+    Alert.alert(
+      "내보낼 범위",
+      `현재 보이는 ${visibleN}작 또는 전체 ${totalN}작 중 선택하세요.`,
+      [
+        { text: "취소", style: "cancel" },
+        { text: `보이는 ${visibleN}작`, onPress: () => exportTierImages("visible") },
+        { text: `전체 ${totalN}작`, onPress: () => exportTierImages("all") },
+      ]
+    );
+  }
+
+  async function exportTierImages(scope) {
+    if (isExportingRef.current) return;
+    if (isAutoMatchingRef.current) {
+      Alert.alert("진행 불가", "자동 매칭 중에는 사용할 수 없습니다.");
+      return;
+    }
+    if (screen !== "rank") return;
+
+    // 🛡️ 더블탭 차단: 어떤 await 직전에라도 isExportingRef를 즉시 설정
+    isExportingRef.current = true;
+
+    Breadcrumbs.add("export", "start", { scope, visible: rankedEntries.length });
+
+    const filterWasActive = !!rankQuery || rankTier !== "ALL";
+    const willResetFilter = scope === "all" && filterWasActive;
+    let fullUri = null;
+
+    try {
+      if (willResetFilter) {
+        setRankQuery("");
+        setRankTier("ALL");
+        // rankedEntriesRef가 새 길이로 동기화될 때까지 폴링 (timing 의존 회피)
+        const expectedFullCount = (list || []).length;
+        await waitForRankedEntriesCount(expectedFullCount);
+        // 추가로 한 frame 더 기다려 onLayout/ref 등록 안정화
+        await new Promise(r => requestAnimationFrame(() =>
+          requestAnimationFrame(() => setTimeout(r, 80))
+        ));
+      }
+
+      setIsExportRendering(true);
+
+      // FlatList prop 부스트가 반영되어 모든 카드 렌더 시작될 때까지 한 frame
+      await new Promise(r => requestAnimationFrame(() =>
+        requestAnimationFrame(() => setTimeout(r, 100))
+      ));
+
+      const targetEntries = rankedEntriesRef.current;
+      const targetCount = targetEntries.length;
+
+      if (targetCount === 0) {
+        Alert.alert("알림", "내보낼 작품이 없습니다.");
+        return;
+      }
+
+      // ⚠️ Android Bitmap 한계 (~4096-8192px). 카드당 ~330-400px → 20개에서 경고
+      if (targetCount > 20) {
+        const ok = await new Promise(res => {
+          Alert.alert(
+            "작품 수 안내",
+            `${targetCount}작은 한 번에 캡처하기 부담스러울 수 있습니다 (Android 이미지 크기 한계). 티어 필터로 약 20작 이하로 좁혀 진행하시는 걸 권합니다. 그대로 진행할까요?`,
+            [
+              { text: "취소", style: "cancel", onPress: () => res(false) },
+              { text: "그대로 진행", onPress: () => res(true) },
+            ]
+          );
+        });
+        if (!ok) return;
+      }
+
+      // 권한 — writeOnly 모드: 갤러리 읽기 권한 없이 저장만 가능 (Android 13+ privacy-friendly)
+      const perm = await MediaLibrary.requestPermissionsAsync(true);
+      if (perm.status !== "granted") {
+        Alert.alert("권한 필요", "갤러리 저장 권한이 거부되어 진행할 수 없습니다.");
+        return;
+      }
+
+      const expectedIds = targetEntries.map(e => e.item.id).filter(Boolean);
+
+      await waitForAllCardsRendered(expectedIds);
+      await measureAllCards(expectedIds);
+
+      fullUri = await captureRef(tierImageRef, {
+        format: "jpg", // view-shot 4.0.3: 'jpg' | 'png' | 'webm' | 'raw'
+        quality: 0.92,
+        result: "tmpfile",
+      });
+      Breadcrumbs.add("export", "capture_done", { count: targetCount });
+
+      const { width: imgWpx, height: imgHpx } = await getImageSizeRobust(fullUri);
+      if (!imgWpx || !imgHpx || imgHpx < 10) {
+        throw new Error(`캡처 이미지 크기 비정상: ${imgWpx}x${imgHpx}`);
+      }
+
+      const pr = PixelRatio.get();
+      const targetPageHdp = Dimensions.get("window").height - 80;
+      const totalDP = imgHpx / pr;
+
+      const cardEndsDP = Array.from(itemLayoutsRef.current.values())
+        .map(L => L.y + L.height)
+        .filter(v => Number.isFinite(v) && v > 0)
+        .sort((a, b) => a - b);
+
+      const breaks = [0];
+      let cursor = 0;
+      while (cursor < totalDP - 1) {
+        const target = cursor + targetPageHdp;
+        let snap = null;
+        for (const ce of cardEndsDP) {
+          if (ce > cursor + 50 && ce <= target + 20) snap = ce;
+          else if (ce > target + 20) break;
+        }
+        if (!snap || snap <= cursor) snap = Math.min(target, totalDP);
+        breaks.push(snap);
+        cursor = snap;
+      }
+      if (breaks[breaks.length - 1] < totalDP - 1) breaks.push(totalDP);
+      const numPages = breaks.length - 1;
+
+      if (numPages <= 0) {
+        throw new Error("페이지 분할 실패 — 캡처 결과가 너무 작습니다");
+      }
+
+      setExportProgress({ phase: "cropping", current: 0, total: numPages, label: "이미지 분할 중" });
+
+      let savedCount = 0;
+      for (let i = 0; i < numPages; i++) {
+        if (!isExportingRef.current) break;
+        setExportProgress({ phase: "saving", current: i + 1, total: numPages, label: "갤러리 저장 중" });
+        const startDP = breaks[i];
+        const endDP = breaks[i + 1];
+        const cropped = await ImageManipulator.manipulateAsync(
+          fullUri,
+          [{ crop: {
+            originX: 0,
+            originY: Math.round(startDP * pr),
+            width: imgWpx,
+            height: Math.round((endDP - startDP) * pr),
+          }}],
+          { compress: 0.9, format: ImageManipulator.SaveFormat.JPEG }
+        );
+        await MediaLibrary.saveToLibraryAsync(cropped.uri);
+        savedCount++;
+        await FileSystem.deleteAsync(cropped.uri, { idempotent: true }).catch(() => {});
+      }
+
+      Breadcrumbs.add("export", "save_done", { saved: savedCount, total: numPages });
+
+      setExportProgress(null);
+      if (savedCount === numPages) {
+        const filterMsg = willResetFilter ? "\n(검색/티어 필터가 해제되었습니다.)" : "";
+        Alert.alert("완료", `${numPages}장의 이미지가 갤러리에 저장되었습니다.${filterMsg}`);
+      } else {
+        Alert.alert("취소됨", `${savedCount}/${numPages}장이 저장된 후 중단되었습니다.`);
+      }
+    } catch (e) {
+      Breadcrumbs.add("export", "error", { msg: (e?.message || "").substring(0, 100) });
+      setExportProgress(null);
+      Alert.alert(
+        "오류",
+        `이미지 내보내기 실패: ${e?.message || "unknown"}\n\n팁: 작품 수가 많다면 티어 필터를 적용해 보세요.`
+      );
+    } finally {
+      isExportingRef.current = false;
+      setIsExportRendering(false);
+      if (fullUri) {
+        await FileSystem.deleteAsync(fullUri, { idempotent: true }).catch(() => {});
+      }
     }
   }
 
@@ -35903,6 +36307,10 @@ function AppContent() {
     return result;
   }, [list, rankQuery, rankTier, screen]);
 
+  // 🆕 v7.4.0 stale closure 회피 — 비동기 export 함수에서 최신 rankedEntries 참조용
+  const rankedEntriesRef = useRef(rankedEntries);
+  useEffect(() => { rankedEntriesRef.current = rankedEntries; }, [rankedEntries]);
+
   // 🆕 v6.1: 티어 관리 탭 데이터 (manual/hybrid 모드)
   // 🆕 v7.0: manual/hybrid에서는 manual_order asc 우선 정렬 (사용자 지정 순서)
   const tierManageEntries = useMemo(() => {
@@ -38612,7 +39020,33 @@ async function importJSON() {
         translucent={appSettings.fullscreenMode === true}
       />
       <ProgressOverlay />
-      <ScrollView 
+      {/* 🆕 v7.4.0 이미지 내보내기 진행 모달 — 캡처에 포함되지 않도록 별도 운영 */}
+      <Modal
+        visible={!!exportProgress}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {}}
+      >
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "center", alignItems: "center" }}>
+          <View style={{ backgroundColor: C.card, padding: 24, borderRadius: 16, alignItems: "center", minWidth: 240 }}>
+            <ActivityIndicator size="large" color={C.primary} />
+            <Text style={{ color: C.text, marginTop: 12, fontWeight: "700" }}>
+              {exportProgress?.label || "처리 중"}
+            </Text>
+            {exportProgress?.total > 0 && (
+              <Text style={{ color: C.sub, marginTop: 4 }}>
+                {exportProgress.current} / {exportProgress.total}
+              </Text>
+            )}
+            <View style={{ height: 12 }} />
+            <PrimaryButton
+              title="취소"
+              onPress={() => { isExportingRef.current = false; }}
+            />
+          </View>
+        </View>
+      </Modal>
+      <ScrollView
         contentContainerStyle={{ padding: 16, paddingBottom: 48 }}
         showsVerticalScrollIndicator={true}
         indicatorStyle={isDark ? "white" : "black"}
@@ -39883,9 +40317,9 @@ async function importJSON() {
               <FlatList
                 data={rankedEntries}
                 keyExtractor={(entry, index) => String(entry?.item?.id || `rank-${index}`)}
-                initialNumToRender={8}
-                maxToRenderPerBatch={5}
-                windowSize={3}
+                initialNumToRender={isExportRendering ? Math.max(rankedEntries.length, 8) : 8}
+                maxToRenderPerBatch={isExportRendering ? Math.max(rankedEntries.length, 5) : 5}
+                windowSize={isExportRendering ? Math.max(rankedEntries.length, 50) : 3}
                 removeClippedSubviews={false}
                 scrollEnabled={false}
                 renderItem={({ item: entry }) => {
@@ -39913,6 +40347,7 @@ async function importJSON() {
                   
                   return (
                     <View
+                      ref={(node) => registerCardRef(item?.id, node)}
                       style={{
                         padding: 14,
                         borderRadius: 14,
@@ -39994,8 +40429,14 @@ async function importJSON() {
                 onPress={shareTierText}
                 disabled={isLoading}
               />
+              <View style={{ height: 8 }} />
+              <PrimaryButton
+                title="이미지로 내보내기"
+                onPress={openExportScopeChoice}
+                disabled={isLoading || rankedEntries.length === 0 || !!exportProgress}
+              />
               <Text style={{ color: C.sub, marginTop: 6, fontSize: 11 }}>
-                ※ 티어별 순위를 텍스트로 공유합니다
+                ※ 텍스트는 티어별 순위, 이미지는 화면 높이에 맞춰 작품 카드 단위로 나뉘어 갤러리에 저장됩니다.
               </Text>
             </Section>
           </>

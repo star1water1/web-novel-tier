@@ -19,6 +19,16 @@
       "bundleIdentifier": "com.star1water.noveltier",
       "supportsTablet": true
     },
+    "plugins": [
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "티어표 이미지를 갤러리에 저장하려면 권한이 필요합니다.",
+          "savePhotosPermission": "티어표 이미지를 갤러리에 저장하려면 권한이 필요합니다.",
+          "isAccessMediaLocationEnabled": false
+        }
+      ]
+    ],
     "sdkVersion": "54.0.0",
     "updates": {
       "url": "https://u.expo.dev/98ffeff1-a782-48be-a747-f122336c5f2e"
