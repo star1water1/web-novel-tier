@@ -2,9 +2,57 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.4.2 (perfMonitor 발견 — 결정론 SQL 에러 fail-fast + 진단 강화)        ║
+ * ║  버전: 7.4.3 (순위 탭 이미지 내보내기 청크 캡처 — Bitmap 한계 우회)            ║
  * ║  최종 수정: 2026-05-10                                                        ║
- * ║  총 라인 수: 약 53,380줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 53,470줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🐛 v7.4.3 이미지 내보내기 청크 캡처 — Android Bitmap 한계 우회 (2026-05-10)    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [증상] 215개 작품에서 "이미지로 내보내기" 클릭 시 즉시 실패:                    ║
+ * ║   Call to function 'Context.renderAsync' has been rejected.                   ║
+ * ║   → Caused by: Could not load the image: ReactNative-snapshot-image*.jpg      ║
+ * ║   → Caused by: java.lang.Exception: Loading bitmap failed                     ║
+ * ║                                                                              ║
+ * ║ [원인] 기존 v7.4.0/v7.4.1 구현은 단일 captureRef로 전체 FlatList 통째 캡처:    ║
+ * ║ • tierImageRef 안에 215개 카드를 모두 mount하고 한 번에 captureRef → 결과      ║
+ * ║   이미지가 카드당 ~330-400px @ PR3 × 215 = ~258,000px → Android Bitmap        ║
+ * ║   한계(~4096-8192px)의 30배 초과 → 파일은 디스크에 생성되나 RN/ImageManipulator ║
+ * ║   가 다시 load 시 OOM 실패. crop 분할은 캡처 후 단계라 의미 X.                  ║
+ * ║ • 사전 경고 임계값 20은 우회 가능 + 어차피 80% 가린 채 export는 사용자 의도 X. ║
+ * ║                                                                              ║
+ * ║ [수정] 청크 단위 mount/capture 반복 (data slicing 패턴, App.jsx:27613~)        ║
+ * ║ • exportSlice/exportChunkIdx 신규 state — FlatList data를 청크 slice로 일시 교체║
+ * ║ • planChunks(entries, pr) — DP 기반 packing. PLAN_CARD_DP=180dp 기준           ║
+ * ║   (실측 평균 130dp + 50dp 안전 마진), MAX_CHUNK_PX=6000(8192의 73%)             ║
+ * ║ • for loop: 청크별 setExportSliceAndWait → waitForAllCardsRendered →           ║
+ * ║   measureAllCards → captureRef → 카드경계 스냅 페이지 분할 → MediaLibrary 저장 ║
+ * ║ • 메모리 윈도우 가드: setIsExportRendering(true)와 동시에 setExportSlice([])    ║
+ * ║   → 첫 청크 setState 전까지 카드 mount 0개 (boost된 windowSize 무해)            ║
+ * ║ • Section header를 ListHeaderComponent로 이동 + 첫 청크에만 노출 — 단일 캡처   ║
+ * ║   동작 재현 (기존: 첫 페이지에만 헤더, 청크별 반복 시 regression)               ║
+ * ║                                                                              ║
+ * ║ [UX 변경]                                                                       ║
+ * ║ • 사전 경고 alert: "20개 초과" → "약 P장 저장됩니다" (P>5일 때). 갤러리 노이즈  ║
+ * ║   사전 동의 보존, 실패 공포 문구 제거.                                         ║
+ * ║ • 진행 모달: "청크 X/Y · 저장 중" + 누적 페이지 카운트. markup 변경 0줄.        ║
+ * ║ • 취소 체크 7곳 (긴 await 후마다) — 청크 도중 cancel 시 chunkUri 정리.         ║
+ * ║                                                                              ║
+ * ║ [효과]                                                                          ║
+ * ║ • 215개 → 약 20청크 (~20초). 임의 N개 안정적 저장. 화질 다운스케일 X.           ║
+ * ║ • 단일 captureRef 비트맵 한계 우회 — 청크당 최대 6000px (한계 73%) 안전 마진.   ║
+ * ║ • 메인 list/UX 영향 0 (export 종료 시 finally에서 setExportSlice(null)).        ║
+ * ║                                                                              ║
+ * ║ [수정 파일] App.jsx (단일 파일, ~+90줄)                                         ║
+ * ║ • 26989-26999: 신규 state (exportSlice, exportChunkIdx)                       ║
+ * ║ • 27526~: 신규 헬퍼 (상수 4개 + planChunks + estimateExportPageCount +         ║
+ * ║   setExportSliceAndWait)                                                      ║
+ * ║ • 27613~27765: exportTierImages 재작성 (chunk loop)                           ║
+ * ║ • 40485~40504: FlatList data + boost 식 + ListHeaderComponent                 ║
+ * ║                                                                              ║
+ * ║ [검증] node 단위 테스트 dry-run — N ∈ {1, 14, 15, 50, 215, 500} × pr ∈ {2, 3} ║
+ * ║ 모두 통과: coverage 빈틈 0, 청크 budget ≤ 6000px, ids 정합. 카드경계 스냅 OK.   ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11085,7 +11133,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.4.2";
+const APP_VERSION = "7.4.3";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -11111,6 +11159,23 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.4.3", date: "2026-05-10",
+    title: "🐛 순위 탭 이미지 내보내기 청크 캡처 — 작품 많아도 안정적으로 저장",
+    highlights: [
+      { type: "fix", text: "🚀 순위 탭 \"이미지로 내보내기\" 215개+ 작품에서 실패하던 문제 수정 — 단일 captureRef 비트맵 한계(~8192px)를 청크 단위로 우회. 임의 N개 안정적 저장" },
+      { type: "improve", text: "📊 사전 안내 변경 — \"20개 초과 경고\" → \"약 P장 저장됩니다 (P>5일 때)\". 갤러리 노이즈 사전 동의만, 실패 공포 문구 제거" },
+      { type: "improve", text: "📈 진행 모달 \"청크 X/Y · 저장 중 K/P\" — 전체 작업의 어디까지 왔는지 명확" },
+    ],
+    details: [
+      { type: "fix", text: "App.jsx:27613~ exportTierImages 청크 loop — entries를 PLAN_CARD_DP=180dp(실측 평균 130 + 안전 마진 50) 기준으로 packing해 청크당 ~11장(pr=3). 215개 → 약 20청크 × ~1초 = 20초" },
+      { type: "fix", text: "App.jsx:27526~ planChunks/setExportSliceAndWait/estimateExportPageCount 헬퍼 + 상수 4개(MAX_CHUNK_PX=6000, PLAN_CARD_DP=180, EST_CARD_DP=130, EST_HEADER_DP=60). 단일 카드 oversize 시 최소 1장 fallback" },
+      { type: "fix", text: "App.jsx:40485~ FlatList data={isExportRendering ? (exportSlice || []) : rankedEntries} — 빈 배열 fallback이 메모리 윈도우 가드 핵심. setIsExportRendering(true) 직후 카드 mount 0개 보장" },
+      { type: "fix", text: "App.jsx ListHeaderComponent — Section 외곽 카드 스타일이 매 페이지 반복되는 regression 차단. 첫 청크에만 inline header 노출 (기존 단일 캡처 동작 재현)" },
+      { type: "fix", text: "취소 체크 7곳 (긴 await 후마다) — 청크 도중 cancel 시 현재 청크 chunkUri deleteAsync 정리, finally에서 setExportSlice(null)" },
+      { type: "perf", text: "단일 captureRef 결과 ~258,000px(215개) → 청크당 최대 6000px(8192의 73%, 안전 마진 27%). java.lang.Exception: Loading bitmap failed 근본 차단" },
+    ],
+  },
   {
     version: "7.4.2", date: "2026-05-10",
     title: "🐛 perfMonitor 발견 — DB 재연결 폭주 차단 + 진단 로그 강화",
@@ -26990,6 +27055,12 @@ function AppContent() {
   // shape: null | { phase, current, total, label }
   const [isExportRendering, setIsExportRendering] = useState(false);
   // FlatList 가상화 한시적 해제용 — true면 모든 항목 즉시 렌더 강제
+  // 🆕 v7.4.3 청크 캡처: 단일 captureRef가 Android Bitmap 한계(~8192px)를 넘지 않도록
+  // FlatList data를 청크 slice로 일시 교체하며 mount→capture→unmount 반복.
+  const [exportSlice, setExportSlice] = useState(null);
+  // null = 메인(전체) / Array<entry> = 현재 캡처 청크
+  const [exportChunkIdx, setExportChunkIdx] = useState(0);
+  // ListHeaderComponent 분기용 — 첫 청크(0)에만 inline header 노출 (기존 단일 캡처 동작 재현)
 
   // 검색/대량
   const [query, setQuery] = useState("");
@@ -27517,6 +27588,57 @@ function AppContent() {
     await Promise.all(promises);
   }
 
+  // 🆕 v7.4.3 청크 캡처 상수 — Android Bitmap 한계(~4096-8192px) 안전 마진.
+  // MAX_CHUNK_PX = 6000 (한계의 ~73%). 두 카드 추정값을 분리:
+  // - PLAN_CARD_DP=180: 청크 packing용 (실측 평균 ~130dp + 50dp 안전 마진).
+  // - EST_CARD_DP=130: 페이지 수 추정용 (실측 평균 — alert "약 P장" 정확도).
+  // v7.4.1 헤더 측정 "330-400px @ PR=3" = DP 110-133과 일치.
+  const MAX_CHUNK_PX = 6000;
+  const PLAN_CARD_DP = 180;
+  const EST_CARD_DP = 130;
+  const EST_HEADER_DP = 60;
+
+  // 🆕 v7.4.3 entries → 청크 배열 (DP 기반 packing). 첫 청크에 inline header 포함되므로
+  // 시작 누적값에 EST_HEADER_DP*pr을 더함. 단일 카드가 한도 초과해도 최소 1장 포함 보장.
+  function planChunks(entries, prGet) {
+    if (!entries || entries.length === 0) return [];
+    const chunks = [];
+    const cardPx = PLAN_CARD_DP * prGet;
+    const headerPx = EST_HEADER_DP * prGet;
+    let i = 0;
+    let isFirst = true;
+    while (i < entries.length) {
+      let acc = isFirst ? headerPx : 0;
+      let j = i;
+      while (j < entries.length) {
+        const next = acc + cardPx;
+        if (next > MAX_CHUNK_PX && j > i) break; // 최소 1장 보장
+        acc = next;
+        j++;
+      }
+      const ids = entries.slice(i, j).map(e => e?.item?.id).filter(Boolean);
+      chunks.push({ startIdx: i, endIdx: j, ids });
+      i = j;
+      isFirst = false;
+    }
+    return chunks;
+  }
+
+  // 🆕 v7.4.3 alert용 P 추정 — 실측 카드 평균 기준.
+  function estimateExportPageCount(n) {
+    if (n <= 0) return 0;
+    const pageHdp = Math.max(1, Dimensions.get("window").height - 80);
+    return Math.max(1, Math.ceil((n * EST_CARD_DP + EST_HEADER_DP) / pageHdp));
+  }
+
+  // 🆕 v7.4.3 청크 slice setState + mount 안정화 대기 (line 27594-27596 패턴 미러).
+  async function setExportSliceAndWait(slice) {
+    setExportSlice(slice);
+    await new Promise(r => requestAnimationFrame(() =>
+      requestAnimationFrame(() => setTimeout(r, 100))
+    ));
+  }
+
   // 🆕 v7.4.0 카드 ref 등록자 — useCallback으로 stable, 매 render 재생성 방지
   const registerCardRef = useCallback((id, node) => {
     if (!id) return;
@@ -27573,7 +27695,6 @@ function AppContent() {
 
     const filterWasActive = !!rankQuery || rankTier !== "ALL";
     const willResetFilter = scope === "all" && filterWasActive;
-    let fullUri = null;
 
     try {
       if (willResetFilter) {
@@ -27588,6 +27709,11 @@ function AppContent() {
         ));
       }
 
+      // 🆕 v7.4.3: 메모리 윈도우 가드 — setIsExportRendering(true) 후 첫 setExportSlice 전까지
+      // FlatList의 data가 rankedEntries 전체였다면 boost된 windowSize로 모든 카드가 잠깐 mount됨.
+      // 빈 배열을 먼저 넣어서 카드 mount 0개 보장. 첫 청크 slice는 loop 안에서 setExportSliceAndWait로 진입.
+      setExportSlice([]);
+      setExportChunkIdx(0);
       setIsExportRendering(true);
 
       // FlatList prop 부스트가 반영되어 모든 카드 렌더 시작될 때까지 한 frame
@@ -27603,15 +27729,18 @@ function AppContent() {
         return;
       }
 
-      // ⚠️ Android Bitmap 한계 (~4096-8192px). 카드당 ~330-400px → 20개에서 경고
-      if (targetCount > 20) {
+      // 🆕 v7.4.3: 임계값 20 사전 경고 → 예상 페이지 수 P 기반 안내로 교체.
+      // 청크 캡처가 Bitmap 한계를 우회하므로 실패 공포 문구 X. 갤러리 노이즈만 사전 동의.
+      const prGet = PixelRatio.get();
+      const pPredict = estimateExportPageCount(targetCount);
+      if (pPredict > 5) {
         const ok = await new Promise(res => {
           Alert.alert(
-            "작품 수 안내",
-            `${targetCount}작은 한 번에 캡처하기 부담스러울 수 있습니다 (Android 이미지 크기 한계). 티어 필터로 약 20작 이하로 좁혀 진행하시는 걸 권합니다. 그대로 진행할까요?`,
+            "이미지 저장 안내",
+            `${targetCount}작을 약 ${pPredict}장의 이미지로 저장합니다.\n갤러리에 ${pPredict}개 항목이 추가됩니다. 진행할까요?`,
             [
               { text: "취소", style: "cancel", onPress: () => res(false) },
-              { text: "그대로 진행", onPress: () => res(true) },
+              { text: "진행", onPress: () => res(true) },
             ]
           );
         });
@@ -27625,97 +27754,125 @@ function AppContent() {
         return;
       }
 
-      const expectedIds = targetEntries.map(e => e.item.id).filter(Boolean);
-
-      await waitForAllCardsRendered(expectedIds);
-      await measureAllCards(expectedIds);
-
-      fullUri = await captureRef(tierImageRef, {
-        format: "jpg", // view-shot 4.0.3: 'jpg' | 'png' | 'webm' | 'raw'
-        quality: 0.92,
-        result: "tmpfile",
-      });
-      Breadcrumbs.add("export", "capture_done", { count: targetCount });
-
-      const { width: imgWpx, height: imgHpx } = await getImageSizeRobust(fullUri);
-      if (!imgWpx || !imgHpx || imgHpx < 10) {
-        throw new Error(`캡처 이미지 크기 비정상: ${imgWpx}x${imgHpx}`);
-      }
-
-      const pr = PixelRatio.get();
+      // 🆕 v7.4.3 청크 캡처 loop — 각 청크는 독립 captureRef. peak Bitmap 크기 < MAX_CHUNK_PX.
+      const chunks = planChunks(targetEntries, prGet);
+      let totalSaved = 0;
+      let totalPages = 0;
       const targetPageHdp = Dimensions.get("window").height - 80;
-      const totalDP = imgHpx / pr;
 
-      const cardEndsDP = Array.from(itemLayoutsRef.current.values())
-        .map(L => L.y + L.height)
-        .filter(v => Number.isFinite(v) && v > 0)
-        .sort((a, b) => a - b);
-
-      const breaks = [0];
-      let cursor = 0;
-      while (cursor < totalDP - 1) {
-        const target = cursor + targetPageHdp;
-        let snap = null;
-        for (const ce of cardEndsDP) {
-          if (ce > cursor + 50 && ce <= target + 20) snap = ce;
-          else if (ce > target + 20) break;
-        }
-        if (!snap || snap <= cursor) snap = Math.min(target, totalDP);
-        breaks.push(snap);
-        cursor = snap;
-      }
-      if (breaks[breaks.length - 1] < totalDP - 1) breaks.push(totalDP);
-      const numPages = breaks.length - 1;
-
-      if (numPages <= 0) {
-        throw new Error("페이지 분할 실패 — 캡처 결과가 너무 작습니다");
-      }
-
-      setExportProgress({ phase: "cropping", current: 0, total: numPages, label: "이미지 분할 중" });
-
-      let savedCount = 0;
-      for (let i = 0; i < numPages; i++) {
+      for (let ci = 0; ci < chunks.length; ci++) {
         if (!isExportingRef.current) break;
-        setExportProgress({ phase: "saving", current: i + 1, total: numPages, label: "갤러리 저장 중" });
-        const startDP = breaks[i];
-        const endDP = breaks[i + 1];
-        const cropped = await ImageManipulator.manipulateAsync(
-          fullUri,
-          [{ crop: {
-            originX: 0,
-            originY: Math.round(startDP * pr),
-            width: imgWpx,
-            height: Math.round((endDP - startDP) * pr),
-          }}],
-          { compress: 0.9, format: ImageManipulator.SaveFormat.JPEG }
-        );
-        await MediaLibrary.saveToLibraryAsync(cropped.uri);
-        savedCount++;
-        await FileSystem.deleteAsync(cropped.uri, { idempotent: true }).catch(() => {});
+        const chunk = chunks[ci];
+
+        setExportChunkIdx(ci);
+        setExportProgress({
+          current: totalSaved,
+          total: Math.max(1, totalPages || 1),
+          label: `청크 ${ci + 1}/${chunks.length} · 렌더 중`,
+        });
+        await setExportSliceAndWait(targetEntries.slice(chunk.startIdx, chunk.endIdx));
+        if (!isExportingRef.current) break;
+
+        await waitForAllCardsRendered(chunk.ids);
+        if (!isExportingRef.current) break;
+        await measureAllCards(chunk.ids);
+        if (!isExportingRef.current) break;
+
+        let chunkUri = null;
+        try {
+          chunkUri = await captureRef(tierImageRef, {
+            format: "jpg",
+            quality: 0.92,
+            result: "tmpfile",
+          });
+          if (!isExportingRef.current) break;
+          Breadcrumbs.add("export", "chunk_done", { ci, ids: chunk.ids.length });
+
+          const { width: imgWpx, height: imgHpx } = await getImageSizeRobust(chunkUri);
+          if (!isExportingRef.current) break;
+          if (imgHpx > 7500) Breadcrumbs.add("export", "oversized_chunk", { ci, h: imgHpx });
+          if (!imgWpx || !imgHpx || imgHpx < 10) {
+            throw new Error(`청크 ${ci + 1} 캡처 크기 비정상: ${imgWpx}x${imgHpx}`);
+          }
+
+          const pr = prGet;
+          const totalDP = imgHpx / pr;
+          const cardEndsDP = Array.from(itemLayoutsRef.current.values())
+            .map(L => L.y + L.height)
+            .filter(v => Number.isFinite(v) && v > 0)
+            .sort((a, b) => a - b);
+
+          const breaks = [0];
+          let cursor = 0;
+          while (cursor < totalDP - 1) {
+            const target = cursor + targetPageHdp;
+            let snap = null;
+            for (const ce of cardEndsDP) {
+              if (ce > cursor + 50 && ce <= target + 20) snap = ce;
+              else if (ce > target + 20) break;
+            }
+            if (!snap || snap <= cursor) snap = Math.min(target, totalDP);
+            breaks.push(snap);
+            cursor = snap;
+          }
+          if (breaks[breaks.length - 1] < totalDP - 1) breaks.push(totalDP);
+          const numPages = breaks.length - 1;
+          if (numPages <= 0) {
+            throw new Error(`청크 ${ci + 1} 페이지 분할 실패 — 캡처 결과가 너무 작습니다`);
+          }
+          totalPages += numPages;
+
+          for (let pi = 0; pi < numPages; pi++) {
+            if (!isExportingRef.current) break;
+            setExportProgress({
+              current: totalSaved + pi + 1,
+              total: totalPages,
+              label: `청크 ${ci + 1}/${chunks.length} · 저장 중`,
+            });
+            const startDP = breaks[pi];
+            const endDP = breaks[pi + 1];
+            const cropped = await ImageManipulator.manipulateAsync(
+              chunkUri,
+              [{ crop: {
+                originX: 0,
+                originY: Math.round(startDP * pr),
+                width: imgWpx,
+                height: Math.round((endDP - startDP) * pr),
+              }}],
+              { compress: 0.9, format: ImageManipulator.SaveFormat.JPEG }
+            );
+            await MediaLibrary.saveToLibraryAsync(cropped.uri);
+            await FileSystem.deleteAsync(cropped.uri, { idempotent: true }).catch(() => {});
+            totalSaved++;
+          }
+        } finally {
+          if (chunkUri) await FileSystem.deleteAsync(chunkUri, { idempotent: true }).catch(() => {});
+        }
       }
 
-      Breadcrumbs.add("export", "save_done", { saved: savedCount, total: numPages });
+      Breadcrumbs.add("export", "save_done", { saved: totalSaved, total: totalPages });
 
       setExportProgress(null);
-      if (savedCount === numPages) {
+      if (totalSaved === totalPages && totalPages > 0) {
         const filterMsg = willResetFilter ? "\n(검색/티어 필터가 해제되었습니다.)" : "";
-        Alert.alert("완료", `${numPages}장의 이미지가 갤러리에 저장되었습니다.${filterMsg}`);
+        Alert.alert("완료", `${totalPages}장의 이미지가 갤러리에 저장되었습니다.${filterMsg}`);
+      } else if (totalSaved > 0) {
+        Alert.alert("취소됨", `${totalSaved}/${totalPages}장이 저장된 후 중단되었습니다.`);
       } else {
-        Alert.alert("취소됨", `${savedCount}/${numPages}장이 저장된 후 중단되었습니다.`);
+        Alert.alert("취소됨", "저장 전 중단되었습니다.");
       }
     } catch (e) {
       Breadcrumbs.add("export", "error", { msg: (e?.message || "").substring(0, 100) });
       setExportProgress(null);
       Alert.alert(
         "오류",
-        `이미지 내보내기 실패: ${e?.message || "unknown"}\n\n팁: 작품 수가 많다면 티어 필터를 적용해 보세요.`
+        `이미지 내보내기 실패: ${e?.message || "unknown"}`
       );
     } finally {
       isExportingRef.current = false;
       setIsExportRendering(false);
-      if (fullUri) {
-        await FileSystem.deleteAsync(fullUri, { idempotent: true }).catch(() => {});
-      }
+      setExportSlice(null);
+      setExportChunkIdx(0);
     }
   }
 
@@ -40395,14 +40552,23 @@ async function importJSON() {
             {/* 🆕 티어표 이미지 캡처 영역 */}
             <View ref={tierImageRef} collapsable={false} style={{ backgroundColor: C.bg }}>
             <Section title={`순위 목록 (총 ${rankedEntries.length}작)`}>
+              {/* 🆕 v7.4.3 청크 캡처 — export 시엔 청크 slice만 mount (Bitmap 한계 우회) */}
               <FlatList
-                data={rankedEntries}
+                data={isExportRendering ? (exportSlice || []) : rankedEntries}
                 keyExtractor={(entry, index) => String(entry?.item?.id || `rank-${index}`)}
-                initialNumToRender={isExportRendering ? Math.max(rankedEntries.length, 8) : 8}
-                maxToRenderPerBatch={isExportRendering ? Math.max(rankedEntries.length, 5) : 5}
-                windowSize={isExportRendering ? Math.max(rankedEntries.length, 50) : 3}
+                initialNumToRender={isExportRendering ? Math.max((exportSlice || []).length, 1) : 8}
+                maxToRenderPerBatch={isExportRendering ? Math.max((exportSlice || []).length, 1) : 5}
+                windowSize={isExportRendering ? Math.max((exportSlice || []).length, 1) : 3}
                 removeClippedSubviews={false}
                 scrollEnabled={false}
+                /* 🆕 v7.4.3 첫 청크에만 inline header 노출 — 기존 단일 캡처 동작 재현 */
+                ListHeaderComponent={
+                  isExportRendering && exportChunkIdx === 0 ? (
+                    <Text style={{ fontWeight: "800", fontSize: 18, color: C.text, marginBottom: 8 }}>
+                      {`순위 목록 (총 ${rankedEntries.length}작)`}
+                    </Text>
+                  ) : null
+                }
                 renderItem={({ item: entry }) => {
                   const { item, rank } = entry || {};
                   if (!item) return null;
