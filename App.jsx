@@ -2,9 +2,45 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.4.6 (v7.4.5 hotfix — 📷 단축 버튼이 캡처 결과에 박히던 regression)    ║
+ * ║  버전: 7.4.7 (v7.4.3 plan 의도 복원 — Section title 캡처 제외, 헤더 중복 차단) ║
  * ║  최종 수정: 2026-05-10                                                        ║
- * ║  총 라인 수: 약 53,690줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 53,700줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.4.7 캡처 영역 재구성 — Section title 중복 차단 (2026-05-10)             ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [증상] v7.4.3 청크 캡처 첫 페이지에 헤더가 2번 노출:                            ║
+ * ║ ① Section title "순위 목록 (총 N작)" (Section 외곽 자체가 캡처에 포함)        ║
+ * ║ ② ListHeaderComponent inline Text (첫 청크 조건부 노출)                        ║
+ * ║                                                                              ║
+ * ║ [원인] v7.4.3 plan은 "Section title은 captureRef 영역 밖" 가정이었으나 실제    ║
+ * ║ 코드는 <View ref={tierImageRef}><Section><FlatList/></Section></View> 트리로  ║
+ * ║ Section이 ref 안에 있었음. 즉 Section의 title/외곽/padding이 캡처 결과 위쪽에  ║
+ * ║ 항상 포함됨. v7.4.5 검토 중 발견. 사용자 결정으로 plan 의도대로 복원.           ║
+ * ║                                                                              ║
+ * ║ [수정] App.jsx:40921~ 트리 swap — tierImageRef를 Section 밖에서 Section 안의   ║
+ * ║ FlatList wrap으로 이동:                                                        ║
+ * ║                                                                              ║
+ * ║   이전: <View ref={tierImageRef}><Section ...><FlatList/></Section></View>    ║
+ * ║   현재: <Section ...><View ref={tierImageRef}><FlatList/></View></Section>    ║
+ * ║                                                                              ║
+ * ║ • Section 외곽 카드 스타일/title/📷 버튼은 메인 화면 그대로 (변화 0)            ║
+ * ║ • 캡처 영역만 좁혀져 FlatList(+ListHeaderComponent)만 픽셀화                   ║
+ * ║ • 첫 청크: inline header 1번만 노출 (중복 해결)                                ║
+ * ║ • 다른 청크: 카드만 (이전과 동일)                                               ║
+ * ║                                                                              ║
+ * ║ [영향]                                                                          ║
+ * ║ • 메인 화면 외관: 변화 없음 (Section + 내부 View가 같은 자리에 그대로)          ║
+ * ║ • measureAllCards: tierImageRef 기준 좌표가 ListHeaderComponent height부터     ║
+ * ║   시작 (이전엔 Section padding 16+title+spacer 포함). 카드 경계 스냅 알고리즘은 ║
+ * ║   cardEndsDP 절대값만 사용하므로 정상 동작.                                     ║
+ * ║ • 캡처 결과 height 감소(~62dp = Section padding 32 + title 22 + spacer 8) →   ║
+ * ║   페이지 분할 수 미세 변화 가능. 카드 경계 스냅이 흡수.                         ║
+ * ║ • v7.4.6 isExportRendering ? null : ... 분기는 잔존 안전망(트리상 이미 밖이라  ║
+ * ║   없어도 무관). 보수적으로 유지.                                                ║
+ * ║                                                                              ║
+ * ║ [5대 불변조건] 무관. 메모리/race/큐 영향 0.                                     ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11224,7 +11260,7 @@ const Section = ({ title, headerRight, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.4.6";
+const APP_VERSION = "7.4.7";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -11250,6 +11286,19 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.4.7", date: "2026-05-10",
+    title: "🛠️ 캡처 영역 재구성 — Section title 헤더 중복 차단",
+    highlights: [
+      { type: "fix", text: "📷 순위탭 export 첫 페이지에 헤더가 2번 노출되던 문제 수정 — Section title이 captureRef 영역 밖으로 분리되어 ListHeaderComponent inline header만 노출" },
+    ],
+    details: [
+      { type: "fix", text: "App.jsx:40921~ 트리 swap — <View ref={tierImageRef}><Section><FlatList/></Section></View> → <Section><View ref={tierImageRef}><FlatList/></View></Section>. Section 외곽/title/📷은 메인 화면 그대로, 캡처 영역만 FlatList wrap으로 좁힘" },
+      { type: "fix", text: "v7.4.3 plan 의도(\"Section title은 captureRef 영역 밖\")를 실제 코드에 반영. 첫 청크 페이지에 inline header 1번만 노출 (중복 해결). 다른 청크는 카드만" },
+      { type: "fix", text: "measureAllCards/카드 경계 스냅: tierImageRef 기준 좌표가 ListHeaderComponent height부터 시작하지만 cardEndsDP 절대값만 사용하므로 정상 동작. 페이지 분할 수 미세 변화 가능 (~62dp 감소) — 카드 경계 스냅이 흡수" },
+      { type: "fix", text: "v7.4.6 isExportRendering ? null 분기는 잔존 안전망 (트리상 이미 밖이라 없어도 무관, 보수적 유지)" },
+    ],
+  },
   {
     version: "7.4.6", date: "2026-05-10",
     title: "🛠️ v7.4.5 hotfix — 📷 단축 버튼이 캡처 결과에 박히던 regression 수정",
@@ -40918,14 +40967,14 @@ async function importJSON() {
               </View>
             </Section>
 
-            {/* 🆕 티어표 이미지 캡처 영역 */}
-            <View ref={tierImageRef} collapsable={false} style={{ backgroundColor: C.bg }}>
+            {/* 🆕 v7.4.7: Section title/외곽/📷 버튼은 캡처에서 제외 — tierImageRef를 FlatList wrap으로 이동.
+                v7.4.3 plan 의도("Section title은 captureRef 영역 밖")를 실제 코드에 반영. 첫 페이지 헤더 중복 차단. */}
             <Section
               title={`순위 목록 (총 ${rankedEntries.length}작)`}
               headerRight={
                 /* 🆕 v7.4.5 Section title 옆 작은 📷 버튼 — 카드 끝까지 스크롤 안 해도 export 가능.
-                   🛠️ v7.4.6: export 진행 중에는 null — Section이 tierImageRef 안에 있어 버튼이
-                   캡처 결과에 박히는 regression 차단. 진행 모달이 화면 가리는 동안엔 어차피 안 보임. */
+                   🛠️ v7.4.7: tierImageRef 밖으로 분리되어 캡처에 더 이상 포함 X. v7.4.6의
+                   isExportRendering 분기는 잔존 안전망(평소엔 그대로 노출). */
                 isExportRendering ? null : (
                   <TouchableOpacity
                     onPress={openExportScopeChoice}
@@ -40945,6 +40994,8 @@ async function importJSON() {
                 )
               }
             >
+              {/* 🆕 티어표 이미지 캡처 영역 — Section 안의 FlatList만 wrap (외곽/title/📷 제외) */}
+              <View ref={tierImageRef} collapsable={false} style={{ backgroundColor: C.bg }}>
               {/* 🆕 v7.4.3 청크 캡처 — export 시엔 청크 slice만 mount (Bitmap 한계 우회) */}
               <FlatList
                 data={isExportRendering ? (exportSlice || []) : rankedEntries}
@@ -41059,8 +41110,8 @@ async function importJSON() {
                 }}
                 ListEmptyComponent={<Text style={{ color: C.sub, textAlign: "center", padding: 20 }}>작품이 없습니다.</Text>}
               />
+              </View>
             </Section>
-            </View>
 
             {/* 🆕 티어표 공유 */}
             <Section title="티어표 공유">
