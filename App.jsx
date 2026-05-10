@@ -2,9 +2,92 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.4.7 (v7.4.3 plan 의도 복원 — Section title 캡처 제외, 헤더 중복 차단) ║
+ * ║  버전: 7.4.9 (배정탭 편집 모드 + 드롭 슬롯 이동 + 카드 표지)                   ║
  * ║  최종 수정: 2026-05-10                                                        ║
- * ║  총 라인 수: 약 53,700줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 53,920줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.4.9 배정탭 편집 모드 + 드롭 슬롯 이동 UX (2026-05-10)                    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [Why] 사용자 피드백 — 배정탭에서 작품을 한 칸씩 ▲/▼로만 옮길 수 있어 큰 폭     ║
+ * ║ 이동에 클릭 누적 과다. 또한 카드가 제목+작가만 노출하여 가시성 부족.            ║
+ * ║                                                                              ║
+ * ║ [정책 결정 — 사용자]                                                            ║
+ * ║ • 드롭 슬롯은 티어 간 이동도 허용 (tier 경계는 슬롯 2개로 모호성 제거)         ║
+ * ║ • 검색어가 있을 때 편집 진입 → 검색어 자동 해제 후 진입                        ║
+ * ║ • 선택은 이동 후 자동 해제, 편집 모드는 직접 토글 OR 탭 이동 시에만 해제        ║
+ * ║                                                                              ║
+ * ║ [수정] 단일 파일 (App.jsx)                                                     ║
+ * ║ • state 추가 (~27537): tierManageEditMode, tierManageSelectedId,              ║
+ * ║   tierManageSelectedIdRef                                                      ║
+ * ║ • useEffect ([screen]) (~36634): 배정탭 이탈 시 편집 모드/선택 자동 cleanup     ║
+ * ║ • moveToTierPosition 헬퍼 (~37635, swapRating 직후): targetTier+insertIndex   ║
+ * ║   기준 일괄 reflow ((i+1)*100). prev 캡처→sameTier SELECT→splice→execBatch   ║
+ * ║   →pushUndo('tier_change')→hybrid 트리거 (tier_change/order_change 분기)→     ║
+ * ║   loadList. finally에서 setTierManageSelectedId(null)로 선택만 해제.            ║
+ * ║ • tierManageDisplay useMemo (~37056): 'card'|'slot' 인터리브 데이터.           ║
+ * ║   variant: top/bottom/between/tierBoundaryUpper/tierBoundaryLower. 자기 위치    ║
+ * ║   직상/직하 슬롯은 no-op이므로 마지막에 hidden.                                ║
+ * ║ • JSX (~44470): Section headerRight에 편집 토글, 안내 배너, FlatList data를    ║
+ * ║   tierManageDisplay로 교체. extraData=[expandedNovelId, editMode, selectedId]. ║
+ * ║   renderItem에서 entry.kind === 'slot'면 dashed border 슬롯 렌더, 아니면      ║
+ * ║   카드 렌더(TouchableOpacity 래핑 + CoverImage size=44 + isSelected 강조).     ║
+ * ║ • Card layout 변경: 표지(좌측) → 순위 → 제목/작가(flex:1) → 티어 배지 → ▲/▼   ║
+ * ║   또는 "선택됨" pin. 편집 모드면 ▲/▼ 숨김(드롭 슬롯이 대체).                   ║
+ * ║                                                                              ║
+ * ║ [Hybrid 트리거]                                                                 ║
+ * ║ • Cross-tier 이동: enqueueVerification(id, "tier_change", suspicion,           ║
+ * ║   "dropSlot_tierMove") — order 비교: 새 tier가 높으면 underrated.              ║
+ * ║ • Same-tier 이동: enqueueVerification(id, "order_change", suspicion,           ║
+ * ║   "dropSlot_orderMove") — clampedIdx < prevIdx면 underrated. swapRating의      ║
+ * ║   양쪽 enqueue 대신 inline_chip 패턴(이동 작품만)으로 일치.                    ║
+ * ║                                                                                  ║
+ * ║ [Undo]                                                                          ║
+ * ║ • 'tier_change' 타입 재사용 — 기존 handler가 manual_tier+manual_order 모두     ║
+ * ║   복원하므로 same-tier 이동도 prevTier===newTier로 호환. 신규 case 불필요.      ║
+ * ║                                                                                  ║
+ * ║ [5대 불변조건]                                                                  ║
+ * ║ • #1 (자동매칭 중 Alert 금지): moveToTierPosition 시작 isAutoMatchingRef 가드  ║
+ * ║   + catch 블록도 가드. 카드 탭 핸들러는 hybrid 검증 세션 in-flight 가드 외엔   ║
+ * ║   Alert 없음.                                                                  ║
+ * ║ • #5 (catch/finally 강제): try{...} catch{console.warn + 조건부 Alert}         ║
+ * ║   finally{setTierManageSelectedId(null)}.                                       ║
+ * ║                                                                                  ║
+ * ║ [영향]                                                                          ║
+ * ║ • match 모드: 변화 없음(기존 ▲/▼ 그대로, 표지만 추가).                         ║
+ * ║ • 검증 세션 in-flight 작품: 카드 탭으로 선택 시 Alert + 차단(기존 inline chip   ║
+ * ║   가드와 동일 패턴).                                                            ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.4.8 캡처 너비 회귀 hotfix — 카드 우측 70% 잘림 차단 (2026-05-10)         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [증상] v7.4.7 적용 후 순위탭 export 결과 이미지에서 카드 우측 70% 이상이       ║
+ * ║ 잘려 저장됨. 좌측 표지(55dp) + 일부 (#순위/티어 칩 시작) 정도만 보이고 제목/    ║
+ * ║ 작가/장르/플랫폼/회차 텍스트가 모두 사라짐. 위/아래(높이) 측면은 정상.          ║
+ * ║                                                                              ║
+ * ║ [원인] v7.4.7에서 <View ref={tierImageRef}>를 Section 외곽에서 Section 안으로  ║
+ * ║ 이동(트리 swap). 이때 새 위치의 View가 명시적 width 없이 부모 stretch 기본값에 ║
+ * ║ 의존했는데, Android captureRef가 측정 시점 race로 native getWidth()를 좁게     ║
+ * ║ 잡아 좁은 너비로 capture됨(콘텐츠 좌측만 픽셀화). v7.4.6 setup(Section을      ║
+ * ║ wrap하는 외곽 View)에서는 ScrollView content 영역이 직접 부모라 측정 안정적.   ║
+ * ║                                                                              ║
+ * ║ [수정] App.jsx:40998~ — tierImageRef View와 FlatList에 명시적 너비 강제:       ║
+ * ║   <View ref={tierImageRef} style={{ ..., alignSelf:'stretch', width:'100%' }}>║
+ * ║     <FlatList style={{ width:'100%' }} ... />                                  ║
+ * ║                                                                              ║
+ * ║ • 사용자 결정: v7.4.7 트리 구조(Section 안의 View) 그대로 유지 (헤더 중복      ║
+ * ║   차단 효과 보존). width 명시만 추가.                                          ║
+ * ║ • alignSelf:'stretch' + width:'100%'는 default와 동일 의미지만 명시함으로써    ║
+ * ║   measure-time race를 방지(layout 단계에서 너비 강제 결정).                    ║
+ * ║                                                                              ║
+ * ║ [영향]                                                                          ║
+ * ║ • 메인 화면 외관: 변화 없음 (Section content 영역 그대로 채움)                  ║
+ * ║ • 캡처 결과 너비: Section content width(예: 296dp) 그대로 — 카드 전체 width   ║
+ * ║   가 saved image에 픽셀화. 우측 잘림 해소.                                     ║
+ * ║ • measureAllCards/카드 경계 스냅: 좌표 산식 무관(절대 Y 기반).                  ║
+ * ║ • 5대 불변조건: 무관. 메모리/race/큐 영향 0.                                   ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11260,7 +11343,7 @@ const Section = ({ title, headerRight, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.4.7";
+const APP_VERSION = "7.4.9";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -11286,6 +11369,37 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.4.9", date: "2026-05-10",
+    title: "🆕 배정탭 편집 모드 + 드롭 슬롯 이동 + 카드 표지 노출",
+    highlights: [
+      { type: "new", text: "✏️ 배정탭 편집 모드 — 작품 탭하여 선택 → 작품 사이사이 점선 슬롯 탭하여 그 위치로 한번에 이동. 한 칸씩 ▲/▼ 누르던 불편 해소" },
+      { type: "new", text: "🖼️ 배정탭 카드에 표지 이미지(size=44) 노출 — 제목+작가만으로 판별 어렵던 가시성 개선" },
+      { type: "improve", text: "✓ 편집 모드는 직접 토글 OR 탭 이동 시에만 해제(선택만 자동 해제). 검색어 자동 클리어 후 진입" },
+    ],
+    details: [
+      { type: "new", text: "App.jsx:~27537 state 추가 — tierManageEditMode, tierManageSelectedId, tierManageSelectedIdRef (selectedIdsRef stale closure 패턴 미러)" },
+      { type: "new", text: "App.jsx:~36634 useEffect([screen]) — 배정탭 이탈 시 편집 모드/선택 자동 cleanup" },
+      { type: "new", text: "App.jsx:~37635 moveToTierPosition 헬퍼 — targetTier+insertIndex 기준 sameTier 일괄 reflow ((i+1)*100). cross-tier도 같은 함수로 처리(manual_tier+manual_order 원자 갱신). hybrid 모드: 검증 세션 in-flight 가드 + 이동 작품만 enqueue (cross=tier_change, same=order_change)" },
+      { type: "new", text: "App.jsx:~37056 tierManageDisplay useMemo — 'card'|'slot' 인터리브. variant: top/bottom/between/tierBoundaryUpper/tierBoundaryLower(tier 경계 모호성 제거 위해 슬롯 2개). selected의 직상/직하 = no-op 슬롯은 hidden" },
+      { type: "new", text: "App.jsx:~44470 JSX — Section headerRight 편집 토글(manual/hybrid에서만 노출), 안내 배너, FlatList data=tierManageDisplay, extraData=[expanded, editMode, selectedId]. renderItem에서 slot vs card 분기. 카드 외곽 TouchableOpacity 래핑 + CoverImage size=44 + isSelected 강조(borderWidth 3 + primary 색)" },
+      { type: "new", text: "Undo 통합 — 'tier_change' 타입 재사용(기존 handler가 manual_tier+manual_order 모두 복원, same-tier도 prevTier===newTier로 호환). 신규 case 불필요" },
+      { type: "fix", text: "5대 불변조건 준수 — #1 isAutoMatchingRef 가드(시작/catch), #5 try/catch/finally(finally에서 setTierManageSelectedId(null)). hybrid 검증 세션 in-flight 작품은 카드 탭/이동 모두 차단" },
+      { type: "improve", text: "match 모드: 변화 없음(기존 ▲/▼ 유지, 표지만 추가). 편집 토글은 manual/hybrid에서만 노출" },
+    ],
+  },
+  {
+    version: "7.4.8", date: "2026-05-10",
+    title: "🛠️ v7.4.7 hotfix — 순위탭 export 카드 우측 70% 잘림 수정",
+    highlights: [
+      { type: "fix", text: "🛠️ 순위탭 이미지 내보내기 결과에서 카드 우측 텍스트(제목/작가/장르/플랫폼)가 잘려 저장되던 회귀 수정 — 좌측 표지 + #순위만 보이던 문제" },
+    ],
+    details: [
+      { type: "fix", text: "App.jsx:40998~ tierImageRef View와 FlatList에 alignSelf:'stretch' + width:'100%' 명시 — v7.4.7 트리 swap(View가 Section 안으로 이동) 이후 Android captureRef가 measure-time race로 좁은 너비를 잡던 회귀 차단" },
+      { type: "fix", text: "default(parent stretch)와 동일 의미지만 명시 강제로 layout 단계에서 너비 결정 — captureRef 호출 전에 native getWidth가 안정적으로 Section content width 반환" },
+      { type: "fix", text: "v7.4.7 트리 구조(Section 안의 View) 그대로 유지 — 헤더 중복 차단 효과 보존. 메인 화면 외관/카드 경계 스냅/5대 불변조건 모두 영향 0" },
+    ],
+  },
   {
     version: "7.4.7", date: "2026-05-10",
     title: "🛠️ 캡처 영역 재구성 — Section title 헤더 중복 차단",
@@ -27494,6 +27608,12 @@ function AppContent() {
   const [tierManageQuery, setTierManageQuery] = useState("");
   const [expandedNovelId, setExpandedNovelId] = useState(null);
 
+  // 🆕 v7.4.9: 배정탭 편집 모드 — 작품 탭 → 선택 → 드롭 슬롯 탭 → 그 위치로 이동.
+  // 선택은 이동 후 자동 해제, 편집 모드 자체는 직접 토글 OR 탭 이동 시에만 해제.
+  const [tierManageEditMode, setTierManageEditMode] = useState(false);
+  const [tierManageSelectedId, setTierManageSelectedId] = useState(null);
+  const tierManageSelectedIdRef = useRef(null);
+
   // 이주의 추천 → 오늘의 추천 (v3.3.0)
   const [dailyReco, setDailyReco] = useState(null); // { novel, pickedAt, reason, category, isPlanned }
   const [recoHistory, setRecoHistory] = useState([]); // 최근 5회 추천 기록 [{novelId, pickedAt}]
@@ -36584,6 +36704,19 @@ function AppContent() {
     }
   }, [screen]);
 
+  // 🆕 v7.4.9: 배정탭 이탈 시 편집 모드/선택 자동 해제 (사용자 결정 — 탭 이동만이 강제 cleanup)
+  useEffect(() => {
+    if (screen !== "tierManage") {
+      if (tierManageEditMode) setTierManageEditMode(false);
+      if (tierManageSelectedId) setTierManageSelectedId(null);
+    }
+  }, [screen]);
+
+  // 🆕 v7.4.9: tierManageSelectedId stale closure 방지용 ref 동기화 (selectedIdsRef 패턴 미러)
+  useEffect(() => {
+    tierManageSelectedIdRef.current = tierManageSelectedId;
+  }, [tierManageSelectedId]);
+
   // 예정 탭 진입 시 예정 목록 로드
   useEffect(() => {
     if (screen === "planned") {
@@ -37012,6 +37145,115 @@ function AppContent() {
 
     return result;
   }, [list, tierManageQuery, tierManageFilter, screen]);
+
+  // 🆕 v7.4.9: 배정탭 편집 모드용 — 작품 사이사이 드롭 슬롯이 인터리브된 표시 데이터.
+  // - kind: 'card'  → 기존 entry({ item, rank, tier })
+  // - kind: 'slot'  → { kind, tier, insertIndex, variant, key }
+  //     variant: 'top' | 'between' | 'bottom' | 'tierBoundaryUpper' | 'tierBoundaryLower'
+  // - tier 경계에서 두 슬롯(이전 tier 하단 + 다음 tier 상단)을 분리해 모호성 제거.
+  // - 자기 위치 직상/직하 슬롯은 no-op이므로 마지막에 hidden 처리.
+  const tierManageDisplay = useMemo(() => {
+    const showSlots =
+      tierManageEditMode &&
+      !!tierManageSelectedId &&
+      !tierManageQuery.trim();
+    if (!showSlots) {
+      return tierManageEntries.map(e => ({ kind: 'card', ...e }));
+    }
+    const selectedEntry = tierManageEntries.find(e => e.item.id === tierManageSelectedId);
+    if (!selectedEntry) {
+      return tierManageEntries.map(e => ({ kind: 'card', ...e }));
+    }
+
+    // tier별 entry 묶음 (자기 자신 포함) — 같은 tier 내 insertIndex 산정용
+    const tierLists = new Map();
+    for (const e of tierManageEntries) {
+      if (!tierLists.has(e.tier)) tierLists.set(e.tier, []);
+      tierLists.get(e.tier).push(e);
+    }
+
+    const result = [];
+    for (let i = 0; i < tierManageEntries.length; i++) {
+      const cur = tierManageEntries[i];
+      const prev = i > 0 ? tierManageEntries[i - 1] : null;
+
+      // (1) 첫 카드 위 — top slot
+      if (i === 0) {
+        result.push({
+          kind: 'slot',
+          tier: cur.tier,
+          insertIndex: 0,
+          variant: 'top',
+          key: `slot-top-${cur.tier}`,
+        });
+      }
+
+      // (2) tier 경계: prev.tier !== cur.tier — 이전 tier 하단 + 다음 tier 상단 두 슬롯
+      if (prev && prev.tier !== cur.tier) {
+        const prevTierLen = (tierLists.get(prev.tier) || [])
+          .filter(e => e.item.id !== tierManageSelectedId).length;
+        result.push({
+          kind: 'slot',
+          tier: prev.tier,
+          insertIndex: prevTierLen,
+          variant: 'tierBoundaryUpper',
+          key: `slot-bot-${prev.tier}-before-${cur.tier}`,
+        });
+        result.push({
+          kind: 'slot',
+          tier: cur.tier,
+          insertIndex: 0,
+          variant: 'tierBoundaryLower',
+          key: `slot-top-${cur.tier}-after-${prev.tier}`,
+        });
+      }
+
+      // (3) 현재 카드
+      result.push({ kind: 'card', ...cur });
+
+      // (4) cur과 next가 같은 tier면 between slot (사이 위치 = curIdxNoSelf + 1)
+      const next = tierManageEntries[i + 1];
+      if (next && next.tier === cur.tier) {
+        const sameTierNoSelf = (tierLists.get(cur.tier) || [])
+          .filter(e => e.item.id !== tierManageSelectedId);
+        const curIdxNoSelf = sameTierNoSelf.findIndex(e => e.item.id === cur.item.id);
+        const insertIdx = curIdxNoSelf >= 0 ? curIdxNoSelf + 1 : 0;
+        result.push({
+          kind: 'slot',
+          tier: cur.tier,
+          insertIndex: insertIdx,
+          variant: 'between',
+          key: `slot-bet-${cur.item.id}-${next.item.id}`,
+        });
+      }
+
+      // (5) 마지막 카드 아래 — bottom slot
+      if (i === tierManageEntries.length - 1) {
+        const lastTierLen = (tierLists.get(cur.tier) || [])
+          .filter(e => e.item.id !== tierManageSelectedId).length;
+        result.push({
+          kind: 'slot',
+          tier: cur.tier,
+          insertIndex: lastTierLen,
+          variant: 'bottom',
+          key: `slot-bot-${cur.tier}-end`,
+        });
+      }
+    }
+
+    // (6) Selected 카드 직상/직하 슬롯 = no-op이므로 hidden
+    // selectedEntry의 sameTier(자기 자신 제외) 정렬 기준 자기 위치 = noOpInsertIdx
+    const selectedSameTier = (tierLists.get(selectedEntry.tier) || [])
+      .filter(e => e.item.id !== tierManageSelectedId);
+    const selectedManualOrder = Number(selectedEntry.item.manual_order) || 0;
+    let noOpInsertIdx = selectedSameTier.findIndex(
+      e => (Number(e.item.manual_order) || 0) > selectedManualOrder
+    );
+    if (noOpInsertIdx === -1) noOpInsertIdx = selectedSameTier.length;
+    return result.filter(r =>
+      !(r.kind === 'slot' && r.tier === selectedEntry.tier && r.insertIndex === noOpInsertIdx)
+    );
+  }, [tierManageEntries, tierManageEditMode, tierManageSelectedId, tierManageQuery]);
 
   // 🆕 분석 통계 (useMemo로 캐싱)
   // 🚀 v3.5.4: 분석 탭에서만 계산 (다른 탭에서 불필요한 전체 순회 방지)
@@ -37569,6 +37811,112 @@ function AppContent() {
       if (!isAutoMatchingRef.current) {
         Alert.alert("순위 변경 실패", e?.message ? `오류: ${e.message}` : "잠시 후 다시 시도해주세요.");
       }
+    }
+  }
+
+  // 🆕 v7.4.9: 배정탭 드롭 슬롯 이동 — 작품 → targetTier의 insertIndex 위치로 이동.
+  // 같은 tier 내 reorder도 cross-tier 이동도 동일 함수로 처리 (manual_tier+manual_order 원자 갱신).
+  // - 5대 불변조건 #1: 자동매칭 중 Alert 차단
+  // - hybrid 모드: 검증 세션 in-flight 가드 + 이동 작품만 enqueue (inline_chip 패턴 일치)
+  // - undo: 'tier_change' 타입 재사용 (기존 handler가 manual_tier+manual_order 모두 복원)
+  // - rebalance: ordered list를 (i+1)*100으로 일괄 UPDATE — gap=100 invariant 자동 회복
+  async function moveToTierPosition(novelId, targetTier, insertIndex) {
+    if (isAutoMatchingRef.current) return;
+    if (!novelId || !targetTier) return;
+    const mode = globalTierConfig.mode;
+
+    // hybrid 검증 세션 in-flight 가드 (swapRating 미러)
+    if (mode === "hybrid") {
+      const sessionNovelId = verificationSessionRef.current?.queueRow?.novel_id;
+      if (sessionNovelId === novelId) {
+        Alert.alert("검증 진행 중", "이 작품은 검증 시퀀스 종료 후 다시 시도해주세요.");
+        return;
+      }
+    }
+
+    try {
+      // 1) prev 캡처 (undo + suspicion 산정용) — execBatch 전에 prev tier 내 인덱스도 함께 잡아둠.
+      const prev = await first(
+        "SELECT manual_tier, manual_order, title FROM novels WHERE id=?",
+        [novelId]
+      );
+      if (!prev) return;
+      const prevTier = prev.manual_tier;
+      const prevOrder = Number(prev.manual_order) || 0;
+
+      // 같은 tier 내 이동 시 prev rank 비교용 — execBatch 이전에 미리 캡처 (reflow 후엔 정렬이 깨짐).
+      let prevSameTierIdx = -1;
+      if (prevTier && prevTier === targetTier) {
+        const prevSameTierRows = await all(
+          `SELECT id FROM novels WHERE manual_tier = ?
+           ORDER BY manual_order ASC, created_at ASC`,
+          [prevTier]
+        );
+        prevSameTierIdx = prevSameTierRows.findIndex(r => r.id === novelId);
+      }
+
+      // 2) targetTier의 모든 row를 manual_order ASC로 — 자기 자신 제외
+      const sameTier = await all(
+        `SELECT id FROM novels WHERE manual_tier = ? AND id != ?
+         ORDER BY manual_order ASC, created_at ASC`,
+        [targetTier, novelId]
+      );
+
+      // 3) insertIndex 위치에 novelId 삽입 후 (i+1)*100 batch UPDATE
+      const ordered = [...sameTier];
+      const clampedIdx = Math.max(0, Math.min(insertIndex, ordered.length));
+      ordered.splice(clampedIdx, 0, { id: novelId });
+
+      const queries = ordered.map((r, i) => ({
+        sql: "UPDATE novels SET manual_tier=?, manual_order=? WHERE id=?",
+        params: [targetTier, (i + 1) * 100, r.id],
+      }));
+      await execBatch(queries);
+
+      // 4) addTierHistoryEntry + pushUndo (기존 'tier_change' 타입 재사용)
+      const isTierChange = prevTier !== targetTier;
+      if (isTierChange) {
+        addTierHistoryEntry(novelId, prev.title, prevTier, targetTier);
+      }
+      pushUndo(
+        'tier_change',
+        {
+          id: novelId,
+          title: prev.title,
+          prevTier,
+          newTier: targetTier,
+          prevManualOrder: prevOrder,
+        },
+        `${prev.title} ${isTierChange ? `${prevTier || "?"}→${targetTier} 이동` : "순위 이동"}`
+      );
+
+      // 5) hybrid trigger — 이동 작품만 (inline_chip 패턴)
+      if (mode === "hybrid") {
+        try {
+          if (isTierChange) {
+            const order = getActiveTierOrder(globalTierConfig);
+            const fromIdx = prevTier ? order.indexOf(prevTier) : order.length;
+            const toIdx = order.indexOf(targetTier);
+            const suspicion = toIdx < fromIdx ? "underrated" : "overrated";
+            await enqueueVerification(novelId, "tier_change", suspicion, "dropSlot_tierMove");
+          } else if (prevSameTierIdx >= 0) {
+            const suspicion = clampedIdx < prevSameTierIdx ? "underrated" : "overrated";
+            await enqueueVerification(novelId, "order_change", suspicion, "dropSlot_orderMove");
+          }
+        } catch (e) {
+          console.warn("[v7.4.9] dropSlot enqueueVerification 실패:", e?.message);
+        }
+      }
+
+      await loadList(undefined, undefined, "tierManage");
+    } catch (e) {
+      console.warn("[v7.4.9] moveToTierPosition 오류:", e?.message);
+      if (!isAutoMatchingRef.current) {
+        Alert.alert("이동 실패", e?.message ? `오류: ${e.message}` : "잠시 후 다시 시도해주세요.");
+      }
+    } finally {
+      // 선택만 풀고 편집 모드는 유지 (사용자 결정)
+      setTierManageSelectedId(null);
     }
   }
 
@@ -40995,9 +41343,13 @@ async function importJSON() {
               }
             >
               {/* 🆕 티어표 이미지 캡처 영역 — Section 안의 FlatList만 wrap (외곽/title/📷 제외) */}
-              <View ref={tierImageRef} collapsable={false} style={{ backgroundColor: C.bg }}>
+              {/* 🛠️ v7.4.8: alignSelf:'stretch' + width:'100%' 명시 — Section 안으로 이동한 후
+                  Android captureRef가 측정 단계에서 좁은 너비로 잡혀 카드 우측 70%가 잘리던 회귀 차단.
+                  FlatList에도 width:'100%' 강제로 내부 콘텐츠가 부모 너비를 따르도록 보강. */}
+              <View ref={tierImageRef} collapsable={false} style={{ backgroundColor: C.bg, alignSelf: 'stretch', width: '100%' }}>
               {/* 🆕 v7.4.3 청크 캡처 — export 시엔 청크 slice만 mount (Bitmap 한계 우회) */}
               <FlatList
+                style={{ width: '100%' }}
                 data={isExportRendering ? (exportSlice || []) : rankedEntries}
                 keyExtractor={(entry, index) => String(entry?.item?.id || `rank-${index}`)}
                 initialNumToRender={isExportRendering ? Math.max((exportSlice || []).length, 1) : 8}
@@ -44187,17 +44539,96 @@ async function importJSON() {
               </View>
             </Section>
 
-            <Section title={`작품 목록 (${tierManageEntries.length}작)`}>
+            <Section
+              title={`작품 목록 (${tierManageEntries.length}작)`}
+              headerRight={
+                /* 🆕 v7.4.9: 편집 토글 (manual/hybrid에서만 노출).
+                   진입 시 검색어 자동 해제, 종료 시 선택도 함께 해제. */
+                (globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid") ? (
+                  <TouchableOpacity
+                    onPress={() => {
+                      if (tierManageEditMode) {
+                        setTierManageEditMode(false);
+                        setTierManageSelectedId(null);
+                      } else {
+                        if (tierManageQuery.trim()) setTierManageQuery("");
+                        setTierManageEditMode(true);
+                      }
+                    }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    style={{
+                      paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8,
+                      backgroundColor: tierManageEditMode ? C.primary : C.chip,
+                    }}
+                  >
+                    <Text style={{
+                      color: tierManageEditMode ? "#fff" : C.text,
+                      fontWeight: "700", fontSize: 13,
+                    }}>
+                      {tierManageEditMode ? "✓ 편집 완료" : "✏️ 편집"}
+                    </Text>
+                  </TouchableOpacity>
+                ) : null
+              }
+            >
+              {/* 🆕 v7.4.9: 편집 모드 안내 — 선택 후 슬롯 탭 가이드 */}
+              {tierManageEditMode && (
+                <View style={{
+                  marginBottom: 10, padding: 8, borderRadius: 8,
+                  backgroundColor: isDark ? "#1e3a5f" : "#eff6ff",
+                  borderWidth: 1, borderColor: isDark ? "#3b82f6" : "#93c5fd",
+                }}>
+                  <Text style={{ color: C.text, fontSize: 12 }}>
+                    {tierManageSelectedId
+                      ? "📍 점선 슬롯을 탭하면 그 위치로 이동합니다. (선택 해제: 같은 작품 다시 탭)"
+                      : "✋ 작품을 탭하면 선택되고, 작품 사이사이 슬롯이 나타납니다."}
+                  </Text>
+                </View>
+              )}
               <FlatList
-                data={tierManageEntries}
-                keyExtractor={(entry, index) => String(entry?.item?.id || `tm-${index}`)}
-                extraData={expandedNovelId}
+                data={tierManageDisplay}
+                keyExtractor={(entry, index) => {
+                  if (entry?.kind === 'slot') return entry.key || `slot-${index}`;
+                  return String(entry?.item?.id || `tm-${index}`);
+                }}
+                extraData={[expandedNovelId, tierManageEditMode, tierManageSelectedId]}
                 initialNumToRender={10}
                 maxToRenderPerBatch={8}
                 windowSize={5}
                 removeClippedSubviews={false}
                 scrollEnabled={false}
                 renderItem={({ item: entry, index }) => {
+                  // 🆕 v7.4.9: 드롭 슬롯 분기
+                  if (entry?.kind === 'slot') {
+                    const slotTierColor = getTierColor(entry.tier);
+                    const slotLabel =
+                      entry.variant === 'top'                ? "▲ 이 티어 상단"
+                    : entry.variant === 'bottom'             ? "▼ 이 티어 하단"
+                    : entry.variant === 'tierBoundaryUpper'  ? `▼ ${getTierLabel(entry.tier)} 하단`
+                    : entry.variant === 'tierBoundaryLower'  ? `▲ ${getTierLabel(entry.tier)} 상단`
+                    : "↳ 여기로 이동";
+                    return (
+                      <TouchableOpacity
+                        onPress={() => {
+                          const movedId = tierManageSelectedIdRef.current || tierManageSelectedId;
+                          if (!movedId) return;
+                          moveToTierPosition(movedId, entry.tier, entry.insertIndex);
+                        }}
+                        hitSlop={{ top: 4, bottom: 4, left: 8, right: 8 }}
+                        style={{
+                          height: 28, marginBottom: 8, borderRadius: 8,
+                          borderWidth: 2, borderStyle: 'dashed',
+                          borderColor: slotTierColor, backgroundColor: C.bg,
+                          alignItems: "center", justifyContent: "center",
+                        }}
+                      >
+                        <Text style={{ color: slotTierColor, fontSize: 12, fontWeight: "700" }}>
+                          {slotLabel}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  }
+
                   const { item, rank, tier } = entry || {};
                   if (!item) return null;
                   const tierColor = getTierColor(tier);
@@ -44205,31 +44636,56 @@ async function importJSON() {
                   // 🆕 v7.0: hybrid 모드에서도 ▲/▼ 활성 (manual_order swap)
                   const isManualOnly = globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid";
                   const hasQuery = tierManageQuery.trim().length > 0;
+                  const isSelected = tierManageEditMode && tierManageSelectedId === item.id;
 
                   // 같은 티어 내 인접 항목 찾기 (▲/▼용)
                   const sameTierEntries = tierManageEntries.filter(e => e.tier === tier);
                   const posInTier = sameTierEntries.findIndex(e => e.item.id === item.id);
 
+                  // 🆕 v7.4.9: 편집 모드일 때 카드 전체 탭이 select 토글
+                  const onCardPress = () => {
+                    if (!tierManageEditMode) return;
+                    // hybrid 검증 세션 in-flight 가드 (선택 차단)
+                    if (verificationSession?.queueRow?.novel_id === item.id) {
+                      Alert.alert("검증 진행 중", "이 작품은 검증 시퀀스 종료 후 선택할 수 있습니다.");
+                      return;
+                    }
+                    setTierManageSelectedId(prev => prev === item.id ? null : item.id);
+                  };
+
                   return (
                     <View style={{ marginBottom: 8 }}>
-                      <View
+                      <TouchableOpacity
+                        activeOpacity={tierManageEditMode ? 0.6 : 1}
+                        onPress={onCardPress}
                         style={{
                           flexDirection: "row",
                           alignItems: "center",
                           padding: 12,
                           borderRadius: 12,
-                          borderWidth: 2,
-                          borderColor: isExpanded ? tierColor : C.line,
-                          backgroundColor: C.card,
+                          borderWidth: isSelected ? 3 : 2,
+                          borderColor: isSelected ? C.primary :
+                                       isExpanded ? tierColor : C.line,
+                          backgroundColor: isSelected ? (isDark ? "#1e293b" : "#eff6ff") : C.card,
                         }}
                       >
+                        {/* 🆕 v7.4.9: 표지 이미지 (편집 모드면 onPress 비활성 — 카드 전체 탭이 select) */}
+                        <CoverImage
+                          uri={item.cover_image}
+                          platforms={item.platforms}
+                          platformCovers={platformCovers}
+                          size={44}
+                          theme={C}
+                          onPress={tierManageEditMode ? undefined : setCoverViewerUri}
+                        />
+
                         {/* 순위 */}
                         <Text style={{ color: C.sub, fontWeight: "700", fontSize: 13, width: 30, textAlign: "center" }}>
                           {rank}
                         </Text>
 
                         {/* 제목 + 작가 */}
-                        <View style={{ flex: 1, marginHorizontal: 8 }}>
+                        <View style={{ flex: 1, marginHorizontal: 4 }}>
                           <Text style={{ color: C.text, fontWeight: "700", fontSize: 14 }} numberOfLines={1}>
                             {item.title}
                           </Text>
@@ -44240,7 +44696,7 @@ async function importJSON() {
                           ) : null}
                         </View>
 
-                        {/* 티어 배지 (탭하면 인라인 확장) */}
+                        {/* 티어 배지 (탭하면 인라인 확장 — 편집 모드에서도 동작) */}
                         <TouchableOpacity
                           onPress={() => setExpandedNovelId(isExpanded ? null : item.id)}
                           style={{
@@ -44253,8 +44709,8 @@ async function importJSON() {
                           </Text>
                         </TouchableOpacity>
 
-                        {/* ▲/▼ (manual 모드 + 검색 미활성 시만) */}
-                        {isManualOnly && !hasQuery && (
+                        {/* ▲/▼ (manual 모드 + 검색 미활성 + 편집 모드 OFF 시만) */}
+                        {!tierManageEditMode && isManualOnly && !hasQuery && (
                           <View style={{ marginLeft: 6, gap: 2 }}>
                             <TouchableOpacity
                               disabled={posInTier <= 0}
@@ -44284,7 +44740,17 @@ async function importJSON() {
                             </TouchableOpacity>
                           </View>
                         )}
-                      </View>
+
+                        {/* 🆕 v7.4.9: 편집 모드에서 선택 시 "선택됨" 핀 (▲/▼ 자리 대체) */}
+                        {isSelected && (
+                          <View style={{
+                            marginLeft: 6, paddingHorizontal: 8, paddingVertical: 4,
+                            borderRadius: 6, backgroundColor: C.primary,
+                          }}>
+                            <Text style={{ color: "#fff", fontSize: 11, fontWeight: "800" }}>선택됨</Text>
+                          </View>
+                        )}
+                      </TouchableOpacity>
 
                       {/* 인라인 티어 선택 (확장 시) */}
                       {isExpanded && (
