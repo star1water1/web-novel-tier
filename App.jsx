@@ -2,9 +2,39 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.4.7 (v7.4.3 plan 의도 복원 — Section title 캡처 제외, 헤더 중복 차단) ║
+ * ║  버전: 7.4.8 (v7.4.7 사후 hotfix — 캡처 너비 회귀 차단, 카드 우측 잘림 수정)   ║
  * ║  최종 수정: 2026-05-10                                                        ║
- * ║  총 라인 수: 약 53,700줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 53,705줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.4.8 캡처 너비 회귀 hotfix — 카드 우측 70% 잘림 차단 (2026-05-10)         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [증상] v7.4.7 적용 후 순위탭 export 결과 이미지에서 카드 우측 70% 이상이       ║
+ * ║ 잘려 저장됨. 좌측 표지(55dp) + 일부 (#순위/티어 칩 시작) 정도만 보이고 제목/    ║
+ * ║ 작가/장르/플랫폼/회차 텍스트가 모두 사라짐. 위/아래(높이) 측면은 정상.          ║
+ * ║                                                                              ║
+ * ║ [원인] v7.4.7에서 <View ref={tierImageRef}>를 Section 외곽에서 Section 안으로  ║
+ * ║ 이동(트리 swap). 이때 새 위치의 View가 명시적 width 없이 부모 stretch 기본값에 ║
+ * ║ 의존했는데, Android captureRef가 측정 시점 race로 native getWidth()를 좁게     ║
+ * ║ 잡아 좁은 너비로 capture됨(콘텐츠 좌측만 픽셀화). v7.4.6 setup(Section을      ║
+ * ║ wrap하는 외곽 View)에서는 ScrollView content 영역이 직접 부모라 측정 안정적.   ║
+ * ║                                                                              ║
+ * ║ [수정] App.jsx:40998~ — tierImageRef View와 FlatList에 명시적 너비 강제:       ║
+ * ║   <View ref={tierImageRef} style={{ ..., alignSelf:'stretch', width:'100%' }}>║
+ * ║     <FlatList style={{ width:'100%' }} ... />                                  ║
+ * ║                                                                              ║
+ * ║ • 사용자 결정: v7.4.7 트리 구조(Section 안의 View) 그대로 유지 (헤더 중복      ║
+ * ║   차단 효과 보존). width 명시만 추가.                                          ║
+ * ║ • alignSelf:'stretch' + width:'100%'는 default와 동일 의미지만 명시함으로써    ║
+ * ║   measure-time race를 방지(layout 단계에서 너비 강제 결정).                    ║
+ * ║                                                                              ║
+ * ║ [영향]                                                                          ║
+ * ║ • 메인 화면 외관: 변화 없음 (Section content 영역 그대로 채움)                  ║
+ * ║ • 캡처 결과 너비: Section content width(예: 296dp) 그대로 — 카드 전체 width   ║
+ * ║   가 saved image에 픽셀화. 우측 잘림 해소.                                     ║
+ * ║ • measureAllCards/카드 경계 스냅: 좌표 산식 무관(절대 Y 기반).                  ║
+ * ║ • 5대 불변조건: 무관. 메모리/race/큐 영향 0.                                   ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11260,7 +11290,7 @@ const Section = ({ title, headerRight, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.4.7";
+const APP_VERSION = "7.4.8";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -11286,6 +11316,18 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.4.8", date: "2026-05-10",
+    title: "🛠️ v7.4.7 hotfix — 순위탭 export 카드 우측 70% 잘림 수정",
+    highlights: [
+      { type: "fix", text: "🛠️ 순위탭 이미지 내보내기 결과에서 카드 우측 텍스트(제목/작가/장르/플랫폼)가 잘려 저장되던 회귀 수정 — 좌측 표지 + #순위만 보이던 문제" },
+    ],
+    details: [
+      { type: "fix", text: "App.jsx:40998~ tierImageRef View와 FlatList에 alignSelf:'stretch' + width:'100%' 명시 — v7.4.7 트리 swap(View가 Section 안으로 이동) 이후 Android captureRef가 measure-time race로 좁은 너비를 잡던 회귀 차단" },
+      { type: "fix", text: "default(parent stretch)와 동일 의미지만 명시 강제로 layout 단계에서 너비 결정 — captureRef 호출 전에 native getWidth가 안정적으로 Section content width 반환" },
+      { type: "fix", text: "v7.4.7 트리 구조(Section 안의 View) 그대로 유지 — 헤더 중복 차단 효과 보존. 메인 화면 외관/카드 경계 스냅/5대 불변조건 모두 영향 0" },
+    ],
+  },
   {
     version: "7.4.7", date: "2026-05-10",
     title: "🛠️ 캡처 영역 재구성 — Section title 헤더 중복 차단",
@@ -40995,9 +41037,13 @@ async function importJSON() {
               }
             >
               {/* 🆕 티어표 이미지 캡처 영역 — Section 안의 FlatList만 wrap (외곽/title/📷 제외) */}
-              <View ref={tierImageRef} collapsable={false} style={{ backgroundColor: C.bg }}>
+              {/* 🛠️ v7.4.8: alignSelf:'stretch' + width:'100%' 명시 — Section 안으로 이동한 후
+                  Android captureRef가 측정 단계에서 좁은 너비로 잡혀 카드 우측 70%가 잘리던 회귀 차단.
+                  FlatList에도 width:'100%' 강제로 내부 콘텐츠가 부모 너비를 따르도록 보강. */}
+              <View ref={tierImageRef} collapsable={false} style={{ backgroundColor: C.bg, alignSelf: 'stretch', width: '100%' }}>
               {/* 🆕 v7.4.3 청크 캡처 — export 시엔 청크 slice만 mount (Bitmap 한계 우회) */}
               <FlatList
+                style={{ width: '100%' }}
                 data={isExportRendering ? (exportSlice || []) : rankedEntries}
                 keyExtractor={(entry, index) => String(entry?.item?.id || `rank-${index}`)}
                 initialNumToRender={isExportRendering ? Math.max((exportSlice || []).length, 1) : 8}
