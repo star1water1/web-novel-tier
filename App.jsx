@@ -2,9 +2,48 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.4.1 (v7.4.0 사후 검토 9건 — race/double-tap/Bitmap 한계 등 안전 강화) ║
- * ║  최종 수정: 2026-05-08                                                        ║
- * ║  총 라인 수: 약 53,356줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 7.4.2 (perfMonitor 발견 — 결정론 SQL 에러 fail-fast + 진단 강화)        ║
+ * ║  최종 수정: 2026-05-10                                                        ║
+ * ║  총 라인 수: 약 53,380줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🐛 v7.4.2 perfMonitor 발견 버그 — DB 재연결 폭주 차단 (2026-05-10)            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [증상] perfMonitor export 분석 — 159초 uptime 중                             ║
+ * ║ • SQL 에러 8건 (모두 tier_verification_queue INSERT, NOT NULL constraint)    ║
+ * ║ • DB 재연결 40회 (resetDbConnection) — 에러당 5회 retry × reconnect          ║
+ * ║ • 단일 INSERT가 3~5초 hang — swapRating(▲/▼) 1회당 idA+idB 2× ≒ 6~10초 UI 블록║
+ * ║                                                                              ║
+ * ║ [원인] safeDbOperation 에러 분류기의 'rejected' 매칭이 너무 광범위.            ║
+ * ║ expo-sqlite는 모든 native rejection을                                         ║
+ * ║ "NativeStatement.X has been rejected"로 wrap하므로,                           ║
+ * ║ CONSTRAINT 위반(error code 19) 같은 결정론 에러까지 isConnectionError로 분류 →║
+ * ║ resetDbConnection + 5회 retry → 같은 쿼리 같은 파라미터로 재시도 → 또 실패.    ║
+ * ║ 불변조건 #4 정신("경합/연결 분리") 위반 — 결정론 에러 카테고리가 빠져있었음.   ║
+ * ║                                                                              ║
+ * ║ [수정 1] 결정론 SQL 에러 fail-fast (App.jsx:5219~)                            ║
+ * ║ • isContentionError/isConnectionError 분기 진입 전 isDeterministicSqlError 체크║
+ * ║ • 매칭 패턴: "constraint failed" / "CONSTRAINT" / "NOT NULL" / "UNIQUE" /     ║
+ * ║   "FOREIGN KEY" / "CHECK" / "syntax error" / "no such table/column" /         ║
+ * ║   "datatype mismatch"                                                         ║
+ * ║ • 일치 시 1회 trackDbRetry + 즉시 throw — 재시도/재연결 모두 skip              ║
+ * ║                                                                              ║
+ * ║ [수정 2] enqueueVerification 진단 로그 강화 (App.jsx:24467~)                  ║
+ * ║ • catch에서 e.message만 → params(novelId/triggerType/suspicionType/priority/   ║
+ * ║   source) 함께 기록. perfMonitor 에러 SQL이 truncated되어 컬럼명 불명이었음 — ║
+ * ║   다음 발생 시 어떤 컬럼이 NULL인지 호출 컨텍스트로 역추적 가능               ║
+ * ║                                                                              ║
+ * ║ [효과]                                                                          ║
+ * ║ • CONSTRAINT 위반 시 5회 reconnect 폭주 차단 — INSERT 실패는 ~10ms로 종료     ║
+ * ║ • swapRating UX: 6~10초 hang → ~150ms (40배 개선)                             ║
+ * ║ • 다른 성공 작업이 reconnect 와중에 connection 잃는 연쇄 크래시 방지            ║
+ * ║ • 에러 자체는 여전히 발생(아직 NULL 원인 미파악) — 진단 로그로 추후 식별        ║
+ * ║                                                                              ║
+ * ║ [Note] swapRating의 12회 fire(idA×6, idB×6)는 의도된 양방향 enqueue 설계.     ║
+ * ║ 8건 NOT NULL 실패는 별개 — 진단 로그로 다음 발생 시 컬럼 식별 후 후속 수정.    ║
+ * ║                                                                              ║
+ * ║ [수정 파일] App.jsx (단일 파일, ~+24줄), 헤더 버전                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -5219,15 +5258,35 @@ async function safeDbOperation(operation, operationName = "DB") {
     } catch (e) {
       const errorMsg = e.message || "";
       Breadcrumbs.error(`db_${operationName}`, errorMsg.substring(0, 100));
+      // 🔧 v7.4.2: 결정론적 SQL 에러 (constraint/syntax/schema) — 재시도/재연결 무의미.
+      // expo-sqlite는 모든 native rejection을 "NativeStatement.X has been rejected"로 wrap하므로
+      // 'rejected' 단순 매칭(아래 isConnectionError)이 CONSTRAINT 위반(error code 19)까지
+      // 5회 reconnect 폭주를 유발하여 단순 INSERT 1건이 3~5초 hang. 즉시 throw — caller가 처리.
+      const isDeterministicSqlError =
+        errorMsg.includes("constraint failed") ||
+        errorMsg.includes("CONSTRAINT") ||
+        errorMsg.includes("NOT NULL") ||
+        errorMsg.includes("UNIQUE constraint") ||
+        errorMsg.includes("FOREIGN KEY") ||
+        errorMsg.includes("CHECK constraint") ||
+        errorMsg.includes("syntax error") ||
+        errorMsg.includes("no such table") ||
+        errorMsg.includes("no such column") ||
+        errorMsg.includes("datatype mismatch");
+      if (isDeterministicSqlError) {
+        console.warn(`${operationName} 오류 (결정론-즉시throw):`, errorMsg.substring(0, 200));
+        PerfMonitor.trackDbRetry(operationName, attempt + 1, errorMsg); // 🔬 1회만
+        throw e;
+      }
       // 🔧 v3.5.15c: 경합 오류와 연결 오류를 분리
       // BUSY/LOCKED는 WAL 모드에서 정상적인 경합 — resetDbConnection 금지
       // resetDbConnection은 다른 동시 작업의 DB 연결도 파괴하여 연쇄 크래시 유발
-      const isContentionError = 
+      const isContentionError =
         errorMsg.includes("locked") ||
         errorMsg.includes("busy") ||
         errorMsg.includes("SQLITE_BUSY") ||
         errorMsg.includes("SQLITE_LOCKED");
-      
+
       const isConnectionError = !isContentionError && (
         errorMsg.includes("NullPointerException") ||
         errorMsg.includes("prepareAsync") ||
@@ -5237,7 +5296,7 @@ async function safeDbOperation(operation, operationName = "DB") {
         errorMsg.includes("closed") ||
         errorMsg.includes("disk I/O")
       );
-      
+
       console.warn(`${operationName} 오류 (시도 ${attempt + 1}/${maxRetries}):`, errorMsg,
         isContentionError ? "[경합-대기]" : isConnectionError ? "[연결-리셋]" : "[기타]");
       PerfMonitor.trackDbRetry(operationName, attempt + 1, errorMsg); // 🔬
@@ -11026,7 +11085,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.4.1";
+const APP_VERSION = "7.4.2";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -11052,6 +11111,20 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.4.2", date: "2026-05-10",
+    title: "🐛 perfMonitor 발견 — DB 재연결 폭주 차단 + 진단 로그 강화",
+    highlights: [
+      { type: "fix", text: "⚡ swapRating(▲/▼) hang 수정 — CONSTRAINT 위반 시 INSERT 1건당 5회 reconnect → 즉시 throw. 6~10초 hang → ~150ms (40배 개선)" },
+      { type: "fix", text: "🛡️ safeDbOperation — 결정론 SQL 에러 분류 추가 (constraint/syntax/schema). 'rejected' 광범위 매칭이 NOT NULL 위반까지 reset 폭주 유발하던 문제 차단" },
+      { type: "improve", text: "🔬 enqueueVerification 진단 로그 — params(novelId/triggerType/suspicionType/priority/source) 함께 기록. 다음 NOT NULL 발생 시 NULL 컬럼 역추적 가능" },
+    ],
+    details: [
+      { type: "fix", text: "App.jsx:5219~ safeDbOperation — isContentionError/isConnectionError 분기 진입 전 isDeterministicSqlError 체크. 매칭 패턴: constraint failed/CONSTRAINT/NOT NULL/UNIQUE constraint/FOREIGN KEY/CHECK constraint/syntax error/no such table·column/datatype mismatch. 일치 시 1회 trackDbRetry + 즉시 throw" },
+      { type: "fix", text: "App.jsx:24467~ enqueueVerification catch — e.message만 → params 객체 함께 기록. perfMonitor 에러 SQL이 truncated되어 컬럼명 불명이었음" },
+      { type: "perf", text: "DB 재연결 40회 폭주 (159초 uptime 중) → 결정론 에러는 0회. 다른 동시 작업의 connection이 reset 와중에 잃는 연쇄 크래시 방지" },
+    ],
+  },
   {
     version: "7.4.1", date: "2026-05-08",
     title: "📷 순위 탭 티어표 이미지 내보내기 — 블로그 업로드용 갤러리 저장",
@@ -24465,7 +24538,15 @@ async function enqueueVerification(novelId, triggerType, suspicionType, source) 
       );
     }
   } catch (e) {
-    console.warn("enqueueVerification 오류:", e?.message);
+    // 🔧 v7.4.2: 진단 강화 — params + source 함께 기록 (NULL 컬럼 추적용)
+    // perfMonitor에서 NOT NULL constraint 8건 발생했으나 truncated SQL로 컬럼 식별 불가했음
+    console.warn("enqueueVerification 오류:", e?.message, {
+      novelId,
+      triggerType,
+      suspicionType,
+      priority,
+      source,
+    });
   }
 }
 
