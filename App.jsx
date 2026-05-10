@@ -2,9 +2,42 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.4.3 (순위 탭 이미지 내보내기 청크 캡처 — Bitmap 한계 우회)            ║
+ * ║  버전: 7.4.4 (수상탭 결과 이미지 내보내기 — 상별 1장씩 갤러리 저장)           ║
  * ║  최종 수정: 2026-05-10                                                        ║
- * ║  총 라인 수: 약 53,470줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 53,650줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📷 v7.4.4 수상 결과 이미지 내보내기 — 상별 독립 이미지 (2026-05-10)            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [Why] 사용자 요청 — 순위탭 v7.4.3 이미지 export처럼 수상 결과도 갤러리에        ║
+ * ║ 저장하고 싶음. 블로그/SNS 업로드용.                                            ║
+ * ║                                                                              ║
+ * ║ [정책] 상별 1장씩 (대상/우수상 각각 독립 이미지). 수상작이 많아 한 상의 캡처    ║
+ * ║ 결과가 한도 초과 시에만 페이지 높이로 균등 분할 fallback. 카드 경계 스냅은     ║
+ * ║ winner card별 ref 추가 필요해 우선 omit (블로그용 미세 잘림 허용).             ║
+ * ║                                                                              ║
+ * ║ [구현] AwardsScreen 안에 완결 (수상탭은 memo 컴포넌트 + map() 기반 — 순위탭의   ║
+ * ║ FlatList data slicing 패턴 재사용 불가).                                       ║
+ * ║ • awardImageRefs (Map<awardId, View ref>) — 각 award View에 ref 등록           ║
+ * ║ • exportAwardResults — 권한 → 후보작 임시 collapse → award loop:               ║
+ * ║   captureRef(awardNode) → height 측정 → ≤MAX_AWARD_PX(7000)면 그대로 저장,     ║
+ * ║   초과면 ImageManipulator로 페이지 높이 균등 분할 → MediaLibrary 저장         ║
+ * ║ • 진행 모달 자체 보유 (App() 모달과 분리, AwardsScreen scope 안에서 동작)       ║
+ * ║ • 취소 버튼 — isAwardExportingRef.current=false → loop break                  ║
+ * ║                                                                              ║
+ * ║ [수정 파일] App.jsx                                                             ║
+ * ║ • 19479~ AwardsScreen — awardImageRefs/isAwardExportingRef/awardExportProgress║
+ * ║   useRef/useState 추가 (3개)                                                  ║
+ * ║ • 19844~ AwardsScreen 내 exportAwardResults 함수 신설 (~140줄)                  ║
+ * ║ • 20381~ "수상 결과" 탭 상단에 "📷 수상 결과 이미지로 내보내기" 버튼            ║
+ * ║ • 20389~ 각 award View에 collapsable={false} + ref 등록                        ║
+ * ║ • 21568~ AwardsScreen return JSX 끝에 자체 진행 모달 + 취소 버튼               ║
+ * ║                                                                              ║
+ * ║ [효과]                                                                          ║
+ * ║ • 수상작 있는 상만 export (빈 상 skip)                                         ║
+ * ║ • 후보작 목록은 export 시 자동 collapse (부수 정보 제외, 깔끔한 결과 이미지)   ║
+ * ║ • Breadcrumb: award_export.{start, captured, oversized?, done, error}         ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11133,7 +11166,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.4.3";
+const APP_VERSION = "7.4.4";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -11159,6 +11192,24 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.4.4", date: "2026-05-10",
+    title: "📷 수상탭 결과 이미지 내보내기 — 상별 1장씩 갤러리 저장",
+    highlights: [
+      { type: "new", text: "📷 수상 결과 탭 \"수상 결과 이미지로 내보내기\" 버튼 — 대상/우수상 등 상별 독립 이미지로 갤러리에 저장 (블로그/SNS 업로드용)" },
+      { type: "new", text: "🎯 수상작 있는 상만 export (빈 상 skip). 한 상의 캡처가 한도 초과 시 페이지 높이로 자동 분할" },
+      { type: "improve", text: "🔻 export 시 후보작 목록 자동 collapse — 결과 이미지에 부수 정보 제외" },
+    ],
+    details: [
+      { type: "new", text: "App.jsx:19479~ AwardsScreen — awardImageRefs(Map<awardId, ref>) + isAwardExportingRef + awardExportProgress useState/useRef 3개 추가" },
+      { type: "new", text: "App.jsx:19844~ exportAwardResults 신설 (~140줄) — 권한 → 후보작 임시 collapse → award loop: captureRef → height 측정 → ≤7000px이면 그대로 저장, 초과면 ImageManipulator 균등 분할 → MediaLibrary 저장 → finally에서 collapse 원복" },
+      { type: "new", text: "App.jsx:20381~ \"수상 결과\" 탭 상단에 \"📷 수상 결과 이미지로 내보내기 (상별 1장씩)\" 버튼 — 수상작 있는 상이 1개 이상일 때만 노출" },
+      { type: "new", text: "App.jsx:20389~ 각 award View에 collapsable={false} + ref 등록 (Android partial captureRef를 위한 native View 보장)" },
+      { type: "new", text: "App.jsx:21568~ AwardsScreen 자체 진행 모달 — App() 모달과 분리, AwardsScreen scope 안에서 동작. 취소 버튼으로 isAwardExportingRef.current=false → loop break" },
+      { type: "new", text: "Breadcrumb: award_export.{start, captured, oversized?, done, error} — 진단 추적" },
+      { type: "new", text: "권한 — MediaLibrary.requestPermissionsAsync(true) writeOnly 모드 (Android 13+ privacy)" },
+    ],
+  },
   {
     version: "7.4.3", date: "2026-05-10",
     title: "🐛 순위 탭 이미지 내보내기 청크 캡처 — 작품 많아도 안정적으로 저장",
@@ -19509,6 +19560,29 @@ const AwardsScreen = memo(({
   // expandedView: { type: "image", uri, title, author } | { type: "quote", text, title } | null
   const [expandedView, setExpandedView] = useState(null);
 
+  // 🆕 v7.4.4: 수상 결과 이미지 내보내기 — 상별 1장씩 (대상/우수상 각각 독립 이미지).
+  // 한 상의 winner가 많아 캡처 결과가 한도 초과 시 균등 분할 fallback.
+  const awardImageRefs = useRef(new Map()); // Map<awardId, View ref>
+  const isAwardExportingRef = useRef(false); // 중복 실행 + 취소 플래그
+  const [awardExportProgress, setAwardExportProgress] = useState(null);
+  // shape: null | { current, total, label }
+  // id별 stable ref setter — inline arrow는 매 render 새 함수 → ref unmount/mount race 발생.
+  // useMemo + cache로 동일 id에 동일 setter 반환 (v7.4.1 cardRefsRef race 패턴 회피).
+  const getAwardRefSetter = useMemo(() => {
+    const cache = new Map();
+    return (id) => {
+      let setter = cache.get(id);
+      if (!setter) {
+        setter = (node) => {
+          if (node) awardImageRefs.current.set(id, node);
+          else awardImageRefs.current.delete(id);
+        };
+        cache.set(id, setter);
+      }
+      return setter;
+    };
+  }, []);
+
   // 🆕 v7.0: hybrid 모드 — manual_tier+manual_order 기준 정렬, 그 외(match)는 rating 기준
   // v7.0.1 (N3 fix): tierMode prop 우선 (memo 리렌더 보장), 미전달 시 globalTierConfig fallback
   const effectiveMode = (tierMode || globalTierConfig.mode);
@@ -19834,6 +19908,151 @@ const AwardsScreen = memo(({
   }, [candidates, awardWinners, compareNovels]);
   
   // 상 추가
+  // 🆕 v7.4.4 수상 결과 이미지 export — 상별 1장씩 (수상 없는 상은 skip).
+  // 단일 award captureRef → 한도(7000px) 안이면 그대로 저장, 초과 시 페이지 높이로 균등 분할.
+  // 카드 경계 스냅은 winner card별 ref 추가 필요해 우선 omit (블로그용 미세 잘림 허용).
+  async function exportAwardResults() {
+    if (isAwardExportingRef.current) return;
+    isAwardExportingRef.current = true;
+    Breadcrumbs.add("award_export", "start", { year: awardSelectedYear });
+
+    // 수상작 있는 award만 필터 (빈 award는 export 의미 없음)
+    const awardsWithWinners = currentYearAwards.filter(a => (awardWinners[a.id] || []).length > 0);
+    if (awardsWithWinners.length === 0) {
+      Alert.alert("알림", "내보낼 수상작이 없습니다.");
+      isAwardExportingRef.current = false;
+      return;
+    }
+
+    // 권한 — writeOnly (Android 13+ privacy)
+    const perm = await MediaLibrary.requestPermissionsAsync(true);
+    if (perm.status !== "granted") {
+      Alert.alert("권한 필요", "갤러리 저장 권한이 거부되어 진행할 수 없습니다.");
+      isAwardExportingRef.current = false;
+      return;
+    }
+
+    // 임시 후보작 collapse — 캡처에 후보작 목록 포함되지 않도록
+    const expandedSnapshot = expandedCandidates;
+    setExpandedCandidates({});
+    // setState 반영 + layout 안정화
+    await new Promise(r => requestAnimationFrame(() =>
+      requestAnimationFrame(() => setTimeout(r, 100))
+    ));
+
+    const pr = PixelRatio.get();
+    const MAX_AWARD_PX = 7000; // captureRef 결과 한도 (8192의 ~85%, 균등 분할 fallback 진입 임계치)
+    const pageHdp = Math.max(1, Dimensions.get("window").height - 80);
+    let totalSaved = 0;
+    let totalImages = awardsWithWinners.length; // 최소 1상=1장, 분할 시 ↑
+
+    setAwardExportProgress({
+      current: 0, total: totalImages,
+      label: `수상 결과 캡처 중 (1/${totalImages})`,
+    });
+
+    try {
+      for (let ai = 0; ai < awardsWithWinners.length; ai++) {
+        if (!isAwardExportingRef.current) break;
+        const award = awardsWithWinners[ai];
+        const node = awardImageRefs.current.get(award.id);
+        if (!node) continue; // ref 미등록 (스크린 전환 등) — skip
+
+        setAwardExportProgress({
+          current: totalSaved, total: totalImages,
+          label: `${award.name} 캡처 중 (${ai + 1}/${awardsWithWinners.length})`,
+        });
+
+        let awardUri = null;
+        try {
+          awardUri = await captureRef(node, {
+            format: "jpg",
+            quality: 0.92,
+            result: "tmpfile",
+          });
+          if (!isAwardExportingRef.current) break;
+          Breadcrumbs.add("award_export", "captured", { awardId: award.id });
+
+          // 결과 height 측정 (RNImage.getSize + ImageManipulator fallback — App() 헬퍼 동등)
+          let imgWpx = 0, imgHpx = 0;
+          try {
+            const sz = await new Promise((resolve, reject) => {
+              const t = setTimeout(() => reject(new Error("Image.getSize timeout")), 4000);
+              RNImage.getSize(awardUri, (w, h) => { clearTimeout(t); resolve({ w, h }); }, (e) => { clearTimeout(t); reject(e); });
+            });
+            imgWpx = sz.w; imgHpx = sz.h;
+          } catch {
+            const r = await ImageManipulator.manipulateAsync(awardUri, [], { compress: 1, format: ImageManipulator.SaveFormat.JPEG });
+            imgWpx = r.width; imgHpx = r.height;
+          }
+          if (!imgWpx || !imgHpx || imgHpx < 10) {
+            throw new Error(`${award.name} 캡처 크기 비정상: ${imgWpx}x${imgHpx}`);
+          }
+
+          // 한도 안이면 그대로 저장
+          if (imgHpx <= MAX_AWARD_PX) {
+            await MediaLibrary.saveToLibraryAsync(awardUri);
+            totalSaved++;
+            setAwardExportProgress({
+              current: totalSaved, total: totalImages,
+              label: `${award.name} 저장 완료`,
+            });
+          } else {
+            // 한도 초과 — 페이지 높이로 균등 분할 (블로그용 미세 잘림 허용)
+            Breadcrumbs.add("award_export", "oversized", { awardId: award.id, h: imgHpx });
+            const totalDP = imgHpx / pr;
+            const numPages = Math.max(1, Math.ceil(totalDP / pageHdp));
+            // 분할 페이지 수만큼 totalImages 보정
+            totalImages += (numPages - 1);
+            for (let pi = 0; pi < numPages; pi++) {
+              if (!isAwardExportingRef.current) break;
+              const startDP = pi * pageHdp;
+              const endDP = Math.min((pi + 1) * pageHdp, totalDP);
+              const cropped = await ImageManipulator.manipulateAsync(
+                awardUri,
+                [{ crop: {
+                  originX: 0,
+                  originY: Math.round(startDP * pr),
+                  width: imgWpx,
+                  height: Math.round((endDP - startDP) * pr),
+                }}],
+                { compress: 0.9, format: ImageManipulator.SaveFormat.JPEG }
+              );
+              await MediaLibrary.saveToLibraryAsync(cropped.uri);
+              await FileSystem.deleteAsync(cropped.uri, { idempotent: true }).catch(() => {});
+              totalSaved++;
+              setAwardExportProgress({
+                current: totalSaved, total: totalImages,
+                label: `${award.name} 분할 저장 (${pi + 1}/${numPages})`,
+              });
+            }
+          }
+        } finally {
+          if (awardUri) await FileSystem.deleteAsync(awardUri, { idempotent: true }).catch(() => {});
+        }
+      }
+
+      Breadcrumbs.add("award_export", "done", { saved: totalSaved, total: totalImages });
+      setAwardExportProgress(null);
+      if (totalSaved === totalImages && totalSaved > 0) {
+        Alert.alert("완료", `${totalSaved}장의 수상 결과 이미지가 갤러리에 저장되었습니다.`);
+      } else if (totalSaved > 0) {
+        Alert.alert("취소됨", `${totalSaved}/${totalImages}장이 저장된 후 중단되었습니다.`);
+      } else {
+        Alert.alert("취소됨", "저장 전 중단되었습니다.");
+      }
+    } catch (e) {
+      Breadcrumbs.add("award_export", "error", { msg: (e?.message || "").substring(0, 100) });
+      setAwardExportProgress(null);
+      Alert.alert("오류", `수상 결과 이미지 내보내기 실패: ${e?.message || "unknown"}`);
+    } finally {
+      isAwardExportingRef.current = false;
+      setAwardExportProgress(null);
+      // 후보작 collapse 상태 원복
+      setExpandedCandidates(expandedSnapshot);
+    }
+  }
+
   const addNewAward = () => {
     if (!newAwardName.trim()) {
       Alert.alert("알림", "상 이름을 입력해주세요.");
@@ -20377,12 +20596,44 @@ const AwardsScreen = memo(({
       {/* ===== 수상 결과 탭 ===== */}
       {awardSubTab === "results" && (
         <>
+          {/* 🆕 v7.4.4 이미지로 내보내기 — 상별 1장씩 갤러리 저장 */}
+          {currentYearAwards.some(a => (awardWinners[a.id] || []).length > 0) && (
+            <View style={{ marginBottom: 14 }}>
+              <TouchableOpacity
+                onPress={exportAwardResults}
+                disabled={!!awardExportProgress}
+                style={{
+                  paddingVertical: 12,
+                  paddingHorizontal: 16,
+                  borderRadius: 12,
+                  backgroundColor: awardExportProgress ? C.chip : "#f97316",
+                  alignItems: "center",
+                  borderWidth: awardExportProgress ? 1 : 0,
+                  borderColor: C.line,
+                }}
+              >
+                <Text style={{
+                  color: awardExportProgress ? C.sub : "#fff",
+                  fontWeight: "800",
+                  fontSize: 14,
+                }}>
+                  📷 수상 결과 이미지로 내보내기 (상별 1장씩)
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
           {/* 수상작 섹션 */}
           {currentYearAwards.map(award => {
             const winners = awardWinners[award.id] || [];
-            
+
             return (
-              <View key={award.id} style={{ marginBottom: 28 }}>
+              <View
+                key={award.id}
+                ref={getAwardRefSetter(award.id)}
+                collapsable={false}
+                style={{ marginBottom: 28, backgroundColor: C.bg }}
+              >
                 {/* 상 헤더 - 화려한 배너 스타일 */}
                 <View style={{
                   backgroundColor: award.color,
@@ -21379,6 +21630,41 @@ const AwardsScreen = memo(({
             <Text style={{ color: "rgba(255,255,255,0.8)", fontSize: 13 }}>탭하여 닫기</Text>
           </View>
         </TouchableOpacity>
+      </Modal>
+
+      {/* 🆕 v7.4.4 수상 결과 이미지 export 진행 모달 — 캡처 영역에 포함되지 않도록 별도 운영 */}
+      <Modal
+        visible={!!awardExportProgress}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {}}
+      >
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "center", alignItems: "center" }}>
+          <View style={{ backgroundColor: C.card, padding: 24, borderRadius: 16, alignItems: "center", minWidth: 260 }}>
+            <ActivityIndicator size="large" color={C.primary} />
+            <Text style={{ color: C.text, marginTop: 12, fontWeight: "700", textAlign: "center" }}>
+              {awardExportProgress?.label || "처리 중"}
+            </Text>
+            {awardExportProgress?.total > 0 && (
+              <Text style={{ color: C.sub, marginTop: 4 }}>
+                {awardExportProgress.current} / {awardExportProgress.total}
+              </Text>
+            )}
+            <View style={{ height: 12 }} />
+            <TouchableOpacity
+              onPress={() => { isAwardExportingRef.current = false; }}
+              style={{
+                paddingVertical: 10,
+                paddingHorizontal: 20,
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: C.line,
+              }}
+            >
+              <Text style={{ color: C.text, fontWeight: "700" }}>취소</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </Modal>
     </>
   );
