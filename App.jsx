@@ -2,9 +2,219 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.4.1 (v7.4.0 사후 검토 9건 — race/double-tap/Bitmap 한계 등 안전 강화) ║
- * ║  최종 수정: 2026-05-08                                                        ║
- * ║  총 라인 수: 약 53,356줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 7.4.7 (v7.4.3 plan 의도 복원 — Section title 캡처 제외, 헤더 중복 차단) ║
+ * ║  최종 수정: 2026-05-10                                                        ║
+ * ║  총 라인 수: 약 53,700줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.4.7 캡처 영역 재구성 — Section title 중복 차단 (2026-05-10)             ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [증상] v7.4.3 청크 캡처 첫 페이지에 헤더가 2번 노출:                            ║
+ * ║ ① Section title "순위 목록 (총 N작)" (Section 외곽 자체가 캡처에 포함)        ║
+ * ║ ② ListHeaderComponent inline Text (첫 청크 조건부 노출)                        ║
+ * ║                                                                              ║
+ * ║ [원인] v7.4.3 plan은 "Section title은 captureRef 영역 밖" 가정이었으나 실제    ║
+ * ║ 코드는 <View ref={tierImageRef}><Section><FlatList/></Section></View> 트리로  ║
+ * ║ Section이 ref 안에 있었음. 즉 Section의 title/외곽/padding이 캡처 결과 위쪽에  ║
+ * ║ 항상 포함됨. v7.4.5 검토 중 발견. 사용자 결정으로 plan 의도대로 복원.           ║
+ * ║                                                                              ║
+ * ║ [수정] App.jsx:40921~ 트리 swap — tierImageRef를 Section 밖에서 Section 안의   ║
+ * ║ FlatList wrap으로 이동:                                                        ║
+ * ║                                                                              ║
+ * ║   이전: <View ref={tierImageRef}><Section ...><FlatList/></Section></View>    ║
+ * ║   현재: <Section ...><View ref={tierImageRef}><FlatList/></View></Section>    ║
+ * ║                                                                              ║
+ * ║ • Section 외곽 카드 스타일/title/📷 버튼은 메인 화면 그대로 (변화 0)            ║
+ * ║ • 캡처 영역만 좁혀져 FlatList(+ListHeaderComponent)만 픽셀화                   ║
+ * ║ • 첫 청크: inline header 1번만 노출 (중복 해결)                                ║
+ * ║ • 다른 청크: 카드만 (이전과 동일)                                               ║
+ * ║                                                                              ║
+ * ║ [영향]                                                                          ║
+ * ║ • 메인 화면 외관: 변화 없음 (Section + 내부 View가 같은 자리에 그대로)          ║
+ * ║ • measureAllCards: tierImageRef 기준 좌표가 ListHeaderComponent height부터     ║
+ * ║   시작 (이전엔 Section padding 16+title+spacer 포함). 카드 경계 스냅 알고리즘은 ║
+ * ║   cardEndsDP 절대값만 사용하므로 정상 동작.                                     ║
+ * ║ • 캡처 결과 height 감소(~62dp = Section padding 32 + title 22 + spacer 8) →   ║
+ * ║   페이지 분할 수 미세 변화 가능. 카드 경계 스냅이 흡수.                         ║
+ * ║ • v7.4.6 isExportRendering ? null : ... 분기는 잔존 안전망(트리상 이미 밖이라  ║
+ * ║   없어도 무관). 보수적으로 유지.                                                ║
+ * ║                                                                              ║
+ * ║ [5대 불변조건] 무관. 메모리/race/큐 영향 0.                                     ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.4.6 v7.4.5 hotfix — 📷 버튼 캡처 포함 regression 차단 (2026-05-10)      ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [증상] v7.4.5에서 추가한 Section title 옆 📷 단축 버튼이 tierImageRef 안의     ║
+ * ║ Section.headerRight에 들어가 captureRef 결과 이미지마다 우상단에 📷 박힘.       ║
+ * ║                                                                              ║
+ * ║ [원인] tierImageRef → Section → headerRight 트리. captureRef는 tierImageRef    ║
+ * ║ 통째 캡처라 headerRight도 함께 픽셀화. v7.4.5 검토 시 누락한 케이스.            ║
+ * ║                                                                              ║
+ * ║ [수정] App.jsx:40889~ headerRight={isExportRendering ? null : <TouchableOpacity>}║
+ * ║ export 진행 중에는 null로 분기 — 진행 모달이 화면 가리므로 버튼 노출 불필요.    ║
+ * ║ 메인 화면(평소)에선 그대로 노출되어 단축 진입점 기능 유지.                      ║
+ * ║                                                                              ║
+ * ║ [영향 0]                                                                        ║
+ * ║ • 평소 사용성: 변화 없음 (버튼 그대로 노출, 클릭 동작 동일)                     ║
+ * ║ • 캡처 결과: 깨끗 (📷 버튼 사라짐). 청크 캡처 height에 미세 변화(~30dp 감소)    ║
+ * ║   가능하나 카드 경계 스냅 알고리즘이 흡수.                                      ║
+ * ║ • 5대 불변조건: 무관                                                            ║
+ * ║                                                                              ║
+ * ║ [잔여 검토 — 별도 결정 필요] v7.4.3 청크 캡처에서 Section title이 tierImageRef ║
+ * ║ 안에 있어 항상 캡처에 포함 + ListHeaderComponent의 inline header도 첫 청크에   ║
+ * ║ 노출 → 첫 청크 페이지에 헤더 중복 가능성. v7.4.3 plan 가정과 실제 코드 mismatch.║
+ * ║ 사용자 결정 후 별도 hotfix 예정 (이번 v7.4.6 범위 X).                           ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🎯 v7.4.5 순위탭 이미지 내보내기 접근성 (2026-05-10)                          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [Why] 사용자 피드백 — "이미지 내보내기" 버튼이 티어표 공유 Section 안에 있고   ║
+ * ║ 그 Section은 순위 목록 FlatList 아래 위치. 215개 작품 시 카드 다 스크롤해야    ║
+ * ║ 도달. 화면 진입 직후에도 트리거 가능하도록 단축 진입점 필요.                   ║
+ * ║                                                                              ║
+ * ║ [수정] Section 컴포넌트에 headerRight 슬롯 추가 + 순위 목록 Section title       ║
+ * ║ 옆에 작은 📷 아이콘 버튼 노출. 텍스트 공유는 그대로 (사용자 명시).             ║
+ * ║                                                                              ║
+ * ║ • App.jsx:11066~ Section({ title, headerRight, children }) — title에 flex:1   ║
+ * ║   + 우측 슬롯 조건부 렌더 (headerRight 미전달 시 null). 149개 기존 호출 모두   ║
+ * ║   backward compat.                                                            ║
+ * ║ • App.jsx:40485~ <Section title="순위 목록..." headerRight={📷 TouchableOpacity}>║
+ * ║   - hitSlop {top/bottom/left/right: 8} 터치 정확도 보강 (~38×38px 실 영역)    ║
+ * ║   - disabled 조건은 기존 하단 PrimaryButton과 동일 (isLoading || 0작 ||        ║
+ * ║     exportProgress)                                                            ║
+ * ║   - 비활성 시 chip 색, 활성 시 primary 색                                      ║
+ * ║                                                                              ║
+ * ║ [한계 인정] sticky header 미적용 — 사용자가 카드 중간/끝 스크롤 상태에선 위로  ║
+ * ║ 다시 올라와야 보임. 사용자가 이 옵션 선택했으므로 의도된 trade-off. 후속       ║
+ * ║ 요청 시 stickyHeaderIndices 검토.                                              ║
+ * ║                                                                              ║
+ * ║ [효과]                                                                          ║
+ * ║ • 화면 진입 직후 1탭으로 export 트리거 가능 (스크롤 0)                         ║
+ * ║ • 기존 하단 PrimaryButton 유지 — 카드 끝까지 갔을 때도 거기서 클릭 가능        ║
+ * ║ • Section 컴포넌트 generalization — 향후 다른 탭에 동일 패턴 재사용 가능       ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📷 v7.4.4 수상 결과 이미지 내보내기 — 상별 독립 이미지 (2026-05-10)            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [Why] 사용자 요청 — 순위탭 v7.4.3 이미지 export처럼 수상 결과도 갤러리에        ║
+ * ║ 저장하고 싶음. 블로그/SNS 업로드용.                                            ║
+ * ║                                                                              ║
+ * ║ [정책] 상별 1장씩 (대상/우수상 각각 독립 이미지). 수상작이 많아 한 상의 캡처    ║
+ * ║ 결과가 한도 초과 시에만 페이지 높이로 균등 분할 fallback. 카드 경계 스냅은     ║
+ * ║ winner card별 ref 추가 필요해 우선 omit (블로그용 미세 잘림 허용).             ║
+ * ║                                                                              ║
+ * ║ [구현] AwardsScreen 안에 완결 (수상탭은 memo 컴포넌트 + map() 기반 — 순위탭의   ║
+ * ║ FlatList data slicing 패턴 재사용 불가).                                       ║
+ * ║ • awardImageRefs (Map<awardId, View ref>) — 각 award View에 ref 등록           ║
+ * ║ • exportAwardResults — 권한 → 후보작 임시 collapse → award loop:               ║
+ * ║   captureRef(awardNode) → height 측정 → ≤MAX_AWARD_PX(7000)면 그대로 저장,     ║
+ * ║   초과면 ImageManipulator로 페이지 높이 균등 분할 → MediaLibrary 저장         ║
+ * ║ • 진행 모달 자체 보유 (App() 모달과 분리, AwardsScreen scope 안에서 동작)       ║
+ * ║ • 취소 버튼 — isAwardExportingRef.current=false → loop break                  ║
+ * ║                                                                              ║
+ * ║ [수정 파일] App.jsx                                                             ║
+ * ║ • 19479~ AwardsScreen — awardImageRefs/isAwardExportingRef/awardExportProgress║
+ * ║   useRef/useState 추가 (3개)                                                  ║
+ * ║ • 19844~ AwardsScreen 내 exportAwardResults 함수 신설 (~140줄)                  ║
+ * ║ • 20381~ "수상 결과" 탭 상단에 "📷 수상 결과 이미지로 내보내기" 버튼            ║
+ * ║ • 20389~ 각 award View에 collapsable={false} + ref 등록                        ║
+ * ║ • 21568~ AwardsScreen return JSX 끝에 자체 진행 모달 + 취소 버튼               ║
+ * ║                                                                              ║
+ * ║ [효과]                                                                          ║
+ * ║ • 수상작 있는 상만 export (빈 상 skip)                                         ║
+ * ║ • 후보작 목록은 export 시 자동 collapse (부수 정보 제외, 깔끔한 결과 이미지)   ║
+ * ║ • Breadcrumb: award_export.{start, captured, oversized?, done, error}         ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🐛 v7.4.3 이미지 내보내기 청크 캡처 — Android Bitmap 한계 우회 (2026-05-10)    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [증상] 215개 작품에서 "이미지로 내보내기" 클릭 시 즉시 실패:                    ║
+ * ║   Call to function 'Context.renderAsync' has been rejected.                   ║
+ * ║   → Caused by: Could not load the image: ReactNative-snapshot-image*.jpg      ║
+ * ║   → Caused by: java.lang.Exception: Loading bitmap failed                     ║
+ * ║                                                                              ║
+ * ║ [원인] 기존 v7.4.0/v7.4.1 구현은 단일 captureRef로 전체 FlatList 통째 캡처:    ║
+ * ║ • tierImageRef 안에 215개 카드를 모두 mount하고 한 번에 captureRef → 결과      ║
+ * ║   이미지가 카드당 ~330-400px @ PR3 × 215 = ~258,000px → Android Bitmap        ║
+ * ║   한계(~4096-8192px)의 30배 초과 → 파일은 디스크에 생성되나 RN/ImageManipulator ║
+ * ║   가 다시 load 시 OOM 실패. crop 분할은 캡처 후 단계라 의미 X.                  ║
+ * ║ • 사전 경고 임계값 20은 우회 가능 + 어차피 80% 가린 채 export는 사용자 의도 X. ║
+ * ║                                                                              ║
+ * ║ [수정] 청크 단위 mount/capture 반복 (data slicing 패턴, App.jsx:27613~)        ║
+ * ║ • exportSlice/exportChunkIdx 신규 state — FlatList data를 청크 slice로 일시 교체║
+ * ║ • planChunks(entries, pr) — DP 기반 packing. PLAN_CARD_DP=180dp 기준           ║
+ * ║   (실측 평균 130dp + 50dp 안전 마진), MAX_CHUNK_PX=6000(8192의 73%)             ║
+ * ║ • for loop: 청크별 setExportSliceAndWait → waitForAllCardsRendered →           ║
+ * ║   measureAllCards → captureRef → 카드경계 스냅 페이지 분할 → MediaLibrary 저장 ║
+ * ║ • 메모리 윈도우 가드: setIsExportRendering(true)와 동시에 setExportSlice([])    ║
+ * ║   → 첫 청크 setState 전까지 카드 mount 0개 (boost된 windowSize 무해)            ║
+ * ║ • Section header를 ListHeaderComponent로 이동 + 첫 청크에만 노출 — 단일 캡처   ║
+ * ║   동작 재현 (기존: 첫 페이지에만 헤더, 청크별 반복 시 regression)               ║
+ * ║                                                                              ║
+ * ║ [UX 변경]                                                                       ║
+ * ║ • 사전 경고 alert: "20개 초과" → "약 P장 저장됩니다" (P>5일 때). 갤러리 노이즈  ║
+ * ║   사전 동의 보존, 실패 공포 문구 제거.                                         ║
+ * ║ • 진행 모달: "청크 X/Y · 저장 중" + 누적 페이지 카운트. markup 변경 0줄.        ║
+ * ║ • 취소 체크 7곳 (긴 await 후마다) — 청크 도중 cancel 시 chunkUri 정리.         ║
+ * ║                                                                              ║
+ * ║ [효과]                                                                          ║
+ * ║ • 215개 → 약 20청크 (~20초). 임의 N개 안정적 저장. 화질 다운스케일 X.           ║
+ * ║ • 단일 captureRef 비트맵 한계 우회 — 청크당 최대 6000px (한계 73%) 안전 마진.   ║
+ * ║ • 메인 list/UX 영향 0 (export 종료 시 finally에서 setExportSlice(null)).        ║
+ * ║                                                                              ║
+ * ║ [수정 파일] App.jsx (단일 파일, ~+90줄)                                         ║
+ * ║ • 26989-26999: 신규 state (exportSlice, exportChunkIdx)                       ║
+ * ║ • 27526~: 신규 헬퍼 (상수 4개 + planChunks + estimateExportPageCount +         ║
+ * ║   setExportSliceAndWait)                                                      ║
+ * ║ • 27613~27765: exportTierImages 재작성 (chunk loop)                           ║
+ * ║ • 40485~40504: FlatList data + boost 식 + ListHeaderComponent                 ║
+ * ║                                                                              ║
+ * ║ [검증] node 단위 테스트 dry-run — N ∈ {1, 14, 15, 50, 215, 500} × pr ∈ {2, 3} ║
+ * ║ 모두 통과: coverage 빈틈 0, 청크 budget ≤ 6000px, ids 정합. 카드경계 스냅 OK.   ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🐛 v7.4.2 perfMonitor 발견 버그 — DB 재연결 폭주 차단 (2026-05-10)            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [증상] perfMonitor export 분석 — 159초 uptime 중                             ║
+ * ║ • SQL 에러 8건 (모두 tier_verification_queue INSERT, NOT NULL constraint)    ║
+ * ║ • DB 재연결 40회 (resetDbConnection) — 에러당 5회 retry × reconnect          ║
+ * ║ • 단일 INSERT가 3~5초 hang — swapRating(▲/▼) 1회당 idA+idB 2× ≒ 6~10초 UI 블록║
+ * ║                                                                              ║
+ * ║ [원인] safeDbOperation 에러 분류기의 'rejected' 매칭이 너무 광범위.            ║
+ * ║ expo-sqlite는 모든 native rejection을                                         ║
+ * ║ "NativeStatement.X has been rejected"로 wrap하므로,                           ║
+ * ║ CONSTRAINT 위반(error code 19) 같은 결정론 에러까지 isConnectionError로 분류 →║
+ * ║ resetDbConnection + 5회 retry → 같은 쿼리 같은 파라미터로 재시도 → 또 실패.    ║
+ * ║ 불변조건 #4 정신("경합/연결 분리") 위반 — 결정론 에러 카테고리가 빠져있었음.   ║
+ * ║                                                                              ║
+ * ║ [수정 1] 결정론 SQL 에러 fail-fast (App.jsx:5219~)                            ║
+ * ║ • isContentionError/isConnectionError 분기 진입 전 isDeterministicSqlError 체크║
+ * ║ • 매칭 패턴: "constraint failed" / "CONSTRAINT" / "NOT NULL" / "UNIQUE" /     ║
+ * ║   "FOREIGN KEY" / "CHECK" / "syntax error" / "no such table/column" /         ║
+ * ║   "datatype mismatch"                                                         ║
+ * ║ • 일치 시 1회 trackDbRetry + 즉시 throw — 재시도/재연결 모두 skip              ║
+ * ║                                                                              ║
+ * ║ [수정 2] enqueueVerification 진단 로그 강화 (App.jsx:24467~)                  ║
+ * ║ • catch에서 e.message만 → params(novelId/triggerType/suspicionType/priority/   ║
+ * ║   source) 함께 기록. perfMonitor 에러 SQL이 truncated되어 컬럼명 불명이었음 — ║
+ * ║   다음 발생 시 어떤 컬럼이 NULL인지 호출 컨텍스트로 역추적 가능               ║
+ * ║                                                                              ║
+ * ║ [효과]                                                                          ║
+ * ║ • CONSTRAINT 위반 시 5회 reconnect 폭주 차단 — INSERT 실패는 ~10ms로 종료     ║
+ * ║ • swapRating UX: 6~10초 hang → ~150ms (40배 개선)                             ║
+ * ║ • 다른 성공 작업이 reconnect 와중에 connection 잃는 연쇄 크래시 방지            ║
+ * ║ • 에러 자체는 여전히 발생(아직 NULL 원인 미파악) — 진단 로그로 추후 식별        ║
+ * ║                                                                              ║
+ * ║ [Note] swapRating의 12회 fire(idA×6, idB×6)는 의도된 양방향 enqueue 설계.     ║
+ * ║ 8건 NOT NULL 실패는 별개 — 진단 로그로 다음 발생 시 컬럼 식별 후 후속 수정.    ║
+ * ║                                                                              ║
+ * ║ [수정 파일] App.jsx (단일 파일, ~+24줄), 헤더 버전                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -5219,15 +5429,35 @@ async function safeDbOperation(operation, operationName = "DB") {
     } catch (e) {
       const errorMsg = e.message || "";
       Breadcrumbs.error(`db_${operationName}`, errorMsg.substring(0, 100));
+      // 🔧 v7.4.2: 결정론적 SQL 에러 (constraint/syntax/schema) — 재시도/재연결 무의미.
+      // expo-sqlite는 모든 native rejection을 "NativeStatement.X has been rejected"로 wrap하므로
+      // 'rejected' 단순 매칭(아래 isConnectionError)이 CONSTRAINT 위반(error code 19)까지
+      // 5회 reconnect 폭주를 유발하여 단순 INSERT 1건이 3~5초 hang. 즉시 throw — caller가 처리.
+      const isDeterministicSqlError =
+        errorMsg.includes("constraint failed") ||
+        errorMsg.includes("CONSTRAINT") ||
+        errorMsg.includes("NOT NULL") ||
+        errorMsg.includes("UNIQUE constraint") ||
+        errorMsg.includes("FOREIGN KEY") ||
+        errorMsg.includes("CHECK constraint") ||
+        errorMsg.includes("syntax error") ||
+        errorMsg.includes("no such table") ||
+        errorMsg.includes("no such column") ||
+        errorMsg.includes("datatype mismatch");
+      if (isDeterministicSqlError) {
+        console.warn(`${operationName} 오류 (결정론-즉시throw):`, errorMsg.substring(0, 200));
+        PerfMonitor.trackDbRetry(operationName, attempt + 1, errorMsg); // 🔬 1회만
+        throw e;
+      }
       // 🔧 v3.5.15c: 경합 오류와 연결 오류를 분리
       // BUSY/LOCKED는 WAL 모드에서 정상적인 경합 — resetDbConnection 금지
       // resetDbConnection은 다른 동시 작업의 DB 연결도 파괴하여 연쇄 크래시 유발
-      const isContentionError = 
+      const isContentionError =
         errorMsg.includes("locked") ||
         errorMsg.includes("busy") ||
         errorMsg.includes("SQLITE_BUSY") ||
         errorMsg.includes("SQLITE_LOCKED");
-      
+
       const isConnectionError = !isContentionError && (
         errorMsg.includes("NullPointerException") ||
         errorMsg.includes("prepareAsync") ||
@@ -5237,7 +5467,7 @@ async function safeDbOperation(operation, operationName = "DB") {
         errorMsg.includes("closed") ||
         errorMsg.includes("disk I/O")
       );
-      
+
       console.warn(`${operationName} 오류 (시도 ${attempt + 1}/${maxRetries}):`, errorMsg,
         isContentionError ? "[경합-대기]" : isConnectionError ? "[연결-리셋]" : "[기타]");
       PerfMonitor.trackDbRetry(operationName, attempt + 1, errorMsg); // 🔬
@@ -11004,7 +11234,8 @@ const OutlineButton = memo(({ title, onPress, style, color = C.sub }) => (
     <Text style={{ color, fontSize: 15, fontWeight: "700" }}>{title}</Text>
   </TouchableOpacity>
 ));
-const Section = ({ title, children }) => (
+// 🆕 v7.4.5 headerRight: title 우측 액션 슬롯 (optional). 미전달 시 기존과 동일 렌더.
+const Section = ({ title, headerRight, children }) => (
   <View
     style={{
       backgroundColor: C.card,
@@ -11015,9 +11246,12 @@ const Section = ({ title, children }) => (
       borderColor: C.line,
     }}
   >
-    <Text style={{ fontWeight: "800", fontSize: 18, color: C.text }}>
-      {title}
-    </Text>
+    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+      <Text style={{ fontWeight: "800", fontSize: 18, color: C.text, flex: 1 }}>
+        {title}
+      </Text>
+      {headerRight ? <View style={{ marginLeft: 8 }}>{headerRight}</View> : null}
+    </View>
     <View style={{ height: 8 }} />
     {children}
   </View>
@@ -11026,7 +11260,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.4.1";
+const APP_VERSION = "7.4.7";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -11052,6 +11286,93 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.4.7", date: "2026-05-10",
+    title: "🛠️ 캡처 영역 재구성 — Section title 헤더 중복 차단",
+    highlights: [
+      { type: "fix", text: "📷 순위탭 export 첫 페이지에 헤더가 2번 노출되던 문제 수정 — Section title이 captureRef 영역 밖으로 분리되어 ListHeaderComponent inline header만 노출" },
+    ],
+    details: [
+      { type: "fix", text: "App.jsx:40921~ 트리 swap — <View ref={tierImageRef}><Section><FlatList/></Section></View> → <Section><View ref={tierImageRef}><FlatList/></View></Section>. Section 외곽/title/📷은 메인 화면 그대로, 캡처 영역만 FlatList wrap으로 좁힘" },
+      { type: "fix", text: "v7.4.3 plan 의도(\"Section title은 captureRef 영역 밖\")를 실제 코드에 반영. 첫 청크 페이지에 inline header 1번만 노출 (중복 해결). 다른 청크는 카드만" },
+      { type: "fix", text: "measureAllCards/카드 경계 스냅: tierImageRef 기준 좌표가 ListHeaderComponent height부터 시작하지만 cardEndsDP 절대값만 사용하므로 정상 동작. 페이지 분할 수 미세 변화 가능 (~62dp 감소) — 카드 경계 스냅이 흡수" },
+      { type: "fix", text: "v7.4.6 isExportRendering ? null 분기는 잔존 안전망 (트리상 이미 밖이라 없어도 무관, 보수적 유지)" },
+    ],
+  },
+  {
+    version: "7.4.6", date: "2026-05-10",
+    title: "🛠️ v7.4.5 hotfix — 📷 단축 버튼이 캡처 결과에 박히던 regression 수정",
+    highlights: [
+      { type: "fix", text: "🛠️ v7.4.5 추가한 Section title 옆 📷 버튼이 export 이미지 우상단에 박히던 문제 수정 — export 진행 중에는 버튼 숨김. 평소엔 그대로 노출" },
+    ],
+    details: [
+      { type: "fix", text: "App.jsx:40889~ headerRight={isExportRendering ? null : <TouchableOpacity>} — Section이 tierImageRef 안에 있어 captureRef가 헤더 슬롯도 함께 픽셀화하던 트리 구조 회피. 진행 모달이 화면 가리므로 export 중 버튼 노출 불필요" },
+      { type: "fix", text: "캡처 결과 깨끗(📷 사라짐). 청크 캡처 height ~30dp 감소 가능하나 카드 경계 스냅이 흡수. 평소 사용성/disabled 동작 변화 0" },
+    ],
+  },
+  {
+    version: "7.4.5", date: "2026-05-10",
+    title: "🎯 순위탭 이미지 내보내기 단축 진입점 — Section title 옆 📷 버튼",
+    highlights: [
+      { type: "improve", text: "📷 순위 목록 Section title 옆에 작은 📷 아이콘 버튼 추가 — 작품 많아도 카드 다 스크롤 안 하고 화면 상단에서 바로 export 가능" },
+      { type: "improve", text: "🧱 Section 컴포넌트 일반화 — headerRight prop으로 title 우측 액션 슬롯 지원 (149개 기존 호출 backward compat)" },
+    ],
+    details: [
+      { type: "improve", text: "App.jsx:11066~ Section({title, headerRight, children}) — title에 flex:1 + 우측 슬롯 조건부 렌더. headerRight 미전달 시 null 분기로 기존과 동일" },
+      { type: "improve", text: "App.jsx:40485~ 순위 목록 Section에 headerRight TouchableOpacity 전달 — hitSlop 8px로 ~38×38px 실 터치 영역, disabled 조건은 기존 하단 PrimaryButton과 동일(isLoading||0작||exportProgress)" },
+      { type: "improve", text: "기존 \"티어표 공유\" Section 하단 PrimaryButton 유지 — 두 위치 모두에서 export 가능. 텍스트 공유는 그대로 (사용자 결정)" },
+      { type: "improve", text: "한계: sticky header 미적용 — 카드 중간/끝 스크롤 상태에선 보이지 않음. 후속 요청 시 stickyHeaderIndices 검토" },
+    ],
+  },
+  {
+    version: "7.4.4", date: "2026-05-10",
+    title: "📷 수상탭 결과 이미지 내보내기 — 상별 1장씩 갤러리 저장",
+    highlights: [
+      { type: "new", text: "📷 수상 결과 탭 \"수상 결과 이미지로 내보내기\" 버튼 — 대상/우수상 등 상별 독립 이미지로 갤러리에 저장 (블로그/SNS 업로드용)" },
+      { type: "new", text: "🎯 수상작 있는 상만 export (빈 상 skip). 한 상의 캡처가 한도 초과 시 페이지 높이로 자동 분할" },
+      { type: "improve", text: "🔻 export 시 후보작 목록 자동 collapse — 결과 이미지에 부수 정보 제외" },
+    ],
+    details: [
+      { type: "new", text: "App.jsx:19479~ AwardsScreen — awardImageRefs(Map<awardId, ref>) + isAwardExportingRef + awardExportProgress useState/useRef 3개 추가" },
+      { type: "new", text: "App.jsx:19844~ exportAwardResults 신설 (~140줄) — 권한 → 후보작 임시 collapse → award loop: captureRef → height 측정 → ≤7000px이면 그대로 저장, 초과면 ImageManipulator 균등 분할 → MediaLibrary 저장 → finally에서 collapse 원복" },
+      { type: "new", text: "App.jsx:20381~ \"수상 결과\" 탭 상단에 \"📷 수상 결과 이미지로 내보내기 (상별 1장씩)\" 버튼 — 수상작 있는 상이 1개 이상일 때만 노출" },
+      { type: "new", text: "App.jsx:20389~ 각 award View에 collapsable={false} + ref 등록 (Android partial captureRef를 위한 native View 보장)" },
+      { type: "new", text: "App.jsx:21568~ AwardsScreen 자체 진행 모달 — App() 모달과 분리, AwardsScreen scope 안에서 동작. 취소 버튼으로 isAwardExportingRef.current=false → loop break" },
+      { type: "new", text: "Breadcrumb: award_export.{start, captured, oversized?, done, error} — 진단 추적" },
+      { type: "new", text: "권한 — MediaLibrary.requestPermissionsAsync(true) writeOnly 모드 (Android 13+ privacy)" },
+    ],
+  },
+  {
+    version: "7.4.3", date: "2026-05-10",
+    title: "🐛 순위 탭 이미지 내보내기 청크 캡처 — 작품 많아도 안정적으로 저장",
+    highlights: [
+      { type: "fix", text: "🚀 순위 탭 \"이미지로 내보내기\" 215개+ 작품에서 실패하던 문제 수정 — 단일 captureRef 비트맵 한계(~8192px)를 청크 단위로 우회. 임의 N개 안정적 저장" },
+      { type: "improve", text: "📊 사전 안내 변경 — \"20개 초과 경고\" → \"약 P장 저장됩니다 (P>5일 때)\". 갤러리 노이즈 사전 동의만, 실패 공포 문구 제거" },
+      { type: "improve", text: "📈 진행 모달 \"청크 X/Y · 저장 중 K/P\" — 전체 작업의 어디까지 왔는지 명확" },
+    ],
+    details: [
+      { type: "fix", text: "App.jsx:27613~ exportTierImages 청크 loop — entries를 PLAN_CARD_DP=180dp(실측 평균 130 + 안전 마진 50) 기준으로 packing해 청크당 ~11장(pr=3). 215개 → 약 20청크 × ~1초 = 20초" },
+      { type: "fix", text: "App.jsx:27526~ planChunks/setExportSliceAndWait/estimateExportPageCount 헬퍼 + 상수 4개(MAX_CHUNK_PX=6000, PLAN_CARD_DP=180, EST_CARD_DP=130, EST_HEADER_DP=60). 단일 카드 oversize 시 최소 1장 fallback" },
+      { type: "fix", text: "App.jsx:40485~ FlatList data={isExportRendering ? (exportSlice || []) : rankedEntries} — 빈 배열 fallback이 메모리 윈도우 가드 핵심. setIsExportRendering(true) 직후 카드 mount 0개 보장" },
+      { type: "fix", text: "App.jsx ListHeaderComponent — Section 외곽 카드 스타일이 매 페이지 반복되는 regression 차단. 첫 청크에만 inline header 노출 (기존 단일 캡처 동작 재현)" },
+      { type: "fix", text: "취소 체크 7곳 (긴 await 후마다) — 청크 도중 cancel 시 현재 청크 chunkUri deleteAsync 정리, finally에서 setExportSlice(null)" },
+      { type: "perf", text: "단일 captureRef 결과 ~258,000px(215개) → 청크당 최대 6000px(8192의 73%, 안전 마진 27%). java.lang.Exception: Loading bitmap failed 근본 차단" },
+    ],
+  },
+  {
+    version: "7.4.2", date: "2026-05-10",
+    title: "🐛 perfMonitor 발견 — DB 재연결 폭주 차단 + 진단 로그 강화",
+    highlights: [
+      { type: "fix", text: "⚡ swapRating(▲/▼) hang 수정 — CONSTRAINT 위반 시 INSERT 1건당 5회 reconnect → 즉시 throw. 6~10초 hang → ~150ms (40배 개선)" },
+      { type: "fix", text: "🛡️ safeDbOperation — 결정론 SQL 에러 분류 추가 (constraint/syntax/schema). 'rejected' 광범위 매칭이 NOT NULL 위반까지 reset 폭주 유발하던 문제 차단" },
+      { type: "improve", text: "🔬 enqueueVerification 진단 로그 — params(novelId/triggerType/suspicionType/priority/source) 함께 기록. 다음 NOT NULL 발생 시 NULL 컬럼 역추적 가능" },
+    ],
+    details: [
+      { type: "fix", text: "App.jsx:5219~ safeDbOperation — isContentionError/isConnectionError 분기 진입 전 isDeterministicSqlError 체크. 매칭 패턴: constraint failed/CONSTRAINT/NOT NULL/UNIQUE constraint/FOREIGN KEY/CHECK constraint/syntax error/no such table·column/datatype mismatch. 일치 시 1회 trackDbRetry + 즉시 throw" },
+      { type: "fix", text: "App.jsx:24467~ enqueueVerification catch — e.message만 → params 객체 함께 기록. perfMonitor 에러 SQL이 truncated되어 컬럼명 불명이었음" },
+      { type: "perf", text: "DB 재연결 40회 폭주 (159초 uptime 중) → 결정론 에러는 0회. 다른 동시 작업의 connection이 reset 와중에 잃는 연쇄 크래시 방지" },
+    ],
+  },
   {
     version: "7.4.1", date: "2026-05-08",
     title: "📷 순위 탭 티어표 이미지 내보내기 — 블로그 업로드용 갤러리 저장",
@@ -19371,6 +19692,29 @@ const AwardsScreen = memo(({
   // expandedView: { type: "image", uri, title, author } | { type: "quote", text, title } | null
   const [expandedView, setExpandedView] = useState(null);
 
+  // 🆕 v7.4.4: 수상 결과 이미지 내보내기 — 상별 1장씩 (대상/우수상 각각 독립 이미지).
+  // 한 상의 winner가 많아 캡처 결과가 한도 초과 시 균등 분할 fallback.
+  const awardImageRefs = useRef(new Map()); // Map<awardId, View ref>
+  const isAwardExportingRef = useRef(false); // 중복 실행 + 취소 플래그
+  const [awardExportProgress, setAwardExportProgress] = useState(null);
+  // shape: null | { current, total, label }
+  // id별 stable ref setter — inline arrow는 매 render 새 함수 → ref unmount/mount race 발생.
+  // useMemo + cache로 동일 id에 동일 setter 반환 (v7.4.1 cardRefsRef race 패턴 회피).
+  const getAwardRefSetter = useMemo(() => {
+    const cache = new Map();
+    return (id) => {
+      let setter = cache.get(id);
+      if (!setter) {
+        setter = (node) => {
+          if (node) awardImageRefs.current.set(id, node);
+          else awardImageRefs.current.delete(id);
+        };
+        cache.set(id, setter);
+      }
+      return setter;
+    };
+  }, []);
+
   // 🆕 v7.0: hybrid 모드 — manual_tier+manual_order 기준 정렬, 그 외(match)는 rating 기준
   // v7.0.1 (N3 fix): tierMode prop 우선 (memo 리렌더 보장), 미전달 시 globalTierConfig fallback
   const effectiveMode = (tierMode || globalTierConfig.mode);
@@ -19696,6 +20040,151 @@ const AwardsScreen = memo(({
   }, [candidates, awardWinners, compareNovels]);
   
   // 상 추가
+  // 🆕 v7.4.4 수상 결과 이미지 export — 상별 1장씩 (수상 없는 상은 skip).
+  // 단일 award captureRef → 한도(7000px) 안이면 그대로 저장, 초과 시 페이지 높이로 균등 분할.
+  // 카드 경계 스냅은 winner card별 ref 추가 필요해 우선 omit (블로그용 미세 잘림 허용).
+  async function exportAwardResults() {
+    if (isAwardExportingRef.current) return;
+    isAwardExportingRef.current = true;
+    Breadcrumbs.add("award_export", "start", { year: awardSelectedYear });
+
+    // 수상작 있는 award만 필터 (빈 award는 export 의미 없음)
+    const awardsWithWinners = currentYearAwards.filter(a => (awardWinners[a.id] || []).length > 0);
+    if (awardsWithWinners.length === 0) {
+      Alert.alert("알림", "내보낼 수상작이 없습니다.");
+      isAwardExportingRef.current = false;
+      return;
+    }
+
+    // 권한 — writeOnly (Android 13+ privacy)
+    const perm = await MediaLibrary.requestPermissionsAsync(true);
+    if (perm.status !== "granted") {
+      Alert.alert("권한 필요", "갤러리 저장 권한이 거부되어 진행할 수 없습니다.");
+      isAwardExportingRef.current = false;
+      return;
+    }
+
+    // 임시 후보작 collapse — 캡처에 후보작 목록 포함되지 않도록
+    const expandedSnapshot = expandedCandidates;
+    setExpandedCandidates({});
+    // setState 반영 + layout 안정화
+    await new Promise(r => requestAnimationFrame(() =>
+      requestAnimationFrame(() => setTimeout(r, 100))
+    ));
+
+    const pr = PixelRatio.get();
+    const MAX_AWARD_PX = 7000; // captureRef 결과 한도 (8192의 ~85%, 균등 분할 fallback 진입 임계치)
+    const pageHdp = Math.max(1, Dimensions.get("window").height - 80);
+    let totalSaved = 0;
+    let totalImages = awardsWithWinners.length; // 최소 1상=1장, 분할 시 ↑
+
+    setAwardExportProgress({
+      current: 0, total: totalImages,
+      label: `수상 결과 캡처 중 (1/${totalImages})`,
+    });
+
+    try {
+      for (let ai = 0; ai < awardsWithWinners.length; ai++) {
+        if (!isAwardExportingRef.current) break;
+        const award = awardsWithWinners[ai];
+        const node = awardImageRefs.current.get(award.id);
+        if (!node) continue; // ref 미등록 (스크린 전환 등) — skip
+
+        setAwardExportProgress({
+          current: totalSaved, total: totalImages,
+          label: `${award.name} 캡처 중 (${ai + 1}/${awardsWithWinners.length})`,
+        });
+
+        let awardUri = null;
+        try {
+          awardUri = await captureRef(node, {
+            format: "jpg",
+            quality: 0.92,
+            result: "tmpfile",
+          });
+          if (!isAwardExportingRef.current) break;
+          Breadcrumbs.add("award_export", "captured", { awardId: award.id });
+
+          // 결과 height 측정 (RNImage.getSize + ImageManipulator fallback — App() 헬퍼 동등)
+          let imgWpx = 0, imgHpx = 0;
+          try {
+            const sz = await new Promise((resolve, reject) => {
+              const t = setTimeout(() => reject(new Error("Image.getSize timeout")), 4000);
+              RNImage.getSize(awardUri, (w, h) => { clearTimeout(t); resolve({ w, h }); }, (e) => { clearTimeout(t); reject(e); });
+            });
+            imgWpx = sz.w; imgHpx = sz.h;
+          } catch {
+            const r = await ImageManipulator.manipulateAsync(awardUri, [], { compress: 1, format: ImageManipulator.SaveFormat.JPEG });
+            imgWpx = r.width; imgHpx = r.height;
+          }
+          if (!imgWpx || !imgHpx || imgHpx < 10) {
+            throw new Error(`${award.name} 캡처 크기 비정상: ${imgWpx}x${imgHpx}`);
+          }
+
+          // 한도 안이면 그대로 저장
+          if (imgHpx <= MAX_AWARD_PX) {
+            await MediaLibrary.saveToLibraryAsync(awardUri);
+            totalSaved++;
+            setAwardExportProgress({
+              current: totalSaved, total: totalImages,
+              label: `${award.name} 저장 완료`,
+            });
+          } else {
+            // 한도 초과 — 페이지 높이로 균등 분할 (블로그용 미세 잘림 허용)
+            Breadcrumbs.add("award_export", "oversized", { awardId: award.id, h: imgHpx });
+            const totalDP = imgHpx / pr;
+            const numPages = Math.max(1, Math.ceil(totalDP / pageHdp));
+            // 분할 페이지 수만큼 totalImages 보정
+            totalImages += (numPages - 1);
+            for (let pi = 0; pi < numPages; pi++) {
+              if (!isAwardExportingRef.current) break;
+              const startDP = pi * pageHdp;
+              const endDP = Math.min((pi + 1) * pageHdp, totalDP);
+              const cropped = await ImageManipulator.manipulateAsync(
+                awardUri,
+                [{ crop: {
+                  originX: 0,
+                  originY: Math.round(startDP * pr),
+                  width: imgWpx,
+                  height: Math.round((endDP - startDP) * pr),
+                }}],
+                { compress: 0.9, format: ImageManipulator.SaveFormat.JPEG }
+              );
+              await MediaLibrary.saveToLibraryAsync(cropped.uri);
+              await FileSystem.deleteAsync(cropped.uri, { idempotent: true }).catch(() => {});
+              totalSaved++;
+              setAwardExportProgress({
+                current: totalSaved, total: totalImages,
+                label: `${award.name} 분할 저장 (${pi + 1}/${numPages})`,
+              });
+            }
+          }
+        } finally {
+          if (awardUri) await FileSystem.deleteAsync(awardUri, { idempotent: true }).catch(() => {});
+        }
+      }
+
+      Breadcrumbs.add("award_export", "done", { saved: totalSaved, total: totalImages });
+      setAwardExportProgress(null);
+      if (totalSaved === totalImages && totalSaved > 0) {
+        Alert.alert("완료", `${totalSaved}장의 수상 결과 이미지가 갤러리에 저장되었습니다.`);
+      } else if (totalSaved > 0) {
+        Alert.alert("취소됨", `${totalSaved}/${totalImages}장이 저장된 후 중단되었습니다.`);
+      } else {
+        Alert.alert("취소됨", "저장 전 중단되었습니다.");
+      }
+    } catch (e) {
+      Breadcrumbs.add("award_export", "error", { msg: (e?.message || "").substring(0, 100) });
+      setAwardExportProgress(null);
+      Alert.alert("오류", `수상 결과 이미지 내보내기 실패: ${e?.message || "unknown"}`);
+    } finally {
+      isAwardExportingRef.current = false;
+      setAwardExportProgress(null);
+      // 후보작 collapse 상태 원복
+      setExpandedCandidates(expandedSnapshot);
+    }
+  }
+
   const addNewAward = () => {
     if (!newAwardName.trim()) {
       Alert.alert("알림", "상 이름을 입력해주세요.");
@@ -20239,12 +20728,44 @@ const AwardsScreen = memo(({
       {/* ===== 수상 결과 탭 ===== */}
       {awardSubTab === "results" && (
         <>
+          {/* 🆕 v7.4.4 이미지로 내보내기 — 상별 1장씩 갤러리 저장 */}
+          {currentYearAwards.some(a => (awardWinners[a.id] || []).length > 0) && (
+            <View style={{ marginBottom: 14 }}>
+              <TouchableOpacity
+                onPress={exportAwardResults}
+                disabled={!!awardExportProgress}
+                style={{
+                  paddingVertical: 12,
+                  paddingHorizontal: 16,
+                  borderRadius: 12,
+                  backgroundColor: awardExportProgress ? C.chip : "#f97316",
+                  alignItems: "center",
+                  borderWidth: awardExportProgress ? 1 : 0,
+                  borderColor: C.line,
+                }}
+              >
+                <Text style={{
+                  color: awardExportProgress ? C.sub : "#fff",
+                  fontWeight: "800",
+                  fontSize: 14,
+                }}>
+                  📷 수상 결과 이미지로 내보내기 (상별 1장씩)
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
           {/* 수상작 섹션 */}
           {currentYearAwards.map(award => {
             const winners = awardWinners[award.id] || [];
-            
+
             return (
-              <View key={award.id} style={{ marginBottom: 28 }}>
+              <View
+                key={award.id}
+                ref={getAwardRefSetter(award.id)}
+                collapsable={false}
+                style={{ marginBottom: 28, backgroundColor: C.bg }}
+              >
                 {/* 상 헤더 - 화려한 배너 스타일 */}
                 <View style={{
                   backgroundColor: award.color,
@@ -21241,6 +21762,41 @@ const AwardsScreen = memo(({
             <Text style={{ color: "rgba(255,255,255,0.8)", fontSize: 13 }}>탭하여 닫기</Text>
           </View>
         </TouchableOpacity>
+      </Modal>
+
+      {/* 🆕 v7.4.4 수상 결과 이미지 export 진행 모달 — 캡처 영역에 포함되지 않도록 별도 운영 */}
+      <Modal
+        visible={!!awardExportProgress}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {}}
+      >
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "center", alignItems: "center" }}>
+          <View style={{ backgroundColor: C.card, padding: 24, borderRadius: 16, alignItems: "center", minWidth: 260 }}>
+            <ActivityIndicator size="large" color={C.primary} />
+            <Text style={{ color: C.text, marginTop: 12, fontWeight: "700", textAlign: "center" }}>
+              {awardExportProgress?.label || "처리 중"}
+            </Text>
+            {awardExportProgress?.total > 0 && (
+              <Text style={{ color: C.sub, marginTop: 4 }}>
+                {awardExportProgress.current} / {awardExportProgress.total}
+              </Text>
+            )}
+            <View style={{ height: 12 }} />
+            <TouchableOpacity
+              onPress={() => { isAwardExportingRef.current = false; }}
+              style={{
+                paddingVertical: 10,
+                paddingHorizontal: 20,
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: C.line,
+              }}
+            >
+              <Text style={{ color: C.text, fontWeight: "700" }}>취소</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </Modal>
     </>
   );
@@ -24465,7 +25021,15 @@ async function enqueueVerification(novelId, triggerType, suspicionType, source) 
       );
     }
   } catch (e) {
-    console.warn("enqueueVerification 오류:", e?.message);
+    // 🔧 v7.4.2: 진단 강화 — params + source 함께 기록 (NULL 컬럼 추적용)
+    // perfMonitor에서 NOT NULL constraint 8건 발생했으나 truncated SQL로 컬럼 식별 불가했음
+    console.warn("enqueueVerification 오류:", e?.message, {
+      novelId,
+      triggerType,
+      suspicionType,
+      priority,
+      source,
+    });
   }
 }
 
@@ -26909,6 +27473,12 @@ function AppContent() {
   // shape: null | { phase, current, total, label }
   const [isExportRendering, setIsExportRendering] = useState(false);
   // FlatList 가상화 한시적 해제용 — true면 모든 항목 즉시 렌더 강제
+  // 🆕 v7.4.3 청크 캡처: 단일 captureRef가 Android Bitmap 한계(~8192px)를 넘지 않도록
+  // FlatList data를 청크 slice로 일시 교체하며 mount→capture→unmount 반복.
+  const [exportSlice, setExportSlice] = useState(null);
+  // null = 메인(전체) / Array<entry> = 현재 캡처 청크
+  const [exportChunkIdx, setExportChunkIdx] = useState(0);
+  // ListHeaderComponent 분기용 — 첫 청크(0)에만 inline header 노출 (기존 단일 캡처 동작 재현)
 
   // 검색/대량
   const [query, setQuery] = useState("");
@@ -27436,6 +28006,57 @@ function AppContent() {
     await Promise.all(promises);
   }
 
+  // 🆕 v7.4.3 청크 캡처 상수 — Android Bitmap 한계(~4096-8192px) 안전 마진.
+  // MAX_CHUNK_PX = 6000 (한계의 ~73%). 두 카드 추정값을 분리:
+  // - PLAN_CARD_DP=180: 청크 packing용 (실측 평균 ~130dp + 50dp 안전 마진).
+  // - EST_CARD_DP=130: 페이지 수 추정용 (실측 평균 — alert "약 P장" 정확도).
+  // v7.4.1 헤더 측정 "330-400px @ PR=3" = DP 110-133과 일치.
+  const MAX_CHUNK_PX = 6000;
+  const PLAN_CARD_DP = 180;
+  const EST_CARD_DP = 130;
+  const EST_HEADER_DP = 60;
+
+  // 🆕 v7.4.3 entries → 청크 배열 (DP 기반 packing). 첫 청크에 inline header 포함되므로
+  // 시작 누적값에 EST_HEADER_DP*pr을 더함. 단일 카드가 한도 초과해도 최소 1장 포함 보장.
+  function planChunks(entries, prGet) {
+    if (!entries || entries.length === 0) return [];
+    const chunks = [];
+    const cardPx = PLAN_CARD_DP * prGet;
+    const headerPx = EST_HEADER_DP * prGet;
+    let i = 0;
+    let isFirst = true;
+    while (i < entries.length) {
+      let acc = isFirst ? headerPx : 0;
+      let j = i;
+      while (j < entries.length) {
+        const next = acc + cardPx;
+        if (next > MAX_CHUNK_PX && j > i) break; // 최소 1장 보장
+        acc = next;
+        j++;
+      }
+      const ids = entries.slice(i, j).map(e => e?.item?.id).filter(Boolean);
+      chunks.push({ startIdx: i, endIdx: j, ids });
+      i = j;
+      isFirst = false;
+    }
+    return chunks;
+  }
+
+  // 🆕 v7.4.3 alert용 P 추정 — 실측 카드 평균 기준.
+  function estimateExportPageCount(n) {
+    if (n <= 0) return 0;
+    const pageHdp = Math.max(1, Dimensions.get("window").height - 80);
+    return Math.max(1, Math.ceil((n * EST_CARD_DP + EST_HEADER_DP) / pageHdp));
+  }
+
+  // 🆕 v7.4.3 청크 slice setState + mount 안정화 대기 (line 27594-27596 패턴 미러).
+  async function setExportSliceAndWait(slice) {
+    setExportSlice(slice);
+    await new Promise(r => requestAnimationFrame(() =>
+      requestAnimationFrame(() => setTimeout(r, 100))
+    ));
+  }
+
   // 🆕 v7.4.0 카드 ref 등록자 — useCallback으로 stable, 매 render 재생성 방지
   const registerCardRef = useCallback((id, node) => {
     if (!id) return;
@@ -27492,7 +28113,6 @@ function AppContent() {
 
     const filterWasActive = !!rankQuery || rankTier !== "ALL";
     const willResetFilter = scope === "all" && filterWasActive;
-    let fullUri = null;
 
     try {
       if (willResetFilter) {
@@ -27507,6 +28127,11 @@ function AppContent() {
         ));
       }
 
+      // 🆕 v7.4.3: 메모리 윈도우 가드 — setIsExportRendering(true) 후 첫 setExportSlice 전까지
+      // FlatList의 data가 rankedEntries 전체였다면 boost된 windowSize로 모든 카드가 잠깐 mount됨.
+      // 빈 배열을 먼저 넣어서 카드 mount 0개 보장. 첫 청크 slice는 loop 안에서 setExportSliceAndWait로 진입.
+      setExportSlice([]);
+      setExportChunkIdx(0);
       setIsExportRendering(true);
 
       // FlatList prop 부스트가 반영되어 모든 카드 렌더 시작될 때까지 한 frame
@@ -27522,15 +28147,18 @@ function AppContent() {
         return;
       }
 
-      // ⚠️ Android Bitmap 한계 (~4096-8192px). 카드당 ~330-400px → 20개에서 경고
-      if (targetCount > 20) {
+      // 🆕 v7.4.3: 임계값 20 사전 경고 → 예상 페이지 수 P 기반 안내로 교체.
+      // 청크 캡처가 Bitmap 한계를 우회하므로 실패 공포 문구 X. 갤러리 노이즈만 사전 동의.
+      const prGet = PixelRatio.get();
+      const pPredict = estimateExportPageCount(targetCount);
+      if (pPredict > 5) {
         const ok = await new Promise(res => {
           Alert.alert(
-            "작품 수 안내",
-            `${targetCount}작은 한 번에 캡처하기 부담스러울 수 있습니다 (Android 이미지 크기 한계). 티어 필터로 약 20작 이하로 좁혀 진행하시는 걸 권합니다. 그대로 진행할까요?`,
+            "이미지 저장 안내",
+            `${targetCount}작을 약 ${pPredict}장의 이미지로 저장합니다.\n갤러리에 ${pPredict}개 항목이 추가됩니다. 진행할까요?`,
             [
               { text: "취소", style: "cancel", onPress: () => res(false) },
-              { text: "그대로 진행", onPress: () => res(true) },
+              { text: "진행", onPress: () => res(true) },
             ]
           );
         });
@@ -27544,97 +28172,125 @@ function AppContent() {
         return;
       }
 
-      const expectedIds = targetEntries.map(e => e.item.id).filter(Boolean);
-
-      await waitForAllCardsRendered(expectedIds);
-      await measureAllCards(expectedIds);
-
-      fullUri = await captureRef(tierImageRef, {
-        format: "jpg", // view-shot 4.0.3: 'jpg' | 'png' | 'webm' | 'raw'
-        quality: 0.92,
-        result: "tmpfile",
-      });
-      Breadcrumbs.add("export", "capture_done", { count: targetCount });
-
-      const { width: imgWpx, height: imgHpx } = await getImageSizeRobust(fullUri);
-      if (!imgWpx || !imgHpx || imgHpx < 10) {
-        throw new Error(`캡처 이미지 크기 비정상: ${imgWpx}x${imgHpx}`);
-      }
-
-      const pr = PixelRatio.get();
+      // 🆕 v7.4.3 청크 캡처 loop — 각 청크는 독립 captureRef. peak Bitmap 크기 < MAX_CHUNK_PX.
+      const chunks = planChunks(targetEntries, prGet);
+      let totalSaved = 0;
+      let totalPages = 0;
       const targetPageHdp = Dimensions.get("window").height - 80;
-      const totalDP = imgHpx / pr;
 
-      const cardEndsDP = Array.from(itemLayoutsRef.current.values())
-        .map(L => L.y + L.height)
-        .filter(v => Number.isFinite(v) && v > 0)
-        .sort((a, b) => a - b);
-
-      const breaks = [0];
-      let cursor = 0;
-      while (cursor < totalDP - 1) {
-        const target = cursor + targetPageHdp;
-        let snap = null;
-        for (const ce of cardEndsDP) {
-          if (ce > cursor + 50 && ce <= target + 20) snap = ce;
-          else if (ce > target + 20) break;
-        }
-        if (!snap || snap <= cursor) snap = Math.min(target, totalDP);
-        breaks.push(snap);
-        cursor = snap;
-      }
-      if (breaks[breaks.length - 1] < totalDP - 1) breaks.push(totalDP);
-      const numPages = breaks.length - 1;
-
-      if (numPages <= 0) {
-        throw new Error("페이지 분할 실패 — 캡처 결과가 너무 작습니다");
-      }
-
-      setExportProgress({ phase: "cropping", current: 0, total: numPages, label: "이미지 분할 중" });
-
-      let savedCount = 0;
-      for (let i = 0; i < numPages; i++) {
+      for (let ci = 0; ci < chunks.length; ci++) {
         if (!isExportingRef.current) break;
-        setExportProgress({ phase: "saving", current: i + 1, total: numPages, label: "갤러리 저장 중" });
-        const startDP = breaks[i];
-        const endDP = breaks[i + 1];
-        const cropped = await ImageManipulator.manipulateAsync(
-          fullUri,
-          [{ crop: {
-            originX: 0,
-            originY: Math.round(startDP * pr),
-            width: imgWpx,
-            height: Math.round((endDP - startDP) * pr),
-          }}],
-          { compress: 0.9, format: ImageManipulator.SaveFormat.JPEG }
-        );
-        await MediaLibrary.saveToLibraryAsync(cropped.uri);
-        savedCount++;
-        await FileSystem.deleteAsync(cropped.uri, { idempotent: true }).catch(() => {});
+        const chunk = chunks[ci];
+
+        setExportChunkIdx(ci);
+        setExportProgress({
+          current: totalSaved,
+          total: Math.max(1, totalPages || 1),
+          label: `청크 ${ci + 1}/${chunks.length} · 렌더 중`,
+        });
+        await setExportSliceAndWait(targetEntries.slice(chunk.startIdx, chunk.endIdx));
+        if (!isExportingRef.current) break;
+
+        await waitForAllCardsRendered(chunk.ids);
+        if (!isExportingRef.current) break;
+        await measureAllCards(chunk.ids);
+        if (!isExportingRef.current) break;
+
+        let chunkUri = null;
+        try {
+          chunkUri = await captureRef(tierImageRef, {
+            format: "jpg",
+            quality: 0.92,
+            result: "tmpfile",
+          });
+          if (!isExportingRef.current) break;
+          Breadcrumbs.add("export", "chunk_done", { ci, ids: chunk.ids.length });
+
+          const { width: imgWpx, height: imgHpx } = await getImageSizeRobust(chunkUri);
+          if (!isExportingRef.current) break;
+          if (imgHpx > 7500) Breadcrumbs.add("export", "oversized_chunk", { ci, h: imgHpx });
+          if (!imgWpx || !imgHpx || imgHpx < 10) {
+            throw new Error(`청크 ${ci + 1} 캡처 크기 비정상: ${imgWpx}x${imgHpx}`);
+          }
+
+          const pr = prGet;
+          const totalDP = imgHpx / pr;
+          const cardEndsDP = Array.from(itemLayoutsRef.current.values())
+            .map(L => L.y + L.height)
+            .filter(v => Number.isFinite(v) && v > 0)
+            .sort((a, b) => a - b);
+
+          const breaks = [0];
+          let cursor = 0;
+          while (cursor < totalDP - 1) {
+            const target = cursor + targetPageHdp;
+            let snap = null;
+            for (const ce of cardEndsDP) {
+              if (ce > cursor + 50 && ce <= target + 20) snap = ce;
+              else if (ce > target + 20) break;
+            }
+            if (!snap || snap <= cursor) snap = Math.min(target, totalDP);
+            breaks.push(snap);
+            cursor = snap;
+          }
+          if (breaks[breaks.length - 1] < totalDP - 1) breaks.push(totalDP);
+          const numPages = breaks.length - 1;
+          if (numPages <= 0) {
+            throw new Error(`청크 ${ci + 1} 페이지 분할 실패 — 캡처 결과가 너무 작습니다`);
+          }
+          totalPages += numPages;
+
+          for (let pi = 0; pi < numPages; pi++) {
+            if (!isExportingRef.current) break;
+            setExportProgress({
+              current: totalSaved + pi + 1,
+              total: totalPages,
+              label: `청크 ${ci + 1}/${chunks.length} · 저장 중`,
+            });
+            const startDP = breaks[pi];
+            const endDP = breaks[pi + 1];
+            const cropped = await ImageManipulator.manipulateAsync(
+              chunkUri,
+              [{ crop: {
+                originX: 0,
+                originY: Math.round(startDP * pr),
+                width: imgWpx,
+                height: Math.round((endDP - startDP) * pr),
+              }}],
+              { compress: 0.9, format: ImageManipulator.SaveFormat.JPEG }
+            );
+            await MediaLibrary.saveToLibraryAsync(cropped.uri);
+            await FileSystem.deleteAsync(cropped.uri, { idempotent: true }).catch(() => {});
+            totalSaved++;
+          }
+        } finally {
+          if (chunkUri) await FileSystem.deleteAsync(chunkUri, { idempotent: true }).catch(() => {});
+        }
       }
 
-      Breadcrumbs.add("export", "save_done", { saved: savedCount, total: numPages });
+      Breadcrumbs.add("export", "save_done", { saved: totalSaved, total: totalPages });
 
       setExportProgress(null);
-      if (savedCount === numPages) {
+      if (totalSaved === totalPages && totalPages > 0) {
         const filterMsg = willResetFilter ? "\n(검색/티어 필터가 해제되었습니다.)" : "";
-        Alert.alert("완료", `${numPages}장의 이미지가 갤러리에 저장되었습니다.${filterMsg}`);
+        Alert.alert("완료", `${totalPages}장의 이미지가 갤러리에 저장되었습니다.${filterMsg}`);
+      } else if (totalSaved > 0) {
+        Alert.alert("취소됨", `${totalSaved}/${totalPages}장이 저장된 후 중단되었습니다.`);
       } else {
-        Alert.alert("취소됨", `${savedCount}/${numPages}장이 저장된 후 중단되었습니다.`);
+        Alert.alert("취소됨", "저장 전 중단되었습니다.");
       }
     } catch (e) {
       Breadcrumbs.add("export", "error", { msg: (e?.message || "").substring(0, 100) });
       setExportProgress(null);
       Alert.alert(
         "오류",
-        `이미지 내보내기 실패: ${e?.message || "unknown"}\n\n팁: 작품 수가 많다면 티어 필터를 적용해 보세요.`
+        `이미지 내보내기 실패: ${e?.message || "unknown"}`
       );
     } finally {
       isExportingRef.current = false;
       setIsExportRendering(false);
-      if (fullUri) {
-        await FileSystem.deleteAsync(fullUri, { idempotent: true }).catch(() => {});
-      }
+      setExportSlice(null);
+      setExportChunkIdx(0);
     }
   }
 
@@ -40311,17 +40967,52 @@ async function importJSON() {
               </View>
             </Section>
 
-            {/* 🆕 티어표 이미지 캡처 영역 */}
-            <View ref={tierImageRef} collapsable={false} style={{ backgroundColor: C.bg }}>
-            <Section title={`순위 목록 (총 ${rankedEntries.length}작)`}>
+            {/* 🆕 v7.4.7: Section title/외곽/📷 버튼은 캡처에서 제외 — tierImageRef를 FlatList wrap으로 이동.
+                v7.4.3 plan 의도("Section title은 captureRef 영역 밖")를 실제 코드에 반영. 첫 페이지 헤더 중복 차단. */}
+            <Section
+              title={`순위 목록 (총 ${rankedEntries.length}작)`}
+              headerRight={
+                /* 🆕 v7.4.5 Section title 옆 작은 📷 버튼 — 카드 끝까지 스크롤 안 해도 export 가능.
+                   🛠️ v7.4.7: tierImageRef 밖으로 분리되어 캡처에 더 이상 포함 X. v7.4.6의
+                   isExportRendering 분기는 잔존 안전망(평소엔 그대로 노출). */
+                isExportRendering ? null : (
+                  <TouchableOpacity
+                    onPress={openExportScopeChoice}
+                    disabled={isLoading || rankedEntries.length === 0 || !!exportProgress}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    style={{
+                      paddingVertical: 6,
+                      paddingHorizontal: 10,
+                      borderRadius: 8,
+                      backgroundColor: (isLoading || rankedEntries.length === 0 || !!exportProgress) ? C.chip : C.primary,
+                      flexDirection: "row",
+                      alignItems: "center",
+                    }}
+                  >
+                    <Text style={{ color: "#fff", fontSize: 13, fontWeight: "700" }}>📷</Text>
+                  </TouchableOpacity>
+                )
+              }
+            >
+              {/* 🆕 티어표 이미지 캡처 영역 — Section 안의 FlatList만 wrap (외곽/title/📷 제외) */}
+              <View ref={tierImageRef} collapsable={false} style={{ backgroundColor: C.bg }}>
+              {/* 🆕 v7.4.3 청크 캡처 — export 시엔 청크 slice만 mount (Bitmap 한계 우회) */}
               <FlatList
-                data={rankedEntries}
+                data={isExportRendering ? (exportSlice || []) : rankedEntries}
                 keyExtractor={(entry, index) => String(entry?.item?.id || `rank-${index}`)}
-                initialNumToRender={isExportRendering ? Math.max(rankedEntries.length, 8) : 8}
-                maxToRenderPerBatch={isExportRendering ? Math.max(rankedEntries.length, 5) : 5}
-                windowSize={isExportRendering ? Math.max(rankedEntries.length, 50) : 3}
+                initialNumToRender={isExportRendering ? Math.max((exportSlice || []).length, 1) : 8}
+                maxToRenderPerBatch={isExportRendering ? Math.max((exportSlice || []).length, 1) : 5}
+                windowSize={isExportRendering ? Math.max((exportSlice || []).length, 1) : 3}
                 removeClippedSubviews={false}
                 scrollEnabled={false}
+                /* 🆕 v7.4.3 첫 청크에만 inline header 노출 — 기존 단일 캡처 동작 재현 */
+                ListHeaderComponent={
+                  isExportRendering && exportChunkIdx === 0 ? (
+                    <Text style={{ fontWeight: "800", fontSize: 18, color: C.text, marginBottom: 8 }}>
+                      {`순위 목록 (총 ${rankedEntries.length}작)`}
+                    </Text>
+                  ) : null
+                }
                 renderItem={({ item: entry }) => {
                   const { item, rank } = entry || {};
                   if (!item) return null;
@@ -40419,8 +41110,8 @@ async function importJSON() {
                 }}
                 ListEmptyComponent={<Text style={{ color: C.sub, textAlign: "center", padding: 20 }}>작품이 없습니다.</Text>}
               />
+              </View>
             </Section>
-            </View>
 
             {/* 🆕 티어표 공유 */}
             <Section title="티어표 공유">
