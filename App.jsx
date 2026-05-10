@@ -2,9 +2,34 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.4.5 (순위탭 이미지 내보내기 버튼 접근성 — Section title 옆 📷 아이콘) ║
+ * ║  버전: 7.4.6 (v7.4.5 hotfix — 📷 단축 버튼이 캡처 결과에 박히던 regression)    ║
  * ║  최종 수정: 2026-05-10                                                        ║
- * ║  총 라인 수: 약 53,680줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 53,690줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.4.6 v7.4.5 hotfix — 📷 버튼 캡처 포함 regression 차단 (2026-05-10)      ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [증상] v7.4.5에서 추가한 Section title 옆 📷 단축 버튼이 tierImageRef 안의     ║
+ * ║ Section.headerRight에 들어가 captureRef 결과 이미지마다 우상단에 📷 박힘.       ║
+ * ║                                                                              ║
+ * ║ [원인] tierImageRef → Section → headerRight 트리. captureRef는 tierImageRef    ║
+ * ║ 통째 캡처라 headerRight도 함께 픽셀화. v7.4.5 검토 시 누락한 케이스.            ║
+ * ║                                                                              ║
+ * ║ [수정] App.jsx:40889~ headerRight={isExportRendering ? null : <TouchableOpacity>}║
+ * ║ export 진행 중에는 null로 분기 — 진행 모달이 화면 가리므로 버튼 노출 불필요.    ║
+ * ║ 메인 화면(평소)에선 그대로 노출되어 단축 진입점 기능 유지.                      ║
+ * ║                                                                              ║
+ * ║ [영향 0]                                                                        ║
+ * ║ • 평소 사용성: 변화 없음 (버튼 그대로 노출, 클릭 동작 동일)                     ║
+ * ║ • 캡처 결과: 깨끗 (📷 버튼 사라짐). 청크 캡처 height에 미세 변화(~30dp 감소)    ║
+ * ║   가능하나 카드 경계 스냅 알고리즘이 흡수.                                      ║
+ * ║ • 5대 불변조건: 무관                                                            ║
+ * ║                                                                              ║
+ * ║ [잔여 검토 — 별도 결정 필요] v7.4.3 청크 캡처에서 Section title이 tierImageRef ║
+ * ║ 안에 있어 항상 캡처에 포함 + ListHeaderComponent의 inline header도 첫 청크에   ║
+ * ║ 노출 → 첫 청크 페이지에 헤더 중복 가능성. v7.4.3 plan 가정과 실제 코드 mismatch.║
+ * ║ 사용자 결정 후 별도 hotfix 예정 (이번 v7.4.6 범위 X).                           ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11199,7 +11224,7 @@ const Section = ({ title, headerRight, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.4.5";
+const APP_VERSION = "7.4.6";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -11225,6 +11250,17 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.4.6", date: "2026-05-10",
+    title: "🛠️ v7.4.5 hotfix — 📷 단축 버튼이 캡처 결과에 박히던 regression 수정",
+    highlights: [
+      { type: "fix", text: "🛠️ v7.4.5 추가한 Section title 옆 📷 버튼이 export 이미지 우상단에 박히던 문제 수정 — export 진행 중에는 버튼 숨김. 평소엔 그대로 노출" },
+    ],
+    details: [
+      { type: "fix", text: "App.jsx:40889~ headerRight={isExportRendering ? null : <TouchableOpacity>} — Section이 tierImageRef 안에 있어 captureRef가 헤더 슬롯도 함께 픽셀화하던 트리 구조 회피. 진행 모달이 화면 가리므로 export 중 버튼 노출 불필요" },
+      { type: "fix", text: "캡처 결과 깨끗(📷 사라짐). 청크 캡처 height ~30dp 감소 가능하나 카드 경계 스냅이 흡수. 평소 사용성/disabled 동작 변화 0" },
+    ],
+  },
   {
     version: "7.4.5", date: "2026-05-10",
     title: "🎯 순위탭 이미지 내보내기 단축 진입점 — Section title 옆 📷 버튼",
@@ -40887,22 +40923,26 @@ async function importJSON() {
             <Section
               title={`순위 목록 (총 ${rankedEntries.length}작)`}
               headerRight={
-                /* 🆕 v7.4.5 Section title 옆 작은 📷 버튼 — 카드 끝까지 스크롤 안 해도 export 가능 */
-                <TouchableOpacity
-                  onPress={openExportScopeChoice}
-                  disabled={isLoading || rankedEntries.length === 0 || !!exportProgress}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  style={{
-                    paddingVertical: 6,
-                    paddingHorizontal: 10,
-                    borderRadius: 8,
-                    backgroundColor: (isLoading || rankedEntries.length === 0 || !!exportProgress) ? C.chip : C.primary,
-                    flexDirection: "row",
-                    alignItems: "center",
-                  }}
-                >
-                  <Text style={{ color: "#fff", fontSize: 13, fontWeight: "700" }}>📷</Text>
-                </TouchableOpacity>
+                /* 🆕 v7.4.5 Section title 옆 작은 📷 버튼 — 카드 끝까지 스크롤 안 해도 export 가능.
+                   🛠️ v7.4.6: export 진행 중에는 null — Section이 tierImageRef 안에 있어 버튼이
+                   캡처 결과에 박히는 regression 차단. 진행 모달이 화면 가리는 동안엔 어차피 안 보임. */
+                isExportRendering ? null : (
+                  <TouchableOpacity
+                    onPress={openExportScopeChoice}
+                    disabled={isLoading || rankedEntries.length === 0 || !!exportProgress}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    style={{
+                      paddingVertical: 6,
+                      paddingHorizontal: 10,
+                      borderRadius: 8,
+                      backgroundColor: (isLoading || rankedEntries.length === 0 || !!exportProgress) ? C.chip : C.primary,
+                      flexDirection: "row",
+                      alignItems: "center",
+                    }}
+                  >
+                    <Text style={{ color: "#fff", fontSize: 13, fontWeight: "700" }}>📷</Text>
+                  </TouchableOpacity>
+                )
               }
             >
               {/* 🆕 v7.4.3 청크 캡처 — export 시엔 청크 slice만 mount (Bitmap 한계 우회) */}
