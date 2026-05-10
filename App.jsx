@@ -2,9 +2,38 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.4.4 (수상탭 결과 이미지 내보내기 — 상별 1장씩 갤러리 저장)           ║
+ * ║  버전: 7.4.5 (순위탭 이미지 내보내기 버튼 접근성 — Section title 옆 📷 아이콘) ║
  * ║  최종 수정: 2026-05-10                                                        ║
- * ║  총 라인 수: 약 53,650줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 53,680줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🎯 v7.4.5 순위탭 이미지 내보내기 접근성 (2026-05-10)                          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [Why] 사용자 피드백 — "이미지 내보내기" 버튼이 티어표 공유 Section 안에 있고   ║
+ * ║ 그 Section은 순위 목록 FlatList 아래 위치. 215개 작품 시 카드 다 스크롤해야    ║
+ * ║ 도달. 화면 진입 직후에도 트리거 가능하도록 단축 진입점 필요.                   ║
+ * ║                                                                              ║
+ * ║ [수정] Section 컴포넌트에 headerRight 슬롯 추가 + 순위 목록 Section title       ║
+ * ║ 옆에 작은 📷 아이콘 버튼 노출. 텍스트 공유는 그대로 (사용자 명시).             ║
+ * ║                                                                              ║
+ * ║ • App.jsx:11066~ Section({ title, headerRight, children }) — title에 flex:1   ║
+ * ║   + 우측 슬롯 조건부 렌더 (headerRight 미전달 시 null). 149개 기존 호출 모두   ║
+ * ║   backward compat.                                                            ║
+ * ║ • App.jsx:40485~ <Section title="순위 목록..." headerRight={📷 TouchableOpacity}>║
+ * ║   - hitSlop {top/bottom/left/right: 8} 터치 정확도 보강 (~38×38px 실 영역)    ║
+ * ║   - disabled 조건은 기존 하단 PrimaryButton과 동일 (isLoading || 0작 ||        ║
+ * ║     exportProgress)                                                            ║
+ * ║   - 비활성 시 chip 색, 활성 시 primary 색                                      ║
+ * ║                                                                              ║
+ * ║ [한계 인정] sticky header 미적용 — 사용자가 카드 중간/끝 스크롤 상태에선 위로  ║
+ * ║ 다시 올라와야 보임. 사용자가 이 옵션 선택했으므로 의도된 trade-off. 후속       ║
+ * ║ 요청 시 stickyHeaderIndices 검토.                                              ║
+ * ║                                                                              ║
+ * ║ [효과]                                                                          ║
+ * ║ • 화면 진입 직후 1탭으로 export 트리거 가능 (스크롤 0)                         ║
+ * ║ • 기존 하단 PrimaryButton 유지 — 카드 끝까지 갔을 때도 거기서 클릭 가능        ║
+ * ║ • Section 컴포넌트 generalization — 향후 다른 탭에 동일 패턴 재사용 가능       ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11144,7 +11173,8 @@ const OutlineButton = memo(({ title, onPress, style, color = C.sub }) => (
     <Text style={{ color, fontSize: 15, fontWeight: "700" }}>{title}</Text>
   </TouchableOpacity>
 ));
-const Section = ({ title, children }) => (
+// 🆕 v7.4.5 headerRight: title 우측 액션 슬롯 (optional). 미전달 시 기존과 동일 렌더.
+const Section = ({ title, headerRight, children }) => (
   <View
     style={{
       backgroundColor: C.card,
@@ -11155,9 +11185,12 @@ const Section = ({ title, children }) => (
       borderColor: C.line,
     }}
   >
-    <Text style={{ fontWeight: "800", fontSize: 18, color: C.text }}>
-      {title}
-    </Text>
+    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+      <Text style={{ fontWeight: "800", fontSize: 18, color: C.text, flex: 1 }}>
+        {title}
+      </Text>
+      {headerRight ? <View style={{ marginLeft: 8 }}>{headerRight}</View> : null}
+    </View>
     <View style={{ height: 8 }} />
     {children}
   </View>
@@ -11166,7 +11199,7 @@ const Section = ({ title, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.4.4";
+const APP_VERSION = "7.4.5";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -11192,6 +11225,20 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.4.5", date: "2026-05-10",
+    title: "🎯 순위탭 이미지 내보내기 단축 진입점 — Section title 옆 📷 버튼",
+    highlights: [
+      { type: "improve", text: "📷 순위 목록 Section title 옆에 작은 📷 아이콘 버튼 추가 — 작품 많아도 카드 다 스크롤 안 하고 화면 상단에서 바로 export 가능" },
+      { type: "improve", text: "🧱 Section 컴포넌트 일반화 — headerRight prop으로 title 우측 액션 슬롯 지원 (149개 기존 호출 backward compat)" },
+    ],
+    details: [
+      { type: "improve", text: "App.jsx:11066~ Section({title, headerRight, children}) — title에 flex:1 + 우측 슬롯 조건부 렌더. headerRight 미전달 시 null 분기로 기존과 동일" },
+      { type: "improve", text: "App.jsx:40485~ 순위 목록 Section에 headerRight TouchableOpacity 전달 — hitSlop 8px로 ~38×38px 실 터치 영역, disabled 조건은 기존 하단 PrimaryButton과 동일(isLoading||0작||exportProgress)" },
+      { type: "improve", text: "기존 \"티어표 공유\" Section 하단 PrimaryButton 유지 — 두 위치 모두에서 export 가능. 텍스트 공유는 그대로 (사용자 결정)" },
+      { type: "improve", text: "한계: sticky header 미적용 — 카드 중간/끝 스크롤 상태에선 보이지 않음. 후속 요청 시 stickyHeaderIndices 검토" },
+    ],
+  },
   {
     version: "7.4.4", date: "2026-05-10",
     title: "📷 수상탭 결과 이미지 내보내기 — 상별 1장씩 갤러리 저장",
@@ -40837,7 +40884,27 @@ async function importJSON() {
 
             {/* 🆕 티어표 이미지 캡처 영역 */}
             <View ref={tierImageRef} collapsable={false} style={{ backgroundColor: C.bg }}>
-            <Section title={`순위 목록 (총 ${rankedEntries.length}작)`}>
+            <Section
+              title={`순위 목록 (총 ${rankedEntries.length}작)`}
+              headerRight={
+                /* 🆕 v7.4.5 Section title 옆 작은 📷 버튼 — 카드 끝까지 스크롤 안 해도 export 가능 */
+                <TouchableOpacity
+                  onPress={openExportScopeChoice}
+                  disabled={isLoading || rankedEntries.length === 0 || !!exportProgress}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  style={{
+                    paddingVertical: 6,
+                    paddingHorizontal: 10,
+                    borderRadius: 8,
+                    backgroundColor: (isLoading || rankedEntries.length === 0 || !!exportProgress) ? C.chip : C.primary,
+                    flexDirection: "row",
+                    alignItems: "center",
+                  }}
+                >
+                  <Text style={{ color: "#fff", fontSize: 13, fontWeight: "700" }}>📷</Text>
+                </TouchableOpacity>
+              }
+            >
               {/* 🆕 v7.4.3 청크 캡처 — export 시엔 청크 slice만 mount (Bitmap 한계 우회) */}
               <FlatList
                 data={isExportRendering ? (exportSlice || []) : rankedEntries}
