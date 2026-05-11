@@ -2,9 +2,68 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.4.9 (배정탭 편집 모드 + 드롭 슬롯 이동 + 카드 표지)                   ║
- * ║  최종 수정: 2026-05-10                                                        ║
- * ║  총 라인 수: 약 53,920줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 7.4.10 (순위탭 export 고정 카드 수 정책 + v7.4.6 구조 복귀로 width 회귀 해소) ║
+ * ║  최종 수정: 2026-05-11                                                        ║
+ * ║  총 라인 수: 약 53,900줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.4.10 순위탭 export 단순화 — 고정 20장/이미지 + width race 구조적 차단 (2026-05-11) ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [증상] v7.4.7~v7.4.8 fix 후에도 순위탭 export 결과 이미지에서 카드 우측 70%+ 가  ║
+ * ║ 잘려 저장되는 회귀 지속. v7.4.8의 width:'100%' + alignSelf:'stretch' (JS-layer  ║
+ * ║ hint)는 Android captureRef의 native getWidth() 측정-시점 race를 해소 못함.       ║
+ * ║                                                                              ║
+ * ║ [원인 분석]                                                                     ║
+ * ║ • v7.4.7에서 <View ref={tierImageRef}>를 Section 안으로 옮긴 후 captured View가  ║
+ * ║   dynamic FlatList 영역의 thin wrapper로 변함. 청크 re-render 시 native layout   ║
+ * ║   commit이 늦어져 captureRef의 native getWidth()가 stale 값을 읽음.              ║
+ * ║ • v7.4.6 구조(<View ref>가 <Section> wrap)에서는 captured View가 ScrollView      ║
+ * ║   contentContainer 직속이라 측정 안정 — width race 없음(실증).                  ║
+ * ║                                                                              ║
+ * ║ [수정] 사용자 결정 3건 반영:                                                    ║
+ * ║ (1) 이미지당 고정 20장 chunking — 화면 높이 페이지 fit 폐기                      ║
+ * ║ (2) 마지막 청크 그대로 (병합 X) — 단순 규칙                                      ║
+ * ║ (3) Section title은 export 중 hide — 카드 위주 chrome                           ║
+ * ║                                                                              ║
+ * ║ 정책 변경에 따라 ImageManipulator.crop 페이지 분할이 사라져 captureRef 영역을    ║
+ * ║ v7.4.6 트리로 복귀 가능. Section에 hideTitle prop 추가로 title row만 조건부 숨김.║
+ * ║                                                                              ║
+ * ║ [변경 항목]                                                                     ║
+ * ║ • App.jsx:~11238 Section — hideTitle prop 추가 (149+ 호출 backward compat)       ║
+ * ║ • App.jsx:~28135 상수 — EXPORT_CARDS_PER_IMAGE=20 신설. 이전 MAX_CHUNK_PX/PLAN_  ║
+ * ║   CARD_DP/EST_CARD_DP/EST_HEADER_DP 제거                                        ║
+ * ║ • App.jsx:~28147 planChunks — count-based 재작성 (prGet 인자 제거)              ║
+ * ║ • App.jsx:~28172 estimateExportPageCount — ceil(n/20)                            ║
+ * ║ • App.jsx:~28284 exportTierImages chunk loop — measureAllCards/getImageSize/    ║
+ * ║   cardEndsDP/breaks/ImageManipulator.crop 호출 제거. 1청크=1이미지=1저장. 한도   ║
+ * ║   모니터링 비차단(near_bitmap_limit Breadcrumb). captureRef 실패 catch에서       ║
+ * ║   친화 메시지(이미지 너무 큼).                                                  ║
+ * ║ • App.jsx:~41271 JSX — <View ref><Section hideTitle={isExportRendering}>...     ║
+ * ║   </Section></View> v7.4.6 구조 복귀. width:'100%'/alignSelf:'stretch' (v7.4.8) ║
+ * ║   + style={{width:'100%'}} (FlatList) + ListHeaderComponent 모두 제거           ║
+ * ║                                                                              ║
+ * ║ [위험 분석] N=20은 bitmap 한계(8192px) 근접:                                    ║
+ * ║ • 평균 카드 ~130dp → 20×130+32 ≈ 7896px(PR=3) — 한계 96%                       ║
+ * ║ • awards row/긴 제목 카드 다수 → 초과 가능                                       ║
+ * ║ • 완화: captureRef 실패 catch → 친화 메시지 + 안전 중단. 사용자는 필터/티어별    ║
+ * ║   부분 export로 우회 가능.                                                      ║
+ * ║                                                                              ║
+ * ║ [영향]                                                                          ║
+ * ║ • 215작 → 11장(=ceil(215/20)) 저장 (이전 ~40장 대비 감소)                        ║
+ * ║ • 각 이미지 width 정상 — 좌측 표지부터 우측 텍스트까지 전부 보임                ║
+ * ║ • 각 이미지 chrome 최소 (Section 외곽 16dp padding만, title row/spacer 숨김)    ║
+ * ║ • 메인 화면(export OFF): Section title + 📷 단축 버튼 그대로 노출                ║
+ * ║                                                                              ║
+ * ║ [5대 불변조건]                                                                  ║
+ * ║ • #1 (자동매칭 중 Alert 금지): catch 블록 isAutoMatchingRef 가드 유지            ║
+ * ║ • #5 (catch/finally 강제): chunk loop try/catch/finally 유지                    ║
+ * ║ • 그 외: 무관                                                                   ║
+ * ║                                                                              ║
+ * ║ [추후 enhancement (이번 범위 X)]                                                 ║
+ * ║ • appSettings.exportCardsPerImage UI 노출                                       ║
+ * ║ • captureRef 실패 시 N/2 자동 fallback                                          ║
+ * ║ • measureAllCards 재활용한 사전 over-bitmap 차단                                 ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11318,7 +11377,7 @@ const OutlineButton = memo(({ title, onPress, style, color = C.sub }) => (
   </TouchableOpacity>
 ));
 // 🆕 v7.4.5 headerRight: title 우측 액션 슬롯 (optional). 미전달 시 기존과 동일 렌더.
-const Section = ({ title, headerRight, children }) => (
+const Section = ({ title, headerRight, hideTitle, children }) => (
   <View
     style={{
       backgroundColor: C.card,
@@ -11329,13 +11388,19 @@ const Section = ({ title, headerRight, children }) => (
       borderColor: C.line,
     }}
   >
-    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-      <Text style={{ fontWeight: "800", fontSize: 18, color: C.text, flex: 1 }}>
-        {title}
-      </Text>
-      {headerRight ? <View style={{ marginLeft: 8 }}>{headerRight}</View> : null}
-    </View>
-    <View style={{ height: 8 }} />
+    {/* 🆕 v7.4.10: hideTitle prop — 순위탭 export 중 title row+spacer 숨김(카드 위주 출력).
+        기본값 falsy → 149+ 기존 호출 backward compat. */}
+    {!hideTitle && (
+      <>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+          <Text style={{ fontWeight: "800", fontSize: 18, color: C.text, flex: 1 }}>
+            {title}
+          </Text>
+          {headerRight ? <View style={{ marginLeft: 8 }}>{headerRight}</View> : null}
+        </View>
+        <View style={{ height: 8 }} />
+      </>
+    )}
     {children}
   </View>
 );
@@ -11343,7 +11408,7 @@ const Section = ({ title, headerRight, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.4.9";
+const APP_VERSION = "7.4.10";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -11369,6 +11434,25 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.4.10", date: "2026-05-11",
+    title: "🛠️ 순위탭 export 단순화 — 이미지당 고정 20장 + width 회귀 구조적 차단",
+    highlights: [
+      { type: "fix", text: "🛠️ 순위탭 이미지 내보내기 카드 우측 70%+ 잘림 회귀 근본 해결 — v7.4.7~v7.4.8 시도 후에도 지속되던 Android captureRef width race 차단" },
+      { type: "improve", text: "📸 이미지당 고정 20장 정책 — 215작 → 11장 저장 (이전 ~40장 대비 감소). 화면 높이 페이지 fit 폐기, 예측 가능한 출력" },
+      { type: "improve", text: "🪟 export 중 Section title 숨김(hideTitle prop) — 각 이미지가 카드 위주 chrome 최소, 메인 화면은 그대로" },
+    ],
+    details: [
+      { type: "fix", text: "App.jsx:~41271 JSX 트리 revert — v7.4.7의 <Section><View ref></View></Section> 구조 폐기, v7.4.6 구조 <View ref><Section>...</Section></View>로 복귀. captured View가 ScrollView contentContainer 직속 = native 측정 안정 → width race 구조적 차단" },
+      { type: "fix", text: "v7.4.8의 width:'100%' + alignSelf:'stretch' + FlatList style={{width:'100%'}} 모두 제거 — JS-layer hint만으로는 native getWidth() race 해소 못함이 검증됨" },
+      { type: "new", text: "App.jsx:~11238 Section 컴포넌트 — hideTitle prop 추가. true 시 title row + 8dp spacer 한 번에 hide. 기본값 falsy → 149+ 기존 호출 backward compat" },
+      { type: "new", text: "App.jsx:~28135 EXPORT_CARDS_PER_IMAGE=20 상수 — 사용자 결정. 향후 appSettings UI 노출 가능 (TODO)" },
+      { type: "new", text: "App.jsx:~28147 planChunks count-based 재작성 — Array.slice(i, i+20) 단순 반복. 마지막 청크 N장 미만이어도 병합 X (사용자 결정)" },
+      { type: "new", text: "App.jsx:~28284 exportTierImages chunk loop — measureAllCards/cardEndsDP/breaks/ImageManipulator.crop/내부 페이지 loop 모두 제거. 1청크=1이미지=1저장. captureRef 실패 catch에서 \"이미지 너무 큼\" 친화 Alert + 안전 중단 (불변조건 #1 가드 유지)" },
+      { type: "perf", text: "bitmap 한계(8192px) 모니터링 — getImageSizeRobust 비차단 호출로 7800px 초과 시 Breadcrumb \"near_bitmap_limit\" 기록. 실패 시 chunk_failed 로깅" },
+      { type: "improve", text: "위험: N=20은 한계 96%(평균 카드). awards/긴 제목 다수 데이터셋에서 초과 가능 — 필터/티어별 부분 export 안내 메시지로 우회 유도" },
+    ],
+  },
   {
     version: "7.4.9", date: "2026-05-10",
     title: "🆕 배정탭 편집 모드 + 드롭 슬롯 이동 + 카드 표지 노출",
@@ -28126,47 +28210,29 @@ function AppContent() {
     await Promise.all(promises);
   }
 
-  // 🆕 v7.4.3 청크 캡처 상수 — Android Bitmap 한계(~4096-8192px) 안전 마진.
-  // MAX_CHUNK_PX = 6000 (한계의 ~73%). 두 카드 추정값을 분리:
-  // - PLAN_CARD_DP=180: 청크 packing용 (실측 평균 ~130dp + 50dp 안전 마진).
-  // - EST_CARD_DP=130: 페이지 수 추정용 (실측 평균 — alert "약 P장" 정확도).
-  // v7.4.1 헤더 측정 "330-400px @ PR=3" = DP 110-133과 일치.
-  const MAX_CHUNK_PX = 6000;
-  const PLAN_CARD_DP = 180;
-  const EST_CARD_DP = 130;
-  const EST_HEADER_DP = 60;
+  // 🆕 v7.4.10: 이미지당 고정 카드 수 (사용자 결정 — 기본 20).
+  // N=20: 평균 카드 ~130dp 기준 ~7900px(PR=3), Android bitmap 한계(8192px) 가까움.
+  // awards/긴 제목이 많은 데이터셋에서는 한계 초과 가능 — captureRef 실패 시 catch에서 친화 메시지.
+  // 향후 enhancement: appSettings.exportCardsPerImage UI 노출, 실패 시 N/2 자동 fallback.
+  const EXPORT_CARDS_PER_IMAGE = 20;
 
-  // 🆕 v7.4.3 entries → 청크 배열 (DP 기반 packing). 첫 청크에 inline header 포함되므로
-  // 시작 누적값에 EST_HEADER_DP*pr을 더함. 단일 카드가 한도 초과해도 최소 1장 포함 보장.
-  function planChunks(entries, prGet) {
+  // 🆕 v7.4.10: count-based chunking. 페이지 분할(ImageManipulator.crop) 제거에 따라
+  // 1청크=1이미지=1저장. 마지막 청크가 N장 미만이어도 병합 없이 그대로 (사용자 결정).
+  function planChunks(entries) {
     if (!entries || entries.length === 0) return [];
     const chunks = [];
-    const cardPx = PLAN_CARD_DP * prGet;
-    const headerPx = EST_HEADER_DP * prGet;
-    let i = 0;
-    let isFirst = true;
-    while (i < entries.length) {
-      let acc = isFirst ? headerPx : 0;
-      let j = i;
-      while (j < entries.length) {
-        const next = acc + cardPx;
-        if (next > MAX_CHUNK_PX && j > i) break; // 최소 1장 보장
-        acc = next;
-        j++;
-      }
-      const ids = entries.slice(i, j).map(e => e?.item?.id).filter(Boolean);
-      chunks.push({ startIdx: i, endIdx: j, ids });
-      i = j;
-      isFirst = false;
+    for (let i = 0; i < entries.length; i += EXPORT_CARDS_PER_IMAGE) {
+      const slice = entries.slice(i, i + EXPORT_CARDS_PER_IMAGE);
+      const ids = slice.map(e => e?.item?.id).filter(Boolean);
+      chunks.push({ startIdx: i, endIdx: i + slice.length, ids });
     }
     return chunks;
   }
 
-  // 🆕 v7.4.3 alert용 P 추정 — 실측 카드 평균 기준.
+  // 🆕 v7.4.10: 사전 경고 P장 추정 — 단순 ceil(n/N).
   function estimateExportPageCount(n) {
     if (n <= 0) return 0;
-    const pageHdp = Math.max(1, Dimensions.get("window").height - 80);
-    return Math.max(1, Math.ceil((n * EST_CARD_DP + EST_HEADER_DP) / pageHdp));
+    return Math.ceil(n / EXPORT_CARDS_PER_IMAGE);
   }
 
   // 🆕 v7.4.3 청크 slice setState + mount 안정화 대기 (line 27594-27596 패턴 미러).
@@ -28292,11 +28358,12 @@ function AppContent() {
         return;
       }
 
-      // 🆕 v7.4.3 청크 캡처 loop — 각 청크는 독립 captureRef. peak Bitmap 크기 < MAX_CHUNK_PX.
-      const chunks = planChunks(targetEntries, prGet);
+      // 🆕 v7.4.10: 1청크 = 1이미지 = 1저장. count-based chunking으로 페이지 분할 사라짐.
+      // captureRef 영역은 v7.4.6 구조(<View ref>가 <Section> wrap)로 복귀 — width race 차단.
+      // bitmap 한계(8192px) 근접 시 Breadcrumb 경고, 초과 실패 시 친화 메시지.
+      const chunks = planChunks(targetEntries);
       let totalSaved = 0;
-      let totalPages = 0;
-      const targetPageHdp = Dimensions.get("window").height - 80;
+      const totalPages = chunks.length;
 
       for (let ci = 0; ci < chunks.length; ci++) {
         if (!isExportingRef.current) break;
@@ -28305,15 +28372,13 @@ function AppContent() {
         setExportChunkIdx(ci);
         setExportProgress({
           current: totalSaved,
-          total: Math.max(1, totalPages || 1),
-          label: `청크 ${ci + 1}/${chunks.length} · 렌더 중`,
+          total: totalPages,
+          label: `${ci + 1}/${totalPages} · 렌더 중`,
         });
         await setExportSliceAndWait(targetEntries.slice(chunk.startIdx, chunk.endIdx));
         if (!isExportingRef.current) break;
 
         await waitForAllCardsRendered(chunk.ids);
-        if (!isExportingRef.current) break;
-        await measureAllCards(chunk.ids);
         if (!isExportingRef.current) break;
 
         let chunkUri = null;
@@ -28326,63 +28391,29 @@ function AppContent() {
           if (!isExportingRef.current) break;
           Breadcrumbs.add("export", "chunk_done", { ci, ids: chunk.ids.length });
 
-          const { width: imgWpx, height: imgHpx } = await getImageSizeRobust(chunkUri);
-          if (!isExportingRef.current) break;
-          if (imgHpx > 7500) Breadcrumbs.add("export", "oversized_chunk", { ci, h: imgHpx });
-          if (!imgWpx || !imgHpx || imgHpx < 10) {
-            throw new Error(`청크 ${ci + 1} 캡처 크기 비정상: ${imgWpx}x${imgHpx}`);
-          }
+          // bitmap 한계 모니터링 (비차단)
+          try {
+            const { width: imgWpx, height: imgHpx } = await getImageSizeRobust(chunkUri);
+            if (imgHpx > 7800) Breadcrumbs.add("export", "near_bitmap_limit", { ci, w: imgWpx, h: imgHpx });
+          } catch { /* 크기 측정 실패해도 저장은 진행 */ }
 
-          const pr = prGet;
-          const totalDP = imgHpx / pr;
-          const cardEndsDP = Array.from(itemLayoutsRef.current.values())
-            .map(L => L.y + L.height)
-            .filter(v => Number.isFinite(v) && v > 0)
-            .sort((a, b) => a - b);
-
-          const breaks = [0];
-          let cursor = 0;
-          while (cursor < totalDP - 1) {
-            const target = cursor + targetPageHdp;
-            let snap = null;
-            for (const ce of cardEndsDP) {
-              if (ce > cursor + 50 && ce <= target + 20) snap = ce;
-              else if (ce > target + 20) break;
-            }
-            if (!snap || snap <= cursor) snap = Math.min(target, totalDP);
-            breaks.push(snap);
-            cursor = snap;
-          }
-          if (breaks[breaks.length - 1] < totalDP - 1) breaks.push(totalDP);
-          const numPages = breaks.length - 1;
-          if (numPages <= 0) {
-            throw new Error(`청크 ${ci + 1} 페이지 분할 실패 — 캡처 결과가 너무 작습니다`);
-          }
-          totalPages += numPages;
-
-          for (let pi = 0; pi < numPages; pi++) {
-            if (!isExportingRef.current) break;
-            setExportProgress({
-              current: totalSaved + pi + 1,
-              total: totalPages,
-              label: `청크 ${ci + 1}/${chunks.length} · 저장 중`,
-            });
-            const startDP = breaks[pi];
-            const endDP = breaks[pi + 1];
-            const cropped = await ImageManipulator.manipulateAsync(
-              chunkUri,
-              [{ crop: {
-                originX: 0,
-                originY: Math.round(startDP * pr),
-                width: imgWpx,
-                height: Math.round((endDP - startDP) * pr),
-              }}],
-              { compress: 0.9, format: ImageManipulator.SaveFormat.JPEG }
+          setExportProgress({
+            current: totalSaved + 1,
+            total: totalPages,
+            label: `${ci + 1}/${totalPages} · 저장 중`,
+          });
+          await MediaLibrary.saveToLibraryAsync(chunkUri);
+          totalSaved++;
+        } catch (e) {
+          // 🆕 v7.4.10: captureRef 실패 (대개 bitmap 한계) — 친화 메시지 후 안전 중단
+          Breadcrumbs.add("export", "chunk_failed", { ci, msg: (e?.message || "").substring(0, 100) });
+          if (!isAutoMatchingRef.current) {
+            Alert.alert(
+              "이미지 너무 큼",
+              `청크 ${ci + 1}/${chunks.length}에서 캡처 실패. 한 이미지당 ${EXPORT_CARDS_PER_IMAGE}장이 이 데이터셋에는 과합니다.\n필터/티어별 부분 export로 다시 시도해주세요.`
             );
-            await MediaLibrary.saveToLibraryAsync(cropped.uri);
-            await FileSystem.deleteAsync(cropped.uri, { idempotent: true }).catch(() => {});
-            totalSaved++;
           }
+          break;
         } finally {
           if (chunkUri) await FileSystem.deleteAsync(chunkUri, { idempotent: true }).catch(() => {});
         }
@@ -41315,14 +41346,16 @@ async function importJSON() {
               </View>
             </Section>
 
-            {/* 🆕 v7.4.7: Section title/외곽/📷 버튼은 캡처에서 제외 — tierImageRef를 FlatList wrap으로 이동.
-                v7.4.3 plan 의도("Section title은 captureRef 영역 밖")를 실제 코드에 반영. 첫 페이지 헤더 중복 차단. */}
+            {/* 🛠️ v7.4.10: v7.4.6 구조로 revert — <View ref={tierImageRef}>가 <Section>을 wrap.
+                고정 카드 수(EXPORT_CARDS_PER_IMAGE=20) chunking으로 페이지 crop이 사라지고
+                inline header도 불필요해짐. Section의 hideTitle prop으로 export 중 title row 숨김.
+                width race는 captured View가 ScrollView contentContainer 직속이라 구조적으로 차단. */}
+            <View ref={tierImageRef} collapsable={false} style={{ backgroundColor: C.bg }}>
             <Section
               title={`순위 목록 (총 ${rankedEntries.length}작)`}
+              hideTitle={isExportRendering}
               headerRight={
-                /* 🆕 v7.4.5 Section title 옆 작은 📷 버튼 — 카드 끝까지 스크롤 안 해도 export 가능.
-                   🛠️ v7.4.7: tierImageRef 밖으로 분리되어 캡처에 더 이상 포함 X. v7.4.6의
-                   isExportRendering 분기는 잔존 안전망(평소엔 그대로 노출). */
+                /* 🆕 v7.4.5 Section title 옆 📷 단축 버튼 — export 중에는 hide (캡처 노출 차단) */
                 isExportRendering ? null : (
                   <TouchableOpacity
                     onPress={openExportScopeChoice}
@@ -41342,14 +41375,8 @@ async function importJSON() {
                 )
               }
             >
-              {/* 🆕 티어표 이미지 캡처 영역 — Section 안의 FlatList만 wrap (외곽/title/📷 제외) */}
-              {/* 🛠️ v7.4.8: alignSelf:'stretch' + width:'100%' 명시 — Section 안으로 이동한 후
-                  Android captureRef가 측정 단계에서 좁은 너비로 잡혀 카드 우측 70%가 잘리던 회귀 차단.
-                  FlatList에도 width:'100%' 강제로 내부 콘텐츠가 부모 너비를 따르도록 보강. */}
-              <View ref={tierImageRef} collapsable={false} style={{ backgroundColor: C.bg, alignSelf: 'stretch', width: '100%' }}>
               {/* 🆕 v7.4.3 청크 캡처 — export 시엔 청크 slice만 mount (Bitmap 한계 우회) */}
               <FlatList
-                style={{ width: '100%' }}
                 data={isExportRendering ? (exportSlice || []) : rankedEntries}
                 keyExtractor={(entry, index) => String(entry?.item?.id || `rank-${index}`)}
                 initialNumToRender={isExportRendering ? Math.max((exportSlice || []).length, 1) : 8}
@@ -41357,14 +41384,7 @@ async function importJSON() {
                 windowSize={isExportRendering ? Math.max((exportSlice || []).length, 1) : 3}
                 removeClippedSubviews={false}
                 scrollEnabled={false}
-                /* 🆕 v7.4.3 첫 청크에만 inline header 노출 — 기존 단일 캡처 동작 재현 */
-                ListHeaderComponent={
-                  isExportRendering && exportChunkIdx === 0 ? (
-                    <Text style={{ fontWeight: "800", fontSize: 18, color: C.text, marginBottom: 8 }}>
-                      {`순위 목록 (총 ${rankedEntries.length}작)`}
-                    </Text>
-                  ) : null
-                }
+                /* ❌ v7.4.10: ListHeaderComponent 제거 — Section.hideTitle로 chrome 자체 차단 */
                 renderItem={({ item: entry }) => {
                   const { item, rank } = entry || {};
                   if (!item) return null;
@@ -41462,8 +41482,8 @@ async function importJSON() {
                 }}
                 ListEmptyComponent={<Text style={{ color: C.sub, textAlign: "center", padding: 20 }}>작품이 없습니다.</Text>}
               />
-              </View>
             </Section>
+            </View>
 
             {/* 🆕 티어표 공유 */}
             <Section title="티어표 공유">
