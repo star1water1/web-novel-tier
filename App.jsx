@@ -2,9 +2,48 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.4.10 (순위탭 export 고정 카드 수 정책 + v7.4.6 구조 복귀로 width 회귀 해소) ║
+ * ║  버전: 7.4.11 (순위탭 export 카드 수 사용자 설정 + 실패 사전 예측)              ║
  * ║  최종 수정: 2026-05-11                                                        ║
- * ║  총 라인 수: 약 53,900줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 54,000줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.4.11 순위탭 export 카드 수 사용자 설정 + 실패 사전 예측 (2026-05-11)     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [Why] v7.4.10 EXPORT_CARDS_PER_IMAGE=20 하드코드 — 데이터셋 따라 적합 N 다름.   ║
+ * ║ 사용자 결정: 프리셋 6개(5/10/15/20/25/30) + bitmap 한계 실패 사전 계산 표시.    ║
+ * ║                                                                              ║
+ * ║ [구조] 카드 height 추정 모델 + N별 청크 시뮬레이션:                            ║
+ * ║ • estimateCardHeight: padding(42dp) + inner(88dp) + awards(+24dp) = 130/154dp ║
+ * ║ • predictExportRisk(list, n): 청크별 sum × PR vs 8192px 안전 마진(7800px) 비교  ║
+ * ║   → maxChunkHeightPx / failCount / totalChunks 반환                            ║
+ * ║                                                                              ║
+ * ║ [수정] 단일 파일 (App.jsx):                                                    ║
+ * ║ • DEFAULT_SETTINGS (~25080): exportCardsPerImage: 20 추가 — deep merge로 기존  ║
+ * ║   사용자도 자동 마이그레이션                                                    ║
+ * ║ • estimateCardHeight / predictExportRisk (~25563, 외부 utility): pure helper   ║
+ * ║   신설. parseAwards 사용 시 try/catch로 예외 방어                              ║
+ * ║ • EXPORT_CARDS_PER_IMAGE (~28217): clamp(1~30) + appSettings 읽기              ║
+ * ║ • exportRiskPresets useMemo (~37336): settings 탭에서만 계산. screen 의존성으  ║
+ * ║   로 다른 탭 진입 시 자동 null 반환                                            ║
+ * ║ • 설정 UI 신규 Section "📷 이미지 내보내기" (~47584): 6개 chip + ✓/⚠/✗ 위험   ║
+ * ║   border + 현재 선택 상세 (최대 청크 px / 8192px 비율 + 성공 예상 청크 수)     ║
+ * ║                                                                              ║
+ * ║ [정책]                                                                          ║
+ * ║ • 기본값 20 (v7.4.10 동작 보존)                                                 ║
+ * ║ • UI clamp 1~30 (외부 경로 방어 가드)                                          ║
+ * ║ • 위험 색: 안전=#22c55e / 일부 실패=#f59e0b / 대부분 실패=#ef4444               ║
+ * ║ • 슬롯별 분리 (app_meta가 슬롯 DB에 있음 — 자연스럽게 슬롯별 N 설정 가능)       ║
+ * ║                                                                              ║
+ * ║ [영향]                                                                          ║
+ * ║ • 기본값 20 보존 → v7.4.10 사용자 동작 변화 0                                  ║
+ * ║ • 설정 화면 발견성 향상 (🖼️ 표지 라이브러리 다음 위치)                          ║
+ * ║ • 예측 정확도: list 원본 순서 기반 — 실제 export는 rankedEntries(sort by rank)  ║
+ * ║   기반이므로 약간 부정확 가능. help text에 "추정치" 명시. 실패 시 친화 Alert.   ║
+ * ║                                                                              ║
+ * ║ [5대 불변조건] 무관 (read-only UI 변경, helper는 pure function)                 ║
+ * ║                                                                              ║
+ * ║ [추후 enhancement] 사용자 지정 TextInput(1~30) / 예측 정밀화 / 실패 N/2 fallback║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11408,7 +11447,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.4.10";
+const APP_VERSION = "7.4.11";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -11434,6 +11473,25 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.4.11", date: "2026-05-11",
+    title: "🆕 순위탭 export 카드 수 사용자 설정 + 실패 사전 예측",
+    highlights: [
+      { type: "new", text: "🆕 설정 → 🎯 앱 탭에 \"📷 이미지 내보내기\" 신규 Section — 이미지당 카드 수 직접 선택(5/10/15/20/25/30)" },
+      { type: "new", text: "🎯 각 프리셋 옆에 ✓/⚠/✗ 위험 지시자 — bitmap 한계(8192px) 대비 청크 최대 height 사전 계산 결과를 색 border + 아이콘으로 즉시 표시" },
+      { type: "new", text: "📊 현재 선택 상세 정보 — 최대 청크 px / 8192px 비율 + 성공/실패 예상 청크 수 (예: \"11장 중 2장 실패 예상\")" },
+    ],
+    details: [
+      { type: "new", text: "App.jsx:~25080 DEFAULT_SETTINGS.exportCardsPerImage=20 추가. 기존 사용자는 deep merge로 자동 마이그레이션 (~28964)" },
+      { type: "new", text: "App.jsx:~25563 estimateCardHeight(item, awardSystemSettings) — pure helper. padding(42dp) + inner(88dp) + awards row(+24dp) = 130/154dp. parseAwards 호출 try/catch 가드" },
+      { type: "new", text: "App.jsx:~25580 predictExportRisk(list, n, awardSystemSettings) — 청크 시뮬레이션. PixelRatio.get() × height 합산 vs SAFE_LIMIT_PX(7800)로 청크별 실패 여부 판정. 반환: maxChunkHeightPx / failCount / totalChunks" },
+      { type: "fix", text: "App.jsx:~28217 EXPORT_CARDS_PER_IMAGE — appSettings.exportCardsPerImage 읽기 + Math.max(1, Math.min(30, ...)) clamp. UI 외 경로 방어. 기본값(없을 때) 20 보존" },
+      { type: "new", text: "App.jsx:~37336 exportRiskPresets useMemo — screen === \"settings\" 가드로 다른 탭에서 계산 스킵. list/awardSystemSettings 변경 시만 재계산. exportCardsCurrent / exportCurrentRisk 함께 도출" },
+      { type: "new", text: "App.jsx:~47584 설정 UI 신규 Section — 🖼️ 표지 라이브러리 다음, 📂 폴더 관리 이전. TouchableOpacity 6개 + 위험 색 border. 현재 선택은 primary 색 배경" },
+      { type: "improve", text: "위험 색 매핑: 안전=#22c55e(green) / 일부 실패=#f59e0b(orange) / 대부분 실패=#ef4444(red)" },
+      { type: "improve", text: "슬롯별 분리: app_meta가 슬롯 DB에 있어 슬롯마다 다른 N 설정 가능. 자연스럽게 슬롯별 데이터 특성 반영" },
+    ],
+  },
   {
     version: "7.4.10", date: "2026-05-11",
     title: "🛠️ 순위탭 export 단순화 — 이미지당 고정 20장 + width 회귀 구조적 차단",
@@ -25078,6 +25136,7 @@ const DEFAULT_SETTINGS = {
   showReviewBanner: true,           // 홈 화면 검토 배너 표시
   undoStackSize: 30,                // 되돌리기 스택 크기
   fullscreenMode: false,            // 🆕 v3.4.4: 전체 화면 모드 (상태바 숨김)
+  exportCardsPerImage: 20,          // 🆕 v7.4.11: 순위탭 export 이미지당 카드 수 (1~30)
   // 📝 보충 탭 기준 (v2.8)
   supplement: {
     enabled: true,                   // 보충 탭 활성화
@@ -25557,6 +25616,49 @@ async function logVerificationMatch(sessionId, suspicionId, candidateId, suspici
   } catch (e) {
     console.warn("[v7.0] logVerificationMatch 오류:", e?.message);
   }
+}
+
+// 🆕 v7.4.11: 순위탭 카드 height 추정 (export 위험 예측용 pure helper).
+// rank tab 카드 구조:
+//  - 외곽: padding 14×2 + border 2×2 + marginBottom 10 = 42dp
+//  - 내부 row: cover 77dp(=55*1.4) vs 4줄 텍스트 ~88dp 중 max = 88dp
+//  - awards row: parseAwards 결과 있을 때만 +24dp
+function estimateCardHeight(item, awardSystemSettings) {
+  const FRAME_DP = 42;
+  const BASE_INNER_DP = 88;
+  let extra = 0;
+  if (item?.awards) {
+    try {
+      if (parseAwards(item.awards, awardSystemSettings).length > 0) extra += 24;
+    } catch { /* parseAwards 예외 시 awards 무가산 */ }
+  }
+  return FRAME_DP + BASE_INNER_DP + extra; // 130dp 기본 / 154dp awards 포함
+}
+
+// 🆕 v7.4.11: N별 export 실패 사전 예측. Android bitmap 한계(8192px) 대비 청크 최대 height 시뮬레이션.
+// 리턴: { maxChunkHeightPx, failCount, totalChunks }
+function predictExportRisk(list, n, awardSystemSettings) {
+  if (!list || list.length === 0 || n <= 0) {
+    return { maxChunkHeightPx: 0, failCount: 0, totalChunks: 0 };
+  }
+  const pr = PixelRatio.get();
+  const SECTION_PADDING_DP = 32;   // Section 외곽 padding 16×2
+  const SAFE_LIMIT_PX = 7800;      // 8192 한계의 ~95% (안전 마진)
+  const heights = list.map(item => estimateCardHeight(item, awardSystemSettings));
+  let maxChunkHeightPx = 0;
+  let failCount = 0;
+  const totalChunks = Math.ceil(list.length / n);
+  for (let i = 0; i < list.length; i += n) {
+    const sumDp = heights.slice(i, i + n).reduce((a, b) => a + b, 0) + SECTION_PADDING_DP;
+    const sumPx = sumDp * pr;
+    if (sumPx > SAFE_LIMIT_PX) failCount++;
+    if (sumPx > maxChunkHeightPx) maxChunkHeightPx = sumPx;
+  }
+  return {
+    maxChunkHeightPx: Math.round(maxChunkHeightPx),
+    failCount,
+    totalChunks,
+  };
 }
 
 // 🆕 v7.0.1 (C1 fix): tier 그룹 manual_order 재정렬 — gap=100 invariant 복원
@@ -28210,11 +28312,14 @@ function AppContent() {
     await Promise.all(promises);
   }
 
-  // 🆕 v7.4.10: 이미지당 고정 카드 수 (사용자 결정 — 기본 20).
+  // 🆕 v7.4.11: appSettings.exportCardsPerImage에서 읽기 (사용자 설정 노출).
+  // 1~30 범위로 clamp — UI에서 5/10/15/20/25/30 프리셋, 외부 경로 방어용 가드.
   // N=20: 평균 카드 ~130dp 기준 ~7900px(PR=3), Android bitmap 한계(8192px) 가까움.
-  // awards/긴 제목이 많은 데이터셋에서는 한계 초과 가능 — captureRef 실패 시 catch에서 친화 메시지.
-  // 향후 enhancement: appSettings.exportCardsPerImage UI 노출, 실패 시 N/2 자동 fallback.
-  const EXPORT_CARDS_PER_IMAGE = 20;
+  // 한계 초과 시 captureRef catch에서 친화 메시지 + 부분 export 안내.
+  const EXPORT_CARDS_PER_IMAGE = Math.max(
+    1,
+    Math.min(30, Number(appSettings?.exportCardsPerImage) || 20)
+  );
 
   // 🆕 v7.4.10: count-based chunking. 페이지 분할(ImageManipulator.crop) 제거에 따라
   // 1청크=1이미지=1저장. 마지막 청크가 N장 미만이어도 병합 없이 그대로 (사용자 결정).
@@ -37285,6 +37390,20 @@ function AppContent() {
       !(r.kind === 'slot' && r.tier === selectedEntry.tier && r.insertIndex === noOpInsertIdx)
     );
   }, [tierManageEntries, tierManageEditMode, tierManageSelectedId, tierManageQuery]);
+
+  // 🆕 v7.4.11: 설정 화면 — 이미지당 카드 수 N별 실패 위험 사전 예측.
+  // settings 탭에서만 계산 (다른 탭에선 불필요).
+  const EXPORT_N_PRESETS = [5, 10, 15, 20, 25, 30];
+  const exportCardsCurrent = Math.max(
+    1, Math.min(30, Number(appSettings.exportCardsPerImage) || 20)
+  );
+  const exportRiskPresets = useMemo(() => {
+    if (screen !== "settings") return null;
+    return EXPORT_N_PRESETS.map(n => ({
+      n, ...predictExportRisk(list || [], n, awardSystemSettings),
+    }));
+  }, [list, awardSystemSettings, screen]);
+  const exportCurrentRisk = exportRiskPresets?.find(r => r.n === exportCardsCurrent) || null;
 
   // 🆕 분석 통계 (useMemo로 캐싱)
   // 🚀 v3.5.4: 분석 탭에서만 계산 (다른 탭에서 불필요한 전체 순회 방지)
@@ -47518,6 +47637,72 @@ async function importJSON() {
                   </TouchableOpacity>
                 ))}
               </View>
+            </Section>
+
+            {/* 🆕 v7.4.11: 순위탭 이미지 내보내기 — 이미지당 카드 수 + 실시간 위험 예측 */}
+            <Section title="📷 이미지 내보내기">
+              <Text style={{ color: C.text, fontSize: 13, marginBottom: 8 }}>
+                이미지당 카드 수
+              </Text>
+
+              {/* 프리셋 6개 — 위험 색 border + ✓/⚠/✗ 아이콘 */}
+              <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 8 }}>
+                {(exportRiskPresets || []).map(({ n, failCount, totalChunks }) => {
+                  const ok = failCount === 0;
+                  const some = failCount > 0 && failCount < totalChunks;
+                  const icon = ok ? "✓" : some ? "⚠" : "✗";
+                  const riskColor = ok ? "#22c55e" : some ? "#f59e0b" : "#ef4444";
+                  const isActive = exportCardsCurrent === n;
+                  return (
+                    <TouchableOpacity
+                      key={n}
+                      onPress={() => saveAppSettings({ exportCardsPerImage: n })}
+                      style={{
+                        paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999,
+                        backgroundColor: isActive ? C.primary : C.chip,
+                        marginRight: 8, marginBottom: 8,
+                        borderWidth: 1.5,
+                        borderColor: isActive ? C.primary : riskColor,
+                        flexDirection: "row", alignItems: "center", gap: 4,
+                      }}
+                    >
+                      <Text style={{
+                        color: isActive ? "#fff" : riskColor,
+                        fontWeight: "800", fontSize: 12,
+                      }}>{icon}</Text>
+                      <Text style={{
+                        color: isActive ? "#fff" : C.text,
+                        fontWeight: "600",
+                      }}>{n}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* 현재 선택 상세 */}
+              {exportCurrentRisk && exportCurrentRisk.totalChunks > 0 ? (
+                <Text style={{ color: C.sub, fontSize: 11, lineHeight: 16 }}>
+                  현재 선택({exportCardsCurrent}장): 최대 청크{" "}
+                  <Text style={{
+                    color: exportCurrentRisk.failCount === 0 ? "#22c55e"
+                         : exportCurrentRisk.failCount < exportCurrentRisk.totalChunks ? "#f59e0b"
+                         : "#ef4444",
+                    fontWeight: "700",
+                  }}>
+                    {exportCurrentRisk.maxChunkHeightPx}px / 8192px ({Math.round(exportCurrentRisk.maxChunkHeightPx / 8192 * 100)}%)
+                  </Text>{"\n"}
+                  {exportCurrentRisk.failCount === 0
+                    ? `✓ ${exportCurrentRisk.totalChunks}장 모두 성공 예상`
+                    : `⚠ ${exportCurrentRisk.failCount}/${exportCurrentRisk.totalChunks}장 캡처 실패 예상`}
+                </Text>
+              ) : (
+                <Text style={{ color: C.sub, fontSize: 11 }}>저장된 작품이 없어 예측 불가</Text>
+              )}
+
+              <Text style={{ color: C.sub, fontSize: 11, lineHeight: 16, marginTop: 8 }}>
+                ✓ 안전 · ⚠ 일부 실패 가능 · ✗ 대부분 실패{"\n"}
+                예측은 awards/카드 데이터 기반 추정치이며 실제 결과는 다를 수 있습니다. 캡처 실패 시 친화 메시지로 안내됩니다.
+              </Text>
             </Section>
 
             {/* 📂 v3.7.0: 폴더 관리 */}
