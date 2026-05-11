@@ -2,9 +2,55 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.4.11 (순위탭 export 카드 수 사용자 설정 + 실패 사전 예측)              ║
+ * ║  버전: 7.4.12 (수상탭 후보작 포함 export 옵션 + v7.4.11 백업 누락 복구)         ║
  * ║  최종 수정: 2026-05-11                                                        ║
- * ║  총 라인 수: 약 54,000줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 54,050줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.4.12 수상탭 후보작 포함 export 옵션 + 백업 누락 복구 (2026-05-11)        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [Why-A] 사용자 요청 — 수상탭 export 시 후보작도 함께 이미지에 포함하는 옵션.    ║
+ * ║ 기존 동작은 항상 강제 collapse 후 캡처(후보작 미포함).                          ║
+ * ║                                                                              ║
+ * ║ [Why-B] PR #27 Codex P2 리뷰 — v7.4.11에서 추가한 exportCardsPerImage 설정이    ║
+ * ║ buildExtendedBackup/restore 페이로드에서 빠져 백업 → 복원 시 기본값 20으로      ║
+ * ║ silently reset. 사용자 튜닝 손실 회귀.                                          ║
+ * ║                                                                              ║
+ * ║ [수정-A] AwardsScreen pre-export Alert (App.jsx ~20322):                       ║
+ * ║ • 권한 확인 직후, expandedSnapshot 캡처 전에 3-button Alert                     ║
+ * ║   ("취소" / "후보작 제외" / "후보작 포함")                                       ║
+ * ║ • 취소 시 기존 early-return 패턴 미러 (isAwardExportingRef 수동 reset)         ║
+ * ║ • 포함 선택 시 모든 awardsWithWinners의 awardId={true}로 setExpandedCandidates   ║
+ * ║ • 제외 선택 시 기존 동작 그대로 (setExpandedCandidates({})로 강제 collapse)     ║
+ * ║ • Breadcrumbs: cancelled / include_choice (디버깅용)                            ║
+ * ║                                                                              ║
+ * ║ [수정-B] backup/restore에 exportCardsPerImage 직렬화 추가:                      ║
+ * ║ • buildExtendedBackup(~38475): settingsDiff.ec = settings.exportCardsPerImage   ║
+ * ║   (기본값과 다를 때만 — 기존 us/aa/al/am 패턴 일치)                            ║
+ * ║ • 복원(~39245): if (s.ec !== undefined) restored.exportCardsPerImage = s.ec    ║
+ * ║ • 약어 키 `ec` (export cards) — 기존 2-char 약어 패턴 일관성                    ║
+ * ║                                                                              ║
+ * ║ [위험 분석 — 후보작 포함 시]                                                    ║
+ * ║ • 평균 award height: 후보작 제외 ~300-500dp / 포함 ~600-800dp                  ║
+ * ║ • bitmap 한계(8192px) 초과 빈도 ↑ → ImageManipulator split fallback 다발        ║
+ * ║ • 갤러리 이미지 수 1.5~2배 증가 가능                                            ║
+ * ║ • mid-card crop: ScrollView horizontal 구조라 후보작 자체는 한 줄(가로 스크롤)  ║
+ * ║   이므로 위/아래 분할 시 후보작 영역 전체가 한 페이지에 들어감. 단 winners ↔   ║
+ * ║   후보작 헤더 사이 분할은 가능 ("블로그용 미세 잘림 허용" 기존 정책)            ║
+ * ║                                                                              ║
+ * ║ [영향]                                                                          ║
+ * ║ • 기본 동작(취소/제외 선택) → v7.4.11과 100% 동일. no regression                ║
+ * ║ • 포함 선택 시만 새 동작. 사용자 선택 즉시 확인 가능                            ║
+ * ║ • 백업 호환: 기존 backup 파일도 ec 없을 시 기본값(20) 적용 → backward compat    ║
+ * ║                                                                              ║
+ * ║ [5대 불변조건] 무관:                                                            ║
+ * ║ • #1 (자동매칭 중 Alert 금지): 신규 Alert는 권한 체크 후, isAutoMatchingRef     ║
+ * ║   가드는 함수 진입부에 기존 존재. 위반 X                                        ║
+ * ║ • #5 (catch/finally): 신규 Alert는 try 블록 밖이지만, finally의 expandedSnapshot ║
+ * ║   원복은 try 진입 후에만 의미. 취소 분기에서 try 진입 안 함 — 원복 불필요       ║
+ * ║                                                                              ║
+ * ║ [추후 enhancement] AwardsScreen 카드 경계 스냅 / backup 페이로드 완전성 검증 자동화 ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11447,7 +11493,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.4.11";
+const APP_VERSION = "7.4.12";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -11473,6 +11519,23 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.4.12", date: "2026-05-11",
+    title: "🆕 수상탭 후보작 포함 export 옵션 + v7.4.11 백업 누락 복구",
+    highlights: [
+      { type: "new", text: "🏆 수상탭 이미지 내보내기 시 \"후보작 포함 / 제외\" 선택 Alert — 후보작 목록을 펼친 상태로도 캡처 가능" },
+      { type: "fix", text: "📦 v7.4.11 exportCardsPerImage 설정이 백업/복원 페이로드에서 누락되던 회귀 수정 (PR #27 Codex P2)" },
+    ],
+    details: [
+      { type: "new", text: "App.jsx:~20322 exportAwardResults — 권한 확인 직후 3-button Alert (취소/제외/포함). 포함 선택 시 모든 awardsWithWinners의 awardId={true}로 setExpandedCandidates 동적 호출. 제외는 기존 동작(setExpandedCandidates({})). 영구 설정 X" },
+      { type: "new", text: "취소 시 isAwardExportingRef.current=false 수동 reset 후 return (기존 라인 20311/20319 early-return 패턴 미러). Breadcrumbs.add(\"award_export\", \"cancelled\"/\"include_choice\")로 디버깅 정보 보존" },
+      { type: "new", text: "expandedSnapshot은 try 블록 밖 그대로 유지 — finally의 setExpandedCandidates(expandedSnapshot) 원복 로직이 자연스럽게 작동 (사용자 export 전 펼친 award 상태 보존)" },
+      { type: "fix", text: "App.jsx:~38475 buildExtendedBackup — settingsDiff.ec = settings.exportCardsPerImage 추가 (기본값 20과 다를 때만, 기존 us/aa/al/am 약어 패턴 일관성)" },
+      { type: "fix", text: "App.jsx:~39245 백업 복원 — if (s.ec !== undefined) restored.exportCardsPerImage = s.ec 매핑. 기존 backup 파일도 ec 부재 시 기본값 20 적용 (backward compat)" },
+      { type: "improve", text: "위험: 후보작 포함 시 award height ↑(600-800dp) → bitmap 한계 초과로 ImageManipulator split fallback 다발 → 갤러리 이미지 수 1.5~2배 증가 가능. 사용자가 Alert에서 의식적 선택" },
+      { type: "improve", text: "기본 동작(취소/제외 선택): v7.4.11과 100% 동일 — no regression. 포함 선택 시만 새 동작 적용" },
+    ],
+  },
   {
     version: "7.4.11", date: "2026-05-11",
     title: "🆕 순위탭 export 카드 수 사용자 설정 + 실패 사전 예측",
@@ -20320,9 +20383,39 @@ const AwardsScreen = memo(({
       return;
     }
 
-    // 임시 후보작 collapse — 캡처에 후보작 목록 포함되지 않도록
+    // 🆕 v7.4.12: 후보작 포함 여부 사용자 선택 (rank tab openExportScopeChoice 패턴 미러)
+    // 포함 시 award 이미지가 커져 split 빈도 ↑. 영구 설정 X — export 시마다 결정.
+    const includeCandidates = await new Promise(res => {
+      Alert.alert(
+        "수상 후보작 포함?",
+        "수상작 옆에 후보작 목록도 함께 이미지로 저장할까요?\n\n포함 시 한 상의 이미지가 커져 여러 장으로 나뉠 수 있습니다.",
+        [
+          { text: "취소", style: "cancel", onPress: () => res(null) },
+          { text: "후보작 제외", onPress: () => res(false) },
+          { text: "후보작 포함", onPress: () => res(true) },
+        ]
+      );
+    });
+    if (includeCandidates === null) {
+      // 기존 early-return 패턴 미러 — 수동 reset 후 종료
+      Breadcrumbs.add("award_export", "cancelled", { stage: "include_choice" });
+      isAwardExportingRef.current = false;
+      return;
+    }
+    Breadcrumbs.add("award_export", "include_choice", { include: includeCandidates });
+
+    // 🆕 v7.4.12: 사용자 선택에 따라 setExpandedCandidates 동적 호출
+    // expandedSnapshot은 try 밖 그대로 유지 — finally가 자연스럽게 참조
     const expandedSnapshot = expandedCandidates;
-    setExpandedCandidates({});
+    if (includeCandidates) {
+      // 모든 award의 후보작을 펼침
+      const allExpanded = {};
+      for (const award of awardsWithWinners) allExpanded[award.id] = true;
+      setExpandedCandidates(allExpanded);
+    } else {
+      // 기존 동작 — 강제 collapse
+      setExpandedCandidates({});
+    }
     // setState 반영 + layout 안정화
     await new Promise(r => requestAnimationFrame(() =>
       requestAnimationFrame(() => setTimeout(r, 100))
@@ -38472,7 +38565,11 @@ async function buildExtendedBackup(novels, matches, settings, tierHist, coverIma
   if (settings.autoApproveMinMatches !== DEFAULT_SETTINGS.autoApproveMinMatches) settingsDiff.am = settings.autoApproveMinMatches;
   if (settings.showReviewBanner === false) settingsDiff.rb = 0;
   if (settings.undoStackSize !== DEFAULT_SETTINGS.undoStackSize) settingsDiff.us = settings.undoStackSize;
-  
+  // 🆕 v7.4.12: exportCardsPerImage 백업 (PR #27 Codex P2 — v7.4.11에서 추가했으나 백업 누락 회귀 해결)
+  if (settings.exportCardsPerImage !== DEFAULT_SETTINGS.exportCardsPerImage) {
+    settingsDiff.ec = settings.exportCardsPerImage;
+  }
+
   // 🆕 v3.4: 예정탭 확장 필드 설정
   if (settings.plannedFields) {
     const pf = settings.plannedFields;
@@ -39241,7 +39338,9 @@ async function importJSON() {
                 if (s.am !== undefined) restored.autoApproveMinMatches = s.am;
                 if (s.rb === 0) restored.showReviewBanner = false;
                 if (s.us !== undefined) restored.undoStackSize = s.us;
-                
+                // 🆕 v7.4.12: exportCardsPerImage 복원 (Codex P2 회귀 해결)
+                if (s.ec !== undefined) restored.exportCardsPerImage = s.ec;
+
                 // 🆕 v3.4: 예정탭 확장 필드 설정 복원
                 if (s.pf && typeof s.pf === "object") {
                   restored.plannedFields = { ...DEFAULT_SETTINGS.plannedFields };
