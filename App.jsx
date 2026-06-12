@@ -2,9 +2,55 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.4.13 (Hybrid 의심 플래그 + AI 프레이밍 + read_progress noise 제거)    ║
+ * ║  버전: 7.5.0 (Hybrid evidence 누적 패러다임 — 신작 캐스케이드 + 자가 시그널)   ║
  * ║  최종 수정: 2026-06-12                                                        ║
- * ║  총 라인 수: 약 54,200줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 54,400줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.5.0 Hybrid evidence 누적 — 신작 캐스케이드 + 자가 시그널 (2026-06-12)    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [Why] v7.4.13에서 남은 누락 2축:                                                ║
+ * ║ • 신작 추가 시 충돌 캐스케이드 (사용자 비전 "자주 부딪치는 작품") 부재         ║
+ * ║ • 매칭 부수효과로 누적된 W/L 전적이 다음 의심 판단에 사용 안 됨 (시스템 자가  ║
+ * ║   시그널 부재) — 사용자 비전 "전적이 다음 의심의 근거"                         ║
+ * ║                                                                              ║
+ * ║ [수정-B1] addNovel hybrid 캐스케이드:                                          ║
+ * ║ • 신작 추가 후 같은 tier에서 manual_order 바로 아래 1작 SELECT                 ║
+ * ║ • 가드: tier가 빈 상태(인접 작품 0건)면 cascade 스킵                            ║
+ * ║ • enqueueVerification(adjId, "conflict", "overrated", "addNovel_cascade")     ║
+ * ║ • UPDATE conflict_hits += 1 (B3 누적 카운터)                                   ║
+ * ║                                                                              ║
+ * ║ [수정-B2] logVerificationMatch evidence 누적:                                  ║
+ * ║ • 신규 컬럼: novels.verification_wins/losses/count (default 0)                 ║
+ * ║ • INSERT log + 양쪽 작품 카운터 증분을 execBatch 단일 트랜잭션                  ║
+ * ║ • NovelCard에 "🤖 검증 N: W/L" 표시 (verification_count > 0 시)                 ║
+ * ║ • 상대 리스트 UI 제거 (tier_validation_log backup 미포함, 일관성 우선)         ║
+ * ║                                                                              ║
+ * ║ [수정-B3] conflict 누적 카운터:                                                ║
+ * ║ • 신규 컬럼: novels.conflict_hits (default 0)                                  ║
+ * ║ • B1 cascade 발생 시 대상 작품 += 1                                            ║
+ * ║ • computeVerificationPriority 가중치: conflictWeight = min(hits, 3)            ║
+ * ║                                                                              ║
+ * ║ [수정-B4] 전적 기반 자동 의심 검출 — 시스템 자가 시그널:                       ║
+ * ║ • 신규 함수 detectAutomaticSuspects(excludeNovelId) — finalize 직후 호출       ║
+ * ║ • 조건: verification_count >= 3, |W-L|/count >= 0.6 한쪽 쏠림                ║
+ * ║ • 방향: W > L → underrated, L > W → overrated                                  ║
+ * ║ • enqueueVerification(id, "auto_detected", dir, "system_inference")           ║
+ * ║ • 가드: pending 큐에 이미 있거나 직전 finalize blocker는 스킵 (루프 방지)      ║
+ * ║ • computeVerificationPriority 가중치: recordSkewWeight = min(skew*3, 3)        ║
+ * ║                                                                              ║
+ * ║ [영향]                                                                          ║
+ * ║ • 사용자 비전 7축 모두 구현 완료 (v7.4.13 합산 평가)                            ║
+ * ║ • 시스템이 매칭 부수효과를 사용해 자가 의심 — passive → active 전환            ║
+ * ║ • backup 호환: 신규 4개 컬럼 모두 novels 자동 직렬화                             ║
+ * ║ • 마이그레이션: ensureColumn 슬롯별 자동 적용 (Q6 검증)                         ║
+ * ║                                                                              ║
+ * ║ [5대 불변조건] 무관: verification 흐름은 matchQueue와 독립                     ║
+ * ║                                                                              ║
+ * ║ [최종 우선순위 공식]                                                            ║
+ * ║ priority = baseReason(0-4) + flagWeight(+3) + blockWeight(0-3) +              ║
+ * ║            conflictWeight(0-3) + recordSkewWeight(0-3) ≈ 0-16 범위            ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -6170,6 +6216,12 @@ async function initDb(progressCb) {
     ["memorable_quote", "TEXT", "''"], // 작품에서 인상깊었던 문장
     // 🆕 v7.4.13: 사용자 명시 의심 표시 (hybrid 모드) — 🔍 토글로 큐 priority +3
     ["user_flagged_suspect", "INTEGER", "0"],
+    // 🆕 v7.5.0: 검증 evidence 누적 — logVerificationMatch에서 양쪽 카운터 증분
+    ["verification_wins", "INTEGER", "0"],
+    ["verification_losses", "INTEGER", "0"],
+    ["verification_count", "INTEGER", "0"],
+    // 🆕 v7.5.0: 신작 캐스케이드 누적 카운터 — B1에서 += 1, priority 가중치
+    ["conflict_hits", "INTEGER", "0"],
   ];
   
   // 필요한 마이그레이션만 실행
@@ -13720,7 +13772,15 @@ const NovelCard = memo(({
               <Text> · RD {Math.round(item.rd || 350)}</Text>
             </Text>
           </View>
-          
+
+          {/* 🆕 v7.5.0: hybrid 검증 evidence — verification_count > 0 시만 표시 (집계만, 상대 리스트 X) */}
+          {hybridMode && Number(item.verification_count) > 0 && (
+            <Text style={{ color: theme.sub, fontSize: 11, marginBottom: 4 }}>
+              🤖 검증 {item.verification_count}: W{item.verification_wins || 0}/L{item.verification_losses || 0}
+              {Number(item.conflict_hits) > 0 && ` · 충돌 ${item.conflict_hits}`}
+            </Text>
+          )}
+
           {/* 4줄: 읽은 회차 + 플랫폼 */}
           <Text style={{ color: theme.sub, fontSize: 12 }} numberOfLines={1}>
             📖 {episodeText} · {plats.length > 0 ? plats.join(", ") : "플랫폼 미지정"}
@@ -13771,6 +13831,10 @@ const NovelCard = memo(({
     p.manual_order === n.manual_order && // 🆕 v7.0.2: hybrid 순위 변동 반영
     p.match_count === n.match_count && // 🆕 v7.0.2: ActualTierTag "미평가" 칩 갱신
     p.user_flagged_suspect === n.user_flagged_suspect && // 🆕 v7.4.13: 🔍 의심 토글 반영
+    p.verification_wins === n.verification_wins && // 🆕 v7.5.0: 검증 evidence 표시 갱신
+    p.verification_losses === n.verification_losses &&
+    p.verification_count === n.verification_count &&
+    p.conflict_hits === n.conflict_hits && // 🆕 v7.5.0: 충돌 카운터 표시 갱신
     p.created_at === n.created_at &&
     prevProps.index === nextProps.index &&
     prevProps.isComparing === nextProps.isComparing &&
@@ -25411,14 +25475,25 @@ const VERIFICATION_PRIORITY = {
 };
 
 // 🆕 v7.4.13: priority 다축 통합 — 단일 reason 상수가 아닌 동적 함수.
-// novel = { user_flagged_suspect, _block_count } (block_count는 호출자가 주입)
-// 합산: baseReason + flagWeight + blockWeight = 0~11 범위
+// 🆕 v7.5.0: conflictWeight + recordSkewWeight 추가 — Phase B 자가 시그널 통합.
+// novel = { user_flagged_suspect, _block_count, conflict_hits, verification_wins/losses/count }
+// 합산: baseReason(0-4) + flagWeight(+3) + blockWeight(0-3) + conflictWeight(0-3) + skewWeight(0-3) ≈ 0-16
 function computeVerificationPriority(novel, reason) {
   const base = Number(VERIFICATION_PRIORITY[reason] || 0);
   const flagWeight = (novel && Number(novel.user_flagged_suspect)) ? 3 : 0;
   const blockCount = Number(novel && novel._block_count) || 0;
   const blockWeight = Math.min(blockCount, 3);
-  return base + flagWeight + blockWeight;
+  const conflictHits = Number(novel && novel.conflict_hits) || 0;
+  const conflictWeight = Math.min(conflictHits, 3);
+  const vCount = Number(novel && novel.verification_count) || 0;
+  const vWins = Number(novel && novel.verification_wins) || 0;
+  const vLosses = Number(novel && novel.verification_losses) || 0;
+  let skewWeight = 0;
+  if (vCount >= 3) {
+    const skewRatio = Math.abs(vWins - vLosses) / vCount;
+    skewWeight = Math.min(Math.round(skewRatio * 3), 3);
+  }
+  return base + flagWeight + blockWeight + conflictWeight + skewWeight;
 }
 
 // 🆕 v7.4.13: reason → 한글 매핑 (AI 프레이밍 — pending 이유 표시).
@@ -25444,11 +25519,12 @@ function formatVerificationReason(reason) {
 async function enqueueVerification(novelId, triggerType, suspicionType, source) {
   if (!novelId || !triggerType || !suspicionType) return;
   const now = Date.now();
-  // 🆕 v7.4.13: priority 계산을 위해 novel.user_flagged_suspect + block_count 조회
+  // 🆕 v7.4.13: priority 계산 시 user_flagged_suspect + block_count 조회
+  // 🆕 v7.5.0: conflict_hits + verification_wins/losses/count 추가 (Phase B 가중치 통합)
   let priority = Number(VERIFICATION_PRIORITY[triggerType] || 0);
   try {
     const novelRow = await first(
-      "SELECT user_flagged_suspect FROM novels WHERE id=?",
+      "SELECT user_flagged_suspect, conflict_hits, verification_wins, verification_losses, verification_count FROM novels WHERE id=?",
       [novelId]
     );
     let blockCount = 0;
@@ -25804,6 +25880,14 @@ async function finalizeVerificationSession(queueRow, suspicionNovel, candidates,
       }
     }
 
+    // 🆕 v7.5.0: 전적 기반 자동 의심 검출 — 방금 누적된 W/L 시그널 반영
+    // suspicionNovel.id는 방금 처리됐으므로 제외 (즉시 재enqueue 루프 방지)
+    try {
+      await detectAutomaticSuspects(suspicionNovel.id);
+    } catch (detectErr) {
+      console.warn("[v7.5.0] finalize 후 detectAutomaticSuspects 실패:", detectErr?.message);
+    }
+
     return { sessionId, ...newPos, stopReason };
   } catch (e) {
     console.warn("[v7.0] finalizeVerificationSession 오류:", e?.message);
@@ -25813,23 +25897,81 @@ async function finalizeVerificationSession(queueRow, suspicionNovel, candidates,
 }
 
 // 🆕 v7.0: 시퀀스 도중 매칭 응답 1건 저장
+// 🆕 v7.5.0: 양쪽 작품의 verification_wins/losses/count 카운터 증분 (evidence 누적).
+// INSERT + 2 UPDATE를 execBatch 단일 트랜잭션으로 묶어 원자성 보장.
 async function logVerificationMatch(sessionId, suspicionId, candidateId, suspicionWon, violationType) {
   try {
-    await exec(
-      `INSERT INTO tier_validation_log (id, session_id, novel_a_id, novel_b_id, user_choice, violation_type, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        uuid(),
-        sessionId,
-        suspicionId,
-        candidateId,
-        suspicionWon ? "a" : "b", // a=의심작 승, b=후보 승
-        violationType || "none",
-        Date.now(),
-      ]
-    );
+    await execBatch([
+      {
+        sql: `INSERT INTO tier_validation_log (id, session_id, novel_a_id, novel_b_id, user_choice, violation_type, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        params: [
+          uuid(),
+          sessionId,
+          suspicionId,
+          candidateId,
+          suspicionWon ? "a" : "b", // a=의심작 승, b=후보 승
+          violationType || "none",
+          Date.now(),
+        ],
+      },
+      {
+        sql: `UPDATE novels SET
+                verification_count = verification_count + 1,
+                verification_wins = verification_wins + ?,
+                verification_losses = verification_losses + ?
+              WHERE id = ?`,
+        params: [suspicionWon ? 1 : 0, suspicionWon ? 0 : 1, suspicionId],
+      },
+      {
+        sql: `UPDATE novels SET
+                verification_count = verification_count + 1,
+                verification_wins = verification_wins + ?,
+                verification_losses = verification_losses + ?
+              WHERE id = ?`,
+        params: [suspicionWon ? 0 : 1, suspicionWon ? 1 : 0, candidateId],
+      },
+    ]);
   } catch (e) {
     console.warn("[v7.0] logVerificationMatch 오류:", e?.message);
+  }
+}
+
+// 🆕 v7.5.0: 전적 기반 자동 의심 검출 (시스템 자가 시그널).
+// 사용자 비전 "전적이 다음 의심 판단의 근거" 구현. finalizeVerificationSession 직후 호출.
+// 조건: verification_count >= 3 AND |W-L|/count >= 0.6 (한쪽 쏠림)
+// 가드: pending 큐에 이미 있거나 직전 finalize 작품(excludeNovelId)은 스킵 (루프 방지)
+// LIMIT 5: finalize 후 한 번에 5개까지만 자동 enqueue — 갑작스러운 큐 플러드 방지
+async function detectAutomaticSuspects(excludeNovelId) {
+  try {
+    const rows = await all(
+      `SELECT n.id, n.verification_wins, n.verification_losses, n.verification_count
+       FROM novels n
+       LEFT JOIN tier_verification_queue q ON q.novel_id = n.id AND q.state = 'pending'
+       WHERE n.verification_count >= 3
+         AND q.id IS NULL
+         AND n.id != ?
+         AND n.manual_tier IS NOT NULL AND n.manual_tier != ''
+       ORDER BY ABS(n.verification_wins - n.verification_losses) DESC
+       LIMIT 5`,
+      [excludeNovelId || ""]
+    );
+    for (const r of (rows || [])) {
+      const w = Number(r.verification_wins) || 0;
+      const l = Number(r.verification_losses) || 0;
+      const total = Number(r.verification_count) || 0;
+      if (total < 3) continue;
+      const skewRatio = Math.abs(w - l) / total;
+      if (skewRatio < 0.6) continue;
+      const direction = w > l ? "underrated" : "overrated";
+      try {
+        await enqueueVerification(r.id, "auto_detected", direction, "system_inference");
+      } catch (innerErr) {
+        console.warn("[v7.5.0] auto_detected enqueue 실패:", r.id, innerErr?.message);
+      }
+    }
+  } catch (e) {
+    console.warn("[v7.5.0] detectAutomaticSuspects 오류:", e?.message);
   }
 }
 
@@ -34954,6 +35096,7 @@ function AppContent() {
       // → 의미있는 방향(overrated, 아래쪽 검증)으로 큐잉. 단, 단일 tier 시스템이면 enqueue 자체 생략.
       // 🆕 v7.0.6 (M6): 최하위 tier(idx===order.length-1)도 underrated 큐잉 — 이전 idx<order.length-1 조건이
       // 최하위를 제외해 검증 사이클 통째 누락. 위쪽으로 비교는 가능하므로 underrated가 정상 의미.
+      // 🆕 v7.5.0 (B1): 신작 추가 시 같은 tier 아래 인접 1작 conflict 캐스케이드 + conflict_hits 누적
       if (globalTierConfig.mode === "hybrid" && newManualTier) {
         try {
           const order = getActiveTierOrder(globalTierConfig);
@@ -34966,6 +35109,26 @@ function AppContent() {
             await enqueueVerification(id, "new", "underrated", "addNovel");
           }
           // idx === -1(비활성) 또는 단일 tier(idx===0 && length===1) 시스템 → enqueue 생략
+
+          // 🆕 v7.5.0 (B1): 같은 tier 내 manual_order 바로 아래 1작에 conflict cascade
+          // 신작은 MAX+100으로 삽입되므로 위쪽 인접은 없음 — 아래만 후보
+          try {
+            const adjacent = await first(
+              `SELECT id FROM novels WHERE manual_tier=? AND id != ? AND manual_order < ?
+               ORDER BY manual_order DESC LIMIT 1`,
+              [newManualTier, id, initialManualOrder]
+            );
+            if (adjacent?.id) {
+              await exec(
+                "UPDATE novels SET conflict_hits = conflict_hits + 1 WHERE id=?",
+                [adjacent.id]
+              );
+              await enqueueVerification(adjacent.id, "conflict", "overrated", "addNovel_cascade");
+            }
+            // 결과 0건이면 cascade 스킵 (빈 tier 또는 신작이 유일)
+          } catch (cascadeErr) {
+            console.warn("[v7.5.0 B1] addNovel cascade 실패:", cascadeErr?.message);
+          }
         } catch (e) {
           console.warn("[v7.0] new 검증 큐 INSERT 실패:", e?.message);
         }
