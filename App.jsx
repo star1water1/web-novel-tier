@@ -2,9 +2,65 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.4.12 (수상탭 후보작 포함 export 옵션 + v7.4.11 백업 누락 복구)         ║
- * ║  최종 수정: 2026-05-11                                                        ║
- * ║  총 라인 수: 약 54,050줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 7.4.13 (Hybrid 의심 플래그 + AI 프레이밍 + read_progress noise 제거)    ║
+ * ║  최종 수정: 2026-06-12                                                        ║
+ * ║  총 라인 수: 약 54,200줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.4.13 Hybrid 설계 의도 정합화 — 의심 플래그 + AI 프레이밍 (2026-06-12)    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [Why] 사용자 원 설계 의도 5축 중 3축 누락 진단:                                ║
+ * ║ • (a) 사용자 명시 의심 표시 부재 — passive 트리거만 (편집 기반 13개)            ║
+ * ║ • (b) AI assistant 프레이밍 부재 — "검증 시퀀스" 기계적 톤                     ║
+ * ║ • (c) priority 단일 상수 — 사용자 의도/시스템 누적 시그널 통합 X               ║
+ * ║                                                                              ║
+ * ║ + 부수 결함 2건:                                                                ║
+ * ║ • F1: 수문장 modal 1단계 위/아래 클릭이 enqueueVerification 재호출 — 순환      ║
+ * ║ • F2: read_progress 트리거(30회 누적) — manual_tier 의심 시그널로 약함        ║
+ * ║                                                                              ║
+ * ║ [수정-A1] novels.user_flagged_suspect 컬럼 추가 + NovelCard 🔍 토글:           ║
+ * ║ • migrations 배열에 신규 컬럼 (~6115)                                         ║
+ * ║ • NovelCard 헤더에 🔍 아이콘 (hybrid 모드만, onTogglePin 패턴 미러링)          ║
+ * ║ • toggle ON: UPDATE flag=1 + enqueueVerification(reason='user_flag')          ║
+ * ║ • toggle OFF: UPDATE flag=0 (큐는 자연 처리, priority 재계산 시 강등)         ║
+ * ║                                                                              ║
+ * ║ [수정-A1 priority 다축 통합] computeVerificationPriority(novel, reason):       ║
+ * ║ • baseReason: tier_change=4, order_change=3, new=2, conflict=1,               ║
+ * ║   user_flag=0, auto_detected=0                                                ║
+ * ║ • flagWeight: user_flagged_suspect ? +3 : 0                                    ║
+ * ║ • blockWeight: min(block_count, 3) — getGatekeeperCandidates 누적 활용         ║
+ * ║ • 합산 priority → tier_verification_queue.priority 저장                        ║
+ * ║ • enqueueVerification에서 VERIFICATION_PRIORITY 상수 대신 이 함수 사용         ║
+ * ║                                                                              ║
+ * ║ [수정-A2] HybridVerificationView 카피 재작성:                                  ║
+ * ║ • 헤더 "🧭 자리 검증 시퀀스" → "🤖 AI 자리 점검"                              ║
+ * ║ • 개요 카피 자문 톤으로 변경                                                    ║
+ * ║ • "검증 대기" 섹션에 다음 의심작 + 이유 미리보기 추가                            ║
+ * ║ • formatVerificationReason(reason) 신설 — reason→한글 매핑 중앙화              ║
+ * ║ • 수문장 modal 헤더 "🛡️ 수문장 후보" → "🤖 AI 제안 — 자리 조정 권장"        ║
+ * ║                                                                              ║
+ * ║ [수정-A3] 수문장 modal 재트리거 단순 제거 (F1):                               ║
+ * ║ • 43109, 43145의 enqueueVerification 호출 제거                                 ║
+ * ║ • 사용자가 AI 제안 수락 = 결정 확정. 재검증 필요 시 🔍 flag로 명시 호출        ║
+ * ║                                                                              ║
+ * ║ [수정-A4] read_progress 트리거 제거 (F2):                                     ║
+ * ║ • saveEdit (35734-35744) else-if 블록 제거                                    ║
+ * ║ • batchIncReadCount (37786-37826) preState+post-update 블록 제거              ║
+ * ║ • VERIFICATION_PRIORITY.read_progress 키 제거                                  ║
+ * ║ • 사용자 비전 "noise 줄여 정말 의심스러운 것만" 정합                            ║
+ * ║                                                                              ║
+ * ║ [영향]                                                                          ║
+ * ║ • 기존 hybrid 사용자: 자동 트리거 13개 → 11개로 noise 감소                     ║
+ * ║ • 사용자 명시 의심 첫 도입 — priority +3 가중치로 큐 상위 자동 노출            ║
+ * ║ • 수문장 modal 클릭 시 동일 작품 즉시 재진입 X (안정성 향상)                    ║
+ * ║ • backup 호환: 신규 컬럼은 novels 자동 직렬화, 기존 데이터 영향 X              ║
+ * ║                                                                              ║
+ * ║ [5대 불변조건] 무관:                                                            ║
+ * ║ • tier_verification_queue ↔ matchQueue 독립 (drain 의무 X)                    ║
+ * ║ • 신규 toggle/finalize 경로는 자동매칭과 분리                                   ║
+ * ║                                                                              ║
+ * ║ [추후 v7.5.0 Phase B] 신작 충돌 캐스케이드 + evidence 누적 + 전적 기반 자동 검출 ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -6112,6 +6168,8 @@ async function initDb(progressCb) {
     ["aliases", "TEXT", "''"],        // JSON: ["하늑", ...] 작품 별명
     // 💬 v3.2.2: 인상깊은 문장
     ["memorable_quote", "TEXT", "''"], // 작품에서 인상깊었던 문장
+    // 🆕 v7.4.13: 사용자 명시 의심 표시 (hybrid 모드) — 🔍 토글로 큐 priority +3
+    ["user_flagged_suspect", "INTEGER", "0"],
   ];
   
   // 필요한 마이그레이션만 실행
@@ -13553,6 +13611,8 @@ const NovelCard = memo(({
   onPress,
   onLongPress, // 🆕 v3.4.1: 길게 누르면 전체 제목 표시
   onTogglePin,
+  onToggleSuspect, // 🆕 v7.4.13: 🔍 의심 표시 토글 (hybrid 모드 전용)
+  hybridMode, // 🆕 v7.4.13: 🔍 토글 표시 여부
   onLinkPress,
   onCoverPress, // 🖼️ v3.5.9: 표지 크게 보기
   compareMode,
@@ -13583,6 +13643,8 @@ const NovelCard = memo(({
   }, [item.gaiden_status, item.gaiden_read_count, item.gaiden_total_episodes, item.total_episodes, item.read_count]);
 
   const hasAwards = useMemo(() => item.awards && parseAwards(item.awards).length > 0, [item.awards]);
+  // 🆕 v7.4.13: 사용자 의심 표시 시 노란 border (NEW의 #fbbf24와 시각 일치 — 둘 다 주의 시그널)
+  const isFlagged = hybridMode && Number(item.user_flagged_suspect) === 1;
 
   return (
     <TouchableOpacity
@@ -13594,19 +13656,19 @@ const NovelCard = memo(({
         padding: 14,
         backgroundColor: isComparing ? (isDark ? "#1e3a5f" : "#e0f2fe") : theme.card,
         borderRadius: 14,
-        borderWidth: isComparing ? 2 : (isNew ? 2 : 1),
-        borderColor: isComparing ? theme.primary : (isNew ? "#fbbf24" : theme.line),
+        borderWidth: isComparing ? 2 : ((isNew || isFlagged) ? 2 : 1),
+        borderColor: isComparing ? theme.primary : (isFlagged ? "#f59e0b" : (isNew ? "#fbbf24" : theme.line)),
         marginBottom: 10,
       }}
     >
       <View style={{ flexDirection: "row" }}>
         {/* 표지 이미지 */}
         <CoverImage uri={item.cover_image} platforms={item.platforms} platformCovers={platformCovers} size={65} theme={theme} onPress={onCoverPress} />
-        
+
         <View style={{ flex: 1 }}>
-          {/* 1줄: 순위 + 즐겨찾기 + NEW + 제목 + 티어 */}
+          {/* 1줄: 순위 + 즐겨찾기 + 🔍의심 + NEW + 제목 + 티어 */}
           <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 6 }}>
-            <TouchableOpacity 
+            <TouchableOpacity
               onPress={onTogglePin}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
@@ -13614,6 +13676,16 @@ const NovelCard = memo(({
                 {item.pinned ? "★" : "☆"}
               </Text>
             </TouchableOpacity>
+            {hybridMode && (
+              <TouchableOpacity
+                onPress={onToggleSuspect}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Text style={{ fontSize: 14, color: isFlagged ? "#f59e0b" : theme.sub, marginRight: 5 }}>
+                  🔍
+                </Text>
+              </TouchableOpacity>
+            )}
             {isNew && (
               <View style={{ backgroundColor: "#fbbf24", paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4, marginRight: 5 }}>
                 <Text style={{ color: "#000", fontSize: 9, fontWeight: "800" }}>NEW</Text>
@@ -13698,11 +13770,13 @@ const NovelCard = memo(({
     p.manual_tier === n.manual_tier &&
     p.manual_order === n.manual_order && // 🆕 v7.0.2: hybrid 순위 변동 반영
     p.match_count === n.match_count && // 🆕 v7.0.2: ActualTierTag "미평가" 칩 갱신
+    p.user_flagged_suspect === n.user_flagged_suspect && // 🆕 v7.4.13: 🔍 의심 토글 반영
     p.created_at === n.created_at &&
     prevProps.index === nextProps.index &&
     prevProps.isComparing === nextProps.isComparing &&
     prevProps.compareMode === nextProps.compareMode &&
     prevProps.isDark === nextProps.isDark &&
+    prevProps.hybridMode === nextProps.hybridMode && // 🆕 v7.4.13: 모드 변경 시 🔍 토글 표시 재계산
     prevProps.platformCovers === nextProps.platformCovers &&
     prevProps.awardSystemSettings === nextProps.awardSystemSettings
   );
@@ -25323,25 +25397,73 @@ function detectViolation(novelA, novelB, choice, tierConfig) {
 }
 
 // 🆕 v7.0: 검증 큐 INSERT — 사용자 편집 행위 발생 시 호출. 시스템 변경(finalize)은 호출 X
-// 🆕 v7.0.15: read_progress 추가 — read_count 일정 이상 증가 시 underrated 의심.
-// order_change와 동일 priority(3) — 둘 다 사용자 행동에서 드러난 선호 변화 시그널.
-// m6 제거된 meta_edit(priority=1)과 달리 임계치 필터 + 충분히 높은 priority로 노이즈 회피.
+// 🆕 v7.4.13: read_progress 제거(noise) + user_flag/auto_detected/conflict 신설.
+// baseReason은 단일 축이고, computeVerificationPriority가 user_flagged_suspect/block_count도 합산.
 const VERIFICATION_PRIORITY = {
-  gatekeeper: 5,
+  gatekeeper: 5,    // legacy (수문장 modal에서 enqueue 제거 — A3) — 기존 큐 row 처리용
   tier_change: 4,
   order_change: 3,
-  read_progress: 3,
   new: 2,
-  meta_edit: 1,
+  conflict: 1,      // 🆕 v7.5.0 신작 충돌 캐스케이드 (Phase B)
+  user_flag: 0,     // 🆕 v7.4.13 baseReason 0 — flagWeight(+3)로 가산
+  auto_detected: 0, // 🆕 v7.5.0 전적 기반 자동 검출 (Phase B)
+  meta_edit: 1,     // (m6 제거됨, legacy 큐 호환만)
 };
+
+// 🆕 v7.4.13: priority 다축 통합 — 단일 reason 상수가 아닌 동적 함수.
+// novel = { user_flagged_suspect, _block_count } (block_count는 호출자가 주입)
+// 합산: baseReason + flagWeight + blockWeight = 0~11 범위
+function computeVerificationPriority(novel, reason) {
+  const base = Number(VERIFICATION_PRIORITY[reason] || 0);
+  const flagWeight = (novel && Number(novel.user_flagged_suspect)) ? 3 : 0;
+  const blockCount = Number(novel && novel._block_count) || 0;
+  const blockWeight = Math.min(blockCount, 3);
+  return base + flagWeight + blockWeight;
+}
+
+// 🆕 v7.4.13: reason → 한글 매핑 (AI 프레이밍 — pending 이유 표시).
+// HybridVerificationView/진단 패널에서 사용.
+function formatVerificationReason(reason) {
+  switch (reason) {
+    case "user_flag":     return "사용자 의심 표시";
+    case "tier_change":   return "최근 tier 변경";
+    case "order_change":  return "최근 순위 변경";
+    case "new":           return "새로 추가됨";
+    case "conflict":      return "신작 추가로 영향";
+    case "auto_detected": return "전적 시그널 의심 (W/L 쏠림)";
+    case "gatekeeper":    return "수문장 누적 (레거시)";
+    case "read_progress": return "읽기 진행 (레거시)";
+    case "meta_edit":     return "메타 편집 (레거시)";
+    default:              return reason || "기타";
+  }
+}
 
 // v7.0.1 (M1 fix): 1초 디바운스 silent drop → UPSERT (작품당 pending 1건 보장 + 최신 의도 반영)
 // 🆕 v7.0.8: source 인자 추가 — 호출자(addNovel/saveEdit/batchSetTier/swapRating/inline_chip/gatekeeper_up/gatekeeper_down) 추적
-// backward compat: source 미전달 시 NULL 저장 (legacy 호출 그대로 동작)
+// 🆕 v7.4.13: priority 다축 통합 — computeVerificationPriority 사용. user_flag/auto_detected/conflict 지원.
 async function enqueueVerification(novelId, triggerType, suspicionType, source) {
   if (!novelId || !triggerType || !suspicionType) return;
   const now = Date.now();
-  const priority = VERIFICATION_PRIORITY[triggerType] || 0;
+  // 🆕 v7.4.13: priority 계산을 위해 novel.user_flagged_suspect + block_count 조회
+  let priority = Number(VERIFICATION_PRIORITY[triggerType] || 0);
+  try {
+    const novelRow = await first(
+      "SELECT user_flagged_suspect FROM novels WHERE id=?",
+      [novelId]
+    );
+    let blockCount = 0;
+    try {
+      const blockRow = await first(
+        "SELECT COUNT(*) as cnt FROM tier_repositioning_session WHERE state='completed' AND blocker_id=? AND result_action='moved'",
+        [novelId]
+      );
+      blockCount = Number(blockRow?.cnt) || 0;
+    } catch { /* block_count는 보조 시그널 — 실패 시 0 fallback */ }
+    priority = computeVerificationPriority(
+      { ...(novelRow || {}), _block_count: blockCount },
+      triggerType
+    );
+  } catch { /* 우선순위 산출 실패 시 baseReason fallback (이미 위에서 priority 초기화됨) */ }
   // 🆕 v7.0.8: trigger_fire_log INSERT — UPSERT 동작과 무관하게 모든 enqueueVerification 호출 기록
   // 진단 탭에서 source × trigger 매트릭스 + 24h fire 카운트 등에 사용
   // 실패는 무음 — 진단 데이터 손실 < 사용자 작업 차단
@@ -25358,7 +25480,7 @@ async function enqueueVerification(novelId, triggerType, suspicionType, source) 
       [novelId]
     );
     if (existing) {
-      // priority는 더 높은 쪽 유지 (gatekeeper 등 우선 신호 보존)
+      // priority는 더 높은 쪽 유지 (다축 통합 시그널의 누적 보존)
       const finalPriority = Math.max(priority, Number(existing.priority) || 0);
       await exec(
         `UPDATE tier_verification_queue SET trigger_type=?, suspicion_type=?, priority=?, created_at=? WHERE id=?`,
@@ -27965,6 +28087,8 @@ function AppContent() {
   const [verificationSession, setVerificationSession] = useState(null);
   const [verificationLoading, setVerificationLoading] = useState(false);
   const [verificationStats, setVerificationStats] = useState({ pending: 0, resolved: 0 });
+  // 🆕 v7.4.13: 검증 대기 섹션의 "다음 점검" 미리보기 — title + trigger_type
+  const [nextVerificationPreview, setNextVerificationPreview] = useState(null);
   // 🆕 v7.0.8: 하이브리드 진단 패널 데이터 (settingsSubTab === "diag" + hybrid 모드 시 로드)
   const [hybridDiagData, setHybridDiagData] = useState(null);
   const [hybridDiagLoading, setHybridDiagLoading] = useState(false);
@@ -34574,6 +34698,57 @@ function AppContent() {
     await loadList(undefined, undefined, "pin");
   }
 
+  // 🆕 v7.4.13: 사용자 명시 의심 표시 토글 (hybrid 모드 전용).
+  // ON: 방향 선택 dialog → user_flagged_suspect=1 + enqueueVerification(user_flag) → priority 다축 통합으로 큐 상위 자동 노출.
+  // OFF: user_flagged_suspect=0. 큐 row는 자연 처리(다른 트리거가 살아있으면 priority 재계산 시 강등).
+  // 양방향 "auto"는 inflection 알고리즘과 호환되지 않아 사용자가 방향 명시 (높아져야/낮아져야).
+  async function toggleSuspect(id, currentFlag, title) {
+    if (currentFlag) {
+      // OFF
+      try {
+        await exec("UPDATE novels SET user_flagged_suspect=0 WHERE id=?", [id]);
+        await loadList(undefined, undefined, "v7-userflag");
+      } catch (e) {
+        console.warn("[v7.4.13] toggleSuspect OFF 오류:", e?.message);
+      }
+      return;
+    }
+    // ON: 방향 선택 후 enqueue
+    Alert.alert(
+      "🔍 의심 표시",
+      `"${title}"의 자리가 어떻게 의심되나요?`,
+      [
+        { text: "취소" },
+        {
+          text: "⬆️ 더 높을 듯",
+          onPress: async () => {
+            try {
+              await exec("UPDATE novels SET user_flagged_suspect=1 WHERE id=?", [id]);
+              await enqueueVerification(id, "user_flag", "underrated", "user_toggle");
+              await loadList(undefined, undefined, "v7-userflag");
+              Alert.alert("🔍 의심 표시됨", "점검 대기에 추가되었습니다.\n매칭 탭에서 점검을 시작할 수 있습니다.");
+            } catch (e) {
+              console.warn("[v7.4.13] toggleSuspect ON(underrated) 오류:", e?.message);
+            }
+          },
+        },
+        {
+          text: "⬇️ 더 낮을 듯",
+          onPress: async () => {
+            try {
+              await exec("UPDATE novels SET user_flagged_suspect=1 WHERE id=?", [id]);
+              await enqueueVerification(id, "user_flag", "overrated", "user_toggle");
+              await loadList(undefined, undefined, "v7-userflag");
+              Alert.alert("🔍 의심 표시됨", "점검 대기에 추가되었습니다.\n매칭 탭에서 점검을 시작할 수 있습니다.");
+            } catch (e) {
+              console.warn("[v7.4.13] toggleSuspect ON(overrated) 오류:", e?.message);
+            }
+          },
+        },
+      ]
+    );
+  }
+
   // 📰 v3.0: 최신 변화 기록 추가 헬퍼
   // type: "new" | "award" | "tier_change" | "tier_review" | "read_count" | "title_change" | "auto_tier"
   // 📅 v3.0.3: customTimestamp 옵션 추가 (날짜 수동 설정 시 해당 시점 기록용)
@@ -35707,18 +35882,10 @@ function AppContent() {
       // 🆕 v7.0: hybrid 모드 — manual_tier 편집 검증 큐 트리거
       // v7.0.1 (C2 fix): fromDisplayTier 기반 방향 판정 (manual_tier=null이어도 ELO fallback 반영)
       // 🆕 v7.0.2: 클리어 path 분리 — meta_edit(잘못된 underrated) 대신 tier_change(overrated)
-      // 🆕 v7.0.6 (m6): meta_edit 트리거 제거 — priority=1로 다른 트리거(gatekeeper=5/tier_change=4/order_change=3/new=2)에 항상 밀려 실효 X.
-      // 매 saveEdit마다 큐에 인입되어 노이즈만 누적. tier 변경 시에는 _v7TierChanged 분기가 처리.
-      // 🆕 v7.0.15: read_count 누적 트래킹 — (현재 read_count − read_count_baseline) >= 30 시 read_progress 트리거.
-      // baseline은 last-fire 시점 read_count. 청크 분할 저장(5화×10번=50)도 누적으로 잡힘.
-      // tier 변경이 동시에 일어나면 그쪽이 우선 (else-if) — 명시적 액션 > 함묵적 시그널.
-      // UPSERT 동작 상 read_progress가 뒤에 와도 trigger_type/suspicion_type을 덮어쓰므로
-      // tier 변경 동반 시 사용자 강등(overrated)을 underrated로 뒤집지 않도록 mutually exclusive 분기.
-      // 어떤 트리거든 발화 시 baseline = newReadCount로 reset (다음 누적 시작점).
+      // 🆕 v7.4.13: read_progress 트리거 제거 — 30회 누적은 manual_tier 의심 시그널로 약함.
+      // 사용자 비전 "noise 줄여 정말 의심스러운 것만" 정합. baseline 컬럼은 유지(데이터 손실 회피)되지만 더 이상 참조되지 않음.
       if (globalTierConfig.mode === "hybrid") {
         try {
-          let firedAnyTrigger = false;
-
           if (_v7TierChanged) {
             const order = getActiveTierOrder(globalTierConfig);
             const fromIdx = order.indexOf(_v7TierChanged.fromDisplayTier);
@@ -35726,32 +35893,12 @@ function AppContent() {
             // fromIdx 미정시 (이전 표시 티어가 active 목록에 없음) — 신중하게 underrated 기본값
             const suspicion = fromIdx === -1 ? "underrated" : (toIdx < fromIdx ? "underrated" : "overrated");
             await enqueueVerification(n.id, "tier_change", suspicion, "saveEdit");
-            firedAnyTrigger = true;
           } else if (_v7TierCleared) {
             // manual_tier → null: 더 이상 잠정 truth 없음, 자리 검증 불필요. 오버레이트 가능성을 가벼운 신호로만 인입
             await enqueueVerification(n.id, "tier_change", "overrated", "saveEdit");
-            firedAnyTrigger = true;
-          } else if (readCountChanged) {
-            // 🆕 v7.0.15: 누적 트래킹 — last-fire 이후 누적 +30화 이상 읽었으면 fire
-            const baseRow = await first(
-              "SELECT read_count_baseline FROM novels WHERE id=?",
-              [n.id]
-            );
-            const baseline = Number(baseRow?.read_count_baseline) || 0;
-            if ((newReadCount - baseline) >= VERIFICATION_READ_COUNT_THRESHOLD) {
-              await enqueueVerification(n.id, "read_progress", "underrated", "saveEdit_readcount");
-              firedAnyTrigger = true;
-            }
           }
-
-          // 🆕 v7.0.15: 어떤 트리거든 발화 시 baseline = newReadCount로 reset (다음 누적 시작점)
-          if (firedAnyTrigger) {
-            await exec(
-              "UPDATE novels SET read_count_baseline=? WHERE id=?",
-              [newReadCount, n.id]
-            );
-          }
-          // (m6 제거) meta_edit 트리거 삭제 — 메타 편집(제목/태그/note 등)은 검증 큐에 영향 X
+          // (v7.4.13 제거) read_progress 트리거 — manual_tier 의심 신호로 약함
+          // (m6 제거) meta_edit 트리거 — 메타 편집(제목/태그/note 등)은 검증 큐에 영향 X
         } catch (e) {
           console.warn("[v7.0] saveEdit 검증 큐 INSERT 실패:", e?.message);
         }
@@ -36072,11 +36219,20 @@ function AppContent() {
   }, []);
 
   // 🆕 v7.0: hybrid 모드 — 매칭 화면 진입 시 검증 시퀀스 자동 로드 + 통계 갱신
+  // 🆕 v7.4.13: "다음 점검" 미리보기 동시 로드 — 사용자가 검증 시작 전에 어떤 작품 + 왜인지 확인
   const loadVerificationStats = useCallback(async () => {
     try {
       const pendingRow = await first(`SELECT COUNT(*) as cnt FROM tier_verification_queue WHERE state='pending'`);
       const resolvedRow = await first(`SELECT COUNT(*) as cnt FROM tier_verification_queue WHERE state='resolved'`);
       setVerificationStats({ pending: pendingRow?.cnt || 0, resolved: resolvedRow?.cnt || 0 });
+      // 다음 점검 미리보기 — getNextVerificationTarget 동일 ORDER (priority DESC, created_at ASC)
+      const nextRow = await first(
+        `SELECT q.trigger_type, n.title FROM tier_verification_queue q
+         LEFT JOIN novels n ON n.id = q.novel_id
+         WHERE q.state='pending' AND n.id IS NOT NULL
+         ORDER BY q.priority DESC, q.created_at ASC LIMIT 1`
+      );
+      setNextVerificationPreview(nextRow ? { title: nextRow.title, trigger_type: nextRow.trigger_type } : null);
     } catch (e) {
       console.warn("[v7.0] loadVerificationStats 오류:", e?.message);
     }
@@ -37768,7 +37924,7 @@ function AppContent() {
   }, [userMajorGenres, userSubGenres, tagAttributes]); // 🔧 v3.5.13: tagAttributes dep 추가
 
   // 🔧 v3.5.1: useCallback으로 변경 (stale closure 방지)
-  // 🆕 v7.0.15: hybrid 모드에서 누적 트래킹 — 작품별 (newReadCount − baseline) >= 30 시 read_progress fire
+  // 🆕 v7.4.13: hybrid 모드 read_progress 트리거 제거 (noise 정리)
   const batchIncReadCount = useCallback(async (delta) => {
     const d = Number(delta) || 0;
     if (!d) {
@@ -37783,47 +37939,13 @@ function AppContent() {
     }
     const now = Date.now();
 
-    // 🆕 v7.0.15: hybrid 모드에선 UPDATE 전에 (read_count, baseline) 캡처
-    // — UPDATE 후엔 read_count가 이미 변경되어 baseline 비교 불가능
-    let preState = null;
-    if (globalTierConfig.mode === "hybrid") {
-      try {
-        const placeholders = ids.map(() => "?").join(",");
-        const rows = await all(
-          `SELECT id, read_count, read_count_baseline FROM novels WHERE id IN (${placeholders})`,
-          ids
-        );
-        preState = new Map((rows || []).map(r => [r.id, {
-          read_count: Number(r.read_count) || 0,
-          baseline: Number(r.read_count_baseline) || 0,
-        }]));
-      } catch (e) {
-        console.warn("[v7.0.15] batchIncReadCount preState 캡처 실패:", e?.message);
-      }
-    }
-
+    // 🆕 v7.4.13: read_progress 트리거 제거에 따라 preState/post-update 블록 삭제.
+    // (이전 v7.0.15 누적 트래킹은 manual_tier 의심 신호로 약해 noise 정리 대상)
     const queries = ids.map((id) => ({
       sql: "UPDATE novels SET read_count = MAX(0, read_count + ?), read_count_updated_at = ? WHERE id=?",
       params: [d, now, id],
     }));
     await execBatch(queries);
-
-    // 🆕 v7.0.15: 작품별 누적 +30 만족 시 read_progress fire + baseline reset
-    if (globalTierConfig.mode === "hybrid" && preState) {
-      for (const id of ids) {
-        const pre = preState.get(id);
-        if (!pre) continue;
-        const newRead = Math.max(0, pre.read_count + d); // SQL MAX(0, ...) clamp 일치
-        if ((newRead - pre.baseline) >= VERIFICATION_READ_COUNT_THRESHOLD) {
-          try {
-            await enqueueVerification(id, "read_progress", "underrated", "batchIncReadCount");
-            await exec("UPDATE novels SET read_count_baseline=? WHERE id=?", [newRead, id]);
-          } catch (e) {
-            console.warn("[v7.0.15] batchIncReadCount read_progress 실패:", e?.message);
-          }
-        }
-      }
-    }
 
     await loadList(undefined, undefined, "batch");
     Alert.alert("완료", `${ids.length}개 작품에 읽은 회차 ${d > 0 ? '+' : ''}${d} 적용했습니다.`);
@@ -41109,6 +41231,8 @@ async function importJSON() {
                       );
                     }}
                     onTogglePin={(e) => { e?.stopPropagation?.(); togglePin(item.id, item.pinned); }}
+                    onToggleSuspect={(e) => { e?.stopPropagation?.(); toggleSuspect(item.id, item.user_flagged_suspect, item.title); }}
+                    hybridMode={globalTierConfig.mode === "hybrid"}
                     onLinkPress={(e) => { e?.stopPropagation?.(); safeOpenURL(item.link); }}
                     onCoverPress={setCoverViewerUri}
                     compareMode={compareMode}
@@ -42854,12 +42978,12 @@ async function importJSON() {
         {/* MATCH (hybrid 모드: 검증 시퀀스 UI) */}
         {screen === "match" && globalTierConfig.mode === "hybrid" && (
           <>
-            <H>🧭 자리 검증 시퀀스 (Hybrid)</H>
+            <H>🤖 AI 자리 점검</H>
 
             {/* 검증 안내 + 통계 + 수문장 인디케이터 */}
             <Section title="현황">
               <Text style={{ color: C.sub, marginBottom: 6, fontSize: 12 }}>
-                manual_tier/순위가 patrick truth. 사용자 편집 행위로 의심작이 큐에 등록되며, 인접 후보와 점진 매칭하여 변곡점이 발견되면 자리를 자동 결정합니다 (max {VERIFICATION_MAX_RESPONSES}회).
+                AI가 자리가 의심스러운 작품을 찾아 인접 작품과 비교해드립니다. 결과는 자동 반영됩니다. 작품 카드의 🔍 토글로 직접 의심 표시도 가능합니다.
               </Text>
               <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
                 <View style={{ backgroundColor: isDark ? "#1f2937" : "#eef2ff", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 }}>
@@ -42879,7 +43003,7 @@ async function importJSON() {
                       borderWidth: 1, borderColor: isDark ? "#f59e0b" : "#fcd34d",
                     }}
                   >
-                    <Text style={{ color: isDark ? "#fcd34d" : "#92400e", fontSize: 11 }}>🛡️ 수문장 후보</Text>
+                    <Text style={{ color: isDark ? "#fcd34d" : "#92400e", fontSize: 11 }}>🤖 AI 제안</Text>
                     <Text style={{ color: isDark ? "#fde68a" : "#78350f", fontWeight: "800", fontSize: 18 }}>{gatekeeperCandidates.length}</Text>
                   </TouchableOpacity>
                 )}
@@ -42888,7 +43012,7 @@ async function importJSON() {
 
             {/* 검증 시퀀스 본체 */}
             {verificationSession ? (
-              <Section title={`검증 진행 — ${verificationSession.suspicionType === "underrated" ? "위로 이동 검증" : "아래로 이동 검증"} (${verificationSession.responses.length + 1}/${VERIFICATION_MAX_RESPONSES})`}>
+              <Section title={`🤖 점검 중 — ${verificationSession.suspicionType === "underrated" ? "위로 이동 검증" : "아래로 이동 검증"} (${verificationSession.responses.length + 1}/${VERIFICATION_MAX_RESPONSES})`}>
                 {/* 진행도 바 */}
                 <View style={{ height: 8, backgroundColor: isDark ? "#1e1e3a" : "#eef2ff", borderRadius: 999, overflow: "hidden", marginBottom: 12 }}>
                   <View style={{
@@ -42918,9 +43042,14 @@ async function importJSON() {
                   if (!cand || !susp) return <Text style={{ color: C.sub }}>후보 없음</Text>;
                   return (
                     <>
-                      <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
+                      <Text style={{ color: C.sub, fontSize: 12, marginBottom: 4 }}>
                         둘 중 더 좋은 작품을 선택하세요. 결과로 자리가 자동 결정됩니다.
                       </Text>
+                      {verificationSession.queueRow?.trigger_type && (
+                        <Text style={{ color: C.sub, fontSize: 11, marginBottom: 8, fontStyle: "italic" }}>
+                          이유: {formatVerificationReason(verificationSession.queueRow.trigger_type)}
+                        </Text>
+                      )}
 
                       {/* 작품 A — 의심작 */}
                       <TouchableOpacity
@@ -43039,12 +43168,23 @@ async function importJSON() {
                     <Text style={{ fontSize: 32, marginBottom: 8 }}>✨</Text>
                     <Text style={{ color: C.text, fontWeight: "700", fontSize: 15, marginBottom: 4 }}>모든 검증이 완료되었습니다</Text>
                     <Text style={{ color: C.sub, fontSize: 12, textAlign: "center" }}>
-                      작품을 추가하거나 티어/순위를 변경하면 의심작이 큐에 등록됩니다.
+                      작품을 추가하거나 티어/순위를 변경, 또는 작품 카드의 🔍 토글로 의심을 표시하면 큐에 등록됩니다.
                     </Text>
                   </View>
                 ) : (
                   <View style={{ alignItems: "center", padding: 8 }}>
-                    <Text style={{ color: C.sub, marginBottom: 12 }}>대기 중인 의심작 {verificationStats.pending}개</Text>
+                    <Text style={{ color: C.sub, marginBottom: 6 }}>🤖 점검 대기 중인 작품 {verificationStats.pending}개</Text>
+                    {nextVerificationPreview && (
+                      <View style={{ backgroundColor: isDark ? "#0c1f3a" : "#eff6ff", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, marginBottom: 12, alignSelf: "stretch" }}>
+                        <Text style={{ color: isDark ? "#93c5fd" : "#1d4ed8", fontSize: 11, fontWeight: "700", marginBottom: 2 }}>다음 점검</Text>
+                        <Text style={{ color: C.text, fontWeight: "700", fontSize: 14 }} numberOfLines={1}>
+                          {nextVerificationPreview.title}
+                        </Text>
+                        <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>
+                          이유: {formatVerificationReason(nextVerificationPreview.trigger_type)}
+                        </Text>
+                      </View>
+                    )}
                     <PrimaryButton title="검증 시작" onPress={startVerificationSession} />
                   </View>
                 )}
@@ -43056,14 +43196,14 @@ async function importJSON() {
               <View style={{ flex: 1, backgroundColor: C.modal, justifyContent: "flex-end" }}>
                 <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: "80%" }}>
                   <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: C.line, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                    <Text style={{ color: C.text, fontSize: 18, fontWeight: "800" }}>🛡️ 수문장 후보</Text>
+                    <Text style={{ color: C.text, fontSize: 18, fontWeight: "800" }}>🤖 AI 제안 — 자리 조정 권장</Text>
                     <TouchableOpacity onPress={() => setGatekeeperModalOpen(false)}>
                       <Text style={{ color: C.sub, fontSize: 22 }}>×</Text>
                     </TouchableOpacity>
                   </View>
                   <ScrollView style={{ padding: 16 }}>
                     <Text style={{ color: C.sub, fontSize: 12, marginBottom: 12 }}>
-                      여러 시퀀스에서 변곡점으로 등장한 작품들입니다. 이 작품들의 manual_tier를 조정하면 검증 효율이 올라갑니다.
+                      이 작품들은 여러 비교에서 경계로 작용했습니다. AI는 한 단계 위/아래 이동을 제안합니다.
                     </Text>
                     {gatekeeperCandidates.length === 0 ? (
                       <Text style={{ color: C.sub, textAlign: "center", padding: 16 }}>현재 누적된 수문장 후보가 없습니다.</Text>
@@ -43106,7 +43246,8 @@ async function importJSON() {
                                               pushUndo('tier_change', { id: g.id, title: g.title, prevTier: g.manual_tier, newTier: higher, prevManualOrder: Number(g.manual_order) || 0 }, `수문장 승급: ${g.title} → ${higher}`);
                                               // 🆕 v7.0.3: 누적 통계 소비 — 과거 blocker_id 기록 NULL 처리 (이전: 5+ 누적이 안 빠져 같은 작품이 모달에 영원히 재등장)
                                               await exec("UPDATE tier_repositioning_session SET blocker_id=NULL WHERE blocker_id=?", [g.id]);
-                                              await enqueueVerification(g.id, "gatekeeper", "underrated", "gatekeeper_up");
+                                              // 🆕 v7.4.13 (F1): 재트리거 enqueueVerification 호출 제거.
+                                              // 사용자가 AI 제안 수락 = 결정 확정. 재검증 필요 시 🔍 flag로 명시 호출.
                                               await loadList(undefined, undefined, "v7-gatekeeper");
                                               await loadVerificationStats(); // 🆕 v7.0.3: pending 카운터 즉시 갱신
                                               const gks = await getGatekeeperCandidates(5);
@@ -43142,7 +43283,7 @@ async function importJSON() {
                                               pushUndo('tier_change', { id: g.id, title: g.title, prevTier: g.manual_tier, newTier: lower, prevManualOrder: Number(g.manual_order) || 0 }, `수문장 강등: ${g.title} → ${lower}`);
                                               // 🆕 v7.0.3: 누적 통계 소비
                                               await exec("UPDATE tier_repositioning_session SET blocker_id=NULL WHERE blocker_id=?", [g.id]);
-                                              await enqueueVerification(g.id, "gatekeeper", "overrated", "gatekeeper_down");
+                                              // 🆕 v7.4.13 (F1): 재트리거 enqueueVerification 호출 제거
                                               await loadList(undefined, undefined, "v7-gatekeeper");
                                               await loadVerificationStats(); // 🆕 v7.0.3
                                               const gks = await getGatekeeperCandidates(5);
