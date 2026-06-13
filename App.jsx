@@ -23699,6 +23699,8 @@ const TasteAnalysisScreen = memo(({
                     <Text style={{ color: C.text, fontWeight: "700" }}>{g.genre}</Text>
                     <Text style={{ color: C.sub, fontSize: 11 }}>
                       {g.count}작 · 완독률 {(g.completionRate * 100).toFixed(0)}% · 드롭률 {(g.dropRate * 100).toFixed(0)}%
+                      {/* 🔧 v7.6.0 (포트 v3.12.1): 연중률 (0보다 클 때만) */}
+                      {g.workDropRate > 0 ? ` · 연중률 ${(g.workDropRate * 100).toFixed(0)}%` : ""}
                     </Text>
                   </View>
                   <View style={{ alignItems: "flex-end" }}>
@@ -24558,6 +24560,43 @@ const TasteAnalysisScreen = memo(({
             </View>
           ))}
         </View>
+
+        {/* 🔧 v7.6.0 (포트 v3.12.1): 완결작 편수별 평가 (편수 기입된 작품만) */}
+        {readingPattern.episodeAnalysis && (readingPattern.episodeAnalysis.short.count + readingPattern.episodeAnalysis.medium.count + readingPattern.episodeAnalysis.long.count) > 0 && (
+          <View style={{ marginTop: 12 }}>
+            <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>완결작 편수별 평가 (편수 기입된 작품만)</Text>
+            {[
+              { label: "단편 (<100화)", ...readingPattern.episodeAnalysis.short },
+              { label: "중편 (100-400화)", ...readingPattern.episodeAnalysis.medium },
+              { label: "장편 (400화+)", ...readingPattern.episodeAnalysis.long },
+            ].filter(item => item.count > 0).map((item, i) => (
+              <View key={i} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 4 }}>
+                <Text style={{ color: C.text }}>{item.label}</Text>
+                <Text style={{ color: C.sub }}>{item.count}작 · 평균 {(item.avgRating || 0).toFixed(0)}점</Text>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* 🔧 v7.6.0 (포트 v3.12.1): 고평가 연중작 — '아깝다' 후보 */}
+        {readingPattern.highRatingDropped && readingPattern.highRatingDropped.length > 0 && (
+          <View style={{ marginTop: 12, padding: 12, backgroundColor: isDark ? "#2a1a1a" : "#fef2f2", borderRadius: 10 }}>
+            <Text style={{ color: isDark ? "#f87171" : "#dc2626", fontWeight: "700", fontSize: 13, marginBottom: 6 }}>
+              💔 고평가 연중작 ({readingPattern.highRatingDropped.length})
+            </Text>
+            <Text style={{ color: C.sub, fontSize: 11, marginBottom: 8 }}>
+              레이팅 1800+이지만 연재가 중단됐어요 — 다시 손에 잡기 아쉬운 작품
+            </Text>
+            {readingPattern.highRatingDropped.map((n, i) => (
+              <View key={n.id || i} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 3 }}>
+                <Text style={{ color: C.text, flex: 1 }} numberOfLines={1}>{n.title}</Text>
+                <Text style={{ color: C.sub, marginLeft: 8 }}>
+                  {(n.rating || 0).toFixed(0)}점 · {n.workStatus === "discontinued" ? "서비스종료" : "연중"}
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
       </Section>
 
       {/* 작가 충성도 (상세) */}
@@ -26871,17 +26910,22 @@ async function analyzePreferences(novels, matches) {
   };
   
   // 3. 대장르 분석
+  // 🔧 v7.6.0 (포트 v3.12.1): work_status 기반 workDrop(연중) 카운트 + episodes 합계
   const majorGenreStats = {};
   for (const n of reliable) {
     for (const g of n.majorGenres) {
       if (!majorGenreStats[g]) {
-        majorGenreStats[g] = { count: 0, weightedCount: 0, ratings: [], readRatios: [], completed: 0, dropped: 0, wins: 0, losses: 0, readCounts: [], rereadSum: 0 };
+        majorGenreStats[g] = { count: 0, weightedCount: 0, ratings: [], readRatios: [], completed: 0, dropped: 0, workDrop: 0, episodes: [], wins: 0, losses: 0, readCounts: [], rereadSum: 0 };
       }
       const stat = majorGenreStats[g];
       // 📚 v3.4: 강화된 다회독 가중치 사용
       const rereadWeight = n.rereadWeight || (1 + Math.sqrt(n.rereadCount - 1) * 0.7);
       stat.count++;
       stat.weightedCount += rereadWeight;
+      // 🔧 v7.6.0 (포트 v3.12.1): 연중(dropped/discontinued) 작품 카운트
+      if (n.work_status === "dropped" || n.work_status === "discontinued") stat.workDrop++;
+      const epCnt = Number(n.total_episodes) || 0;
+      if (epCnt > 0) stat.episodes.push(epCnt);
       // 🆕 v7.1: prefScore (mode-aware)
       stat.ratings.push(n.prefScore);
       if (n.readRatio !== null) stat.readRatios.push(n.readRatio);
@@ -26904,6 +26948,9 @@ async function analyzePreferences(novels, matches) {
       avgReadRatio: avg(stat.readRatios),
       completionRate: stat.count > 0 ? stat.completed / stat.count : 0,
       dropRate: stat.count > 0 ? stat.dropped / stat.count : 0,
+      // 🔧 v7.6.0 (포트 v3.12.1): 연중률 + 평균 편수 (편수 기입된 작품만)
+      workDropRate: stat.count > 0 ? stat.workDrop / stat.count : 0,
+      avgEpisodes: stat.episodes.length > 0 ? avg(stat.episodes) : 0,
       winRate: (stat.wins + stat.losses) > 0 ? stat.wins / (stat.wins + stat.losses) : 0,
       totalRead: stat.readCounts.reduce((a, b) => a + b, 0),
       avgReread: stat.count > 0 ? stat.rereadSum / stat.count : 1,
@@ -27159,6 +27206,26 @@ async function analyzePreferences(novels, matches) {
       totalEpisodes: n.total_episodes,
       tags: [...n.majorGenres, ...n.subGenres].join(", "),
     })),
+    // 🔧 v7.6.0 (포트 v3.12.1): 완결작 편수별 평가 (단편/중편/장편)
+    episodeAnalysis: (() => {
+      const eligible = reliable.filter(n => n.work_status === "completed" && (Number(n.total_episodes) || 0) > 0);
+      const buckets = {
+        short: eligible.filter(n => Number(n.total_episodes) < 100),
+        medium: eligible.filter(n => Number(n.total_episodes) >= 100 && Number(n.total_episodes) < 400),
+        long: eligible.filter(n => Number(n.total_episodes) >= 400),
+      };
+      const m = {};
+      for (const [k, list] of Object.entries(buckets)) {
+        m[k] = { count: list.length, avgRating: avg(list.map(n => n.prefScore)) };
+      }
+      return m;
+    })(),
+    // 🔧 v7.6.0 (포트 v3.12.1): 고평가 연중작 — '아깝다' 후보 surface
+    highRatingDropped: reliable
+      .filter(n => (n.work_status === "dropped" || n.work_status === "discontinued") && n.prefScore >= 1800)
+      .sort((a, b) => b.prefScore - a.prefScore)
+      .slice(0, 5)
+      .map(n => ({ id: n.id, title: n.title, rating: n.prefScore, workStatus: n.work_status })),
   };
 
   // 🆕 v7.0.4: 연중(dropped/discontinued) 작품의 평가 패턴 — 완결작 평균 대비 격차 산출
