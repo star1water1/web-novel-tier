@@ -2,9 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.6.4 (표지/명대사 첫 확대 깨짐 수정 — 타 분기 누락 픽스)                 ║
+ * ║  버전: 7.6.5 (매칭 N회 후 무조건 튕기던 크래시 근본 수정)                        ║
  * ║  최종 수정: 2026-06-13                                                        ║
  * ║  총 라인 수: 약 56,250줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔴 v7.6.5 매칭 N회 후 무조건 튕기던 크래시 근본 수정 (2026-06-13)               ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [증상] 조건과 무관하게 매칭을 5번 정도 하면 무조건 앱이 튕김 (deterministic).   ║
+ * ║ [원인] openDb()/resetDbConnection()이 db.closeAsync()를 **즉시 await** 호출 →   ║
+ * ║   진행 중인 매칭 prepareAsync의 네이티브 핸들이 파괴되어 NullPointerException.   ║
+ * ║   매칭마다 openDb가 불리고 SELECT 1 테스트/슬롯 체크가 close를 트리거 → 몇 회    ║
+ * ║   누적되면 in-flight prepareAsync와 close가 경합해 반드시 크래시.                ║
+ * ║   (v3.10.2/v3.11.2가 v3.x 계보에서 고쳤으나 main fork엔 미반영이었음.)           ║
+ * ║ [수정] closeAsync 직접 3곳(openDb 슬롯불일치/연결테스트실패 + resetDbConnection) ║
+ * ║   → 참조만 즉시 폐기(db=null)하고 실제 close는 setTimeout 5초 지연. in-flight    ║
+ * ║   작업은 캡처된 database 변수로 안전하게 완료, 새 openDb는 fresh connection.     ║
+ * ║   매칭 루프·5대 불변조건 미접촉 (close 타이밍만 지연 — 동작 동일).               ║
+ * ║ [잔여 closeAsync 4곳] 임시/슬롯 전용 연결(srcDb/tmp)이라 매칭 무관 → 유지.       ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -5524,10 +5540,14 @@ async function openDb() {
   //   openDb()를 호출하면 슬롯 0 DB로 연결이 캐시되어 이후 모든 쿼리가 잘못된 슬롯으로 감
   if (db && _dbOpenedForSlot !== activeSlotId) {
     console.warn(`[openDb] 슬롯 불일치: db=슬롯${_dbOpenedForSlot}, active=슬롯${activeSlotId} → 캐시 무효화`);
-    try { await db.closeAsync(); } catch (_) {}
+    // 🛠️ v7.6.5 (포트 v3.11.2): 즉시 closeAsync 금지 — 진행 중 작업(매칭 prepareAsync 등)의
+    //   네이티브 핸들을 파괴해 NullPointerException 크래시 유발. 참조만 폐기하고 실제 close는
+    //   5초 지연 → in-flight 작업은 캡처된 database 변수로 완료, 새 openDb는 fresh connection.
+    const _staleDb = db;
     db = null;
     dbOpenPromise = null;
     dbLastSuccessTime = 0;
+    setTimeout(() => { _staleDb?.closeAsync?.().catch(() => {}); }, 5000);
   }
 
   // 이미 연결 시도 중이면 해당 Promise를 기다림
@@ -5553,10 +5573,12 @@ async function openDb() {
       dbLastSuccessTime = Date.now();
       return db;
     } catch (e) {
-      // 연결이 죽었으면 실제로 닫고 정리
+      // 연결이 죽었으면 정리 (🛠️ v7.6.5 포트 v3.11.2: closeAsync 즉시 호출 금지 →
+      //   진행 중 prepareAsync 네이티브 핸들 파괴 NPE 방지. 참조 폐기 + 5초 지연 close)
       console.warn("DB 연결 테스트 실패:", e.message);
-      try { await db.closeAsync(); } catch (_) {}
+      const _deadDb = db;
       db = null;
+      setTimeout(() => { _deadDb?.closeAsync?.().catch(() => {}); }, 5000);
     }
   }
 
@@ -5600,14 +5622,12 @@ async function resetDbConnection() {
   dbOpenPromise = null;
   dbLastSuccessTime = 0;
   _dbOpenedForSlot = -1; // 🔧 슬롯 추적 리셋
-  // 🔧 v3.5.3: 기존 연결을 실제로 닫아야 새 연결이 정상 작동
+  // 🛠️ v7.6.5 (포트 v3.10.2): 즉시 closeAsync 금지 — 진행 중 작업(매칭 prepareAsync 등)의
+  //   네이티브 핸들을 파괴해 NPE 크래시. 참조는 이미 폐기(db=null)했으니 새 openDb는 fresh
+  //   connection을 만들고, 기존 연결은 5초 뒤 close → in-flight 작업이 안전하게 완료됨.
+  //   ("매칭 N회 후 무조건 튕김"의 근본 원인 — deterministic prepareAsync NPE)
   if (oldDb) {
-    try {
-      await oldDb.closeAsync();
-      console.log("기존 DB 연결 닫기 성공");
-    } catch (closeErr) {
-      console.warn("기존 DB 닫기 실패 (무시):", closeErr.message);
-    }
+    setTimeout(() => { oldDb.closeAsync().catch(() => {}); }, 5000);
   }
 }
 
@@ -11920,7 +11940,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.6.4";
+const APP_VERSION = "7.6.5";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -11946,6 +11966,17 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.6.5", date: "2026-06-13",
+    title: "🔴 매칭 몇 번 하면 앱이 튕기던 크래시 수정",
+    highlights: [
+      { type: "fix", text: "⚔️ 매칭을 5번 정도 하면 무조건 앱이 튕기던 문제를 근본 수정했어요. 이제 마음껏 매칭하셔도 됩니다." },
+    ],
+    details: [
+      { type: "fix", text: "원인: openDb()/resetDbConnection()이 DB 연결을 닫을 때 closeAsync()를 즉시 호출 → 진행 중인 매칭 작업(prepareAsync)의 네이티브 핸들이 파괴되며 NullPointerException 크래시. 매칭마다 누적되어 몇 회 뒤 반드시 터짐" },
+      { type: "fix", text: "수정: 연결 닫기를 5초 지연(참조는 즉시 폐기) — 진행 중 작업은 안전하게 완료되고 새 작업은 새 연결을 씀. 매칭 로직·불변조건은 그대로(닫는 타이밍만 지연). v3.10.2/v3.11.2 계보 수정을 main에 이식" },
+    ],
+  },
   {
     version: "7.6.4", date: "2026-06-13",
     title: "🐛 표지·명대사 이미지 첫 확대 시 깨짐 수정",
