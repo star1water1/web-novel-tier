@@ -48723,112 +48723,135 @@ async function importJSON() {
                 </View>
               </ScrollView>
 
-              {/* 🆕 v6.0: 티어 리스트 편집기 */}
+              {/* 🆕 v6.0: 티어 리스트 편집기 — 🔧 v7.6.0 (포트 v3.9.3): React state(appSettings) 직접 참조로 토글/입력 즉시 반영 */}
               <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>티어 목록 편집</Text>
               <View style={{ backgroundColor: C.bg, padding: 12, borderRadius: 12, marginBottom: 16 }}>
-                {(globalTierConfig.tiers || []).map((t, idx) => (
-                  <View key={`tier-${idx}`} style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                    {/* 색상 스와치 */}
-                    <TouchableOpacity
-                      onPress={() => {
-                        const currentIdx = TIER_COLOR_PALETTE.indexOf(t.color);
-                        const nextColor = TIER_COLOR_PALETTE[(currentIdx + 1) % TIER_COLOR_PALETTE.length];
-                        const newTiers = [...globalTierConfig.tiers];
-                        newTiers[idx] = { ...newTiers[idx], color: nextColor };
-                        saveAppSettings({ tierSystemConfig: { ...globalTierConfig, tiers: newTiers } });
-                      }}
-                      style={{ backgroundColor: t.color, width: 28, height: 28, borderRadius: 8, borderWidth: 2, borderColor: "rgba(255,255,255,0.3)" }}
-                    />
-                    {/* 라벨 입력 (key는 불변 — label만 변경) */}
-                    <TextInput
-                      value={t.label}
-                      onChangeText={(v) => {
-                        if (!v.trim()) return; // 빈 라벨 방지
-                        const newTiers = [...globalTierConfig.tiers];
-                        newTiers[idx] = { ...newTiers[idx], label: v.trim() };
-                        saveAppSettings({ tierSystemConfig: { ...globalTierConfig, tiers: newTiers } });
-                      }}
-                      style={{
-                        backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8,
-                        paddingHorizontal: 8, paddingVertical: 4, width: 60, textAlign: "center",
-                        color: C.text, fontWeight: "700",
-                      }}
-                    />
-                    {/* threshold (match/hybrid 모드에서만) */}
-                    {globalTierConfig.mode !== "manual" && (
-                      <TextInput
-                        value={String(t.threshold)}
-                        onChangeText={(v) => {
-                          const newTiers = [...globalTierConfig.tiers];
-                          newTiers[idx] = { ...newTiers[idx], threshold: parseInt(v) || 0 };
-                          saveAppSettings({ tierSystemConfig: { ...globalTierConfig, tiers: newTiers } });
-                        }}
-                        keyboardType="number-pad"
-                        placeholder="기준"
-                        placeholderTextColor={C.sub}
-                        style={{
-                          backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8,
-                          paddingHorizontal: 8, paddingVertical: 4, width: 60, textAlign: "center",
-                          color: C.text, fontSize: 12,
-                        }}
-                      />
-                    )}
-                    {/* gated 토글 (match 모드에서만) */}
-                    {globalTierConfig.mode === "match" && (
-                      <TouchableOpacity
-                        onPress={() => {
-                          const newTiers = [...globalTierConfig.tiers];
-                          newTiers[idx] = { ...newTiers[idx], gated: !newTiers[idx].gated };
-                          saveAppSettings({ tierSystemConfig: { ...globalTierConfig, tiers: newTiers } });
-                        }}
-                        style={{
-                          backgroundColor: t.gated ? "#f59e0b" : C.chip,
-                          paddingHorizontal: 6, paddingVertical: 3, borderRadius: 6,
-                        }}
-                      >
-                        <Text style={{ color: t.gated ? "#fff" : C.sub, fontSize: 10, fontWeight: "600" }}>
-                          {t.gated ? "승인" : "자동"}
-                        </Text>
-                      </TouchableOpacity>
-                    )}
-                    {/* 삭제 버튼 (최소 2개) */}
-                    {globalTierConfig.tiers.length > 2 && (
-                      <TouchableOpacity
-                        onPress={() => {
-                          Alert.alert("삭제", `"${t.label}" 티어를 삭제할까요?`, [
-                            { text: "취소" },
-                            { text: "삭제", style: "destructive", onPress: () => {
-                              const newTiers = globalTierConfig.tiers.filter((_, i) => i !== idx);
-                              const newDefault = newTiers[newTiers.length - 1]?.key || "C";
-                              saveAppSettings({ tierSystemConfig: { ...globalTierConfig, tiers: newTiers, defaultTier: newDefault } });
-                            }},
-                          ]);
-                        }}
-                        style={{ padding: 4 }}
-                      >
-                        <Text style={{ color: C.warn, fontSize: 14 }}>✕</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                ))}
-                {/* 티어 추가 버튼 (최대 10개) */}
-                {globalTierConfig.tiers.length < 10 && (
-                  <TouchableOpacity
-                    onPress={() => {
-                      const usedColors = new Set(globalTierConfig.tiers.map(t => t.color));
-                      const nextColor = TIER_COLOR_PALETTE.find(c => !usedColors.has(c)) || TIER_COLOR_PALETTE[0];
-                      // key는 유니크 + 안정적 (타임스탬프 기반, 이후 변경 불가)
-                      const newKey = "T_" + Date.now().toString(36);
-                      const newLabel = "T" + (globalTierConfig.tiers.length);
-                      const newTiers = [...globalTierConfig.tiers];
-                      newTiers.splice(newTiers.length - 1, 0, { key: newKey, label: newLabel, color: nextColor, threshold: 0, gated: false });
-                      saveAppSettings({ tierSystemConfig: { ...globalTierConfig, tiers: newTiers } });
-                    }}
-                    style={{ backgroundColor: C.chip, padding: 10, borderRadius: 8, alignItems: "center", marginTop: 4 }}
-                  >
-                    <Text style={{ color: C.primary, fontWeight: "600" }}>+ 티어 추가</Text>
-                  </TouchableOpacity>
-                )}
+                {(() => {
+                  // module 변수(globalTierConfig)는 saveAppSettings 직후 비동기 갱신 — UI 즉시 반영 안 됨
+                  // appSettings.tierSystemConfig를 우선 참조하여 setState 트리거 시 리렌더 보장
+                  const tsc = appSettings.tierSystemConfig || globalTierConfig;
+                  const tiersForUI = tsc.tiers || [];
+                  const modeForUI = tsc.mode;
+                  return (
+                    <>
+                      {tiersForUI.map((t, idx) => (
+                        <View key={`tier-${idx}`} style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                          {/* 색상 스와치 */}
+                          <TouchableOpacity
+                            onPress={() => {
+                              const currentIdx = TIER_COLOR_PALETTE.indexOf(t.color);
+                              const nextColor = TIER_COLOR_PALETTE[(currentIdx + 1) % TIER_COLOR_PALETTE.length];
+                              const newTiers = [...tiersForUI];
+                              newTiers[idx] = { ...newTiers[idx], color: nextColor };
+                              saveAppSettings({ tierSystemConfig: { ...tsc, tiers: newTiers } });
+                            }}
+                            style={{ backgroundColor: t.color, width: 28, height: 28, borderRadius: 8, borderWidth: 2, borderColor: "rgba(255,255,255,0.3)" }}
+                          />
+                          {/* 라벨 입력 (key는 불변 — label만 변경) */}
+                          <TextInput
+                            value={t.label}
+                            onChangeText={(v) => {
+                              if (!v.trim()) return; // 빈 라벨 방지
+                              const newTiers = [...tiersForUI];
+                              newTiers[idx] = { ...newTiers[idx], label: v.trim() };
+                              saveAppSettings({ tierSystemConfig: { ...tsc, tiers: newTiers } });
+                            }}
+                            style={{
+                              backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8,
+                              paddingHorizontal: 8, paddingVertical: 4, width: 60, textAlign: "center",
+                              color: C.text, fontWeight: "700",
+                            }}
+                          />
+                          {/* threshold (match/hybrid 모드에서만) */}
+                          {modeForUI !== "manual" && (
+                            <TextInput
+                              value={String(t.threshold)}
+                              onChangeText={(v) => {
+                                const newTiers = [...tiersForUI];
+                                newTiers[idx] = { ...newTiers[idx], threshold: parseInt(v) || 0 };
+                                saveAppSettings({ tierSystemConfig: { ...tsc, tiers: newTiers } });
+                              }}
+                              keyboardType="number-pad"
+                              placeholder="기준"
+                              placeholderTextColor={C.sub}
+                              style={{
+                                backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8,
+                                paddingHorizontal: 8, paddingVertical: 4, width: 60, textAlign: "center",
+                                color: C.text, fontSize: 12,
+                              }}
+                            />
+                          )}
+                          {/* gated 토글 (match 모드에서만) */}
+                          {modeForUI === "match" && (
+                            <TouchableOpacity
+                              onPress={async () => {
+                                const newGated = !t.gated;
+                                const newTiers = [...tiersForUI];
+                                newTiers[idx] = { ...newTiers[idx], gated: newGated };
+                                saveAppSettings({ tierSystemConfig: { ...tsc, tiers: newTiers } });
+
+                                // 🔧 v7.6.0 (포트 v3.11.3): gated 해제 시 해당 티어 manual_tier 자동 클리어
+                                // → 검토 대기 작품이 즉시 레이팅 기반 티어로 처리됨
+                                if (!newGated) {
+                                  try {
+                                    await exec(`UPDATE novels SET manual_tier=NULL WHERE manual_tier=?`, [t.key]);
+                                    await loadList(undefined, undefined, "gated_off_clear");
+                                  } catch (e) {
+                                    console.warn("[gated-off] manual_tier clear 실패:", e?.message);
+                                  }
+                                }
+                              }}
+                              style={{
+                                backgroundColor: t.gated ? "#f59e0b" : C.chip,
+                                paddingHorizontal: 6, paddingVertical: 3, borderRadius: 6,
+                              }}
+                            >
+                              <Text style={{ color: t.gated ? "#fff" : C.sub, fontSize: 10, fontWeight: "600" }}>
+                                {t.gated ? "승인" : "자동"}
+                              </Text>
+                            </TouchableOpacity>
+                          )}
+                          {/* 삭제 버튼 (최소 2개) */}
+                          {tiersForUI.length > 2 && (
+                            <TouchableOpacity
+                              onPress={() => {
+                                Alert.alert("삭제", `"${t.label}" 티어를 삭제할까요?`, [
+                                  { text: "취소" },
+                                  { text: "삭제", style: "destructive", onPress: () => {
+                                    const newTiers = tiersForUI.filter((_, i) => i !== idx);
+                                    const newDefault = newTiers[newTiers.length - 1]?.key || "C";
+                                    saveAppSettings({ tierSystemConfig: { ...tsc, tiers: newTiers, defaultTier: newDefault } });
+                                  }},
+                                ]);
+                              }}
+                              style={{ padding: 4 }}
+                            >
+                              <Text style={{ color: C.warn, fontSize: 14 }}>✕</Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                      ))}
+                      {/* 티어 추가 버튼 (최대 10개) */}
+                      {tiersForUI.length < 10 && (
+                        <TouchableOpacity
+                          onPress={() => {
+                            const usedColors = new Set(tiersForUI.map(t => t.color));
+                            const nextColor = TIER_COLOR_PALETTE.find(c => !usedColors.has(c)) || TIER_COLOR_PALETTE[0];
+                            // key는 유니크 + 안정적 (타임스탬프 기반, 이후 변경 불가)
+                            const newKey = "T_" + Date.now().toString(36);
+                            const newLabel = "T" + tiersForUI.length;
+                            const newTiers = [...tiersForUI];
+                            newTiers.splice(newTiers.length - 1, 0, { key: newKey, label: newLabel, color: nextColor, threshold: 0, gated: false });
+                            saveAppSettings({ tierSystemConfig: { ...tsc, tiers: newTiers } });
+                          }}
+                          style={{ backgroundColor: C.chip, padding: 10, borderRadius: 8, alignItems: "center", marginTop: 4 }}
+                        >
+                          <Text style={{ color: C.primary, fontWeight: "600" }}>+ 티어 추가</Text>
+                        </TouchableOpacity>
+                      )}
+                    </>
+                  );
+                })()}
               </View>
 
               {/* 등록 옵션 */}
