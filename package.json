@@ -6,8 +6,8 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "build": "git checkout main && git pull --ff-only && eas build -p android --profile preview",
-    "build:prod": "git checkout main && git pull --ff-only && eas build -p android --profile production"
+    "build": "git checkout main && git pull --ff-only && npx --yes eas-cli build -p android --profile preview",
+    "build:prod": "git checkout main && git pull --ff-only && npx --yes eas-cli build -p android --profile production"
   },
   "dependencies": {
     "expo": "~54.0.33",
