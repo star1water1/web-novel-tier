@@ -2,9 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.6.3 (명대사 이미지 최대 10→30 확장)                                   ║
+ * ║  버전: 7.6.4 (표지/명대사 첫 확대 깨짐 수정 — 타 분기 누락 픽스)                 ║
  * ║  최종 수정: 2026-06-13                                                        ║
  * ║  총 라인 수: 약 56,250줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🐛 v7.6.4 표지/명대사 첫 확대 시 깨짐 수정 — 타 분기 누락 픽스 (2026-06-13)     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [증상] 이미지를 처음 확대하면 깨져 보이고, 한 번 본 이미지는 다음부터 정상.     ║
+ * ║ [원인] 표지 확대 뷰어(coverViewerUri 모달)의 ExpoImage가 recyclingKey={URI}로   ║
+ * ║   썸네일과 같은 key를 써서, expo-image가 썸네일의 저해상도 비트맵을 재활용 →    ║
+ * ║   첫 확대 시 깨짐. (갤러리·수상 확대 모달은 v7.1.2에서 expand- prefix로 이미    ║
+ * ║   고쳐졌으나, 표지 뷰어만 누락 — 표지/명대사 확대가 이 모달을 공유.)            ║
+ * ║ [수정] recyclingKey={`expand-${coverViewerUri}`} + priority=high + transition=0 ║
+ * ║   (갤러리/수상 모달과 동일 패턴으로 통일).                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11908,7 +11920,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.6.3";
+const APP_VERSION = "7.6.4";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -11934,6 +11946,17 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.6.4", date: "2026-06-13",
+    title: "🐛 표지·명대사 이미지 첫 확대 시 깨짐 수정",
+    highlights: [
+      { type: "fix", text: "🖼️ 이미지를 처음 확대할 때 깨져 보이던 문제를 고쳤어요. (표지·명대사 확대 — 한 번 본 뒤엔 정상이던 그 증상)" },
+    ],
+    details: [
+      { type: "fix", text: "표지 확대 뷰어(coverViewerUri 모달)의 ExpoImage가 recyclingKey={URI}로 썸네일과 같은 key를 써서 expo-image가 썸네일의 저해상도 비트맵을 재활용 → 첫 확대 시 깨짐" },
+      { type: "fix", text: "recyclingKey를 `expand-${uri}`로 분리 + priority=high + transition=0 — 갤러리·수상 확대 모달이 v7.1.2에서 받은 수정을 표지 뷰어에도 동일 적용(누락분 보강)" },
+    ],
+  },
   {
     version: "7.6.3", date: "2026-06-13",
     title: "🎨 명대사 이미지, 작품당 최대 30장으로 확장",
@@ -56096,11 +56119,15 @@ async function importJSON() {
           {coverViewerUri && (
             <ExpoImage
               source={{ uri: coverViewerUri }}
-              recyclingKey={coverViewerUri}
+              /* 🛠️ v7.6.4: 갤러리/수상 모달과 동일한 v7.1.2 패턴 적용 — 썸네일과 같은 key(URI)를
+                 쓰면 expo-image가 썸네일의 저해상도 비트맵을 재활용해 첫 확대 시 깨져 보임
+                 (이후 풀해상도 캐시되면 정상). `expand-` prefix로 모달 인스턴스 분리 + priority/transition 통일 */
+              recyclingKey={`expand-${coverViewerUri}`}
               style={{ width: "88%", height: "75%", borderRadius: 12 }}
               contentFit="contain"
               cachePolicy="memory-disk"
-              transition={200}
+              priority="high"
+              transition={0}
             />
           )}
           <View style={{ 
