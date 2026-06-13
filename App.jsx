@@ -14,6 +14,8 @@
  * ║ • 카드 표시는 기존대로 이미지 2개 캡 (App.jsx:42518) → 목록 성능 영향 0.        ║
  * ║ • 백업 base64 임베드는 작품당 3개 캡 유지 (slice(0,3)) — 같은 기기 복원은 전체  ║
  * ║   보존(파일 경로 유지), 기기 간 이전은 3개까지(기존과 동일 제약, 의도적 유지).  ║
+ * ║ • 인앱 변경이력(CHANGELOG_DATA)에 7.6.0~7.6.3 항목 추가 + 기능 가이드 갱신       ║
+ * ║   (예정작 명대사·갤러리 안내) — 모두 사용자 친화 표현으로 작성.                  ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11933,6 +11935,65 @@ function compareVersions(a, b) {
 
 const CHANGELOG_DATA = [
   {
+    version: "7.6.3", date: "2026-06-13",
+    title: "🎨 명대사 이미지, 작품당 최대 30장으로 확장",
+    highlights: [
+      { type: "improve", text: "📷 한 작품에 넣을 수 있는 인상깊은 문장 이미지가 10장 → 30장으로 늘었어요. 본 작품·예정 작품 모두 적용돼요." },
+    ],
+    details: [
+      { type: "improve", text: "QUOTE_IMAGE_MAX_COUNT 상수만 10→30 변경 — 순수 입력 제한이라 DB·정렬·매칭 로직과 무관, 모든 명대사 에디터에 일괄 반영" },
+      { type: "improve", text: "작품 카드의 이미지 미리보기는 기존대로 2장까지만 표시(나머지는 +N장)해서 목록 스크롤 성능 영향 없음" },
+      { type: "improve", text: "백업 base64 임베드는 작품당 3장 캡 유지 — 같은 기기 복원은 30장 전부 보존(파일 경로 유지), 기기 간 이전은 3장까지(백업 용량 폭증 방지)" },
+    ],
+  },
+  {
+    version: "7.6.2", date: "2026-06-13",
+    title: "🆕 예정 작품에도 명대사·갤러리를 추가할 수 있어요",
+    highlights: [
+      { type: "new", text: "💬 읽을 예정 작품에도 인상깊은 문장을 텍스트 + 이미지로 남길 수 있어요. 예전엔 본 작품으로 등록한 뒤에만 가능했어요." },
+      { type: "new", text: "🖼️ 예정 작품에도 갤러리 이미지를 추가할 수 있어요. 추가한 이미지는 갤러리 탭에서 함께 관리돼요." },
+      { type: "fix", text: "예정 작품의 갤러리 이미지가 갤러리 탭에서 제목 없이 떠 있던 문제도 함께 해결했어요." },
+    ],
+    details: [
+      { type: "new", text: "예정 편집 모달의 평문 명대사 입력칸을 본 작품과 동일한 리치 에디터(텍스트/이미지 추가·삭제·캡션)로 교체 — plannedEditItem.memorable_quote 직접 바인딩" },
+      { type: "new", text: "이미지 파일 생명주기 처리 — 편집 취소 시 새로 추가한 이미지 정리(cancelPlannedEdit), 저장 시 삭제분 정리. 본 작품 saveEdit과 동일 패턴" },
+      { type: "new", text: "loadGalleryImages에 planned_novels LEFT JOIN + COALESCE / addGalleryImages 존재 체크에 예정작 UNION / 예정 편집 모달에 갤러리 추가 버튼·등록 수 카운트" },
+      { type: "improve", text: "오래 병합되지 않은 계보(v3.12.2)의 미반영 기능을 완전 이식 — 본 작품과 예정 작품의 명대사·갤러리 기능 격차 해소" },
+    ],
+  },
+  {
+    version: "7.6.1", date: "2026-06-13",
+    title: "🔧 백업 안정성 개선 — 예정작 연재 연도·검증 기록 보존",
+    highlights: [
+      { type: "fix", text: "📦 예정 작품에 입력한 연재 시작/종료 연도가 백업·복원 과정에서 사라지던 문제를 고쳤어요." },
+      { type: "fix", text: "🔄 본 작품을 예정 작품으로 되돌릴 때도 연재 연도가 그대로 유지돼요." },
+      { type: "fix", text: "🤖 하이브리드 모드의 검증 전적(승/패·충돌 횟수)이 백업에 보존되도록 했어요." },
+    ],
+    details: [
+      { type: "fix", text: "buildUltraCompactBackup의 예정작 직렬화(PL.map)와 복원(data.PL.map INSERT) 양쪽에 start_year/end_year 추가 — 컬럼·placeholder·params 정합 확인" },
+      { type: "fix", text: "convertNovelToPlanned INSERT의 연재 연도 누락 보강 (forward 전환은 기존에도 정상이었음)" },
+      { type: "fix", text: "verification_wins/losses/count + conflict_hits를 novels 백업 opt(vw/vl/vc/ch)에 직렬화 + 복원 — 매칭 기록으로 재계산 불가한 카운터라 보존 필수" },
+    ],
+  },
+  {
+    version: "7.6.0", date: "2026-06-13",
+    title: "🆕 매칭 밴 · 연재 연도 · 비율 티어 등 대규모 기능 통합",
+    highlights: [
+      { type: "new", text: "🚫 매칭 밴 — 특정 작품을 자동 매칭에서 제외할 수 있어요. (설정 탭에서 검색·지정)" },
+      { type: "new", text: "📅 연재 연도 — 본 작품·예정 작품에 연재 시작/종료 연도를 기록해요. 태그에 적힌 4자리 연도는 자동으로 인식돼요." },
+      { type: "new", text: "📊 비율 티어 모드 — 작품을 정해진 비율(예: 상위 10% S)로 자동 배분하는 티어 모드를 추가했어요." },
+      { type: "new", text: "🏷️ 태그 칩 통합 편집 — 태그의 농도·분류·감정·고정/숨김을 한 모달에서 한번에 설정해요." },
+      { type: "improve", text: "📈 취향 분석에 연중률과 편수 분석(단편/중편/장편), 고평가 연재중 작품 인사이트가 추가됐어요." },
+      { type: "improve", text: "💬 명대사 이미지를 탭하면 크게 볼 수 있고, 홈 탭의 정렬·필터 설정이 앱을 다시 켜도 유지돼요." },
+    ],
+    details: [
+      { type: "new", text: "오래 병합되지 않은 계보(v3.9.2~v3.18.2, 67커밋)에서 미반영 기능 19건을 검토·이식한 대규모 통합 릴리스" },
+      { type: "new", text: "novels/planned_novels에 start_year/end_year/match_ban 컬럼 + 백업 v12(sy/ey/mb) + 태그→연도 1회 자동 마이그레이션" },
+      { type: "new", text: "TIER_PRESETS ratio_6 + computeRatioTierMap + getDisplayTier 비율 분기 / TagChipEditModal 신설 / 취향분석 workDropRate·episodeAnalysis·highRatingDropped" },
+      { type: "improve", text: "이후 v7.6.1 사후 감사에서 백업 round-trip 누락 3건을 추가로 복구" },
+    ],
+  },
+  {
     version: "7.4.12", date: "2026-05-11",
     title: "🆕 수상탭 후보작 포함 export 옵션 + v7.4.11 백업 누락 복구",
     highlights: [
@@ -13032,6 +13093,8 @@ const GUIDE_CONTENT = [
         tips: [
           "예정 작품은 순위에 영향을 주지 않아요.",
           "읽기 시작하면 '등록전환' 버튼으로 본 목록에 추가하세요.",
+          "💬 예정 작품에도 인상깊은 문장(텍스트·이미지)을 남길 수 있어요. (v7.6.2)",
+          "🖼️ 예정 작품에도 갤러리 이미지를 추가할 수 있어요 — 갤러리 탭에서 함께 관리돼요. (v7.6.2)",
         ],
       },
       {
@@ -13226,6 +13289,7 @@ const GUIDE_CONTENT = [
         tips: [
           "이미지 탭으로 확대 모달 진입 — 좌우 스와이프로 다른 이미지로 이동",
           "원본 파일은 앱 데이터 폴더에 저장돼 백업/복원 시 함께 이동",
+          "📋 예정 작품에도 갤러리 이미지를 등록할 수 있어요 — 본 작품으로 전환해도 그대로 유지돼요. (v7.6.2)",
         ],
       },
     ],
