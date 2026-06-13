@@ -16046,6 +16046,179 @@ const SearchTagModal = memo(({
  * [데이터 흐름]
  * props로 받음 → 내부 상태로 복사 → 수정 → onSave로 일괄 전달
  */
+/* =========================================================
+   🔧 v7.6.0 (포트 v3.12.4): TagChipEditModal
+   - 작품 내 태그 칩 롱프레스 시 열림
+   - 농도(intensity, per-novel) + 속성(major/sub/normal) + 감정(sentiment) +
+     고정/숨김을 한 화면에서 통합 편집
+   - 농도는 호출처 콜백으로 위임 (new/edit/supplement 각각 다른 tag_data setter)
+   - 속성/감정/고정/숨김은 글로벌 — 부모 콜백으로 전달
+   ========================================================= */
+const TagChipEditModal = memo(({
+  visible, onClose, tag, currentIntensity, isMajor, isSub, sentiment,
+  isPinned, isHidden, isTitle,
+  onSaveIntensity,        // (val) => void — per-novel
+  onPromoteToMajor,       // () => void — 글로벌 속성 변경
+  onPromoteToSub, onDemoteToNormal,
+  onSetSentiment,         // ("positive"|"neutral"|"negative"|null) => void
+  onTogglePin,            // (next: bool) => void
+  onToggleHide,           // (next: bool) => void
+  onToggleTitle,          // (next: bool) => void
+  theme,
+}) => {
+  const C = theme;
+  const isDark = C.bg !== "#F5F7FB";
+  const [localIntensity, setLocalIntensity] = useState(currentIntensity ?? 3);
+  useEffect(() => {
+    if (visible) setLocalIntensity(currentIntensity ?? 3);
+  }, [visible, currentIntensity]);
+
+  if (!visible || !tag) return null;
+
+  // 농도별 색상 (INTENSITY)
+  const INTENSITY_COLORS = ["#94a3b8", "#a3e635", "#22c55e", "#3b82f6", "#8b5cf6"];
+  const currentType = isMajor ? "major" : (isSub ? "sub" : "normal");
+  const sentimentLabels = { positive: "긍정", neutral: "중립", negative: "부정" };
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" statusBarTranslucent={true} onRequestClose={onClose}>
+      <TouchableOpacity activeOpacity={1} onPress={onClose} style={{
+        flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "center", padding: 16,
+      }}>
+        <TouchableOpacity activeOpacity={1} onPress={() => {}} style={{
+          backgroundColor: C.card, borderRadius: 16, padding: 16, maxHeight: "85%",
+        }}>
+          <Text style={{ color: C.text, fontSize: 16, fontWeight: "800", marginBottom: 12 }}>
+            🏷️ "{tag}" 태그 설정
+          </Text>
+
+          <ScrollView style={{ maxHeight: 480 }}>
+            {/* 농도 (per-novel) */}
+            <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>🎚️ 농도 (이 작품에서)</Text>
+            <View style={{ flexDirection: "row", marginBottom: 14 }}>
+              {[1, 2, 3, 4, 5].map(v => {
+                const active = localIntensity === v;
+                return (
+                  <TouchableOpacity
+                    key={v}
+                    onPress={() => { setLocalIntensity(v); onSaveIntensity && onSaveIntensity(v); }}
+                    style={{
+                      flex: 1, marginHorizontal: 2, paddingVertical: 12, borderRadius: 8,
+                      borderWidth: active ? 2 : 1,
+                      borderColor: active ? INTENSITY_COLORS[v - 1] : C.line,
+                      backgroundColor: active ? INTENSITY_COLORS[v - 1] : C.chip,
+                      alignItems: "center",
+                    }}
+                  >
+                    <Text style={{
+                      color: active ? "#fff" : C.text,
+                      fontWeight: "700",
+                    }}>{v}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* 분류 */}
+            {(onPromoteToMajor || onPromoteToSub || onDemoteToNormal) && (
+              <>
+                <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>📂 분류</Text>
+                <View style={{ flexDirection: "row", marginBottom: 14 }}>
+                  {[
+                    { key: "normal", label: "일반", action: onDemoteToNormal },
+                    { key: "major", label: "대장르", action: onPromoteToMajor },
+                    { key: "sub", label: "부장르", action: onPromoteToSub },
+                  ].map(opt => {
+                    const active = currentType === opt.key;
+                    return (
+                      <TouchableOpacity
+                        key={opt.key}
+                        onPress={() => { if (!active && opt.action) opt.action(); }}
+                        style={{
+                          flex: 1, marginHorizontal: 2, paddingVertical: 10, borderRadius: 8,
+                          borderWidth: 1, borderColor: active ? C.primary : C.line,
+                          backgroundColor: active ? C.primary : C.chip, alignItems: "center",
+                        }}
+                      >
+                        <Text style={{ color: active ? "#fff" : C.text, fontWeight: "600" }}>{opt.label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </>
+            )}
+
+            {/* 감정 */}
+            {onSetSentiment && (
+              <>
+                <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>🎭 감정 속성</Text>
+                <View style={{ flexDirection: "row", marginBottom: 14 }}>
+                  {[
+                    { key: null, label: "미지정", color: C.chip },
+                    { key: "positive", label: "😊 긍정", color: "#22c55e" },
+                    { key: "neutral", label: "😐 중립", color: "#94a3b8" },
+                    { key: "negative", label: "😟 부정", color: "#ef4444" },
+                  ].map(opt => {
+                    const active = sentiment === opt.key;
+                    return (
+                      <TouchableOpacity
+                        key={String(opt.key)}
+                        onPress={() => onSetSentiment(opt.key)}
+                        style={{
+                          flex: 1, marginHorizontal: 2, paddingVertical: 8, borderRadius: 8,
+                          borderWidth: 1, borderColor: active ? opt.color : C.line,
+                          backgroundColor: active ? opt.color : C.chip, alignItems: "center",
+                        }}
+                      >
+                        <Text style={{
+                          color: active ? "#fff" : C.text,
+                          fontWeight: "600", fontSize: 11,
+                        }}>{opt.label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </>
+            )}
+
+            {/* 토글 옵션 */}
+            <View style={{ marginBottom: 8 }}>
+              {onTogglePin && (
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 8 }}>
+                  <Text style={{ color: C.text, fontSize: 14 }}>📌 고정 (상단)</Text>
+                  <Switch value={!!isPinned} onValueChange={(v) => onTogglePin(v)} />
+                </View>
+              )}
+              {onToggleHide && (
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 8 }}>
+                  <Text style={{ color: C.text, fontSize: 14 }}>🙈 숨김 (필터에서 제외)</Text>
+                  <Switch value={!!isHidden} onValueChange={(v) => onToggleHide(v)} />
+                </View>
+              )}
+              {onToggleTitle && (
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 8 }}>
+                  <Text style={{ color: C.text, fontSize: 14 }}>📖 작품명 태그</Text>
+                  <Switch value={!!isTitle} onValueChange={(v) => onToggleTitle(v)} />
+                </View>
+              )}
+            </View>
+          </ScrollView>
+
+          <TouchableOpacity
+            onPress={onClose}
+            style={{
+              marginTop: 10, paddingVertical: 12, borderRadius: 10,
+              backgroundColor: C.chip, alignItems: "center",
+            }}
+          >
+            <Text style={{ color: C.text, fontWeight: "700" }}>닫기</Text>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </TouchableOpacity>
+    </Modal>
+  );
+});
+
 const TagEditModal = memo(({
   visible,
   onClose,
@@ -28322,6 +28495,14 @@ function AppContent() {
   const [hiddenTags, setHiddenTags] = useState([]); // 숨김 태그 (기본 태그 숨기기용)
   const [tagEditModalOpen, setTagEditModalOpen] = useState(false); // 태그 편집 모달
   const [editingTag, setEditingTag] = useState(null); // { tag, type: "custom"|"combo"|"major"|"sub"|"general" }
+
+  // 🔧 v7.6.0 (포트 v3.12.4): 작품 내 태그 칩 통합 편집 모달
+  // - 농도(intensity) + 속성(major/sub) + 감정 + 고정/숨김 한 화면
+  // - tagChipEditSource: "new" | "edit" | "supplement" — 농도 setter 분기
+  const [tagChipEditOpen, setTagChipEditOpen] = useState(false);
+  const [tagChipEditTag, setTagChipEditTag] = useState("");
+  const [tagChipEditSource, setTagChipEditSource] = useState("new");
+  const [tagChipEditIntensity, setTagChipEditIntensity] = useState(3);
 
   // 🔮 v3.0.3: 이변 원인 분석 시스템
   const [upsetFactors, setUpsetFactors] = useState({
@@ -41266,22 +41447,13 @@ async function importJSON() {
                   userSubGenres={userSubGenres}
                   tagAttributes={tagAttributes}
                   onLongPressTag={(tag) => {
-                    // 🆕 v3.5.12: 롱프레스로 농도 즉시 조절
-                    // 🔧 v3.5.12: newTagDataRef.current 사용 (stale closure 방지)
-                    // 🔧 v3.5.13: map → upsert (tag_data에 항목 없는 태그도 추가)
+                    // 🔧 v7.6.0 (포트 v3.12.4): 농도 Alert → 통합 모달 (농도 + 속성/감정/고정/숨김)
                     const td = newTagDataRef.current || [];
                     const current = td.find(t => t.tag === tag)?.intensity || 3;
-                    const upsertIntensity = (arr, tg, val) => {
-                      const a = arr || [];
-                      return a.some(t => t.tag === tg) ? a.map(t => t.tag === tg ? {...t, intensity: val} : t) : [...a, { tag: tg, intensity: val }];
-                    };
-                    Alert.alert(`🎚️ "${tag}" 농도`, `현재: ${current}/5`, [
-                      { text: "1 (약함)", onPress: () => setNewTagData(prev => upsertIntensity(prev, tag, 1)) },
-                      { text: "2", onPress: () => setNewTagData(prev => upsertIntensity(prev, tag, 2)) },
-                      { text: "3 (보통)", onPress: () => setNewTagData(prev => upsertIntensity(prev, tag, 3)) },
-                      { text: "4", onPress: () => setNewTagData(prev => upsertIntensity(prev, tag, 4)) },
-                      { text: "5 (강함)", onPress: () => setNewTagData(prev => upsertIntensity(prev, tag, 5)) },
-                    ]);
+                    setTagChipEditTag(tag);
+                    setTagChipEditSource("new");
+                    setTagChipEditIntensity(current);
+                    setTagChipEditOpen(true);
                   }}
                   onRemoveTag={(tag) => {
                     // 🔧 v3.5.9: ref에서 최신값 읽기 (stale closure 방지)
@@ -45235,35 +45407,13 @@ async function importJSON() {
                       userSubGenres={userSubGenres}
                       tagAttributes={tagAttributes}
                       onLongPressTag={(tag) => {
-                        // 🆕 v3.5.12: 보충탭 롱프레스 농도 조절
-                        // 🔧 v3.5.13: map → upsert (tag_data에 항목 없는 태그도 추가)
+                        // 🔧 v7.6.0 (포트 v3.12.4): 보충탭 농도 Alert → 통합 모달
                         const td = editItem?.tag_data ? parseTagData(editItem.tag_data) : [];
                         const current = td.find(t => t.tag === tag)?.intensity || 3;
-                        const upsertTd = (parsed, tg, val) => {
-                          return parsed.some(t => t.tag === tg) ? parsed.map(t => t.tag === tg ? {...t, intensity: val} : t) : [...parsed, { tag: tg, intensity: val }];
-                        };
-                        Alert.alert(`🎚️ "${tag}" 농도`, `현재: ${current}/5`, [
-                          { text: "1", onPress: () => updateEditItem(prev => {
-                            if (!prev) return null;
-                            return { ...prev, tag_data: JSON.stringify(upsertTd(parseTagData(prev.tag_data), tag, 1)) };
-                          })},
-                          { text: "2", onPress: () => updateEditItem(prev => {
-                            if (!prev) return null;
-                            return { ...prev, tag_data: JSON.stringify(upsertTd(parseTagData(prev.tag_data), tag, 2)) };
-                          })},
-                          { text: "3", onPress: () => updateEditItem(prev => {
-                            if (!prev) return null;
-                            return { ...prev, tag_data: JSON.stringify(upsertTd(parseTagData(prev.tag_data), tag, 3)) };
-                          })},
-                          { text: "4", onPress: () => updateEditItem(prev => {
-                            if (!prev) return null;
-                            return { ...prev, tag_data: JSON.stringify(upsertTd(parseTagData(prev.tag_data), tag, 4)) };
-                          })},
-                          { text: "5", onPress: () => updateEditItem(prev => {
-                            if (!prev) return null;
-                            return { ...prev, tag_data: JSON.stringify(upsertTd(parseTagData(prev.tag_data), tag, 5)) };
-                          })},
-                        ]);
+                        setTagChipEditTag(tag);
+                        setTagChipEditSource("supplement");
+                        setTagChipEditIntensity(current);
+                        setTagChipEditOpen(true);
                       }}
                       onRemoveTag={(tag) => {
                         // 🔧 v3.5.9 BUG FIX: 함수형 업데이트로 prev.tags 사용 (stale closure 방지)
@@ -52708,34 +52858,13 @@ async function importJSON() {
                     userSubGenres={userSubGenres}
                     tagAttributes={tagAttributes}
                     onLongPressTag={(tag) => {
-                      // 🆕 v3.5.13: 편집 모달 롱프레스 농도 조절
+                      // 🔧 v7.6.0 (포트 v3.12.4): 편집 모달 농도 Alert → 통합 모달
                       const td = editItem?.tag_data ? parseTagData(editItem.tag_data) : [];
                       const current = td.find(t => t.tag === tag)?.intensity || 3;
-                      const upsertTd = (parsed, tg, val) => {
-                        return parsed.some(t => t.tag === tg) ? parsed.map(t => t.tag === tg ? {...t, intensity: val} : t) : [...parsed, { tag: tg, intensity: val }];
-                      };
-                      Alert.alert(`🎚️ "${tag}" 농도`, `현재: ${current}/5`, [
-                        { text: "1 (약함)", onPress: () => updateEditItem(prev => {
-                          if (!prev) return null;
-                          return { ...prev, tag_data: JSON.stringify(upsertTd(parseTagData(prev.tag_data), tag, 1)) };
-                        })},
-                        { text: "2", onPress: () => updateEditItem(prev => {
-                          if (!prev) return null;
-                          return { ...prev, tag_data: JSON.stringify(upsertTd(parseTagData(prev.tag_data), tag, 2)) };
-                        })},
-                        { text: "3 (보통)", onPress: () => updateEditItem(prev => {
-                          if (!prev) return null;
-                          return { ...prev, tag_data: JSON.stringify(upsertTd(parseTagData(prev.tag_data), tag, 3)) };
-                        })},
-                        { text: "4", onPress: () => updateEditItem(prev => {
-                          if (!prev) return null;
-                          return { ...prev, tag_data: JSON.stringify(upsertTd(parseTagData(prev.tag_data), tag, 4)) };
-                        })},
-                        { text: "5 (강함)", onPress: () => updateEditItem(prev => {
-                          if (!prev) return null;
-                          return { ...prev, tag_data: JSON.stringify(upsertTd(parseTagData(prev.tag_data), tag, 5)) };
-                        })},
-                      ]);
+                      setTagChipEditTag(tag);
+                      setTagChipEditSource("edit");
+                      setTagChipEditIntensity(current);
+                      setTagChipEditOpen(true);
                     }}
                     onRemoveTag={(tag) => {
                       // 🔧 v3.5.9 BUG FIX: 함수형 업데이트로 prev.tags 사용 (stale closure 방지)
@@ -54116,6 +54245,60 @@ async function importJSON() {
         userSubGenres={userSubGenres}
         pinnedTags={pinnedTags}
         hiddenTags={hiddenTags}
+        theme={C}
+      />
+
+      {/* 🔧 v7.6.0 (포트 v3.12.4): 작품 내 태그 칩 통합 편집 모달 */}
+      <TagChipEditModal
+        visible={tagChipEditOpen}
+        onClose={() => { setTagChipEditOpen(false); setTagChipEditTag(""); }}
+        tag={tagChipEditTag}
+        currentIntensity={tagChipEditIntensity}
+        // 분류 추론: tagAttributes에서 카테고리 확인
+        isMajor={tagChipEditTag ? listHasTag(getAllMajorTags(tagAttributes, userMajorGenres), tagChipEditTag) : false}
+        isSub={tagChipEditTag ? listHasTag(getAllSubTags(tagAttributes, userSubGenres), tagChipEditTag) : false}
+        sentiment={tagChipEditTag ? getTagSentiment(tagChipEditTag, tagSentiments) : null}
+        isPinned={tagChipEditTag ? listHasTag(pinnedTags, tagChipEditTag) : false}
+        isHidden={tagChipEditTag ? listHasTag(hiddenTags, tagChipEditTag) : false}
+        isTitle={tagChipEditTag ? isTagTitle(tagChipEditTag, tagAttributes) : false}
+        onSaveIntensity={(val) => {
+          setTagChipEditIntensity(val);
+          const tag = tagChipEditTag;
+          if (!tag) return;
+          // 호출처별 농도 setter 분기
+          if (tagChipEditSource === "new") {
+            setNewTagData(prev => {
+              const a = prev || [];
+              return a.some(t => t.tag === tag) ? a.map(t => t.tag === tag ? { ...t, intensity: val } : t) : [...a, { tag, intensity: val }];
+            });
+          } else {
+            // edit / supplement 공통
+            updateEditItem(prev => {
+              if (!prev) return null;
+              const parsed = parseTagData(prev.tag_data);
+              const next = parsed.some(t => t.tag === tag)
+                ? parsed.map(t => t.tag === tag ? { ...t, intensity: val } : t)
+                : [...parsed, { tag, intensity: val }];
+              return { ...prev, tag_data: JSON.stringify(next) };
+            });
+          }
+        }}
+        onPromoteToMajor={tagChipEditTag ? () => promoteToMajorGenre(tagChipEditTag) : null}
+        onPromoteToSub={tagChipEditTag ? () => promoteToSubGenre(tagChipEditTag) : null}
+        onDemoteToNormal={tagChipEditTag ? () => {
+          // 현재 분류에 따라 적절한 demote
+          if (listHasTag(getAllMajorTags(tagAttributes, userMajorGenres), tagChipEditTag)) demoteMajorToCustom(tagChipEditTag);
+          else if (listHasTag(getAllSubTags(tagAttributes, userSubGenres), tagChipEditTag)) demoteSubToCustom(tagChipEditTag);
+        } : null}
+        onSetSentiment={tagChipEditTag ? (s) => setTagSentiment(tagChipEditTag, s) : null}
+        onTogglePin={tagChipEditTag ? (next) => {
+          const has = listHasTag(pinnedTags, tagChipEditTag);
+          if (has !== next) togglePinTag(tagChipEditTag);
+        } : null}
+        onToggleHide={tagChipEditTag ? (next) => {
+          const has = listHasTag(hiddenTags, tagChipEditTag);
+          if (has !== next) toggleHideTag(tagChipEditTag);
+        } : null}
         theme={C}
       />
 
