@@ -6220,6 +6220,8 @@ async function initDb(progressCb) {
     // 🔧 v7.6.0 (포트 v3.12.0): 연재 시작/종료 연도 전용 필드 — 수상 후보 선정 + 향후 활용
     ["start_year", "INTEGER", "0"],   // 0 = 미설정
     ["end_year", "INTEGER", "0"],     // 0 = 미설정/연재중
+    // 🚫 v7.6.0 (포트 v3.16.0): 매칭 밴 — 활성화 시 매칭 페어 생성에서 제외
+    ["match_ban", "INTEGER", "0"],
     // 💬 v3.2.2: 인상깊은 문장
     ["memorable_quote", "TEXT", "''"], // 작품에서 인상깊었던 문장
     // 🆕 v7.4.13: 사용자 명시 의심 표시 (hybrid 모드) — 🔍 토글로 큐 priority +3
@@ -6342,6 +6344,8 @@ async function initDb(progressCb) {
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_novels_pinned ON novels(pinned DESC);`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_novels_status ON novels(status);`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_novels_title ON novels(title COLLATE NOCASE);`);
+  // 🚫 v7.6.0 (포트 v3.16.0): 매칭 밴 인덱스
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_novels_match_ban ON novels(match_ban);`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_matches_created ON matches(created_at ASC);`);
   
   // ═══════════════════════════════════════════════════════════════════════════════
@@ -11214,6 +11218,7 @@ function normalizeNovel(r) {
     read_count: Number(r.read_count) || 0,
     reread_count: r.reread_count != null ? Number(r.reread_count) : 1,
     pinned: Number(r.pinned) || 0,
+    match_ban: Number(r.match_ban) || 0, // 🚫 v7.6.0 (포트 v3.16.0)
   };
 }
 
@@ -25622,6 +25627,14 @@ function formatVerificationReason(reason) {
 // 🆕 v7.4.13: priority 다축 통합 — computeVerificationPriority 사용. user_flag/auto_detected/conflict 지원.
 async function enqueueVerification(novelId, triggerType, suspicionType, source) {
   if (!novelId || !triggerType || !suspicionType) return;
+  // 🚫 v7.6.0 (포트 v3.16.0): 매칭 밴 작품은 검증 큐에 등록하지 않음
+  try {
+    const banCheck = await first("SELECT match_ban FROM novels WHERE id = ?", [novelId]);
+    if (banCheck?.match_ban) {
+      console.log('[hybrid] enqueueVerification skipped: banned', novelId);
+      return null;
+    }
+  } catch {}
   const now = Date.now();
   // 🆕 v7.4.13: priority 계산 시 user_flagged_suspect + block_count 조회
   // 🆕 v7.5.0: conflict_hits + verification_wins/losses/count 추가 (Phase B 가중치 통합)
@@ -25703,8 +25716,10 @@ async function getCandidatesForVerification(novelId, suspicionType, limit = 10) 
   if (ownTierIdx === -1) return [];
 
   const allRows = await all(
+    // 🚫 v7.6.0 (포트 v3.16.0): 매칭 밴 작품을 opponent 후보에서 제외
     `SELECT id, title, manual_tier, manual_order, rating FROM novels
-     WHERE id != ? AND manual_tier IS NOT NULL AND manual_tier != ''`,
+     WHERE id != ? AND manual_tier IS NOT NULL AND manual_tier != ''
+        AND COALESCE(match_ban, 0) = 0`,
     [novelId]
   );
 
@@ -28345,6 +28360,9 @@ function AppContent() {
   // 특정 작품 고정 매칭용
   const [focusMatchNovel, setFocusMatchNovel] = useState(null);
   const [focusMatchQuery, setFocusMatchQuery] = useState("");
+  // 🚫 v7.6.0 (포트 v3.16.0): 매칭 밴 UI 상태 (접이식 + 검색)
+  const [matchBanExpanded, setMatchBanExpanded] = useState(false);
+  const [matchBanSearchQuery, setMatchBanSearchQuery] = useState("");
 
   // 🆕 v7.0: hybrid 모드 — 검증 시퀀스 상태
   // session: { queueRow, suspicionNovel, candidates, responses, currentIdx, suspicionType }
@@ -35335,6 +35353,33 @@ function AppContent() {
   }
 
 
+  // 🚫 v7.6.0 (포트 v3.16.0): 매칭 밴 토글
+  // - UPDATE novels SET match_ban = ?
+  // - 밴 시 hybrid 검증 큐 pending/active 무효화
+  // - focus가 이 작품이면 해제
+  // - invalidateMatchCache() + loadList() 동기화
+  async function toggleMatchBan(id, ban) {
+    try {
+      await exec("UPDATE novels SET match_ban=? WHERE id=?", [ban ? 1 : 0, id]);
+      if (ban) {
+        try {
+          await exec(
+            `UPDATE tier_verification_queue
+             SET status='invalidated', invalidated_at=?, invalidated_reason='work_banned'
+             WHERE (subject_id=? OR opponent_id=?) AND status IN ('pending','active')`,
+            [Date.now(), id, id]
+          );
+        } catch (e) { console.warn('[match_ban] queue invalidate failed:', e?.message); }
+        if (focusMatchNovel?.id === id) setFocusMatchNovel(null);
+      }
+      invalidateMatchCache();
+      await loadList(undefined, undefined, ban ? "match_ban_set" : "match_ban_unset");
+    } catch (e) {
+      console.warn('[match_ban] toggle failed:', e?.message);
+      Alert.alert("오류", "매칭 밴 상태 변경에 실패했습니다.\n\n" + (e?.message || ""));
+    }
+  }
+
   async function removeNovel(id) {
     Alert.alert("확인", "정말로 이 작품을 삭제할까요? (대진 로그도 함께 삭제됩니다)", [
       { text: "취소" },
@@ -36441,8 +36486,10 @@ function AppContent() {
     try {
       // 🔧 v3.5.15: 캐시 사용 (매번 SELECT * FROM novels + SELECT FROM matches 제거)
       const { novels: cachedNovels, playedSet } = await getMatchCacheData();
-      let allNovels = cachedNovels;
-      
+      // 🚫 v7.6.0 (포트 v3.16.0): 매칭 밴 작품 제외
+      const banCount = cachedNovels.reduce((acc, n) => acc + (n.match_ban ? 1 : 0), 0);
+      let allNovels = cachedNovels.filter(n => !n.match_ban);
+
       // 🆕 v3.5.11: 매치 필터링 적용
       if (matchFilterEnabled) {
         const filtered = allNovels.filter(isDataRichNovel);
@@ -36452,8 +36499,9 @@ function AppContent() {
             Alert.alert(
               "매치 필터링",
               `조건을 충족하는 작품이 ${filtered.length}개뿐입니다 (2개 이상 필요).\n\n` +
-              `조건: 읽은 회차, 총 회차, 작가 기입 + 태그 ${matchFilterMinTags}개 이상\n\n` +
-              "필터를 해제하거나 작품 정보를 보충하세요."
+              `조건: 읽은 회차, 총 회차, 작가 기입 + 태그 ${matchFilterMinTags}개 이상\n` +
+              (banCount > 0 ? `(매칭 밴 ${banCount}개 제외됨)\n` : "") +
+              "\n필터를 해제하거나 작품 정보를 보충하세요."
             );
           }
           setPair(null);
@@ -36482,8 +36530,17 @@ function AppContent() {
       if (focusId) {
         const focus = allNovels.find((n) => n.id === focusId);
         if (!focus) {
+          // 🚫 v7.6.0 (포트 v3.16.0): focus 작품이 매칭 밴이면 별도 안내 + focus 해제
+          const rawFocus = cachedNovels.find(n => n.id === focusId);
+          if (rawFocus && rawFocus.match_ban) {
+            setFocusMatchNovel(null);
+            if (!isAutoMatchingRef.current) {
+              Alert.alert("알림", "고정 매칭 작품이 매칭 밴 상태입니다. 밴을 해제하거나 다른 작품을 선택하세요.");
+            }
+            setPair(null);
+            return;
+          }
           if (matchFilterEnabled) {
-            const rawFocus = cachedNovels.find(n => n.id === focusId);
             if (rawFocus) {
               if (!isAutoMatchingRef.current) {
                 Alert.alert("매치 필터링", "고정 매칭 작품이 필터 조건을 충족하지 않습니다.\n\n필터를 해제하거나 작품 정보를 보충하세요.");
@@ -44115,6 +44172,107 @@ async function importJSON() {
                 </View>
               )}
             </Section>
+
+            {/* 🚫 v7.6.0 (포트 v3.16.0): 매칭 밴 (접이식) */}
+            {(() => {
+              const bannedNovels = list.filter(n => n.match_ban);
+              const banCount = bannedNovels.length;
+              const query = matchBanSearchQuery.trim().toLowerCase();
+              const candidates = query.length > 0
+                ? list
+                    .filter(n => !n.match_ban)
+                    .filter(n => {
+                      const t = (n.title || "").toLowerCase();
+                      const a = (n.author || "").toLowerCase();
+                      return t.includes(query) || a.includes(query);
+                    })
+                    .slice(0, 5)
+                : [];
+              return (
+                <View style={{
+                  backgroundColor: C.card,
+                  borderRadius: 16,
+                  padding: 14,
+                  marginBottom: 16,
+                  borderWidth: 1,
+                  borderColor: C.line,
+                }}>
+                  <TouchableOpacity
+                    onPress={() => setMatchBanExpanded(v => !v)}
+                    activeOpacity={0.7}
+                    style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}
+                  >
+                    <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+                      <Text style={{ fontSize: 16, fontWeight: "800", color: C.text }}>🚫 매칭 밴</Text>
+                      <View style={{
+                        marginLeft: 8,
+                        backgroundColor: banCount > 0 ? "#ef4444" : (isDark ? "#374151" : "#e5e7eb"),
+                        paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999,
+                      }}>
+                        <Text style={{ color: banCount > 0 ? "#fff" : C.sub, fontSize: 12, fontWeight: "700" }}>{banCount}</Text>
+                      </View>
+                    </View>
+                    <Text style={{ fontSize: 14, color: C.sub, fontWeight: "700" }}>{matchBanExpanded ? "▾" : "▸"}</Text>
+                  </TouchableOpacity>
+
+                  {matchBanExpanded && (
+                    <View style={{ marginTop: 12 }}>
+                      <Text style={{ color: C.sub, fontSize: 12, marginBottom: 10, lineHeight: 18 }}>
+                        밴 목록에 등록된 작품은 매칭 페어 생성에서 제외됩니다.{"\n"}해제하려면 작품을 탭하세요.
+                      </Text>
+
+                      <Text style={{ color: C.text, fontSize: 13, fontWeight: "700", marginBottom: 6 }}>작품 추가</Text>
+                      <Input
+                        value={matchBanSearchQuery}
+                        onChangeText={setMatchBanSearchQuery}
+                        placeholder="제목/작가 일부를 입력하세요"
+                      />
+                      {candidates.length > 0 && (
+                        <View style={{ marginTop: 6 }}>
+                          {candidates.map(n => (
+                            <TouchableOpacity
+                              key={n.id}
+                              onPress={() => { toggleMatchBan(n.id, true); setMatchBanSearchQuery(""); }}
+                              activeOpacity={0.7}
+                              style={{
+                                paddingVertical: 8, paddingHorizontal: 10, marginTop: 4,
+                                borderRadius: 8, borderWidth: 1, borderColor: C.line, backgroundColor: isDark ? "#1f2937" : "#f9fafb",
+                              }}
+                            >
+                              <Text style={{ color: C.text, fontWeight: "700" }} numberOfLines={1}>{n.title}</Text>
+                              <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }} numberOfLines={1}>{n.author || "작가 미상"}</Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      )}
+
+                      {banCount > 0 && (
+                        <>
+                          <Text style={{ color: C.text, fontSize: 13, fontWeight: "700", marginTop: 14, marginBottom: 6 }}>
+                            밴 목록 ({banCount})
+                          </Text>
+                          {bannedNovels.map(n => (
+                            <TouchableOpacity
+                              key={n.id}
+                              onPress={() => toggleMatchBan(n.id, false)}
+                              activeOpacity={0.7}
+                              style={{
+                                paddingVertical: 8, paddingHorizontal: 10, marginTop: 4,
+                                borderRadius: 8, borderWidth: 1, borderColor: "#ef4444",
+                                backgroundColor: isDark ? "#3a1818" : "#fef2f2",
+                              }}
+                            >
+                              <Text style={{ color: C.text, fontWeight: "700" }} numberOfLines={1}>{n.title}</Text>
+                              <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }} numberOfLines={1}>탭하여 해제 · {n.author || "작가 미상"}</Text>
+                            </TouchableOpacity>
+                          ))}
+                        </>
+                      )}
+                    </View>
+                  )}
+                </View>
+              );
+            })()}
 
             <Section title="매칭">
               {/* 🆕 v3.5.11: 매치 필터링 활성 표시 */}
