@@ -2,9 +2,34 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.6.1 (v7.6.0 포팅 사후 감사 — round-trip 누락 3건 복구)                 ║
+ * ║  버전: 7.6.2 (예정작 명대사·갤러리 이식 + round-trip 복구)                      ║
  * ║  최종 수정: 2026-06-13                                                        ║
- * ║  총 라인 수: 약 56,100줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 56,250줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🖼️ v7.6.2 예정작 명대사·갤러리 이식 — stranded v3.12.2 완전 포팅 (2026-06-13)  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [Why] v7.6.1 사후 감사에서 보류했던 v3.12.2(f6b1ffc) 미이식 기능을 사용자       ║
+ * ║ 요청으로 완전 포팅. 그간 예정작 명대사는 텍스트 전용 + 갤러리 불가였음          ║
+ * ║ ("이미지 첨부는 진등록 후 가능" 제약). 본작과 동일 수준으로 격차 해소.          ║
+ * ║                                                                              ║
+ * ║ [명대사] 예정 편집 모달의 평문 Input → 리치 에디터로 교체:                      ║
+ * ║ • 텍스트 + 이미지 명대사 추가/삭제/캡션 (본작 saveEdit 패턴과 동일)            ║
+ * ║ • plannedEditItem.memorable_quote 직접 바인딩 (updatePlannedEditItem 함수형)   ║
+ * ║ • 이미지 생명주기: removedQuoteImagesRef/editNewQuoteImagesRef 공유 재사용     ║
+ * ║   - 열기: ref 초기화 / 저장: 삭제분 파일 정리 / 취소(cancelPlannedEdit): 새    ║
+ * ║     이미지 정리(디스크 누수 방지). convert는 모달 밖 트리거라 충돌 없음        ║
+ * ║                                                                              ║
+ * ║ [갤러리] gallery_images 시스템을 예정작까지 확장:                               ║
+ * ║ • loadGalleryImages에 planned_novels LEFT JOIN + COALESCE (title NULL 해소 —  ║
+ * ║   헤더 [defer to v7.4+] 노트 해결)                                             ║
+ * ║ • addGalleryImages 존재 체크에 planned_novels UNION 추가                       ║
+ * ║ • 예정 편집 모달에 "갤러리 이미지 추가" 버튼 + 등록 수 카운트                   ║
+ * ║ • orphan 정리(ALIVE=novels∪planned) / convert id 보존은 기존에 이미 처리됨     ║
+ * ║                                                                              ║
+ * ║ [검증] esbuild JSX 파싱 통과. memorable_quote는 add/edit/convert/backup 전     ║
+ * ║   경로에서 이미 round-trip(v7.6.1 포함). 매칭 5대 불변조건 미접촉.             ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11872,7 +11897,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.6.1";
+const APP_VERSION = "7.6.2";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -28830,6 +28855,7 @@ function AppContent() {
   // 예정 작품 편집 모달
   const [plannedEditOpen, setPlannedEditOpen] = useState(false);
   const [plannedEditItem, setPlannedEditItem] = useState(null);
+  const [plannedEditGalleryCount, setPlannedEditGalleryCount] = useState(0); // 🖼️ v7.6.2: 예정작 갤러리 이미지 수 (편집 모달)
   // 🔧 v3.5.8: editItemRef 패턴 적용 (stale closure 방지)
   const plannedEditItemRef = useRef(null);
   const updatePlannedEditItem = useCallback((updater) => {
@@ -31182,6 +31208,14 @@ function AppContent() {
       }
       
       syncTagsToCustom(n.tags?.trim() || ""); // 🔧 v3.5.9: 태그 동기화
+      // 💬 v7.6.2: 편집 중 삭제된 명대사 이미지 파일 정리 (저장 성공 후에만 — 본작 saveEdit과 동일)
+      if (removedQuoteImagesRef.current.length > 0) {
+        for (const uri of removedQuoteImagesRef.current) {
+          FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+        }
+        removedQuoteImagesRef.current = [];
+      }
+      editNewQuoteImagesRef.current = []; // 저장 성공 → 새 이미지 추적 해제 (파일 유지)
       if (_pt) PerfMonitor.trackFunc("savePlannedEdit", Date.now() - _pt); // 🔬
       setPlannedEditOpen(false);
       updatePlannedEditItem(null);
@@ -31194,6 +31228,20 @@ function AppContent() {
     setIsLoading(false);
   }
   
+  // 💬 v7.6.2: 예정 편집 취소/닫기 — 저장 없이 추가한 명대사 이미지 정리 (디스크 누수 방지).
+  //   convert는 모달 밖(카드/일괄편집)에서 트리거되므로 이 경로로 전환된 이미지가 삭제될 일 없음.
+  function cancelPlannedEdit() {
+    if (editNewQuoteImagesRef.current.length > 0) {
+      for (const uri of editNewQuoteImagesRef.current) {
+        FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+      }
+      editNewQuoteImagesRef.current = [];
+    }
+    removedQuoteImagesRef.current = []; // 취소 시 삭제 목록 폐기 (기존 이미지 보존)
+    setPlannedEditOpen(false);
+    updatePlannedEditItem(null);
+  }
+
   // 예정 → 본 목록으로 등록 전환
   // 🆕 v7.3.0: 핵심 로직 분리 — silent (Alert X) 호출 가능. batch에서 재사용.
   // 반환: { ok: true, id, noteAdditions } 또는 { ok: false, reason: "duplicate_title"|"error", message }
@@ -32647,12 +32695,21 @@ function AppContent() {
   async function loadGalleryImages() {
     try {
       const rows = await safeDbOperation(async () => {
+        // 🖼️ v7.6.2 (포트 v3.12.2): planned_novels도 LEFT JOIN — 예정작 갤러리 이미지가
+        //   title NULL로 표시되던 문제 해결 (convertNovelToPlanned 후/예정작 직접 등록 모두 지원)
         return await all(`
           SELECT g.id, g.novel_id, g.file_path, g.caption, g.created_at,
-                 n.title, n.author, n.rating, n.tier, n.platforms, n.major_genre,
-                 CASE WHEN n.cover_image LIKE 'data:%' THEN '' ELSE COALESCE(n.cover_image,'') END as cover_image
+                 COALESCE(n.title, p.title) as title,
+                 COALESCE(n.author, p.author) as author,
+                 COALESCE(n.rating, p.rating) as rating,
+                 COALESCE(n.tier, '') as tier,
+                 COALESCE(n.platforms, p.platforms) as platforms,
+                 COALESCE(n.major_genre, p.major_genre) as major_genre,
+                 CASE WHEN COALESCE(n.cover_image, p.cover_image) LIKE 'data:%' THEN '' ELSE COALESCE(n.cover_image, p.cover_image, '') END as cover_image,
+                 CASE WHEN p.id IS NOT NULL THEN 1 ELSE 0 END as is_planned
           FROM gallery_images g
           LEFT JOIN novels n ON g.novel_id = n.id
+          LEFT JOIN planned_novels p ON g.novel_id = p.id
           ORDER BY g.created_at DESC
         `);
       }, "loadGalleryImages");
@@ -32675,7 +32732,8 @@ function AppContent() {
   async function addGalleryImages(novelId) {
     try {
       // 작품 존재 확인 (삭제된 작품 방어)
-      const novelExists = await first("SELECT id FROM novels WHERE id=?", [novelId]);
+      // 🖼️ v7.6.2 (포트 v3.12.2): 예정작(planned_novels)도 갤러리 등록 허용
+      const novelExists = await first("SELECT id FROM novels WHERE id=? UNION SELECT id FROM planned_novels WHERE id=?", [novelId, novelId]);
       if (!novelExists) {
         Alert.alert("오류", "선택한 작품이 삭제되었습니다. 다시 선택해주세요.");
         setGalleryRegNovel(null);
@@ -43195,6 +43253,12 @@ async function importJSON() {
                         <TouchableOpacity
                           onPress={() => {
                             updatePlannedEditItem({ ...item });
+                            // 💬🖼️ v7.6.2: 명대사 이미지 추적 ref 초기화 + 갤러리 수 로드 (편집 세션 시작)
+                            removedQuoteImagesRef.current = [];
+                            editNewQuoteImagesRef.current = [];
+                            setPlannedEditGalleryCount(0);
+                            first("SELECT COUNT(*) as c FROM gallery_images WHERE novel_id=?", [item.id])
+                              .then(r => setPlannedEditGalleryCount(r?.c || 0)).catch(() => {});
                             deferOpen(setPlannedEditOpen); // 🔧 v3.5.8
                           }}
                           onLongPress={() => Alert.alert(item.title, item.note || "(메모 없음)")}
@@ -54829,7 +54893,7 @@ async function importJSON() {
       <Modal
         visible={plannedEditOpen}
         animationType="slide"
-        onRequestClose={() => setPlannedEditOpen(false)}
+        onRequestClose={cancelPlannedEdit}
         onShow={() => onModalShow('planned')}
         transparent
       >
@@ -54841,8 +54905,8 @@ async function importJSON() {
         >
           <TouchableOpacity 
             style={{ height: Math.round(Dimensions.get("window").height * 0.12) }} 
-            activeOpacity={1} 
-            onPress={() => setPlannedEditOpen(false)} 
+            activeOpacity={1}
+            onPress={cancelPlannedEdit}
           />
           <View
             style={{
@@ -55327,13 +55391,136 @@ async function importJSON() {
                     placeholder="예: 별명1, 별명2"
                   />
 
-                  <Label style={{ marginTop: 10 }}>인상깊은 문장 (memorable_quote)</Label>
-                  <Input
-                    value={plannedEditItem.memorable_quote || ""}
-                    onChangeText={(t) => updatePlannedEditItem(prev => prev ? { ...prev, memorable_quote: t } : null)}
-                    placeholder="텍스트 입력 (이미지 첨부는 진등록 후 가능)"
-                    multiline
-                  />
+                  {/* 💬 v7.6.2 (포트 v3.12.2): 예정작 명대사 — 텍스트 + 이미지 첨부 지원 */}
+                  <Label style={{ marginTop: 10 }}>💬 인상깊은 문장</Label>
+                  {(() => {
+                    const quotes = parseQuotes(plannedEditItem.memorable_quote || "");
+                    const imgCount = quotes.filter(isImageQuote).length;
+                    const maxReached = imgCount >= QUOTE_IMAGE_MAX_COUNT;
+                    return (
+                      <View style={{ padding: 10, backgroundColor: C.card, borderRadius: 10, borderWidth: 1, borderColor: C.line }}>
+                        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                          <TouchableOpacity
+                            onPress={() => updatePlannedEditItem(prev => {
+                              if (!prev) return null;
+                              const cur = parseQuotes(prev.memorable_quote || "");
+                              return { ...prev, memorable_quote: serializeQuotes([...cur, ""]) };
+                            })}
+                            style={{ backgroundColor: C.primary, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
+                          >
+                            <Text style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}>+ 텍스트</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            disabled={maxReached}
+                            onPress={async () => {
+                              if (maxReached) return;
+                              try {
+                                const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, quality: 1.0 });
+                                await resetDbConnection();
+                                try { await openDb(); } catch {}
+                                if (!result.canceled && result.assets?.[0]) {
+                                  const { ext } = getImageFormat(result.assets[0]);
+                                  const saved = await compressAndSaveImage(result.assets[0].uri, QUOTE_IMAGE_MAX_SIZE, QUOTE_IMAGE_QUALITY, ext);
+                                  if (saved && !saved.error) {
+                                    editNewQuoteImagesRef.current.push(saved.file_path);
+                                    updatePlannedEditItem(prev => {
+                                      if (!prev) return null;
+                                      const cur = parseQuotes(prev.memorable_quote || "");
+                                      return { ...prev, memorable_quote: serializeQuotes([...cur, { type: "image", uri: saved.file_path }]) };
+                                    });
+                                  }
+                                }
+                              } catch (e) { Alert.alert("오류", "이미지 선택 실패: " + (e?.message || e)); }
+                            }}
+                            style={{ backgroundColor: isDark ? "#374151" : "#e5e7eb", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, opacity: maxReached ? 0.4 : 1 }}
+                          >
+                            <Text style={{ color: C.text, fontWeight: "700", fontSize: 12 }}>📷 이미지 ({imgCount}/{QUOTE_IMAGE_MAX_COUNT})</Text>
+                          </TouchableOpacity>
+                        </View>
+                        {quotes.length === 0 ? (
+                          <TouchableOpacity
+                            onPress={() => updatePlannedEditItem(prev => prev ? { ...prev, memorable_quote: serializeQuotes([""]) } : null)}
+                            style={{ padding: 16, borderWidth: 1, borderColor: C.line, borderRadius: 10, borderStyle: "dashed", alignItems: "center" }}
+                          >
+                            <Text style={{ color: C.sub, fontSize: 13 }}>터치하여 첫 문장 추가</Text>
+                          </TouchableOpacity>
+                        ) : (
+                          quotes.map((q, qi) => (
+                            <View key={`planned-quote-${qi}`} style={{ marginBottom: qi < quotes.length - 1 ? 10 : 0 }}>
+                              <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
+                                <Text style={{ color: C.sub, fontSize: 11, flex: 1 }}>#{qi + 1} {isImageQuote(q) ? "📷" : "💬"}</Text>
+                                <TouchableOpacity
+                                  onPress={() => {
+                                    if (isImageQuote(q)) {
+                                      removedQuoteImagesRef.current.push(q.uri);
+                                      editNewQuoteImagesRef.current = editNewQuoteImagesRef.current.filter(u => u !== q.uri);
+                                    }
+                                    updatePlannedEditItem(prev => {
+                                      if (!prev) return null;
+                                      const cur = parseQuotes(prev.memorable_quote || "");
+                                      return { ...prev, memorable_quote: serializeQuotes(cur.filter((_, i) => i !== qi)) };
+                                    });
+                                  }}
+                                  style={{ padding: 4 }}
+                                >
+                                  <Text style={{ color: C.warn, fontSize: 12, fontWeight: "700" }}>삭제</Text>
+                                </TouchableOpacity>
+                              </View>
+                              {isImageQuote(q) ? (
+                                <View>
+                                  <ExpoImage source={{ uri: q.uri }} style={{ width: "100%", height: 120, borderRadius: 10, backgroundColor: C.bg }} contentFit="contain" cachePolicy="disk" />
+                                  <TextInput
+                                    value={q.caption || ""}
+                                    onChangeText={(t) => updatePlannedEditItem(prev => {
+                                      if (!prev) return null;
+                                      const cur = parseQuotes(prev.memorable_quote || "");
+                                      if (cur[qi] && typeof cur[qi] === "object") cur[qi] = { ...cur[qi], caption: t };
+                                      return { ...prev, memorable_quote: serializeQuotes(cur) };
+                                    })}
+                                    placeholder="캡션 (선택)"
+                                    placeholderTextColor={C.sub}
+                                    style={{ backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 8, padding: 8, fontSize: 13, color: C.text, marginTop: 6 }}
+                                  />
+                                </View>
+                              ) : (
+                                <TextInput
+                                  value={typeof q === "string" ? q : ""}
+                                  onChangeText={(t) => updatePlannedEditItem(prev => {
+                                    if (!prev) return null;
+                                    const cur = parseQuotes(prev.memorable_quote || "");
+                                    cur[qi] = t;
+                                    return { ...prev, memorable_quote: serializeQuotes(cur) };
+                                  })}
+                                  placeholder={`기억에 남는 문장 ${qi + 1}...`}
+                                  placeholderTextColor={C.sub}
+                                  multiline
+                                  style={{ backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 10, padding: 12, fontSize: 15, fontStyle: "italic", color: C.text, minHeight: 60, textAlignVertical: "top" }}
+                                />
+                              )}
+                            </View>
+                          ))
+                        )}
+                      </View>
+                    );
+                  })()}
+
+                  {/* 🖼️ v7.6.2 (포트 v3.12.2): 예정작 갤러리 이미지 */}
+                  <Label style={{ marginTop: 12 }}>🖼️ 갤러리 이미지 ({plannedEditGalleryCount}/{GALLERY_IMAGE_MAX_COUNT})</Label>
+                  <TouchableOpacity
+                    disabled={galleryLoading}
+                    onPress={async () => {
+                      const pid = plannedEditItemRef.current?.id || plannedEditItem.id;
+                      await addGalleryImages(pid);
+                      try {
+                        const r = await first("SELECT COUNT(*) as c FROM gallery_images WHERE novel_id=?", [pid]);
+                        setPlannedEditGalleryCount(r?.c || 0);
+                      } catch {}
+                    }}
+                    style={{ padding: 12, borderWidth: 1, borderColor: C.primary, borderRadius: 10, borderStyle: "dashed", alignItems: "center", opacity: galleryLoading ? 0.5 : 1 }}
+                  >
+                    <Text style={{ color: C.primary, fontWeight: "700", fontSize: 13 }}>{galleryLoading ? "처리중..." : "+ 갤러리 이미지 추가"}</Text>
+                  </TouchableOpacity>
+                  <Text style={{ color: C.sub, fontSize: 11, marginTop: 4 }}>추가한 이미지는 갤러리 탭에서 관리할 수 있어요.</Text>
 
                   {/* 수상 정보: read-only 카운트 — 진등록 후 편집 가능 */}
                   {(() => {
@@ -55364,10 +55551,7 @@ async function importJSON() {
                   />
                   <OutlineButton
                     title="닫기"
-                    onPress={() => {
-                      setPlannedEditOpen(false);
-                      updatePlannedEditItem(null);
-                    }}
+                    onPress={cancelPlannedEdit}
                     style={{ flex: 1 }}
                   />
                 </View>
