@@ -16163,14 +16163,15 @@ const TagChipEditModal = memo(({
             {onSetSentiment && (
               <>
                 <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>🎭 감정 속성</Text>
+                {/* 🔧 v7.6.0 사후검토: getTagSentiment가 미지정을 "neutral"로 반환하므로 별도 null 옵션 제거.
+                    "중립" 선택 시 setTagSentiment가 기본값 삭제로 처리(저장 공간 절약) → null 명시 저장 회피. */}
                 <View style={{ flexDirection: "row", marginBottom: 14 }}>
                   {[
-                    { key: null, label: "미지정", color: C.chip },
                     { key: "positive", label: "😊 긍정", color: "#22c55e" },
                     { key: "neutral", label: "😐 중립", color: "#94a3b8" },
                     { key: "negative", label: "😟 부정", color: "#ef4444" },
                   ].map(opt => {
-                    const active = sentiment === opt.key;
+                    const active = (sentiment || "neutral") === opt.key;
                     return (
                       <TouchableOpacity
                         key={String(opt.key)}
@@ -25848,18 +25849,26 @@ function computeRatioTierMap(novels, cfg) {
   // 마지막 경계는 항상 total
   cumCounts[cumCounts.length - 1] = total;
 
-  let tierIdx = 0;
-  for (let i = 0; i < total; i++) {
-    while (tierIdx < cumCounts.length - 1 && i >= cumCounts[tierIdx]) tierIdx++;
-    // 동점 처리: 직전 작품과 rating 같으면 같은 티어 (경계 직후라도)
-    if (i > 0 && sorted[i].rating === sorted[i - 1].rating) {
-      const prevTier = map.get(sorted[i - 1].id);
-      if (prevTier) {
-        map.set(sorted[i].id, prevTier);
-        continue;
-      }
+  // 위치(0-indexed) → 티어 인덱스. cumCounts는 비감소 + 마지막=total 보장이라 항상 유효.
+  const tierForPos = (pos) => {
+    for (let t = 0; t < cumCounts.length; t++) {
+      if (pos < cumCounts[t]) return t;
     }
-    map.set(sorted[i].id, cfg.tiers[tierIdx].key);
+    return cumCounts.length - 1;
+  };
+
+  // 🔧 v7.6.0 사후검토: 동점 그룹 단위로 묶어 "그룹 중앙 위치"의 티어를 그룹 전체에 부여.
+  // (이전: 직전 작품 티어를 그대로 복사 → 전원 동률(갓 만든 미매칭 데이터, 전부 1500)일 때
+  //  연쇄적으로 0번 작품의 S 티어가 전체로 전파되어 "전원 S" 붕괴. 중앙 위치 방식은
+  //  동일 레이팅=동일 티어 불변식을 유지하면서 전원 동률 시 중앙 티어로 수렴시킨다.)
+  let i = 0;
+  while (i < total) {
+    let j = i;
+    while (j + 1 < total && sorted[j + 1].rating === sorted[i].rating) j++;
+    const mid = Math.floor((i + j) / 2);
+    const key = cfg.tiers[tierForPos(mid)].key;
+    for (let k = i; k <= j; k++) map.set(sorted[k].id, key);
+    i = j + 1;
   }
   return map;
 }
