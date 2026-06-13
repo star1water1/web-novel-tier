@@ -6217,6 +6217,9 @@ async function initDb(progressCb) {
     // 🏷️ v5.0 태그 시스템
     ["tag_data", "TEXT", "''"],      // JSON: [{tag, intensity}, ...]
     ["aliases", "TEXT", "''"],        // JSON: ["하늑", ...] 작품 별명
+    // 🔧 v7.6.0 (포트 v3.12.0): 연재 시작/종료 연도 전용 필드 — 수상 후보 선정 + 향후 활용
+    ["start_year", "INTEGER", "0"],   // 0 = 미설정
+    ["end_year", "INTEGER", "0"],     // 0 = 미설정/연재중
     // 💬 v3.2.2: 인상깊은 문장
     ["memorable_quote", "TEXT", "''"], // 작품에서 인상깊었던 문장
     // 🆕 v7.4.13: 사용자 명시 의심 표시 (hybrid 모드) — 🔍 토글로 큐 priority +3
@@ -11213,6 +11216,71 @@ function normalizeNovel(r) {
     pinned: Number(r.pinned) || 0,
   };
 }
+
+/* =========================================================
+   🔧 v7.6.0 (포트 v3.12.0): YearStepper — 연재 연도 입력
+   - +/- 1년, 길게 누르면 0(미설정), ✕ 버튼으로 명시적 리셋
+   ========================================================= */
+const YearStepper = memo(({ label, value, onChange, isDark }) => {
+  const displayValue = value > 0 ? String(value) : "미설정";
+  const currentYear = new Date().getFullYear();
+  const bg = isDark ? "#1a1a2e" : "#f8f9fa";
+  const border = isDark ? "#333" : "#ddd";
+  const textColor = isDark ? "#e0e0e0" : "#333";
+  const subColor = isDark ? "#888" : "#999";
+  const btnBg = isDark ? "#2a2a3e" : "#eee";
+
+  const step = (delta) => {
+    if (value === 0) {
+      onChange(delta > 0 ? currentYear : currentYear - 1);
+    } else {
+      const next = value + delta;
+      if (next >= 1990 && next <= 2099) onChange(next);
+    }
+  };
+
+  return (
+    <View style={{ marginBottom: 8 }}>
+      {label && <Text style={{ color: subColor, fontSize: 12, marginBottom: 4 }}>{label}</Text>}
+      <View style={{
+        flexDirection: "row", alignItems: "center",
+        backgroundColor: bg, borderRadius: 8, borderWidth: 1, borderColor: border,
+        overflow: "hidden",
+      }}>
+        <TouchableOpacity
+          onPress={() => step(-1)}
+          style={{ paddingHorizontal: 14, paddingVertical: 10, backgroundColor: btnBg }}
+        >
+          <Text style={{ fontSize: 18, fontWeight: "700", color: textColor }}>−</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onLongPress={() => onChange(0)}
+          delayLongPress={500}
+          style={{ flex: 1, alignItems: "center", paddingVertical: 10 }}
+        >
+          <Text style={{
+            fontSize: 15, fontWeight: value > 0 ? "700" : "400",
+            color: value > 0 ? textColor : subColor,
+          }}>{displayValue}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => step(1)}
+          style={{ paddingHorizontal: 14, paddingVertical: 10, backgroundColor: btnBg }}
+        >
+          <Text style={{ fontSize: 18, fontWeight: "700", color: textColor }}>+</Text>
+        </TouchableOpacity>
+        {value > 0 && (
+          <TouchableOpacity
+            onPress={() => onChange(0)}
+            style={{ paddingHorizontal: 10, paddingVertical: 10, backgroundColor: btnBg, borderLeftWidth: 1, borderLeftColor: border }}
+          >
+            <Text style={{ fontSize: 14, fontWeight: "700", color: isDark ? "#e57373" : "#d32f2f" }}>✕</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
+  );
+});
 
 /* =========================================================
    🖼️ 표지 라이브러리 시스템 (v3.4.7 - 레거시 FileSystem API)
@@ -28083,6 +28151,9 @@ function AppContent() {
   const [editPlatforms, setEditPlatforms] = useState([]); // 🆕 편집용 플랫폼
   const [editStatus, setEditStatus] = useState("reading"); // 🆕 편집용 상태
   const [editWorkStatus, setEditWorkStatus] = useState("ongoing"); // 🆕 편집용 작품 연재 상태
+  // 🔧 v7.6.0 (포트 v3.12.0): 편집 모달 연재 연도
+  const [editStartYear, setEditStartYear] = useState(0);
+  const [editEndYear, setEditEndYear] = useState(0);
   const [editCoverImage, setEditCoverImage] = useState(""); // 🆕 편집용 표지
   // 🔧 v3.5.8: editCoverImage + editItem.cover_image 양쪽 동기화 setter
   // v3.5.6에서 라이브러리 선택만 양쪽 동기화됨 → URL/갤러리/삭제 경로 누락 수정
@@ -28399,6 +28470,9 @@ function AppContent() {
   }, []);
   const [newUserMajorGenre, setNewUserMajorGenre] = useState(""); // 태그 모달에서 대장르 추가용
   const [newUserSubGenre, setNewUserSubGenre] = useState(""); // 태그 모달에서 부장르 추가용
+  // 🔧 v7.6.0 (포트 v3.12.0): 신규 등록 연재 연도
+  const [newStartYear, setNewStartYear] = useState(0);
+  const [newEndYear, setNewEndYear] = useState(0);
   // 🔗 v3.0.4: 조합 요소 입력용
   const [newComboTraitInput, setNewComboTraitInput] = useState(""); // 조합 특성 추가용
   const [newComboTargetInput, setNewComboTargetInput] = useState(""); // 조합 대상 추가용
@@ -35111,8 +35185,8 @@ function AppContent() {
       const _initialReadCount = Number(readCount) || 0;
       await execBatch([
         {
-          sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order,read_count_baseline)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+          sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order,read_count_baseline,start_year,end_year)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
           params: [
             id,
             t,
@@ -35148,6 +35222,8 @@ function AppContent() {
             initialManualTier,
             initialManualOrder, // 🆕 v7.0.1 (N6 fix)
             _initialReadCount, // 🆕 v7.0.15: read_count_baseline = 초기 read_count
+            Number(newStartYear) || 0, // 🔧 v7.6.0 (포트 v3.12.0): 연재 시작 연도
+            Number(newEndYear) || 0,   // 🔧 v7.6.0 (포트 v3.12.0): 연재 종료 연도
           ],
         },
       ]);
@@ -35174,6 +35250,8 @@ function AppContent() {
       setNewGaidenReadCount("");
       setNewGaidenTotalEpisodes("");
       setNewManualTier(""); // 🆕 v6.0: 등록 시 티어 선택 초기화
+      setNewStartYear(0); // 🔧 v7.6.0 (포트 v3.12.0)
+      setNewEndYear(0);
       await loadList(undefined, undefined, "register");
       await refreshDailyRecommendation(false);
       
@@ -35779,9 +35857,11 @@ function AppContent() {
       editNewQuoteImagesRef.current = [];
       setEditOpen(false);
       updateEditItem(null);
+      setEditStartYear(0); // 🔧 v7.6.0 (포트 v3.12.0)
+      setEditEndYear(0);
       return;
     }
-    
+
     // ── editItem 경유 필드 비교 ──
     const itemChanged = (
       (curr.title || "") !== snap.title ||
@@ -35793,7 +35873,7 @@ function AppContent() {
       (curr.cover_image || "") !== snap.cover_image ||
       (curr.tag_data || "") !== snap.tag_data
     );
-    
+
     // ── 별도 state 필드 비교 (일반 함수이므로 최신 state 접근 가능) ──
     const stateChanged = (
       editRating !== snap.rating ||
@@ -35808,7 +35888,10 @@ function AppContent() {
       editCreatedAt !== snap.created_at ||
       editReadCountUpdatedAt !== snap.read_count_updated_at ||
       JSON.stringify(editQuotes) !== snap.quotes ||
-      JSON.stringify(editAwards) !== snap.awards
+      JSON.stringify(editAwards) !== snap.awards ||
+      // 🔧 v7.6.0 (포트 v3.12.0): 연도 변경 감지
+      editStartYear !== (snap.start_year || 0) ||
+      editEndYear !== (snap.end_year || 0)
     );
     
     if (itemChanged || stateChanged) {
@@ -35827,6 +35910,8 @@ function AppContent() {
             editNewQuoteImagesRef.current = [];
             setEditOpen(false);
             updateEditItem(null);
+            setEditStartYear(0); // 🔧 v7.6.0 (포트 v3.12.0)
+            setEditEndYear(0);
           }},
         ]
       );
@@ -35842,6 +35927,8 @@ function AppContent() {
       }
       setEditOpen(false);
       updateEditItem(null);
+      setEditStartYear(0); // 🔧 v7.6.0 (포트 v3.12.0)
+      setEditEndYear(0);
     }
   }
 
@@ -35862,6 +35949,8 @@ function AppContent() {
     setEditPlatforms(parsePlatforms(n.platforms));
     setEditStatus(n.status || "reading");
     setEditWorkStatus(n.work_status || "ongoing"); // 🆕 작품 연재 상태
+    setEditStartYear(Number(n.start_year) || 0); // 🔧 v7.6.0 (포트 v3.12.0)
+    setEditEndYear(Number(n.end_year) || 0);
     setEditCoverImage(n.cover_image || "");
     setEditOriginalCoverImage(n.cover_image || ""); // 🖼️ v3.4.5: 원본 표지 저장
     setEditLink(n.link || ""); // 🔗 링크
@@ -35949,6 +36038,9 @@ function AppContent() {
       sub_genre: n.sub_genre || "",
       aliases: n.aliases || "",
       memorable_quote: n.memorable_quote || "",
+      // 🔧 v7.6.0 (포트 v3.12.0): 연재 연도 스냅샷
+      start_year: Number(n.start_year) || 0,
+      end_year: Number(n.end_year) || 0,
     };
 
     // 🔧 v3.5.7: Android transparent Modal ScrollView 버그 대응
@@ -36072,7 +36164,7 @@ function AppContent() {
       const newReadCountUpdatedAt = parseDate(editReadCountUpdatedAt) || (readCountChanged ? Date.now() : (n.read_count_updated_at || Date.now()));
 
       await exec(
-        "UPDATE novels SET title=?, author=?, tags=?, note=?, platforms=?, read_count=?, awards=?, total_episodes=?, status=?, cover_image=?, link=?, work_status=?, read_count_updated_at=?, major_genre=?, sub_genre=?, gaiden_status=?, gaiden_read_count=?, gaiden_total_episodes=?, created_at=?, reread_count=?, tag_data=?, memorable_quote=?, aliases=? WHERE id=?;",
+        "UPDATE novels SET title=?, author=?, tags=?, note=?, platforms=?, read_count=?, awards=?, total_episodes=?, status=?, cover_image=?, link=?, work_status=?, read_count_updated_at=?, major_genre=?, sub_genre=?, gaiden_status=?, gaiden_read_count=?, gaiden_total_episodes=?, created_at=?, reread_count=?, tag_data=?, memorable_quote=?, aliases=?, start_year=?, end_year=? WHERE id=?;",
         [
           newTitle,
           n.author?.trim() || "",
@@ -36097,6 +36189,8 @@ function AppContent() {
           n.tag_data || "", // 🏷️ v5.0
           serializeQuotes(editQuotes), // 💬 v3.5.4: 인상깊은 문장 (다중 지원)
           n.aliases || "", // 🏷️ 작품 별명 유지
+          Number(editStartYear) || 0, // 🔧 v7.6.0 (포트 v3.12.0)
+          Number(editEndYear) || 0,
           n.id,
         ]
       );
@@ -40933,6 +41027,16 @@ async function importJSON() {
       onPress={() => setNewWorkStatus(s.key)}
     />
   ))}
+</View>
+
+{/* 🔧 v7.6.0 (포트 v3.12.0): 연재 연도 */}
+<View style={{ marginTop: 10, flexDirection: "row", gap: 8 }}>
+  <View style={{ flex: 1 }}>
+    <YearStepper label="연재 시작 연도" value={newStartYear} onChange={setNewStartYear} isDark={isDark} />
+  </View>
+  <View style={{ flex: 1 }}>
+    <YearStepper label="연재 종료 연도" value={newEndYear} onChange={setNewEndYear} isDark={isDark} />
+  </View>
 </View>
 
 {/* 📖 외전 상태 */}
@@ -52242,6 +52346,16 @@ async function importJSON() {
                       onPress={() => setEditWorkStatus(s.key)}
                     />
                   ))}
+                </View>
+
+                {/* 🔧 v7.6.0 (포트 v3.12.0): 연재 연도 */}
+                <View style={{ marginTop: 10, flexDirection: "row", gap: 8 }}>
+                  <View style={{ flex: 1 }}>
+                    <YearStepper label="연재 시작 연도" value={editStartYear} onChange={setEditStartYear} isDark={isDark} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <YearStepper label="연재 종료 연도" value={editEndYear} onChange={setEditEndYear} isDark={isDark} />
+                  </View>
                 </View>
 
                 {/* 📂 v3.7.0: 폴더 배정 */}
