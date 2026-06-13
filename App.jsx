@@ -2,9 +2,9 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.6.0 (stranded 계보 통합 마이그레이션 — 14개 미병합 기능 이식)         ║
+ * ║  버전: 7.6.0 (stranded 계보 통합 마이그레이션 — 19개 항목 완전 이식)            ║
  * ║  최종 수정: 2026-06-13                                                        ║
- * ║  총 라인 수: 약 55,000줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 55,500줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -53,16 +53,29 @@
  * ║ • computeRatioTierMap + globalRatioTierMap (loadList에서 사전 계산)            ║
  * ║ • getDisplayTier ratio 분기 + 모드 선택기에 옵션 추가                          ║
  * ║                                                                              ║
+ * ║ [Stage 8] 백업 v12 + 연도 자동 마이그레이션 + 태그→연도 동기화:                 ║
+ * ║ • buildUltraCompactBackup opt에 sy/ey/mb 추가, v: 11 → 12                       ║
+ * ║ • validateImportData/restoreBackup [9,10,11,12] 확장 (v11 이하 0 폴백)          ║
+ * ║ • migrateStartEndYearFromTags 1회 실행 — tags+note에서 4자리 연도 추출         ║
+ * ║   ongoing/hiatus면 end_year 미설정 유지 (연중 의미 보존)                       ║
+ * ║ • handleTagModalConfirm: new/edit/supplement 모두 태그→연도 단방향 동기화      ║
+ * ║                                                                              ║
+ * ║ [Stage 9] #11 TasteAnalysisScreen UI 표시:                                     ║
+ * ║ • majorGenreStats에 workDrop/episodes 누적, output에 workDropRate/avgEpisodes  ║
+ * ║ • readingPattern.episodeAnalysis (단편/중편/장편 평가)                         ║
+ * ║ • readingPattern.highRatingDropped (rating 1800+ 연중작 상위 5)                ║
+ * ║ • 대장르 row "연중률 N%" 표시 + 📖 읽기 패턴에 편수 분석 + 💔 고평가 연중작     ║
+ * ║                                                                              ║
+ * ║ [Stage 10] #7 태그칩 통합 편집 모달:                                            ║
+ * ║ • 신규 TagChipEditModal — 농도 1~5 + 분류 + 감정 + 고정/숨김/작품명 통합        ║
+ * ║ • 농도 호출처 콜백(setNewTagData / updateEditItem)으로 위임                    ║
+ * ║ • 속성/감정/토글은 글로벌 핸들러 직접 호출 (promote/demote/setSentiment 등)    ║
+ * ║ • Alert.alert 3곳 (등록/보충/편집) 모두 통합 모달로 대체 — 코드 28줄 → 6줄     ║
+ * ║                                                                              ║
  * ║ [검증 후 제외] main에서 이미 더 안전한 패턴으로 해결되어 있음:                  ║
  * ║ • #4 NsLBp 3건 (deleteAward/updateAward/validateImportData)                    ║
  * ║ • #10 matches INSERT OR IGNORE (UNIQUE 인덱스 없어 실익 X)                      ║
  * ║ • #16 staticSignals 캐시 reset (v3.18.0 시스템 자체가 main에 없음)              ║
- * ║                                                                              ║
- * ║ [후속 단계로 미룬 항목]                                                         ║
- * ║ • #7 태그칩 통합 모달 — main TagEditModal 구조와 농도 Alert 디자인 충돌          ║
- * ║ • #5/#2 연도 백업 v9+ payload (sy/ey) + 기존 데이터 자동 마이그레이션           ║
- * ║ • #11 TasteAnalysisScreen UI 연중률/편수 분석 섹션 표시                         ║
- * ║ • #1 백업 v13 포맷 (opt.mb) — 현재 슬롯 내 저장으로 동작                        ║
  * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
