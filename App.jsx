@@ -14,7 +14,7 @@
  * ║ • 카드 표시는 기존대로 이미지 2개 캡 (App.jsx:42518) → 목록 성능 영향 0.        ║
  * ║ • 백업 base64 임베드는 작품당 3개 캡 유지 (slice(0,3)) — 같은 기기 복원은 전체  ║
  * ║   보존(파일 경로 유지), 기기 간 이전은 3개까지(기존과 동일 제약, 의도적 유지).  ║
- * ║ • 인앱 변경이력(CHANGELOG_DATA)에 7.6.0~7.6.3 항목 추가 + 기능 가이드 갱신       ║
+ * ║ • 인앱 변경이력(CHANGELOG_DATA)에 7.4.13~7.6.3 항목 추가 + 기능 가이드 갱신      ║
  * ║   (예정작 명대사·갤러리 안내) — 모두 사용자 친화 표현으로 작성.                  ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
@@ -11991,6 +11991,35 @@ const CHANGELOG_DATA = [
       { type: "new", text: "novels/planned_novels에 start_year/end_year/match_ban 컬럼 + 백업 v12(sy/ey/mb) + 태그→연도 1회 자동 마이그레이션" },
       { type: "new", text: "TIER_PRESETS ratio_6 + computeRatioTierMap + getDisplayTier 비율 분기 / TagChipEditModal 신설 / 취향분석 workDropRate·episodeAnalysis·highRatingDropped" },
       { type: "improve", text: "이후 v7.6.1 사후 감사에서 백업 round-trip 누락 3건을 추가로 복구" },
+    ],
+  },
+  {
+    version: "7.5.0", date: "2026-06-12",
+    title: "🤖 하이브리드 — 검증 전적 누적 + 새 작품 자동 자리 점검",
+    highlights: [
+      { type: "new", text: "🤖 (하이브리드 모드) 작품 카드에 검증 전적(🤖 검증 N: 승/패)이 표시돼요. 자리 점검을 반복할수록 쌓여요." },
+      { type: "new", text: "🆕 새 작품을 추가하면 같은 티어의 인접 작품과 자동으로 자리 점검 후보에 올라요 ('자주 부딪치는 작품')." },
+      { type: "improve", text: "📊 쌓인 검증 전적이 한쪽으로 치우치면(예: 계속 이기면) 시스템이 알아서 '자리를 다시 볼 작품'으로 점검해요." },
+    ],
+    details: [
+      { type: "new", text: "novels.verification_wins/losses/count + conflict_hits 컬럼 추가 — logVerificationMatch가 로그 INSERT + 양쪽 카운터 증분을 execBatch 단일 트랜잭션으로 처리" },
+      { type: "new", text: "addNovel hybrid 캐스케이드 — 신작 추가 후 같은 tier 인접 1작을 enqueueVerification(conflict). 빈 tier면 스킵" },
+      { type: "new", text: "detectAutomaticSuspects — verification_count>=3 & |W-L|/count>=0.6 쏠림 시 auto_detected 큐 등록 (pending/직전 blocker 스킵으로 루프 방지)" },
+      { type: "improve", text: "computeVerificationPriority 가중치에 conflictWeight=min(hits,3), recordSkewWeight=min(skew*3,3) 추가 — 사용자 비전 7축 구현 완료" },
+    ],
+  },
+  {
+    version: "7.4.13", date: "2026-06-12",
+    title: "🔍 하이브리드 — 의심 작품 직접 표시 + AI 점검 톤 개선",
+    highlights: [
+      { type: "new", text: "🔍 (하이브리드 모드) 작품 카드의 🔍 버튼으로 '자리가 의심되는 작품'을 직접 표시하면 우선 점검돼요." },
+      { type: "improve", text: "🤖 자리 검증 화면 문구를 'AI 자리 점검' 톤으로 다듬어 더 친근해졌어요." },
+      { type: "improve", text: "🔧 자리 점검 우선순위를 사용자 표시·시스템 누적 신호를 합쳐 더 정교하게 계산해요." },
+    ],
+    details: [
+      { type: "new", text: "novels.user_flagged_suspect 컬럼 + NovelCard 🔍 토글(hybrid 모드만) — ON 시 enqueueVerification(reason=user_flag), OFF 시 우선순위 재계산으로 자연 강등" },
+      { type: "improve", text: "computeVerificationPriority(novel, reason) 신설 — baseReason + flagWeight(+3) + blockWeight(min 3) 다축 통합. enqueueVerification이 상수 대신 이 함수 사용" },
+      { type: "fix", text: "수문장 모달 1단계 위/아래 이동이 enqueueVerification을 재호출하던 순환(F1) + read_progress 30회 누적의 약한 의심 트리거(F2) 제거" },
     ],
   },
   {
