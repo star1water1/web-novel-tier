@@ -14,8 +14,9 @@
  * ║ 머무름. 같은 시기 main은 v6.2/v7.0~v7.5로 다른 fork 진행 → 한 번도 합류 X.    ║
  * ║ 사용자가 직접 검토 요청 → 안전 패치 7건 + 핵심 기능 5건 + B그룹 2건 통합.       ║
  * ║                                                                              ║
- * ║ [Stage 1] 안전 작은 패치 4건:                                                   ║
- * ║ • #14 v3.9.6 4616f14: processMatchQueue finally 후 잔여 큐 재진입             ║
+ * ║ [Stage 1] 안전 작은 패치 (사후 검토에서 #14 철회 → 실질 3건):                   ║
+ * ║ • #14 철회: processMatchQueue 재진입 — main은 while가 length==0에서만 종료 +   ║
+ * ║   abort 메커니즘 부재 → 포팅 블록이 도달 불가 죽은 코드여서 제거               ║
  * ║ • #9  v3.12.2 19b9b12: 자동매칭 중 슬롯 전환 차단 (performSlotSwitch 가드)     ║
  * ║ • #15 v3.9.8  5b1554b: folderCounts useMemo O(n)→O(1)                          ║
  * ║ • #12 v3.17.4 6a64c7f: 취향 분석 win_rate NaN/null isFinite 가드 5곳           ║
@@ -6107,11 +6108,6 @@ async function processMatchQueue() {
   
   isProcessingMatchQueue = false;
   notifyQueueStatus();
-  // 🔧 v7.6.0 (포트 v3.9.6): isProcessingMatchQueue=false 직전 enqueue된 태스크 고아 방지
-  // enqueueMatchTask는 guard에 막혀 무위 호출이 될 수 있으므로 잔여 큐 직접 재진입
-  if (matchQueue.length > 0) {
-    processMatchQueue();
-  }
 }
 
 /* =========================================================
@@ -6758,8 +6754,10 @@ async function migrateStartEndYearFromTags(database) {
     for (const u of updates) {
       await database.runAsync(`UPDATE novels SET start_year=?, end_year=? WHERE id=?`, [u.sy, u.ey, u.id]);
     }
+    // 🔧 v7.6.0: app_meta value는 JSON 인코딩 컨벤션 (backfillManualOrder와 동일, getAppMeta 호환)
     await database.runAsync(
-      `INSERT OR REPLACE INTO app_meta (key, value) VALUES ('start_end_year_migrated', '1');`
+      `INSERT OR REPLACE INTO app_meta (key, value) VALUES ('start_end_year_migrated', ?)`,
+      [JSON.stringify("1")]
     );
     if (updates.length > 0) console.log(`[migration] start_end_year 백필 ${updates.length}건`);
   } catch (e) {
@@ -31243,8 +31241,8 @@ function AppContent() {
       const _baselineToRestore = Number(planned.read_count_baseline) || (Number(planned.read_count) || initialReadCount);
       await execBatch([
         {
-          sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+          sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order,start_year,end_year)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
           params: [
             id,
             planned.title,
@@ -31279,6 +31277,9 @@ function AppContent() {
             planned.aliases || "",
             planned.manual_tier || initialManualTier,
             initialManualOrder,
+            // 🔧 v7.6.0: 예정→본작 전환 시 연재 연도 round-trip 보존
+            Number(planned.start_year) || 0,
+            Number(planned.end_year) || 0,
           ],
         },
         {
@@ -35102,9 +35103,10 @@ function AppContent() {
           // 🆕 v7.0.2: manual_order 컬럼 누락 보강 — 미포함 시 hybrid 정렬에서 0 그룹으로 떨어져 gap=100 invariant 깨짐
           const n = item.payload.novel;
           await exec(
-            `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-            [n.id, n.title, n.author, n.tags, n.platforms, n.note, n.read_count, n.rating, n.rd, n.wins, n.losses, n.match_count, n.tier, n.created_at, n.awards, n.total_episodes, n.status, n.pinned, n.cover_image, n.link, n.work_status, n.read_count_updated_at, n.major_genre, n.sub_genre, n.gaiden_status, n.gaiden_read_count, n.gaiden_total_episodes, n.manual_tier, Number(n.manual_order) || 0, n.reread_count || 1, n.tag_data || "", n.aliases || "", n.memorable_quote || ""]
+            // 🔧 v7.6.0: start_year/end_year/match_ban 복원 추가 (n은 SELECT * 캡처 → 필드 존재, 미존재 시 0 폴백)
+            `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,start_year,end_year,match_ban)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+            [n.id, n.title, n.author, n.tags, n.platforms, n.note, n.read_count, n.rating, n.rd, n.wins, n.losses, n.match_count, n.tier, n.created_at, n.awards, n.total_episodes, n.status, n.pinned, n.cover_image, n.link, n.work_status, n.read_count_updated_at, n.major_genre, n.sub_genre, n.gaiden_status, n.gaiden_read_count, n.gaiden_total_episodes, n.manual_tier, Number(n.manual_order) || 0, n.reread_count || 1, n.tag_data || "", n.aliases || "", n.memorable_quote || "", Number(n.start_year) || 0, Number(n.end_year) || 0, Number(n.match_ban) || 0]
           );
           // 🔧 v3.6.2: 복원된 작품의 표지를 라이브러리에서 "사용중"으로 동기화
           if (n.cover_image) {
@@ -35836,7 +35838,7 @@ function AppContent() {
 
   // 🚫 v7.6.0 (포트 v3.16.0): 매칭 밴 토글
   // - UPDATE novels SET match_ban = ?
-  // - 밴 시 hybrid 검증 큐 pending/active 무효화
+  // - 밴 시 hybrid 검증 큐 pending 항목 취소 (main 스키마: novel_id/state/processed_at)
   // - focus가 이 작품이면 해제
   // - invalidateMatchCache() + loadList() 동기화
   async function toggleMatchBan(id, ban) {
@@ -35844,13 +35846,14 @@ function AppContent() {
       await exec("UPDATE novels SET match_ban=? WHERE id=?", [ban ? 1 : 0, id]);
       if (ban) {
         try {
+          // 🔧 v7.6.0: main의 tier_verification_queue 스키마에 맞춤
+          // (포트 원본의 status/invalidated_at/subject_id 컬럼은 main에 없음 → state/processed_at/novel_id 사용)
+          // 작품 삭제(removeNovel) 시 큐 취소와 동일 패턴
           await exec(
-            `UPDATE tier_verification_queue
-             SET status='invalidated', invalidated_at=?, invalidated_reason='work_banned'
-             WHERE (subject_id=? OR opponent_id=?) AND status IN ('pending','active')`,
-            [Date.now(), id, id]
+            `UPDATE tier_verification_queue SET state='cancelled', processed_at=? WHERE novel_id=? AND state='pending'`,
+            [Date.now(), id]
           );
-        } catch (e) { console.warn('[match_ban] queue invalidate failed:', e?.message); }
+        } catch (e) { console.warn('[match_ban] queue cancel failed:', e?.message); }
         if (focusMatchNovel?.id === id) setFocusMatchNovel(null);
       }
       invalidateMatchCache();
