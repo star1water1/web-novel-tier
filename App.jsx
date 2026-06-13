@@ -6322,6 +6322,9 @@ async function initDb(progressCb) {
   await ensureColumn("planned_novels", "awards", "TEXT", "''");
   await ensureColumn("planned_novels", "read_count_updated_at", "INTEGER", "0");
   await ensureColumn("planned_novels", "read_count_baseline", "INTEGER", "0");
+  // 🔧 v7.6.0 (포트 v3.12.3): 예정작 연재 시작/종료 연도
+  await ensureColumn("planned_novels", "start_year", "INTEGER", "0");
+  await ensureColumn("planned_novels", "end_year", "INTEGER", "0");
 
   // 🖼️ v3.4.5: 표지 라이브러리 테이블
   await database.runAsync(`CREATE TABLE IF NOT EXISTS cover_library (
@@ -28332,6 +28335,9 @@ function AppContent() {
   const [plannedCoverImage, setPlannedCoverImage] = useState("");
   const [plannedLink, setPlannedLink] = useState("");
   const [plannedWorkStatus, setPlannedWorkStatus] = useState("ongoing");
+  // 🔧 v7.6.0 (포트 v3.12.3): 예정작 연재 연도
+  const [plannedStartYear, setPlannedStartYear] = useState(0);
+  const [plannedEndYear, setPlannedEndYear] = useState(0);
   const [plannedMajorGenre, setPlannedMajorGenre] = useState([]);
   const [plannedSubGenre, setPlannedSubGenre] = useState([]);
   const [plannedPriority, setPlannedPriority] = useState(3); // 1~5 (5가 가장 높음)
@@ -30516,8 +30522,8 @@ function AppContent() {
       const now = Date.now();
       
       await exec(
-        `INSERT INTO planned_novels (id,title,author,tags,platforms,note,total_episodes,cover_image,link,work_status,major_genre,sub_genre,priority,created_at,expected_rating,expected_tier,interest_level,discovery_source,first_chapter_read,scheduled_start_date,similar_novels,why_interested,tag_data)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+        `INSERT INTO planned_novels (id,title,author,tags,platforms,note,total_episodes,cover_image,link,work_status,major_genre,sub_genre,priority,created_at,expected_rating,expected_tier,interest_level,discovery_source,first_chapter_read,scheduled_start_date,similar_novels,why_interested,tag_data,start_year,end_year)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
         [
           id,
           t,
@@ -30549,6 +30555,8 @@ function AppContent() {
           plannedSimilarNovels.length > 0 ? JSON.stringify(plannedSimilarNovels) : "",
           plannedWhyInterested.trim(),
           "", // 🔧 v3.9.2: tag_data 누락 수정 (UPDATE에는 있으나 INSERT에 빠져있었음)
+          Number(plannedStartYear) || 0, // 🔧 v7.6.0 (포트 v3.12.3)
+          Number(plannedEndYear) || 0,
         ]
       );
 
@@ -30565,6 +30573,8 @@ function AppContent() {
       setPlannedCoverImage("");
       setPlannedLink("");
       setPlannedWorkStatus("ongoing");
+      setPlannedStartYear(0); // 🔧 v7.6.0 (포트 v3.12.3)
+      setPlannedEndYear(0);
       setPlannedMajorGenre([]);
       setPlannedSubGenre([]);
       setPlannedPriority(3);
@@ -30651,7 +30661,7 @@ function AppContent() {
       
       // 🆕 v7.2.0: aliases/memorable_quote 새 편집 필드 포함 (awards는 read-only — 편집 X)
       await exec(
-        `UPDATE planned_novels SET title=?, author=?, tags=?, platforms=?, note=?, total_episodes=?, cover_image=?, link=?, work_status=?, major_genre=?, sub_genre=?, priority=?, expected_rating=?, expected_tier=?, interest_level=?, discovery_source=?, first_chapter_read=?, scheduled_start_date=?, similar_novels=?, why_interested=?, tag_data=?, aliases=?, memorable_quote=? WHERE id=?;`,
+        `UPDATE planned_novels SET title=?, author=?, tags=?, platforms=?, note=?, total_episodes=?, cover_image=?, link=?, work_status=?, major_genre=?, sub_genre=?, priority=?, expected_rating=?, expected_tier=?, interest_level=?, discovery_source=?, first_chapter_read=?, scheduled_start_date=?, similar_novels=?, why_interested=?, tag_data=?, aliases=?, memorable_quote=?, start_year=?, end_year=? WHERE id=?;`,
         [
           newTitle,
           n.author?.trim() || "",
@@ -30677,6 +30687,8 @@ function AppContent() {
           n.tag_data || "", // 🔧 v3.5.9: tag_data 저장 누락 수정
           n.aliases || "",                  // 🆕 v7.2.0
           n.memorable_quote || "",          // 🆕 v7.2.0
+          Number(n.start_year) || 0,        // 🔧 v7.6.0 (포트 v3.12.3)
+          Number(n.end_year) || 0,          // 🔧 v7.6.0 (포트 v3.12.3)
           n.id,
         ]
       );
@@ -54311,7 +54323,27 @@ async function importJSON() {
                     />
                   ))}
                 </View>
-                
+
+                {/* 🔧 v7.6.0 (포트 v3.12.3): 연재 연도 */}
+                <View style={{ marginTop: 10, flexDirection: "row", gap: 8 }}>
+                  <View style={{ flex: 1 }}>
+                    <YearStepper
+                      label="연재 시작 연도"
+                      value={Number(plannedEditItem.start_year) || 0}
+                      onChange={(v) => updatePlannedEditItem(prev => prev ? { ...prev, start_year: v } : null)}
+                      isDark={isDark}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <YearStepper
+                      label="연재 종료 연도"
+                      value={Number(plannedEditItem.end_year) || 0}
+                      onChange={(v) => updatePlannedEditItem(prev => prev ? { ...prev, end_year: v } : null)}
+                      isDark={isDark}
+                    />
+                  </View>
+                </View>
+
                 <Label style={{ marginTop: 10 }}>전체 회차 수</Label>
                 <Input
                   value={String(plannedEditItem.total_episodes || "")}
