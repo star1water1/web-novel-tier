@@ -37005,7 +37005,12 @@ function AppContent() {
       
       if (!allNovels || allNovels.length < 2) {
         if (!isAutoMatchingRef.current) {
-          Alert.alert("알림", "작품을 2개 이상 추가하세요.");
+          // 🔧 v7.6.0 사후검토: 매칭 밴으로 인해 부족한 경우 별도 안내 (오해 방지)
+          Alert.alert("알림",
+            banCount > 0
+              ? `매칭 가능한 작품이 ${allNovels.length}개뿐입니다.\n(매칭 밴 ${banCount}개 제외됨)\n\n작품을 추가하거나 밴을 해제하세요.`
+              : "작품을 2개 이상 추가하세요."
+          );
         }
         setPair(null);
         return;
