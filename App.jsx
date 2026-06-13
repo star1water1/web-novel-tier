@@ -7785,6 +7785,7 @@ function createNovelSnapshot(novel, tagAttributes = {}) {
     read_ratio: calculateReadRatio(novel),
     platforms: platforms,
     status: novel.status || "reading",
+    work_status: novel.work_status || "ongoing", // 🔧 v7.6.0 (포트 v3.12.1): 연재 상태
   };
 }
 
@@ -8200,8 +8201,23 @@ async function processPatternUpdates(logs) {
           didWin: true,
         });
       }
+
+      // 🔧 v7.6.0 (포트 v3.12.1): 연재 상태 affinity 패턴
+      if (ws.work_status) {
+        updates.push({ category: "work_status_affinity", patternKey: `status:${ws.work_status}`, didWin: true });
+      }
+      if (ls.work_status) {
+        updates.push({ category: "work_status_affinity", patternKey: `status:${ls.work_status}`, didWin: false });
+      }
+
+      // 🔧 v7.6.0 (포트 v3.12.1): 편수 길이 패턴 (완결 + 편수 > 0만)
+      const getEpBucket = (ep) => ep < 100 ? "short" : ep < 400 ? "medium" : "long";
+      const wEpLen = ws.work_status === "completed" && (ws.total_episodes || 0) > 0 ? ws.total_episodes : 0;
+      const lEpLen = ls.work_status === "completed" && (ls.total_episodes || 0) > 0 ? ls.total_episodes : 0;
+      if (wEpLen > 0) updates.push({ category: "episode_length", patternKey: `length:${getEpBucket(wEpLen)}`, didWin: true });
+      if (lEpLen > 0) updates.push({ category: "episode_length", patternKey: `length:${getEpBucket(lEpLen)}`, didWin: false });
     }
-    
+
     // DB 업데이트 (배치)
     if (updates.length > 0) {
       await batchUpdatePatternStats(updates);
@@ -9685,12 +9701,21 @@ function parseMajorSub(value) {
 
 // 태그 사용 빈도 계산 함수
 // 🔧 v3.5.11 성능: counts만 빠르게 계산 (O(n*m) — loadList 핫패스)
+// 🔧 v7.6.0 (포트 v3.9.2): 로컬 Map 캐시로 parseMajorSub 중복 JSON.parse 제거
 function countTagUsageFast(novels) {
   const counts = {};
+  const parseCache = new Map();
+  const cachedParse = (val) => {
+    if (!val) return [];
+    if (parseCache.has(val)) return parseCache.get(val);
+    const result = parseMajorSub(val);
+    parseCache.set(val, result);
+    return result;
+  };
   for (const n of novels) {
     const tags = (n.tags || "").split(",").map(t => t.trim()).filter(Boolean);
-    const majorTags = parseMajorSub(n.major_genre);
-    const subTags = parseMajorSub(n.sub_genre);
+    const majorTags = cachedParse(n.major_genre);
+    const subTags = cachedParse(n.sub_genre);
     const allTagsInNovel = [...new Set([...tags, ...majorTags, ...subTags])];
     for (const tag of allTagsInNovel) {
       counts[tag] = (counts[tag] || 0) + 1;
@@ -27926,6 +27951,21 @@ function AppContent() {
   const [filterStatus, setFilterStatus] = useState("ALL");
   const [filterFolder, setFilterFolder] = useState("ALL"); // 📂 v3.7.0: 폴더 필터
 
+  // 🔧 v7.6.0 (포트 v3.12.1): 홈 정렬/필터 영속화
+  const homeSortInitRef = useRef(false); // 초기 복원 완료 전 저장 방지
+  useEffect(() => {
+    if (!homeSortInitRef.current) return;
+    deferSetAppMeta("home_sort_settings", {
+      sortKey: homeSortKey,
+      sortDir: homeSortDir,
+      filterTier,
+      filterPlatform,
+      filterGenre,
+      filterStatus,
+      filterFolder,
+    });
+  }, [homeSortKey, homeSortDir, filterTier, filterPlatform, filterGenre, filterStatus, filterFolder]);
+
   // 📂 v3.7.0: 폴더 시스템
   const [folders, setFolders] = useState([]);
   const [novelFolderMap, setNovelFolderMap] = useState(new Map());
@@ -29401,6 +29441,7 @@ function AppContent() {
             savedTagSortMode,         // 🔧 20: 동일 이유
             savedTagLastTab,          // 🔧 21: 동일 이유
             savedTagPreviewExpanded,  // 22: 태그 칩 프리뷰 펼침 상태
+            savedHomeSortSettings,    // 23: 🔧 v7.6.0 (포트 v3.12.1): 홈 정렬/필터
           ] = await Promise.all([
             getAppMeta("settings_darkMode"),      // 0: savedDarkMode
             getAppMeta("platform_covers"),        // 1: savedPlatformCovers
@@ -29425,6 +29466,7 @@ function AppContent() {
             getAppMeta("tag_sort_mode"),           // 20: savedTagSortMode (🔧 동일 이유)
             getAppMeta("tag_last_tab"),            // 21: savedTagLastTab (🔧 동일 이유)
             getAppMeta("tag_preview_expanded"),    // 22: savedTagPreviewExpanded
+            getAppMeta("home_sort_settings"),      // 23: 🔧 v7.6.0 (포트 v3.12.1)
           ]);
           
           if (!mounted) return;
@@ -29565,7 +29607,19 @@ function AppContent() {
             if (VALID_TAB_KEYS.includes(savedTagLastTab)) setTagLastTab(savedTagLastTab);
           }
           if (savedTagPreviewExpanded === true) setTagPreviewExpanded(true);
-          
+
+          // 🔧 v7.6.0 (포트 v3.12.1): 홈 정렬/필터 영속화 복원
+          if (savedHomeSortSettings && typeof savedHomeSortSettings === "object") {
+            if (savedHomeSortSettings.sortKey) setHomeSortKey(savedHomeSortSettings.sortKey);
+            if (savedHomeSortSettings.sortDir) setHomeSortDir(savedHomeSortSettings.sortDir);
+            if (savedHomeSortSettings.filterTier) setFilterTier(savedHomeSortSettings.filterTier);
+            if (savedHomeSortSettings.filterPlatform) setFilterPlatform(savedHomeSortSettings.filterPlatform);
+            if (savedHomeSortSettings.filterGenre) setFilterGenre(savedHomeSortSettings.filterGenre);
+            if (savedHomeSortSettings.filterStatus) setFilterStatus(savedHomeSortSettings.filterStatus);
+            if (savedHomeSortSettings.filterFolder) setFilterFolder(savedHomeSortSettings.filterFolder);
+          }
+          homeSortInitRef.current = true; // 초기 복원 완료 → 이후 변경은 deferSetAppMeta로 저장됨
+
           // 🏆 v2.9: 수상 시스템 설정
           if (savedAwardSystemSettings && typeof savedAwardSystemSettings === "object") {
             // 기존 설정과 병합 (새 연도 자동 추가)
@@ -29985,6 +30039,7 @@ function AppContent() {
         savedAutoMatchSettings, savedCustomComboTraits, savedCustomComboTargets,
         savedCoordinateSystems, savedCustomTagCategories, savedMatchFilterSettings,
         savedPinnedTags,
+        savedHomeSortSettings,                 // 🔧 v7.6.0 (포트 v3.12.1)
       ] = await Promise.all([
         getAppMeta("platform_covers"),         // 0
         getAppMeta("app_settings"),            // 1
@@ -30005,6 +30060,7 @@ function AppContent() {
         getAppMeta("custom_tag_categories"),   // 16
         getAppMeta("match_filter_settings"),   // 17
         getAppMeta("pinned_tags"),             // 18
+        getAppMeta("home_sort_settings"),      // 19: 🔧 v7.6.0 (포트 v3.12.1)
       ]);
       
       // 5. state 복원 (간소화 — 핵심 데이터만)
@@ -30077,7 +30133,26 @@ function AppContent() {
       
       // 🔧 v3.5.15e: pinnedTags 복원 (useEffect([]) 는 마운트 시 1회만이므로 슬롯 전환 시 별도 로드 필수)
       if (Array.isArray(savedPinnedTags)) setPinnedTags(savedPinnedTags);
-      
+
+      // 🔧 v7.6.0 (포트 v3.12.1): 홈 정렬/필터 슬롯 전환 시에도 복원
+      // Ref 일시 false 후 setState → 다음 tick에 true 복원 (전환 중 false-save 방지)
+      homeSortInitRef.current = false;
+      if (savedHomeSortSettings && typeof savedHomeSortSettings === "object") {
+        if (savedHomeSortSettings.sortKey) setHomeSortKey(savedHomeSortSettings.sortKey);
+        if (savedHomeSortSettings.sortDir) setHomeSortDir(savedHomeSortSettings.sortDir);
+        if (savedHomeSortSettings.filterTier) setFilterTier(savedHomeSortSettings.filterTier); else setFilterTier("ALL");
+        if (savedHomeSortSettings.filterPlatform) setFilterPlatform(savedHomeSortSettings.filterPlatform); else setFilterPlatform("ALL");
+        if (savedHomeSortSettings.filterGenre) setFilterGenre(savedHomeSortSettings.filterGenre); else setFilterGenre("ALL");
+        if (savedHomeSortSettings.filterStatus) setFilterStatus(savedHomeSortSettings.filterStatus); else setFilterStatus("ALL");
+        if (savedHomeSortSettings.filterFolder) setFilterFolder(savedHomeSortSettings.filterFolder); else setFilterFolder("ALL");
+      } else {
+        // 새 슬롯에 저장값 없으면 기본값
+        setHomeSortKey("rating"); setHomeSortDir("DESC");
+        setFilterTier("ALL"); setFilterPlatform("ALL"); setFilterGenre("ALL"); setFilterStatus("ALL"); setFilterFolder("ALL");
+      }
+      // setTimeout으로 next tick에 Ref 활성화 (setState 반영 후)
+      setTimeout(() => { homeSortInitRef.current = true; }, 0);
+
       // 🔧 v3.6.1: addTagToRegistry는 tagRegistry 클로저(null)를 참조하므로
       //   slotRegistry를 직접 수정하여 updateTagRegistry 호출
       if (Array.isArray(savedComboTags) && savedComboTags.length > 0 && slotRegistry) {
@@ -30240,11 +30315,18 @@ function AppContent() {
             await database.getAllAsync("SELECT 1;");
             console.log("DB 연결 유효 - 리셋 스킵");
           } catch (e) {
-            console.log("DB 연결 무효 - 리셋 수행");
-            await resetDbConnection();
-            await openDb();
-            await loadList(undefined, undefined, "fg-recovery");
-            await loadCoverLibrary();
+            // 🔧 v7.6.0 (포트 v3.9.2): SQLITE_BUSY/LOCKED 구분 — 경합은 리셋 불필요 (불변규칙 #4)
+            const msg = (e.message || "").toLowerCase();
+            const isBusy = msg.includes("busy") || msg.includes("locked");
+            if (isBusy) {
+              console.log("DB 경합 감지 (BUSY/LOCKED) - 리셋 스킵 (연결 유효)");
+            } else {
+              console.log("DB 연결 무효 - 리셋 수행");
+              await resetDbConnection();
+              await openDb();
+              await loadList(undefined, undefined, "fg-recovery");
+              await loadCoverLibrary();
+            }
           }
         } else {
           console.log(`앱 포그라운드 전환 (${bgDuration}ms) - DB 연결 리셋 및 데이터 리로드`);
@@ -34833,6 +34915,8 @@ function AppContent() {
         PerfMonitor.snapshotState({
           novels: safeRows.length,
           customTags: customTags.length,
+          // 🔧 v7.6.0 (포트 v3.9.2): comboTags 진단 누락 수정
+          comboTags: (customComboTraits?.length || 0) + (customComboTargets?.length || 0),
           coverImages: coverLibrary?.length || 0,
         });
       }
@@ -36033,24 +36117,26 @@ function AppContent() {
       updateEditItem(null);
       
       await loadList(undefined, undefined, "supplement");
-      
+
+      // 🔧 v7.6.0 (포트 v3.9.2): addRecentChange 병렬 실행
+      // (React setState 함수형 업데이터 + deferSetAppMeta 코얼레싱 안전)
+      const changePromises = [];
       // 📰 v3.0.2: 제목 변경 기록
       if (editOriginalTitle && editOriginalTitle !== newTitle) {
-        await addRecentChange(n.id, newTitle, "title_change", {
+        changePromises.push(addRecentChange(n.id, newTitle, "title_change", {
           from: editOriginalTitle,
           to: newTitle
-        });
+        }));
       }
-      
       // 📰 v3.0: 읽은 회차수 변경 기록 (수동 날짜 설정 시 해당 시점으로 기록)
       if (readCountChanged && newReadCount > editOriginalReadCount) {
-        const delta = newReadCount - editOriginalReadCount;
-        await addRecentChange(n.id, newTitle, "read_count", {
+        changePromises.push(addRecentChange(n.id, newTitle, "read_count", {
           from: editOriginalReadCount,
           to: newReadCount,
-          delta: delta
-        }, newReadCountUpdatedAt); // 📅 수동 설정된 날짜로 기록
+          delta: newReadCount - editOriginalReadCount
+        }, newReadCountUpdatedAt));
       }
+      if (changePromises.length > 0) await Promise.all(changePromises);
       
       // 🖼️ v3.4.5: 표지 변경 시 라이브러��� 상태 업데이트
       if (editCoverImage !== editOriginalCoverImage) {
@@ -41672,7 +41758,10 @@ async function importJSON() {
                     }}>
                       {isImageQuote(quote) ? (
                         <View>
-                          <ExpoImage source={{ uri: quote.uri }} style={{ width: "100%", height: 200, borderRadius: 8 }} contentFit="contain" cachePolicy="disk" />
+                          {/* 🔧 v7.6.0 (포트 v3.14.2): 명언 이미지 탭→확대 */}
+                          <TouchableOpacity activeOpacity={0.85} onPress={() => setCoverViewerUri(quote.uri)}>
+                            <ExpoImage source={{ uri: quote.uri }} style={{ width: "100%", height: 200, borderRadius: 8 }} contentFit="contain" cachePolicy="disk" />
+                          </TouchableOpacity>
                           {quote.caption ? (
                             <Text style={{ fontStyle: "italic", fontSize: 13, color: isDark ? "#fef3c7" : "#78350f", marginTop: 6, textAlign: "center" }}>
                               {quote.caption}
@@ -42849,7 +42938,8 @@ async function importJSON() {
                     <TextInput
                       value={String(retentionDays)}
                       onChangeText={(v) => {
-                        const days = parseInt(v) || 30;
+                        // 🔧 v7.6.0 (포트 v3.12.0): 0 입력 시 의도 보존 (|| 30 → isFinite)
+                        const n = parseInt(v); const days = Number.isFinite(n) ? n : 30;
                         saveAppSettings({ 
                           recentChanges: { 
                             ...DEFAULT_SETTINGS.recentChanges, 
