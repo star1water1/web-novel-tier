@@ -7617,6 +7617,22 @@ const TIER_PRESETS = [
       defaultTier: "보통", defaultRating: 1500, allowRegistrationTier: true,
     },
   },
+  // 🔧 v7.6.0 (포트 v3.10.0): 비율 기반 6티어 프리셋
+  {
+    id: "ratio_6", name: "비율 기반 (6티어)", description: "ELO + 상위 % 동적 배정 (10/15/25/25/15/10)",
+    config: {
+      mode: "ratio",
+      tiers: [
+        { key: "S",  label: "S",  color: "#8b5cf6", threshold: 1950, gated: true,  ratio: 10 },
+        { key: "A",  label: "A",  color: "#3b82f6", threshold: 1850, gated: true,  ratio: 15 },
+        { key: "B+", label: "B+", color: "#22c55e", threshold: 1700, gated: false, ratio: 25 },
+        { key: "B",  label: "B",  color: "#a3e635", threshold: 1600, gated: false, ratio: 25 },
+        { key: "B-", label: "B-", color: "#f59e0b", threshold: 1500, gated: false, ratio: 15 },
+        { key: "C",  label: "C",  color: "#ef4444", threshold: 0,    gated: false, ratio: 10 },
+      ],
+      defaultTier: "C", defaultRating: 1500, allowRegistrationTier: false,
+    },
+  },
 ];
 
 /** 커스텀 프리셋 최대 개수 */
@@ -25467,6 +25483,60 @@ function rebuildTierLookup(config) {
   globalTierLookup = new Map((config && config.tiers || []).map(t => [t.key, t]));
 }
 
+// 🔧 v7.6.0 (포트 v3.10.0): ratio 모드 — id → tierKey 매핑 (loadList에서 재계산)
+let globalRatioTierMap = new Map();
+
+/**
+ * 비율 기반 티어 매핑 계산
+ * - rating DESC 정렬 → 누적 비율로 각 작품을 buckets에 분배
+ * - ratio 합계 0이면 균등 분배 폴백
+ * - 동점은 같은 티어 (boundary에서 같은 rating이면 같은 키)
+ */
+function computeRatioTierMap(novels, cfg) {
+  const map = new Map();
+  if (!cfg || !Array.isArray(cfg.tiers) || cfg.tiers.length === 0) return map;
+  if (!Array.isArray(novels) || novels.length === 0) return map;
+
+  // 정렬 가능한 작품만 (rating 숫자)
+  const sorted = novels
+    .filter(n => n && n.id)
+    .map(n => ({ id: n.id, rating: Number(n.rating) || 0 }))
+    .sort((a, b) => b.rating - a.rating);
+
+  const total = sorted.length;
+  if (total === 0) return map;
+
+  // ratio 합계 — 0이면 균등 분배
+  const ratios = cfg.tiers.map(t => Math.max(0, Number(t.ratio) || 0));
+  let sumR = ratios.reduce((a, b) => a + b, 0);
+  if (sumR <= 0) sumR = cfg.tiers.length, ratios.fill(1);
+
+  // 각 티어 누적 경계 (count 기준)
+  const cumCounts = [];
+  let acc = 0;
+  for (let i = 0; i < ratios.length; i++) {
+    acc += (ratios[i] / sumR) * total;
+    cumCounts.push(Math.round(acc));
+  }
+  // 마지막 경계는 항상 total
+  cumCounts[cumCounts.length - 1] = total;
+
+  let tierIdx = 0;
+  for (let i = 0; i < total; i++) {
+    while (tierIdx < cumCounts.length - 1 && i >= cumCounts[tierIdx]) tierIdx++;
+    // 동점 처리: 직전 작품과 rating 같으면 같은 티어 (경계 직후라도)
+    if (i > 0 && sorted[i].rating === sorted[i - 1].rating) {
+      const prevTier = map.get(sorted[i - 1].id);
+      if (prevTier) {
+        map.set(sorted[i].id, prevTier);
+        continue;
+      }
+    }
+    map.set(sorted[i].id, cfg.tiers[tierIdx].key);
+  }
+  return map;
+}
+
 // ⚙️ 기본 설정값
 const DEFAULT_SETTINGS = {
   tierThresholds: { S: 1950, A: 1850, "B+": 1700, B: 1600, "B-": 1500 },
@@ -26244,6 +26314,15 @@ function getDisplayTier(novel, config) {
   if (mode === "hybrid") {
     const mt = novel.manual_tier;
     if (mt && tierOrder.includes(mt)) return mt;
+    return tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg);
+  }
+
+  // 🔧 v7.6.0 (포트 v3.10.0): ratio 모드 — globalRatioTierMap 사용 (loadList에서 사전 계산)
+  if (mode === "ratio") {
+    if (novel.manual_tier && tierOrder.includes(novel.manual_tier)) return novel.manual_tier;
+    const ratioTier = globalRatioTierMap && globalRatioTierMap.get(novel.id);
+    if (ratioTier && tierOrder.includes(ratioTier)) return ratioTier;
+    // 폴백: 매핑 미완료 시 레이팅 기반
     return tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg);
   }
 
@@ -35009,6 +35088,13 @@ function AppContent() {
       // 🛡️ v3.5.6: 숫자 필드 정규화 (null → 기본값, 하위 렌더링 크래시 방지)
       const safeRows = (rows || []).map(normalizeNovel);
       PerfMonitor.stepFunc("loadList", "normalize"); // 🔬 v3.5.9b
+      // 🔧 v7.6.0 (포트 v3.10.0): ratio 모드 — 정렬 + 누적 비율 사전 계산
+      if (globalTierConfig?.mode === "ratio") {
+        try { globalRatioTierMap = computeRatioTierMap(safeRows, globalTierConfig); }
+        catch (e) { console.warn("[ratio] computeRatioTierMap 실패:", e?.message); globalRatioTierMap = new Map(); }
+      } else {
+        globalRatioTierMap = new Map();
+      }
       setList(safeRows);
       updateTagUsageCounts(safeRows); // 🏷️ 태그 사용 빈도 업데이트
       PerfMonitor.stepFunc("loadList", "tagCount"); // 🔬 v3.5.9b
@@ -48524,6 +48610,8 @@ async function importJSON() {
                   { key: "match", label: "매칭 기반", desc: "Elo 레이팅으로 자동 배정" },
                   { key: "manual", label: "직접 배정", desc: "매칭 없이 수동 지정" },
                   { key: "hybrid", label: "혼합", desc: "매칭 + 자유 오버라이드" },
+                  // 🔧 v7.6.0 (포트 v3.10.0): 비율 기반 모드
+                  { key: "ratio", label: "비율 기반", desc: "Elo + 상위 % 동적 배정 (분포 균형)" },
                 ].map(m => (
                   <TouchableOpacity
                     key={m.key}
