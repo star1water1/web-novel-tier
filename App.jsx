@@ -2,9 +2,68 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.5.0 (Hybrid evidence 누적 패러다임 — 신작 캐스케이드 + 자가 시그널)   ║
- * ║  최종 수정: 2026-06-12                                                        ║
- * ║  총 라인 수: 약 54,400줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 7.6.0 (stranded 계보 통합 마이그레이션 — 14개 미병합 기능 이식)         ║
+ * ║  최종 수정: 2026-06-13                                                        ║
+ * ║  총 라인 수: 약 55,000줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🚀 v7.6.0 stranded 계보 통합 마이그레이션 — 14개 미병합 기능 이식 (2026-06-13) ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [Why] claude/fix-code-bugs-ASsb8 계보 67개 커밋(v3.9.2~v3.18.2)이 PR 없이      ║
+ * ║ 머무름. 같은 시기 main은 v6.2/v7.0~v7.5로 다른 fork 진행 → 한 번도 합류 X.    ║
+ * ║ 사용자가 직접 검토 요청 → 안전 패치 7건 + 핵심 기능 5건 + B그룹 2건 통합.       ║
+ * ║                                                                              ║
+ * ║ [Stage 1] 안전 작은 패치 4건:                                                   ║
+ * ║ • #14 v3.9.6 4616f14: processMatchQueue finally 후 잔여 큐 재진입             ║
+ * ║ • #9  v3.12.2 19b9b12: 자동매칭 중 슬롯 전환 차단 (performSlotSwitch 가드)     ║
+ * ║ • #15 v3.9.8  5b1554b: folderCounts useMemo O(n)→O(1)                          ║
+ * ║ • #12 v3.17.4 6a64c7f: 취향 분석 win_rate NaN/null isFinite 가드 5곳           ║
+ * ║                                                                              ║
+ * ║ [Stage 2] 안전 후속 5건:                                                        ║
+ * ║ • #13 baa9ee8: retentionDays parseInt → Number.isFinite 패턴                  ║
+ * ║ • #3  v3.12.1 fab8626: 홈탭 sortKey/sortDir/filterTier 등 7개 영속화           ║
+ * ║ • #8  v3.14.2 e6e5af2: NovelCard 명언 이미지 탭→확대 (setCoverViewerUri)       ║
+ * ║ • #11 v3.12.1 6cdbab2 부분: createNovelSnapshot work_status 필드 +             ║
+ * ║   processPatternUpdates에 work_status_affinity/episode_length 학습              ║
+ * ║ • #17 v3.9.2  2e1afd8: countTagUsageFast Map 캐시 + BG 복귀 BUSY 구분 +        ║
+ * ║   PerfMonitor comboTags 필드 + saveEdit Promise.all 병렬화                     ║
+ * ║                                                                              ║
+ * ║ [Stage 3] #5 본작 연재 연도 (v3.12.0):                                          ║
+ * ║ • novels.start_year/end_year INTEGER + idx, YearStepper memo 컴포넌트          ║
+ * ║ • 등록/편집 폼 통합 (state + UI + INSERT/UPDATE + closeEditModal reset)        ║
+ * ║                                                                              ║
+ * ║ [Stage 4] #1 매칭 밴 (v3.16.0):                                                ║
+ * ║ • novels.match_ban INTEGER + idx, toggleMatchBan(id, ban) + 큐 정리            ║
+ * ║ • pickRandomUnseenPair 진입 즉시 제외, focus 작품 밴 시 별도 안내               ║
+ * ║ • enqueueVerification/getCandidatesForVerification에서 hybrid 큐 차단          ║
+ * ║ • 설정 접이식 UI: 카운트 배지 + 작품 검색 + 밴/해제 목록                       ║
+ * ║                                                                              ║
+ * ║ [Stage 5] #2 예정작 연재 연도 (v3.12.3):                                        ║
+ * ║ • planned_novels에 동일 컬럼 + 예정 편집 모달 YearStepper                      ║
+ * ║                                                                              ║
+ * ║ [Stage 6] B그룹 — 부분 충돌 검토 후 적용 2건:                                   ║
+ * ║ • #18 v3.9.3 0bbadba: 티어 편집기 module 변수 → React state (appSettings)      ║
+ * ║   IIFE + tsc/tiersForUI/modeForUI 로컬 var, saveAppSettings 즉시 반영          ║
+ * ║ • #19 v3.11.3 299b32c: gated 토글 OFF 시 manual_tier 자동 클리어                ║
+ * ║   (match 모드에서만 — hybrid의 patrick truth와 충돌 없음)                       ║
+ * ║                                                                              ║
+ * ║ [Stage 7] #6 비율 티어 모드 (v3.10.0):                                          ║
+ * ║ • TIER_PRESETS "ratio_6" 프리셋 (10/15/25/25/15/10 분포)                       ║
+ * ║ • computeRatioTierMap + globalRatioTierMap (loadList에서 사전 계산)            ║
+ * ║ • getDisplayTier ratio 분기 + 모드 선택기에 옵션 추가                          ║
+ * ║                                                                              ║
+ * ║ [검증 후 제외] main에서 이미 더 안전한 패턴으로 해결되어 있음:                  ║
+ * ║ • #4 NsLBp 3건 (deleteAward/updateAward/validateImportData)                    ║
+ * ║ • #10 matches INSERT OR IGNORE (UNIQUE 인덱스 없어 실익 X)                      ║
+ * ║ • #16 staticSignals 캐시 reset (v3.18.0 시스템 자체가 main에 없음)              ║
+ * ║                                                                              ║
+ * ║ [후속 단계로 미룬 항목]                                                         ║
+ * ║ • #7 태그칩 통합 모달 — main TagEditModal 구조와 농도 Alert 디자인 충돌          ║
+ * ║ • #5/#2 연도 백업 v9+ payload (sy/ey) + 기존 데이터 자동 마이그레이션           ║
+ * ║ • #11 TasteAnalysisScreen UI 연중률/편수 분석 섹션 표시                         ║
+ * ║ • #1 백업 v13 포맷 (opt.mb) — 현재 슬롯 내 저장으로 동작                        ║
+ * ║                                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11731,7 +11790,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.4.12";
+const APP_VERSION = "7.6.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
