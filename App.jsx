@@ -6035,6 +6035,11 @@ async function processMatchQueue() {
   
   isProcessingMatchQueue = false;
   notifyQueueStatus();
+  // 🔧 v7.6.0 (포트 v3.9.6): isProcessingMatchQueue=false 직전 enqueue된 태스크 고아 방지
+  // enqueueMatchTask는 guard에 막혀 무위 호출이 될 수 있으므로 잔여 큐 직접 재진입
+  if (matchQueue.length > 0) {
+    processMatchQueue();
+  }
 }
 
 /* =========================================================
@@ -8416,12 +8421,14 @@ function generateInsightFromPattern(pattern) {
 function generateGenreMatchupInsight(pattern) {
   const parts = pattern.pattern_key.split("_vs_");
   if (parts.length !== 2) return null;
-  
+
   const [genreA, genreB] = parts;
-  const preferredGenre = pattern.win_rate >= 0.5 ? genreA : genreB;
-  const avoidedGenre = pattern.win_rate >= 0.5 ? genreB : genreA;
-  const rate = pattern.win_rate >= 0.5 ? pattern.win_rate : (1 - pattern.win_rate);
-  
+  // 🔧 v7.6.0 (포트 v3.17.4): win_rate null/NaN 방어 (백업 복원 직후 NULL 가능)
+  const wr = (pattern.win_rate == null || !isFinite(pattern.win_rate)) ? 0.5 : pattern.win_rate;
+  const preferredGenre = wr >= 0.5 ? genreA : genreB;
+  const avoidedGenre = wr >= 0.5 ? genreB : genreA;
+  const rate = wr >= 0.5 ? wr : (1 - wr);
+
   if (rate < 0.65) return null;
   
   return {
@@ -8446,8 +8453,9 @@ function generateGenreMatchupInsight(pattern) {
  */
 function generateGenreAffinityInsight(pattern) {
   const genre = pattern.pattern_key.replace("genre:", "");
-  const rate = pattern.win_rate;
-  
+  // 🔧 v7.6.0 (포트 v3.17.4): win_rate null/NaN 방어
+  const rate = (pattern.win_rate == null || !isFinite(pattern.win_rate)) ? 0.5 : pattern.win_rate;
+
   if (rate < 0.6 || pattern.sample_size < 20) return null;
   
   return {
@@ -8471,8 +8479,9 @@ function generateGenreAffinityInsight(pattern) {
  */
 function generateTagPowerInsight(pattern) {
   const tag = pattern.pattern_key.replace("tag:", "");
-  const rate = pattern.win_rate;
-  
+  // 🔧 v7.6.0 (포트 v3.17.4): win_rate null/NaN 방어
+  const rate = (pattern.win_rate == null || !isFinite(pattern.win_rate)) ? 0.5 : pattern.win_rate;
+
   if (rate < 0.6 || pattern.sample_size < 15) return null;
   
   return {
@@ -8496,8 +8505,9 @@ function generateTagPowerInsight(pattern) {
  */
 function generateAuthorLoyaltyInsight(pattern) {
   const author = pattern.pattern_key.replace("author:", "");
-  const rate = pattern.win_rate;
-  
+  // 🔧 v7.6.0 (포트 v3.17.4): win_rate null/NaN 방어
+  const rate = (pattern.win_rate == null || !isFinite(pattern.win_rate)) ? 0.5 : pattern.win_rate;
+
   if (rate < 0.7 || pattern.sample_size < 10) return null;
   
   return {
@@ -8524,8 +8534,9 @@ function generateRatingBehaviorInsight(pattern) {
   if (!key.startsWith("underdog_win:")) return null;
   
   const bucket = key.replace("underdog_win:", "");
-  const rate = pattern.win_rate;
-  
+  // 🔧 v7.6.0 (포트 v3.17.4): win_rate null/NaN 방어
+  const rate = (pattern.win_rate == null || !isFinite(pattern.win_rate)) ? 0.5 : pattern.win_rate;
+
   if (rate < 0.3 || pattern.sample_size < 10) return null;
   
   const bucketLabels = {
@@ -29260,12 +29271,17 @@ function AppContent() {
     }
   }
 
-  function getFolderNovelCount(folderId) {
-    let count = 0;
+  // 📂 v7.6.0 (포트 v3.9.8): 폴더별 작품 수 O(n) 1회 → 조회 O(1)
+  const folderCounts = useMemo(() => {
+    const counts = new Map();
     novelFolderMap.forEach((folderIds) => {
-      if (folderIds.includes(folderId)) count++;
+      folderIds.forEach((fid) => counts.set(fid, (counts.get(fid) || 0) + 1));
     });
-    return count;
+    return counts;
+  }, [novelFolderMap]);
+
+  function getFolderNovelCount(folderId) {
+    return folderCounts.get(folderId) || 0;
   }
 
   // 📂 폴더 필터용 파생 상태 (Set.has()로 O(1) 조회)
@@ -29806,6 +29822,11 @@ function AppContent() {
   // 📁 v3.5.15d: 슬롯 전환 함수 (전체 state 리셋 + 새 DB 초기화 + 재로드)
   const performSlotSwitch = async (newSlotId) => {
     if (newSlotId === activeSlotId || slotSwitching) return;
+    // 🔧 v7.6.0 (포트 v3.12.2): 자동매칭 중 슬롯 전환 차단 — in-flight 매칭 DB 오염 방지
+    if (isAutoMatchingRef.current) {
+      Alert.alert("슬롯 전환 불가", "자동 매칭을 먼저 중지해주세요.");
+      return;
+    }
     Breadcrumbs.action("slot_switch", `${activeSlotId} → ${newSlotId}`);
     const previousSlotId = activeSlotId; // 🔧 롤백용 백업
     setSlotSwitching(true);
