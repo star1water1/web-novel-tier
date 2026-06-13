@@ -2,9 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.6.6 (매칭 크래시 진짜 근본 수정 — expo-sqlite 연결 풀 우회)             ║
+ * ║  버전: 7.6.7 (이미지 첫 확대 흐릿함 수정 — allowDownscaling=false)               ║
  * ║  최종 수정: 2026-06-13                                                        ║
  * ║  총 라인 수: 약 56,250줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🐛 v7.6.7 이미지 첫 확대 흐릿함(저해상도) 수정 — allowDownscaling (2026-06-13)  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [빌드 테스트 피드백] v7.6.4(recyclingKey) 후에도 첫 확대 시 흐릿/저해상도 지속. ║
+ * ║   갤러리·수상 모달은 v7.1.2 expand- recyclingKey가 있는데도 동일 → recyclingKey  ║
+ * ║   는 view 재활용만 막고 **다운스케일 디코드는 못 막음**이 확인됨.               ║
+ * ║ [원인] expo-image 기본값 allowDownscaling=true → 컨테이너 크기에 맞춰 다운스케일 ║
+ * ║   디코드. 같은 URI 썸네일의 저해상도 비트맵을 첫 확대 시 재사용 → 흐릿하게 보임  ║
+ * ║   (이후 풀해상도 재디코드되면 선명).                                            ║
+ * ║ [수정] 3개 확대 모달(coverViewer/galleryExpand/awards expandedView) ExpoImage에 ║
+ * ║   allowDownscaling={false} 추가 → 항상 원본 해상도로 디코드 (이미지 ≤800px라    ║
+ * ║   메모리 부담 없음). recyclingKey expand-/priority/transition은 유지(보완).      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11962,7 +11976,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.6.6";
+const APP_VERSION = "7.6.7";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -11988,6 +12002,17 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.6.7", date: "2026-06-13",
+    title: "🐛 이미지 첫 확대 시 흐릿하던 문제 수정",
+    highlights: [
+      { type: "fix", text: "🖼️ 이미지를 처음 확대할 때 흐릿하게(저해상도로) 보이던 문제를 고쳤어요. 이제 처음부터 선명하게 보입니다. (표지·명대사·갤러리·수상 모두)" },
+    ],
+    details: [
+      { type: "fix", text: "원인: expo-image가 기본적으로 컨테이너 크기에 맞춰 다운스케일 디코드 → 같은 이미지의 썸네일(저해상도) 비트맵을 첫 확대 때 재사용해 흐릿하게 보임(이후 풀해상도로 다시 디코드되면 선명)" },
+      { type: "fix", text: "수정: 3개 확대 모달 ExpoImage에 allowDownscaling={false} 추가 → 항상 원본 해상도로 디코드. (v7.6.4의 recyclingKey는 view 재활용만 막아 불충분했음 — 이게 진짜 원인)" },
+    ],
+  },
   {
     version: "7.6.6", date: "2026-06-13",
     title: "🔴 매칭 크래시 진짜 근본 수정 (연결 풀 우회)",
@@ -22860,6 +22885,7 @@ const AwardsScreen = memo(({
               /* 🛠️ v7.1.2: 썸네일과 다른 recyclingKey + transition=0 + priority=high
                  → 첫 확대 시 저해상도 비트맵 재활용으로 흐릿하게 보이는 문제 회피 */
               recyclingKey={`expand-award-${expandedView.uri}`}
+              allowDownscaling={false}
               style={{ width: "92%", height: "72%", borderRadius: 12 }}
               contentFit="contain"
               cachePolicy="memory-disk"
@@ -56188,6 +56214,7 @@ async function importJSON() {
                  쓰면 expo-image가 썸네일의 저해상도 비트맵을 재활용해 첫 확대 시 깨져 보임
                  (이후 풀해상도 캐시되면 정상). `expand-` prefix로 모달 인스턴스 분리 + priority/transition 통일 */
               recyclingKey={`expand-${coverViewerUri}`}
+              allowDownscaling={false}
               style={{ width: "88%", height: "75%", borderRadius: 12 }}
               contentFit="contain"
               cachePolicy="memory-disk"
@@ -56234,6 +56261,7 @@ async function importJSON() {
                    썸네일의 저해상도 비트맵을 재활용해 첫 확대 시 흐릿하게 보임.
                    `expand-` prefix로 모달용 인스턴스를 구분 → 풀 해상도 디코드 강제. */
                 recyclingKey={`expand-${galleryExpandImg.id}`}
+                allowDownscaling={false}
                 style={{ width: "92%", height: "72%", borderRadius: 12 }}
                 contentFit="contain"
                 cachePolicy="memory-disk"
