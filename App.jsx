@@ -2,13 +2,30 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.6.5 (매칭 N회 후 무조건 튕기던 크래시 근본 수정)                        ║
+ * ║  버전: 7.6.6 (매칭 크래시 진짜 근본 수정 — expo-sqlite 연결 풀 우회)             ║
  * ║  최종 수정: 2026-06-13                                                        ║
  * ║  총 라인 수: 약 56,250줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
- * ║ 🔴 v7.6.5 매칭 N회 후 무조건 튕기던 크래시 근본 수정 (2026-06-13)               ║
+ * ║ 🔴 v7.6.6 매칭 크래시 진짜 근본 수정 — expo-sqlite 연결 풀 우회 (2026-06-13)    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [빌드 테스트 피드백] v7.6.5(지연 close) 후: 5회는 넘겼으나 "진행할수록 로딩이   ║
+ * ║   점점 느려지다가 prepareAsync NPE". → 지연 close는 race만 막은 band-aid였고,   ║
+ * ║   진짜 원인은 expo-sqlite 연결 풀 공유였음.                                      ║
+ * ║ [근본 원인] SQLite.openDatabaseAsync(file)를 옵션 없이 호출 → 풀링된 네이티브   ║
+ * ║   핸들 공유 (expo/expo#28176, #33677). 병렬 prepareAsync로 핸들이 poisoned되면  ║
+ * ║   같은 풀의 모든 JS 래퍼가 NPE를 던지고, 재시도해도 풀이 같은 손상 핸들 반환 →  ║
+ * ║   영구 실패 + 매 쿼리 재시도로 점점 느려짐(평균 SQL 783ms).                      ║
+ * ║ [수정] openDatabaseAsync(file, { useNewConnection: true }) — 매 연결 독립 핸들   ║
+ * ║   → 풀 공유 완전 차단. poisoned 핸들 폐기+재획득이 프로세스 재시작 없이 작동.    ║
+ * ║   메인(openDb) + 슬롯 임시연결 3곳 모두 적용(슬롯 복제 시 풀 오염 전파 차단).   ║
+ * ║ [v7.6.5 지연 close 유지] in-flight 작업의 즉시-close race 방지에 여전히 유효     ║
+ * ║   (v3.x 계보도 둘 다 유지). 매칭 루프·5대 불변조건 미접촉.                       ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔴 v7.6.5 매칭 N회 후 무조건 튕기던 크래시 (1차 — 지연 close) (2026-06-13)      ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ [증상] 조건과 무관하게 매칭을 5번 정도 하면 무조건 앱이 튕김 (deterministic).   ║
  * ║ [원인] openDb()/resetDbConnection()이 db.closeAsync()를 **즉시 await** 호출 →   ║
@@ -5257,7 +5274,7 @@ async function duplicateSlot(srcSlotId, newName) {
         }
       } else {
         // 비활성 슬롯: 임시 connection
-        srcDb = await SQLite.openDatabaseAsync(getSlotDbFilename(srcSlotId));
+        srcDb = await SQLite.openDatabaseAsync(getSlotDbFilename(srcSlotId), { useNewConnection: true }); // 🛠️ v7.6.6: 풀 공유 차단
         await srcDb.runAsync(`VACUUM INTO '${escapedDst}';`);
       }
     } catch (e) {
@@ -5274,7 +5291,7 @@ async function duplicateSlot(srcSlotId, newName) {
     // 사후 paranoid 검증 (PRAGMA quick_check) + 실 novelCount 캡처
     let realCount = srcSlot.novelCount || 0;
     try {
-      const tmp = await SQLite.openDatabaseAsync(dstDbName);
+      const tmp = await SQLite.openDatabaseAsync(dstDbName, { useNewConnection: true }); // 🛠️ v7.6.6: 풀 공유 차단
       try {
         const qcRow = await tmp.getFirstAsync("PRAGMA quick_check;");
         // 결과 row는 { quick_check: 'ok' } 형태 또는 컬럼명 변형 가능
@@ -5392,7 +5409,7 @@ async function recoverSlotDb(slotId) {
   let openErr = null;
   let tmp = null;
   try {
-    tmp = await SQLite.openDatabaseAsync(dbName);
+    tmp = await SQLite.openDatabaseAsync(dbName, { useNewConnection: true }); // 🛠️ v7.6.6: 풀 공유 차단
     const row = await tmp.getFirstAsync("PRAGMA quick_check;");
     qc = row && (row.quick_check || row["quick_check"] || Object.values(row)[0]);
   } catch (e) {
@@ -5585,7 +5602,12 @@ async function openDb() {
   // 새 연결 생성
   // 🔧 v3.5.15d: 슬롯 시스템 — activeSlotId에 따른 DB 파일명
   const dbFilename = getSlotDbFilename(activeSlotId);
-  dbOpenPromise = SQLite.openDatabaseAsync(dbFilename);
+  // 🛠️ v7.6.6 (포트 v3.11.3): useNewConnection — expo-sqlite 연결 풀 공유 우회 (진짜 근본 수정).
+  //   옵션 없이 openDatabaseAsync를 호출하면 풀링된 네이티브 핸들을 공유하는데(expo/expo#28176,
+  //   #33677), 병렬 prepareAsync로 핸들이 poisoned되면 같은 풀의 모든 JS 래퍼가 NPE를 던지고
+  //   재시도해도 풀이 같은 손상 핸들을 반환 → 영구 실패("매칭 진행할수록 느려지다 NPE 크래시").
+  //   독립 핸들을 강제해 풀 공유를 차단 → poisoned 핸들 폐기 + 새 handle 획득이 정상 작동.
+  dbOpenPromise = SQLite.openDatabaseAsync(dbFilename, { useNewConnection: true });
   
   try {
     db = await dbOpenPromise;
@@ -11940,7 +11962,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.6.5";
+const APP_VERSION = "7.6.6";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -11967,8 +11989,20 @@ function compareVersions(a, b) {
 
 const CHANGELOG_DATA = [
   {
+    version: "7.6.6", date: "2026-06-13",
+    title: "🔴 매칭 크래시 진짜 근본 수정 (연결 풀 우회)",
+    highlights: [
+      { type: "fix", text: "⚔️ 매칭을 오래 하면 점점 느려지다가 튕기던 문제를 근본적으로 잡았어요. 이제 길게 매칭해도 안정적입니다." },
+    ],
+    details: [
+      { type: "fix", text: "근본 원인: expo-sqlite가 SQLite.openDatabaseAsync(file)를 옵션 없이 호출하면 풀링된 네이티브 핸들을 공유하는데(expo/expo#28176,#33677), 병렬 prepareAsync로 핸들이 손상(poisoned)되면 같은 풀의 모든 쿼리가 NullPointerException → 재시도해도 같은 손상 핸들이 반환돼 영구 실패 + 점점 느려짐" },
+      { type: "fix", text: "수정: openDatabaseAsync(file, { useNewConnection: true })로 매 연결을 독립 핸들로 — 풀 공유 완전 차단. 손상 핸들 폐기·재획득이 정상 작동. 메인 연결 + 슬롯 임시연결 모두 적용 (v3.11.3 계보 수정 이식)" },
+      { type: "fix", text: "v7.6.5의 연결 닫기 지연(5초)도 유지 — 진행 중 작업이 안전히 끝나게 하는 보완책. 둘이 함께 동작" },
+    ],
+  },
+  {
     version: "7.6.5", date: "2026-06-13",
-    title: "🔴 매칭 몇 번 하면 앱이 튕기던 크래시 수정",
+    title: "🔴 매칭 크래시 1차 수정 (연결 닫기 지연)",
     highlights: [
       { type: "fix", text: "⚔️ 매칭을 5번 정도 하면 무조건 앱이 튕기던 문제를 근본 수정했어요. 이제 마음껏 매칭하셔도 됩니다." },
     ],
