@@ -6707,6 +6707,51 @@ async function initDb(progressCb) {
 
   // manual_order 백필 (1회만 — app_meta로 가드)
   await backfillManualOrder(database);
+
+  // 🔧 v7.6.0 (포트 v3.12.0): 연재 연도 자동 마이그레이션 (1회만)
+  await migrateStartEndYearFromTags(database);
+}
+
+/**
+ * 🔧 v7.6.0 (포트 v3.12.0): 태그/메모에서 4자리 연도 추출 → start_year/end_year 백필
+ * - app_meta "start_end_year_migrated" 가드
+ * - 이미 start_year/end_year 설정된 작품은 스킵
+ * - 1990~2099 범위 매치만 채택
+ */
+async function migrateStartEndYearFromTags(database) {
+  try {
+    const done = await database.getFirstAsync(
+      `SELECT value FROM app_meta WHERE key = 'start_end_year_migrated' LIMIT 1;`
+    );
+    if (done && done.value) return;
+
+    const novels = await database.getAllAsync(
+      `SELECT id, tags, note, work_status, start_year, end_year FROM novels;`
+    );
+    const yearRegex = /\b(19[9]\d|20\d{2})\b/g;
+    const updates = [];
+    for (const row of (novels || [])) {
+      if ((Number(row.start_year) || 0) > 0 || (Number(row.end_year) || 0) > 0) continue;
+      const haystack = `${row.tags || ""} ${row.note || ""}`;
+      const matches = [...haystack.matchAll(yearRegex)].map(m => Number(m[1])).filter(y => y >= 1990 && y <= 2099);
+      if (matches.length === 0) continue;
+      const unique = [...new Set(matches)].sort((a, b) => a - b);
+      const sy = unique[0];
+      // 연중/연재중이면 end_year 미설정 유지 (0)
+      const isOngoing = row.work_status === "ongoing" || row.work_status === "hiatus";
+      const ey = (unique.length > 1 && !isOngoing) ? unique[unique.length - 1] : 0;
+      updates.push({ id: row.id, sy, ey });
+    }
+    for (const u of updates) {
+      await database.runAsync(`UPDATE novels SET start_year=?, end_year=? WHERE id=?`, [u.sy, u.ey, u.id]);
+    }
+    await database.runAsync(
+      `INSERT OR REPLACE INTO app_meta (key, value) VALUES ('start_end_year_migrated', '1');`
+    );
+    if (updates.length > 0) console.log(`[migration] start_end_year 백필 ${updates.length}건`);
+  } catch (e) {
+    console.warn("[migration] start_end_year 실패:", e?.message);
+  }
 }
 
 // 🆕 v7.0: manual_order 백필 — 기존 작품들에 티어 그룹별 순차 manual_order 부여
@@ -33122,11 +33167,24 @@ function AppContent() {
     // 🏷️ v5.0: tagData JSON 문자열
     const tagDataJson = tagData && tagData.length > 0 ? JSON.stringify(tagData) : "";
     
+    // 🔧 v7.6.0 (포트 v3.12.0): 태그→연도 단방향 자동 동기화
+    // 1990~2099 4자리 매치만 채택, 이미 설정된 값은 유지 (사용자 입력 우선)
+    const extractYears = (text) => {
+      const matches = [...(text || "").matchAll(/\b(19[9]\d|20\d{2})\b/g)]
+        .map(m => Number(m[1])).filter(y => y >= 1990 && y <= 2099);
+      return [...new Set(matches)].sort((a, b) => a - b);
+    };
+
     if (tagModalTarget === "new") {
       setTags(allTagsString);
       setNewMajorGenre(selectedMajor);
       setNewSubGenre(selectedSub);
       setNewTagData(tagData); // 🏷️ v5.0
+      const extracted = extractYears(allTagsString);
+      if (extracted.length > 0) {
+        setNewStartYear(prev => prev > 0 ? prev : extracted[0]);
+        setNewEndYear(prev => prev > 0 ? prev : (extracted.length > 1 ? extracted[extracted.length - 1] : 0));
+      }
     } else if (tagModalTarget === "edit" || tagModalTarget === "supplement") {
       // 🔧 v3.5.6: 함수형 업데이트로 stale closure 방지
       updateEditItem(prev => prev ? {
@@ -33136,6 +33194,11 @@ function AppContent() {
         sub_genre: subJson,
         tag_data: tagDataJson, // 🏷️ v5.0
       } : null);
+      const extracted = extractYears(allTagsString);
+      if (extracted.length > 0) {
+        setEditStartYear(prev => prev > 0 ? prev : extracted[0]);
+        setEditEndYear(prev => prev > 0 ? prev : (extracted.length > 1 ? extracted[extracted.length - 1] : 0));
+      }
     } else if (tagModalTarget === "planned") {
       // 🆕 v3.4.3: 예정탭 편집에서 태그 선택
       // 🔧 v3.5.8: 함수형 업데이트로 stale closure 방지
@@ -39181,6 +39244,14 @@ async function buildUltraCompactBackup(novels, matches, coverImages = null) {
       opt.al = aliasesStr;
     }
     
+    // 🔧 v7.6.0 (포트 v3.12.0): 연재 시작/종료 연도 — 0 외 저장
+    const startYearVal = Number(n.start_year) || 0;
+    const endYearVal = Number(n.end_year) || 0;
+    if (startYearVal > 0) opt.sy = startYearVal;
+    if (endYearVal > 0) opt.ey = endYearVal;
+    // 🚫 v7.6.0 (포트 v3.16.0): 매칭 밴 — 활성 시만 저장
+    if (n.match_ban) opt.mb = 1;
+
     // 💬 v3.2.2: 인상깊은 문장 / 📷 v3.6.1: 이미지 인용구 base64 포함
     const memorableQuote = (n.memorable_quote || "").trim();
     if (memorableQuote) {
@@ -39234,7 +39305,7 @@ async function buildUltraCompactBackup(novels, matches, coverImages = null) {
   }
 
   return {
-    v: 11, // 📐 v3.2.0: tag_coordinate_systems 포함
+    v: 12, // 🔧 v7.6.0: start_year(sy)/end_year(ey)/match_ban(mb) 포함
     b: BASE_TIMESTAMP,
     T: tagDict,
     P: platDict,
@@ -39688,12 +39759,13 @@ function validateImportData(text) {
     return result;
   }
 
-  // v9/v10/v11 극한 압축 포맷 (v10: tag_data, aliases / v11: 좌표계 포함)
-  if (data && [9, 10, 11].includes(data.v) && Array.isArray(data.N) && typeof data.M === "string") {
+  // v9/v10/v11/v12 극한 압축 포맷 (v12: 연재 연도 + 매칭 밴 포함)
+  if (data && [9, 10, 11, 12].includes(data.v) && Array.isArray(data.N) && typeof data.M === "string") {
     result.valid = true;
     result.version = data.v;
-    result.format = data.v === 11 ? "v11 극한 압축 (좌표계 포함)" 
-                  : data.v === 10 ? "v10 극한 압축 (태그 v5.0)" 
+    result.format = data.v === 12 ? "v12 극한 압축 (연도/매칭 밴 포함)"
+                  : data.v === 11 ? "v11 극한 압축 (좌표계 포함)"
+                  : data.v === 10 ? "v10 극한 압축 (태그 v5.0)"
                   : "v9 극한 압축";
     result.novelCount = data.N.length;
     
@@ -39837,7 +39909,7 @@ async function importJSON() {
     // -------------------------------
     // ➊ v9/v10/v11 극한 압축 포맷 (v10: tag_data, aliases / v11: 좌표계 포함)
     // -------------------------------
-    if (data && [9, 10, 11].includes(data.v) && Array.isArray(data.N) && typeof data.M === "string") {
+    if (data && [9, 10, 11, 12].includes(data.v) && Array.isArray(data.N) && typeof data.M === "string") {
       const tagDict = Array.isArray(data.T) ? data.T : [];
       const platDict = Array.isArray(data.P) ? data.P : [];
       const authorDict = Array.isArray(data.A) ? data.A : [];
@@ -39939,6 +40011,11 @@ async function importJSON() {
                 // 🏷️ v5.0: tag_data, aliases
                 const tagData = opt.td || "";
                 const aliases = opt.al || "";
+                // 🔧 v7.6.0 (포트 v3.12.0): 연재 연도 (v11 이하는 opt.sy/ey 없음 → 0)
+                const startYearVal = Number(opt.sy) || 0;
+                const endYearVal = Number(opt.ey) || 0;
+                // 🚫 v7.6.0 (포트 v3.16.0): 매칭 밴 (v11 이하는 opt.mb 없음 → 0)
+                const matchBanVal = opt.mb ? 1 : 0;
                 // 💬 v3.2.2: 인상깊은 문장 / 📷 v3.6.1: 이미지 base64 복원
                 let memorableQuote = opt.mq || "";
                 if (opt.mqImg && typeof opt.mqImg === "object" && memorableQuote.startsWith("[")) {
@@ -39978,9 +40055,10 @@ async function importJSON() {
                 novelQueries.push({
                   // 🛠️ v7.3.3: read_count_baseline을 INSERT에 직접 포함 (이전: 별도 bulk UPDATE → 부분 실패 시
                   // baseline=0 잔존하여 첫 saveEdit에서 mass-fire). 백업 v9에 baseline 미포함이라 readCount 동일 값.
-                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,read_count_baseline)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, manualOrder, rereadCount, tagData, aliases, memorableQuote, readCount],
+                  // 🔧 v7.6.0: start_year/end_year/match_ban (v11 이하 백업은 기본값 0)
+                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,read_count_baseline,start_year,end_year,match_ban)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, manualOrder, rereadCount, tagData, aliases, memorableQuote, readCount, startYearVal, endYearVal, matchBanVal],
                 });
               }
 
