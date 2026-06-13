@@ -2,9 +2,35 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.6.0 (stranded 계보 통합 마이그레이션 — 19개 항목 완전 이식)            ║
+ * ║  버전: 7.6.1 (v7.6.0 포팅 사후 감사 — round-trip 누락 3건 복구)                 ║
  * ║  최종 수정: 2026-06-13                                                        ║
- * ║  총 라인 수: 약 55,500줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 56,100줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.6.1 포팅 사후 감사 — backup round-trip 누락 3건 복구 (2026-06-13)        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [Why] v7.6.0 stranded 계보(ASsb8, v3.9.2~v3.18.2 67커밋) 포팅을 전수 재대조.    ║
+ * ║ 19개 이식 항목 시그니처는 모두 정상이나, 백업 직렬화 경로에서 누락 3건 발견 —   ║
+ * ║ 모두 입력은 되지만 backup→restore 시 소실되는 silent 데이터 손실.              ║
+ * ║                                                                              ║
+ * ║ [Fix-1] 예정작 연재 연도(start_year/end_year) backup round-trip 누락:          ║
+ * ║ • 포트 #2(v3.12.3)가 컬럼+YearStepper UI+add/edit CRUD는 넣었으나 백업 양쪽 누락 ║
+ * ║ • buildUltraCompactBackup PL.map: row.sy/ey 추가 (0 외 저장)                    ║
+ * ║ • restore data.PL.map INSERT: start_year/end_year 컬럼+placeholder+params 추가  ║
+ * ║                                                                              ║
+ * ║ [Fix-2] convertNovelToPlanned(본작→예정 강등) 연재 연도 누락:                   ║
+ * ║ • INSERT에 연도 컬럼 부재 → 강등 시 소실. 컬럼+params 추가 (forward 경로는 정상) ║
+ * ║                                                                              ║
+ * ║ [Fix-3] v7.5 하이브리드 검증 증거 4종 backup 직렬화 누락:                       ║
+ * ║ • verification_wins/losses/count + conflict_hits — v7.5 헤더는 "novels 자동     ║
+ * ║   직렬화" 주장했으나 실제 opt 키 부재 → 복원 시 0 리셋 (matches로 재계산 불가)  ║
+ * ║ • 직렬화 opt.vw/vl/vc/ch + 복원 INSERT 컬럼/placeholder/params 추가             ║
+ * ║                                                                              ║
+ * ║ [검증] 3개 INSERT 모두 컬럼==placeholder==params (novels 41 / 예정·convert 44), ║
+ * ║   esbuild JSX 파싱 통과. 백업 v: 12 유지 (신규 키는 구버전 복원 시 0 폴백).     ║
+ * ║ [보류] 예정작 명대사·갤러리(v3.12.2) 미이식 — main의 경량 가등록 설계와 충돌,   ║
+ * ║   버그가 아닌 제품 결정이라 사용자 확인 후 별도 진행.                           ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11846,7 +11872,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.6.0";
+const APP_VERSION = "7.6.1";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -31735,8 +31761,9 @@ function AppContent() {
             gaiden_status, gaiden_read_count, gaiden_total_episodes,
             manual_tier, manual_order, reread_count,
             aliases, memorable_quote, awards,
-            read_count_updated_at, read_count_baseline
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            read_count_updated_at, read_count_baseline,
+            start_year, end_year
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           params: [
             novel.id, novel.title, novel.author || "",
             novel.tags || "", novel.platforms || "[]", novel.note || "",
@@ -31762,6 +31789,9 @@ function AppContent() {
             novel.aliases || "", novel.memorable_quote || "", novel.awards || "",
             Number(novel.read_count_updated_at) || 0,
             Number(novel.read_count_baseline) || 0,
+            // 🔧 v7.6.1: novel→planned 강등 시 연재 연도 보존 (누락 → round-trip 손실 수정)
+            Number(novel.start_year) || 0,
+            Number(novel.end_year) || 0,
           ],
         },
         // pending verification 큐 cancel — 가등록 작품은 verification 의미 없음
@@ -39529,6 +39559,12 @@ async function buildUltraCompactBackup(novels, matches, coverImages = null) {
     if (endYearVal > 0) opt.ey = endYearVal;
     // 🚫 v7.6.0 (포트 v3.16.0): 매칭 밴 — 활성 시만 저장
     if (n.match_ban) opt.mb = 1;
+    // 🤖 v7.6.1: 하이브리드 검증 증거 4종 — 0 외 저장 (v7.5 헤더는 "자동 직렬화" 주장했으나
+    //   실제 누락되어 있던 것 수정. matches로 재계산 불가한 denormalized 카운터라 복원 보존 필수)
+    if (Number(n.verification_wins) > 0) opt.vw = Number(n.verification_wins);
+    if (Number(n.verification_losses) > 0) opt.vl = Number(n.verification_losses);
+    if (Number(n.verification_count) > 0) opt.vc = Number(n.verification_count);
+    if (Number(n.conflict_hits) > 0) opt.ch = Number(n.conflict_hits);
 
     // 💬 v3.2.2: 인상깊은 문장 / 📷 v3.6.1: 이미지 인용구 base64 포함
     const memorableQuote = (n.memorable_quote || "").trim();
@@ -39935,6 +39971,9 @@ async function exportJSON() {
         if (p.awards) row.aw = p.awards;
         if (Number(p.read_count_updated_at)) row.ru = Number(p.read_count_updated_at);
         if (Number(p.read_count_baseline)) row.rb = Number(p.read_count_baseline);
+        // 🔧 v7.6.1: 예정작 연재 연도 백업 직렬화 (포트 v3.12.3에서 누락 → backup round-trip 손실 수정)
+        if (Number(p.start_year) > 0) row.sy = Number(p.start_year);
+        if (Number(p.end_year) > 0) row.ey = Number(p.end_year);
         return row;
       });
     }
@@ -40294,6 +40333,11 @@ async function importJSON() {
                 const endYearVal = Number(opt.ey) || 0;
                 // 🚫 v7.6.0 (포트 v3.16.0): 매칭 밴 (v11 이하는 opt.mb 없음 → 0)
                 const matchBanVal = opt.mb ? 1 : 0;
+                // 🤖 v7.6.1: 하이브리드 검증 증거 복원 (구버전 백업은 vw/vl/vc/ch 없음 → 0)
+                const verWins = Number(opt.vw) || 0;
+                const verLosses = Number(opt.vl) || 0;
+                const verCount = Number(opt.vc) || 0;
+                const conflictHits = Number(opt.ch) || 0;
                 // 💬 v3.2.2: 인상깊은 문장 / 📷 v3.6.1: 이미지 base64 복원
                 let memorableQuote = opt.mq || "";
                 if (opt.mqImg && typeof opt.mqImg === "object" && memorableQuote.startsWith("[")) {
@@ -40334,9 +40378,9 @@ async function importJSON() {
                   // 🛠️ v7.3.3: read_count_baseline을 INSERT에 직접 포함 (이전: 별도 bulk UPDATE → 부분 실패 시
                   // baseline=0 잔존하여 첫 saveEdit에서 mass-fire). 백업 v9에 baseline 미포함이라 readCount 동일 값.
                   // 🔧 v7.6.0: start_year/end_year/match_ban (v11 이하 백업은 기본값 0)
-                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,read_count_baseline,start_year,end_year,match_ban)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, manualOrder, rereadCount, tagData, aliases, memorableQuote, readCount, startYearVal, endYearVal, matchBanVal],
+                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,read_count_baseline,start_year,end_year,match_ban,verification_wins,verification_losses,verification_count,conflict_hits)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, manualOrder, rereadCount, tagData, aliases, memorableQuote, readCount, startYearVal, endYearVal, matchBanVal, verWins, verLosses, verCount, conflictHits],
                 });
               }
 
@@ -40581,8 +40625,8 @@ async function importJSON() {
                 // 🆕 v7.2.0: round-trip 보존 19개 신규 필드 + id 보존 (있으면 사용, 없으면 신규 uuid)
                 const plannedQueries = data.PL.map(p => ({
                   sql: `INSERT INTO planned_novels
-                    (id, title, author, tags, platforms, note, total_episodes, cover_image, link, work_status, major_genre, sub_genre, priority, created_at, expected_rating, expected_tier, interest_level, discovery_source, first_chapter_read, scheduled_start_date, similar_novels, why_interested, tag_data, status, pinned, read_count, rating, rd, wins, losses, match_count, gaiden_status, gaiden_read_count, gaiden_total_episodes, manual_tier, manual_order, reread_count, aliases, memorable_quote, awards, read_count_updated_at, read_count_baseline)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                    (id, title, author, tags, platforms, note, total_episodes, cover_image, link, work_status, major_genre, sub_genre, priority, created_at, expected_rating, expected_tier, interest_level, discovery_source, first_chapter_read, scheduled_start_date, similar_novels, why_interested, tag_data, status, pinned, read_count, rating, rd, wins, losses, match_count, gaiden_status, gaiden_read_count, gaiden_total_episodes, manual_tier, manual_order, reread_count, aliases, memorable_quote, awards, read_count_updated_at, read_count_baseline, start_year, end_year)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
                   params: [
                     p.id || uuid(),                                      // 🆕 v7.2.0: id 보존
                     p.t || "",
@@ -40628,6 +40672,9 @@ async function importJSON() {
                     p.aw || "",
                     Number(p.ru) || 0,
                     Number(p.rb) || 0,
+                    // 🔧 v7.6.1: 예정작 연재 연도 복원 (구버전 백업은 sy/ey 없음 → 0)
+                    Number(p.sy) || 0,
+                    Number(p.ey) || 0,
                   ],
                 }));
                 
