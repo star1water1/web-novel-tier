@@ -2,9 +2,33 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.10.0 (기능 전면검수 수정 — 모드 정합성·검증·정렬·데이터 위생)       ║
+ * ║  버전: 7.11.0 (검수 보류분 — 검증 K단계 재설계·태그 이름변경/병합·비율 에디터)║
  * ║  최종 수정: 2026-06-14                                                        ║
- * ║  총 라인 수: 약 57,490줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 57,780줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ ✅ v7.11.0 검수 보류분 구현 — 검증 K단계·태그 이름변경/병합·비율 에디터 (2026-06-14)║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ v7.10.0 검수에서 '별도 작업'으로 미뤘던 3건을 구현.                            ║
+ * ║ [#1 하이브리드 검증 K단계 재설계] 변곡점 발견 후 K=2 추가검증이 '더 먼 후보'를  ║
+ * ║   물어 computeNewPosition(passed·blocker만 사용)에 전혀 반영 안 되던 무의미     ║
+ * ║   문제 → K단계에 'blocker(경계 작품) 재대결'로 변경. computeNewPosition이 재대결 ║
+ * ║   과반으로 경계 확정/통과를 판정: 확정 시 passed~blocker 사이, 의심작이 재대결   ║
+ * ║   에서 blocker를 넘으면 blocker 자리로 이동(blockerId=null로 수문장 오기록 방지).║
+ * ║   UI도 '경계 작품과 재대결로 확인' 안내로 변경.                                ║
+ * ║ [#3 태그 이름변경/병합] renameTagGlobally 신설 — 전 작품(novels·planned tags/   ║
+ * ║   tag_data/major·sub) + 레지스트리 + pinned/hidden/sentiment/attributes +      ║
+ * ║   tag_relations + coordinateSystems를 새 이름으로 일괄 이전(병합 시 중복 제거). ║
+ * ║   새 이름이 이미 있으면 자연 병합. TagManager 액션시트에 '✏️ 이름 변경/병합'    ║
+ * ║   입력칸 추가(기존엔 삭제 후 재태깅뿐이었음). 학습 패턴은 정리(재학습).         ║
+ * ║ [#4 비율(ratio) % 에디터] 티어 에디터에 비율(%) 입력칸 추가(ratio 모드) + 모드  ║
+ * ║   진입 시 ratio 백필(없으면 균등 부여 — 이전엔 computeRatioTierMap 균등 폴백으로 ║
+ * ║   조용히 떨어져 프리셋 분포와 달라짐). threshold는 match/hybrid만 노출(ratio는  ║
+ * ║   비율 사용), 신규 티어에도 ratio 기본값, 정규화 안내 문구.                     ║
+ * ║ [검증] esbuild JSX 파싱 통과.                                                  ║
+ * ║ [관찰] TagEditModal(55627)은 tagEditModalOpen이 항상 false로 도달 불가한 죽은   ║
+ * ║   모달 — 이번 rename UI는 실제 동작하는 TagManager 액션시트에 추가함.           ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12432,6 +12456,19 @@ function compareVersions(a, b) {
 
 const CHANGELOG_DATA = [
   {
+    version: "7.11.0", date: "2026-06-14",
+    title: "🆕 태그 이름변경/병합 · 비율 티어 편집 · 검증 정밀화",
+    highlights: [
+      { type: "new", text: "✏️ 태그 이름변경/병합이 생겼어요. 태그 관리에서 태그를 누르면 '이름 변경/병합' 칸이 있어, 오타나 같은 뜻 태그를 새 이름으로 한 번에 통합할 수 있어요. (이전엔 삭제 후 다시 태깅뿐) 작품·고정·숨김·감정·관계·좌표 설정까지 함께 옮겨집니다." },
+      { type: "new", text: "📊 '비율 기반' 티어 모드에서 각 티어의 비율(%)을 직접 편집할 수 있어요. (이전엔 비율을 못 바꿔 균등 분배로만 동작) 모드를 켜면 기본 비율이 자동으로 채워집니다." },
+      { type: "improve", text: "🤖 하이브리드 '자리 점검'에서 변곡점을 찾은 뒤의 추가 확인이, 엉뚱한 먼 작품이 아니라 '경계가 된 그 작품'과 다시 비교하도록 바뀌어 자리 결정이 더 정확해졌어요." },
+    ],
+    details: [
+      { type: "improve", text: "검증 K단계 재설계: 변곡점 이후 추가 매칭이 blocker(경계 작품) 재대결로 변경되고, 그 결과(과반)로 경계 확정/통과를 판정해 새 자리에 실제 반영" },
+      { type: "fix", text: "비율 모드 진입 시 ratio 필드가 없으면 균등 폴백으로 조용히 떨어지던 것 → 진입 시 기본 비율 백필 + 에디터에서 편집 가능" },
+    ],
+  },
+  {
     version: "7.10.0", date: "2026-06-14",
     title: "🔧 기능 전면검수 수정 — 모드별 동작·정렬·자동매칭 정합성",
     highlights: [
@@ -19027,6 +19064,7 @@ const TagManagerModal = memo(({
   onDeleteTag,
   onBatchDeleteTags, // 🆕 일괄 레지스트리 삭제 (배치 최적화)
   onDeleteGlobally,
+  onRenameGlobally, // 🆕 v7.10.0: 태그 이름변경/병합
   onBatchDeleteGlobally, // 🆕 일괄 전체 삭제
   onAddCustomTag,
   onChangeSentiment,  // 🆕 속성 변경 콜백
@@ -19061,6 +19099,8 @@ const TagManagerModal = memo(({
   const [selectedTag, setSelectedTag] = useState(null); // { tag, type }
   const [actionModalOpen, setActionModalOpen] = useState(false);
   const [newTagInput, setNewTagInput] = useState("");
+  const [renameInput, setRenameInput] = useState(""); // 🆕 v7.10.0: 이름변경/병합 입력
+  useEffect(() => { setRenameInput(""); }, [selectedTag]); // 대상 태그 바뀌면 입력 초기화
   const [addTagCategory, setAddTagCategory] = useState(null); // 🆕 태그 추가 시 카테고리 선택
   const [showCategoryPicker, setShowCategoryPicker] = useState(false); // 🆕 카테고리 피커 표시
   const [categoryEditMode, setCategoryEditMode] = useState(false); // 🆕 카테고리 관리 모드
@@ -20927,6 +20967,37 @@ const TagManagerModal = memo(({
                         )}
                       </View>
                     </TouchableOpacity>
+
+                    {/* 🆕 v7.10.0: 이름 변경 / 병합 */}
+                    {onRenameGlobally && (
+                      <View style={{ backgroundColor: isDark ? "#1f2937" : "#f8fafc", padding: 12, borderRadius: 12, gap: 8, marginBottom: 4 }}>
+                        <Text style={{ fontWeight: "700", color: C.text }}>✏️ 이름 변경 / 병합</Text>
+                        <Text style={{ fontSize: 11, color: C.sub }}>
+                          모든 작품·설정에서 "{selectedTag.tag}"을(를) 새 이름으로 바꿔요. 새 이름이 이미 있으면 합쳐집니다(병합).
+                        </Text>
+                        <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+                          <TextInput
+                            value={renameInput}
+                            onChangeText={setRenameInput}
+                            placeholder="새 태그 이름"
+                            placeholderTextColor={C.sub}
+                            style={{ flex: 1, backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, color: C.text }}
+                          />
+                          <TouchableOpacity
+                            onPress={() => {
+                              const nv = (renameInput || "").trim();
+                              if (!nv || isSameTag(nv, selectedTag.tag)) return;
+                              onRenameGlobally(selectedTag.tag, nv);
+                              setRenameInput("");
+                              setActionModalOpen(false);
+                            }}
+                            style={{ backgroundColor: C.primary, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 8 }}
+                          >
+                            <Text style={{ color: "#fff", fontWeight: "700" }}>변경</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    )}
 
                     {/* 전체에서 삭제 (모든 태그) */}
                     <TouchableOpacity
@@ -27045,6 +27116,22 @@ function computeNewPosition(suspicionNovel, candidates, responses, suspicionType
   const passedCand = candidates.find(c => c.id === passedResp.candidateId);
   if (!passedCand) {
     return { tier: suspicionNovel.manual_tier, order: ownOrder, blockerId: blockerCand.id, action: "no_change" };
+  }
+
+  // 🔧 v7.10.0: K단계(blocker 재대결) 결과로 경계 확정 여부 판정. infIdx 이후 응답은 모두 blocker와의
+  //   재대결(respondVerificationMatch가 K단계에 blocker를 재present). 과반이 경계를 확인하면 아래의
+  //   passed~blocker 사이 배치, 아니면(의심작이 재대결에서 blocker를 넘어섬) blocker 자리로 이동시켜
+  //   K 응답이 실제 자리에 반영되도록 한다(이전엔 변곡점 이후 K 응답이 자리 산출에서 무시됐음).
+  const blockerResults = responses.slice(infIdx).filter(r => r.candidateId === blockerCand.id);
+  const confirms = blockerResults.filter(r => suspicionType === "underrated" ? !r.suspicionWon : r.suspicionWon).length;
+  const boundaryConfirmed = confirms * 2 >= blockerResults.length; // 동률 포함 과반이 경계 확인
+  if (!boundaryConfirmed) {
+    // 재대결에서 의심작이 blocker를 넘어섬 → blocker가 실제로 막지 못함. blocker 자리(경계)로 이동.
+    //   막지 못했으므로 수문장으로 기록하지 않음(blockerId=null).
+    const bOrder = Number(blockerCand.manual_order) || 0;
+    return suspicionType === "underrated"
+      ? { tier: blockerCand.manual_tier, order: bOrder - 25, blockerId: null, action: "moved" }
+      : { tier: blockerCand.manual_tier, order: bOrder + 25, blockerId: null, action: "moved" };
   }
 
   // 두 후보 사이 — 같은 tier면 단순 사이값, 다른 tier면 passed의 tier 끝/시작
@@ -35432,6 +35519,187 @@ function AppContent() {
     );
   }
 
+  // 🆕 v7.10.0: 태그 이름변경 / 병합 — 전 작품 + 메타데이터 전반을 새 이름으로 이전.
+  //   새 이름(to)이 이미 존재하면 자연스럽게 병합(중복 제거). delete+재태깅 없이 통합 가능.
+  //   주의: 학습 패턴(preference_patterns)은 병합 충돌/유령 방지를 위해 정리(재학습됨).
+  async function renameTagGlobally(oldTag, newTag) {
+    const from = (oldTag || "").trim();
+    const to = (newTag || "").trim();
+    if (!from || !to) { Alert.alert("이름 변경", "새 태그 이름을 입력하세요."); return; }
+    if (isSameTag(from, to)) { Alert.alert("이름 변경", "기존 이름과 동일합니다."); return; }
+    setIsLoading(true);
+    try {
+      // 1) novels + planned_novels 재작성 (정확 태그만 치환 + 병합 시 중복 제거)
+      let affected = 0;
+      for (const tableName of ["novels", "planned_novels"]) {
+        const rows = await all(`SELECT id, tags, tag_data, major_genre, sub_genre FROM ${tableName}`);
+        const updates = [];
+        for (const row of (rows || [])) {
+          let changed = false;
+          let { tags, tag_data, major_genre, sub_genre } = row;
+          // tags (CSV) — 치환 후 dedupe(isSameTag)
+          if (tags && tags.split(",").some(t => isSameTag(t.trim(), from))) {
+            const arr = tags.split(",").map(t => t.trim()).filter(Boolean);
+            const out = [];
+            for (const t of arr) {
+              const v = isSameTag(t, from) ? to : t;
+              if (!out.some(x => isSameTag(x, v))) out.push(v);
+            }
+            const ns = out.join(", ");
+            if (ns !== tags) { tags = ns; changed = true; }
+          }
+          // tag_data (JSON [{tag,intensity}]) — 치환 후 동일 태그 병합(강도는 최댓값)
+          if (tag_data) {
+            try {
+              const parsed = JSON.parse(tag_data);
+              if (Array.isArray(parsed)) {
+                let td = false;
+                const merged = [];
+                for (const item of parsed) {
+                  if (!item || item.tag == null) { merged.push(item); continue; }
+                  const v = isSameTag(item.tag, from) ? to : item.tag;
+                  if (v !== item.tag) td = true;
+                  const ex = merged.find(m => m && isSameTag(m.tag, v));
+                  if (ex) { td = true; if ((Number(item.intensity) || 0) > (Number(ex.intensity) || 0)) ex.intensity = item.intensity; }
+                  else merged.push({ ...item, tag: v });
+                }
+                if (td) { tag_data = JSON.stringify(merged); changed = true; }
+              }
+            } catch {}
+          }
+          // major_genre / sub_genre (JSON []) — 치환 + dedupe
+          for (const fld of ["major_genre", "sub_genre"]) {
+            const cur = fld === "major_genre" ? major_genre : sub_genre;
+            if (!cur) continue;
+            try {
+              const arr = JSON.parse(cur);
+              if (Array.isArray(arr)) {
+                let ch = false;
+                const out = [];
+                for (const g of arr) {
+                  const v = isSameTag(g, from) ? to : g;
+                  if (v !== g) ch = true;
+                  if (!out.some(x => isSameTag(x, v))) out.push(v); else ch = true;
+                }
+                if (ch) {
+                  const js = JSON.stringify(out);
+                  if (fld === "major_genre") major_genre = js; else sub_genre = js;
+                  changed = true;
+                }
+              }
+            } catch {}
+          }
+          if (changed) updates.push({ sql: `UPDATE ${tableName} SET tags=?, tag_data=?, major_genre=?, sub_genre=? WHERE id=?`, params: [tags, tag_data, major_genre, sub_genre, row.id] });
+        }
+        for (let i = 0; i < updates.length; i += 50) await execBatch(updates.slice(i, i + 50));
+        affected += updates.length;
+      }
+
+      // 2) 레지스트리 rename(+dedupe)
+      updateTagRegistryFn(prev => {
+        const nr = { ...prev };
+        const ren = (list) => {
+          if (!Array.isArray(list)) return list;
+          const out = [];
+          for (const t of list) {
+            const v = isSameTag(t, from) ? to : t;
+            if (!out.some(x => isSameTag(x, v))) out.push(v);
+          }
+          return out;
+        };
+        nr.majorGenres = ren(nr.majorGenres);
+        nr.subGenres = ren(nr.subGenres);
+        const ng = {};
+        for (const [cat, tags] of Object.entries(nr.generalTags || {})) ng[cat] = ren(tags);
+        nr.generalTags = ng;
+        return nr;
+      });
+
+      // 3) 메타데이터 이전: pinned/hidden(배열), sentiment/attributes(객체 키)
+      const renameInArray = (prev) => {
+        if (!prev.some(t => isSameTag(t, from))) return null;
+        const out = [];
+        for (const t of prev) { const v = isSameTag(t, from) ? to : t; if (!out.some(x => isSameTag(x, v))) out.push(v); }
+        return out;
+      };
+      setPinnedTags(prev => { const n = renameInArray(prev); if (!n) return prev; safeDefer(() => deferSetAppMeta("pinned_tags", n)); return n; });
+      setHiddenTags(prev => { const n = renameInArray(prev); if (!n) return prev; safeDefer(() => deferSetAppMeta("hidden_tags", n)); return n; });
+      const transferKey = (setter, metaKey) => setter(prev => {
+        const mk = Object.keys(prev).find(k => isSameTag(k, from));
+        if (!mk) return prev;
+        const next = { ...prev };
+        const tk = Object.keys(next).find(k => isSameTag(k, to));
+        if (!tk) next[to] = next[mk]; // 대상 없으면 이전, 있으면 대상 유지(병합)
+        delete next[mk];
+        safeDefer(() => deferSetAppMeta(metaKey, next));
+        return next;
+      });
+      transferKey(setTagSentiments, "tag_sentiments");
+      transferKey(setTagAttributes, "tag_attributes");
+
+      // 4) tag_relations: from 키를 to로 rename(그룹 내 dedupe)
+      setTagRelations(prev => {
+        if (!prev || !prev.tagToGroup) return prev;
+        const mk = Object.keys(prev.tagToGroup).find(k => isSameTag(k, from));
+        if (!mk) return prev;
+        const gid = prev.tagToGroup[mk];
+        const grp = prev.groups?.[gid];
+        const newGroups = { ...prev.groups };
+        const newT2G = { ...prev.tagToGroup };
+        delete newT2G[mk];
+        if (grp) {
+          const newTags = [];
+          for (const t of (grp.tags || [])) { const v = isSameTag(t, from) ? to : t; if (!newTags.some(x => isSameTag(x, v))) newTags.push(v); }
+          newGroups[gid] = { ...grp, tags: newTags };
+          if (!Object.keys(newT2G).some(k => isSameTag(k, to))) newT2G[to] = gid;
+        }
+        const updated = { groups: newGroups, tagToGroup: newT2G };
+        safeDefer(() => deferSetAppMeta("tag_relations", updated));
+        return updated;
+      });
+
+      // 5) coordinateSystems: from 키를 to로 rename
+      setCoordinateSystems(prev => {
+        if (!prev) return prev;
+        let changed = false;
+        const next = {};
+        for (const [csId, cs] of Object.entries(prev)) {
+          if (cs.tags) {
+            const mk = Object.keys(cs.tags).find(k => isSameTag(k, from));
+            if (mk) {
+              changed = true;
+              const nt = { ...cs.tags };
+              const val = nt[mk]; delete nt[mk];
+              const tk = Object.keys(nt).find(k => isSameTag(k, to));
+              if (!tk) nt[to] = val; // 대상 없으면 이전(있으면 대상 유지)
+              next[csId] = { ...cs, tags: nt };
+              continue;
+            }
+          }
+          next[csId] = cs;
+        }
+        if (!changed) return prev;
+        safeDefer(() => saveTagCoordinateSystems(next));
+        return next;
+      });
+
+      // 6) preference_patterns: from의 학습 패턴 정리(병합 충돌/유령 방지 — 재학습됨)
+      try {
+        const _nf = normalizeTag(from);
+        await exec("DELETE FROM preference_patterns WHERE (category IN ('tag_power','tag_aversion') AND pattern_key IN (?, ?)) OR (category='genre_affinity' AND pattern_key IN (?, ?));",
+          [`tag:${from}`, `tag:${_nf}`, `genre:${from}`, `genre:${_nf}`]);
+      } catch (e) { console.warn('[renameTag] pattern cleanup:', e?.message); }
+
+      await loadList(undefined, undefined, "tag_rename");
+      Alert.alert("완료", `"${from}" → "${to}" 이름 변경/병합 완료 (${affected}개 작품 수정).\n\n관계·좌표 설정도 함께 이전됐어요.`);
+    } catch (e) {
+      console.warn('[renameTag] failed:', e?.message);
+      Alert.alert("오류", "태그 이름 변경 중 오류가 발생했습니다.\n\n" + (e?.message || ""));
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
   // 전체 범위에서 태그 삭제 (작품 데이터에서도 제거)
   async function deleteTagGlobally(tag) {
     Alert.alert(
@@ -38263,8 +38531,11 @@ function AppContent() {
       // 다음 큐 항목 자동 시작
       startVerificationSession();
     } else {
-      // 다음 후보로 이동
-      const nextIdx = currentIdx + 1;
+      // 🔧 v7.10.0: 변곡점 발견 후 K단계에서는 더 먼 후보가 아니라 blocker(변곡점 후보)를 재대결시켜
+      //   경계를 확인. 이전엔 currentIdx+1로 더 먼 후보를 물었으나 그 응답이 computeNewPosition에
+      //   전혀 반영되지 않아 K=2 추가 질문이 무의미했음. blocker 재대결 결과는 자리 산출에 반영됨.
+      const infIdxNow = findInflectionPoint(newResponses, suspicionType);
+      const nextIdx = infIdxNow > 0 ? infIdxNow : currentIdx + 1;
       if (nextIdx >= candidates.length) {
         // 후보 풀 소진 → 강제 finalize
         try {
@@ -45019,7 +45290,7 @@ async function importJSON() {
                   return (
                     <View style={{ backgroundColor: isDark ? "#422006" : "#fef3c7", padding: 8, borderRadius: 8, marginBottom: 10 }}>
                       <Text style={{ color: isDark ? "#fcd34d" : "#92400e", fontSize: 12, fontWeight: "700" }}>
-                        🔍 변곡점 발견 (#{infIdx + 1}) — 추가 검증 {remaining}회
+                        🔍 변곡점 발견 (#{infIdx + 1}) — 경계 작품과 재대결로 확인 ({remaining}회 남음)
                       </Text>
                     </View>
                   );
@@ -50170,6 +50441,17 @@ async function importJSON() {
                             }
                             const newConfig = { ...oldConfig, mode: m.key };
                             if (m.key === "manual") newConfig.allowRegistrationTier = true;
+                            // 🔧 v7.10.0: ratio 모드 진입 시 ratio 필드 백필 — 없으면 computeRatioTierMap이
+                            //   균등 폴백으로 조용히 떨어져 프리셋(10/15/25…)과 결과가 달라짐. 기존 ratio가
+                            //   전무하면 균등(합 100) 부여(에디터에서 편집 가능). 일부라도 있으면 보존.
+                            if (m.key === "ratio") {
+                              const rts = newConfig.tiers || [];
+                              if (rts.length > 0 && !rts.some(t => Number(t.ratio) > 0)) {
+                                const even = Math.floor(100 / rts.length);
+                                const rem = 100 - even * rts.length;
+                                newConfig.tiers = rts.map((t, i) => ({ ...t, ratio: even + (i < rem ? 1 : 0) }));
+                              }
+                            }
                             // 🆕 v6.1: manual→match 복귀 시 ELO 재계산
                             if (m.key === "match" && oldConfig.mode === "manual") {
                               await rebuildAllFromMatches(tagAttributes);
@@ -50365,8 +50647,8 @@ async function importJSON() {
                               color: C.text, fontWeight: "700",
                             }}
                           />
-                          {/* threshold (match/hybrid 모드에서만) */}
-                          {modeForUI !== "manual" && (
+                          {/* threshold (match/hybrid 모드에서만 — ratio는 아래 비율 입력 사용) */}
+                          {(modeForUI === "match" || modeForUI === "hybrid") && (
                             <TextInput
                               value={String(t.threshold)}
                               onChangeText={(v) => {
@@ -50383,6 +50665,28 @@ async function importJSON() {
                                 color: C.text, fontSize: 12,
                               }}
                             />
+                          )}
+                          {/* 🔧 v7.10.0: 비율(%) 입력 (ratio 모드에서만) */}
+                          {modeForUI === "ratio" && (
+                            <View style={{ flexDirection: "row", alignItems: "center" }}>
+                              <TextInput
+                                value={String(Number(t.ratio) || 0)}
+                                onChangeText={(v) => {
+                                  const newTiers = [...tiersForUI];
+                                  newTiers[idx] = { ...newTiers[idx], ratio: Math.max(0, parseInt(v) || 0) };
+                                  saveAppSettings({ tierSystemConfig: { ...tsc, tiers: newTiers } });
+                                }}
+                                keyboardType="number-pad"
+                                placeholder="비율"
+                                placeholderTextColor={C.sub}
+                                style={{
+                                  backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8,
+                                  paddingHorizontal: 8, paddingVertical: 4, width: 48, textAlign: "center",
+                                  color: C.text, fontSize: 12,
+                                }}
+                              />
+                              <Text style={{ color: C.sub, fontSize: 11, marginLeft: 2 }}>%</Text>
+                            </View>
                           )}
                           {/* gated 토글 (match 모드에서만) */}
                           {modeForUI === "match" && (
@@ -50444,7 +50748,10 @@ async function importJSON() {
                             const newKey = "T_" + Date.now().toString(36);
                             const newLabel = "T" + tiersForUI.length;
                             const newTiers = [...tiersForUI];
-                            newTiers.splice(newTiers.length - 1, 0, { key: newKey, label: newLabel, color: nextColor, threshold: 0, gated: false });
+                            // 🔧 v7.10.0: ratio 모드면 신규 티어에도 기본 비율 부여(미부여 시 비중 0이 됨)
+                            const newTier = { key: newKey, label: newLabel, color: nextColor, threshold: 0, gated: false };
+                            if (modeForUI === "ratio") newTier.ratio = 10;
+                            newTiers.splice(newTiers.length - 1, 0, newTier);
                             saveAppSettings({ tierSystemConfig: { ...tsc, tiers: newTiers } });
                           }}
                           style={{ backgroundColor: C.chip, padding: 10, borderRadius: 8, alignItems: "center", marginTop: 4 }}
@@ -50456,6 +50763,12 @@ async function importJSON() {
                   );
                 })()}
               </View>
+              {/* 🔧 v7.10.0: ratio 모드 비율 안내 */}
+              {globalTierConfig.mode === "ratio" && (
+                <Text style={{ color: C.sub, fontSize: 11, marginBottom: 12 }}>
+                  💡 비율(%)은 상대값으로 정규화됩니다. 작품을 점수순으로 정렬해 각 티어 비중만큼 나눠 배정해요.
+                </Text>
+              )}
 
               {/* 등록 옵션 */}
               {globalTierConfig.mode !== "manual" && (
@@ -56942,6 +57255,7 @@ async function importJSON() {
           Alert.alert("완료", `${allTags.length}개 태그를 삭제했습니다.`);
         }}
         onDeleteGlobally={deleteTagGlobally}
+        onRenameGlobally={renameTagGlobally}
         onBatchDeleteGlobally={batchDeleteTagsGlobally}
         onAddCustomTag={async (tag, category) => {
           // 🔧 전체 레지스트리 + 기본 태그에서 중복 체크 (카테고리별 구체적 안내)
