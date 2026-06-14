@@ -2,9 +2,30 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.11.0 (검수 보류분 — 검증 K단계 재설계·태그 이름변경/병합·비율 에디터)║
+ * ║  버전: 7.12.0 (검수 잔여 — 좌표 Y축·명대사 고아·예정작 명대사·태그 검색/정규화)║
  * ║  최종 수정: 2026-06-14                                                        ║
- * ║  총 라인 수: 약 57,780줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 57,880줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ ✅ v7.12.0 검수 잔여분 구현 — 좌표 Y축·명대사 고아·예정작 명대사·검색 (2026-06-14)║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ v7.10.0 검수의 남은 보류 5건 구현.                                            ║
+ * ║ [#2 좌표계 Y축 2D 분석] coordinatePreferenceAnalysis가 X축만 집계해 2D 좌표계의 ║
+ * ║   Y를 통째로 버리던 것 → Y 누적/선호/고평점편향 추가, 취향분석 UI에 Y축 선호    ║
+ * ║   블록(↕ 라벨+선호+편향) 표시. yAxis 있고 표본≥3일 때만.                        ║
+ * ║ [#5 명대사 배경이미지 교체 고아] QuoteStyleEditor 픽커가 '변경' 시 이전 파일을  ║
+ * ║   어떤 ref에도 안 넣어 영구 고아로 남던 것 → 교체 시 onClearBgImage(prev) 호출  ║
+ * ║   (등록/프리셋=즉시삭제, 편집/예정/빠른수정=저장 시 삭제로 컨텍스트별 정리 재사용).║
+ * ║ [#6a 예정작 명대사 표시] quotesCards가 본작만 순회해 예정 편집기로 꾸민 명대사가 ║
+ * ║   안 보이던 것 → 예정작도 포함(tier "예정"). 표지탭은 openEditByNovelId가 이미  ║
+ * ║   예정작 처리, 명언 원격수정(quick-edit)은 isPlanned로 planned_novels 분기.     ║
+ * ║ [#6b 태그 검색 과매칭] matchTagWithAlias가 substring(.includes)이라 "판타지"가  ║
+ * ║   "현대판타지"까지 매칭(제외 필터에서 과도 제외)하고 has()는 대문자 태그서 죽던 ║
+ * ║   것 → 정규화/별칭/그룹 변형에 대한 대소문자 무시 '정확' 매칭으로 변경.         ║
+ * ║ [#6c 저장계층 정규화] usedTagsSet이 raw만 담아 별칭 저장 태그가 "미사용" 오판→  ║
+ * ║   일괄삭제 위험이던 것 → 정규화형도 함께 담아 canonical 조회 성공.              ║
+ * ║ [검증] esbuild JSX 파싱 통과.                                                  ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11895,7 +11916,14 @@ const QuoteStyleEditor = memo(({ style, text, onChange, onPickBgImage, onClearBg
           onPress={async () => {
             if (busy || !onPickBgImage) return;
             const uri = await onPickBgImage();
-            if (uri) set({ bgImage: uri });
+            if (uri) {
+              // 🔧 v7.12.0: 교체 시 이전 배경이미지 파일 정리 등록 — 이전엔 '변경'으로 새 이미지를
+              //   고르면 옛 파일이 어떤 추적 ref에도 안 들어가 영구 고아로 남았음. onClearBgImage가
+              //   컨텍스트별로 올바르게 처리(등록/프리셋=즉시삭제, 편집/예정/빠른수정=저장 시 삭제).
+              const prev = s.bgImage;
+              if (prev && prev !== uri && onClearBgImage) onClearBgImage(prev);
+              set({ bgImage: uri });
+            }
           }}
           style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: C.chip, opacity: busy ? 0.5 : 1 }}
         >
@@ -12455,6 +12483,19 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.12.0", date: "2026-06-14",
+    title: "🔭 좌표계 Y축 분석 · 예정작 명대사 표시 · 태그 검색 정확도",
+    highlights: [
+      { type: "new", text: "💬 예정작에 적어둔 명대사도 이제 명언 쇼츠에 함께 나와요. (이전엔 예정 편집 화면에서만 보였어요) 카드를 누르면 예정작 편집이 열리고, 꾸미기 수정도 됩니다." },
+      { type: "improve", text: "🔭 취향분석 좌표계가 가로축(X)뿐 아니라 세로축(Y)도 분석해요. 2D로 만든 좌표계의 절반(Y)이 분석에서 버려지던 문제를 보강했습니다." },
+      { type: "fix", text: "🔍 태그 검색에서 '판타지'가 '현대판타지·다크판타지'까지 잡히던(특히 제외 필터에서 과하게 빠지던) 문제를 잡아, 선택한 태그와 정확히 일치하는 작품만 걸러요." },
+    ],
+    details: [
+      { type: "fix", text: "명대사 배경이미지를 '변경'할 때 이전 이미지 파일이 안 지워지고 쌓이던 문제 수정 (교체 시 이전 파일 정리)" },
+      { type: "fix", text: "태그 사용량 집계에서 별칭으로 저장된 태그가 '미사용'으로 잘못 잡혀 실수로 삭제될 위험 보강 (정규화형도 사용중으로 인식)" },
+    ],
+  },
   {
     version: "7.11.0", date: "2026-06-14",
     title: "🆕 태그 이름변경/병합 · 비율 티어 편집 · 검증 정밀화",
@@ -24112,7 +24153,7 @@ const TasteAnalysisScreen = memo(({
         const allTags = [...novelTags, ...majorGenres, ...subGenres];
         
         // 이 작품이 좌표계에 해당하는 태그를 가지고 있는지
-        let sumPosX = 0, count = 0;
+        let sumPosX = 0, sumPosY = 0, count = 0, countY = 0;
         for (const tag of allTags) {
           const tagData = sys.tags[tag];
           // tagData는 {x, y} 객체 또는 숫자일 수 있음
@@ -24122,9 +24163,14 @@ const TasteAnalysisScreen = memo(({
               sumPosX += xVal;
               count++;
             }
+            // 🆕 v7.12.0: Y축도 집계 (2D 좌표계 — 이전엔 X만 읽어 Y 데이터 절반을 폐기했음)
+            if (typeof tagData === "object" && tagData.y != null && !isNaN(Number(tagData.y))) {
+              sumPosY += Number(tagData.y);
+              countY++;
+            }
           }
         }
-        
+
         if (count > 0) {
           const avgPos = sumPosX / count; // 0~1 범위
           novelPositions.push({
@@ -24133,6 +24179,7 @@ const TasteAnalysisScreen = memo(({
             // 🔧 v7.10.0: raw ELO 대신 mode-aware prefScore (hybrid에서 1500 고정으로 분석이 죽던 문제)
             rating: getPrefScore(novel, globalTierConfig),
             position: avgPos * 100, // 0~100으로 변환
+            positionY: countY > 0 ? (sumPosY / countY) * 100 : null, // 🆕 v7.12.0: Y 위치(없으면 null)
             tagCount: count,
           });
         }
@@ -24180,7 +24227,22 @@ const TasteAnalysisScreen = memo(({
         // 라벨 추출 (xAxis 또는 기존 leftLabel/rightLabel)
         const leftLabel = sys.xAxis?.negative || sys.leftLabel || "왼쪽";
         const rightLabel = sys.xAxis?.positive || sys.rightLabel || "오른쪽";
-        
+
+        // 🆕 v7.12.0: Y축 집계 — 그리드 뷰는 2D인데 분석은 X만 써서 Y를 통째로 버리던 것 보강.
+        const bottomLabel = sys.yAxis?.negative || "아래";
+        const topLabel = sys.yAxis?.positive || "위";
+        const yNovels = novelPositions.filter(n => n.positionY != null);
+        const hasY = !!sys.yAxis && yNovels.length >= 3;
+        let avgPositionY = null, highRatedBiasY = 0, preferenceLabelY = null;
+        if (hasY) {
+          avgPositionY = yNovels.reduce((s, n) => s + n.positionY, 0) / yNovels.length;
+          const avgScoreY = yNovels.reduce((s, n) => s + n.rating, 0) / yNovels.length;
+          const hiY = yNovels.filter(n => n.rating > avgScoreY);
+          const hiAvgY = hiY.length > 0 ? hiY.reduce((s, n) => s + n.positionY, 0) / hiY.length : avgPositionY;
+          highRatedBiasY = hiAvgY - avgPositionY;
+          preferenceLabelY = avgPositionY < 35 ? `${bottomLabel} 선호` : avgPositionY > 65 ? `${topLabel} 선호` : "중간 성향";
+        }
+
         results.push({
           id: sysId,
           name: sys.name || sysId,
@@ -24192,11 +24254,13 @@ const TasteAnalysisScreen = memo(({
           segments,
           preferredSegment: preferredSegment?.range || null,
           // 선호 성향 해석
-          preferenceLabel: avgPosition < 35 ? `${leftLabel} 선호` 
+          preferenceLabel: avgPosition < 35 ? `${leftLabel} 선호`
                          : avgPosition > 65 ? `${rightLabel} 선호`
                          : "중간 성향",
           // 고평점 작품과 전체 평균의 차이
           highRatedBias: highRatedAvgPos - avgPosition,
+          // 🆕 v7.12.0: Y축 선호 (2D)
+          hasY, bottomLabel, topLabel, avgPositionY, preferenceLabelY, highRatedBiasY,
         });
       }
     }
@@ -25023,11 +25087,28 @@ const TasteAnalysisScreen = memo(({
                   {/* 고평점 편향 표시 */}
                   {Math.abs(coord.highRatedBias) > 10 && (
                     <Text style={{ color: C.sub, fontSize: 10, marginTop: 6, fontStyle: "italic" }}>
-                      💡 고평점 작품은 {coord.highRatedBias > 0 ? coord.rightLabel : coord.leftLabel} 쪽으로 
+                      💡 고평점 작품은 {coord.highRatedBias > 0 ? coord.rightLabel : coord.leftLabel} 쪽으로
                       {Math.abs(coord.highRatedBias).toFixed(0)}% 더 치우침
                     </Text>
                   )}
-                  
+
+                  {/* 🆕 v7.12.0: Y축 선호 (2D 좌표계 — 그리드는 2D인데 분석이 X만 보던 것 보강) */}
+                  {coord.hasY && (
+                    <View style={{ marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: C.line }}>
+                      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                        <Text style={{ color: C.sub, fontSize: 11 }}>↕ {coord.bottomLabel} ↔ {coord.topLabel}</Text>
+                        <View style={{ backgroundColor: C.primary + "20", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}>
+                          <Text style={{ color: C.primary, fontSize: 11, fontWeight: "600" }}>{coord.preferenceLabelY}</Text>
+                        </View>
+                      </View>
+                      {Math.abs(coord.highRatedBiasY) > 10 && (
+                        <Text style={{ color: C.sub, fontSize: 10, marginTop: 4, fontStyle: "italic" }}>
+                          💡 고평점 작품은 {coord.highRatedBiasY > 0 ? coord.topLabel : coord.bottomLabel} 쪽으로 {Math.abs(coord.highRatedBiasY).toFixed(0)}% 더 치우침
+                        </Text>
+                      )}
+                    </View>
+                  )}
+
                   {/* 상세 구간 (펼침 시) */}
                   {isExpanded("coordPref") && coord.segments && (
                     <View style={{ 
@@ -29773,11 +29854,14 @@ function AppContent() {
   // 🆕 사용중인 태그 Set (TagManagerModal에서 usage 필터용)
   const usedTagsSet = useMemo(() => {
     const set = new Set();
+    // 🔧 v7.12.0: 원본 + 정규화형을 모두 추가 — 이전엔 raw 태그만 담아, 작품엔 별칭("현판")으로
+    //   저장됐는데 레지스트리엔 canonical("현대판타지")로 있는 태그가 "미사용"으로 오판돼
+    //   일괄 삭제 위험이 있었음(usedTagsSet.has(canonical) 실패). 정규화형 추가로 canonical 조회 성공.
+    const addBoth = (t) => { if (!t) return; set.add(t); const nm = normalizeTag(t); if (nm && nm !== t) set.add(nm); };
     for (const n of list) {
-      const tags = (n.tags || "").split(",").map(t => t.trim()).filter(Boolean);
-      tags.forEach(t => set.add(t));
-      parseMajorSub(n.major_genre).forEach(g => set.add(g));
-      parseMajorSub(n.sub_genre).forEach(g => set.add(g));
+      (n.tags || "").split(",").map(t => t.trim()).filter(Boolean).forEach(addBoth);
+      parseMajorSub(n.major_genre).forEach(addBoth);
+      parseMajorSub(n.sub_genre).forEach(addBoth);
     }
     return set;
   }, [list]);
@@ -30379,18 +30463,21 @@ function AppContent() {
   // 💬 v3.5.4: 명언 카드 데이터 (list 변경 시 재계산)
   const quotesCards = useMemo(() => {
     const cards = [];
-    for (const n of (list || [])) {
+    // 🆕 v7.12.0: 본작 + 예정작 공통 처리 (예정작 명대사도 쇼츠/상세에 표시 — 이전엔 본작만 순회해
+    //   예정 편집기로 공들여 꾸민 명대사가 어디에도 안 보였음). 예정작은 tier "예정"(보라).
+    const pushFrom = (n, isPlanned) => {
       const quotes = parseQuotes(n.memorable_quote);
-      if (quotes.length === 0) continue; // 🚀 빈 명언 작품 스킵
-      const t = getDisplayTier(n, globalTierConfig); // 🚀 v3.5.4: 1회 계산 캐시
-      const tc = getTierColor(t);
+      if (quotes.length === 0) return; // 🚀 빈 명언 작품 스킵
+      const t = isPlanned ? "예정" : getDisplayTier(n, globalTierConfig); // 🚀 v3.5.4: 1회 계산 캐시
+      const tc = isPlanned ? "#8b5cf6" : getTierColor(t);
       const mg = (() => { try { const mg = JSON.parse(n.major_genre || "[]"); return Array.isArray(mg) ? mg[0] || "" : mg || ""; } catch { return n.major_genre || ""; } })();
       for (let qi = 0; qi < quotes.length; qi++) {
         const q = quotes[qi];
         const img = isImageQuote(q);
         cards.push({
-          id: `${n.id}-q${qi}`,
+          id: `${isPlanned ? "p-" : ""}${n.id}-q${qi}`,
           novelId: n.id,
+          isPlanned: !!isPlanned, // 🆕 v7.12.0: 탭→편집/원격수정 테이블 분기용
           qIndex: qi, // 🆕 v7.9.0: 명언 탭 원격 수정용
           quote: img ? (q.caption || "") : getQuoteText(q),
           quoteStyle: img ? null : getQuoteStyle(q), // 🆕 v7.8.0: 텍스트 서식
@@ -30407,9 +30494,11 @@ function AppContent() {
           majorGenre: mg,
         });
       }
-    }
+    };
+    for (const n of (list || [])) pushFrom(n, false);
+    for (const p of (plannedList || [])) pushFrom(p, true);
     return cards;
-  }, [list]);
+  }, [list, plannedList]);
 
   // 🔧 v3.5.6: editItemRef를 렌더 시점마다 동기화 (기본 동기화)
   // 핵심: 함수형 업데이트 내에서도 ref를 갱신하여 saveEdit이 최신값을 읽도록 함
@@ -37722,7 +37811,7 @@ function AppContent() {
     quickQuoteRemovedImagesRef.current = [];
     // 개별 서식이 없으면 현재 보이는 모습(전역 기본 프리셋)에서 시작 — 이 문장만 따로 커스텀
     const seed = card.quoteStyle || (appSettings.quoteDefaultStyle ? { ...appSettings.quoteDefaultStyle } : null);
-    setQuoteQuickEdit({ novelId: card.novelId, qIndex: card.qIndex, text: card.quote || "", style: seed });
+    setQuoteQuickEdit({ novelId: card.novelId, isPlanned: card.isPlanned, qIndex: card.qIndex, text: card.quote || "", style: seed });
   };
   const cancelQuoteQuickEdit = () => {
     for (const uri of quickQuoteNewImagesRef.current) FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
@@ -37736,17 +37825,19 @@ function AppContent() {
     const text = (qe.text || "").trim();
     if (!text) { Alert.alert("알림", "문장을 입력하세요."); return; }
     try {
-      const row = await first("SELECT memorable_quote FROM novels WHERE id=?", [qe.novelId]);
+      // 🆕 v7.12.0: 예정작 명대사 원격 수정 지원 — 카드 isPlanned에 따라 테이블 분기
+      const tbl = qe.isPlanned ? "planned_novels" : "novels";
+      const row = await first(`SELECT memorable_quote FROM ${tbl} WHERE id=?`, [qe.novelId]);
       const quotes = parseQuotes(row?.memorable_quote || "");
       if (qe.qIndex < 0 || qe.qIndex >= quotes.length) { Alert.alert("알림", "문장을 찾을 수 없습니다 (목록이 변경됨)."); cancelQuoteQuickEdit(); return; }
       const style = qe.style;
       quotes[qe.qIndex] = (style && !quoteStyleIsDefault(style)) ? { type: "text", text, style } : text;
-      await exec("UPDATE novels SET memorable_quote=? WHERE id=?", [serializeQuotes(quotes), qe.novelId]);
+      await exec(`UPDATE ${tbl} SET memorable_quote=? WHERE id=?`, [serializeQuotes(quotes), qe.novelId]);
       for (const uri of quickQuoteRemovedImagesRef.current) FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
       quickQuoteRemovedImagesRef.current = [];
       quickQuoteNewImagesRef.current = []; // 저장됨 → 새 이미지 파일 유지
       setQuoteQuickEdit(null);
-      await loadList(undefined, undefined, "quoteQuickEdit");
+      if (qe.isPlanned) await loadPlannedList(); else await loadList(undefined, undefined, "quoteQuickEdit");
     } catch (e) {
       Alert.alert("오류", "저장 실패: " + (e?.message || e));
     }
@@ -39308,9 +39399,13 @@ function AppContent() {
       }
     }
     
-    return variants.some(v => novelTags.has(v) || 
-      Array.from(novelTags).some(t => t.toLowerCase().includes(v))
-    );
+    // 🔧 v7.12.0: 선택된 태그 칩은 '그 태그'를 의미 → 부분일치(substring) 제거하고 정규화/별칭/그룹
+    //   변형에 대한 대소문자 무시 '정확' 매칭. 이전엔 .includes로 "판타지"가 "현대판타지"·"다크판타지"
+    //   까지 매칭(특히 제외 필터에서 과도 제외)했고, novelTags.has(v)는 대문자 태그에서 죽어 substring
+    //   에만 의존했음. (자유 검색어 부분일치는 별도 q 필터가 담당하므로 칩 매칭에는 불필요.)
+    const novelLower = new Set();
+    for (const t of novelTags) novelLower.add(String(t).toLowerCase());
+    return variants.some(v => novelLower.has(v));
   };
 
   // 🆕 v3.4.1 #10: 실시간 중복 체크 (제목 입력 시)
