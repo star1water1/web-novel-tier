@@ -2,9 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.8.1 (명대사 서식 — 자동 크기 맞춤 + 배경 카드 통합)                 ║
+ * ║  버전: 7.9.0 (명언 표지탭 수정 + 원격 수정 + 기본 서식 프리셋)               ║
  * ║  최종 수정: 2026-06-14                                                        ║
- * ║  총 라인 수: 약 57,073줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 57,260줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.9.0 명언: 표지탭 수정 + 원격 꾸미기 + 기본 프리셋 (2026-06-14)         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [표지 탭→수정] 💬명언/🎨갤러리 탭에서 작품 표지를 누르면 해당 작품 수정 모달 ║
+ * ║   (본작 openEdit / 예정작 예정편집) 바로 열림. openEditByNovelId 추가.       ║
+ * ║ [명언 원격 수정] 명언 카드에 ✏️꾸미기 버튼 → 해당 문장만 텍스트+서식 편집   ║
+ * ║   모달(QuoteStyleEditor 재사용). 저장 시 그 문장만 UPDATE 후 재로드.         ║
+ * ║   배경이미지 파일 추적(저장 시 교체본 정리/취소 시 새 파일 정리).            ║
+ * ║ [기본 서식 프리셋] 설정>앱 에 명언 기본 서식 섹션 — 개별 커스텀이 없는 모든  ║
+ * ║   명언에 적용되는 전역 프리셋(quoteDefaultStyle). effectiveQuoteStyle 헬퍼가 ║
+ * ║   (개별→프리셋→내장 자동)로 쇼츠/상세/수상/확대 전 표면에 일괄 반영.         ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11622,6 +11635,13 @@ const AutoFitQuoteText = memo(({ text, baseStyle, fixedSize, userLineHeight, max
   );
 });
 
+// 🆕 v7.9.0: 개별 커스텀이 없으면 전역 기본 프리셋을 적용 (둘 다 없으면 null=내장 자동)
+function effectiveQuoteStyle(individualStyle, defaultStyle) {
+  if (individualStyle && !quoteStyleIsDefault(individualStyle)) return individualStyle;
+  if (defaultStyle && !quoteStyleIsDefault(defaultStyle)) return defaultStyle;
+  return null;
+}
+
 function parseQuotes(val) {
   if (!val || typeof val !== "string" || !val.trim()) return [];
   const trimmed = val.trim();
@@ -21161,6 +21181,7 @@ const AwardsScreen = memo(({
   setAwardFilter,
   theme,
   tierMode, // 🆕 v7.0.1 (N3 fix): hybrid mode 변경 시 memo invalidation
+  quoteDefaultStyle, // 🆕 v7.9.0: 명언 기본 서식 프리셋 (개별 커스텀 없을 때 적용)
   onGiveAward,
   onRemoveAward,
   onSaveSettings,
@@ -22502,7 +22523,7 @@ const AwardsScreen = memo(({
                               <ExpoImage source={{ uri: firstItem.uri }} style={{ width: "100%", height: 100, borderRadius: 8 }} contentFit="contain" cachePolicy="disk" />
                             ) : (() => {
                               // 🆕 v7.8.0: 사용자 서식 적용
-                              const st = getQuoteStyle(firstItem);
+                              const st = effectiveQuoteStyle(getQuoteStyle(firstItem), quoteDefaultStyle);
                               const auto = { size: 14, lineHeight: 22, letterSpacing: 0.3, color: isDark ? "#fef3c7" : "#78350f", textAlign: "left", fontStyle: "italic", fontWeight: "400" };
                               if (st && st.bgImage) auto.color = "#fff";
                               const eff = resolveQuoteTextStyle(st, auto);
@@ -23260,8 +23281,8 @@ const AwardsScreen = memo(({
               showsVerticalScrollIndicator={false}
             >
               {(() => {
-                // 🆕 v7.8.0: 수상 명대사 확대 — 사용자 서식 반영
-                const st = expandedView.quoteStyle;
+                // 🆕 v7.8.0: 수상 명대사 확대 — 사용자 서식 반영 (AwardsScreen 내부 → prop 사용)
+                const st = effectiveQuoteStyle(expandedView.quoteStyle, quoteDefaultStyle);
                 const auto = { size: 22, lineHeight: 36, letterSpacing: 0.3, color: "#fef3c7", textAlign: "center", fontStyle: "italic", fontWeight: "400" };
                 if (st && st.bgImage) auto.color = "#fff";
                 const eff = resolveQuoteTextStyle(st, auto);
@@ -26524,6 +26545,7 @@ const DEFAULT_SETTINGS = {
   undoStackSize: 30,                // 되돌리기 스택 크기
   fullscreenMode: false,            // 🆕 v3.4.4: 전체 화면 모드 (상태바 숨김)
   exportCardsPerImage: 20,          // 🆕 v7.4.11: 순위탭 export 이미지당 카드 수 (1~30)
+  quoteDefaultStyle: null,          // 🆕 v7.9.0: 명언 기본 서식 프리셋 (개별 커스텀 없는 명언에 적용)
   // 📝 보충 탭 기준 (v2.8)
   supplement: {
     enabled: true,                   // 보충 탭 활성화
@@ -29282,6 +29304,9 @@ function AppContent() {
   const [editQuotes, setEditQuotes] = useState([]); // 💬 v3.5.4: 다중 인상깊은 문장
   const [quoteStyleIdx, setQuoteStyleIdx] = useState(-1); // 🆕 v7.8.0: 명대사 서식 패널 열림 인덱스 (-1=닫힘)
   const [plannedQuoteStyleIdx, setPlannedQuoteStyleIdx] = useState(-1); // 🆕 v7.8.0: 예정작 편집 서식 패널 인덱스
+  const [quoteQuickEdit, setQuoteQuickEdit] = useState(null); // 🆕 v7.9.0: 명언 탭 원격 수정 {novelId, qIndex, text, style}
+  const quickQuoteNewImagesRef = useRef([]);     // 명언 원격수정에서 새로 추가한 배경이미지 (취소 시 정리)
+  const quickQuoteRemovedImagesRef = useRef([]); // 교체/제거된 배경이미지 (저장 시 정리)
 
   // ★ 수상 편집용 상태
   const [editAwards, setEditAwards] = useState([]); // [{year: "2024", type: "grand"}, ...]
@@ -30184,6 +30209,7 @@ function AppContent() {
         cards.push({
           id: `${n.id}-q${qi}`,
           novelId: n.id,
+          qIndex: qi, // 🆕 v7.9.0: 명언 탭 원격 수정용
           quote: img ? (q.caption || "") : getQuoteText(q),
           quoteStyle: img ? null : getQuoteStyle(q), // 🆕 v7.8.0: 텍스트 서식
           isImage: img,
@@ -37280,6 +37306,61 @@ function AppContent() {
     });
   }, []);
 
+  // 🆕 v7.9.0: novelId로 적절한 편집 모달 열기 (본작 → openEdit, 예정작 → 예정 편집)
+  const openEditByNovelId = useCallback((novelId) => {
+    if (!novelId) return;
+    const nv = (list || []).find(n => n.id === novelId);
+    if (nv) { openEdit(nv); return; }
+    const pv = (plannedList || []).find(p => p.id === novelId);
+    if (pv) {
+      updatePlannedEditItem({ ...pv });
+      setPlannedQuoteStyleIdx(-1);
+      removedQuoteImagesRef.current = [];
+      editNewQuoteImagesRef.current = [];
+      setPlannedEditGalleryCount(0);
+      first("SELECT COUNT(*) as c FROM gallery_images WHERE novel_id=?", [pv.id])
+        .then(r => setPlannedEditGalleryCount(r?.c || 0)).catch(() => {});
+      deferOpen(setPlannedEditOpen);
+    }
+  }, [list, plannedList, openEdit, updatePlannedEditItem]);
+
+  // 🆕 v7.9.0: 명언 탭 원격 수정 (해당 문장만 텍스트/서식 편집)
+  const openQuoteQuickEdit = (card) => {
+    if (!card || card.isImage) return;
+    quickQuoteNewImagesRef.current = [];
+    quickQuoteRemovedImagesRef.current = [];
+    // 개별 서식이 없으면 현재 보이는 모습(전역 기본 프리셋)에서 시작 — 이 문장만 따로 커스텀
+    const seed = card.quoteStyle || (appSettings.quoteDefaultStyle ? { ...appSettings.quoteDefaultStyle } : null);
+    setQuoteQuickEdit({ novelId: card.novelId, qIndex: card.qIndex, text: card.quote || "", style: seed });
+  };
+  const cancelQuoteQuickEdit = () => {
+    for (const uri of quickQuoteNewImagesRef.current) FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+    quickQuoteNewImagesRef.current = [];
+    quickQuoteRemovedImagesRef.current = [];
+    setQuoteQuickEdit(null);
+  };
+  const saveQuoteQuickEdit = async () => {
+    const qe = quoteQuickEdit;
+    if (!qe || !qe.novelId) { setQuoteQuickEdit(null); return; }
+    const text = (qe.text || "").trim();
+    if (!text) { Alert.alert("알림", "문장을 입력하세요."); return; }
+    try {
+      const row = await first("SELECT memorable_quote FROM novels WHERE id=?", [qe.novelId]);
+      const quotes = parseQuotes(row?.memorable_quote || "");
+      if (qe.qIndex < 0 || qe.qIndex >= quotes.length) { Alert.alert("알림", "문장을 찾을 수 없습니다 (목록이 변경됨)."); cancelQuoteQuickEdit(); return; }
+      const style = qe.style;
+      quotes[qe.qIndex] = (style && !quoteStyleIsDefault(style)) ? { type: "text", text, style } : text;
+      await exec("UPDATE novels SET memorable_quote=? WHERE id=?", [serializeQuotes(quotes), qe.novelId]);
+      for (const uri of quickQuoteRemovedImagesRef.current) FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+      quickQuoteRemovedImagesRef.current = [];
+      quickQuoteNewImagesRef.current = []; // 저장됨 → 새 이미지 파일 유지
+      setQuoteQuickEdit(null);
+      await loadList(undefined, undefined, "quoteQuickEdit");
+    } catch (e) {
+      Alert.alert("오류", "저장 실패: " + (e?.message || e));
+    }
+  };
+
   async function saveEdit() {
     const _pt = PerfMonitor.enabled ? Date.now() : 0; // 🔬
     // 🔧 v3.5.6: editItemRef.current에서 읽어 React 배칭 지연과 무관하게 최신값 사용
@@ -43156,7 +43237,7 @@ async function importJSON() {
                         </View>
                       ) : (() => {
                         // 🆕 v7.8.0: 사용자 서식 적용 (없으면 기존 기본 스타일)
-                        const st = getQuoteStyle(quote);
+                        const st = effectiveQuoteStyle(getQuoteStyle(quote), appSettings.quoteDefaultStyle);
                         const auto = { size: 15, lineHeight: 22, letterSpacing: 0.3, color: isDark ? "#fef3c7" : "#78350f", textAlign: "left", fontStyle: "italic", fontWeight: "400" };
                         if (st && st.bgImage) auto.color = "#fff";
                         const eff = resolveQuoteTextStyle(st, auto);
@@ -44593,6 +44674,7 @@ async function importJSON() {
             setAwardFilter={setAwardFilter}
             theme={C}
             tierMode={globalTierConfig.mode}
+            quoteDefaultStyle={appSettings.quoteDefaultStyle}
             onGiveAward={async (novelId, awardId, year) => {
               // 수상 부여
               const novel = listMap.get(novelId);
@@ -48746,13 +48828,15 @@ async function importJSON() {
                             flexDirection: "row",
                             alignItems: "center",
                           }}>
-                            <CoverImage
-                              uri={card.cover_image}
-                              platforms={card.platforms}
-                              platformCovers={platformCovers}
-                              size={46}
-                              theme={C}
-                            />
+                            <TouchableOpacity activeOpacity={0.7} onPress={() => openEditByNovelId(card.novel_id)}>
+                              <CoverImage
+                                uri={card.cover_image}
+                                platforms={card.platforms}
+                                platformCovers={platformCovers}
+                                size={46}
+                                theme={C}
+                              />
+                            </TouchableOpacity>
                             <View style={{ flex: 1 }}>
                               <Text style={{
                                 fontSize: 15,
@@ -49214,7 +49298,7 @@ async function importJSON() {
                 {card && (() => {
                   const tierBg = card.tierColor + "15";
                   // 🆕 v7.8.1: 사용자 배경(색/이미지)을 카드 전체에 통합 — 장식 아치 대체 + 대비색 자동
-                  const qst = !card.isImage ? card.quoteStyle : null;
+                  const qst = !card.isImage ? effectiveQuoteStyle(card.quoteStyle, appSettings.quoteDefaultStyle) : null;
                   const hasCustomBg = !!(qst && (qst.bg || qst.bgImage));
                   const onBg = hasCustomBg ? (qst.bgImage ? "#ffffff" : quoteContrastColor(qst.bg)) : null;
                   const lightOnBg = hasCustomBg && (qst.bgImage || onBg === "#ffffff");
@@ -49285,6 +49369,15 @@ async function importJSON() {
                           {safeIdx + 1} / {total}
                         </Text>
                         <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
+                          {!card.isImage ? (
+                            <TouchableOpacity
+                              activeOpacity={0.7}
+                              onPress={() => openQuoteQuickEdit(card)}
+                              style={{ backgroundColor: hasCustomBg ? (lightOnBg ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.12)") : C.chip, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 }}
+                            >
+                              <Text style={{ color: onBg || C.text, fontSize: 12, fontWeight: "700" }}>✏️ 꾸미기</Text>
+                            </TouchableOpacity>
+                          ) : null}
                           {card.majorGenre ? (
                             <View style={{
                               backgroundColor: C.chip,
@@ -49372,13 +49465,15 @@ async function importJSON() {
                         flexDirection: "row",
                         alignItems: "center",
                       }}>
-                        <CoverImage
-                          uri={card.coverImage}
-                          platforms={card.platforms}
-                          platformCovers={platformCovers}
-                          size={46}
-                          theme={C}
-                        />
+                        <TouchableOpacity activeOpacity={0.7} onPress={() => openEditByNovelId(card.novelId)}>
+                          <CoverImage
+                            uri={card.coverImage}
+                            platforms={card.platforms}
+                            platformCovers={platformCovers}
+                            size={46}
+                            theme={C}
+                          />
+                        </TouchableOpacity>
                         <View style={{ flex: 1 }}>
                           <Text style={{
                             fontSize: 15,
@@ -49577,6 +49672,39 @@ async function importJSON() {
             {/* ═══════════════════════════════════════════════════════════════ */}
             {settingsSubTab === "app" && (
               <>
+            <Section title="💬 명언 기본 서식">
+              <Text style={{ color: C.sub, fontSize: 12, lineHeight: 18, marginBottom: 8 }}>
+                개별로 꾸미지 않은 모든 명언에 기본으로 적용되는 서식이에요. (특정 명언만 따로 꾸미려면 💬명언 탭의 "✏️ 꾸미기"를 사용하세요.)
+              </Text>
+              <QuoteStyleEditor
+                style={appSettings.quoteDefaultStyle}
+                text="예시 — 기본 서식 미리보기"
+                theme={C}
+                isDark={isDark}
+                busy={batchImporting}
+                onChange={(newStyle) => saveAppSettings({ quoteDefaultStyle: quoteStyleIsDefault(newStyle) ? null : newStyle })}
+                onPickBgImage={async () => {
+                  try {
+                    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, quality: 1.0 });
+                    await resetDbConnection();
+                    try { await openDb(); } catch {}
+                    if (!result.canceled && result.assets?.[0]) {
+                      const { ext } = getImageFormat(result.assets[0]);
+                      const saved = await compressAndSaveImage(result.assets[0].uri, QUOTE_IMAGE_MAX_SIZE, QUOTE_IMAGE_QUALITY, ext);
+                      if (saved && !saved.error) return saved.file_path;
+                    }
+                  } catch (e) { Alert.alert("오류", "배경 이미지 선택 실패: " + (e?.message || e)); }
+                  return null;
+                }}
+                onClearBgImage={(uri) => { FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {}); }}
+              />
+              {appSettings.quoteDefaultStyle ? (
+                <TouchableOpacity onPress={() => saveAppSettings({ quoteDefaultStyle: null })} style={{ marginTop: 10, alignSelf: "flex-start", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: C.chip }}>
+                  <Text style={{ color: C.warn, fontWeight: "700", fontSize: 13 }}>기본 서식 초기화</Text>
+                </TouchableOpacity>
+              ) : null}
+            </Section>
+
             <Section title="테마">
               <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
                 <Text style={{ color: C.text, fontWeight: "700" }}>다크 모드</Text>
@@ -53480,6 +53608,65 @@ async function importJSON() {
             >
               <Text style={{ color: C.primary, fontSize: 13, fontWeight: "600" }}>전체 업데이트 내역 보기 →</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 🆕 v7.9.0: 명언 탭 원격 수정·꾸미기 모달 */}
+      <Modal visible={!!quoteQuickEdit} transparent animationType="fade" onRequestClose={cancelQuoteQuickEdit}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", padding: 18 }}>
+          <View style={{ backgroundColor: C.bg, borderRadius: 16, maxHeight: "88%", overflow: "hidden" }}>
+            <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: C.line, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+              <Text style={{ color: C.text, fontSize: 16, fontWeight: "800" }}>💬 명언 수정 · 꾸미기</Text>
+              <TouchableOpacity onPress={cancelQuoteQuickEdit} style={{ padding: 4 }}><Text style={{ color: C.sub, fontSize: 20 }}>✕</Text></TouchableOpacity>
+            </View>
+            <ScrollView style={{ padding: 16 }} keyboardShouldPersistTaps="handled">
+              {quoteQuickEdit ? (
+                <>
+                  <TextInput
+                    value={quoteQuickEdit.text}
+                    onChangeText={(t) => setQuoteQuickEdit(prev => prev ? { ...prev, text: t } : prev)}
+                    placeholder="문장을 입력하세요"
+                    placeholderTextColor={C.sub}
+                    multiline
+                    style={{ backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 10, padding: 12, fontSize: 15, color: C.text, minHeight: 80, textAlignVertical: "top" }}
+                  />
+                  {(!quoteQuickEdit.style || quoteStyleIsDefault(quoteQuickEdit.style)) && appSettings.quoteDefaultStyle && !quoteStyleIsDefault(appSettings.quoteDefaultStyle) ? (
+                    <Text style={{ color: C.sub, fontSize: 11, marginTop: 6 }}>※ 지금은 전역 기본 서식을 따르는 중이에요. 아래에서 이 문장만 따로 꾸밀 수 있어요.</Text>
+                  ) : null}
+                  <QuoteStyleEditor
+                    style={quoteQuickEdit.style}
+                    text={quoteQuickEdit.text}
+                    theme={C}
+                    isDark={isDark}
+                    busy={batchImporting}
+                    onChange={(newStyle) => setQuoteQuickEdit(prev => prev ? { ...prev, style: newStyle } : prev)}
+                    onPickBgImage={async () => {
+                      try {
+                        const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, quality: 1.0 });
+                        await resetDbConnection();
+                        try { await openDb(); } catch {}
+                        if (!result.canceled && result.assets?.[0]) {
+                          const { ext } = getImageFormat(result.assets[0]);
+                          const saved = await compressAndSaveImage(result.assets[0].uri, QUOTE_IMAGE_MAX_SIZE, QUOTE_IMAGE_QUALITY, ext);
+                          if (saved && !saved.error) { quickQuoteNewImagesRef.current.push(saved.file_path); return saved.file_path; }
+                        }
+                      } catch (e) { Alert.alert("오류", "배경 이미지 선택 실패: " + (e?.message || e)); }
+                      return null;
+                    }}
+                    onClearBgImage={(uri) => { quickQuoteRemovedImagesRef.current.push(uri); quickQuoteNewImagesRef.current = quickQuoteNewImagesRef.current.filter(u => u !== uri); }}
+                  />
+                </>
+              ) : null}
+            </ScrollView>
+            <View style={{ flexDirection: "row", gap: 10, padding: 16, borderTopWidth: 1, borderTopColor: C.line }}>
+              <TouchableOpacity onPress={cancelQuoteQuickEdit} style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: C.chip, alignItems: "center" }}>
+                <Text style={{ color: C.text, fontWeight: "700" }}>취소</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={saveQuoteQuickEdit} style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: C.primary, alignItems: "center" }}>
+                <Text style={{ color: "#fff", fontWeight: "800" }}>저장</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
