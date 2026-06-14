@@ -2,9 +2,36 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.9.2 (명언 기능 검수 — 튕김/원래순서/대비색/배경틀 수정)             ║
+ * ║  버전: 7.10.0 (기능 전면검수 수정 — 모드 정합성·검증·정렬·데이터 위생)       ║
  * ║  최종 수정: 2026-06-14                                                        ║
- * ║  총 라인 수: 약 57,341줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 57,490줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ ✅ v7.10.0 기능 전면검수 수정 — 모드 정합성·검증·정렬·데이터 위생 (2026-06-14)║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [검수 방법] 8개 기능 영역 병렬 심층검수 + 핵심 발견 직접 교차검증 후 일괄 수정.║
+ * ║ [매칭] ① "티어 차이" 자동매칭이 key/label 도메인 불일치(getTierIdx가 라벨을    ║
+ * ║   key배열에서 indexOf)로 라벨 변경 시 영구 미발동 → tierFromRating로 key 통일. ║
+ * ║   ② 매칭 밴 시 화면의 현재 대결도 즉시 비움(밴 직후 그 대결 판정→ELO갱신 방지).║
+ * ║   ③ "all" 자동매칭 분모를 '평가가능' 기준만 카운트 — 예측승률/직접대결 데이터  ║
+ * ║   부재 시 영구 미발동하던 문제. ④ manual 모드 매칭 화면 진입 시 쌍 생성 차단   ║
+ * ║   (decide가 no-op이라 조작 가능하나 무효였던 도태 UI 제거).                    ║
+ * ║ [하이브리드] 수문장 통계가 result_action='moved' 세션만 세어, 즉시 막아 이동을 ║
+ * ║   무산시킨(no_change) 최강 수문장이 누락되던 역전 수정 → blocker_id 기준 집계. ║
+ * ║ [모드 정합] 홈 목록 "티어순" 정렬 신설+기본값화: hybrid/manual은 manual_order, ║
+ * ║   ratio는 누적비율 티어 반영(이전 ELO 정렬이 순위탭과 어긋남). 좌표계 취향분석 ║
+ * ║   raw ELO→mode-aware prefScore+동적임계(hybrid/ratio에서 죽던 분석 복구).      ║
+ * ║   수상 점수 티어 가중 30→200(C티어가 A티어 추월하던 확률 역전 수정), 빅카드    ║
+ * ║   0승0패 박제 → hybrid는 검증 전적 표시.                                       ║
+ * ║ [데이터 위생] 태그 전체삭제가 preference_patterns(학습 패턴)도 정리 — 삭제 태그 ║
+ * ║   가 취향점수/추천에 유령 기여하던 것 제거(단건+일괄 경로). user_flagged_suspect║
+ * ║   (🔍 의심 플래그) 백업 round-trip 추가(복원 시 소실 수정, INSERT 41→42컬럼).  ║
+ * ║   백업 거부 안내 v9~v11→v9~v12. import 후 공동출현/장르/매칭 캐시 리셋(슬롯과   ║
+ * ║   대칭). 취향 '황금 조합' 표본 2/3→3/5 상향(소표본 노이즈 축소).               ║
+ * ║ [검증] esbuild JSX 파싱 통과. 백업 INSERT 컬럼=플레이스홀더=파라미터(42) 정합. ║
+ * ║ [보류—별도 작업] 검증 K=2 단계 재설계, 좌표 Y축 2D 분석, 태그 이름변경/병합 UI,║
+ * ║   ratio % 에디터, 명대사 배경이미지 교체 시 고아 파일 정리.                    ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12405,6 +12432,22 @@ function compareVersions(a, b) {
 
 const CHANGELOG_DATA = [
   {
+    version: "7.10.0", date: "2026-06-14",
+    title: "🔧 기능 전면검수 수정 — 모드별 동작·정렬·자동매칭 정합성",
+    highlights: [
+      { type: "fix", text: "📊 홈 목록에 '티어순' 정렬이 생겼고 기본값이 됐어요. 하이브리드/수동 모드는 내가 정한 순위대로, 비율 모드는 비율 티어대로 정렬돼 순위 탭과 일치합니다. (이전엔 ELO 점수순이라 어긋났어요)" },
+      { type: "fix", text: "🏆 시상식 점수에서 한 작품의 태그·완결·재독 보너스가 티어 차이를 뒤집어 하위 티어 작품이 상위 티어를 추월하던 문제를 잡았어요. 또 하이브리드 빅카드의 '0승 0패'를 검증 전적으로 바꿨습니다." },
+      { type: "fix", text: "⚔️ '티어 차이' 자동승패가 티어 이름을 바꾸면 작동하지 않던 문제, '모두 만족' 모드가 발동하지 않던 문제, 매칭 밴이 즉시 적용되지 않던 문제를 수정했어요." },
+    ],
+    details: [
+      { type: "fix", text: "취향분석 좌표계가 하이브리드/비율 모드에서 항상 같은 값으로 죽어 '치우침' 힌트가 안 뜨던 것 → mode-aware 점수+동적 임계로 복구" },
+      { type: "fix", text: "하이브리드 수문장(경계 작품) 식별이 '이동한' 세션만 세어, 즉시 막아낸 가장 강력한 수문장을 놓치던 통계 역전 수정" },
+      { type: "fix", text: "태그를 전체 삭제해도 학습 데이터(취향 패턴)가 남아 삭제된 태그가 추천·점수에 계속 영향을 주던 문제 수정 (단건·일괄 모두)" },
+      { type: "fix", text: "백업에 '🔍 의심 표시'가 빠져 복원하면 사라지던 문제, 백업 가져오기 후 일부 통계 캐시가 갱신 안 되던 문제, 백업 안내 문구(v9~v12) 수정" },
+      { type: "improve", text: "수동 모드에서 매칭 화면이 조작은 되는데 효과는 없던(도태) 상태 정리, 취향 '황금 조합' 표본 기준 상향(소표본 과신 축소)" },
+    ],
+  },
+  {
     version: "7.6.9", date: "2026-06-14",
     title: "🖼️ 이미지 확대 시 흐릿하던 문제 수정",
     highlights: [
@@ -21433,6 +21476,10 @@ const AwardsScreen = memo(({
         // manual_order 작을수록(상위) 약간 가산 — 최대 ±15점. manual_order=0(legacy)는 자연 fallback
         const order = Number(n.manual_order) || 0;
         score += Math.max(0, 15 - order / 200);
+        // 🔧 v7.10.0: 티어당 30점은 비-티어 가산점 합(태그50+완결25+재독30+신뢰15≈120)보다 작아
+        //   C티어 작품이 A티어를 추월(확률 배지 역전)했음. 한 티어 격차가 가산점 합을 압도하도록 추가 확대.
+        //   (가산점은 같은 티어 내 타이브레이커로만 작동. 정렬은 compareNovels라 무관 — 확률 배지만 정합.)
+        score += (tierOrder.length - tierIndex) * 170;
       } else {
         // 1. 기본 레이팅 (정규화: 1500 기준으로 차이를 점수화)
         score += (n.rating - 1400) * 0.5;  // 레이팅 1500이면 50점, 1800이면 200점
@@ -22446,18 +22493,30 @@ const AwardsScreen = memo(({
                                   {isManualOrHybrid ? `${getTierLabel(novel.manual_tier || "")} #${novel.manual_order || 0}` : `${(novel.rating || 0).toFixed(1)}점`}
                                 </Text>
                               </View>
-                              <View style={{ flexDirection: "row", alignItems: "center" }}>
-                                <Text style={{ fontSize: 13 }}>🏅</Text>
-                                <Text style={{ color: C.text, fontSize: 13, fontWeight: "700", marginLeft: 4 }}>
-                                  {winRate}% 승률
-                                </Text>
-                              </View>
-                              <View style={{ flexDirection: "row", alignItems: "center" }}>
-                                <Text style={{ fontSize: 13 }}>⚔️</Text>
-                                <Text style={{ color: C.text, fontSize: 13, fontWeight: "700", marginLeft: 4 }}>
-                                  {novel.wins}승 {novel.losses}패
-                                </Text>
-                              </View>
+                              {/* 🔧 v7.10.0: hybrid/manual은 ELO 승패가 0으로 박제됨 → 검증 전적으로 대체 */}
+                              {isManualOrHybrid ? (
+                                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                                  <Text style={{ fontSize: 13 }}>🔍</Text>
+                                  <Text style={{ color: C.text, fontSize: 13, fontWeight: "700", marginLeft: 4 }}>
+                                    검증 {Number(novel.verification_wins) || 0}승 {Number(novel.verification_losses) || 0}패
+                                  </Text>
+                                </View>
+                              ) : (
+                                <>
+                                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                                    <Text style={{ fontSize: 13 }}>🏅</Text>
+                                    <Text style={{ color: C.text, fontSize: 13, fontWeight: "700", marginLeft: 4 }}>
+                                      {winRate}% 승률
+                                    </Text>
+                                  </View>
+                                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                                    <Text style={{ fontSize: 13 }}>⚔️</Text>
+                                    <Text style={{ color: C.text, fontSize: 13, fontWeight: "700", marginLeft: 4 }}>
+                                      {novel.wins}승 {novel.losses}패
+                                    </Text>
+                                  </View>
+                                </>
+                              )}
                             </View>
                           </View>
                         </View>
@@ -23934,7 +23993,8 @@ const TasteAnalysisScreen = memo(({
     
     // 고평점 비율이 높은 조합 찾기
     const insights = Object.entries(pairCounts)
-      .filter(([key, data]) => data.count >= 2 && allPairCounts[key] >= 3)
+      // 🔧 v7.10.0: 표본 상향 (2/3 → 3/5) — 표본 2~3건짜리가 "황금 조합 🥇"으로 surface되던 노이즈 축소
+      .filter(([key, data]) => data.count >= 3 && allPairCounts[key] >= 5)
       .map(([key, data]) => {
         const totalCount = allPairCounts[key] || 1;
         const highRatedRatio = data.count / totalCount;
@@ -23999,7 +24059,8 @@ const TasteAnalysisScreen = memo(({
           novelPositions.push({
             id: novel.id,
             title: novel.title,
-            rating: Number(novel.rating) || 1500,
+            // 🔧 v7.10.0: raw ELO 대신 mode-aware prefScore (hybrid에서 1500 고정으로 분석이 죽던 문제)
+            rating: getPrefScore(novel, globalTierConfig),
             position: avgPos * 100, // 0~100으로 변환
             tagCount: count,
           });
@@ -24037,8 +24098,10 @@ const TasteAnalysisScreen = memo(({
         // 전체 평균 위치
         const avgPosition = novelPositions.reduce((sum, n) => sum + n.position, 0) / novelPositions.length;
         
-        // 고평점(1700+) 작품의 평균 위치
-        const highRated = novelPositions.filter(n => n.rating >= 1700);
+        // 🔧 v7.10.0: 고평점 = 평균 prefScore 초과 (동적). 이전 raw ELO 1700 절대임계치는
+        //   hybrid/ratio에서 거의 항상 0개 → highRatedBias가 영구 0이라 "치우침" 힌트가 안 떴음.
+        const avgScoreAll = novelPositions.reduce((sum, n) => sum + n.rating, 0) / novelPositions.length;
+        const highRated = novelPositions.filter(n => n.rating > avgScoreAll);
         const highRatedAvgPos = highRated.length > 0
           ? highRated.reduce((sum, n) => sum + n.position, 0) / highRated.length
           : avgPosition;
@@ -26740,7 +26803,9 @@ async function enqueueVerification(novelId, triggerType, suspicionType, source) 
     let blockCount = 0;
     try {
       const blockRow = await first(
-        "SELECT COUNT(*) as cnt FROM tier_repositioning_session WHERE state='completed' AND blocker_id=? AND result_action='moved'",
+        // 🔧 v7.10.0: result_action='moved' 한정 제거 — 의심작을 즉시 막아 이동을 무산시킨
+        //   가장 강력한 수문장 케이스(no_change, infIdx=0)도 blocker로 카운트해야 통계 의미가 맞음.
+        "SELECT COUNT(*) as cnt FROM tier_repositioning_session WHERE state='completed' AND blocker_id=?",
         [novelId]
       );
       blockCount = Number(blockRow?.cnt) || 0;
@@ -27286,9 +27351,11 @@ async function setNovelTierAtomic(novelId, newTier) {
 async function getGatekeeperCandidates(threshold = 5) {
   try {
     const rows = await all(
+      // 🔧 v7.10.0: result_action='moved' 한정 제거 — 즉시 막아 이동을 무산시킨(no_change) 세션도
+      //   수문장 누적에 포함(블록할수록 카운트되도록). 막은 횟수가 많을수록 빠지던 역전 수정.
       `SELECT blocker_id, COUNT(*) as block_count
        FROM tier_repositioning_session
-       WHERE state='completed' AND blocker_id IS NOT NULL AND result_action='moved'
+       WHERE state='completed' AND blocker_id IS NOT NULL
        GROUP BY blocker_id
        HAVING block_count >= ?
        ORDER BY block_count DESC
@@ -29155,7 +29222,9 @@ function AppContent() {
 
   // 홈 검색/정렬
   const [homeQuery, setHomeQuery] = useState("");
-  const [homeSortKey, setHomeSortKey] = useState("rating");
+  // 🔧 v7.10.0: 기본 정렬 "rating"→"tier"(티어순). hybrid/manual/ratio에서 ELO rating 정렬이
+  //   순위탭(manual_order/누적비율 티어)과 어긋나던 문제 해소. match 모드는 티어=ELO 파생이라 결과 거의 동일.
+  const [homeSortKey, setHomeSortKey] = useState("tier");
   const [homeSortDir, setHomeSortDir] = useState("DESC"); // DESC / ASC
 
   // 🆕 고급 필터
@@ -35422,6 +35491,15 @@ function AppContent() {
             // 🔧 v3.5.9: 연관 메타데이터 일괄 정리 (고정/숨김/감정/속성)
             const isDefault = ALL_DEFAULT_TAGS.some(t => isSameTag(t, tag));
             await cleanupTagMetadata(tag); // 🔧 숨김 포함 모든 메타데이터 제거
+            // 🔧 v7.10.0: 학습 패턴(preference_patterns)도 정리 — 안 그러면 삭제된 태그가
+            //   취향점수/추천에 유령으로 계속 기여하고, 같은 이름 재생성 시 과거 승패가 되살아남.
+            try {
+              const _nt = normalizeTag(tag);
+              await exec(
+                "DELETE FROM preference_patterns WHERE (category IN ('tag_power','tag_aversion') AND pattern_key IN (?, ?)) OR (category='genre_affinity' AND pattern_key IN (?, ?));",
+                [`tag:${tag}`, `tag:${_nt}`, `genre:${tag}`, `genre:${_nt}`]
+              );
+            } catch (e) { console.warn('[deleteTag] pattern cleanup failed:', e?.message); }
             // 🆕 기본 태그는 cleanup 이후 다시 숨김 추가
             if (isDefault) {
               toggleHideTag(tag);
@@ -35500,6 +35578,24 @@ function AppContent() {
     // 3. 🔧 배치 최적화: per-tag cleanupTagMetadata → cleanupTagMetadataBatch
     //    (N회 setState × 4 → 4회 setState로 축소)
     cleanupTagMetadataBatch(tagsToDelete);
+
+    // 🔧 v7.10.0: 학습 패턴(preference_patterns)도 일괄 정리 (단건 deleteTagGlobally와 동일 이유 — orphan 방지)
+    try {
+      const keySet = new Set();
+      for (const tag of tagsToDelete) {
+        const _nt = normalizeTag(tag);
+        keySet.add(`tag:${tag}`); keySet.add(`tag:${_nt}`);
+        keySet.add(`genre:${tag}`); keySet.add(`genre:${_nt}`);
+      }
+      const keys = [...keySet];
+      if (keys.length > 0) {
+        const ph = keys.map(() => "?").join(",");
+        await exec(
+          `DELETE FROM preference_patterns WHERE category IN ('tag_power','tag_aversion','genre_affinity') AND pattern_key IN (${ph});`,
+          keys
+        );
+      }
+    } catch (e) { console.warn('[batchDeleteTags] pattern cleanup failed:', e?.message); }
 
     // 기본 태그는 cleanup 이후 다시 숨김 추가
     const defaultTagsToHide = tagsToDelete.filter(tag => ALL_DEFAULT_TAGS.some(t => isSameTag(t, tag)));
@@ -36602,6 +36698,9 @@ function AppContent() {
           );
         } catch (e) { console.warn('[match_ban] queue cancel failed:', e?.message); }
         if (focusMatchNovel?.id === id) setFocusMatchNovel(null);
+        // 🔧 v7.10.0: 밴 즉시성 — 화면의 현재 대결에 밴 작품이 포함되면 즉시 비움(removeNovel과 동일).
+        //   안 그러면 밴 직후에도 그 대결을 그대로 판정해 밴 작품의 ELO가 갱신됨.
+        if (pair && (pair.A?.id === id || pair.B?.id === id)) setPair(null);
       }
       invalidateMatchCache();
       await loadList(undefined, undefined, ban ? "match_ban_set" : "match_ban_unset");
@@ -37909,9 +38008,11 @@ function AppContent() {
     }
   };
 
-  // 매칭 화면 진입 시 자동 매칭 1개 생성 (hybrid 모드는 제외 — 검증 시퀀스 사용)
+  // 매칭 화면 진입 시 자동 매칭 1개 생성
+  // 🔧 v7.10.0: hybrid(검증 시퀀스 사용) + manual(ELO 미사용) 모두 제외 — 이전엔 manual을 안 막아
+  //   매칭 쌍이 떴지만 decide가 no-op이라 "조작 가능하나 무효"인 도태 UI였음. ratio는 ELO 사용하므로 허용.
   useEffect(() => {
-    if (screen === "match" && !pair && globalTierConfig.mode !== "hybrid") {
+    if (screen === "match" && !pair && globalTierConfig.mode !== "hybrid" && globalTierConfig.mode !== "manual") {
       invalidateMatchCache(); // 🔧 v3.5.15: 매칭 화면 진입 시 캐시 갱신
       pickRandomUnseenPair();
     }
@@ -38541,10 +38642,10 @@ function AppContent() {
     // 4. 티어 차이
     if (criteria.tierDiff?.enabled) {
       const tierOrder = getActiveTierOrder(globalTierConfig);
-      const getTierIdx = (r) => {
-        const t = tierBadge(r).t;
-        return tierOrder.indexOf(t);
-      };
+      // 🔧 v7.10.0: tierBadge(r).t는 표시 라벨(getTierLabel)이라 key 배열(tierOrder)에서 못 찾음.
+      //   라벨≠key인 프리셋/커스텀 라벨(예: "B+"→"브론즈")에서 indexOf=-1 → diff=0 → 기준 영구 미발동.
+      //   tierFromRating은 key를 반환하므로 tierOrder와 동일 도메인.
+      const getTierIdx = (r) => tierOrder.indexOf(tierFromRating(r, globalTierConfig));
       const idxA = getTierIdx(A.rating);
       const idxB = getTierIdx(B.rating);
       const diff = Math.abs(idxA - idxB);
@@ -38622,9 +38723,20 @@ function AppContent() {
     
     if (mode === "all") {
       // 모든 활성화된 기준의 승자가 동일해야 함
-      const enabledCount = Object.values(criteria).filter(c => c.enabled).length;
-      if (results.length < enabledCount) return null;
-      
+      // 🔧 v7.10.0: 데이터 부재로 평가 자체가 불가한 기준(분석 없음/직접대결 이력 없음)은 분모에서 제외.
+      //   이전엔 enabledCount(전체 활성 수)에 포함돼, 예측승률/직접대결을 함께 켜면 데이터가 없을 때
+      //   results.length < enabledCount이 영구히 참 → "all" 모드 자동매칭이 한 번도 발동하지 못했음.
+      let evaluableCount = 0;
+      if (criteria.ratingGap?.enabled) evaluableCount++;
+      if (criteria.predictionRate?.enabled && analysis) evaluableCount++;
+      if (criteria.h2hStreak?.enabled && analysis?.h2h) evaluableCount++;
+      if (criteria.tierDiff?.enabled) evaluableCount++;
+      if (criteria.winRateDiff?.enabled) evaluableCount++;
+      if (criteria.readRatioDiff?.enabled) evaluableCount++;
+      if (criteria.matchCountDiff?.enabled) evaluableCount++;
+      if (evaluableCount === 0) return null;
+      if (results.length < evaluableCount) return null;
+
       const firstWinner = results[0].winner;
       const allSame = results.every(r => r.winner.id === firstWinner.id);
       if (allSame) {
@@ -39055,8 +39167,34 @@ function AppContent() {
         return searchVariants.some(variant => bank.includes(variant));
       });
     }
+
+    // 🔧 v7.10.0: "티어순" 정렬은 getDisplayTier 합성값이라 SQL ORDER BY로 표현 불가 → JS 후처리.
+    //   hybrid/manual은 manual_tier+manual_order, ratio는 누적비율 티어, match는 ELO 파생 티어 기준.
+    if (homeSortKey === "tier") {
+      const cfg = globalTierConfig;
+      const to = getActiveTierOrder(cfg);
+      const mode = cfg?.mode;
+      const dir = homeSortDir === "ASC" ? -1 : 1;
+      const tierIdxOf = (n) => {
+        const idx = to.indexOf(getDisplayTier(n, cfg));
+        return idx === -1 ? to.length : idx;
+      };
+      result = [...result].sort((a, b) => {
+        const pa = a.pinned ? 1 : 0, pb = b.pinned ? 1 : 0;
+        if (pa !== pb) return pb - pa; // 고정작 항상 먼저
+        const ia = tierIdxOf(a), ib = tierIdxOf(b);
+        if (ia !== ib) return (ia - ib) * dir; // 낮은 인덱스=상위 티어, DESC=상위 먼저
+        if (mode === "hybrid" || mode === "manual") {
+          const oa = Number(a.manual_order) || 0, ob = Number(b.manual_order) || 0;
+          if (oa !== ob) return (oa - ob) * dir; // 작은 order=상위(상단)
+        }
+        const ra = Number(a.rating) || 0, rb = Number(b.rating) || 0;
+        if (ra !== rb) return (rb - ra) * dir;
+        return (a.title || "").localeCompare(b.title || "");
+      });
+    }
     return result;
-  }, [homeQuery, list, filterTier, filterPlatform, filterGenre, filterStatus, searchIncludeTags, searchExcludeTags, searchExcludeStatus, searchExcludeWorkStatus, folderFilteredIds, tagRelations]);
+  }, [homeQuery, list, homeSortKey, homeSortDir, filterTier, filterPlatform, filterGenre, filterStatus, searchIncludeTags, searchExcludeTags, searchExcludeStatus, searchExcludeWorkStatus, folderFilteredIds, tagRelations]);
 
   // 공용 검색 필터 (bulk/search)
   const filtered = useMemo(() => {
@@ -40328,6 +40466,8 @@ async function buildUltraCompactBackup(novels, matches, coverImages = null) {
     if (endYearVal > 0) opt.ey = endYearVal;
     // 🚫 v7.6.0 (포트 v3.16.0): 매칭 밴 — 활성 시만 저장
     if (n.match_ban) opt.mb = 1;
+    // 🔧 v7.10.0: 사용자 🔍 의심 플래그 — 백업 누락으로 복원 시 소실되던 것 추가(재계산 불가한 순수 사용자 입력)
+    if (n.user_flagged_suspect) opt.uf = 1;
     // 🤖 v7.6.1: 하이브리드 검증 증거 4종 — 0 외 저장 (v7.5 헤더는 "자동 직렬화" 주장했으나
     //   실제 누락되어 있던 것 수정. matches로 재계산 불가한 denormalized 카운터라 복원 보존 필수)
     if (Number(n.verification_wins) > 0) opt.vw = Number(n.verification_wins);
@@ -40941,7 +41081,7 @@ function validateImportData(text) {
     return result;
   }
 
-  result.errors.push("지원하지 않는 백업 형식입니다.\nv9~v11 형식만 지원됩니다.");
+  result.errors.push("지원하지 않는 백업 형식입니다.\nv9~v12 형식만 지원됩니다.");
   return result;
 }
 
@@ -41102,6 +41242,8 @@ async function importJSON() {
                 const endYearVal = Number(opt.ey) || 0;
                 // 🚫 v7.6.0 (포트 v3.16.0): 매칭 밴 (v11 이하는 opt.mb 없음 → 0)
                 const matchBanVal = opt.mb ? 1 : 0;
+                // 🔧 v7.10.0: 사용자 🔍 의심 플래그 복원 (구버전 백업은 opt.uf 없음 → 0)
+                const userFlaggedVal = opt.uf ? 1 : 0;
                 // 🤖 v7.6.1: 하이브리드 검증 증거 복원 (구버전 백업은 vw/vl/vc/ch 없음 → 0)
                 const verWins = Number(opt.vw) || 0;
                 const verLosses = Number(opt.vl) || 0;
@@ -41147,9 +41289,10 @@ async function importJSON() {
                   // 🛠️ v7.3.3: read_count_baseline을 INSERT에 직접 포함 (이전: 별도 bulk UPDATE → 부분 실패 시
                   // baseline=0 잔존하여 첫 saveEdit에서 mass-fire). 백업 v9에 baseline 미포함이라 readCount 동일 값.
                   // 🔧 v7.6.0: start_year/end_year/match_ban (v11 이하 백업은 기본값 0)
-                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,read_count_baseline,start_year,end_year,match_ban,verification_wins,verification_losses,verification_count,conflict_hits)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, manualOrder, rereadCount, tagData, aliases, memorableQuote, readCount, startYearVal, endYearVal, matchBanVal, verWins, verLosses, verCount, conflictHits],
+                  // 🔧 v7.10.0: user_flagged_suspect 컬럼 추가 (41→42)
+                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,read_count_baseline,start_year,end_year,match_ban,verification_wins,verification_losses,verification_count,conflict_hits,user_flagged_suspect)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, manualOrder, rereadCount, tagData, aliases, memorableQuote, readCount, startYearVal, endYearVal, matchBanVal, verWins, verLosses, verCount, conflictHits, userFlaggedVal],
                 });
               }
 
@@ -41628,7 +41771,12 @@ async function importJSON() {
               patternUpdateScheduled = false;
               invalidatePatternCache(); // 🔧 v3.5.14
               invalidateWeightsCache(); // 🔧 v3.5.14
-              
+              // 🔧 v7.10.0: 슬롯 전환과 동일하게 공동출현/장르매치업/매칭 캐시도 리셋 — 이전 데이터셋의
+              //   stale 통계가 복원 후 잔류하던 비대칭 해소(loadList 재계산은 빈 맵일 때만 동작 → 선행 클리어).
+              setTagCoOccurrences({});
+              genreMatchupCacheRef.current = { data: {}, ts: 0, TTL: 30000 };
+              invalidateMatchCache();
+
               setImportOpen(false);
               setImportText("");
               setImportValidation(null);
@@ -41692,7 +41840,7 @@ async function importJSON() {
     }
 
     // v9~v11 외의 포맷은 지원하지 않음
-    Alert.alert("오류", "지원하지 않는 백업 형식입니다.\nv9~v11 형식만 지원됩니다.");
+    Alert.alert("오류", "지원하지 않는 백업 형식입니다.\nv9~v12 형식만 지원됩니다.");
 
   } catch (e) {
     console.warn(e);
@@ -42940,6 +43088,7 @@ async function importJSON() {
                 }}
               >
                 {[
+                  ["티어순", "tier"],
                   ["레이팅", "rating"],
                   ["제목", "title"],
                   ["등록순", "created"],
