@@ -98,3 +98,8 @@ eas build -p android --profile preview  # APK 빌드
 - 현재 단일 파일 구조 — 새 파일 생성 불필요, App.jsx 내에서 작업
 - memo() 컴포넌트는 props 변경에만 리렌더링됨을 고려하여 설계
 - App.jsx 수정 시 반드시 헤더 버전 히스토리 (1~290줄) 업데이트: 버전 번호 증가, 날짜 갱신, 변경 내역 추가
+
+## Git 워크플로
+
+- 개발은 작업 브랜치에서, **주요 업데이트(기능 추가/버그 수정 묶음/버전 올림) 완료 시마다 `main`에 병합**한다 (빌드는 `main`에서 수행 — `package.json` build 스크립트가 `git checkout main` 사용).
+- 병합은 가능하면 fast-forward, 분기 시 머지 커밋. 병합 후에도 작업 브랜치에서 계속 개발.
