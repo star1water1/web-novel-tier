@@ -2,9 +2,30 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.6.9 (이미지 확대 흐릿함 진짜 수정 — 고정 픽셀 크기, 레이아웃 타이밍)     ║
+ * ║  버전: 7.7.0 (코드 전반 버그 감사 — 다발 실버그 일괄 수정)                   ║
  * ║  최종 수정: 2026-06-14                                                        ║
- * ║  총 라인 수: 약 56,250줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 56,580줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ ✅ v7.7.0 코드 전반 버그 감사 — 다발 실버그 일괄 수정 (2026-06-14)           ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [방법] 8개 영역 병렬 정밀 점검 + 규칙기반 정적분석으로 실버그 선별·수정.     ║
+ * ║ [크래시] CrashLog 스냅샷의 미정의 activeTab 참조 제거 — AppContent           ║
+ * ║   스코프에 없어 크래시 로깅 시 ReferenceError로 진단 자체가 실패.            ║
+ * ║ [크래시] Awards 결과/비교 모달 novel.rating.toFixed() null 가드 (3곳).       ║
+ * ║ [데이터손실] undo(tier_change/tier_batch)가 hybrid/manual에서 비-gated       ║
+ * ║   manual_tier를 NULL로 덮어씀 → prevTier 그대로 복원 (NULL강제금지 정책).    ║
+ * ║ [정합성] import 시 검증/게이트키퍼 in-memory state 미초기화 → 삭제된         ║
+ * ║   작품 id 참조 orphan write. 슬롯전환(30758~)과 동일 리셋 추가.              ║
+ * ║ [중복쓰기] saveEdit/savePlannedEdit 상단버튼 in-flight 가드 누락 → 더블탭    ║
+ * ║   시 tier_history/undo/검증큐 중복 INSERT. isLoading 가드 추가.              ║
+ * ║ [표시] 카테고리 라벨 이모지 strip 정규식 u플래그 누락 → surrogate 손상       ║
+ * ║   mojibake. /u + \uFE0F? 처리, 클래스 내 결합문자 제거 (5곳).                ║
+ * ║ [분석정확] 상반태그/공동출현이 raw ELO rating 사용 → hybrid 무의미.          ║
+ * ║   getPrefScore(mode-aware)로 교체 (3곳).                                     ║
+ * ║ [분석정확] 스펙트럼 normalizedPosition 0~1 보정 (1구간 도달불가/마커         ║
+ * ║   좌편향 수정). tier 집중도 CI NaN 가드. PlatformChips memo theme 추가.      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -18922,7 +18943,7 @@ const TagManagerModal = memo(({
       ...Object.entries(GENERAL_TAGS).reduce((acc, [cat, tags]) => {
         const aliases = tagRegistry?.categoryAliases || {};
         acc[`general_${cat}`] = {
-          label: (aliases[cat] || cat).replace(/^[📖🎭📝⚡💕👤🏙️🔞⭐📅📂📁]\s?/, ""),
+          label: (aliases[cat] || cat).replace(/^[📖🎭📝⚡💕👤🏙🔞⭐📅📂📁]\uFE0F?\s?/u, ""),
           count: tags.length,
           tags: tags.map(t => ({ tag: t, type: "defaultGeneral", sentiment: getTagSentimentValue(t) })),
           isGeneral: true,
@@ -18996,7 +19017,7 @@ const TagManagerModal = memo(({
       .filter(cat => !hiddenCats.includes(cat))
       .map(cat => ({
         key: `general_${cat}`,
-        label: (aliases[cat] || cat).replace(/^[📖🎭📝⚡💕👤🏙️🔞⭐📅📂📁]\s?/, "").slice(0, 6),
+        label: (aliases[cat] || cat).replace(/^[📖🎭📝⚡💕👤🏙🔞⭐📅📂📁]\uFE0F?\s?/u, "").slice(0, 6),
         count: GENERAL_TAGS[cat].length,
         isGeneral: true,
       }));
@@ -19895,7 +19916,7 @@ const TagManagerModal = memo(({
                       <Text style={{
                         fontSize: 11, fontWeight: "600",
                         color: addTagCategory === cat ? "#fff" : C.sub,
-                      }}>{cat.replace(/^[📁📂📖🎭📝⚡💕👤🏙️🔞⭐📅]\s?/, "").slice(0, 8)}</Text>
+                      }}>{cat.replace(/^[📁📂📖🎭📝⚡💕👤🏙🔞⭐📅]\uFE0F?\s?/u, "").slice(0, 8)}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -19918,7 +19939,7 @@ const TagManagerModal = memo(({
               <TextInput
                 value={newTagInput}
                 onChangeText={setNewTagInput}
-                placeholder={activeTab.startsWith("general_") ? `${activeTab.replace("general_", "").replace(/^[📖🎭📝⚡💕👤🏙️🔞⭐📅]\s?/, "").slice(0, 6)}에 태그 추가...` : "새 태그 입력..."}
+                placeholder={activeTab.startsWith("general_") ? `${activeTab.replace("general_", "").replace(/^[📖🎭📝⚡💕👤🏙🔞⭐📅]\uFE0F?\s?/u, "").slice(0, 6)}에 태그 추가...` : "새 태그 입력..."}
                 placeholderTextColor={C.sub}
                 style={{
                   flex: 1,
@@ -20350,7 +20371,7 @@ const TagManagerModal = memo(({
                           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 6, marginBottom: 4 }}>
                             {Object.keys(tagRegistry.generalTags || {}).map(cat => {
                               const aliases = tagRegistry?.categoryAliases || {};
-                              const label = (aliases[cat] || cat).replace(/^[📁📂📖🎭📝⚡💕👤🏙️🔞⭐📅]\s?/, "");
+                              const label = (aliases[cat] || cat).replace(/^[📁📂📖🎭📝⚡💕👤🏙🔞⭐📅]\uFE0F?\s?/u, "");
                               return (
                                 <TouchableOpacity
                                   key={cat}
@@ -20808,6 +20829,7 @@ const PlatformChips = memo(({ platforms, onChange, options, extraPlatforms, them
     if (prev.platforms[i] !== next.platforms[i]) return false;
   }
   if (prev.options !== next.options) return false;
+  if (prev.theme !== next.theme) return false; // 🔧 다크/라이트 토글 시 미등록 칩 색상 stale 방지
   const pe = prev.extraPlatforms || [], ne = next.extraPlatforms || [];
   if (pe.length !== ne.length) return false;
   for (let i = 0; i < pe.length; i++) { if (pe[i] !== ne[i]) return false; }
@@ -22073,7 +22095,7 @@ const AwardsScreen = memo(({
                                 <Text style={{ fontSize: 13 }}>📊</Text>
                                 <Text style={{ color: C.text, fontSize: 13, fontWeight: "700", marginLeft: 4 }}>
                                   {/* 🆕 v7.0.6 (M2/m5): hybrid/manual 모드는 ELO rating 비활성 — manual_tier #order 표시 */}
-                                  {isManualOrHybrid ? `${getTierLabel(novel.manual_tier || "")} #${novel.manual_order || 0}` : `${novel.rating.toFixed(1)}점`}
+                                  {isManualOrHybrid ? `${getTierLabel(novel.manual_tier || "")} #${novel.manual_order || 0}` : `${(novel.rating || 0).toFixed(1)}점`}
                                 </Text>
                               </View>
                               <View style={{ flexDirection: "row", alignItems: "center" }}>
@@ -22453,7 +22475,7 @@ const AwardsScreen = memo(({
                           marginTop: 2,
                         }}>
                           {/* 🆕 v7.0.6 (M2/m5): hybrid/manual 모드는 ELO rating 비활성 — manual_tier #order 표시 */}
-                          {isManualOrHybrid ? `${getTierLabel(novel.manual_tier || "")} #${novel.manual_order || 0}` : `${novel.rating.toFixed(0)}점`}
+                          {isManualOrHybrid ? `${getTierLabel(novel.manual_tier || "")} #${novel.manual_order || 0}` : `${(novel.rating || 0).toFixed(0)}점`}
                         </Text>
                       </View>
                     );
@@ -23456,7 +23478,7 @@ const TasteAnalysisScreen = memo(({
       // 통계 계산
       const calcStats = (novels) => {
         if (novels.length === 0) return { count: 0, avgRating: 0, completedRate: 0, droppedRate: 0 };
-        const ratings = novels.map(n => Number(n.rating) || 1500);
+        const ratings = novels.map(n => getPrefScore(n, globalTierConfig));
         const completed = novels.filter(n => n.status === "completed").length;
         const dropped = novels.filter(n => n.status === "dropped").length;
         return {
@@ -23494,7 +23516,7 @@ const TasteAnalysisScreen = memo(({
     if (!list || list.length === 0) return null;
     
     // 고평점 작품(1700+)의 태그들에서 공동출현 패턴 찾기
-    const highRatedNovels = list.filter(n => (Number(n.rating) || 1500) >= 1700);
+    const highRatedNovels = list.filter(n => getPrefScore(n, globalTierConfig) >= 1700);
     if (highRatedNovels.length < 3) return null;
     
     // 고평점 작품에서 자주 함께 나타나는 태그 조합
@@ -23515,7 +23537,7 @@ const TasteAnalysisScreen = memo(({
             pairCounts[key] = { count: 0, ratings: [], tags: [allTags[i], allTags[j]] };
           }
           pairCounts[key].count++;
-          pairCounts[key].ratings.push(Number(novel.rating) || 1500);
+          pairCounts[key].ratings.push(getPrefScore(novel, globalTierConfig));
         }
       }
     }
@@ -27918,7 +27940,7 @@ async function analyzePreferences(novels, matches) {
         
         if (sumWeight > 0) {
           const avgPosition = sumPos / sumWeight;
-          const normalizedPosition = avgPosition / spectrumLength; // 0~1 범위
+          const normalizedPosition = spectrumLength > 1 ? (avgPosition - 1) / (spectrumLength - 1) : 0.5; // 0~1 범위 (pos 0→0, 마지막→1)
           novelAnalyses.push({
             id: n.id,
             title: n.title,
@@ -28269,7 +28291,7 @@ async function analyzePreferences(novels, matches) {
       const _addConcentrationRow = (entityKind, stat, sampleThreshold) => {
         if (stat.totalCount < sampleThreshold) return;
         const isNotable = stat.topTierRatio >= 0.6;
-        const ciHalf = (stat.topTierCI?.upper - stat.topTierCI?.lower) / 2;
+        const _ci = stat.topTierCI; const ciHalf = _ci ? (_ci.upper - _ci.lower) / 2 : 0;
         const detailsObj = {
           byTier: stat.byTier,
           byTierWeight: stat.byTierWeight,
@@ -30706,7 +30728,6 @@ function AppContent() {
   // 💥 v3.9.0: CrashLog 상태 스냅샷 — 매 렌더마다 최신 클로저로 등록 (stale closure 방지)
   CrashLog.registerStateSnapshot(() => ({
     screen: screen || "unknown",
-    activeTab: activeTab,
     listCount: list?.length || 0,
     slotId: activeSlotId,
     isAutoMatching: isAutoMatchingRef.current,
@@ -31377,7 +31398,8 @@ function AppContent() {
     // 🔧 v3.5.8: plannedEditItemRef에서 읽어 React 배칭 지연과 무관하게 최신값 사용
     const n = plannedEditItemRef.current;
     if (!n) return;
-    
+    if (isLoading) return; // 🔧 중복 제출 가드 (saveEdit과 동일 — 중복 UPDATE/부수효과 방지)
+
     const newTitle = (n.title || "").trim();
     if (!newTitle) {
       Alert.alert("알림", "제목은 비울 수 없습니다.");
@@ -35375,8 +35397,13 @@ function AppContent() {
         case 'tier_change':
           // 티어 변경 되돌리기 (gated 티어가 아니면 null로 복원)
           // 🆕 v7.0.6 (M11): manual_order도 함께 복원 — 페이로드 누락 시 fallback 0 (backward compat)
+          // 🔧 hybrid/manual 모드는 manual_tier가 사용자 진실 — prevTier 그대로 복원 (헤더 정책: 절대 NULL 강제 금지)
+          //    match 모드만 기존 휴리스틱 유지 (prevTier가 ELO 표시 티어일 수 있어 비-gated는 자동(null) 복귀)
+          const _restoreTier = globalTierConfig.mode === "match"
+            ? (isGatedTier(item.payload.prevTier, globalTierConfig) ? item.payload.prevTier : null)
+            : (item.payload.prevTier || null);
           await exec("UPDATE novels SET manual_tier=?, manual_order=? WHERE id=?", [
-            isGatedTier(item.payload.prevTier, globalTierConfig) ? item.payload.prevTier : null,
+            _restoreTier,
             Number(item.payload.prevManualOrder) || 0,
             item.payload.id
           ]);
@@ -35399,8 +35426,11 @@ function AppContent() {
           // 일괄 티어 변경 되돌리기
           // 🆕 v7.0.6 (M11): manual_order도 함께 복원 — 페이로드 누락 시 fallback 0 (backward compat)
           for (const change of item.payload.changes) {
+            const _restoreTierB = globalTierConfig.mode === "match"
+              ? (isGatedTier(change.prevTier, globalTierConfig) ? change.prevTier : null)
+              : (change.prevTier || null);
             await exec("UPDATE novels SET manual_tier=?, manual_order=? WHERE id=?", [
-              isGatedTier(change.prevTier, globalTierConfig) ? change.prevTier : null,
+              _restoreTierB,
               Number(change.prevManualOrder) || 0,
               change.id
             ]);
@@ -36920,6 +36950,7 @@ function AppContent() {
     // 🔧 v3.5.6: editItemRef.current에서 읽어 React 배칭 지연과 무관하게 최신값 사용
     const n = editItemRef.current;
     if (!n) return;
+    if (isLoading) return; // 🔧 중복 제출 가드 — 느린 저장 중 재탭 시 tier_history/undo/검증큐 중복 INSERT 방지
 
     const newTitle = (n.title || "").trim();
     if (!newTitle) {
@@ -41126,6 +41157,16 @@ async function importJSON() {
               // 🔧 v3.5.15e: doClearAll로 DB 삭제된 테이블의 state 정리
               setUndoStack([]); // 이전 데이터 참조하는 undo 무효화
               setInsightList([]); // insight_queue 삭제 반영
+              // 🔧 hybrid 검증/게이트키퍼 in-memory state 정리 — doClearAll이 큐/세션 테이블 삭제 +
+              //    새 UUID로 재INSERT하므로, 진행 중 세션이 삭제된 작품 id 참조 시 orphan write 발생
+              //    (슬롯 전환 경로와 동일 리셋)
+              setVerificationSession(null);
+              verificationSessionIdRef.current = null;
+              setVerificationStats({ pending: 0, resolved: 0 });
+              setVerificationLoading(false);
+              verificationLoadingRef.current = false;
+              setGatekeeperCandidates([]);
+              setGatekeeperModalOpen(false);
               // matchInsights/upsetFactors: import AD가 복원하지 않은 경우만 클리어
               if (!analysisRestored) {
                 setMatchInsights([]);
@@ -54486,7 +54527,7 @@ async function importJSON() {
                           </Text>
                         </View>
                         <StatusBadge status={n.status} /><WorkStatusBadge workStatus={n.work_status} />
-                        <Text style={{ color: C.sub, marginTop: 6, fontSize: 12 }}>레이팅: {n.rating.toFixed(1)}</Text>
+                        <Text style={{ color: C.sub, marginTop: 6, fontSize: 12 }}>레이팅: {(Number(n.rating) || 0).toFixed(1)}</Text>
                         <Text style={{ color: C.sub, fontSize: 12 }}>승률: {winRate}%</Text>
                         <Text style={{ color: C.sub, fontSize: 12 }}>전적: {n.wins}승 {n.losses}패</Text>
                         <Text style={{ color: C.sub, fontSize: 12 }}>읽음: {n.read_count}회</Text>
