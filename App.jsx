@@ -2,9 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.8.0 (명대사 텍스트 서식 — 폰트/크기/자간/행간/색/배경)              ║
+ * ║  버전: 7.8.1 (명대사 서식 — 자동 크기 맞춤 + 배경 카드 통합)                 ║
  * ║  최종 수정: 2026-06-14                                                        ║
- * ║  총 라인 수: 약 56,981줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 57,073줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.8.1 명대사 서식 — 자동 크기(맞춤) + 배경 카드 통합 (2026-06-14)        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [피드백] ①긴 명대사가 카드를 벗어나 잘림 ②배경색이 카드 장식 틀을 덮어       ║
+ * ║   조화롭지 못함. 표면 패치 대신 구조적 수정.                                 ║
+ * ║ [자동 크기=맞춤] AutoFitQuoteText 신설 — 자동이 기본값 복원이 아니라         ║
+ * ║   카드 가용 높이를 측정(onLayout)+줄 높이 측정(onTextLayout) 후 비례 축소로  ║
+ * ║   글자가 잘리지 않게 fit. 직접 크기 지정 시 그 값 고정. 편집기에 안내 추가.  ║
+ * ║ [배경 통합] 배경(색/이미지) 지정 시 떠 있던 박스 대신 카드 전체 배경으로     ║
+ * ║   적용 + 티어색 장식 아치 숨김. 헤더/푸터/본문 글자색을 배경 명도 기반 자동  ║
+ * ║   대비(quoteContrastColor: 흰/검 자동), 이미지 배경은 어둠 오버레이+흰 글자. ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11559,6 +11572,55 @@ function resolveQuoteTextStyle(style, auto) {
   else out.fontWeight = s.bold ? "700" : (auto.fontWeight || "400");
   return out;
 }
+// 배경색 명도에 따라 가독성 좋은 글자색(흰/검) 반환 — 카드 헤더/푸터/본문 대비용
+function quoteContrastColor(hex) {
+  if (!hex || typeof hex !== "string") return "#111827";
+  let h = hex.replace("#", "");
+  if (h.length === 3) h = h.split("").map(c => c + c).join("");
+  if (h.length < 6) return "#111827";
+  const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+  if ([r, g, b].some(n => Number.isNaN(n))) return "#111827";
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return lum > 0.6 ? "#111827" : "#ffffff";
+}
+
+/* =========================================================
+   🆕 v7.8.1: AutoFitQuoteText — 명대사 자동 크기(맞춤)
+   - fixedSize>0 이면 그대로, 0(자동)이면 컨테이너 높이에 맞게 폰트 축소(잘림 방지)
+   - onLayout으로 가용 높이 측정 + onTextLayout으로 실제 줄 높이 측정 → 비례 축소(1~2패스 수렴)
+   - ❝❞ 따옴표를 내부에 포함해 예약 높이를 반영
+   ========================================================= */
+const AutoFitQuoteText = memo(({ text, baseStyle, fixedSize, userLineHeight, maxSize = 23, minSize = 11, marksColor }) => {
+  const [avail, setAvail] = useState(0);
+  const [size, setSize] = useState(fixedSize > 0 ? fixedSize : maxSize);
+  useEffect(() => {
+    setSize(fixedSize > 0 ? fixedSize : maxSize);
+  }, [text, avail, fixedSize, maxSize]);
+  const onText = (e) => {
+    if (fixedSize > 0 || avail <= 0) return;
+    const lines = e?.nativeEvent?.lines;
+    if (!lines || !lines.length) return;
+    let h = 0;
+    for (const ln of lines) h += (ln.height || 0);
+    const budget = avail - 80; // ❝❞ + 여백 예약
+    if (budget <= 0 || h <= 0) return;
+    if (h > budget && size > minSize) {
+      const next = Math.max(minSize, Math.floor(size * (budget / h) * 0.96));
+      if (next < size) setSize(next);
+    }
+  };
+  const lh = userLineHeight > 0 ? userLineHeight : Math.round(size * 1.45);
+  return (
+    <View
+      style={{ flex: 1, width: "100%", justifyContent: "center" }}
+      onLayout={(e) => { const h = e.nativeEvent.layout.height; if (h > 0 && Math.abs(h - avail) > 1) setAvail(h); }}
+    >
+      <Text style={{ fontSize: 28, color: marksColor, textAlign: "center", opacity: 0.4, marginBottom: 2 }}>❝</Text>
+      <Text style={[baseStyle, { fontSize: size, lineHeight: lh }]} onTextLayout={onText}>{text}</Text>
+      <Text style={{ fontSize: 28, color: marksColor, textAlign: "center", opacity: 0.4, marginTop: 2 }}>❞</Text>
+    </View>
+  );
+});
 
 function parseQuotes(val) {
   if (!val || typeof val !== "string" || !val.trim()) return [];
@@ -11755,6 +11817,10 @@ const QuoteStyleEditor = memo(({ style, text, onChange, onPickBgImage, onClearBg
           </TouchableOpacity>
         ) : null}
       </View>
+
+      <Text style={{ color: C.sub, fontSize: 11, marginTop: 10, lineHeight: 16 }}>
+        💡 크기 "자동"은 💬명언 카드 높이에 맞춰 글자가 잘리지 않게 자동 조절됩니다. 직접 크기를 정하면 그 값으로 고정됩니다.
+      </Text>
     </View>
   );
 });
@@ -49147,8 +49213,13 @@ async function importJSON() {
                 {/* ═══ 메인 카드 (쇼츠) ═══ */}
                 {card && (() => {
                   const tierBg = card.tierColor + "15";
-                  const isLong = (card.quote || "").length > 100;
-                  const isMedium = (card.quote || "").length > 50;
+                  // 🆕 v7.8.1: 사용자 배경(색/이미지)을 카드 전체에 통합 — 장식 아치 대체 + 대비색 자동
+                  const qst = !card.isImage ? card.quoteStyle : null;
+                  const hasCustomBg = !!(qst && (qst.bg || qst.bgImage));
+                  const onBg = hasCustomBg ? (qst.bgImage ? "#ffffff" : quoteContrastColor(qst.bg)) : null;
+                  const lightOnBg = hasCustomBg && (qst.bgImage || onBg === "#ffffff");
+                  const onBgDim = lightOnBg ? "rgba(255,255,255,0.78)" : "rgba(17,24,39,0.62)";
+                  const cardLine = hasCustomBg ? (lightOnBg ? "rgba(255,255,255,0.22)" : "rgba(0,0,0,0.12)") : C.line;
                   
                   return (
                     <View 
@@ -49178,16 +49249,30 @@ async function importJSON() {
                         }
                       }}
                     >
-                      {/* 배경 장식 */}
-                      <View style={{
-                        position: "absolute",
-                        top: 0, left: 0, right: 0,
-                        height: "45%",
-                        backgroundColor: tierBg,
-                        borderBottomLeftRadius: 120,
-                        borderBottomRightRadius: 120,
-                      }} />
-                      
+                      {/* 배경: 사용자 서식 배경이 있으면 카드 전체에 통합, 없으면 기존 티어색 장식 아치 */}
+                      {hasCustomBg ? (
+                        <>
+                          {qst.bg ? (
+                            <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: qst.bg }} />
+                          ) : null}
+                          {qst.bgImage ? (
+                            <>
+                              <ExpoImage source={{ uri: qst.bgImage }} recyclingKey={qst.bgImage} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} contentFit="cover" cachePolicy="disk" />
+                              <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.40)" }} />
+                            </>
+                          ) : null}
+                        </>
+                      ) : (
+                        <View style={{
+                          position: "absolute",
+                          top: 0, left: 0, right: 0,
+                          height: "45%",
+                          backgroundColor: tierBg,
+                          borderBottomLeftRadius: 120,
+                          borderBottomRightRadius: 120,
+                        }} />
+                      )}
+
                       {/* 상단: 카운터 + 티어 + 장르 */}
                       <View style={{ 
                         flexDirection: "row", 
@@ -49196,7 +49281,7 @@ async function importJSON() {
                         padding: 18,
                         paddingBottom: 8,
                       }}>
-                        <Text style={{ color: C.sub, fontSize: 13, fontWeight: "600" }}>
+                        <Text style={{ color: onBg || C.sub, fontSize: 13, fontWeight: "600" }}>
                           {safeIdx + 1} / {total}
                         </Text>
                         <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
@@ -49249,61 +49334,62 @@ async function importJSON() {
                             ) : null}
                           </View>
                         ) : (() => {
-                          // 🆕 v7.8.0: 사용자 서식 적용 (없으면 기존 길이기반 자동 스타일)
-                          const st = card.quoteStyle;
+                          // 🆕 v7.8.1: 자동 크기는 카드 높이에 맞춰 fit(잘림 방지). 배경은 카드 레벨에서 통합.
                           const auto = {
-                            size: isLong ? 16 : isMedium ? 19 : 22,
-                            lineHeight: isLong ? 26 : isMedium ? 30 : 36,
-                            letterSpacing: 0.3,
-                            color: (st && st.bgImage) ? "#fff" : C.text,
+                            size: 22, lineHeight: 33, letterSpacing: 0.3,
+                            color: hasCustomBg ? onBg : C.text,
                             textAlign: "center", fontStyle: "italic", fontWeight: "500",
                           };
-                          const eff = resolveQuoteTextStyle(st, auto);
-                          const hasBg = !!(st && (st.bg || st.bgImage));
-                          const markColor = (st && st.bgImage) ? "rgba(255,255,255,0.55)" : card.tierColor;
+                          const eff = resolveQuoteTextStyle(qst, auto);
+                          const baseStyle = {
+                            letterSpacing: eff.letterSpacing,
+                            color: eff.color,
+                            textAlign: eff.textAlign,
+                            fontStyle: eff.fontStyle,
+                            ...(eff.fontFamily ? { fontFamily: eff.fontFamily } : { fontWeight: eff.fontWeight }),
+                          };
+                          const markColor = hasCustomBg ? (lightOnBg ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.32)") : card.tierColor;
                           return (
-                            <View style={{ width: "100%", borderRadius: 16, overflow: "hidden", justifyContent: "center", paddingVertical: hasBg ? 22 : 0, paddingHorizontal: hasBg ? 14 : 0, backgroundColor: (st && st.bg) ? st.bg : "transparent" }}>
-                              {st && st.bgImage ? (
-                                <>
-                                  <ExpoImage source={{ uri: st.bgImage }} recyclingKey={st.bgImage} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} contentFit="cover" cachePolicy="disk" />
-                                  <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.32)" }} />
-                                </>
-                              ) : null}
-                              <Text style={{ fontSize: 36, color: markColor, marginBottom: 10, opacity: 0.4, textAlign: "center" }}>❝</Text>
-                              <Text style={eff}>{card.quote}</Text>
-                              <Text style={{ fontSize: 36, color: markColor, marginTop: 10, opacity: 0.4, textAlign: "center" }}>❞</Text>
-                            </View>
+                            <AutoFitQuoteText
+                              text={card.quote}
+                              baseStyle={baseStyle}
+                              fixedSize={(qst && qst.size > 0) ? qst.size : 0}
+                              userLineHeight={(qst && qst.lineHeight > 0) ? qst.lineHeight : 0}
+                              maxSize={23}
+                              minSize={11}
+                              marksColor={markColor}
+                            />
                           );
                         })()}
                       </View>
                       
                       {/* 하단: 작품 정보 */}
-                      <View style={{ 
+                      <View style={{
                         padding: 18,
                         paddingTop: 14,
                         borderTopWidth: 1,
-                        borderTopColor: C.line,
+                        borderTopColor: cardLine,
                         flexDirection: "row",
                         alignItems: "center",
                       }}>
-                        <CoverImage 
-                          uri={card.coverImage} 
-                          platforms={card.platforms} 
-                          platformCovers={platformCovers} 
-                          size={46} 
-                          theme={C} 
+                        <CoverImage
+                          uri={card.coverImage}
+                          platforms={card.platforms}
+                          platformCovers={platformCovers}
+                          size={46}
+                          theme={C}
                         />
                         <View style={{ flex: 1 }}>
-                          <Text style={{ 
-                            fontSize: 15, 
-                            fontWeight: "800", 
-                            color: C.text,
+                          <Text style={{
+                            fontSize: 15,
+                            fontWeight: "800",
+                            color: hasCustomBg ? onBg : C.text,
                           }} numberOfLines={1}>
                             {card.title}
                           </Text>
-                          <Text style={{ 
-                            fontSize: 13, 
-                            color: C.sub, 
+                          <Text style={{
+                            fontSize: 13,
+                            color: hasCustomBg ? onBgDim : C.sub,
                             marginTop: 2,
                           }}>
                             {card.author} · {card.rating.toFixed(0)}점
