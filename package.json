@@ -10,8 +10,13 @@
     "build:prod": "git checkout main && git pull --ff-only && npx --yes eas-cli build -p android --profile production"
   },
   "dependencies": {
+    "@expo-google-fonts/gowun-batang": "^0.4.1",
+    "@expo-google-fonts/jua": "^0.4.1",
+    "@expo-google-fonts/nanum-gothic": "^0.4.0",
+    "@expo-google-fonts/nanum-myeongjo": "^0.4.1",
     "expo": "~54.0.33",
     "expo-file-system": "~19.0.21",
+    "expo-font": "~14.0.12",
     "expo-image": "~3.0.11",
     "expo-image-manipulator": "~14.0.8",
     "expo-image-picker": "~17.0.10",

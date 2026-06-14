@@ -2,9 +2,28 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.7.0 (코드 전반 버그 감사 — 다발 실버그 일괄 수정)                   ║
+ * ║  버전: 7.8.0 (명대사 텍스트 서식 — 폰트/크기/자간/행간/색/배경)              ║
  * ║  최종 수정: 2026-06-14                                                        ║
- * ║  총 라인 수: 약 56,580줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 56,981줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.8.0 명대사 텍스트 서식 — 폰트/크기/자간/행간/색/배경 (2026-06-14)      ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [요청] 직접 입력 명대사(텍스트)를 자유롭게 꾸미는 기능. 문장별 자유 편집.    ║
+ * ║ [폰트] expo-font + @expo-google-fonts 한글 4종 번들 (나눔고딕/나눔명조/      ║
+ * ║   고운바탕/주아) + 시스템 기본. App() 루트에서 비차단 로드.                  ║
+ * ║ [데이터] 텍스트 quote를 {type:'text',text,style} 객체로 승격(서식 지정 시).  ║
+ * ║   parseQuotes/serializeQuotes 확장 — 빈 스타일은 평문화(저장 컴팩트),        ║
+ * ║   레거시 문자열·@구분·이미지 quote 100% 호환. 백업도 그대로 통과.            ║
+ * ║ [편집기] QuoteStyleEditor: 글꼴/굵게/기울임/정렬, 크기·자간·행간 스테퍼,     ║
+ * ║   글자색·배경색 스와치, 배경이미지 선택, 실시간 미리보기. 본편집·예정편집    ║
+ * ║   모달에 '🎨 꾸미기' 패널로 연동. 보충편집은 서식 표시·보존(안전).           ║
+ * ║ [표시] 명언 쇼츠/상세뷰/수상카드/확대모달 모두 서식 적용 — 미지정 시 기존    ║
+ * ║   자동 스타일 폴백. 배경이미지에는 가독성 오버레이 + 기본 흰색 글자.         ║
+ * ║ [정리] 삭제·편집 시 배경이미지 파일도 고아 정리(기존 이미지 quote와          ║
+ * ║   동일 추적 ref 재사용). 미리보기 외 이미지 내보내기는 v1 범위 외(추후).     ║
+ * ║ [검증] 데이터 헬퍼 라운드트립 단위테스트 23종 통과, ESLint 파싱 무오류.      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -4870,6 +4889,12 @@ import * as FileSystem from "expo-file-system/legacy"; // 🔧 v3.5.3: SDK 54 �
 import * as ImageManipulator from "expo-image-manipulator"; // 📷 명대사 이미지 압축
 import * as MediaLibrary from "expo-media-library"; // 📷 v7.4.0 티어표 갤러리 저장
 import { captureRef } from "react-native-view-shot"; // 📷 v7.4.0 티어표 캡처
+// 🆕 v7.8.0: 명대사 텍스트 서식 — 한글 웹폰트 번들 (expo-font + @expo-google-fonts)
+import { useFonts as useExpoFonts } from "expo-font";
+import { NanumGothic_400Regular, NanumGothic_700Bold } from "@expo-google-fonts/nanum-gothic";
+import { NanumMyeongjo_400Regular, NanumMyeongjo_700Bold } from "@expo-google-fonts/nanum-myeongjo";
+import { GowunBatang_400Regular, GowunBatang_700Bold } from "@expo-google-fonts/gowun-batang";
+import { Jua_400Regular } from "@expo-google-fonts/jua";
 
 /* =========================================================
    💥 v3.9.0: 크래시 로그 영속화 + Breadcrumbs
@@ -11473,16 +11498,79 @@ function isImageQuote(q) {
   return q && typeof q === "object" && q.type === "image" && !!q.uri;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 🆕 v7.8.0: 명대사 텍스트 서식 (직접 입력 문장에 폰트/크기/자간/행간/색/배경 지정)
+//   - 평문 문자열(string) = 서식 없음(레거시/기본). 서식 지정 시 { type:"text", text, style } 객체로 승격.
+//   - 이미지 quote({type:"image"})는 기존 그대로.
+// ─────────────────────────────────────────────────────────────────────────────
+const QUOTE_FONTS = [
+  { key: "system",        label: "기본",     regular: null,                       bold: null },
+  { key: "nanumGothic",   label: "나눔고딕", regular: "NanumGothic_400Regular",   bold: "NanumGothic_700Bold" },
+  { key: "nanumMyeongjo", label: "나눔명조", regular: "NanumMyeongjo_400Regular", bold: "NanumMyeongjo_700Bold" },
+  { key: "gowunBatang",   label: "고운바탕", regular: "GowunBatang_400Regular",   bold: "GowunBatang_700Bold" },
+  { key: "jua",           label: "주아",     regular: "Jua_400Regular",           bold: "Jua_400Regular" },
+];
+const QUOTE_FONT_MAP = Object.fromEntries(QUOTE_FONTS.map(f => [f.key, f]));
+// 텍스트색/배경색 스와치 (배경은 "없음"=null 포함)
+const QUOTE_TEXT_COLORS = [null, "#111827", "#ffffff", "#ef4444", "#f59e0b", "#22c55e", "#3b82f6", "#8b5cf6", "#ec4899"];
+const QUOTE_BG_COLORS   = [null, "#111827", "#1f2937", "#fef3c7", "#fee2e2", "#dcfce7", "#dbeafe", "#f3e8ff", "#fce7f3"];
+const QUOTE_SIZE_MIN = 12, QUOTE_SIZE_MAX = 40;
+const QUOTE_LS_MIN = -2, QUOTE_LS_MAX = 12;          // 자간
+const QUOTE_LH_MIN = 16, QUOTE_LH_MAX = 64;          // 행간
+const DEFAULT_QUOTE_STYLE = { font: "system", size: 0, letterSpacing: null, lineHeight: 0, color: null, bg: null, bgImage: null, bold: false, italic: true, align: "center" };
+
+function isTextQuote(q) {
+  return (typeof q === "string") || (q && typeof q === "object" && q.type === "text");
+}
+function getQuoteText(q) {
+  if (typeof q === "string") return q;
+  if (q && typeof q === "object" && q.type === "text") return q.text || "";
+  return "";
+}
+function getQuoteStyle(q) {
+  return (q && typeof q === "object" && q.type === "text" && q.style && typeof q.style === "object") ? q.style : null;
+}
+function resolveQuoteFontFamily(fontKey, bold) {
+  const f = QUOTE_FONT_MAP[fontKey];
+  if (!f || !f.regular) return undefined; // 시스템 기본 → fontFamily 미지정
+  return bold ? (f.bold || f.regular) : f.regular;
+}
+// 스타일이 전부 기본값이면 평문 문자열로 다운그레이드 가능 (저장 컴팩트 + 하위호환)
+function quoteStyleIsDefault(s) {
+  if (!s || typeof s !== "object") return true;
+  return (!s.font || s.font === "system") && !(s.size > 0) && (s.letterSpacing == null)
+    && !(s.lineHeight > 0) && !s.color && !s.bg && !s.bgImage && !s.bold
+    && (s.italic === undefined || s.italic === true) && (!s.align || s.align === "center");
+}
+// 최종 RN Text 스타일 = 표면별 auto 기본값 + 사용자 서식 오버라이드
+function resolveQuoteTextStyle(style, auto) {
+  const s = style || {};
+  const fam = resolveQuoteFontFamily(s.font || "system", !!s.bold);
+  const effSize = (s.size > 0) ? s.size : auto.size;
+  const out = {
+    fontSize: effSize,
+    lineHeight: (s.lineHeight > 0) ? s.lineHeight : (s.size > 0 ? Math.round(effSize * 1.4) : auto.lineHeight),
+    letterSpacing: (s.letterSpacing != null) ? s.letterSpacing : auto.letterSpacing,
+    color: s.color || auto.color,
+    textAlign: s.align || auto.textAlign || "center",
+    fontStyle: ((s.italic != null) ? s.italic : (auto.fontStyle === "italic")) ? "italic" : "normal",
+  };
+  if (fam) out.fontFamily = fam;            // 커스텀 폰트: weight는 family에 내장
+  else out.fontWeight = s.bold ? "700" : (auto.fontWeight || "400");
+  return out;
+}
+
 function parseQuotes(val) {
   if (!val || typeof val !== "string" || !val.trim()) return [];
   const trimmed = val.trim();
-  // 하위호환: 기존 JSON 배열 형식 지원 (텍스트 + 이미지 객체)
+  // 하위호환: 기존 JSON 배열 형식 지원 (텍스트 + 이미지 + 서식 텍스트 객체)
   if (trimmed.startsWith("[")) {
     try {
       const arr = JSON.parse(trimmed);
       if (Array.isArray(arr)) return arr.filter(q =>
         (typeof q === "string" && q.trim()) ||
-        (q && typeof q === "object" && q.type === "image" && q.uri)
+        (q && typeof q === "object" && q.type === "image" && q.uri) ||
+        (q && typeof q === "object" && q.type === "text" && typeof q.text === "string" && q.text.trim())
       );
       return [];
     } catch { /* JSON 파싱 실패 시 아래로 계속 */ }
@@ -11505,20 +11593,171 @@ function parseQuotes(val) {
 
 function serializeQuotes(arr) {
   if (!arr || arr.length === 0) return "";
-  // 이미지가 포함된 경우 JSON 직렬화
-  const hasImages = arr.some(q => isImageQuote(q));
-  if (hasImages) {
-    const cleaned = arr.filter(q =>
-      isImageQuote(q) || (typeof q === "string" && q.trim())
+  // 서식 텍스트 객체 정규화: 빈 스타일이면 평문 문자열로 다운그레이드
+  const norm = arr.map(q => {
+    if (q && typeof q === "object" && q.type === "text") {
+      const t = (q.text || "").trim();
+      if (!t) return null;
+      if (quoteStyleIsDefault(q.style)) return t; // 평문화 (저장 컴팩트)
+      const o = { type: "text", text: t, style: q.style };
+      if (q.caption) o.caption = q.caption;
+      return o;
+    }
+    return q;
+  }).filter(q => q != null);
+  // 이미지 또는 서식 텍스트 객체가 있으면 JSON 직렬화
+  const hasComplex = norm.some(q => isImageQuote(q) || (q && typeof q === "object" && q.type === "text"));
+  if (hasComplex) {
+    const cleaned = norm.filter(q =>
+      isImageQuote(q) ||
+      (q && typeof q === "object" && q.type === "text") ||
+      (typeof q === "string" && q.trim())
     );
     return cleaned.length > 0 ? JSON.stringify(cleaned) : "";
   }
-  // 텍스트 전용: 기존 @ 구분자 로직
-  const cleaned = arr.filter(q => typeof q === "string" && q.trim()).map(q => q.trim());
+  // 텍스트 평문 전용: 기존 @ 구분자 로직
+  const cleaned = norm.filter(q => typeof q === "string" && q.trim()).map(q => q.trim());
   if (cleaned.length === 0) return "";
   if (cleaned.length === 1) return cleaned[0]; // 하위 호환: 1개면 단일 문자열
   return cleaned.join(" @ ");
 }
+
+/* =========================================================
+   🆕 v7.8.0: 명대사 텍스트 서식 편집기 (QuoteStyleEditor)
+   - 폰트/크기/자간/행간/글자색/배경색/배경이미지/볼드/이탤릭/정렬
+   - style 객체를 받아 onChange(newStyle)로 통지 (상위가 quote 항목에 반영)
+   - onPickBgImage: 비동기 이미지 선택 → 저장된 uri 반환(없으면 null)
+   ========================================================= */
+const QuoteStyleEditor = memo(({ style, text, onChange, onPickBgImage, onClearBgImage, theme, isDark, busy }) => {
+  const C = theme;
+  const s = { ...DEFAULT_QUOTE_STYLE, ...(style || {}) };
+  const set = (patch) => onChange({ ...s, ...patch });
+  const previewAuto = { size: 20, lineHeight: 28, letterSpacing: 0.3, color: C.text, textAlign: "center", fontStyle: "italic", fontWeight: "500" };
+  const eff = resolveQuoteTextStyle(s, previewAuto);
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+  const btnStyle = { width: 34, height: 30, borderRadius: 7, backgroundColor: C.chip, alignItems: "center", justifyContent: "center" };
+  const stepRow = (label, display, onDec, onInc, onAuto) => (
+    <View style={{ flexDirection: "row", alignItems: "center", marginTop: 8 }}>
+      <Text style={{ color: C.sub, fontSize: 12, width: 38 }}>{label}</Text>
+      <TouchableOpacity onPress={onDec} style={btnStyle}><Text style={{ color: C.text, fontSize: 18, fontWeight: "800" }}>−</Text></TouchableOpacity>
+      <Text style={{ color: C.text, fontSize: 13, fontWeight: "700", minWidth: 54, textAlign: "center" }}>{display}</Text>
+      <TouchableOpacity onPress={onInc} style={btnStyle}><Text style={{ color: C.text, fontSize: 16, fontWeight: "800" }}>＋</Text></TouchableOpacity>
+      <TouchableOpacity onPress={onAuto} style={{ marginLeft: 8, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 6, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line }}>
+        <Text style={{ color: C.sub, fontSize: 11 }}>자동</Text>
+      </TouchableOpacity>
+    </View>
+  );
+  const swatch = (color, selected, onPress, isNone) => (
+    <TouchableOpacity key={String(color)} onPress={onPress} style={{
+      width: 26, height: 26, borderRadius: 13, marginRight: 6, marginBottom: 6,
+      backgroundColor: isNone ? "transparent" : color,
+      borderWidth: selected ? 3 : 1,
+      borderColor: selected ? C.primary : (isNone ? C.sub : C.line),
+      alignItems: "center", justifyContent: "center",
+    }}>
+      {isNone ? <Text style={{ color: C.sub, fontSize: 11 }}>⊘</Text> : null}
+    </TouchableOpacity>
+  );
+
+  return (
+    <View style={{ marginTop: 8, padding: 10, backgroundColor: C.bg, borderRadius: 10, borderWidth: 1, borderColor: C.line }}>
+      {/* 미리보기 */}
+      <View style={{ borderRadius: 10, overflow: "hidden", minHeight: 80, justifyContent: "center", backgroundColor: s.bg || C.card, marginBottom: 10, borderWidth: 1, borderColor: C.line }}>
+        {s.bgImage ? (
+          <>
+            <ExpoImage source={{ uri: s.bgImage }} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} contentFit="cover" cachePolicy="disk" />
+            <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.28)" }} />
+          </>
+        ) : null}
+        <Text style={[{ paddingVertical: 14, paddingHorizontal: 12 }, eff]}>
+          {(text && text.trim()) ? text : "미리보기 문장"}
+        </Text>
+      </View>
+
+      {/* 폰트 */}
+      <Text style={{ color: C.sub, fontSize: 12, marginBottom: 4 }}>글꼴</Text>
+      <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+        {QUOTE_FONTS.map(f => {
+          const sel = (s.font || "system") === f.key;
+          return (
+            <TouchableOpacity key={f.key} onPress={() => set({ font: f.key })} style={{
+              paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8, marginRight: 6, marginBottom: 6,
+              backgroundColor: sel ? C.primary : C.chip,
+            }}>
+              <Text style={{ color: sel ? "#fff" : C.text, fontSize: 13, fontWeight: "600", fontFamily: resolveQuoteFontFamily(f.key, false) }}>{f.label}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {/* 굵게/기울임/정렬 */}
+      <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 8, gap: 6 }}>
+        <TouchableOpacity onPress={() => set({ bold: !s.bold })} style={{ paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8, backgroundColor: s.bold ? C.primary : C.chip }}>
+          <Text style={{ color: s.bold ? "#fff" : C.text, fontSize: 13, fontWeight: "800" }}>굵게</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => set({ italic: !s.italic })} style={{ paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8, backgroundColor: s.italic ? C.primary : C.chip }}>
+          <Text style={{ color: s.italic ? "#fff" : C.text, fontSize: 13, fontStyle: "italic" }}>기울임</Text>
+        </TouchableOpacity>
+        {["left", "center", "right"].map(al => (
+          <TouchableOpacity key={al} onPress={() => set({ align: al })} style={{ paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8, backgroundColor: (s.align || "center") === al ? C.primary : C.chip }}>
+            <Text style={{ color: (s.align || "center") === al ? "#fff" : C.text, fontSize: 13 }}>{al === "left" ? "왼쪽" : al === "center" ? "가운데" : "오른쪽"}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {/* 크기/자간/행간 */}
+      {stepRow("크기", s.size > 0 ? `${s.size}` : "자동",
+        () => set({ size: clamp((s.size > 0 ? s.size : 20) - 1, QUOTE_SIZE_MIN, QUOTE_SIZE_MAX) }),
+        () => set({ size: clamp((s.size > 0 ? s.size : 20) + 1, QUOTE_SIZE_MIN, QUOTE_SIZE_MAX) }),
+        () => set({ size: 0 }))}
+      {stepRow("자간", s.letterSpacing != null ? `${s.letterSpacing}` : "자동",
+        () => set({ letterSpacing: clamp(Math.round(((s.letterSpacing != null ? s.letterSpacing : 0) - 0.5) * 10) / 10, QUOTE_LS_MIN, QUOTE_LS_MAX) }),
+        () => set({ letterSpacing: clamp(Math.round(((s.letterSpacing != null ? s.letterSpacing : 0) + 0.5) * 10) / 10, QUOTE_LS_MIN, QUOTE_LS_MAX) }),
+        () => set({ letterSpacing: null }))}
+      {stepRow("행간", s.lineHeight > 0 ? `${s.lineHeight}` : "자동",
+        () => set({ lineHeight: clamp((s.lineHeight > 0 ? s.lineHeight : 28) - 2, QUOTE_LH_MIN, QUOTE_LH_MAX) }),
+        () => set({ lineHeight: clamp((s.lineHeight > 0 ? s.lineHeight : 28) + 2, QUOTE_LH_MIN, QUOTE_LH_MAX) }),
+        () => set({ lineHeight: 0 }))}
+
+      {/* 글자색 */}
+      <Text style={{ color: C.sub, fontSize: 12, marginTop: 10, marginBottom: 4 }}>글자색</Text>
+      <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+        {QUOTE_TEXT_COLORS.map(col => swatch(col, (s.color || null) === col, () => set({ color: col }), col === null))}
+      </View>
+
+      {/* 배경색 */}
+      <Text style={{ color: C.sub, fontSize: 12, marginTop: 6, marginBottom: 4 }}>배경색</Text>
+      <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+        {QUOTE_BG_COLORS.map(col => swatch(col, (s.bg || null) === col, () => set({ bg: col }), col === null))}
+      </View>
+
+      {/* 배경 이미지 */}
+      <Text style={{ color: C.sub, fontSize: 12, marginTop: 6, marginBottom: 4 }}>배경 이미지</Text>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+        <TouchableOpacity
+          disabled={busy}
+          onPress={async () => {
+            if (busy || !onPickBgImage) return;
+            const uri = await onPickBgImage();
+            if (uri) set({ bgImage: uri });
+          }}
+          style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: C.chip, opacity: busy ? 0.5 : 1 }}
+        >
+          <Text style={{ color: C.text, fontSize: 13, fontWeight: "600" }}>🖼️ {s.bgImage ? "변경" : "선택"}</Text>
+        </TouchableOpacity>
+        {s.bgImage ? (
+          <TouchableOpacity
+            onPress={() => { if (onClearBgImage) onClearBgImage(s.bgImage); set({ bgImage: null }); }}
+            style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line }}
+          >
+            <Text style={{ color: C.warn, fontSize: 13, fontWeight: "600" }}>제거</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    </View>
+  );
+});
 
 /**
  * 🛡️ v3.5.6: 소설 객체 숫자 필드 정규화
@@ -22164,8 +22403,8 @@ const AwardsScreen = memo(({
                         {/* 🆕 v7.0.14: 탭 시 풀스크린 확대 — 이미지/긴 텍스트 모두 가독성 개선 */}
                         {(() => {
                           const awardQuotes = parseQuotes(novel.memorable_quote);
-                          // 텍스트 인용구 우선, 없으면 첫 번째 항목
-                          const firstText = awardQuotes.find(q => typeof q === "string");
+                          // 텍스트 인용구 우선, 없으면 첫 번째 항목 (🆕 v7.8.0: 서식 텍스트 객체 포함)
+                          const firstText = awardQuotes.find(q => isTextQuote(q));
                           const firstItem = firstText || awardQuotes[0];
                           if (!firstItem) return null;
                           const isImg = isImageQuote(firstItem);
@@ -22179,7 +22418,8 @@ const AwardsScreen = memo(({
                               author: novel.author,
                             } : {
                               type: "quote",
-                              text: firstItem,
+                              text: getQuoteText(firstItem),
+                              quoteStyle: getQuoteStyle(firstItem),
                               title: novel.title,
                               author: novel.author,
                             })}
@@ -22194,16 +22434,26 @@ const AwardsScreen = memo(({
                           >
                             {isImg ? (
                               <ExpoImage source={{ uri: firstItem.uri }} style={{ width: "100%", height: 100, borderRadius: 8 }} contentFit="contain" cachePolicy="disk" />
-                            ) : (
-                              <Text style={{
-                                fontStyle: "italic",
-                                fontSize: 14,
-                                color: isDark ? "#fef3c7" : "#78350f",
-                                lineHeight: 22,
-                              }}>
-                                {firstItem}
-                              </Text>
-                            )}
+                            ) : (() => {
+                              // 🆕 v7.8.0: 사용자 서식 적용
+                              const st = getQuoteStyle(firstItem);
+                              const auto = { size: 14, lineHeight: 22, letterSpacing: 0.3, color: isDark ? "#fef3c7" : "#78350f", textAlign: "left", fontStyle: "italic", fontWeight: "400" };
+                              if (st && st.bgImage) auto.color = "#fff";
+                              const eff = resolveQuoteTextStyle(st, auto);
+                              const hasBg = !!(st && (st.bg || st.bgImage));
+                              if (!hasBg) return <Text numberOfLines={3} style={eff}>{getQuoteText(firstItem)}</Text>;
+                              return (
+                                <View style={{ borderRadius: 8, overflow: "hidden", paddingVertical: 8, paddingHorizontal: 10, backgroundColor: st.bg || "transparent" }}>
+                                  {st.bgImage ? (
+                                    <>
+                                      <ExpoImage source={{ uri: st.bgImage }} recyclingKey={st.bgImage} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} contentFit="cover" cachePolicy="disk" />
+                                      <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.32)" }} />
+                                    </>
+                                  ) : null}
+                                  <Text numberOfLines={3} style={eff}>{getQuoteText(firstItem)}</Text>
+                                </View>
+                              );
+                            })()}
                           </TouchableOpacity>
                         );
                         })()}
@@ -22943,16 +23193,27 @@ const AwardsScreen = memo(({
               contentContainerStyle={{ justifyContent: "center", flexGrow: 1 }}
               showsVerticalScrollIndicator={false}
             >
-              <Text style={{
-                color: "#fef3c7",
-                fontSize: 22,
-                fontStyle: "italic",
-                lineHeight: 36,
-                textAlign: "center",
-                paddingHorizontal: 12,
-              }}>
-                {expandedView.text}
-              </Text>
+              {(() => {
+                // 🆕 v7.8.0: 수상 명대사 확대 — 사용자 서식 반영
+                const st = expandedView.quoteStyle;
+                const auto = { size: 22, lineHeight: 36, letterSpacing: 0.3, color: "#fef3c7", textAlign: "center", fontStyle: "italic", fontWeight: "400" };
+                if (st && st.bgImage) auto.color = "#fff";
+                const eff = resolveQuoteTextStyle(st, auto);
+                const hasBg = !!(st && (st.bg || st.bgImage));
+                const inner = <Text style={[{ paddingHorizontal: 12 }, eff]}>{expandedView.text}</Text>;
+                if (!hasBg) return inner;
+                return (
+                  <View style={{ borderRadius: 14, overflow: "hidden", paddingVertical: 24, paddingHorizontal: 8, backgroundColor: st.bg || "transparent" }}>
+                    {st.bgImage ? (
+                      <>
+                        <ExpoImage source={{ uri: st.bgImage }} recyclingKey={st.bgImage} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} contentFit="cover" cachePolicy="disk" />
+                        <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.35)" }} />
+                      </>
+                    ) : null}
+                    {inner}
+                  </View>
+                );
+              })()}
             </ScrollView>
           )}
           {expandedView?.title ? (
@@ -28953,6 +29214,8 @@ function AppContent() {
   const [editRereadCount, setEditRereadCount] = useState("1");
   // 💬 인상깊은 문장 (편집)
   const [editQuotes, setEditQuotes] = useState([]); // 💬 v3.5.4: 다중 인상깊은 문장
+  const [quoteStyleIdx, setQuoteStyleIdx] = useState(-1); // 🆕 v7.8.0: 명대사 서식 패널 열림 인덱스 (-1=닫힘)
+  const [plannedQuoteStyleIdx, setPlannedQuoteStyleIdx] = useState(-1); // 🆕 v7.8.0: 예정작 편집 서식 패널 인덱스
 
   // ★ 수상 편집용 상태
   const [editAwards, setEditAwards] = useState([]); // [{year: "2024", type: "grand"}, ...]
@@ -29855,7 +30118,8 @@ function AppContent() {
         cards.push({
           id: `${n.id}-q${qi}`,
           novelId: n.id,
-          quote: img ? (q.caption || "") : q,
+          quote: img ? (q.caption || "") : getQuoteText(q),
+          quoteStyle: img ? null : getQuoteStyle(q), // 🆕 v7.8.0: 텍스트 서식
           isImage: img,
           imageUri: img ? q.uri : null,
           title: n.title,
@@ -31824,6 +32088,8 @@ function AppContent() {
                       if (isImageQuote(q) && q.uri) {
                         FileSystem.deleteAsync(q.uri, { idempotent: true }).catch(() => {});
                       }
+                      const _st = getQuoteStyle(q); // 🆕 v7.8.0: 텍스트 서식 배경이미지도 정리
+                      if (_st && _st.bgImage) FileSystem.deleteAsync(_st.bgImage, { idempotent: true }).catch(() => {});
                     }
                   } catch {}
                 }
@@ -36315,6 +36581,8 @@ function AppContent() {
                   if (isImageQuote(q)) {
                     FileSystem.deleteAsync(q.uri, { idempotent: true }).catch(() => {});
                   }
+                  const _st = getQuoteStyle(q); // 🆕 v7.8.0: 텍스트 서식 배경이미지도 정리
+                  if (_st && _st.bgImage) FileSystem.deleteAsync(_st.bgImage, { idempotent: true }).catch(() => {});
                 }
               } catch {}
             }
@@ -36871,6 +37139,7 @@ function AppContent() {
     
     // 💬 인상깊은 문장 로드
     setEditQuotes(parseQuotes(n.memorable_quote)); // 💬 v3.5.4: 다중 문장 파싱
+    setQuoteStyleIdx(-1); // 🆕 v7.8.0: 서식 패널 초기화
     removedQuoteImagesRef.current = []; // 📷 v3.6.1: 이미지 삭제 추적 초기화
     editNewQuoteImagesRef.current = []; // 📷 v6.0.1: 새 이미지 추적 초기화
 
@@ -39635,6 +39904,8 @@ function AppContent() {
                     if (isImageQuote(q) && q.uri) {
                       FileSystem.deleteAsync(q.uri, { idempotent: true }).catch(() => {});
                     }
+                    const _st = getQuoteStyle(q); // 🆕 v7.8.0: 텍스트 서식 배경이미지도 정리
+                    if (_st && _st.bgImage) FileSystem.deleteAsync(_st.bgImage, { idempotent: true }).catch(() => {});
                   }
                 } catch {}
               }
@@ -42817,16 +43088,26 @@ async function importJSON() {
                             </Text>
                           ) : null}
                         </View>
-                      ) : (
-                        <Text style={{
-                          fontStyle: "italic",
-                          fontSize: 15,
-                          color: isDark ? "#fef3c7" : "#78350f",
-                          lineHeight: 22,
-                        }}>
-                          {quote}
-                        </Text>
-                      )}
+                      ) : (() => {
+                        // 🆕 v7.8.0: 사용자 서식 적용 (없으면 기존 기본 스타일)
+                        const st = getQuoteStyle(quote);
+                        const auto = { size: 15, lineHeight: 22, letterSpacing: 0.3, color: isDark ? "#fef3c7" : "#78350f", textAlign: "left", fontStyle: "italic", fontWeight: "400" };
+                        if (st && st.bgImage) auto.color = "#fff";
+                        const eff = resolveQuoteTextStyle(st, auto);
+                        const hasBg = !!(st && (st.bg || st.bgImage));
+                        if (!hasBg) return <Text style={eff}>{getQuoteText(quote)}</Text>;
+                        return (
+                          <View style={{ borderRadius: 8, overflow: "hidden", paddingVertical: 10, paddingHorizontal: 10, backgroundColor: st.bg || "transparent" }}>
+                            {st.bgImage ? (
+                              <>
+                                <ExpoImage source={{ uri: st.bgImage }} recyclingKey={st.bgImage} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} contentFit="cover" cachePolicy="disk" />
+                                <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.32)" }} />
+                              </>
+                            ) : null}
+                            <Text style={eff}>{getQuoteText(quote)}</Text>
+                          </View>
+                        );
+                      })()}
                     </View>
                   ))}
                   {hiddenImageCount > 0 && (
@@ -43532,6 +43813,7 @@ async function importJSON() {
                         <TouchableOpacity
                           onPress={() => {
                             updatePlannedEditItem({ ...item });
+                            setPlannedQuoteStyleIdx(-1); // 🆕 v7.8.0: 서식 패널 초기화
                             // 💬🖼️ v7.6.2: 명대사 이미지 추적 ref 초기화 + 갤러리 수 로드 (편집 세션 시작)
                             removedQuoteImagesRef.current = [];
                             editNewQuoteImagesRef.current = [];
@@ -45963,8 +46245,9 @@ async function importJSON() {
                     <Label>💬 인상깊은 문장</Label>
                     {(() => {
                       const quotes = parseQuotes(editItem?.memorable_quote || "");
-                      const hasImages = quotes.some(q => isImageQuote(q));
-                      if (hasImages) {
+                      // 🆕 v7.8.0: 이미지 또는 서식 텍스트가 있으면 인라인 편집기로 (평문 raw 표시/소실 방지)
+                      const hasComplex = quotes.some(q => isImageQuote(q) || getQuoteStyle(q));
+                      if (hasComplex) {
                         // 📷 v3.6.2: 이미지 포함 시에도 편집 가능 (텍스트 인라인 편집 + 이미지 삭제/캡션)
                         const updateQuotesInEditItem = (newQuotes) => {
                           updateEditItem(prev => prev ? { ...prev, memorable_quote: serializeQuotes(newQuotes) } : null);
@@ -45977,6 +46260,8 @@ async function importJSON() {
                                   <Text style={{ color: C.sub, fontSize: 11, flex: 1 }}>#{i + 1} {isImageQuote(q) ? "📷" : "💬"}</Text>
                                   <TouchableOpacity onPress={() => {
                                     if (isImageQuote(q)) removedQuoteImagesRef.current.push(q.uri);
+                                    const _st = getQuoteStyle(q); // 🆕 v7.8.0: 배경이미지 정리
+                                    if (_st && _st.bgImage) removedQuoteImagesRef.current.push(_st.bgImage);
                                     updateQuotesInEditItem(quotes.filter((_, j) => j !== i));
                                   }} style={{ padding: 4 }}>
                                     <Text style={{ color: C.warn, fontSize: 12, fontWeight: "700" }}>삭제</Text>
@@ -45999,10 +46284,12 @@ async function importJSON() {
                                   </View>
                                 ) : (
                                   <TextInput
-                                    value={q}
+                                    value={getQuoteText(q)}
                                     onChangeText={(t) => {
                                       const updated = [...quotes];
-                                      updated[i] = t;
+                                      const c0 = quotes[i];
+                                      if (c0 && typeof c0 === "object" && c0.type === "text") updated[i] = { ...c0, text: t };
+                                      else updated[i] = t;
                                       updateQuotesInEditItem(updated);
                                     }}
                                     placeholder="인상깊은 문장..."
@@ -48961,23 +49248,33 @@ async function importJSON() {
                               </Text>
                             ) : null}
                           </View>
-                        ) : (
-                          <>
-                            <Text style={{ fontSize: 36, color: card.tierColor, marginBottom: 12, opacity: 0.3 }}>❝</Text>
-                            <Text style={{
-                              fontSize: isLong ? 16 : isMedium ? 19 : 22,
-                              fontStyle: "italic",
-                              color: C.text,
-                              textAlign: "center",
-                              lineHeight: isLong ? 26 : isMedium ? 30 : 36,
-                              fontWeight: "500",
-                              letterSpacing: 0.3,
-                            }}>
-                              {card.quote}
-                            </Text>
-                            <Text style={{ fontSize: 36, color: card.tierColor, marginTop: 12, opacity: 0.3 }}>❞</Text>
-                          </>
-                        )}
+                        ) : (() => {
+                          // 🆕 v7.8.0: 사용자 서식 적용 (없으면 기존 길이기반 자동 스타일)
+                          const st = card.quoteStyle;
+                          const auto = {
+                            size: isLong ? 16 : isMedium ? 19 : 22,
+                            lineHeight: isLong ? 26 : isMedium ? 30 : 36,
+                            letterSpacing: 0.3,
+                            color: (st && st.bgImage) ? "#fff" : C.text,
+                            textAlign: "center", fontStyle: "italic", fontWeight: "500",
+                          };
+                          const eff = resolveQuoteTextStyle(st, auto);
+                          const hasBg = !!(st && (st.bg || st.bgImage));
+                          const markColor = (st && st.bgImage) ? "rgba(255,255,255,0.55)" : card.tierColor;
+                          return (
+                            <View style={{ width: "100%", borderRadius: 16, overflow: "hidden", justifyContent: "center", paddingVertical: hasBg ? 22 : 0, paddingHorizontal: hasBg ? 14 : 0, backgroundColor: (st && st.bg) ? st.bg : "transparent" }}>
+                              {st && st.bgImage ? (
+                                <>
+                                  <ExpoImage source={{ uri: st.bgImage }} recyclingKey={st.bgImage} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} contentFit="cover" cachePolicy="disk" />
+                                  <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.32)" }} />
+                                </>
+                              ) : null}
+                              <Text style={{ fontSize: 36, color: markColor, marginBottom: 10, opacity: 0.4, textAlign: "center" }}>❝</Text>
+                              <Text style={eff}>{card.quote}</Text>
+                              <Text style={{ fontSize: 36, color: markColor, marginTop: 10, opacity: 0.4, textAlign: "center" }}>❞</Text>
+                            </View>
+                          );
+                        })()}
                       </View>
                       
                       {/* 하단: 작품 정보 */}
@@ -53725,6 +54022,16 @@ async function importJSON() {
                       <View key={`quote-${qi}`} style={{ marginBottom: 10 }}>
                         <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
                           <Text style={{ color: C.sub, fontSize: 11, flex: 1 }}>#{qi + 1} {isImageQuote(q) ? "📷" : "💬"}</Text>
+                          {!isImageQuote(q) ? (
+                            <TouchableOpacity
+                              onPress={() => setQuoteStyleIdx(quoteStyleIdx === qi ? -1 : qi)}
+                              style={{ padding: 4, marginRight: 8 }}
+                            >
+                              <Text style={{ color: quoteStyleIdx === qi ? C.primary : C.sub, fontSize: 12, fontWeight: "700" }}>
+                                🎨 꾸미기{(getQuoteStyle(q) && !quoteStyleIsDefault(getQuoteStyle(q))) ? " ●" : ""}
+                              </Text>
+                            </TouchableOpacity>
+                          ) : null}
                           <TouchableOpacity
                             onPress={() => {
                               if (isImageQuote(q)) {
@@ -53732,6 +54039,13 @@ async function importJSON() {
                                 // 📷 v6.0.1: 새로 추가한 이미지면 추적 목록에서도 제거
                                 editNewQuoteImagesRef.current = editNewQuoteImagesRef.current.filter(u => u !== q.uri);
                               }
+                              // 🆕 v7.8.0: 텍스트 서식 배경이미지 파일도 정리 대상에 추가
+                              const _st = getQuoteStyle(q);
+                              if (_st && _st.bgImage) {
+                                removedQuoteImagesRef.current.push(_st.bgImage);
+                                editNewQuoteImagesRef.current = editNewQuoteImagesRef.current.filter(u => u !== _st.bgImage);
+                              }
+                              setQuoteStyleIdx(-1);
                               setEditQuotes(prev => prev.filter((_, i) => i !== qi));
                             }}
                             style={{ padding: 4 }}
@@ -53745,9 +54059,7 @@ async function importJSON() {
                             <TextInput
                               value={q.caption || ""}
                               onChangeText={(t) => {
-                                const updated = [...editQuotes];
-                                updated[qi] = { ...q, caption: t };
-                                setEditQuotes(updated);
+                                setEditQuotes(prev => { const u = [...prev]; u[qi] = { ...prev[qi], caption: t }; return u; });
                               }}
                               placeholder="캡션 (선택)"
                               placeholderTextColor={C.sub}
@@ -53764,12 +54076,17 @@ async function importJSON() {
                             />
                           </View>
                         ) : (
+                        <>
                         <TextInput
-                          value={q}
+                          value={getQuoteText(q)}
                           onChangeText={(t) => {
-                            const updated = [...editQuotes];
-                            updated[qi] = t;
-                            setEditQuotes(updated);
+                            setEditQuotes(prev => {
+                              const u = [...prev];
+                              const cur = prev[qi];
+                              if (cur && typeof cur === "object" && cur.type === "text") u[qi] = { ...cur, text: t };
+                              else u[qi] = t;
+                              return u;
+                            });
                           }}
                           placeholder={`기억에 남는 문장 ${qi + 1}...`}
                           placeholderTextColor={C.sub}
@@ -53787,6 +54104,45 @@ async function importJSON() {
                             textAlignVertical: "top",
                           }}
                         />
+                        {quoteStyleIdx === qi ? (
+                          <QuoteStyleEditor
+                            style={getQuoteStyle(q)}
+                            text={getQuoteText(q)}
+                            theme={C}
+                            isDark={isDark}
+                            busy={batchImporting}
+                            onChange={(newStyle) => {
+                              setEditQuotes(prev => {
+                                const u = [...prev];
+                                u[qi] = { type: "text", text: getQuoteText(prev[qi]), style: newStyle };
+                                return u;
+                              });
+                            }}
+                            onPickBgImage={async () => {
+                              try {
+                                const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, quality: 1.0 });
+                                await resetDbConnection();
+                                try { await openDb(); } catch {}
+                                if (!result.canceled && result.assets?.[0]) {
+                                  const { ext } = getImageFormat(result.assets[0]);
+                                  const saved = await compressAndSaveImage(result.assets[0].uri, QUOTE_IMAGE_MAX_SIZE, QUOTE_IMAGE_QUALITY, ext);
+                                  if (saved && !saved.error) {
+                                    editNewQuoteImagesRef.current.push(saved.file_path);
+                                    return saved.file_path;
+                                  }
+                                }
+                              } catch (e) {
+                                Alert.alert("오류", "배경 이미지 선택 실패: " + (e?.message || e));
+                              }
+                              return null;
+                            }}
+                            onClearBgImage={(uri) => {
+                              removedQuoteImagesRef.current.push(uri);
+                              editNewQuoteImagesRef.current = editNewQuoteImagesRef.current.filter(u => u !== uri);
+                            }}
+                          />
+                        ) : null}
+                        </>
                         )}
                       </View>
                     ))
@@ -55728,12 +56084,28 @@ async function importJSON() {
                             <View key={`planned-quote-${qi}`} style={{ marginBottom: qi < quotes.length - 1 ? 10 : 0 }}>
                               <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
                                 <Text style={{ color: C.sub, fontSize: 11, flex: 1 }}>#{qi + 1} {isImageQuote(q) ? "📷" : "💬"}</Text>
+                                {!isImageQuote(q) ? (
+                                  <TouchableOpacity
+                                    onPress={() => setPlannedQuoteStyleIdx(plannedQuoteStyleIdx === qi ? -1 : qi)}
+                                    style={{ padding: 4, marginRight: 8 }}
+                                  >
+                                    <Text style={{ color: plannedQuoteStyleIdx === qi ? C.primary : C.sub, fontSize: 12, fontWeight: "700" }}>
+                                      🎨 꾸미기{(getQuoteStyle(q) && !quoteStyleIsDefault(getQuoteStyle(q))) ? " ●" : ""}
+                                    </Text>
+                                  </TouchableOpacity>
+                                ) : null}
                                 <TouchableOpacity
                                   onPress={() => {
                                     if (isImageQuote(q)) {
                                       removedQuoteImagesRef.current.push(q.uri);
                                       editNewQuoteImagesRef.current = editNewQuoteImagesRef.current.filter(u => u !== q.uri);
                                     }
+                                    const _st = getQuoteStyle(q); // 🆕 v7.8.0: 배경이미지 정리
+                                    if (_st && _st.bgImage) {
+                                      removedQuoteImagesRef.current.push(_st.bgImage);
+                                      editNewQuoteImagesRef.current = editNewQuoteImagesRef.current.filter(u => u !== _st.bgImage);
+                                    }
+                                    setPlannedQuoteStyleIdx(-1);
                                     updatePlannedEditItem(prev => {
                                       if (!prev) return null;
                                       const cur = parseQuotes(prev.memorable_quote || "");
@@ -55762,12 +56134,15 @@ async function importJSON() {
                                   />
                                 </View>
                               ) : (
+                                <>
                                 <TextInput
-                                  value={typeof q === "string" ? q : ""}
+                                  value={getQuoteText(q)}
                                   onChangeText={(t) => updatePlannedEditItem(prev => {
                                     if (!prev) return null;
                                     const cur = parseQuotes(prev.memorable_quote || "");
-                                    cur[qi] = t;
+                                    const c0 = cur[qi];
+                                    if (c0 && typeof c0 === "object" && c0.type === "text") cur[qi] = { ...c0, text: t };
+                                    else cur[qi] = t;
                                     return { ...prev, memorable_quote: serializeQuotes(cur) };
                                   })}
                                   placeholder={`기억에 남는 문장 ${qi + 1}...`}
@@ -55775,6 +56150,44 @@ async function importJSON() {
                                   multiline
                                   style={{ backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 10, padding: 12, fontSize: 15, fontStyle: "italic", color: C.text, minHeight: 60, textAlignVertical: "top" }}
                                 />
+                                {plannedQuoteStyleIdx === qi ? (
+                                  <QuoteStyleEditor
+                                    style={getQuoteStyle(q)}
+                                    text={getQuoteText(q)}
+                                    theme={C}
+                                    isDark={isDark}
+                                    busy={batchImporting}
+                                    onChange={(newStyle) => updatePlannedEditItem(prev => {
+                                      if (!prev) return null;
+                                      const cur = parseQuotes(prev.memorable_quote || "");
+                                      cur[qi] = { type: "text", text: getQuoteText(cur[qi]), style: newStyle };
+                                      return { ...prev, memorable_quote: serializeQuotes(cur) };
+                                    })}
+                                    onPickBgImage={async () => {
+                                      try {
+                                        const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, quality: 1.0 });
+                                        await resetDbConnection();
+                                        try { await openDb(); } catch {}
+                                        if (!result.canceled && result.assets?.[0]) {
+                                          const { ext } = getImageFormat(result.assets[0]);
+                                          const saved = await compressAndSaveImage(result.assets[0].uri, QUOTE_IMAGE_MAX_SIZE, QUOTE_IMAGE_QUALITY, ext);
+                                          if (saved && !saved.error) {
+                                            editNewQuoteImagesRef.current.push(saved.file_path);
+                                            return saved.file_path;
+                                          }
+                                        }
+                                      } catch (e) {
+                                        Alert.alert("오류", "배경 이미지 선택 실패: " + (e?.message || e));
+                                      }
+                                      return null;
+                                    }}
+                                    onClearBgImage={(uri) => {
+                                      removedQuoteImagesRef.current.push(uri);
+                                      editNewQuoteImagesRef.current = editNewQuoteImagesRef.current.filter(u => u !== uri);
+                                    }}
+                                  />
+                                ) : null}
+                                </>
                               )}
                             </View>
                           ))
@@ -56571,6 +56984,13 @@ async function importJSON() {
    - AppContent의 모든 에러를 ErrorBoundary가 잡음
    ========================================================= */
 export default function App() {
+  // 🆕 v7.8.0: 명대사 텍스트 서식용 한글 웹폰트 로드 (비차단 — 로드 완료 시 자동 리렌더로 적용)
+  useExpoFonts({
+    NanumGothic_400Regular, NanumGothic_700Bold,
+    NanumMyeongjo_400Regular, NanumMyeongjo_700Bold,
+    GowunBatang_400Regular, GowunBatang_700Bold,
+    Jua_400Regular,
+  });
   return (
     <AppErrorBoundary>
       <AppContent />
