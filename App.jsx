@@ -2,9 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.9.1 (등록 폼 명언 꾸미기 추가)                                      ║
+ * ║  버전: 7.9.2 (명언 기능 검수 — 튕김/원래순서/대비색/배경틀 수정)             ║
  * ║  최종 수정: 2026-06-14                                                        ║
- * ║  총 라인 수: 약 57,325줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 57,341줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.9.2 명언 기능 전면검수 — 기믹/일관성/퇴행 수정 (2026-06-14)            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [튕김 수정] 명언 탭에서 문장 편집(원격/표지) 시 목록이 재셔플+첫 카드로 튕기던 ║
+ * ║   문제 → 셔플 순서·보던 위치 보존(내용만 갱신). quotesEnteredRef로 첫 진입만 셔플. ║
+ * ║ [원래순서 복구] "원래순서" 버튼이 즉시 재셔플돼 동작 안 하던 회귀 수정       ║
+ * ║   (진입 effect가 resetOrder의 null을 덮어쓰던 문제).                         ║
+ * ║ [대비색 일관성] 상세/수상/확대 표면이 배경"이미지"만 글자색 대비하고 배경"색"은 ║
+ * ║   무시하던 퇴행 → quoteContrastColor로 배경색에도 흰/검 자동 대비(쇼츠와 동일). ║
+ * ║ [배경 틀 일관성] 상세뷰에서 커스텀 배경이 cream 틀 안에 중첩되던 문제 → 배경 지정 ║
+ * ║   시 cream 틀/borderLeft 제거(쇼츠와 동일). 프리셋 초기화 시 배경이미지도 정리. ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -22535,6 +22548,7 @@ const AwardsScreen = memo(({
                               const st = effectiveQuoteStyle(getQuoteStyle(firstItem), quoteDefaultStyle);
                               const auto = { size: 14, lineHeight: 22, letterSpacing: 0.3, color: isDark ? "#fef3c7" : "#78350f", textAlign: "left", fontStyle: "italic", fontWeight: "400" };
                               if (st && st.bgImage) auto.color = "#fff";
+                              else if (st && st.bg) auto.color = quoteContrastColor(st.bg); // 🆕 v7.9.2: 배경색 대비
                               const eff = resolveQuoteTextStyle(st, auto);
                               const hasBg = !!(st && (st.bg || st.bgImage));
                               if (!hasBg) return <Text numberOfLines={3} style={eff}>{getQuoteText(firstItem)}</Text>;
@@ -23294,6 +23308,7 @@ const AwardsScreen = memo(({
                 const st = effectiveQuoteStyle(expandedView.quoteStyle, quoteDefaultStyle);
                 const auto = { size: 22, lineHeight: 36, letterSpacing: 0.3, color: "#fef3c7", textAlign: "center", fontStyle: "italic", fontWeight: "400" };
                 if (st && st.bgImage) auto.color = "#fff";
+                else if (st && st.bg) auto.color = quoteContrastColor(st.bg); // 🆕 v7.9.2: 배경색 대비
                 const eff = resolveQuoteTextStyle(st, auto);
                 const hasBg = !!(st && (st.bg || st.bgImage));
                 const inner = <Text style={[{ paddingHorizontal: 12 }, eff]}>{expandedView.text}</Text>;
@@ -29108,6 +29123,7 @@ function AppContent() {
   // 💬 v3.5.4: 명언 쇼츠 상태
   const [quotesIdx, setQuotesIdx] = useState(0);
   const [quotesShuffled, setQuotesShuffled] = useState(null); // null=원본순, array=셔플순
+  const quotesEnteredRef = useRef(false); // 🆕 v7.9.2: 명언 탭 첫 진입 감지(자동 셔플 1회 + resetOrder 보존)
   const [quotesListExpanded, setQuotesListExpanded] = useState(false); // 📋 전체 목록 접기/펼치기
   const [batchImporting, setBatchImporting] = useState(false); // 📷 일괄 가져오기 로딩
   const quotesSwipeRef = useRef({ startX: 0, startY: 0 }); // 🔀 v3.5.5: 스와이프 감지
@@ -30243,28 +30259,25 @@ function AppContent() {
   // 핵심: 함수형 업데이트 내에서도 ref를 갱신하여 saveEdit이 최신값을 읽도록 함
   editItemRef.current = editItem;
 
-  // 💬 v3.5.4: quotesShuffled stale 방지 (작품 삭제/수정 시 셔플 재생성)
-  // 과거 버그 [상태 동기화 버그] v3.5.0과 동일 패턴
-  // 🔀 v3.5.5: null 대신 재셔플 (기본 랜덤 유지)
+  // 💬 v7.9.2: quotesShuffled 내용 동기화 — 편집/삭제 시 위치·순서 보존 (재셔플/인덱스 리셋 X)
+  //   (이전 v3.5.5: quotesCards 변경마다 재셔플 + idx 0 → 명언 탭에서 문장 편집 시 첫 카드로 튕김)
   useEffect(() => {
-    if (quotesShuffled && quotesCards.length > 0) {
-      const arr = [...quotesCards];
-      for (let i = arr.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [arr[i], arr[j]] = [arr[j], arr[i]];
-      }
-      setQuotesShuffled(arr);
-      setQuotesIdx(0);
-    } else if (quotesShuffled && quotesCards.length === 0) {
-      setQuotesShuffled(null);
-      setQuotesIdx(0);
-    }
+    if (!quotesShuffled) return; // 원래순서 모드: quotesCards 직접 사용 (항상 최신)
+    if (quotesCards.length === 0) { setQuotesShuffled(null); setQuotesIdx(0); return; }
+    // 기존 셔플 순서를 유지하면서 카드 내용만 최신으로 교체 (삭제 제거 / 신규 말미 추가)
+    const byId = new Map(quotesCards.map(c => [c.id, c]));
+    const kept = [];
+    const seen = new Set();
+    for (const c of quotesShuffled) { const nc = byId.get(c.id); if (nc && !seen.has(c.id)) { kept.push(nc); seen.add(c.id); } }
+    for (const c of quotesCards) { if (!seen.has(c.id)) kept.push(c); }
+    setQuotesShuffled(kept); // quotesIdx는 렌더 시 safeIdx로 clamp → 보던 위치 유지
   }, [quotesCards]);
 
-  // 🔀 v3.5.5: 명언 탭 진입 시 자동 셔플 (기본 랜덤 순서)
-  // 🔧 v3.9.2: quotesShuffled 의존성 추가 — quotesCards 변경 시 null 리셋 후 재셔플 트리거
+  // 🔀 v7.9.2: 명언 탭 "첫 진입" 시에만 자동 셔플 — resetOrder("원래순서")가 즉시 재셔플되던 문제 수정
   useEffect(() => {
-    if (screen === "quotes" && !quotesShuffled && quotesCards.length > 0) {
+    if (screen !== "quotes") { quotesEnteredRef.current = false; return; }
+    if (!quotesEnteredRef.current && quotesShuffled === null && quotesCards.length > 0) {
+      quotesEnteredRef.current = true;
       const arr = [...quotesCards];
       for (let i = arr.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -43275,13 +43288,18 @@ async function importJSON() {
                 const hiddenImageCount = totalImages - Math.min(totalImages, 2);
                 return (
                 <View style={{ marginBottom: 12 }}>
-                  {visibleQuotes.map((quote, qi) => (
+                  {visibleQuotes.map((quote, qi) => {
+                    // 🆕 v7.9.2: 커스텀 배경이 있으면 cream 틀/borderLeft 제거(인라인 박스가 곧 배경) — 표면 일관성
+                    const _qst = !isImageQuote(quote) ? effectiveQuoteStyle(getQuoteStyle(quote), appSettings.quoteDefaultStyle) : null;
+                    const _qHasBg = !!(_qst && (_qst.bg || _qst.bgImage));
+                    return (
                     <View key={`q-${qi}`} style={{
-                      backgroundColor: isDark ? "#1e293b" : "#fef3c7",
-                      padding: isImageQuote(quote) ? 8 : 14,
+                      backgroundColor: _qHasBg ? "transparent" : (isDark ? "#1e293b" : "#fef3c7"),
+                      padding: _qHasBg ? 0 : (isImageQuote(quote) ? 8 : 14),
                       borderRadius: 12,
+                      overflow: "hidden",
                       marginBottom: qi < visibleQuotes.length - 1 ? 8 : 0,
-                      borderLeftWidth: 4,
+                      borderLeftWidth: _qHasBg ? 0 : 4,
                       borderLeftColor: isDark ? "#fbbf24" : "#f59e0b",
                     }}>
                       {isImageQuote(quote) ? (
@@ -43301,6 +43319,7 @@ async function importJSON() {
                         const st = effectiveQuoteStyle(getQuoteStyle(quote), appSettings.quoteDefaultStyle);
                         const auto = { size: 15, lineHeight: 22, letterSpacing: 0.3, color: isDark ? "#fef3c7" : "#78350f", textAlign: "left", fontStyle: "italic", fontWeight: "400" };
                         if (st && st.bgImage) auto.color = "#fff";
+                        else if (st && st.bg) auto.color = quoteContrastColor(st.bg); // 🆕 v7.9.2: 배경색 대비
                         const eff = resolveQuoteTextStyle(st, auto);
                         const hasBg = !!(st && (st.bg || st.bgImage));
                         if (!hasBg) return <Text style={eff}>{getQuoteText(quote)}</Text>;
@@ -43317,7 +43336,8 @@ async function importJSON() {
                         );
                       })()}
                     </View>
-                  ))}
+                    );
+                  })}
                   {hiddenImageCount > 0 && (
                     <Text style={{ color: isDark ? "#fbbf24" : "#d97706", fontSize: 12, marginTop: 6, textAlign: "center" }}>
                       +{hiddenImageCount}개 이미지 (명언 탭에서 전체 감상)
@@ -49760,7 +49780,7 @@ async function importJSON() {
                 onClearBgImage={(uri) => { FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {}); }}
               />
               {appSettings.quoteDefaultStyle ? (
-                <TouchableOpacity onPress={() => saveAppSettings({ quoteDefaultStyle: null })} style={{ marginTop: 10, alignSelf: "flex-start", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: C.chip }}>
+                <TouchableOpacity onPress={() => { const _bg = appSettings.quoteDefaultStyle?.bgImage; if (_bg) FileSystem.deleteAsync(_bg, { idempotent: true }).catch(() => {}); saveAppSettings({ quoteDefaultStyle: null }); }} style={{ marginTop: 10, alignSelf: "flex-start", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: C.chip }}>
                   <Text style={{ color: C.warn, fontWeight: "700", fontSize: 13 }}>기본 서식 초기화</Text>
                 </TouchableOpacity>
               ) : null}
