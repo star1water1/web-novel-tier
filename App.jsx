@@ -2,9 +2,18 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.9.0 (명언 표지탭 수정 + 원격 수정 + 기본 서식 프리셋)               ║
+ * ║  버전: 7.9.1 (등록 폼 명언 꾸미기 추가)                                      ║
  * ║  최종 수정: 2026-06-14                                                        ║
- * ║  총 라인 수: 약 57,260줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 57,325줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.9.1 등록 폼에도 명언 꾸미기 추가 (2026-06-14)                          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [등록 폼] 신규 작품 등록 시 명언 입력칸에도 "🎨 꾸미기" 패널 연동 — 본편집/  ║
+ * ║   예정편집과 동일(QuoteStyleEditor). value=getQuoteText로 객체/문자열 호환,  ║
+ * ║   배경이미지는 regQuoteImagesRef로 추적(취소/실패 정리, 제거 시 즉시 삭제).  ║
+ * ║   저장은 serializeQuotes 기존 경로 그대로. 5개 명언 에디터 모두 서식 지원.   ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -29304,6 +29313,7 @@ function AppContent() {
   const [editQuotes, setEditQuotes] = useState([]); // 💬 v3.5.4: 다중 인상깊은 문장
   const [quoteStyleIdx, setQuoteStyleIdx] = useState(-1); // 🆕 v7.8.0: 명대사 서식 패널 열림 인덱스 (-1=닫힘)
   const [plannedQuoteStyleIdx, setPlannedQuoteStyleIdx] = useState(-1); // 🆕 v7.8.0: 예정작 편집 서식 패널 인덱스
+  const [regQuoteStyleIdx, setRegQuoteStyleIdx] = useState(-1); // 🆕 v7.9.1: 등록 폼 명언 서식 패널 인덱스
   const [quoteQuickEdit, setQuoteQuickEdit] = useState(null); // 🆕 v7.9.0: 명언 탭 원격 수정 {novelId, qIndex, text, style}
   const quickQuoteNewImagesRef = useRef([]);     // 명언 원격수정에서 새로 추가한 배경이미지 (취소 시 정리)
   const quickQuoteRemovedImagesRef = useRef([]); // 교체/제거된 배경이미지 (저장 시 정리)
@@ -36459,6 +36469,7 @@ function AppContent() {
       setPlatforms([]);
       setNote("");
       setMemorableQuote([]); // 💬 인상깊은 문장 초기화
+      setRegQuoteStyleIdx(-1); // 🆕 v7.9.1: 서식 패널 초기화
       regQuoteImagesRef.current = []; // 📷 v3.6.2: 등록 성공 → 추적 해제 (파일 유지)
       setReadCount("");
       setTotalEpisodes("");
@@ -42561,12 +42572,26 @@ async function importJSON() {
       <View key={`reg-quote-${qi}`} style={{ marginBottom: 8 }}>
         <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 3 }}>
           <Text style={{ color: C.sub, fontSize: 11, flex: 1 }}>#{qi + 1} {isImageQuote(q) ? "📷" : "💬"}</Text>
+          {!isImageQuote(q) ? (
+            <TouchableOpacity onPress={() => setRegQuoteStyleIdx(regQuoteStyleIdx === qi ? -1 : qi)} style={{ padding: 4, marginRight: 8 }}>
+              <Text style={{ color: regQuoteStyleIdx === qi ? C.primary : C.sub, fontSize: 12, fontWeight: "700" }}>
+                🎨 꾸미기{(getQuoteStyle(q) && !quoteStyleIsDefault(getQuoteStyle(q))) ? " ●" : ""}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity onPress={() => {
             // 📷 v3.6.2: 등록 폼에서 이미지 삭제 시 파일도 즉시 정리
             if (isImageQuote(q)) {
               regQuoteImagesRef.current = regQuoteImagesRef.current.filter(u => u !== q.uri);
               FileSystem.deleteAsync(q.uri, { idempotent: true }).catch(() => {});
             }
+            // 🆕 v7.9.1: 텍스트 서식 배경이미지 파일도 즉시 정리
+            const _st = getQuoteStyle(q);
+            if (_st && _st.bgImage) {
+              regQuoteImagesRef.current = regQuoteImagesRef.current.filter(u => u !== _st.bgImage);
+              FileSystem.deleteAsync(_st.bgImage, { idempotent: true }).catch(() => {});
+            }
+            setRegQuoteStyleIdx(-1);
             setMemorableQuote(prev => prev.filter((_, i) => i !== qi));
           }} style={{ padding: 4 }}>
             <Text style={{ color: C.warn, fontSize: 12, fontWeight: "700" }}>삭제</Text>
@@ -42577,21 +42602,57 @@ async function importJSON() {
             <ExpoImage source={{ uri: q.uri }} style={{ width: "100%", height: 120, borderRadius: 10, backgroundColor: C.card }} contentFit="contain" cachePolicy="disk" />
             <TextInput
               value={q.caption || ""}
-              onChangeText={(t) => setMemorableQuote(prev => { const u = [...prev]; u[qi] = { ...q, caption: t }; return u; })}
+              onChangeText={(t) => setMemorableQuote(prev => { const u = [...prev]; u[qi] = { ...prev[qi], caption: t }; return u; })}
               placeholder="캡션 (선택)"
               placeholderTextColor={C.sub}
               style={{ backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8, padding: 8, fontSize: 13, color: C.text, marginTop: 6 }}
             />
           </View>
         ) : (
+          <>
           <TextInput
-            value={q}
-            onChangeText={(t) => setMemorableQuote(prev => { const u = [...prev]; u[qi] = t; return u; })}
+            value={getQuoteText(q)}
+            onChangeText={(t) => setMemorableQuote(prev => {
+              const u = [...prev];
+              const cur = prev[qi];
+              if (cur && typeof cur === "object" && cur.type === "text") u[qi] = { ...cur, text: t };
+              else u[qi] = t;
+              return u;
+            })}
             placeholder={`기억에 남는 문장 ${qi + 1}...`}
             placeholderTextColor={C.sub}
             multiline
             style={{ backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 10, padding: 12, fontSize: 15, fontStyle: "italic", color: C.text, minHeight: 60, textAlignVertical: "top" }}
           />
+          {regQuoteStyleIdx === qi ? (
+            <QuoteStyleEditor
+              style={getQuoteStyle(q)}
+              text={getQuoteText(q)}
+              theme={C}
+              isDark={isDark}
+              busy={batchImporting}
+              onChange={(newStyle) => setMemorableQuote(prev => {
+                const u = [...prev];
+                u[qi] = { type: "text", text: getQuoteText(prev[qi]), style: newStyle };
+                return u;
+              })}
+              onPickBgImage={async () => {
+                try {
+                  const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, quality: 1.0 });
+                  await resetDbConnection();
+                  try { await openDb(); } catch {}
+                  if (!result.canceled && result.assets?.[0]) {
+                    const { ext } = getImageFormat(result.assets[0]);
+                    const saved = await compressAndSaveImage(result.assets[0].uri, QUOTE_IMAGE_MAX_SIZE, QUOTE_IMAGE_QUALITY, ext);
+                    if (saved && !saved.error) { regQuoteImagesRef.current.push(saved.file_path); return saved.file_path; }
+                  }
+                } catch (e) { Alert.alert("오류", "배경 이미지 선택 실패: " + (e?.message || e)); }
+                return null;
+              }}
+              onClearBgImage={(uri) => { regQuoteImagesRef.current = regQuoteImagesRef.current.filter(u => u !== uri); FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {}); }}
+            />
+          ) : null}
+          </>
         )}
       </View>
     ))
