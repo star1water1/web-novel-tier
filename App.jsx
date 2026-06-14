@@ -2,9 +2,26 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.6.7 (이미지 첫 확대 흐릿함 수정 — allowDownscaling=false)               ║
- * ║  최종 수정: 2026-06-13                                                        ║
+ * ║  버전: 7.6.8 (이미지 확대 흐릿함 진짜 수정 — source.cacheKey 캐시 분리)          ║
+ * ║  최종 수정: 2026-06-14                                                        ║
  * ║  총 라인 수: 약 56,250줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🐛 v7.6.8 이미지 확대 흐릿함 진짜 수정 — source.cacheKey 캐시 분리 (2026-06-14) ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [빌드 테스트] v7.6.7(allowDownscaling=false)이 오히려 악화 — 첫 확대만 → 매번   ║
+ * ║   흐림. 리서치(Glide 소스 검증)로 진짜 동작 확정:                                ║
+ * ║ [근본 원인] expo-image(Android=Glide)의 메모리 비트맵 캐시 키 = URI + 타겟크기.  ║
+ * ║   썸네일(작은 타겟)이 작은 비트맵을 캐시 → 같은 URI 모달이 첫 확대 시 그 작은    ║
+ * ║   비트맵을 먼저 그림 → 흐릿. (이후 큰 타겟 디코드가 캐시되면 선명.)              ║
+ * ║ [왜 이전 시도 실패] recyclingKey=view 재활용 전용이라 캐시 키 무관(무효).        ║
+ * ║   allowDownscaling=false=DownsampleStrategy.NONE 강제 → 원본 800px 그대로 디코드 ║
+ * ║   → 컨테이너로 업스케일 → 매번 흐림(악화). 둘 다 정리.                           ║
+ * ║ [진짜 수정] source={{ uri, cacheKey:`expand-${uri}` }} — 모달 전용 Glide 캐시    ║
+ * ║   엔트리 분리(GlideUrlWithCustomCacheKey). 썸네일 비트맵 재사용 불가 → 풀스크린  ║
+ * ║   컨테이너 크기로 독립 디코드 → 처음부터 선명. 3개 모달 모두 적용.               ║
+ * ║   (cacheKey는 expo-image ImageSource 정식 필드. 소스≤800~1200px라 메모리 무부담) ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11976,7 +11993,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.6.7";
+const APP_VERSION = "7.6.8";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -12003,14 +12020,14 @@ function compareVersions(a, b) {
 
 const CHANGELOG_DATA = [
   {
-    version: "7.6.7", date: "2026-06-13",
-    title: "🐛 이미지 첫 확대 시 흐릿하던 문제 수정",
+    version: "7.6.8", date: "2026-06-14",
+    title: "🖼️ 이미지 확대 시 흐릿하던 문제 수정 (진짜 원인)",
     highlights: [
-      { type: "fix", text: "🖼️ 이미지를 처음 확대할 때 흐릿하게(저해상도로) 보이던 문제를 고쳤어요. 이제 처음부터 선명하게 보입니다. (표지·명대사·갤러리·수상 모두)" },
+      { type: "fix", text: "🖼️ 이미지를 확대할 때 흐릿하게(저해상도로) 보이던 문제를 근본적으로 잡았어요. 이제 처음부터 선명합니다. (표지·명대사·갤러리·수상 모두)" },
     ],
     details: [
-      { type: "fix", text: "원인: expo-image가 기본적으로 컨테이너 크기에 맞춰 다운스케일 디코드 → 같은 이미지의 썸네일(저해상도) 비트맵을 첫 확대 때 재사용해 흐릿하게 보임(이후 풀해상도로 다시 디코드되면 선명)" },
-      { type: "fix", text: "수정: 3개 확대 모달 ExpoImage에 allowDownscaling={false} 추가 → 항상 원본 해상도로 디코드. (v7.6.4의 recyclingKey는 view 재활용만 막아 불충분했음 — 이게 진짜 원인)" },
+      { type: "fix", text: "원인: expo-image(Android Glide)의 메모리 비트맵 캐시 키가 'URI + 표시 크기'라, 작은 썸네일과 큰 확대 모달이 같은 URI면 모달이 썸네일의 작은 비트맵을 먼저 재사용해 흐릿하게 보임(이후 큰 크기로 다시 디코드되면 선명)" },
+      { type: "fix", text: "수정: 확대 모달 source에 cacheKey를 다르게 부여(expand-${uri})해 모달 전용 캐시 엔트리로 분리 → 풀스크린 크기로 독립 디코드. 앞서 시도했던 recyclingKey(view 전용·무효)·allowDownscaling(역효과)은 정리. Glide 소스 검증으로 확정" },
     ],
   },
   {
@@ -12034,17 +12051,6 @@ const CHANGELOG_DATA = [
     details: [
       { type: "fix", text: "원인: openDb()/resetDbConnection()이 DB 연결을 닫을 때 closeAsync()를 즉시 호출 → 진행 중인 매칭 작업(prepareAsync)의 네이티브 핸들이 파괴되며 NullPointerException 크래시. 매칭마다 누적되어 몇 회 뒤 반드시 터짐" },
       { type: "fix", text: "수정: 연결 닫기를 5초 지연(참조는 즉시 폐기) — 진행 중 작업은 안전하게 완료되고 새 작업은 새 연결을 씀. 매칭 로직·불변조건은 그대로(닫는 타이밍만 지연). v3.10.2/v3.11.2 계보 수정을 main에 이식" },
-    ],
-  },
-  {
-    version: "7.6.4", date: "2026-06-13",
-    title: "🐛 표지·명대사 이미지 첫 확대 시 깨짐 수정",
-    highlights: [
-      { type: "fix", text: "🖼️ 이미지를 처음 확대할 때 깨져 보이던 문제를 고쳤어요. (표지·명대사 확대 — 한 번 본 뒤엔 정상이던 그 증상)" },
-    ],
-    details: [
-      { type: "fix", text: "표지 확대 뷰어(coverViewerUri 모달)의 ExpoImage가 recyclingKey={URI}로 썸네일과 같은 key를 써서 expo-image가 썸네일의 저해상도 비트맵을 재활용 → 첫 확대 시 깨짐" },
-      { type: "fix", text: "recyclingKey를 `expand-${uri}`로 분리 + priority=high + transition=0 — 갤러리·수상 확대 모달이 v7.1.2에서 받은 수정을 표지 뷰어에도 동일 적용(누락분 보강)" },
     ],
   },
   {
@@ -22881,11 +22887,10 @@ const AwardsScreen = memo(({
         >
           {expandedView?.type === "image" && (
             <ExpoImage
-              source={{ uri: expandedView.uri }}
-              /* 🛠️ v7.1.2: 썸네일과 다른 recyclingKey + transition=0 + priority=high
-                 → 첫 확대 시 저해상도 비트맵 재활용으로 흐릿하게 보이는 문제 회피 */
+              /* 🛠️ v7.6.8: source.cacheKey로 모달 전용 캐시 분리 — 썸네일의 작은 비트맵 재사용
+                 차단(Glide 캐시 키=URI+크기). recyclingKey는 무효, allowDownscaling 제거(역효과). */
+              source={{ uri: expandedView.uri, cacheKey: `expand-award-${expandedView.uri}` }}
               recyclingKey={`expand-award-${expandedView.uri}`}
-              allowDownscaling={false}
               style={{ width: "92%", height: "72%", borderRadius: 12 }}
               contentFit="contain"
               cachePolicy="memory-disk"
@@ -56209,12 +56214,13 @@ async function importJSON() {
         >
           {coverViewerUri && (
             <ExpoImage
-              source={{ uri: coverViewerUri }}
-              /* 🛠️ v7.6.4: 갤러리/수상 모달과 동일한 v7.1.2 패턴 적용 — 썸네일과 같은 key(URI)를
-                 쓰면 expo-image가 썸네일의 저해상도 비트맵을 재활용해 첫 확대 시 깨져 보임
-                 (이후 풀해상도 캐시되면 정상). `expand-` prefix로 모달 인스턴스 분리 + priority/transition 통일 */
+              /* 🛠️ v7.6.8: source.cacheKey로 모달 전용 캐시 엔트리 분리 (진짜 수정).
+                 expo-image(Glide)의 메모리 비트맵 캐시 키는 URI+타겟크기라, 썸네일과 같은 uri면
+                 썸네일의 작은 비트맵을 첫 확대 때 재사용 → 흐릿. cacheKey를 다르게 주면 풀스크린
+                 컨테이너 크기로 독립 디코드 → 처음부터 선명. (recyclingKey는 view 재활용만 막아
+                 무효, allowDownscaling=false는 NONE 전략 강제로 원본을 업스케일 → 매번 흐림이라 제거) */
+              source={{ uri: coverViewerUri, cacheKey: `expand-${coverViewerUri}` }}
               recyclingKey={`expand-${coverViewerUri}`}
-              allowDownscaling={false}
               style={{ width: "88%", height: "75%", borderRadius: 12 }}
               contentFit="contain"
               cachePolicy="memory-disk"
@@ -56256,12 +56262,10 @@ async function importJSON() {
           {galleryExpandImg && (
             <>
               <ExpoImage
-                source={{ uri: galleryExpandImg.file_path }}
-                /* 🛠️ v7.1.2: recyclingKey 분리 — 썸네일과 같은 key 쓰면 expo-image가
-                   썸네일의 저해상도 비트맵을 재활용해 첫 확대 시 흐릿하게 보임.
-                   `expand-` prefix로 모달용 인스턴스를 구분 → 풀 해상도 디코드 강제. */
+                /* 🛠️ v7.6.8: source.cacheKey로 모달 전용 캐시 분리 — 썸네일의 작은 비트맵 재사용
+                   차단(Glide 캐시 키=URI+크기). recyclingKey는 무효, allowDownscaling 제거(역효과). */
+                source={{ uri: galleryExpandImg.file_path, cacheKey: `expand-${galleryExpandImg.file_path}` }}
                 recyclingKey={`expand-${galleryExpandImg.id}`}
-                allowDownscaling={false}
                 style={{ width: "92%", height: "72%", borderRadius: 12 }}
                 contentFit="contain"
                 cachePolicy="memory-disk"
