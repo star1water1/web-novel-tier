@@ -2,7 +2,7 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.13.1 (🔍 의심 표시 점검 불가 버그 수정 + v7.13.0 2차검수)              ║
+ * ║  버전: 7.13.2 (🔬 의심 표시 큐 미등록 원인 추적 — 진단 계측 임시 빌드)          ║
  * ║  최종 수정: 2026-06-14                                                        ║
  * ║  총 라인 수: 약 57,980줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -27000,6 +27000,8 @@ function formatVerificationReason(reason) {
 // v7.0.1 (M1 fix): 1초 디바운스 silent drop → UPSERT (작품당 pending 1건 보장 + 최신 의도 반영)
 // 🆕 v7.0.8: source 인자 추가 — 호출자(addNovel/saveEdit/batchSetTier/swapRating/inline_chip/gatekeeper_up/gatekeeper_down) 추적
 // 🆕 v7.4.13: priority 다축 통합 — computeVerificationPriority 사용. user_flag/auto_detected/conflict 지원.
+// 🔬 v7.13.2 진단용: 큐 등록 마지막 오류 캡처 (화면 표시로 원인 추적)
+let __lastEnqueueErr = null;
 async function enqueueVerification(novelId, triggerType, suspicionType, source) {
   if (!novelId || !triggerType || !suspicionType) return;
   // 🚫 v7.6.0 (포트 v3.16.0): 매칭 밴 작품은 검증 큐에 등록하지 않음
@@ -27044,6 +27046,7 @@ async function enqueueVerification(novelId, triggerType, suspicionType, source) 
     );
   } catch (logErr) { /* 무음 */ }
   try {
+    __lastEnqueueErr = null; // 🔬 v7.13.2
     // 동일 novel_id의 pending 엔트리가 이미 있으면 최신 trigger/suspicion으로 UPDATE
     const existing = await first(
       `SELECT id, priority FROM tier_verification_queue WHERE novel_id=? AND state='pending' LIMIT 1`,
@@ -27063,6 +27066,7 @@ async function enqueueVerification(novelId, triggerType, suspicionType, source) 
       );
     }
   } catch (e) {
+    __lastEnqueueErr = e?.message || String(e); // 🔬 v7.13.2 화면 표시용
     // 🔧 v7.4.2: 진단 강화 — params + source 함께 기록 (NULL 컬럼 추적용)
     // perfMonitor에서 NOT NULL constraint 8건 발생했으나 truncated SQL로 컬럼 식별 불가했음
     console.warn("enqueueVerification 오류:", e?.message, {
@@ -36826,31 +36830,28 @@ function AppContent() {
     await loadList(undefined, undefined, "pin");
   }
 
-  // 🔧 v7.13.1: 의심 표시 시 후보 유무를 먼저 검사 — 후보 0이면 매칭 탭 자동시작이 조용히
-  //   no_candidates로 resolve해 "의심 표시해도 매칭이 안 뜬다"로 보이던 문제. 이유를 즉시 안내하고,
-  //   후보가 있을 때만 큐에 등록한다. (후보 0의 주원인: hybrid에서 manual_tier 미지정 작품 — backfill은
-  //   manual_order만 채우므로 티어 미지정 작품/방향엔 비교 대상이 없음.)
+  // 🔬 v7.13.2 진단 빌드: "의심 표시해도 대기 0" 원인 추적용. 후보 검사/조기반환을 잠시 끄고,
+  //   등록 직후 큐/발화/후보 실제 상태를 화면에 찍는다. 원인 확정 후 정식 수정 + 진단 제거 예정.
   async function flagSuspect(id, direction) {
+    let step = "start";
     try {
+      step = "flag";
       await exec("UPDATE novels SET user_flagged_suspect=1 WHERE id=?", [id]);
-      const cands = await getCandidatesForVerification(id, direction, 1);
-      await loadList(undefined, undefined, "v7-userflag");
-      if (!cands || cands.length === 0) {
-        const self = await first("SELECT manual_tier FROM novels WHERE id=?", [id]);
-        const noTier = !self?.manual_tier;
-        const dirWord = direction === "underrated" ? "위쪽" : "아래쪽";
-        Alert.alert(
-          "🔍 의심 표시됨 (지금은 점검 불가)",
-          noTier
-            ? "이 작품은 아직 티어가 지정되지 않아 자리 점검을 할 수 없어요.\n순위 탭에서 티어를 먼저 지정하면 점검 대상이 됩니다."
-            : `${dirWord}에 비교할 (티어가 지정된) 작품이 없어 점검을 진행할 수 없어요.\n이미 끝자리이거나 그 방향에 티어 지정 작품이 없습니다.`
-        );
-        return;
-      }
+      step = "enqueue";
       await enqueueVerification(id, "user_flag", direction, "user_toggle");
-      Alert.alert("🔍 의심 표시됨", "점검 대기에 추가되었습니다.\n매칭 탭에서 점검을 시작할 수 있습니다.");
+      step = "readback";
+      let pend = "?", tot = "?", fire = "?", cand = "?";
+      try { pend = (await first("SELECT COUNT(*) c FROM tier_verification_queue WHERE novel_id=? AND state='pending'", [id]))?.c; } catch (e) { pend = "ERR:" + (e?.message || ""); }
+      try { tot = (await first("SELECT COUNT(*) c FROM tier_verification_queue", []))?.c; } catch (e) { tot = "ERR:" + (e?.message || ""); }
+      try { fire = (await first("SELECT COUNT(*) c FROM trigger_fire_log WHERE novel_id=?", [id]))?.c; } catch (e) { fire = "ERR:" + (e?.message || ""); }
+      try { cand = (await getCandidatesForVerification(id, direction, 10)).length; } catch (e) { cand = "ERR:" + (e?.message || ""); }
+      await loadList(undefined, undefined, "v7-userflag");
+      Alert.alert(
+        "🔬 진단 (이 5줄 알려주세요)",
+        `pending(이 작품): ${pend}\n큐 전체 행수: ${tot}\n발화기록: ${fire}\n후보수: ${cand}\n등록오류: ${__lastEnqueueErr ?? "없음"}`
+      );
     } catch (e) {
-      console.warn("[v7.13.1] flagSuspect 오류:", e?.message);
+      Alert.alert("🔬 진단 — 예외", `단계: ${step}\n오류: ${e?.message || String(e)}`);
     }
   }
 
