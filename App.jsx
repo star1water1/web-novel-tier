@@ -2,9 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.13.7 (검증 매칭 상대작 표지 표시 + 점검 완료 시 의심 표시 자동 해제)    ║
+ * ║  버전: 7.13.8 (명대사 커스텀 폰트 적용 수정 + 배정탭 의심도/🔍 표시)            ║
  * ║  최종 수정: 2026-06-14                                                        ║
  * ║  총 라인 수: 약 57,980줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.13.8 명대사 폰트 적용 + 배정탭 의심도 표시 (2026-06-15)                    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ • #2 명대사 커스텀 폰트(나눔고딕 등)가 적용 안 되던 문제 — 폰트는 로드되나        ║
+ * ║   (칩은 표시됨) eff에 기본 italic이 붙어, Android가 italic 변형 없는 한글         ║
+ * ║   커스텀 폰트에서 family를 통째 무시(시스템 폴백)한 것. resolveQuoteTextStyle에서 ║
+ * ║   커스텀 폰트 적용 시 fontStyle:"normal" 강제 → 글꼴이 실제 적용됨.              ║
+ * ║ • #3 배정탭(hybrid)에 작품별 의심도 표시 + 🔍 의심작 지정 토글 추가 —            ║
+ * ║   computeSuspicionLevel(검증 승패 쏠림 + 충돌 누적, 시스템 자동감지와 동일 축)    ║
+ * ║   로 지정/높음/보통 색·라벨 표기. 탭 시 toggleSuspect(방향 선택→큐 등록).        ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11801,8 +11813,15 @@ function resolveQuoteTextStyle(style, auto) {
     textAlign: s.align || auto.textAlign || "center",
     fontStyle: ((s.italic != null) ? s.italic : (auto.fontStyle === "italic")) ? "italic" : "normal",
   };
-  if (fam) out.fontFamily = fam;            // 커스텀 폰트: weight는 family에 내장
-  else out.fontWeight = s.bold ? "700" : (auto.fontWeight || "400");
+  if (fam) {
+    out.fontFamily = fam;                   // 커스텀 폰트: weight는 family에 내장
+    // 🔧 v7.13.8: 커스텀 한글 폰트는 italic 변형 파일이 없어, fontStyle:"italic"를 함께 주면
+    //   Android가 폰트 매칭에 실패해 family를 통째로 무시(시스템 폴백)한다. → 커스텀 폰트엔
+    //   italic 강제 해제(글꼴 자체가 적용되도록). 칩이 되고 미리보기가 안 되던 원인.
+    out.fontStyle = "normal";
+  } else {
+    out.fontWeight = s.bold ? "700" : (auto.fontWeight || "400");
+  }
   return out;
 }
 // 배경색 명도에 따라 가독성 좋은 글자색(흰/검) 반환 — 카드 헤더/푸터/본문 대비용
@@ -12609,6 +12628,15 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.13.8", date: "2026-06-15",
+    title: "🔧 명대사 글꼴 적용 + 배정탭 의심도 표시",
+    highlights: [
+      { type: "fix", text: "🔤 명대사에 글꼴(나눔고딕·나눔명조·고운바탕·주아)을 골라도 적용이 안 되던 문제를 고쳤어요. (안드로이드에서 기울임과 한글 커스텀 글꼴이 충돌해 글꼴이 무시되던 것 — 커스텀 글꼴 선택 시 기울임은 자동 해제됩니다.)" },
+      { type: "new", text: "🔍 (하이브리드) 배정 탭의 각 작품에 '의심도'(지정/높음/보통)가 표시되고, 🔍를 눌러 그 자리에서 바로 의심작으로 지정할 수 있어요. 의심도는 매칭 승패 쏠림·충돌 누적 등 자동 감지 신호를 반영합니다." },
+    ],
+    details: [],
+  },
   {
     version: "7.13.7", date: "2026-06-15",
     title: "🔧 AI 자리 점검 — 상대작 표지 + 의심 표시 자동 해제",
@@ -27669,6 +27697,21 @@ async function detectAutomaticSuspects(excludeNovelId) {
   } catch (e) {
     console.warn("[v7.5.0] detectAutomaticSuspects 오류:", e?.message);
   }
+}
+
+// 🆕 v7.13.8: 배정탭 표시용 의심도 — 시스템이 쓰는 신호(검증 승패 쏠림 + 충돌 누적)를 동기 계산.
+//   detectAutomaticSuspects의 skew(|W-L|/count, ≥0.6 자동감지) + computeVerificationPriority의
+//   conflictWeight와 동일 축. user_flagged_suspect(명시 지정)는 분리 반환. score 0~6.
+function computeSuspicionLevel(novel) {
+  const flagged = Number(novel?.user_flagged_suspect) === 1;
+  const w = Number(novel?.verification_wins) || 0;
+  const l = Number(novel?.verification_losses) || 0;
+  const cnt = Number(novel?.verification_count) || 0;
+  const conflict = Number(novel?.conflict_hits) || 0;
+  let score = 0;
+  if (cnt >= 3) score += Math.min(Math.round((Math.abs(w - l) / cnt) * 3), 3); // 쏠림 0~3
+  score += Math.min(conflict, 3);                                              // 충돌 0~3
+  return { flagged, score };
 }
 
 // 🆕 v7.4.11: 순위탭 카드 height 추정 (export 위험 예측용 pure helper).
@@ -47787,6 +47830,9 @@ async function importJSON() {
                     setTierManageSelectedId(prev => prev === item.id ? null : item.id);
                   };
 
+                  // 🆕 v7.13.8: hybrid 의심도 — 시스템 신호 기반(요청 #3)
+                  const sus = globalTierConfig.mode === "hybrid" ? computeSuspicionLevel(item) : null;
+
                   return (
                     <View style={{ marginBottom: 8 }}>
                       <TouchableOpacity
@@ -47829,6 +47875,22 @@ async function importJSON() {
                             </Text>
                           ) : null}
                         </View>
+
+                        {/* 🆕 v7.13.8: 의심도 + 🔍 의심작 지정 (hybrid 전용, 요청 #3) */}
+                        {sus && (
+                          <TouchableOpacity
+                            onPress={() => toggleSuspect(item.id, item.user_flagged_suspect, item.title)}
+                            hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+                            style={{ alignItems: "center", width: 30, marginRight: 2 }}
+                          >
+                            <Text style={{ fontSize: 15, color: sus.flagged ? "#f59e0b" : (sus.score >= 3 ? "#ef4444" : sus.score >= 1 ? "#3b82f6" : C.sub) }}>🔍</Text>
+                            {(sus.flagged || sus.score >= 1) && (
+                              <Text style={{ fontSize: 8, fontWeight: "800", color: sus.flagged ? "#f59e0b" : (sus.score >= 3 ? "#ef4444" : "#3b82f6") }}>
+                                {sus.flagged ? "지정" : sus.score >= 3 ? "높음" : "보통"}
+                              </Text>
+                            )}
+                          </TouchableOpacity>
+                        )}
 
                         {/* 티어 배지 (탭하면 인라인 확장 — 편집 모드에서도 동작) */}
                         <TouchableOpacity
