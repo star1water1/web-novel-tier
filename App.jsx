@@ -2,9 +2,20 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.13.4 (🛠️ 레거시 검증 테이블 통째 재생성 — type-only DROP 부족분 보강)  ║
+ * ║  버전: 7.13.5 (🛠️ enqueue 자가복구 — 런타임 연결에서 큐 재생성+재시도 / 진단)   ║
  * ║  최종 수정: 2026-06-14                                                        ║
  * ║  총 라인 수: 약 57,980줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.13.5 enqueue 자가복구 + 런타임 큐 스키마 진단 (2026-06-15)                ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ v7.13.4(initDb 마이그레이션)으로도 "현재 대기 0건" 지속. 유력 원인: initDb가      ║
+ * ║ 고친 연결(openDb local database)과 런타임 enqueue가 쓰는 연결(exec)이 달라        ║
+ * ║ 재생성이 런타임에 미반영. → enqueueVerification 큐 INSERT가 NOT NULL(...queue)로   ║
+ * ║ 실패하면, INSERT를 수행하는 바로 그 런타임 연결(exec)에서 큐 테이블을 정식         ║
+ * ║ 스키마로 재생성 후 1회 재시도하는 자가복구 추가(연결 불일치와 무관하게 복구).     ║
+ * ║ flagSuspect에 런타임이 보는 큐 컬럼 + 오류 덤프 진단 유지(원인 최종 확인용).      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -27074,6 +27085,8 @@ function formatVerificationReason(reason) {
 // v7.0.1 (M1 fix): 1초 디바운스 silent drop → UPSERT (작품당 pending 1건 보장 + 최신 의도 반영)
 // 🆕 v7.0.8: source 인자 추가 — 호출자(addNovel/saveEdit/batchSetTier/swapRating/inline_chip/gatekeeper_up/gatekeeper_down) 추적
 // 🆕 v7.4.13: priority 다축 통합 — computeVerificationPriority 사용. user_flag/auto_detected/conflict 지원.
+// 🔬 v7.13.5 진단: 큐 등록 마지막 오류 캡처 (화면 표시)
+let __lastEnqueueErr = null;
 async function enqueueVerification(novelId, triggerType, suspicionType, source) {
   if (!novelId || !triggerType || !suspicionType) return;
   // 🚫 v7.6.0 (포트 v3.16.0): 매칭 밴 작품은 검증 큐에 등록하지 않음
@@ -27118,6 +27131,7 @@ async function enqueueVerification(novelId, triggerType, suspicionType, source) 
     );
   } catch (logErr) { /* 무음 */ }
   try {
+    __lastEnqueueErr = null; // 🔬 v7.13.5
     // 동일 novel_id의 pending 엔트리가 이미 있으면 최신 trigger/suspicion으로 UPDATE
     const existing = await first(
       `SELECT id, priority FROM tier_verification_queue WHERE novel_id=? AND state='pending' LIMIT 1`,
@@ -27137,8 +27151,27 @@ async function enqueueVerification(novelId, triggerType, suspicionType, source) 
       );
     }
   } catch (e) {
+    __lastEnqueueErr = e?.message || String(e); // 🔬 v7.13.5
+    // 🔧 v7.13.5 자가복구: 레거시 스키마(type 등 NOT NULL 잔재)로 큐 INSERT가 실패하면, INSERT를
+    //   수행하는 바로 그 런타임 연결(exec)에서 큐 테이블을 정식 스키마로 통째 재생성 후 1회 재시도.
+    //   initDb 마이그레이션이 다른 연결/타이밍이라 런타임에 미반영된 경우까지 확실히 복구한다.
+    //   (큐는 휘발성 — 재생성해도 손실 없음. 검증/매칭이 영구 불능이던 근본원인 최종 차단.)
+    if (/NOT NULL constraint failed: tier_verification_queue/i.test(__lastEnqueueErr || "")) {
+      try {
+        await exec(`DROP TABLE IF EXISTS tier_verification_queue;`);
+        await exec(`CREATE TABLE tier_verification_queue (id TEXT PRIMARY KEY NOT NULL, novel_id TEXT NOT NULL, trigger_type TEXT NOT NULL, suspicion_type TEXT NOT NULL, priority INTEGER DEFAULT 0, state TEXT DEFAULT 'pending', created_at INTEGER NOT NULL, processed_at INTEGER);`);
+        await exec(`CREATE INDEX IF NOT EXISTS idx_tvq_state ON tier_verification_queue(state, priority DESC, created_at);`);
+        await exec(`CREATE INDEX IF NOT EXISTS idx_tvq_novel ON tier_verification_queue(novel_id);`);
+        await exec(
+          `INSERT INTO tier_verification_queue (id, novel_id, trigger_type, suspicion_type, priority, state, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+          [uuid(), novelId, triggerType, suspicionType, priority, now]
+        );
+        __lastEnqueueErr = null; // 자가복구 성공
+      } catch (e2) {
+        __lastEnqueueErr = "자가복구 실패: " + (e2?.message || String(e2));
+      }
+    }
     // 🔧 v7.4.2: 진단 강화 — params + source 함께 기록 (NULL 컬럼 추적용)
-    // perfMonitor에서 NOT NULL constraint 8건 발생했으나 truncated SQL로 컬럼 식별 불가했음
     console.warn("enqueueVerification 오류:", e?.message, {
       novelId,
       triggerType,
@@ -36921,9 +36954,11 @@ function AppContent() {
         return;
       }
       await enqueueVerification(id, "user_flag", direction, "user_toggle");
-      // v7.13.4: 등록 직후 대기 수 read-back — 0이면 큐 INSERT가 아직 실패하는 것(추가 진단 필요)
-      let _pc = "?"; try { _pc = (await first("SELECT COUNT(*) c FROM tier_verification_queue WHERE state='pending'", []))?.c; } catch {}
-      Alert.alert("🔍 의심 표시됨", `점검 대기에 추가되었습니다 (현재 대기 ${_pc}건).\n매칭 탭에서 점검을 시작할 수 있습니다.`);
+      // 🔬 v7.13.5: 런타임 연결이 실제로 보는 큐 스키마 + 오류 덤프 (연결 불일치/잔재 컬럼 확인)
+      let _pend = "?", _cols = "?";
+      try { _pend = (await first("SELECT COUNT(*) c FROM tier_verification_queue WHERE state='pending'"))?.c; } catch (e) { _pend = "E:" + (e?.message || ""); }
+      try { const _ti = await all("PRAGMA table_info(tier_verification_queue)"); _cols = (_ti || []).map(c => c.name).join(","); } catch (e) { _cols = "E:" + (e?.message || ""); }
+      Alert.alert("🔬 진단 (이 3줄 알려주세요)", `pending: ${_pend}\n큐컬럼: ${_cols}\n등록오류: ${__lastEnqueueErr ?? "없음"}`);
     } catch (e) {
       console.warn("[v7.13.1] flagSuspect 오류:", e?.message);
     }
