@@ -2,9 +2,20 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.13.8 (명대사 커스텀 폰트 적용 수정 + 배정탭 의심도/🔍 표시)            ║
+ * ║  버전: 7.13.9 (검증 건너뛰기/중단 시에도 의심 표시(🔍) 해제 — stuck 상태 제거)  ║
  * ║  최종 수정: 2026-06-14                                                        ║
  * ║  총 라인 수: 약 57,980줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.13.9 검증 건너뛰기/중단 시 의심 표시 해제 (2026-06-15)                     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ v7.13.7은 검증 '완료' 시에만 user_flagged_suspect=0 해제 → '건너뛰기'/'시퀀스    ║
+ * ║ 중단'은 큐를 'skipped'로 마감하면서도 🔍 플래그는 남겨, 작품이 '의심 지정됨'인데  ║
+ * ║ 큐엔 없는 stuck 상태(재검증도 안 됨)로 방치되던 문제(사용자 지적). → 건너뛰기/   ║
+ * ║ 중단 핸들러에도 user_flagged_suspect=0 + loadList 추가. 이제 어떤 종료 경로든    ║
+ * ║ (완료/건너뛰기/중단) 🔍가 해제되어 일관됨(다시 의심되면 재지정). 단, 시스템      ║
+ * ║ 자동 의심도(쏠림/충돌)는 flag와 무관하게 유지되어 배정탭에 계속 반영됨.          ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12628,6 +12639,14 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.13.9", date: "2026-06-15",
+    title: "🔧 점검 건너뛰기/중단 시에도 의심 표시 해제",
+    highlights: [
+      { type: "fix", text: "🔍 점검을 '건너뛰기'/'중단'했을 때도 의심 표시가 해제돼요. (이전엔 완료일 때만 풀려서, 건너뛴 작품이 '의심 지정됨'인데 점검 대기엔 없는 어정쩡한 상태로 남았어요. 다시 의심되면 언제든 재지정하면 됩니다.)" },
+    ],
+    details: [],
+  },
   {
     version: "7.13.8", date: "2026-06-15",
     title: "🔧 명대사 글꼴 적용 + 배정탭 의심도 표시",
@@ -45839,9 +45858,12 @@ async function importJSON() {
                                       `UPDATE tier_verification_queue SET state='skipped', processed_at=? WHERE id=?`,
                                       [Date.now(), verificationSession.queueRow.id]
                                     );
+                                    // 🆕 v7.13.9: 중단도 🔍 해제 — flag만 남고 큐엔 없는 stuck 상태 방지(다시 의심되면 재지정)
+                                    await exec(`UPDATE novels SET user_flagged_suspect=0 WHERE id=?`, [verificationSession.queueRow.novel_id]);
                                   } catch {}
                                   setVerificationSession(null);
                                   verificationSessionIdRef.current = null;
+                                  await loadList(undefined, undefined, "v7-skip");
                                   await loadVerificationStats();
                                   startVerificationSession();
                                 },
@@ -45856,9 +45878,12 @@ async function importJSON() {
                             // 현재 큐 항목 cancel + 다음 큐로
                             try {
                               await exec(`UPDATE tier_verification_queue SET state='skipped', processed_at=? WHERE id=?`, [Date.now(), verificationSession.queueRow.id]);
+                              // 🆕 v7.13.9: 건너뛰기도 🔍 해제 — stuck 상태 방지(다시 의심되면 재지정)
+                              await exec(`UPDATE novels SET user_flagged_suspect=0 WHERE id=?`, [verificationSession.queueRow.novel_id]);
                             } catch {}
                             setVerificationSession(null);
                             verificationSessionIdRef.current = null;
+                            await loadList(undefined, undefined, "v7-skip");
                             await loadVerificationStats();
                             startVerificationSession();
                           }}
