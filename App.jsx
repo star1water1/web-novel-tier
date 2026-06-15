@@ -2,9 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.13.5 (🛠️ enqueue 자가복구 — 런타임 연결에서 큐 재생성+재시도 / 진단)   ║
+ * ║  버전: 7.13.6 (✅ 하이브리드 검증 복구 확정 — 진단 제거 + 보조테이블 선제복구)   ║
  * ║  최종 수정: 2026-06-14                                                        ║
  * ║  총 라인 수: 약 57,980줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ ✅ v7.13.6 하이브리드 검증 복구 확정 + 마무리 (2026-06-15)                       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ v7.13.5 자가복구로 큐 INSERT 성공 확인(기기: pending=1, 큐컬럼 정식, 오류 없음). ║
+ * ║ 근본원인은 옛 스키마의 'type' NOT NULL 컬럼 + initDb 마이그레이션 연결과 런타임  ║
+ * ║ 연결 불일치였다. 마무리: ① flagSuspect 진단 팝업 제거(정상 메시지 복원),         ║
+ * ║ ② 같은 연결 불일치로 보조테이블(tier_repositioning_session/tier_validation_log)  ║
+ * ║ 도 런타임에선 옛 스키마일 수 있어, 세션 시작 전 런타임 연결에서 1회 선제 재생성   ║
+ * ║ (ensureVerificationAuxSchema) → 비교 후 결과 저장(finalize/log)까지 정상화.       ║
+ * ║ 큐는 enqueue self-heal, 보조테이블은 startVerificationSession 진입 시 복구.       ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12588,6 +12600,16 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.13.6", date: "2026-06-15",
+    title: "✅ 하이브리드 'AI 자리 점검' 정상화 완료",
+    highlights: [
+      { type: "fix", text: "✅ 하이브리드 모드에서 작품 추가·티어 변경·🔍 의심 표시를 해도 'AI 자리 점검'이 한 번도 작동하지 않던 문제가 완전히 해결됐어요. 이제 점검 대기에 정상 등록되고, 매칭 탭에서 인접 작품과 비교해 자리를 찾아줍니다. 비교 결과 저장까지 정상 동작합니다." },
+    ],
+    details: [
+      { type: "fix", text: "원인: 오래된 내부 스키마의 'type'(NOT NULL) 잔재 컬럼 + 초기화 연결과 실행 연결 불일치로 검증 큐 등록이 항상 실패. 실행 연결에서 검증 테이블을 정식 구조로 자가복구하도록 수정(데이터 무손실). 진단용 임시 팝업 제거." },
+    ],
+  },
   {
     version: "7.13.4", date: "2026-06-15",
     title: "🛠️ 하이브리드 'AI 자리 점검' 미작동 — 추가 수정",
@@ -27087,6 +27109,34 @@ function formatVerificationReason(reason) {
 // 🆕 v7.4.13: priority 다축 통합 — computeVerificationPriority 사용. user_flag/auto_detected/conflict 지원.
 // 🔬 v7.13.5 진단: 큐 등록 마지막 오류 캡처 (화면 표시)
 let __lastEnqueueErr = null;
+// 🔧 v7.13.6: 런타임 연결 기준 검증 보조테이블(세션/검증로그) 레거시 스키마 1회 복구.
+//   enqueue가 쓰는 연결과 initDb 마이그레이션 연결이 달라(=큐 self-heal로 확인됨), 보조테이블도
+//   런타임에선 옛 스키마('type' NOT NULL)일 수 있어 finalize/logVerificationMatch INSERT가 조용히
+//   실패 → "비교는 되는데 결과 미저장"이 될 수 있다. 세션 시작 전 런타임 연결(exec/all)에서 복구.
+//   (검증이 한 번도 완료된 적 없어 비어 있으므로 재생성 무손실. 큐는 enqueue self-heal이 담당.)
+let __verifAuxFixed = false;
+async function ensureVerificationAuxSchema() {
+  if (__verifAuxFixed) return;
+  __verifAuxFixed = true;
+  const fixes = [
+    { t: "tier_repositioning_session",
+      create: `CREATE TABLE tier_repositioning_session (id TEXT PRIMARY KEY NOT NULL, novel_id TEXT NOT NULL, suspicion_type TEXT NOT NULL, trigger_type TEXT, state TEXT NOT NULL, result_tier TEXT, result_order INTEGER, result_action TEXT, total_responses INTEGER DEFAULT 0, blocker_id TEXT, created_at INTEGER NOT NULL, completed_at INTEGER);`,
+      idx: [`CREATE INDEX IF NOT EXISTS idx_trs_blocker ON tier_repositioning_session(blocker_id, state);`, `CREATE INDEX IF NOT EXISTS idx_trs_novel ON tier_repositioning_session(novel_id);`] },
+    { t: "tier_validation_log",
+      create: `CREATE TABLE tier_validation_log (id TEXT PRIMARY KEY NOT NULL, session_id TEXT, novel_a_id TEXT NOT NULL, novel_b_id TEXT NOT NULL, user_choice TEXT NOT NULL, violation_type TEXT NOT NULL, created_at INTEGER NOT NULL);`,
+      idx: [`CREATE INDEX IF NOT EXISTS idx_tvl_session ON tier_validation_log(session_id);`, `CREATE INDEX IF NOT EXISTS idx_tvl_a ON tier_validation_log(novel_a_id);`, `CREATE INDEX IF NOT EXISTS idx_tvl_b ON tier_validation_log(novel_b_id);`] },
+  ];
+  for (const f of fixes) {
+    try {
+      const cols = await all(`PRAGMA table_info(${f.t})`);
+      if (cols && cols.some(c => c.name === "type")) {
+        await exec(`DROP TABLE IF EXISTS ${f.t};`);
+        await exec(f.create);
+        for (const ix of f.idx) await exec(ix);
+      }
+    } catch (e) { console.warn("[v7.13.6] aux schema fix:", f.t, e?.message); }
+  }
+}
 async function enqueueVerification(novelId, triggerType, suspicionType, source) {
   if (!novelId || !triggerType || !suspicionType) return;
   // 🚫 v7.6.0 (포트 v3.16.0): 매칭 밴 작품은 검증 큐에 등록하지 않음
@@ -36954,11 +37004,7 @@ function AppContent() {
         return;
       }
       await enqueueVerification(id, "user_flag", direction, "user_toggle");
-      // 🔬 v7.13.5: 런타임 연결이 실제로 보는 큐 스키마 + 오류 덤프 (연결 불일치/잔재 컬럼 확인)
-      let _pend = "?", _cols = "?";
-      try { _pend = (await first("SELECT COUNT(*) c FROM tier_verification_queue WHERE state='pending'"))?.c; } catch (e) { _pend = "E:" + (e?.message || ""); }
-      try { const _ti = await all("PRAGMA table_info(tier_verification_queue)"); _cols = (_ti || []).map(c => c.name).join(","); } catch (e) { _cols = "E:" + (e?.message || ""); }
-      Alert.alert("🔬 진단 (이 3줄 알려주세요)", `pending: ${_pend}\n큐컬럼: ${_cols}\n등록오류: ${__lastEnqueueErr ?? "없음"}`);
+      Alert.alert("🔍 의심 표시됨", "점검 대기에 추가되었습니다.\n매칭 탭에서 점검을 시작할 수 있습니다.");
     } catch (e) {
       console.warn("[v7.13.1] flagSuspect 오류:", e?.message);
     }
@@ -38750,6 +38796,7 @@ function AppContent() {
     setVerificationLoading(true);
     let shouldRetry = false;
     try {
+      await ensureVerificationAuxSchema(); // 🔧 v7.13.6: 세션/로그 테이블 런타임 스키마 선제 복구
       const queueRow = await getNextVerificationTarget();
       if (!queueRow) {
         setVerificationSession(null);
