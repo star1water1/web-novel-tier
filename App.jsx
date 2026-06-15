@@ -2,9 +2,29 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.15.0 (3차 검수 — 명대사 개별↔프리셋 병합 + 수상 자격·정원 강제)          ║
+ * ║  버전: 7.16.0 (3차 검수 — 하이브리드 자동조정 이력 노출 + 전승 시 이어서 수렴)    ║
  * ║  최종 수정: 2026-06-15                                                        ║
- * ║  총 라인 수: 약 58,470줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 58,510줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.16.0 3차 검수 — 하이브리드 이력 노출 + 이어서 수렴 (2026-06-15)            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [이력 노출] tier_repositioning_session(여태 숨은 진단 탭에서만 보이던 쓰기 전용  ║
+ * ║   기록)을 hybrid 매칭 화면에 '📜 최근 자동 조정 이력'(접이식, 기본 접힘)으로 노출.║
+ * ║   무엇이 어디로(→ 티어 #순위) 왜(상향/하향·경계작) 옮겨졌고 비교 몇 회였는지 표시.║
+ * ║   loadRepositioningHistory(최근 20건) — 화면 진입/finalize 후 갱신.              ║
+ * ║ [#2 전승 시 이어서 수렴] computeNewPosition no_inflection(전 구간 가설 방향 승)   ║
+ * ║   에서 응답 상한(max)까지 도달하면 7이웃까지만 이동 후 멈춰 극단 작품이 한 세션엔  ║
+ * ║   못 가던 소프트 한계 → stopReason==='max' && 변곡 없음 && 이동 시 같은 방향으로   ║
+ * ║   재등록('continue')해 다음 세션에서 이어서 등반. 후보 소진은 'exhausted'라 해당   ║
+ * ║   없음 → 티어 극단 도달 시 자연 종료(무한 루프 방지, 사용자 주도 수렴).           ║
+ * ║ [검증 — 수렴 '버그' 재평가] #1 K단계 '오염'은 blocker와의 실제 비교를 모두 세는    ║
+ * ║   것이라 표본↑로 오히려 타당(변곡 1패 후 뒤집으려면 재대결 승 필요 = 정상). #3은   ║
+ * ║   신작이 티어 맨밑(MAX+100) 삽입이라 '아래로 못 감' 무의미. #4 ±25/±50은 finalize ║
+ * ║   후 rebalanceTierOrder가 상대순서 보존해 재배치 → 명확 버그 아님. 취약 코드라    ║
+ * ║   논쟁적 변경은 보류, 안전한 #2와 이력만 반영(사용자 선택).                       ║
+ * ║ [검증] esbuild JSX 파싱 통과. enqueue 'continue' 우선순위/표시 매핑 추가.         ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -27252,6 +27272,7 @@ const VERIFICATION_PRIORITY = {
   tier_change: 4,
   order_change: 3,
   new: 2,
+  continue: 2,      // 🆕 v7.16.0 #2: 전승(변곡 없음) 시 이어서 수렴(계속 등반) 재등록
   conflict: 1,      // 🆕 v7.5.0 신작 충돌 캐스케이드 (Phase B)
   user_flag: 0,     // 🆕 v7.4.13 baseReason 0 — flagWeight(+3)로 가산
   auto_detected: 0, // 🆕 v7.5.0 전적 기반 자동 검출 (Phase B)
@@ -27290,6 +27311,7 @@ function formatVerificationReason(reason) {
     case "new":           return "새로 추가됨";
     case "conflict":      return "신작 추가로 영향";
     case "auto_detected": return "전적 시그널 의심 (W/L 쏠림)";
+    case "continue":      return "이어서 수렴 중 (계속 등반)";
     case "gatekeeper":    return "수문장 누적 (레거시)";
     case "read_progress": return "읽기 진행 (레거시)";
     case "meta_edit":     return "메타 편집 (레거시)";
@@ -27749,6 +27771,14 @@ async function finalizeVerificationSession(queueRow, suspicionNovel, candidates,
       if (tierChanged && suspicionNovel.manual_tier) {
         await rebalanceTierOrder(suspicionNovel.manual_tier);
       }
+    }
+
+    // 🔧 v7.16.0 (#2): 응답 상한(max)까지 변곡 없이(전 구간 가설 방향 승) 이동한 경우 — 아직 더
+    //   이동할 여지가 있다는 뜻이므로 같은 방향으로 재등록해 다음 세션에서 이어서 수렴(계속 등반).
+    //   후보 소진은 stopReason="exhausted"라 여기 해당 없음 → 티어 극단 도달 시 자연 종료(무한루프 방지).
+    if (newPos.action === "moved" && stopReason === "max" && findInflectionPoint(responses, suspicionType) === -1) {
+      try { await enqueueVerification(suspicionNovel.id, "continue", suspicionType, "auto_continue"); }
+      catch (ce) { console.warn("[v7.16.0 #2] 이어서 수렴 재등록 실패:", ce?.message); }
     }
 
     // 🆕 v7.5.0: 전적 기반 자동 의심 검출 — 방금 누적된 W/L 시그널 반영
@@ -30201,6 +30231,8 @@ function AppContent() {
   const [verificationSession, setVerificationSession] = useState(null);
   const [verificationLoading, setVerificationLoading] = useState(false);
   const [verificationStats, setVerificationStats] = useState({ pending: 0, resolved: 0 });
+  const [repositioningHistory, setRepositioningHistory] = useState([]); // 🆕 v7.16.0: 최근 자동 조정 이력 (write-only이던 세션 기록을 사용자에게 노출)
+  const [repoHistoryExpanded, setRepoHistoryExpanded] = useState(false); // 🆕 v7.16.0: 이력 접기/펼치기(기본 접힘 — 점검 흐름 방해 최소화)
   // 🆕 v7.4.13: 검증 대기 섹션의 "다음 점검" 미리보기 — title + trigger_type
   const [nextVerificationPreview, setNextVerificationPreview] = useState(null);
   // 🆕 v7.0.8: 하이브리드 진단 패널 데이터 (settingsSubTab === "diag" + hybrid 모드 시 로드)
@@ -38926,6 +38958,25 @@ function AppContent() {
     }
   }, []);
 
+  // 🆕 v7.16.0: 최근 자동 조정 이력 로드 — tier_repositioning_session(여태 진단 탭에서만 보이던 쓰기 전용
+  //   기록)을 사용자 화면에 노출. "무엇이 어디로 옮겨졌고 왜인지"를 보여 검증 결과의 투명성 확보.
+  const loadRepositioningHistory = useCallback(async () => {
+    try {
+      const rows = await all(
+        `SELECT s.novel_id, s.suspicion_type, s.trigger_type, s.result_tier, s.result_order, s.result_action,
+                s.total_responses, s.blocker_id, s.completed_at, n.title AS title, b.title AS blocker_title
+         FROM tier_repositioning_session s
+         LEFT JOIN novels n ON n.id = s.novel_id
+         LEFT JOIN novels b ON b.id = s.blocker_id
+         WHERE s.state='completed' AND n.id IS NOT NULL
+         ORDER BY s.completed_at DESC LIMIT 20`
+      );
+      setRepositioningHistory(rows || []);
+    } catch (e) {
+      console.warn("[v7.16.0] loadRepositioningHistory 오류:", e?.message);
+    }
+  }, []);
+
   // 🆕 v7.0.8: 하이브리드 진단 패널 통합 데이터 로드 — 진단 탭 진입 시 + 새로고침 버튼
   const loadHybridDiag = useCallback(async () => {
     if (hybridDiagLoading) return;
@@ -39124,6 +39175,7 @@ function AppContent() {
       verificationSessionIdRef.current = null;
       await loadList(undefined, undefined, "v7-finalize");
       await loadVerificationStats();
+      await loadRepositioningHistory(); // 🆕 v7.16.0: 방금 완료된 자동 조정을 이력에 즉시 반영
       // Stage 4: 수문장 후보 갱신 (5개 누적 시 모달 트리거)
       try {
         const gks = await getGatekeeperCandidates(5);
@@ -39165,6 +39217,7 @@ function AppContent() {
   useEffect(() => {
     if (screen === "match" && globalTierConfig.mode === "hybrid" && !verificationSession && !verificationLoading) {
       loadVerificationStats();
+      loadRepositioningHistory();
       startVerificationSession();
     }
   }, [screen, globalTierConfig.mode]); // verificationSession 의존성 제외 (startVerificationSession 내부에서 setState하면 재진입 방지)
@@ -45976,6 +46029,41 @@ async function importJSON() {
                 )}
               </View>
             </Section>
+
+            {/* 🆕 v7.16.0: 최근 자동 조정 이력 (접이식) — 시스템이 무엇을 어디로 왜 옮겼는지 투명 노출.
+                이전엔 tier_repositioning_session이 숨은 진단 탭에서만 보였음. 기본 접힘. */}
+            {repositioningHistory.length > 0 && (
+              <View style={{ backgroundColor: C.card, borderRadius: 12, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: C.line }}>
+                <TouchableOpacity onPress={() => setRepoHistoryExpanded(v => !v)} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                  <Text style={{ fontWeight: "800", color: C.text, fontSize: 14 }}>📜 최근 자동 조정 이력 ({repositioningHistory.length})</Text>
+                  <Text style={{ color: C.sub, fontSize: 12 }}>{repoHistoryExpanded ? "접기 ▲" : "펼치기 ▼"}</Text>
+                </TouchableOpacity>
+                {repoHistoryExpanded && (
+                  <View style={{ marginTop: 8 }}>
+                    {repositioningHistory.map((h, i) => {
+                      const moved = h.result_action === "moved";
+                      const actionLabel = moved ? "이동" : h.result_action === "no_change" ? "유지" : h.result_action === "no_candidates" ? "후보없음" : (h.result_action || "");
+                      const dirLabel = h.suspicion_type === "underrated" ? "↑ 상향 의심" : h.suspicion_type === "overrated" ? "↓ 하향 의심" : "";
+                      let when = "";
+                      try { when = new Date(h.completed_at).toLocaleDateString(); } catch { /* noop */ }
+                      return (
+                        <View key={i} style={{ paddingVertical: 6, borderTopWidth: i === 0 ? 0 : 0.5, borderTopColor: C.line }}>
+                          <View style={{ flexDirection: "row", alignItems: "center" }}>
+                            <Text style={{ flex: 1, color: C.text, fontWeight: "600", fontSize: 13 }} numberOfLines={1}>{h.title || "(삭제됨)"}</Text>
+                            <View style={{ backgroundColor: moved ? (isDark ? "#1e3a3a" : "#dcfce7") : (isDark ? "#374151" : "#f1f5f9"), paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+                              <Text style={{ color: moved ? (isDark ? "#86efac" : "#166534") : C.sub, fontSize: 11, fontWeight: "700" }}>{actionLabel}</Text>
+                            </View>
+                          </View>
+                          <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }} numberOfLines={1}>
+                            {dirLabel}{moved && h.result_tier ? ` → ${getTierLabel(h.result_tier)} #${h.result_order ?? "?"}` : ""}{h.blocker_title ? ` · 경계 ${h.blocker_title}` : ""} · 비교 {h.total_responses || 0}회 · {when}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+            )}
 
             {/* 검증 시퀀스 본체 */}
             {verificationSession ? (
