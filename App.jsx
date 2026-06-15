@@ -2,9 +2,37 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.13.9 (검증 건너뛰기/중단 시에도 의심 표시(🔍) 해제 — stuck 상태 제거)  ║
- * ║  최종 수정: 2026-06-14                                                        ║
- * ║  총 라인 수: 약 57,980줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 7.14.0 (3차 검수 P0 — 조용한 데이터 손실/자동매칭 정지 5건 수정)          ║
+ * ║  최종 수정: 2026-06-15                                                        ║
+ * ║  총 라인 수: 약 58,380줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔴 v7.14.0 3차 전면검수 P0 — 조용한 데이터 손실/정지 5건 (2026-06-15)            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 7개 영역 병렬 심층검수 + 셸 직접 점검에서 발견한 ~50건 중 '사용자가 모르게        ║
+ * ║ 일어나는 데이터 손실/정지' P0 5건을 우선 수정(나머지 P1~확장은 후속 단계).        ║
+ * ║ [#1 수상 정의 백업 누락] award_system_settings가 백업 페이로드에 없어, 복원 시   ║
+ * ║   작품의 awards JSON은 남지만 parseAwards가 정의를 못 찾아 사용자 정의 수상이     ║
+ * ║   전부 사라지던 손실 → 백업에 AW 키 동봉 + 복원 매핑(setAwardSystemSettings).     ║
+ * ║ [#2 명언 프리셋 백업 누락] quoteDefaultStyle이 export/restore 양쪽에 없어, 같은  ║
+ * ║   기기에서 아무 백업이나 복원해도 전역 명대사 서식이 null로 초기화되던 손실 →     ║
+ * ║   settingsDiff.qd 추가 + 복원(restored.quoteDefaultStyle).                       ║
+ * ║ [#3 명언 빠른수정이 공유 프리셋 배경파일 삭제] quick-edit 시드가 프리셋 bgImage   ║
+ * ║   경로를 그대로 참조(CoW 부재) → 변경/제거 시 deleteAsync가 원본을 지워 프리셋+    ║
+ * ║   모든 프리셋 적용 명대사 배경이 동시 소실 → 명대사 편집 4개 삭제 경로 모두에서   ║
+ * ║   '현재 프리셋이 참조 중인 파일'은 삭제 금지 가드 추가(quick/본편집/예정/보충).   ║
+ * ║   (개별↔프리셋 병합/CoW 완전화는 후속 '명대사 서식' 단계에서.)                    ║
+ * ║ [#4 태그 전체삭제가 예정작 누락] deleteTagGlobally/batchDeleteTagsGlobally가     ║
+ * ║   novels만 스캔해 예정작에 유령 태그가 남아 승격 시 부활(renameTagGlobally는      ║
+ * ║   두 테이블 처리) → 둘 다 ["novels","planned_novels"] 스캔으로 보강.             ║
+ * ║ [#5 자동매칭 첫 판정불가 쌍에서 정지] 다음 쌍 생성이 decide() 안에만 있어, 기준  ║
+ * ║   미충족 시 return만 하고 pair/deps 불변이라 effect 재발화 안 됨 → 기본 기준      ║
+ * ║   (티어차≥250)+평점 밀집 시 사실상 즉시 정지 → 세션 건너뛰기 세트로 다음 쌍 자동  ║
+ * ║   진행, 연속 60회 초과(판정가능 대결 없음) 시 자동 종료+수동 안내. pickRandom-    ║
+ * ║   UnseenPair가 건너뛰기 세트 제외, 자동 OFF/판정성공 시 세트 초기화.              ║
+ * ║ [검증] esbuild JSX 파싱 통과(EXIT=0, 무경고). 백업 AW/qd 키는 신규(기존 백업과    ║
+ * ║   호환 — 부재 시 기존 동작). 불변조건1 위배 없음(정지 Alert는 잠금 전 경로).      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -29906,6 +29934,9 @@ function AppContent() {
   const [isAutoMatching, setIsAutoMatching] = useState(false); // 🔧 v3.4.6: 자동 승패 처리 중 플래그
   const isAutoMatchingRef = useRef(false); // 🔧 v3.5.14: ref 기반 동기 guard (state 배칭 우회 방지)
   const needsListRefreshRef = useRef(false); // 🔧 v3.5.15: 자동매칭 종료 후 loadList 지연 실행 플래그
+  // 🔧 v7.14.0 (P0): 자동매칭이 첫 '판정불가' 쌍에서 영구 정지하던 문제 — 세션 건너뛰기 세트로 다음 쌍 진행
+  const autoMatchSkipRef = useRef(new Set()); // 판정불가로 건너뛴 쌍 키(세션 한정, 자동 OFF 시 초기화)
+  const autoMatchSkipCountRef = useRef(0);     // 연속 건너뛰기 수 (상한 초과 시 자동 종료 — 런어웨이 방지)
   const modeChangingRef = useRef(false); // 🆕 v6.2: 티어 모드 변경 in-flight 가드 (Alert 큐잉/중복 실행 방지)
   
   // 🎯 v3.0.4: 확장된 자동승패 설정
@@ -32410,6 +32441,7 @@ function AppContent() {
       // 💬 v7.6.2: 편집 중 삭제된 명대사 이미지 파일 정리 (저장 성공 후에만 — 본작 saveEdit과 동일)
       if (removedQuoteImagesRef.current.length > 0) {
         for (const uri of removedQuoteImagesRef.current) {
+          if (uri && uri === appSettings.quoteDefaultStyle?.bgImage) continue; // 🔧 v7.14.0 (P0): 공유 프리셋 배경 파일 보존
           FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
         }
         removedQuoteImagesRef.current = [];
@@ -36139,41 +36171,40 @@ function AppContent() {
             
             // 2. 모든 작품에서 해당 태그 제거
             // 🔧 v3.5.13: tag_data도 함께 정리 (batchRemoveTag와 동일 수준)
-            const novels = await all("SELECT id, tags, tag_data, major_genre, sub_genre FROM novels;");
+            // 🔧 v7.14.0 (P0): novels + planned_novels 모두 스캔 — 이전엔 novels만 처리해 예정작에
+            //   유령 태그가 남아 승격 시 부활했음(renameTagGlobally는 두 테이블 처리). 동일 정합으로 보강.
             const updates = [];
-            for (const n of (novels || [])) {
-              let changed = false;
-              // 🔧 v3.5.13: isSameTag 사용으로 공백/alias 변형도 정확히 제거
-              // 일반 태그에서 제거
-              const tags = (n.tags || "").split(",").map(t => t.trim()).filter(Boolean);
-              const newTags = tags.filter(t => !isSameTag(t, tag));
-              if (newTags.length !== tags.length) changed = true;
-              // 대장르에서 제거
-              const majors = parseMajorSub(n.major_genre);
-              const newMajors = majors.filter(g => !isSameTag(g, tag));
-              if (newMajors.length !== majors.length) changed = true;
-              // 부장르에서 제거
-              const subs = parseMajorSub(n.sub_genre);
-              const newSubs = subs.filter(g => !isSameTag(g, tag));
-              if (newSubs.length !== subs.length) changed = true;
-              // 🔧 v3.5.13: tag_data에서 해당 태그 농도 데이터 제거
-              let tagData = [];
-              try { tagData = JSON.parse(n.tag_data || "[]"); if (!Array.isArray(tagData)) tagData = []; } catch { tagData = []; }
-              const newTagData = tagData.filter(td => !isSameTag(td.tag, tag));
-              const tagDataChanged = newTagData.length !== tagData.length;
-              if (tagDataChanged) changed = true;
-              
-              if (changed) {
-                updates.push({
-                  sql: "UPDATE novels SET tags=?, tag_data=?, major_genre=?, sub_genre=? WHERE id=?",
-                  params: [
-                    newTags.join(", "),
-                    newTagData.length > 0 ? JSON.stringify(newTagData) : "",
-                    JSON.stringify(newMajors),
-                    JSON.stringify(newSubs),
-                    n.id
-                  ]
-                });
+            for (const tableName of ["novels", "planned_novels"]) {
+              const rows = await all(`SELECT id, tags, tag_data, major_genre, sub_genre FROM ${tableName};`);
+              for (const n of (rows || [])) {
+                let changed = false;
+                // 🔧 v3.5.13: isSameTag 사용으로 공백/alias 변형도 정확히 제거
+                const tags = (n.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+                const newTags = tags.filter(t => !isSameTag(t, tag));
+                if (newTags.length !== tags.length) changed = true;
+                const majors = parseMajorSub(n.major_genre);
+                const newMajors = majors.filter(g => !isSameTag(g, tag));
+                if (newMajors.length !== majors.length) changed = true;
+                const subs = parseMajorSub(n.sub_genre);
+                const newSubs = subs.filter(g => !isSameTag(g, tag));
+                if (newSubs.length !== subs.length) changed = true;
+                let tagData = [];
+                try { tagData = JSON.parse(n.tag_data || "[]"); if (!Array.isArray(tagData)) tagData = []; } catch { tagData = []; }
+                const newTagData = tagData.filter(td => !isSameTag(td.tag, tag));
+                if (newTagData.length !== tagData.length) changed = true;
+
+                if (changed) {
+                  updates.push({
+                    sql: `UPDATE ${tableName} SET tags=?, tag_data=?, major_genre=?, sub_genre=? WHERE id=?`,
+                    params: [
+                      newTags.join(", "),
+                      newTagData.length > 0 ? JSON.stringify(newTagData) : "",
+                      JSON.stringify(newMajors),
+                      JSON.stringify(newSubs),
+                      n.id
+                    ]
+                  });
+                }
               }
             }
             if (updates.length > 0) {
@@ -36228,38 +36259,41 @@ function AppContent() {
       return newRegistry;
     });
 
-    // 2. 모든 작품에서 해당 태그들 일괄 제거 (한 번의 스캔)
-    const novels = await all("SELECT id, tags, tag_data, major_genre, sub_genre FROM novels;");
+    // 2. 모든 작품(+예정작)에서 해당 태그들 일괄 제거 (한 번의 스캔)
+    // 🔧 v7.14.0 (P0): planned_novels도 포함 — 단건 deleteTagGlobally와 동일 이유(예정작 유령 태그 부활 방지)
     const updates = [];
     const isSameTagBatch = (t) => tagsToDelete.some(d => isSameTag(t, d));
 
-    for (const n of (novels || [])) {
-      let changed = false;
-      const tags = (n.tags || "").split(",").map(t => t.trim()).filter(Boolean);
-      const newTags = tags.filter(t => !isSameTagBatch(t));
-      if (newTags.length !== tags.length) changed = true;
-      const majors = parseMajorSub(n.major_genre);
-      const newMajors = majors.filter(g => !isSameTagBatch(g));
-      if (newMajors.length !== majors.length) changed = true;
-      const subs = parseMajorSub(n.sub_genre);
-      const newSubs = subs.filter(g => !isSameTagBatch(g));
-      if (newSubs.length !== subs.length) changed = true;
-      let tagData = [];
-      try { tagData = JSON.parse(n.tag_data || "[]"); if (!Array.isArray(tagData)) tagData = []; } catch { tagData = []; }
-      const newTagData = tagData.filter(td => !isSameTagBatch(td.tag));
-      if (newTagData.length !== tagData.length) changed = true;
+    for (const tableName of ["novels", "planned_novels"]) {
+      const rows = await all(`SELECT id, tags, tag_data, major_genre, sub_genre FROM ${tableName};`);
+      for (const n of (rows || [])) {
+        let changed = false;
+        const tags = (n.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+        const newTags = tags.filter(t => !isSameTagBatch(t));
+        if (newTags.length !== tags.length) changed = true;
+        const majors = parseMajorSub(n.major_genre);
+        const newMajors = majors.filter(g => !isSameTagBatch(g));
+        if (newMajors.length !== majors.length) changed = true;
+        const subs = parseMajorSub(n.sub_genre);
+        const newSubs = subs.filter(g => !isSameTagBatch(g));
+        if (newSubs.length !== subs.length) changed = true;
+        let tagData = [];
+        try { tagData = JSON.parse(n.tag_data || "[]"); if (!Array.isArray(tagData)) tagData = []; } catch { tagData = []; }
+        const newTagData = tagData.filter(td => !isSameTagBatch(td.tag));
+        if (newTagData.length !== tagData.length) changed = true;
 
-      if (changed) {
-        updates.push({
-          sql: "UPDATE novels SET tags=?, tag_data=?, major_genre=?, sub_genre=? WHERE id=?",
-          params: [
-            newTags.join(", "),
-            newTagData.length > 0 ? JSON.stringify(newTagData) : "",
-            JSON.stringify(newMajors),
-            JSON.stringify(newSubs),
-            n.id
-          ]
-        });
+        if (changed) {
+          updates.push({
+            sql: `UPDATE ${tableName} SET tags=?, tag_data=?, major_genre=?, sub_genre=? WHERE id=?`,
+            params: [
+              newTags.join(", "),
+              newTagData.length > 0 ? JSON.stringify(newTagData) : "",
+              JSON.stringify(newMajors),
+              JSON.stringify(newSubs),
+              n.id
+            ]
+          });
+        }
       }
     }
     if (updates.length > 0) {
@@ -38193,7 +38227,12 @@ function AppContent() {
       const style = qe.style;
       quotes[qe.qIndex] = (style && !quoteStyleIsDefault(style)) ? { type: "text", text, style } : text;
       await exec(`UPDATE ${tbl} SET memorable_quote=? WHERE id=?`, [serializeQuotes(quotes), qe.novelId]);
-      for (const uri of quickQuoteRemovedImagesRef.current) FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+      // 🔧 v7.14.0 (P0): 공유 전역 프리셋 배경 파일은 삭제 금지 — quick-edit 시드가 프리셋 경로를
+      //   그대로 참조(CoW 부재)해, 변경/제거 시 프리셋+모든 프리셋 적용 명대사의 배경이 동시 소실되던 버그.
+      for (const uri of quickQuoteRemovedImagesRef.current) {
+        if (uri && uri === appSettings.quoteDefaultStyle?.bgImage) continue;
+        FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+      }
       quickQuoteRemovedImagesRef.current = [];
       quickQuoteNewImagesRef.current = []; // 저장됨 → 새 이미지 파일 유지
       setQuoteQuickEdit(null);
@@ -38351,6 +38390,7 @@ function AppContent() {
       // 📷 v3.6.1: 편집 중 삭제된 명대사 이미지 파일 정리 (저장 성공 후에만)
       if (removedQuoteImagesRef.current.length > 0) {
         for (const uri of removedQuoteImagesRef.current) {
+          if (uri && uri === appSettings.quoteDefaultStyle?.bgImage) continue; // 🔧 v7.14.0 (P0): 공유 프리셋 배경 파일 보존
           FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
         }
         removedQuoteImagesRef.current = [];
@@ -38636,6 +38676,8 @@ function AppContent() {
       for (const pendingKey of pendingMatchPairs) {
         played.add(pendingKey);
       }
+      // 🔧 v7.14.0 (P0): 자동매칭에서 판정불가로 건너뛴 쌍은 재선택 제외 (세션 한정, 자동 OFF 시 초기화)
+      for (const skipKey of autoMatchSkipRef.current) played.add(skipKey);
 
       const candidates = [];
       const focusId = focusMatchNovel?.id || null;
@@ -39523,8 +39565,31 @@ function AppContent() {
     
     // 판정 (동기)
     const result = evaluateAutoMatch(pair.A, pair.B, matchAnalysis);
-    if (!result || !result.winner) return;
-    
+    if (!result || !result.winner) {
+      // 🔧 v7.14.0 (P0): 판정불가 쌍에서 자동매칭이 영구 정지하던 문제 수정.
+      //   이전: 단순 return → pair/deps 불변이라 effect 재발화 안 됨 → 첫 미충족 쌍에서 조용히 멈춤
+      //   (기본 기준 티어차≥250 + 평점 1500 밀집 시 거의 즉시). 수정: 해당 쌍을 세션 건너뛰기 세트에
+      //   넣고 다음 쌍으로 자동 진행. 연속 건너뛰기가 상한을 넘으면(판정 가능한 새 대결이 사실상
+      //   없음) 자동매칭을 끄고 수동 결정 안내.
+      autoMatchSkipRef.current.add(pairKey(pair.A.id, pair.B.id));
+      autoMatchSkipCountRef.current += 1;
+      if (autoMatchSkipCountRef.current > 60) {
+        autoMatchSkipRef.current.clear();
+        autoMatchSkipCountRef.current = 0;
+        setAutoEnabled(false);
+        // 이 경로에서 isAutoMatchingRef는 항상 false(잠금은 판정 성공 시에만) → 불변조건1 위배 아님
+        if (!isAutoMatchingRef.current) {
+          Alert.alert("자동매칭 중단", "현재 판정 기준을 충족하는 새 대결이 없어 자동매칭을 멈췄습니다.\n기준을 낮추거나 직접 결정해 주세요.");
+        }
+        return;
+      }
+      pickRandomUnseenPair();
+      return;
+    }
+    // 🔧 v7.14.0: 판정 가능한 쌍 발견 → 건너뛰기 추적 초기화 (평점 변동 후 새 미충족 구간을 새로 카운트)
+    autoMatchSkipRef.current.clear();
+    autoMatchSkipCountRef.current = 0;
+
     // 🔧 v3.9.2: autoMatchSettings를 로컬에 캡처 (stale closure 방지)
     const capturedSpeed = autoMatchSettings.speed || "fast";
 
@@ -39564,7 +39629,12 @@ function AppContent() {
     // 🆕 v7.0.6 (m1): IIFE 외부 .catch — finally 내부 setState/loadList가 throw할 이론적 가능성 대응 (unhandled rejection 차단)
   }, [pair, autoEnabled, autoMatchSettings, matchAnalysis, evaluateAutoMatch, screen]);
   // 🆕 v7.0.6 (m2): deps에 screen 추가 — 매칭 탭 이탈 시 자동매칭 effect 재진입에서 조기 리턴되도록
-  
+
+  // 🔧 v7.14.0 (P0): 자동매칭 OFF 시 건너뛰기 세트 초기화 (다음 세션을 깨끗하게 — 평점 변동 후 재평가)
+  useEffect(() => {
+    if (!autoEnabled) { autoMatchSkipRef.current.clear(); autoMatchSkipCountRef.current = 0; }
+  }, [autoEnabled]);
+
   // 자동승패 설정 저장
   const saveAutoMatchSettings = useCallback((updates) => {
     setAutoMatchSettings(prev => {
@@ -41305,6 +41375,9 @@ async function buildExtendedBackup(novels, matches, settings, tierHist, coverIma
   if (settings.exportCardsPerImage !== DEFAULT_SETTINGS.exportCardsPerImage) {
     settingsDiff.ec = settings.exportCardsPerImage;
   }
+  // 🆕 v7.14.0 (P0): 명언 전역 기본 서식 프리셋(quoteDefaultStyle) 백업 — 이전엔 미백업이라
+  //   복원 시 restored={...DEFAULT_SETTINGS}로 null 초기화되어 사용자 설정이 소실되던 데이터 손실.
+  if (settings.quoteDefaultStyle) settingsDiff.qd = settings.quoteDefaultStyle;
 
   // 🆕 v3.4: 예정탭 확장 필드 설정
   if (settings.plannedFields) {
@@ -41494,6 +41567,12 @@ async function exportJSON() {
     // 📷 v3.5.5: 플랫폼 기본 표지 백업 (PC = Platform Covers)
     if (platformCovers && Object.keys(platformCovers).length > 0) {
       payload.PC = platformCovers;
+    }
+
+    // 🏆 v7.14.0 (P0): 수상 시스템 설정 백업 (AW) — 이전엔 미백업이라 복원 시 작품의 awards JSON은
+    //   남지만 parseAwards가 정의를 못 찾아 사용자 정의 수상이 전부 사라지던 데이터 손실. 정의 동봉.
+    if (awardSystemSettings && awardSystemSettings.yearlyAwards && Object.keys(awardSystemSettings.yearlyAwards).length > 0) {
+      payload.AW = awardSystemSettings;
     }
     
     // 🆕 v3.2.1: 태그 메타데이터 백업 (TM = Tag Metadata)
@@ -42094,6 +42173,8 @@ async function importJSON() {
                 if (s.us !== undefined) restored.undoStackSize = s.us;
                 // 🆕 v7.4.12: exportCardsPerImage 복원 (Codex P2 회귀 해결)
                 if (s.ec !== undefined) restored.exportCardsPerImage = s.ec;
+                // 🆕 v7.14.0 (P0): 명언 전역 기본 서식 프리셋 복원 (백업 누락 회귀 해결 — 소실/초기화 방지)
+                if (s.qd) restored.quoteDefaultStyle = s.qd;
 
                 // 🆕 v3.4: 예정탭 확장 필드 설정 복원
                 if (s.pf && typeof s.pf === "object") {
@@ -42119,7 +42200,14 @@ async function importJSON() {
                   globalTierThresholds = { ...globalTierThresholds, ...restored.tierThresholds };
                 }
               }
-              
+
+              // 🏆 v7.14.0 (P0): 수상 시스템 설정(AW) 복원 — 이전엔 미복원이라 작품 수상이 정의 누락으로
+              //   parseAwards에서 전부 필터링되어 사라지던 데이터 손실. 백업의 정의를 그대로 복원.
+              if (data.AW && typeof data.AW === "object" && data.AW.yearlyAwards && typeof data.AW.yearlyAwards === "object") {
+                setAwardSystemSettings(data.AW);
+                await setAppMeta("award_system_settings", data.AW);
+              }
+
               // 🏆 티어 히스토리 복원 (v2.6)
               if (data.H && Array.isArray(data.H)) {
                 const restoredHist = data.H.map(h => ({
@@ -47618,6 +47706,7 @@ async function importJSON() {
                           // 📷 v6.0.1: 보충 편집에서 삭제된 명대사 이미지 파일 정리
                           if (removedQuoteImagesRef.current.length > 0) {
                             for (const uri of removedQuoteImagesRef.current) {
+                              if (uri && uri === appSettings.quoteDefaultStyle?.bgImage) continue; // 🔧 v7.14.0 (P0): 공유 프리셋 배경 파일 보존
                               FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
                             }
                             removedQuoteImagesRef.current = [];
