@@ -2,9 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.13.3 (🛠️ 검증 큐 레거시 type 컬럼 제거 — 하이브리드 검증 영구불능 해결)║
+ * ║  버전: 7.13.4 (🛠️ 레거시 검증 테이블 통째 재생성 — type-only DROP 부족분 보강)  ║
  * ║  최종 수정: 2026-06-14                                                        ║
  * ║  총 라인 수: 약 57,980줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.13.4 레거시 검증 테이블 통째 재생성 (2026-06-15)                          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ v7.13.3은 레거시 'type' 컬럼만 DROP COLUMN으로 제거했으나, 옛 스키마에 type 외   ║
+ * ║ 다른 NOT NULL 잔재 컬럼이 더 있으면 INSERT가 여전히 실패(whack-a-mole) → 대기 0   ║
+ * ║ 지속. 레거시 'type'가 있다는 건 enqueue가 늘 실패했다는 뜻이고, 그러면 검증       ║
+ * ║ 세션이 한 번도 완료된 적 없어 세 테이블 모두 비어 있다. 따라서 'type' 감지 시     ║
+ * ║ 컬럼 하나씩이 아니라 DROP TABLE + 정식 스키마로 통째 재생성(무손실)해 모든 레거시 ║
+ * ║ 잔재를 한 번에 제거. flagSuspect 성공 안내에 등록 직후 '현재 대기 N건' read-back  ║
+ * ║ 추가(수정 적용 여부 즉시 확인용).                                               ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -7076,33 +7088,31 @@ async function initDb(progressCb) {
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_trs_blocker ON tier_repositioning_session(blocker_id, state);`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_trs_novel ON tier_repositioning_session(novel_id);`);
 
-  // 🔧 v7.13.3: 레거시 'type NOT NULL' 컬럼 제거 (사용자 진단으로 확인된 실제 근본원인).
-  //   초기/알파 스키마는 트리거 컬럼명이 type(현재는 trigger_type)이었고 NOT NULL이라, 현재 INSERT가
-  //   매번 "NOT NULL constraint failed: ....type"로 실패 → enqueue/검증/매칭이 영구 불능이었다.
-  //   세 검증 테이블 정식 스키마엔 'type'이 없으므로(각각 trigger_type/violation_type 사용) 잔재로
-  //   판단하고 제거. CREATE TABLE IF NOT EXISTS/ensureColumn은 기존 컬럼을 못 고쳐 누락됐던 보강.
-  for (const _t of ["tier_verification_queue", "tier_repositioning_session", "tier_validation_log"]) {
+  // 🔧 v7.13.4: 레거시 스키마 검증 테이블 복구 — 옛 스키마는 컬럼명이 'type'(NOT NULL)이라
+  //   현재 INSERT(trigger_type/violation_type 사용)가 매번 NOT NULL 위반으로 실패 → enqueue/검증/
+  //   매칭이 영구 불능이었다. v7.13.3은 'type'만 DROP했으나 다른 레거시 NOT NULL 컬럼이 남으면
+  //   여전히 실패(whack-a-mole). 레거시 'type'가 있다는 건 enqueue가 늘 실패했다는 뜻 → 이 테이블엔
+  //   완료된 데이터가 없으므로(세션이 한 번도 끝난 적 없음) 통째 재생성해 정식 스키마를 보장한다(무손실).
+  const _legacyFixes = [
+    { t: "tier_verification_queue",
+      create: `CREATE TABLE tier_verification_queue (id TEXT PRIMARY KEY NOT NULL, novel_id TEXT NOT NULL, trigger_type TEXT NOT NULL, suspicion_type TEXT NOT NULL, priority INTEGER DEFAULT 0, state TEXT DEFAULT 'pending', created_at INTEGER NOT NULL, processed_at INTEGER);`,
+      idx: [`CREATE INDEX IF NOT EXISTS idx_tvq_state ON tier_verification_queue(state, priority DESC, created_at);`, `CREATE INDEX IF NOT EXISTS idx_tvq_novel ON tier_verification_queue(novel_id);`] },
+    { t: "tier_repositioning_session",
+      create: `CREATE TABLE tier_repositioning_session (id TEXT PRIMARY KEY NOT NULL, novel_id TEXT NOT NULL, suspicion_type TEXT NOT NULL, trigger_type TEXT, state TEXT NOT NULL, result_tier TEXT, result_order INTEGER, result_action TEXT, total_responses INTEGER DEFAULT 0, blocker_id TEXT, created_at INTEGER NOT NULL, completed_at INTEGER);`,
+      idx: [`CREATE INDEX IF NOT EXISTS idx_trs_blocker ON tier_repositioning_session(blocker_id, state);`, `CREATE INDEX IF NOT EXISTS idx_trs_novel ON tier_repositioning_session(novel_id);`] },
+    { t: "tier_validation_log",
+      create: `CREATE TABLE tier_validation_log (id TEXT PRIMARY KEY NOT NULL, session_id TEXT, novel_a_id TEXT NOT NULL, novel_b_id TEXT NOT NULL, user_choice TEXT NOT NULL, violation_type TEXT NOT NULL, created_at INTEGER NOT NULL);`,
+      idx: [`CREATE INDEX IF NOT EXISTS idx_tvl_session ON tier_validation_log(session_id);`, `CREATE INDEX IF NOT EXISTS idx_tvl_a ON tier_validation_log(novel_a_id);`, `CREATE INDEX IF NOT EXISTS idx_tvl_b ON tier_validation_log(novel_b_id);`] },
+  ];
+  for (const _f of _legacyFixes) {
     try {
-      const _cols = await database.getAllAsync(`PRAGMA table_info(${_t})`);
+      const _cols = await database.getAllAsync(`PRAGMA table_info(${_f.t})`);
       if (_cols && _cols.some(c => c.name === "type")) {
-        try {
-          await database.runAsync(`ALTER TABLE ${_t} DROP COLUMN type;`);
-        } catch (dropErr) {
-          // DROP COLUMN 미지원(구버전 SQLite) → 검증 큐만 휘발성이라 재생성으로 정리(데이터 폐기 무방)
-          if (_t === "tier_verification_queue") {
-            await database.runAsync(`DROP TABLE IF EXISTS tier_verification_queue;`);
-            await database.runAsync(`CREATE TABLE tier_verification_queue (
-              id TEXT PRIMARY KEY NOT NULL, novel_id TEXT NOT NULL, trigger_type TEXT NOT NULL,
-              suspicion_type TEXT NOT NULL, priority INTEGER DEFAULT 0, state TEXT DEFAULT 'pending',
-              created_at INTEGER NOT NULL, processed_at INTEGER);`);
-            await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tvq_state ON tier_verification_queue(state, priority DESC, created_at);`);
-            await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tvq_novel ON tier_verification_queue(novel_id);`);
-          } else {
-            console.warn(`[v7.13.3] ${_t}.type DROP 실패(이력 보존 위해 재생성 생략):`, dropErr?.message);
-          }
-        }
+        await database.runAsync(`DROP TABLE IF EXISTS ${_f.t};`);
+        await database.runAsync(_f.create);
+        for (const _ix of _f.idx) await database.runAsync(_ix);
       }
-    } catch (e) { console.warn(`[v7.13.3] ${_t} 레거시 type 정리 실패:`, e?.message); }
+    } catch (e) { console.warn(`[v7.13.4] ${_f.t} 레거시 스키마 복구 실패:`, e?.message); }
   }
 
   // 🆕 v7.0.8: trigger_fire_log — enqueueVerification 모든 호출 추적 (UPSERT 동작과 무관하게 fire 횟수 정확 기록)
@@ -12567,6 +12577,14 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.13.4", date: "2026-06-15",
+    title: "🛠️ 하이브리드 'AI 자리 점검' 미작동 — 추가 수정",
+    highlights: [
+      { type: "fix", text: "🛠️ 앞선 수정(v7.13.3)으로도 점검 대기가 계속 0이던 문제를 추가로 잡았어요. 오래된 검증용 내부 테이블을 정식 구조로 통째 재생성합니다(평가·티어 등 실제 데이터는 영향 없음). 의심 표시 시 '현재 대기 N건'이 함께 표시돼 바로 확인할 수 있어요." },
+    ],
+    details: [],
+  },
   {
     version: "7.13.3", date: "2026-06-15",
     title: "🛠️ 하이브리드 'AI 자리 점검'이 작동하지 않던 문제 해결",
@@ -36903,7 +36921,9 @@ function AppContent() {
         return;
       }
       await enqueueVerification(id, "user_flag", direction, "user_toggle");
-      Alert.alert("🔍 의심 표시됨", "점검 대기에 추가되었습니다.\n매칭 탭에서 점검을 시작할 수 있습니다.");
+      // v7.13.4: 등록 직후 대기 수 read-back — 0이면 큐 INSERT가 아직 실패하는 것(추가 진단 필요)
+      let _pc = "?"; try { _pc = (await first("SELECT COUNT(*) c FROM tier_verification_queue WHERE state='pending'", []))?.c; } catch {}
+      Alert.alert("🔍 의심 표시됨", `점검 대기에 추가되었습니다 (현재 대기 ${_pc}건).\n매칭 탭에서 점검을 시작할 수 있습니다.`);
     } catch (e) {
       console.warn("[v7.13.1] flagSuspect 오류:", e?.message);
     }
