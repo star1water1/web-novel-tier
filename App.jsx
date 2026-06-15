@@ -2,9 +2,26 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.13.2 (🔬 의심 표시 큐 미등록 원인 추적 — 진단 계측 임시 빌드)          ║
+ * ║  버전: 7.13.3 (🛠️ 검증 큐 레거시 type 컬럼 제거 — 하이브리드 검증 영구불능 해결)║
  * ║  최종 수정: 2026-06-14                                                        ║
  * ║  총 라인 수: 약 57,980줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.13.3 하이브리드 검증 영구 불능 — 근본 원인 수정 (2026-06-15)              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 증상(사용자 보고): hybrid에서 🔍 의심 표시/티어 변경/작품 추가 — 무엇을 해도    ║
+ * ║   "점검 대기"가 0, 매칭/알림이 한 번도 안 떴음.                                  ║
+ * ║ 원인(기기 진단으로 확정): tier_verification_queue에 옛 스키마의 'type' 컬럼이    ║
+ * ║   NOT NULL로 남아 있어, 현재 INSERT(trigger_type 사용·type 미기입)가 매번         ║
+ * ║   "NOT NULL constraint failed: tier_verification_queue.type"로 실패 → 큐 행이    ║
+ * ║   생성되지 않음(발화기록은 쌓이나 큐는 빈 채). CREATE TABLE IF NOT EXISTS와       ║
+ * ║   ensureColumn은 기존 컬럼 제약을 못 고쳐 잔재가 영구히 남아 있었음.             ║
+ * ║ 수정: initDb에서 세 검증 테이블의 레거시 'type' 컬럼을 감지해 DROP COLUMN(미지원 ║
+ * ║   시 큐는 휘발성이라 재생성). 정식 스키마엔 type이 없어 안전.                    ║
+ * ║ 부수: v7.13.2 진단 계측(화면 Alert) 제거 + flagSuspect 정식 동작 복원.           ║
+ * ║ 경위: 후보=0/manual_tier 가설은 기기 측정(대기0·완료0, 발화3·후보10, 등록오류=   ║
+ * ║   type NOT NULL)으로 배제·정정. 정적 분석 한계를 1탭 진단 계측으로 돌파.         ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -7059,6 +7076,35 @@ async function initDb(progressCb) {
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_trs_blocker ON tier_repositioning_session(blocker_id, state);`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_trs_novel ON tier_repositioning_session(novel_id);`);
 
+  // 🔧 v7.13.3: 레거시 'type NOT NULL' 컬럼 제거 (사용자 진단으로 확인된 실제 근본원인).
+  //   초기/알파 스키마는 트리거 컬럼명이 type(현재는 trigger_type)이었고 NOT NULL이라, 현재 INSERT가
+  //   매번 "NOT NULL constraint failed: ....type"로 실패 → enqueue/검증/매칭이 영구 불능이었다.
+  //   세 검증 테이블 정식 스키마엔 'type'이 없으므로(각각 trigger_type/violation_type 사용) 잔재로
+  //   판단하고 제거. CREATE TABLE IF NOT EXISTS/ensureColumn은 기존 컬럼을 못 고쳐 누락됐던 보강.
+  for (const _t of ["tier_verification_queue", "tier_repositioning_session", "tier_validation_log"]) {
+    try {
+      const _cols = await database.getAllAsync(`PRAGMA table_info(${_t})`);
+      if (_cols && _cols.some(c => c.name === "type")) {
+        try {
+          await database.runAsync(`ALTER TABLE ${_t} DROP COLUMN type;`);
+        } catch (dropErr) {
+          // DROP COLUMN 미지원(구버전 SQLite) → 검증 큐만 휘발성이라 재생성으로 정리(데이터 폐기 무방)
+          if (_t === "tier_verification_queue") {
+            await database.runAsync(`DROP TABLE IF EXISTS tier_verification_queue;`);
+            await database.runAsync(`CREATE TABLE tier_verification_queue (
+              id TEXT PRIMARY KEY NOT NULL, novel_id TEXT NOT NULL, trigger_type TEXT NOT NULL,
+              suspicion_type TEXT NOT NULL, priority INTEGER DEFAULT 0, state TEXT DEFAULT 'pending',
+              created_at INTEGER NOT NULL, processed_at INTEGER);`);
+            await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tvq_state ON tier_verification_queue(state, priority DESC, created_at);`);
+            await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tvq_novel ON tier_verification_queue(novel_id);`);
+          } else {
+            console.warn(`[v7.13.3] ${_t}.type DROP 실패(이력 보존 위해 재생성 생략):`, dropErr?.message);
+          }
+        }
+      }
+    } catch (e) { console.warn(`[v7.13.3] ${_t} 레거시 type 정리 실패:`, e?.message); }
+  }
+
   // 🆕 v7.0.8: trigger_fire_log — enqueueVerification 모든 호출 추적 (UPSERT 동작과 무관하게 fire 횟수 정확 기록)
   // 진단 탭에서 "트리거가 잘 적용되는지", "어떤 호출자(source)가 어떤 트리거를 발동하는지" 검증용
   await database.runAsync(`CREATE TABLE IF NOT EXISTS trigger_fire_log (
@@ -12521,6 +12567,16 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.13.3", date: "2026-06-15",
+    title: "🛠️ 하이브리드 'AI 자리 점검'이 작동하지 않던 문제 해결",
+    highlights: [
+      { type: "fix", text: "🛠️ (하이브리드) 작품을 추가하거나 티어를 바꾸거나 🔍 의심 표시를 해도 'AI 자리 점검'이 한 번도 작동하지 않던 근본 문제를 고쳤어요. 오래된 내부 데이터 구조 때문에 점검 대기열에 작품이 등록되지 못하고 있었습니다 — 앱을 켜면 자동으로 정리됩니다." },
+    ],
+    details: [
+      { type: "fix", text: "tier_verification_queue 등 검증 테이블의 레거시 'type'(NOT NULL) 컬럼 제거 마이그레이션 — 이 컬럼이 모든 큐 등록 INSERT를 실패시켜 검증이 영구 불능이었음. v7.13.2 진단용 임시 팝업 제거." },
+    ],
+  },
   {
     version: "7.13.1", date: "2026-06-15",
     title: "🐛 의심 표시(🔍) 점검 불가 수정",
@@ -27000,8 +27056,6 @@ function formatVerificationReason(reason) {
 // v7.0.1 (M1 fix): 1초 디바운스 silent drop → UPSERT (작품당 pending 1건 보장 + 최신 의도 반영)
 // 🆕 v7.0.8: source 인자 추가 — 호출자(addNovel/saveEdit/batchSetTier/swapRating/inline_chip/gatekeeper_up/gatekeeper_down) 추적
 // 🆕 v7.4.13: priority 다축 통합 — computeVerificationPriority 사용. user_flag/auto_detected/conflict 지원.
-// 🔬 v7.13.2 진단용: 큐 등록 마지막 오류 캡처 (화면 표시로 원인 추적)
-let __lastEnqueueErr = null;
 async function enqueueVerification(novelId, triggerType, suspicionType, source) {
   if (!novelId || !triggerType || !suspicionType) return;
   // 🚫 v7.6.0 (포트 v3.16.0): 매칭 밴 작품은 검증 큐에 등록하지 않음
@@ -27046,7 +27100,6 @@ async function enqueueVerification(novelId, triggerType, suspicionType, source) 
     );
   } catch (logErr) { /* 무음 */ }
   try {
-    __lastEnqueueErr = null; // 🔬 v7.13.2
     // 동일 novel_id의 pending 엔트리가 이미 있으면 최신 trigger/suspicion으로 UPDATE
     const existing = await first(
       `SELECT id, priority FROM tier_verification_queue WHERE novel_id=? AND state='pending' LIMIT 1`,
@@ -27066,7 +27119,6 @@ async function enqueueVerification(novelId, triggerType, suspicionType, source) 
       );
     }
   } catch (e) {
-    __lastEnqueueErr = e?.message || String(e); // 🔬 v7.13.2 화면 표시용
     // 🔧 v7.4.2: 진단 강화 — params + source 함께 기록 (NULL 컬럼 추적용)
     // perfMonitor에서 NOT NULL constraint 8건 발생했으나 truncated SQL로 컬럼 식별 불가했음
     console.warn("enqueueVerification 오류:", e?.message, {
@@ -36830,28 +36882,30 @@ function AppContent() {
     await loadList(undefined, undefined, "pin");
   }
 
-  // 🔬 v7.13.2 진단 빌드: "의심 표시해도 대기 0" 원인 추적용. 후보 검사/조기반환을 잠시 끄고,
-  //   등록 직후 큐/발화/후보 실제 상태를 화면에 찍는다. 원인 확정 후 정식 수정 + 진단 제거 예정.
+  // 🔧 v7.13.1: 의심 표시 시 후보 유무를 먼저 검사 — 후보 0이면 매칭이 안 뜨므로 이유를 안내하고
+  //   큐 등록을 생략. 후보가 있을 때만 등록. (v7.13.3: 큐 INSERT 자체를 막던 레거시 'type' 컬럼이
+  //   "매칭이 한 번도 안 뜨던" 근본 원인이었고 별도 마이그레이션으로 수정함.)
   async function flagSuspect(id, direction) {
-    let step = "start";
     try {
-      step = "flag";
       await exec("UPDATE novels SET user_flagged_suspect=1 WHERE id=?", [id]);
-      step = "enqueue";
-      await enqueueVerification(id, "user_flag", direction, "user_toggle");
-      step = "readback";
-      let pend = "?", tot = "?", fire = "?", cand = "?";
-      try { pend = (await first("SELECT COUNT(*) c FROM tier_verification_queue WHERE novel_id=? AND state='pending'", [id]))?.c; } catch (e) { pend = "ERR:" + (e?.message || ""); }
-      try { tot = (await first("SELECT COUNT(*) c FROM tier_verification_queue", []))?.c; } catch (e) { tot = "ERR:" + (e?.message || ""); }
-      try { fire = (await first("SELECT COUNT(*) c FROM trigger_fire_log WHERE novel_id=?", [id]))?.c; } catch (e) { fire = "ERR:" + (e?.message || ""); }
-      try { cand = (await getCandidatesForVerification(id, direction, 10)).length; } catch (e) { cand = "ERR:" + (e?.message || ""); }
+      const cands = await getCandidatesForVerification(id, direction, 1);
       await loadList(undefined, undefined, "v7-userflag");
-      Alert.alert(
-        "🔬 진단 (이 5줄 알려주세요)",
-        `pending(이 작품): ${pend}\n큐 전체 행수: ${tot}\n발화기록: ${fire}\n후보수: ${cand}\n등록오류: ${__lastEnqueueErr ?? "없음"}`
-      );
+      if (!cands || cands.length === 0) {
+        const self = await first("SELECT manual_tier FROM novels WHERE id=?", [id]);
+        const noTier = !self?.manual_tier;
+        const dirWord = direction === "underrated" ? "위쪽" : "아래쪽";
+        Alert.alert(
+          "🔍 의심 표시됨 (지금은 점검 불가)",
+          noTier
+            ? "이 작품은 아직 티어가 지정되지 않아 자리 점검을 할 수 없어요.\n순위 탭에서 티어를 먼저 지정하면 점검 대상이 됩니다."
+            : `${dirWord}에 비교할 작품이 없어 점검을 진행할 수 없어요.\n이미 끝자리이거나 그 방향에 작품이 없습니다.`
+        );
+        return;
+      }
+      await enqueueVerification(id, "user_flag", direction, "user_toggle");
+      Alert.alert("🔍 의심 표시됨", "점검 대기에 추가되었습니다.\n매칭 탭에서 점검을 시작할 수 있습니다.");
     } catch (e) {
-      Alert.alert("🔬 진단 — 예외", `단계: ${step}\n오류: ${e?.message || String(e)}`);
+      console.warn("[v7.13.1] flagSuspect 오류:", e?.message);
     }
   }
 
