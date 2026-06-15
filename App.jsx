@@ -2,9 +2,35 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.12.0 (검수 잔여 — 좌표 Y축·명대사 고아·예정작 명대사·태그 검색/정규화)║
+ * ║  버전: 7.13.0 (2차검수 — 데일리추천 mode-aware·ratio 게이팅·동적 award·undo 확장)║
  * ║  최종 수정: 2026-06-14                                                        ║
- * ║  총 라인 수: 약 57,880줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 57,980줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ ✅ v7.13.0 2차 검수 수정 — 모드정합 잔재·도태 기능 정비 (2026-06-14)            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 1차에서 안 본 영역(데일리추천·차트·외전·읽음추적·undo) 2차 검수 후 수정.        ║
+ * ║ [데일리 추천 mode-aware] 후보 분류가 raw ELO rating/tierFromRating에 의존해     ║
+ * ║   manual/hybrid/ratio(rating=1500)에서 오분류 + reread/low_data 카테고리가      ║
+ * ║   사문화되던 것 → getPrefScore/getDisplayTier 기반으로 전환, low_data는 비-match║
+ * ║   에서 readRatio 기반, 매칭 의존 문구 모드별 분기, 캐시 추천 하차 재검증.        ║
+ * ║ [ratio 게이팅 통일] 취향분석에서 isHybridOrManualMode가 ratio 제외 → 티어       ║
+ * ║   인사이트 숨김+선호도 표시 역전. isTierMode(mode!==match) 도입해 티어 인사이트/ ║
+ * ║   prefScore 표시엔 ratio 포함(단 ratio는 ELO 매칭 보유 → 매칭/심화 그룹 숨김엔  ║
+ * ║   미포함). 플랫폼/읽기/편수/Radar 표시를 formatPrefScore + mode-aware 정규화로,  ║
+ * ║   비-match 승률 숨김, highRatingDropped 임계를 평균+1σ(tier모드)로.             ║
+ * ║ [동적 award] awardsToSearchText가 레거시 9종만 인식→사용자 상 검색 불가하던 것  ║
+ * ║   buildAwardMetaMap 주입으로 해석(미스 시 연도만이라도). awardTierCorrelation   ║
+ * ║   모달의 UUID 표시도 상 이름으로 해석.                                          ║
+ * ║ [undo 확장] 일괄 회차/읽기상태/연재상태 변경에 prev 캡처+undo 추가(광범위        ║
+ * ║   변경인데 되돌리기 불가하던 도태 해소). tier_batch 패턴 재사용.                ║
+ * ║ [외전 격하] 사용자 선택대로 '부가정보'로 — 입력 폼에 '평가·추천 미반영' 안내,   ║
+ * ║   외전 있을 때 카드에서 본편 읽은회차가 사라지던 표기 결함(#M4) 수정.           ║
+ * ║ [문서 정정] read_count_baseline/임계 상수는 v7.4.13에 비활성된 잔존 인프라임을  ║
+ * ║   주석에 명시(살아있는 듯 읽히던 것). 컬럼은 백업 호환 위해 유지.               ║
+ * ║ [회귀검토] 직전 v7.10~12 변경은 크래시/데이터오염 회귀 없음 확인(빌드 #169      ║
+ * ║   success). [검증] esbuild JSX 파싱 통과.                                       ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12484,6 +12510,20 @@ function compareVersions(a, b) {
 
 const CHANGELOG_DATA = [
   {
+    version: "7.13.0", date: "2026-06-14",
+    title: "🎯 모드별 추천·분석 정합 · 되돌리기 확장 · 외전 정리",
+    highlights: [
+      { type: "fix", text: "🎯 '오늘의 추천'이 매칭/하이브리드/직접배정/비율 모드에 맞게 동작해요. (이전엔 ELO 점수에만 의존해 비-매칭 모드에서 엉뚱하게 추천하거나 일부 추천이 아예 안 뜨던 문제) 하차한 작품이 추천에 계속 남던 것도 고쳤어요." },
+      { type: "fix", text: "📊 '비율 기반' 모드에서도 취향분석의 티어 분포·인사이트가 제대로 나오고, 점수가 모드에 맞는 표기(선호도/레이팅)로 표시돼요." },
+      { type: "new", text: "↩️ 일괄 작업(읽은 회차 증감·읽기 상태·연재 상태 변경)도 되돌리기가 됩니다. (이전엔 티어/삭제만 가능)" },
+      { type: "fix", text: "🔍 직접 만든 수상(상) 이름으로도 검색돼요. 취향분석의 수상-티어 분석에서 상 이름이 정상 표시됩니다." },
+    ],
+    details: [
+      { type: "improve", text: "외전 입력에 '참고용 부가정보(평가·추천 미반영)' 안내 추가, 외전 있는 작품 카드에서 본편 읽은 회차가 사라지던 표기 수정" },
+      { type: "fix", text: "명대사 배경이미지 교체 시 이전 파일 정리(이전 패스 보강), 플랫폼/읽기패턴 점수 표기를 모드에 맞게" },
+    ],
+  },
+  {
     version: "7.12.0", date: "2026-06-14",
     title: "🔭 좌표계 Y축 분석 · 예정작 명대사 표시 · 태그 검색 정확도",
     highlights: [
@@ -14707,7 +14747,7 @@ const NovelCard = memo(({
       const gaidenPart = item.gaiden_total_episodes > 0 
         ? `외전 ${item.gaiden_read_count || 0}/${item.gaiden_total_episodes}화`
         : `외전 ${item.gaiden_read_count || 0}화`;
-      const mainPart = item.total_episodes > 0 ? `본편 ${item.total_episodes}화` : "";
+      const mainPart = item.total_episodes > 0 ? `본편 ${item.read_count || 0}/${item.total_episodes}화` : "";
       return mainPart ? `${gaidenPart} (${mainPart})` : gaidenPart;
     }
     return item.total_episodes > 0 
@@ -23715,6 +23755,7 @@ const TasteAnalysisScreen = memo(({
   tagAttributes = {},  // 🔧 v3.5.15d: 유사그룹 일관성 등에서 isTagTitle 사용
   hiddenTags = [],  // 🆕 숨김 태그 필터용
   tierMode,  // 🆕 v7.0.2: 모드 변경 시 memo 재렌더 트리거 (직접 globalTierConfig.mode 참조하면 prop 변동 없어 stale)
+  awardMetaMap = {},  // 🆕 v7.13.0: 동적 상 id→메타 (awardTierCorrelation 이름 표시용)
 }) => {
   PerfMonitor.trackRender("TasteAnalysisScreen"); // 🔬
   const [analysis, setAnalysis] = useState(null);
@@ -24512,6 +24553,9 @@ const TasteAnalysisScreen = memo(({
   const isHybridMode = globalTierConfig.mode === "hybrid";
   // 🆕 v7.1: hybrid 또는 manual — 두 모드 모두 티어 인사이트 그룹 노출 대상
   const isHybridOrManualMode = globalTierConfig.mode === "hybrid" || globalTierConfig.mode === "manual";
+  // 🔧 v7.13.0: ratio는 티어 기반 표시지만 ELO 매칭도 돌리므로, "티어 인사이트/선호도 표시"에는 포함
+  //   (isTierMode)하되, "매칭/심화 그룹 숨김"(아래 g.key matching/advanced)에는 포함하지 않는다(ratio는 매칭 데이터 보유).
+  const isTierMode = globalTierConfig.mode !== "match";
 
   return (
     <>
@@ -24574,7 +24618,7 @@ const TasteAnalysisScreen = memo(({
       {/* 🆕 v7.1: hybrid/manual은 "tier" 그룹 노출, match는 숨김 (모드별 분리) */}
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
         {SECTION_GROUPS.filter(g => {
-          if (g.key === "tier") return isHybridOrManualMode; // 🆕 v7.1: hybrid/manual에만
+          if (g.key === "tier") return isTierMode; // 🔧 v7.13.0: 티어기반(hybrid/manual/ratio) 전부
           if (isHybridOrManualMode && (g.key === "matching" || g.key === "advanced")) return false;
           return true;
         }).map(g => {
@@ -24625,10 +24669,10 @@ const TasteAnalysisScreen = memo(({
           </View>
           <View style={{ flex: 1, backgroundColor: C.card, padding: 12, borderRadius: 12, alignItems: "center" }}>
             {/* 🆕 v7.1: mode-aware 표시 — match는 점수, hybrid/manual은 평균 티어 */}
-            <Text style={{ color: C.ok, fontSize: isHybridOrManualMode ? 14 : 22, fontWeight: "800", textAlign: "center" }}>
-              {isHybridOrManualMode ? formatPrefScore(basicStats.avgRating, globalTierConfig) : basicStats.avgRating.toFixed(0)}
+            <Text style={{ color: C.ok, fontSize: isTierMode ? 14 : 22, fontWeight: "800", textAlign: "center" }}>
+              {isTierMode ? formatPrefScore(basicStats.avgRating, globalTierConfig) : basicStats.avgRating.toFixed(0)}
             </Text>
-            <Text style={{ color: C.sub, fontSize: 11 }}>{isHybridOrManualMode ? "평균 선호도" : "평균 레이팅"}</Text>
+            <Text style={{ color: C.sub, fontSize: 11 }}>{isTierMode ? "평균 선호도" : "평균 레이팅"}</Text>
           </View>
           <View style={{ flex: 1, backgroundColor: C.card, padding: 12, borderRadius: 12, alignItems: "center" }}>
             <Text style={{ color: "#f59e0b", fontSize: 22, fontWeight: "800" }}>{(basicStats.totalReadCount / 1000).toFixed(1)}k</Text>
@@ -24730,7 +24774,7 @@ const TasteAnalysisScreen = memo(({
           ) : (
             <Text style={{ color: C.sub, fontSize: 12 }}>
               {/* 🆕 v7.1: mode-aware avgRating 표시 */}
-              {basicStats.total}작 · {isHybridOrManualMode ? formatPrefScore(basicStats.avgRating, globalTierConfig) : `평균 ${basicStats.avgRating.toFixed(0)}점`} · 총 {(basicStats.totalReadCount / 1000).toFixed(1)}k회 읽음
+              {basicStats.total}작 · {isTierMode ? formatPrefScore(basicStats.avgRating, globalTierConfig) : `평균 ${basicStats.avgRating.toFixed(0)}점`} · 총 {(basicStats.totalReadCount / 1000).toFixed(1)}k회 읽음
             </Text>
           )}
         </Section>
@@ -24742,7 +24786,7 @@ const TasteAnalysisScreen = memo(({
       <TouchableOpacity onPress={() => toggleSection("majorGenre")}>
         <Section title={`📚 대장르 선호도 ${isExpanded("majorGenre") ? "▼" : "▶"}`}>
           <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
-            평균 레이팅 기준 (1400점 이상 표시)
+            {isTierMode ? "평균 선호도 기준" : "평균 레이팅 기준 (1400점 이상 표시)"}
           </Text>
           <RadarChartSimple 
             data={genreChartData.map(g => ({ ...g, value: g.value + 1400 }))} 
@@ -24771,7 +24815,7 @@ const TasteAnalysisScreen = memo(({
                   </View>
                   <View style={{ alignItems: "flex-end" }}>
                     <Text style={{ color: C.text, fontWeight: "800" }}>{g.avgRating.toFixed(0)}</Text>
-                    <Text style={{ color: C.sub, fontSize: 11 }}>승률 {(g.winRate * 100).toFixed(0)}%</Text>
+                    {!isTierMode && <Text style={{ color: C.sub, fontSize: 11 }}>승률 {(g.winRate * 100).toFixed(0)}%</Text>}
                   </View>
                 </View>
               ))}
@@ -25147,7 +25191,7 @@ const TasteAnalysisScreen = memo(({
 
       {/* 🆕 v7.1: 티어 인사이트 그룹 (hybrid/manual에서 활성) */}
       {/* ════ 1. TierDistribution — 전체 티어 분포 ════ */}
-      {isHybridOrManualMode && isGroupExpanded("tier") && tierDistribution && (
+      {isTierMode && isGroupExpanded("tier") && tierDistribution && (
         <TouchableOpacity onPress={() => toggleSection("tierDistribution")}>
           <Section title={`📊 티어 분포 ${isExpanded("tierDistribution") ? "▼" : "▶"}`}>
             <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
@@ -25191,7 +25235,7 @@ const TasteAnalysisScreen = memo(({
       )}
 
       {/* ════ 2. TierConcentration — 상위 티어 집중도 ════ */}
-      {isHybridOrManualMode && isGroupExpanded("tier") && tierConcentration && (
+      {isTierMode && isGroupExpanded("tier") && tierConcentration && (
         <TouchableOpacity onPress={() => toggleSection("tierConcentration")}>
           <Section title={`🏆 상위 티어 집중도 ${isExpanded("tierConcentration") ? "▼" : "▶"}`}>
             <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
@@ -25259,7 +25303,7 @@ const TasteAnalysisScreen = memo(({
       )}
 
       {/* ════ 3. TierStratificationHeatmap — 엔티티 × 티어 매트릭스 ════ */}
-      {isHybridOrManualMode && isGroupExpanded("tier") && tierStratification && (
+      {isTierMode && isGroupExpanded("tier") && tierStratification && (
         <TouchableOpacity onPress={() => toggleSection("tierStratificationHeatmap")}>
           <Section title={`🗺️ 티어×엔티티 매트릭스 ${isExpanded("tierStratificationHeatmap") ? "▼" : "▶"}`}>
             <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
@@ -25316,7 +25360,7 @@ const TasteAnalysisScreen = memo(({
       )}
 
       {/* ════ 4. TierEntropyView — 강한 선호 vs 균등 분산 ════ */}
-      {isHybridOrManualMode && isGroupExpanded("tier") && tierEntropy && (tierEntropy.strong.length > 0 || tierEntropy.dispersed.length > 0) && (
+      {isTierMode && isGroupExpanded("tier") && tierEntropy && (tierEntropy.strong.length > 0 || tierEntropy.dispersed.length > 0) && (
         <TouchableOpacity onPress={() => toggleSection("tierEntropy")}>
           <Section title={`🎯 강한 선호 vs 균등 분산 ${isExpanded("tierEntropy") ? "▼" : "▶"}`}>
             <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
@@ -25357,7 +25401,7 @@ const TasteAnalysisScreen = memo(({
       )}
 
       {/* ════ 5. TierInversionView — disconnect 카드 (보수적, dismissable) ════ */}
-      {isHybridOrManualMode && isGroupExpanded("tier") && tierInversion && tierInversion.items.length > 0 && (
+      {isTierMode && isGroupExpanded("tier") && tierInversion && tierInversion.items.length > 0 && (
         <TouchableOpacity onPress={() => toggleSection("tierInversion")}>
           <Section title={`🔍 다회독·완독 vs 티어 disconnect ${isExpanded("tierInversion") ? "▼" : "▶"}`}>
             <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
@@ -25386,7 +25430,7 @@ const TasteAnalysisScreen = memo(({
       )}
 
       {/* ════ 6. AwardTierView — 수상-티어 상관 ════ */}
-      {isHybridOrManualMode && isGroupExpanded("tier") && awardTierCorrelation !== undefined && (
+      {isTierMode && isGroupExpanded("tier") && awardTierCorrelation !== undefined && (
         <TouchableOpacity onPress={() => toggleSection("awardTier")}>
           <Section title={`🏅 수상×티어 상관 ${isExpanded("awardTier") ? "▼" : "▶"}`}>
             <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
@@ -25398,7 +25442,7 @@ const TasteAnalysisScreen = memo(({
               <View style={{ gap: 12 }}>
                 {Object.entries(awardTierCorrelation.byAward).map(([key, stat]) => (
                   <View key={key} style={{ backgroundColor: C.bg, padding: 10, borderRadius: 8 }}>
-                    <Text style={{ color: C.text, fontWeight: "700" }}>🏆 {key} ({stat.count}건)</Text>
+                    <Text style={{ color: C.text, fontWeight: "700" }}>🏆 {awardMetaMap[key]?.label || AWARD_META[key]?.label || key} ({stat.count}건)</Text>
                     {stat.avgPrefScore != null && (
                       <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>
                         평균 — {formatPrefScore(stat.avgPrefScore, globalTierConfig)}
@@ -25610,14 +25654,15 @@ const TasteAnalysisScreen = memo(({
             <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 2 }}>
               <Text style={{ color: C.text, fontWeight: "600" }}>{p.platform}</Text>
               <Text style={{ color: C.sub, fontSize: 12 }}>
-                {p.count}작 · 평균 {p.avgRating.toFixed(0)}점
+                {p.count}작 · 평균 {formatPrefScore(p.avgRating, globalTierConfig)}
               </Text>
             </View>
             <View style={{ height: 8, backgroundColor: C.chip, borderRadius: 4, overflow: "hidden" }}>
-              <View style={{ 
-                width: `${Math.min(100, ((p.avgRating - 1400) / 600) * 100)}%`, 
-                height: "100%", 
-                backgroundColor: p.avgRating >= 1700 ? C.ok : C.primary,
+              {/* 🔧 v7.13.0: 표시/정규화 mode-aware — 값(p.avgRating)은 prefScore라 tier모드 1000~2000 */}
+              <View style={{
+                width: `${Math.min(100, Math.max(0, ((p.avgRating - (isTierMode ? 1000 : 1400)) / (isTierMode ? 1000 : 600)) * 100))}%`,
+                height: "100%",
+                backgroundColor: p.avgRating >= (isTierMode ? 1750 : 1700) ? C.ok : C.primary,
               }} />
             </View>
           </View>
@@ -25638,7 +25683,7 @@ const TasteAnalysisScreen = memo(({
             <View key={i} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 4 }}>
               <Text style={{ color: C.text }}>{item.label}</Text>
               <Text style={{ color: C.sub }}>
-                {item.count}작 · 평균 {(item.avgRating || 0).toFixed(0)}점
+                {item.count}작 · 평균 {formatPrefScore(item.avgRating || 0, globalTierConfig)}
               </Text>
             </View>
           ))}
@@ -25655,7 +25700,7 @@ const TasteAnalysisScreen = memo(({
             ].filter(item => item.count > 0).map((item, i) => (
               <View key={i} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 4 }}>
                 <Text style={{ color: C.text }}>{item.label}</Text>
-                <Text style={{ color: C.sub }}>{item.count}작 · 평균 {(item.avgRating || 0).toFixed(0)}점</Text>
+                <Text style={{ color: C.sub }}>{item.count}작 · 평균 {formatPrefScore(item.avgRating || 0, globalTierConfig)}</Text>
               </View>
             ))}
           </View>
@@ -25668,13 +25713,13 @@ const TasteAnalysisScreen = memo(({
               💔 고평가 연중작 ({readingPattern.highRatingDropped.length})
             </Text>
             <Text style={{ color: C.sub, fontSize: 11, marginBottom: 8 }}>
-              레이팅 1800+이지만 연재가 중단됐어요 — 다시 손에 잡기 아쉬운 작품
+              {isTierMode ? "상위 평가작인데" : "레이팅 1800+이지만"} 연재가 중단됐어요 — 다시 손에 잡기 아쉬운 작품
             </Text>
             {readingPattern.highRatingDropped.map((n, i) => (
               <View key={n.id || i} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 3 }}>
                 <Text style={{ color: C.text, flex: 1 }} numberOfLines={1}>{n.title}</Text>
                 <Text style={{ color: C.sub, marginLeft: 8 }}>
-                  {(n.rating || 0).toFixed(0)}점 · {n.workStatus === "discontinued" ? "서비스종료" : "연중"}
+                  {formatPrefScore(n.rating || 0, globalTierConfig)} · {n.workStatus === "discontinued" ? "서비스종료" : "연중"}
                 </Text>
               </View>
             ))}
@@ -26684,15 +26729,17 @@ const TasteAnalysisScreen = memo(({
   );
 });
 
-function awardsToSearchText(awardsJson) {
+function awardsToSearchText(awardsJson, awardMetaMap) {
   const items = parseAwards(awardsJson);
   if (!items.length) return "";
   const parts = [];
   for (const a of items) {
-    const meta = AWARD_META[a.type];
-    if (!meta) continue;
+    // 🔧 v7.13.0: 동적(사용자 생성) 상도 검색 가능 — 이전엔 AWARD_META(레거시 9종) 미스 시 continue로 통째 누락.
+    //   awardMetaMap(buildAwardMetaMap)으로 사용자 상 이름까지 해석. 둘 다 없으면 연도만이라도 포함.
+    const meta = AWARD_META[a.type] || (awardMetaMap && awardMetaMap[a.type]);
     parts.push(String(a.year));
-    parts.push(meta.label);
+    if (meta?.label) parts.push(meta.label);
+    else if (a.name) parts.push(a.name);
   }
   parts.push("수상");
   return parts.join(" ");
@@ -27069,10 +27116,12 @@ async function getCandidatesForVerification(novelId, suspicionType, limit = 10) 
 const VERIFICATION_MAX_RESPONSES = 7;
 const VERIFICATION_K_AFTER_INFLECTION = 2;
 
-// 🆕 v7.0.15: read_count 누적 임계치 — (현재 read_count − read_count_baseline) >= 이 값이면 read_progress fire (underrated).
-// — 사용자 보고: "회차수 50화 넘게 올렸는데도 의심작 미선정. 한 번에 30 안 올라도 누적되면 평가 변할 수 있지 않나?"
-// — 누적 트래킹: read_count_baseline은 last-fire 시점 read_count. 청크 분할 저장(5화×10번=50)도 동일하게 잡힘.
-// — m6 제거된 meta_edit(priority=1)과 달리 임계치 필터 + priority=3로 노이즈 회피.
+// ⚠️ v7.4.13에서 read_progress(읽은 회차 누적) 트리거는 noise로 판단되어 제거됨 → 이 상수와
+//    read_count_baseline 컬럼은 현재 어떤 검증도 발화시키지 않는 잔존(vestigial) 인프라다.
+//    (컬럼은 백업 round-trip/마이그레이션 호환을 위해 유지. 회차를 올려도 의심작은 선정되지 않음 — 의도된 침묵.)
+//    v7.13.0: 살아있는 기능처럼 읽히던 주석을 정정(코드 동작 변경 아님).
+// 🗄️ (구) v7.0.15 설계: (현재 read_count − read_count_baseline) >= 이 값이면 read_progress fire (underrated).
+//    누적 트래킹: read_count_baseline은 last-fire 시점 read_count. 청크 분할 저장(5화×10번=50)도 동일하게 잡힘.
 const VERIFICATION_READ_COUNT_THRESHOLD = 30;
 
 // 🆕 v7.0: 검증 큐에서 다음 처리 대상 작품 fetch (priority DESC, 디바운스 1초 적용)
@@ -28333,8 +28382,10 @@ async function analyzePreferences(novels, matches) {
       return m;
     })(),
     // 🔧 v7.6.0 (포트 v3.12.1): 고평가 연중작 — '아깝다' 후보 surface
+    // 🔧 v7.13.0: 임계 mode-relative — match는 ELO 1800, tier모드는 평균+1σ(prefScore 양자화로 1800이
+    //   S티어 전용 필터로 변질되던 문제 해소).
     highRatingDropped: reliable
-      .filter(n => (n.work_status === "dropped" || n.work_status === "discontinued") && n.prefScore >= 1800)
+      .filter(n => (n.work_status === "dropped" || n.work_status === "discontinued") && n.prefScore >= (globalTierConfig.mode === "match" ? 1800 : basicStats.avgRating + (basicStats.stdDevRating || 0)))
       .sort((a, b) => b.prefScore - a.prefScore)
       .slice(0, 5)
       .map(n => ({ id: n.id, title: n.title, rating: n.prefScore, workStatus: n.work_status })),
@@ -32855,7 +32906,8 @@ function AppContent() {
           const existingNovel = novels?.find((n) => n.id === saved.novel_id);
           const existingPlanned = planned?.find((p) => p.id === saved.novel_id);
           
-          if (existingNovel) {
+          // 🔧 v7.13.0: 캐시 추천 복원 시 하차 상태 재검증 — 추천 후 dropped된 작품이 24h간 잔존하던 문제
+          if (existingNovel && existingNovel.status !== "dropped") {
             setDailyReco({
               novel: existingNovel,
               pickedAt: saved.picked_at,
@@ -32884,8 +32936,11 @@ function AppContent() {
       const totalNovelCount = novels?.length || 0;
       
       // 🧠 v3.5.4: preference_patterns 기반 취향 데이터 로드
-      const avgRating = totalNovelCount > 0 
-        ? novels.reduce((sum, n) => sum + (Number(n.rating) || 1500), 0) / totalNovelCount 
+      // 🔧 v7.13.0: mode-aware 평균 점수 (raw ELO → getPrefScore). manual/hybrid/ratio에서 rating=1500
+      //   고정으로 추천 분류가 죽던 문제 해소.
+      const isMatchMode = globalTierConfig.mode === "match";
+      const avgScore = totalNovelCount > 0
+        ? novels.reduce((sum, n) => sum + getPrefScore(n, globalTierConfig), 0) / totalNovelCount
         : 1500;
       
       // 매칭 학습 데이터에서 취향 맵 구축
@@ -33129,7 +33184,10 @@ function AppContent() {
         const rereadCount = Number(n.reread_count) || 1;
         const isCompleted = n.work_status === "completed";
         const readRatio = totalEp > 0 ? readCount / totalEp : 0;
-        
+        // 🔧 v7.13.0: mode-aware 점수/티어 (raw ELO rating 대신) — 비-match 모드 오분류 해소
+        const score = getPrefScore(n, globalTierConfig);
+        const displayTier = getDisplayTier(n, globalTierConfig);
+
         const taste = computeTasteScore(n);
         
         // 2) 거의 다 읽었고 끝을 남겨둔 작품 (90%+)
@@ -33146,7 +33204,7 @@ function AppContent() {
         }
         
         // 3) 취향에 맞는데 안 읽고 있는 작품 (보류 + 취향 일치)
-        if (n.status === "paused" && taste.score >= 30 && rating >= avgRating) {
+        if (n.status === "paused" && taste.score >= 30 && score >= avgScore) {
           candidates.push({
             novel: n,
             weight: 80 + taste.score,
@@ -33158,13 +33216,23 @@ function AppContent() {
           continue;
         }
         
-        // 4) 데이터가 비교적 적은 작품 (신뢰도 낮음)
-        if (reliability > 0 && reliability < 40 && n.status !== "dropped") {
+        // 4) 데이터가 비교적 적은 작품
+        // 🔧 v7.13.0: match는 신뢰도(매칭 의존), 비-match는 readRatio 기반 — manual에서 reliability=0이라
+        //   영영 안 잡히던 사문화 해소. 매칭 의존 문구도 모드별로 분기(밴/비-match 모순 제거).
+        const dataPoor = isMatchMode
+          ? (reliability > 0 && reliability < 40)
+          : (totalEp > 0 && readRatio > 0 && readRatio < 0.3);
+        if (dataPoor && n.status !== "dropped") {
           candidates.push({
             novel: n,
             weight: 70 + taste.score / 2,
             category: "low_data",
-            reason: buildTasteReason(`📊 아직 데이터가 부족합니다. (신뢰도 ${Math.round(reliability)}%) 더 읽거나 매칭해보세요!`, taste),
+            reason: buildTasteReason(
+              isMatchMode
+                ? `📊 아직 데이터가 부족합니다. (신뢰도 ${Math.round(reliability)}%) 더 읽거나 매칭해보세요!`
+                : `📊 아직 ${Math.round(readRatio * 100)}%만 읽으셨어요. 더 읽어보세요!`,
+              taste
+            ),
             isPlanned: false,
             tasteScore: taste,
           });
@@ -33177,7 +33245,7 @@ function AppContent() {
             novel: n,
             weight: 60 + taste.score,
             category: "taste_high_tier",
-            reason: buildTasteReason(`⭐ 매칭 분석 결과 취향 적합도가 높습니다!`, taste),
+            reason: buildTasteReason(isMatchMode ? `⭐ 매칭 분석 결과 취향 적합도가 높습니다!` : `⭐ 취향 적합도가 높은 작품이에요!`, taste),
             isPlanned: false,
             tasteScore: taste,
           });
@@ -33185,12 +33253,13 @@ function AppContent() {
         }
         
         // 6) 티어 높은 덜 읽은 작품 (v6.0: 상위 절반 티어 동적 판정)
-        const tier = tierFromRating(rating, globalTierConfig);
+        // 🔧 v7.13.0: tierFromRating(rating) → getDisplayTier (mode-aware), 가중치도 score 기반
+        const tier = displayTier;
         const tierOrder = getActiveTierOrder(globalTierConfig);
         if (tierRank(tier, globalTierConfig) < Math.ceil(tierOrder.length / 2) && (totalEp === 0 || readRatio < 0.5)) {
           candidates.push({
             novel: n,
-            weight: 50 + (rating - 1500) / 20 + taste.score / 4,
+            weight: 50 + (score - 1500) / 20 + taste.score / 4,
             category: "high_tier_less_read",
             reason: buildTasteReason(`🏆 ${tier} 티어 작품인데 아직 ${totalEp > 0 ? Math.round(readRatio * 100) + '%' : '조금'}밖에 안 읽었습니다.`, taste),
             isPlanned: false,
@@ -33199,8 +33268,9 @@ function AppContent() {
           continue;
         }
         
-        // 7) 완결까지 다 읽었는데 다회독 추천 (취향 일치 + 고평점)
-        if (isCompleted && totalEp > 0 && readRatio >= 1.0 && rating >= 1800 && taste.score >= 25) {
+        // 7) 완결까지 다 읽었는데 다회독 추천 (취향 일치 + 상위 티어)
+        // 🔧 v7.13.0: rating>=1800(ELO) → 상위 절반 티어(getDisplayTier 기반) — 비-match에서 사문화 해소
+        if (isCompleted && totalEp > 0 && readRatio >= 1.0 && tierRank(displayTier, globalTierConfig) < Math.ceil(getActiveTierOrder(globalTierConfig).length / 2) && taste.score >= 25) {
           candidates.push({
             novel: n,
             weight: 30 + taste.score,
@@ -36323,7 +36393,24 @@ function AppContent() {
           );
           await rebuildAllFromMatches(tagAttributes);
           break;
-          
+
+        // 🆕 v7.13.0: 일괄 작업 되돌리기 (광범위 변경인데 undo 불가하던 도태 해소)
+        case 'read_count_batch':
+          for (const c of item.payload.changes) {
+            await exec("UPDATE novels SET read_count=?, read_count_updated_at=? WHERE id=?", [Number(c.prevReadCount) || 0, c.prevUpdatedAt ?? null, c.id]);
+          }
+          break;
+        case 'status_batch':
+          for (const c of item.payload.changes) {
+            await exec("UPDATE novels SET status=? WHERE id=?", [c.prevStatus ?? "reading", c.id]);
+          }
+          break;
+        case 'work_status_batch':
+          for (const c of item.payload.changes) {
+            await exec("UPDATE novels SET work_status=? WHERE id=?", [c.prevWorkStatus ?? "ongoing", c.id]);
+          }
+          break;
+
         default:
           Alert.alert("알림", "알 수 없는 작업 유형입니다.");
           return;
@@ -39485,6 +39572,9 @@ function AppContent() {
       .slice(0, 5);
   }, [recentlyEditedIds, listMap]);
 
+  // 🔧 v7.13.0: 동적(사용자 생성) 상 id→메타 매핑 — 검색/표시에서 사용자 상 이름 해석용
+  const awardMetaMap = useMemo(() => buildAwardMetaMap(awardSystemSettings), [awardSystemSettings]);
+
   const homeFiltered = useMemo(() => {
     const q = homeQuery.toLowerCase().trim();
     let result = list;
@@ -39525,7 +39615,7 @@ function AppContent() {
       
       result = result.filter((n) => {
         const plats = parsePlatforms(n.platforms);
-        const awardText = awardsToSearchText(n.awards);
+        const awardText = awardsToSearchText(n.awards, awardMetaMap);
         const aliasesText = parseNovelAliases(n.aliases).join(" ");
         const bank = [n.title, n.author, n.tags, n.note, awardText, aliasesText, ...(plats || [])].join(" ").toLowerCase();
         
@@ -39560,7 +39650,7 @@ function AppContent() {
       });
     }
     return result;
-  }, [homeQuery, list, homeSortKey, homeSortDir, filterTier, filterPlatform, filterGenre, filterStatus, searchIncludeTags, searchExcludeTags, searchExcludeStatus, searchExcludeWorkStatus, folderFilteredIds, tagRelations]);
+  }, [homeQuery, list, homeSortKey, homeSortDir, filterTier, filterPlatform, filterGenre, filterStatus, searchIncludeTags, searchExcludeTags, searchExcludeStatus, searchExcludeWorkStatus, folderFilteredIds, tagRelations, awardMetaMap]);
 
   // 공용 검색 필터 (bulk/search)
   const filtered = useMemo(() => {
@@ -39576,7 +39666,7 @@ function AppContent() {
       })();
 
       // ★ 수상 텍스트 추가
-      const awardText = awardsToSearchText(n.awards);
+      const awardText = awardsToSearchText(n.awards, awardMetaMap);
       // 🏷️ v5.0: 작품 별명 추가
       const aliasesText = parseNovelAliases(n.aliases).join(" ");
       
@@ -39680,7 +39770,7 @@ function AppContent() {
           return [];
         }
       })();
-      const awardText = awardsToSearchText(n.awards);
+      const awardText = awardsToSearchText(n.awards, awardMetaMap);
 
       const bank = [
         n.title,
@@ -40161,11 +40251,15 @@ function AppContent() {
 
     // 🆕 v7.4.13: read_progress 트리거 제거에 따라 preState/post-update 블록 삭제.
     // (이전 v7.0.15 누적 트래킹은 manual_tier 의심 신호로 약해 noise 정리 대상)
+    // 🆕 v7.13.0: undo용 이전 값 캡처 (일괄 회차 변경 되돌리기)
+    let _prevRC = [];
+    try { _prevRC = await all(`SELECT id, read_count, read_count_updated_at FROM novels WHERE id IN (${ids.map(() => "?").join(",")})`, ids); } catch {}
     const queries = ids.map((id) => ({
       sql: "UPDATE novels SET read_count = MAX(0, read_count + ?), read_count_updated_at = ? WHERE id=?",
       params: [d, now, id],
     }));
     await execBatch(queries);
+    if (_prevRC.length > 0) pushUndo("read_count_batch", { changes: _prevRC.map(r => ({ id: r.id, prevReadCount: r.read_count, prevUpdatedAt: r.read_count_updated_at })) }, `읽은 회차 일괄 ${d > 0 ? '+' : ''}${d}`);
 
     await loadList(undefined, undefined, "batch");
     Alert.alert("완료", `${ids.length}개 작품에 읽은 회차 ${d > 0 ? '+' : ''}${d} 적용했습니다.`);
@@ -40181,11 +40275,15 @@ function AppContent() {
       return;
     }
     if (!status) return;
+    // 🆕 v7.13.0: undo용 이전 상태 캡처
+    let _prevSt = [];
+    try { _prevSt = await all(`SELECT id, status FROM novels WHERE id IN (${ids.map(() => "?").join(",")})`, ids); } catch {}
     const queries = ids.map((id) => ({
       sql: "UPDATE novels SET status=? WHERE id=?",
       params: [status, id],
     }));
     await execBatch(queries);
+    if (_prevSt.length > 0) pushUndo("status_batch", { changes: _prevSt.map(r => ({ id: r.id, prevStatus: r.status })) }, `읽기 상태 일괄 변경`);
     await loadList(undefined, undefined, "batch");
     Alert.alert("완료", `${ids.length}개 작품의 읽기 상태를 변경했습니다.`);
   }, []);
@@ -40200,11 +40298,15 @@ function AppContent() {
       return;
     }
     if (!workStatus) return;
+    // 🆕 v7.13.0: undo용 이전 연재상태 캡처
+    let _prevWs = [];
+    try { _prevWs = await all(`SELECT id, work_status FROM novels WHERE id IN (${ids.map(() => "?").join(",")})`, ids); } catch {}
     const queries = ids.map((id) => ({
       sql: "UPDATE novels SET work_status=? WHERE id=?",
       params: [workStatus, id],
     }));
     await execBatch(queries);
+    if (_prevWs.length > 0) pushUndo("work_status_batch", { changes: _prevWs.map(r => ({ id: r.id, prevWorkStatus: r.work_status })) }, `연재 상태 일괄 변경`);
     await loadList(undefined, undefined, "batch");
     Alert.alert("완료", `${ids.length}개 작품의 연재 상태를 변경했습니다.`);
   }, []);
@@ -42942,6 +43044,7 @@ async function importJSON() {
 
 {/* 📖 외전 상태 */}
 <Label style={{ marginTop: 10 }}>외전 상태</Label>
+<Text style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>참고용 부가정보 — 평가·추천에는 반영되지 않아요.</Text>
 <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
   {GAIDEN_STATUS_OPTIONS.map((s) => (
     <Chip
@@ -47110,6 +47213,7 @@ async function importJSON() {
 
                   <View style={{ marginBottom: 8 }}>
                     <Label>외전 상태</Label>
+                    <Text style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>참고용 부가정보 — 평가·추천에는 반영되지 않아요.</Text>
                     <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
                       {GAIDEN_STATUS_OPTIONS.map((s) => (
                         <Chip
@@ -48399,6 +48503,7 @@ async function importJSON() {
             tagAttributes={tagAttributes}
             hiddenTags={hiddenTags}
             tierMode={globalTierConfig.mode}
+            awardMetaMap={awardMetaMap}
           />
         )}
 
@@ -54657,6 +54762,7 @@ async function importJSON() {
 
 {/* 📖 외전 상태 */}
 <Label style={{ marginTop: 10 }}>외전 상태</Label>
+<Text style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>참고용 부가정보 — 평가·추천에는 반영되지 않아요.</Text>
 <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
   {GAIDEN_STATUS_OPTIONS.map((s) => (
     <Chip
