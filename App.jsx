@@ -2,9 +2,18 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.13.6 (✅ 하이브리드 검증 복구 확정 — 진단 제거 + 보조테이블 선제복구)   ║
+ * ║  버전: 7.13.7 (검증 매칭 상대작 표지 표시 + 점검 완료 시 의심 표시 자동 해제)    ║
  * ║  최종 수정: 2026-06-14                                                        ║
  * ║  총 라인 수: 약 57,980줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.13.7 검증 매칭 UX 개선 (2026-06-15)                                       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ • #1 검증 매칭에서 상대작(후보) 표지가 안 나오던 문제 — getCandidatesForVerifi-  ║
+ * ║   cation SELECT에 cover_image/platforms 누락이 원인. 추가해 표지 표시.           ║
+ * ║ • #4 의심작(🔍) 지정 후 점검(검증 세션)이 완료되면 user_flagged_suspect=0으로     ║
+ * ║   자동 해제 — finalize 트랜잭션에 포함(원자적). (skip/중단은 해제 안 함.)         ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12600,6 +12609,15 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.13.7", date: "2026-06-15",
+    title: "🔧 AI 자리 점검 — 상대작 표지 + 의심 표시 자동 해제",
+    highlights: [
+      { type: "fix", text: "🖼️ (하이브리드) AI 자리 점검의 비교 화면에서 상대 작품 표지가 안 보이던 문제를 고쳤어요." },
+      { type: "fix", text: "🔍 작품을 의심 표시한 뒤 점검(비교)이 끝나면 의심 표시가 자동으로 해제돼요." },
+    ],
+    details: [],
+  },
   {
     version: "7.13.6", date: "2026-06-15",
     title: "✅ 하이브리드 'AI 자리 점검' 정상화 완료",
@@ -27251,7 +27269,8 @@ async function getCandidatesForVerification(novelId, suspicionType, limit = 10) 
 
   const allRows = await all(
     // 🚫 v7.6.0 (포트 v3.16.0): 매칭 밴 작품을 opponent 후보에서 제외
-    `SELECT id, title, manual_tier, manual_order, rating FROM novels
+    // 🔧 v7.13.7: cover_image/platforms 추가 — 검증 매칭 UI에서 상대작 표지가 안 나오던 문제(미SELECT)
+    `SELECT id, title, manual_tier, manual_order, rating, cover_image, platforms FROM novels
      WHERE id != ? AND manual_tier IS NOT NULL AND manual_tier != ''
         AND COALESCE(match_ban, 0) = 0`,
     [novelId]
@@ -27532,6 +27551,12 @@ async function finalizeVerificationSession(queueRow, suspicionNovel, candidates,
         });
       }
     }
+
+    // 🆕 v7.13.7: 검증 완료 시 사용자 의심 표시(🔍) 자동 해제 — 의심이 점검으로 처리됨(요청 #4)
+    txBatch.push({
+      sql: "UPDATE novels SET user_flagged_suspect=0 WHERE id=?",
+      params: [suspicionNovel.id],
+    });
 
     txBatch.push({
       sql: `UPDATE tier_verification_queue SET state='resolved', processed_at=? WHERE id=?`,
