@@ -2,9 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.13.0 (2차검수 — 데일리추천 mode-aware·ratio 게이팅·동적 award·undo 확장)║
+ * ║  버전: 7.13.1 (🔍 의심 표시 점검 불가 버그 수정 + v7.13.0 2차검수)              ║
  * ║  최종 수정: 2026-06-14                                                        ║
  * ║  총 라인 수: 약 57,980줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🐛 v7.13.1 의심 표시(🔍) 점검 불가 버그 수정 (2026-06-15)                       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 증상: hybrid에서 작품을 🔍 의심 표시해도 "점검 대기"가 0 그대로 — 매칭이 안 뜸. ║
+ * ║ 원인: getCandidatesForVerification은 의심작+후보 모두 manual_tier 필요. 그러나  ║
+ * ║   backfillManualOrder는 manual_order만 채우고 manual_tier=NULL로 둠 → 티어       ║
+ * ║   미지정 작품/방향엔 후보 0. 큐 행은 생성되나 매칭 탭 자동시작이 즉시            ║
+ * ║   no_candidates로 resolve → 사용자는 대기 0만 봄(조용한 실패).                  ║
+ * ║ 수정: flagSuspect()에서 표시 시점에 후보 검사 → 0이면 이유 안내(티어 미지정 vs  ║
+ * ║   방향에 대상 없음) 후 큐 등록 생략. 후보 있을 때만 enqueue.                     ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12509,6 +12521,14 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.13.1", date: "2026-06-15",
+    title: "🐛 의심 표시(🔍) 점검 불가 수정",
+    highlights: [
+      { type: "fix", text: "🔍 (하이브리드) 작품을 의심 표시해도 점검 매칭이 안 뜨던 문제를 고쳤어요. 비교할 후보가 없을 때(예: 티어가 지정 안 된 작품이거나 이미 맨 위/맨 아래)는 조용히 사라지는 대신 이유를 바로 알려줘요." },
+    ],
+    details: [],
+  },
   {
     version: "7.13.0", date: "2026-06-14",
     title: "🎯 모드별 추천·분석 정합 · 되돌리기 확장 · 외전 정리",
@@ -36806,6 +36826,34 @@ function AppContent() {
     await loadList(undefined, undefined, "pin");
   }
 
+  // 🔧 v7.13.1: 의심 표시 시 후보 유무를 먼저 검사 — 후보 0이면 매칭 탭 자동시작이 조용히
+  //   no_candidates로 resolve해 "의심 표시해도 매칭이 안 뜬다"로 보이던 문제. 이유를 즉시 안내하고,
+  //   후보가 있을 때만 큐에 등록한다. (후보 0의 주원인: hybrid에서 manual_tier 미지정 작품 — backfill은
+  //   manual_order만 채우므로 티어 미지정 작품/방향엔 비교 대상이 없음.)
+  async function flagSuspect(id, direction) {
+    try {
+      await exec("UPDATE novels SET user_flagged_suspect=1 WHERE id=?", [id]);
+      const cands = await getCandidatesForVerification(id, direction, 1);
+      await loadList(undefined, undefined, "v7-userflag");
+      if (!cands || cands.length === 0) {
+        const self = await first("SELECT manual_tier FROM novels WHERE id=?", [id]);
+        const noTier = !self?.manual_tier;
+        const dirWord = direction === "underrated" ? "위쪽" : "아래쪽";
+        Alert.alert(
+          "🔍 의심 표시됨 (지금은 점검 불가)",
+          noTier
+            ? "이 작품은 아직 티어가 지정되지 않아 자리 점검을 할 수 없어요.\n순위 탭에서 티어를 먼저 지정하면 점검 대상이 됩니다."
+            : `${dirWord}에 비교할 (티어가 지정된) 작품이 없어 점검을 진행할 수 없어요.\n이미 끝자리이거나 그 방향에 티어 지정 작품이 없습니다.`
+        );
+        return;
+      }
+      await enqueueVerification(id, "user_flag", direction, "user_toggle");
+      Alert.alert("🔍 의심 표시됨", "점검 대기에 추가되었습니다.\n매칭 탭에서 점검을 시작할 수 있습니다.");
+    } catch (e) {
+      console.warn("[v7.13.1] flagSuspect 오류:", e?.message);
+    }
+  }
+
   // 🆕 v7.4.13: 사용자 명시 의심 표시 토글 (hybrid 모드 전용).
   // ON: 방향 선택 dialog → user_flagged_suspect=1 + enqueueVerification(user_flag) → priority 다축 통합으로 큐 상위 자동 노출.
   // OFF: user_flagged_suspect=0. 큐 row는 자연 처리(다른 트리거가 살아있으면 priority 재계산 시 강등).
@@ -36829,29 +36877,11 @@ function AppContent() {
         { text: "취소" },
         {
           text: "⬆️ 더 높을 듯",
-          onPress: async () => {
-            try {
-              await exec("UPDATE novels SET user_flagged_suspect=1 WHERE id=?", [id]);
-              await enqueueVerification(id, "user_flag", "underrated", "user_toggle");
-              await loadList(undefined, undefined, "v7-userflag");
-              Alert.alert("🔍 의심 표시됨", "점검 대기에 추가되었습니다.\n매칭 탭에서 점검을 시작할 수 있습니다.");
-            } catch (e) {
-              console.warn("[v7.4.13] toggleSuspect ON(underrated) 오류:", e?.message);
-            }
-          },
+          onPress: () => flagSuspect(id, "underrated"),
         },
         {
           text: "⬇️ 더 낮을 듯",
-          onPress: async () => {
-            try {
-              await exec("UPDATE novels SET user_flagged_suspect=1 WHERE id=?", [id]);
-              await enqueueVerification(id, "user_flag", "overrated", "user_toggle");
-              await loadList(undefined, undefined, "v7-userflag");
-              Alert.alert("🔍 의심 표시됨", "점검 대기에 추가되었습니다.\n매칭 탭에서 점검을 시작할 수 있습니다.");
-            } catch (e) {
-              console.warn("[v7.4.13] toggleSuspect ON(overrated) 오류:", e?.message);
-            }
-          },
+          onPress: () => flagSuspect(id, "overrated"),
         },
       ]
     );
