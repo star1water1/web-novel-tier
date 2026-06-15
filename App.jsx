@@ -2,9 +2,26 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.14.2 (3차 검수 정리(1) — 상반 태그 이중 렌더 중복 제거)                  ║
+ * ║  버전: 7.15.0 (3차 검수 — 명대사 개별↔프리셋 병합 + 수상 자격·정원 강제)          ║
  * ║  최종 수정: 2026-06-15                                                        ║
- * ║  총 라인 수: 약 58,390줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 58,470줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.15.0 3차 검수 — 명대사 병합 + 수상 자격/정원 강제 (2026-06-15)             ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [명대사 개별↔프리셋 병합] effectiveQuoteStyle이 개별 서식 존재 시 프리셋을 통째  ║
+ * ║   교체하던 것(폰트 하나만 바꿔도 프리셋 배경/색/크기 전부 소실) → 필드별 병합으로 ║
+ * ║   변경: 개별이 실제 지정한 필드만 덮어쓰고 나머지는 프리셋 유지(resolveQuoteText- ║
+ * ║   Style의 per-field fallback과 동일 축). 전 표면 일관 적용.                      ║
+ * ║ [명대사 CoW 완성] 빠른수정 저장 시 프리셋과 동일한 배경이미지는 개별에 저장 안 함 ║
+ * ║   (병합으로 상속 → 공유 파일 직접 참조 제거) + 결과가 프리셋과 같으면 평문으로     ║
+ * ║   저장(프리셋 재연결 → 이후 프리셋 변경 자동 추종). quoteStylesEqual 헬퍼 추가.   ║
+ * ║   (P0 삭제 가드와 합쳐 프리셋 배경 파일 소실 경로 종결.)                         ║
+ * ║ [수상 자격·정원 강제] onGiveAward가 중복만 검사하던 것 → 상의 matchTags(장르/태그)║
+ * ║   ·tierMin(최소 티어)·count(정원) 위반 시 경고 후 '그래도 수여/취소' 확인(의도적  ║
+ * ║   강제 허용). 이전엔 로맨스에 베스트 무협, C티어에 S상, 정원 초과가 무경고 가능.  ║
+ * ║ [검증] esbuild JSX 파싱 통과. effectiveQuoteStyle은 순수함수(전 표면 동일 경로).  ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11872,6 +11889,25 @@ function quoteStyleIsDefault(s) {
     && !(s.lineHeight > 0) && !s.color && !s.bg && !s.bgImage && !s.bold
     && (s.italic === undefined || s.italic === true) && (!s.align || s.align === "center");
 }
+// 🔧 v7.15.0: 두 명대사 서식이 (표시상) 동일한지 — 개별 서식이 프리셋과 같아지면 평문으로 재연결(프리셋 추종) 판단용
+function quoteStylesEqual(a, b) {
+  const norm = (s) => {
+    const v = s || {};
+    return [
+      (v.font && v.font !== "system") ? v.font : "system",
+      !!v.bold,
+      v.italic === false ? "f" : "t",
+      v.size > 0 ? v.size : 0,
+      v.lineHeight > 0 ? v.lineHeight : 0,
+      v.letterSpacing != null ? v.letterSpacing : "n",
+      v.color || "",
+      v.bg || "",
+      v.bgImage || "",
+      v.align || "center",
+    ].join("|");
+  };
+  return norm(a) === norm(b);
+}
 // 최종 RN Text 스타일 = 표면별 auto 기본값 + 사용자 서식 오버라이드
 function resolveQuoteTextStyle(style, auto) {
   const s = style || {};
@@ -11947,9 +11983,30 @@ const AutoFitQuoteText = memo(({ text, baseStyle, fixedSize, userLineHeight, max
 });
 
 // 🆕 v7.9.0: 개별 커스텀이 없으면 전역 기본 프리셋을 적용 (둘 다 없으면 null=내장 자동)
+// 🔧 v7.15.0: 개별 서식을 전역 프리셋 '위에 병합' — 개별이 실제 지정한 필드만 덮어쓰고
+//   나머지는 프리셋 값을 유지한다(이전: 개별이 있으면 프리셋을 통째 교체 → 폰트 하나만 바꿔도
+//   프리셋 배경/색/크기가 전부 사라지던 문제). 둘 중 하나만 있으면 그대로, 둘 다 없으면 null(내장 자동).
 function effectiveQuoteStyle(individualStyle, defaultStyle) {
-  if (individualStyle && !quoteStyleIsDefault(individualStyle)) return individualStyle;
-  if (defaultStyle && !quoteStyleIsDefault(defaultStyle)) return defaultStyle;
+  const indSet = individualStyle && !quoteStyleIsDefault(individualStyle);
+  const defSet = defaultStyle && !quoteStyleIsDefault(defaultStyle);
+  if (indSet && defSet) {
+    const i = individualStyle, d = defaultStyle;
+    // 필드별: 개별이 비-기본(실제 지정)이면 개별값, 아니면 프리셋값 (quoteStyleIsDefault 판정과 동일 축)
+    return {
+      font:          (i.font && i.font !== "system") ? i.font : d.font,
+      bold:          i.bold || d.bold,
+      italic:        (i.italic !== undefined) ? i.italic : d.italic,
+      size:          (i.size > 0) ? i.size : d.size,
+      lineHeight:    (i.lineHeight > 0) ? i.lineHeight : d.lineHeight,
+      letterSpacing: (i.letterSpacing != null) ? i.letterSpacing : d.letterSpacing,
+      color:         i.color || d.color,
+      bg:            i.bg || d.bg,
+      bgImage:       i.bgImage || d.bgImage,
+      align:         (i.align && i.align !== "center") ? i.align : d.align,
+    };
+  }
+  if (indSet) return individualStyle;
+  if (defSet) return defaultStyle;
   return null;
 }
 
@@ -38267,8 +38324,18 @@ function AppContent() {
       const row = await first(`SELECT memorable_quote FROM ${tbl} WHERE id=?`, [qe.novelId]);
       const quotes = parseQuotes(row?.memorable_quote || "");
       if (qe.qIndex < 0 || qe.qIndex >= quotes.length) { Alert.alert("알림", "문장을 찾을 수 없습니다 (목록이 변경됨)."); cancelQuoteQuickEdit(); return; }
-      const style = qe.style;
-      quotes[qe.qIndex] = (style && !quoteStyleIsDefault(style)) ? { type: "text", text, style } : text;
+      // 🔧 v7.15.0: 개별↔프리셋 병합 정합 — 저장 전 프리셋 대비 정규화
+      let saveStyle = qe.style;
+      const preset = appSettings.quoteDefaultStyle;
+      if (saveStyle && preset) {
+        // 프리셋과 동일한 배경이미지는 개별에 저장하지 않음(병합으로 상속 → 공유 파일 직접 참조 제거, CoW 완성)
+        if (saveStyle.bgImage && preset.bgImage && saveStyle.bgImage === preset.bgImage) {
+          saveStyle = { ...saveStyle, bgImage: "" };
+        }
+        // 결과가 프리셋과 사실상 동일하면 평문으로 저장(프리셋 재연결 → 이후 프리셋 변경 자동 추종)
+        if (quoteStylesEqual(saveStyle, preset)) saveStyle = null;
+      }
+      quotes[qe.qIndex] = (saveStyle && !quoteStyleIsDefault(saveStyle)) ? { type: "text", text, style: saveStyle } : text;
       await exec(`UPDATE ${tbl} SET memorable_quote=? WHERE id=?`, [serializeQuotes(quotes), qe.novelId]);
       // 🔧 v7.14.0 (P0): 공유 전역 프리셋 배경 파일은 삭제 금지 — quick-edit 시드가 프리셋 경로를
       //   그대로 참조(CoW 부재)해, 변경/제거 시 프리셋+모든 프리셋 적용 명대사의 배경이 동시 소실되던 버그.
@@ -45783,36 +45850,73 @@ async function importJSON() {
               // 수상 부여
               const novel = listMap.get(novelId);
               if (!novel) return;
-              
+
               let currentAwards = [];
               try {
                 currentAwards = JSON.parse(novel.awards || "[]");
               } catch { currentAwards = []; }
-              
+
               // 중복 체크
               const exists = currentAwards.some(a => a.year === Number(year) && a.type === awardId);
               if (exists) {
                 Alert.alert("알림", "이미 해당 수상이 부여되어 있습니다.");
                 return;
               }
-              
-              currentAwards.push({ year: Number(year), type: awardId });
-              const newAwardsJson = JSON.stringify(currentAwards);
-              
-              await exec("UPDATE novels SET awards=? WHERE id=?", [newAwardsJson, novelId]);
-              await loadList(undefined, undefined, "update");
-              
-              // 📰 v3.0: 수상 기록
-              const yearAwards = awardSystemSettings.yearlyAwards?.[year] || [];
-              const awardMeta = yearAwards.find(a => a.id === awardId);
-              const awardName = awardMeta ? `${awardMeta.icon || "🏆"} ${awardMeta.name}` : awardId;
-              await addRecentChange(novelId, novel.title, "award", {
-                awardId,
-                awardName,
-                year
-              });
-              
-              Alert.alert("🏆 수상 완료!", `${novel.title}에 수상이 부여되었습니다.`);
+
+              // 🔧 v7.15.0: 자격(티어/태그)·정원 검사 — 위반 시 경고 후 확인받고 수여(의도적 강제 허용).
+              //   이전: onGiveAward가 중복만 검사 → 로맨스에 "베스트 무협"·C티어에 "S 이상"·정원 초과
+              //   수여가 무경고로 가능했음(상 규칙이 후보 필터/확률에만 쓰이고 수여엔 미적용).
+              const awardDef = (awardSystemSettings.yearlyAwards?.[year] || []).find(a => a.id === awardId);
+              const issues = [];
+              if (awardDef) {
+                if (awardDef.matchTags && awardDef.matchTags.length > 0 && !awardDef.matchTags.includes("__ANY__")) {
+                  const allTags = [(novel.tags || ""), (novel.major_genre || ""), (novel.sub_genre || "")].join(" ").toLowerCase();
+                  const ok = awardDef.matchTags.some(t => t === "__ANY__" || allTags.includes(String(t).toLowerCase()));
+                  if (!ok) issues.push("장르/태그 조건 불일치");
+                }
+                if (awardDef.tierMin) {
+                  const tierOrder = getActiveTierOrder(globalTierConfig);
+                  const minIndex = tierOrder.indexOf(awardDef.tierMin);
+                  if (minIndex !== -1) {
+                    const nIdx = tierOrder.indexOf(getDisplayTier(novel, globalTierConfig));
+                    if (nIdx === -1 || nIdx > minIndex) issues.push(`최소 티어(${awardDef.tierMin}) 미달`);
+                  }
+                }
+                const cap = Number(awardDef.count) || 0;
+                if (cap > 0) {
+                  let cur = 0;
+                  for (const n of list) {
+                    try { const arr = JSON.parse(n.awards || "[]"); if (Array.isArray(arr) && arr.some(a => a.year === Number(year) && a.type === awardId)) cur++; } catch { /* skip */ }
+                  }
+                  if (cur >= cap) issues.push(`정원 초과 (정원 ${cap}작 · 현재 ${cur}작 수상)`);
+                }
+              }
+
+              const doGive = async () => {
+                currentAwards.push({ year: Number(year), type: awardId });
+                const newAwardsJson = JSON.stringify(currentAwards);
+                await exec("UPDATE novels SET awards=? WHERE id=?", [newAwardsJson, novelId]);
+                await loadList(undefined, undefined, "update");
+                // 📰 v3.0: 수상 기록
+                const yearAwards = awardSystemSettings.yearlyAwards?.[year] || [];
+                const awardMeta = yearAwards.find(a => a.id === awardId);
+                const awardName = awardMeta ? `${awardMeta.icon || "🏆"} ${awardMeta.name}` : awardId;
+                await addRecentChange(novelId, novel.title, "award", { awardId, awardName, year });
+                Alert.alert("🏆 수상 완료!", `${novel.title}에 수상이 부여되었습니다.`);
+              };
+
+              if (issues.length > 0) {
+                Alert.alert(
+                  "수여 조건 확인",
+                  `이 작품은 상 조건에 맞지 않습니다:\n· ${issues.join("\n· ")}\n\n그래도 수여할까요?`,
+                  [
+                    { text: "취소", style: "cancel" },
+                    { text: "그래도 수여", style: "destructive", onPress: () => { doGive().catch(e => Alert.alert("오류", "수여 실패: " + (e?.message || e))); } },
+                  ]
+                );
+                return;
+              }
+              await doGive();
             }}
             onRemoveAward={async (novelId, awardId, year) => {
               // 수상 제거
