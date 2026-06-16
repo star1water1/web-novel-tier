@@ -2,9 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.16.4 (명언 자동 글자 크기 산정 근본 수정 — 측정 기반 양방향 적합)        ║
+ * ║  버전: 7.16.5 (앱 설정 영속화 근본 수정 — 명언 프리셋 등 재시작 시 원복 해결)      ║
  * ║  최종 수정: 2026-06-16                                                        ║
- * ║  총 라인 수: 약 58,500줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 58,510줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🐛 v7.16.5 앱 설정 영속화 근본 수정 (프리셋 재시작 원복) (2026-06-16)            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [증상] 설정의 명언 기본 서식(프리셋) 글꼴/설정이 인-세션엔 적용되는데 앱을 껐다   ║
+ * ║   켜면 원복(저장 안 됨). 코드상 저장 경로·복원·미리보기는 정상이었음.            ║
+ * ║ [근본 원인] saveAppSettings가 merged를 setState 업데이터의 '부수효과'(mergedResult)║
+ * ║   로 캡처 → React 19가 업데이터를 동기 실행하지 않으면(보류 업데이트/배칭)        ║
+ * ║   mergedResult=null → if(mergedResult) 스킵 → setAppMeta 미호출 → DB 미영속 →     ║
+ * ║   재시작 시 원복. (전역 변수 갱신도 같은 이유로 누락 가능.) 단일 변경은 eager     ║
+ * ║   eval로 우연히 동작했으나 보장되지 않음.                                        ║
+ * ║ [수정] appSettingsRef(렌더마다 동기화)로 최신 설정을 동기 참조해 merged를 확정 →  ║
+ * ║   setState·globals·setAppMeta 모두 reliable. editItemRef와 동일 패턴. 연속 호출도 ║
+ * ║   ref 즉시 갱신으로 체이닝. 슬롯 전환 영속화는 safeDefer 세대 가드로 안전 유지.   ║
+ * ║ [검증] esbuild JSX 파싱 통과. (이 빌드에 v7.16.4 자동크기 수정도 함께 포함.)      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -30013,6 +30029,10 @@ function AppContent() {
 
   // ⚙️ 앱 설정 (v2.6)
   const [appSettings, setAppSettings] = useState(DEFAULT_SETTINGS);
+  // 🔧 v7.16.5: 렌더마다 최신 설정을 ref에 동기화 — saveAppSettings가 setState 업데이터의 부수효과에
+  //   의존하지 않고 merged를 '동기적으로' 확정해 영속화(setAppMeta)를 신뢰성 있게 호출하기 위함.
+  const appSettingsRef = useRef(appSettings);
+  appSettingsRef.current = appSettings;
   const [undoStack, setUndoStack] = useState([]); // 전역 되돌리기 스택 [{type, payload, description, at}]
 
   // 등록 입력
@@ -36696,53 +36716,50 @@ function AppContent() {
   
   // 설정 저장 (변경 시 자동 호출)
   function saveAppSettings(newSettings) {
-    // 🔧 함수형 setState로 stale closure 방지 (모든 토글 동시 조작 안전)
-    // 부수효과는 updater 밖에서 실행 (React 안티패턴 회피, StrictMode 안전)
-    let mergedResult = null;
-
-    setAppSettings(prev => {
-      const merged = { ...prev };
-
-      for (const key of Object.keys(newSettings)) {
-        if (key === 'plannedFields' || key === 'supplement' || key === 'recentChanges' || key === 'coverLibrary' || key === 'tierSystemConfig') {
-          // nested object는 deep merge (prev 기준 — stale closure 아닌 최신 state)
-          merged[key] = { ...(prev[key] || {}), ...newSettings[key] };
-          // 🆕 v6.0: tierSystemConfig의 tiers 배열은 교체 (merge 아님)
-          if (key === 'tierSystemConfig' && newSettings[key].tiers) {
-            merged[key].tiers = newSettings[key].tiers;
-          }
-        } else {
-          merged[key] = newSettings[key];
+    // 🔧 v7.16.5: 영속화 신뢰성 근본 수정.
+    //   [이전 결함] mergedResult를 setState 업데이터의 '부수효과'로 캡처 → React 19가 업데이터를
+    //   동기 실행하지 않으면(보류 업데이트 존재/배칭 등) mergedResult=null → if(mergedResult) 건너뜀
+    //   → setAppMeta 미호출 → 해당 호출의 설정(특히 명언 프리셋)이 앱 재시작 시 원복.
+    //   [수정] appSettingsRef(렌더 동기화)로 최신 설정을 동기 참조해 merged를 확정 → setState·globals·
+    //   영속화 모두 reliable. 연속 호출도 ref 즉시 갱신으로 체이닝.
+    const prev = appSettingsRef.current || DEFAULT_SETTINGS;
+    const merged = { ...prev };
+    for (const key of Object.keys(newSettings)) {
+      if (key === 'plannedFields' || key === 'supplement' || key === 'recentChanges' || key === 'coverLibrary' || key === 'tierSystemConfig') {
+        // nested object는 deep merge
+        merged[key] = { ...(prev[key] || {}), ...newSettings[key] };
+        // 🆕 v6.0: tierSystemConfig의 tiers 배열은 교체 (merge 아님)
+        if (key === 'tierSystemConfig' && newSettings[key].tiers) {
+          merged[key].tiers = newSettings[key].tiers;
         }
+      } else {
+        merged[key] = newSettings[key];
       }
-
-      mergedResult = merged;
-      return merged;
-    });
-
-    // 부수효과: 전역 변수 갱신 + DB 영속화 (updater 밖, 같은 동기 블록 내)
-    if (mergedResult) {
-      try {
-        if (newSettings.tierThresholds) {
-          globalTierThresholds = { ...globalTierThresholds, ...newSettings.tierThresholds };
-        }
-        if (newSettings.tierSystemConfig || mergedResult.tierSystemConfig) {
-          const tsc = mergedResult.tierSystemConfig || DEFAULT_TIER_SYSTEM_CONFIG;
-          globalTierConfig = { ...tsc };
-          rebuildTierLookup(globalTierConfig);
-          if (tsc.tiers) {
-            const th = {};
-            for (const t of tsc.tiers) {
-              if (t.key !== tsc.defaultTier) th[t.key] = t.threshold;
-            }
-            globalTierThresholds = th;
-          }
-        }
-      } catch (e) {
-        console.warn("saveAppSettings: global update error:", e);
-      }
-      safeDefer(() => setAppMeta("app_settings", mergedResult));
     }
+    appSettingsRef.current = merged; // 연속 호출이 최신 merged를 prev로 보도록 즉시 동기화
+    setAppSettings(merged);
+
+    // 부수효과: 전역 변수 갱신 + DB 영속화 (merged 확정 → reliable)
+    try {
+      if (newSettings.tierThresholds) {
+        globalTierThresholds = { ...globalTierThresholds, ...newSettings.tierThresholds };
+      }
+      if (newSettings.tierSystemConfig || merged.tierSystemConfig) {
+        const tsc = merged.tierSystemConfig || DEFAULT_TIER_SYSTEM_CONFIG;
+        globalTierConfig = { ...tsc };
+        rebuildTierLookup(globalTierConfig);
+        if (tsc.tiers) {
+          const th = {};
+          for (const t of tsc.tiers) {
+            if (t.key !== tsc.defaultTier) th[t.key] = t.threshold;
+          }
+          globalTierThresholds = th;
+        }
+      }
+    } catch (e) {
+      console.warn("saveAppSettings: global update error:", e);
+    }
+    safeDefer(() => setAppMeta("app_settings", merged));
   }
   
   // 🆕 v6.0: 티어 히스토리 저장 (gated 티어 관련만 영속화)
