@@ -2,9 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.16.3 (명언 쇼츠 — 긴 텍스트가 꾸미기 버튼 가림/비정상출력 수정)          ║
+ * ║  버전: 7.16.4 (명언 자동 글자 크기 산정 근본 수정 — 측정 기반 양방향 적합)        ║
  * ║  최종 수정: 2026-06-16                                                        ║
- * ║  총 라인 수: 약 58,490줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 58,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🐛 v7.16.4 명언 자동 글자 크기 산정 근본 수정 (2026-06-16)                       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [근본 원인] AutoFitQuoteText가 size를 maxSize로 '리셋'하는 것으로만 축소를 재유발. ║
+ * ║   그러나 이미 maxSize면(특히 신규 마운트) setSize(maxSize)=no-op → 재레이아웃 없음 ║
+ * ║   → onTextLayout 미발화 → 축소 영구 미작동(텍스트 maxSize 고정 → overflow로 잘림). ║
+ * ║   v7.16.3의 카드 key가 매 카드를 신규 마운트시키며 이 결함을 전면 표면화.         ║
+ * ║ [수정] 실제 렌더 높이를 measRef에 기록하고, 그 측정값으로 목표 크기를 '비례 산출' ║
+ * ║   (budget/height). 축소·확대 양방향 + min/max 클램프 + 0.98 댐핑(진동 방지).      ║
+ * ║   size 리셋에 의존하지 않아 신규/재활용 모두 신뢰성 수렴. avail 늦은 측정도        ║
+ * ║   useEffect[avail]에서 재적합으로 커버.                                          ║
+ * ║ [부수] v7.16.3 AutoFit key 제거(이제 불필요 + 신규마운트 no-op 유발) — overflow:  ║
+ * ║   hidden(버튼 가림 차단)은 유지.                                                 ║
+ * ║ [검증] esbuild JSX 파싱 통과. (프리셋 저장 건은 별도 — 양상 확인 후 동봉.)        ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12024,22 +12040,39 @@ function quoteContrastColor(hex) {
 const AutoFitQuoteText = memo(({ text, baseStyle, fixedSize, userLineHeight, maxSize = 23, minSize = 11, marksColor }) => {
   const [avail, setAvail] = useState(0);
   const [size, setSize] = useState(fixedSize > 0 ? fixedSize : maxSize);
+  const measRef = useRef({ size: 0, height: 0 }); // 마지막 측정: 그때의 size와 렌더된 텍스트 총 높이
+  // 🔧 v7.16.4: 자동 글자 크기 산정 근본 수정.
+  //   [이전 결함] size 리셋(→maxSize)으로만 축소를 재유발했는데, 이미 maxSize면(특히 카드/AutoFit
+  //   신규 마운트 시) setSize(maxSize)가 no-op → 재레이아웃 없음 → onTextLayout 미발화 → 축소 영구
+  //   미작동(텍스트가 maxSize로 고정, overflow로 잘림). v7.16.3 key로 매 카드가 신규 마운트되며 표면화.
+  //   [수정] 실제 렌더 높이를 measRef에 기록하고, 그 측정값으로 목표 크기를 '비례 산출'(축소·확대
+  //   양방향). size 리셋에 의존하지 않으므로 신규/재활용 모두에서 신뢰성 있게 수렴.
   useEffect(() => {
+    measRef.current = { size: 0, height: 0 };
     setSize(fixedSize > 0 ? fixedSize : maxSize);
-  }, [text, avail, fixedSize, maxSize]);
+  }, [text, fixedSize, maxSize]);
+  const refit = () => {
+    if (fixedSize > 0 || avail <= 0) return; // 고정 크기 모드거나 컨테이너 미측정
+    const m = measRef.current;
+    if (!m.size || !m.height) return;
+    const budget = avail - 80; // ❝❞ + 여백 예약
+    if (budget <= 0) return;
+    const cap = maxSize;
+    let target = Math.floor(m.size * (budget / m.height) * 0.98); // 0.98: 오버슈트(깜빡 진동) 방지
+    target = Math.max(minSize, Math.min(cap, target));
+    if (target !== size) setSize(target);
+  };
   const onText = (e) => {
-    if (fixedSize > 0 || avail <= 0) return;
     const lines = e?.nativeEvent?.lines;
     if (!lines || !lines.length) return;
     let h = 0;
     for (const ln of lines) h += (ln.height || 0);
-    const budget = avail - 80; // ❝❞ + 여백 예약
-    if (budget <= 0 || h <= 0) return;
-    if (h > budget && size > minSize) {
-      const next = Math.max(minSize, Math.floor(size * (budget / h) * 0.96));
-      if (next < size) setSize(next);
-    }
+    if (h <= 0) return;
+    measRef.current = { size, height: h }; // 현재 size에서의 실제 렌더 높이 기록
+    refit();
   };
+  // avail이 onTextLayout보다 늦게 잡히는 첫 마운트 케이스 대비 — 측정값 있으면 즉시 재적합
+  useEffect(() => { refit(); }, [avail]); // eslint-disable-line react-hooks/exhaustive-deps
   const lh = userLineHeight > 0 ? userLineHeight : Math.round(size * 1.45);
   return (
     <View
@@ -50795,7 +50828,6 @@ async function importJSON() {
                           const markColor = hasCustomBg ? (lightOnBg ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.32)") : card.tierColor;
                           return (
                             <AutoFitQuoteText
-                              key={card.id}
                               text={card.quote}
                               baseStyle={baseStyle}
                               fixedSize={(qst && qst.size > 0) ? qst.size : 0}
