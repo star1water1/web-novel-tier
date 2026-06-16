@@ -2,9 +2,27 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.16.1 (명언 쇼츠 — 네비게이션 시 서식 미적용/지연 수정: 카드 key)         ║
+ * ║  버전: 7.16.2 (명언 표시 변경 원복 — 병합/key 회귀로 세션 이전 동작 복원)          ║
  * ║  최종 수정: 2026-06-16                                                        ║
- * ║  총 라인 수: 약 58,510줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 58,490줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔙 v7.16.2 명언 표시 변경 원복 (병합 v7.15.0 + key v7.16.1) (2026-06-16)         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [배경] v7.15.0 개별↔프리셋 '병합' + v7.16.1 카드 key 도입 후, 사용자 기기(빌드   ║
+ * ║   v7.16.1)에서 명언 서식 미적용/지연·꾸미기 무반응 회귀가 더 악화됨. 디바이스     ║
+ * ║   재현이 안 돼 가설 수정을 거듭하다 역효과 → 요청대로 세션 이전(안정) 동작 복원.  ║
+ * ║ [원복 1] effectiveQuoteStyle: 필드별 병합 → 개별 있으면 그대로(교체). 순수·안정   ║
+ * ║   참조(병합은 매 렌더 새 객체 생성이었음).                                       ║
+ * ║ [원복 2] 쇼츠 메인 카드 <View> key={card.id} 제거 → 카드 전환마다 배경 ExpoImage  ║
+ * ║   재마운트로 깜빡/재로딩되던 부작용 제거.                                        ║
+ * ║ [원복 3] saveQuoteQuickEdit: 프리셋 대비 정규화(bgImage 제거/재연결) 제거 →       ║
+ * ║   개별 서식 그대로 저장.                                                         ║
+ * ║ [유지] P0 데이터 손실 수정(공유 프리셋 배경 파일 삭제 가드)·백업 라운드트립(수상/  ║
+ * ║   명언 프리셋)은 표시와 무관하므로 유지.                                          ║
+ * ║ [미해결] '꾸미기 버튼 무반응'은 openQuoteQuickEdit/모달 경로가 세션 중 미변경이라  ║
+ * ║   본 원복으로 안 잡힐 수 있음 → 재빌드 후 재현 조건(작품 유형/배경 유무) 확인 필요.║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12018,30 +12036,12 @@ const AutoFitQuoteText = memo(({ text, baseStyle, fixedSize, userLineHeight, max
 });
 
 // 🆕 v7.9.0: 개별 커스텀이 없으면 전역 기본 프리셋을 적용 (둘 다 없으면 null=내장 자동)
-// 🔧 v7.15.0: 개별 서식을 전역 프리셋 '위에 병합' — 개별이 실제 지정한 필드만 덮어쓰고
-//   나머지는 프리셋 값을 유지한다(이전: 개별이 있으면 프리셋을 통째 교체 → 폰트 하나만 바꿔도
-//   프리셋 배경/색/크기가 전부 사라지던 문제). 둘 중 하나만 있으면 그대로, 둘 다 없으면 null(내장 자동).
+// 🔙 v7.16.2: v7.15.0 '병합' 원복 — 개별 서식이 있으면 그대로(교체) 사용. 병합 도입 후 명언탭에서
+//   서식 미적용/지연·꾸미기 무반응 등 회귀가 보고되어 세션 이전(안정) 동작으로 복원. (병합은 추후
+//   디바이스 검증과 함께 안전하게 재시도.)
 function effectiveQuoteStyle(individualStyle, defaultStyle) {
-  const indSet = individualStyle && !quoteStyleIsDefault(individualStyle);
-  const defSet = defaultStyle && !quoteStyleIsDefault(defaultStyle);
-  if (indSet && defSet) {
-    const i = individualStyle, d = defaultStyle;
-    // 필드별: 개별이 비-기본(실제 지정)이면 개별값, 아니면 프리셋값 (quoteStyleIsDefault 판정과 동일 축)
-    return {
-      font:          (i.font && i.font !== "system") ? i.font : d.font,
-      bold:          i.bold || d.bold,
-      italic:        (i.italic !== undefined) ? i.italic : d.italic,
-      size:          (i.size > 0) ? i.size : d.size,
-      lineHeight:    (i.lineHeight > 0) ? i.lineHeight : d.lineHeight,
-      letterSpacing: (i.letterSpacing != null) ? i.letterSpacing : d.letterSpacing,
-      color:         i.color || d.color,
-      bg:            i.bg || d.bg,
-      bgImage:       i.bgImage || d.bgImage,
-      align:         (i.align && i.align !== "center") ? i.align : d.align,
-    };
-  }
-  if (indSet) return individualStyle;
-  if (defSet) return defaultStyle;
+  if (individualStyle && !quoteStyleIsDefault(individualStyle)) return individualStyle;
+  if (defaultStyle && !quoteStyleIsDefault(defaultStyle)) return defaultStyle;
   return null;
 }
 
@@ -38371,18 +38371,9 @@ function AppContent() {
       const row = await first(`SELECT memorable_quote FROM ${tbl} WHERE id=?`, [qe.novelId]);
       const quotes = parseQuotes(row?.memorable_quote || "");
       if (qe.qIndex < 0 || qe.qIndex >= quotes.length) { Alert.alert("알림", "문장을 찾을 수 없습니다 (목록이 변경됨)."); cancelQuoteQuickEdit(); return; }
-      // 🔧 v7.15.0: 개별↔프리셋 병합 정합 — 저장 전 프리셋 대비 정규화
-      let saveStyle = qe.style;
-      const preset = appSettings.quoteDefaultStyle;
-      if (saveStyle && preset) {
-        // 프리셋과 동일한 배경이미지는 개별에 저장하지 않음(병합으로 상속 → 공유 파일 직접 참조 제거, CoW 완성)
-        if (saveStyle.bgImage && preset.bgImage && saveStyle.bgImage === preset.bgImage) {
-          saveStyle = { ...saveStyle, bgImage: "" };
-        }
-        // 결과가 프리셋과 사실상 동일하면 평문으로 저장(프리셋 재연결 → 이후 프리셋 변경 자동 추종)
-        if (quoteStylesEqual(saveStyle, preset)) saveStyle = null;
-      }
-      quotes[qe.qIndex] = (saveStyle && !quoteStyleIsDefault(saveStyle)) ? { type: "text", text, style: saveStyle } : text;
+      // 🔙 v7.16.2: v7.15.0 정규화(프리셋 대비 bgImage 제거/재연결) 원복 — 개별 서식을 그대로 저장.
+      const style = qe.style;
+      quotes[qe.qIndex] = (style && !quoteStyleIsDefault(style)) ? { type: "text", text, style } : text;
       await exec(`UPDATE ${tbl} SET memorable_quote=? WHERE id=?`, [serializeQuotes(quotes), qe.novelId]);
       // 🔧 v7.14.0 (P0): 공유 전역 프리셋 배경 파일은 삭제 금지 — quick-edit 시드가 프리셋 경로를
       //   그대로 참조(CoW 부재)해, 변경/제거 시 프리셋+모든 프리셋 적용 명대사의 배경이 동시 소실되던 버그.
@@ -50646,7 +50637,6 @@ async function importJSON() {
                   
                   return (
                     <View
-                      key={card.id}
                       style={{
                         height: CARD_H,
                         backgroundColor: C.card,
