@@ -2,9 +2,30 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.16.5 (앱 설정 영속화 근본 수정 — 명언 프리셋 등 재시작 시 원복 해결)      ║
+ * ║  버전: 7.17.0 (하이브리드 관계형 의심도 엔진 — 순위변동 전파 + 매칭 업셋 분석)    ║
  * ║  최종 수정: 2026-06-16                                                        ║
- * ║  총 라인 수: 약 58,510줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 58,580줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.17.0 하이브리드 관계형 의심도 엔진 (2026-06-16)                            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [의도] 의심도를 정적 카운터 스냅샷 → '모순 증거가 쌓이는 누적 점수'로 전환.       ║
+ * ║   사용자 결정: 검증 시에만 리셋, 보통 민감도.                                    ║
+ * ║ [신규] novels.suspicion_score (REAL, 마이그레이션). 0~CAP(20). 검증 finalize 시   ║
+ * ║   해당 작품 0으로 리셋(점검=의심 해소).                                          ║
+ * ║ [증거① 순위변동 전파] propagateRankSuspicion — 작품의 티어/순위가 바뀌면(편집·    ║
+ * ║   swap·인라인칩·드래그·신작삽입·시스템 finalize 이동) 같은 티어 인접권(±5랭크)     ║
+ * ║   작품 의심도 상승, 변동 지점에 가까울수록 큼(1−dist/6). 변동 주체 자신은 제외.    ║
+ * ║ [증거② 매칭 업셋] respondVerificationMatch — 의심작 X vs 상대 Y 결과마다 Y의       ║
+ * ║   의심도를 현재 순위와의 모순 정도로 상승: X승&Y가 상위(또는 X패&Y가 하위)=업셋 →  ║
+ * ║   기본(0.6)+업셋(2.0+순위차×0.4). 예상된 결과도 소폭(0.6). → '높은 순위 후보가     ║
+ * ║   의심작한테 지고 낮은 후보가 이김'이 per-상대 업셋 누적으로 큰 의심도 자동 반영.  ║
+ * ║ [활용] 배정탭 표시(보통≥2/높음≥6)·computeVerificationPriority 가중(0~4)·          ║
+ * ║   detectAutomaticSuspects 트리거(suspicion_score≥6)에 통합 → 연관작이 자동으로     ║
+ * ║   다음 검증 대상에 오름(연쇄 수렴). 백업 미동봉(복원 시 0, 이벤트로 재축적).       ║
+ * ║ [제외] batchSetTier(대량) 전파는 성능상 제외. 상수는 SUSPICION_* 로 튜닝 가능.    ║
+ * ║ [검증] esbuild JSX 파싱 통과. SELECT * 로 배정탭에 컬럼 자동 노출.               ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -6933,6 +6954,8 @@ async function initDb(progressCb) {
     ["verification_count", "INTEGER", "0"],
     // 🆕 v7.5.0: 신작 캐스케이드 누적 카운터 — B1에서 += 1, priority 가중치
     ["conflict_hits", "INTEGER", "0"],
+    // 🆕 v7.17.0: 관계형 의심도 누적 점수 — 순위변동 전파 + 매칭 업셋으로 상승, 검증 시 리셋
+    ["suspicion_score", "REAL", "0"],
   ];
   
   // 필요한 마이그레이션만 실행
@@ -27380,7 +27403,9 @@ function computeVerificationPriority(novel, reason) {
     const skewRatio = Math.abs(vWins - vLosses) / vCount;
     skewWeight = Math.min(Math.round(skewRatio * 3), 3);
   }
-  return base + flagWeight + blockWeight + conflictWeight + skewWeight;
+  // 🆕 v7.17.0: 관계형 누적 의심도 가중 (0~4) — 매칭 업셋·순위변동으로 쌓인 의심도가 큐 우선순위에 반영
+  const suspWeight = Math.min(Math.round((Number(novel && novel.suspicion_score) || 0) / 4), 4);
+  return base + flagWeight + blockWeight + conflictWeight + skewWeight + suspWeight;
 }
 
 // 🆕 v7.4.13: reason → 한글 매핑 (AI 프레이밍 — pending 이유 표시).
@@ -27450,7 +27475,7 @@ async function enqueueVerification(novelId, triggerType, suspicionType, source) 
   let priority = Number(VERIFICATION_PRIORITY[triggerType] || 0);
   try {
     const novelRow = await first(
-      "SELECT user_flagged_suspect, conflict_hits, verification_wins, verification_losses, verification_count FROM novels WHERE id=?",
+      "SELECT user_flagged_suspect, conflict_hits, verification_wins, verification_losses, verification_count, suspicion_score FROM novels WHERE id=?",
       [novelId]
     );
     let blockCount = 0;
@@ -27831,9 +27856,9 @@ async function finalizeVerificationSession(queueRow, suspicionNovel, candidates,
       }
     }
 
-    // 🆕 v7.13.7: 검증 완료 시 사용자 의심 표시(🔍) 자동 해제 — 의심이 점검으로 처리됨(요청 #4)
+    // 🆕 v7.13.7: 검증 완료 시 사용자 의심 표시(🔍) 자동 해제 + 🆕 v7.17.0: 누적 의심도 리셋(점검 완료 = 의심 해소, 사용자 결정: 검증 시에만 리셋)
     txBatch.push({
-      sql: "UPDATE novels SET user_flagged_suspect=0 WHERE id=?",
+      sql: "UPDATE novels SET user_flagged_suspect=0, suspicion_score=0 WHERE id=?",
       params: [suspicionNovel.id],
     });
 
@@ -27853,6 +27878,8 @@ async function finalizeVerificationSession(queueRow, suspicionNovel, candidates,
       if (tierChanged && suspicionNovel.manual_tier) {
         await rebalanceTierOrder(suspicionNovel.manual_tier);
       }
+      // 🆕 v7.17.0 증거①: 시스템 이동도 '변동' — 새 자리 인접권 작품 의심도 전파(가까울수록 큼).
+      await propagateRankSuspicion(suspicionNovel.id);
     }
 
     // 🔧 v7.16.0 (#2): 응답 상한(max)까지 변곡 없이(전 구간 가설 방향 승) 이동한 경우 — 아직 더
@@ -27927,26 +27954,31 @@ async function logVerificationMatch(sessionId, suspicionId, candidateId, suspici
 // LIMIT 5: finalize 후 한 번에 5개까지만 자동 enqueue — 갑작스러운 큐 플러드 방지
 async function detectAutomaticSuspects(excludeNovelId) {
   try {
+    // 🆕 v7.17.0: 전적 쏠림(기존) OR 누적 의심도(신규)로 자동 검출. 둘 다 ORDER 가중에 반영 →
+    //   매칭 업셋·순위변동으로 의심도가 높아진 연관작이 자동으로 다음 검증 대상에 오름.
     const rows = await all(
-      `SELECT n.id, n.verification_wins, n.verification_losses, n.verification_count
+      `SELECT n.id, n.verification_wins, n.verification_losses, n.verification_count, n.suspicion_score
        FROM novels n
        LEFT JOIN tier_verification_queue q ON q.novel_id = n.id AND q.state = 'pending'
-       WHERE n.verification_count >= 3
+       WHERE (n.verification_count >= 3 OR COALESCE(n.suspicion_score,0) >= ?)
          AND q.id IS NULL
          AND n.id != ?
          AND n.manual_tier IS NOT NULL AND n.manual_tier != ''
-       ORDER BY ABS(n.verification_wins - n.verification_losses) DESC
+       ORDER BY (COALESCE(n.suspicion_score,0) + ABS(n.verification_wins - n.verification_losses)) DESC
        LIMIT 5`,
-      [excludeNovelId || ""]
+      [SUSPICION_LEVEL_HIGH, excludeNovelId || ""]
     );
     for (const r of (rows || [])) {
       const w = Number(r.verification_wins) || 0;
       const l = Number(r.verification_losses) || 0;
       const total = Number(r.verification_count) || 0;
-      if (total < 3) continue;
-      const skewRatio = Math.abs(w - l) / total;
-      if (skewRatio < 0.6) continue;
-      const direction = w > l ? "underrated" : "overrated";
+      const susp = Number(r.suspicion_score) || 0;
+      const skewRatio = total >= 3 ? Math.abs(w - l) / total : 0;
+      const trigBySkew = total >= 3 && skewRatio >= 0.6;
+      const trigBySusp = susp >= SUSPICION_LEVEL_HIGH;
+      if (!trigBySkew && !trigBySusp) continue;
+      // 방향: 전적 우세 쪽(동률·무전적 → underrated 기본; 시퀀스가 실제 방향을 확정)
+      const direction = w >= l ? "underrated" : "overrated";
       try {
         await enqueueVerification(r.id, "auto_detected", direction, "system_inference");
       } catch (innerErr) {
@@ -27958,18 +27990,61 @@ async function detectAutomaticSuspects(excludeNovelId) {
   }
 }
 
-// 🆕 v7.13.8: 배정탭 표시용 의심도 — 시스템이 쓰는 신호(검증 승패 쏠림 + 충돌 누적)를 동기 계산.
-//   detectAutomaticSuspects의 skew(|W-L|/count, ≥0.6 자동감지) + computeVerificationPriority의
-//   conflictWeight와 동일 축. user_flagged_suspect(명시 지정)는 분리 반환. score 0~6.
+// 🆕 v7.17.0: 관계형 의심도 엔진 — 상수 + 헬퍼.
+//   suspicion_score는 두 증거로 누적되고 검증 시 리셋(사용자 결정: 검증 시에만 리셋, 보통 민감도):
+//   ① 순위/티어 변동 → 변동 지점 인접권 작품 상승(가까울수록 큼)  ② 검증 매칭 결과 → 상대(후보)를
+//   현재 순위와의 모순(업셋) 정도로 상승. 표시·큐 우선순위가 이 점수를 사용.
+const SUSPICION_CAP = 20;             // 누적 상한 (표시 임계 안정화)
+const SUSPICION_MOVE_BASE = 1.5;      // 순위변동 인접 전파 기본량
+const SUSPICION_MOVE_WINDOW = 5;      // 전파 범위 (랭크 거리)
+const SUSPICION_MATCH_BASE = 0.6;     // 매칭 기본(예상된 결과에도 소폭)
+const SUSPICION_UPSET_BASE = 2.0;     // 업셋(순위 모순) 추가 기본
+const SUSPICION_UPSET_PER_GAP = 0.4;  // 업셋 순위차 1당 가산
+const SUSPICION_LEVEL_MID = 2;        // 표시 '보통' 임계
+const SUSPICION_LEVEL_HIGH = 6;       // 표시 '높음' 임계 (+ 자동검출 트리거)
+
+// 누적 증분 쿼리 (0~CAP clamp). execBatch/exec 양쪽에서 사용.
+function suspicionBumpQuery(novelId, delta) {
+  return { sql: "UPDATE novels SET suspicion_score = MIN(?, MAX(0, COALESCE(suspicion_score,0) + ?)) WHERE id=?", params: [SUSPICION_CAP, delta, novelId] };
+}
+// a가 b보다 상위(더 좋은 자리)인가 — 티어 우선, 같은 티어면 manual_order 작은 쪽
+function isRankedAbove(a, b, cfg) {
+  const ta = tierRank(a?.manual_tier, cfg), tb = tierRank(b?.manual_tier, cfg);
+  if (ta !== tb) return ta < tb;
+  return (Number(a?.manual_order) || 0) < (Number(b?.manual_order) || 0);
+}
+// 두 작품 순위차(랭크 상당) — 업셋 가중용. 티어차는 크게(1티어≈3랭크), 같은 티어는 order/100.
+function suspicionRankGap(a, b, cfg) {
+  const ta = tierRank(a?.manual_tier, cfg), tb = tierRank(b?.manual_tier, cfg);
+  if (ta !== tb) return Math.abs(ta - tb) * 3;
+  return Math.min(8, Math.abs((Number(a?.manual_order) || 0) - (Number(b?.manual_order) || 0)) / 100);
+}
+// 증거 ①: 순위/티어 변동 후 같은 티어 인접권(±window) 작품 의심도 상승(가까울수록 큼). 변동 주체 제외.
+async function propagateRankSuspicion(centerNovelId) {
+  try {
+    const row = await first("SELECT manual_tier, manual_order FROM novels WHERE id=?", [centerNovelId]);
+    if (!row || !row.manual_tier) return;
+    const center = Number(row.manual_order) || 0;
+    const sibs = await all(
+      "SELECT id, manual_order FROM novels WHERE manual_tier=? AND id!=? AND manual_tier IS NOT NULL AND (match_ban IS NULL OR match_ban=0)",
+      [row.manual_tier, centerNovelId]
+    );
+    const batch = [];
+    for (const s of (sibs || [])) {
+      const dist = Math.abs((Number(s.manual_order) || 0) - center) / 100; // order 100단위 → 랭크 거리
+      if (dist > SUSPICION_MOVE_WINDOW) continue;
+      const delta = SUSPICION_MOVE_BASE * (1 - dist / (SUSPICION_MOVE_WINDOW + 1)); // 가까울수록 큼
+      if (delta > 0.05) batch.push(suspicionBumpQuery(s.id, Math.round(delta * 100) / 100));
+    }
+    if (batch.length) await execBatch(batch);
+  } catch (e) { console.warn("[v7.17.0] propagateRankSuspicion 오류:", e?.message); }
+}
+
+// 🆕 v7.13.8→v7.17.0: 배정탭 표시용 의심도 — 관계형 누적 점수(suspicion_score) 기반.
+//   user_flagged_suspect(명시 지정)는 분리 반환. score는 0~CAP.
 function computeSuspicionLevel(novel) {
   const flagged = Number(novel?.user_flagged_suspect) === 1;
-  const w = Number(novel?.verification_wins) || 0;
-  const l = Number(novel?.verification_losses) || 0;
-  const cnt = Number(novel?.verification_count) || 0;
-  const conflict = Number(novel?.conflict_hits) || 0;
-  let score = 0;
-  if (cnt >= 3) score += Math.min(Math.round((Math.abs(w - l) / cnt) * 3), 3); // 쏠림 0~3
-  score += Math.min(conflict, 3);                                              // 충돌 0~3
+  const score = Number(novel?.suspicion_score) || 0;
   return { flagged, score };
 }
 
@@ -37601,6 +37676,7 @@ function AppContent() {
             // 중간/최하위 tier — 위쪽으로 검증 (default). idx===order.length-1 (최하위)도 포함.
             await enqueueVerification(id, "new", "underrated", "addNovel");
           }
+          propagateRankSuspicion(id).catch(() => {}); // 🆕 v7.17.0 증거①: 신작 삽입 인접권 의심도 전파
           // idx === -1(비활성) 또는 단일 tier(idx===0 && length===1) 시스템 → enqueue 생략
 
           // 🆕 v7.5.0 (B1): 같은 tier 내 manual_order 바로 아래 1작에 conflict cascade
@@ -38666,6 +38742,7 @@ function AppContent() {
             // fromIdx 미정시 (이전 표시 티어가 active 목록에 없음) — 신중하게 underrated 기본값
             const suspicion = fromIdx === -1 ? "underrated" : (toIdx < fromIdx ? "underrated" : "overrated");
             await enqueueVerification(n.id, "tier_change", suspicion, "saveEdit");
+            propagateRankSuspicion(n.id).catch(() => {}); // 🆕 v7.17.0 증거①: 새 자리 인접권 의심도 전파
           } else if (_v7TierCleared) {
             // manual_tier → null: 더 이상 잠정 truth 없음, 자리 검증 불필요. 오버레이트 가능성을 가벼운 신호로만 인입
             await enqueueVerification(n.id, "tier_change", "overrated", "saveEdit");
@@ -39234,6 +39311,19 @@ function AppContent() {
 
     // 매칭 로그 INSERT
     await logVerificationMatch(verificationSessionIdRef.current, suspicionNovel.id, candidate.id, suspicionWon, violation);
+
+    // 🆕 v7.17.0 증거②: 상대(후보) 의심도 — 현재 순위와의 모순(업셋) 정도로 상승.
+    //   X(의심작) 승→상대 패: 과대평가 가설(기본 소폭↑), 상대가 X보다 상위였으면 업셋→대폭↑.
+    //   X 패→상대 승: 저평가 가설(기본 소폭↑), 상대가 X보다 하위였으면 업셋→대폭↑.
+    //   → "순위 높은 후보가 의심작한테 졌고, 낮은 후보는 이겼다"가 per-상대 업셋 누적으로 자동 반영.
+    try {
+      const yAbove = isRankedAbove(candidate, suspicionNovel, globalTierConfig);
+      const upset = suspicionWon ? yAbove : !yAbove; // X승&상대상위 또는 X패&상대하위 = 순위 모순
+      const gap = suspicionRankGap(candidate, suspicionNovel, globalTierConfig);
+      const delta = SUSPICION_MATCH_BASE + (upset ? (SUSPICION_UPSET_BASE + Math.min(gap, 8) * SUSPICION_UPSET_PER_GAP) : 0);
+      const q = suspicionBumpQuery(candidate.id, Math.round(delta * 100) / 100);
+      await exec(q.sql, q.params);
+    } catch (suspErr) { console.warn("[v7.17.0] 상대 의심도 갱신 오류:", suspErr?.message); }
 
     const newResponses = [...responses, { candidateId: candidate.id, suspicionWon, violationType: violation }];
     const progress = evaluateSequenceProgress(newResponses, suspicionType);
@@ -41054,6 +41144,7 @@ function AppContent() {
               const inverseSuspicion = suspicionForHybrid === "underrated" ? "overrated" : "underrated";
               await enqueueVerification(idB, "order_change", inverseSuspicion, "swapRating_idB");
             }
+            propagateRankSuspicion(idA).catch(() => {}); // 🆕 v7.17.0 증거①: swap 인접권 의심도 전파
           } catch (e) {
             console.warn("검증 큐 INSERT 실패:", e?.message);
           }
@@ -41171,6 +41262,7 @@ function AppContent() {
             const suspicion = clampedIdx < prevSameTierIdx ? "underrated" : "overrated";
             await enqueueVerification(novelId, "order_change", suspicion, "dropSlot_orderMove");
           }
+          propagateRankSuspicion(novelId).catch(() => {}); // 🆕 v7.17.0 증거①: 드래그 이동 인접권 의심도 전파
         } catch (e) {
           console.warn("[v7.4.9] dropSlot enqueueVerification 실패:", e?.message);
         }
@@ -48306,10 +48398,10 @@ async function importJSON() {
                             hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
                             style={{ alignItems: "center", width: 30, marginRight: 2 }}
                           >
-                            <Text style={{ fontSize: 15, color: sus.flagged ? "#f59e0b" : (sus.score >= 3 ? "#ef4444" : sus.score >= 1 ? "#3b82f6" : C.sub) }}>🔍</Text>
-                            {(sus.flagged || sus.score >= 1) && (
-                              <Text style={{ fontSize: 8, fontWeight: "800", color: sus.flagged ? "#f59e0b" : (sus.score >= 3 ? "#ef4444" : "#3b82f6") }}>
-                                {sus.flagged ? "지정" : sus.score >= 3 ? "높음" : "보통"}
+                            <Text style={{ fontSize: 15, color: sus.flagged ? "#f59e0b" : (sus.score >= SUSPICION_LEVEL_HIGH ? "#ef4444" : sus.score >= SUSPICION_LEVEL_MID ? "#3b82f6" : C.sub) }}>🔍</Text>
+                            {(sus.flagged || sus.score >= SUSPICION_LEVEL_MID) && (
+                              <Text style={{ fontSize: 8, fontWeight: "800", color: sus.flagged ? "#f59e0b" : (sus.score >= SUSPICION_LEVEL_HIGH ? "#ef4444" : "#3b82f6") }}>
+                                {sus.flagged ? "지정" : sus.score >= SUSPICION_LEVEL_HIGH ? "높음" : "보통"}
                               </Text>
                             )}
                           </TouchableOpacity>
@@ -48412,6 +48504,7 @@ async function importJSON() {
                                     const toIdx = order.indexOf(tk);
                                     const suspicion = toIdx < fromIdx ? "underrated" : "overrated";
                                     enqueueVerification(item.id, "tier_change", suspicion, "inline_chip").catch(() => {});
+                                    propagateRankSuspicion(item.id).catch(() => {}); // 🆕 v7.17.0 증거①: 새 자리 인접권 의심도 전파
                                   }
                                   setExpandedNovelId(null);
                                   await loadList(undefined, undefined, "tierManage");
