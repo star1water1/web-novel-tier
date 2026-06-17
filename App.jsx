@@ -2,9 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.18.0 (의심도 민감도 사용자 설정화 — 프리셋 + 상세 계수 조정)              ║
+ * ║  버전: 7.19.0 (타모드→하이브리드 전환 시 순위/티어 초기화 방식 선택)               ║
  * ║  최종 수정: 2026-06-16                                                        ║
- * ║  총 라인 수: 약 58,640줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 58,700줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.19.0 하이브리드 전환 시 초기화 방식 선택 모달 (2026-06-16)                 ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [트리거] 타모드(match/manual/ratio) → hybrid 전환 시 일반 확인 대신 초기화 방식  ║
+ * ║   모달. (hybrid→hybrid·기타 전환은 기존 흐름 유지.)                              ║
+ * ║ [① 그대로] 현재 표시 티어(getDisplayTier)·순위를 manual_tier/manual_order로 고정.║
+ * ║ [② 백분위 재분배] 현재 순위(티어→rating) 유지 + 티어만 입력 비율로 재배분         ║
+ * ║   (computeRatioTierMap과 동일 top-down 채움). 활성 티어별 비율 스테퍼 입력 UI    ║
+ * ║   제공(기본=현재 티어 비율, 없으면 균등). 100 아니어도 정규화.                    ║
+ * ║ [③ 초기화] manual_tier=NULL·manual_order=0·suspicion_score=0·flag=0 완전 비움 →  ║
+ * ║   하이브리드가 ELO 기준 표시(백지), 사용자가 직접 배정 시작.                      ║
+ * ║ [구현] applyHybridInit(strategy) — 전 작품 batch UPDATE 후 saveAppSettings(mode  ║
+ * ║   =hybrid)+리다이렉트+loadList. hybridInit* 상태 + 모달 UI.                       ║
+ * ║ [검증] esbuild JSX 파싱 통과.                                                    ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -30270,6 +30286,10 @@ function AppContent() {
   const autoMatchSkipRef = useRef(new Set()); // 판정불가로 건너뛴 쌍 키(세션 한정, 자동 OFF 시 초기화)
   const autoMatchSkipCountRef = useRef(0);     // 연속 건너뛰기 수 (상한 초과 시 자동 종료 — 런어웨이 방지)
   const modeChangingRef = useRef(false); // 🆕 v6.2: 티어 모드 변경 in-flight 가드 (Alert 큐잉/중복 실행 방지)
+  // 🆕 v7.19.0: 타모드 → 하이브리드 전환 시 순위/티어 초기화 방식 선택 모달
+  const [hybridInitOpen, setHybridInitOpen] = useState(false);
+  const [hybridInitRatios, setHybridInitRatios] = useState(null); // 옵션② 백분위 재분배용 {tierKey: ratio}
+  const [hybridInitShowRatio, setHybridInitShowRatio] = useState(false);
   
   // 🎯 v3.0.4: 확장된 자동승패 설정
   const [autoMatchSettings, setAutoMatchSettings] = useState({
@@ -36884,6 +36904,65 @@ function AppContent() {
     }
     safeDefer(() => setAppMeta("app_settings", merged));
   }
+
+  // 🆕 v7.19.0: 타모드 → 하이브리드 전환 시 초기화 전략 적용 + 모드 전환 마무리.
+  //   strategy: "keep"(현재 티어·순위 고정) | "redistribute"(순위 유지 + 티어 백분위 재분배) | "reset"(완전 비움)
+  const applyHybridInit = async (strategy) => {
+    if (modeChangingRef.current) return;
+    modeChangingRef.current = true;
+    try {
+      const oldConfig = { ...globalTierConfig };           // 전환 전 모드(여기 기준으로 현재 표시 티어 계산)
+      const tierOrder = getActiveTierOrder(oldConfig);
+      if (strategy === "reset") {
+        // ③ 완전 비움 — manual_tier/order/의심신호 모두 클리어 → 하이브리드가 ELO로 표시(백지)
+        await exec("UPDATE novels SET manual_tier=NULL, manual_order=0, suspicion_score=0, user_flagged_suspect=0;");
+      } else {
+        const novels = await all("SELECT id, rating, manual_tier, manual_order FROM novels");
+        // 현재 표시 순위(티어→레이팅 내림차순)로 정렬 — 순위탭/rankedEntries와 동일 기준
+        const sorted = [...(novels || [])].sort((a, b) => {
+          const ta = tierRank(getDisplayTier(a, oldConfig), oldConfig);
+          const tb = tierRank(getDisplayTier(b, oldConfig), oldConfig);
+          if (ta !== tb) return ta - tb;
+          return (Number(b.rating) || 0) - (Number(a.rating) || 0);
+        });
+        let tierForPos = null;
+        if (strategy === "redistribute") {
+          // ② 순위 유지 + 티어 백분위 재분배 (computeRatioTierMap과 동일한 top-down 채움)
+          const total = sorted.length;
+          const ratios = tierOrder.map(k => Math.max(0, Number(hybridInitRatios?.[k]) || 0));
+          let sumR = ratios.reduce((a, b) => a + b, 0);
+          if (sumR <= 0) { for (let i = 0; i < ratios.length; i++) ratios[i] = 1; sumR = ratios.length || 1; }
+          const cumCounts = []; let acc = 0, prev = 0;
+          for (let i = 0; i < ratios.length; i++) {
+            acc += ratios[i] / sumR * total;
+            let c = Math.round(acc);
+            if (c < prev) c = prev;
+            if (ratios[i] > 0 && c === prev && prev < total) c = prev + 1;
+            cumCounts.push(c); prev = c;
+          }
+          if (cumCounts.length) cumCounts[cumCounts.length - 1] = total;
+          tierForPos = (pos) => { for (let t = 0; t < cumCounts.length; t++) if (pos < cumCounts[t]) return t; return cumCounts.length - 1; };
+        }
+        const perTier = {};
+        const queries = sorted.map((n, pos) => {
+          const t = strategy === "redistribute" ? tierOrder[tierForPos(pos)] : getDisplayTier(n, oldConfig);
+          perTier[t] = (perTier[t] || 0) + 1;
+          return { sql: "UPDATE novels SET manual_tier=?, manual_order=? WHERE id=?", params: [t, perTier[t] * 100, n.id] };
+        });
+        for (let i = 0; i < queries.length; i += 50) await execBatch(queries.slice(i, i + 50));
+      }
+      saveAppSettings({ tierSystemConfig: { ...oldConfig, mode: "hybrid" } });
+      setHybridInitOpen(false);
+      setHybridInitShowRatio(false);
+      if (screen === "review") setScreen("tierManage"); // hybrid에서 검토 탭 숨김
+      await loadList(undefined, undefined, "settings");
+      Alert.alert("완료", "하이브리드 모드로 변경되었습니다.");
+    } catch (e) {
+      Alert.alert("오류", "초기화 적용 실패: " + (e?.message || e));
+    } finally {
+      modeChangingRef.current = false;
+    }
+  };
   
   // 🆕 v6.0: 티어 히스토리 저장 (gated 티어 관련만 영속화)
   async function saveTierHistory(newHistory) {
@@ -51519,6 +51598,20 @@ async function importJSON() {
                       }
                       // 🆕 v6.2: 다중 클릭 / Alert 큐잉 race 방지
                       if (modeChangingRef.current) return;
+                      // 🆕 v7.19.0: 타모드 → 하이브리드 전환 시 초기화 방식 선택 모달 (일반 확인 대체)
+                      if (m.key === "hybrid" && globalTierConfig.mode !== "hybrid") {
+                        const tiers = getActiveTierOrder(globalTierConfig);
+                        const ratios = {};
+                        (globalTierConfig.tiers || []).forEach(t => { if (tiers.includes(t.key)) ratios[t.key] = Number(t.ratio) || 0; });
+                        if (!Object.values(ratios).some(v => v > 0)) {
+                          const even = Math.round(100 / (tiers.length || 1));
+                          tiers.forEach(k => { ratios[k] = even; });
+                        }
+                        setHybridInitRatios(ratios);
+                        setHybridInitShowRatio(false);
+                        setHybridInitOpen(true);
+                        return;
+                      }
                       Alert.alert(
                         "모드 변경",
                         `"${m.label}" 모드로 변경하시겠습니까?\n\n${m.desc}\n\n${m.key === "manual" ? "기존 레이팅 기반 티어가 manual_tier에 자동 저장됩니다." : ""}`,
@@ -55264,6 +55357,57 @@ async function importJSON() {
       </Modal>
 
       {/* 🆕 v7.9.0: 명언 탭 원격 수정·꾸미기 모달 */}
+      {/* 🆕 v7.19.0: 타모드 → 하이브리드 전환 초기화 방식 선택 */}
+      <Modal visible={hybridInitOpen} transparent animationType="fade" onRequestClose={() => setHybridInitOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", padding: 20 }}>
+          <View style={{ backgroundColor: C.card, borderRadius: 16, padding: 18, maxHeight: "85%" }}>
+            <Text style={{ color: C.text, fontWeight: "800", fontSize: 17, marginBottom: 4 }}>하이브리드 모드 전환</Text>
+            <Text style={{ color: C.sub, fontSize: 12, lineHeight: 18, marginBottom: 14 }}>
+              현재 작품들의 티어/순위를 어떻게 시작할지 선택하세요.
+            </Text>
+            <ScrollView>
+              <TouchableOpacity onPress={() => applyHybridInit("keep")} style={{ backgroundColor: C.bg, borderRadius: 10, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: C.line }}>
+                <Text style={{ color: C.text, fontWeight: "800", fontSize: 14 }}>① 현재 티어·순위 그대로</Text>
+                <Text style={{ color: C.sub, fontSize: 11, marginTop: 3, lineHeight: 16 }}>지금 보이는 티어와 순위를 그대로 고정합니다.</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setHybridInitShowRatio(v => !v)} style={{ backgroundColor: C.bg, borderRadius: 10, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: hybridInitShowRatio ? C.primary : C.line }}>
+                <Text style={{ color: C.text, fontWeight: "800", fontSize: 14 }}>② 순위 유지 + 티어 백분위 재분배  {hybridInitShowRatio ? "▲" : "▼"}</Text>
+                <Text style={{ color: C.sub, fontSize: 11, marginTop: 3, lineHeight: 16 }}>순위는 그대로 두고, 티어만 아래 비율로 다시 나눕니다.</Text>
+              </TouchableOpacity>
+              {hybridInitShowRatio && (
+                <View style={{ backgroundColor: C.bg, borderRadius: 10, padding: 10, marginBottom: 8 }}>
+                  {getActiveTierOrder(globalTierConfig).map(k => {
+                    const v = Number(hybridInitRatios?.[k]) || 0;
+                    const setR = (nv) => setHybridInitRatios(prev => ({ ...prev, [k]: Math.max(0, Math.min(100, nv)) }));
+                    return (
+                      <View key={k} style={{ flexDirection: "row", alignItems: "center", marginVertical: 3 }}>
+                        <Text style={{ width: 46, color: C.text, fontWeight: "700", fontSize: 13 }}>{getTierLabel(k)}</Text>
+                        <TouchableOpacity onPress={() => setR(v - 5)} style={{ width: 30, height: 28, borderRadius: 6, backgroundColor: C.chip, alignItems: "center", justifyContent: "center" }}><Text style={{ color: C.text, fontSize: 16, fontWeight: "800" }}>−</Text></TouchableOpacity>
+                        <Text style={{ minWidth: 46, textAlign: "center", color: C.text, fontWeight: "700" }}>{v}%</Text>
+                        <TouchableOpacity onPress={() => setR(v + 5)} style={{ width: 30, height: 28, borderRadius: 6, backgroundColor: C.chip, alignItems: "center", justifyContent: "center" }}><Text style={{ color: C.text, fontSize: 16, fontWeight: "800" }}>＋</Text></TouchableOpacity>
+                      </View>
+                    );
+                  })}
+                  <Text style={{ color: C.sub, fontSize: 11, marginTop: 4 }}>
+                    합계 {Object.values(hybridInitRatios || {}).reduce((a, b) => a + (Number(b) || 0), 0)}% (100 아니어도 비율대로 정규화됨)
+                  </Text>
+                  <TouchableOpacity onPress={() => applyHybridInit("redistribute")} style={{ marginTop: 8, backgroundColor: C.primary, padding: 10, borderRadius: 10, alignItems: "center" }}>
+                    <Text style={{ color: "#fff", fontWeight: "800" }}>이 비율로 적용</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+              <TouchableOpacity onPress={() => applyHybridInit("reset")} style={{ backgroundColor: C.bg, borderRadius: 10, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: C.line }}>
+                <Text style={{ color: C.text, fontWeight: "800", fontSize: 14 }}>③ 순위·티어 초기화 (백지)</Text>
+                <Text style={{ color: C.sub, fontSize: 11, marginTop: 3, lineHeight: 16 }}>티어·순위를 모두 비웁니다. ELO 기준으로 표시되며 직접 배정해 나갑니다.</Text>
+              </TouchableOpacity>
+            </ScrollView>
+            <TouchableOpacity onPress={() => setHybridInitOpen(false)} style={{ marginTop: 10, padding: 12, borderRadius: 10, backgroundColor: C.chip, alignItems: "center" }}>
+              <Text style={{ color: C.text, fontWeight: "700" }}>취소</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       <Modal visible={!!quoteQuickEdit} transparent animationType="fade" onRequestClose={cancelQuoteQuickEdit}>
         <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", padding: 18 }}>
           <View style={{ backgroundColor: C.bg, borderRadius: 16, maxHeight: "88%", overflow: "hidden" }}>
