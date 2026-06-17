@@ -2,9 +2,24 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.17.0 (하이브리드 관계형 의심도 엔진 — 순위변동 전파 + 매칭 업셋 분석)    ║
+ * ║  버전: 7.17.1 (순위탭 정렬 정합 + 의심도 % 표기 + 증분 하향)                       ║
  * ║  최종 수정: 2026-06-16                                                        ║
- * ║  총 라인 수: 약 58,580줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 58,590줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.17.1 순위탭 정합 + 의심도 % 표기 + 파생 완화 (2026-06-16)                  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [#1 순위탭≠배정탭 수정] rankedEntries(순위탭)가 티어 내 rating 정렬이라, 검증기반  ║
+ * ║   hybrid/manual에서 rating 정체값 → 배정탭(manual_order)·홈과 순위가 어긋났음.     ║
+ * ║   → 순위탭도 hybrid/manual에선 manual_order 우선 정렬로 통일(match는 rating 유지). ║
+ * ║ [#2 의심도 수치화] 배정탭 의심도 표시 '보통/높음' 라벨 → 점검선(자동검출 임계=6)   ║
+ * ║   대비 백분율(예 "67%", 100%=점검 권장). 사용자 지정은 '지정' 유지.               ║
+ * ║ [#3 파생매칭 무분별 완화] v7.17.0 증분 과다 → 의심도가 한 세션에 점검선 돌파 →     ║
+ * ║   자동검출 연쇄 폭주. 사용자 결정(현행 로직 유지 + 증분만 낮춤)대로 증분 하향:     ║
+ * ║   MOVE 1.5→0.6, MATCH_BASE 0.6→0.25, UPSET_BASE 2.0→0.8, PER_GAP 0.4→0.2         ║
+ * ║   (최대 업셋 5.2→2.4/판). 지속적 모순이 쌓여야 자동검증되도록 — 일회성은 표시만.   ║
+ * ║ [검증] esbuild JSX 파싱 통과. 임계값(6)·자동검출 로직은 유지.                     ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -27995,13 +28010,15 @@ async function detectAutomaticSuspects(excludeNovelId) {
 //   ① 순위/티어 변동 → 변동 지점 인접권 작품 상승(가까울수록 큼)  ② 검증 매칭 결과 → 상대(후보)를
 //   현재 순위와의 모순(업셋) 정도로 상승. 표시·큐 우선순위가 이 점수를 사용.
 const SUSPICION_CAP = 20;             // 누적 상한 (표시 임계 안정화)
-const SUSPICION_MOVE_BASE = 1.5;      // 순위변동 인접 전파 기본량
+// 🔧 v7.17.1: 증분 하향 — 파생매칭 무분별 완화(사용자 결정: 현행 자동검출 로직 유지 + 증분만 낮춤).
+//   한 세션의 업셋 한두 번으론 점검선(6)에 못 닿고, 모순이 지속 누적돼야 자동 검증되도록.
+const SUSPICION_MOVE_BASE = 0.6;      // 순위변동 인접 전파 기본량 (was 1.5)
 const SUSPICION_MOVE_WINDOW = 5;      // 전파 범위 (랭크 거리)
-const SUSPICION_MATCH_BASE = 0.6;     // 매칭 기본(예상된 결과에도 소폭)
-const SUSPICION_UPSET_BASE = 2.0;     // 업셋(순위 모순) 추가 기본
-const SUSPICION_UPSET_PER_GAP = 0.4;  // 업셋 순위차 1당 가산
-const SUSPICION_LEVEL_MID = 2;        // 표시 '보통' 임계
-const SUSPICION_LEVEL_HIGH = 6;       // 표시 '높음' 임계 (+ 자동검출 트리거)
+const SUSPICION_MATCH_BASE = 0.25;    // 매칭 기본(예상된 결과에도 소폭) (was 0.6)
+const SUSPICION_UPSET_BASE = 0.8;     // 업셋(순위 모순) 추가 기본 (was 2.0)
+const SUSPICION_UPSET_PER_GAP = 0.2;  // 업셋 순위차 1당 가산 (was 0.4) → 최대 업셋 ~2.4/판
+const SUSPICION_LEVEL_MID = 2;        // (예비) 중간 임계
+const SUSPICION_LEVEL_HIGH = 6;       // 점검선 = 자동검출 트리거 + 표시 100% 기준
 
 // 누적 증분 쿼리 (0~CAP clamp). execBatch/exec 양쪽에서 사용.
 function suspicionBumpQuery(novelId, delta) {
@@ -40411,7 +40428,15 @@ function AppContent() {
       
       // 티어가 다르면 티어 순서대로 (S=0, A=1, B+=2, ...)
       if (tierRankA !== tierRankB) return tierRankA - tierRankB;
-      
+
+      // 🔧 v7.17.1: hybrid/manual은 같은 티어 내 manual_order 우선 (배정탭·홈과 정합).
+      //   이전엔 순위탭만 rating 정렬 → 검증기반 모드에선 rating이 정체값이라 사용자 수동순서와 어긋남.
+      if (globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid") {
+        const oA = Number(a.manual_order) || 0;
+        const oB = Number(b.manual_order) || 0;
+        if (oA !== oB) return oA - oB;
+      }
+
       // 같은 티어 내에서는 레이팅 내림차순
       if (b.rating !== a.rating) return b.rating - a.rating;
       
@@ -48398,10 +48423,11 @@ async function importJSON() {
                             hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
                             style={{ alignItems: "center", width: 30, marginRight: 2 }}
                           >
-                            <Text style={{ fontSize: 15, color: sus.flagged ? "#f59e0b" : (sus.score >= SUSPICION_LEVEL_HIGH ? "#ef4444" : sus.score >= SUSPICION_LEVEL_MID ? "#3b82f6" : C.sub) }}>🔍</Text>
-                            {(sus.flagged || sus.score >= SUSPICION_LEVEL_MID) && (
-                              <Text style={{ fontSize: 8, fontWeight: "800", color: sus.flagged ? "#f59e0b" : (sus.score >= SUSPICION_LEVEL_HIGH ? "#ef4444" : "#3b82f6") }}>
-                                {sus.flagged ? "지정" : sus.score >= SUSPICION_LEVEL_HIGH ? "높음" : "보통"}
+                            <Text style={{ fontSize: 15, color: sus.flagged ? "#f59e0b" : (sus.score >= SUSPICION_LEVEL_HIGH ? "#ef4444" : sus.score > 0 ? "#3b82f6" : C.sub) }}>🔍</Text>
+                            {(sus.flagged || sus.score > 0) && (
+                              <Text style={{ fontSize: 9, fontWeight: "800", color: sus.flagged ? "#f59e0b" : (sus.score >= SUSPICION_LEVEL_HIGH ? "#ef4444" : "#3b82f6") }}>
+                                {/* 🔧 v7.17.1: 라벨 → 수치(%). 점검선(SUSPICION_LEVEL_HIGH=자동검출선) 대비 백분율, 100%=점검 권장 */}
+                                {sus.flagged ? "지정" : `${Math.min(100, Math.round(sus.score / SUSPICION_LEVEL_HIGH * 100))}%`}
                               </Text>
                             )}
                           </TouchableOpacity>
