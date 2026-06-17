@@ -2,9 +2,18 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.20.0 (수상 결과 수상작 미표시 근본 수정 + 명대사 이미지 레터박스 제거)   ║
+ * ║  버전: 7.20.1 (명대사 이미지 종횡비 측정을 RNImage.getSize로 — 레터박스 실제 제거) ║
  * ║  최종 수정: 2026-06-17                                                        ║
- * ║  총 라인 수: 약 58,760줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 58,775줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.20.1 명대사 이미지 레터박스 실제 제거 (측정 경로 교체) (2026-06-17)         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ v7.20.0 AwardQuoteImage가 expo-image onLoad의 source 치수로 종횡비를 측정했으나   ║
+ * ║ SDK 54에서 해당 치수가 비제공 → ratio=0 fallback(고정 height)에 머물러 이미지가    ║
+ * ║ 그대로 보였음. 측정을 RNImage.getSize(export 경로 검증됨)로 교체 + onLoad 폴백     ║
+ * ║ 유지. maxHeight 320→460(정사각 이미지가 폰 너비에서 안 잘리도록).                 ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -14938,14 +14947,29 @@ const AwardsRow = memo(({ awardsJson, awardSystemSettings }) => {
 
 // 🆕 v7.20.0: 수상작 카드 명대사 이미지 썸네일 — 자연 종횡비로 너비를 꽉 채워 표시.
 //   (이전: contentFit="contain" + 고정 height:100 + width:"100%" → 정사각/세로 이미지가
-//    좌우 레터박스 여백에 둘러싸여 '붕 뜬' 느낌. 이미지 quote는 치수 미저장 → onLoad로 측정.)
+//    좌우 레터박스 여백에 둘러싸여 '붕 뜬' 느낌. 이미지 quote는 치수 미저장 → 측정 필요.)
 //   측정 후 width:100% + aspectRatio → 박스가 이미지 모양과 일치(여백 0). 너무 세로로 길면
 //   maxHeight로만 제한(그 경우에만 미세 여백 허용). 측정 전엔 임시 height로 잠깐 표시.
-const AwardQuoteImage = memo(({ uri, maxHeight = 320 }) => {
+//   🔧 v7.20.1: 종횡비 측정을 RNImage.getSize(이미 export 경로에서 검증)로 변경 — expo-image
+//     onLoad의 source 치수가 SDK 54에서 비제공되어 ratio=0 fallback에 머물던 문제(이미지 무변화).
+const AwardQuoteImage = memo(({ uri, maxHeight = 460 }) => {
   const [ratio, setRatio] = useState(0); // width / height (>0이면 측정 완료)
+  useEffect(() => {
+    let alive = true;
+    setRatio(0);
+    if (uri) {
+      RNImage.getSize(
+        uri,
+        (w, h) => { if (alive && w > 0 && h > 0) setRatio(w / h); },
+        () => { /* 실패 시 onLoad 폴백에 위임 */ }
+      );
+    }
+    return () => { alive = false; };
+  }, [uri]);
+  // 폴백: getSize 실패 시 expo-image onLoad가 치수를 주면 사용 (이미 측정됐으면 유지)
   const onLoad = useCallback((e) => {
     const s = e?.source;
-    if (s && s.width > 0 && s.height > 0) setRatio(s.width / s.height);
+    if (s && s.width > 0 && s.height > 0) setRatio(prev => prev > 0 ? prev : s.width / s.height);
   }, []);
   const style = ratio > 0
     ? { width: "100%", aspectRatio: ratio, maxHeight, borderRadius: 8 }
