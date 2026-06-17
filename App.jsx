@@ -2,9 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.17.1 (순위탭 정렬 정합 + 의심도 % 표기 + 증분 하향)                       ║
+ * ║  버전: 7.18.0 (의심도 민감도 사용자 설정화 — 프리셋 + 상세 계수 조정)              ║
  * ║  최종 수정: 2026-06-16                                                        ║
- * ║  총 라인 수: 약 58,590줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 58,640줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.18.0 의심도 민감도 사용자 설정화 (2026-06-16)                              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [의도] 사용자마다 의심도 수요가 달라 → 증감 계수를 설정에서 상세 조정 가능하게.   ║
+ * ║ [엔진] SUSPICION_* 상수 → globalSuspicionConfig(module-global, globalTierConfig   ║
+ * ║   패턴). 모든 헬퍼(propagate/매칭업셋/자동검출/표시%)가 이 config를 읽음.         ║
+ * ║   DEFAULT_SUSPICION_CONFIG = v7.17.1 '보통' 값.                                  ║
+ * ║ [영속] appSettings.suspicionConfig (deep-merge 키 추가) → saveAppSettings·마운트· ║
+ * ║   슬롯전환·import에서 globalSuspicionConfig 동기화. 백업 round-trip(settingsDiff. ║
+ * ║   sc) 포함.                                                                     ║
+ * ║ [UI] 설정 '🔍 의심도 민감도'(하이브리드 전용): 프리셋 3종(보수적/보통/민감) +     ║
+ * ║   상세 스테퍼 6개(순위변동 전파·전파 범위·매칭 기본·업셋 가중·업셋 순위차 계수·   ║
+ * ║   점검선) + 기본값 복원. 점검선=자동검증 트리거이자 표시 100% 기준.               ║
+ * ║ [검증] esbuild JSX 파싱 통과.                                                    ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -27981,7 +27997,7 @@ async function detectAutomaticSuspects(excludeNovelId) {
          AND n.manual_tier IS NOT NULL AND n.manual_tier != ''
        ORDER BY (COALESCE(n.suspicion_score,0) + ABS(n.verification_wins - n.verification_losses)) DESC
        LIMIT 5`,
-      [SUSPICION_LEVEL_HIGH, excludeNovelId || ""]
+      [globalSuspicionConfig.checkLine, excludeNovelId || ""]
     );
     for (const r of (rows || [])) {
       const w = Number(r.verification_wins) || 0;
@@ -27990,7 +28006,7 @@ async function detectAutomaticSuspects(excludeNovelId) {
       const susp = Number(r.suspicion_score) || 0;
       const skewRatio = total >= 3 ? Math.abs(w - l) / total : 0;
       const trigBySkew = total >= 3 && skewRatio >= 0.6;
-      const trigBySusp = susp >= SUSPICION_LEVEL_HIGH;
+      const trigBySusp = susp >= globalSuspicionConfig.checkLine;
       if (!trigBySkew && !trigBySusp) continue;
       // 방향: 전적 우세 쪽(동률·무전적 → underrated 기본; 시퀀스가 실제 방향을 확정)
       const direction = w >= l ? "underrated" : "overrated";
@@ -28009,20 +28025,28 @@ async function detectAutomaticSuspects(excludeNovelId) {
 //   suspicion_score는 두 증거로 누적되고 검증 시 리셋(사용자 결정: 검증 시에만 리셋, 보통 민감도):
 //   ① 순위/티어 변동 → 변동 지점 인접권 작품 상승(가까울수록 큼)  ② 검증 매칭 결과 → 상대(후보)를
 //   현재 순위와의 모순(업셋) 정도로 상승. 표시·큐 우선순위가 이 점수를 사용.
-const SUSPICION_CAP = 20;             // 누적 상한 (표시 임계 안정화)
-// 🔧 v7.17.1: 증분 하향 — 파생매칭 무분별 완화(사용자 결정: 현행 자동검출 로직 유지 + 증분만 낮춤).
-//   한 세션의 업셋 한두 번으론 점검선(6)에 못 닿고, 모순이 지속 누적돼야 자동 검증되도록.
-const SUSPICION_MOVE_BASE = 0.6;      // 순위변동 인접 전파 기본량 (was 1.5)
-const SUSPICION_MOVE_WINDOW = 5;      // 전파 범위 (랭크 거리)
-const SUSPICION_MATCH_BASE = 0.25;    // 매칭 기본(예상된 결과에도 소폭) (was 0.6)
-const SUSPICION_UPSET_BASE = 0.8;     // 업셋(순위 모순) 추가 기본 (was 2.0)
-const SUSPICION_UPSET_PER_GAP = 0.2;  // 업셋 순위차 1당 가산 (was 0.4) → 최대 업셋 ~2.4/판
-const SUSPICION_LEVEL_MID = 2;        // (예비) 중간 임계
-const SUSPICION_LEVEL_HIGH = 6;       // 점검선 = 자동검출 트리거 + 표시 100% 기준
+// 🔧 v7.18.0: 의심도 계수를 사용자 설정화(설정>의심도 민감도). 모듈 헬퍼가 읽는 module-global을
+//   globalTierConfig 패턴으로 동기화. DEFAULT는 v7.17.1 튜닝값('보통').
+const DEFAULT_SUSPICION_CONFIG = {
+  cap: 20,            // 누적 상한
+  moveBase: 0.6,      // 순위변동 인접 전파 기본량
+  moveWindow: 5,      // 전파 범위 (랭크 거리)
+  matchBase: 0.25,    // 매칭 기본(예상된 결과에도 소폭)
+  upsetBase: 0.8,     // 업셋(순위 모순) 추가 기본
+  upsetPerGap: 0.2,   // 업셋 순위차 1당 가산
+  checkLine: 6,       // 점검선 = 자동검출 트리거 + 표시 100% 기준
+};
+let globalSuspicionConfig = { ...DEFAULT_SUSPICION_CONFIG };
+// 민감도 프리셋 — 설정 UI 빠른 적용용
+const SUSPICION_PRESETS = {
+  conservative: { cap: 20, moveBase: 0.3, moveWindow: 4, matchBase: 0.15, upsetBase: 0.5, upsetPerGap: 0.12, checkLine: 8 },
+  balanced:     { ...DEFAULT_SUSPICION_CONFIG },
+  sensitive:    { cap: 20, moveBase: 1.2, moveWindow: 6, matchBase: 0.5, upsetBase: 1.6, upsetPerGap: 0.35, checkLine: 5 },
+};
 
 // 누적 증분 쿼리 (0~CAP clamp). execBatch/exec 양쪽에서 사용.
 function suspicionBumpQuery(novelId, delta) {
-  return { sql: "UPDATE novels SET suspicion_score = MIN(?, MAX(0, COALESCE(suspicion_score,0) + ?)) WHERE id=?", params: [SUSPICION_CAP, delta, novelId] };
+  return { sql: "UPDATE novels SET suspicion_score = MIN(?, MAX(0, COALESCE(suspicion_score,0) + ?)) WHERE id=?", params: [globalSuspicionConfig.cap, delta, novelId] };
 }
 // a가 b보다 상위(더 좋은 자리)인가 — 티어 우선, 같은 티어면 manual_order 작은 쪽
 function isRankedAbove(a, b, cfg) {
@@ -28049,9 +28073,9 @@ async function propagateRankSuspicion(centerNovelId) {
     const batch = [];
     for (const s of (sibs || [])) {
       const dist = Math.abs((Number(s.manual_order) || 0) - center) / 100; // order 100단위 → 랭크 거리
-      if (dist > SUSPICION_MOVE_WINDOW) continue;
-      const delta = SUSPICION_MOVE_BASE * (1 - dist / (SUSPICION_MOVE_WINDOW + 1)); // 가까울수록 큼
-      if (delta > 0.05) batch.push(suspicionBumpQuery(s.id, Math.round(delta * 100) / 100));
+      if (dist > globalSuspicionConfig.moveWindow) continue;
+      const delta = globalSuspicionConfig.moveBase * (1 - dist / (globalSuspicionConfig.moveWindow + 1)); // 가까울수록 큼
+      if (delta > 0.02) batch.push(suspicionBumpQuery(s.id, Math.round(delta * 100) / 100));
     }
     if (batch.length) await execBatch(batch);
   } catch (e) { console.warn("[v7.17.0] propagateRankSuspicion 오류:", e?.message); }
@@ -31659,6 +31683,8 @@ function AppContent() {
             }
 
             setAppSettings(merged);
+            // 🔧 v7.18.0: 의심도 계수 전역 동기화
+            globalSuspicionConfig = { ...DEFAULT_SUSPICION_CONFIG, ...(merged.suspicionConfig || {}) };
             if (merged.tierThresholds) {
               globalTierThresholds = { ...DEFAULT_SETTINGS.tierThresholds, ...merged.tierThresholds };
             }
@@ -32229,6 +32255,7 @@ function AppContent() {
           }
         }
         setAppSettings(merged);
+        globalSuspicionConfig = { ...DEFAULT_SUSPICION_CONFIG, ...(merged.suspicionConfig || {}) }; // 🔧 v7.18.0
         if (merged.tierThresholds) globalTierThresholds = { ...DEFAULT_SETTINGS.tierThresholds, ...merged.tierThresholds };
         // 🆕 v6.0: globalTierConfig 초기화 (슬롯 전환)
         if (merged.tierSystemConfig) {
@@ -36817,7 +36844,7 @@ function AppContent() {
     const prev = appSettingsRef.current || DEFAULT_SETTINGS;
     const merged = { ...prev };
     for (const key of Object.keys(newSettings)) {
-      if (key === 'plannedFields' || key === 'supplement' || key === 'recentChanges' || key === 'coverLibrary' || key === 'tierSystemConfig') {
+      if (key === 'plannedFields' || key === 'supplement' || key === 'recentChanges' || key === 'coverLibrary' || key === 'tierSystemConfig' || key === 'suspicionConfig') {
         // nested object는 deep merge
         merged[key] = { ...(prev[key] || {}), ...newSettings[key] };
         // 🆕 v6.0: tierSystemConfig의 tiers 배열은 교체 (merge 아님)
@@ -36847,6 +36874,10 @@ function AppContent() {
           }
           globalTierThresholds = th;
         }
+      }
+      // 🔧 v7.18.0: 의심도 계수 전역 동기화 (globalTierConfig 패턴)
+      if (newSettings.suspicionConfig) {
+        globalSuspicionConfig = { ...DEFAULT_SUSPICION_CONFIG, ...(merged.suspicionConfig || {}) };
       }
     } catch (e) {
       console.warn("saveAppSettings: global update error:", e);
@@ -39337,7 +39368,7 @@ function AppContent() {
       const yAbove = isRankedAbove(candidate, suspicionNovel, globalTierConfig);
       const upset = suspicionWon ? yAbove : !yAbove; // X승&상대상위 또는 X패&상대하위 = 순위 모순
       const gap = suspicionRankGap(candidate, suspicionNovel, globalTierConfig);
-      const delta = SUSPICION_MATCH_BASE + (upset ? (SUSPICION_UPSET_BASE + Math.min(gap, 8) * SUSPICION_UPSET_PER_GAP) : 0);
+      const delta = globalSuspicionConfig.matchBase + (upset ? (globalSuspicionConfig.upsetBase + Math.min(gap, 8) * globalSuspicionConfig.upsetPerGap) : 0);
       const q = suspicionBumpQuery(candidate.id, Math.round(delta * 100) / 100);
       await exec(q.sql, q.params);
     } catch (suspErr) { console.warn("[v7.17.0] 상대 의심도 갱신 오류:", suspErr?.message); }
@@ -41752,6 +41783,8 @@ async function buildExtendedBackup(novels, matches, settings, tierHist, coverIma
   if (settings.tierSystemConfig) {
     settingsDiff.tc = settings.tierSystemConfig;
   }
+  // 🆕 v7.18.0: 의심도 민감도 설정 백업
+  if (settings.suspicionConfig) settingsDiff.sc = settings.suspicionConfig;
 
   if (Object.keys(settingsDiff).length > 0) {
     base.S = settingsDiff;
@@ -42540,6 +42573,11 @@ async function importJSON() {
                 // 🆕 v6.0: tierSystemConfig 복원
                 if (s.tc && typeof s.tc === "object" && Array.isArray(s.tc.tiers)) {
                   restored.tierSystemConfig = s.tc;
+                }
+                // 🆕 v7.18.0: 의심도 민감도 설정 복원 + 전역 동기화
+                if (s.sc && typeof s.sc === "object") {
+                  restored.suspicionConfig = s.sc;
+                  globalSuspicionConfig = { ...DEFAULT_SUSPICION_CONFIG, ...s.sc };
                 }
 
                 // 🆕 v6.0: globalTierConfig를 소설 복원 전에 갱신 (tierFromRating 정합성)
@@ -48423,11 +48461,11 @@ async function importJSON() {
                             hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
                             style={{ alignItems: "center", width: 30, marginRight: 2 }}
                           >
-                            <Text style={{ fontSize: 15, color: sus.flagged ? "#f59e0b" : (sus.score >= SUSPICION_LEVEL_HIGH ? "#ef4444" : sus.score > 0 ? "#3b82f6" : C.sub) }}>🔍</Text>
+                            <Text style={{ fontSize: 15, color: sus.flagged ? "#f59e0b" : (sus.score >= globalSuspicionConfig.checkLine ? "#ef4444" : sus.score > 0 ? "#3b82f6" : C.sub) }}>🔍</Text>
                             {(sus.flagged || sus.score > 0) && (
-                              <Text style={{ fontSize: 9, fontWeight: "800", color: sus.flagged ? "#f59e0b" : (sus.score >= SUSPICION_LEVEL_HIGH ? "#ef4444" : "#3b82f6") }}>
-                                {/* 🔧 v7.17.1: 라벨 → 수치(%). 점검선(SUSPICION_LEVEL_HIGH=자동검출선) 대비 백분율, 100%=점검 권장 */}
-                                {sus.flagged ? "지정" : `${Math.min(100, Math.round(sus.score / SUSPICION_LEVEL_HIGH * 100))}%`}
+                              <Text style={{ fontSize: 9, fontWeight: "800", color: sus.flagged ? "#f59e0b" : (sus.score >= globalSuspicionConfig.checkLine ? "#ef4444" : "#3b82f6") }}>
+                                {/* 🔧 v7.17.1→v7.18.0: 라벨 → 수치(%). 점검선(checkLine=자동검출선) 대비 백분율, 100%=점검 권장 */}
+                                {sus.flagged ? "지정" : `${Math.min(100, Math.round(sus.score / globalSuspicionConfig.checkLine * 100))}%`}
                               </Text>
                             )}
                           </TouchableOpacity>
@@ -51224,6 +51262,57 @@ async function importJSON() {
                 </TouchableOpacity>
               ) : null}
             </Section>
+
+            {/* 🆕 v7.18.0: 의심도 민감도 상세 조정 (하이브리드 전용 — 엔진이 이 모드에서만 동작) */}
+            {globalTierConfig.mode === "hybrid" && (() => {
+              const sc = { ...DEFAULT_SUSPICION_CONFIG, ...(appSettings.suspicionConfig || {}) };
+              const setSC = (patch) => saveAppSettings({ suspicionConfig: { ...sc, ...patch } });
+              const r2 = (x) => Math.round(x * 100) / 100;
+              const sBtn = { width: 34, height: 30, borderRadius: 7, backgroundColor: C.chip, alignItems: "center", justifyContent: "center" };
+              const stepper = (label, key, step, min, max, desc) => {
+                const v = Number(sc[key]) || 0;
+                return (
+                  <View key={key} style={{ marginTop: 10 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center" }}>
+                      <Text style={{ flex: 1, color: C.text, fontSize: 13, fontWeight: "600" }}>{label}</Text>
+                      <TouchableOpacity onPress={() => setSC({ [key]: r2(Math.max(min, v - step)) })} style={sBtn}><Text style={{ color: C.text, fontSize: 18, fontWeight: "800" }}>−</Text></TouchableOpacity>
+                      <Text style={{ minWidth: 48, textAlign: "center", color: C.text, fontWeight: "700", fontSize: 13 }}>{v}</Text>
+                      <TouchableOpacity onPress={() => setSC({ [key]: r2(Math.min(max, v + step)) })} style={sBtn}><Text style={{ color: C.text, fontSize: 16, fontWeight: "800" }}>＋</Text></TouchableOpacity>
+                    </View>
+                    {desc ? <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>{desc}</Text> : null}
+                  </View>
+                );
+              };
+              const presetEq = (p) => Object.keys(p).every(k => Number(sc[k]) === Number(p[k]));
+              return (
+                <Section title="🔍 의심도 민감도 (하이브리드)">
+                  <Text style={{ color: C.sub, fontSize: 12, lineHeight: 18, marginBottom: 8 }}>
+                    배정탭 의심도(🔍)가 오르는 속도와 자동 점검(파생매칭) 빈도를 조절해요. 값이 클수록 의심도가 빨리 오르고 자동 점검이 잦아집니다. '점검선'은 자동 점검이 시작되는 기준(표시 100%)이에요.
+                  </Text>
+                  <View style={{ flexDirection: "row", gap: 8, marginBottom: 4 }}>
+                    {[["보수적", "conservative"], ["보통", "balanced"], ["민감", "sensitive"]].map(([lbl, pk]) => {
+                      const active = presetEq(SUSPICION_PRESETS[pk]);
+                      return (
+                        <TouchableOpacity key={pk} onPress={() => saveAppSettings({ suspicionConfig: { ...SUSPICION_PRESETS[pk] } })}
+                          style={{ paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8, backgroundColor: active ? C.primary : C.chip }}>
+                          <Text style={{ color: active ? "#fff" : C.text, fontWeight: "700", fontSize: 13 }}>{lbl}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  {stepper("순위변동 전파", "moveBase", 0.1, 0, 3, "작품 순위/티어를 바꾸면 인접 작품 의심도가 오르는 양")}
+                  {stepper("전파 범위", "moveWindow", 1, 1, 10, "변동 지점에서 몇 순위까지 퍼질지 (랭크)")}
+                  {stepper("매칭 기본", "matchBase", 0.05, 0, 2, "검증 매칭 1판당 상대 작품 기본 상승")}
+                  {stepper("업셋 가중", "upsetBase", 0.1, 0, 5, "순위와 모순된 결과(업셋) 시 추가 상승")}
+                  {stepper("업셋 순위차 계수", "upsetPerGap", 0.05, 0, 1, "업셋일 때 순위 차이 1당 추가")}
+                  {stepper("점검선(자동검증 기준)", "checkLine", 1, 2, 30, "의심도가 이 값에 닿으면 자동 점검. 표시 100% 기준 — 낮출수록 자주 점검")}
+                  <TouchableOpacity onPress={() => saveAppSettings({ suspicionConfig: { ...DEFAULT_SUSPICION_CONFIG } })}
+                    style={{ marginTop: 12, alignSelf: "flex-start", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: C.chip }}>
+                    <Text style={{ color: C.warn, fontWeight: "700", fontSize: 13 }}>기본값 복원</Text>
+                  </TouchableOpacity>
+                </Section>
+              );
+            })()}
 
             <Section title="테마">
               <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
