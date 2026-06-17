@@ -2,9 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.20.3 (수상 카드 텍스트 명대사도 세로 한도 내 글자 맞춤 — 이미지와 통일)   ║
+ * ║  버전: 7.20.4 (수상 카드 이미지 명대사 화질 개선 — 고정 픽셀 디코드 + 저장 해상도↑) ║
  * ║  최종 수정: 2026-06-17                                                        ║
- * ║  총 라인 수: 약 58,820줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 58,840줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.20.4 수상 카드 이미지 명대사 화질 개선 (2026-06-17)                         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [증상] v7.20.0/.1에서 이미지 명대사를 크게(세로 한도까지) 표시하게 되자 화질이     ║
+ * ║   아쉬움(흐릿). [원인] AwardQuoteImage가 width:"100%"+aspectRatio(퍼센트) →        ║
+ * ║   expo-image가 첫 측정 시 작은 크기로 디코드 → 저해상도(흐릿). v7.6.9 확대 모달    ║
+ * ║   에서 확인된 '퍼센트 디코드' 문제와 동일 원리.                                   ║
+ * ║ [수정-A 디코드] 컨테이너 너비를 onLayout으로 측정 → '고정 픽셀'(cw×cw/ratio,       ║
+ * ║   maxHeight 제한)로 ExpoImage 렌더 → 첫 디코드부터 풀해상도. cachePolicy          ║
+ * ║   memory-disk. (allowDownscaling은 v7.6.7 교훈대로 기본값 유지.)                  ║
+ * ║ [수정-B 저장 해상도] QUOTE_IMAGE_MAX_SIZE 800→1200, QUALITY 0.7→0.82 — 새로        ║
+ * ║   추가/재등록되는 이미지 명대사가 더 선명(기존 저장분은 불변). 백업 base64는 3장   ║
+ * ║   캡 유지라 영향 경미.                                                            ║
+ * ║ [검증] esbuild JSX 파싱 통과.                                                    ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12566,8 +12582,8 @@ const COMPRESSION_PRESETS = {
 };
 
 // 📷 명대사 이미지 압축 설정
-const QUOTE_IMAGE_MAX_SIZE = 800;   // 긴 변 최대 800px
-const QUOTE_IMAGE_QUALITY = 0.7;    // JPEG 품질 70%
+const QUOTE_IMAGE_MAX_SIZE = 1200;  // 🔧 v7.20.4: 긴 변 최대 800→1200px (수상 카드 등 크게 표시 시 화질 개선. 기존 저장분은 불변 — 재등록 시 적용)
+const QUOTE_IMAGE_QUALITY = 0.82;   // 🔧 v7.20.4: JPEG 품질 0.7→0.82
 const QUOTE_IMAGE_MAX_COUNT = 50;   // 🔧 v7.19.1: 이미지 인용구 최대 개수 (30→50 확장. 순수 UI 가드 — 스키마/알고리즘 무의존. 백업 base64 캡은 3 유지 — buildUltraCompactBackup slice(0,3))
 
 // 🎨 v3.8.0: 갤러리 이미지 설정
@@ -14990,6 +15006,7 @@ const AwardsRow = memo(({ awardsJson, awardSystemSettings }) => {
 //     onLoad의 source 치수가 SDK 54에서 비제공되어 ratio=0 fallback에 머물던 문제(이미지 무변화).
 const AwardQuoteImage = memo(({ uri, maxHeight = 460 }) => {
   const [ratio, setRatio] = useState(0); // width / height (>0이면 측정 완료)
+  const [cw, setCw] = useState(0);        // 컨테이너 측정 너비(px)
   useEffect(() => {
     let alive = true;
     setRatio(0);
@@ -15007,18 +15024,34 @@ const AwardQuoteImage = memo(({ uri, maxHeight = 460 }) => {
     const s = e?.source;
     if (s && s.width > 0 && s.height > 0) setRatio(prev => prev > 0 ? prev : s.width / s.height);
   }, []);
-  const style = ratio > 0
-    ? { width: "100%", aspectRatio: ratio, maxHeight, borderRadius: 8 }
+  // 🔧 v7.20.4: 화질 개선 — '고정 픽셀' 크기로 디코드 타겟 확정 → 풀해상도 디코드(흐릿 방지).
+  //   (이전 width:"100%"+aspectRatio는 퍼센트라 expo-image가 첫 측정 시 작게 디코드 → 흐릿.
+  //    v7.6.9 확대 모달 수정과 동일 원리. 컨테이너 너비를 onLayout으로 재고 그 픽셀로 렌더.)
+  let dispW = 0, dispH = 0;
+  if (ratio > 0 && cw > 0) {
+    dispW = cw;
+    dispH = Math.round(cw / ratio);
+    if (dispH > maxHeight) { dispH = maxHeight; dispW = Math.round(maxHeight * ratio); } // 너무 길면 높이 제한+너비 비례
+  }
+  // 치수 확정 전(측정 대기/실패)엔 임시 퍼센트 크기로 표시 — ExpoImage는 항상 렌더해야 onLoad
+  //   폴백(ratio 복구)이 동작. 치수 확정되면 고정 픽셀로 전환되어 풀해상도 재디코드.
+  const style = dispW > 0
+    ? { width: dispW, height: dispH, borderRadius: 8 }
     : { width: "100%", height: 160, borderRadius: 8 };
   return (
-    <ExpoImage
-      source={{ uri }}
-      recyclingKey={uri}
-      style={style}
-      contentFit="contain"
-      cachePolicy="disk"
-      onLoad={onLoad}
-    />
+    <View
+      style={{ width: "100%", alignItems: "center" }}
+      onLayout={(e) => { const w = Math.round(e.nativeEvent.layout.width); if (w > 0 && w !== cw) setCw(w); }}
+    >
+      <ExpoImage
+        source={{ uri }}
+        recyclingKey={uri}
+        style={style}
+        contentFit="contain"
+        cachePolicy="memory-disk"
+        onLoad={onLoad}
+      />
+    </View>
   );
 });
 
