@@ -2,9 +2,29 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.19.1 (명대사 이미지 최대 개수 30→50)                                     ║
- * ║  최종 수정: 2026-06-16                                                        ║
- * ║  총 라인 수: 약 58,700줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 7.20.0 (수상 결과 수상작 미표시 근본 수정 + 명대사 이미지 레터박스 제거)   ║
+ * ║  최종 수정: 2026-06-17                                                        ║
+ * ║  총 라인 수: 약 58,760줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.20.0 수상 결과 수상작 미표시 근본 수정 + 명대사 이미지 레터박스 제거 (2026-06-17) ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [버그1 수상 결과 탭 수상작 미표시] 수상 탭 배지(22894 AWARD_META 폴백)·시상 통계   ║
+ * ║   (Object.values(awardWinners))는 정의 누락 상도 표시/집계하나, 결과 탭 수상작     ║
+ * ║   섹션은 currentYearAwards(연도 정의)만 순회 → 정의 누락 시 수상작 0개 렌더.       ║
+ * ║   재현: 옛 기본슬롯 매칭모드 — performSlotSwitch(32302)가 initialize와 달리 누락   ║
+ * ║   연도 백필이 없어 yearlyAwards["2025"] 공백 → 통계는 5건이나 화면엔 수상작 안보임.║
+ * ║   [근본 수정-A] displayAwards 신설: currentYearAwards + awardWinners에만 있는      ║
+ * ║     고아 상(buildAwardMetaMap→AWARD_META 폴백 메타) 병합. 결과 섹션·내보내기 버튼· ║
+ * ║     exportAwardResults가 displayAwards 순회 → 집계=표시 정합 보장.                ║
+ * ║   [근본 수정-B] performSlotSwitch도 initialize와 동일하게 누락 연도 백필 + 저장    ║
+ * ║     설정이 아예 없을 때 전 연도 생성(else) → 슬롯 전환 후 공백 방지.               ║
+ * ║ [버그2 명대사 이미지 '붕뜬' 여백] 결과 카드 이미지 명대사가 contentFit=contain +   ║
+ * ║   고정 height:100 + width:100% → 정사각/세로 이미지 좌우 레터박스 여백. 신설       ║
+ * ║   AwardQuoteImage(onLoad로 종횡비 측정 → width:100%+aspectRatio, maxHeight 320) →  ║
+ * ║   박스가 이미지 모양과 일치해 여백 제거.                                          ║
+ * ║ [검증] esbuild JSX 파싱 통과.                                                    ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -14916,6 +14936,32 @@ const AwardsRow = memo(({ awardsJson, awardSystemSettings }) => {
   );
 });
 
+// 🆕 v7.20.0: 수상작 카드 명대사 이미지 썸네일 — 자연 종횡비로 너비를 꽉 채워 표시.
+//   (이전: contentFit="contain" + 고정 height:100 + width:"100%" → 정사각/세로 이미지가
+//    좌우 레터박스 여백에 둘러싸여 '붕 뜬' 느낌. 이미지 quote는 치수 미저장 → onLoad로 측정.)
+//   측정 후 width:100% + aspectRatio → 박스가 이미지 모양과 일치(여백 0). 너무 세로로 길면
+//   maxHeight로만 제한(그 경우에만 미세 여백 허용). 측정 전엔 임시 height로 잠깐 표시.
+const AwardQuoteImage = memo(({ uri, maxHeight = 320 }) => {
+  const [ratio, setRatio] = useState(0); // width / height (>0이면 측정 완료)
+  const onLoad = useCallback((e) => {
+    const s = e?.source;
+    if (s && s.width > 0 && s.height > 0) setRatio(s.width / s.height);
+  }, []);
+  const style = ratio > 0
+    ? { width: "100%", aspectRatio: ratio, maxHeight, borderRadius: 8 }
+    : { width: "100%", height: 160, borderRadius: 8 };
+  return (
+    <ExpoImage
+      source={{ uri }}
+      recyclingKey={uri}
+      style={style}
+      contentFit="contain"
+      cachePolicy="disk"
+      onLoad={onLoad}
+    />
+  );
+});
+
 /* ---------------- 상태 아이콘 (카드 우측용) ---------------- */
 const StatusIcon = memo(({ status }) => {
   const colors = {
@@ -22077,7 +22123,32 @@ const AwardsScreen = memo(({
 
     return winners;
   }, [list, awardSelectedYear, awardSystemSettings, compareNovels]);
-  
+
+  // 🆕 v7.20.0: 수상 결과 표시용 상 목록 — currentYearAwards(연도 정의) + awardWinners에만 존재하는
+  //   고아 상(정의 누락) 병합. 시상 통계(Object.values(awardWinners))·수상 탭 배지(AWARD_META 폴백)는
+  //   정의 누락 상도 집계/표시하나, 결과 탭 수상작 섹션은 currentYearAwards만 순회해 슬롯 전환 미백필·
+  //   레거시·커스텀 삭제 시 '수상작은 있는데 화면엔 0개'로 어긋나던 불일치를 해소한다.
+  //   메타는 buildAwardMetaMap(전 연도 정의에서 id→메타) → AWARD_META(레거시) 순으로 폴백.
+  const displayAwards = useMemo(() => {
+    const result = [...currentYearAwards];
+    const known = new Set(currentYearAwards.map(a => a.id));
+    const metaMap = buildAwardMetaMap(awardSystemSettings);
+    for (const type of Object.keys(awardWinners)) {
+      if (known.has(type) || (awardWinners[type] || []).length === 0) continue;
+      const meta = metaMap[type] || AWARD_META[type] || {};
+      result.push({
+        id: type,
+        name: meta.label || type,
+        color: meta.color || "#6366f1",
+        icon: meta.icon || "🏆",
+        matchTags: [],
+        tierMin: null,
+        __orphan: true, // 연도 정의에 없는 상 (설정 모달에는 노출 안 함)
+      });
+    }
+    return result;
+  }, [currentYearAwards, awardWinners, awardSystemSettings]);
+
   // 수상 여부 확인
   const getNovelAwardsForYear = useCallback((novel) => {
     const awards = parseAwards(novel.awards, awardSystemSettings);
@@ -22270,7 +22341,8 @@ const AwardsScreen = memo(({
     Breadcrumbs.add("award_export", "start", { year: awardSelectedYear });
 
     // 수상작 있는 award만 필터 (빈 award는 export 의미 없음)
-    const awardsWithWinners = currentYearAwards.filter(a => (awardWinners[a.id] || []).length > 0);
+    // 🆕 v7.20.0: displayAwards 기준 — 정의 누락 고아 상의 수상작도 내보내기 포함
+    const awardsWithWinners = displayAwards.filter(a => (awardWinners[a.id] || []).length > 0);
     if (awardsWithWinners.length === 0) {
       Alert.alert("알림", "내보낼 수상작이 없습니다.");
       isAwardExportingRef.current = false;
@@ -22980,7 +23052,7 @@ const AwardsScreen = memo(({
       {awardSubTab === "results" && (
         <>
           {/* 🆕 v7.4.4 이미지로 내보내기 — 상별 1장씩 갤러리 저장 */}
-          {currentYearAwards.some(a => (awardWinners[a.id] || []).length > 0) && (
+          {displayAwards.some(a => (awardWinners[a.id] || []).length > 0) && (
             <View style={{ marginBottom: 14 }}>
               <TouchableOpacity
                 onPress={exportAwardResults}
@@ -23007,7 +23079,8 @@ const AwardsScreen = memo(({
           )}
 
           {/* 수상작 섹션 */}
-          {currentYearAwards.map(award => {
+          {/* 🆕 v7.20.0: displayAwards 순회 — 연도 정의 누락(슬롯 전환 미백필/레거시) 상의 수상작도 표시 */}
+          {displayAwards.map(award => {
             const winners = awardWinners[award.id] || [];
 
             return (
@@ -23242,7 +23315,8 @@ const AwardsScreen = memo(({
                             }}
                           >
                             {isImg ? (
-                              <ExpoImage source={{ uri: firstItem.uri }} style={{ width: "100%", height: 100, borderRadius: 8 }} contentFit="contain" cachePolicy="disk" />
+                              // 🆕 v7.20.0: 자연 종횡비로 너비 꽉 채움 — 레터박스 '붕뜬' 여백 제거
+                              <AwardQuoteImage uri={firstItem.uri} />
                             ) : (() => {
                               // 🆕 v7.8.0: 사용자 서식 적용
                               const st = effectiveQuoteStyle(getQuoteStyle(firstItem), quoteDefaultStyle);
@@ -32300,9 +32374,29 @@ function AppContent() {
       if (savedTagAttributes && typeof savedTagAttributes === "object") setTagAttributes(savedTagAttributes);
       if (Array.isArray(savedHiddenTags)) setHiddenTags(savedHiddenTags);
       if (savedAwardSystemSettings && typeof savedAwardSystemSettings === "object") {
+        // 🛠️ v7.20.0: initialize와 동일하게 누락 연도 백필 — 슬롯 전환 시 currentYearAwards 공백 방지
+        //   (이전: 백필 없이 저장값만 사용 → 옛 슬롯이 "2024"만 보유 시 올해 yearlyAwards 누락 →
+        //    수상 결과 탭 currentYearAwards=[] → 수상작 미표시. displayAwards가 표시는 보강하나
+        //    수상 탭 배정 버튼/필터는 정의가 있어야 동작하므로 데이터 정합도 함께 복구.)
         const merged = { ...DEFAULT_AWARD_SYSTEM_SETTINGS };
         if (savedAwardSystemSettings.yearlyAwards) merged.yearlyAwards = { ...savedAwardSystemSettings.yearlyAwards };
+        const years = getAwardYears();
+        for (const y of years) {
+          if (!merged.yearlyAwards[y]) {
+            const prevYear = String(Number(y) - 1);
+            merged.yearlyAwards[y] = merged.yearlyAwards[prevYear]
+              ? merged.yearlyAwards[prevYear].map(a => ({ ...a }))
+              : DEFAULT_AWARD_TEMPLATE.map(a => ({ ...a }));
+          }
+        }
         setAwardSystemSettings(merged);
+      } else {
+        // 🛠️ v7.20.0: 슬롯에 저장된 수상 설정이 없을 때도 전 연도 생성 (initialize와 동일, 슬롯 간 잔존 방지)
+        const initial = { ...DEFAULT_AWARD_SYSTEM_SETTINGS, yearlyAwards: {} };
+        for (const y of getAwardYears()) {
+          initial.yearlyAwards[y] = DEFAULT_AWARD_TEMPLATE.map(a => ({ ...a }));
+        }
+        setAwardSystemSettings(initial);
       }
       if (Array.isArray(savedRecentChanges)) setRecentChanges(savedRecentChanges);
       if (Array.isArray(savedMatchInsights)) setMatchInsights(savedMatchInsights);
