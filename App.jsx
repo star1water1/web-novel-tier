@@ -2,9 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.20.1 (명대사 이미지 종횡비 측정을 RNImage.getSize로 — 레터박스 실제 제거) ║
+ * ║  버전: 7.20.2 (명언탭 일부 명언 계속 깜빡임 — AutoFit 진동 근본 차단)              ║
  * ║  최종 수정: 2026-06-17                                                        ║
- * ║  총 라인 수: 약 58,775줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 58,780줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🐛 v7.20.2 명언탭 일부 명언 계속 깜빡임(무한 진동) 근본 수정 (2026-06-17)         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [근본 원인] AutoFitQuoteText(자동 글자 크기)의 refit이 비례 추정으로 size를 '양방향'║
+ * ║   (축소·확대) 조정. 텍스트가 줄바꿈 경계에 걸리면 작게→줄감소→높이급감→여유→키움→   ║
+ * ║   줄증가→넘침→작게… 두 크기를 무한 왕복 → 일부 명언이 계속 깜빡임. (0.98 댐핑은     ║
+ * ║   오버슈트만 줄일 뿐 사이클 자체는 못 끊음.)                                       ║
+ * ║ [수정] 자동 맞춤을 '축소 단일 방향'으로 변경 — maxSize에서 시작해 넘치면 줄이고     ║
+ * ║   들어가면 멈춤(절대 키우지 않음). size 단조 감소 → 진동 수학적 불가. 근소 초과는   ║
+ * ║   1씩(맞는 최대 근처), 큰 초과는 비례 점프, 어느 쪽이든 현재보다 작게 강제.         ║
+ * ║   text/서식 변경 시 maxSize로 리셋 후 재축소. attemptsRef(≤40) 안전망 병행.        ║
+ * ║ [검증] esbuild JSX 파싱 통과.                                                    ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12163,26 +12177,33 @@ const AutoFitQuoteText = memo(({ text, baseStyle, fixedSize, userLineHeight, max
   const [avail, setAvail] = useState(0);
   const [size, setSize] = useState(fixedSize > 0 ? fixedSize : maxSize);
   const measRef = useRef({ size: 0, height: 0 }); // 마지막 측정: 그때의 size와 렌더된 텍스트 총 높이
-  // 🔧 v7.16.4: 자동 글자 크기 산정 근본 수정.
-  //   [이전 결함] size 리셋(→maxSize)으로만 축소를 재유발했는데, 이미 maxSize면(특히 카드/AutoFit
-  //   신규 마운트 시) setSize(maxSize)가 no-op → 재레이아웃 없음 → onTextLayout 미발화 → 축소 영구
-  //   미작동(텍스트가 maxSize로 고정, overflow로 잘림). v7.16.3 key로 매 카드가 신규 마운트되며 표면화.
-  //   [수정] 실제 렌더 높이를 measRef에 기록하고, 그 측정값으로 목표 크기를 '비례 산출'(축소·확대
-  //   양방향). size 리셋에 의존하지 않으므로 신규/재활용 모두에서 신뢰성 있게 수렴.
+  const attemptsRef = useRef(0);                  // 축소 시도 횟수 (무한 루프 안전망)
+  // 🔧 v7.20.2: 명언 깜빡임(무한 진동) 근본 차단 — '축소 단일 방향' 수렴.
+  //   [이전 결함] refit의 비례 추정(target = size*budget/height)이 size를 '키울' 수도 있었음.
+  //   텍스트가 줄바꿈 경계에 걸리면: 작게→줄 수 감소→높이 급감→여유 생김→키움→줄 수 증가→넘침→
+  //   다시 작게… 두 크기를 무한 왕복(0.98 댐핑으로도 사이클 자체는 못 끊음) → 일부 명언이 계속 깜빡임.
+  //   [수정] 자동 맞춤은 maxSize에서 시작해 '넘치면 줄이고, 들어가면 멈춤'만 수행(절대 키우지 않음).
+  //   size는 한 패스 내 단조 감소 → 진동이 수학적으로 불가능. attemptsRef로 안전망도 병행.
+  //   (text/fixedSize/maxSize 변경 시 maxSize로 리셋 후 다시 단조 축소 — 새 카드/서식 변경도 정상 수렴.)
   useEffect(() => {
     measRef.current = { size: 0, height: 0 };
+    attemptsRef.current = 0;
     setSize(fixedSize > 0 ? fixedSize : maxSize);
   }, [text, fixedSize, maxSize]);
-  const refit = () => {
-    if (fixedSize > 0 || avail <= 0) return; // 고정 크기 모드거나 컨테이너 미측정
-    const m = measRef.current;
-    if (!m.size || !m.height) return;
+  // h: 현재 size에서 측정된 텍스트 총 높이. 넘치면 더 작은 크기로(단조), 들어가면 정지.
+  const fit = (h) => {
+    if (fixedSize > 0 || avail <= 0 || h <= 0) return; // 고정 크기 모드거나 컨테이너 미측정
     const budget = avail - 80; // ❝❞ + 여백 예약
     if (budget <= 0) return;
-    const cap = maxSize;
-    let target = Math.floor(m.size * (budget / m.height) * 0.98); // 0.98: 오버슈트(깜빡 진동) 방지
-    target = Math.max(minSize, Math.min(cap, target));
-    if (target !== size) setSize(target);
+    if (h <= budget) return;     // 들어감 → 정지 (키우지 않음 = 진동 없음)
+    if (size <= minSize) return; // 더 줄일 수 없음
+    // 근소 초과는 1씩(맞는 최대 근처로), 큰 초과는 비례 점프 — 어느 쪽이든 '현재보다 작게' 강제.
+    let target = (h <= budget * 1.18) ? size - 1 : Math.floor(size * (budget / h) * 0.98);
+    target = Math.max(minSize, Math.min(size - 1, target));
+    if (target !== size && attemptsRef.current < 40) {
+      attemptsRef.current += 1;
+      setSize(target);
+    }
   };
   const onText = (e) => {
     const lines = e?.nativeEvent?.lines;
@@ -12191,10 +12212,13 @@ const AutoFitQuoteText = memo(({ text, baseStyle, fixedSize, userLineHeight, max
     for (const ln of lines) h += (ln.height || 0);
     if (h <= 0) return;
     measRef.current = { size, height: h }; // 현재 size에서의 실제 렌더 높이 기록
-    refit();
+    fit(h);
   };
-  // avail이 onTextLayout보다 늦게 잡히는 첫 마운트 케이스 대비 — 측정값 있으면 즉시 재적합
-  useEffect(() => { refit(); }, [avail]); // eslint-disable-line react-hooks/exhaustive-deps
+  // avail이 onTextLayout보다 늦게 잡히거나 변할 때 — 마지막 측정 높이로 재적합(축소 방향만, stall 없이)
+  useEffect(() => {
+    const m = measRef.current;
+    if (m.height > 0) fit(m.height);
+  }, [avail]); // eslint-disable-line react-hooks/exhaustive-deps
   const lh = userLineHeight > 0 ? userLineHeight : Math.round(size * 1.45);
   return (
     <View
