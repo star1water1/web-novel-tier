@@ -2,9 +2,28 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.20.4 (수상 카드 이미지 명대사 화질 개선 — 고정 픽셀 디코드 + 저장 해상도↑) ║
+ * ║  버전: 7.20.5 (hybrid/manual 모드에서 ELO 표시 누수 제거 — 1차: 홈/순위/정렬/비교) ║
  * ║  최종 수정: 2026-06-17                                                        ║
- * ║  총 라인 수: 약 58,840줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 58,870줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.20.5 hybrid/manual ELO 표시 누수 제거 (1차) (2026-06-17)                    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [증상] match→hybrid 백분위 재분배(②) 후 홈 상위작 대부분에 ⚠️(!) 표시 + 순위탭·   ║
+ * ║   비교·정렬 등에서 ELO 레이팅/승률/전적이 그대로 노출(hybrid/manual은 ELO 미사용). ║
+ * ║ [원인] 표시/정렬 컴포넌트가 mode 분기 없이 rating/wins/losses를 읽음. (전환 시     ║
+ * ║   rating 잔존은 의도 — ② '순위 유지' 선택. 표시 측이 mode를 따라야 함.)            ║
+ * ║ [수정 1차]                                                                       ║
+ * ║  • ActualTierTag: ELO '권장 티어'·⚠️(강제) 경고를 match 전용으로 (hybrid/manual은  ║
+ * ║    manual_tier가 진실값이라 무의미) → !표시 폭주 해소.                            ║
+ * ║  • NovelCard(홈/검색): 레이팅/승률/전적/RD 줄을 match·ratio 전용으로 숨김.         ║
+ * ║  • 순위탭 카드: ELO 숨김(티어·#순위 유지), hybrid는 검증전적 표시.                 ║
+ * ║  • 홈·대량 정렬: '레이팅' 정렬 옵션을 hybrid/manual에서 숨김.                      ║
+ * ║  • 비교 모달: 레이팅/승률/전적·차이 → hybrid/manual은 티어/티어차이로 대체.        ║
+ * ║ [남음(2차 예정)] 취향분석 탭 평균 레이팅 표시 다수(formatPrefScore 일관 적용),     ║
+ * ║   매칭 화면 ELO 스탯(manual), 태그 매니저 평균 레이팅 — 사용자 확인 후 진행.       ║
+ * ║ [검증] esbuild JSX 파싱 통과.                                                    ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -14629,14 +14648,16 @@ const ActualTierTag = memo(({ novel, showDiff = false, showWarning = true }) => 
   const label = getTierLabel(actual, cfg);
   const color = getTierColor(actual, cfg);
 
-  // match/hybrid 모드에서만 권장 티어 비교 의미 있음
-  const isMatchMode = cfg.mode === "match" || cfg.mode === "hybrid";
-  const recommended = isMatchMode ? tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg) : actual;
-  const isForced = showWarning && isMatchMode && novel.manual_tier && tierRank(tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg), cfg) > tierRank(novel.manual_tier, cfg);
+  // 🔧 v7.20.5: ELO '권장 티어' 비교와 ⚠️(강제) 경고는 'match 모드 전용'.
+  //   hybrid/manual은 manual_tier가 진실값(ELO 미사용)이라 rating 기반 권장/강제 경고가 무의미.
+  //   (이전: isMatchMode가 hybrid 포함 → match→hybrid 백분위 재분배 후 상위작 대부분이 ⚠️ 표시되던 문제.)
+  const isEloRecoMode = cfg.mode === "match";
+  const recommended = isEloRecoMode ? tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg) : actual;
+  const isForced = showWarning && isEloRecoMode && novel.manual_tier && tierRank(tierFromRating(novel.rating || (cfg.defaultRating || 1500), cfg), cfg) > tierRank(novel.manual_tier, cfg);
   const hasDiff = actual !== recommended;
-  // 🆕 v6.2: match/hybrid 모드 + manual_tier 미설정 + 매칭 0회 → 미평가
-  // (default rating 1500이라 의미 없는 티어가 표시되는 문제 해결)
-  const isUnrated = isMatchMode && !novel.manual_tier && (Number(novel.match_count) || 0) === 0;
+  // 미평가: match=매칭 0회 미설정 / hybrid·manual=직접 배정(manual_tier) 미설정 (둘 다 의미 있음)
+  const isUnrated = (cfg.mode === "match" || cfg.mode === "hybrid" || cfg.mode === "manual")
+    && !novel.manual_tier && (Number(novel.match_count) || 0) === 0;
 
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
@@ -15403,6 +15424,9 @@ const NovelCard = memo(({
   PerfMonitor.trackRender("NovelCard"); // 🔬
   // 메모이제이션된 계산들
   const winRate = useMemo(() => getWinRate(item.wins, item.losses), [item.wins, item.losses]);
+  // 🔧 v7.20.5: hybrid/manual은 ELO(레이팅/승률/전적/RD) 미사용 → 카드의 ELO 줄 숨김.
+  //   (티어는 ActualTierTag, 순위는 목록 번호로 이미 표시. match/ratio는 ELO 기반이라 그대로 노출.)
+  const eloDisplayMode = !(globalTierConfig.mode === "hybrid" || globalTierConfig.mode === "manual");
   const isNew = useMemo(() => isNewNovel(item.created_at), [item.created_at]);
   const plats = useMemo(() => parsePlatforms(item.platforms), [item.platforms]);
   
@@ -15489,7 +15513,8 @@ const NovelCard = memo(({
             </View>
           </View>
           
-          {/* 3줄: 레이팅 정보 */}
+          {/* 3줄: 레이팅 정보 — 🔧 v7.20.5: match/ratio 전용 (hybrid/manual은 ELO 미사용 → 숨김) */}
+          {eloDisplayMode && (
           <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
             <Text style={{ color: theme.sub, fontSize: 12 }}>
               <Text style={{ fontWeight: "700", color: theme.text }}>{(Number(item.rating) || 1500).toFixed(1)}</Text>
@@ -15498,6 +15523,7 @@ const NovelCard = memo(({
               <Text> · RD {Math.round(item.rd || 350)}</Text>
             </Text>
           </View>
+          )}
 
           {/* 🆕 v7.5.0: hybrid 검증 evidence — verification_count > 0 시만 표시 (집계만, 상대 리스트 X) */}
           {hybridMode && Number(item.verification_count) > 0 && (
@@ -44626,7 +44652,8 @@ async function importJSON() {
               >
                 {[
                   ["티어순", "tier"],
-                  ["레이팅", "rating"],
+                  // 🔧 v7.20.5: hybrid/manual은 ELO 미사용 → '레이팅' 정렬 옵션 숨김
+                  ...((globalTierConfig.mode === "hybrid" || globalTierConfig.mode === "manual") ? [] : [["레이팅", "rating"]]),
                   ["제목", "title"],
                   ["등록순", "created"],
                   ["읽은 회차", "read"],
@@ -45297,20 +45324,30 @@ async function importJSON() {
                             </Text>
                           </View>
                           
-                          {/* 2줄: 티어 + 레이팅 + 승률 */}
+                          {/* 2줄: 티어 (+ match/ratio 레이팅·승률 / hybrid 검증전적) — 🔧 v7.20.5 */}
                           <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 6 }}>
                             <ActualTierTag novel={item} showWarning={false} />
-                            <Text style={{ marginLeft: 8, fontWeight: "800", color: c, fontSize: 16 }}>
-                              {(Number(item.rating) || 1500).toFixed(1)}
-                            </Text>
-                            <Text style={{ marginLeft: 8, color: C.sub, fontSize: 13 }}>
-                              승률 <Text style={{ fontWeight: "700", color: C.text }}>{winRate}%</Text>
-                            </Text>
-                            <Text style={{ marginLeft: 8, color: C.sub, fontSize: 12 }}>
-                              ({item.wins}W/{item.losses}L)
-                            </Text>
+                            {(globalTierConfig.mode === "hybrid" || globalTierConfig.mode === "manual") ? (
+                              globalTierConfig.mode === "hybrid" && Number(item.verification_count) > 0 ? (
+                                <Text style={{ marginLeft: 8, color: C.sub, fontSize: 13 }}>
+                                  🔍 검증 <Text style={{ fontWeight: "700", color: C.text }}>{item.verification_wins || 0}승 {item.verification_losses || 0}패</Text>
+                                </Text>
+                              ) : null
+                            ) : (
+                              <>
+                                <Text style={{ marginLeft: 8, fontWeight: "800", color: c, fontSize: 16 }}>
+                                  {(Number(item.rating) || 1500).toFixed(1)}
+                                </Text>
+                                <Text style={{ marginLeft: 8, color: C.sub, fontSize: 13 }}>
+                                  승률 <Text style={{ fontWeight: "700", color: C.text }}>{winRate}%</Text>
+                                </Text>
+                                <Text style={{ marginLeft: 8, color: C.sub, fontSize: 12 }}>
+                                  ({item.wins}W/{item.losses}L)
+                                </Text>
+                              </>
+                            )}
                           </View>
-                          
+
                           {/* 3줄: 작가 · 장르 + 우측 상태 아이콘 */}
                           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
                             <Text style={{ color: C.text, fontSize: 13, flex: 1 }} numberOfLines={1}>
@@ -50035,7 +50072,8 @@ async function importJSON() {
             <Section title="정렬">
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
                 {[
-                  ["레이팅", "rating"],
+                  // 🔧 v7.20.5: hybrid/manual은 ELO 미사용 → '레이팅' 정렬 옵션 숨김
+                  ...((globalTierConfig.mode === "hybrid" || globalTierConfig.mode === "manual") ? [] : [["레이팅", "rating"]]),
                   ["제목", "title"],
                   ["등록순", "created"],
                   ["읽은 회차", "read"],
@@ -57187,9 +57225,16 @@ async function importJSON() {
                           </Text>
                         </View>
                         <StatusBadge status={n.status} /><WorkStatusBadge workStatus={n.work_status} />
-                        <Text style={{ color: C.sub, marginTop: 6, fontSize: 12 }}>레이팅: {(Number(n.rating) || 0).toFixed(1)}</Text>
-                        <Text style={{ color: C.sub, fontSize: 12 }}>승률: {winRate}%</Text>
-                        <Text style={{ color: C.sub, fontSize: 12 }}>전적: {n.wins}승 {n.losses}패</Text>
+                        {/* 🔧 v7.20.5: hybrid/manual은 ELO 대신 티어 표시 */}
+                        {(globalTierConfig.mode === "hybrid" || globalTierConfig.mode === "manual") ? (
+                          <Text style={{ color: C.sub, marginTop: 6, fontSize: 12 }}>티어: {getTierLabel(getDisplayTier(n, globalTierConfig), globalTierConfig)}</Text>
+                        ) : (
+                          <>
+                            <Text style={{ color: C.sub, marginTop: 6, fontSize: 12 }}>레이팅: {(Number(n.rating) || 0).toFixed(1)}</Text>
+                            <Text style={{ color: C.sub, fontSize: 12 }}>승률: {winRate}%</Text>
+                            <Text style={{ color: C.sub, fontSize: 12 }}>전적: {n.wins}승 {n.losses}패</Text>
+                          </>
+                        )}
                         <Text style={{ color: C.sub, fontSize: 12 }}>읽음: {n.read_count}회</Text>
                         <Text style={{ color: C.sub, fontSize: 12 }}>작가: {n.author || "-"}</Text>
                         <Text style={{ color: C.sub, fontSize: 12 }}>플랫폼: {plats.join(",") || "-"}</Text>
@@ -57199,15 +57244,24 @@ async function importJSON() {
                 </View>
                 <View style={{ marginTop: 14, padding: 10, backgroundColor: C.bg, borderRadius: 10 }}>
                   <Text style={{ fontWeight: "700", color: C.text, marginBottom: 6 }}>차이</Text>
-                  <Text style={{ color: C.sub }}>
-                    레이팅: {Math.abs(compareNovels[0].rating - compareNovels[1].rating).toFixed(1)}점
-                  </Text>
-                  <Text style={{ color: C.sub }}>
-                    승률: {Math.abs(
-                      (parseFloat(getWinRate(compareNovels[0].wins, compareNovels[0].losses)) || 0) -
-                      (parseFloat(getWinRate(compareNovels[1].wins, compareNovels[1].losses)) || 0)
-                    ).toFixed(1)}%
-                  </Text>
+                  {/* 🔧 v7.20.5: hybrid/manual은 ELO 차이 대신 티어 단계 차이 */}
+                  {(globalTierConfig.mode === "hybrid" || globalTierConfig.mode === "manual") ? (
+                    <Text style={{ color: C.sub }}>
+                      티어 차이: {Math.abs(tierRank(getDisplayTier(compareNovels[0], globalTierConfig), globalTierConfig) - tierRank(getDisplayTier(compareNovels[1], globalTierConfig), globalTierConfig))}단계
+                    </Text>
+                  ) : (
+                    <>
+                      <Text style={{ color: C.sub }}>
+                        레이팅: {Math.abs(compareNovels[0].rating - compareNovels[1].rating).toFixed(1)}점
+                      </Text>
+                      <Text style={{ color: C.sub }}>
+                        승률: {Math.abs(
+                          (parseFloat(getWinRate(compareNovels[0].wins, compareNovels[0].losses)) || 0) -
+                          (parseFloat(getWinRate(compareNovels[1].wins, compareNovels[1].losses)) || 0)
+                        ).toFixed(1)}%
+                      </Text>
+                    </>
+                  )}
                 </View>
               </ScrollView>
             )}
