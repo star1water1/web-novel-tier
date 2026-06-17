@@ -2,9 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.20.2 (명언탭 일부 명언 계속 깜빡임 — AutoFit 진동 근본 차단)              ║
+ * ║  버전: 7.20.3 (수상 카드 텍스트 명대사도 세로 한도 내 글자 맞춤 — 이미지와 통일)   ║
  * ║  최종 수정: 2026-06-17                                                        ║
- * ║  총 라인 수: 약 58,780줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 58,820줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ ✨ v7.20.3 수상 카드 텍스트 명대사 — 세로 한도 내 글자 크기 맞춤 (2026-06-17)      ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [요청] 수상 결과 카드의 이미지 명대사가 세로 한도 안에 들어가듯, 텍스트 명대사도   ║
+ * ║   3줄 자름('…') 대신 세로 한도 내에서 글자 크기를 줄여 전체 문장이 보이게.         ║
+ * ║ [구현] AwardQuoteText 신설 — numberOfLines:3 제거, maxHeight(기본 320) 안에서      ║
+ * ║   onTextLayout 측정→폰트 '축소 단일 방향'(v7.20.2와 동일, 진동 불가)으로 맞춤.     ║
+ * ║   startSize=사용자 지정 크기 또는 자동 기본(14→18 상향)·lineHeight 비례 축소.      ║
+ * ║   배경/배경이미지 서식과 확대 모달 탭은 기존 유지. minSize 12, attemptsRef 안전망. ║
+ * ║ [검증] esbuild JSX 파싱 통과.                                                    ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -15010,6 +15022,43 @@ const AwardQuoteImage = memo(({ uri, maxHeight = 460 }) => {
   );
 });
 
+// 🆕 v7.20.3: 수상 카드 텍스트 명대사 — 이미지 명대사처럼 '세로 한도(maxHeight)' 안에서 글자 크기를
+//   줄여 전체 문장을 보이게(이전 numberOfLines:3 '…' 자름 제거). 폰트 맞춤은 v7.20.2 AutoFit과 동일한
+//   '축소 단일 방향' 알고리즘 — startSize에서 시작해 넘치면 줄이고 들어가면 정지(절대 키우지 않음) →
+//   단조 감소라 깜빡임(진동) 불가. startSize는 사용자 지정 크기 또는 기본값(상위에서 결정).
+const AwardQuoteText = memo(({ text, style, startSize, startLineHeight, minSize = 12, maxHeight = 320 }) => {
+  const [size, setSize] = useState(startSize > 0 ? startSize : 18);
+  const attemptsRef = useRef(0);
+  useEffect(() => {
+    attemptsRef.current = 0;
+    setSize(startSize > 0 ? startSize : 18);
+  }, [text, startSize]);
+  const onText = (e) => {
+    const lines = e?.nativeEvent?.lines;
+    if (!lines || !lines.length) return;
+    let h = 0;
+    for (const ln of lines) h += (ln.height || 0);
+    if (h <= 0 || h <= maxHeight) return; // 세로 한도 안에 들어감 → 정지
+    if (size <= minSize) return;          // 더 줄일 수 없음(극단적으로 긴 문장은 maxHeight에서 클립)
+    // 근소 초과는 1씩, 큰 초과는 비례 점프 — 어느 쪽이든 '현재보다 작게' 강제(단조 감소).
+    let target = (h <= maxHeight * 1.18) ? size - 1 : Math.floor(size * (maxHeight / h) * 0.98);
+    target = Math.max(minSize, Math.min(size - 1, target));
+    if (target !== size && attemptsRef.current < 40) {
+      attemptsRef.current += 1;
+      setSize(target);
+    }
+  };
+  // lineHeight: 시작값(있으면) 대비 폰트 축소 비율만큼 비례 축소. 최소 size+2 보장.
+  const baseStart = startSize > 0 ? startSize : 18;
+  const ratio = baseStart > 0 ? size / baseStart : 1;
+  const lh = Math.max(size + 2, Math.round((startLineHeight > 0 ? startLineHeight : baseStart * 1.5) * ratio));
+  return (
+    <View style={{ maxHeight, overflow: "hidden" }}>
+      <Text style={[style, { fontSize: size, lineHeight: lh }]} onTextLayout={onText}>{text}</Text>
+    </View>
+  );
+});
+
 /* ---------------- 상태 아이콘 (카드 우측용) ---------------- */
 const StatusIcon = memo(({ status }) => {
   const colors = {
@@ -23368,12 +23417,16 @@ const AwardsScreen = memo(({
                             ) : (() => {
                               // 🆕 v7.8.0: 사용자 서식 적용
                               const st = effectiveQuoteStyle(getQuoteStyle(firstItem), quoteDefaultStyle);
-                              const auto = { size: 14, lineHeight: 22, letterSpacing: 0.3, color: isDark ? "#fef3c7" : "#78350f", textAlign: "left", fontStyle: "italic", fontWeight: "400" };
+                              // 🆕 v7.20.3: 자동 시작 크기 14→18 (세로 한도 내 글자 맞춤과 함께 더 꽉 차게)
+                              const auto = { size: 18, lineHeight: 27, letterSpacing: 0.3, color: isDark ? "#fef3c7" : "#78350f", textAlign: "left", fontStyle: "italic", fontWeight: "400" };
                               if (st && st.bgImage) auto.color = "#fff";
                               else if (st && st.bg) auto.color = quoteContrastColor(st.bg); // 🆕 v7.9.2: 배경색 대비
                               const eff = resolveQuoteTextStyle(st, auto);
                               const hasBg = !!(st && (st.bg || st.bgImage));
-                              if (!hasBg) return <Text numberOfLines={3} style={eff}>{getQuoteText(firstItem)}</Text>;
+                              // 🆕 v7.20.3: 3줄 자름 → 세로 한도 내 글자 크기 맞춤(전체 문장 표시)
+                              if (!hasBg) return (
+                                <AwardQuoteText text={getQuoteText(firstItem)} style={eff} startSize={eff.fontSize} startLineHeight={eff.lineHeight} />
+                              );
                               return (
                                 <View style={{ borderRadius: 8, overflow: "hidden", paddingVertical: 8, paddingHorizontal: 10, backgroundColor: st.bg || "transparent" }}>
                                   {st.bgImage ? (
@@ -23382,7 +23435,7 @@ const AwardsScreen = memo(({
                                       <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.32)" }} />
                                     </>
                                   ) : null}
-                                  <Text numberOfLines={3} style={eff}>{getQuoteText(firstItem)}</Text>
+                                  <AwardQuoteText text={getQuoteText(firstItem)} style={eff} startSize={eff.fontSize} startLineHeight={eff.lineHeight} />
                                 </View>
                               );
                             })()}
