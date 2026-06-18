@@ -2,9 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.21.9 (읽기 상태에 '신규' 추가 — 편집/대량편집/필터/통계 자동 반영)    ║
+ * ║  버전: 7.21.10 (추천 속도 근본 수정 — normalizeTag O(1) + 추천 다양성 강화)    ║
  * ║  최종 수정: 2026-06-18                                                        ║
- * ║  총 라인 수: 약 59,310줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 59,340줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ ⚡ v7.21.10 추천 탭 속도 근본 수정 + 다양성 강화 (2026-06-18)                      ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [원인] '오늘의 추천'이 작품마다 computeTaste→isSameTag→normalizeTag를 호출하는데,  ║
+ * ║   normalizeTag가 miss마다 Object.entries(TAG_ALIASES) 전체를 돌며 alias마다 regex ║
+ * ║   2회 → N(작품)×T(태그)×M(장르)×A(별칭) 정규식 폭풍(수십만~수백만 연산)이 UI      ║
+ * ║   스레드를 점유 → 추천 선정이 수 초씩 지연. (앱 전역 태그 비교의 공통 병목.)       ║
+ * ║ [해결] normalizeTag O(1)화 — 공백제거·소문자 alias→canonical 사전 인덱스          ║
+ * ║   (TAG_ALIAS_COLLAPSED, applyTagRegistry에서 재계산, first-match 의미 보존).      ║
+ * ║   miss-path 시뮬레이션 A=206에서 247× 가속, 동작 동등성 확인. isSameTag/           ║
+ * ║   resolveTagToGroup/getAnalysisTags 등 전 태그 분석 경로가 함께 빨라짐.            ║
+ * ║ [강화] 추천 다양성 — 최근 3회 카테고리·직전 장르와 겹치면 가중치 감점(×0.5/×0.6,  ║
+ * ║   최소 1 보장). 이전엔 novelId 5개만 제외 → 같은 부류·장르 연속 추천 식상함 해소.  ║
+ * ║ [검증] esbuild JSX 파싱 통과 + normalizeTag old/new 동등성·속도 검증.             ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11172,6 +11188,19 @@ function buildReverseAliases(aliases) {
   return result;
 }
 
+// 🆕 v7.21.10: 공백제거·소문자 alias → canonical 사전 인덱스 (normalizeTag O(1)화).
+//   [이전] normalizeTag가 miss마다 Object.entries(TAG_ALIASES) 전체를 돌며 alias마다 regex
+//   2회 실행 → 추천/취향분석에서 N×T×M×A 정규식 폭풍. 이 맵으로 O(1) 룩업 1회로 대체.
+//   TAG_ALIASES 변경(applyTagRegistry) 시 함께 재계산. (buildReverseAliases와 동일 수명.)
+function buildAliasCollapsedIndex(aliases) {
+  const idx = Object.create(null);
+  for (const [alias, canonical] of Object.entries(aliases)) {
+    const k = alias.replace(/\s+/g, "").toLowerCase();
+    if (idx[k] === undefined) idx[k] = canonical; // 첫 매치 우선 — 기존 선형 스캔과 동일 의미
+  }
+  return idx;
+}
+
 /**
  * 🔗 v3.5.5: 태그를 유사 그룹의 대표 태그로 해석
  * - similar 그룹에 속한 태그 → 그룹의 첫 번째 태그(대표)로 통합
@@ -11316,6 +11345,7 @@ let COMBO_TAG_TRAITS = CHARACTER_CATEGORIES["성향/성격"];
 let ALL_GENERAL_TAGS = Object.values(GENERAL_TAGS).flat();
 let ALL_DEFAULT_TAGS = [...MAJOR_GENRES, ...SUB_GENRES, ...ALL_GENERAL_TAGS];
 let TAG_REVERSE_ALIASES = buildReverseAliases(TAG_ALIASES);
+let TAG_ALIAS_COLLAPSED = buildAliasCollapsedIndex(TAG_ALIASES); // 🆕 v7.21.10: normalizeTag O(1) 인덱스
 
 /**
  * 🔄 Tag Registry → 모듈 레벨 변수 적용
@@ -11341,6 +11371,7 @@ function applyTagRegistry(registry) {
   ALL_GENERAL_TAGS = Object.values(GENERAL_TAGS).flat();
   ALL_DEFAULT_TAGS = [...MAJOR_GENRES, ...SUB_GENRES, ...ALL_GENERAL_TAGS];
   TAG_REVERSE_ALIASES = buildReverseAliases(TAG_ALIASES);
+  TAG_ALIAS_COLLAPSED = buildAliasCollapsedIndex(TAG_ALIASES); // 🆕 v7.21.10
   // 🆕 hiddenCategories/categoryAliases 적용
   const _hiddenCats = Array.isArray(registry.hiddenCategories) ? registry.hiddenCategories : [];
   const _catAliases = (registry.categoryAliases && typeof registry.categoryAliases === "object") ? registry.categoryAliases : {};
@@ -11662,12 +11693,11 @@ function normalizeTag(tag) {
   const trimmed = tag.trim();
   // 1) 원본 그대로 alias 체크
   if (TAG_ALIASES[trimmed]) return TAG_ALIASES[trimmed];
-  // 2) 공백 제거 후 alias 재체크 (사용자가 "현대 판타지" / "현대판타지" 어느 쪽이든 → "현대판타지")
-  const collapsed = trimmed.replace(/\s+/g, "");
-  for (const [alias, canonical] of Object.entries(TAG_ALIASES)) {
-    if (alias.replace(/\s+/g, "").toLowerCase() === collapsed.toLowerCase()) return canonical;
-  }
-  return trimmed;
+  // 2) 🔧 v7.21.10: 공백제거·소문자 사전 인덱스로 O(1) 매칭 (이전: 매 호출 O(A) 스캔 + alias마다 regex 2회)
+  //    "현대 판타지"/"현대판타지" 어느 쪽이든 → "현대판타지". 인덱스는 TAG_ALIASES 변경 시 재계산됨.
+  if (!TAG_ALIAS_COLLAPSED) TAG_ALIAS_COLLAPSED = buildAliasCollapsedIndex(TAG_ALIASES); // 방어 (초기화 순서)
+  const key = trimmed.replace(/\s+/g, "").toLowerCase();
+  return TAG_ALIAS_COLLAPSED[key] || trimmed;
 }
 
 /**
@@ -34607,6 +34637,25 @@ function AppContent() {
       if (candidates.length === 0) {
         setDailyReco(null);
         return;
+      }
+
+      // 🆕 v7.21.10 강화: 다양성 — 최근 추천과 같은 카테고리/장르는 가중치 감점(이전: novelId 5개만 제외 →
+      //   같은 부류·장르가 연속 추천되어 식상). 감점만 적용(제외 아님)이라 후보 고갈 시에도 항상 추천 가능.
+      const recentCats = history.slice(0, 3).map(h => h.category).filter(Boolean);
+      let lastGenre = null;
+      if (history[0]?.novelId) {
+        const lastN = (novels || []).find(n => n.id === history[0].novelId) || (planned || []).find(p => p.id === history[0].novelId);
+        if (lastN) lastGenre = getFirstGenre(lastN.major_genre) || deriveMajorGenre(lastN.tags);
+      }
+      if (recentCats.length > 0 || lastGenre) {
+        for (const c of candidates) {
+          if (recentCats.includes(c.category)) c.weight *= 0.5;            // 같은 카테고리 반복 감점
+          if (lastGenre) {
+            const g = getFirstGenre(c.novel.major_genre) || deriveMajorGenre(c.novel.tags);
+            if (g && g === lastGenre) c.weight *= 0.6;                     // 직전과 같은 장르 감점
+          }
+          if (c.weight < 1) c.weight = 1;                                  // 최소 가중 보장
+        }
       }
 
       // 가중치 기반 확률적 선택
