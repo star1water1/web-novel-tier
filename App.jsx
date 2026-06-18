@@ -2,9 +2,18 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.20.8 (순위탭 카드 — hybrid/manual ELO 줄 자리에 주요 태그 표시)          ║
+ * ║  버전: 7.20.9 (순위탭(rank) 카드에도 주요 태그 적용 — v7.20.8 홈탭 누락 보완)      ║
  * ║  최종 수정: 2026-06-17                                                        ║
  * ║  총 라인 수: 약 58,900줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.20.9 순위탭 카드 주요 태그 — 홈탭 누락 보완 (2026-06-17)                     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ v7.20.8은 홈탭(screen==="home")의 NovelCard에만 태그 줄을 추가해, 실제          ║
+ * ║ 순위탭(screen==="rank")의 인라인 카드는 그대로였음(사용자 보고). 순위탭 카드의    ║
+ * ║ 작가·장르 줄과 📖회차 줄 사이에 동일한 '🏷️ 주요 태그' 줄 추가(hybrid/manual).    ║
+ * ║ 단, 이미지 export 캡처 중(isExportRendering)엔 카드 높이 추정 정합을 위해 미표시.║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -45361,11 +45370,23 @@ async function importJSON() {
                       : `외전 ${item.gaiden_read_count || 0}`;
                     episodeText = gaidenPart;
                   } else {
-                    episodeText = item.total_episodes > 0 
-                      ? `${item.read_count}/${item.total_episodes}` 
+                    episodeText = item.total_episodes > 0
+                      ? `${item.read_count}/${item.total_episodes}`
                       : `${item.read_count}`;
                   }
-                  
+
+                  // 🆕 v7.20.8: hybrid/manual은 ELO 자리 대신 '주요 태그'를 표시(대장르/부장르 중복 제외, 상위 4개).
+                  //   export 캡처 중엔 카드 높이 추정(EXPORT_CARDS_PER_IMAGE chunking) 정합을 위해 미표시.
+                  const isTierModeRank = globalTierConfig.mode === "hybrid" || globalTierConfig.mode === "manual";
+                  let rankTopTags = [];
+                  if (isTierModeRank && !isExportRendering && item.tags) {
+                    const shownGenres = new Set(
+                      [...String(item.major_genre || "").split(","), ...String(item.sub_genre || "").split(",")]
+                        .map(s => s.trim()).filter(Boolean)
+                    );
+                    rankTopTags = item.tags.split(",").map(t => t.trim()).filter(t => t && !shownGenres.has(t)).slice(0, 4);
+                  }
+
                   return (
                     <View
                       ref={(node) => registerCardRef(item?.id, node)}
@@ -45434,6 +45455,13 @@ async function importJSON() {
                             </View>
                           </View>
                           
+                          {/* 🆕 v7.20.8: hybrid/manual — 주요 태그 (태그 없으면 줄 자체 생략) */}
+                          {isTierModeRank && rankTopTags.length > 0 && (
+                            <Text style={{ color: C.sub, fontSize: 12, marginBottom: 4 }} numberOfLines={1}>
+                              🏷️ {rankTopTags.join(" · ")}
+                            </Text>
+                          )}
+
                           {/* 4줄: 플랫폼 + 회차 */}
                           <Text style={{ color: C.sub, fontSize: 12 }} numberOfLines={1}>
                             📖 {episodeText}화 · {plats.length > 0 ? plats.join(", ") : "-"}
