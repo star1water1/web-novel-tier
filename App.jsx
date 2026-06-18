@@ -2,9 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.21.1 (전면 기능검수 P1 — 하이브리드 검증 수렴·의심도 자기보정)        ║
+ * ║  버전: 7.21.2 (전면 기능검수 P2 — 모드 일관성: ELO 누수·태그 정규화)          ║
  * ║  최종 수정: 2026-06-18                                                        ║
- * ║  총 라인 수: 약 59,250줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 59,280줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🎯 v7.21.2 전면 기능검수 P2 — 모드 일관성(ELO 누수·태그 정규화) (2026-06-18)      ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [#1 취향분석 ELO 임계 누수] v7.20.5~.7이 표시 라벨은 고쳤으나 분기·색상은 여전히 ║
+ * ║   하드코딩 1700/1550(match 가정) → tier 모드(prefScore 1000~2000)에선 임의 경계.║
+ * ║   증상: '함께 좋아하는 태그' 통째 사라짐(null), 스펙트럼/장르 막대색 한 색 붕괴, ║
+ * ║   부장르/카테고리 '고선호' 녹색 강조 미발화. → prefHighThreshold(분포 mean+1σ,  ║
+ * ║   mode-aware) 신설 + TasteAnalysisScreen에 PREF_HI/MID_CUT(basicStats 기반)로    ║
+ * ║   5개 지점(coOccurrence·genreChart·부장르·카테고리·스펙트럼) + 추천폴백 교체.    ║
+ * ║ [#2 태그 쓰기 정규화 비대칭] deduplicateTags가 trim().toLowerCase()만 써서 별칭/ ║
+ * ║   공백 변형("현판"·"현대판타지")을 둘 다 저장 → 중복 누적(읽기는 normalizeTag로  ║
+ * ║   합침). dedup 키를 normalizeTagKey로 강화(첫 표기 보존) → 쓰기 시점 변형 차단.  ║
+ * ║ [검증] esbuild JSX 파싱 통과. (잔여: getPrefScore의 manual_order granularity는    ║
+ * ║   대형 티어에서 포화 — 별도 후속.)                                               ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -10634,10 +10650,15 @@ function deduplicateTags(tags) {
   const seen = new Set();
   const result = [];
   for (const tag of tags) {
-    const normalized = tag.trim().toLowerCase();
-    if (!seen.has(normalized) && tag.trim()) {
-      seen.add(normalized);
-      result.push(tag.trim());
+    const t = tag.trim();
+    if (!t) continue;
+    // 🔧 v7.21.2: dedup 키를 normalizeTagKey로 강화 — 이전 trim().toLowerCase()는 별칭/공백
+    //   변형("현판"·"현대판타지", "먼치킨 주인공"·"먼치킨주인공")을 서로 다른 것으로 보고
+    //   둘 다 저장 → 중복 누적(읽기는 normalizeTag로 합치는데 쓰기는 안 함). 첫 표기는 보존.
+    const key = normalizeTagKey(t);
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(t);
     }
   }
   return result;
@@ -24988,8 +25009,9 @@ const TasteAnalysisScreen = memo(({
     if (!tagCoOccurrences || Object.keys(tagCoOccurrences).length === 0) return null;
     if (!list || list.length === 0) return null;
     
-    // 고평점 작품(1700+)의 태그들에서 공동출현 패턴 찾기
-    const highRatedNovels = list.filter(n => getPrefScore(n, globalTierConfig) >= 1700);
+    // 🔧 v7.21.2: 고선호 작품의 태그에서 공동출현 패턴 — mode-aware 동적 임계(이전 하드코딩 1700)
+    const _hiCut = prefHighThreshold(list, globalTierConfig);
+    const highRatedNovels = list.filter(n => getPrefScore(n, globalTierConfig) >= _hiCut);
     if (highRatedNovels.length < 3) return null;
     
     // 고평점 작품에서 자주 함께 나타나는 태그 조합
@@ -25412,13 +25434,19 @@ const TasteAnalysisScreen = memo(({
           tierStratification, tierConcentration, tierEntropy, tierInversion,
           awardTierCorrelation, tierDistribution } = analysis;
 
+  // 🔧 v7.21.2: 그룹 평균(avgRating=prefScore) 색상/강조 임계 — 하드코딩 ELO(1700/1550) 대신
+  //   사용자 분포의 mean / mean+1σ 동적 임계(모든 모드 정합). basicStats는 이미 mode-aware prefScore.
+  const _prefStdSafe = Math.max(50, basicStats.stdDevRating || 100);
+  const PREF_HI_CUT = (basicStats.avgRating || 1500) + _prefStdSafe;   // 고선호(녹색) ≈ 1σ 위
+  const PREF_MID_CUT = (basicStats.avgRating || 1500);                 // 중상(파랑) ≈ 평균 위
+
   // 차트 데이터 준비
   const genreChartData = majorGenreAnalysis.slice(0, 8).map(g => ({
     label: g.genre,
     value: g.avgRating - 1400, // 1400 기준으로 표시 (막대 높이는 상대값이라 모드 무관 유지)
     displayValue: globalTierConfig.mode !== "match" ? prefScoreLabel(g.avgRating, globalTierConfig, false) : g.avgRating.toFixed(0), // 🔧 v7.20.6
 
-    color: g.avgRating >= 1700 ? "#22c55e" : g.avgRating >= 1550 ? "#3b82f6" : "#f59e0b",
+    color: g.avgRating >= PREF_HI_CUT ? "#22c55e" : g.avgRating >= PREF_MID_CUT ? "#3b82f6" : "#f59e0b",
   }));
 
   const platformChartData = platformAnalysis.map(p => ({
@@ -25728,7 +25756,7 @@ const TasteAnalysisScreen = memo(({
               <Text style={{ color: C.text, fontSize: 13 }}>
                 {i + 1}. {g.genre} ({g.count}작)
               </Text>
-              <Text style={{ color: g.avgRating >= 1700 ? C.ok : C.text, fontWeight: "600", fontSize: 13 }}>
+              <Text style={{ color: g.avgRating >= PREF_HI_CUT ? C.ok : C.text, fontWeight: "600", fontSize: 13 }}>
                 {prefScoreLabel(g.avgRating, globalTierConfig, false)}
               </Text>
             </View>
@@ -25761,7 +25789,7 @@ const TasteAnalysisScreen = memo(({
                     태그 {cat.tagCount}종 · 사용 {cat.count}회
                   </Text>
                 </View>
-                <Text style={{ color: cat.avgRating >= 1700 ? C.ok : C.text, fontWeight: "700", fontSize: 13 }}>
+                <Text style={{ color: cat.avgRating >= PREF_HI_CUT ? C.ok : C.text, fontWeight: "700", fontSize: 13 }}>
                   {prefScoreLabel(cat.avgRating, globalTierConfig, false)}
                 </Text>
               </View>
@@ -26925,8 +26953,8 @@ const TasteAnalysisScreen = memo(({
                             flex: 1, 
                             alignItems: "center",
                             paddingVertical: 4,
-                            backgroundColor: seg.novels?.length > 0 
-                              ? (seg.avgRating >= 1700 ? "#22c55e20" : seg.avgRating >= 1550 ? "#3b82f620" : "#f59e0b20")
+                            backgroundColor: seg.novels?.length > 0
+                              ? (seg.avgRating >= PREF_HI_CUT ? "#22c55e20" : seg.avgRating >= PREF_MID_CUT ? "#3b82f620" : "#f59e0b20")
                               : "transparent",
                             borderRadius: 4,
                             marginHorizontal: 1,
@@ -28966,6 +28994,23 @@ function getPrefScore(novel, config) {
   // manual_order 미세 조정 (cap 80 — 티어 경계 침범 방지)
   const orderAdj = -Math.min(80, Math.max(0, Number(novel.manual_order) || 0) / 100 * 10);
   return Math.round(tierBase + orderAdj);
+}
+
+// 🆕 v7.21.2: mode-aware '고선호' 임계 — getPrefScore 분포의 mean + sigma·σ.
+//   하드코딩 ELO 상수(1700/1550)는 match 가정이라 hybrid/manual/ratio의 prefScore 분포
+//   (티어 양자화 1000~2000)에선 임의 경계에 떨어져 '고선호' 강조/필터가 죽거나 폭주.
+//   분포 기반 동적 임계로 모든 모드에서 일관 동작. (analyzePreferences의 HIGH_THRESHOLD와 동일 개념의 재사용 가능 버전.)
+function prefHighThreshold(novels, config, sigma = 1) {
+  const scores = [];
+  for (const n of (novels || [])) {
+    const v = getPrefScore(n, config);
+    if (typeof v === "number" && !isNaN(v)) scores.push(v);
+  }
+  if (scores.length === 0) return 1700; // 폴백
+  const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
+  const variance = scores.reduce((a, b) => a + (b - mean) * (b - mean), 0) / scores.length;
+  const std = Math.max(50, Math.sqrt(variance)); // 분산 0 회피
+  return mean + sigma * std;
 }
 
 /**
@@ -34178,8 +34223,10 @@ function AppContent() {
         }
       }
       
-      // 폴백: 패턴 데이터가 부족하면 기존 방식(고티어 기반) 보완
-      const highTierNovels = (novels || []).filter(n => (Number(n.rating) || 1500) >= 1700);
+      // 폴백: 패턴 데이터가 부족하면 기존 방식(고선호 기반) 보완
+      // 🔧 v7.21.2: 원시 rating(ELO) → mode-aware prefScore 동적 임계 (hybrid/manual/ratio 정합)
+      const _hiTierCut = prefHighThreshold(novels, globalTierConfig);
+      const highTierNovels = (novels || []).filter(n => getPrefScore(n, globalTierConfig) >= _hiTierCut);
       const fallbackGenres = new Set();
       const fallbackTags = new Set();
       for (const fn of highTierNovels) {
