@@ -2,9 +2,24 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.21.6 (전면 기능검수 P6 — 예정작 기대 분석: 예상↔실제·발견경로)       ║
+ * ║  버전: 7.21.7 (전면 기능검수 P7 — 죽은 코드 정리)                             ║
  * ║  최종 수정: 2026-06-18                                                        ║
- * ║  총 라인 수: 약 59,460줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 59,290줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🧹 v7.21.7 전면 기능검수 P7 — 죽은 코드 정리 (2026-06-18)                         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [원칙] 호출부가 0인 함수만 제거(라이브/진단/백업호환 잔존은 보존). 검수에서       ║
+ * ║   확인된 orphan 4종 삭제(−168줄):                                                ║
+ * ║ • calculatePredictionAccuracy — 정의 외 호출 없음(라이브는 upsetAnalysis 경로).   ║
+ * ║ • analyzeCoordinatePreference — orphan(라이브는 인라인 재구현이 대체).            ║
+ * ║ • interpretCoordinate — analyzeCoordinatePreference 전용 헬퍼라 함께 제거.        ║
+ * ║ • analyzeSpectrum — orphan(라이브는 인라인). TAG_SPECTRUM_GROUPS 상수는 라이브    ║
+ * ║   스펙트럼 분석이 사용하므로 보존.                                                ║
+ * ║ [보존] evaluateSequenceProgress(진단 패널 사용)·findInflectionPoint(finalize)·    ║
+ * ║   generateEnhancedPrediction(매칭 예측)·read_count_baseline(백업 호환)은 유지.    ║
+ * ║ [검증] esbuild JSX 파싱 통과. 라이브 참조 0 확인(변경내역 표시 문자열만 잔존).    ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -10138,36 +10153,6 @@ async function getTopPatterns(category = null, limit = 10) {
 }
 
 /**
- * 예측 정확도 계산
- */
-async function calculatePredictionAccuracy(days = 30) {
-  try {
-    const since = Date.now() - (days * 24 * 60 * 60 * 1000);
-    
-    const rows = (await all(`
-      SELECT was_correct FROM choice_logs
-      WHERE match_type = 'user'
-        AND was_correct IS NOT NULL
-        AND created_at >= ?
-    `, [since])) || [];
-
-    if (rows.length === 0) {
-      return { accuracy: 0, sampleSize: 0 };
-    }
-
-    const correct = rows.filter(r => r.was_correct === 1).length;
-    return {
-      accuracy: correct / rows.length,
-      sampleSize: rows.length,
-    };
-    
-  } catch (e) {
-    console.error("[calculatePredictionAccuracy] 오류:", e);
-    return { accuracy: 0, sampleSize: 0 };
-  }
-}
-
-/**
  * 기존 매칭 데이터에서 초기 패턴 추출 (마이그레이션)
  */
 async function migrateExistingMatchesToPatterns(tagAttrs = {}) {
@@ -11641,89 +11626,6 @@ function getTagFullInfo(tag, novel, coordinateSystems) {
   return info;
 }
 
-/**
- * 좌표계에서 태그 위치 자연어 해석
- */
-function interpretCoordinate(systemName, x, y) {
-  let xDesc;
-  if (x < 0.2) xDesc = "매우 낮은";
-  else if (x < 0.4) xDesc = "낮은";
-  else if (x < 0.6) xDesc = "중간";
-  else if (x < 0.8) xDesc = "높은";
-  else xDesc = "매우 높은";
-  
-  const yDesc = y > 0.65 ? " (강조)" : y < 0.35 ? " (순함)" : "";
-  
-  return `${xDesc} ${systemName}${yDesc}`;
-}
-
-/**
- * 좌표계 기반 취향 분석
- * - 각 좌표계별 평균 x좌표 (선호 위치)
- */
-function analyzeCoordinatePreference(novels, coordinateSystems) {
-  if (!novels || !coordinateSystems) return {};
-  
-  const result = {};
-  
-  for (const [sysId, sys] of Object.entries(coordinateSystems)) {
-    const dataPoints = [];
-    
-    for (const novel of novels) {
-      const tagData = parseTagData(novel.tag_data);
-      const rating = novel.rating || 1500;
-      
-      for (const td of tagData) {
-        const pos = sys.tags?.[td.tag] || sys.tags?.[normalizeTag(td.tag)];
-        if (pos) {
-          const weight = (td.intensity || 3) / 3;  // 농도 가중치
-          dataPoints.push({
-            x: pos.x,
-            y: pos.y,
-            rating,
-            weight,
-            intensity: td.intensity || 3,
-          });
-        }
-      }
-    }
-    
-    if (dataPoints.length > 0) {
-      // 가중 평균 계산
-      let sumX = 0, sumY = 0, sumWeight = 0;
-      let sumRatingWeight = 0, sumRating = 0;
-      
-      for (const dp of dataPoints) {
-        const w = dp.weight;
-        sumX += dp.x * w;
-        sumY += dp.y * w;
-        sumWeight += w;
-        
-        // 레이팅 기반 가중치도 계산
-        const rw = (dp.rating / 1500) * w;
-        sumRating += dp.x * rw;
-        sumRatingWeight += rw;
-      }
-      
-      result[sysId] = {
-        systemId: sysId,
-        systemName: sys.name,
-        avgX: sumWeight > 0 ? sumX / sumWeight : 0.5,
-        avgY: sumWeight > 0 ? sumY / sumWeight : 0.5,
-        ratingWeightedX: sumRatingWeight > 0 ? sumRating / sumRatingWeight : 0.5,
-        count: dataPoints.length,
-        interpretation: interpretCoordinate(
-          sys.name, 
-          sumWeight > 0 ? sumX / sumWeight : 0.5,
-          sumWeight > 0 ? sumY / sumWeight : 0.5
-        ),
-      };
-    }
-  }
-  
-  return result;
-}
-
 // ═══════════════════════════════════════════════════════════════
 // 🔧 태그 v5.0 헬퍼 함수들
 // ═══════════════════════════════════════════════════════════════
@@ -11851,61 +11753,6 @@ function tagsStringToTagData(tagsStr, defaultIntensity = 3) {
     tag: normalizeTag(tag),
     intensity: defaultIntensity,
   }));
-}
-
-/**
- * 스펙트럼 분석
- */
-function analyzeSpectrum(tagData, spectrumId) {
-  const spectrum = TAG_SPECTRUM_GROUPS[spectrumId];
-  if (!spectrum || !spectrum.tags || spectrum.tags.length === 0) return null;
-  
-  const matches = tagData.filter(t => 
-    spectrum.tags.includes(t.tag) || spectrum.tags.includes(normalizeTag(t.tag))
-  );
-  
-  if (matches.length === 0) return null;
-  
-  const spectrumLength = spectrum.tags.length;
-  
-  if (matches.length === 1) {
-    const tag = normalizeTag(matches[0].tag);
-    const pos = spectrum.tags.indexOf(tag) + 1;
-    if (pos <= 0) return null; // 🔧 normalizeTag 결과가 spectrum에 없는 엣지 케이스 방어 (복수매칭과 동일한 가드)
-    const normalizedPos = pos / spectrumLength;
-    return {
-      type: "single",
-      score: normalizedPos * matches[0].intensity,
-      normalizedScore: normalizedPos * matches[0].intensity, // 0~5 범위
-      tag: matches[0].tag,
-      position: pos,
-      intensity: matches[0].intensity,
-      spectrumName: spectrum.name,
-    };
-  }
-  
-  // 복수 태그: 가중 평균
-  let sumScore = 0, sumWeight = 0;
-  const positions = [];
-  
-  for (const m of matches) {
-    const tag = normalizeTag(m.tag);
-    const pos = spectrum.tags.indexOf(tag) + 1;
-    if (pos > 0) {
-      const normalizedPos = pos / spectrumLength;
-      sumScore += normalizedPos * m.intensity;
-      sumWeight += m.intensity;
-      positions.push({ tag: m.tag, pos, normalizedPos, intensity: m.intensity });
-    }
-  }
-  
-  return {
-    type: "range",
-    avgScore: sumWeight > 0 ? sumScore / sumWeight : 0,
-    normalizedScore: sumWeight > 0 ? (sumScore / sumWeight) * (sumWeight / (positions.length || 1)) : 0,
-    tags: positions,
-    spectrumName: spectrum.name,
-  };
 }
 
 /**
