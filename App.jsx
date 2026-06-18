@@ -2,9 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.21.4 (전면 기능검수 P4 — match 모드 정보량 가중 페어링)              ║
+ * ║  버전: 7.21.5 (전면 기능검수 P5 — manual 재배치 + ratio 핀 해제)             ║
  * ║  최종 수정: 2026-06-18                                                        ║
- * ║  총 라인 수: 약 59,360줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 59,380줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🧩 v7.21.5 전면 기능검수 P5 — manual/ratio 1급화 (저위험 확장) (2026-06-18)       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [#1 manual 재배치] '비교 배치'(이진 삽입)가 기본 티어(미배치)작만 진입 가능 →     ║
+ * ║   한번 배치하면 ▲/▼ 한 칸씩만. 배정 탭 작품별 🔍버튼을 전 작품에 노출(라벨        ║
+ * ║   배치/재배치 분기), startPlacement는 buildPlacementList(self 제외)로 이미 지원.   ║
+ * ║ [#2 ratio 핀 해제] ratio에서 인라인칩으로 티어 핀은 가능했으나 해제 칩이 없어     ║
+ * ║   되돌릴 수 없었음 → '⚙️ 자동' 칩 추가(manual_tier=NULL=비율 분포 복귀, undo 지원).║
+ * ║   (v7.21.0에서 ratio가 핀을 정원 차감하도록 고쳤으므로 핀/해제가 일관 동작.)      ║
+ * ║ [검증] esbuild JSX 파싱 통과. (기존 moveToTierPosition/setNovelTierAtomic 재사용.)║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -49378,15 +49390,19 @@ async function importJSON() {
                           </TouchableOpacity>
                         )}
 
-                        {/* 🆕 v7.20.12: manual 모드 — 미배치(기본 티어) 작품에 '비교 배치' 진입 버튼 */}
-                        {globalTierConfig.mode === "manual" && !tierManageEditMode && item.manual_tier === globalTierConfig.defaultTier && (
+                        {/* 🆕 v7.20.12: manual 모드 — '비교 배치' 진입 버튼.
+                            🆕 v7.21.5: 미배치(기본 티어)뿐 아니라 이미 배치된 작품도 '재배치' 가능
+                            (이전: 기본 티어만 → 한번 배치하면 ▲/▼ 한 칸씩만. 이제 전 작품 이진 재배치). */}
+                        {globalTierConfig.mode === "manual" && !tierManageEditMode && (
                           <TouchableOpacity
                             onPress={() => startPlacement(item.id)}
                             hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
                             style={{ alignItems: "center", width: 32, marginRight: 2 }}
                           >
                             <Text style={{ fontSize: 15 }}>🔍</Text>
-                            <Text style={{ fontSize: 9, fontWeight: "800", color: C.primary }}>배치</Text>
+                            <Text style={{ fontSize: 9, fontWeight: "800", color: C.primary }}>
+                              {item.manual_tier === globalTierConfig.defaultTier ? "배치" : "재배치"}
+                            </Text>
                           </TouchableOpacity>
                         )}
 
@@ -49455,6 +49471,23 @@ async function importJSON() {
                           borderBottomLeftRadius: 12, borderBottomRightRadius: 12,
                           backgroundColor: C.card,
                         }}>
+                          {/* 🆕 v7.21.5: ratio 모드 — 수동 핀 해제(자동=비율 분포 복귀). 이전엔 한번 핀하면 되돌릴 칩이 없었음. */}
+                          {globalTierConfig.mode === "ratio" && item.manual_tier && (
+                            <TouchableOpacity
+                              onPress={async () => {
+                                try {
+                                  const prevManualOrder = Number(item.manual_order) || 0;
+                                  await setNovelTierAtomic(item.id, null);
+                                  pushUndo('tier_change', { id: item.id, title: item.title, prevTier: item.manual_tier, newTier: null, prevManualOrder }, `${item.title} 자동(비율) 복귀`);
+                                  setExpandedNovelId(null);
+                                  await loadList(undefined, undefined, "tierManage");
+                                } catch (e) { console.warn("핀 해제 오류:", e?.message); Alert.alert("오류", "해제에 실패했습니다."); }
+                              }}
+                              style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, backgroundColor: C.chip, borderWidth: 1, borderColor: C.line }}
+                            >
+                              <Text style={{ color: C.text, fontWeight: "700", fontSize: 13 }}>⚙️ 자동</Text>
+                            </TouchableOpacity>
+                          )}
                           {getActiveTierOrder(globalTierConfig).map(tk => (
                             <TouchableOpacity
                               key={tk}
