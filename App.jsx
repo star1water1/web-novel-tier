@@ -2,9 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.20.11 (하이브리드 검증 — 갤로핑+이진 탐색으로 연승/연패 매칭 폭증 완화)   ║
+ * ║  버전: 7.20.12 (수동 모드 '비교로 배치' — 이진 삽입 도구로 하이브리드와 기능 동등화)║
  * ║  최종 수정: 2026-06-17                                                        ║
- * ║  총 라인 수: 약 58,900줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 59,100줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.20.12 수동 모드 '비교로 배치' (이진 삽입) (2026-06-17)                       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [배경] hybrid는 비교 기반 자동 배치(매칭 탭)가 최신화됐으나 manual은 슬롯 드래그   ║
+ * ║   뿐이라 신작을 수백 개 중 어디 둘지 매번 눈대중 → 기능 격차.                      ║
+ * ║ [해결] 사용자 호출형 '비교로 배치' 도구 추가(자동 트리거 X — 수동 철학 유지).      ║
+ * ║   A/B 비교만으로 전체 정렬 목록에 이진 삽입(~log2N회, 200작≈8회) → 자리 자동 결정. ║
+ * ║   • buildPlacementList: 배정된 작품 best→worst 정렬(대상작/밴/비활성 티어 제외).   ║
+ * ║   • startPlacement/respondPlacement: lo/hi 이진 삽입 세션. 확정 시 ins→(티어,      ║
+ * ║     티어내 인덱스) 변환 후 기존 moveToTierPosition 재사용(reflow+undo+이력).        ║
+ * ║   • 진입점 3곳: 전용 '🔍비교' 탭(manual에서 숨긴 매칭 탭 자리) + 배정 탭 미배치작    ║
+ * ║     '🔍배치' 버튼 + 작품 추가 직후 '지금 배치?' 제안.                              ║
+ * ║   • 대상: 신작/미배치(기본 티어) 중심. 비교 UI는 hybrid 검증과 동일한 표지 카드.    ║
+ * ║ [검증] 이진 삽입 시뮬레이션(N=0~200 전 삽입점) 통과 — 정확 배치, 비교≤ceil(log2).  ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -27997,6 +28013,27 @@ async function getCandidatesForVerification(novelId, suspicionType, limit = 10) 
   return scored.slice(0, limit);
 }
 
+// 🆕 v7.20.12: 수동 모드 '비교로 배치' — 이진 삽입용 정렬 목록(best→worst). 대상작/밴작/비활성 티어 제외.
+async function buildPlacementList(excludeId) {
+  const cfg = globalTierConfig;
+  const tierOrder = getActiveTierOrder(cfg);
+  if (!tierOrder || tierOrder.length === 0) return [];
+  const rows = await all(
+    `SELECT id, title, author, manual_tier, manual_order, cover_image, platforms, major_genre, sub_genre, tags, created_at
+     FROM novels
+     WHERE id != ? AND manual_tier IS NOT NULL AND manual_tier != '' AND COALESCE(match_ban,0)=0`,
+    [excludeId]
+  );
+  const ti = (t) => { const i = tierOrder.indexOf(t); return i === -1 ? 99999 : i; };
+  return (rows || [])
+    .filter(r => tierOrder.includes(r.manual_tier))
+    .sort((a, b) =>
+      ti(a.manual_tier) - ti(b.manual_tier) ||
+      (Number(a.manual_order) || 0) - (Number(b.manual_order) || 0) ||
+      (Number(a.created_at) || 0) - (Number(b.created_at) || 0)
+    );
+}
+
 // 🆕 v7.0: 검증 시퀀스 상수 — 변곡점 알고리즘 / K=2 추가 매칭 / max=7
 const VERIFICATION_MAX_RESPONSES = 7;
 const VERIFICATION_K_AFTER_INFLECTION = 2; // (v7.20.11~ 이진 수렴이 경계를 직접 확정 — 코어 루프 미사용, 진단/하위호환 잔존)
@@ -30819,6 +30856,9 @@ function AppContent() {
   // 🛠️ v7.0.12: batchSetTier가 useCallback([])이라 verificationSession state stale capture 발생 → ref로 최신값 동기 노출
   const verificationSessionRef = useRef(null);
   verificationSessionRef.current = verificationSession;
+  // 🆕 v7.20.12: 수동 모드 '비교로 배치'(이진 삽입) 세션 — { novel, list(best→worst), lo, hi, comparisons }. lo>=hi면 ins=lo로 확정.
+  const [placementSession, setPlacementSession] = useState(null);
+  const placementBusyRef = useRef(false); // 더블탭/동시 진입 가드
   const respondingRef = useRef(false); // 🆕 v7.0.3: respondVerificationMatch 동시 진입 가드 (빠른 더블탭 시 중복 log/finalize 방지)
   const gatekeeperRespondingRef = useRef(false); // 🆕 v7.0.6: 수문장 ⬆️/⬇️ Alert "변경" 더블탭 가드 (manual_order +100 중복 적용 방지)
 
@@ -38200,7 +38240,15 @@ function AppContent() {
       }
 
       if (_pt) PerfMonitor.trackFunc("addNovel", Date.now() - _pt); // 🔬
-      Alert.alert("완료", "작품이 추가되었습니다.");
+      // 🆕 v7.20.12: manual 모드 — 추가 직후 '비교로 배치' 제안 (사용자 선택, 비교 대상 없으면 startPlacement가 안내)
+      if (globalTierConfig.mode === "manual") {
+        Alert.alert("작품 추가됨", "지금 비교로 자리를 찾을까요?\n(몇 번의 A/B 선택으로 자동 배치)", [
+          { text: "나중에", style: "cancel" },
+          { text: "🔍 지금 배치", onPress: () => { startPlacement(id); } },
+        ]);
+      } else {
+        Alert.alert("완료", "작품이 추가되었습니다.");
+      }
     } catch (e) {
       if (_pt) PerfMonitor.logError("addNovel", e); // 🔬
       console.warn("addNovel 오류:", e);
@@ -41781,6 +41829,67 @@ function AppContent() {
     }
   }
 
+  // 🆕 v7.20.12: 수동 모드 '비교로 배치' — 신작/미배치작을 이진 삽입(비교 ~log2N회)으로 자리 찾기.
+  //   사용자의 A/B 선택만으로 결정(수동 철학 유지). 확정 시 moveToTierPosition 재사용(reflow+undo).
+  async function startPlacement(novelId) {
+    if (!novelId) return;
+    try {
+      const novel = await first(
+        "SELECT id, title, author, manual_tier, manual_order, cover_image, platforms, major_genre, sub_genre, tags FROM novels WHERE id=?",
+        [novelId]
+      );
+      if (!novel) return;
+      const list = await buildPlacementList(novelId);
+      if (list.length === 0) {
+        Alert.alert("비교 대상 없음", "배정된 다른 작품이 없어 비교할 수 없습니다. 먼저 몇 작품을 배정해 주세요.");
+        return;
+      }
+      setPlacementSession({ novel, list, lo: 0, hi: list.length, comparisons: 0 });
+      setScreen("placeCompare");
+    } catch (e) {
+      console.warn("[v7.20.12] startPlacement 오류:", e?.message);
+      Alert.alert("오류", "비교 배치를 시작할 수 없습니다.\n\n" + (e?.message || ""));
+    }
+  }
+
+  // 이진 삽입: X가 더 좋으면 hi=mid, 아니면 lo=mid+1. lo>=hi면 ins=lo로 확정 후 배치.
+  async function respondPlacement(xBetter) {
+    if (placementBusyRef.current) return;
+    const s = placementSession;
+    if (!s || s.lo >= s.hi) return;
+    placementBusyRef.current = true;
+    try {
+      const mid = (s.lo + s.hi) >> 1;
+      let lo = s.lo, hi = s.hi;
+      if (xBetter) hi = mid; else lo = mid + 1;
+      const comparisons = s.comparisons + 1;
+      if (lo < hi) {
+        setPlacementSession({ ...s, lo, hi, comparisons });
+        return;
+      }
+      // 확정 — ins=lo. above=list[ins-1](더 좋음), below=list[ins](더 나쁨)
+      const ins = lo;
+      const above = ins > 0 ? s.list[ins - 1] : null;
+      const below = ins < s.list.length ? s.list[ins] : null;
+      const targetTier = above ? above.manual_tier
+        : below ? below.manual_tier
+        : (globalTierConfig.defaultTier || getActiveTierOrder(globalTierConfig)[0]);
+      // targetTier 내에서 삽입 위치 = ins 앞쪽에 있는 targetTier 작품 수
+      let insertIdxInTier = 0;
+      for (let i = 0; i < ins; i++) { if (s.list[i].manual_tier === targetTier) insertIdxInTier++; }
+      setPlacementSession(null);
+      await moveToTierPosition(s.novel.id, targetTier, insertIdxInTier);
+      Alert.alert("배치 완료", `'${s.novel.title}' → ${getTierLabel(targetTier, globalTierConfig)} 티어 (비교 ${comparisons}회)`);
+    } catch (e) {
+      console.warn("[v7.20.12] respondPlacement 오류:", e?.message);
+      Alert.alert("오류", "배치 중 오류가 발생했습니다.\n\n" + (e?.message || ""));
+    } finally {
+      placementBusyRef.current = false;
+    }
+  }
+
+  function cancelPlacement() { setPlacementSession(null); }
+
   // 🔧 v3.5.1: useCallback으로 변경 (stale closure 방지)
   const batchDelete = useCallback(async () => {
     // 🔧 v3.5.3: ref로 최신 selectedIds 참조
@@ -43887,6 +43996,7 @@ async function importJSON() {
         ["취향", "taste"],
         ["추천", "reco"],
         ...(!isManualMode ? [["매칭", "match"]] : []), // hybrid는 검증 시퀀스로 변형 (유지)
+        ...(isManualMode ? [["🔍비교", "placeCompare"]] : []), // 🆕 v7.20.12: 수동 모드 비교 배치(이진 삽입)
         ["분석", "analysis"],
         ["대량", "bulk"],
         ["🖼️표지", "covers"], // 🆕 v3.4.5
@@ -48954,6 +49064,18 @@ async function importJSON() {
                           </TouchableOpacity>
                         )}
 
+                        {/* 🆕 v7.20.12: manual 모드 — 미배치(기본 티어) 작품에 '비교 배치' 진입 버튼 */}
+                        {globalTierConfig.mode === "manual" && !tierManageEditMode && item.manual_tier === globalTierConfig.defaultTier && (
+                          <TouchableOpacity
+                            onPress={() => startPlacement(item.id)}
+                            hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+                            style={{ alignItems: "center", width: 32, marginRight: 2 }}
+                          >
+                            <Text style={{ fontSize: 15 }}>🔍</Text>
+                            <Text style={{ fontSize: 9, fontWeight: "800", color: C.primary }}>배치</Text>
+                          </TouchableOpacity>
+                        )}
+
                         {/* 티어 배지 (탭하면 인라인 확장 — 편집 모드에서도 동작) */}
                         <TouchableOpacity
                           onPress={() => setExpandedNovelId(isExpanded ? null : item.id)}
@@ -49100,6 +49222,97 @@ async function importJSON() {
                 }}
               />
             </Section>
+          </>
+        )}
+
+        {/* 🆕 v7.20.12: 수동 모드 비교 배치 (이진 삽입) */}
+        {screen === "placeCompare" && (
+          <>
+            <H>🔍 비교로 배치</H>
+            {placementSession ? (() => {
+              const s = placementSession;
+              const mid = (s.lo + s.hi) >> 1;
+              const opp = s.list[mid];
+              const total = Math.max(1, Math.ceil(Math.log2((s.list.length || 1) + 1)));
+              if (!opp) {
+                return (
+                  <Section title="오류">
+                    <Text style={{ color: C.sub, marginBottom: 10 }}>비교 대상을 찾을 수 없습니다.</Text>
+                    <PrimaryButton title="닫기" onPress={cancelPlacement} />
+                  </Section>
+                );
+              }
+              return (
+                <Section title={`'${s.novel.title}' 배치 중 (${s.comparisons + 1}/${total}회 내외)`}>
+                  <Text style={{ color: C.sub, fontSize: 12, marginBottom: 10 }}>
+                    둘 중 더 좋은 작품을 고르세요. 답에 따라 자리가 자동 결정됩니다.
+                  </Text>
+                  {/* 배치 대상작 */}
+                  <TouchableOpacity onPress={() => respondPlacement(true)} style={{ borderWidth: 3, borderColor: C.ok, backgroundColor: C.card, borderRadius: 16, padding: 14, marginBottom: 6 }}>
+                    <View style={{ flexDirection: "row" }}>
+                      <CoverImage uri={s.novel.cover_image} platforms={s.novel.platforms} platformCovers={platformCovers} size={70} theme={C} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 16, fontWeight: "800", color: C.text }} numberOfLines={1}>{s.novel.title}</Text>
+                        <Text style={{ color: C.sub, fontSize: 12 }} numberOfLines={1}>
+                          {s.novel.author || "작가 미상"}{getFirstGenre(s.novel.major_genre) ? ` · ${getFirstGenre(s.novel.major_genre)}` : ""}
+                        </Text>
+                        <View style={{ marginTop: 4, backgroundColor: isDark ? "#1e3a5f" : "#eff6ff", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, alignSelf: "flex-start" }}>
+                          <Text style={{ color: isDark ? "#93c5fd" : "#1d4ed8", fontSize: 10, fontWeight: "700" }}>배치 대상</Text>
+                        </View>
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                  <Text style={{ textAlign: "center", color: C.sub, fontSize: 11, marginVertical: 4 }}>vs</Text>
+                  {/* 비교 상대 */}
+                  <TouchableOpacity onPress={() => respondPlacement(false)} style={{ borderWidth: 3, borderColor: C.warn, backgroundColor: C.card, borderRadius: 16, padding: 14, marginBottom: 6 }}>
+                    <View style={{ flexDirection: "row" }}>
+                      <CoverImage uri={opp.cover_image} platforms={opp.platforms} platformCovers={platformCovers} size={70} theme={C} />
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
+                          <Text style={{ fontSize: 16, fontWeight: "800", color: C.text, flex: 1 }} numberOfLines={1}>{opp.title}</Text>
+                          <View style={{ backgroundColor: getTierColor(opp.manual_tier || ""), paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+                            <Text style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}>{getTierLabel(opp.manual_tier || "", globalTierConfig)}</Text>
+                          </View>
+                        </View>
+                        <Text style={{ color: C.sub, fontSize: 12 }} numberOfLines={1}>
+                          {opp.author || "작가 미상"} · 순위 #{opp.manual_order || 0}
+                        </Text>
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={cancelPlacement} style={{ marginTop: 8, alignSelf: "center" }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <Text style={{ color: C.sub, fontSize: 13 }}>취소</Text>
+                  </TouchableOpacity>
+                </Section>
+              );
+            })() : (
+              <Section title="배치가 필요한 작품">
+                <Text style={{ color: C.sub, fontSize: 12, marginBottom: 10 }}>
+                  기본 티어({getTierLabel(globalTierConfig.defaultTier || "", globalTierConfig)})에 있는 작품을 비교 몇 번으로 제자리에 보냅니다. (배정 탭의 작품별 버튼·작품 추가 직후에도 시작 가능)
+                </Text>
+                {(() => {
+                  const dt = globalTierConfig.defaultTier;
+                  const pending = (list || [])
+                    .filter(n => n.manual_tier === dt)
+                    .sort((a, b) => (Number(b.created_at) || 0) - (Number(a.created_at) || 0));
+                  if (pending.length === 0) {
+                    return <Text style={{ color: C.sub, fontSize: 13 }}>배치 대기 중인 작품이 없습니다.</Text>;
+                  }
+                  return pending.map(n => (
+                    <View key={n.id} style={{ flexDirection: "row", alignItems: "center", padding: 10, backgroundColor: C.chip, borderRadius: 10, marginBottom: 6 }}>
+                      <CoverImage uri={n.cover_image} platforms={n.platforms} platformCovers={platformCovers} size={40} theme={C} />
+                      <View style={{ flex: 1, marginLeft: 8 }}>
+                        <Text style={{ color: C.text, fontWeight: "700", fontSize: 13 }} numberOfLines={1}>{n.title}</Text>
+                        <Text style={{ color: C.sub, fontSize: 11 }} numberOfLines={1}>{n.author || "작가 미상"}</Text>
+                      </View>
+                      <TouchableOpacity onPress={() => startPlacement(n.id)} style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, backgroundColor: C.primary }}>
+                        <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>🔍 비교 배치</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ));
+                })()}
+              </Section>
+            )}
           </>
         )}
 
