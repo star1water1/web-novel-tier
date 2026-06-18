@@ -2,9 +2,28 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.21.0 (전면 기능검수 P0 — 데이터 무결성·안전망 5건 일괄 수정)         ║
+ * ║  버전: 7.21.1 (전면 기능검수 P1 — 하이브리드 검증 수렴·의심도 자기보정)        ║
  * ║  최종 수정: 2026-06-18                                                        ║
- * ║  총 라인 수: 약 59,200줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 59,250줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔬 v7.21.1 전면 기능검수 P1 — 하이브리드 검증 수렴 개선 (2026-06-18)              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [#1 갤로핑이 이진 정제 전에 예산 소진] 단일 상한 7을 갤로핑(경계 발견)이 모두     ║
+ * ║   써버리면(idx 63까지 7회) 이진 narrowing 전에 max 종료 → 큰 이동을 [lo,hi]      ║
+ * ║   중앙(±최대 16칸)에만 놓고 'continue'로 떠넘김(다음 세션 idx 0부터 재갤로핑).    ║
+ * ║   → phase-aware 분리 예산: GALLOP_MAX=7 + BINARY_MAX=4(총 11). 경계를 찾으면     ║
+ * ║   이진 정제가 항상 실행돼 정밀 수렴. planVerificationProbe에 binaryCount 추가,    ║
+ * ║   세션 search 상태로 thread. exhausted가 예산 cutoff보다 우선(불필요 continue 방지).║
+ * ║   [검증] 전 경계(N=1~64 × b=0~N) 시뮬레이션 — 항상 lo<b≤hi, 구간폭≤2, ≤11회.    ║
+ * ║ [#2 의심도 드리프트/폭주] 검증 finalize가 검증작만 0 리셋, propagate는 이웃을     ║
+ * ║   단조 증가만 → 활발한 티어에 저강도 의심 누적(자동검출 오선정). → suspicionConfig ║
+ * ║   에 decay(기본 0.85, 프리셋별) 추가, 매 finalize에 전 작품 의심도 ×decay 감쇠로  ║
+ * ║   자기보정(갱신 안 된 누적 증거 점감). 백업 round-trip 포함.                      ║
+ * ║ [#3 수문장 임계 도달 불가] 같은 작품이 5세션 경계여야 제안 → 사실상 vestigial.    ║
+ * ║   GATEKEEPER_BLOCK_THRESHOLD=3으로 상수화·하향(4개 호출부 통일) → 실제 발화.      ║
+ * ║ [검증] esbuild JSX 파싱 통과.                                                    ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -28103,8 +28122,17 @@ async function buildPlacementList(excludeId) {
 }
 
 // 🆕 v7.0: 검증 시퀀스 상수 — 변곡점 알고리즘 / K=2 추가 매칭 / max=7
-const VERIFICATION_MAX_RESPONSES = 7;
+// 🔧 v7.21.0: phase-aware 예산. [이전 버그] 단일 상한 7을 갤로핑(경계 발견)이 모두
+//   소진하면(idx 63 도달까지 7회) 이진 정제 단계 전에 max 종료 → 큰 이동을 [lo,hi]
+//   중앙(±최대 16칸)에만 놓고 "continue"로 떠넘김(다음 세션이 idx 0부터 재갤로핑 낭비).
+//   [수정] 갤로핑과 이진에 분리 예산 부여 — 경계를 찾으면 이진 정제가 항상 실행돼 정밀 수렴.
+const VERIFICATION_GALLOP_MAX = 7;   // 갤로핑(경계 발견) 단계 probe 상한
+const VERIFICATION_BINARY_MAX = 4;   // 경계 발견 후 이진 정제 추가 probe 상한 (구간 2^4=16배 축소)
+const VERIFICATION_MAX_RESPONSES = VERIFICATION_GALLOP_MAX + VERIFICATION_BINARY_MAX; // 총 안전 상한(=11)
 const VERIFICATION_K_AFTER_INFLECTION = 2; // (v7.20.11~ 이진 수렴이 경계를 직접 확정 — 코어 루프 미사용, 진단/하위호환 잔존)
+// 🔧 v7.21.0: 수문장 제안 임계 5→3. [이전] 같은 작품이 5개 세션에서 경계(blocker)여야 제안 →
+//   일반 라이브러리에선 사실상 도달 불가(거의 vestigial). 3으로 낮춰 실제 발화하게 함.
+const GATEKEEPER_BLOCK_THRESHOLD = 3;
 // 🆕 v7.20.11: 갤로핑+이진 탐색 후보 풀 — 지수 점프(2^k-1)가 닿을 범위. 7회 응답이면 idx~63까지 도달 가능.
 //   (선형 시절엔 10이면 충분했으나, 점프로 멀리 어긋난 작품을 적은 매칭으로 옮기려면 풀을 넓혀야 함.)
 const VERIFICATION_CANDIDATE_POOL = 64;
@@ -28191,29 +28219,32 @@ function evaluateSequenceProgress(responses, suspicionType) {
 //   점프 탐색으로 대체(매칭 폭증 완화). 입력 lo=가설방향(expected) 최원거리 인덱스(-1=없음),
 //   hi=경계 넘은(unexpected) 최근거리 인덱스(poolSize=아직 없음), jump=현재 보폭, phase="gallop"|"binary".
 //   반환: 종료면 {stop:true, reason}, 계속이면 {stop:false, reason, nextIdx, lo, hi, jump, phase}.
-function planVerificationProbe(lo, hi, jump, phase, poolSize, responseCount) {
-  if (responseCount >= VERIFICATION_MAX_RESPONSES) return { stop: true, reason: "max" };
+function planVerificationProbe(lo, hi, jump, phase, poolSize, responseCount, binaryCount) {
   // 첫(가장 가까운) 후보부터 경계 넘음 → 의심 무효
   if (lo === -1 && hi === 0) return { stop: true, reason: "rejected" };
-  if (phase === "gallop") {
-    if (hi >= poolSize) {
-      // 아직 경계 미발견 → 지수 점프 계속 (offset 1,3,7,15...)
-      const next = lo + jump;
-      if (next >= poolSize) {
-        // 풀 끝까지 모두 가설 방향 — 맨 끝 후보를 한 번 더 확인 후 종료
-        if (lo < poolSize - 1) {
-          return { stop: false, reason: "gallop", nextIdx: poolSize - 1, lo, hi, jump: jump * 2, phase: "gallop" };
-        }
-        return { stop: true, reason: "exhausted" };
-      }
-      return { stop: false, reason: "gallop", nextIdx: next, lo, hi, jump: jump * 2, phase: "gallop" };
+  // 🔧 v7.21.0: 경계 발견 여부로 단계 판정 (phase==="binary" 또는 hi<poolSize=unexpected 후보 존재).
+  const boundaryFound = (phase === "binary") || (hi < poolSize);
+  if (!boundaryFound) {
+    // === 갤로핑 단계 (경계 발견) — 분리 예산 ===
+    // 아직 경계 미발견 → 지수 점프 계속 (offset 1,3,7,15...)
+    const next = lo + jump;
+    if (next >= poolSize) {
+      // 🔧 v7.21.0: 맨 끝 후보까지 모두 가설 방향이면 exhausted(확정 결과 — 예산 cutoff보다 우선,
+      //   불필요한 'continue' 재등록 방지). 끝 후보 미확인이면 예산 내에서 한 번 더 확인.
+      if (lo >= poolSize - 1) return { stop: true, reason: "exhausted" };
+      if (responseCount >= VERIFICATION_GALLOP_MAX) return { stop: true, reason: "max" };
+      return { stop: false, reason: "gallop", nextIdx: poolSize - 1, lo, hi, jump: jump * 2, phase: "gallop", binaryCount: 0 };
     }
-    phase = "binary"; // 경계 발견 → 이진 단계 전환
+    if (responseCount >= VERIFICATION_GALLOP_MAX) return { stop: true, reason: "max" };
+    return { stop: false, reason: "gallop", nextIdx: next, lo, hi, jump: jump * 2, phase: "gallop", binaryCount: 0 };
   }
-  // binary: lo(expected) < hi(unexpected) 구간 좁히기
-  if (hi - lo <= 1) return { stop: true, reason: "decisive" }; // 인접 → 경계 확정
+  // === 이진 정제 단계 — lo(expected) < hi(unexpected) 구간 좁히기 ===
+  if (hi - lo <= 1) return { stop: true, reason: "decisive" }; // 인접(또는 노이즈 lo>=hi) → 경계 확정
+  // 🔧 v7.21.0: 갤로핑이 예산을 다 써도 이진은 별도 예산으로 정제 실행(중앙 ±16 → 수렴).
+  if (responseCount >= VERIFICATION_MAX_RESPONSES) return { stop: true, reason: "max" };
+  if ((binaryCount || 0) >= VERIFICATION_BINARY_MAX) return { stop: true, reason: "max" };
   const mid = Math.floor((lo + hi) / 2);
-  return { stop: false, reason: "binary", nextIdx: mid, lo, hi, jump, phase: "binary" };
+  return { stop: false, reason: "binary", nextIdx: mid, lo, hi, jump, phase: "binary", binaryCount: (binaryCount || 0) + 1 };
 }
 
 // 🆕 v7.0 → 🔧 v7.20.11: 시퀀스 종료 시 새 자리 산출 (system path — 트리거 X).
@@ -28334,6 +28365,17 @@ async function finalizeVerificationSession(queueRow, suspicionNovel, candidates,
       }
     }
 
+    // 🆕 v7.21.0: 자기보정 감쇠 — 검증 완료마다 전 작품 의심도에 decay 곱(드리프트/폭주 방지).
+    //   (이전: 검증작만 0 리셋, propagateRankSuspicion으로 이웃은 단조 증가만 → 활발한 티어에
+    //    저강도 의심 누적 → detectAutomaticSuspects 오선정. 검증=시간 신호로 보고 점감.)
+    //   순서: 전체 감쇠 → 검증작 0 리셋(아래) → (txBatch 후) propagateRankSuspicion 신규 증거 가산.
+    const _decay = (globalSuspicionConfig.decay != null ? globalSuspicionConfig.decay : 0.85);
+    if (_decay < 1) {
+      txBatch.push({
+        sql: "UPDATE novels SET suspicion_score = ROUND(suspicion_score * ?, 2) WHERE suspicion_score > 0",
+        params: [_decay],
+      });
+    }
     // 🆕 v7.13.7: 검증 완료 시 사용자 의심 표시(🔍) 자동 해제 + 🆕 v7.17.0: 누적 의심도 리셋(점검 완료 = 의심 해소, 사용자 결정: 검증 시에만 리셋)
     txBatch.push({
       sql: "UPDATE novels SET user_flagged_suspect=0, suspicion_score=0 WHERE id=?",
@@ -28482,13 +28524,16 @@ const DEFAULT_SUSPICION_CONFIG = {
   upsetBase: 0.8,     // 업셋(순위 모순) 추가 기본
   upsetPerGap: 0.2,   // 업셋 순위차 1당 가산
   checkLine: 6,       // 점검선 = 자동검출 트리거 + 표시 100% 기준
+  // 🆕 v7.21.0: 검증 완료마다 전 작품 의심도에 곱하는 감쇠 계수(자기보정 — 드리프트/폭주 방지).
+  //   1=감쇠 없음(구 동작). 검증=시간 경과 신호로 보고, 갱신 안 된 누적 증거를 점감.
+  decay: 0.85,
 };
 let globalSuspicionConfig = { ...DEFAULT_SUSPICION_CONFIG };
 // 민감도 프리셋 — 설정 UI 빠른 적용용
 const SUSPICION_PRESETS = {
-  conservative: { cap: 20, moveBase: 0.3, moveWindow: 4, matchBase: 0.15, upsetBase: 0.5, upsetPerGap: 0.12, checkLine: 8 },
+  conservative: { cap: 20, moveBase: 0.3, moveWindow: 4, matchBase: 0.15, upsetBase: 0.5, upsetPerGap: 0.12, checkLine: 8, decay: 0.8 },
   balanced:     { ...DEFAULT_SUSPICION_CONFIG },
-  sensitive:    { cap: 20, moveBase: 1.2, moveWindow: 6, matchBase: 0.5, upsetBase: 1.6, upsetPerGap: 0.35, checkLine: 5 },
+  sensitive:    { cap: 20, moveBase: 1.2, moveWindow: 6, matchBase: 0.5, upsetBase: 1.6, upsetPerGap: 0.35, checkLine: 5, decay: 0.92 },
 };
 
 // 누적 증분 쿼리 (0~CAP clamp). execBatch/exec 양쪽에서 사용.
@@ -28643,7 +28688,7 @@ async function setNovelTierAtomic(novelId, newTier) {
 
 // 🆕 v7.0: 수문장 식별 — 최근 N개 세션의 blocker_id 누적 통계
 // 5개 누적 시 수문장 후보로 제안
-async function getGatekeeperCandidates(threshold = 5) {
+async function getGatekeeperCandidates(threshold = GATEKEEPER_BLOCK_THRESHOLD) {
   try {
     const rows = await all(
       // 🔧 v7.10.0: result_action='moved' 한정 제거 — 즉시 막아 이동을 무산시킨(no_change) 세션도
@@ -39968,11 +40013,12 @@ function AppContent() {
     // 🆕 v7.20.11: 갤로핑+이진 탐색으로 다음 후보 결정 (연승/연패 시 1칸씩 선형 스캔하던 폭증 방지).
     //   현재 probe 결과로 경계 구간(lo/hi)을 갱신한 뒤 planVerificationProbe가 다음 위치/종료를 판정.
     const expected = suspicionType === "underrated" ? suspicionWon : !suspicionWon;
-    const prevSearch = verificationSession.search || { lo: -1, hi: candidates.length, jump: 1, phase: "gallop" };
+    const prevSearch = verificationSession.search || { lo: -1, hi: candidates.length, jump: 1, phase: "gallop", binaryCount: 0 };
     let sLo = prevSearch.lo, sHi = prevSearch.hi;
     if (expected) { if (currentIdx > sLo) sLo = currentIdx; }
     else { if (currentIdx < sHi) sHi = currentIdx; }
-    const plan = planVerificationProbe(sLo, sHi, prevSearch.jump, prevSearch.phase, candidates.length, newResponses.length);
+    // 🔧 v7.21.0: binaryCount 전달 — 갤로핑 예산 소진과 무관하게 이진 정제가 별도 예산으로 수렴
+    const plan = planVerificationProbe(sLo, sHi, prevSearch.jump, prevSearch.phase, candidates.length, newResponses.length, prevSearch.binaryCount || 0);
 
     if (plan.stop) {
       // 시퀀스 종료 — finalize
@@ -39988,7 +40034,7 @@ function AppContent() {
       await loadRepositioningHistory(); // 🆕 v7.16.0: 방금 완료된 자동 조정을 이력에 즉시 반영
       // Stage 4: 수문장 후보 갱신 (5개 누적 시 모달 트리거)
       try {
-        const gks = await getGatekeeperCandidates(5);
+        const gks = await getGatekeeperCandidates(GATEKEEPER_BLOCK_THRESHOLD);
         setGatekeeperCandidates(gks);
         if (gks.length > 0 && !gatekeeperModalOpen) {
           // 자동으로는 띄우지 않음 — 헤더 인디케이터로만 표시 (사용자 클릭 시 모달)
@@ -40002,7 +40048,7 @@ function AppContent() {
         ...verificationSession,
         responses: newResponses,
         currentIdx: plan.nextIdx,
-        search: { lo: plan.lo, hi: plan.hi, jump: plan.jump, phase: plan.phase },
+        search: { lo: plan.lo, hi: plan.hi, jump: plan.jump, phase: plan.phase, binaryCount: plan.binaryCount || 0 },
       });
     }
     } finally {
@@ -40022,7 +40068,7 @@ function AppContent() {
   // 🆕 v7.0: 매칭 화면 진입 시 수문장 후보 사전 로드 (hybrid)
   useEffect(() => {
     if (screen === "match" && globalTierConfig.mode === "hybrid") {
-      getGatekeeperCandidates(5).then(setGatekeeperCandidates).catch(() => {});
+      getGatekeeperCandidates(GATEKEEPER_BLOCK_THRESHOLD).then(setGatekeeperCandidates).catch(() => {});
     }
   }, [screen, globalTierConfig.mode, verificationStats.resolved]);
 
@@ -47230,7 +47276,7 @@ async function importJSON() {
                                               // 사용자가 AI 제안 수락 = 결정 확정. 재검증 필요 시 🔍 flag로 명시 호출.
                                               await loadList(undefined, undefined, "v7-gatekeeper");
                                               await loadVerificationStats(); // 🆕 v7.0.3: pending 카운터 즉시 갱신
-                                              const gks = await getGatekeeperCandidates(5);
+                                              const gks = await getGatekeeperCandidates(GATEKEEPER_BLOCK_THRESHOLD);
                                               setGatekeeperCandidates(gks);
                                             } catch (e) { console.warn(e); }
                                             finally { gatekeeperRespondingRef.current = false; } // 🆕 v7.0.6
@@ -47266,7 +47312,7 @@ async function importJSON() {
                                               // 🆕 v7.4.13 (F1): 재트리거 enqueueVerification 호출 제거
                                               await loadList(undefined, undefined, "v7-gatekeeper");
                                               await loadVerificationStats(); // 🆕 v7.0.3
-                                              const gks = await getGatekeeperCandidates(5);
+                                              const gks = await getGatekeeperCandidates(GATEKEEPER_BLOCK_THRESHOLD);
                                               setGatekeeperCandidates(gks);
                                             } catch (e) { console.warn(e); }
                                             finally { gatekeeperRespondingRef.current = false; } // 🆕 v7.0.6
