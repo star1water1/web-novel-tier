@@ -2,9 +2,19 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.20.9 (순위탭(rank) 카드에도 주요 태그 적용 — v7.20.8 홈탭 누락 보완)      ║
+ * ║  버전: 7.20.10 (순위탭 이미지 export에도 주요 태그 포함 — 높이 추정 동기화)        ║
  * ║  최종 수정: 2026-06-17                                                        ║
  * ║  총 라인 수: 약 58,900줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.20.10 순위탭 export 이미지에도 주요 태그 (2026-06-17)                        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ v7.20.9는 export 캡처 중 태그 줄을 숨겼으나(높이 추정 회귀 우려), 사용자 요청으로 ║
+ * ║ 내보낸 이미지에도 포함. estimateCardHeight에 hybrid/manual 태그 줄 +22dp를        ║
+ * ║ 동일 조건(대장르/부장르 제외 후 태그 존재)으로 추가 → predictExportRisk 청크      ║
+ * ║ 분할/실패 예측이 늘어난 높이를 정확히 반영(카드 우측·하단 잘림 방지). 렌더의      ║
+ * ║ !isExportRendering 게이트 제거. ⚠️ 렌더 조건과 추정 조건은 항상 일치 유지.        ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -28420,6 +28430,7 @@ function computeSuspicionLevel(novel) {
 //  - 외곽: padding 14×2 + border 2×2 + marginBottom 10 = 42dp
 //  - 내부 row: cover 77dp(=55*1.4) vs 4줄 텍스트 ~88dp 중 max = 88dp
 //  - awards row: parseAwards 결과 있을 때만 +24dp
+//  - 🆕 v7.20.10: hybrid/manual '주요 태그' 줄(렌더 시) +22dp
 function estimateCardHeight(item, awardSystemSettings) {
   const FRAME_DP = 42;
   const BASE_INNER_DP = 88;
@@ -28429,7 +28440,17 @@ function estimateCardHeight(item, awardSystemSettings) {
       if (parseAwards(item.awards, awardSystemSettings).length > 0) extra += 24;
     } catch { /* parseAwards 예외 시 awards 무가산 */ }
   }
-  return FRAME_DP + BASE_INNER_DP + extra; // 130dp 기본 / 154dp awards 포함
+  // 🆕 v7.20.10: hybrid/manual은 ELO 줄 대신 '주요 태그' 줄이 추가될 수 있음 → 높이 +22dp.
+  //   ⚠️ rank 카드 렌더의 rankTopTags 조건(대장르/부장르 제외 후 태그 존재)과 반드시 동일하게 유지.
+  if ((globalTierConfig.mode === "hybrid" || globalTierConfig.mode === "manual") && item?.tags) {
+    const shownGenres = new Set(
+      [...String(item.major_genre || "").split(","), ...String(item.sub_genre || "").split(",")]
+        .map(s => s.trim()).filter(Boolean)
+    );
+    const hasTagLine = item.tags.split(",").map(t => t.trim()).some(t => t && !shownGenres.has(t));
+    if (hasTagLine) extra += 22;
+  }
+  return FRAME_DP + BASE_INNER_DP + extra; // 130dp 기본 / +awards 24 / +태그 22
 }
 
 // 🆕 v7.4.11: N별 export 실패 사전 예측. Android bitmap 한계(8192px) 대비 청크 최대 height 시뮬레이션.
@@ -45376,10 +45397,10 @@ async function importJSON() {
                   }
 
                   // 🆕 v7.20.8: hybrid/manual은 ELO 자리 대신 '주요 태그'를 표시(대장르/부장르 중복 제외, 상위 4개).
-                  //   export 캡처 중엔 카드 높이 추정(EXPORT_CARDS_PER_IMAGE chunking) 정합을 위해 미표시.
+                  //   🔧 v7.20.10: export 이미지에도 포함 — estimateCardHeight가 +22dp로 동일 조건 반영(높이 정합).
                   const isTierModeRank = globalTierConfig.mode === "hybrid" || globalTierConfig.mode === "manual";
                   let rankTopTags = [];
-                  if (isTierModeRank && !isExportRendering && item.tags) {
+                  if (isTierModeRank && item.tags) {
                     const shownGenres = new Set(
                       [...String(item.major_genre || "").split(","), ...String(item.sub_genre || "").split(",")]
                         .map(s => s.trim()).filter(Boolean)
