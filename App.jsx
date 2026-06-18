@@ -2,9 +2,32 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.20.12 (수동 모드 '비교로 배치' — 이진 삽입 도구로 하이브리드와 기능 동등화)║
- * ║  최종 수정: 2026-06-17                                                        ║
- * ║  총 라인 수: 약 59,100줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 7.21.0 (전면 기능검수 P0 — 데이터 무결성·안전망 5건 일괄 수정)         ║
+ * ║  최종 수정: 2026-06-18                                                        ║
+ * ║  총 라인 수: 약 59,200줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🐛 v7.21.0 전면 기능검수 P0 — 데이터 무결성·안전망 (2026-06-18)                   ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [배경] 코드 전반 기능검수에서 '조용한 데이터 손상/소실' 부류 5건 우선 수정.       ║
+ * ║ [#1 티어 삭제 고아화] 티어 에디터 삭제가 config만 갱신 → 그 키의 manual_tier가    ║
+ * ║   유령 그룹으로 잔류(배치/순위 누락). 프리셋 전환과 동일 migrateTierKey 패턴으로  ║
+ * ║   novels·planned_novels를 인접 생존 티어로 이전 + rebalanceTierOrder.            ║
+ * ║ [#2 ratio 이중 카운트] computeRatioTierMap이 전 작품을 rating으로 세는데          ║
+ * ║   getDisplayTier는 ratio에서도 manual_tier 우선 → 핀 작품이 두 자리 점유(% 위반).║
+ * ║   핀 작품을 풀에서 분리하고 각 티어 정원에서 핀 수 차감 → 미배정작만 채움.        ║
+ * ║ [#3 슬롯 의심도 누수] 빈 슬롯(설정 null) 전환 시 globalSuspicionConfig 리셋        ║
+ * ║   블록을 건너뛰어 이전 슬롯 계수 잔류 → globalTierConfig처럼 무조건 선리셋.       ║
+ * ║ [#4 작품 삭제 되돌리기] removeNovel이 pushUndo 미호출(케이스는 dead code)이라      ║
+ * ║   삭제가 비가역 → 삭제 전 전체 행+매치 스냅샷, undo 'novel_delete'가 작품+매치     ║
+ * ║   복원 후 rebuildAllFromMatches로 ELO 정합. (갤러리/명대사 이미지 파일은 물리     ║
+ * ║   삭제되어 복구 불가 — 한계 명시.)                                               ║
+ * ║ [#5 고아 커스텀 수상] 수상이 {year,type}만 저장 + 메타는 슬롯별 정의에서 해석 →   ║
+ * ║   정의 소실 시 parseAwards가 통째 누락(표시·집계 불가). 수여 시 메타 스냅샷       ║
+ * ║   (n/c/i) 동봉 + parseAwards 수용 + resolveAwardMeta 단일 리졸버(라이브→레거시→   ║
+ * ║   스냅샷)로 카드 배지·수상 결과·고아 병합 모두 자기서술 표시.                     ║
+ * ║ [검증] esbuild JSX 파싱 통과. (이번 빌드는 P0만 — P1 이후 후속 커밋)             ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -15047,6 +15070,8 @@ function parseAwards(json, awardSystemSettings = null) {
         // (이전: AwardsScreen 18483/18501에서 award.year === Number(...) 비교 시 string year 항상 false → 수상작 미표시)
         year: Number(a.year) || 0,
         type: a.type,
+        // 🆕 v7.21.0: 메타 스냅샷(name/color/icon) 보존 — 정의가 사라진 고아 상의 자기서술용
+        n: a.n, c: a.c, i: a.i,
       }))
       .filter((a) => {
         if (!a.year || !a.type) return false;
@@ -15056,11 +15081,26 @@ function parseAwards(json, awardSystemSettings = null) {
           if (found) return true;
         }
         // 레거시 AWARD_META에서 찾기
-        return !!AWARD_META[a.type];
+        if (AWARD_META[a.type]) return true;
+        // 🆕 v7.21.0: 정의/레거시가 없어도 스냅샷이 있으면 표시 (고아 상 복구 — 이전엔 통째 누락)
+        return !!(a.n || a.c || a.i);
       });
   } catch {
     return [];
   }
+}
+
+// 🆕 v7.21.0: 수상 메타 해석 단일 진입점 — 라이브 정의 → 레거시 AWARD_META → 엔트리 스냅샷(고아).
+//   각 표시 지점이 제각각 폴백하던 것을 통일. 셋 다 없으면 null(표시 측이 연도만이라도 처리).
+function resolveAwardMeta(a, awardSystemSettings) {
+  if (!a || !a.type) return null;
+  if (awardSystemSettings?.yearlyAwards?.[a.year]) {
+    const found = awardSystemSettings.yearlyAwards[a.year].find(aw => aw.id === a.type);
+    if (found) return { label: found.name, color: found.color, icon: found.icon };
+  }
+  if (AWARD_META[a.type]) return AWARD_META[a.type];
+  if (a.n || a.c || a.i) return { label: a.n || a.type, color: a.c || "#6b7280", icon: a.i || "🏆" };
+  return null;
 }
 
 // 수상 뱃지 컴포넌트 (개선)
@@ -15071,14 +15111,8 @@ const AwardsRow = memo(({ awardsJson, awardSystemSettings }) => {
   return (
     <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 6 }}>
       {items.map((a, idx) => {
-        // 동적 설정에서 메타 찾기
-        let meta = null;
-        if (awardSystemSettings?.yearlyAwards?.[a.year]) {
-          const found = awardSystemSettings.yearlyAwards[a.year].find(aw => aw.id === a.type);
-          if (found) meta = { label: found.name, color: found.color, icon: found.icon };
-        }
-        // 없으면 레거시에서 찾기
-        if (!meta) meta = AWARD_META[a.type];
+        // 🆕 v7.21.0: 통합 리졸버 (라이브 정의 → AWARD_META → 고아 스냅샷)
+        const meta = resolveAwardMeta(a, awardSystemSettings);
         if (!meta) return null;
         
         return (
@@ -22376,7 +22410,8 @@ const AwardsScreen = memo(({
       for (const award of awards) {
         if (award.year === Number(awardSelectedYear)) {
           if (!winners[award.type]) winners[award.type] = [];
-          winners[award.type].push({ ...novel, awardType: award.type });
+          // 🆕 v7.21.0: 엔트리 메타 스냅샷(n/c/i) 운반 — displayAwards 고아 병합이 자기서술 메타 사용
+          winners[award.type].push({ ...novel, awardType: award.type, _awMeta: (award.n || award.c || award.i) ? { n: award.n, c: award.c, i: award.i } : null });
         }
       }
     }
@@ -22400,7 +22435,9 @@ const AwardsScreen = memo(({
     const metaMap = buildAwardMetaMap(awardSystemSettings);
     for (const type of Object.keys(awardWinners)) {
       if (known.has(type) || (awardWinners[type] || []).length === 0) continue;
-      const meta = metaMap[type] || AWARD_META[type] || {};
+      // 🆕 v7.21.0: 정의/레거시 없으면 수상작에 운반된 메타 스냅샷으로 폴백(고아 상 자기서술)
+      const snap = (awardWinners[type] || []).find(w => w._awMeta)?._awMeta;
+      const meta = metaMap[type] || AWARD_META[type] || (snap ? { label: snap.n || type, color: snap.c, icon: snap.i } : {});
       result.push({
         id: type,
         name: meta.label || type,
@@ -27608,21 +27645,38 @@ function computeRatioTierMap(novels, cfg) {
   if (!cfg || !Array.isArray(cfg.tiers) || cfg.tiers.length === 0) return map;
   if (!Array.isArray(novels) || novels.length === 0) return map;
 
-  // 정렬 가능한 작품만 (rating 숫자)
-  const sorted = novels
-    .filter(n => n && n.id)
-    .map(n => ({ id: n.id, rating: Number(n.rating) || 0 }))
-    .sort((a, b) => b.rating - a.rating);
+  const tierKeys = cfg.tiers.map(t => t.key);
+  const tierKeySet = new Set(tierKeys);
 
-  const total = sorted.length;
+  // 🐛 v7.21.0: 수동 배정작(유효 manual_tier)을 비율 풀에서 분리.
+  //   [이전 버그] 전 작품을 rating으로 세서 정원을 잡는데 getDisplayTier는 ratio에서도
+  //   manual_tier를 우선 반환 → 핀 작품이 (manual 티어 + rating-rank 슬롯) 두 자리를
+  //   차지(이중 카운트). 정원 1칸짜리 티어를 2작품이 점유, % 계약 위반.
+  //   [수정] 핀 작품은 풀에서 제외(map 미등록 — getDisplayTier가 manual_tier 우선 반환),
+  //   각 티어 정원에서 핀 수만큼 차감해 미배정작만 채운다. 비율 기준(total)은 전체 유지.
+  const pinnedCountByTier = new Array(cfg.tiers.length).fill(0);
+  const unpinned = [];
+  let total = 0;
+  for (const n of novels) {
+    if (!n || !n.id) continue;
+    total++;
+    const mt = n.manual_tier;
+    if (mt && tierKeySet.has(mt)) {
+      const ti = tierKeys.indexOf(mt);
+      if (ti >= 0) pinnedCountByTier[ti]++;
+    } else {
+      unpinned.push({ id: n.id, rating: Number(n.rating) || 0 });
+    }
+  }
   if (total === 0) return map;
+  unpinned.sort((a, b) => b.rating - a.rating);
 
   // ratio 합계 — 0이면 균등 분배
   const ratios = cfg.tiers.map(t => Math.max(0, Number(t.ratio) || 0));
   let sumR = ratios.reduce((a, b) => a + b, 0);
   if (sumR <= 0) sumR = cfg.tiers.length, ratios.fill(1);
 
-  // 각 티어 누적 경계 (count 기준)
+  // 각 티어 누적 경계 (전체 기준)
   // 🔧 v7.14.0 (P1): 작품 수가 적을 때 Math.round 단독이면 상위 티어 누적 share가 0.5 미만→0으로
   //   반올림되어 최상위 티어가 비고 #1 작품이 S에 못 들어가던 버그(예: 3작품·S=10% → S 비고 #1→A).
   //   티어는 '순위'이기도 하므로, 비율>0인 티어는 작품이 남아있는 한 상위부터 최소 1개씩 채운다.
@@ -27640,12 +27694,26 @@ function computeRatioTierMap(novels, cfg) {
   // 마지막 경계는 항상 total
   cumCounts[cumCounts.length - 1] = total;
 
-  // 위치(0-indexed) → 티어 인덱스. cumCounts는 비감소 + 마지막=total 보장이라 항상 유효.
+  // 🐛 v7.21.0: 전체 티어 정원 → 핀 수 차감 = 미배정작 정원 → 미배정 누적 경계.
+  //   (티어에 비율 정원보다 핀이 많으면 정원 0으로 클램프, 넘친 미배정작은 마지막 티어가 흡수)
+  const unpinnedCum = [];
+  let prevBoundary = 0;
+  let uacc = 0;
+  for (let t = 0; t < cumCounts.length; t++) {
+    const fullCap = cumCounts[t] - prevBoundary;
+    prevBoundary = cumCounts[t];
+    uacc += Math.max(0, fullCap - pinnedCountByTier[t]);
+    unpinnedCum.push(uacc);
+  }
+  const uTotal = unpinned.length;
+  if (unpinnedCum.length > 0) unpinnedCum[unpinnedCum.length - 1] = uTotal; // 나머지 흡수
+
+  // 위치(0-indexed) → 티어 인덱스. unpinnedCum은 비감소 + 마지막=uTotal 보장이라 항상 유효.
   const tierForPos = (pos) => {
-    for (let t = 0; t < cumCounts.length; t++) {
-      if (pos < cumCounts[t]) return t;
+    for (let t = 0; t < unpinnedCum.length; t++) {
+      if (pos < unpinnedCum[t]) return t;
     }
-    return cumCounts.length - 1;
+    return unpinnedCum.length - 1;
   };
 
   // 🔧 v7.6.0 사후검토: 동점 그룹 단위로 묶어 "그룹 중앙 위치"의 티어를 그룹 전체에 부여.
@@ -27653,12 +27721,12 @@ function computeRatioTierMap(novels, cfg) {
   //  연쇄적으로 0번 작품의 S 티어가 전체로 전파되어 "전원 S" 붕괴. 중앙 위치 방식은
   //  동일 레이팅=동일 티어 불변식을 유지하면서 전원 동률 시 중앙 티어로 수렴시킨다.)
   let i = 0;
-  while (i < total) {
+  while (i < uTotal) {
     let j = i;
-    while (j + 1 < total && sorted[j + 1].rating === sorted[i].rating) j++;
+    while (j + 1 < uTotal && unpinned[j + 1].rating === unpinned[i].rating) j++;
     const mid = Math.floor((i + j) / 2);
     const key = cfg.tiers[tierForPos(mid)].key;
-    for (let k = i; k <= j; k++) map.set(sorted[k].id, key);
+    for (let k = i; k <= j; k++) map.set(unpinned[k].id, key);
     i = j + 1;
   }
   return map;
@@ -32536,6 +32604,10 @@ function AppContent() {
       // 🔧 v6.0.1: globalTierConfig + lookup 리셋 (이전 슬롯 커스텀 프리셋 잔류 방지)
       globalTierConfig = { ...DEFAULT_TIER_SYSTEM_CONFIG };
       rebuildTierLookup(globalTierConfig);
+      // 🐛 v7.21.0: globalSuspicionConfig 무조건 리셋 — 빈 슬롯(설정 null)으로 전환 시
+      //   아래 has-settings 블록(globalSuspicionConfig 동기화)을 건너뛰어 이전 슬롯의
+      //   의심도 계수가 잔류하던 누수 차단. globalTierConfig와 동일하게 선(先)리셋.
+      globalSuspicionConfig = { ...DEFAULT_SUSPICION_CONFIG };
       // 🆕 플랫폼 레지스트리 리셋 (이전 슬롯 커스텀 플랫폼 잔류 방지)
       PLATFORM_OPTIONS = [...FACTORY_PLATFORM_OPTIONS];
       PLATFORM_URLS = { ...FACTORY_PLATFORM_URLS };
@@ -37501,6 +37573,17 @@ function AppContent() {
              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
             [n.id, n.title, n.author, n.tags, n.platforms, n.note, n.read_count, n.rating, n.rd, n.wins, n.losses, n.match_count, n.tier, n.created_at, n.awards, n.total_episodes, n.status, n.pinned, n.cover_image, n.link, n.work_status, n.read_count_updated_at, n.major_genre, n.sub_genre, n.gaiden_status, n.gaiden_read_count, n.gaiden_total_episodes, n.manual_tier, Number(n.manual_order) || 0, n.reread_count || 1, n.tag_data || "", n.aliases || "", n.memorable_quote || "", Number(n.start_year) || 0, Number(n.end_year) || 0, Number(n.match_ban) || 0]
           );
+          // 🆕 v7.21.0: 삭제 시 함께 지워진 매치 복원 → rebuildAllFromMatches로 ELO 정합 회복
+          //   (매치 미복원 시 복원작은 stored rating만 갖고 다음 rebuild에서 1500으로 초기화됨)
+          if (Array.isArray(item.payload.matches) && item.payload.matches.length > 0) {
+            for (const m of item.payload.matches) {
+              await exec(
+                `INSERT OR IGNORE INTO matches (id,a_id,b_id,winner_id,decided_by,gap_when_matched,k_factor_used,created_at) VALUES (?,?,?,?,?,?,?,?);`,
+                [m.id, m.a_id, m.b_id, m.winner_id, m.decided_by, m.gap_when_matched ?? null, m.k_factor_used ?? null, m.created_at]
+              );
+            }
+            await rebuildAllFromMatches(tagAttributes);
+          }
           // 🔧 v3.6.2: 복원된 작품의 표지를 라이브러리에서 "사용중"으로 동기화
           if (n.cover_image) {
             await applyNovelCover(n.id, n.cover_image, null);
@@ -38307,8 +38390,13 @@ function AppContent() {
           setIsLoading(true);
           try {
             // 🖼️ v3.4.5: 삭제 전에 해당 작품의 표지 + 📷 v6.0.1: 명대사 이미지 가져오기
-            const novel = await first("SELECT cover_image, memorable_quote FROM novels WHERE id=?", [id]);
+            // 🆕 v7.21.0: 되돌리기용 전체 행 + 매치 스냅샷 (SELECT * → undo 'novel_delete'가 작품+ELO 복원)
+            const novel = await first("SELECT * FROM novels WHERE id=?", [id]);
             const coverPath = novel?.cover_image;
+            let _undoMatches = [];
+            try {
+              _undoMatches = await all("SELECT * FROM matches WHERE a_id=? OR b_id=?", [id, id]);
+            } catch (e) { console.warn("removeNovel 매치 스냅샷 실패:", e?.message); }
             
             // 🔄 v3.5.0: 상태 동기화 - 삭제 대상과 관련된 모든 상태 초기화
             if (pair && (pair.A?.id === id || pair.B?.id === id)) {
@@ -38391,6 +38479,10 @@ function AppContent() {
             await rebuildAllFromMatches(tagAttributes);
             await loadList(undefined, undefined, "rebuild");
             await loadGalleryImages(); // 🎨 v3.8.0
+            // 🆕 v7.21.0: 삭제 되돌리기 — 작품 행 + 매치 복원 (갤러리/명대사 이미지 파일은 물리 삭제되어 복구 불가)
+            if (novel) {
+              pushUndo('novel_delete', { novel, matches: _undoMatches }, `'${novel.title}' 삭제`);
+            }
           } catch (e) {
             console.warn("removeNovel 오류:", e);
             Alert.alert("오류", "삭제 중 문제가 발생했습니다: " + (e.message || e));
@@ -46760,7 +46852,16 @@ async function importJSON() {
               }
 
               const doGive = async () => {
-                currentAwards.push({ year: Number(year), type: awardId });
+                // 🆕 v7.21.0: 메타 스냅샷(n/c/i) 동봉 — 정의가 다른 슬롯/삭제로 사라져도
+                //   상이 자기서술로 표시·집계되도록(고아 방지). awardDef(라이브) → AWARD_META(레거시) 순.
+                const _src = awardDef || AWARD_META[awardId];
+                const _entry = { year: Number(year), type: awardId };
+                if (_src) {
+                  _entry.n = _src.name || _src.label || awardId;
+                  if (_src.color) _entry.c = _src.color;
+                  if (_src.icon) _entry.i = _src.icon;
+                }
+                currentAwards.push(_entry);
                 const newAwardsJson = JSON.stringify(currentAwards);
                 await exec("UPDATE novels SET awards=? WHERE id=?", [newAwardsJson, novelId]);
                 await loadList(undefined, undefined, "update");
@@ -52541,12 +52642,32 @@ async function importJSON() {
                           {tiersForUI.length > 2 && (
                             <TouchableOpacity
                               onPress={() => {
-                                Alert.alert("삭제", `"${t.label}" 티어를 삭제할까요?`, [
+                                Alert.alert("삭제", `"${t.label}" 티어를 삭제할까요?\n\n이 티어에 배정된 작품은 인접 티어로 자동 이동돼요.`, [
                                   { text: "취소" },
-                                  { text: "삭제", style: "destructive", onPress: () => {
+                                  { text: "삭제", style: "destructive", onPress: async () => {
+                                    const deletedKey = t.key;
                                     const newTiers = tiersForUI.filter((_, i) => i !== idx);
                                     const newDefault = newTiers[newTiers.length - 1]?.key || "C";
-                                    saveAppSettings({ tierSystemConfig: { ...tsc, tiers: newTiers, defaultTier: newDefault } });
+                                    const oldConfig = { ...tsc };
+                                    const newConfig = { ...tsc, tiers: newTiers, defaultTier: newDefault };
+                                    // 🐛 v7.21.0: 티어 삭제 시 manual_tier 고아화 방지 — 삭제 키를 가진
+                                    //   novels/planned_novels를 인접 생존 티어로 마이그레이션 + reflow.
+                                    //   (이전: config만 갱신 → 고아 manual_tier가 유령 그룹으로 잔류,
+                                    //    배치/순위에서 누락. 프리셋 전환과 동일한 migrateTierKey 패턴 적용)
+                                    try {
+                                      const mapped = migrateTierKey(deletedKey, oldConfig, newConfig);
+                                      if (mapped) {
+                                        await execBatch([
+                                          { sql: "UPDATE novels SET manual_tier=? WHERE manual_tier=?", params: [mapped, deletedKey] },
+                                          { sql: "UPDATE planned_novels SET manual_tier=? WHERE manual_tier=?", params: [mapped, deletedKey] },
+                                        ]);
+                                        await rebalanceTierOrder(mapped);
+                                      }
+                                    } catch (e) {
+                                      console.warn("[v7.21.0] 티어 삭제 마이그레이션 실패:", e?.message);
+                                    }
+                                    saveAppSettings({ tierSystemConfig: newConfig });
+                                    await loadList(undefined, undefined, "tier_delete");
                                   }},
                                 ]);
                               }}
