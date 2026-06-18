@@ -2,9 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.20.5 (hybrid/manual 모드에서 ELO 표시 누수 제거 — 1차: 홈/순위/정렬/비교) ║
+ * ║  버전: 7.20.6 (hybrid/manual ELO 표시 누수 제거 2차 — 취향분석/매칭/태그매니저)    ║
  * ║  최종 수정: 2026-06-17                                                        ║
- * ║  총 라인 수: 약 58,870줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 58,900줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.20.6 hybrid/manual ELO 표시 누수 제거 (2차) (2026-06-17)                    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [범위] 취향분석 탭 점수(숫자) → 선호도 티어 라벨 통일 + 매칭/태그매니저 잔여 정리. ║
+ * ║ [신규] prefScoreLabel(score, config, withUnit) — match는 "{n}점"/"{n}", tier는    ║
+ * ║   prefScore→티어 라벨("B"/"B~A"). formatPrefScore의 간결 인라인 버전.             ║
+ * ║ [취향분석] 장르/부장르/카테고리/조합/태그/작가/그룹비교/스펙트럼/추세/차트 라벨의 ║
+ * ║   avgRating 숫자(=mode-aware prefScore)를 tier 모드에서 라벨로 표시. 평균 레이팅   ║
+ * ║   → '평균 선호도'. 작가 편향(델타)·그룹 편차(stdDev)·조합 델타는 tier에서 질적     ║
+ * ║   표현으로(점수 델타 숨김). 막대 높이·색 임계는 상대값이라 유지.                  ║
+ * ║ [매칭 화면] manual 모드 대결 카드의 레이팅/RD/전적/승률 줄 숨김(티어는 유지.       ║
+ * ║   hybrid는 HybridVerificationView라 애초 미표시).                                ║
+ * ║ [태그 매니저] '평균 레이팅' 통계 셀을 hybrid/manual에서 숨김(ELO 미사용).          ║
+ * ║ [검증] esbuild JSX 파싱 통과.                                                    ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -18083,12 +18099,15 @@ const TagEditModal = memo(({
                     </Text>
                     <Text style={{ fontSize: 10, color: C.sub }}>평균 농도</Text>
                   </View>
+                  {/* 🔧 v7.20.6: 평균 레이팅(ELO)은 match/ratio 전용 — hybrid/manual은 미사용이라 셀 숨김 */}
+                  {(globalTierConfig.mode !== "hybrid" && globalTierConfig.mode !== "manual") && (
                   <View style={{ flex: 1, backgroundColor: C.bg, padding: 10, borderRadius: 10, alignItems: "center" }}>
                     <Text style={{ fontSize: 18, fontWeight: "800", color: "#f59e0b" }}>
                       {tagUsageStats.avgRating ? Math.round(tagUsageStats.avgRating).toLocaleString() : "-"}
                     </Text>
                     <Text style={{ fontSize: 10, color: C.sub }}>평균 레이팅</Text>
                   </View>
+                  )}
                 </View>
               </View>
             )}
@@ -25249,8 +25268,9 @@ const TasteAnalysisScreen = memo(({
   // 차트 데이터 준비
   const genreChartData = majorGenreAnalysis.slice(0, 8).map(g => ({
     label: g.genre,
-    value: g.avgRating - 1400, // 1400 기준으로 표시
-    displayValue: g.avgRating.toFixed(0),
+    value: g.avgRating - 1400, // 1400 기준으로 표시 (막대 높이는 상대값이라 모드 무관 유지)
+    displayValue: globalTierConfig.mode !== "match" ? prefScoreLabel(g.avgRating, globalTierConfig, false) : g.avgRating.toFixed(0), // 🔧 v7.20.6
+
     color: g.avgRating >= 1700 ? "#22c55e" : g.avgRating >= 1550 ? "#3b82f6" : "#f59e0b",
   }));
 
@@ -25413,7 +25433,7 @@ const TasteAnalysisScreen = memo(({
               borderRadius: 12 
             }}>
               <Text style={{ color: C.primary, fontSize: 12, fontWeight: "700" }}>
-                {g.genre} ({g.avgRating.toFixed(0)})
+                {g.genre} ({prefScoreLabel(g.avgRating, globalTierConfig, false)})
               </Text>
             </View>
           ))}
@@ -25478,7 +25498,7 @@ const TasteAnalysisScreen = memo(({
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
                 {[
                   { label: "총 작품", value: basicStats.total },
-                  { label: "평균 레이팅", value: basicStats.avgRating.toFixed(0) },
+                  { label: isTierMode ? "평균 선호도" : "평균 레이팅", value: isTierMode ? formatPrefScore(basicStats.avgRating, globalTierConfig) : basicStats.avgRating.toFixed(0) },
                   { label: "총 읽은 회차", value: basicStats.totalReadCount.toLocaleString() },
                   { label: "평균 읽은 회차", value: basicStats.avgReadCount.toFixed(0) },
                   { label: "다회독 작품", value: basicStats.rereadNovelCount || 0 },
@@ -25537,7 +25557,7 @@ const TasteAnalysisScreen = memo(({
                     </Text>
                   </View>
                   <View style={{ alignItems: "flex-end" }}>
-                    <Text style={{ color: C.text, fontWeight: "800" }}>{g.avgRating.toFixed(0)}</Text>
+                    <Text style={{ color: C.text, fontWeight: "800" }}>{prefScoreLabel(g.avgRating, globalTierConfig, false)}</Text>
                     {!isTierMode && <Text style={{ color: C.sub, fontSize: 11 }}>승률 {(g.winRate * 100).toFixed(0)}%</Text>}
                   </View>
                 </View>
@@ -25562,7 +25582,7 @@ const TasteAnalysisScreen = memo(({
                 {i + 1}. {g.genre} ({g.count}작)
               </Text>
               <Text style={{ color: g.avgRating >= 1700 ? C.ok : C.text, fontWeight: "600", fontSize: 13 }}>
-                {g.avgRating.toFixed(0)}
+                {prefScoreLabel(g.avgRating, globalTierConfig, false)}
               </Text>
             </View>
           ))}
@@ -25595,7 +25615,7 @@ const TasteAnalysisScreen = memo(({
                   </Text>
                 </View>
                 <Text style={{ color: cat.avgRating >= 1700 ? C.ok : C.text, fontWeight: "700", fontSize: 13 }}>
-                  {cat.avgRating.toFixed(0)}
+                  {prefScoreLabel(cat.avgRating, globalTierConfig, false)}
                 </Text>
               </View>
             ))}
@@ -25624,7 +25644,7 @@ const TasteAnalysisScreen = memo(({
               </View>
               <View style={{ flexDirection: "row", alignItems: "center" }}>
                 <Text style={{ color: C.sub, fontSize: 12, marginRight: 6 }}>{c.count}작</Text>
-                <Text style={{ color: C.ok, fontWeight: "700" }}>{c.avgRating.toFixed(0)}</Text>
+                <Text style={{ color: C.ok, fontWeight: "700" }}>{prefScoreLabel(c.avgRating, globalTierConfig, false)}</Text>
               </View>
             </View>
           ))}
@@ -25666,7 +25686,7 @@ const TasteAnalysisScreen = memo(({
                       {preference === "A" && " ✓"}
                     </Text>
                     <Text style={{ color: C.sub, fontSize: 10 }}>
-                      {groupA.stats.count}작 · {groupA.stats.avgRating.toFixed(0)}점
+                      {groupA.stats.count}작 · {prefScoreLabel(groupA.stats.avgRating, globalTierConfig, true)}
                     </Text>
                   </View>
                   
@@ -25684,7 +25704,7 @@ const TasteAnalysisScreen = memo(({
                       {groupB.tags.slice(0, 2).join(", ")}
                     </Text>
                     <Text style={{ color: C.sub, fontSize: 10 }}>
-                      {groupB.stats.count}작 · {groupB.stats.avgRating.toFixed(0)}점
+                      {groupB.stats.count}작 · {prefScoreLabel(groupB.stats.avgRating, globalTierConfig, true)}
                     </Text>
                   </View>
                 </View>
@@ -25753,7 +25773,7 @@ const TasteAnalysisScreen = memo(({
                   </View>
                   <View style={{ alignItems: "flex-end" }}>
                     <Text style={{ color: C.ok, fontWeight: "800", fontSize: 16 }}>
-                      {item.avgRating.toFixed(0)}
+                      {prefScoreLabel(item.avgRating, globalTierConfig, false)}
                     </Text>
                     <Text style={{ color: C.sub, fontSize: 10 }}>평균</Text>
                   </View>
@@ -25897,7 +25917,7 @@ const TasteAnalysisScreen = memo(({
                               fontSize: 11,
                               fontWeight: seg.range === coord.preferredSegment ? "800" : "400",
                             }}>
-                              {seg.novels.length > 0 ? seg.avgRating.toFixed(0) : "-"}
+                              {seg.novels.length > 0 ? prefScoreLabel(seg.avgRating, globalTierConfig, false) : "-"}
                             </Text>
                             <Text style={{ color: C.sub, fontSize: 9 }}>{seg.novels.length}작</Text>
                           </View>
@@ -26329,7 +26349,8 @@ const TasteAnalysisScreen = memo(({
                   </View>
                   
                   <Text style={{ color: C.sub, fontSize: 11, marginTop: 4 }}>
-                    평균 {group.avgRating.toFixed(0)}점 · 편차 ±{group.stdDev.toFixed(0)}점
+                    {/* 🔧 v7.20.6: tier 모드는 선호도 라벨(편차=점 단위라 tier에선 생략) */}
+                    {isTierMode ? formatPrefScore(group.avgRating, globalTierConfig) : `평균 ${group.avgRating.toFixed(0)}점 · 편차 ±${group.stdDev.toFixed(0)}점`}
                   </Text>
                   
                   {/* 상세 (펼침 시) */}
@@ -26347,7 +26368,7 @@ const TasteAnalysisScreen = memo(({
                             borderRadius: 6 
                           }}>
                             <Text style={{ color: C.text, fontSize: 11 }}>
-                              {isTagTitle(tag, tagAttributes) ? `📖 ${tag}` : tag} <Text style={{ fontWeight: "700" }}>{data.avgRating.toFixed(0)}</Text>
+                              {isTagTitle(tag, tagAttributes) ? `📖 ${tag}` : tag} <Text style={{ fontWeight: "700" }}>{prefScoreLabel(data.avgRating, globalTierConfig, false)}</Text>
                               <Text style={{ color: C.sub }}> ({data.count})</Text>
                             </Text>
                           </View>
@@ -26356,9 +26377,8 @@ const TasteAnalysisScreen = memo(({
                       
                       {!isConsistent && group.bestTag && group.worstTag && (
                         <Text style={{ color: C.warn, fontSize: 10, marginTop: 6, fontStyle: "italic" }}>
-                          💡 "{group.bestTag[0]}"({group.bestTag[1].avgRating.toFixed(0)})과 
-                          "{group.worstTag[0]}"({group.worstTag[1].avgRating.toFixed(0)}) 사이에 
-                          {(group.bestTag[1].avgRating - group.worstTag[1].avgRating).toFixed(0)}점 차이
+                          💡 "{group.bestTag[0]}"({prefScoreLabel(group.bestTag[1].avgRating, globalTierConfig, false)})과
+                          "{group.worstTag[0]}"({prefScoreLabel(group.worstTag[1].avgRating, globalTierConfig, false)}) 사이에 {isTierMode ? "선호 차이 큼" : `${(group.bestTag[1].avgRating - group.worstTag[1].avgRating).toFixed(0)}점 차이`}
                         </Text>
                       )}
                     </View>
@@ -26457,17 +26477,19 @@ const TasteAnalysisScreen = memo(({
             2작품 이상 읽은 작가 · 평점 편향 분석
           </Text>
           {loyalAuthors.slice(0, 7).map((a, i) => {
-            // 점수 편향 표시
-            const biasText = a.ratingBias > 0 
-              ? `+${a.ratingBias.toFixed(0)}점 고평가` 
-              : a.ratingBias < -10 
-                ? `${a.ratingBias.toFixed(0)}점 저평가`
-                : "평균 수준";
+            // 점수 편향 표시 — 🔧 v7.20.6: tier 모드는 점수 델타 대신 질적 표현
+            const biasText = isTierMode
+              ? (a.ratingBias > 10 ? "고평가 경향" : a.ratingBias < -10 ? "저평가 경향" : "평균 수준")
+              : (a.ratingBias > 0
+                  ? `+${a.ratingBias.toFixed(0)}점 고평가`
+                  : a.ratingBias < -10
+                    ? `${a.ratingBias.toFixed(0)}점 저평가`
+                    : "평균 수준");
             const biasColor = a.ratingBias > 20 ? C.ok : a.ratingBias < -20 ? C.warn : C.sub;
-            
-            // 작품 목록 (점수 포함)
-            const novelList = a.novels.slice(0, 3).map(n => 
-              typeof n === "object" ? `${n.title}(${n.rating.toFixed(0)})` : n
+
+            // 작품 목록 (점수 포함) — 🔧 v7.20.6: tier 모드는 티어 라벨
+            const novelList = a.novels.slice(0, 3).map(n =>
+              typeof n === "object" ? `${n.title}(${prefScoreLabel(n.rating, globalTierConfig, false)})` : n
             );
             
             return (
@@ -26487,8 +26509,8 @@ const TasteAnalysisScreen = memo(({
                     <Text style={{ color: C.text, fontWeight: "800", fontSize: 15 }}>{a.author}</Text>
                   </View>
                   <View style={{ flexDirection: "row", alignItems: "center" }}>
-                    <Text style={{ color: C.ok, fontWeight: "800", fontSize: 16 }}>{a.avgRating.toFixed(0)}</Text>
-                    <Text style={{ color: C.sub, fontSize: 12, marginLeft: 4 }}>점</Text>
+                    <Text style={{ color: C.ok, fontWeight: "800", fontSize: 16 }}>{prefScoreLabel(a.avgRating, globalTierConfig, false)}</Text>
+                    {!isTierMode && <Text style={{ color: C.sub, fontSize: 12, marginLeft: 4 }}>점</Text>}
                   </View>
                 </View>
                 
@@ -26607,7 +26629,7 @@ const TasteAnalysisScreen = memo(({
             <View style={{ flex: 1, backgroundColor: C.chip, padding: 10, borderRadius: 8 }}>
               <Text style={{ color: C.sub, fontSize: 11 }}>최근 3개월</Text>
               <Text style={{ color: C.text, fontWeight: "700" }}>{trendAnalysis.recent.count}작</Text>
-              <Text style={{ color: C.sub, fontSize: 11 }}>평균 {trendAnalysis.recent.avgRating.toFixed(0)}점</Text>
+              <Text style={{ color: C.sub, fontSize: 11 }}>{prefScoreLabel(trendAnalysis.recent.avgRating, globalTierConfig, true)}</Text>
               <Text style={{ color: C.primary, fontSize: 11, marginTop: 4 }}>
                 {trendAnalysis.recent.topGenres.join(", ") || "-"}
               </Text>
@@ -26615,7 +26637,7 @@ const TasteAnalysisScreen = memo(({
             <View style={{ flex: 1, backgroundColor: C.chip, padding: 10, borderRadius: 8 }}>
               <Text style={{ color: C.sub, fontSize: 11 }}>이전 기간</Text>
               <Text style={{ color: C.text, fontWeight: "700" }}>{trendAnalysis.older.count}작</Text>
-              <Text style={{ color: C.sub, fontSize: 11 }}>평균 {trendAnalysis.older.avgRating.toFixed(0)}점</Text>
+              <Text style={{ color: C.sub, fontSize: 11 }}>{prefScoreLabel(trendAnalysis.older.avgRating, globalTierConfig, true)}</Text>
               <Text style={{ color: C.sub, fontSize: 11, marginTop: 4 }}>
                 {trendAnalysis.older.topGenres.join(", ") || "-"}
               </Text>
@@ -26852,7 +26874,7 @@ const TasteAnalysisScreen = memo(({
                     alignItems: "center",
                   }}>
                     <Text style={{ color: "#fff", fontSize: 11, fontWeight: "700" }}>
-                      {pair.groupA.stats.avgRating.toFixed(0)}
+                      {prefScoreLabel(pair.groupA.stats.avgRating, globalTierConfig, false)}
                     </Text>
                   </View>
                   <View style={{
@@ -26862,7 +26884,7 @@ const TasteAnalysisScreen = memo(({
                     alignItems: "center",
                   }}>
                     <Text style={{ color: "#fff", fontSize: 11, fontWeight: "700" }}>
-                      {pair.groupB.stats.avgRating.toFixed(0)}
+                      {prefScoreLabel(pair.groupB.stats.avgRating, globalTierConfig, false)}
                     </Text>
                   </View>
                 </View>
@@ -28744,6 +28766,15 @@ function formatPrefScore(score, config) {
   return `평균 ${getTierLabel(tierOrder[lower], config)}~${getTierLabel(tierOrder[upper], config)}`;
 }
 
+// 🆕 v7.20.6: 취향분석 인라인 표시용 — match는 "{n}점"(withUnit) 또는 "{n}", tier 모드는
+//   prefScore를 티어 라벨("B" / "B~A")로. (hybrid/manual에서 선호도 점수를 ELO 숫자처럼
+//   보여주지 않도록 formatPrefScore와 동일 매핑을 간결 라벨로 제공.)
+function prefScoreLabel(score, config, withUnit = true) {
+  const mode = config?.mode || 'match';
+  if (mode === 'match') return withUnit ? `${Math.round(score)}점` : `${Math.round(score)}`;
+  return formatPrefScore(score, config).replace(/^평균\s*/, ""); // "B" 또는 "B~A"
+}
+
 /**
  * 🆕 v7.1: 엔티티×티어 스트라티피케이션 매트릭스
  * - getEntityKeys: (novel) => ["key1", ...] 또는 [{key, intensity}, ...]
@@ -30160,12 +30191,15 @@ function generateInsights(data) {
   // 작가 충성도
   if (loyalAuthors.length > 0) {
     const topAuthor = loyalAuthors[0];
-    hiddenPatterns.push(`'${topAuthor.author}' 작가의 작품을 ${topAuthor.count}개 읽으며 평균 ${topAuthor.avgRating.toFixed(0)}점`);
+    hiddenPatterns.push(`'${topAuthor.author}' 작가의 작품을 ${topAuthor.count}개 읽으며 평균 ${prefScoreLabel(topAuthor.avgRating, globalTierConfig)}`); // 🔧 v7.20.6
   }
   
   // 태그 시너지
   if (comboAnalysis.length > 0 && comboAnalysis[0].avgRating > basicStats.avgRating + 50) {
-    hiddenPatterns.push(`'${comboAnalysis[0].combo}' 조합에서 평균보다 +${(comboAnalysis[0].avgRating - basicStats.avgRating).toFixed(0)}점 높은 만족도`);
+    // 🔧 v7.20.6: tier 모드는 점수 델타 대신 질적 표현
+    hiddenPatterns.push(globalTierConfig.mode !== "match"
+      ? `'${comboAnalysis[0].combo}' 조합에서 평균보다 높은 만족도`
+      : `'${comboAnalysis[0].combo}' 조합에서 평균보다 +${(comboAnalysis[0].avgRating - basicStats.avgRating).toFixed(0)}점 높은 만족도`);
   }
   
   // 완결작 vs 연재중 선호
@@ -47532,7 +47566,8 @@ async function importJSON() {
                           </View>
                         </View>
                         
-                        {/* 스탯 */}
+                        {/* 스탯 — 🔧 v7.20.6: ELO는 match/ratio 전용 (manual 매칭 화면에선 숨김) */}
+                        {(globalTierConfig.mode !== "hybrid" && globalTierConfig.mode !== "manual") && (
                         <View style={{ flexDirection: "row", alignItems: "center" }}>
                           <Text style={{ color: C.ok, fontWeight: "800", fontSize: 15 }}>
                             {(Number(pair.A.rating) || 1500).toFixed(1)}
@@ -47541,6 +47576,7 @@ async function importJSON() {
                             RD {Math.round(pair.A.rd || 350)} · {pair.A.wins || 0}W/{pair.A.losses || 0}L · {getWinRate(pair.A.wins, pair.A.losses)}%
                           </Text>
                         </View>
+                        )}
                         
                         {/* 읽은 회차 */}
                         <Text style={{ color: C.sub, fontSize: 12, marginTop: 2 }}>
@@ -47753,7 +47789,8 @@ async function importJSON() {
                           </View>
                         </View>
 
-                        {/* 스탯 */}
+                        {/* 스탯 — 🔧 v7.20.6: ELO는 match/ratio 전용 (manual 매칭 화면에선 숨김) */}
+                        {(globalTierConfig.mode !== "hybrid" && globalTierConfig.mode !== "manual") && (
                         <View style={{ flexDirection: "row", alignItems: "center" }}>
                           <Text style={{ color: C.warn, fontWeight: "800", fontSize: 15 }}>
                             {(Number(pair.B.rating) || 1500).toFixed(1)}
@@ -47762,6 +47799,7 @@ async function importJSON() {
                             RD {Math.round(pair.B.rd || 350)} · {pair.B.wins || 0}W/{pair.B.losses || 0}L · {getWinRate(pair.B.wins, pair.B.losses)}%
                           </Text>
                         </View>
+                        )}
                         
                         {/* 읽은 회차 */}
                         <Text style={{ color: C.sub, fontSize: 12, marginTop: 2 }}>
