@@ -2,9 +2,19 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.20.7 (대장르 선호도 레이더 차트 점수 누수 수정)                          ║
+ * ║  버전: 7.20.8 (순위탭 카드 — hybrid/manual ELO 줄 자리에 주요 태그 표시)          ║
  * ║  최종 수정: 2026-06-17                                                        ║
  * ║  총 라인 수: 약 58,900줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.20.8 순위탭 카드 빈 줄 보강 — 주요 태그 (2026-06-17)                         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ v7.20.5에서 hybrid/manual 카드의 ELO 줄(레이팅/전적/RD)을 숨기며 카드가 비어     ║
+ * ║ 보이던 문제 → NovelCard에 '🏷️ 주요 태그' 줄 추가(hybrid/manual 한정).           ║
+ * ║ item.tags(쉼표 구분)에서 2줄에 이미 노출되는 대장르/부장르 값을 제외하고 상위    ║
+ * ║ 4개를 ' · '로 표시. 태그가 없으면 줄 자체 생략. match/ratio는 기존 ELO 줄 유지.   ║
+ * ║ memo 비교자에 p.tags 추가(태그 편집 시 카드 갱신).                               ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -15452,6 +15462,16 @@ const NovelCard = memo(({
   // 🔧 v7.20.5: hybrid/manual은 ELO(레이팅/승률/전적/RD) 미사용 → 카드의 ELO 줄 숨김.
   //   (티어는 ActualTierTag, 순위는 목록 번호로 이미 표시. match/ratio는 ELO 기반이라 그대로 노출.)
   const eloDisplayMode = !(globalTierConfig.mode === "hybrid" || globalTierConfig.mode === "manual");
+  // 🆕 v7.20.8: hybrid/manual은 ELO 줄 대신 '주요 태그'를 표시(빈 줄 보강).
+  //   2줄에 이미 노출되는 대장르/부장르 값은 제외해 중복 방지, 상위 4개만.
+  const topTags = useMemo(() => {
+    if (eloDisplayMode || !item.tags) return [];
+    const shownGenres = new Set(
+      [...String(item.major_genre || "").split(","), ...String(item.sub_genre || "").split(",")]
+        .map(s => s.trim()).filter(Boolean)
+    );
+    return item.tags.split(",").map(t => t.trim()).filter(t => t && !shownGenres.has(t)).slice(0, 4);
+  }, [eloDisplayMode, item.tags, item.major_genre, item.sub_genre]);
   const isNew = useMemo(() => isNewNovel(item.created_at), [item.created_at]);
   const plats = useMemo(() => parsePlatforms(item.platforms), [item.platforms]);
   
@@ -15550,6 +15570,13 @@ const NovelCard = memo(({
           </View>
           )}
 
+          {/* 🆕 v7.20.8: hybrid/manual — ELO 줄 대신 주요 태그 (태그 없으면 줄 자체 생략) */}
+          {!eloDisplayMode && topTags.length > 0 && (
+            <Text style={{ color: theme.sub, fontSize: 12, marginBottom: 4 }} numberOfLines={1}>
+              🏷️ {topTags.join(" · ")}
+            </Text>
+          )}
+
           {/* 🆕 v7.5.0: hybrid 검증 evidence — verification_count > 0 시만 표시 (집계만, 상대 리스트 X) */}
           {hybridMode && Number(item.verification_count) > 0 && (
             <Text style={{ color: theme.sub, fontSize: 11, marginBottom: 4 }}>
@@ -15597,6 +15624,7 @@ const NovelCard = memo(({
     p.author === n.author &&
     p.major_genre === n.major_genre &&
     p.sub_genre === n.sub_genre &&
+    p.tags === n.tags && // 🆕 v7.20.8: 주요 태그 줄(hybrid/manual) 갱신
     p.total_episodes === n.total_episodes &&
     p.gaiden_status === n.gaiden_status &&
     p.gaiden_read_count === n.gaiden_read_count &&
