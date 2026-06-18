@@ -2,9 +2,18 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.20.6 (hybrid/manual ELO 표시 누수 제거 2차 — 취향분석/매칭/태그매니저)    ║
+ * ║  버전: 7.20.7 (대장르 선호도 레이더 차트 점수 누수 수정)                          ║
  * ║  최종 수정: 2026-06-17                                                        ║
  * ║  총 라인 수: 약 58,900줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.20.7 대장르 선호도 차트 점수 누수 수정 (2026-06-17)                          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ RadarChartSimple이 displayValue를 무시하고 item.value.toFixed(0)(=prefScore     ║
+ * ║ 원시 숫자)를 항상 출력 → '📚 대장르 선호도' 차트가 tier 모드에서도 1523 같은      ║
+ * ║ 점수를 표시. displayValue가 있으면 우선 사용하도록 수정(tier=선호도 라벨 "B").    ║
+ * ║ (genreChartData.displayValue는 v7.20.6에서 이미 mode-aware로 설정됨.)            ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -24388,8 +24397,9 @@ const RadarChartSimple = memo(({ data, maxValue = 100, theme }) => {
             <View style={{ flex: 1, height: 16, backgroundColor: C.chip, borderRadius: 8, overflow: "hidden" }}>
               <View style={{ width: `${pct}%`, height: "100%", backgroundColor: item.color || C.primary }} />
             </View>
-            <Text style={{ width: 45, textAlign: "right", fontSize: 12, color: C.text, fontWeight: "600" }}>
-              {item.value.toFixed(0)}
+            <Text style={{ width: 52, textAlign: "right", fontSize: 12, color: C.text, fontWeight: "600" }}>
+              {/* 🔧 v7.20.6: displayValue 우선 — tier 모드는 선호도 라벨("B") 표시 */}
+              {item.displayValue != null ? item.displayValue : item.value.toFixed(0)}
             </Text>
           </View>
         );
