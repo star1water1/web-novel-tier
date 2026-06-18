@@ -2,9 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.21.7 (전면 기능검수 P7 — 죽은 코드 정리)                             ║
+ * ║  버전: 7.21.8 (수상탭 명대사 — 원본급 화질 + 랜덤 출력)                        ║
  * ║  최종 수정: 2026-06-18                                                        ║
- * ║  총 라인 수: 약 59,290줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 59,310줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🖼️ v7.21.8 수상탭 명대사 — 원본급 화질 + 랜덤 출력 (2026-06-18)                   ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [#1 화질] 이미 고정픽셀 디코드(v7.20.4)였으나 ① 저장 해상도 1200→1600px·품질     ║
+ * ║   0.82→0.9(원본급 소스, 기존 저장분 불변) ② AwardQuoteImage에 독립 cacheKey      ║
+ * ║   (award-) 추가 → 작은 썸네일 비트맵 재사용 차단, 고정픽셀 타겟으로 풀해상도 디코드.║
+ * ║   (allowDownscaling=false는 v7.6.7 교훈대로 영구흐림 유발 → 사용 안 함.)          ║
+ * ║ [#2 랜덤] 명대사 선택을 '첫 텍스트/첫 항목 고정' → 시드 기반 랜덤(작품별 결정적,  ║
+ * ║   탭 진입 재마운트마다 시드 갱신 → 매번 다른 명대사). 결과탭 '🔀 명대사 다시 뽑기' ║
+ * ║   버튼으로 수동 재추첨. 텍스트/이미지 명대사 모두 후보.                           ║
+ * ║ [검증] esbuild JSX 파싱 통과.                                                    ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12680,8 +12693,8 @@ const COMPRESSION_PRESETS = {
 };
 
 // 📷 명대사 이미지 압축 설정
-const QUOTE_IMAGE_MAX_SIZE = 1200;  // 🔧 v7.20.4: 긴 변 최대 800→1200px (수상 카드 등 크게 표시 시 화질 개선. 기존 저장분은 불변 — 재등록 시 적용)
-const QUOTE_IMAGE_QUALITY = 0.82;   // 🔧 v7.20.4: JPEG 품질 0.7→0.82
+const QUOTE_IMAGE_MAX_SIZE = 1600;  // 🔧 v7.21.8: 1200→1600px (수상탭 명대사 '원본급' 선명도. 고DPI 풀폭 표시에도 다운스케일 여유. 기존 저장분 불변 — 재등록 시 적용)
+const QUOTE_IMAGE_QUALITY = 0.9;    // 🔧 v7.21.8: JPEG 품질 0.82→0.9 (압축 아티팩트 감소)
 const QUOTE_IMAGE_MAX_COUNT = 50;   // 🔧 v7.19.1: 이미지 인용구 최대 개수 (30→50 확장. 순수 UI 가드 — 스키마/알고리즘 무의존. 백업 base64 캡은 3 유지 — buildUltraCompactBackup slice(0,3))
 
 // 🎨 v3.8.0: 갤러리 이미지 설정
@@ -15155,7 +15168,9 @@ const AwardQuoteImage = memo(({ uri, maxHeight = 460 }) => {
       onLayout={(e) => { const w = Math.round(e.nativeEvent.layout.width); if (w > 0 && w !== cw) setCw(w); }}
     >
       <ExpoImage
-        source={{ uri }}
+        // 🔧 v7.21.8: 독립 cacheKey(award-) — 같은 URI의 작은 썸네일 비트맵 재사용 방지 →
+        //   고정 픽셀(아래 style) 타겟으로 풀해상도 디코드(원본급). v7.6.8에서 입증된 기법.
+        source={{ uri, cacheKey: `award-${uri}` }}
         recyclingKey={uri}
         style={style}
         contentFit="contain"
@@ -22222,6 +22237,17 @@ const AwardsScreen = memo(({
   // expandedView: { type: "image", uri, title, author } | { type: "quote", text, title } | null
   const [expandedView, setExpandedView] = useState(null);
 
+  // 🆕 v7.21.8: 명대사 랜덤 출력 — 작품마다 여러 명대사가 있으면 그 중 하나를 시드 기반으로 선택.
+  //   (이전: 첫 텍스트/첫 항목 고정.) 탭 진입(재마운트)마다 시드 갱신 → 매번 다른 명대사. 🔀로 수동 재추첨.
+  const [quoteShuffleSeed, setQuoteShuffleSeed] = useState(() => (Date.now() & 0x7fffffff) || 1);
+  const pickQuoteIndex = useCallback((id, len) => {
+    if (!len || len <= 1) return 0;
+    let h = quoteShuffleSeed >>> 0;
+    const s = String(id || "");
+    for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) >>> 0;
+    return h % len;
+  }, [quoteShuffleSeed]);
+
   // 🆕 v7.4.4: 수상 결과 이미지 내보내기 — 상별 1장씩 (대상/우수상 각각 독립 이미지).
   // 한 상의 winner가 많아 캡처 결과가 한도 초과 시 균등 분할 fallback.
   const awardImageRefs = useRef(new Map()); // Map<awardId, View ref>
@@ -23348,6 +23374,16 @@ const AwardsScreen = memo(({
             </View>
           )}
 
+          {/* 🆕 v7.21.8: 명대사 랜덤 재추첨 — 작품마다 여러 명대사가 있으면 다른 문장으로 다시 뽑기 */}
+          {displayAwards.some(a => (awardWinners[a.id] || []).length > 0) && (
+            <TouchableOpacity
+              onPress={() => setQuoteShuffleSeed((Math.floor(Math.random() * 0x7fffffff)) || 1)}
+              style={{ alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: 4, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10, backgroundColor: C.chip, marginBottom: 12 }}
+            >
+              <Text style={{ color: C.text, fontWeight: "700", fontSize: 12 }}>🔀 명대사 다시 뽑기</Text>
+            </TouchableOpacity>
+          )}
+
           {/* 수상작 섹션 */}
           {/* 🆕 v7.20.0: displayAwards 순회 — 연도 정의 누락(슬롯 전환 미백필/레거시) 상의 수상작도 표시 */}
           {displayAwards.map(award => {
@@ -23555,9 +23591,8 @@ const AwardsScreen = memo(({
                         {/* 🆕 v7.0.14: 탭 시 풀스크린 확대 — 이미지/긴 텍스트 모두 가독성 개선 */}
                         {(() => {
                           const awardQuotes = parseQuotes(novel.memorable_quote);
-                          // 텍스트 인용구 우선, 없으면 첫 번째 항목 (🆕 v7.8.0: 서식 텍스트 객체 포함)
-                          const firstText = awardQuotes.find(q => isTextQuote(q));
-                          const firstItem = firstText || awardQuotes[0];
+                          // 🆕 v7.21.8: 첫 항목 고정 → 시드 기반 랜덤 선택(여러 명대사 중 하나). 텍스트/이미지 모두 후보.
+                          const firstItem = awardQuotes.length > 0 ? awardQuotes[pickQuoteIndex(novel.id, awardQuotes.length)] : null;
                           if (!firstItem) return null;
                           const isImg = isImageQuote(firstItem);
                           return (
