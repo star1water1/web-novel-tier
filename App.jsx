@@ -2,9 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.21.2 (전면 기능검수 P2 — 모드 일관성: ELO 누수·태그 정규화)          ║
+ * ║  버전: 7.21.3 (전면 기능검수 P3 — 백업에 검증 이력·의심도 포함)               ║
  * ║  최종 수정: 2026-06-18                                                        ║
- * ║  총 라인 수: 약 59,280줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 59,340줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 💾 v7.21.3 전면 기능검수 P3 — 백업 라운드트립 보강 (2026-06-18)                   ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [배경] v7 의심도/검증 상태가 백업에서 빠져 복원 시 콜드스타트(엔진 증거 0).       ║
+ * ║   사용자 결정: 백업에 포함. (기존 백업분은 해당 키 없음 → 0 폴백, 하위호환.)      ║
+ * ║ [#1 suspicion_score] export opt.ss(>0만) + import 디코드 + novels INSERT 컬럼     ║
+ * ║   42→43 확장. → 관계형 누적 의심도 보존(detectAutomaticSuspects/우선순위/표시).   ║
+ * ║   (검증 카운터 vw/vl/vc/ch·수문장 RS는 기존 백업 — 이제 엔진 구동 상태 전부 보존.)║
+ * ║ [#2 tier_validation_log(VL)·tier_verification_queue(VQ)] 신규 백업 — 검증 매치   ║
+ * ║   이력(최근 1000)·대기 큐(pending 200) export/import. novel id는 remapNovelId로  ║
+ * ║   remap, 새 id로 INSERT OR IGNORE. clear-all이 이미 3테이블 비우므로 중복 없음.   ║
+ * ║ [검증] esbuild JSX 파싱 통과 + novels INSERT placeholder/params 43=43 정합 확인.  ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -42410,6 +42424,8 @@ async function buildUltraCompactBackup(novels, matches, coverImages = null) {
     if (Number(n.verification_losses) > 0) opt.vl = Number(n.verification_losses);
     if (Number(n.verification_count) > 0) opt.vc = Number(n.verification_count);
     if (Number(n.conflict_hits) > 0) opt.ch = Number(n.conflict_hits);
+    // 🆕 v7.21.3: 누적 의심도(v7.17) — 복원 시 0 콜드스타트 방지. matches로 재계산 불가한 관계형 누적값.
+    if (Number(n.suspicion_score) > 0) opt.ss = Number(n.suspicion_score);
 
     // 💬 v3.2.2: 인상깊은 문장 / 📷 v3.6.1: 이미지 인용구 base64 포함
     const memorableQuote = (n.memorable_quote || "").trim();
@@ -42774,6 +42790,36 @@ async function exportJSON() {
     } catch (rsErr) {
       console.warn("tier_repositioning_session 백업 실패:", rsErr);
     }
+
+    // 🆕 v7.21.3: tier_validation_log(VL=검증 매치 이력) + tier_verification_queue(VQ=대기 큐) 백업.
+    //   [이전] 미포함(상대 리스트 UI 제거 후 일관성 우선) → 복원 시 검증 이력/대기 소실.
+    //   사용자 결정으로 포함. novel id 참조는 NID 매핑으로 복원 시 remapNovelId.
+    try {
+      const vlRows = await all(
+        `SELECT session_id, novel_a_id, novel_b_id, user_choice, violation_type, created_at
+         FROM tier_validation_log ORDER BY created_at DESC LIMIT 1000`
+      );
+      if (vlRows && vlRows.length > 0) {
+        payload.VL = vlRows.map(r => ({
+          si: r.session_id || "", a: r.novel_a_id, b: r.novel_b_id,
+          uc: r.user_choice || "", vt: r.violation_type || "", c: r.created_at,
+        }));
+        if (!payload.NID) payload.NID = novels.map(n => n.id);
+      }
+    } catch (vlErr) { console.warn("tier_validation_log 백업 실패:", vlErr); }
+    try {
+      const vqRows = await all(
+        `SELECT novel_id, trigger_type, suspicion_type, priority, created_at
+         FROM tier_verification_queue WHERE state='pending' ORDER BY created_at DESC LIMIT 200`
+      );
+      if (vqRows && vqRows.length > 0) {
+        payload.VQ = vqRows.map(r => ({
+          n: r.novel_id, tt: r.trigger_type || "", st: r.suspicion_type || "",
+          p: r.priority || 0, c: r.created_at,
+        }));
+        if (!payload.NID) payload.NID = novels.map(n => n.id);
+      }
+    } catch (vqErr) { console.warn("tier_verification_queue 백업 실패:", vqErr); }
 
     // 📋 v3.3.0: 예정 작품 백업 (PL = Planned List)
     // 🆕 v3.4: 확장 필드 추가
@@ -43196,6 +43242,8 @@ async function importJSON() {
                 const verLosses = Number(opt.vl) || 0;
                 const verCount = Number(opt.vc) || 0;
                 const conflictHits = Number(opt.ch) || 0;
+                // 🆕 v7.21.3: 누적 의심도 복원 (구버전 백업은 opt.ss 없음 → 0)
+                const suspicionScoreVal = Number(opt.ss) || 0;
                 // 💬 v3.2.2: 인상깊은 문장 / 📷 v3.6.1: 이미지 base64 복원
                 let memorableQuote = opt.mq || "";
                 if (opt.mqImg && typeof opt.mqImg === "object" && memorableQuote.startsWith("[")) {
@@ -43237,9 +43285,10 @@ async function importJSON() {
                   // baseline=0 잔존하여 첫 saveEdit에서 mass-fire). 백업 v9에 baseline 미포함이라 readCount 동일 값.
                   // 🔧 v7.6.0: start_year/end_year/match_ban (v11 이하 백업은 기본값 0)
                   // 🔧 v7.10.0: user_flagged_suspect 컬럼 추가 (41→42)
-                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,read_count_baseline,start_year,end_year,match_ban,verification_wins,verification_losses,verification_count,conflict_hits,user_flagged_suspect)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, manualOrder, rereadCount, tagData, aliases, memorableQuote, readCount, startYearVal, endYearVal, matchBanVal, verWins, verLosses, verCount, conflictHits, userFlaggedVal],
+                  // 🆕 v7.21.3: suspicion_score 컬럼 추가 (42→43)
+                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,read_count_baseline,start_year,end_year,match_ban,verification_wins,verification_losses,verification_count,conflict_hits,user_flagged_suspect,suspicion_score)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, manualOrder, rereadCount, tagData, aliases, memorableQuote, readCount, startYearVal, endYearVal, matchBanVal, verWins, verLosses, verCount, conflictHits, userFlaggedVal, suspicionScoreVal],
                 });
               }
 
@@ -43632,6 +43681,36 @@ async function importJSON() {
                 } catch (rsErr) {
                   console.warn("repositioning_session 복원 실패:", rsErr);
                 }
+              }
+
+              // 🆕 v7.21.3: tier_validation_log(VL) 복원 — novel_a_id/b_id remap, 새 id 부여(INSERT OR IGNORE)
+              if (Array.isArray(data.VL) && data.VL.length > 0) {
+                try {
+                  const vlQueries = [];
+                  for (const r of data.VL) {
+                    if (!r.a || !r.b) continue;
+                    vlQueries.push({
+                      sql: `INSERT OR IGNORE INTO tier_validation_log (id, session_id, novel_a_id, novel_b_id, user_choice, violation_type, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                      params: [uuid(), r.si || null, remapNovelId(r.a), remapNovelId(r.b), r.uc || null, r.vt || null, r.c || Date.now()],
+                    });
+                  }
+                  if (vlQueries.length > 0) await execBatch(vlQueries);
+                } catch (vlErr) { console.warn("validation_log 복원 실패:", vlErr); }
+              }
+
+              // 🆕 v7.21.3: tier_verification_queue(VQ) 대기 행 복원 — novel_id remap, pending 상태로
+              if (Array.isArray(data.VQ) && data.VQ.length > 0) {
+                try {
+                  const vqQueries = [];
+                  for (const r of data.VQ) {
+                    if (!r.n) continue;
+                    vqQueries.push({
+                      sql: `INSERT OR IGNORE INTO tier_verification_queue (id, novel_id, trigger_type, suspicion_type, priority, state, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+                      params: [uuid(), remapNovelId(r.n), r.tt || "", r.st || "", Number(r.p) || 0, r.c || Date.now()],
+                    });
+                  }
+                  if (vqQueries.length > 0) await execBatch(vqQueries);
+                } catch (vqErr) { console.warn("verification_queue 복원 실패:", vqErr); }
               }
 
               // 🎨 v3.8.0: 갤러리 이미지 복원
