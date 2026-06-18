@@ -2,9 +2,27 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.20.10 (순위탭 이미지 export에도 주요 태그 포함 — 높이 추정 동기화)        ║
+ * ║  버전: 7.20.11 (하이브리드 검증 — 갤로핑+이진 탐색으로 연승/연패 매칭 폭증 완화)   ║
  * ║  최종 수정: 2026-06-17                                                        ║
  * ║  총 라인 수: 약 58,900줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.20.11 하이브리드 검증 갤로핑+이진 탐색 (2026-06-17)                          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [증상] 연승/연패 시 의심작이 후보를 1칸씩 선형 스캔(currentIdx+1)하며 변곡점을     ║
+ * ║   찾아 매칭이 과도하게 잡힘(최대 7회까지, 그래도 멀리 못 옮김).                    ║
+ * ║ [해결] 점프 탐색 도입: 가설 방향으로 연속 적중 시 1→2→4→8…칸 지수 점프(갤로핑)로   ║
+ * ║   경계를 빠르게 넘어선 뒤, 그 구간만 이진 탐색으로 좁혀 자리 확정.                 ║
+ * ║   • planVerificationProbe(신규): lo/hi/jump/phase 상태로 다음 probe·종료 판정.    ║
+ * ║   • computeNewPosition(재작성): probe 순서 무관 — 응답을 '후보 인덱스' 기준으로    ║
+ * ║     모아 경계구간[lo,hi] 도출(갤로핑/이진/선형 동일 결과). 노이즈(lo≥hi)는 hi 우선.║
+ * ║     v7.10.0 blocker 재대결 K-confirm은 이진 수렴이 경계를 직접 확정하므로 제거.    ║
+ * ║   • 후보 풀 10→VERIFICATION_CANDIDATE_POOL=64 (점프가 닿을 범위 확보).             ║
+ * ║   • 세션에 search 상태 추가, 매칭 UI는 '위치 탐색/경계 좁히는 중(N칸)' 단계 표시.  ║
+ * ║   • 종료 상한 VERIFICATION_MAX_RESPONSES=7 유지(루프 항상 7회 내 종료 보장).       ║
+ * ║ [효과] 200칸 차이도 보통 4~6회로 해결(이전: 7회 상한에 막혀 ~7칸만 이동).          ║
+ * ║ [주의] findInflectionPoint/evaluateSequenceProgress는 진단 패널용으로 잔존.       ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -27981,7 +27999,10 @@ async function getCandidatesForVerification(novelId, suspicionType, limit = 10) 
 
 // 🆕 v7.0: 검증 시퀀스 상수 — 변곡점 알고리즘 / K=2 추가 매칭 / max=7
 const VERIFICATION_MAX_RESPONSES = 7;
-const VERIFICATION_K_AFTER_INFLECTION = 2;
+const VERIFICATION_K_AFTER_INFLECTION = 2; // (v7.20.11~ 이진 수렴이 경계를 직접 확정 — 코어 루프 미사용, 진단/하위호환 잔존)
+// 🆕 v7.20.11: 갤로핑+이진 탐색 후보 풀 — 지수 점프(2^k-1)가 닿을 범위. 7회 응답이면 idx~63까지 도달 가능.
+//   (선형 시절엔 10이면 충분했으나, 점프로 멀리 어긋난 작품을 적은 매칭으로 옮기려면 풀을 넓혀야 함.)
+const VERIFICATION_CANDIDATE_POOL = 64;
 
 // ⚠️ v7.4.13에서 read_progress(읽은 회차 누적) 트리거는 noise로 판단되어 제거됨 → 이 상수와
 //    read_count_baseline 컬럼은 현재 어떤 검증도 발화시키지 않는 잔존(vestigial) 인프라다.
@@ -28061,103 +28082,88 @@ function evaluateSequenceProgress(responses, suspicionType) {
   return { shouldStop: false, reason: "continue" };
 }
 
-// 🆕 v7.0: 시퀀스 종료 시 새 자리 산출 (system path — 트리거 X)
-// 변곡점 = "이 후보까지는 의심작이 이동해야 함"의 경계
-// blocker = 변곡점 인덱스의 후보 (수문장 후보)
+// 🆕 v7.20.11: 갤로핑(지수)+이진 탐색 플래너 — 연승/연패 시 후보를 1칸씩 선형 스캔하던 것을
+//   점프 탐색으로 대체(매칭 폭증 완화). 입력 lo=가설방향(expected) 최원거리 인덱스(-1=없음),
+//   hi=경계 넘은(unexpected) 최근거리 인덱스(poolSize=아직 없음), jump=현재 보폭, phase="gallop"|"binary".
+//   반환: 종료면 {stop:true, reason}, 계속이면 {stop:false, reason, nextIdx, lo, hi, jump, phase}.
+function planVerificationProbe(lo, hi, jump, phase, poolSize, responseCount) {
+  if (responseCount >= VERIFICATION_MAX_RESPONSES) return { stop: true, reason: "max" };
+  // 첫(가장 가까운) 후보부터 경계 넘음 → 의심 무효
+  if (lo === -1 && hi === 0) return { stop: true, reason: "rejected" };
+  if (phase === "gallop") {
+    if (hi >= poolSize) {
+      // 아직 경계 미발견 → 지수 점프 계속 (offset 1,3,7,15...)
+      const next = lo + jump;
+      if (next >= poolSize) {
+        // 풀 끝까지 모두 가설 방향 — 맨 끝 후보를 한 번 더 확인 후 종료
+        if (lo < poolSize - 1) {
+          return { stop: false, reason: "gallop", nextIdx: poolSize - 1, lo, hi, jump: jump * 2, phase: "gallop" };
+        }
+        return { stop: true, reason: "exhausted" };
+      }
+      return { stop: false, reason: "gallop", nextIdx: next, lo, hi, jump: jump * 2, phase: "gallop" };
+    }
+    phase = "binary"; // 경계 발견 → 이진 단계 전환
+  }
+  // binary: lo(expected) < hi(unexpected) 구간 좁히기
+  if (hi - lo <= 1) return { stop: true, reason: "decisive" }; // 인접 → 경계 확정
+  const mid = Math.floor((lo + hi) / 2);
+  return { stop: false, reason: "binary", nextIdx: mid, lo, hi, jump, phase: "binary" };
+}
+
+// 🆕 v7.0 → 🔧 v7.20.11: 시퀀스 종료 시 새 자리 산출 (system path — 트리거 X).
+//   probe 순서와 무관하게 응답들로부터 경계 구간 [lo, hi]를 "후보 인덱스" 기준으로 도출 →
+//   갤로핑/이진/선형 어느 probe 순서든 동일 결과. lo=가설방향 최원거리 expected, hi=최근거리 unexpected.
+//   blocker = candidates[hi](경계=수문장 후보), passed = candidates[lo](넘어선 마지막).
+//   (이전 v7.10.0의 blocker 재대결 K-confirm 로직은 이진 수렴이 경계를 직접 확정하므로 제거.)
 function computeNewPosition(suspicionNovel, candidates, responses, suspicionType, tierConfig) {
-  const cfg = tierConfig || globalTierConfig;
-  const tierOrder = getActiveTierOrder(cfg);
-  const infIdx = findInflectionPoint(responses, suspicionType);
-  const ownTierIdx = tierOrder.indexOf(suspicionNovel.manual_tier);
   const ownOrder = Number(suspicionNovel.manual_order) || 0;
-
-  // 변곡점 미발견 (모든 응답이 가설 방향)
-  if (infIdx === -1) {
-    // 가장 멀리 있는 응답 후보의 위치까지 이동
-    const lastIdx = responses.length - 1;
-    if (lastIdx < 0) {
-      return { tier: suspicionNovel.manual_tier, order: ownOrder, blockerId: null, action: "no_change" };
-    }
-    const lastResp = responses[lastIdx];
-    const lastCand = candidates.find(c => c.id === lastResp.candidateId);
-    if (!lastCand) {
-      return { tier: suspicionNovel.manual_tier, order: ownOrder, blockerId: null, action: "no_change" };
-    }
-    // suspicionType에 따라 "넘어선" 위치
-    if (suspicionType === "underrated") {
-      // 위쪽 후보 → 그 후보 바로 위로
-      const newOrder = (Number(lastCand.manual_order) || 0) - 50;
-      return { tier: lastCand.manual_tier, order: newOrder, blockerId: null, action: "moved" };
-    } else {
-      // 아래쪽 후보 → 그 후보 바로 아래로
-      const newOrder = (Number(lastCand.manual_order) || 0) + 50;
-      return { tier: lastCand.manual_tier, order: newOrder, blockerId: null, action: "moved" };
-    }
+  const idxOf = (cid) => candidates.findIndex(c => c.id === cid);
+  const isExpected = (r) => suspicionType === "underrated" ? r.suspicionWon : !r.suspicionWon;
+  let lo = -1, hi = candidates.length;
+  for (const r of responses) {
+    const i = idxOf(r.candidateId);
+    if (i < 0) continue;
+    if (isExpected(r)) { if (i > lo) lo = i; }
+    else { if (i < hi) hi = i; }
   }
+  // 노이즈로 lo >= hi 가능 → 보수적으로 가장 가까운 경계(hi) 우선
+  if (lo >= hi) lo = hi - 1;
 
-  // 변곡점 발견 — blocker = responses[infIdx].candidateId
-  const blockerResp = responses[infIdx];
-  const blockerCand = candidates.find(c => c.id === blockerResp.candidateId);
-  if (!blockerCand) {
-    return { tier: suspicionNovel.manual_tier, order: ownOrder, blockerId: null, action: "no_change" };
-  }
-
-  // 변곡점 직전(infIdx-1)까지의 후보들을 넘어섬, blocker에게 막힘
-  if (infIdx === 0) {
-    // 첫 매치부터 가설 부정 → 의심 무효
-    return { tier: suspicionNovel.manual_tier, order: ownOrder, blockerId: blockerCand.id, action: "no_change" };
-  }
-
-  // 변곡점 직전 후보(passedCand) 위치 + blocker 사이로 자리 결정
-  const passedResp = responses[infIdx - 1];
-  const passedCand = candidates.find(c => c.id === passedResp.candidateId);
-  if (!passedCand) {
-    return { tier: suspicionNovel.manual_tier, order: ownOrder, blockerId: blockerCand.id, action: "no_change" };
-  }
-
-  // 🔧 v7.10.0: K단계(blocker 재대결) 결과로 경계 확정 여부 판정. infIdx 이후 응답은 모두 blocker와의
-  //   재대결(respondVerificationMatch가 K단계에 blocker를 재present). 과반이 경계를 확인하면 아래의
-  //   passed~blocker 사이 배치, 아니면(의심작이 재대결에서 blocker를 넘어섬) blocker 자리로 이동시켜
-  //   K 응답이 실제 자리에 반영되도록 한다(이전엔 변곡점 이후 K 응답이 자리 산출에서 무시됐음).
-  const blockerResults = responses.slice(infIdx).filter(r => r.candidateId === blockerCand.id);
-  const confirms = blockerResults.filter(r => suspicionType === "underrated" ? !r.suspicionWon : r.suspicionWon).length;
-  const boundaryConfirmed = confirms * 2 >= blockerResults.length; // 동률 포함 과반이 경계 확인
-  if (!boundaryConfirmed) {
-    // 재대결에서 의심작이 blocker를 넘어섬 → blocker가 실제로 막지 못함. blocker 자리(경계)로 이동.
-    //   막지 못했으므로 수문장으로 기록하지 않음(blockerId=null).
-    const bOrder = Number(blockerCand.manual_order) || 0;
+  // 경계(unexpected) 없음 → 모두 가설 방향 → 가장 먼 expected 후보 너머로 이동
+  if (hi >= candidates.length) {
+    if (lo < 0) return { tier: suspicionNovel.manual_tier, order: ownOrder, blockerId: null, action: "no_change" };
+    const lastCand = candidates[lo];
+    if (!lastCand) return { tier: suspicionNovel.manual_tier, order: ownOrder, blockerId: null, action: "no_change" };
+    const lastOrder = Number(lastCand.manual_order) || 0;
     return suspicionType === "underrated"
-      ? { tier: blockerCand.manual_tier, order: bOrder - 25, blockerId: null, action: "moved" }
-      : { tier: blockerCand.manual_tier, order: bOrder + 25, blockerId: null, action: "moved" };
+      ? { tier: lastCand.manual_tier, order: lastOrder - 50, blockerId: null, action: "moved" }
+      : { tier: lastCand.manual_tier, order: lastOrder + 50, blockerId: null, action: "moved" };
   }
 
-  // 두 후보 사이 — 같은 tier면 단순 사이값, 다른 tier면 passed의 tier 끝/시작
-  // v7.0.1 (C1 fix): collision/gap 압축 위험은 finalize 후 rebalanceTierOrder로 복구
+  const blockerCand = candidates[hi];
+  if (!blockerCand) return { tier: suspicionNovel.manual_tier, order: ownOrder, blockerId: null, action: "no_change" };
+  // 가장 가까운 후보부터 막힘 → 의심 무효 (수문장 후보로만 기록)
+  if (lo < 0) return { tier: suspicionNovel.manual_tier, order: ownOrder, blockerId: blockerCand.id, action: "no_change" };
+  const passedCand = candidates[lo];
+  if (!passedCand) return { tier: suspicionNovel.manual_tier, order: ownOrder, blockerId: blockerCand.id, action: "no_change" };
+
+  // passed(통과한 마지막 후보) ~ blocker(경계) 사이로 배치.
+  // v7.0.1 (C1 fix): collision/gap 압축은 finalize 후 rebalanceTierOrder로 복구.
   const passedOrder = Number(passedCand.manual_order) || 0;
   const blockerOrder = Number(blockerCand.manual_order) || 0;
-  // 🆕 v7.0.3: cross-tier 방향 수정 — 이전 버그: passed보다 "약간 아래(+50)"로 배치하여
-  // suspicion이 passed에게 졌다는 의미가 되어 hypothesis(suspicion이 passed 위)와 모순.
-  // underrated: suspicion이 passed를 이김 → passed 위, blocker 아래(다른 tier).
-  // overrated: suspicion이 passed에게 짐 → passed 아래, blocker 위(다른 tier).
   if (suspicionType === "underrated") {
-    // 위쪽으로 이동: passed보다 위(작은 order), blocker보다 아래(큰 order, blocker tier가 더 위면 무관)
     if (passedCand.manual_tier === blockerCand.manual_tier) {
-      // 같은 tier이면 두 사이값. 충돌 시 passed-1로 두고 finalize의 rebalance가 stable-sort로 정합성 회복
       const order = passedOrder === blockerOrder ? passedOrder - 1 : Math.floor((passedOrder + blockerOrder) / 2);
       return { tier: passedCand.manual_tier, order, blockerId: blockerCand.id, action: "moved" };
-    } else {
-      // 다른 tier — passed의 tier에서 passed 위(passedOrder - 50)
-      return { tier: passedCand.manual_tier, order: passedOrder - 50, blockerId: blockerCand.id, action: "moved" };
     }
+    return { tier: passedCand.manual_tier, order: passedOrder - 50, blockerId: blockerCand.id, action: "moved" };
   } else {
-    // overrated: 아래쪽으로 이동: passed보다 아래(큰 order), blocker보다 위
     if (passedCand.manual_tier === blockerCand.manual_tier) {
       const order = passedOrder === blockerOrder ? passedOrder + 1 : Math.floor((passedOrder + blockerOrder) / 2);
       return { tier: passedCand.manual_tier, order, blockerId: blockerCand.id, action: "moved" };
-    } else {
-      // 다른 tier — passed의 tier에서 passed 아래(passedOrder + 50)
-      return { tier: passedCand.manual_tier, order: passedOrder + 50, blockerId: blockerCand.id, action: "moved" };
     }
+    return { tier: passedCand.manual_tier, order: passedOrder + 50, blockerId: blockerCand.id, action: "moved" };
   }
 }
 
@@ -39747,7 +39753,7 @@ function AppContent() {
         shouldRetry = true; // 다음 큐 항목 자동 시도
         return;
       }
-      const candidates = await getCandidatesForVerification(queueRow.novel_id, queueRow.suspicion_type, 10);
+      const candidates = await getCandidatesForVerification(queueRow.novel_id, queueRow.suspicion_type, VERIFICATION_CANDIDATE_POOL);
       if (!candidates || candidates.length === 0) {
         // 후보 부족 → 자동 finalize (no_change)
         const sessionId = uuid();
@@ -39770,6 +39776,8 @@ function AppContent() {
         responses: [], // [{candidateId, suspicionWon, violationType}]
         currentIdx: 0,
         suspicionType: queueRow.suspicion_type,
+        // 🆕 v7.20.11: 갤로핑+이진 탐색 상태 (lo=expected 최원거리, hi=unexpected 최근거리, jump=보폭, phase)
+        search: { lo: -1, hi: candidates.length, jump: 1, phase: "gallop" },
       });
     } catch (e) {
       console.warn("[v7.0] startVerificationSession 오류:", e?.message);
@@ -39816,12 +39824,20 @@ function AppContent() {
     } catch (suspErr) { console.warn("[v7.17.0] 상대 의심도 갱신 오류:", suspErr?.message); }
 
     const newResponses = [...responses, { candidateId: candidate.id, suspicionWon, violationType: violation }];
-    const progress = evaluateSequenceProgress(newResponses, suspicionType);
 
-    if (progress.shouldStop) {
+    // 🆕 v7.20.11: 갤로핑+이진 탐색으로 다음 후보 결정 (연승/연패 시 1칸씩 선형 스캔하던 폭증 방지).
+    //   현재 probe 결과로 경계 구간(lo/hi)을 갱신한 뒤 planVerificationProbe가 다음 위치/종료를 판정.
+    const expected = suspicionType === "underrated" ? suspicionWon : !suspicionWon;
+    const prevSearch = verificationSession.search || { lo: -1, hi: candidates.length, jump: 1, phase: "gallop" };
+    let sLo = prevSearch.lo, sHi = prevSearch.hi;
+    if (expected) { if (currentIdx > sLo) sLo = currentIdx; }
+    else { if (currentIdx < sHi) sHi = currentIdx; }
+    const plan = planVerificationProbe(sLo, sHi, prevSearch.jump, prevSearch.phase, candidates.length, newResponses.length);
+
+    if (plan.stop) {
       // 시퀀스 종료 — finalize
       try {
-        await finalizeVerificationSession(queueRow, suspicionNovel, candidates, newResponses, suspicionType, progress.reason);
+        await finalizeVerificationSession(queueRow, suspicionNovel, candidates, newResponses, suspicionType, plan.reason);
       } catch (e) {
         console.warn("[v7.0] finalize 실패:", e?.message);
       }
@@ -39841,26 +39857,13 @@ function AppContent() {
       // 다음 큐 항목 자동 시작
       startVerificationSession();
     } else {
-      // 🔧 v7.10.0: 변곡점 발견 후 K단계에서는 더 먼 후보가 아니라 blocker(변곡점 후보)를 재대결시켜
-      //   경계를 확인. 이전엔 currentIdx+1로 더 먼 후보를 물었으나 그 응답이 computeNewPosition에
-      //   전혀 반영되지 않아 K=2 추가 질문이 무의미했음. blocker 재대결 결과는 자리 산출에 반영됨.
-      const infIdxNow = findInflectionPoint(newResponses, suspicionType);
-      const nextIdx = infIdxNow > 0 ? infIdxNow : currentIdx + 1;
-      if (nextIdx >= candidates.length) {
-        // 후보 풀 소진 → 강제 finalize
-        try {
-          await finalizeVerificationSession(queueRow, suspicionNovel, candidates, newResponses, suspicionType, "exhausted");
-        } catch (e) {
-          console.warn("[v7.0] finalize 실패:", e?.message);
-        }
-        setVerificationSession(null);
-        verificationSessionIdRef.current = null;
-        await loadList(undefined, undefined, "v7-finalize");
-        await loadVerificationStats();
-        startVerificationSession();
-      } else {
-        setVerificationSession({ ...verificationSession, responses: newResponses, currentIdx: nextIdx });
-      }
+      // planVerificationProbe가 풀 소진/경계 미발견을 내부 처리하므로 nextIdx는 항상 유효 인덱스
+      setVerificationSession({
+        ...verificationSession,
+        responses: newResponses,
+        currentIdx: plan.nextIdx,
+        search: { lo: plan.lo, hi: plan.hi, jump: plan.jump, phase: plan.phase },
+      });
     }
     } finally {
       respondingRef.current = false; // 🆕 v7.0.3
@@ -46778,15 +46781,19 @@ async function importJSON() {
                   }} />
                 </View>
 
-                {/* 변곡점 표시 */}
+                {/* 🔧 v7.20.11: 갤로핑/이진 탐색 단계 표시 (변곡점·K 재대결 → 점프 탐색으로 대체) */}
                 {(() => {
-                  const infIdx = findInflectionPoint(verificationSession.responses, verificationSession.suspicionType);
-                  if (infIdx === -1) return null;
-                  const remaining = Math.max(0, VERIFICATION_K_AFTER_INFLECTION - (verificationSession.responses.length - 1 - infIdx));
+                  const s = verificationSession.search;
+                  if (!s) return null;
+                  const boundaryFound = s.hi < verificationSession.candidates.length;
+                  if (!boundaryFound && s.lo < 0) return null; // 첫 응답 전
+                  const span = Math.max(0, s.hi - s.lo - 1);
                   return (
                     <View style={{ backgroundColor: isDark ? "#422006" : "#fef3c7", padding: 8, borderRadius: 8, marginBottom: 10 }}>
                       <Text style={{ color: isDark ? "#fcd34d" : "#92400e", fontSize: 12, fontWeight: "700" }}>
-                        🔍 변곡점 발견 (#{infIdx + 1}) — 경계 작품과 재대결로 확인 ({remaining}회 남음)
+                        {boundaryFound
+                          ? `🎯 경계 근처 — 범위 좁히는 중 (${span}칸 남음)`
+                          : `🔎 위치 탐색 중 — 점프 탐색`}
                       </Text>
                     </View>
                   );
@@ -55058,7 +55065,13 @@ async function importJSON() {
                         <View style={{ padding: 8, backgroundColor: C.bg, borderRadius: 6 }}>
                           <Text style={{ color: C.text, fontWeight: "700" }}>{sus?.title || "?"} · tier={sus?.manual_tier || "-"} #{sus?.manual_order || 0}</Text>
                           <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>의심방향: {verificationSession.suspicionType} · 후보 풀: {(verificationSession.candidates || []).length} · 응답: {responses.length}/{VERIFICATION_MAX_RESPONSES}</Text>
-                          {infIdx >= 0 && <Text style={{ color: "#f59e0b", fontSize: 11, marginTop: 2 }}>변곡점 idx: {infIdx}</Text>}
+                          {/* 🆕 v7.20.11: 갤로핑+이진 탐색 상태 (현재 알고리즘 기준) */}
+                          {verificationSession.search && (
+                            <Text style={{ color: "#38bdf8", fontSize: 11, marginTop: 2 }}>
+                              탐색: {verificationSession.search.phase} · lo={verificationSession.search.lo} · hi={verificationSession.search.hi >= (verificationSession.candidates || []).length ? "∞" : verificationSession.search.hi} · jump={verificationSession.search.jump} · idx={verificationSession.currentIdx}
+                            </Text>
+                          )}
+                          {infIdx >= 0 && <Text style={{ color: "#f59e0b", fontSize: 11, marginTop: 2 }}>변곡점 idx: {infIdx} (legacy)</Text>}
                           {eval_ && <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>다음 단계: shouldStop={String(eval_.shouldStop)} reason={eval_.reason}</Text>}
                         </View>
                         {/* 응답 trail */}
