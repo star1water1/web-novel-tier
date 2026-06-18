@@ -2,9 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.21.5 (전면 기능검수 P5 — manual 재배치 + ratio 핀 해제)             ║
+ * ║  버전: 7.21.6 (전면 기능검수 P6 — 예정작 기대 분석: 예상↔실제·발견경로)       ║
  * ║  최종 수정: 2026-06-18                                                        ║
- * ║  총 라인 수: 약 59,380줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 59,460줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📋 v7.21.6 전면 기능검수 P6 — 예정작 기대 분석 (2026-06-18)                       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [배경] 예정작의 expected_tier/expected_rating/interest_level/discovery_source를   ║
+ * ║   입력받지만 전환 시 메모 텍스트로만 합쳐져 사후 분석 불가(버려지던 데이터).      ║
+ * ║ [#1 구조 보존] novels에 expected_tier/discovery_source 컬럼 추가(ensureColumn).   ║
+ * ║   convertPlannedToNovel의 post-INSERT UPDATE에서 채움(메모 병합은 유지).          ║
+ * ║ [#2 분석] TasteAnalysisScreen에 '📋 예정 → 실제 분석' 섹션(모드 무관, prefScore): ║
+ * ║   • 예상 적중률: 예상 티어 vs 실제 getDisplayTier — 정확/±1티어/과소·과대 + 빗남 top.║
+ * ║   • 발견 경로별 성과: discovery_source별 실제 평균 선호도(어디서 찾은 게 좋았나). ║
+ * ║   (전환 작품 기준 — 본 버전 이후 전환부터 누적. 기존 전환분은 메모에만 존재.)     ║
+ * ║ [검증] esbuild JSX 파싱 통과. diff 방향(>0=과소예상/실제 상위) 로직 확인.         ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -7287,6 +7301,10 @@ async function initDb(progressCb) {
     ["conflict_hits", "INTEGER", "0"],
     // 🆕 v7.17.0: 관계형 의심도 누적 점수 — 순위변동 전파 + 매칭 업셋으로 상승, 검증 시 리셋
     ["suspicion_score", "REAL", "0"],
+    // 🆕 v7.21.6: 예정작 기대 데이터 보존 — 전환 시 채워 '예상↔실제' 적중률·발견경로 성과 분석.
+    //   (이전: convertPlannedToNovel이 메모 텍스트로만 합쳐 구조적 분석 불가)
+    ["expected_tier", "TEXT", "''"],       // 읽기 전 예상 티어 (전환 시점 스냅샷)
+    ["discovery_source", "TEXT", "''"],    // 발견 경로 (예정작에서 이관)
   ];
   
   // 필요한 마이그레이션만 실행
@@ -25148,6 +25166,56 @@ const TasteAnalysisScreen = memo(({
     return insights.length > 0 ? insights : null;
   }, [tagCoOccurrences, list]);
 
+  // 🆕 v7.21.6: 예정작 기대 분석 — 전환 시 보존된 expected_tier/discovery_source로
+  //   '예상↔실제 적중률'과 '발견 경로별 성과' 산출(이전엔 메모로만 합쳐져 버려지던 데이터).
+  const plannedOutcomeAnalysis = useMemo(() => {
+    if (!list || list.length === 0) return null;
+    const cfg = globalTierConfig;
+    const tierOrder = getActiveTierOrder(cfg);
+    // 1) 예상 티어 ↔ 실제 티어 적중
+    let predictionStats = null;
+    const withExpected = list.filter(n => n.expected_tier && tierOrder.includes(n.expected_tier));
+    if (withExpected.length >= 3) {
+      let exact = 0, within1 = 0, over = 0, under = 0;
+      const rows = [];
+      for (const n of withExpected) {
+        const actual = getDisplayTier(n, cfg);
+        const ei = tierOrder.indexOf(n.expected_tier);
+        const ai = tierOrder.indexOf(actual);
+        if (ai === -1) continue;
+        const diff = ei - ai; // >0: 실제가 예상보다 상위(과소예상), <0: 과대예상
+        if (diff === 0) exact++;
+        else if (Math.abs(diff) === 1) within1++;
+        if (diff > 0) under++; else if (diff < 0) over++;
+        rows.push({ title: n.title, expected: n.expected_tier, actual, diff });
+      }
+      const total = withExpected.length;
+      if (total > 0) {
+        predictionStats = {
+          total, exact, over, under,
+          exactPct: Math.round(exact / total * 100),
+          within1Pct: Math.round((exact + within1) / total * 100),
+          rows: rows.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff)).slice(0, 5),
+        };
+      }
+    }
+    // 2) 발견 경로별 성과 (실제 평균 선호도)
+    const bySource = {};
+    for (const n of list) {
+      const src = (n.discovery_source || "").trim();
+      if (!src) continue;
+      if (!bySource[src]) bySource[src] = { source: src, count: 0, scoreSum: 0 };
+      bySource[src].count++;
+      bySource[src].scoreSum += getPrefScore(n, cfg);
+    }
+    const sources = Object.values(bySource)
+      .filter(s => s.count >= 2)
+      .map(s => ({ ...s, avg: s.scoreSum / s.count }))
+      .sort((a, b) => b.avg - a.avg);
+    if (!predictionStats && sources.length === 0) return null;
+    return { predictionStats, sources };
+  }, [list, tierMode]);
+
   // 🆕 v3.2.1: 좌표계 기반 취향 분포 분석
   const coordinatePreferenceAnalysis = useMemo(() => {
     if (!coordinateSystems || Object.keys(coordinateSystems).length === 0) return null;
@@ -26019,6 +26087,64 @@ const TasteAnalysisScreen = memo(({
               </View>
             );
           })}
+        </Section>
+      )}
+
+      {/* 🆕 v7.21.6: 예정 → 실제 분석 (예상 티어 적중률 + 발견 경로별 성과). 모드 무관(prefScore 기반). */}
+      {plannedOutcomeAnalysis && (
+        <Section title="📋 예정 → 실제 분석">
+          <Text style={{ color: C.sub, fontSize: 12, marginBottom: 12 }}>
+            예정작 등록 시 입력한 예상 티어·발견 경로를 실제 결과와 비교합니다. (등록 전환된 작품 기준)
+          </Text>
+          {plannedOutcomeAnalysis.predictionStats && (() => {
+            const ps = plannedOutcomeAnalysis.predictionStats;
+            const misses = ps.rows.filter(r => r.diff !== 0);
+            return (
+              <View style={{ marginBottom: 14 }}>
+                <Text style={{ color: C.text, fontWeight: "800", fontSize: 13, marginBottom: 6 }}>🎯 예상 적중률 ({ps.total}작)</Text>
+                <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
+                  <View style={{ flex: 1, backgroundColor: C.chip, borderRadius: 10, padding: 10, alignItems: "center" }}>
+                    <Text style={{ color: C.ok, fontWeight: "800", fontSize: 18 }}>{ps.exactPct}%</Text>
+                    <Text style={{ color: C.sub, fontSize: 11 }}>정확히 일치</Text>
+                  </View>
+                  <View style={{ flex: 1, backgroundColor: C.chip, borderRadius: 10, padding: 10, alignItems: "center" }}>
+                    <Text style={{ color: C.text, fontWeight: "800", fontSize: 18 }}>{ps.within1Pct}%</Text>
+                    <Text style={{ color: C.sub, fontSize: 11 }}>±1티어 이내</Text>
+                  </View>
+                </View>
+                <Text style={{ color: C.sub, fontSize: 11, marginBottom: 6 }}>
+                  과소평가 {ps.under}작(예상보다 좋았음) · 과대평가 {ps.over}작(예상보다 아쉬움)
+                </Text>
+                {misses.length > 0 && (
+                  <>
+                    <Text style={{ color: C.text, fontWeight: "700", fontSize: 12, marginTop: 4, marginBottom: 4 }}>가장 빗나간 예측</Text>
+                    {misses.map((r, i) => (
+                      <View key={i} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 3 }}>
+                        <Text style={{ color: C.text, fontSize: 12, flex: 1 }} numberOfLines={1}>{r.title}</Text>
+                        <Text style={{ color: C.sub, fontSize: 12 }}>
+                          {getTierLabel(r.expected, globalTierConfig)} → {getTierLabel(r.actual, globalTierConfig)} {r.diff > 0 ? "▲" : "▼"}
+                        </Text>
+                      </View>
+                    ))}
+                  </>
+                )}
+              </View>
+            );
+          })()}
+          {plannedOutcomeAnalysis.sources.length > 0 && (
+            <View>
+              <Text style={{ color: C.text, fontWeight: "800", fontSize: 13, marginBottom: 6 }}>🔎 발견 경로별 성과</Text>
+              <Text style={{ color: C.sub, fontSize: 11, marginBottom: 6 }}>어디서 찾은 작품이 더 좋았나 (실제 평균 선호도순)</Text>
+              {plannedOutcomeAnalysis.sources.map((s, i) => (
+                <View key={i} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 5 }}>
+                  <Text style={{ color: C.text, fontSize: 13, flex: 1 }} numberOfLines={1}>
+                    {i === 0 ? "🥇 " : ""}{s.source} <Text style={{ color: C.sub, fontSize: 11 }}>({s.count}작)</Text>
+                  </Text>
+                  <Text style={{ color: C.ok, fontWeight: "700", fontSize: 13 }}>{prefScoreLabel(s.avg, globalTierConfig, false)}</Text>
+                </View>
+              ))}
+            </View>
+          )}
         </Section>
       )}
 
@@ -33588,8 +33714,9 @@ function AppContent() {
           ],
         },
         {
-          sql: "UPDATE novels SET read_count_baseline=? WHERE id=?",
-          params: [_baselineToRestore, id],
+          // 🆕 v7.21.6: 예정작 기대 데이터(예상 티어·발견 경로)를 구조적 컬럼으로 보존 → 사후 분석.
+          sql: "UPDATE novels SET read_count_baseline=?, expected_tier=?, discovery_source=? WHERE id=?",
+          params: [_baselineToRestore, planned.expected_tier || "", planned.discovery_source || "", id],
         },
         {
           sql: "DELETE FROM planned_novels WHERE id=?",
