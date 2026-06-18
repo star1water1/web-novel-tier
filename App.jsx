@@ -2,9 +2,26 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.21.10 (추천 속도 근본 수정 — normalizeTag O(1) + 추천 다양성 강화)    ║
+ * ║  버전: 7.21.11 (탭별 정렬/필터 영속화 — 예정·일괄·보충·수상·최신변화 + 태그누수)║
  * ║  최종 수정: 2026-06-18                                                        ║
- * ║  총 라인 수: 약 59,340줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 59,380줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 💾 v7.21.11 탭별 정렬/필터 영속화 (앱 재시작·슬롯 전환 보존) (2026-06-18)          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제] home/태그 정렬만 영속됐고 예정(정렬·필터)·일괄(정렬)·보충(정렬·필터)·      ║
+ * ║   수상(필터)·최신변화(필터)는 미저장 → 재시작 시 기본값 원복. 태그 정렬모드/탭/   ║
+ * ║   프리뷰는 마운트만 복원돼 슬롯 전환 시 이전 슬롯 값 누수.                         ║
+ * ║ [해결] 단일 메타키 tab_sort_settings로 묶어 home_sort_settings와 동일 패턴 적용:  ║
+ * ║   init-ref 게이트 저장 effect + 마운트 복원 + 슬롯 전환 복원(기본값 else +         ║
+ * ║   setTimeout 재무장). awardFilter는 객체라 spread-merge(불리언 false 보존,        ║
+ * ║   truthiness 가드 금지). 태그 정렬모드/탭/프리뷰를 슬롯 전환 Promise.all·복원에    ║
+ * ║   추가해 누수 차단.                                                               ║
+ * ║ [검토] loadList는 정렬 미덮어씀(read-only) 확인. 보충 0건 자동리셋은 정당 가드라   ║
+ * ║   유지(마운트 시 totalCount>0 조건으로 복원 비간섭). saveAppSettings 배칭 함정     ║
+ * ║   회피 위해 standalone 메타키 사용.                                               ║
+ * ║ [검증] esbuild JSX 파싱 통과.                                                    ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -30760,6 +30777,18 @@ function AppContent() {
     });
   }, [homeSortKey, homeSortDir, filterTier, filterPlatform, filterGenre, filterStatus, filterFolder]);
 
+  // 🆕 v7.21.11: 나머지 탭 정렬/필터 영속화 (예정·일괄·보충·수상·최신변화) — home_sort_settings와 동일 패턴.
+  //   단일 메타키로 묶어 저장. init-ref 게이트로 마운트 복원 전 기본값이 덮어쓰는 것 방지.
+  const tabSortInitRef = useRef(false);
+  useEffect(() => {
+    if (!tabSortInitRef.current) return;
+    deferSetAppMeta("tab_sort_settings", {
+      plannedSortKey, plannedSortDir, plannedFilterPlatform,
+      bulkSortKey, supplementSort, supplementFilter,
+      awardFilter, recentFilter,
+    });
+  }, [plannedSortKey, plannedSortDir, plannedFilterPlatform, bulkSortKey, supplementSort, supplementFilter, awardFilter, recentFilter]);
+
   // 📂 v3.7.0: 폴더 시스템
   const [folders, setFolders] = useState([]);
   const [novelFolderMap, setNovelFolderMap] = useState(new Map());
@@ -32286,6 +32315,7 @@ function AppContent() {
             savedTagLastTab,          // 🔧 21: 동일 이유
             savedTagPreviewExpanded,  // 22: 태그 칩 프리뷰 펼침 상태
             savedHomeSortSettings,    // 23: 🔧 v7.6.0 (포트 v3.12.1): 홈 정렬/필터
+            savedTabSortSettings,     // 24: 🆕 v7.21.11: 나머지 탭 정렬/필터
           ] = await Promise.all([
             getAppMeta("settings_darkMode"),      // 0: savedDarkMode
             getAppMeta("platform_covers"),        // 1: savedPlatformCovers
@@ -32311,8 +32341,9 @@ function AppContent() {
             getAppMeta("tag_last_tab"),            // 21: savedTagLastTab (🔧 동일 이유)
             getAppMeta("tag_preview_expanded"),    // 22: savedTagPreviewExpanded
             getAppMeta("home_sort_settings"),      // 23: 🔧 v7.6.0 (포트 v3.12.1)
+            getAppMeta("tab_sort_settings"),       // 24: 🆕 v7.21.11
           ]);
-          
+
           if (!mounted) return;
           
           // 다크모드
@@ -32465,6 +32496,20 @@ function AppContent() {
             if (savedHomeSortSettings.filterFolder) setFilterFolder(savedHomeSortSettings.filterFolder);
           }
           homeSortInitRef.current = true; // 초기 복원 완료 → 이후 변경은 deferSetAppMeta로 저장됨
+
+          // 🆕 v7.21.11: 나머지 탭 정렬/필터 복원 (예정·일괄·보충·수상·최신변화)
+          if (savedTabSortSettings && typeof savedTabSortSettings === "object") {
+            const s = savedTabSortSettings;
+            if (s.plannedSortKey) setPlannedSortKey(s.plannedSortKey);
+            if (s.plannedSortDir) setPlannedSortDir(s.plannedSortDir);
+            if (s.plannedFilterPlatform) setPlannedFilterPlatform(s.plannedFilterPlatform);
+            if (s.bulkSortKey) setBulkSortKey(s.bulkSortKey);
+            if (s.supplementSort) setSupplementSort(s.supplementSort);
+            if (s.supplementFilter) setSupplementFilter(s.supplementFilter);
+            if (s.awardFilter && typeof s.awardFilter === "object") setAwardFilter(prev => ({ ...prev, ...s.awardFilter })); // 객체: spread-merge(불리언 false 보존)
+            if (s.recentFilter) setRecentFilter(s.recentFilter);
+          }
+          tabSortInitRef.current = true;
 
           // 🏆 v2.9: 수상 시스템 설정
           if (savedAwardSystemSettings && typeof savedAwardSystemSettings === "object") {
@@ -32889,6 +32934,8 @@ function AppContent() {
         savedCoordinateSystems, savedCustomTagCategories, savedMatchFilterSettings,
         savedPinnedTags,
         savedHomeSortSettings,                 // 🔧 v7.6.0 (포트 v3.12.1)
+        savedTabSortSettings,                  // 🆕 v7.21.11: 나머지 탭 정렬/필터
+        savedTagSortMode, savedTagLastTab, savedTagPreviewExpanded, // 🆕 v7.21.11: 슬롯 전환 시 태그 정렬 누수 수정
       ] = await Promise.all([
         getAppMeta("platform_covers"),         // 0
         getAppMeta("app_settings"),            // 1
@@ -32910,8 +32957,12 @@ function AppContent() {
         getAppMeta("match_filter_settings"),   // 17
         getAppMeta("pinned_tags"),             // 18
         getAppMeta("home_sort_settings"),      // 19: 🔧 v7.6.0 (포트 v3.12.1)
+        getAppMeta("tab_sort_settings"),       // 20: 🆕 v7.21.11
+        getAppMeta("tag_sort_mode"),           // 21: 🆕 v7.21.11 (슬롯 누수 수정)
+        getAppMeta("tag_last_tab"),            // 22
+        getAppMeta("tag_preview_expanded"),    // 23
       ]);
-      
+
       // 5. state 복원 (간소화 — 핵심 데이터만)
       if (savedPlatformCovers && typeof savedPlatformCovers === "object") setPlatformCovers(savedPlatformCovers);
       if (savedSettings && typeof savedSettings === "object") {
@@ -33022,6 +33073,27 @@ function AppContent() {
       }
       // setTimeout으로 next tick에 Ref 활성화 (setState 반영 후)
       setTimeout(() => { homeSortInitRef.current = true; }, 0);
+
+      // 🆕 v7.21.11: 나머지 탭 정렬/필터 슬롯 전환 복원 (홈과 동일 init-ref 패턴)
+      tabSortInitRef.current = false;
+      {
+        const s = (savedTabSortSettings && typeof savedTabSortSettings === "object") ? savedTabSortSettings : {};
+        setPlannedSortKey(s.plannedSortKey || "created");
+        setPlannedSortDir(s.plannedSortDir || "DESC");
+        setPlannedFilterPlatform(s.plannedFilterPlatform || "ALL");
+        setBulkSortKey(s.bulkSortKey || "rating");
+        setSupplementSort(s.supplementSort || "tier");
+        setSupplementFilter(s.supplementFilter || "all");
+        setAwardFilter((s.awardFilter && typeof s.awardFilter === "object") ? { awardId: "all", tierMin: null, excludeDropped: false, excludeDiscontinued: false, ...s.awardFilter } : { awardId: "all", tierMin: null, excludeDropped: false, excludeDiscontinued: false });
+        setRecentFilter(s.recentFilter || "all");
+      }
+      setTimeout(() => { tabSortInitRef.current = true; }, 0);
+
+      // 🆕 v7.21.11: 태그 정렬 모드/탭/프리뷰 슬롯 전환 복원 (이전: 마운트만 복원 → 슬롯 전환 시 이전 슬롯 값 누수)
+      if (savedTagSortMode && ["usage", "name", "registered"].includes(savedTagSortMode)) setTagSortMode(savedTagSortMode);
+      else setTagSortMode("usage");
+      if (savedTagLastTab && ["genre", "general", "sentiment", "combo", "intensity"].includes(savedTagLastTab)) setTagLastTab(savedTagLastTab);
+      setTagPreviewExpanded(savedTagPreviewExpanded === true);
 
       // 🔧 v3.6.1: addTagToRegistry는 tagRegistry 클로저(null)를 참조하므로
       //   slotRegistry를 직접 수정하여 updateTagRegistry 호출
