@@ -2,9 +2,24 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.21.3 (전면 기능검수 P3 — 백업에 검증 이력·의심도 포함)               ║
+ * ║  버전: 7.21.4 (전면 기능검수 P4 — match 모드 정보량 가중 페어링)              ║
  * ║  최종 수정: 2026-06-18                                                        ║
- * ║  총 라인 수: 약 59,340줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 59,360줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ ⚡ v7.21.4 전면 기능검수 P4 — match 모드 정보량 가중 페어링 (2026-06-18)          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [배경] match 모드는 v7 내내 미개선(2024 설계). 자동매칭 페어 선택이 '균등 랜덤'   ║
+ * ║   이라 1900 vs 1100(결과 뻔함=정보량≈0, 레이팅 거의 안 변함)도 1500 vs 1500과     ║
+ * ║   동확률 → 무의미 매칭에 노력 낭비 + 수렴 느림(전 쌍 N²을 소진해야 100%).         ║
+ * ║ [수정] informativePairWeight = (rdA+rdB)·exp(-Δrating²/2σ²)+EPS (σ=200).          ║
+ * ║   가까운 레이팅(결과 불확실=정보량↑)+높은 RD(미확정) 쌍 우선. 비-포커스(가중      ║
+ * ║   reservoir)·포커스(가중 선택) 양 경로 적용. +EPS로 전 쌍 coverage 보장(언젠가    ║
+ * ║   다 매칭됨). 데이터 평탄 초기(전부 1500/RD350)엔 가중 균일=기존 균등 동작.        ║
+ * ║ [검증] 가중 reservoir(Chao) 통계 시뮬레이션 — 선택확률=w/Σw(오차<0.001), 가까운   ║
+ * ║   쌍 우선·먼 쌍 nonzero(coverage). esbuild JSX 파싱 통과.                         ║
+ * ║ [잔여] RD 시간기반 복원(Glicko)·예정작 기대분석·태그 헬스·manual 재배치 — 후속.   ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11948,6 +11963,28 @@ function applyElo(A, B, aWin) {
   }
 
   return { newA, newB, kA, kB };
+}
+
+// 🆕 v7.21.4: 정보량 가중 페어링 (match 모드). [이전] 자동매칭 페어 선택이 균등 랜덤 →
+//   1900 vs 1100(결과 뻔함=정보량≈0, 레이팅 거의 안 변함)도 1500 vs 1500과 동확률 선택 →
+//   무의미 매칭에 노력 낭비 + 수렴 느림(전 쌍 N²을 소진해야 100%). 가까운 레이팅(결과 불확실)
+//   + 높은 RD(미확정) 쌍을 우선 선택해 정보량 최대화. +EPS로 모든 쌍 최소 가중(전 쌍 도달 보장).
+//   데이터 평탄 초기(전부 1500/RD350)엔 가중이 균일 → 기존 균등 동작과 동일.
+const INFORMATIVE_PAIR_SIGMA = 200; // rating 근접 커널 폭(점). |Δrating|≈σ에서 가중 ~0.6배.
+function informativePairWeight(A, B) {
+  const dr = (Number(A.rating) || 1500) - (Number(B.rating) || 1500);
+  const rdSum = (Number(A.rd) || 350) + (Number(B.rd) || 350);
+  return rdSum * Math.exp(-(dr * dr) / (2 * INFORMATIVE_PAIR_SIGMA * INFORMATIVE_PAIR_SIGMA)) + 1e-6;
+}
+// 가중 배열에서 1개 선택 (가중 reservoir 동치). 빈 배열이면 null.
+function pickWeightedPair(candidates) {
+  let cumW = 0, picked = null;
+  for (const c of candidates) {
+    const w = informativePairWeight(c.A, c.B);
+    cumW += w;
+    if (cumW > 0 && Math.random() < w / cumW) picked = c;
+  }
+  return picked || (candidates.length > 0 ? candidates[candidates.length - 1] : null);
 }
 
 /** 🔧 매치 로그 기준 전체 재계산 (메모리 기반 최적화)
@@ -39763,13 +39800,16 @@ function AppContent() {
         }
       } else {
         // 🔧 reservoir sampling: O(n^2) 메모리 방지 (작품 수 많을 때 OOM 크래시 방지)
-        let candidateCount = 0;
+        // 🆕 v7.21.4: 정보량 가중 reservoir — 가까운 레이팅+높은 RD 쌍 우선(균등→가중).
+        //   가중 reservoir: 각 쌍을 w/Σw 확률로 선택(Chao). +EPS로 전 쌍 coverage 유지.
+        let cumW = 0;
         let picked = null;
         for (let i = 0; i < allNovels.length; i++) {
           for (let j = i + 1; j < allNovels.length; j++) {
             if (played.has(pairKey(allNovels[i].id, allNovels[j].id))) continue;
-            candidateCount++;
-            if (Math.random() < 1 / candidateCount) {
+            const w = informativePairWeight(allNovels[i], allNovels[j]);
+            cumW += w;
+            if (cumW > 0 && Math.random() < w / cumW) {
               picked = { A: allNovels[i], B: allNovels[j] };
             }
           }
@@ -39792,7 +39832,8 @@ function AppContent() {
         setPair(null);
         return;
       }
-      const picked = candidates[Math.floor(Math.random() * candidates.length)];
+      // 🆕 v7.21.4: 포커스 경로도 정보량 가중 선택(이전 균등 랜덤) — 포커스작과 레이팅 가까운/RD 높은 상대 우선.
+      const picked = pickWeightedPair(candidates) || candidates[Math.floor(Math.random() * candidates.length)];
       setPair({ A: picked.A, B: picked.B });
     } catch (e) {
       console.warn("pickRandomUnseenPair 오류:", e);
