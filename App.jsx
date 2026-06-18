@@ -2,9 +2,24 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.21.11 (탭별 정렬/필터 영속화 — 예정·일괄·보충·수상·최신변화 + 태그누수)║
+ * ║  버전: 7.21.12 (데이터 무결성 검증 확장 — 하이브리드/티어/매치 5종 추가)       ║
  * ║  최종 수정: 2026-06-18                                                        ║
- * ║  총 라인 수: 약 59,380줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 59,440줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛡️ v7.21.12 데이터 무결성 검증 강화·확장 (2026-06-18)                             ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ verifyDataIntegrity에 하이브리드/티어/매치 검사 5종 추가(INTEGRITY_VERSION 1→2,   ║
+ * ║ 기존 설치 1회 자동 재실행). 기존: novels JSON/숫자/태그·표지·11종 고아만 검사.     ║
+ * ║ [추가] (a) suspicion_score 범위/NaN 보정(0~cap) (b) 매치 무결성(자기대결·winner   ║
+ * ║   불일치 삭제) (c) choice_logs.match_id 고아(매치 삭제 잔존, ALIVE로 안 잡히던)   ║
+ * ║   정리 (d) 비활성 티어 manual_tier 클리어(novels+planned, config↔data 드리프트·   ║
+ * ║   티어 삭제 고아) (e) manual_order gap=100 불변식 위반 티어 rebalanceTierOrder    ║
+ * ║   재정렬(중복/비양수/100배수 아님). rebalance는 자체 batch라 메인 execBatch 후.   ║
+ * ║ [패턴 재사용] ALIVE 서브쿼리·execBatch·addLog·getActiveTierOrder·                 ║
+ * ║   globalSuspicionConfig.cap·rebalanceTierOrder. 모두 try-guard로 부분 실패 격리.  ║
+ * ║ [검증] esbuild JSX 파싱 통과.                                                    ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -8332,7 +8347,7 @@ async function migrateTagSystem() {
 
 async function verifyDataIntegrity(options = {}) {
   const { silent = false, forceRun = false } = options;
-  const INTEGRITY_VERSION = 1; // 버전 올리면 자동 재실행
+  const INTEGRITY_VERSION = 2; // 🔧 v7.21.12: 하이브리드/티어 무결성 검사 추가 → 1→2 (기존 설치 1회 재실행)
   
   try {
     if (!forceRun) {
@@ -8357,6 +8372,7 @@ async function verifyDataIntegrity(options = {}) {
     
     const novelIds = new Set((novels || []).map(n => n.id));
     const queries = [];
+    const tiersToRebalance = new Set(); // 🆕 v7.21.12: manual_order 불변식 복구 대상(메인 batch 후 처리)
     let _integrityTagAttrs = null; // 1d에서 lazy 로드
     let _integrityUserMajorGenres = null;
     let _integrityUserSubGenres = null;
@@ -8633,12 +8649,76 @@ async function verifyDataIntegrity(options = {}) {
       console.warn("[v7.0.12] v7.0 고아 검증 실패:", e?.message);
     }
 
+    // ─── 🆕 v7.21.12: 하이브리드/티어/매치 무결성 검사 (전면 검수 #6) ───
+    try {
+      // (a) suspicion_score 범위/NaN 정규화 (0~cap)
+      const _cap = (globalSuspicionConfig && Number(globalSuspicionConfig.cap)) || 20;
+      const badSusp = await all(
+        `SELECT COUNT(*) AS c FROM novels WHERE suspicion_score IS NULL OR suspicion_score < 0 OR suspicion_score > ? OR suspicion_score <> suspicion_score`,
+        [_cap]
+      );
+      if (badSusp && Number(badSusp[0]?.c) > 0) {
+        queries.push({
+          sql: `UPDATE novels SET suspicion_score = CASE WHEN suspicion_score IS NULL OR suspicion_score <> suspicion_score OR suspicion_score < 0 THEN 0 WHEN suspicion_score > ? THEN ? ELSE suspicion_score END WHERE suspicion_score IS NULL OR suspicion_score < 0 OR suspicion_score > ? OR suspicion_score <> suspicion_score`,
+          params: [_cap, _cap, _cap],
+        });
+        addLog("의심도범위", `suspicion_score 범위 이탈 ${badSusp[0].c}건 보정(0~${_cap})`);
+      }
+
+      // (b) 매치 무결성 — 자기대결(a=b) / winner가 a·b 아님
+      const badMatches = await all(`SELECT id FROM matches WHERE a_id = b_id OR (winner_id IS NOT NULL AND winner_id NOT IN (a_id, b_id))`);
+      if (badMatches && badMatches.length > 0) {
+        for (const m of badMatches) queries.push({ sql: "DELETE FROM matches WHERE id=?", params: [m.id] });
+        addLog("매치무결성", `손상 매치(자기대결/winner불일치) ${badMatches.length}건 삭제`);
+      }
+
+      // (c) choice_logs.match_id 고아 (매치 삭제로 잔존 — novel은 살아있어 ALIVE 검사로 안 잡힘)
+      const orphanChoiceByMatch = await all(`SELECT id FROM choice_logs WHERE match_id IS NOT NULL AND match_id NOT IN (SELECT id FROM matches)`);
+      if (orphanChoiceByMatch && orphanChoiceByMatch.length > 0) {
+        for (const c of orphanChoiceByMatch) queries.push({ sql: "DELETE FROM choice_logs WHERE id=?", params: [c.id] });
+        addLog("고아로그", `삭제된 매치 참조 choice_log ${orphanChoiceByMatch.length}건 정리`);
+      }
+
+      // (d) manual_tier가 현재 활성 티어에 없는 작품 → 클리어 (config↔data 드리프트 / 티어 삭제 고아)
+      const activeTierKeys = new Set(getActiveTierOrder(globalTierConfig));
+      for (const tbl of ["novels", "planned_novels"]) {
+        const assigned = await all(`SELECT id, manual_tier FROM ${tbl} WHERE manual_tier IS NOT NULL AND manual_tier != ''`);
+        let cleared = 0;
+        for (const r of (assigned || [])) {
+          if (!activeTierKeys.has(r.manual_tier)) {
+            queries.push({ sql: `UPDATE ${tbl} SET manual_tier=NULL, manual_order=0 WHERE id=?`, params: [r.id] });
+            cleared++;
+          }
+        }
+        if (cleared > 0) addLog("비활성티어", `${tbl}: 비활성 티어 manual_tier ${cleared}건 클리어`);
+      }
+
+      // (e) manual_order gap=100 불변식 위반 티어 → rebalance 대상 수집 (중복/비양수/100배수 아님)
+      const badOrderTiers = await all(
+        `SELECT manual_tier FROM novels WHERE manual_tier IS NOT NULL AND manual_tier != '' GROUP BY manual_tier
+         HAVING COUNT(*) <> COUNT(DISTINCT manual_order) OR MIN(manual_order) <= 0 OR SUM(CASE WHEN manual_order % 100 <> 0 THEN 1 ELSE 0 END) > 0`
+      );
+      for (const t of (badOrderTiers || [])) {
+        if (activeTierKeys.has(t.manual_tier)) tiersToRebalance.add(t.manual_tier);
+      }
+    } catch (e) {
+      console.warn("[v7.21.12] 하이브리드/티어 무결성 검사 실패:", e?.message);
+    }
+
     // ─── 실행 ───
     if (queries.length > 0) {
       await execBatch(queries);
       addLog("완료", `총 ${queries.length}건 쿼리 실행, ${log.fixed}개 작품 수정`);
     } else {
       addLog("완료", "불일치 없음 — 데이터 정합성 양호");
+    }
+
+    // 🆕 v7.21.12: manual_order 불변식 복구 (rebalanceTierOrder는 자체 execBatch라 메인 실행 후 분리)
+    if (tiersToRebalance.size > 0) {
+      for (const tier of tiersToRebalance) {
+        try { await rebalanceTierOrder(tier); } catch (re) { console.warn("[v7.21.12] rebalance 실패:", tier, re?.message); }
+      }
+      addLog("순서정규화", `manual_order 불변식 위반 ${tiersToRebalance.size}개 티어 재정렬`);
     }
     
     // 버전 기록 (자동 실행 시)
