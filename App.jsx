@@ -2,9 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.22.0 (🅐 하이브리드 신호 정밀화 — manual_order 반영 + 표본 보정)      ║
+ * ║  버전: 7.22.1 (🅑-1 태그 관계 정합 — 그룹 CRUD 정규화 + 고아 정리)             ║
  * ║  최종 수정: 2026-06-19                                                        ║
- * ║  총 라인 수: 약 59,560줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 59,600줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🅑-1 v7.22.1 태그 관계 시스템 정합 (2026-06-19)                                   ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [HIGH] 태그 그룹 CRUD가 raw 문자열 키라 읽기경로(resolveTagToGroup=정규화 우선)와  ║
+ * ║   불일치 → 변형 조회 실패·tagToGroup 고아 매핑 누적. 4개 핸들러를 정규화 통일:     ║
+ * ║   • getTagGroupInfo: tagToGroup[normalizeTag] || [raw] 우선 조회.                 ║
+ * ║   • createTagGroup/addTagToGroup: canonical 키로 저장(+옛 raw 키 정리).           ║
+ * ║   • addTagToGroup/removeTagFromGroup: 그룹 tags 필터를 isSameTag로(별칭/공백 변형  ║
+ * ║     도 제거), 매핑은 canonical·raw 모두 삭제.                                     ║
+ * ║   • deleteTagGroup: 삭제 그룹을 가리키던 relatedGroupId(상반 관계) 역참조 정리 →   ║
+ * ║     끊어진 참조로 oppositeTagAnalysis가 빈 결과 내던 것 방지.                      ║
+ * ║ [+] syncCustomTagsFromNovels 일반태그 분기도 normalizeTagKey 통일(변형을 새 커스텀 ║
+ * ║   태그로 재등록하던 중복 누적 차단, major/sub의 listHasTag와 일관).               ║
+ * ║ [검증] esbuild JSX 파싱 통과.                                                    ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -35903,7 +35919,8 @@ function AppContent() {
   
   // 태그의 그룹 정보 조회
   const getTagGroupInfo = useCallback((tag) => {
-    const groupId = tagRelations.tagToGroup[tag];
+    // 🔧 v7.22.1: resolveTagToGroup와 동일하게 정규화 키 우선 조회 (별칭/공백 변형도 매칭)
+    const groupId = tagRelations.tagToGroup[normalizeTag(tag)] || tagRelations.tagToGroup[tag];
     if (!groupId) return null;
     return tagRelations.groups[groupId] || null;
   }, [tagRelations]);
@@ -35950,16 +35967,16 @@ function AppContent() {
       const newGroups = { ...prev.groups, [groupId]: newGroup };
       const newTagToGroup = { ...prev.tagToGroup };
       
-      // 태그 → 그룹 매핑 업데이트
+      // 태그 → 그룹 매핑 업데이트 (🔧 v7.22.1: canonical 키로 저장 — 조회(resolveTagToGroup)와 일치, 고아 방지)
       for (const tag of tags) {
-        newTagToGroup[tag] = groupId;
+        newTagToGroup[normalizeTag(tag)] = groupId;
       }
-      
+
       const updated = { groups: newGroups, tagToGroup: newTagToGroup };
       deferSetAppMeta("tag_relations", updated);
       return updated;
     });
-    
+
     return groupId;
   }, []);
   
@@ -35969,27 +35986,31 @@ function AppContent() {
       const group = prev.groups[groupId];
       if (!group) return prev;
       
-      // 이미 다른 그룹에 있으면 제거
-      const oldGroupId = prev.tagToGroup[tag];
+      // 이미 다른 그룹에 있으면 제거 (🔧 v7.22.1: 정규화 키 조회 + isSameTag 필터)
+      const nk = normalizeTag(tag);
+      const oldGroupId = prev.tagToGroup[nk] || prev.tagToGroup[tag];
       const newGroups = { ...prev.groups };
-      
+
       if (oldGroupId && oldGroupId !== groupId) {
         const oldGroup = newGroups[oldGroupId];
         if (oldGroup) {
           newGroups[oldGroupId] = {
             ...oldGroup,
-            tags: oldGroup.tags.filter(t => t !== tag),
+            tags: oldGroup.tags.filter(t => !isSameTag(t, tag)),
           };
         }
       }
-      
-      // 새 그룹에 추가
+
+      // 새 그룹에 추가 (isSameTag 중복 방지)
       newGroups[groupId] = {
         ...group,
-        tags: [...new Set([...group.tags, tag])],
+        tags: group.tags.some(t => isSameTag(t, tag)) ? group.tags : [...group.tags, tag],
       };
-      
-      const newTagToGroup = { ...prev.tagToGroup, [tag]: groupId };
+
+      // canonical 키로 저장 + 옛 raw 키 정리
+      const newTagToGroup = { ...prev.tagToGroup };
+      delete newTagToGroup[tag];
+      newTagToGroup[nk] = groupId;
       const updated = { groups: newGroups, tagToGroup: newTagToGroup };
       deferSetAppMeta("tag_relations", updated);
       return updated;
@@ -36002,19 +36023,21 @@ function AppContent() {
       const group = prev.groups[groupId];
       if (!group) return prev;
       
-      const newTags = group.tags.filter(t => t !== tag);
+      // 🔧 v7.22.1: isSameTag 필터(별칭/공백 변형도 제거) + canonical·raw 키 모두 정리(고아 방지)
+      const newTags = group.tags.filter(t => !isSameTag(t, tag));
       const newGroups = { ...prev.groups };
       const newTagToGroup = { ...prev.tagToGroup };
-      
+
       if (newTags.length === 0) {
         // 그룹이 비면 삭제
         delete newGroups[groupId];
       } else {
         newGroups[groupId] = { ...group, tags: newTags };
       }
-      
+
       delete newTagToGroup[tag];
-      
+      delete newTagToGroup[normalizeTag(tag)];
+
       const updated = { groups: newGroups, tagToGroup: newTagToGroup };
       deferSetAppMeta("tag_relations", updated);
       return updated;
@@ -36029,14 +36052,22 @@ function AppContent() {
       
       const newGroups = { ...prev.groups };
       const newTagToGroup = { ...prev.tagToGroup };
-      
-      // 그룹의 모든 태그 매핑 제거
+
+      // 그룹의 모든 태그 매핑 제거 (🔧 v7.22.1: canonical·raw 키 모두)
       for (const tag of group.tags) {
         delete newTagToGroup[tag];
+        delete newTagToGroup[normalizeTag(tag)];
       }
-      
+
       delete newGroups[groupId];
-      
+
+      // 🔧 v7.22.1: 이 그룹을 가리키던 상반 관계(relatedGroupId)를 정리 → 끊어진 참조(고아) 방지
+      for (const gId of Object.keys(newGroups)) {
+        if (newGroups[gId]?.relatedGroupId === groupId) {
+          newGroups[gId] = { ...newGroups[gId], relatedGroupId: null };
+        }
+      }
+
       const updated = { groups: newGroups, tagToGroup: newTagToGroup };
       deferSetAppMeta("tag_relations", updated);
       return updated;
@@ -37750,36 +37781,31 @@ function AppContent() {
 
   // 🏷️ 작품에 적용된 태그 중 기본 목록에 없는 것들을 커스텀 태그로 자동 수집
   async function syncCustomTagsFromNovels(novels, currentCustomTags) {
-    const allDefaultSet = new Set([
-      ...ALL_DEFAULT_TAGS,
-      ...MAJOR_GENRES,
-      ...SUB_GENRES,
-    ]);
-    const currentCustomSet = new Set(currentCustomTags);
+    // 🔧 v7.22.1: 정규화 키 기반 — 이전 일반 태그 분기가 raw Set.has라 별칭/공백 변형("현판"·
+    //   "현대판타지")을 기본/기존 커스텀과 다른 것으로 보고 새 커스텀 태그로 재등록(중복 누적).
+    //   major/sub 분기(listHasTag)와 동일하게 normalizeTagKey로 통일 + 수집 내 중복도 키로 차단.
+    const allDefaultSet = new Set([...ALL_DEFAULT_TAGS, ...MAJOR_GENRES, ...SUB_GENRES].map(normalizeTagKey));
+    const currentCustomSet = new Set((currentCustomTags || []).map(normalizeTagKey));
     const newTags = new Set();
+    const newTagKeys = new Set();
+    const collect = (tag) => {
+      const k = normalizeTagKey(tag);
+      if (!k || allDefaultSet.has(k) || currentCustomSet.has(k) || newTagKeys.has(k)) return;
+      newTags.add(tag); // 원본 표기 보존
+      newTagKeys.add(k);
+    };
 
     for (const n of novels) {
       // 일반 태그
       const tags = (n.tags || "").split(",").map(t => t.trim()).filter(Boolean);
-      for (const tag of tags) {
-        if (!allDefaultSet.has(tag) && !currentCustomSet.has(tag)) {
-          newTags.add(tag);
-        }
-      }
-      // 대장르
-      const majors = parseMajorSub(n.major_genre);
-      for (const g of majors) {
-        if (!listHasTag(MAJOR_GENRES, g) && !listHasTag(userMajorGenres, g) && !currentCustomSet.has(g)) {
-          // 대장르는 userMajorGenres에 추가하지 않고, 일단 커스텀 태그로
-          if (!allDefaultSet.has(g)) newTags.add(g);
-        }
+      for (const tag of tags) collect(tag);
+      // 대장르 (userMajorGenres에 추가하지 않고 일단 커스텀 태그로)
+      for (const g of parseMajorSub(n.major_genre)) {
+        if (!listHasTag(MAJOR_GENRES, g) && !listHasTag(userMajorGenres, g)) collect(g);
       }
       // 부장르
-      const subs = parseMajorSub(n.sub_genre);
-      for (const g of subs) {
-        if (!listHasTag(SUB_GENRES, g) && !listHasTag(userSubGenres, g) && !currentCustomSet.has(g)) {
-          if (!allDefaultSet.has(g)) newTags.add(g);
-        }
+      for (const g of parseMajorSub(n.sub_genre)) {
+        if (!listHasTag(SUB_GENRES, g) && !listHasTag(userSubGenres, g)) collect(g);
       }
     }
 
