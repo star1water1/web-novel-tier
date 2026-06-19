@@ -2,9 +2,26 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.22.1 (🅑-1 태그 관계 정합 — 그룹 CRUD 정규화 + 고아 정리)             ║
+ * ║  버전: 7.22.2 (🅑-2 태그 헬스 패널 — 변형 클러스터 병합 + 관계 정리)           ║
  * ║  최종 수정: 2026-06-19                                                        ║
- * ║  총 라인 수: 약 59,600줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 59,700줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🅑-2 v7.22.2 태그 헬스 패널 (2026-06-19)                                          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [의도 부합] 사용자 호출형 진단 도구(태그매니저처럼) — 자동 변경 X, 병합은 사용자  ║
+ * ║   1탭 승인. 정규화 O(1)·관계 정합(🅑-1) 위에 얹은 정리 도구.                       ║
+ * ║ [기능] 설정>태그 관리에 '🩺 태그 헬스 점검' 추가:                                 ║
+ * ║   • 변형 클러스터: 라이브러리 전반에서 normalizeTagKey가 같은데 표기가 다른        ║
+ * ║     태그(별칭·띄어쓰기)를 사용 빈도와 함께 묶어 표시 → 대표 표기 탭으로 전 작품·   ║
+ * ║     관계·좌표 일괄 통일(renameTagGlobally silent 루프, 끝에 1회 갱신).             ║
+ * ║   • 끊어진 관계: 존재 않는 그룹을 가리키는 relatedGroupId·tagToGroup 매핑 진단 +   ║
+ * ║     '관계 정리' 1탭(null화/제거). (cleanupDuplicateTags는 작품내/레지스트리 dedup  ║
+ * ║     으로 별개 — 헬스는 라이브러리 전반 변형 통합.)                                ║
+ * ║ [구현] computeTagHealth/openTagHealth/mergeTagCluster/cleanupTagRelationsHealth + ║
+ * ║   renameTagGlobally에 {silent} 옵션 추가(루프 알림 폭주 방지). 신규 모달 UI.      ║
+ * ║ [검증] esbuild JSX 파싱 통과.                                                    ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -31123,6 +31140,10 @@ function AppContent() {
   
   const [tagManagerTab, setTagManagerTab] = useState("custom"); // 설정 내 태그 관리 탭
   const [tagManagerModalOpen, setTagManagerModalOpen] = useState(false); // 태그 매니저 모달
+  // 🆕 v7.22.2: 태그 헬스 패널 (변형 클러스터 병합 + 끊어진 관계 정리)
+  const [tagHealthModalOpen, setTagHealthModalOpen] = useState(false);
+  const [tagHealthData, setTagHealthData] = useState(null);
+  const [tagHealthBusy, setTagHealthBusy] = useState(false);
 
   // 🏆 티어 검토 시스템 (v2.5)
   const [reviewSearchQuery, setReviewSearchQuery] = useState(""); // 강제 지정용 검색
@@ -36476,6 +36497,100 @@ function AppContent() {
 
   // 🏷️ 중복 태그 정리 (전체 태그에서 중복 제거)
   // 🔧 v3.5.15b: 작품별 DB 데이터 중복도 일괄 정리 추가
+  // 🆕 v7.22.2: 태그 헬스 — 라이브러리 전반의 '변형 클러스터'(같은 정규화 키, 다른 표기)와
+  //   끊어진 관계(존재하지 않는 그룹을 가리키는 relatedGroupId·tagToGroup) 진단. 자동 변경 X(진단만).
+  function computeTagHealth() {
+    const byKey = new Map(); // normKey → Map(원본표기 → 사용 작품수)
+    for (const n of (list || [])) {
+      const all = [
+        ...parseMajorSub(n.major_genre),
+        ...parseMajorSub(n.sub_genre),
+        ...((n.tags || "").split(",").map(t => t.trim()).filter(Boolean)),
+      ];
+      const seenInNovel = new Set(); // 한 작품 내 같은 표기 중복은 1회만
+      for (const t of all) {
+        if (seenInNovel.has(t)) continue;
+        seenInNovel.add(t);
+        const k = normalizeTagKey(t);
+        if (!k) continue;
+        if (!byKey.has(k)) byKey.set(k, new Map());
+        const m = byKey.get(k);
+        m.set(t, (m.get(t) || 0) + 1);
+      }
+    }
+    const clusters = [];
+    for (const [k, m] of byKey) {
+      if (m.size >= 2) {
+        const variants = [...m.entries()].map(([spelling, count]) => ({ spelling, count })).sort((a, b) => b.count - a.count);
+        clusters.push({ key: k, canonical: variants[0].spelling, variants, total: variants.reduce((s, v) => s + v.count, 0) });
+      }
+    }
+    clusters.sort((a, b) => b.total - a.total);
+    // 끊어진 관계
+    const groups = tagRelations?.groups || {};
+    const gids = new Set(Object.keys(groups));
+    const danglingRelated = [];
+    for (const [gid, g] of Object.entries(groups)) {
+      if (g.relatedGroupId && !gids.has(g.relatedGroupId)) danglingRelated.push({ groupId: gid, name: g.name || "(이름없음)" });
+    }
+    const orphanMappings = [];
+    for (const [tag, gid] of Object.entries(tagRelations?.tagToGroup || {})) {
+      if (!gids.has(gid)) orphanMappings.push(tag);
+    }
+    return { clusters, danglingRelated, orphanMappings };
+  }
+
+  function openTagHealth() {
+    try { setTagHealthData(computeTagHealth()); }
+    catch (e) { console.warn("[tagHealth] 계산 실패:", e?.message); setTagHealthData({ clusters: [], danglingRelated: [], orphanMappings: [] }); }
+    deferOpen(setTagHealthModalOpen);
+  }
+
+  // 클러스터 병합: 비-canonical 표기를 canonical로 일괄 rename (silent 루프 → 끝에 1회 갱신)
+  async function mergeTagCluster(cluster, canonical) {
+    if (!cluster || !canonical) return;
+    setTagHealthBusy(true);
+    try {
+      for (const v of cluster.variants) {
+        if (!isSameTag(v.spelling, canonical)) {
+          await renameTagGlobally(v.spelling, canonical, { silent: true });
+        }
+      }
+      await loadList(undefined, undefined, "tagHealthMerge");
+      setTagHealthData(computeTagHealth());
+    } catch (e) {
+      console.warn("[tagHealth] 병합 오류:", e?.message);
+      Alert.alert("오류", "태그 병합 중 문제가 발생했습니다: " + (e?.message || ""));
+    } finally {
+      setTagHealthBusy(false);
+    }
+  }
+
+  // 끊어진 관계 정리: dangling relatedGroupId NULL화 + 존재 않는 그룹 가리키는 tagToGroup 제거
+  function cleanupTagRelationsHealth() {
+    setTagRelations(prev => {
+      if (!prev || !prev.groups) return prev;
+      const gids = new Set(Object.keys(prev.groups));
+      const newGroups = { ...prev.groups };
+      let changed = false;
+      for (const gid of Object.keys(newGroups)) {
+        if (newGroups[gid]?.relatedGroupId && !gids.has(newGroups[gid].relatedGroupId)) {
+          newGroups[gid] = { ...newGroups[gid], relatedGroupId: null };
+          changed = true;
+        }
+      }
+      const newT2G = {};
+      for (const [tag, gid] of Object.entries(prev.tagToGroup || {})) {
+        if (gids.has(gid)) newT2G[tag] = gid; else changed = true;
+      }
+      if (!changed) return prev;
+      const updated = { groups: newGroups, tagToGroup: newT2G };
+      deferSetAppMeta("tag_relations", updated);
+      return updated;
+    });
+    setTimeout(() => { try { setTagHealthData(computeTagHealth()); } catch {} }, 0);
+  }
+
   async function cleanupDuplicateTags() {
     setIsLoading(true);
     try {
@@ -37411,11 +37526,12 @@ function AppContent() {
   // 🆕 v7.10.0: 태그 이름변경 / 병합 — 전 작품 + 메타데이터 전반을 새 이름으로 이전.
   //   새 이름(to)이 이미 존재하면 자연스럽게 병합(중복 제거). delete+재태깅 없이 통합 가능.
   //   주의: 학습 패턴(preference_patterns)은 병합 충돌/유령 방지를 위해 정리(재학습됨).
-  async function renameTagGlobally(oldTag, newTag) {
+  async function renameTagGlobally(oldTag, newTag, opts = {}) {
+    const { silent = false } = opts; // 🆕 v7.22.2: 헬스 패널 클러스터 병합(루프) 시 알림/loadList 억제
     const from = (oldTag || "").trim();
     const to = (newTag || "").trim();
-    if (!from || !to) { Alert.alert("이름 변경", "새 태그 이름을 입력하세요."); return; }
-    if (isSameTag(from, to)) { Alert.alert("이름 변경", "기존 이름과 동일합니다."); return; }
+    if (!from || !to) { if (!silent) Alert.alert("이름 변경", "새 태그 이름을 입력하세요."); return; }
+    if (isSameTag(from, to)) { if (!silent) Alert.alert("이름 변경", "기존 이름과 동일합니다."); return; }
     setIsLoading(true);
     try {
       // 1) novels + planned_novels 재작성 (정확 태그만 치환 + 병합 시 중복 제거)
@@ -37579,8 +37695,10 @@ function AppContent() {
           [`tag:${from}`, `tag:${_nf}`, `genre:${from}`, `genre:${_nf}`]);
       } catch (e) { console.warn('[renameTag] pattern cleanup:', e?.message); }
 
-      await loadList(undefined, undefined, "tag_rename");
-      Alert.alert("완료", `"${from}" → "${to}" 이름 변경/병합 완료 (${affected}개 작품 수정).\n\n관계·좌표 설정도 함께 이전됐어요.`);
+      if (!silent) {
+        await loadList(undefined, undefined, "tag_rename");
+        Alert.alert("완료", `"${from}" → "${to}" 이름 변경/병합 완료 (${affected}개 작품 수정).\n\n관계·좌표 설정도 함께 이전됐어요.`);
+      }
     } catch (e) {
       console.warn('[renameTag] failed:', e?.message);
       Alert.alert("오류", "태그 이름 변경 중 오류가 발생했습니다.\n\n" + (e?.message || ""));
@@ -53619,7 +53737,21 @@ async function importJSON() {
                   🏷️ 전체 태그 관리 열기
                 </Text>
               </TouchableOpacity>
-              
+
+              {/* 🆕 v7.22.2: 태그 헬스 — 변형 클러스터 병합 + 끊어진 관계 정리 (진단형, 사용자 승인 병합) */}
+              <TouchableOpacity
+                onPress={openTagHealth}
+                style={{
+                  backgroundColor: isDark ? "#134e4a" : "#ccfbf1",
+                  padding: 14, borderRadius: 14, flexDirection: "row",
+                  alignItems: "center", justifyContent: "center", marginBottom: 16,
+                }}
+              >
+                <Text style={{ color: isDark ? "#5eead4" : "#0f766e", fontSize: 15, fontWeight: "700" }}>
+                  🩺 태그 헬스 점검 (중복 표기 병합·관계 정리)
+                </Text>
+              </TouchableOpacity>
+
               {/* 빠른 유틸리티 */}
               <View style={{ flexDirection: "row", gap: 8, marginBottom: 16 }}>
                 <TouchableOpacity
@@ -60032,6 +60164,91 @@ async function importJSON() {
         usedTagsSet={usedTagsSet}
         theme={C}
       />}
+
+      {/* 🩺 v7.22.2: 태그 헬스 패널 — 변형 클러스터 병합 + 끊어진 관계 정리 (진단, 사용자 승인 병합) */}
+      {tagHealthModalOpen && (
+      <Modal
+        visible={tagHealthModalOpen}
+        animationType="slide"
+        onRequestClose={() => setTagHealthModalOpen(false)}
+        transparent
+      >
+        <View style={{ flex: 1, backgroundColor: C.modal }}>
+          <TouchableOpacity style={{ height: Math.round(Dimensions.get("window").height * 0.08) }} activeOpacity={1} onPress={() => setTagHealthModalOpen(false)} />
+          <View style={{ backgroundColor: C.card, borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, flex: 1 }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>🩺 태그 헬스</Text>
+              <TouchableOpacity onPress={() => setTagHealthModalOpen(false)} style={{ padding: 6 }}>
+                <Text style={{ fontSize: 22, color: C.sub }}>×</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={{ color: C.sub, fontSize: 12, marginBottom: 12 }}>
+              같은 뜻인데 표기가 다른 태그(별칭·띄어쓰기 변형)와 끊어진 관계를 찾아 줍니다. 병합할 대표 표기를 탭하면 모든 작품에서 통일돼요.
+            </Text>
+            {tagHealthBusy && <Text style={{ color: C.primary, fontSize: 13, marginBottom: 8 }}>처리 중…</Text>}
+            <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled">
+              {/* 변형 클러스터 */}
+              <Text style={{ color: C.text, fontWeight: "800", fontSize: 14, marginBottom: 6 }}>
+                🔀 중복 표기 ({tagHealthData?.clusters?.length || 0})
+              </Text>
+              {(tagHealthData?.clusters || []).length === 0 ? (
+                <Text style={{ color: C.sub, fontSize: 13, marginBottom: 16 }}>중복 표기가 없습니다 ✓</Text>
+              ) : (
+                (tagHealthData.clusters).slice(0, 50).map((cluster) => (
+                  <View key={cluster.key} style={{ backgroundColor: C.chip, borderRadius: 12, padding: 10, marginBottom: 8 }}>
+                    <Text style={{ color: C.sub, fontSize: 11, marginBottom: 6 }}>탭하면 그 표기로 통일 (총 {cluster.total}회 사용)</Text>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                      {cluster.variants.map((v) => (
+                        <TouchableOpacity
+                          key={v.spelling}
+                          disabled={tagHealthBusy}
+                          onPress={() => {
+                            Alert.alert(
+                              "태그 병합",
+                              `이 표기들을 "${v.spelling}"(으)로 통일할까요?\n\n· ${cluster.variants.map(x => `${x.spelling} (${x.count})`).join("\n· ")}\n\n모든 작품·관계·좌표에서 바뀝니다.`,
+                              [{ text: "취소" }, { text: "병합", style: "destructive", onPress: () => mergeTagCluster(cluster, v.spelling) }]
+                            );
+                          }}
+                          style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: v.spelling === cluster.canonical ? C.primary : C.card, borderWidth: 1, borderColor: v.spelling === cluster.canonical ? C.primary : C.line }}
+                        >
+                          <Text style={{ color: v.spelling === cluster.canonical ? "#fff" : C.text, fontSize: 13, fontWeight: "700" }}>
+                            {v.spelling} <Text style={{ fontSize: 11, opacity: 0.8 }}>×{v.count}</Text>
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+                ))
+              )}
+
+              {/* 끊어진 관계 */}
+              <Text style={{ color: C.text, fontWeight: "800", fontSize: 14, marginTop: 12, marginBottom: 6 }}>
+                🔗 끊어진 관계 ({(tagHealthData?.danglingRelated?.length || 0) + (tagHealthData?.orphanMappings?.length || 0)})
+              </Text>
+              {((tagHealthData?.danglingRelated?.length || 0) + (tagHealthData?.orphanMappings?.length || 0)) === 0 ? (
+                <Text style={{ color: C.sub, fontSize: 13, marginBottom: 16 }}>끊어진 관계가 없습니다 ✓</Text>
+              ) : (
+                <View style={{ backgroundColor: C.chip, borderRadius: 12, padding: 12, marginBottom: 16 }}>
+                  {(tagHealthData?.danglingRelated?.length || 0) > 0 && (
+                    <Text style={{ color: C.text, fontSize: 13, marginBottom: 4 }}>· 존재하지 않는 그룹을 가리키는 상반 관계 {tagHealthData.danglingRelated.length}건</Text>
+                  )}
+                  {(tagHealthData?.orphanMappings?.length || 0) > 0 && (
+                    <Text style={{ color: C.text, fontSize: 13, marginBottom: 4 }}>· 사라진 그룹을 가리키는 태그 매핑 {tagHealthData.orphanMappings.length}건</Text>
+                  )}
+                  <TouchableOpacity
+                    onPress={() => { cleanupTagRelationsHealth(); Alert.alert("완료", "끊어진 관계를 정리했어요."); }}
+                    style={{ marginTop: 8, alignSelf: "flex-start", backgroundColor: C.primary, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10 }}
+                  >
+                    <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>관계 정리</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+              <View style={{ height: 40 }} />
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+      )}
 
       {/* 🧹 v3.5.5: 커스텀 초기화 모달 */}
       <Modal
