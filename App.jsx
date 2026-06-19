@@ -2,9 +2,27 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.21.12 (7.21 릴리스 — 인앱 버전/변경내역/가이드 동기화)                ║
- * ║  최종 수정: 2026-06-18                                                        ║
- * ║  총 라인 수: 약 59,520줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 7.22.0 (🅐 하이브리드 신호 정밀화 — manual_order 반영 + 표본 보정)      ║
+ * ║  최종 수정: 2026-06-19                                                        ║
+ * ║  총 라인 수: 약 59,560줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🅐 v7.22.0 하이브리드 신호 정밀화 (2026-06-19)                                    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [의도 부합] hybrid 'patrick truth'(manual_order=사용자 진실)를 분석이 더 충실히   ║
+ * ║   반영하도록 — 새 방향이 아니라 의도 미달 복원.                                   ║
+ * ║ [#1 getPrefScore 포화 해소] 이전 orderAdj=절대 order/100*10 cap 80 → 티어 9위부터  ║
+ * ║   전부 -80 포화 → 티어 내 미세 순위가 취향분석·추천·좌표에서 소실. → globalTierRank ║
+ * ║   Map(loadList에서 hybrid/manual만 사전계산, id→티어내 순위비율 0~1)을 밴드폭×      ║
+ * ║   ORDER_BAND_FRACTION(0.45)으로 분포. 티어=1차 신호 유지(밴드 침범/역전 없음),     ║
+ * ║   순위=2차로 부활. 시뮬레이션: 티어 내 전 순위 차등(B#1=1500 vs B#40=1388), 티어   ║
+ * ║   비역전·formatPrefScore 라벨 정합 확인. match는 원시 rating이라 무영향.           ║
+ * ║ [#2 표본크기 보정] 장르/부장르/태그/조합 '선호' 순위가 raw 평균이라 2~3표본 항목이 ║
+ * ║   고평균으로 상위 점령 → shrunkMean(empirical Bayes 수축, k=4, 전역평균 기준)으로  ║
+ * ║   정렬 키(adjRating) 보정. 표시는 raw avgRating 유지. (조합은 순수 avg 정렬이라    ║
+ * ║   효과 큼.) 검증: 2표본 raw2000→adj1667 < 20표본 raw1800→adj1750.                  ║
+ * ║ [검증] esbuild JSX 파싱 통과 + prefScore/shrinkage 시뮬레이션.                    ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -28004,6 +28022,39 @@ function rebuildTierLookup(config) {
 // 🔧 v7.6.0 (포트 v3.10.0): ratio 모드 — id → tierKey 매핑 (loadList에서 재계산)
 let globalRatioTierMap = new Map();
 
+// 🆕 v7.22.0: hybrid/manual 모드 — id → 티어 내 순위 비율(0=티어 top, 1=티어 bottom). loadList에서 재계산.
+//   getPrefScore가 manual_order를 '티어 크기 대비 상대 위치'로 반영하기 위함(절대 order 포화 해소).
+let globalTierRankMap = new Map();
+// 순위가 티어 밴드에서 차지하는 최대 비율 — 티어를 1차 신호로 보존(밴드 침범/티어 역전 방지).
+const ORDER_BAND_FRACTION = 0.45;
+
+// 🆕 v7.22.0: 티어 내 순위 비율 맵 계산 (hybrid/manual). manual_order ASC가 사용자 진실 순위.
+function computeTierRankMap(novels, cfg) {
+  const map = new Map();
+  if (!Array.isArray(novels) || novels.length === 0) return map;
+  const tierOrder = getActiveTierOrder(cfg);
+  const tierSet = new Set(tierOrder);
+  const byTier = new Map();
+  for (const n of novels) {
+    if (!n || !n.id) continue;
+    const t = getDisplayTier(n, cfg);
+    if (!t || !tierSet.has(t)) continue;
+    if (!byTier.has(t)) byTier.set(t, []);
+    byTier.get(t).push(n);
+  }
+  for (const arr of byTier.values()) {
+    arr.sort((a, b) =>
+      (Number(a.manual_order) || 0) - (Number(b.manual_order) || 0) ||
+      (Number(a.created_at) || 0) - (Number(b.created_at) || 0)
+    );
+    const sz = arr.length;
+    for (let i = 0; i < sz; i++) {
+      map.set(arr[i].id, sz > 1 ? i / (sz - 1) : 0); // 0=top, 1=bottom
+    }
+  }
+  return map;
+}
+
 /**
  * 비율 기반 티어 매핑 계산
  * - rating DESC 정렬 → 누적 비율로 각 작품을 buckets에 분배
@@ -29268,6 +29319,15 @@ function calcNovelReliabilityScore(novel, totalCount) {
 
 // 헬퍼: 배열 평균
 const avg = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+// 🆕 v7.22.0: 표본크기 보정 평균(empirical Bayes 수축) — 표본이 적을수록 전역평균(globalMean)
+//   쪽으로 끌어당겨, 2~3개짜리 항목이 raw 고평균으로 '선호' 순위를 점령하는 노이즈를 완화.
+//   k=의사표본수(클수록 더 보수적). 표시는 raw avgRating 유지, 정렬/순위만 adjRating 사용.
+const shrunkMean = (values, globalMean, k = 4) => {
+  const n = values.length;
+  if (n === 0) return globalMean;
+  const m = values.reduce((a, b) => a + b, 0) / n;
+  return (n * m + k * globalMean) / (n + k);
+};
 // 헬퍼: 배열 중앙값
 const median = (arr) => {
   if (!arr.length) return 0;
@@ -29314,8 +29374,19 @@ function getPrefScore(novel, config) {
   const tierCount = tierOrder.length;
   // S=2000, bottom=1000 (linear). 5-tier: [2000, 1750, 1500, 1250, 1000]
   const tierBase = 2000 - (tierRank / Math.max(1, tierCount - 1)) * 1000;
-  // manual_order 미세 조정 (cap 80 — 티어 경계 침범 방지)
-  const orderAdj = -Math.min(80, Math.max(0, Number(novel.manual_order) || 0) / 100 * 10);
+  // 🔧 v7.22.0: manual_order 반영 — '티어 내 순위 비율'을 밴드의 일정 비율만큼 차감.
+  //   [이전] 절대 order/100*10 cap 80 → 티어 9위부터 포화(전부 -80) → 티어 내 미세 순위가
+  //   분석/추천에서 소실(hybrid 'patrick truth' 훼손). [수정] globalTierRankMap(0=top,1=bottom)을
+  //   밴드폭×ORDER_BAND_FRACTION으로 분포 → 티어는 1차 신호 유지하며 순위가 2차로 살아남.
+  const bandWidth = 1000 / Math.max(1, tierCount - 1);
+  const frac = globalTierRankMap.get(novel.id);
+  let orderAdj;
+  if (typeof frac === "number") {
+    orderAdj = -frac * bandWidth * ORDER_BAND_FRACTION;
+  } else {
+    // 폴백(맵 미빌드/외부 호출): 기존 절대 order 방식 유지
+    orderAdj = -Math.min(80, Math.max(0, Number(novel.manual_order) || 0) / 100 * 10);
+  }
   return Math.round(tierBase + orderAdj);
 }
 
@@ -29605,6 +29676,7 @@ async function analyzePreferences(novels, matches) {
       count: stat.count,
       weightedCount: stat.weightedCount,
       avgRating: avg(stat.ratings),
+      adjRating: shrunkMean(stat.ratings, basicStats.avgRating), // 🆕 v7.22.0: 표본 보정 순위 키
       medianRating: median(stat.ratings),
       avgReadRatio: avg(stat.readRatios),
       completionRate: stat.count > 0 ? stat.completed / stat.count : 0,
@@ -29616,7 +29688,7 @@ async function analyzePreferences(novels, matches) {
       totalRead: stat.readCounts.reduce((a, b) => a + b, 0),
       avgReread: stat.count > 0 ? stat.rereadSum / stat.count : 1,
     }))
-    .sort((a, b) => b.weightedCount - a.weightedCount || b.avgRating - a.avgRating);
+    .sort((a, b) => b.weightedCount - a.weightedCount || b.adjRating - a.adjRating);
 
   // 4. 부장르 분석
   const subGenreStats = {};
@@ -29641,10 +29713,11 @@ async function analyzePreferences(novels, matches) {
       count: stat.count,
       weightedCount: stat.weightedCount,
       avgRating: avg(stat.ratings),
+      adjRating: shrunkMean(stat.ratings, basicStats.avgRating), // 🆕 v7.22.0
       dropRate: stat.count > 0 ? stat.dropped / stat.count : 0,
       avgReread: stat.count > 0 ? stat.rereadSum / stat.count : 1,
     }))
-    .sort((a, b) => b.weightedCount - a.weightedCount || b.avgRating - a.avgRating);
+    .sort((a, b) => b.weightedCount - a.weightedCount || b.adjRating - a.adjRating);
 
   // 5. 일반 태그 분석 (🏷️ v5.0: 농도 가중치 적용)
   const tagStats = {};
@@ -29673,10 +29746,11 @@ async function analyzePreferences(novels, matches) {
       count: stat.count,
       weightedCount: stat.weightedCount,
       avgRating: avg(stat.ratings),
+      adjRating: shrunkMean(stat.ratings, basicStats.avgRating), // 🆕 v7.22.0
       avgIntensity: stat.count > 0 ? stat.intensitySum / stat.count : 3, // 🏷️ v5.0
       dropRate: stat.count > 0 ? stat.dropped / stat.count : 0,
     }))
-    .sort((a, b) => b.weightedCount - a.weightedCount || b.avgRating - a.avgRating);
+    .sort((a, b) => b.weightedCount - a.weightedCount || b.adjRating - a.adjRating);
 
   // 6. 태그 조합 분석 (2개 조합)
   const combos = {};
@@ -29698,8 +29772,9 @@ async function analyzePreferences(novels, matches) {
       combo,
       count: stat.count,
       avgRating: avg(stat.ratings),
+      adjRating: shrunkMean(stat.ratings, basicStats.avgRating), // 🆕 v7.22.0: 저표본 조합이 순위 점령 방지
     }))
-    .sort((a, b) => b.avgRating - a.avgRating)
+    .sort((a, b) => b.adjRating - a.adjRating)
     .slice(0, 15);
 
   // 7. 플랫폼 분석
@@ -38462,6 +38537,13 @@ function AppContent() {
         catch (e) { console.warn("[ratio] computeRatioTierMap 실패:", e?.message); globalRatioTierMap = new Map(); }
       } else {
         globalRatioTierMap = new Map();
+      }
+      // 🆕 v7.22.0: hybrid/manual 모드 — 티어 내 순위 비율 사전 계산(getPrefScore가 manual_order 반영)
+      if (globalTierConfig?.mode === "hybrid" || globalTierConfig?.mode === "manual") {
+        try { globalTierRankMap = computeTierRankMap(safeRows, globalTierConfig); }
+        catch (e) { console.warn("[tierRank] computeTierRankMap 실패:", e?.message); globalTierRankMap = new Map(); }
+      } else {
+        globalTierRankMap = new Map();
       }
       setList(safeRows);
       updateTagUsageCounts(safeRows); // 🏷️ 태그 사용 빈도 업데이트
