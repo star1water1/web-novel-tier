@@ -2,9 +2,37 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.24.3 (7.24 릴리스 — 인앱 버전/변경내역/가이드 동기화)                 ║
+ * ║  버전: 7.24.4 (코드 전수 검토 — 백업 복원/갤러리 셔플 결함 수정)               ║
  * ║  최종 수정: 2026-06-19                                                        ║
- * ║  총 라인 수: 약 60,090줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 61,340줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.24.4 코드 전수 검토 — 백업 복원/갤러리 셔플 결함 3건 수정 (2026-06-19)     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 9개 서브시스템 병렬 코드 감사(DB/매칭/ELO/하이브리드검증/CRUD/훅/백업/통계/UI).   ║
+ * ║ 7개 영역 무결, 실제 결함 3건 검출·수정. 매칭 5대 불변조건과 충돌 없음.            ║
+ * ║                                                                              ║
+ * ║ [Fix-1 High] 백업 복원 시 manual_order(hybrid 'patrick truth') 손실             ║
+ * ║ • importJSON이 복원한 manual_order를 INSERT한 뒤 backfillManualOrder(forceReflow)║
+ * ║   가 rating DESC 순서로 전부 덮어씀. hybrid는 매칭 비활성 → rating 동률 → 사용자가║
+ * ║   손으로 맞춘 티어 내 순서가 created_at 순으로 붕괴. 복원할 때마다 재현되는 손실.  ║
+ * ║ • 수정: backfillManualOrder ORDER BY에 (manual_order≠0 우선 → manual_order ASC)   ║
+ * ║   추가 — 지정된 순서는 보존, 미지정(0/NULL)만 rating으로 추정. 시작 마이그레이션  ║
+ * ║   경로(전부 0)는 동작 동일 → 무회귀.                                            ║
+ * ║                                                                              ║
+ * ║ [Fix-2 Medium] 갤러리 셔플 중 데이터 변경 시 재셔플 + 첫 카드로 튕김             ║
+ * ║ • galleryShuffled 활성 중 캡션 편집 등으로 galleryCards 변경 시 Fisher-Yates 재실 ║
+ * ║   행 + setGalleryIdx(0)으로 순서·위치 소실. 명언 탭은 v7.9.2에서 이미 수정(순서·  ║
+ * ║   위치 보존), 갤러리만 누락. → quotesShuffled 동기화와 동일 id 기반 병합으로 교체. ║
+ * ║                                                                              ║
+ * ║ [Fix-3 Medium] 갤러리 '원래순서'가 이미지 추가/삭제 시 자동 셔플에 덮어써짐       ║
+ * ║ • 진입 자동 셔플 effect에 첫 진입 가드 없음 → resetOrder('원래순서') 후 카드 수가  ║
+ * ║   바뀌면 재셔플. 명언 탭 quotesEnteredRef(v7.9.2)와 동일하게 galleryEnteredRef 추가║
+ * ║                                                                              ║
+ * ║ [검증] esbuild JSX 파싱 통과. 9개 병렬 감사에서 나머지 7영역(DB락/트랜잭션, ELO/  ║
+ * ║   정렬자, 하이브리드 갤로핑 탐색, CRUD 정합성, 훅 정리/클로저, 통계 0분모, 파싱)  ║
+ * ║   은 기존 하드닝 유지 확인 — 신규 결함 없음.                                     ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -8086,9 +8114,16 @@ async function backfillManualOrder(database, forceReflow = false) {
 
     // manual_tier 그룹별로 정렬 후 0부터 gap 100으로 부여
     // manual_tier가 NULL이거나 빈 문자열인 작품(Unrated)도 동일 그룹으로 묶어 부여
+    // 🛠️ v7.24.4: 기존 manual_order(≠0)는 사용자가 지정한 순서이므로 우선 보존하고,
+    //   미지정(0/NULL)인 작품만 rating 기반으로 추정 배치한다.
+    //   (이전: rating DESC만으로 정렬 → import 시 forceReflow가 백업에서 복원된
+    //    manual_order(hybrid 'patrick truth')를 전부 rating 순서로 덮어써 사용자 순서 손실.
+    //    hybrid는 매칭 비활성이라 rating이 정체값(동률)이면 created_at 순으로 붕괴됐음)
     const rows = await database.getAllAsync(
       `SELECT id, manual_tier, rating, created_at FROM novels ORDER BY
-       COALESCE(manual_tier, '') ASC, rating DESC, created_at ASC`
+       COALESCE(manual_tier, '') ASC,
+       (manual_order IS NULL OR manual_order = 0) ASC, manual_order ASC,
+       rating DESC, created_at ASC`
     );
     const groups = {};
     for (const r of rows) {
@@ -13436,7 +13471,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.24.3";
+const APP_VERSION = "7.24.4";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -13462,6 +13497,16 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.24.4", date: "2026-06-19",
+    title: "🛠️ 백업 복원·갤러리 셔플 안정화",
+    highlights: [
+      { type: "fix", text: "💾 백업 복원 시 하이브리드/수동 모드에서 직접 맞춘 '티어 안 순서'가 보존돼요. 이전에는 복원 후 순서가 자동 재정렬되며 손으로 정렬한 결과가 사라졌어요." },
+      { type: "fix", text: "🖼️ 갤러리를 셔플해서 보는 중 캡션을 편집해도 더 이상 순서가 다시 섞이거나 첫 카드로 튕기지 않아요. 보던 위치와 셔플 순서가 그대로 유지돼요." },
+      { type: "fix", text: "🖼️ 갤러리에서 '원래순서'로 둔 상태에서 이미지를 추가·삭제해도 자동으로 다시 셔플되지 않아요." },
+    ],
+    details: [],
+  },
   {
     version: "7.24.3", date: "2026-06-19",
     title: "⚖️ 비율 모드 정원 초과 안내",
@@ -31348,6 +31393,7 @@ function AppContent() {
   const [quotesIdx, setQuotesIdx] = useState(0);
   const [quotesShuffled, setQuotesShuffled] = useState(null); // null=원본순, array=셔플순
   const quotesEnteredRef = useRef(false); // 🆕 v7.9.2: 명언 탭 첫 진입 감지(자동 셔플 1회 + resetOrder 보존)
+  const galleryEnteredRef = useRef(false); // 🆕 v7.24.4: 갤러리 탭 첫 진입 감지(자동 셔플 1회 + 원래순서 보존)
   const [quotesListExpanded, setQuotesListExpanded] = useState(false); // 📋 전체 목록 접기/펼치기
   const [batchImporting, setBatchImporting] = useState(false); // 📷 일괄 가져오기 로딩
   const quotesSwipeRef = useRef({ startX: 0, startY: 0 }); // 🔀 v3.5.5: 스와이프 감지
@@ -32609,19 +32655,19 @@ function AppContent() {
     return list.filter(n => n.title.toLowerCase().includes(q) || (n.author || "").toLowerCase().includes(q));
   }, [list, galleryRegSearch]);
 
-  // 갤러리 셔플 stale 방지
+  // 🎨 v7.24.4: galleryShuffled 내용 동기화 — 편집/삭제 시 위치·순서 보존 (재셔플/인덱스 리셋 X)
+  //   (이전 v3.8.0: galleryCards 변경마다 재셔플 + idx 0 → 갤러리 셔플 중 캡션 편집 시 첫 카드로 튕김)
+  //   명언 탭 quotesShuffled 동기화 effect(위)와 동일 패턴.
   useEffect(() => {
-    if (galleryShuffled && galleryCards.length > 0) {
-      const arr = [...galleryCards];
-      for (let i = arr.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [arr[i], arr[j]] = [arr[j], arr[i]];
-      }
-      setGalleryShuffled(arr);
-      setGalleryIdx(0);
-    } else if (galleryShuffled && galleryCards.length === 0) {
-      setGalleryShuffled(null);
-    }
+    if (!galleryShuffled) return; // 원래순서 모드: galleryCards 직접 사용 (항상 최신)
+    if (galleryCards.length === 0) { setGalleryShuffled(null); setGalleryIdx(0); return; }
+    // 기존 셔플 순서를 유지하면서 카드 내용만 최신으로 교체 (삭제 제거 / 신규 말미 추가)
+    const byId = new Map(galleryCards.map(c => [c.id, c]));
+    const kept = [];
+    const seen = new Set();
+    for (const c of galleryShuffled) { const nc = byId.get(c.id); if (nc && !seen.has(c.id)) { kept.push(nc); seen.add(c.id); } }
+    for (const c of galleryCards) { if (!seen.has(c.id)) kept.push(c); }
+    setGalleryShuffled(kept); // galleryIdx는 렌더 시 safeIdx로 clamp → 보던 위치 유지
   }, [galleryCards]);
 
   // 🔧 v3.6.0: 진단탭 비동기 데이터 로드 (조건부 IIFE 내 hooks 금지 → 최상위 useEffect로 이동)
@@ -32663,19 +32709,22 @@ function AppContent() {
     return () => { mounted = false; };
   }, [settingsSubTab, refreshKey]);
 
-  // 갤러리 탭 진입 시 자동 셔플 + 데이터 로드
+  // 갤러리 탭 "첫 진입" 시에만 자동 셔플 + 데이터 로드
+  // 🛠️ v7.24.4: galleryEnteredRef 가드 추가 — 이전엔 가드가 없어 원래순서(resetOrder) 상태에서
+  //   이미지 추가/삭제로 galleryCards.length가 바뀌면 자동 셔플이 재발동해 사용자의 "원래순서"
+  //   선택을 덮어썼다. 명언 탭 v7.9.2 첫 진입 가드와 동일 패턴.
   useEffect(() => {
-    if (screen === "gallery") {
-      if (galleryImages.length === 0) loadGalleryImages();
-      if (!galleryShuffled && galleryCards.length > 0) {
-        const arr = [...galleryCards];
-        for (let i = arr.length - 1; i > 0; i--) {
-          const j = Math.floor(Math.random() * (i + 1));
-          [arr[i], arr[j]] = [arr[j], arr[i]];
-        }
-        setGalleryShuffled(arr);
-        setGalleryIdx(0);
+    if (screen !== "gallery") { galleryEnteredRef.current = false; return; }
+    if (galleryImages.length === 0) loadGalleryImages();
+    if (!galleryEnteredRef.current && !galleryShuffled && galleryCards.length > 0) {
+      galleryEnteredRef.current = true;
+      const arr = [...galleryCards];
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
       }
+      setGalleryShuffled(arr);
+      setGalleryIdx(0);
     }
   }, [screen, galleryCards.length]);
 

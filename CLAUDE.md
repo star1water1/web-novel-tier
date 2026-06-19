@@ -24,7 +24,7 @@ ELO 매칭 시스템으로 작품 간 대전을 통해 자동으로 티어를 �
 - DB/판정: `detectViolation`, `enqueueVerification`, `getCandidatesForVerification`, `backfillManualOrder`, `getNextVerificationTarget`
 - 시퀀스: `findInflectionPoint`, `evaluateSequenceProgress`, `computeNewPosition`, `finalizeVerificationSession`, `logVerificationMatch`, `getGatekeeperCandidates`
 
-신규 상수: `VERIFICATION_MAX_RESPONSES = 7`, `VERIFICATION_K_AFTER_INFLECTION = 2`, `VERIFICATION_PRIORITY` (gatekeeper=5, tier_change=4, order_change=3, new=2, meta_edit=1)
+신규 상수: `VERIFICATION_GALLOP_MAX = 7` + `VERIFICATION_BINARY_MAX = 4` → `VERIFICATION_MAX_RESPONSES = 11` (v7.20.11~ 갤로핑 경계탐색 + 이진 정제 분리 예산), `VERIFICATION_K_AFTER_INFLECTION = 2` (코어 루프 미사용 — 진단/하위호환 잔존), `VERIFICATION_PRIORITY` (gatekeeper=5, tier_change=4, order_change=3, new=2, meta_edit=1)
 
 CRUD 트리거 hook 위치 (App.jsx, hybrid 모드만):
 - `addNovel` (manual_tier 설정 시): `new` / `underrated`
