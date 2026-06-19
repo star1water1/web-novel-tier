@@ -2,9 +2,24 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.22.2 (7.22 릴리스 — 인앱 버전/변경내역/가이드 동기화)                 ║
+ * ║  버전: 7.23.0 (🅕 UI 견고성 — AutoFit 단일화 + cachePolicy 통일)               ║
  * ║  최종 수정: 2026-06-19                                                        ║
- * ║  총 라인 수: 약 59,730줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 59,700줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🅕 v7.23.0 UI 견고성 — AutoFit 글자맞춤 단일화 (2026-06-19)                       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [의도 부합] 순수 리팩터 — 동작 보존, 재발버그 표면 축소.                          ║
+ * ║ [#1 AutoFit 3중 복제 제거] AutoFitQuoteText·AwardQuoteText의 '축소 단일 방향'      ║
+ * ║   (v7.20.2) 로직이 따로 복제돼 진동/흐림 버그를 매번 2~3곳에 반복 수정해옴 →       ║
+ * ║   공용 훅 useAutoFitFontSize로 단일화. budget(가용높이-80 / maxHeight)·fixedSize  ║
+ * ║   (budget 0=비활성)만 다르게 주입. 단조 감소 알고리즘·attemptsRef(≤40) 동일 보존. ║
+ * ║ [#2 폰트 변경 재적합] 리셋 deps에 fontKey(글꼴/굵기/자간 fingerprint) 추가 →      ║
+ * ║   사용자가 명대사 폰트를 바꾸면 즉시 재적합(이전: 글꼴 바꿔도 옛 크기 잔존 가능). ║
+ * ║ [#3 cachePolicy 통일] 명대사 배경/이미지·쇼츠·확대 ExpoImage의 cachePolicy        ║
+ * ║   'disk'→'memory-disk' 11곳 통일 → 스와이프 재방문 시 재디코드 감소(흐림 완화).   ║
+ * ║ [검증] esbuild JSX 파싱 통과. (AwardQuoteImage는 이미지 종횡비 측정이라 별개 유지.)║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12520,52 +12535,53 @@ function quoteContrastColor(hex) {
    - onLayout으로 가용 높이 측정 + onTextLayout으로 실제 줄 높이 측정 → 비례 축소(1~2패스 수렴)
    - ❝❞ 따옴표를 내부에 포함해 예약 높이를 반영
    ========================================================= */
-const AutoFitQuoteText = memo(({ text, baseStyle, fixedSize, userLineHeight, maxSize = 23, minSize = 11, marksColor }) => {
-  const [avail, setAvail] = useState(0);
-  const [size, setSize] = useState(fixedSize > 0 ? fixedSize : maxSize);
-  const measRef = useRef({ size: 0, height: 0 }); // 마지막 측정: 그때의 size와 렌더된 텍스트 총 높이
-  const attemptsRef = useRef(0);                  // 축소 시도 횟수 (무한 루프 안전망)
-  // 🔧 v7.20.2: 명언 깜빡임(무한 진동) 근본 차단 — '축소 단일 방향' 수렴.
-  //   [이전 결함] refit의 비례 추정(target = size*budget/height)이 size를 '키울' 수도 있었음.
-  //   텍스트가 줄바꿈 경계에 걸리면: 작게→줄 수 감소→높이 급감→여유 생김→키움→줄 수 증가→넘침→
-  //   다시 작게… 두 크기를 무한 왕복(0.98 댐핑으로도 사이클 자체는 못 끊음) → 일부 명언이 계속 깜빡임.
-  //   [수정] 자동 맞춤은 maxSize에서 시작해 '넘치면 줄이고, 들어가면 멈춤'만 수행(절대 키우지 않음).
-  //   size는 한 패스 내 단조 감소 → 진동이 수학적으로 불가능. attemptsRef로 안전망도 병행.
-  //   (text/fixedSize/maxSize 변경 시 maxSize로 리셋 후 다시 단조 축소 — 새 카드/서식 변경도 정상 수렴.)
+// 🆕 v7.23.0: 명대사 자동 글자맞춤 공용 훅 — AutoFitQuoteText/AwardQuoteText 중복(3중 복제) 제거.
+//   '축소 단일 방향'(v7.20.2): startSize에서 시작, budget 초과 시에만 줄임(단조 감소 → 진동 수학적 불가).
+//   budget<=0이면 비활성(고정 크기 모드). resetKey/startSize/fontKey 변경 시 리셋 후 재축소
+//   (fontKey=글꼴/굵기/자간 fingerprint → 사용자가 명대사 폰트를 바꾸면 재적합). attemptsRef(≤40) 안전망.
+function useAutoFitFontSize({ resetKey, startSize, minSize = 11, budget, fontKey }) {
+  const [size, setSize] = useState(startSize > 0 ? startSize : 18);
+  const measRef = useRef(0);     // 마지막 측정 높이
+  const attemptsRef = useRef(0); // 축소 시도 횟수(무한 루프 안전망)
   useEffect(() => {
-    measRef.current = { size: 0, height: 0 };
+    measRef.current = 0;
     attemptsRef.current = 0;
-    setSize(fixedSize > 0 ? fixedSize : maxSize);
-  }, [text, fixedSize, maxSize]);
-  // h: 현재 size에서 측정된 텍스트 총 높이. 넘치면 더 작은 크기로(단조), 들어가면 정지.
+    setSize(startSize > 0 ? startSize : 18);
+  }, [resetKey, startSize, fontKey]);
   const fit = (h) => {
-    if (fixedSize > 0 || avail <= 0 || h <= 0) return; // 고정 크기 모드거나 컨테이너 미측정
-    const budget = avail - 80; // ❝❞ + 여백 예약
-    if (budget <= 0) return;
-    if (h <= budget) return;     // 들어감 → 정지 (키우지 않음 = 진동 없음)
-    if (size <= minSize) return; // 더 줄일 수 없음
-    // 근소 초과는 1씩(맞는 최대 근처로), 큰 초과는 비례 점프 — 어느 쪽이든 '현재보다 작게' 강제.
-    let target = (h <= budget * 1.18) ? size - 1 : Math.floor(size * (budget / h) * 0.98);
-    target = Math.max(minSize, Math.min(size - 1, target));
-    if (target !== size && attemptsRef.current < 40) {
-      attemptsRef.current += 1;
-      setSize(target);
-    }
+    if (!(budget > 0) || h <= 0) return; // 비활성(고정) 또는 미측정
+    if (h <= budget) return;             // 들어감 → 정지(절대 키우지 않음 = 진동 없음)
+    setSize(prev => {
+      if (prev <= minSize) return prev;  // 더 줄일 수 없음
+      // 근소 초과는 1씩, 큰 초과는 비례 점프 — 어느 쪽이든 '현재보다 작게' 강제.
+      let target = (h <= budget * 1.18) ? prev - 1 : Math.floor(prev * (budget / h) * 0.98);
+      target = Math.max(minSize, Math.min(prev - 1, target));
+      if (target !== prev && attemptsRef.current < 40) { attemptsRef.current += 1; return target; }
+      return prev;
+    });
   };
-  const onText = (e) => {
+  const onTextLayout = (e) => {
     const lines = e?.nativeEvent?.lines;
     if (!lines || !lines.length) return;
     let h = 0;
     for (const ln of lines) h += (ln.height || 0);
     if (h <= 0) return;
-    measRef.current = { size, height: h }; // 현재 size에서의 실제 렌더 높이 기록
+    measRef.current = h;
     fit(h);
   };
-  // avail이 onTextLayout보다 늦게 잡히거나 변할 때 — 마지막 측정 높이로 재적합(축소 방향만, stall 없이)
-  useEffect(() => {
-    const m = measRef.current;
-    if (m.height > 0) fit(m.height);
-  }, [avail]); // eslint-disable-line react-hooks/exhaustive-deps
+  // budget(가용 높이/한도) 늦은 측정·변동 시 마지막 높이로 재적합(축소 방향만)
+  useEffect(() => { if (measRef.current > 0) fit(measRef.current); }, [budget]); // eslint-disable-line react-hooks/exhaustive-deps
+  return { size, onTextLayout };
+}
+
+const AutoFitQuoteText = memo(({ text, baseStyle, fixedSize, userLineHeight, maxSize = 23, minSize = 11, marksColor }) => {
+  const [avail, setAvail] = useState(0);
+  // fixedSize>0 이면 자동맞춤 비활성(budget 0). 자동이면 가용높이 - ❝❞/여백 80 예약.
+  const budget = fixedSize > 0 ? 0 : (avail > 0 ? avail - 80 : 0);
+  const fontKey = `${baseStyle?.fontFamily || ""}|${baseStyle?.fontWeight || ""}|${baseStyle?.letterSpacing || ""}`;
+  const { size, onTextLayout } = useAutoFitFontSize({
+    resetKey: text, startSize: fixedSize > 0 ? fixedSize : maxSize, minSize, budget, fontKey,
+  });
   const lh = userLineHeight > 0 ? userLineHeight : Math.round(size * 1.45);
   return (
     <View
@@ -12573,7 +12589,7 @@ const AutoFitQuoteText = memo(({ text, baseStyle, fixedSize, userLineHeight, max
       onLayout={(e) => { const h = e.nativeEvent.layout.height; if (h > 0 && Math.abs(h - avail) > 1) setAvail(h); }}
     >
       <Text style={{ fontSize: 28, color: marksColor, textAlign: "center", opacity: 0.4, marginBottom: 2 }}>❝</Text>
-      <Text style={[baseStyle, { fontSize: size, lineHeight: lh }]} onTextLayout={onText}>{text}</Text>
+      <Text style={[baseStyle, { fontSize: size, lineHeight: lh }]} onTextLayout={onTextLayout}>{text}</Text>
       <Text style={{ fontSize: 28, color: marksColor, textAlign: "center", opacity: 0.4, marginTop: 2 }}>❞</Text>
     </View>
   );
@@ -12695,7 +12711,7 @@ const QuoteStyleEditor = memo(({ style, text, onChange, onPickBgImage, onClearBg
       <View style={{ borderRadius: 10, overflow: "hidden", minHeight: 80, justifyContent: "center", backgroundColor: s.bg || C.card, marginBottom: 10, borderWidth: 1, borderColor: C.line }}>
         {s.bgImage ? (
           <>
-            <ExpoImage source={{ uri: s.bgImage }} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} contentFit="cover" cachePolicy="disk" />
+            <ExpoImage source={{ uri: s.bgImage }} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} contentFit="cover" cachePolicy="memory-disk" />
             <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.28)" }} />
           </>
         ) : null}
@@ -15524,34 +15540,18 @@ const AwardQuoteImage = memo(({ uri, maxHeight = 460 }) => {
 //   '축소 단일 방향' 알고리즘 — startSize에서 시작해 넘치면 줄이고 들어가면 정지(절대 키우지 않음) →
 //   단조 감소라 깜빡임(진동) 불가. startSize는 사용자 지정 크기 또는 기본값(상위에서 결정).
 const AwardQuoteText = memo(({ text, style, startSize, startLineHeight, minSize = 12, maxHeight = 320 }) => {
-  const [size, setSize] = useState(startSize > 0 ? startSize : 18);
-  const attemptsRef = useRef(0);
-  useEffect(() => {
-    attemptsRef.current = 0;
-    setSize(startSize > 0 ? startSize : 18);
-  }, [text, startSize]);
-  const onText = (e) => {
-    const lines = e?.nativeEvent?.lines;
-    if (!lines || !lines.length) return;
-    let h = 0;
-    for (const ln of lines) h += (ln.height || 0);
-    if (h <= 0 || h <= maxHeight) return; // 세로 한도 안에 들어감 → 정지
-    if (size <= minSize) return;          // 더 줄일 수 없음(극단적으로 긴 문장은 maxHeight에서 클립)
-    // 근소 초과는 1씩, 큰 초과는 비례 점프 — 어느 쪽이든 '현재보다 작게' 강제(단조 감소).
-    let target = (h <= maxHeight * 1.18) ? size - 1 : Math.floor(size * (maxHeight / h) * 0.98);
-    target = Math.max(minSize, Math.min(size - 1, target));
-    if (target !== size && attemptsRef.current < 40) {
-      attemptsRef.current += 1;
-      setSize(target);
-    }
-  };
+  // 🔧 v7.23.0: 공용 useAutoFitFontSize 사용(중복 제거). budget=maxHeight(세로 한도) 직접 사용.
+  const fontKey = `${style?.fontFamily || ""}|${style?.fontWeight || ""}|${style?.letterSpacing || ""}`;
+  const { size, onTextLayout } = useAutoFitFontSize({
+    resetKey: text, startSize: startSize > 0 ? startSize : 18, minSize, budget: maxHeight, fontKey,
+  });
   // lineHeight: 시작값(있으면) 대비 폰트 축소 비율만큼 비례 축소. 최소 size+2 보장.
   const baseStart = startSize > 0 ? startSize : 18;
   const ratio = baseStart > 0 ? size / baseStart : 1;
   const lh = Math.max(size + 2, Math.round((startLineHeight > 0 ? startLineHeight : baseStart * 1.5) * ratio));
   return (
     <View style={{ maxHeight, overflow: "hidden" }}>
-      <Text style={[style, { fontSize: size, lineHeight: lh }]} onTextLayout={onText}>{text}</Text>
+      <Text style={[style, { fontSize: size, lineHeight: lh }]} onTextLayout={onTextLayout}>{text}</Text>
     </View>
   );
 });
@@ -23977,7 +23977,7 @@ const AwardsScreen = memo(({
                                 <View style={{ borderRadius: 8, overflow: "hidden", paddingVertical: 8, paddingHorizontal: 10, backgroundColor: st.bg || "transparent" }}>
                                   {st.bgImage ? (
                                     <>
-                                      <ExpoImage source={{ uri: st.bgImage }} recyclingKey={st.bgImage} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} contentFit="cover" cachePolicy="disk" />
+                                      <ExpoImage source={{ uri: st.bgImage }} recyclingKey={st.bgImage} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} contentFit="cover" cachePolicy="memory-disk" />
                                       <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.32)" }} />
                                     </>
                                   ) : null}
@@ -24738,7 +24738,7 @@ const AwardsScreen = memo(({
                   <View style={{ borderRadius: 14, overflow: "hidden", paddingVertical: 24, paddingHorizontal: 8, backgroundColor: st.bg || "transparent" }}>
                     {st.bgImage ? (
                       <>
-                        <ExpoImage source={{ uri: st.bgImage }} recyclingKey={st.bgImage} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} contentFit="cover" cachePolicy="disk" />
+                        <ExpoImage source={{ uri: st.bgImage }} recyclingKey={st.bgImage} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} contentFit="cover" cachePolicy="memory-disk" />
                         <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.35)" }} />
                       </>
                     ) : null}
@@ -45451,7 +45451,7 @@ async function importJSON() {
         </View>
         {isImageQuote(q) ? (
           <View>
-            <ExpoImage source={{ uri: q.uri }} style={{ width: "100%", height: 120, borderRadius: 10, backgroundColor: C.card }} contentFit="contain" cachePolicy="disk" />
+            <ExpoImage source={{ uri: q.uri }} style={{ width: "100%", height: 120, borderRadius: 10, backgroundColor: C.card }} contentFit="contain" cachePolicy="memory-disk" />
             <TextInput
               value={q.caption || ""}
               onChangeText={(t) => setMemorableQuote(prev => { const u = [...prev]; u[qi] = { ...prev[qi], caption: t }; return u; })}
@@ -46147,7 +46147,7 @@ async function importJSON() {
                         <View>
                           {/* 🔧 v7.6.0 (포트 v3.14.2): 명언 이미지 탭→확대 */}
                           <TouchableOpacity activeOpacity={0.85} onPress={() => setCoverViewerUri(quote.uri)}>
-                            <ExpoImage source={{ uri: quote.uri }} style={{ width: "100%", height: 200, borderRadius: 8 }} contentFit="contain" cachePolicy="disk" />
+                            <ExpoImage source={{ uri: quote.uri }} style={{ width: "100%", height: 200, borderRadius: 8 }} contentFit="contain" cachePolicy="memory-disk" />
                           </TouchableOpacity>
                           {quote.caption ? (
                             <Text style={{ fontStyle: "italic", fontSize: 13, color: isDark ? "#fef3c7" : "#78350f", marginTop: 6, textAlign: "center" }}>
@@ -46168,7 +46168,7 @@ async function importJSON() {
                           <View style={{ borderRadius: 8, overflow: "hidden", paddingVertical: 10, paddingHorizontal: 10, backgroundColor: st.bg || "transparent" }}>
                             {st.bgImage ? (
                               <>
-                                <ExpoImage source={{ uri: st.bgImage }} recyclingKey={st.bgImage} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} contentFit="cover" cachePolicy="disk" />
+                                <ExpoImage source={{ uri: st.bgImage }} recyclingKey={st.bgImage} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} contentFit="cover" cachePolicy="memory-disk" />
                                 <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.32)" }} />
                               </>
                             ) : null}
@@ -49463,7 +49463,7 @@ async function importJSON() {
                                 </View>
                                 {isImageQuote(q) ? (
                                   <View>
-                                    <ExpoImage source={{ uri: q.uri }} style={{ width: "100%", height: 120, borderRadius: 8 }} contentFit="contain" cachePolicy="disk" />
+                                    <ExpoImage source={{ uri: q.uri }} style={{ width: "100%", height: 120, borderRadius: 8 }} contentFit="contain" cachePolicy="memory-disk" />
                                     <TextInput
                                       value={q.caption || ""}
                                       onChangeText={(t) => {
@@ -51997,7 +51997,7 @@ async function importJSON() {
                               recyclingKey={card.id}
                               style={{ width: "100%", flex: 1, borderRadius: 12 }}
                               contentFit="contain"
-                              cachePolicy="disk"
+                              cachePolicy="memory-disk"
                               transition={200}
                             />
                             {card.caption ? (
@@ -52536,7 +52536,7 @@ async function importJSON() {
                           ) : null}
                           {qst.bgImage ? (
                             <>
-                              <ExpoImage source={{ uri: qst.bgImage }} recyclingKey={qst.bgImage} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} contentFit="cover" cachePolicy="disk" />
+                              <ExpoImage source={{ uri: qst.bgImage }} recyclingKey={qst.bgImage} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} contentFit="cover" cachePolicy="memory-disk" />
                               <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.40)" }} />
                             </>
                           ) : null}
@@ -52615,7 +52615,7 @@ async function importJSON() {
                               recyclingKey={card.imageUri}
                               style={{ width: "100%", flex: 1, borderRadius: 12, marginVertical: 8 }}
                               contentFit="contain"
-                              cachePolicy="disk"
+                              cachePolicy="memory-disk"
                               transition={200}
                             />
                             {card.quote ? (
@@ -57725,7 +57725,7 @@ async function importJSON() {
                         </View>
                         {isImageQuote(q) ? (
                           <View>
-                            <ExpoImage source={{ uri: q.uri }} style={{ width: "100%", height: 120, borderRadius: 10, backgroundColor: C.card }} contentFit="contain" cachePolicy="disk" />
+                            <ExpoImage source={{ uri: q.uri }} style={{ width: "100%", height: 120, borderRadius: 10, backgroundColor: C.card }} contentFit="contain" cachePolicy="memory-disk" />
                             <TextInput
                               value={q.caption || ""}
                               onChangeText={(t) => {
@@ -59805,7 +59805,7 @@ async function importJSON() {
                               </View>
                               {isImageQuote(q) ? (
                                 <View>
-                                  <ExpoImage source={{ uri: q.uri }} style={{ width: "100%", height: 120, borderRadius: 10, backgroundColor: C.bg }} contentFit="contain" cachePolicy="disk" />
+                                  <ExpoImage source={{ uri: q.uri }} style={{ width: "100%", height: 120, borderRadius: 10, backgroundColor: C.bg }} contentFit="contain" cachePolicy="memory-disk" />
                                   <TextInput
                                     value={q.caption || ""}
                                     onChangeText={(t) => updatePlannedEditItem(prev => {
