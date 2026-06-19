@@ -2,9 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.24.1 (🅓 매치 모드 완성도 — 수렴 가시성·집중·대전 기록)               ║
+ * ║  버전: 7.24.2 (🅖 수동 배치 품질 — 분포 미리보기·정밀 이동)                    ║
  * ║  최종 수정: 2026-06-19                                                        ║
- * ║  총 라인 수: 약 59,970줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 60,010줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🅖 v7.24.2 수동 배치 품질 — 분포 미리보기·정밀 이동 (2026-06-19)                  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [의도 부합] manual=사용자 직접 배치 강화. 기존 헬퍼(moveToTierPosition·이진배치)   ║
+ * ║   재사용, 자동 동작 추가 없음.                                                    ║
+ * ║ [#0 배치 undo] 이미 존재 확인 — respondPlacement→moveToTierPosition이 'tier_change'║
+ * ║   undo를 push(이동 작품 tier+order 복원). 별도 추가 불필요(검증만).                ║
+ * ║ [#1 분포 미리보기] '비교로 배치' 화면에 현재 티어 분포 막대(비교 상대 티어 강조) + ║
+ * ║   확정 시 '이제 N작' 안내 → 과밀 티어로의 배치 실수 예방.                          ║
+ * ║ [#2 정밀 이동] 순위 카드 확장에 '⤒ 맨 위로 / ⤓ 맨 아래로' 추가 — ▲/▼ 다중 탭     ║
+ * ║   없이 티어 내 끝으로 한 번에(moveToTierPosition 재사용, manual/hybrid).            ║
+ * ║ [검증] esbuild JSX 파싱 통과.                                                    ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -42982,8 +42996,10 @@ function AppContent() {
       let insertIdxInTier = 0;
       for (let i = 0; i < ins; i++) { if (s.list[i].manual_tier === targetTier) insertIdxInTier++; }
       setPlacementSession(null);
+      // 🆕 v7.24.2 (🅖): 배치 결과 미리보기 — 대상 티어가 몇 작이 되는지 함께 안내
+      const targetExisting = s.list.filter(x => x.manual_tier === targetTier).length;
       await moveToTierPosition(s.novel.id, targetTier, insertIdxInTier);
-      Alert.alert("배치 완료", `'${s.novel.title}' → ${getTierLabel(targetTier, globalTierConfig)} 티어 (비교 ${comparisons}회)`);
+      Alert.alert("배치 완료", `'${s.novel.title}' → ${getTierLabel(targetTier, globalTierConfig)} 티어 (이제 ${targetExisting + 1}작 · 비교 ${comparisons}회)`);
     } catch (e) {
       console.warn("[v7.20.12] respondPlacement 오류:", e?.message);
       Alert.alert("오류", "배치 중 오류가 발생했습니다.\n\n" + (e?.message || ""));
@@ -50382,6 +50398,25 @@ async function importJSON() {
                               <Text style={{ color: C.text, fontWeight: "700", fontSize: 13 }}>📊 대전 기록 ({item.match_count}전)</Text>
                             </TouchableOpacity>
                           )}
+                          {/* 🆕 v7.24.2 (🅖): 정밀 이동 — 티어 내 맨 위/맨 아래로 한 번에 (▲/▼ 다중 탭 대체). manual/hybrid 전용 */}
+                          {isManualOnly && sameTierEntries.length > 1 && (
+                            <>
+                              <TouchableOpacity
+                                disabled={posInTier <= 0}
+                                onPress={async () => { setExpandedNovelId(null); await moveToTierPosition(item.id, tier, 0); }}
+                                style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, backgroundColor: C.chip, borderWidth: 1, borderColor: C.line, opacity: posInTier > 0 ? 1 : 0.4 }}
+                              >
+                                <Text style={{ color: C.text, fontWeight: "700", fontSize: 13 }}>⤒ 맨 위로</Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                disabled={posInTier >= sameTierEntries.length - 1}
+                                onPress={async () => { setExpandedNovelId(null); await moveToTierPosition(item.id, tier, sameTierEntries.length); }}
+                                style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, backgroundColor: C.chip, borderWidth: 1, borderColor: C.line, opacity: posInTier < sameTierEntries.length - 1 ? 1 : 0.4 }}
+                              >
+                                <Text style={{ color: C.text, fontWeight: "700", fontSize: 13 }}>⤓ 맨 아래로</Text>
+                              </TouchableOpacity>
+                            </>
+                          )}
                           {/* 🆕 v7.21.5: ratio 모드 — 수동 핀 해제(자동=비율 분포 복귀). 이전엔 한번 핀하면 되돌릴 칩이 없었음. */}
                           {globalTierConfig.mode === "ratio" && item.manual_tier && (
                             <TouchableOpacity
@@ -50538,6 +50573,25 @@ async function importJSON() {
                       </View>
                     </View>
                   </TouchableOpacity>
+                  {/* 🆕 v7.24.2 (🅖): 티어 분포 미리보기 — 과밀 티어를 보며 배치(현재 비교 상대 티어 강조) */}
+                  {(() => {
+                    const order = getActiveTierOrder(globalTierConfig);
+                    const counts = {};
+                    for (const n of (list || [])) { const t = getDisplayTier(n, globalTierConfig); counts[t] = (counts[t] || 0) + 1; }
+                    const oppTier = opp.manual_tier;
+                    return (
+                      <View style={{ marginTop: 6, marginBottom: 2 }}>
+                        <Text style={{ color: C.sub, fontSize: 10, textAlign: "center", marginBottom: 4 }}>현재 티어 분포</Text>
+                        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 5, justifyContent: "center" }}>
+                          {order.map(tk => (
+                            <View key={tk} style={{ paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6, backgroundColor: tk === oppTier ? getTierColor(tk) : C.chip }}>
+                              <Text style={{ fontSize: 10, fontWeight: "700", color: tk === oppTier ? "#fff" : C.sub }}>{getTierLabel(tk)} {counts[tk] || 0}</Text>
+                            </View>
+                          ))}
+                        </View>
+                      </View>
+                    );
+                  })()}
                   <TouchableOpacity onPress={cancelPlacement} style={{ marginTop: 8, alignSelf: "center" }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                     <Text style={{ color: C.sub, fontSize: 13 }}>취소</Text>
                   </TouchableOpacity>
