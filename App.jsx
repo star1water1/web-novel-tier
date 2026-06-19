@@ -2,9 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.24.0 (🅒 수상 정확도 + 🅗 분석 신뢰도 노출)                           ║
+ * ║  버전: 7.24.1 (🅓 매치 모드 완성도 — 수렴 가시성·집중·대전 기록)               ║
  * ║  최종 수정: 2026-06-19                                                        ║
- * ║  총 라인 수: 약 59,820줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 59,970줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🅓 v7.24.1 매치(ELO) 모드 완성도 — 가시성·통제권 (2026-06-19)                     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [의도 부합] match 엔진은 견고하나 '가시성 0' — 자동 시간기반 RD 인플레는 의도적   ║
+ * ║   배제(안정적 랭킹 보존). 가시성·통제권만 추가, 5대 불변조건·자동매칭 루프 무수정. ║
+ * ║ [#1 수렴 대시보드] loadMatchStats에 남은 조합·정착/미정착(RD≤150 기준)·가장        ║
+ * ║   불확실한 작품 산출 추가 → 매칭 진행도에 노출(match/ratio). 매칭 밴 작품 제외.    ║
+ * ║ [#2 가장 불확실한 작품 집중] 미정착 최상위(RD 최대) 1탭 집중 — 기존 focusMatchNovel║
+ * ║   재사용(setPair(null)로 즉시 재추첨). 엔진 변경 없이 미정착 작품 우선 매칭.       ║
+ * ║ [#3 대전 기록 감사] 순위 탭 카드 확장에 '📊 대전 기록' — 작품별 전 매치(상대·승패· ║
+ * ║   직접/자동·날짜) 읽기 전용 모달(최근 200건, 승률 요약). openMatchHistory.         ║
+ * ║ [검증] esbuild JSX 파싱 통과 + 수렴 통계(정착/미정착/topUnsettled) 시뮬레이션.     ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12138,6 +12152,9 @@ function applyElo(A, B, aWin) {
 //   + 높은 RD(미확정) 쌍을 우선 선택해 정보량 최대화. +EPS로 모든 쌍 최소 가중(전 쌍 도달 보장).
 //   데이터 평탄 초기(전부 1500/RD350)엔 가중이 균일 → 기존 균등 동작과 동일.
 const INFORMATIVE_PAIR_SIGMA = 200; // rating 근접 커널 폭(점). |Δrating|≈σ에서 가중 ~0.6배.
+// 🆕 v7.24.1 (🅓): 매치 수렴 가시성 — RD가 이 값 이하면 '정착'(충분히 매칭돼 확정), 초과면 '미정착'(불확실).
+//   RD는 기본 350에서 매치당 0.98 감쇠(floor 60) → ~40매치에서 ≈150. 미정착=매칭을 더 할 가치가 있는 작품.
+const MATCH_SETTLED_RD = 150;
 function informativePairWeight(A, B) {
   const dr = (Number(A.rating) || 1500) - (Number(B.rating) || 1500);
   const rdSum = (Number(A.rd) || 350) + (Number(B.rd) || 350);
@@ -31527,6 +31544,12 @@ function AppContent() {
     total: 0,
     done: 0,
     percent: 0,
+    // 🆕 v7.24.1 (🅓): 수렴 가시성 — 남은 조합 + 정착/미정착 작품 수 + 가장 불확실한 작품
+    n: 0,
+    remaining: 0,
+    settled: 0,
+    unsettled: 0,
+    topUnsettled: null, // { id, title } | null — RD 최대(가장 불확실) 작품
   });
 
   // 🔄 v3.4.6: 매칭 큐 상태 (처리 중 표시용)
@@ -31652,6 +31675,10 @@ function AppContent() {
   // 특정 작품 고정 매칭용
   const [focusMatchNovel, setFocusMatchNovel] = useState(null);
   const [focusMatchQuery, setFocusMatchQuery] = useState("");
+  // 🆕 v7.24.1 (🅓): 작품별 대전 기록 감사 모달 상태
+  const [matchHistoryNovel, setMatchHistoryNovel] = useState(null); // { id, title } | null
+  const [matchHistoryRows, setMatchHistoryRows] = useState(null); // null=로딩, [] 이상=결과
+
   // 🚫 v7.6.0 (포트 v3.16.0): 매칭 밴 UI 상태 (접이식 + 검색)
   const [matchBanExpanded, setMatchBanExpanded] = useState(false);
   const [matchBanSearchQuery, setMatchBanSearchQuery] = useState("");
@@ -33404,7 +33431,7 @@ function AppContent() {
       setGalleryCount(0);
       setGalleryExpandedGroups({});
       // 🔧 누락 리셋 보완
-      setMatchStats({ total: 0, done: 0, percent: 0 });
+      setMatchStats({ total: 0, done: 0, percent: 0, n: 0, remaining: 0, settled: 0, unsettled: 0, topUnsettled: null });
       setIsAutoMatching(false);
       setMatchFilterEnabled(false);
       setMatchFilterMinTags(15);
@@ -35766,22 +35793,40 @@ function AppContent() {
 
   async function loadMatchStats() {
     try {
-      const novels = await all(`SELECT id FROM novels;`);
-      const n = novels?.length || 0;
+      // 🆕 v7.24.1 (🅓): rd/match_count/title도 함께 조회 — 정착/미정착 + 가장 불확실한 작품 산출.
+      //   매칭 밴 작품은 대전 대상이 아니므로 전 통계에서 제외(분모 왜곡 방지).
+      const novels = await all(`SELECT id, title, rd, match_count, match_ban FROM novels;`);
+      const eligible = (novels || []).filter(nv => !nv.match_ban);
+      const n = eligible.length;
       if (n < 2) {
-        setMatchStats({ total: 0, done: 0, percent: 0 });
+        setMatchStats({ total: 0, done: 0, percent: 0, n, remaining: 0, settled: 0, unsettled: 0, topUnsettled: null });
         return;
       }
       const total = (n * (n - 1)) / 2;
       const rows = await all(
         `SELECT COUNT(DISTINCT (CASE WHEN a_id < b_id THEN a_id || '|' || b_id ELSE b_id || '|' || a_id END)) AS c FROM matches;`
       );
-      const done = rows?.[0]?.c || 0;
+      const done = Math.min(total, rows?.[0]?.c || 0);
       const percent = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
-      setMatchStats({ total, done, percent });
+      // 정착/미정착 + 가장 불확실(RD 최대, 동률 시 match_count 최소) 작품 1건
+      let settled = 0;
+      let topUnsettled = null, topRd = -1, topMc = Infinity;
+      for (const nv of eligible) {
+        const rd = Number(nv.rd) || 350;
+        if (rd <= MATCH_SETTLED_RD) { settled++; continue; }
+        const mc = Number(nv.match_count) || 0;
+        if (rd > topRd || (rd === topRd && mc < topMc)) {
+          topRd = rd; topMc = mc; topUnsettled = { id: nv.id, title: nv.title };
+        }
+      }
+      setMatchStats({
+        total, done, percent, n,
+        remaining: Math.max(0, total - done),
+        settled, unsettled: n - settled, topUnsettled,
+      });
     } catch (e) {
       console.warn("loadMatchStats 오류:", e);
-      setMatchStats({ total: 0, done: 0, percent: 0 });
+      setMatchStats({ total: 0, done: 0, percent: 0, n: 0, remaining: 0, settled: 0, unsettled: 0, topUnsettled: null });
     }
   }
 
@@ -35798,6 +35843,35 @@ function AppContent() {
       else if (m.winner_id === bId) bWins++;
     }
     return { aWins, bWins, total: (matches || []).length };
+  }
+
+  // 🆕 v7.24.1 (🅓): 작품 1개의 모든 대전 기록 감사 — 상대/승패/방식/날짜. (읽기 전용)
+  async function openMatchHistory(novel) {
+    if (!novel) return;
+    setMatchHistoryNovel({ id: novel.id, title: novel.title });
+    setMatchHistoryRows(null); // 로딩
+    try {
+      const rows = await all(
+        `SELECT a_id, b_id, winner_id, decided_by, created_at FROM matches WHERE a_id=? OR b_id=? ORDER BY created_at DESC LIMIT 200;`,
+        [novel.id, novel.id]
+      );
+      const out = (rows || []).map(m => {
+        const oppId = m.a_id === novel.id ? m.b_id : m.a_id;
+        const opp = listMap.get(oppId);
+        const won = m.winner_id === novel.id;
+        const drawOrNull = !m.winner_id;
+        return {
+          oppTitle: opp ? opp.title : "(삭제된 작품)",
+          result: drawOrNull ? "무효" : (won ? "승" : "패"),
+          decidedBy: m.decided_by || "",
+          ts: Number(m.created_at) || 0,
+        };
+      });
+      setMatchHistoryRows(out);
+    } catch (e) {
+      console.warn("openMatchHistory 오류:", e?.message);
+      setMatchHistoryRows([]);
+    }
   }
 
   // 장르 상성 분석 (같은 장르 간 전적 집계)
@@ -48349,7 +48423,31 @@ async function importJSON() {
                   }}
                 />
               </View>
-              
+
+              {/* 🆕 v7.24.1 (🅓): 수렴 가시성 — 남은 조합 + 정착/미정착 + 가장 불확실한 작품 집중 (match/ratio만) */}
+              {(globalTierConfig.mode === "match" || globalTierConfig.mode === "ratio") && matchStats.total > 0 && (
+                <View style={{ marginTop: 8 }}>
+                  <Text style={{ color: C.sub, fontSize: 12 }}>
+                    남은 조합 {matchStats.remaining.toLocaleString()}개 · 정착 {matchStats.settled}/{matchStats.n}작
+                    {matchStats.unsettled > 0 ? ` · 불확실 ${matchStats.unsettled}작` : " · 모두 정착 ✅"}
+                  </Text>
+                  {matchStats.unsettled > 0 && matchStats.topUnsettled && (
+                    <TouchableOpacity
+                      onPress={() => {
+                        const nv = listMap.get(matchStats.topUnsettled.id) || matchStats.topUnsettled;
+                        setFocusMatchNovel(nv);
+                        setPair(null); // 포커스 반영해 즉시 재추첨 (effect: screen==="match" && !pair)
+                      }}
+                      style={{ marginTop: 8, alignSelf: "flex-start", maxWidth: "100%", flexDirection: "row", alignItems: "center", backgroundColor: isDark ? "#3f2d12" : "#fef3c7", borderWidth: 1, borderColor: isDark ? "#a16207" : "#fcd34d", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 }}
+                    >
+                      <Text style={{ color: isDark ? "#fde68a" : "#92400e", fontWeight: "700", fontSize: 12, flexShrink: 1 }} numberOfLines={1}>
+                        🎯 가장 불확실한 작품 집중: {matchStats.topUnsettled.title}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
+
               {/* 🔧 v3.5.11: 매치 필터링 ON일 때 보조 안내 */}
               {matchFilterEnabled && matchStats.total > 0 && (
                 <Text style={{ color: "#6366f1", fontSize: 11, marginTop: 6 }}>
@@ -50275,6 +50373,15 @@ async function importJSON() {
                           borderBottomLeftRadius: 12, borderBottomRightRadius: 12,
                           backgroundColor: C.card,
                         }}>
+                          {/* 🆕 v7.24.1 (🅓): 대전 기록 감사 — 매치가 1회 이상 있는 작품만 (읽기 전용 모달) */}
+                          {(item.match_count || 0) > 0 && (
+                            <TouchableOpacity
+                              onPress={() => openMatchHistory(item)}
+                              style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, backgroundColor: C.chip, borderWidth: 1, borderColor: C.line }}
+                            >
+                              <Text style={{ color: C.text, fontWeight: "700", fontSize: 13 }}>📊 대전 기록 ({item.match_count}전)</Text>
+                            </TouchableOpacity>
+                          )}
                           {/* 🆕 v7.21.5: ratio 모드 — 수동 핀 해제(자동=비율 분포 복귀). 이전엔 한번 핀하면 되돌릴 칩이 없었음. */}
                           {globalTierConfig.mode === "ratio" && item.manual_tier && (
                             <TouchableOpacity
@@ -57213,6 +57320,58 @@ async function importJSON() {
             <TouchableOpacity onPress={() => setHybridInitOpen(false)} style={{ marginTop: 10, padding: 12, borderRadius: 10, backgroundColor: C.chip, alignItems: "center" }}>
               <Text style={{ color: C.text, fontWeight: "700" }}>취소</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 🆕 v7.24.1 (🅓): 작품별 대전 기록 감사 (읽기 전용) */}
+      <Modal visible={!!matchHistoryNovel} transparent animationType="slide" onRequestClose={() => { setMatchHistoryNovel(null); setMatchHistoryRows(null); }}>
+        <View style={{ flex: 1, backgroundColor: C.modal, justifyContent: "flex-end" }}>
+          <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: "80%" }}>
+            <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: C.line, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+              <View style={{ flex: 1, paddingRight: 10 }}>
+                <Text style={{ color: C.text, fontSize: 16, fontWeight: "800" }}>📊 대전 기록</Text>
+                {matchHistoryNovel && <Text style={{ color: C.sub, fontSize: 12, marginTop: 2 }} numberOfLines={1}>{matchHistoryNovel.title}</Text>}
+              </View>
+              <TouchableOpacity onPress={() => { setMatchHistoryNovel(null); setMatchHistoryRows(null); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Text style={{ color: C.sub, fontSize: 22 }}>×</Text>
+              </TouchableOpacity>
+            </View>
+            {matchHistoryRows === null ? (
+              <View style={{ padding: 30, alignItems: "center" }}>
+                <ActivityIndicator size="small" color={C.primary} />
+              </View>
+            ) : matchHistoryRows.length === 0 ? (
+              <Text style={{ color: C.sub, textAlign: "center", padding: 24 }}>대전 기록이 없습니다.</Text>
+            ) : (
+              <>
+                {(() => {
+                  const w = matchHistoryRows.filter(r => r.result === "승").length;
+                  const l = matchHistoryRows.filter(r => r.result === "패").length;
+                  const tot = w + l;
+                  return (
+                    <Text style={{ color: C.sub, fontSize: 12, paddingHorizontal: 16, paddingTop: 12 }}>
+                      총 {matchHistoryRows.length}전 · {w}승 {l}패{tot > 0 ? ` · 승률 ${Math.round((w / tot) * 100)}%` : ""}
+                    </Text>
+                  );
+                })()}
+                <ScrollView style={{ paddingHorizontal: 16, paddingBottom: 16 }}>
+                  {matchHistoryRows.map((r, i) => (
+                    <View key={i} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: C.line }}>
+                      <View style={{ flex: 1, paddingRight: 8 }}>
+                        <Text style={{ color: C.text, fontSize: 13 }} numberOfLines={1}>vs {r.oppTitle}</Text>
+                        <Text style={{ color: C.sub, fontSize: 10, marginTop: 1 }}>
+                          {r.ts ? new Date(r.ts).toLocaleDateString("ko-KR") : "-"}{r.decidedBy ? ` · ${r.decidedBy === "auto" ? "자동" : r.decidedBy === "user" ? "직접" : r.decidedBy}` : ""}
+                        </Text>
+                      </View>
+                      <View style={{ paddingHorizontal: 9, paddingVertical: 3, borderRadius: 7, backgroundColor: r.result === "승" ? (isDark ? "#14532d" : "#dcfce7") : r.result === "패" ? (isDark ? "#7f1d1d" : "#fee2e2") : C.chip }}>
+                        <Text style={{ fontSize: 12, fontWeight: "800", color: r.result === "승" ? (isDark ? "#86efac" : "#166534") : r.result === "패" ? (isDark ? "#fca5a5" : "#991b1b") : C.sub }}>{r.result}</Text>
+                      </View>
+                    </View>
+                  ))}
+                </ScrollView>
+              </>
+            )}
           </View>
         </View>
       </Modal>
