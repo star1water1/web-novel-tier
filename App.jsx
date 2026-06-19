@@ -2,9 +2,29 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.23.1 (7.23 릴리스 — 인앱 버전/변경내역/가이드 동기화)                 ║
+ * ║  버전: 7.24.0 (🅒 수상 정확도 + 🅗 분석 신뢰도 노출)                           ║
  * ║  최종 수정: 2026-06-19                                                        ║
- * ║  총 라인 수: 약 59,740줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 59,820줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🅒+🅗 v7.24.0 수상 정확도 + 분석 신뢰도 노출 (2026-06-19)                         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [🅒 수상 시스템 정확도]                                                           ║
+ * ║ [#1 구조화 연도 1급 기준] 후보 판정이 태그/메모 문자열 스캔에만 의존 → 오탐/미탐. ║
+ * ║   start_year/end_year(연재 시작·종료·해당 연도 연재중)을 1급 OR 기준으로 추가.    ║
+ * ║ [#2 자격/정원 폴백] onGiveAward가 대상 연도 상정의 없으면 검사 전부 skip(무자격·   ║
+ * ║   무제한 수여) → 타 연도 동일 상(id)→기본 템플릿 순 resolvedDef로 폴백 검사.       ║
+ * ║ [#3 import 연도 백필] 구버전/연도 미기재 백업은 start/end_year=0으로 들어와 후보   ║
+ * ║   누락 → import 경로에서 태그/메모→연재연도 백필(마이그 가드 무관, 0인 작품만).    ║
+ * ║ [#4 내보내기 누락 경고] 미마운트 ref로 캡처 못한 상을 조용히 누락 → 종료 메시지에  ║
+ * ║   건너뛴 상 목록 + 재시도 안내 노출. extractStartEndYearFromText 헬퍼 공용화.      ║
+ * ║ [🅗 분석 신뢰도 노출]                                                             ║
+ * ║ [#1 표본 적음 배지] 장르/부장르/조합에 표본<5 '표본 N' 배지(수축평균 k=4 보정      ║
+ * ║   효과가 큰 구간) → 적은 표본의 고평점 과대평가를 한눈에 식별.                     ║
+ * ║ [#2 신뢰도 정렬 토글] 빈도순 ↔ 신뢰도순(adjRating=수축평균) 전환 토글(영속) —      ║
+ * ║   on이면 순위·표시 점수를 표본 보정값으로 전환. raw 평균 표시는 기본(off) 유지.    ║
+ * ║ [검증] esbuild JSX 파싱 통과 + 후보판정/수축정렬 시뮬레이션.                       ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -7949,10 +7969,28 @@ async function initDb(progressCb) {
 }
 
 /**
+ * 🆕 v7.24.0 (🅒): 태그+메모에서 연재 시작/종료 연도 추출 (순수 함수, DB/가드 무관).
+ *   마이그레이션·백업 import 백필 공용. 1990~2099 범위 4자리 연도만 채택.
+ *   반환: { sy, ey } | null (추출 실패). 연재중/휴재면 ey=0(미설정) 유지.
+ */
+function extractStartEndYearFromText(tags, note, work_status) {
+  const yearRegex = /\b(19[9]\d|20\d{2})\b/g;
+  const haystack = `${tags || ""} ${note || ""}`;
+  const matches = [...haystack.matchAll(yearRegex)].map(m => Number(m[1])).filter(y => y >= 1990 && y <= 2099);
+  if (matches.length === 0) return null;
+  const unique = [...new Set(matches)].sort((a, b) => a - b);
+  const sy = unique[0];
+  // 연중/연재중이면 end_year 미설정 유지 (0)
+  const isOngoing = work_status === "ongoing" || work_status === "hiatus";
+  const ey = (unique.length > 1 && !isOngoing) ? unique[unique.length - 1] : 0;
+  return { sy, ey };
+}
+
+/**
  * 🔧 v7.6.0 (포트 v3.12.0): 태그/메모에서 4자리 연도 추출 → start_year/end_year 백필
  * - app_meta "start_end_year_migrated" 가드
  * - 이미 start_year/end_year 설정된 작품은 스킵
- * - 1990~2099 범위 매치만 채택
+ * - 1990~2099 범위 매치만 채택 (v7.24.0: extractStartEndYearFromText 공용화)
  */
 async function migrateStartEndYearFromTags(database) {
   try {
@@ -7964,19 +8002,12 @@ async function migrateStartEndYearFromTags(database) {
     const novels = await database.getAllAsync(
       `SELECT id, tags, note, work_status, start_year, end_year FROM novels;`
     );
-    const yearRegex = /\b(19[9]\d|20\d{2})\b/g;
     const updates = [];
     for (const row of (novels || [])) {
       if ((Number(row.start_year) || 0) > 0 || (Number(row.end_year) || 0) > 0) continue;
-      const haystack = `${row.tags || ""} ${row.note || ""}`;
-      const matches = [...haystack.matchAll(yearRegex)].map(m => Number(m[1])).filter(y => y >= 1990 && y <= 2099);
-      if (matches.length === 0) continue;
-      const unique = [...new Set(matches)].sort((a, b) => a - b);
-      const sy = unique[0];
-      // 연중/연재중이면 end_year 미설정 유지 (0)
-      const isOngoing = row.work_status === "ongoing" || row.work_status === "hiatus";
-      const ey = (unique.length > 1 && !isOngoing) ? unique[unique.length - 1] : 0;
-      updates.push({ id: row.id, sy, ey });
+      const ext = extractStartEndYearFromText(row.tags, row.note, row.work_status);
+      if (!ext) continue;
+      updates.push({ id: row.id, sy: ext.sy, ey: ext.ey });
     }
     for (const u of updates) {
       await database.runAsync(`UPDATE novels SET start_year=?, end_year=? WHERE id=?`, [u.sy, u.ey, u.id]);
@@ -22709,15 +22740,24 @@ const AwardsScreen = memo(({
       
       // 2. 메모에 연도 포함
       const note = (novel.note || "").toLowerCase();
-      const hasYearInNote = note.includes(yearStr) || 
+      const hasYearInNote = note.includes(yearStr) ||
                            note.includes(`${yearStr}년`) ||
                            note.includes(`${shortYear}년`);
-      
+
       // 3. 완결작이면서 연도 힌트가 있는 경우
       const isCompleteWithYearHint = novel.work_status === "completed" && (hasYearInTags || hasYearInNote);
-      
+
+      // 🆕 v7.24.0 (🅒): 구조화 연도(start_year/end_year) 1급 기준.
+      //   태그/메모 문자열 스캔은 오탐(다른 맥락의 연도)·미탐(연도 미기재) 모두 발생 → 구조화 필드가 더 신뢰됨.
+      //   • 연재 시작이 해당 연도(sy===yearNum) 또는 완결이 해당 연도(ey===yearNum) → 직접 후보
+      //   • 시작~종료 사이에 해당 연도 포함(sy≤yearNum≤ey, 둘 다 설정) → 그 해에 연재 중이던 작품도 후보
+      const sy = Number(novel.start_year) || 0;
+      const ey = Number(novel.end_year) || 0;
+      const hasYearInStruct = (sy === yearNum) || (ey === yearNum) ||
+                             (sy > 0 && ey > 0 && sy <= yearNum && yearNum <= ey);
+
       // 최소 하나의 명시적 기준 충족 필요
-      return hasYearInTags || hasYearInNote || isCompleteWithYearHint;
+      return hasYearInTags || hasYearInNote || isCompleteWithYearHint || hasYearInStruct;
     });
   }, [list, awardSelectedYear, awardFilter.excludeDropped, awardFilter.excludeDiscontinued]);
   
@@ -23079,6 +23119,7 @@ const AwardsScreen = memo(({
     const pageHdp = Math.max(1, Dimensions.get("window").height - 80);
     let totalSaved = 0;
     let totalImages = awardsWithWinners.length; // 최소 1상=1장, 분할 시 ↑
+    const skippedNames = []; // 🆕 v7.24.0 (🅒): ref 미등록으로 캡처 못한 상 이름 — 종료 시 경고용
 
     setAwardExportProgress({
       current: 0, total: totalImages,
@@ -23090,7 +23131,12 @@ const AwardsScreen = memo(({
         if (!isAwardExportingRef.current) break;
         const award = awardsWithWinners[ai];
         const node = awardImageRefs.current.get(award.id);
-        if (!node) continue; // ref 미등록 (스크린 전환 등) — skip
+        if (!node) {
+          // 🆕 v7.24.0 (🅒): ref 미등록(스크린 전환·미마운트) 시 조용히 누락하지 않고 집계 → 종료 시 경고.
+          skippedNames.push(award.name);
+          totalImages = Math.max(0, totalImages - 1); // 누락분은 분모에서 제외(완료 판정 왜곡 방지)
+          continue;
+        }
 
         setAwardExportProgress({
           current: totalSaved, total: totalImages,
@@ -23166,14 +23212,18 @@ const AwardsScreen = memo(({
         }
       }
 
-      Breadcrumbs.add("award_export", "done", { saved: totalSaved, total: totalImages });
+      Breadcrumbs.add("award_export", "done", { saved: totalSaved, total: totalImages, skipped: skippedNames.length });
       setAwardExportProgress(null);
+      // 🆕 v7.24.0 (🅒): 미마운트로 건너뛴 상이 있으면 완료/부분 메시지에 함께 안내(이전: 무경고 누락).
+      const skipNote = skippedNames.length > 0
+        ? `\n\n⚠️ 화면에 표시되지 않아 건너뛴 상 ${skippedNames.length}개: ${skippedNames.join(", ")}\n(수상 탭을 연 상태에서 다시 시도하면 모두 저장됩니다.)`
+        : "";
       if (totalSaved === totalImages && totalSaved > 0) {
-        Alert.alert("완료", `${totalSaved}장의 수상 결과 이미지가 갤러리에 저장되었습니다.`);
+        Alert.alert(skippedNames.length > 0 ? "저장 완료(일부 제외)" : "완료", `${totalSaved}장의 수상 결과 이미지가 갤러리에 저장되었습니다.${skipNote}`);
       } else if (totalSaved > 0) {
-        Alert.alert("취소됨", `${totalSaved}/${totalImages}장이 저장된 후 중단되었습니다.`);
+        Alert.alert("일부 저장", `${totalSaved}/${totalImages}장이 저장되었습니다.${skipNote}`);
       } else {
-        Alert.alert("취소됨", "저장 전 중단되었습니다.");
+        Alert.alert(skippedNames.length > 0 ? "저장 안 됨" : "취소됨", skippedNames.length > 0 ? `저장된 이미지가 없습니다.${skipNote}` : "저장 전 중단되었습니다.");
       }
     } catch (e) {
       Breadcrumbs.add("award_export", "error", { msg: (e?.message || "").substring(0, 100) });
@@ -24995,6 +25045,7 @@ const SECTION_GROUPS = [
 const ALL_SECTION_KEYS = SECTION_GROUPS.flatMap(g => g.sections);
 const ALL_GROUP_KEYS = SECTION_GROUPS.map(g => g.key);
 const META_KEY_GROUPS = "tasteAnalysisExpandedGroups";
+const META_KEY_CONF_SORT = "tasteAnalysisConfidenceSort"; // 🆕 v7.24.0 (🅗): 신뢰도(표본 보정) 정렬 토글 영속
 
 const TasteAnalysisScreen = memo(({
   list,
@@ -25021,6 +25072,8 @@ const TasteAnalysisScreen = memo(({
   const [errorMsg, setErrorMsg] = useState(null);
   // 🆕 v6.2: 그룹 단위 펼침 상태 (기본: stats만)
   const [expandedGroups, setExpandedGroups] = useState(new Set(["stats"]));
+  // 🆕 v7.24.0 (🅗): 신뢰도(표본 보정) 정렬 모드 — on이면 장르/태그/조합을 adjRating(수축평균)으로 정렬·표시
+  const [confidenceSort, setConfidenceSort] = useState(false);
 
   // 🆕 v6.2: 첫 마운트 시 영속 상태 로드 (slot별 자동 분리: app_meta는 slot DB 격리)
   useEffect(() => {
@@ -25033,11 +25086,23 @@ const TasteAnalysisScreen = memo(({
           const valid = saved.filter(k => ALL_GROUP_KEYS.includes(k));
           setExpandedGroups(new Set(valid));
         }
+        // 🆕 v7.24.0 (🅗): 신뢰도 정렬 토글 복원
+        const savedConf = await getAppMeta(META_KEY_CONF_SORT);
+        if (!cancelled && typeof savedConf === "boolean") setConfidenceSort(savedConf);
       } catch (e) {
         // 로드 실패 시 기본값 유지
       }
     })();
     return () => { cancelled = true; };
+  }, []);
+
+  // 🆕 v7.24.0 (🅗): 신뢰도 정렬 토글 + 영속화
+  const toggleConfidenceSort = useCallback(() => {
+    setConfidenceSort(prev => {
+      const next = !prev;
+      setAppMeta(META_KEY_CONF_SORT, next).catch(() => {});
+      return next;
+    });
   }, []);
 
   // 🆕 v6.2: 그룹 토글 + 영속화
@@ -25830,6 +25895,20 @@ const TasteAnalysisScreen = memo(({
           tierStratification, tierConcentration, tierEntropy, tierInversion,
           awardTierCorrelation, tierDistribution } = analysis;
 
+  // 🆕 v7.24.0 (🅗): 분석 신뢰도 노출 — 표본 적은 항목 표식 + 신뢰도(표본 보정) 정렬/표시 전환.
+  //   SMALL_SAMPLE: 수축평균 k=4 기준 보정 효과가 큰 구간(표본<5)에 '표본 N' 배지 표시.
+  //   confidenceSort on: 빈도순 대신 adjRating(수축평균)으로 정렬하고 표시 점수도 보정값으로 전환.
+  const SMALL_SAMPLE = 5;
+  const sortByConfidence = (arr) => confidenceSort ? [...arr].sort((a, b) => (b.adjRating || 0) - (a.adjRating || 0)) : arr;
+  const majorGenreView = sortByConfidence(majorGenreAnalysis);
+  const subGenreView = sortByConfidence(subGenreAnalysis);
+  const dispRating = (item) => (confidenceSort && item.adjRating != null) ? item.adjRating : item.avgRating;
+  const renderSampleBadge = (count) => count < SMALL_SAMPLE ? (
+    <View style={{ marginLeft: 6, paddingHorizontal: 5, paddingVertical: 1, borderRadius: 5, backgroundColor: isDark ? "#3f3f12" : "#fef9c3" }}>
+      <Text style={{ fontSize: 9, color: isDark ? "#fde68a" : "#92400e", fontWeight: "700" }}>표본 {count}</Text>
+    </View>
+  ) : null;
+
   // 🔧 v7.21.2: 그룹 평균(avgRating=prefScore) 색상/강조 임계 — 하드코딩 ELO(1700/1550) 대신
   //   사용자 분포의 mean / mean+1σ 동적 임계(모든 모드 정합). basicStats는 이미 mode-aware prefScore.
   const _prefStdSafe = Math.max(50, basicStats.stdDevRating || 100);
@@ -25913,19 +25992,48 @@ const TasteAnalysisScreen = memo(({
         >
           <Text style={{ color: C.sub, fontWeight: "700" }}>📁 전체 접기</Text>
         </TouchableOpacity>
-        <TouchableOpacity 
+        <TouchableOpacity
           onPress={runAnalysis}
-          style={{ 
-            backgroundColor: C.primary, 
-            paddingVertical: 10, 
+          style={{
+            backgroundColor: C.primary,
+            paddingVertical: 10,
             paddingHorizontal: 16,
-            borderRadius: 10, 
-            alignItems: "center" 
+            borderRadius: 10,
+            alignItems: "center"
           }}
         >
           <Text style={{ color: "#fff", fontWeight: "700" }}>🔄</Text>
         </TouchableOpacity>
       </View>
+
+      {/* 🆕 v7.24.0 (🅗): 신뢰도(표본 보정) 정렬 토글 — 장르/태그/조합 순위를 빈도순 ↔ 신뢰도순 전환 */}
+      <TouchableOpacity
+        onPress={toggleConfidenceSort}
+        style={{
+          flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+          backgroundColor: confidenceSort ? (isDark ? "#1e3a5f" : "#dbeafe") : C.chip,
+          paddingVertical: 9, paddingHorizontal: 12, borderRadius: 10, marginBottom: 12,
+          borderWidth: 1, borderColor: confidenceSort ? "#3b82f6" : C.line,
+        }}
+      >
+        <View style={{ flex: 1, paddingRight: 8 }}>
+          <Text style={{ color: confidenceSort ? (isDark ? "#bfdbfe" : "#1d4ed8") : C.text, fontWeight: "700", fontSize: 13 }}>
+            {confidenceSort ? "🎯 신뢰도순 (표본 보정)" : "📊 빈도순 (기본)"}
+          </Text>
+          <Text style={{ color: C.sub, fontSize: 10, marginTop: 2 }}>
+            {confidenceSort
+              ? "표본이 적은 항목은 전역 평균 쪽으로 보정해 순위·점수 표시"
+              : "탭하면 표본 적은 고평점의 과대평가를 줄인 신뢰도순으로 전환"}
+          </Text>
+        </View>
+        <View style={{
+          width: 40, height: 22, borderRadius: 11, padding: 2,
+          backgroundColor: confidenceSort ? "#3b82f6" : (isDark ? "#374151" : "#cbd5e1"),
+          alignItems: confidenceSort ? "flex-end" : "flex-start", justifyContent: "center",
+        }}>
+          <View style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: "#fff" }} />
+        </View>
+      </TouchableOpacity>
 
       {/* 🆕 v6.2: 그룹 단위 펼침 토글 칩 (5그룹) */}
       {/* 🆕 v7.0: hybrid 모드는 매칭/심화 그룹 비활성 (ELO 기반) */}
@@ -26110,17 +26218,21 @@ const TasteAnalysisScreen = memo(({
           
           {isExpanded("majorGenre") && (
             <View style={{ marginTop: 12 }}>
-              {majorGenreAnalysis.map((g, i) => (
-                <View key={i} style={{ 
-                  flexDirection: "row", 
-                  justifyContent: "space-between", 
+              {majorGenreView.map((g, i) => (
+                <View key={i} style={{
+                  flexDirection: "row",
+                  justifyContent: "space-between",
                   alignItems: "center",
                   paddingVertical: 8,
                   borderBottomWidth: 1,
                   borderBottomColor: C.line,
                 }}>
                   <View>
-                    <Text style={{ color: C.text, fontWeight: "700" }}>{g.genre}</Text>
+                    {/* 🆕 v7.24.0 (🅗): 장르명 옆 표본 적음 배지 */}
+                    <View style={{ flexDirection: "row", alignItems: "center" }}>
+                      <Text style={{ color: C.text, fontWeight: "700" }}>{g.genre}</Text>
+                      {renderSampleBadge(g.count)}
+                    </View>
                     <Text style={{ color: C.sub, fontSize: 11 }}>
                       {g.count}작 · 완독률 {(g.completionRate * 100).toFixed(0)}% · 드롭률 {(g.dropRate * 100).toFixed(0)}%
                       {/* 🔧 v7.6.0 (포트 v3.12.1): 연중률 (0보다 클 때만) */}
@@ -26128,7 +26240,8 @@ const TasteAnalysisScreen = memo(({
                     </Text>
                   </View>
                   <View style={{ alignItems: "flex-end" }}>
-                    <Text style={{ color: C.text, fontWeight: "800" }}>{prefScoreLabel(g.avgRating, globalTierConfig, false)}</Text>
+                    {/* 🆕 v7.24.0 (🅗): 신뢰도순일 때 표본 보정 점수 표시 */}
+                    <Text style={{ color: C.text, fontWeight: "800" }}>{prefScoreLabel(dispRating(g), globalTierConfig, false)}</Text>
                     {!isTierMode && <Text style={{ color: C.sub, fontSize: 11 }}>승률 {(g.winRate * 100).toFixed(0)}%</Text>}
                   </View>
                 </View>
@@ -26143,17 +26256,22 @@ const TasteAnalysisScreen = memo(({
       {isGroupExpanded("genreTag") && (
       <TouchableOpacity onPress={() => toggleSection("subGenre")}>
         <Section title={`🏷️ 부장르 선호도 TOP 10 ${isExpanded("subGenre") ? "▼" : "▶"}`}>
-          {subGenreAnalysis.slice(0, isExpanded("subGenre") ? 20 : 10).map((g, i) => (
-            <View key={i} style={{ 
-              flexDirection: "row", 
+          {subGenreView.slice(0, isExpanded("subGenre") ? 20 : 10).map((g, i) => (
+            <View key={i} style={{
+              flexDirection: "row",
               justifyContent: "space-between",
+              alignItems: "center",
               paddingVertical: 4,
             }}>
-              <Text style={{ color: C.text, fontSize: 13 }}>
-                {i + 1}. {g.genre} ({g.count}작)
-              </Text>
-              <Text style={{ color: g.avgRating >= PREF_HI_CUT ? C.ok : C.text, fontWeight: "600", fontSize: 13 }}>
-                {prefScoreLabel(g.avgRating, globalTierConfig, false)}
+              {/* 🆕 v7.24.0 (🅗): 표본 적음 배지 + (신뢰도순) 보정 점수 */}
+              <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+                <Text style={{ color: C.text, fontSize: 13 }}>
+                  {i + 1}. {g.genre} ({g.count}작)
+                </Text>
+                {renderSampleBadge(g.count)}
+              </View>
+              <Text style={{ color: dispRating(g) >= PREF_HI_CUT ? C.ok : C.text, fontWeight: "600", fontSize: 13 }}>
+                {prefScoreLabel(dispRating(g), globalTierConfig, false)}
               </Text>
             </View>
           ))}
@@ -26209,13 +26327,15 @@ const TasteAnalysisScreen = memo(({
               borderBottomWidth: 1,
               borderBottomColor: C.line,
             }}>
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
                 <Text style={{ color: C.primary, fontWeight: "800", marginRight: 8 }}>#{i + 1}</Text>
                 <Text style={{ color: C.text }}>{c.combo}</Text>
+                {/* 🆕 v7.24.0 (🅗): 표본 적음 배지 */}
+                {renderSampleBadge(c.count)}
               </View>
               <View style={{ flexDirection: "row", alignItems: "center" }}>
                 <Text style={{ color: C.sub, fontSize: 12, marginRight: 6 }}>{c.count}작</Text>
-                <Text style={{ color: C.ok, fontWeight: "700" }}>{prefScoreLabel(c.avgRating, globalTierConfig, false)}</Text>
+                <Text style={{ color: C.ok, fontWeight: "700" }}>{prefScoreLabel(dispRating(c), globalTierConfig, false)}</Text>
               </View>
             </View>
           ))}
@@ -44013,6 +44133,21 @@ async function importJSON() {
                 console.warn(`복원 검증 경고: 예상 ${lenN}개 중 ${insertedCount}개만 삽입됨`);
               }
 
+              // 🆕 v7.24.0 (🅒): import된 작품 중 연도 미설정분에 태그/메모→연재연도 백필.
+              //   구버전(v9~v11) 백업·연도 미기재 작품은 start_year/end_year=0으로 들어와 수상 후보(구조화 연도)에서 누락됨.
+              //   최초 마이그레이션 가드(start_end_year_migrated)는 이미 set 상태라 재실행 안 됨 → import 경로에서 직접 보강.
+              try {
+                const yless = await all("SELECT id, tags, note, work_status FROM novels WHERE (start_year IS NULL OR start_year=0) AND (end_year IS NULL OR end_year=0);");
+                let backfilled = 0;
+                for (const row of (yless || [])) {
+                  const ext = extractStartEndYearFromText(row.tags, row.note, row.work_status);
+                  if (!ext) continue;
+                  await exec("UPDATE novels SET start_year=?, end_year=? WHERE id=?", [ext.sy, ext.ey, row.id]);
+                  backfilled++;
+                }
+                if (backfilled > 0) console.log(`[import] start_end_year 백필 ${backfilled}건`);
+              } catch (yErr) { console.warn("[import] start_end_year 백필 실패:", yErr?.message); }
+
               // 매칭 복원
               const matchQueries = [];
               const baseTime = Date.now();
@@ -47709,22 +47844,33 @@ async function importJSON() {
               //   이전: onGiveAward가 중복만 검사 → 로맨스에 "베스트 무협"·C티어에 "S 이상"·정원 초과
               //   수여가 무경고로 가능했음(상 규칙이 후보 필터/확률에만 쓰이고 수여엔 미적용).
               const awardDef = (awardSystemSettings.yearlyAwards?.[year] || []).find(a => a.id === awardId);
+              // 🆕 v7.24.0 (🅒): 대상 연도에 정의가 없어도(연도 미생성·삭제·타 슬롯 백업 등) 자격/정원 검사를 건너뛰지 않도록
+              //   폴백 정의를 확보 — 다른 연도의 동일 상(id) → 기본 템플릿 순. (이전: awardDef 없으면 검사 전부 skip → 무제한·무자격 수여 가능)
+              let resolvedDef = awardDef;
+              if (!resolvedDef) {
+                const ya = awardSystemSettings.yearlyAwards || {};
+                for (const y of Object.keys(ya)) {
+                  const found = (ya[y] || []).find(a => a.id === awardId);
+                  if (found) { resolvedDef = found; break; }
+                }
+                if (!resolvedDef) resolvedDef = DEFAULT_AWARD_TEMPLATE.find(a => a.id === awardId) || null;
+              }
               const issues = [];
-              if (awardDef) {
-                if (awardDef.matchTags && awardDef.matchTags.length > 0 && !awardDef.matchTags.includes("__ANY__")) {
+              if (resolvedDef) {
+                if (resolvedDef.matchTags && resolvedDef.matchTags.length > 0 && !resolvedDef.matchTags.includes("__ANY__")) {
                   const allTags = [(novel.tags || ""), (novel.major_genre || ""), (novel.sub_genre || "")].join(" ").toLowerCase();
-                  const ok = awardDef.matchTags.some(t => t === "__ANY__" || allTags.includes(String(t).toLowerCase()));
+                  const ok = resolvedDef.matchTags.some(t => t === "__ANY__" || allTags.includes(String(t).toLowerCase()));
                   if (!ok) issues.push("장르/태그 조건 불일치");
                 }
-                if (awardDef.tierMin) {
+                if (resolvedDef.tierMin) {
                   const tierOrder = getActiveTierOrder(globalTierConfig);
-                  const minIndex = tierOrder.indexOf(awardDef.tierMin);
+                  const minIndex = tierOrder.indexOf(resolvedDef.tierMin);
                   if (minIndex !== -1) {
                     const nIdx = tierOrder.indexOf(getDisplayTier(novel, globalTierConfig));
-                    if (nIdx === -1 || nIdx > minIndex) issues.push(`최소 티어(${awardDef.tierMin}) 미달`);
+                    if (nIdx === -1 || nIdx > minIndex) issues.push(`최소 티어(${resolvedDef.tierMin}) 미달`);
                   }
                 }
-                const cap = Number(awardDef.count) || 0;
+                const cap = Number(resolvedDef.count) || 0;
                 if (cap > 0) {
                   let cur = 0;
                   for (const n of list) {
@@ -47736,8 +47882,8 @@ async function importJSON() {
 
               const doGive = async () => {
                 // 🆕 v7.21.0: 메타 스냅샷(n/c/i) 동봉 — 정의가 다른 슬롯/삭제로 사라져도
-                //   상이 자기서술로 표시·집계되도록(고아 방지). awardDef(라이브) → AWARD_META(레거시) 순.
-                const _src = awardDef || AWARD_META[awardId];
+                //   상이 자기서술로 표시·집계되도록(고아 방지). awardDef(라이브) → resolvedDef(타 연도/템플릿) → AWARD_META(레거시) 순.
+                const _src = awardDef || resolvedDef || AWARD_META[awardId];
                 const _entry = { year: Number(year), type: awardId };
                 if (_src) {
                   _entry.n = _src.name || _src.label || awardId;
