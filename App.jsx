@@ -2,9 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.24.2 (🅖 수동 배치 품질 — 분포 미리보기·정밀 이동)                    ║
+ * ║  버전: 7.24.3 (🅡 비율 모드 마감 — 정원 초과 경고)                             ║
  * ║  최종 수정: 2026-06-19                                                        ║
- * ║  총 라인 수: 약 60,010줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 60,060줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🅡 v7.24.3 비율 모드 마감 — 정원 초과 경고 (2026-06-19)                           ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [의도 부합] ratio=Elo+상위% 분포의 일관성 마감(P0 이중 카운트 수정의 연장).       ║
+ * ║ [#0 핀 즉시 재계산] 이미 동작 확인 — 모든 핀 경로가 loadList 호출, loadList는      ║
+ * ║   ratio 모드에서 globalRatioTierMap을 항상 재계산. 별도 추가 불필요(검증만).       ║
+ * ║ [#1 정원 초과 경고] 비율 정원(=상위% 슬롯 수)을 넘겨 핀 고정 시, 자동 분포 작품이  ║
+ * ║   아래 티어로 밀려남 → 인라인 티어칩 고정 전 정원/현재 핀 수 안내 후 확인받음.     ║
+ * ║ [구현] computeRatioCumCounts 추출(computeRatioTierMap의 누적경계 로직 공유 — 정원  ║
+ * ║   경고와 공식 드리프트 방지) + getRatioTierCapacity. computeRatioTierMap은 추출    ║
+ * ║   함수 호출로 대체(동작 동일, 시뮬레이션으로 등가 확인).                           ║
+ * ║ [검증] esbuild JSX 파싱 통과 + cumCounts 리팩터 등가성(전 시나리오) 시뮬레이션.    ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -28329,6 +28343,38 @@ function computeTierRankMap(novels, cfg) {
   return map;
 }
 
+// 🆕 v7.24.3 (🅡): ratio 티어별 누적 경계(0..total) 산출 — computeRatioTierMap과 정원 경고가 공유.
+//   비율>0 티어는 상위부터 최소 1개 보장(starvation 방지), 단조 비감소, 마지막=total.
+//   (이전: computeRatioTierMap 내부 인라인 — 정원 경고와 공식 드리프트 방지 위해 추출.)
+function computeRatioCumCounts(total, cfg) {
+  if (!cfg || !Array.isArray(cfg.tiers) || cfg.tiers.length === 0) return [];
+  const ratios = cfg.tiers.map(t => Math.max(0, Number(t.ratio) || 0));
+  let sumR = ratios.reduce((a, b) => a + b, 0);
+  if (sumR <= 0) { sumR = cfg.tiers.length; ratios.fill(1); }
+  const cumCounts = [];
+  let acc = 0, prevCum = 0;
+  for (let i = 0; i < ratios.length; i++) {
+    acc += (ratios[i] / sumR) * total;
+    let c = Math.round(acc);
+    if (c < prevCum) c = prevCum;                                            // 단조 비감소 보장
+    if (ratios[i] > 0 && c === prevCum && prevCum < total) c = prevCum + 1;   // 상위 티어 starvation 방지
+    cumCounts.push(c);
+    prevCum = c;
+  }
+  cumCounts[cumCounts.length - 1] = total; // 마지막 경계는 항상 total
+  return cumCounts;
+}
+
+// 🆕 v7.24.3 (🅡): 특정 티어의 비율 기반 정원(슬롯 수) — 정원 초과 핀 경고용.
+function getRatioTierCapacity(tierKey, total, cfg) {
+  if (!cfg || !Array.isArray(cfg.tiers)) return 0;
+  const idx = cfg.tiers.findIndex(t => t.key === tierKey);
+  if (idx < 0) return 0;
+  const cum = computeRatioCumCounts(total, cfg);
+  if (idx >= cum.length) return 0;
+  return cum[idx] - (idx > 0 ? cum[idx - 1] : 0);
+}
+
 /**
  * 비율 기반 티어 매핑 계산
  * - rating DESC 정렬 → 누적 비율로 각 작품을 buckets에 분배
@@ -28366,28 +28412,11 @@ function computeRatioTierMap(novels, cfg) {
   if (total === 0) return map;
   unpinned.sort((a, b) => b.rating - a.rating);
 
-  // ratio 합계 — 0이면 균등 분배
-  const ratios = cfg.tiers.map(t => Math.max(0, Number(t.ratio) || 0));
-  let sumR = ratios.reduce((a, b) => a + b, 0);
-  if (sumR <= 0) sumR = cfg.tiers.length, ratios.fill(1);
-
-  // 각 티어 누적 경계 (전체 기준)
+  // 각 티어 누적 경계 (전체 기준) — 🆕 v7.24.3 (🅡): computeRatioCumCounts로 추출(정원 경고와 공유).
   // 🔧 v7.14.0 (P1): 작품 수가 적을 때 Math.round 단독이면 상위 티어 누적 share가 0.5 미만→0으로
   //   반올림되어 최상위 티어가 비고 #1 작품이 S에 못 들어가던 버그(예: 3작품·S=10% → S 비고 #1→A).
   //   티어는 '순위'이기도 하므로, 비율>0인 티어는 작품이 남아있는 한 상위부터 최소 1개씩 채운다.
-  const cumCounts = [];
-  let acc = 0;
-  let prevCum = 0;
-  for (let i = 0; i < ratios.length; i++) {
-    acc += (ratios[i] / sumR) * total;
-    let c = Math.round(acc);
-    if (c < prevCum) c = prevCum;                                            // 단조 비감소 보장
-    if (ratios[i] > 0 && c === prevCum && prevCum < total) c = prevCum + 1;   // 상위 티어 starvation 방지
-    cumCounts.push(c);
-    prevCum = c;
-  }
-  // 마지막 경계는 항상 total
-  cumCounts[cumCounts.length - 1] = total;
+  const cumCounts = computeRatioCumCounts(total, cfg);
 
   // 🐛 v7.21.0: 전체 티어 정원 → 핀 수 차감 = 미배정작 정원 → 미배정 누적 경계.
   //   (티어에 비율 정원보다 핀이 많으면 정원 0으로 클램프, 넘친 미배정작은 마지막 티어가 흡수)
@@ -50449,31 +50478,53 @@ async function importJSON() {
                                 }
                                 const oldTier = tier;
                                 const prevManualOrder = Number(item.manual_order) || 0; // 🆕 v7.0.6 (M11/C1)
-                                try {
-                                  // 🆕 v7.0.6 (M5c): manual_tier + manual_order 원자적 갱신 (이전 단순 manual_tier UPDATE는 새 tier collision 유발)
-                                  await setNovelTierAtomic(item.id, tk);
-                                  addTierHistoryEntry(item.id, item.title, oldTier, tk);
-                                  // 🆕 v7.0.6 (C1): inline chip은 tier만 단독 변경 → 정상 undo push
-                                  pushUndo('tier_change', {
-                                    id: item.id, title: item.title,
-                                    prevTier: item.manual_tier, newTier: tk,
-                                    prevManualOrder,
-                                  }, `${item.title} 티어 변경 (인라인)`);
-                                  // 🆕 v7.0: hybrid 모드 — 사용자 path 트리거
-                                  if (globalTierConfig.mode === "hybrid") {
-                                    const order = getActiveTierOrder(globalTierConfig);
-                                    const fromIdx = oldTier ? order.indexOf(oldTier) : order.length;
-                                    const toIdx = order.indexOf(tk);
-                                    const suspicion = toIdx < fromIdx ? "underrated" : "overrated";
-                                    enqueueVerification(item.id, "tier_change", suspicion, "inline_chip").catch(() => {});
-                                    propagateRankSuspicion(item.id).catch(() => {}); // 🆕 v7.17.0 증거①: 새 자리 인접권 의심도 전파
+                                const proceed = async () => {
+                                  try {
+                                    // 🆕 v7.0.6 (M5c): manual_tier + manual_order 원자적 갱신 (이전 단순 manual_tier UPDATE는 새 tier collision 유발)
+                                    await setNovelTierAtomic(item.id, tk);
+                                    addTierHistoryEntry(item.id, item.title, oldTier, tk);
+                                    // 🆕 v7.0.6 (C1): inline chip은 tier만 단독 변경 → 정상 undo push
+                                    pushUndo('tier_change', {
+                                      id: item.id, title: item.title,
+                                      prevTier: item.manual_tier, newTier: tk,
+                                      prevManualOrder,
+                                    }, `${item.title} 티어 변경 (인라인)`);
+                                    // 🆕 v7.0: hybrid 모드 — 사용자 path 트리거
+                                    if (globalTierConfig.mode === "hybrid") {
+                                      const order = getActiveTierOrder(globalTierConfig);
+                                      const fromIdx = oldTier ? order.indexOf(oldTier) : order.length;
+                                      const toIdx = order.indexOf(tk);
+                                      const suspicion = toIdx < fromIdx ? "underrated" : "overrated";
+                                      enqueueVerification(item.id, "tier_change", suspicion, "inline_chip").catch(() => {});
+                                      propagateRankSuspicion(item.id).catch(() => {}); // 🆕 v7.17.0 증거①: 새 자리 인접권 의심도 전파
+                                    }
+                                    setExpandedNovelId(null);
+                                    await loadList(undefined, undefined, "tierManage");
+                                  } catch (e) {
+                                    console.warn("티어 변경 오류:", e.message);
+                                    Alert.alert("오류", "티어 변경에 실패했습니다.");
                                   }
-                                  setExpandedNovelId(null);
-                                  await loadList(undefined, undefined, "tierManage");
-                                } catch (e) {
-                                  console.warn("티어 변경 오류:", e.message);
-                                  Alert.alert("오류", "티어 변경에 실패했습니다.");
+                                };
+                                // 🆕 v7.24.3 (🅡): ratio 모드 정원 초과 핀 경고 — 비율 정원을 넘겨 고정 시
+                                //   자동 분포 작품이 아래로 밀려나므로 확인받고 진행(의도적 강제 허용).
+                                if (globalTierConfig.mode === "ratio") {
+                                  const total = (list || []).length;
+                                  const cap = getRatioTierCapacity(tk, total, globalTierConfig);
+                                  const curPins = (list || []).filter(x => x.manual_tier === tk).length;
+                                  if (cap > 0 && curPins >= cap) {
+                                    setExpandedNovelId(null);
+                                    Alert.alert(
+                                      "정원 초과 고정",
+                                      `${getTierLabel(tk, globalTierConfig)} 티어의 비율 정원은 약 ${cap}작인데 이미 ${curPins}작이 고정돼 있습니다.\n\n그래도 고정하면 자동 분포 작품이 아래 티어로 밀려납니다. 계속할까요?`,
+                                      [
+                                        { text: "취소", style: "cancel" },
+                                        { text: "그래도 고정", onPress: () => { proceed().catch(() => {}); } },
+                                      ]
+                                    );
+                                    return;
+                                  }
                                 }
+                                await proceed();
                               }}
                               style={{
                                 paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999,
