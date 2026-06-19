@@ -2,9 +2,41 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.24.4 (코드 전수 검토 — 백업 복원/갤러리 셔플 결함 수정)               ║
+ * ║  버전: 7.24.5 (실사용 시나리오 7종 정밀 검토 — 통합/순차 결함 수정)            ║
  * ║  최종 수정: 2026-06-19                                                        ║
- * ║  총 라인 수: 약 61,340줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 61,380줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔬 v7.24.5 실사용 시나리오 7종 정밀 검토 — 통합/순차 결함 4건 수정 (2026-06-19) ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 신규 사용자 온보딩·장시간 자동매칭+생명주기·모드 왕복·하이브리드 검증·다중      ║
+ * ║ 슬롯·백업 라운드트립·티어 커스터마이징 7개 시나리오를 단계별 코드 추적.          ║
+ * ║ 5개 시나리오 무결, 통합/순차 결함 4건 검출·수정(나머지는 비손상 방어 관찰).      ║
+ * ║                                                                              ║
+ * ║ [Fix-1 Medium] 새 슬롯 전환 시 홈 정렬 기본값 'rating' (v7.10.0 누락 지점)       ║
+ * ║ • 초기 로드는 useState 기본값 'tier' 유지하나 슬롯 전환 else-branch만 'rating'   ║
+ * ║   하드코딩 → hybrid/manual/ratio에서 홈이 ELO순으로 떠 순위 탭과 불일치.        ║
+ * ║   → 'tier'로 정정(v7.10.0 rating→tier 전환 의도와 일치).                        ║
+ * ║                                                                              ║
+ * ║ [Fix-2 Medium] 티어 threshold-순서 vs 배열-순서 분기 (match 모드)               ║
+ * ║ • tierFromRating은 threshold 내림차순, getActiveTierOrder/tierRank는 배열 순서.  ║
+ * ║   threshold 편집기가 배열 재정렬 없이 저장 → 비단조 threshold 입력 시 표시 티어  ║
+ * ║   (tierFromRating)와 순위(tierRank)가 어긋남. → match 모드에서만 편집 확정       ║
+ * ║   (onEndEditing) 시 배열을 threshold 내림차순으로 정규화. hybrid/manual/ratio는  ║
+ * ║   배열이 사용자 위계(manual_tier/비율)라 미변경.                                ║
+ * ║                                                                              ║
+ * ║ [Fix-3 Low] 티어 추가 기본 threshold:0 → 최하위 작품 흡수                        ║
+ * ║ • 신규 티어가 맨아래 티어와 threshold 0 중복 → match 정렬상 위로 와 최저 레이팅  ║
+ * ║   작품 전부 흡수. → 끼어들 두 이웃 사이값으로 시드.                             ║
+ * ║                                                                              ║
+ * ║ [Fix-4 Low] 검증 세션 currentIdx 범위 초과 시 무한 정지                          ║
+ * ║ • respondVerificationMatch가 손상/외부복원 세션의 currentIdx 초과 시 bare return ║
+ * ║   → '후보 없음' 카드에 no-op 버튼만 남아 정지. → 세션 정리 후 다음 큐 자동 진행. ║
+ * ║                                                                              ║
+ * ║ [방어 관찰 — 비손상이라 미수정] AppState 포그라운드 복구가 slotSwitching 미참조  ║
+ * ║ (전환 중 배경복귀 시 중복 재연결, 3중 수렴으로 비손상) / _recoveryAttempted는    ║
+ * ║ 성공 복구도 세션당 1회 제한(설계 의도). 둘 다 데이터 영향 없어 현행 유지.         ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -13471,7 +13503,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.24.4";
+const APP_VERSION = "7.24.5";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -13497,6 +13529,17 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.24.5", date: "2026-06-19",
+    title: "🔬 실사용 점검 — 정렬·티어·검증 안정화",
+    highlights: [
+      { type: "fix", text: "🧭 새 슬롯으로 전환할 때 홈 목록이 기본 '티어순'으로 정렬돼요. (이전엔 ELO 점수순이라 하이브리드·수동·비율 모드에서 순위 탭과 어긋났어요)" },
+      { type: "fix", text: "🏷️ 티어를 새로 추가하면 위·아래 티어 사이의 기준 점수가 자동으로 채워져요. (이전엔 기준 0으로 추가돼 최하위 작품이 새 티어로 쏠렸어요)" },
+      { type: "fix", text: "🏷️ 매치 모드에서 티어 기준 점수를 바꾸면 티어 순서가 점수에 맞게 자동 정렬돼, 순위 탭과 표시 티어가 항상 일치해요." },
+      { type: "fix", text: "🛡️ 드물게 손상된 검증 세션이 '후보 없음'으로 멈추지 않고 자동으로 다음 점검 대상으로 넘어가요." },
+    ],
+    details: [],
+  },
   {
     version: "7.24.4", date: "2026-06-19",
     title: "🛠️ 백업 복원·갤러리 셔플 안정화",
@@ -33760,7 +33803,10 @@ function AppContent() {
         if (savedHomeSortSettings.filterFolder) setFilterFolder(savedHomeSortSettings.filterFolder); else setFilterFolder("ALL");
       } else {
         // 새 슬롯에 저장값 없으면 기본값
-        setHomeSortKey("rating"); setHomeSortDir("DESC");
+        // 🛠️ v7.24.5: 기본 정렬 키를 useState 기본값 및 v7.10.0 의도(티어순)와 일치시킴.
+        //   이전엔 "rating"으로 하드코딩돼 새 슬롯 전환 시 hybrid/manual/ratio에서 홈이 ELO
+        //   점수순으로 떠 티어 배지·순위 탭과 어긋났음(v7.10.0 rating→tier 전환의 누락 지점).
+        setHomeSortKey("tier"); setHomeSortDir("DESC");
         setFilterTier("ALL"); setFilterPlatform("ALL"); setFilterGenre("ALL"); setFilterStatus("ALL"); setFilterFolder("ALL");
       }
       // setTimeout으로 next tick에 Ref 활성화 (setState 반영 후)
@@ -41094,7 +41140,16 @@ function AppContent() {
     try {
     const { queueRow, suspicionNovel, candidates, responses, currentIdx, suspicionType } = verificationSession;
     const candidate = candidates[currentIdx];
-    if (!candidate) return;
+    if (!candidate) {
+      // 🛠️ v7.24.5: 방어 — currentIdx가 범위를 벗어난 손상/외부복원 세션이면 무한 정지(후보 없음 카드에
+      //   no-op 버튼만 남음) 대신 세션을 정리하고 다음 큐로 자동 진행(finalize 경로와 동일 패턴).
+      //   정상 planVerificationProbe 경로는 항상 nextIdx<poolSize라 여기 도달 불가.
+      console.warn("[verify] currentIdx 범위 초과 — 세션 정리 후 다음 대상으로 진행");
+      setVerificationSession(null);
+      verificationSessionIdRef.current = null;
+      startVerificationSession();
+      return; // finally가 respondingRef 해제
+    }
 
     // violation_type 산출
     const choice = suspicionWon ? "a" : "b";
@@ -53937,6 +53992,20 @@ async function importJSON() {
                                 newTiers[idx] = { ...newTiers[idx], threshold: parseInt(v) || 0 };
                                 saveAppSettings({ tierSystemConfig: { ...tsc, tiers: newTiers } });
                               }}
+                              onEndEditing={() => {
+                                // 🛠️ v7.24.5: match 모드에서만 threshold 내림차순으로 배열 순서 정규화.
+                                //   배열 순서(getActiveTierOrder/tierRank = 순위 기준)와 threshold 순서
+                                //   (tierFromRating = 표시 티어)가 어긋나면 순위 탭과 표시 티어가 불일치한다.
+                                //   match는 배열 순서가 곧 threshold 위계라 정렬이 맞음. hybrid/manual/ratio는
+                                //   배열이 사용자 지정 위계(manual_tier/비율)라 절대 건드리지 않는다.
+                                if (modeForUI !== "match") return;
+                                const curCfg = appSettings.tierSystemConfig || globalTierConfig;
+                                const cur = curCfg.tiers || [];
+                                const sorted = [...cur].sort((a, b) => (Number(b.threshold) || 0) - (Number(a.threshold) || 0));
+                                if (sorted.some((tt, i) => tt.key !== cur[i]?.key)) {
+                                  saveAppSettings({ tierSystemConfig: { ...curCfg, tiers: sorted, defaultTier: sorted[sorted.length - 1].key } });
+                                }
+                              }}
                               keyboardType="number-pad"
                               placeholder="기준"
                               placeholderTextColor={C.sub}
@@ -54049,8 +54118,14 @@ async function importJSON() {
                             const newKey = "T_" + Date.now().toString(36);
                             const newLabel = "T" + tiersForUI.length;
                             const newTiers = [...tiersForUI];
+                            // 🛠️ v7.24.5: 신규 티어 threshold를 끼어들 두 이웃(위/맨아래) 사이값으로 시드.
+                            //   이전 threshold:0은 맨아래 티어(보통 0)와 중복 → match 모드에서 tierFromRating의
+                            //   threshold 정렬상 신규 티어가 맨아래보다 위에 와, 최하위 레이팅 작품을 전부 흡수했음.
+                            const _aboveT = Number(tiersForUI[tiersForUI.length - 2]?.threshold) || 0;
+                            const _bottomT = Number(tiersForUI[tiersForUI.length - 1]?.threshold) || 0;
+                            const _seedThreshold = _aboveT > _bottomT ? Math.round((_aboveT + _bottomT) / 2) : _bottomT + 50;
                             // 🔧 v7.10.0: ratio 모드면 신규 티어에도 기본 비율 부여(미부여 시 비중 0이 됨)
-                            const newTier = { key: newKey, label: newLabel, color: nextColor, threshold: 0, gated: false };
+                            const newTier = { key: newKey, label: newLabel, color: nextColor, threshold: _seedThreshold, gated: false };
                             if (modeForUI === "ratio") newTier.ratio = 10;
                             newTiers.splice(newTiers.length - 1, 0, newTier);
                             saveAppSettings({ tierSystemConfig: { ...tsc, tiers: newTiers } });
