@@ -2,9 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.23.0 (🅕 UI 견고성 — AutoFit 단일화 + cachePolicy 통일)               ║
+ * ║  버전: 7.23.1 (🅔 좌표/스펙트럼 마감 — 구간 라벨 의미화 + 대표 예시)           ║
  * ║  최종 수정: 2026-06-19                                                        ║
- * ║  총 라인 수: 약 59,700줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 59,720줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🅔 v7.23.1 좌표/스펙트럼 분석 마감 (2026-06-19)                                   ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [의도 부합] 사용자 저작 좌표/축은 그대로 유지(유도/대체 X) — 라벨 의미화 +        ║
+ * ║   폐기되던 per-novel 정보로 '대표 예시'만 추가. 데이터 오버레이(고평점 마커·       ║
+ * ║   highRatedBias 힌트)는 이미 존재(보존).                                          ║
+ * ║ [#1 좌표 구간 라벨] '상세 구간'의 불투명한 'N구간' → 축 위치(%)로 의미화          ║
+ * ║   (위 막대의 좌/우 라벨과 매핑되어 어느 쪽인지 즉시 파악).                         ║
+ * ║ [#2 스펙트럼 구간 방향] 구간별 작품 수 행에 좌/우 축(◀leftTag · rightTag▶) 명시.  ║
+ * ║ [#3 대표 예시] 스펙트럼별 '최고 선호작'(폐기되던 novelAnalyses의 최고 prefScore   ║
+ * ║   작품 + 성향 쪽) 노출 → 추상 분석에 구체 작품 연결.                              ║
+ * ║ [검증] esbuild JSX 파싱 통과.                                                    ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -26490,12 +26504,13 @@ const TasteAnalysisScreen = memo(({
                     }}>
                       <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
                         {coord.segments.map((seg, segIdx) => (
-                          <View key={segIdx} style={{ 
-                            width: "20%", 
+                          <View key={segIdx} style={{
+                            width: "20%",
                             alignItems: "center",
                             paddingVertical: 4,
                           }}>
-                            <Text style={{ color: C.sub, fontSize: 9 }}>{seg.range}</Text>
+                            {/* 🔧 v7.23.1: 불투명한 'N구간' → 축 위치(%)로 의미화 (위 막대의 좌/우 라벨과 매핑) */}
+                            <Text style={{ color: C.sub, fontSize: 9 }}>{segIdx * 20}–{segIdx * 20 + 20}%</Text>
                             <Text style={{ 
                               color: seg.novels.length > 0 ? C.text : C.sub, 
                               fontSize: 11,
@@ -27349,12 +27364,18 @@ const TasteAnalysisScreen = memo(({
                     <View style={{ marginTop: 8 }}>
                       <Text style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>
                         {data.novelCount}개 작품 분석 · 고평점 작품 성향: {
-                          data.highRatedAvgPosition < 0.35 ? leftTag 
-                          : data.highRatedAvgPosition > 0.65 ? rightTag 
+                          data.highRatedAvgPosition < 0.35 ? leftTag
+                          : data.highRatedAvgPosition > 0.65 ? rightTag
                           : "중간"
                         }
                       </Text>
-                      
+                      {/* 🆕 v7.23.1: 대표 예시 작품 */}
+                      {data.topNovel && (
+                        <Text style={{ color: C.sub, fontSize: 11, marginBottom: 4 }} numberOfLines={1}>
+                          ⭐ 최고 선호작: {data.topNovel.title}{data.topNovel.side !== "중간" ? ` (${data.topNovel.side} 쪽)` : ""}
+                        </Text>
+                      )}
+
                       {/* 구간별 분포 */}
                       <View style={{ flexDirection: "row", marginTop: 4 }}>
                         {(data.segments || []).map((seg, i) => (
@@ -27378,9 +27399,12 @@ const TasteAnalysisScreen = memo(({
                           </View>
                         ))}
                       </View>
-                      <Text style={{ color: C.sub, fontSize: 9, marginTop: 2, textAlign: "center" }}>
-                        구간별 작품 수
-                      </Text>
+                      {/* 🔧 v7.23.1: 구간 카운트 행에 축 방향 명시(leftTag ← → rightTag) — 좌/우 의미 부여 */}
+                      <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 2 }}>
+                        <Text style={{ color: "#3b82f6", fontSize: 9 }}>◀ {leftTag}</Text>
+                        <Text style={{ color: C.sub, fontSize: 9 }}>구간별 작품 수</Text>
+                        <Text style={{ color: "#f59e0b", fontSize: 9 }}>{rightTag} ▶</Text>
+                      </View>
                     </View>
                   )}
                 </View>
@@ -30294,12 +30318,19 @@ async function analyzePreferences(novels, matches) {
       const preferredSegment = validSegments.length > 0
         ? validSegments.reduce((best, s) => s.avgRating > best.avgRating ? s : best)
         : null;
-      
+      // 🆕 v7.23.1: 대표 예시 — 이 스펙트럼에서 가장 선호한 작품(폐기되던 per-novel 정보 활용)
+      const topNovel = novelAnalyses.reduce((best, n) => (n.rating > best.rating ? n : best), novelAnalyses[0]);
+
       spectrumAnalysis[spectrumId] = {
         name: spectrum.name,
         description: spectrum.description,
         tags: spectrum.tags,
         novelCount: novelAnalyses.length,
+        topNovel: topNovel ? {
+          title: topNovel.title,
+          side: topNovel.normalizedPosition < 0.4 ? spectrum.tags[0]
+              : topNovel.normalizedPosition > 0.6 ? spectrum.tags[spectrumLength - 1] : "중간",
+        } : null,
         avgPosition: avgPos,
         highRatedAvgPosition: highRatedAvgPos,
         segments,
