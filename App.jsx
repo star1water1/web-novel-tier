@@ -2,9 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.27.0 (AI 유의어 점검 — 옵트인 LLM 추천)                              ║
+ * ║  버전: 7.27.1 (유의어 후보 — 태깅 습관 편향 제거)                             ║
  * ║  최종 수정: 2026-06-20                                                        ║
  * ║  총 라인 수: 약 61,440줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.27.1 유의어 후보 — 태깅 습관 편향 제거 (2026-06-20)                       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제] v7.26.0 로컬 엔진이 동시출현(같은 작품에 함께 붙는 빈도)을 가점/감점에   ║
+ * ║ 사용 → 한 작품에 유의어를 둘 다 다는지는 사용자 습관이라 보편 기준이 못 됨.     ║
+ * ║ 꼼꼼히 둘 다 다는 사용자는 진짜 유의어가 '자주 함께 쓰임'으로 감점되어 누락.    ║
+ * ║                                                                              ║
+ * ║ [수정] computeSynonymCandidates에서 동시출현(coRatio) 신호 완전 제거. 형태      ║
+ * ║ (접미사·편집거리) 신호만 사용 — 글자 기반이라 태깅 습관과 무관(객관적).         ║
+ * ║ 형태 오탐은 진단(추천)일 뿐이라 [무시]로 거른다. 부수: 교집합 계산 제거로        ║
+ * ║ 성능도 개선. 정렬 score→minFreq. AI 옵트인 경로는 영향 없음(의미 기반).        ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12169,13 +12182,15 @@ function isSameTag(a, b) {
 
 /* =========================================================
    🧩 v7.26.0: 유의어 후보 자동 발굴 (로컬 엔진 — 키/네트워크 불필요)
-   - 형태 규칙(접미사·편집거리)으로 1차 후보 → 비대칭 통계로 보정.
+   - 형태 규칙(접미사·편집거리)만으로 후보 발굴 — 글자 신호라 사용자
+     태깅 습관과 무관한 객관적 기준.
    - computeTagHealth(같은 정규화 키의 표기 변형)를 넘어, 어근이 같은
      "유의어"(예: 회귀 ↔ 회귀물, 판타지 ↔ 환타지)를 진단·추천한다.
-   - 핵심 통찰: 진짜 유의어는 비슷한 작품군에 나타나지만 같은 작품에는
-     함께 잘 안 붙는다(분포 유사 ↑ + 동시출현 ↓). 자주 함께 쓰이면 감점.
-   - 진단만 — 등록(묶기)은 사용자 승인 시에만. 의미만 다른 유의어
-     (먼치킨 ↔ 사기캐)는 형태로 안 잡히므로 AI 옵트인이 담당.
+   - 🔧 v7.27.1: 동시출현(같은 작품에 함께 붙는 빈도)은 일부러 안 쓴다.
+     한 작품에 유의어를 둘 다 다는지는 사람마다 달라 판별 기준이 못 됨
+     (꼼꼼히 둘 다 다는 사용자가 오히려 감점되는 습관 편향).
+   - 진단만 — 등록(묶기)은 사용자 승인 시에만. 형태로 잘못 걸린 후보는
+     [무시]로 거른다. 의미만 같은 유의어(먼치킨 ↔ 사기캐)는 AI 옵트인이 담당.
    ========================================================= */
 
 // 편집거리 (Levenshtein) — 행 2개만 유지하는 O(mn)
@@ -12219,17 +12234,16 @@ function morphSynonymScore(ka, kb) {
   return { score: 0, reason: null };
 }
 
-// 라이브러리 전반에서 유의어 후보 쌍 발굴 (순수 함수)
+// 라이브러리 전반에서 유의어 후보 쌍 발굴 (순수 함수 — 형태 신호만)
 function computeSynonymCandidates(novels, tagRelations, opts = {}) {
   const MIN_FREQ = opts.minFreq || 2;
   const MAX_RESULTS = opts.maxResults || 40;
   const t2g = tagRelations?.tagToGroup || {};
 
-  const tagToNovels = new Map(); // normKey → Set(novelIdx)
   const tagFreq = new Map();     // normKey → 사용 작품 수
   const tagDisplay = new Map();  // normKey → Map(표기 → 횟수)
 
-  (novels || []).forEach((n, idx) => {
+  (novels || []).forEach((n) => {
     const raw = [
       ...parseMajorSub(n.major_genre),
       ...parseMajorSub(n.sub_genre),
@@ -12240,8 +12254,7 @@ function computeSynonymCandidates(novels, tagRelations, opts = {}) {
       const k = normalizeTagKey(t);
       if (!k || seen.has(k)) continue;
       seen.add(k);
-      if (!tagToNovels.has(k)) { tagToNovels.set(k, new Set()); tagFreq.set(k, 0); tagDisplay.set(k, new Map()); }
-      tagToNovels.get(k).add(idx);
+      if (!tagFreq.has(k)) { tagFreq.set(k, 0); tagDisplay.set(k, new Map()); }
       tagFreq.set(k, tagFreq.get(k) + 1);
       const dm = tagDisplay.get(k);
       dm.set(t, (dm.get(t) || 0) + 1);
@@ -12259,45 +12272,30 @@ function computeSynonymCandidates(novels, tagRelations, opts = {}) {
 
   const keys = [...tagFreq.entries()].filter(([, f]) => f >= MIN_FREQ).map(([k]) => k).sort();
 
+  // 🔧 v7.27.1: 형태(글자) 신호만 사용. 동시출현은 태깅 습관에 의존해
+  //   유의어 판별 기준으로 부적절(한 작품에 유의어를 둘 다 다는지가 사람마다 다름).
   const candidates = [];
   for (let i = 0; i < keys.length; i++) {
     const ka = keys[i];
-    const setA = tagToNovels.get(ka);
     const fa = tagFreq.get(ka);
     const ga = groupOf(ka);
     for (let j = i + 1; j < keys.length; j++) {
       const kb = keys[j];
       if (Math.abs(ka.length - kb.length) > 4) continue; // 길이차 가지치기
       const morph = morphSynonymScore(ka, kb);
-      if (morph.score <= 0) continue;
+      if (morph.score < 0.45) continue;
       const gb = groupOf(kb);
       if (ga && gb && ga === gb) continue; // 이미 같은 그룹
-
-      // 비대칭 통계: 같은 작품에 함께 붙는 비율(coRatio)이 낮을수록 유의어 신호
-      const setB = tagToNovels.get(kb);
-      const fb = tagFreq.get(kb);
-      const [small, big] = setA.size <= setB.size ? [setA, setB] : [setB, setA];
-      let co = 0;
-      for (const x of small) if (big.has(x)) co++;
-      const minF = Math.min(fa, fb);
-      const coRatio = minF > 0 ? co / minF : 0;
-
-      let score = morph.score;
-      const reasons = [morph.reason];
-      if (coRatio <= 0.15) { score += 0.05; reasons.push("거의 안 겹침"); }
-      else if (coRatio >= 0.5) { score -= 0.3; reasons.push("자주 함께 쓰임"); }
-
-      if (score < 0.45) continue;
       candidates.push({
         a: displayOf(ka), b: displayOf(kb),
-        score: Math.min(1, Math.round(score * 100) / 100),
-        minFreq: minF,
-        reasons: reasons.filter(Boolean),
+        score: morph.score,
+        minFreq: Math.min(fa, tagFreq.get(kb)),
+        reasons: [morph.reason].filter(Boolean),
         suggest: morph.score >= 0.9 ? "merge" : "group",
       });
     }
   }
-  candidates.sort((x, y) => y.score - x.score);
+  candidates.sort((x, y) => (y.score - x.score) || (y.minFreq - x.minFreq));
   return candidates.slice(0, MAX_RESULTS);
 }
 
@@ -13777,7 +13775,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.27.0";
+const APP_VERSION = "7.27.1";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -13803,6 +13801,14 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.27.1", date: "2026-06-20",
+    title: "🔧 유의어 후보 — 태깅 습관 편향 제거",
+    highlights: [
+      { type: "fix", text: "🧩 유의어 후보를 고를 때 '같은 작품에 함께 쓰였는지'는 더 이상 보지 않아요. 한 작품에 비슷한 태그를 둘 다 다는지는 사람마다 달라서, 꼼꼼히 다는 분이 오히려 손해 보던 문제를 고쳤어요. 이제 글자가 닮은 정도(어근·접미사·오타)만 봐서 누구에게나 똑같이 동작해요." },
+    ],
+    details: [],
+  },
   {
     version: "7.27.0", date: "2026-06-20",
     title: "🤖 AI 유의어 점검 (옵트인)",
