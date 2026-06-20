@@ -2,9 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.8 (자체 검토 후속 — 직전 수정의 미흡/방편식 보완 5건)             ║
+ * ║  버전: 7.28.9 (제미나이(Gemini) 무료 연동 — AI 유의어 점검 제공자 선택)      ║
  * ║  최종 수정: 2026-06-20                                                        ║
- * ║  총 라인 수: 약 62,400줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 62,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🤖 v7.28.9 제미나이(Gemini) 무료 연동 — AI 유의어 점검 제공자 선택 (2026-06-20)║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ AI 유의어 점검을 Claude(유료) 외에 Google Gemini(무료 한도)로도 돌릴 수 있게 ║
+ * ║ 확장. 설정>태그에서 제공자 토글(Gemini/Claude) 선택 + 해당 키 입력.          ║
+ * ║                                                                              ║
+ * ║ [공통화] 프롬프트 빌더(buildSynonymPromptText)를 추출—두 제공자가 동일 맥락·║
+ * ║ 사용자 규칙을 공유. Gemini는 responseSchema로 구조화 출력 강제(=tool_use 대응).║
+ * ║                                                                              ║
+ * ║ [보안] Gemini 키도 app_meta(기기 전용)에만 저장·백업 미포함. 전송은          ║
+ * ║ 점검 시 태그 목록만(작품 제목·감상 제외) — Claude와 동일.                   ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12565,10 +12578,11 @@ function computeSynonymCandidates(novels, tagRelations, opts = {}) {
      "claude-sonnet-4-6" 또는 "claude-opus-4-8"로 바꾸면 된다(비용↑).
    ========================================================= */
 const SYNONYM_AI_MODEL = "claude-haiku-4-5";
+// 🆕 v7.28.9: 무료 대안 — Google Gemini (AI Studio 무료 한도). Flash 계열 = 무료·충분.
+const GEMINI_AI_MODEL = "gemini-2.5-flash";
 
-async function callClaudeForSynonyms(tags, apiKey, model = SYNONYM_AI_MODEL, context = {}) {
-  if (!apiKey) throw new Error("API 키가 없습니다");
-  if (!tags || tags.length === 0) return [];
+// 🆕 v7.28.9: 유의어 점검 프롬프트 빌더 (Claude·Gemini 공통) — 단일 출처로 분기 방지
+function buildSynonymPromptText(tags, context = {}) {
   // 🔧 v7.28.1: 사용자 맥락(기존 그룹·상반·거절) 주입 → AI가 '이 사람 기준'으로 판단
   let ctxText = "";
   const sg = (context.similarGroups || []).filter(g => Array.isArray(g) && g.length >= 2);
@@ -12577,6 +12591,13 @@ async function callClaudeForSynonyms(tags, apiKey, model = SYNONYM_AI_MODEL, con
   if (sg.length) ctxText += "\n\n[이 사용자가 이미 '같다'고 묶은 그룹 — 묶는 기준·취향 참고]\n" + sg.slice(0, 30).map(g => "- " + g.join(", ")).join("\n");
   if (op.length) ctxText += "\n\n[이 사용자가 '반대 의미'라고 지정한 쌍 — 절대 묶지 마세요]\n" + op.slice(0, 30).map(p => "- " + p[0] + " ↔ " + p[1]).join("\n");
   if (dp.length) ctxText += "\n\n[이 사용자가 이전에 '아니다'라고 거절한 쌍 — 다시 제안하지 마세요]\n" + dp.slice(0, 50).map(p => "- " + p[0] + " ↔ " + p[1]).join("\n");
+  return "다음은 한 사용자의 웹소설 태그 목록입니다. 표기만 다른 게 아니라 '뜻이 같거나 거의 같은' 유의어/동의어끼리 그룹으로 묶어 주세요. 예: 먼치킨/사기캐/최강, 회귀/회귀물. 애매하면 묶지 마세요. 반드시 입력 목록에 있는 표기만 사용하세요. 아래에 이 사용자가 이미 묶은/반대로 둔/거절한 예시가 있으면 그 취향과 결정을 존중하세요." + ctxText + "\n\n태그: " + tags.join(", ");
+}
+
+async function callClaudeForSynonyms(tags, apiKey, model = SYNONYM_AI_MODEL, context = {}) {
+  if (!apiKey) throw new Error("API 키가 없습니다");
+  if (!tags || tags.length === 0) return [];
+  const promptText = buildSynonymPromptText(tags, context);
   const tool = {
     name: "report_synonyms",
     description: "의미가 같거나 매우 비슷한 웹소설 태그들을 그룹으로 보고한다",
@@ -12607,10 +12628,7 @@ async function callClaudeForSynonyms(tags, apiKey, model = SYNONYM_AI_MODEL, con
       max_tokens: 4096,
       tools: [tool],
       tool_choice: { type: "tool", name: "report_synonyms" },
-      messages: [{
-        role: "user",
-        content: "다음은 한 사용자의 웹소설 태그 목록입니다. 표기만 다른 게 아니라 '뜻이 같거나 거의 같은' 유의어/동의어끼리 그룹으로 묶어 주세요. 예: 먼치킨/사기캐/최강, 회귀/회귀물. 애매하면 묶지 마세요. 반드시 입력 목록에 있는 표기만 사용하세요. 아래에 이 사용자가 이미 묶은/반대로 둔/거절한 예시가 있으면 그 취향과 결정을 존중하세요." + ctxText + "\n\n태그: " + tags.join(", "),
-      }],
+      messages: [{ role: "user", content: promptText }],
     }),
   });
   if (!res.ok) {
@@ -12623,6 +12641,65 @@ async function callClaudeForSynonyms(tags, apiKey, model = SYNONYM_AI_MODEL, con
   const data = await res.json();
   const toolUse = (data.content || []).find(b => b.type === "tool_use");
   const groups = toolUse?.input?.groups;
+  return Array.isArray(groups) ? groups : [];
+}
+
+// 🆕 v7.28.9: Gemini(무료)로 유의어 그룹 요청 — Claude와 동일한 {groups:[{tags,reason}]} 반환.
+// responseSchema로 구조화 출력 강제(=Claude의 tool_use 대응). 키는 쿼리 파라미터로 전달.
+async function callGeminiForSynonyms(tags, apiKey, model = GEMINI_AI_MODEL, context = {}) {
+  if (!apiKey) throw new Error("API 키가 없습니다");
+  if (!tags || tags.length === 0) return [];
+  const promptText = buildSynonymPromptText(tags, context);
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: promptText }] }],
+      generationConfig: {
+        temperature: 0.2,
+        responseMimeType: "application/json",
+        // Gemini Schema는 protobuf 열거형 → 타입은 대문자(OBJECT/ARRAY/STRING)가 문서 표준
+        responseSchema: {
+          type: "OBJECT",
+          properties: {
+            groups: {
+              type: "ARRAY",
+              items: {
+                type: "OBJECT",
+                properties: {
+                  tags: { type: "ARRAY", items: { type: "STRING" } },
+                  reason: { type: "STRING" },
+                },
+                required: ["tags"],
+                propertyOrdering: ["tags", "reason"],
+              },
+            },
+          },
+          required: ["groups"],
+          propertyOrdering: ["groups"],
+        },
+      },
+    }),
+  });
+  if (!res.ok) {
+    let detail = "";
+    try { detail = (await res.json())?.error?.message || ""; } catch {}
+    if (res.status === 400 && /API key not valid|API_KEY_INVALID/i.test(detail)) throw new Error("API 키가 올바르지 않아요 (400)");
+    if (res.status === 401 || res.status === 403) throw new Error(`API 키가 올바르지 않아요 (${res.status})`);
+    if (res.status === 429) throw new Error("무료 한도를 초과했어요. 잠시 후 다시 시도 (429)");
+    throw new Error(`API 오류 ${res.status}${detail ? ": " + detail.slice(0, 120) : ""}`);
+  }
+  const data = await res.json();
+  const cand = (data.candidates || [])[0];
+  const text = (cand?.content?.parts || []).map(p => p?.text || "").join("");
+  if (!text) {
+    if (data?.promptFeedback?.blockReason) throw new Error("요청이 차단됐어요: " + data.promptFeedback.blockReason);
+    return [];
+  }
+  let parsed;
+  try { parsed = JSON.parse(text); } catch { return []; }
+  const groups = parsed?.groups;
   return Array.isArray(groups) ? groups : [];
 }
 
@@ -32299,6 +32376,8 @@ function AppContent() {
   const [tagHealthModalOpen, setTagHealthModalOpen] = useState(false);
   const [tagHealthData, setTagHealthData] = useState(null);
   const [claudeApiKey, setClaudeApiKey] = useState(""); // 🤖 v7.27.0: AI 유의어 점검용 (app_meta 저장, 백업엔 미포함)
+  const [geminiApiKey, setGeminiApiKey] = useState(""); // 🆕 v7.28.9: 무료 대안(Gemini) 키 (app_meta 저장, 백업엔 미포함)
+  const [aiProvider, setAiProvider] = useState("claude"); // 🆕 v7.28.9: AI 제공자 선택 ("claude" | "gemini")
   const [dismissedSynPairs, setDismissedSynPairs] = useState(() => new Set()); // 🔧 v7.28.0: 유의어 후보 거절 이력 (로컬·AI 공통)
   const [tagHealthBusy, setTagHealthBusy] = useState(false);
 
@@ -37974,10 +38053,30 @@ function AppContent() {
     try { await setAppMeta("claude_api_key", k); } catch (e) { console.warn("[ai] 키 저장 실패:", e?.message); }
   }
 
-  // 🤖 v7.27.0: AI 유의어 점검 — 자기 키로 Claude 호출, 결과를 후보 목록에 병합
+  // 🆕 v7.28.9: Gemini API 키 저장 (무료 대안 — app_meta, 백업엔 미포함)
+  async function saveGeminiApiKey(key) {
+    const k = (key || "").trim();
+    setGeminiApiKey(k);
+    try { await setAppMeta("gemini_api_key", k); } catch (e) { console.warn("[ai] Gemini 키 저장 실패:", e?.message); }
+  }
+
+  // 🆕 v7.28.9: AI 제공자 선택 저장 (claude | gemini)
+  async function saveAiProvider(p) {
+    const v = p === "gemini" ? "gemini" : "claude";
+    setAiProvider(v);
+    try { await setAppMeta("ai_synonym_provider", v); } catch (e) { console.warn("[ai] 제공자 저장 실패:", e?.message); }
+  }
+
+  // 🤖 v7.27.0: AI 유의어 점검 — 자기 키로 호출, 결과를 후보 목록에 병합 (🆕 v7.28.9: 제공자 분기 Claude/Gemini)
   async function runAiSynonymScan() {
-    const key = (claudeApiKey || "").trim();
-    if (!key) { Alert.alert("AI 점검", "먼저 설정 > 🏷️ 태그에서 Claude API 키를 입력해 주세요."); return; }
+    const provider = aiProvider === "gemini" ? "gemini" : "claude";
+    const key = ((provider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim();
+    if (!key) {
+      Alert.alert("AI 점검", provider === "gemini"
+        ? "먼저 설정 > 🏷️ 태그에서 Gemini API 키를 입력해 주세요."
+        : "먼저 설정 > 🏷️ 태그에서 Claude API 키를 입력해 주세요.");
+      return;
+    }
     setTagHealthBusy(true);
     try {
       // 빈도 2+ 유니크 태그 수집 (상위 200개 — 토큰 절약)
@@ -38001,7 +38100,9 @@ function AppContent() {
         if (a && b) oppositePairs.push([a, b]);
       }
       const dismissedPairs = [...dismissedSynPairs].map(pk => { const [ka, kb] = pk.split("|"); return [disp.get(ka) || ka, disp.get(kb) || kb]; }).slice(0, 50);
-      const groups = await callClaudeForSynonyms(tags, key, SYNONYM_AI_MODEL, { similarGroups, oppositePairs, dismissedPairs });
+      const groups = provider === "gemini"
+        ? await callGeminiForSynonyms(tags, key, GEMINI_AI_MODEL, { similarGroups, oppositePairs, dismissedPairs })
+        : await callClaudeForSynonyms(tags, key, SYNONYM_AI_MODEL, { similarGroups, oppositePairs, dismissedPairs });
       const tagset = new Set(tags.map(t => normalizeTagKey(t)));
       const aiCands = [];
       for (const g of (groups || [])) {
@@ -38117,9 +38218,13 @@ function AppContent() {
     }
   }, [screen]);
 
-  // 🤖 v7.27.0: AI 유의어 점검용 Claude API 키 로드 (슬롯 DB의 app_meta)
+  // 🤖 v7.27.0: AI 유의어 점검용 키/제공자 로드 (슬롯 DB의 app_meta) — 🆕 v7.28.9: Gemini·제공자 추가
   useEffect(() => {
-    (async () => { try { const k = await getAppMeta("claude_api_key"); setClaudeApiKey(typeof k === "string" ? k : ""); } catch {} })();
+    (async () => {
+      try { const k = await getAppMeta("claude_api_key"); setClaudeApiKey(typeof k === "string" ? k : ""); } catch {}
+      try { const gk = await getAppMeta("gemini_api_key"); setGeminiApiKey(typeof gk === "string" ? gk : ""); } catch {}
+      try { const p = await getAppMeta("ai_synonym_provider"); if (p === "gemini" || p === "claude") setAiProvider(p); } catch {}
+    })();
   }, []);
 
   // 🔧 v7.28.0: 유의어 후보 거절 이력 로드 (다시 추천하지 않기 위함)
@@ -55346,36 +55451,85 @@ async function importJSON() {
                 </Text>
               </TouchableOpacity>
 
-              {/* 🤖 v7.27.0: AI 유의어 점검 API 키 (선택·옵트인) */}
+              {/* 🤖 v7.27.0 / 🆕 v7.28.9: AI 유의어 점검 — 제공자 선택(Gemini 무료 · Claude 유료) */}
               <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
-                <Text style={{ color: C.text, fontWeight: "700", fontSize: 14, marginBottom: 4 }}>🤖 AI 유의어 점검 (선택)</Text>
-                <Text style={{ color: C.sub, fontSize: 11, lineHeight: 16, marginBottom: 10 }}>
-                  Claude API 키를 넣으면 태그 헬스의 '🤖 AI로 더 찾기'가 켜져요. 통계가 못 잡는 의미 유의어(예: 먼치킨↔사기캐)까지 추천받을 수 있어요. 키는 이 기기에만 저장되고 백업엔 포함되지 않아요. 점검할 때만 태그 목록이 전송돼요(작품 제목·감상 등은 전송 안 함).
-                </Text>
-                <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-                  <TextInput
-                    value={claudeApiKey}
-                    onChangeText={setClaudeApiKey}
-                    placeholder="sk-ant-..."
-                    placeholderTextColor={C.sub}
-                    secureTextEntry
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    style={{ flex: 1, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, color: C.text, fontSize: 13 }}
-                  />
-                  <TouchableOpacity
-                    onPress={() => { saveClaudeApiKey(claudeApiKey); Alert.alert("저장됨", (claudeApiKey || "").trim() ? "API 키를 저장했어요." : "API 키를 비웠어요."); }}
-                    style={{ backgroundColor: C.primary, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 }}
-                  >
-                    <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>저장</Text>
-                  </TouchableOpacity>
+                <Text style={{ color: C.text, fontWeight: "700", fontSize: 14, marginBottom: 8 }}>🤖 AI 유의어 점검 (선택)</Text>
+                {/* 제공자 토글 */}
+                <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
+                  {[{ id: "gemini", label: "Gemini (무료)" }, { id: "claude", label: "Claude (유료)" }].map((opt) => {
+                    const on = aiProvider === opt.id;
+                    return (
+                      <TouchableOpacity
+                        key={opt.id}
+                        onPress={() => saveAiProvider(opt.id)}
+                        style={{ flex: 1, paddingVertical: 9, borderRadius: 10, alignItems: "center", backgroundColor: on ? C.primary : C.bg, borderWidth: 1, borderColor: on ? C.primary : C.line }}
+                      >
+                        <Text style={{ color: on ? "#fff" : C.sub, fontWeight: "700", fontSize: 13 }}>{opt.label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
-                <Text style={{ color: (claudeApiKey || "").trim() ? (isDark ? "#4ade80" : "#16a34a") : C.sub, fontSize: 11, marginTop: 6 }}>
-                  {(claudeApiKey || "").trim() ? "✓ 키 입력됨 · 모델 Haiku (1회 점검 ~20원)" : "키 미설정 — AI 점검 비활성"}
-                </Text>
-                <Text style={{ color: C.sub, fontSize: 10, marginTop: 4 }}>
-                  키 발급: console.anthropic.com → API Keys
-                </Text>
+                {aiProvider === "gemini" ? (
+                  <>
+                    <Text style={{ color: C.sub, fontSize: 11, lineHeight: 16, marginBottom: 10 }}>
+                      Google Gemini API 키를 넣으면 태그 헬스의 '🤖 AI로 더 찾기'가 켜져요. 무료 한도로 쓸 수 있어요(과금 없음). 통계가 못 잡는 의미 유의어(예: 먼치킨↔사기캐)까지 추천받아요. 키는 이 기기에만 저장되고 백업엔 포함되지 않아요. 점검할 때만 태그 목록이 전송돼요(작품 제목·감상 등은 전송 안 함).
+                    </Text>
+                    <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+                      <TextInput
+                        value={geminiApiKey}
+                        onChangeText={setGeminiApiKey}
+                        placeholder="AIza..."
+                        placeholderTextColor={C.sub}
+                        secureTextEntry
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        style={{ flex: 1, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, color: C.text, fontSize: 13 }}
+                      />
+                      <TouchableOpacity
+                        onPress={() => { saveGeminiApiKey(geminiApiKey); Alert.alert("저장됨", (geminiApiKey || "").trim() ? "Gemini API 키를 저장했어요." : "API 키를 비웠어요."); }}
+                        style={{ backgroundColor: C.primary, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 }}
+                      >
+                        <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>저장</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <Text style={{ color: (geminiApiKey || "").trim() ? (isDark ? "#4ade80" : "#16a34a") : C.sub, fontSize: 11, marginTop: 6 }}>
+                      {(geminiApiKey || "").trim() ? "✓ 키 입력됨 · 모델 Gemini Flash (무료 한도)" : "키 미설정 — AI 점검 비활성"}
+                    </Text>
+                    <Text style={{ color: C.sub, fontSize: 10, marginTop: 4 }}>
+                      키 발급: aistudio.google.com → Get API key (무료·카드 등록 불필요)
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <Text style={{ color: C.sub, fontSize: 11, lineHeight: 16, marginBottom: 10 }}>
+                      Claude API 키를 넣으면 태그 헬스의 '🤖 AI로 더 찾기'가 켜져요. 통계가 못 잡는 의미 유의어(예: 먼치킨↔사기캐)까지 추천받을 수 있어요. 키는 이 기기에만 저장되고 백업엔 포함되지 않아요. 점검할 때만 태그 목록이 전송돼요(작품 제목·감상 등은 전송 안 함).
+                    </Text>
+                    <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+                      <TextInput
+                        value={claudeApiKey}
+                        onChangeText={setClaudeApiKey}
+                        placeholder="sk-ant-..."
+                        placeholderTextColor={C.sub}
+                        secureTextEntry
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        style={{ flex: 1, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, color: C.text, fontSize: 13 }}
+                      />
+                      <TouchableOpacity
+                        onPress={() => { saveClaudeApiKey(claudeApiKey); Alert.alert("저장됨", (claudeApiKey || "").trim() ? "API 키를 저장했어요." : "API 키를 비웠어요."); }}
+                        style={{ backgroundColor: C.primary, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 }}
+                      >
+                        <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>저장</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <Text style={{ color: (claudeApiKey || "").trim() ? (isDark ? "#4ade80" : "#16a34a") : C.sub, fontSize: 11, marginTop: 6 }}>
+                      {(claudeApiKey || "").trim() ? "✓ 키 입력됨 · 모델 Haiku (1회 점검 ~20원)" : "키 미설정 — AI 점검 비활성"}
+                    </Text>
+                    <Text style={{ color: C.sub, fontSize: 10, marginTop: 4 }}>
+                      키 발급: console.anthropic.com → API Keys
+                    </Text>
+                  </>
+                )}
               </View>
 
               {/* 빠른 유틸리티 */}
@@ -62047,16 +62201,22 @@ async function importJSON() {
               <Text style={{ color: C.sub, fontSize: 11, marginBottom: 6 }}>
                 어근이 같아 보이는 태그예요(예: 회귀 ↔ 회귀물). '묶기'를 누르면 유사 그룹으로 등록돼 취향 분석에서 같은 요인으로 취급됩니다. 표기 자체는 그대로 유지돼요.
               </Text>
-              {/* 🤖 v7.27.0: AI 옵트인 — 형태/통계가 못 잡는 의미 유의어까지 LLM이 추천 */}
-              <TouchableOpacity
-                disabled={tagHealthBusy}
-                onPress={runAiSynonymScan}
-                style={{ flexDirection: "row", alignItems: "center", alignSelf: "flex-start", gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, backgroundColor: claudeApiKey ? (isDark ? "#3730a3" : "#eef2ff") : C.chip, borderWidth: 1, borderColor: claudeApiKey ? (isDark ? "#4f46e5" : "#c7d2fe") : C.line, marginBottom: 8, opacity: tagHealthBusy ? 0.5 : 1 }}
-              >
-                <Text style={{ color: claudeApiKey ? (isDark ? "#c7d2fe" : "#4338ca") : C.sub, fontWeight: "700", fontSize: 13 }}>
-                  🤖 AI로 더 찾기 {claudeApiKey ? "" : "(설정 > 태그에서 키 입력)"}
-                </Text>
-              </TouchableOpacity>
+              {/* 🤖 v7.27.0 / 🆕 v7.28.9: AI 옵트인 — 활성 제공자(Gemini/Claude) 키 유무로 켜짐 */}
+              {(() => {
+                const activeKey = ((aiProvider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim();
+                const provLabel = aiProvider === "gemini" ? "Gemini" : "Claude";
+                return (
+                  <TouchableOpacity
+                    disabled={tagHealthBusy}
+                    onPress={runAiSynonymScan}
+                    style={{ flexDirection: "row", alignItems: "center", alignSelf: "flex-start", gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, backgroundColor: activeKey ? (isDark ? "#3730a3" : "#eef2ff") : C.chip, borderWidth: 1, borderColor: activeKey ? (isDark ? "#4f46e5" : "#c7d2fe") : C.line, marginBottom: 8, opacity: tagHealthBusy ? 0.5 : 1 }}
+                  >
+                    <Text style={{ color: activeKey ? (isDark ? "#c7d2fe" : "#4338ca") : C.sub, fontWeight: "700", fontSize: 13 }}>
+                      🤖 AI로 더 찾기 {activeKey ? `(${provLabel})` : "(설정 > 태그에서 키 입력)"}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })()}
               {(tagHealthData?.synonymCandidates || []).length === 0 ? (
                 <Text style={{ color: C.sub, fontSize: 13, marginBottom: 16 }}>발견된 유의어 후보가 없어요 ✓</Text>
               ) : (
