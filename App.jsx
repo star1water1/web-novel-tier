@@ -2,9 +2,33 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.7 (남은 저위험 항목 정리 — UI/백업/이미지/정렬 8건)              ║
+ * ║  버전: 7.28.8 (자체 검토 후속 — 직전 수정의 미흡/방편식 보완 5건)             ║
  * ║  최종 수정: 2026-06-20                                                        ║
- * ║  총 라인 수: 약 62,350줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 62,400줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔎 v7.28.8 자체 검토 후속 — 직전 수정의 미흡/방편식 보완 (2026-06-20)            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 무편향 교차 리뷰(2영역)로 v7.28.3~7 변경을 재검토 → 발견된 결함 5건 보완.        ║
+ * ║                                                                              ║
+ * ║ [acceptSynonymGroup] v7.28.4 가드가 gA&&gB(둘 다 그룹) 분기만 막아, 한쪽만       ║
+ * ║ 상반 그룹·다른쪽 미그룹이면 else로 빠져 tagToGroup 재배정→상반 관계 파괴되던      ║
+ * ║ 누수 잔존. 업데이터 상단에서 비유사 그룹 일괄 차단(타이밍 무관) + 선검사 피드백.  ║
+ * ║                                                                              ║
+ * ║ [verification_baseline] v7.28.6 신규 컬럼이 백업 직렬화·업그레이드 백필이 없어   ║
+ * ║ 복원/업그레이드 후 baseline=0 → 이미 해소된 쏠림이 다시 churn. 마이그레이션      ║
+ * ║ 백필(baseline=count) + import 복원 후 동일 초기화 추가.                         ║
+ * ║                                                                              ║
+ * ║ [alias dismissed] v7.28.6 dismissedAliasGroupsRef가 슬롯 전환 시 미갱신 →        ║
+ * ║ deleteTagGroup이 이전 슬롯 목록을 현재 슬롯에 덮어쓰던 오염. ref 대신 현재 슬롯   ║
+ * ║ app_meta를 읽어-수정-쓰기로 슬롯 안전화.                                        ║
+ * ║                                                                              ║
+ * ║ [addNovel] v7.28.4 `if(isLoading)return`은 비동기 state라 같은 프레임 더블탭을   ║
+ * ║ 못 막던 방편 → 동기 ref(addNovelBusyRef) 가드로 교체(코드베이스 표준 패턴).      ║
+ * ║                                                                              ║
+ * ║ [avgReadRatio] v7.28.6 null 변경은 렌더 소비처가 없는 dead code였음을 확인 →     ║
+ * ║ 무효 변경 철회(원복).                                                          ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -7898,6 +7922,15 @@ async function initDb(progressCb) {
     }
   }
 
+  // 🛡️ FIX(v7.28.6): verification_baseline 신규 추가 시 기존 행 backfill — baseline=count로 초기화.
+  //   (이전: 컬럼 default 0 → 업그레이드 직후 count>=3 기존 작품을 detectAutomaticSuspects가 '새 증거
+  //   있음'으로 오인해 churn 재발. baseline=count로 두면 이후 누적된 새 증거에만 반응.)
+  if (!existingNames.has("verification_baseline")) {
+    try {
+      await database.runAsync("UPDATE novels SET verification_baseline = verification_count WHERE verification_count > 0;");
+    } catch (e) { console.warn("[v7.28.6] verification_baseline backfill 실패:", e?.message); }
+  }
+
   // 🆕 v7.0.15: read_count_baseline column + 일회성 backfill (transaction)
   // — 누적 read_count 추적용. saveEdit/batchIncReadCount에서 (현재 read_count - baseline) >= 30 시 read_progress fire.
   // — column DEFAULT 0이 그대로면 마이그레이션 직후 첫 saveEdit에서 mass-fire 발생 → backfill 필수.
@@ -14028,7 +14061,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.7";
+const APP_VERSION = "7.28.8";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -14054,6 +14087,17 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.8", date: "2026-06-20",
+    title: "🔎 자체 검토 후속 — 직전 수정 보완",
+    highlights: [
+      { type: "fix", text: "🧩 유의어 묶기에서, '상반'으로 지정한 태그가 섞일 때 관계가 깨질 수 있던 경로를 완전히 막았어요(이제 막고 알려드려요)." },
+      { type: "fix", text: "🤖 백업 복원이나 앱 업데이트 직후, 이미 자리를 잡은 작품이 다시 검증 대상으로 잔뜩 떠오르던 문제를 고쳤어요(직전 버전의 보완)." },
+      { type: "fix", text: "🏷️ 여러 데이터 슬롯을 쓸 때, 한 슬롯에서 지운 약어 묶음 기록이 다른 슬롯에 잘못 섞이던 문제를 막았어요." },
+      { type: "fix", text: "➕ 작품 '추가' 버튼을 아주 빠르게 두 번 눌러도 같은 작품이 중복 등록되지 않도록 더 단단히 막았어요." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.7", date: "2026-06-20",
     title: "🛡️ 남은 저위험 항목 정리 — UI/백업/이미지/정렬",
@@ -30811,7 +30855,7 @@ async function analyzePreferences(novels, matches) {
       avgRating: avg(stat.ratings),
       adjRating: shrunkMean(stat.ratings, basicStats.avgRating), // 🆕 v7.22.0: 표본 보정 순위 키
       medianRating: median(stat.ratings),
-      avgReadRatio: stat.readRatios.length ? avg(stat.readRatios) : null, // 🛡️ FIX: 데이터 없으면 0이 아닌 null(미집계와 '0% 읽음' 구분)
+      avgReadRatio: avg(stat.readRatios), // (미렌더 — 소비처 없음. v7.28.6 null 변경은 무효라 철회)
       completionRate: stat.count > 0 ? stat.completed / stat.count : 0,
       dropRate: stat.count > 0 ? stat.dropped / stat.count : 0,
       // 🔧 v7.6.0 (포트 v3.12.1): 연중률 + 평균 편수 (편수 기입된 작품만)
@@ -30930,7 +30974,7 @@ async function analyzePreferences(novels, matches) {
       platform,
       count: stat.count,
       avgRating: avg(stat.ratings),
-      avgReadRatio: stat.readRatios.length ? avg(stat.readRatios) : null, // 🛡️ FIX: 데이터 없으면 0이 아닌 null(미집계와 '0% 읽음' 구분)
+      avgReadRatio: avg(stat.readRatios), // (미렌더 — 소비처 없음. v7.28.6 null 변경은 무효라 철회)
       completionRate: stat.count > 0 ? stat.completed / stat.count : 0,
       dropRate: stat.count > 0 ? stat.dropped / stat.count : 0,
     }))
@@ -32614,6 +32658,9 @@ function AppContent() {
   const importBackupRef = useRef("");
   // 🛡️ FIX: 사용자가 삭제한 약어 그룹(alias_*) id — migrateAliasesToRelations 재생성 방지(마운트 시 로드)
   const dismissedAliasGroupsRef = useRef([]);
+  // 🛡️ FIX: addNovel 동기 재진입 가드 — isLoading(비동기 state)은 같은 프레임 더블탭을 못 막아 중복
+  //   INSERT 가능. ref는 함수 진입 즉시 동기 설정되어 같은 프레임 두 번째 탭을 차단(코드베이스 표준 패턴).
+  const addNovelBusyRef = useRef(false);
 
   // 📝 보충 탭 (v2.8)
   const [supplementCurrentNovel, setSupplementCurrentNovel] = useState(null); // 현재 보충 중인 작품
@@ -37343,10 +37390,20 @@ function AppContent() {
   // 그룹 삭제
   const deleteTagGroup = useCallback((groupId) => {
     // 🛡️ FIX: 약어 그룹(alias_*) 삭제를 영구 기억 → 재시작 시 migrateAliasesToRelations가 재생성하지
-    //   않도록(이전: 삭제해도 매 실행 부활). app_meta에 dismissed id 누적 저장.
-    if (groupId && groupId.startsWith("alias_") && !dismissedAliasGroupsRef.current.includes(groupId)) {
-      dismissedAliasGroupsRef.current = [...dismissedAliasGroupsRef.current, groupId];
-      deferSetAppMeta("alias_groups_dismissed", dismissedAliasGroupsRef.current);
+    //   않도록. 🔧 슬롯 안전: 마운트 캐시 ref에 의존하면 슬롯 전환 후 이전 슬롯 목록을 현재 슬롯에
+    //   덮어쓰므로(오염), 현재 슬롯 app_meta를 읽어-수정-쓰기 한다. ref는 캐시로만 갱신.
+    if (groupId && groupId.startsWith("alias_")) {
+      (async () => {
+        try {
+          const cur = await getAppMeta("alias_groups_dismissed");
+          const arr = Array.isArray(cur) ? [...cur] : [];
+          if (!arr.includes(groupId)) {
+            arr.push(groupId);
+            await setAppMeta("alias_groups_dismissed", arr);
+          }
+          dismissedAliasGroupsRef.current = arr;
+        } catch (e) { console.warn("[deleteTagGroup] dismissed 저장 실패:", e?.message); }
+      })();
     }
     setTagRelations(prev => {
       const group = prev.groups[groupId];
@@ -37857,18 +37914,29 @@ function AppContent() {
   //   기존 그룹이 있으면 흡수/병합, 없으면 새 similar 그룹 생성. 시스템 path(트리거 X).
   function acceptSynonymGroup(tagA, tagB) {
     if (!tagA || !tagB || isSameTag(tagA, tagB)) return;
+    // 🛡️ FIX: tagA/tagB가 '상반' 등 비유사 그룹에 이미 속하면 유의어로 묶지 않는다(상반 관계 파괴 방지).
+    //   현재 렌더 tagRelations로 선검사 → 사용자 피드백 + 후보 유지(아래 setTagHealthData 제거 안 함).
+    {
+      const _gA = tagRelations?.tagToGroup?.[tagA];
+      const _gB = tagRelations?.tagToGroup?.[tagB];
+      const _tA = _gA && tagRelations?.groups?.[_gA]?.type;
+      const _tB = _gB && tagRelations?.groups?.[_gB]?.type;
+      if ((_tA && _tA !== "similar") || (_tB && _tB !== "similar")) {
+        Alert.alert("묶을 수 없음", "이 태그는 이미 '상반' 등 다른 관계 그룹에 속해 있어 유의어로 묶지 않았어요.\n먼저 해당 관계를 정리해 주세요.");
+        return;
+      }
+    }
     setTagRelations(prev => {
       const relations = { groups: { ...(prev?.groups || {}) }, tagToGroup: { ...(prev?.tagToGroup || {}) } };
       const gA = relations.tagToGroup[tagA];
       const gB = relations.tagToGroup[tagB];
       if (gA && gA === gB) return prev; // 이미 같은 그룹
+      // 🛡️ FIX(보강): 한쪽이라도 비유사(상반/계층) 그룹 소속이면 묶지 않음 — 이전 수정은 gA&&gB 병합
+      //   분기만 가드해, 한쪽만 상반 그룹이고 다른쪽 미그룹이면 아래 else로 빠져 tagToGroup가 재배정되며
+      //   상반 그룹 멤버십/relatedGroupId가 깨지던 누수가 남았음. 업데이터 상단에서 일괄 차단(타이밍 무관).
+      if ((gA && relations.groups[gA]?.type !== "similar") || (gB && relations.groups[gB]?.type !== "similar")) return prev;
       if (gA && gB) {
-        // 🛡️ FIX: 단일 그룹 분기와 동일하게 양쪽 모두 "similar"일 때만 병합한다. 한쪽이 opposite/
-        //   계층 그룹이면 병합 시 그 그룹이 삭제되고 상반 관계의 relatedGroupId가 dangling되어
-        //   상반 관계가 파괴됨(후보 생성이 '서로 상반인 쌍'만 제외하므로 한쪽이 다른 상반 그룹
-        //   소속인 경우는 도달 가능). 비유사 그룹이 끼면 병합하지 않는다.
-        if (relations.groups[gA]?.type !== "similar" || relations.groups[gB]?.type !== "similar") return prev;
-        // 두 그룹 병합 → gA로 흡수
+        // 두 그룹 병합 → gA로 흡수 (위 가드로 둘 다 similar 보장)
         const merged = [...new Set([...(relations.groups[gA]?.tags || []), ...(relations.groups[gB]?.tags || [])])];
         relations.groups[gA] = { ...relations.groups[gA], tags: merged };
         for (const t of (relations.groups[gB]?.tags || [])) relations.tagToGroup[t] = gA;
@@ -40248,15 +40316,19 @@ function AppContent() {
       Alert.alert("알림", "제목은 필수입니다.");
       return;
     }
-    if (isLoading) return; // 🛡️ FIX: 더블탭 재진입 가드 — 중복 체크~INSERT 사이 yield로 같은 제목 2건 INSERT 방지 (saveEdit/savePlannedEdit와 동일)
+    // 🛡️ FIX: 동기 ref 재진입 가드 — isLoading은 비동기 state라 같은 프레임 더블탭에 stale(중복 INSERT).
+    //   ref는 진입 즉시 동기 설정 → 같은 프레임 두 번째 호출 차단. (각 exit에서 false로 리셋)
+    if (addNovelBusyRef.current) return;
+    addNovelBusyRef.current = true;
 
     setIsLoading(true);
-    
+
     try {
       // 🔧 v3.5.9: 본 목록 + 예정 목록 양쪽 중복 체크
       const dup = await first("SELECT id FROM novels WHERE title=?", [t]);
       const dupPlanned = await first("SELECT id FROM planned_novels WHERE title=?", [t]);
       if (dup || dupPlanned) {
+        addNovelBusyRef.current = false;
         setIsLoading(false);
         Alert.alert("알림", dup ? "같은 제목이 이미 있습니다." : "예정 목록에 같은 제목이 있습니다.");
         return;
@@ -40466,6 +40538,7 @@ function AppContent() {
       }
       Alert.alert("오류", "작품 추가 중 오류가 발생했습니다.\n\n" + e.message);
     }
+    addNovelBusyRef.current = false; // 🛡️ FIX: 성공·catch 모두 통과하는 최종 리셋
     setIsLoading(false);
   }
 
@@ -45869,6 +45942,13 @@ async function importJSON() {
                 }
                 if (_cq.length) await execBatch(_cq);
               } catch (covErr) { console.warn("[import] cover_library 상태 재조정 실패:", covErr?.message); }
+
+              // 🛡️ FIX(v7.28.6): 복원된 작품의 verification_baseline을 count로 초기화 — baseline은 백업에
+              //   직렬화되지 않아 0으로 복원되며, 그러면 detectAutomaticSuspects가 이미 해소된 쏠림을
+              //   재큐잉(churn 재발)함. 복원 직후 baseline=count로 두어 새 증거에만 반응하도록.
+              try {
+                await exec("UPDATE novels SET verification_baseline = verification_count WHERE verification_count > 0;");
+              } catch (vbErr) { console.warn("[import] verification_baseline 초기화 실패:", vbErr?.message); }
 
               await loadList(undefined, undefined, "op");
               
