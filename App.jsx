@@ -2,9 +2,37 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.3 (코드 전반 버그 점검 — 데이터 손실/중복 6건 수정)               ║
+ * ║  버전: 7.28.4 (코드 전반 버그 점검 2차 — 데이터 손실/누수/손상 추가 수정)     ║
  * ║  최종 수정: 2026-06-20                                                        ║
- * ║  총 라인 수: 약 62,100줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 62,200줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛡️ v7.28.4 코드 전반 버그 점검 2차 — 데이터 손실/누수/손상 10건 (2026-06-20)    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [수상/데이터손실] 수상 메타 스냅샷(n/c/i)이 작품 편집-저장마다 제거 → 이후      ║
+ * ║ 수상 정의 삭제 시 고아 복구 불가로 수상이 영구 누락. 편집 진입 파싱·저장 양쪽    ║
+ * ║ 에서 스냅샷 보존.                                                              ║
+ * ║                                                                              ║
+ * ║ [표지/데이터손실·HIGH] cover_library 참조 카운팅 부재 → 공유 표지가 'unused'로  ║
+ * ║ 잘못 표시되면 '미사용 표지 전체 삭제'가 다른 작품이 쓰는 파일을 영구 삭제.       ║
+ * ║ 파일 삭제 직전 novels/planned 참조를 확인해 참조 중이면 보존(상태 복구).         ║
+ * ║                                                                              ║
+ * ║ [예정작/누수] removePlannedNovel 단일 삭제가 갤러리 row·파일, 인용구 이미지      ║
+ * ║ 파일을 안 지워 누수(일괄 삭제만 처리). batchDeletePlanned와 동일 cascade +       ║
+ * ║ try/catch(무방비 onPress의 unhandled rejection 방지) 추가.                      ║
+ * ║                                                                              ║
+ * ║ [중복/UI] addNovel 더블탭 재진입 가드(if isLoading) — 중복 작품 INSERT 방지.    ║
+ * ║ toggleNovelFolder 함수형 setState — 연속 토글 시 폴더 체크 UI 유실 수정.        ║
+ * ║ createFolder sort_order=MAX+1 — 삭제 후 정렬값 충돌 수정.                       ║
+ * ║                                                                              ║
+ * ║ [관계/손상] acceptSynonymGroup 병합에 'similar' 타입 가드 — 한쪽이 상반 그룹    ║
+ * ║ 이면 병합 시 상반 관계 파괴되던 것 방지. awardsToSearchText에 설정 전달 —        ║
+ * ║ 레거시 사용자 정의 수상 검색 복구.                                              ║
+ * ║                                                                              ║
+ * ║ [점검 범위] 2차 6영역 병렬 분석(CRUD·캐스케이드/이미지·파일/티어설정·마이그/     ║
+ * ║ 인용구·수상/폴더·좌표계/목록·검색·정렬). 미수정(저위험/보류): 좌표계 삭제 후     ║
+ * ║ 기본값 부활, alias 그룹 재생성, 백업 import 표지 재조정, 티어 프리셋 일부 경로.  ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -13910,7 +13938,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.3";
+const APP_VERSION = "7.28.4";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -13936,6 +13964,18 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.4", date: "2026-06-20",
+    title: "🛡️ 코드 전반 버그 점검 2차 — 데이터 손실/누수 수정",
+    highlights: [
+      { type: "fix", text: "🏆 작품을 수정·저장할 때 수상 정보의 표시 정보(이름·색·아이콘 스냅샷)가 지워지던 문제를 고쳤어요. 이 때문에 나중에 수상 항목 정의를 바꾸거나 지우면 그 작품의 수상이 사라질 수 있었는데, 이제 안전하게 보존돼요." },
+      { type: "fix", text: "🖼️ '미사용 표지 전체 삭제'가 실수로 다른 작품이 쓰고 있는 표지 파일까지 지울 수 있던 위험을 막았어요. 이제 삭제 직전에 아직 쓰는 작품이 있는지 확인하고, 사용 중이면 보존해요." },
+      { type: "fix", text: "🗑️ 예정 작품을 하나씩 삭제할 때 갤러리·인용구 이미지 파일이 정리되지 않고 남던 문제를 고쳤어요(일괄 삭제와 동일하게 처리)." },
+      { type: "fix", text: "➕ '작품 추가' 버튼을 빠르게 두 번 누르면 같은 작품이 중복 등록될 수 있던 문제, 폴더를 빠르게 연속 토글하면 체크 표시가 어긋나던 문제를 고쳤어요." },
+      { type: "fix", text: "🧩 유의어로 묶을 때 한쪽이 '상반'으로 지정된 태그면 상반 관계가 깨지던 문제를 막았어요. 또 일부 사용자 정의 수상이 검색되지 않던 문제도 고쳤어요." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.3", date: "2026-06-20",
     title: "🛡️ 코드 전반 버그 점검 — 데이터 손실/중복 수정",
@@ -28927,8 +28967,10 @@ const TasteAnalysisScreen = memo(({
   );
 });
 
-function awardsToSearchText(awardsJson, awardMetaMap) {
-  const items = parseAwards(awardsJson);
+function awardsToSearchText(awardsJson, awardMetaMap, awardSystemSettings = null) {
+  // 🛡️ FIX: awardSystemSettings를 parseAwards에 전달 — 미전달 시 동적(사용자 정의) 수상 중
+  //   스냅샷 없는 레거시(v7.21.0 이전) 항목이 필터에서 누락되어 검색 색인에 안 들어가던 문제.
+  const items = parseAwards(awardsJson, awardSystemSettings);
   if (!items.length) return "";
   const parts = [];
   for (const a of items) {
@@ -33309,8 +33351,11 @@ function AppContent() {
     if (!trimmed) { Alert.alert("알림", "폴더 이름을 입력해주세요."); return null; }
     try {
       const id = uuid();
+      // 🛡️ FIX: sort_order를 MAX+1로 — 이전 folders.length는 중간 폴더 삭제 후 기존 폴더와
+      //   sort_order가 충돌(중복)하여 정렬/재배치가 비결정적이 되던 문제.
+      const nextOrder = (folders || []).reduce((mx, f) => Math.max(mx, Number(f.sort_order) || 0), -1) + 1;
       await exec("INSERT INTO folders (id, name, color, icon, sort_order, created_at) VALUES (?,?,?,?,?,?);",
-        [id, trimmed, color || '#6366f1', icon || '📂', folders.length, Date.now()]);
+        [id, trimmed, color || '#6366f1', icon || '📂', nextOrder, Date.now()]);
       await loadFolders();
       return id;
     } catch (e) {
@@ -33376,22 +33421,26 @@ function AppContent() {
   }
 
   async function toggleNovelFolder(novelId, folderId) {
-    const current = novelFolderMap.get(novelId) || [];
-    const oldMap = novelFolderMap;
-    const newMap = new Map(novelFolderMap);
-    if (current.includes(folderId)) {
-      newMap.set(novelId, current.filter(f => f !== folderId));
-      setNovelFolderMap(newMap);
-      try {
-        await exec("DELETE FROM novel_folders WHERE folder_id=? AND novel_id=?;", [folderId, novelId]);
-      } catch (e) { setNovelFolderMap(oldMap); }
-    } else {
-      newMap.set(novelId, [...current, folderId]);
-      setNovelFolderMap(newMap);
-      try {
+    // 🛡️ FIX: 함수형 업데이트로 갱신 — 이전엔 클로저 스냅샷(novelFolderMap)으로 newMap을 만들고
+    //   비함수형 set을 호출해, 한 렌더 안에서 다른 폴더를 빠르게 연속 토글하면 두 번째가 첫 번째
+    //   변경을 덮어써 UI 체크 상태가 어긋났다(DB는 정상이라 reload 시 자가복구). 롤백도 함수형으로.
+    const isAdding = !((novelFolderMap.get(novelId) || []).includes(folderId));
+    const applyToggle = (prev, add) => {
+      const cur = prev.get(novelId) || [];
+      const m = new Map(prev);
+      m.set(novelId, add ? [...new Set([...cur, folderId])] : cur.filter(f => f !== folderId));
+      return m;
+    };
+    setNovelFolderMap(prev => applyToggle(prev, isAdding));
+    try {
+      if (isAdding) {
         await exec("INSERT OR IGNORE INTO novel_folders (folder_id, novel_id, added_at) VALUES (?,?,?);",
           [folderId, novelId, Date.now()]);
-      } catch (e) { setNovelFolderMap(oldMap); }
+      } else {
+        await exec("DELETE FROM novel_folders WHERE folder_id=? AND novel_id=?;", [folderId, novelId]);
+      }
+    } catch (e) {
+      setNovelFolderMap(prev => applyToggle(prev, !isAdding)); // 이 변경만 되돌림
     }
   }
 
@@ -34726,19 +34775,44 @@ function AppContent() {
         text: "삭제",
         style: "destructive",
         onPress: async () => {
-          // 🖼️ v3.4.5: 삭제 전에 표지 확인
-          const planned = await first("SELECT cover_image FROM planned_novels WHERE id=?", [id]);
-          const coverPath = planned?.cover_image;
-          
-          await exec("DELETE FROM planned_novels WHERE id=?", [id]);
-          
-          // 🖼️ v3.4.5: 표지가 있었으면 미사용으로 변경
-          if (coverPath) {
-            await updateCoverStatus(coverPath, null, "unused");
-            await loadCoverLibrary();
+          // 🛡️ FIX: 단일 삭제도 batchDeletePlanned와 동일하게 갤러리/인용구 이미지 cascade +
+          //   try/catch로 감싼다 (이전: 표지만 정리 → 갤러리 row/파일·인용구 이미지 파일 누수,
+          //   그리고 onPress가 무방비라 DB 오류 시 unhandled rejection).
+          try {
+            const planned = await first("SELECT cover_image, memorable_quote FROM planned_novels WHERE id=?", [id]);
+            const coverPath = planned?.cover_image;
+
+            // 갤러리 이미지 파일 + DB row 정리
+            try {
+              const gImgs = await all("SELECT file_path FROM gallery_images WHERE novel_id=?", [id]);
+              for (const g of (gImgs || [])) { await deleteCoverFromLibrary(g.file_path).catch(() => {}); }
+            } catch (gErr) { console.warn("[removePlannedNovel] gallery file cleanup:", gErr?.message); }
+            try { await exec("DELETE FROM gallery_images WHERE novel_id=?", [id]); } catch {}
+
+            // 인용구 이미지 파일 정리 (이미지 인용구 + 텍스트 서식 배경이미지)
+            try {
+              if (planned?.memorable_quote) {
+                for (const q of parseQuotes(planned.memorable_quote)) {
+                  if (isImageQuote(q) && q.uri) FileSystem.deleteAsync(q.uri, { idempotent: true }).catch(() => {});
+                  const _st = getQuoteStyle(q);
+                  if (_st && _st.bgImage) FileSystem.deleteAsync(_st.bgImage, { idempotent: true }).catch(() => {});
+                }
+              }
+            } catch (qErr) { console.warn("[removePlannedNovel] quote image cleanup:", qErr?.message); }
+
+            await exec("DELETE FROM planned_novels WHERE id=?", [id]);
+
+            // 🖼️ 표지가 있었으면 미사용으로 변경
+            if (coverPath) {
+              await updateCoverStatus(coverPath, null, "unused");
+              await loadCoverLibrary();
+            }
+
+            await loadPlannedList();
+          } catch (e) {
+            console.warn("[removePlannedNovel] 삭제 실패:", e?.message);
+            Alert.alert("오류", "삭제 중 문제가 발생했습니다: " + (e?.message || ""));
           }
-          
-          await loadPlannedList();
         },
       },
     ]);
@@ -36203,6 +36277,16 @@ function AppContent() {
           text: "삭제",
           style: "destructive",
           onPress: async () => {
+            // 🛡️ FIX: 공유 표지 보호 — cover_library는 참조 카운팅이 없어 status가 잘못 'unused'여도
+            //   파일이 다른 작품/예정작에 아직 참조될 수 있다. 되돌릴 수 없는 파일 삭제 직전에 확인.
+            const rM = await first("SELECT COUNT(*) AS c FROM novels WHERE cover_image=?", [cover.file_path]);
+            const rP = await first("SELECT COUNT(*) AS c FROM planned_novels WHERE cover_image=?", [cover.file_path]);
+            if ((Number(rM?.c) || 0) + (Number(rP?.c) || 0) > 0) {
+              await exec("UPDATE cover_library SET status='used' WHERE id=?", [coverId]);
+              await loadCoverLibrary();
+              Alert.alert("알림", "이 표지를 아직 사용 중인 작품이 있어 삭제하지 않았습니다.");
+              return;
+            }
             // 파일 삭제
             await deleteCoverFromLibrary(cover.file_path);
             // DB에서 삭제
@@ -36234,14 +36318,33 @@ function AppContent() {
             setCoverLibraryLoading(true);
             setCoverLibraryProgress({ current: 0, total: unusedCovers.length }); // 🔧 v3.6.0: 진행도
             try {
+              // 🛡️ FIX: 공유 표지 보호 — 아직 어느 작품/예정작에 참조되는 파일은 삭제하지 않는다
+              //   (참조 카운팅 부재 보완). 참조 경로 집합을 1회 조회 후 루프에서 대조.
+              const usedPaths = new Set();
+              try {
+                const refRows = await all(
+                  "SELECT cover_image AS p FROM novels WHERE cover_image IS NOT NULL AND cover_image != '' " +
+                  "UNION SELECT cover_image AS p FROM planned_novels WHERE cover_image IS NOT NULL AND cover_image != ''"
+                );
+                for (const r of (refRows || [])) usedPaths.add(r.p);
+              } catch (refErr) { console.warn("[removeAllUnusedCovers] 참조 조회 실패:", refErr?.message); }
+
+              let deleted = 0, skipped = 0;
               for (let i = 0; i < unusedCovers.length; i++) {
-                await deleteCoverFromLibrary(unusedCovers[i].file_path);
+                const cv = unusedCovers[i];
+                if (usedPaths.has(cv.file_path)) {
+                  await exec("UPDATE cover_library SET status='used' WHERE id=?", [cv.id]).catch(() => {});
+                  skipped++;
+                } else {
+                  await deleteCoverFromLibrary(cv.file_path);
+                  await exec("DELETE FROM cover_library WHERE id=?", [cv.id]).catch(() => {});
+                  deleted++;
+                }
                 setCoverLibraryProgress({ current: i + 1, total: unusedCovers.length });
               }
 
-              await exec("DELETE FROM cover_library WHERE status='unused'");
               await loadCoverLibrary();
-              Alert.alert("완료", `${unusedCovers.length}개의 미사용 표지를 삭제했습니다.`);
+              Alert.alert("완료", `${deleted}개의 미사용 표지를 삭제했습니다.${skipped ? `\n(사용 중인 표지 ${skipped}개는 보존)` : ""}`);
             } finally {
               setCoverLibraryLoading(false);
               setCoverLibraryProgress({ current: 0, total: 0 });
@@ -37592,6 +37695,11 @@ function AppContent() {
       const gB = relations.tagToGroup[tagB];
       if (gA && gA === gB) return prev; // 이미 같은 그룹
       if (gA && gB) {
+        // 🛡️ FIX: 단일 그룹 분기와 동일하게 양쪽 모두 "similar"일 때만 병합한다. 한쪽이 opposite/
+        //   계층 그룹이면 병합 시 그 그룹이 삭제되고 상반 관계의 relatedGroupId가 dangling되어
+        //   상반 관계가 파괴됨(후보 생성이 '서로 상반인 쌍'만 제외하므로 한쪽이 다른 상반 그룹
+        //   소속인 경우는 도달 가능). 비유사 그룹이 끼면 병합하지 않는다.
+        if (relations.groups[gA]?.type !== "similar" || relations.groups[gB]?.type !== "similar") return prev;
         // 두 그룹 병합 → gA로 흡수
         const merged = [...new Set([...(relations.groups[gA]?.tags || []), ...(relations.groups[gB]?.tags || [])])];
         relations.groups[gA] = { ...relations.groups[gA], tags: merged };
@@ -39972,7 +40080,8 @@ function AppContent() {
       Alert.alert("알림", "제목은 필수입니다.");
       return;
     }
-    
+    if (isLoading) return; // 🛡️ FIX: 더블탭 재진입 가드 — 중복 체크~INSERT 사이 yield로 같은 제목 2건 INSERT 방지 (saveEdit/savePlannedEdit와 동일)
+
     setIsLoading(true);
     
     try {
@@ -40888,10 +40997,15 @@ function AppContent() {
       if (Array.isArray(raw)) {
         parsed = raw
           .filter((a) => a && a.year && a.type)
-          .map((a) => ({
-            year: String(a.year),
-            type: a.type,
-          }));
+          .map((a) => {
+            // 🛡️ FIX: 메타 스냅샷(n/c/i)을 보존 — 이전엔 편집 진입 시 누락되어 저장 시
+            //   doGive가 심어둔 고아 복구용 스냅샷이 사라짐(정의 삭제 후 수상 영구 손실).
+            const o = { year: String(a.year), type: a.type };
+            if (a.n) o.n = a.n;
+            if (a.c) o.c = a.c;
+            if (a.i) o.i = a.i;
+            return o;
+          });
       }
     } catch (e) {
       parsed = [];
@@ -41105,10 +41219,14 @@ function AppContent() {
       const awardsPayload =
         editAwards && editAwards.length
           ? JSON.stringify(
-              editAwards.map((a) => ({
-                year: Number(a.year) || "",
-                type: a.type,
-              }))
+              editAwards.map((a) => {
+                // 🛡️ FIX: 메타 스냅샷(n/c/i) 보존 (편집 진입 파싱과 짝 — 고아 수상 복구용)
+                const o = { year: Number(a.year) || "", type: a.type };
+                if (a.n) o.n = a.n;
+                if (a.c) o.c = a.c;
+                if (a.i) o.i = a.i;
+                return o;
+              })
             )
           : "";
 
@@ -42782,7 +42900,7 @@ function AppContent() {
       
       result = result.filter((n) => {
         const plats = parsePlatforms(n.platforms);
-        const awardText = awardsToSearchText(n.awards, awardMetaMap);
+        const awardText = awardsToSearchText(n.awards, awardMetaMap, awardSystemSettings);
         const aliasesText = parseNovelAliases(n.aliases).join(" ");
         const bank = [n.title, n.author, n.tags, n.note, awardText, aliasesText, ...(plats || [])].join(" ").toLowerCase();
         
@@ -42833,7 +42951,7 @@ function AppContent() {
       })();
 
       // ★ 수상 텍스트 추가
-      const awardText = awardsToSearchText(n.awards, awardMetaMap);
+      const awardText = awardsToSearchText(n.awards, awardMetaMap, awardSystemSettings);
       // 🏷️ v5.0: 작품 별명 추가
       const aliasesText = parseNovelAliases(n.aliases).join(" ");
       
@@ -42945,7 +43063,7 @@ function AppContent() {
           return [];
         }
       })();
-      const awardText = awardsToSearchText(n.awards, awardMetaMap);
+      const awardText = awardsToSearchText(n.awards, awardMetaMap, awardSystemSettings);
 
       const bank = [
         n.title,
