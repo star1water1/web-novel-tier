@@ -2,9 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.25.0 (설정 탭 기능별 7개 서브탭 재구성)                              ║
+ * ║  버전: 7.25.1 (매칭 결과 저장 오류 수정 — UNIQUE matches.id)                  ║
  * ║  최종 수정: 2026-06-20                                                        ║
  * ║  총 라인 수: 약 61,440줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.25.1 매칭 결과 저장 오류 수정 — UNIQUE matches.id (2026-06-20)            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [증상] 매칭 진행 중 가끔 '매칭 결과 저장 중 오류 / UNIQUE constraint failed:    ║
+ * ║ matches.id' 모달. 점수·승패는 반영되나 모달로 흐름이 끊김.                      ║
+ * ║                                                                              ║
+ * ║ [원인] decide의 execBatch(트랜잭션: novels UPDATE×2 + matches INSERT)가         ║
+ * ║ COMMIT 시점 DB 경합(BUSY/locked)으로 safeDbOperation 재시도될 때, 첫 시도가      ║
+ * ║ 사실상 커밋된 뒤라 동일 mid 재INSERT가 UNIQUE 충돌. 백그라운드 setTimeout의      ║
+ * ║ saveChoiceLog/analyzeMatchResult가 다음 매치 트랜잭션과 경합해 최근 빈도 증가.   ║
+ * ║                                                                              ║
+ * ║ [수정] matches INSERT를 INSERT OR IGNORE로 멱등화(3경로: decide/import/undo).   ║
+ * ║ novels UPDATE는 절대값 SET이라 이미 멱등, uuid는 48bit random이라 충돌 ~0 →     ║
+ * ║ 매치 누락 없이 중복 재시도만 무해 처리. (자동승패 복원 경로는 이미 OR IGNORE).  ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -13533,7 +13549,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.25.0";
+const APP_VERSION = "7.25.1";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -13559,6 +13575,14 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.25.1", date: "2026-06-20",
+    title: "🔧 매칭 결과 저장 오류 수정",
+    highlights: [
+      { type: "fix", text: "⚔️ 매칭 중 가끔 뜨던 '매칭 결과 저장 중 오류 — UNIQUE constraint failed: matches.id'를 고쳤어요. DB가 바쁜 순간 같은 매치 기록이 두 번 저장되려다 충돌하던 것을, 중복이면 조용히 넘어가도록 처리했어요. 점수·승패 기록은 그대로 정확히 반영돼요." },
+    ],
+    details: [],
+  },
   {
     version: "7.25.0", date: "2026-06-20",
     title: "⚙️ 설정 탭 기능별 7개 서브탭 재구성",
@@ -38833,7 +38857,8 @@ function AppContent() {
           // 매칭 삭제 되돌리기
           const m = item.payload.match;
           await exec(
-            `INSERT INTO matches (id,a_id,b_id,winner_id,decided_by,gap_when_matched,k_factor_used,created_at) VALUES (?,?,?,?,?,?,?,?);`,
+            // 🔧 v7.25.1: OR IGNORE — 복원 대상 매치가 (트랜잭션 경합 재시도 등으로) 이미 있으면 멱등 스킵
+            `INSERT OR IGNORE INTO matches (id,a_id,b_id,winner_id,decided_by,gap_when_matched,k_factor_used,created_at) VALUES (?,?,?,?,?,?,?,?);`,
             [m.id, m.a_id, m.b_id, m.winner_id, m.decided_by, m.gap_when_matched, m.k_factor_used, m.created_at]
           );
           await rebuildAllFromMatches(tagAttributes);
@@ -41461,7 +41486,11 @@ function AppContent() {
           ],
         },
         {
-          sql: `INSERT INTO matches (id,a_id,b_id,winner_id,decided_by,gap_when_matched,k_factor_used,created_at)
+          // 🔧 v7.25.1: OR IGNORE — execBatch 트랜잭션이 COMMIT 경합(BUSY/locked)으로
+          //   재시도될 때, 동일 mid 재INSERT가 'UNIQUE constraint failed: matches.id'로
+          //   터지던 것을 멱등 처리(= 매칭 결과 저장 오류 방지).
+          //   novels UPDATE는 절대값 SET이라 이미 멱등, uuid 충돌 확률은 사실상 0이라 매치 누락 X.
+          sql: `INSERT OR IGNORE INTO matches (id,a_id,b_id,winner_id,decided_by,gap_when_matched,k_factor_used,created_at)
                 VALUES (?,?,?,?,?,?,?,?)`,
           params: [
             mid,
@@ -44497,7 +44526,8 @@ async function importJSON() {
                 const decided_by = (f & 2) ? "auto" : "user";
 
                 matchQueries.push({
-                  sql: `INSERT INTO matches (id,a_id,b_id,winner_id,decided_by,gap_when_matched,k_factor_used,created_at) VALUES (?,?,?,?,?,?,?,?);`,
+                  // 🔧 v7.25.1: OR IGNORE — 대량 복원 청크가 트랜잭션 경합으로 재시도돼도 멱등
+                  sql: `INSERT OR IGNORE INTO matches (id,a_id,b_id,winner_id,decided_by,gap_when_matched,k_factor_used,created_at) VALUES (?,?,?,?,?,?,?,?);`,
                   params: [uuid(), a_id, b_id, winner_id, decided_by, 0, 24, baseTime + i],
                 });
               }
