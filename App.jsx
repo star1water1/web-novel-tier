@@ -2,9 +2,24 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.11 (AI 점검 넓게 점검 옵트인 + 인앱 버전/가이드 동기화)          ║
+ * ║  버전: 7.28.12 (AI 점검 — 상반(반대 의미) 관계 추천 추가)                    ║
  * ║  최종 수정: 2026-06-20                                                        ║
  * ║  총 라인 수: 약 62,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ ⚡ v7.28.12 AI 점검 — 상반(반대 의미) 관계 추천 추가 (2026-06-20)            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 유의어 점검을 확장: 한 번의 'AI로 더 찾기'로 유의어(groups)에 더해 뜻이      ║
+ * ║ 정반대인 상반 쌍(opposites)까지 받아 '⚡ 상반 후보'로 제안. 호출·비용은       ║
+ * ║ 1회 그대로(스키마에 opposites 가산), 전송은 태그만(현행 동일).               ║
+ * ║                                                                              ║
+ * ║ [수락] acceptOppositePair — 두 태그를 opposite로 연결(점유 가드: 이미 유의어║
+ * ║ 묶음/상반이면 거부). [거절] dismissOppositePair + app_meta(opposite_dismissed)║
+ * ║ 로 재추천 차단. buildSynonymPromptText·콜러 2종이 {groups,opposites} 반환.   ║
+ * ║                                                                              ║
+ * ║ [장르 라벨 파괴적 병합은 별도] 감지·그룹핑은 이미 됨 — 라벨 remap은 위험    ║
+ * ║ 등급이 달라 후속 설계로 분리.                                                ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12606,25 +12621,31 @@ const SYNONYM_AI_MODEL = "claude-haiku-4-5";
 const GEMINI_AI_MODEL = "gemini-2.5-flash";
 
 // 🆕 v7.28.9: 유의어 점검 프롬프트 빌더 (Claude·Gemini 공통) — 단일 출처로 분기 방지
+// 🆕 v7.28.12: 유의어(groups)에 더해 상반 쌍(opposites)까지 한 번에 요청
 function buildSynonymPromptText(tags, context = {}) {
   // 🔧 v7.28.1: 사용자 맥락(기존 그룹·상반·거절) 주입 → AI가 '이 사람 기준'으로 판단
   let ctxText = "";
   const sg = (context.similarGroups || []).filter(g => Array.isArray(g) && g.length >= 2);
   const op = (context.oppositePairs || []).filter(p => Array.isArray(p) && p.length >= 2);
   const dp = (context.dismissedPairs || []).filter(p => Array.isArray(p) && p.length >= 2);
+  const dop = (context.dismissedOppositePairs || []).filter(p => Array.isArray(p) && p.length >= 2);
   if (sg.length) ctxText += "\n\n[이 사용자가 이미 '같다'고 묶은 그룹 — 묶는 기준·취향 참고]\n" + sg.slice(0, 30).map(g => "- " + g.join(", ")).join("\n");
-  if (op.length) ctxText += "\n\n[이 사용자가 '반대 의미'라고 지정한 쌍 — 절대 묶지 마세요]\n" + op.slice(0, 30).map(p => "- " + p[0] + " ↔ " + p[1]).join("\n");
-  if (dp.length) ctxText += "\n\n[이 사용자가 이전에 '아니다'라고 거절한 쌍 — 다시 제안하지 마세요]\n" + dp.slice(0, 50).map(p => "- " + p[0] + " ↔ " + p[1]).join("\n");
-  return "다음은 한 사용자의 웹소설 태그 목록입니다. 표기만 다른 게 아니라 '뜻이 같거나 거의 같은' 유의어/동의어끼리 그룹으로 묶어 주세요. 예: 먼치킨/사기캐/최강, 회귀/회귀물. 애매하면 묶지 마세요. 반드시 입력 목록에 있는 표기만 사용하세요. 아래에 이 사용자가 이미 묶은/반대로 둔/거절한 예시가 있으면 그 취향과 결정을 존중하세요." + ctxText + "\n\n태그: " + tags.join(", ");
+  if (op.length) ctxText += "\n\n[이 사용자가 이미 '반대 의미'로 지정한 쌍 — 이미 아는 상반이니 다시 제안 말고, 유의어로도 묶지 마세요]\n" + op.slice(0, 30).map(p => "- " + p[0] + " ↔ " + p[1]).join("\n");
+  if (dp.length) ctxText += "\n\n[이 사용자가 '유의어 아니다'라고 거절한 쌍 — 다시 유의어로 제안하지 마세요]\n" + dp.slice(0, 50).map(p => "- " + p[0] + " ↔ " + p[1]).join("\n");
+  if (dop.length) ctxText += "\n\n[이 사용자가 '상반 아니다'라고 거절한 쌍 — 다시 상반으로 제안하지 마세요]\n" + dop.slice(0, 50).map(p => "- " + p[0] + " ↔ " + p[1]).join("\n");
+  return "다음은 한 사용자의 웹소설 태그 목록입니다. 두 가지를 보고하세요.\n" +
+    "(1) groups: 표기만 다른 게 아니라 '뜻이 같거나 거의 같은' 유의어/동의어끼리 묶은 그룹. 예: 먼치킨/사기캐/최강, 회귀/회귀물.\n" +
+    "(2) opposites: 뜻이 '정반대'인 태그 쌍. 예: 먼치킨 ↔ 약자, 해피엔딩 ↔ 새드엔딩, 빠른전개 ↔ 느린전개.\n" +
+    "둘 다 확실한 것만 넣고, 애매하면 비워 두세요. 반드시 입력 목록에 있는 표기만 사용하세요. '같다'고 묶인 건 상반이 아니고, 상반은 유의어가 아닙니다. 아래에 사용자의 기존 묶음/상반/거절 예시가 있으면 그 취향과 결정을 존중하세요." + ctxText + "\n\n태그: " + tags.join(", ");
 }
 
 async function callClaudeForSynonyms(tags, apiKey, model = SYNONYM_AI_MODEL, context = {}) {
   if (!apiKey) throw new Error("API 키가 없습니다");
-  if (!tags || tags.length === 0) return [];
+  if (!tags || tags.length === 0) return { groups: [], opposites: [] };
   const promptText = buildSynonymPromptText(tags, context);
   const tool = {
     name: "report_synonyms",
-    description: "의미가 같거나 매우 비슷한 웹소설 태그들을 그룹으로 보고한다",
+    description: "의미가 같은 유의어 그룹과, 뜻이 정반대인 상반 쌍을 보고한다",
     input_schema: {
       type: "object",
       properties: {
@@ -12638,6 +12659,19 @@ async function callClaudeForSynonyms(tags, apiKey, model = SYNONYM_AI_MODEL, con
               reason: { type: "string", description: "묶은 이유 (짧게)" },
             },
             required: ["tags"],
+          },
+        },
+        opposites: {
+          type: "array",
+          description: "뜻이 정반대인 태그 쌍 목록. 확실한 것만 포함.",
+          items: {
+            type: "object",
+            properties: {
+              a: { type: "string", description: "태그 A (입력 목록의 표기 그대로)" },
+              b: { type: "string", description: "A와 반대 의미인 태그 B (입력 목록의 표기 그대로)" },
+              reason: { type: "string", description: "반대인 이유 (짧게)" },
+            },
+            required: ["a", "b"],
           },
         },
       },
@@ -12665,14 +12699,15 @@ async function callClaudeForSynonyms(tags, apiKey, model = SYNONYM_AI_MODEL, con
   const data = await res.json();
   const toolUse = (data.content || []).find(b => b.type === "tool_use");
   const groups = toolUse?.input?.groups;
-  return Array.isArray(groups) ? groups : [];
+  const opposites = toolUse?.input?.opposites;
+  return { groups: Array.isArray(groups) ? groups : [], opposites: Array.isArray(opposites) ? opposites : [] };
 }
 
 // 🆕 v7.28.9: Gemini(무료)로 유의어 그룹 요청 — Claude와 동일한 {groups:[{tags,reason}]} 반환.
 // responseSchema로 구조화 출력 강제(=Claude의 tool_use 대응). 키는 쿼리 파라미터로 전달.
 async function callGeminiForSynonyms(tags, apiKey, model = GEMINI_AI_MODEL, context = {}) {
   if (!apiKey) throw new Error("API 키가 없습니다");
-  if (!tags || tags.length === 0) return [];
+  if (!tags || tags.length === 0) return { groups: [], opposites: [] };
   const promptText = buildSynonymPromptText(tags, context);
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
   const res = await fetch(url, {
@@ -12700,9 +12735,22 @@ async function callGeminiForSynonyms(tags, apiKey, model = GEMINI_AI_MODEL, cont
                 propertyOrdering: ["tags", "reason"],
               },
             },
+            opposites: {
+              type: "ARRAY",
+              items: {
+                type: "OBJECT",
+                properties: {
+                  a: { type: "STRING" },
+                  b: { type: "STRING" },
+                  reason: { type: "STRING" },
+                },
+                required: ["a", "b"],
+                propertyOrdering: ["a", "b", "reason"],
+              },
+            },
           },
           required: ["groups"],
-          propertyOrdering: ["groups"],
+          propertyOrdering: ["groups", "opposites"],
         },
       },
     }),
@@ -12720,12 +12768,13 @@ async function callGeminiForSynonyms(tags, apiKey, model = GEMINI_AI_MODEL, cont
   const text = (cand?.content?.parts || []).map(p => p?.text || "").join("");
   if (!text) {
     if (data?.promptFeedback?.blockReason) throw new Error("요청이 차단됐어요: " + data.promptFeedback.blockReason);
-    return [];
+    return { groups: [], opposites: [] };
   }
   let parsed;
-  try { parsed = JSON.parse(text); } catch { return []; }
+  try { parsed = JSON.parse(text); } catch { return { groups: [], opposites: [] }; }
   const groups = parsed?.groups;
-  return Array.isArray(groups) ? groups : [];
+  const opposites = parsed?.opposites;
+  return { groups: Array.isArray(groups) ? groups : [], opposites: Array.isArray(opposites) ? opposites : [] };
 }
 
 /**
@@ -14163,7 +14212,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.11";
+const APP_VERSION = "7.28.12";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -14189,6 +14238,16 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.12", date: "2026-06-20",
+    title: "⚡ AI 점검 — 상반(반대 의미) 관계 추천",
+    highlights: [
+      { type: "new", text: "⚡ '🤖 AI로 더 찾기'가 이제 유의어뿐 아니라 '뜻이 정반대인 쌍'(예: 먼치킨 ↔ 약자, 해피엔딩 ↔ 새드엔딩)도 찾아줘요. 태그 헬스 아래쪽 '⚡ 상반 후보'에서 '상반 등록'을 누르면 관계로 저장돼, 취향 분석에서 대척 축으로 쓰여요." },
+      { type: "improve", text: "💸 호출은 한 번 그대로라 비용·시간 추가 없이 유의어+상반을 같이 받아요(무료 Gemini도 동일). 전송은 예전처럼 태그 목록만 — 제목·감상은 안 나가요." },
+      { type: "improve", text: "🧠 '상반 아니다'라고 무시한 쌍은 다시 추천하지 않아요(유의어 무시 학습과 동일). 이미 유의어로 묶였거나 다른 관계에 속한 태그는 실수로 덮어쓰지 않도록 막아줘요." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.11", date: "2026-06-20",
     title: "🤖 AI 유의어 점검 — 무료(제미나이) 지원 · 발급 안내 · 넓게 점검",
@@ -16103,7 +16162,7 @@ const GUIDE_CONTENT = [
         tips: [
           "🔀 중복 표기 — \"현판\"·\"현대판타지\"처럼 같은 뜻 다른 표기를 대표 표기로 한 번에 통일해요. (v7.22.2)",
           "🧩 유의어 후보 — 어근이 같아 보이는 태그(예: 회귀 ↔ 회귀물, 판타지 ↔ 환타지)를 자동으로 찾아 '묶기'를 제안해요. 묶으면 유사 그룹이 돼 취향 분석에서 같은 요인으로 취급되고, 표기 자체는 그대로 유지돼요. (v7.26.0)",
-          "🤖 AI로 더 찾기 — 글자는 달라도 뜻이 같은 유의어(먼치킨 ↔ 사기캐)까지 AI가 찾아줘요. 무료로 쓰려면 설정 > 태그에서 제공자를 'Gemini(무료)'로 두고 무료 키만 넣으면 돼요(기본이 무료예요). 같은 화면의 'API 키 발급 방법 자세히 보기'에 단계가 안내돼 있어요. '넓게 점검'을 켜면 1회만 쓴 태그까지 더 꼼꼼히 봐요. 선택 기능이고, 키는 이 기기에만 저장·점검할 때만 태그 목록이 전송돼요. (v7.28.11)",
+          "🤖 AI로 더 찾기 — 글자는 달라도 뜻이 같은 유의어(먼치킨 ↔ 사기캐)와, 뜻이 정반대인 상반 쌍(먼치킨 ↔ 약자)까지 AI가 한 번에 찾아줘요. 유의어는 '🧩 유의어 후보', 상반은 '⚡ 상반 후보'에서 등록하면 돼요. 무료로 쓰려면 설정 > 태그에서 제공자를 'Gemini(무료)'로 두고 무료 키만 넣으면 돼요(기본이 무료예요). 같은 화면의 'API 키 발급 방법 자세히 보기'에 단계가 안내돼 있어요. '넓게 점검'을 켜면 1회만 쓴 태그까지 더 꼼꼼히 봐요. 선택 기능이고, 키는 이 기기에만 저장·점검할 때만 태그 목록이 전송돼요. (v7.28.12)",
           "🧠 한 번 '무시'했거나 '상반'으로 지정한 쌍은 다시 추천하지 않아요 — AI 점검에도 똑같이 적용돼 쓸수록 내 기준에 맞게 다듬어져요. (v7.28.0)",
           "📐 태그 좌표계를 쓰면, 좌표상 가깝게 둔 태그(직접 의미가 가깝다고 둔 것)도 유의어 후보로 잡아줘요. (v7.28.2)",
         ],
@@ -32417,6 +32476,7 @@ function AppContent() {
   const [apiKeyHelpModalOpen, setApiKeyHelpModalOpen] = useState(false); // 🆕 v7.28.10: API 키 발급 방법 안내 모달
   const [aiWideScan, setAiWideScan] = useState(false); // 🆕 v7.28.11: 넓게 점검(옵트인) — 1회 태그 포함·상한 400
   const [dismissedSynPairs, setDismissedSynPairs] = useState(() => new Set()); // 🔧 v7.28.0: 유의어 후보 거절 이력 (로컬·AI 공통)
+  const [dismissedOppPairs, setDismissedOppPairs] = useState(() => new Set()); // 🆕 v7.28.12: 상반 후보 거절 이력
   const [tagHealthBusy, setTagHealthBusy] = useState(false);
 
   // 🏆 티어 검토 시스템 (v2.5)
@@ -38084,6 +38144,49 @@ function AppContent() {
     setTagHealthData(prev => prev ? { ...prev, synonymCandidates: (prev.synonymCandidates || []).filter(c => synPairKey(c.a, c.b) !== key) } : prev);
   }
 
+  // 🆕 v7.28.12: 상반 관계 수락 — 두 태그를 opposite로 연결 (acceptSynonymGroup 미러 + 점유 가드)
+  function acceptOppositePair(tagA, tagB) {
+    if (!tagA || !tagB || isSameTag(tagA, tagB)) return;
+    // 선검사: 같은 그룹(이미 유의어)·한쪽이 이미 다른 관계에 점유되면 자동 연결 거부 (현재 렌더 스냅샷)
+    {
+      const r = tagRelations || {};
+      const gA = r.tagToGroup?.[tagA], gB = r.tagToGroup?.[tagB];
+      if (gA && gA === gB) { Alert.alert("연결 불가", "이미 같은 유의어 그룹이에요. 상반으로 둘 수 없어요."); return; }
+      const occupied = (gid) => { const g = gid && r.groups?.[gid]; return !!(g && ((g.tags || []).length > 1 || g.relatedGroupId)); };
+      if (occupied(gA) || occupied(gB)) { Alert.alert("연결 불가", "한쪽 태그가 이미 다른 묶음/상반 관계에 속해 있어요.\n'태그 관계'에서 직접 연결해 주세요."); return; }
+    }
+    setTagRelations(prev => {
+      const relations = { groups: { ...(prev?.groups || {}) }, tagToGroup: { ...(prev?.tagToGroup || {}) } };
+      const gA = relations.tagToGroup[tagA];
+      const gB = relations.tagToGroup[tagB];
+      if (gA && gA === gB) return prev;
+      const occ = (gid) => { const g = gid && relations.groups[gid]; return !!(g && ((g.tags || []).length > 1 || g.relatedGroupId)); };
+      if (occ(gA) || occ(gB)) return prev; // 동시성 가드 (선검사와 동일 기준)
+      const ensure = (tag, gid) => {
+        if (gid && relations.groups[gid]) return gid;
+        const id = `opp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+        relations.groups[id] = { id, name: `${tag}`, type: "opposite", tags: [tag], relatedGroupId: null, createdAt: Date.now() };
+        relations.tagToGroup[tag] = id;
+        return id;
+      };
+      const idA = ensure(tagA, gA);
+      const idB = ensure(tagB, gB);
+      if (idA === idB) return prev;
+      relations.groups[idA] = { ...relations.groups[idA], type: "opposite", relatedGroupId: idB };
+      relations.groups[idB] = { ...relations.groups[idB], type: "opposite", relatedGroupId: idA };
+      deferSetAppMeta("tag_relations", relations);
+      return relations;
+    });
+    setTagHealthData(prev => prev ? { ...prev, oppositeCandidates: (prev.oppositeCandidates || []).filter(c => !(c.a === tagA && c.b === tagB)) } : prev);
+  }
+
+  // 🆕 v7.28.12: 상반 후보 거절 — app_meta에 기억해 다시 추천하지 않음
+  function dismissOppositePair(tagA, tagB) {
+    const key = synPairKey(tagA, tagB);
+    setDismissedOppPairs(prev => { const n = new Set(prev); n.add(key); deferSetAppMeta("opposite_dismissed", [...n]); return n; });
+    setTagHealthData(prev => prev ? { ...prev, oppositeCandidates: (prev.oppositeCandidates || []).filter(c => synPairKey(c.a, c.b) !== key) } : prev);
+  }
+
   // 🤖 v7.27.0: Claude API 키 저장 (app_meta — 슬롯 DB, 백업엔 미포함)
   async function saveClaudeApiKey(key) {
     const k = (key || "").trim();
@@ -38148,9 +38251,12 @@ function AppContent() {
         if (a && b) oppositePairs.push([a, b]);
       }
       const dismissedPairs = [...dismissedSynPairs].map(pk => { const [ka, kb] = pk.split("|"); return [disp.get(ka) || ka, disp.get(kb) || kb]; }).slice(0, 50);
+      // 🆕 v7.28.12: 상반 거절 이력도 맥락으로 전달 (같은 실수 반복 방지)
+      const dismissedOppositePairs = [...dismissedOppPairs].map(pk => { const [ka, kb] = pk.split("|"); return [disp.get(ka) || ka, disp.get(kb) || kb]; }).slice(0, 50);
       // 🆕 v7.28.11: 넓게 점검 시 응답 상한 상향(그룹 많아도 잘리지 않게)
-      const ctx = { similarGroups, oppositePairs, dismissedPairs, maxTokens: aiWideScan ? 8192 : 4096 };
-      const groups = provider === "gemini"
+      const ctx = { similarGroups, oppositePairs, dismissedPairs, dismissedOppositePairs, maxTokens: aiWideScan ? 8192 : 4096 };
+      // 🆕 v7.28.12: 한 번 호출로 유의어(groups) + 상반(opposites) 동시 수신
+      const { groups, opposites } = provider === "gemini"
         ? await callGeminiForSynonyms(tags, key, GEMINI_AI_MODEL, ctx)
         : await callClaudeForSynonyms(tags, key, SYNONYM_AI_MODEL, ctx);
       const tagset = new Set(tags.map(t => normalizeTagKey(t)));
@@ -38165,13 +38271,28 @@ function AppContent() {
           aiCands.push({ a: uniq[0], b: uniq[i], score: 0.85, minFreq: 0, reasons: ["AI" + (g.reason ? ": " + g.reason : "")], suggest: "group", ai: true });
         }
       }
+      // 🆕 v7.28.12: 상반 후보 가공 (입력 태그 한정 · 중복/이미상반/거절 제외)
+      const oppCands = []; const seenOppPair = new Set();
+      for (const o of (opposites || [])) {
+        const a = o?.a, b = o?.b;
+        if (!a || !b || isSameTag(a, b)) continue;
+        if (!tagset.has(normalizeTagKey(a)) || !tagset.has(normalizeTagKey(b))) continue;
+        const pk = synPairKey(a, b);
+        if (seenOppPair.has(pk)) continue; seenOppPair.add(pk);
+        if (dismissedOppPairs.has(pk)) continue;
+        if (isOppositePair(a, b, tagRelations)) continue; // 이미 상반으로 등록됨
+        oppCands.push({ a, b, reason: o.reason ? String(o.reason) : "", ai: true });
+      }
       setTagHealthData(prev => {
         const existing = (prev?.synonymCandidates) || [];
         const seen = new Set(existing.map(c => `${normalizeTagKey(c.a)}|${normalizeTagKey(c.b)}`));
         const fresh = aiCands.filter(c => { const kk = `${normalizeTagKey(c.a)}|${normalizeTagKey(c.b)}`; if (seen.has(kk)) return false; seen.add(kk); return true; });
-        return { ...(prev || {}), synonymCandidates: [...fresh, ...existing] };
+        const existingOpp = (prev?.oppositeCandidates) || [];
+        const seenO = new Set(existingOpp.map(c => synPairKey(c.a, c.b)));
+        const freshOpp = oppCands.filter(c => { const k = synPairKey(c.a, c.b); if (seenO.has(k)) return false; seenO.add(k); return true; });
+        return { ...(prev || {}), synonymCandidates: [...fresh, ...existing], oppositeCandidates: [...freshOpp, ...existingOpp] };
       });
-      Alert.alert("AI 점검 완료", `유의어 후보 ${aiCands.length}개를 찾았어요.${aiCands.length ? "\n위쪽 '유의어 후보'에서 확인하세요." : ""}`);
+      Alert.alert("AI 점검 완료", `유의어 후보 ${aiCands.length}개, 상반 후보 ${oppCands.length}개를 찾았어요.${(aiCands.length || oppCands.length) ? "\n아래 '유의어 후보'·'상반 후보'에서 확인하세요." : ""}`);
     } catch (e) {
       Alert.alert("AI 점검 실패", e?.message || String(e));
     } finally {
@@ -38278,9 +38399,12 @@ function AppContent() {
     })();
   }, []);
 
-  // 🔧 v7.28.0: 유의어 후보 거절 이력 로드 (다시 추천하지 않기 위함)
+  // 🔧 v7.28.0: 유의어 후보 거절 이력 로드 (다시 추천하지 않기 위함) — 🆕 v7.28.12: 상반 거절도
   useEffect(() => {
-    (async () => { try { const arr = await getAppMeta("synonym_dismissed"); if (Array.isArray(arr)) setDismissedSynPairs(new Set(arr)); } catch {} })();
+    (async () => {
+      try { const arr = await getAppMeta("synonym_dismissed"); if (Array.isArray(arr)) setDismissedSynPairs(new Set(arr)); } catch {}
+      try { const arr2 = await getAppMeta("opposite_dismissed"); if (Array.isArray(arr2)) setDismissedOppPairs(new Set(arr2)); } catch {}
+    })();
   }, []);
 
   async function saveHiddenTags(tags) {
@@ -62378,6 +62502,39 @@ async function importJSON() {
                     </TouchableOpacity>
                     <TouchableOpacity
                       onPress={() => dismissSynonymPair(c.a, c.b)}
+                      style={{ paddingHorizontal: 10, paddingVertical: 7, borderRadius: 8, backgroundColor: C.card, borderWidth: 1, borderColor: C.line, marginLeft: 6 }}
+                    >
+                      <Text style={{ color: C.sub, fontWeight: "700", fontSize: 13 }}>무시</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))
+              )}
+
+              {/* 🆕 v7.28.12: ⚡ 상반 후보 (AI 점검에서만 채워짐) */}
+              <Text style={{ color: C.text, fontWeight: "800", fontSize: 14, marginTop: 18, marginBottom: 2 }}>
+                ⚡ 상반 후보 ({tagHealthData?.oppositeCandidates?.length || 0})
+              </Text>
+              <Text style={{ color: C.sub, fontSize: 11, marginBottom: 8 }}>
+                뜻이 정반대로 보이는 쌍이에요(예: 먼치킨 ↔ 약자). '상반 등록'을 누르면 관계로 저장돼 취향 분석에서 대척 축으로 쓰여요. (🤖 AI로 더 찾기에서만 채워져요)
+              </Text>
+              {(tagHealthData?.oppositeCandidates || []).length === 0 ? (
+                <Text style={{ color: C.sub, fontSize: 13, marginBottom: 16 }}>상반 후보가 없어요 (🤖 AI로 더 찾기로 탐색)</Text>
+              ) : (
+                tagHealthData.oppositeCandidates.slice(0, 30).map((c) => (
+                  <View key={`opp_${c.a}|${c.b}`} style={{ backgroundColor: C.chip, borderRadius: 12, padding: 10, marginBottom: 8, flexDirection: "row", alignItems: "center" }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: C.text, fontSize: 14, fontWeight: "700" }}>{c.a}  ↔  {c.b}</Text>
+                      {!!c.reason && <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>AI: {c.reason}</Text>}
+                    </View>
+                    <TouchableOpacity
+                      disabled={tagHealthBusy}
+                      onPress={() => acceptOppositePair(c.a, c.b)}
+                      style={{ paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8, backgroundColor: isDark ? "#7c2d12" : "#fed7aa", marginLeft: 8 }}
+                    >
+                      <Text style={{ color: isDark ? "#fdba74" : "#9a3412", fontWeight: "700", fontSize: 13 }}>상반 등록</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => dismissOppositePair(c.a, c.b)}
                       style={{ paddingHorizontal: 10, paddingVertical: 7, borderRadius: 8, backgroundColor: C.card, borderWidth: 1, borderColor: C.line, marginLeft: 6 }}
                     >
                       <Text style={{ color: C.sub, fontWeight: "700", fontSize: 13 }}>무시</Text>
