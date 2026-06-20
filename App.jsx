@@ -2,9 +2,20 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.9 (제미나이(Gemini) 무료 연동 — AI 유의어 점검 제공자 선택)      ║
+ * ║  버전: 7.28.10 (AI 점검 기본 Gemini 무료 + API 키 발급 안내 모달)            ║
  * ║  최종 수정: 2026-06-20                                                        ║
  * ║  총 라인 수: 약 62,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🟢 v7.28.10 AI 점검 기본=Gemini(무료) + 키 발급 안내 모달 (2026-06-20)       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ AI 유의어 점검 기본 제공자를 Gemini(무료)로 변경 — Max 구독과 별개인 Claude ║
+ * ║ API 종량제 과금을 피해 바로 무료로 시작. (Claude 선택을 저장한 사용자는 유지)║
+ * ║                                                                              ║
+ * ║ [발급 모달] 설정>태그의 '📖 API 키 발급 방법 자세히 보기' → 제공자별 단계·   ║
+ * ║ 주의·발급 페이지 바로가기(safeOpenURL) 안내. Gemini=카드 없이 무료,          ║
+ * ║ Claude=별도 크레딧 충전 필요를 명시.                                         ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -32377,7 +32388,8 @@ function AppContent() {
   const [tagHealthData, setTagHealthData] = useState(null);
   const [claudeApiKey, setClaudeApiKey] = useState(""); // 🤖 v7.27.0: AI 유의어 점검용 (app_meta 저장, 백업엔 미포함)
   const [geminiApiKey, setGeminiApiKey] = useState(""); // 🆕 v7.28.9: 무료 대안(Gemini) 키 (app_meta 저장, 백업엔 미포함)
-  const [aiProvider, setAiProvider] = useState("claude"); // 🆕 v7.28.9: AI 제공자 선택 ("claude" | "gemini")
+  const [aiProvider, setAiProvider] = useState("gemini"); // 🆕 v7.28.9 AI 제공자 ("claude"|"gemini") · 🆕 v7.28.10 기본값 Gemini(무료)
+  const [apiKeyHelpModalOpen, setApiKeyHelpModalOpen] = useState(false); // 🆕 v7.28.10: API 키 발급 방법 안내 모달
   const [dismissedSynPairs, setDismissedSynPairs] = useState(() => new Set()); // 🔧 v7.28.0: 유의어 후보 거절 이력 (로컬·AI 공통)
   const [tagHealthBusy, setTagHealthBusy] = useState(false);
 
@@ -55530,7 +55542,90 @@ async function importJSON() {
                     </Text>
                   </>
                 )}
+                {/* 🆕 v7.28.10: 발급 방법 상세 안내 모달 열기 */}
+                <TouchableOpacity onPress={() => setApiKeyHelpModalOpen(true)} style={{ alignSelf: "flex-start", marginTop: 12 }}>
+                  <Text style={{ color: C.primary, fontSize: 12.5, fontWeight: "800", textDecorationLine: "underline" }}>📖 API 키 발급 방법 자세히 보기</Text>
+                </TouchableOpacity>
               </View>
+
+              {/* 🆕 v7.28.10: API 키 발급 안내 모달 (제공자별 단계·주의·바로가기) */}
+              <Modal visible={apiKeyHelpModalOpen} animationType="fade" transparent statusBarTranslucent onRequestClose={() => setApiKeyHelpModalOpen(false)}>
+                <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center" }}>
+                  <TouchableOpacity style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} activeOpacity={1} onPress={() => setApiKeyHelpModalOpen(false)} />
+                  <View style={{ backgroundColor: C.card, borderRadius: 20, padding: 20, width: "90%", maxWidth: 440, maxHeight: "85%" }}>
+                    <ScrollView showsVerticalScrollIndicator={false}>
+                      {(() => {
+                        const isGem = aiProvider === "gemini";
+                        const steps = isGem ? [
+                          "아래 '구글 AI 스튜디오 열기'를 누르거나, 브라우저에서 aistudio.google.com 접속",
+                          "구글 계정으로 로그인 (평소 쓰는 계정이면 돼요)",
+                          "'Get API key (API 키 가져오기)' 클릭",
+                          "'Create API key (API 키 만들기)' 클릭 → 새 프로젝트가 자동으로 만들어져요",
+                          "생성된 키(AIza…로 시작)를 복사",
+                          "이 화면의 키 입력칸에 붙여넣고 '저장' 누르기",
+                        ] : [
+                          "아래 'Anthropic 콘솔 열기'를 누르거나, 브라우저에서 console.anthropic.com 접속",
+                          "로그인 또는 회원가입",
+                          "왼쪽/위쪽 메뉴에서 'API Keys' 선택",
+                          "'Create Key' 클릭 → 이름을 정하고 생성",
+                          "표시된 키(sk-ant-…로 시작)를 복사 — ⚠️ 이때만 보여요! 창을 닫으면 다시 못 봐요",
+                          "이 화면의 키 입력칸에 붙여넣고 '저장' 누르기",
+                          "'Billing(결제)'에서 결제수단 등록 또는 크레딧 충전 (과금 필요)",
+                        ];
+                        const notes = isGem ? [
+                          "카드 등록·결제 없이 무료로 시작할 수 있어요.",
+                          "무료 한도(분당·하루 요청 수 제한)가 있지만, 유의어 점검은 가끔 누르는 기능이라 넉넉해요.",
+                          "키는 비밀번호처럼 다뤄 주세요. 남에게 공유하면 안 돼요.",
+                          "이 앱은 키를 '이 기기'에만 저장하고, 백업·내보내기 파일엔 절대 넣지 않아요.",
+                          "점검할 때 전송되는 건 '태그 목록'뿐 — 작품 제목·감상·점수는 전송되지 않아요.",
+                        ] : [
+                          "⚠️ Claude Max 구독과는 '별개'의 종량제 과금이에요. API용 크레딧을 따로 충전해야 동작해요.",
+                          "비용: 기본 Haiku 모델 기준 1회 점검 약 20원 수준 (태그 수에 따라 달라져요).",
+                          "크레딧이 없으면 401·요청 실패가 떠요.",
+                          "키 보안·전송 범위는 Gemini와 똑같아요 (기기에만 저장, 태그 목록만 전송).",
+                          "돈 안 내고 쓰고 싶으면 위 토글에서 'Gemini (무료)'를 고르세요.",
+                        ];
+                        const url = isGem ? "https://aistudio.google.com/app/apikey" : "https://console.anthropic.com/settings/keys";
+                        const linkLabel = isGem ? "🔗 구글 AI 스튜디오 열기" : "🔗 Anthropic 콘솔 열기";
+                        return (
+                          <>
+                            <Text style={{ fontSize: 19, fontWeight: "800", color: C.text, marginBottom: 6 }}>
+                              {isGem ? "🟢 Gemini API 키 발급 (무료)" : "🟣 Claude API 키 발급 (유료)"}
+                            </Text>
+                            <Text style={{ fontSize: 12.5, color: C.sub, lineHeight: 18, marginBottom: 14 }}>
+                              {isGem
+                                ? "구글 계정만 있으면 카드 등록 없이 무료로 발급돼요. 1~2분이면 끝나요."
+                                : "⚠️ Claude Max 구독과 별개의 API 과금이에요. 결제수단·크레딧을 따로 등록해야 동작해요."}
+                            </Text>
+                            <TouchableOpacity onPress={() => safeOpenURL(url)} style={{ backgroundColor: C.primary, borderRadius: 12, paddingVertical: 12, alignItems: "center", marginBottom: 18 }}>
+                              <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>{linkLabel}</Text>
+                            </TouchableOpacity>
+                            <Text style={{ fontSize: 14, fontWeight: "800", color: C.text, marginBottom: 10 }}>📋 단계별 안내</Text>
+                            {steps.map((s, i) => (
+                              <View key={i} style={{ flexDirection: "row", marginBottom: 10, alignItems: "flex-start" }}>
+                                <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: C.primary, alignItems: "center", justifyContent: "center", marginRight: 10, marginTop: 1 }}>
+                                  <Text style={{ color: "#fff", fontWeight: "800", fontSize: 12 }}>{i + 1}</Text>
+                                </View>
+                                <Text style={{ flex: 1, fontSize: 13.5, color: C.text, lineHeight: 19 }}>{s}</Text>
+                              </View>
+                            ))}
+                            <Text style={{ fontSize: 14, fontWeight: "800", color: C.text, marginTop: 10, marginBottom: 10 }}>💡 참고 · 주의</Text>
+                            {notes.map((n, i) => (
+                              <View key={i} style={{ flexDirection: "row", marginBottom: 8, alignItems: "flex-start" }}>
+                                <Text style={{ color: C.sub, fontSize: 13, marginRight: 6, lineHeight: 18 }}>•</Text>
+                                <Text style={{ flex: 1, fontSize: 12.5, color: C.sub, lineHeight: 18 }}>{n}</Text>
+                              </View>
+                            ))}
+                            <TouchableOpacity onPress={() => setApiKeyHelpModalOpen(false)} style={{ backgroundColor: C.chip, borderRadius: 12, paddingVertical: 12, alignItems: "center", marginTop: 10 }}>
+                              <Text style={{ color: C.text, fontWeight: "800", fontSize: 14 }}>닫기</Text>
+                            </TouchableOpacity>
+                          </>
+                        );
+                      })()}
+                    </ScrollView>
+                  </View>
+                </View>
+              </Modal>
 
               {/* 빠른 유틸리티 */}
               <View style={{ flexDirection: "row", gap: 8, marginBottom: 16 }}>
