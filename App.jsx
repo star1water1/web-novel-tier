@@ -2,9 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.25.1 (매칭 결과 저장 오류 수정 — UNIQUE matches.id)                  ║
+ * ║  버전: 7.26.0 (유의어 후보 자동 추천 — 태그 헬스 통합)                        ║
  * ║  최종 수정: 2026-06-20                                                        ║
  * ║  총 라인 수: 약 61,440줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🧩 v7.26.0 유의어 후보 자동 추천 — 태그 헬스 통합 (2026-06-20)                  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [기능] '태그 헬스 점검'에 '유의어 후보' 섹션 추가. computeTagHealth(같은 정규화 ║
+ * ║ 키의 표기 변형)을 넘어, 어근이 같은 유의어(회귀↔회귀물, 판타지↔환타지)를         ║
+ * ║ 발굴·추천. '묶기' 승인 시 tag_relations similar 그룹 등록(표기는 보존).         ║
+ * ║                                                                              ║
+ * ║ [엔진/로컬] 형태 규칙(SYNONYM_SUFFIXES 접미사 + Levenshtein 편집거리)으로 1차    ║
+ * ║ 후보 → 비대칭 통계로 보정. 핵심: 유의어는 비슷한 작품군에 있지만 같은 작품엔     ║
+ * ║ 잘 안 붙음(분포 유사 ↑ + 동시출현 ↓). coRatio 높으면(자주 함께 쓰임) 감점.       ║
+ * ║ 점수<0.45 컷, 표본·근거·신뢰도 표시. 진단만 — 등록은 사용자 승인 시에만.        ║
+ * ║                                                                              ║
+ * ║ [신규 전역 함수] levenshtein, morphSynonymScore, computeSynonymCandidates.     ║
+ * ║ [한계] 의미만 같은 유의어(먼치킨↔사기캐)는 형태로 안 잡힘 → AI 옵트인이 담당.    ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12135,6 +12151,140 @@ function isSameTag(a, b) {
   return na === nb;
 }
 
+/* =========================================================
+   🧩 v7.26.0: 유의어 후보 자동 발굴 (로컬 엔진 — 키/네트워크 불필요)
+   - 형태 규칙(접미사·편집거리)으로 1차 후보 → 비대칭 통계로 보정.
+   - computeTagHealth(같은 정규화 키의 표기 변형)를 넘어, 어근이 같은
+     "유의어"(예: 회귀 ↔ 회귀물, 판타지 ↔ 환타지)를 진단·추천한다.
+   - 핵심 통찰: 진짜 유의어는 비슷한 작품군에 나타나지만 같은 작품에는
+     함께 잘 안 붙는다(분포 유사 ↑ + 동시출현 ↓). 자주 함께 쓰이면 감점.
+   - 진단만 — 등록(묶기)은 사용자 승인 시에만. 의미만 다른 유의어
+     (먼치킨 ↔ 사기캐)는 형태로 안 잡히므로 AI 옵트인이 담당.
+   ========================================================= */
+
+// 편집거리 (Levenshtein) — 행 2개만 유지하는 O(mn)
+function levenshtein(a, b) {
+  if (a === b) return 0;
+  const m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  let prev = new Array(n + 1);
+  for (let j = 0; j <= n; j++) prev[j] = j;
+  for (let i = 1; i <= m; i++) {
+    const cur = new Array(n + 1);
+    cur[0] = i;
+    const ai = a.charCodeAt(i - 1);
+    for (let j = 1; j <= n; j++) {
+      const cost = ai === b.charCodeAt(j - 1) ? 0 : 1;
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+    }
+    prev = cur;
+  }
+  return prev[n];
+}
+
+// 같은 어근을 공유하는 흔한 한국 웹소설 접미사 (보수적 — 오탐 최소화)
+const SYNONYM_SUFFIXES = ["물", "주인공", "물주인공"];
+
+// 두 정규화 키의 형태 유사도 → { score 0~1, reason }
+function morphSynonymScore(ka, kb) {
+  if (!ka || !kb || ka === kb) return { score: 0, reason: null };
+  const [short, long] = ka.length <= kb.length ? [ka, kb] : [kb, ka];
+  if (short.length >= 2 && long.startsWith(short)) {
+    const suffix = long.slice(short.length);
+    if (SYNONYM_SUFFIXES.includes(suffix)) return { score: 0.92, reason: `접미사 '${suffix}'` };
+  }
+  const maxLen = Math.max(ka.length, kb.length);
+  if (maxLen >= 3) {
+    const d = levenshtein(ka, kb);
+    if (d === 1) return { score: 0.7, reason: "한 글자 차이" };
+    if (d === 2 && maxLen >= 5) return { score: 0.5, reason: "두 글자 차이" };
+  }
+  return { score: 0, reason: null };
+}
+
+// 라이브러리 전반에서 유의어 후보 쌍 발굴 (순수 함수)
+function computeSynonymCandidates(novels, tagRelations, opts = {}) {
+  const MIN_FREQ = opts.minFreq || 2;
+  const MAX_RESULTS = opts.maxResults || 40;
+  const t2g = tagRelations?.tagToGroup || {};
+
+  const tagToNovels = new Map(); // normKey → Set(novelIdx)
+  const tagFreq = new Map();     // normKey → 사용 작품 수
+  const tagDisplay = new Map();  // normKey → Map(표기 → 횟수)
+
+  (novels || []).forEach((n, idx) => {
+    const raw = [
+      ...parseMajorSub(n.major_genre),
+      ...parseMajorSub(n.sub_genre),
+      ...((n.tags || "").split(",").map(t => t.trim()).filter(Boolean)),
+    ];
+    const seen = new Set();
+    for (const t of raw) {
+      const k = normalizeTagKey(t);
+      if (!k || seen.has(k)) continue;
+      seen.add(k);
+      if (!tagToNovels.has(k)) { tagToNovels.set(k, new Set()); tagFreq.set(k, 0); tagDisplay.set(k, new Map()); }
+      tagToNovels.get(k).add(idx);
+      tagFreq.set(k, tagFreq.get(k) + 1);
+      const dm = tagDisplay.get(k);
+      dm.set(t, (dm.get(t) || 0) + 1);
+    }
+  });
+
+  const displayOf = (k) => {
+    const dm = tagDisplay.get(k);
+    if (!dm) return k;
+    let best = k, bc = -1;
+    for (const [s, c] of dm) if (c > bc) { bc = c; best = s; }
+    return best;
+  };
+  const groupOf = (k) => t2g[displayOf(k)] || t2g[k] || null;
+
+  const keys = [...tagFreq.entries()].filter(([, f]) => f >= MIN_FREQ).map(([k]) => k).sort();
+
+  const candidates = [];
+  for (let i = 0; i < keys.length; i++) {
+    const ka = keys[i];
+    const setA = tagToNovels.get(ka);
+    const fa = tagFreq.get(ka);
+    const ga = groupOf(ka);
+    for (let j = i + 1; j < keys.length; j++) {
+      const kb = keys[j];
+      if (Math.abs(ka.length - kb.length) > 4) continue; // 길이차 가지치기
+      const morph = morphSynonymScore(ka, kb);
+      if (morph.score <= 0) continue;
+      const gb = groupOf(kb);
+      if (ga && gb && ga === gb) continue; // 이미 같은 그룹
+
+      // 비대칭 통계: 같은 작품에 함께 붙는 비율(coRatio)이 낮을수록 유의어 신호
+      const setB = tagToNovels.get(kb);
+      const fb = tagFreq.get(kb);
+      const [small, big] = setA.size <= setB.size ? [setA, setB] : [setB, setA];
+      let co = 0;
+      for (const x of small) if (big.has(x)) co++;
+      const minF = Math.min(fa, fb);
+      const coRatio = minF > 0 ? co / minF : 0;
+
+      let score = morph.score;
+      const reasons = [morph.reason];
+      if (coRatio <= 0.15) { score += 0.05; reasons.push("거의 안 겹침"); }
+      else if (coRatio >= 0.5) { score -= 0.3; reasons.push("자주 함께 쓰임"); }
+
+      if (score < 0.45) continue;
+      candidates.push({
+        a: displayOf(ka), b: displayOf(kb),
+        score: Math.min(1, Math.round(score * 100) / 100),
+        minFreq: minF,
+        reasons: reasons.filter(Boolean),
+        suggest: morph.score >= 0.9 ? "merge" : "group",
+      });
+    }
+  }
+  candidates.sort((x, y) => y.score - x.score);
+  return candidates.slice(0, MAX_RESULTS);
+}
+
 /**
  * 🆕 v3.5.12: 태그 목록에서 대상 태그 찾기 (공백 무시 매칭)
  * 찾으면 목록 내 원본 문자열 반환, 없으면 null
@@ -13549,7 +13699,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.25.1";
+const APP_VERSION = "7.26.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -13575,6 +13725,15 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.26.0", date: "2026-06-20",
+    title: "🧩 유의어 후보 자동 추천 (태그 헬스)",
+    highlights: [
+      { type: "new", text: "🧩 설정 > 태그 관리 > '태그 헬스 점검'에 '유의어 후보'가 생겼어요. 어근이 같아 보이는 태그(예: 회귀 ↔ 회귀물, 판타지 ↔ 환타지)를 자동으로 찾아 추천해요. '묶기'를 누르면 유사 그룹으로 등록돼 취향 분석이 더 정확해져요. 표기 자체는 그대로 유지돼요." },
+      { type: "improve", text: "🔍 추천은 형태(어근·접미사·오타)와 통계(비슷한 작품군에 있지만 같은 작품엔 잘 안 붙는 패턴)를 함께 봐서 고르고, 근거와 신뢰도를 함께 보여줘요. 등록은 직접 '묶기'를 누를 때만 진행돼요." },
+    ],
+    details: [],
+  },
   {
     version: "7.25.1", date: "2026-06-20",
     title: "🔧 매칭 결과 저장 오류 수정",
@@ -37094,8 +37253,14 @@ function AppContent() {
   }
 
   function openTagHealth() {
-    try { setTagHealthData(computeTagHealth()); }
-    catch (e) { console.warn("[tagHealth] 계산 실패:", e?.message); setTagHealthData({ clusters: [], danglingRelated: [], orphanMappings: [] }); }
+    try {
+      const health = computeTagHealth();
+      // 🧩 v7.26.0: 유의어 후보(어근 공유) 동시 계산 — 표기 변형(clusters)과 별개 섹션
+      try { health.synonymCandidates = computeSynonymCandidates(list, tagRelations); }
+      catch (se) { console.warn("[synonym] 계산 실패:", se?.message); health.synonymCandidates = []; }
+      setTagHealthData(health);
+    }
+    catch (e) { console.warn("[tagHealth] 계산 실패:", e?.message); setTagHealthData({ clusters: [], danglingRelated: [], orphanMappings: [], synonymCandidates: [] }); }
     deferOpen(setTagHealthModalOpen);
   }
 
@@ -37117,6 +37282,40 @@ function AppContent() {
     } finally {
       setTagHealthBusy(false);
     }
+  }
+
+  // 🧩 v7.26.0: 유의어 후보 승인 → 유사 그룹(tag_relations)에 등록 (묶기)
+  //   기존 그룹이 있으면 흡수/병합, 없으면 새 similar 그룹 생성. 시스템 path(트리거 X).
+  function acceptSynonymGroup(tagA, tagB) {
+    if (!tagA || !tagB || isSameTag(tagA, tagB)) return;
+    setTagRelations(prev => {
+      const relations = { groups: { ...(prev?.groups || {}) }, tagToGroup: { ...(prev?.tagToGroup || {}) } };
+      const gA = relations.tagToGroup[tagA];
+      const gB = relations.tagToGroup[tagB];
+      if (gA && gA === gB) return prev; // 이미 같은 그룹
+      if (gA && gB) {
+        // 두 그룹 병합 → gA로 흡수
+        const merged = [...new Set([...(relations.groups[gA]?.tags || []), ...(relations.groups[gB]?.tags || [])])];
+        relations.groups[gA] = { ...relations.groups[gA], tags: merged };
+        for (const t of (relations.groups[gB]?.tags || [])) relations.tagToGroup[t] = gA;
+        delete relations.groups[gB];
+      } else if (gA && relations.groups[gA]?.type === "similar") {
+        relations.groups[gA] = { ...relations.groups[gA], tags: [...new Set([...(relations.groups[gA].tags || []), tagB])] };
+        relations.tagToGroup[tagB] = gA;
+      } else if (gB && relations.groups[gB]?.type === "similar") {
+        relations.groups[gB] = { ...relations.groups[gB], tags: [...new Set([...(relations.groups[gB].tags || []), tagA])] };
+        relations.tagToGroup[tagA] = gB;
+      } else {
+        const gid = `syn_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+        relations.groups[gid] = { id: gid, name: `${tagA} 유의어`, type: "similar", tags: [tagA, tagB] };
+        relations.tagToGroup[tagA] = gid;
+        relations.tagToGroup[tagB] = gid;
+      }
+      deferSetAppMeta("tag_relations", relations);
+      return relations;
+    });
+    // 후보 목록에서 해당 쌍 제거
+    setTagHealthData(prev => prev ? { ...prev, synonymCandidates: (prev.synonymCandidates || []).filter(c => !(c.a === tagA && c.b === tagB)) } : prev);
   }
 
   // 끊어진 관계 정리: dangling relatedGroupId NULL화 + 존재 않는 그룹 가리키는 tagToGroup 제거
@@ -61005,6 +61204,42 @@ async function importJSON() {
                   </TouchableOpacity>
                 </View>
               )}
+
+              {/* 🧩 v7.26.0: 유의어 후보 (어근 공유 — 표기 변형과 별개) */}
+              <Text style={{ color: C.text, fontWeight: "800", fontSize: 14, marginTop: 12, marginBottom: 2 }}>
+                🧩 유의어 후보 ({tagHealthData?.synonymCandidates?.length || 0})
+              </Text>
+              <Text style={{ color: C.sub, fontSize: 11, marginBottom: 6 }}>
+                어근이 같아 보이는 태그예요(예: 회귀 ↔ 회귀물). '묶기'를 누르면 유사 그룹으로 등록돼 취향 분석에서 같은 요인으로 취급됩니다. 표기 자체는 그대로 유지돼요.
+              </Text>
+              {(tagHealthData?.synonymCandidates || []).length === 0 ? (
+                <Text style={{ color: C.sub, fontSize: 13, marginBottom: 16 }}>발견된 유의어 후보가 없어요 ✓</Text>
+              ) : (
+                tagHealthData.synonymCandidates.slice(0, 30).map((c) => (
+                  <View key={`${c.a}|${c.b}`} style={{ backgroundColor: C.chip, borderRadius: 12, padding: 10, marginBottom: 8, flexDirection: "row", alignItems: "center" }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: C.text, fontSize: 14, fontWeight: "700" }}>{c.a}  ↔  {c.b}</Text>
+                      <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>
+                        {c.reasons.join(" · ")} · 표본 {c.minFreq} · 신뢰도 {Math.round(c.score * 100)}%
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      disabled={tagHealthBusy}
+                      onPress={() => acceptSynonymGroup(c.a, c.b)}
+                      style={{ paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8, backgroundColor: C.primary, marginLeft: 8 }}
+                    >
+                      <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>묶기</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => setTagHealthData(prev => prev ? { ...prev, synonymCandidates: (prev.synonymCandidates || []).filter(x => !(x.a === c.a && x.b === c.b)) } : prev)}
+                      style={{ paddingHorizontal: 10, paddingVertical: 7, borderRadius: 8, backgroundColor: C.card, borderWidth: 1, borderColor: C.line, marginLeft: 6 }}
+                    >
+                      <Text style={{ color: C.sub, fontWeight: "700", fontSize: 13 }}>무시</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))
+              )}
+
               <View style={{ height: 40 }} />
             </ScrollView>
           </View>
