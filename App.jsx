@@ -2,9 +2,26 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.24.6 (수상 결과·명언 이미지 화질 상향)                                ║
+ * ║  버전: 7.25.0 (설정 탭 기능별 7개 서브탭 재구성)                              ║
  * ║  최종 수정: 2026-06-20                                                        ║
  * ║  총 라인 수: 약 61,440줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ ⚙️ v7.25.0 설정 탭 기능별 재구성 — 7개 서브탭으로 정리 (2026-06-20)             ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [의도] 설정 서브탭이 '앱/태그/분석/슬롯/백업/진단/정보'로 성격이 섞여 어떤       ║
+ * ║ 기능이 어디 있는지 예상이 어려웠음(특히 '앱' 탭에 표시·엔진·데이터·유틸 혼재).   ║
+ * ║ → 기능 성격 기준 7개 탭으로 재배치.                                            ║
+ * ║                                                                              ║
+ * ║ [새 구조] 🏆랭킹 / 🎨표시 / 🏷️태그 / 🗂️데이터 / 💾백업 / 🔬진단 / ℹ️정보        ║
+ * ║ • 🏆랭킹(신규): 티어 시스템 + 의심도 민감도 — 구 '앱'에서 분리, 맨 앞 배치.      ║
+ * ║ • 🎨표시(구 '앱'): 명언 서식·테마·표지 라이브러리·이미지 내보내기.               ║
+ * ║ • 🗂️데이터(구 '분석'+'슬롯'): 폴더·예정 필드·분석 데이터·플랫폼·기본표지·슬롯.    ║
+ * ║ • 💾백업: 되돌리기 합류(구 '앱'에서 이동).                                      ║
+ * ║                                                                              ║
+ * ║ [구현] 큰 블록(티어/분석데이터/슬롯)은 제자리 고정·wrapper만 재정의. 작은        ║
+ * ║ 섹션(의심도/폴더/예정/되돌리기)만 이동. 기본 서브탭 'app'→'ranking'.            ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -13516,7 +13533,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.24.6";
+const APP_VERSION = "7.25.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -13542,6 +13559,17 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.25.0", date: "2026-06-20",
+    title: "⚙️ 설정 탭 기능별 7개 서브탭 재구성",
+    highlights: [
+      { type: "improve", text: "⚙️ 설정 탭을 기능 성격에 맞춰 '🏆랭킹 / 🎨표시 / 🏷️태그 / 🗂️데이터 / 💾백업 / 🔬진단 / ℹ️정보' 7개로 다시 정리했어요. 어떤 설정이 어디 있는지 한눈에 예상돼요." },
+      { type: "improve", text: "🏆 티어 시스템과 의심도 민감도를 새 '랭킹' 탭으로 모아 맨 앞에 뒀어요. 앱의 핵심 설정을 바로 찾을 수 있어요." },
+      { type: "improve", text: "🗂️ 폴더·예정 필드·분석 데이터·플랫폼·슬롯을 '데이터' 탭으로 통합했어요. (기존 '슬롯' 탭이 '데이터' 탭에 합쳐졌어요)" },
+      { type: "improve", text: "💾 '되돌리기'를 '백업' 탭으로 옮겼어요. 데이터 보호 기능끼리 모았어요." },
+    ],
+    details: [],
+  },
   {
     version: "7.24.6", date: "2026-06-20",
     title: "🖼️ 수상 결과·명언 이미지 화질 상향",
@@ -31465,7 +31493,7 @@ function AppContent() {
   const removedQuoteImagesRef = useRef([]); // 📷 v3.6.1: 편집 중 삭제된 이미지 URI 추적 (저장 시 실제 삭제)
   const editNewQuoteImagesRef = useRef([]); // 📷 v6.0.1: 편집 모달에서 새로 추가된 이미지 URI 추적 (취소 시 정리)
   const regQuoteImagesRef = useRef([]); // 📷 v3.6.2: 등록 폼에서 추가된 이미지 URI 추적 (실패/취소 시 정리)
-  const [settingsSubTab, setSettingsSubTab] = useState("app"); // 🆕 Phase 2: 설정 서브탭 ("app" | "tags" | "analysis" | "slot" | "backup" | "diag" | "info")
+  const [settingsSubTab, setSettingsSubTab] = useState("ranking"); // 🆕 Phase 2: 설정 서브탭 (v7.21: "ranking" | "display" | "tags" | "data" | "backup" | "diag" | "info")
   // 🎨 v3.8.0: 갤러리 시스템
   const [gallerySubTab, setGallerySubTab] = useState("view");
   const [galleryImages, setGalleryImages] = useState([]);
@@ -53431,10 +53459,10 @@ async function importJSON() {
               borderColor: C.line,
             }}>
               {[
-                { key: "app", label: "🎯 앱" },
+                { key: "ranking", label: "🏆 랭킹" },
+                { key: "display", label: "🎨 표시" },
                 { key: "tags", label: "🏷️ 태그" },
-                { key: "analysis", label: "📊 분석" },
-                { key: "slot", label: "📁 슬롯" },
+                { key: "data", label: "🗂️ 데이터" },
                 { key: "backup", label: "💾 백업" },
                 { key: "diag", label: "🔬 진단" },
                 { key: "info", label: "ℹ️ 정보" },
@@ -53462,9 +53490,9 @@ async function importJSON() {
             </ScrollView>
             
             {/* ═══════════════════════════════════════════════════════════════ */}
-            {/* 🎯 앱 설정 서브탭 */}
+            {/* 🎨 표시 서브탭 (테마·명언 서식·표지·이미지) */}
             {/* ═══════════════════════════════════════════════════════════════ */}
-            {settingsSubTab === "app" && (
+            {settingsSubTab === "display" && (
               <>
             <Section title="💬 명언 기본 서식">
               <Text style={{ color: C.sub, fontSize: 12, lineHeight: 18, marginBottom: 8 }}>
@@ -53498,57 +53526,6 @@ async function importJSON() {
                 </TouchableOpacity>
               ) : null}
             </Section>
-
-            {/* 🆕 v7.18.0: 의심도 민감도 상세 조정 (하이브리드 전용 — 엔진이 이 모드에서만 동작) */}
-            {globalTierConfig.mode === "hybrid" && (() => {
-              const sc = { ...DEFAULT_SUSPICION_CONFIG, ...(appSettings.suspicionConfig || {}) };
-              const setSC = (patch) => saveAppSettings({ suspicionConfig: { ...sc, ...patch } });
-              const r2 = (x) => Math.round(x * 100) / 100;
-              const sBtn = { width: 34, height: 30, borderRadius: 7, backgroundColor: C.chip, alignItems: "center", justifyContent: "center" };
-              const stepper = (label, key, step, min, max, desc) => {
-                const v = Number(sc[key]) || 0;
-                return (
-                  <View key={key} style={{ marginTop: 10 }}>
-                    <View style={{ flexDirection: "row", alignItems: "center" }}>
-                      <Text style={{ flex: 1, color: C.text, fontSize: 13, fontWeight: "600" }}>{label}</Text>
-                      <TouchableOpacity onPress={() => setSC({ [key]: r2(Math.max(min, v - step)) })} style={sBtn}><Text style={{ color: C.text, fontSize: 18, fontWeight: "800" }}>−</Text></TouchableOpacity>
-                      <Text style={{ minWidth: 48, textAlign: "center", color: C.text, fontWeight: "700", fontSize: 13 }}>{v}</Text>
-                      <TouchableOpacity onPress={() => setSC({ [key]: r2(Math.min(max, v + step)) })} style={sBtn}><Text style={{ color: C.text, fontSize: 16, fontWeight: "800" }}>＋</Text></TouchableOpacity>
-                    </View>
-                    {desc ? <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>{desc}</Text> : null}
-                  </View>
-                );
-              };
-              const presetEq = (p) => Object.keys(p).every(k => Number(sc[k]) === Number(p[k]));
-              return (
-                <Section title="🔍 의심도 민감도 (하이브리드)">
-                  <Text style={{ color: C.sub, fontSize: 12, lineHeight: 18, marginBottom: 8 }}>
-                    배정탭 의심도(🔍)가 오르는 속도와 자동 점검(파생매칭) 빈도를 조절해요. 값이 클수록 의심도가 빨리 오르고 자동 점검이 잦아집니다. '점검선'은 자동 점검이 시작되는 기준(표시 100%)이에요.
-                  </Text>
-                  <View style={{ flexDirection: "row", gap: 8, marginBottom: 4 }}>
-                    {[["보수적", "conservative"], ["보통", "balanced"], ["민감", "sensitive"]].map(([lbl, pk]) => {
-                      const active = presetEq(SUSPICION_PRESETS[pk]);
-                      return (
-                        <TouchableOpacity key={pk} onPress={() => saveAppSettings({ suspicionConfig: { ...SUSPICION_PRESETS[pk] } })}
-                          style={{ paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8, backgroundColor: active ? C.primary : C.chip }}>
-                          <Text style={{ color: active ? "#fff" : C.text, fontWeight: "700", fontSize: 13 }}>{lbl}</Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                  {stepper("순위변동 전파", "moveBase", 0.1, 0, 3, "작품 순위/티어를 바꾸면 인접 작품 의심도가 오르는 양")}
-                  {stepper("전파 범위", "moveWindow", 1, 1, 10, "변동 지점에서 몇 순위까지 퍼질지 (랭크)")}
-                  {stepper("매칭 기본", "matchBase", 0.05, 0, 2, "검증 매칭 1판당 상대 작품 기본 상승")}
-                  {stepper("업셋 가중", "upsetBase", 0.1, 0, 5, "순위와 모순된 결과(업셋) 시 추가 상승")}
-                  {stepper("업셋 순위차 계수", "upsetPerGap", 0.05, 0, 1, "업셋일 때 순위 차이 1당 추가")}
-                  {stepper("점검선(자동검증 기준)", "checkLine", 1, 2, 30, "의심도가 이 값에 닿으면 자동 점검. 표시 100% 기준 — 낮출수록 자주 점검")}
-                  <TouchableOpacity onPress={() => saveAppSettings({ suspicionConfig: { ...DEFAULT_SUSPICION_CONFIG } })}
-                    style={{ marginTop: 12, alignSelf: "flex-start", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: C.chip }}>
-                    <Text style={{ color: C.warn, fontWeight: "700", fontSize: 13 }}>기본값 복원</Text>
-                  </TouchableOpacity>
-                </Section>
-              );
-            })()}
 
             <Section title="테마">
               <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
@@ -53708,29 +53685,14 @@ async function importJSON() {
                 예측은 awards/카드 데이터 기반 추정치이며 실제 결과는 다를 수 있습니다. 캡처 실패 시 친화 메시지로 안내됩니다.
               </Text>
             </Section>
+              </>
+            )}
 
-            {/* 📂 v3.7.0: 폴더 관리 */}
-            <Section title="📂 폴더 관리">
-              <Text style={{ color: C.sub, marginBottom: 12, fontSize: 13 }}>
-                폴더를 만들어 작품을 자유롭게 분류할 수 있습니다. 하나의 작품을 여러 폴더에 넣을 수 있습니다.
-              </Text>
-              <TouchableOpacity
-                onPress={() => deferOpen(setFolderModalOpen)}
-                style={{
-                  backgroundColor: C.primary,
-                  padding: 14,
-                  borderRadius: 12,
-                  flexDirection: "row",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  marginBottom: 8,
-                }}
-              >
-                <Text style={{ color: "#fff", fontSize: 16, fontWeight: "700" }}>📂 폴더 관리 열기</Text>
-              </TouchableOpacity>
-              <Text style={{ color: C.sub, fontSize: 11, textAlign: "center" }}>현재 {folders.length}개 폴더</Text>
-            </Section>
-
+            {/* ═══════════════════════════════════════════════════════════════ */}
+            {/* 🏆 랭킹 서브탭 (티어 시스템·의심도 민감도) */}
+            {/* ═══════════════════════════════════════════════════════════════ */}
+            {settingsSubTab === "ranking" && (
+              <>
             {/* ⚙️ 티어 시스템 설정 (v6.0 유연한 티어 시스템) */}
             <Section title="🏆 티어 시스템">
               {/* 🆕 v6.0: 모드 선택기 */}
@@ -54263,100 +54225,56 @@ async function importJSON() {
               </View>
             </Section>
             
-            {/* 📋 예정탭 확장 필드 설정 (v3.4) */}
-            <Section title="📋 예정탭 확장 필드">
-              <Text style={{ color: C.sub, marginBottom: 12 }}>
-                예정 작품 등록/편집 시 표시할 추가 필드를 선택합니다.
-              </Text>
-              <View style={{ gap: 12 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ color: C.text, fontWeight: "600" }}>📅 읽기 시작 예정일</Text>
-                    <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>언제부터 읽을 예정인지 날짜 설정</Text>
-                  </View>
-                  <Switch
-                    value={appSettings.plannedFields?.showScheduledStart !== false}
-                    onValueChange={(v) => saveAppSettings({ 
-                      plannedFields: { 
-                        ...appSettings.plannedFields, 
-                        showScheduledStart: v 
-                      } 
-                    })}
-                  />
-                </View>
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ color: C.text, fontWeight: "600" }}>📊 예상 레이팅 (숫자)</Text>
-                    <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>예상 티어 대신 직접 숫자로 입력</Text>
-                  </View>
-                  <Switch
-                    value={appSettings.plannedFields?.showExpectedRating === true}
-                    onValueChange={(v) => saveAppSettings({ 
-                      plannedFields: { 
-                        ...appSettings.plannedFields, 
-                        showExpectedRating: v 
-                      } 
-                    })}
-                  />
-                </View>
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ color: C.text, fontWeight: "600" }}>📚 비슷한 작품</Text>
-                    <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>본 목록에서 유사 작품 선택 (고급)</Text>
-                  </View>
-                  <Switch
-                    value={appSettings.plannedFields?.showSimilarNovels === true}
-                    onValueChange={(v) => saveAppSettings({ 
-                      plannedFields: { 
-                        ...appSettings.plannedFields, 
-                        showSimilarNovels: v 
-                      } 
-                    })}
-                  />
-                </View>
-              </View>
-            </Section>
-
-            {/* ↩️ 되돌리기 (v2.6) */}
-            {undoStack.length > 0 && (
-              <Section title="↩️ 되돌리기">
-                <Text style={{ color: C.sub, marginBottom: 8 }}>최근 {undoStack.length}개 작업을 되돌릴 수 있습니다.</Text>
-                <PrimaryButton title="마지막 작업 되돌리기" onPress={performUndo} />
-                <View style={{ marginTop: 12 }}>
-                  {undoStack.slice(0, 5).map((item, idx) => (
-                    <View key={idx} style={{ flexDirection: "row", alignItems: "center", paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: C.line }}>
-                      <Text style={{ color: C.sub, fontSize: 12, marginRight: 8 }}>{idx + 1}.</Text>
-                      <Text style={{ color: C.text, fontSize: 13, flex: 1 }} numberOfLines={1}>{item.description}</Text>
-                      <Text style={{ color: C.sub, fontSize: 11 }}>
-                        {(() => {
-                          const ago = Date.now() - item.at;
-                          if (ago < 60000) return "방금 전";
-                          if (ago < 3600000) return `${Math.floor(ago / 60000)}분 전`;
-                          if (ago < 86400000) return `${Math.floor(ago / 3600000)}시간 전`;
-                          return `${Math.floor(ago / 86400000)}일 전`;
-                        })()}
-                      </Text>
+            {/* 🔍 의심도 민감도 (하이브리드 전용 — 엔진이 이 모드에서만 동작) */}
+            {globalTierConfig.mode === "hybrid" && (() => {
+              const sc = { ...DEFAULT_SUSPICION_CONFIG, ...(appSettings.suspicionConfig || {}) };
+              const setSC = (patch) => saveAppSettings({ suspicionConfig: { ...sc, ...patch } });
+              const r2 = (x) => Math.round(x * 100) / 100;
+              const sBtn = { width: 34, height: 30, borderRadius: 7, backgroundColor: C.chip, alignItems: "center", justifyContent: "center" };
+              const stepper = (label, key, step, min, max, desc) => {
+                const v = Number(sc[key]) || 0;
+                return (
+                  <View key={key} style={{ marginTop: 10 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center" }}>
+                      <Text style={{ flex: 1, color: C.text, fontSize: 13, fontWeight: "600" }}>{label}</Text>
+                      <TouchableOpacity onPress={() => setSC({ [key]: r2(Math.max(min, v - step)) })} style={sBtn}><Text style={{ color: C.text, fontSize: 18, fontWeight: "800" }}>−</Text></TouchableOpacity>
+                      <Text style={{ minWidth: 48, textAlign: "center", color: C.text, fontWeight: "700", fontSize: 13 }}>{v}</Text>
+                      <TouchableOpacity onPress={() => setSC({ [key]: r2(Math.min(max, v + step)) })} style={sBtn}><Text style={{ color: C.text, fontSize: 16, fontWeight: "800" }}>＋</Text></TouchableOpacity>
                     </View>
-                  ))}
-                </View>
-                {undoStack.length > 5 && (
-                  <Text style={{ color: C.sub, fontSize: 11, marginTop: 8, textAlign: "center" }}>
-                    +{undoStack.length - 5}개 더
+                    {desc ? <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>{desc}</Text> : null}
+                  </View>
+                );
+              };
+              const presetEq = (p) => Object.keys(p).every(k => Number(sc[k]) === Number(p[k]));
+              return (
+                <Section title="🔍 의심도 민감도 (하이브리드)">
+                  <Text style={{ color: C.sub, fontSize: 12, lineHeight: 18, marginBottom: 8 }}>
+                    배정탭 의심도(🔍)가 오르는 속도와 자동 점검(파생매칭) 빈도를 조절해요. 값이 클수록 의심도가 빨리 오르고 자동 점검이 잦아집니다. '점검선'은 자동 점검이 시작되는 기준(표시 100%)이에요.
                   </Text>
-                )}
-                <OutlineButton
-                  title="되돌리기 스택 비우기"
-                  onPress={() => {
-                    Alert.alert("확인", "모든 되돌리기 기록을 삭제할까요?", [
-                      { text: "취소" },
-                      { text: "삭제", style: "destructive", onPress: () => setUndoStack([]) }
-                    ]);
-                  }}
-                  style={{ marginTop: 12 }}
-                  color={C.warn}
-                />
-              </Section>
-            )}
+                  <View style={{ flexDirection: "row", gap: 8, marginBottom: 4 }}>
+                    {[["보수적", "conservative"], ["보통", "balanced"], ["민감", "sensitive"]].map(([lbl, pk]) => {
+                      const active = presetEq(SUSPICION_PRESETS[pk]);
+                      return (
+                        <TouchableOpacity key={pk} onPress={() => saveAppSettings({ suspicionConfig: { ...SUSPICION_PRESETS[pk] } })}
+                          style={{ paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8, backgroundColor: active ? C.primary : C.chip }}>
+                          <Text style={{ color: active ? "#fff" : C.text, fontWeight: "700", fontSize: 13 }}>{lbl}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  {stepper("순위변동 전파", "moveBase", 0.1, 0, 3, "작품 순위/티어를 바꾸면 인접 작품 의심도가 오르는 양")}
+                  {stepper("전파 범위", "moveWindow", 1, 1, 10, "변동 지점에서 몇 순위까지 퍼질지 (랭크)")}
+                  {stepper("매칭 기본", "matchBase", 0.05, 0, 2, "검증 매칭 1판당 상대 작품 기본 상승")}
+                  {stepper("업셋 가중", "upsetBase", 0.1, 0, 5, "순위와 모순된 결과(업셋) 시 추가 상승")}
+                  {stepper("업셋 순위차 계수", "upsetPerGap", 0.05, 0, 1, "업셋일 때 순위 차이 1당 추가")}
+                  {stepper("점검선(자동검증 기준)", "checkLine", 1, 2, 30, "의심도가 이 값에 닿으면 자동 점검. 표시 100% 기준 — 낮출수록 자주 점검")}
+                  <TouchableOpacity onPress={() => saveAppSettings({ suspicionConfig: { ...DEFAULT_SUSPICION_CONFIG } })}
+                    style={{ marginTop: 12, alignSelf: "flex-start", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: C.chip }}>
+                    <Text style={{ color: C.warn, fontWeight: "700", fontSize: 13 }}>기본값 복원</Text>
+                  </TouchableOpacity>
+                </Section>
+              );
+            })()}
               </>
             )}
             
@@ -55236,10 +55154,86 @@ async function importJSON() {
             )}
             
             {/* ═══════════════════════════════════════════════════════════════ */}
-            {/* 📊 분석 데이터 서브탭 */}
+            {/* 🗂️ 데이터 서브탭 (폴더·예정필드·분석데이터·플랫폼·슬롯) */}
             {/* ═══════════════════════════════════════════════════════════════ */}
-            {settingsSubTab === "analysis" && (
+            {settingsSubTab === "data" && (
               <>
+            {/* 📂 v3.7.0: 폴더 관리 */}
+            <Section title="📂 폴더 관리">
+              <Text style={{ color: C.sub, marginBottom: 12, fontSize: 13 }}>
+                폴더를 만들어 작품을 자유롭게 분류할 수 있습니다. 하나의 작품을 여러 폴더에 넣을 수 있습니다.
+              </Text>
+              <TouchableOpacity
+                onPress={() => deferOpen(setFolderModalOpen)}
+                style={{
+                  backgroundColor: C.primary,
+                  padding: 14,
+                  borderRadius: 12,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  marginBottom: 8,
+                }}
+              >
+                <Text style={{ color: "#fff", fontSize: 16, fontWeight: "700" }}>📂 폴더 관리 열기</Text>
+              </TouchableOpacity>
+              <Text style={{ color: C.sub, fontSize: 11, textAlign: "center" }}>현재 {folders.length}개 폴더</Text>
+            </Section>
+
+            {/* 📋 예정탭 확장 필드 설정 (v3.4) */}
+            <Section title="📋 예정탭 확장 필드">
+              <Text style={{ color: C.sub, marginBottom: 12 }}>
+                예정 작품 등록/편집 시 표시할 추가 필드를 선택합니다.
+              </Text>
+              <View style={{ gap: 12 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: C.text, fontWeight: "600" }}>📅 읽기 시작 예정일</Text>
+                    <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>언제부터 읽을 예정인지 날짜 설정</Text>
+                  </View>
+                  <Switch
+                    value={appSettings.plannedFields?.showScheduledStart !== false}
+                    onValueChange={(v) => saveAppSettings({
+                      plannedFields: {
+                        ...appSettings.plannedFields,
+                        showScheduledStart: v
+                      }
+                    })}
+                  />
+                </View>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: C.text, fontWeight: "600" }}>📊 예상 레이팅 (숫자)</Text>
+                    <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>예상 티어 대신 직접 숫자로 입력</Text>
+                  </View>
+                  <Switch
+                    value={appSettings.plannedFields?.showExpectedRating === true}
+                    onValueChange={(v) => saveAppSettings({
+                      plannedFields: {
+                        ...appSettings.plannedFields,
+                        showExpectedRating: v
+                      }
+                    })}
+                  />
+                </View>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: C.text, fontWeight: "600" }}>📚 비슷한 작품</Text>
+                    <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>본 목록에서 유사 작품 선택 (고급)</Text>
+                  </View>
+                  <Switch
+                    value={appSettings.plannedFields?.showSimilarNovels === true}
+                    onValueChange={(v) => saveAppSettings({
+                      plannedFields: {
+                        ...appSettings.plannedFields,
+                        showSimilarNovels: v
+                      }
+                    })}
+                  />
+                </View>
+              </View>
+            </Section>
+
             {/* 🎯 v3.0.4: 분석 데이터 관리 */}
             <Section title="📊 분석 데이터 관리">
               <Text style={{ color: C.sub, marginBottom: 12 }}>
@@ -55622,14 +55616,8 @@ async function importJSON() {
                 </View>
               ))}
             </Section>
-              </>
-            )}
-            
-            {/* ═══════════════════════════════════════════════════════════════ */}
-            {/* 📁 슬롯 관리 서브탭 */}
-            {/* ═══════════════════════════════════════════════════════════════ */}
-            {settingsSubTab === "slot" && (
-              <>
+
+            {/* 📁 데이터 슬롯 (슬롯 관리 — 독립 데이터셋 분리, v7.21 데이터 탭 통합) */}
             <Section title="📁 데이터 슬롯">
               <Text style={{ color: C.sub, fontSize: 12, marginBottom: 12, lineHeight: 18 }}>
                 독립적인 데이터셋을 최대 10개까지 관리할 수 있습니다.{"\n"}
@@ -56055,6 +56043,47 @@ async function importJSON() {
                 💡 데이터 이상이 의심될 때 실행하세요. 앱 시작 시 자동으로도 실행됩니다.
               </Text>
             </Section>
+
+            {/* ↩️ 되돌리기 (v2.6) */}
+            {undoStack.length > 0 && (
+              <Section title="↩️ 되돌리기">
+                <Text style={{ color: C.sub, marginBottom: 8 }}>최근 {undoStack.length}개 작업을 되돌릴 수 있습니다.</Text>
+                <PrimaryButton title="마지막 작업 되돌리기" onPress={performUndo} />
+                <View style={{ marginTop: 12 }}>
+                  {undoStack.slice(0, 5).map((item, idx) => (
+                    <View key={idx} style={{ flexDirection: "row", alignItems: "center", paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: C.line }}>
+                      <Text style={{ color: C.sub, fontSize: 12, marginRight: 8 }}>{idx + 1}.</Text>
+                      <Text style={{ color: C.text, fontSize: 13, flex: 1 }} numberOfLines={1}>{item.description}</Text>
+                      <Text style={{ color: C.sub, fontSize: 11 }}>
+                        {(() => {
+                          const ago = Date.now() - item.at;
+                          if (ago < 60000) return "방금 전";
+                          if (ago < 3600000) return `${Math.floor(ago / 60000)}분 전`;
+                          if (ago < 86400000) return `${Math.floor(ago / 3600000)}시간 전`;
+                          return `${Math.floor(ago / 86400000)}일 전`;
+                        })()}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+                {undoStack.length > 5 && (
+                  <Text style={{ color: C.sub, fontSize: 11, marginTop: 8, textAlign: "center" }}>
+                    +{undoStack.length - 5}개 더
+                  </Text>
+                )}
+                <OutlineButton
+                  title="되돌리기 스택 비우기"
+                  onPress={() => {
+                    Alert.alert("확인", "모든 되돌리기 기록을 삭제할까요?", [
+                      { text: "취소" },
+                      { text: "삭제", style: "destructive", onPress: () => setUndoStack([]) }
+                    ]);
+                  }}
+                  style={{ marginTop: 12 }}
+                  color={C.warn}
+                />
+              </Section>
+            )}
 
             <Section title="⚠️ 위험">
               <Text style={{ color: C.warn, marginBottom: 10, fontSize: 12 }}>
