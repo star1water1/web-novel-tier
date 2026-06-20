@@ -2,9 +2,35 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.5 (코드 전반 버그 점검 3차 — 내보내기/생명주기 견고화)           ║
+ * ║  버전: 7.28.6 (보류 항목 정리 — 데이터/마이그레이션/검증 churn 6건)          ║
  * ║  최종 수정: 2026-06-20                                                        ║
- * ║  총 라인 수: 약 62,230줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 62,300줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛡️ v7.28.6 보류 항목 정리 — 데이터/마이그레이션/검증 churn 6건 (2026-06-20)     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [검증 churn·B1] verification 카운터가 영구 누적이라, 한 번 쏠린 작품이 배치 후   ║
+ * ║ 에도 다른 작품 검증마다 무한 재큐잉되던 문제. 카운터는 표시·백업·우선순위용으로  ║
+ * ║ 보존하되, 신규 컬럼 verification_baseline(배치 시점 count 스냅샷)을 두어         ║
+ * ║ detectAutomaticSuspects가 '배치 이후 새 증거(count>baseline)'가 있을 때만 재검출.║
+ * ║                                                                              ║
+ * ║ [티어 프리셋·A2] match 모드에서 또 다른 match/ratio 프리셋 적용 시 무효 manual_  ║
+ * ║ tier 키가 마이그레이션 안 되던(고아·오등급) 분기 누락 — 예정작처럼 항상 무효     ║
+ * ║ 키만 변환하도록 수정(`oldConfig.mode !== "match"` 가드 제거).                   ║
+ * ║                                                                              ║
+ * ║ [약어 그룹·A3] 사용자가 삭제한 약어(alias_*) 그룹이 재시작마다 부활하던 문제 —   ║
+ * ║ 삭제 id를 app_meta(alias_groups_dismissed)에 영구 기억, migrateAliasesTo       ║
+ * ║ Relations가 제외하고 재생성.                                                   ║
+ * ║                                                                              ║
+ * ║ [좌표계·B2] 좌표계 전체 삭제 후 재시작 시 기본 4종 부활 — 로더가 null(첫 실행)과 ║
+ * ║ {}(전체 삭제)를 구분하도록 수정.                                                ║
+ * ║                                                                              ║
+ * ║ [백업 표지·A1] import가 cover_library를 안 비워 상태/소유자가 잔존(잘못된       ║
+ * ║ used·unused) → 복원된 novels/planned 참조 기준으로 상태만 타깃 재조정(티어 무관).║
+ * ║                                                                              ║
+ * ║ [표시·B4] 플랫폼/장르 통계 avgReadRatio가 데이터 없을 때 0이 아닌 null(미집계와  ║
+ * ║ '0% 읽음' 구분 — 현재 미렌더라 영향 없음, 데이터 정확성만).                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -7829,6 +7855,10 @@ async function initDb(progressCb) {
     ["verification_wins", "INTEGER", "0"],
     ["verification_losses", "INTEGER", "0"],
     ["verification_count", "INTEGER", "0"],
+    // 🛡️ FIX(v7.28.6): 마지막 배치(finalize) 시점의 verification_count 스냅샷. detectAutomaticSuspects가
+    //   '배치 이후 새로 누적된 검증 증거'가 있을 때만 재검출하도록 — 카운터는 표시·백업용으로 보존하되
+    //   이미 배치로 해소된 쏠림이 무한 재큐잉되던 churn 차단.
+    ["verification_baseline", "INTEGER", "0"],
     // 🆕 v7.5.0: 신작 캐스케이드 누적 카운터 — B1에서 += 1, priority 가중치
     ["conflict_hits", "INTEGER", "0"],
     // 🆕 v7.17.0: 관계형 의심도 누적 점수 — 순위변동 전파 + 매칭 업셋으로 상승, 검증 시 리셋
@@ -11809,24 +11839,28 @@ function getGroupTags(representativeTag, tagRelations) {
  * - 하드코딩된 약어 매핑을 사용자 편집 가능한 유사 그룹으로 변환
  * - 기존 그룹과 중복되지 않는 것만 추가
  */
-function migrateAliasesToRelations(currentRelations) {
+function migrateAliasesToRelations(currentRelations, dismissedGroupIds = []) {
   const relations = {
     groups: { ...(currentRelations?.groups || {}) },
     tagToGroup: { ...(currentRelations?.tagToGroup || {}) },
   };
-  
+  // 🛡️ FIX: 사용자가 삭제한 약어 그룹(alias_*) id 집합 — 재생성 방지(삭제가 재시작에도 유지)
+  const dismissed = dismissedGroupIds instanceof Set ? dismissedGroupIds : new Set(dismissedGroupIds || []);
+
   let addedCount = 0;
-  
+
   for (const [canonical, aliases] of Object.entries(TAG_REVERSE_ALIASES)) {
+    const groupId = `alias_${canonical.replace(/\s+/g, "_")}`;
+    // 🛡️ FIX: 사용자가 지운 약어 그룹은 다시 만들지 않음
+    if (dismissed.has(groupId)) continue;
     // 이미 그룹에 있는 태그는 스킵
     if (relations.tagToGroup[canonical]) continue;
-    
+
     const allTags = [canonical, ...aliases];
     const anyInGroup = allTags.some(t => relations.tagToGroup[t]);
     if (anyInGroup) continue;
-    
+
     // 새 유사 그룹 생성
-    const groupId = `alias_${canonical.replace(/\s+/g, "_")}`;
     relations.groups[groupId] = {
       id: groupId,
       name: `${canonical} (약어)`,
@@ -12104,8 +12138,13 @@ const WORK_IDENTIFIERS = [
  */
 async function getTagCoordinateSystems() {
   const saved = await getAppMeta("tag_coordinate_systems");
-  if (saved && typeof saved === "object" && Object.keys(saved).length > 0) {
-    // 기본 좌표계 중 누락된 것 추가
+  // 🛡️ FIX: null(=한 번도 저장 안 함, 첫 실행)과 {}(=사용자가 전체 삭제)를 구분한다.
+  //   이전엔 빈 {}도 "데이터 없음"으로 보고 기본 4종을 주입 → '전체 삭제'가 재시작마다 부활.
+  if (saved != null && typeof saved === "object") {
+    if (Object.keys(saved).length === 0) {
+      return {}; // 사용자가 전체 삭제 — 빈 상태 유지
+    }
+    // 저장된 좌표계 + 누락된 '신규' 기본 좌표계만 보강(앞으로 추가될 기본 호환)
     const merged = { ...saved };
     for (const [id, sys] of Object.entries(DEFAULT_COORDINATE_SYSTEMS)) {
       if (!merged[id]) {
@@ -12114,7 +12153,7 @@ async function getTagCoordinateSystems() {
     }
     return merged;
   }
-  // 처음이면 기본 좌표계 반환
+  // 처음이면(저장 이력 없음) 기본 좌표계 반환
   return { ...DEFAULT_COORDINATE_SYSTEMS };
 }
 
@@ -13957,7 +13996,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.5";
+const APP_VERSION = "7.28.6";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -13983,6 +14022,18 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.6", date: "2026-06-20",
+    title: "🛡️ 보류 항목 정리 — 데이터/마이그레이션/검증",
+    highlights: [
+      { type: "fix", text: "🤖 하이브리드 검증에서, 한 번 자리를 잡은 작품이 계속 다시 검증 대상으로 떠오르던 문제를 고쳤어요. 이제 배치한 뒤로 '새로운 근거'가 쌓였을 때만 다시 점검 대상이 돼요. (검증 횟수·전적 표시는 그대로 유지)" },
+      { type: "fix", text: "🏷️ 자동으로 만들어진 약어 묶음(예: '현대판타지(약어)')을 삭제하면, 이제 앱을 다시 켜도 되살아나지 않아요." },
+      { type: "fix", text: "📐 태그 좌표계를 전부 삭제한 뒤 앱을 다시 켜면 기본 좌표계가 되살아나던 문제를 고쳤어요. 비워둔 상태가 그대로 유지돼요." },
+      { type: "fix", text: "🎚️ 매칭/비율 티어 체계끼리 프리셋을 바꿀 때, 일부 작품의 직접 배정 등급이 엉뚱하게 남던 문제를 고쳤어요." },
+      { type: "fix", text: "🖼️ 백업을 복원한 뒤 표지 보관함의 '사용 중/미사용' 표시가 실제 사용 여부와 맞도록 정리돼요(잘못된 표시로 인한 삭제·잔류 방지)." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.5", date: "2026-06-20",
     title: "🛡️ 코드 전반 버그 점검 3차 — 내보내기/생명주기 견고화",
@@ -29811,6 +29862,13 @@ async function finalizeVerificationSession(queueRow, suspicionNovel, candidates,
       sql: "UPDATE novels SET user_flagged_suspect=0, suspicion_score=0 WHERE id=?",
       params: [suspicionNovel.id],
     });
+    // 🛡️ FIX(v7.28.6): 배치 완료 → 현재까지 누적된 검증 쏠림은 이 자리 결정으로 '해소됨'. baseline을
+    //   현재 verification_count로 올려, detectAutomaticSuspects가 새 증거(후보 출연 등으로 count가
+    //   baseline 초과) 없이는 이 작품을 즉시 재큐잉하지 못하게 한다(카운터 자체는 표시·백업용 보존).
+    txBatch.push({
+      sql: "UPDATE novels SET verification_baseline = verification_count WHERE id=?",
+      params: [suspicionNovel.id],
+    });
 
     txBatch.push({
       sql: `UPDATE tier_verification_queue SET state='resolved', processed_at=? WHERE id=?`,
@@ -29907,10 +29965,10 @@ async function detectAutomaticSuspects(excludeNovelId) {
     // 🆕 v7.17.0: 전적 쏠림(기존) OR 누적 의심도(신규)로 자동 검출. 둘 다 ORDER 가중에 반영 →
     //   매칭 업셋·순위변동으로 의심도가 높아진 연관작이 자동으로 다음 검증 대상에 오름.
     const rows = await all(
-      `SELECT n.id, n.verification_wins, n.verification_losses, n.verification_count, n.suspicion_score
+      `SELECT n.id, n.verification_wins, n.verification_losses, n.verification_count, n.verification_baseline, n.suspicion_score
        FROM novels n
        LEFT JOIN tier_verification_queue q ON q.novel_id = n.id AND q.state = 'pending'
-       WHERE (n.verification_count >= 3 OR COALESCE(n.suspicion_score,0) >= ?)
+       WHERE ((n.verification_count >= 3 AND n.verification_count > COALESCE(n.verification_baseline, 0)) OR COALESCE(n.suspicion_score,0) >= ?)
          AND q.id IS NULL
          AND n.id != ?
          AND n.manual_tier IS NOT NULL AND n.manual_tier != ''
@@ -29922,9 +29980,12 @@ async function detectAutomaticSuspects(excludeNovelId) {
       const w = Number(r.verification_wins) || 0;
       const l = Number(r.verification_losses) || 0;
       const total = Number(r.verification_count) || 0;
+      const baseline = Number(r.verification_baseline) || 0;
       const susp = Number(r.suspicion_score) || 0;
       const skewRatio = total >= 3 ? Math.abs(w - l) / total : 0;
-      const trigBySkew = total >= 3 && skewRatio >= 0.6;
+      // 🛡️ FIX(v7.28.6): 마지막 배치(finalize) 이후 새 검증 증거(count > baseline)가 있을 때만 쏠림
+      //   재검출 — 이미 배치로 해소된 작품이 무한 재큐잉되던 churn 차단(카운터는 표시·백업용 보존).
+      const trigBySkew = total >= 3 && skewRatio >= 0.6 && total > baseline;
       const trigBySusp = susp >= globalSuspicionConfig.checkLine;
       if (!trigBySkew && !trigBySusp) continue;
       // 방향: 전적 우세 쪽(동률·무전적 → underrated 기본; 시퀀스가 실제 방향을 확정)
@@ -30706,7 +30767,7 @@ async function analyzePreferences(novels, matches) {
       avgRating: avg(stat.ratings),
       adjRating: shrunkMean(stat.ratings, basicStats.avgRating), // 🆕 v7.22.0: 표본 보정 순위 키
       medianRating: median(stat.ratings),
-      avgReadRatio: avg(stat.readRatios),
+      avgReadRatio: stat.readRatios.length ? avg(stat.readRatios) : null, // 🛡️ FIX: 데이터 없으면 0이 아닌 null(미집계와 '0% 읽음' 구분)
       completionRate: stat.count > 0 ? stat.completed / stat.count : 0,
       dropRate: stat.count > 0 ? stat.dropped / stat.count : 0,
       // 🔧 v7.6.0 (포트 v3.12.1): 연중률 + 평균 편수 (편수 기입된 작품만)
@@ -30825,7 +30886,7 @@ async function analyzePreferences(novels, matches) {
       platform,
       count: stat.count,
       avgRating: avg(stat.ratings),
-      avgReadRatio: avg(stat.readRatios),
+      avgReadRatio: stat.readRatios.length ? avg(stat.readRatios) : null, // 🛡️ FIX: 데이터 없으면 0이 아닌 null(미집계와 '0% 읽음' 구분)
       completionRate: stat.count > 0 ? stat.completed / stat.count : 0,
       dropRate: stat.count > 0 ? stat.dropped / stat.count : 0,
     }))
@@ -32504,6 +32565,8 @@ function AppContent() {
   const exportFullJsonRef = useRef(""); // 전체 JSON (공유용)
   // 🔧 v3.5.9: 복원 실패 시 자동 재시도를 위한 백업 저장
   const importBackupRef = useRef("");
+  // 🛡️ FIX: 사용자가 삭제한 약어 그룹(alias_*) id — migrateAliasesToRelations 재생성 방지(마운트 시 로드)
+  const dismissedAliasGroupsRef = useRef([]);
 
   // 📝 보충 탭 (v2.8)
   const [supplementCurrentNovel, setSupplementCurrentNovel] = useState(null); // 현재 보충 중인 작품
@@ -33910,24 +33973,30 @@ function AppContent() {
           }
           
           // 🔗 v3.0.3: 태그 관계도 로드
+          // 🛡️ FIX: 사용자가 삭제한 약어 그룹(alias_*) 목록을 먼저 로드 — migrateAliasesToRelations가
+          //   이를 제외하고 마이그레이션해 '삭제한 약어 그룹이 재시작마다 부활'하던 문제 차단.
+          {
+            const _dismissedAlias = await getAppMeta("alias_groups_dismissed");
+            dismissedAliasGroupsRef.current = Array.isArray(_dismissedAlias) ? _dismissedAlias : [];
+          }
           if (savedTagRelations && typeof savedTagRelations === "object") {
             let loaded = {
               groups: savedTagRelations.groups || {},
               tagToGroup: savedTagRelations.tagToGroup || {},
             };
-            
+
             // 🔗 v3.5.5: TAG_ALIASES → similar 그룹 자동 마이그레이션
-            const { relations: migrated, addedCount } = migrateAliasesToRelations(loaded);
+            const { relations: migrated, addedCount } = migrateAliasesToRelations(loaded, dismissedAliasGroupsRef.current);
             if (addedCount > 0) {
               loaded = migrated;
               safeDefer(() => setAppMeta("tag_relations", migrated));
               console.log(`[태그 관계] ${addedCount}개 약어 그룹 자동 마이그레이션`);
             }
-            
+
             setTagRelations(loaded);
           } else {
             // 최초 실행: TAG_ALIASES 기반으로 초기 그룹 생성
-            const { relations: initial, addedCount } = migrateAliasesToRelations(null);
+            const { relations: initial, addedCount } = migrateAliasesToRelations(null, dismissedAliasGroupsRef.current);
             if (addedCount > 0) {
               setTagRelations(initial);
               safeDefer(() => setAppMeta("tag_relations", initial));
@@ -37223,6 +37292,12 @@ function AppContent() {
   
   // 그룹 삭제
   const deleteTagGroup = useCallback((groupId) => {
+    // 🛡️ FIX: 약어 그룹(alias_*) 삭제를 영구 기억 → 재시작 시 migrateAliasesToRelations가 재생성하지
+    //   않도록(이전: 삭제해도 매 실행 부활). app_meta에 dismissed id 누적 저장.
+    if (groupId && groupId.startsWith("alias_") && !dismissedAliasGroupsRef.current.includes(groupId)) {
+      dismissedAliasGroupsRef.current = [...dismissedAliasGroupsRef.current, groupId];
+      deferSetAppMeta("alias_groups_dismissed", dismissedAliasGroupsRef.current);
+    }
     setTagRelations(prev => {
       const group = prev.groups[groupId];
       if (!group) return prev;
@@ -45706,7 +45781,30 @@ async function importJSON() {
                 await setAppMeta("platform_covers", data.PC);
                 platformCoversRestored = true;
               }
-              
+
+              // 🛡️ FIX: import는 cover_library를 비우지 않아(doClearAll 미포함) 이전 데이터셋의 표지
+              //   상태/소유자가 잔존한다. 복원된 novels/planned가 실제 참조하는 표지만 'used', 나머지는
+              //   'unused'로 재조정 — 잘못된 'used' 박제(삭제 불가)·잘못된 'unused'(삭제 위험) 해소.
+              //   티어/manual_tier 등은 건드리지 않아 안전(verifyDataIntegrity 전체 실행과 무관).
+              try {
+                const _refRows = await all(
+                  "SELECT cover_image AS p FROM novels WHERE cover_image IS NOT NULL AND cover_image != '' " +
+                  "UNION SELECT cover_image AS p FROM planned_novels WHERE cover_image IS NOT NULL AND cover_image != ''"
+                );
+                const _usedSet = new Set((_refRows || []).map(r => r.p));
+                const _libRows = await all("SELECT id, file_path, status FROM cover_library");
+                const _cq = [];
+                for (const c of (_libRows || [])) {
+                  const target = _usedSet.has(c.file_path) ? "used" : "unused";
+                  if (c.status !== target) {
+                    _cq.push(target === "unused"
+                      ? { sql: "UPDATE cover_library SET status='unused', novel_id=NULL WHERE id=?", params: [c.id] }
+                      : { sql: "UPDATE cover_library SET status='used' WHERE id=?", params: [c.id] });
+                  }
+                }
+                if (_cq.length) await execBatch(_cq);
+              } catch (covErr) { console.warn("[import] cover_library 상태 재조정 실패:", covErr?.message); }
+
               await loadList(undefined, undefined, "op");
               
               // 🔄 v3.5.0: 관련 상태 초기화 (이전 데이터 참조 방지)
@@ -54635,9 +54733,13 @@ async function importJSON() {
                                 for (const tk of affectedTiers) {
                                   await rebalanceTierOrder(tk);
                                 }
-                              } else if (oldConfig.mode !== "match") {
-                                // 🆕 v6.2: match 프리셋 적용 시 manual_tier 보존 정책
+                              } else {
+                                // 🆕 v6.2: match/ratio 프리셋 적용 시 manual_tier 보존 정책
                                 // match 모드에선 표시되지 않지만, hybrid/manual 복귀 시 부활
+                                // 🛡️ FIX: 이전 `oldConfig.mode !== "match"` 가드는 match→match/ratio
+                                //   전환 시 무효 키 마이그레이션을 건너뛰어, 등록 티어/과거 hybrid 흔적의
+                                //   manual_tier가 고아 또는 (키 우연 일치 시) 오등급으로 남던 문제.
+                                //   예정작은 이미 mode 무관 마이그레이션 → 본작도 일관되게. 무효 키만 변환이라 안전.
                                 // 새 tier 시스템 키 집합에 없는 키만 마이그레이션, 그 외는 그대로 둠
                                 const novels = await all("SELECT id, manual_tier FROM novels");
                                 const newOrder = getActiveTierOrder(newConfig);
