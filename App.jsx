@@ -2,9 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.0 (유의어 추천 — 관계 인식 + 거절 학습)                           ║
+ * ║  버전: 7.28.1 (AI 유의어 점검 — 사용자 맥락 주입)                             ║
  * ║  최종 수정: 2026-06-20                                                        ║
  * ║  총 라인 수: 약 61,440줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🤖 v7.28.1 AI 유의어 점검 — 사용자 맥락 주입 (2026-06-20)                       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [축4] AI 호출에 사용자 맥락 동봉 — 기존 유사 그룹(묶는 취향), 상반 쌍(반대),    ║
+ * ║ 거절 이력을 프롬프트 섹션으로 넣어 AI가 '이 사람 기준'으로 판단. 결과 필터를    ║
+ * ║ 넘어 애초에 어긋난 제안을 안 하도록(토큰·품질 동시 개선).                        ║
+ * ║                                                                              ║
+ * ║ [구현] callClaudeForSynonyms(…, context) — similarGroups/oppositePairs/        ║
+ * ║ dismissedPairs 자연어 주입. runAiSynonymScan이 tag_relations에서 맥락 구성.     ║
+ * ║ 4축(관계·유형·학습·AI맥락) 설계 1차 완성. 남음: ③ 좌표/스펙트럼 신호.           ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12344,9 +12356,17 @@ function computeSynonymCandidates(novels, tagRelations, opts = {}) {
    ========================================================= */
 const SYNONYM_AI_MODEL = "claude-haiku-4-5";
 
-async function callClaudeForSynonyms(tags, apiKey, model = SYNONYM_AI_MODEL) {
+async function callClaudeForSynonyms(tags, apiKey, model = SYNONYM_AI_MODEL, context = {}) {
   if (!apiKey) throw new Error("API 키가 없습니다");
   if (!tags || tags.length === 0) return [];
+  // 🔧 v7.28.1: 사용자 맥락(기존 그룹·상반·거절) 주입 → AI가 '이 사람 기준'으로 판단
+  let ctxText = "";
+  const sg = (context.similarGroups || []).filter(g => Array.isArray(g) && g.length >= 2);
+  const op = (context.oppositePairs || []).filter(p => Array.isArray(p) && p.length >= 2);
+  const dp = (context.dismissedPairs || []).filter(p => Array.isArray(p) && p.length >= 2);
+  if (sg.length) ctxText += "\n\n[이 사용자가 이미 '같다'고 묶은 그룹 — 묶는 기준·취향 참고]\n" + sg.slice(0, 30).map(g => "- " + g.join(", ")).join("\n");
+  if (op.length) ctxText += "\n\n[이 사용자가 '반대 의미'라고 지정한 쌍 — 절대 묶지 마세요]\n" + op.slice(0, 30).map(p => "- " + p[0] + " ↔ " + p[1]).join("\n");
+  if (dp.length) ctxText += "\n\n[이 사용자가 이전에 '아니다'라고 거절한 쌍 — 다시 제안하지 마세요]\n" + dp.slice(0, 50).map(p => "- " + p[0] + " ↔ " + p[1]).join("\n");
   const tool = {
     name: "report_synonyms",
     description: "의미가 같거나 매우 비슷한 웹소설 태그들을 그룹으로 보고한다",
@@ -12379,7 +12399,7 @@ async function callClaudeForSynonyms(tags, apiKey, model = SYNONYM_AI_MODEL) {
       tool_choice: { type: "tool", name: "report_synonyms" },
       messages: [{
         role: "user",
-        content: "다음은 한 사용자의 웹소설 태그 목록입니다. 표기만 다른 게 아니라 '뜻이 같거나 거의 같은' 유의어/동의어끼리 그룹으로 묶어 주세요. 예: 먼치킨/사기캐/최강, 회귀/회귀물. 애매하면 묶지 마세요. 반드시 입력 목록에 있는 표기만 사용하세요.\n\n태그: " + tags.join(", "),
+        content: "다음은 한 사용자의 웹소설 태그 목록입니다. 표기만 다른 게 아니라 '뜻이 같거나 거의 같은' 유의어/동의어끼리 그룹으로 묶어 주세요. 예: 먼치킨/사기캐/최강, 회귀/회귀물. 애매하면 묶지 마세요. 반드시 입력 목록에 있는 표기만 사용하세요. 아래에 이 사용자가 이미 묶은/반대로 둔/거절한 예시가 있으면 그 취향과 결정을 존중하세요." + ctxText + "\n\n태그: " + tags.join(", "),
       }],
     }),
   });
@@ -13810,7 +13830,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.0";
+const APP_VERSION = "7.28.1";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -13836,6 +13856,14 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.1", date: "2026-06-20",
+    title: "🤖 AI 유의어 점검 — 내 취향 맥락 반영",
+    highlights: [
+      { type: "improve", text: "🤖 AI 점검이 '내 기준'을 보고 판단해요. 이미 묶어둔 유사 그룹(내가 묶는 취향), 반대로 지정한 쌍, 이전에 거절한 쌍을 AI에 함께 알려줘서, 내 결정을 존중하고 어긋난 제안을 반복하지 않아요." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.0", date: "2026-06-20",
     title: "🧠 유의어 추천 — 관계 인식 + 거절 학습",
@@ -37486,7 +37514,19 @@ function AppContent() {
       }
       const tags = [...freq.entries()].filter(([, f]) => f >= 2).sort((a, b) => b[1] - a[1]).slice(0, 200).map(([k]) => disp.get(k));
       if (tags.length < 2) { Alert.alert("AI 점검", "분석할 태그가 부족해요. (2회 이상 쓰인 태그가 2개 이상 필요)"); return; }
-      const groups = await callClaudeForSynonyms(tags, key);
+      // 🔧 v7.28.1: 사용자 맥락 구성 — 기존 유사/상반 그룹 + 거절 이력을 AI에 전달
+      const relGroups = tagRelations?.groups || {};
+      const similarGroups = Object.values(relGroups).filter(g => g.type === "similar" && (g.tags || []).length >= 2).map(g => g.tags).slice(0, 30);
+      const oppositePairs = []; const seenOpp = new Set();
+      for (const [gid, g] of Object.entries(relGroups)) {
+        if (g.type !== "opposite" || !g.relatedGroupId) continue;
+        const other = relGroups[g.relatedGroupId]; if (!other) continue;
+        const pk = [gid, g.relatedGroupId].sort().join("|"); if (seenOpp.has(pk)) continue; seenOpp.add(pk);
+        const a = (g.tags || [])[0], b = (other.tags || [])[0];
+        if (a && b) oppositePairs.push([a, b]);
+      }
+      const dismissedPairs = [...dismissedSynPairs].map(pk => { const [ka, kb] = pk.split("|"); return [disp.get(ka) || ka, disp.get(kb) || kb]; }).slice(0, 50);
+      const groups = await callClaudeForSynonyms(tags, key, SYNONYM_AI_MODEL, { similarGroups, oppositePairs, dismissedPairs });
       const tagset = new Set(tags.map(t => normalizeTagKey(t)));
       const aiCands = [];
       for (const g of (groups || [])) {
