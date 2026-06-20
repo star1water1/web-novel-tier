@@ -2,9 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.12 (AI 점검 — 상반(반대 의미) 관계 추천 추가)                    ║
+ * ║  버전: 7.28.13 (좌표계 AI 자동 배치 — 축 라벨→관련 태그 버킷 배치)           ║
  * ║  최종 수정: 2026-06-20                                                        ║
  * ║  총 라인 수: 약 62,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📐 v7.28.13 좌표계 AI 자동 배치 — 축 라벨→관련 태그 버킷 배치 (2026-06-20)  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 좌표계 편집에서 '🤖 AI 배치 제안': 축 라벨(약함↔강함 등)을 보고 관련 태그만  ║
+ * ║ 골라 X·Y를 1~5 버킷으로 제안. 연속값 가짜정밀 대신 범주 → LLM 신뢰성↑,       ║
+ * ║ 적용 후 그리드에서 미세조정. 전송은 태그+축 라벨만(제목·감상 X).             ║
+ * ║                                                                              ║
+ * ║ [옵션] 후보범위 토글 2개(자주만 2+ / 이미배치 재배치). [안전] 빈 축 라벨     ║
+ * ║ 거부, 미배치만=추가 전용, 재배치=전체적용 시 덮어쓰기 확인, 버킷·후보·NaN    ║
+ * ║ 검증. 신규 callClaude/GeminiForPlacements + runAiCoordPlacement.             ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12777,6 +12789,132 @@ async function callGeminiForSynonyms(tags, apiKey, model = GEMINI_AI_MODEL, cont
   return { groups: Array.isArray(groups) ? groups : [], opposites: Array.isArray(opposites) ? opposites : [] };
 }
 
+/* =========================================================
+   🆕 v7.28.13: 좌표계 AI 자동 배치 — 축 라벨을 보고 관련 태그를
+   1~5 버킷 위치로 제안(연속값 가짜정밀 대신 범주 → LLM 신뢰성↑).
+   전송은 태그 + 축 라벨만. Claude tool_use / Gemini responseSchema 공용.
+   ========================================================= */
+function buildPlacementPromptText(tags, context = {}) {
+  const ax = context.axes || {};
+  const xn = ax.xn || "낮음", xp = ax.xp || "높음", yn = ax.yn || "낮음", yp = ax.yp || "높음";
+  let anchorText = "";
+  const anchors = (context.anchors || []).filter(a => a && a.tag);
+  if (anchors.length) anchorText = "\n\n[이 사용자가 이미 배치한 태그 — 이 척도/기준에 맞추세요]\n" + anchors.slice(0, 40).map(a => `- ${a.tag}: X=${a.xb}/5, Y=${a.yb}/5`).join("\n");
+  return `이 사용자의 웹소설 태그 '좌표계'에 태그를 배치합니다.\n좌표계: "${ax.name || "좌표계"}"\nX축 (1~5 정수): 1 = "${xn}", 5 = "${xp}" (3 = 중간)\nY축 (1~5 정수): 1 = "${yn}", 5 = "${yp}" (3 = 중간)` + anchorText + `\n\n아래 태그 중 '이 두 축과 분명히 관련 있는' 것만 골라 X·Y를 1~5 정수로 정하세요. 두 축과 무관한 태그는 placements에서 빼세요(억지로 넣지 말 것). 반드시 입력 목록의 표기만 사용하고, 확실한 것만 넣으세요.\n\n태그: ${tags.join(", ")}`;
+}
+
+async function callClaudeForPlacements(tags, apiKey, model = SYNONYM_AI_MODEL, context = {}) {
+  if (!apiKey) throw new Error("API 키가 없습니다");
+  if (!tags || tags.length === 0) return { placements: [] };
+  const ax = context.axes || {};
+  const promptText = buildPlacementPromptText(tags, context);
+  const tool = {
+    name: "report_placements",
+    description: "좌표계의 두 축과 관련된 태그를 1~5 버킷 위치로 배치한다",
+    input_schema: {
+      type: "object",
+      properties: {
+        placements: {
+          type: "array",
+          description: "이 좌표계와 분명히 관련된 태그만 포함. 무관하면 제외.",
+          items: {
+            type: "object",
+            properties: {
+              tag: { type: "string", description: "입력 목록의 표기 그대로" },
+              xb: { type: "integer", description: `X축 1~5 (1=${ax.xn || "낮음"}, 5=${ax.xp || "높음"})` },
+              yb: { type: "integer", description: `Y축 1~5 (1=${ax.yn || "낮음"}, 5=${ax.yp || "높음"})` },
+              reason: { type: "string", description: "짧은 근거" },
+            },
+            required: ["tag", "xb", "yb"],
+          },
+        },
+      },
+      required: ["placements"],
+    },
+  };
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({
+      model,
+      max_tokens: context.maxTokens || 4096,
+      tools: [tool],
+      tool_choice: { type: "tool", name: "report_placements" },
+      messages: [{ role: "user", content: promptText }],
+    }),
+  });
+  if (!res.ok) {
+    let detail = "";
+    try { detail = (await res.json())?.error?.message || ""; } catch {}
+    if (res.status === 401) throw new Error("API 키가 올바르지 않아요 (401)");
+    if (res.status === 429) throw new Error("요청이 많아요. 잠시 후 다시 시도 (429)");
+    throw new Error(`API 오류 ${res.status}${detail ? ": " + detail.slice(0, 120) : ""}`);
+  }
+  const data = await res.json();
+  const toolUse = (data.content || []).find(b => b.type === "tool_use");
+  const placements = toolUse?.input?.placements;
+  return { placements: Array.isArray(placements) ? placements : [] };
+}
+
+async function callGeminiForPlacements(tags, apiKey, model = GEMINI_AI_MODEL, context = {}) {
+  if (!apiKey) throw new Error("API 키가 없습니다");
+  if (!tags || tags.length === 0) return { placements: [] };
+  const promptText = buildPlacementPromptText(tags, context);
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: promptText }] }],
+      generationConfig: {
+        temperature: 0.2,
+        maxOutputTokens: context.maxTokens || 4096,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: "OBJECT",
+          properties: {
+            placements: {
+              type: "ARRAY",
+              items: {
+                type: "OBJECT",
+                properties: {
+                  tag: { type: "STRING" },
+                  xb: { type: "INTEGER" },
+                  yb: { type: "INTEGER" },
+                  reason: { type: "STRING" },
+                },
+                required: ["tag", "xb", "yb"],
+                propertyOrdering: ["tag", "xb", "yb", "reason"],
+              },
+            },
+          },
+          required: ["placements"],
+          propertyOrdering: ["placements"],
+        },
+      },
+    }),
+  });
+  if (!res.ok) {
+    let detail = "";
+    try { detail = (await res.json())?.error?.message || ""; } catch {}
+    if (res.status === 400 && /API key not valid|API_KEY_INVALID/i.test(detail)) throw new Error("API 키가 올바르지 않아요 (400)");
+    if (res.status === 401 || res.status === 403) throw new Error(`API 키가 올바르지 않아요 (${res.status})`);
+    if (res.status === 429) throw new Error("무료 한도를 초과했어요. 잠시 후 다시 시도 (429)");
+    throw new Error(`API 오류 ${res.status}${detail ? ": " + detail.slice(0, 120) : ""}`);
+  }
+  const data = await res.json();
+  const cand = (data.candidates || [])[0];
+  const text = (cand?.content?.parts || []).map(p => p?.text || "").join("");
+  if (!text) {
+    if (data?.promptFeedback?.blockReason) throw new Error("요청이 차단됐어요: " + data.promptFeedback.blockReason);
+    return { placements: [] };
+  }
+  let parsed;
+  try { parsed = JSON.parse(text); } catch { return { placements: [] }; }
+  const placements = parsed?.placements;
+  return { placements: Array.isArray(placements) ? placements : [] };
+}
+
 /**
  * 🆕 v3.5.12: 태그 목록에서 대상 태그 찾기 (공백 무시 매칭)
  * 찾으면 목록 내 원본 문자열 반환, 없으면 null
@@ -14212,7 +14350,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.12";
+const APP_VERSION = "7.28.13";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -14238,6 +14376,16 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.13", date: "2026-06-20",
+    title: "📐 좌표계 AI 자동 배치",
+    highlights: [
+      { type: "new", text: "📐 태그 좌표계 편집에 '🤖 AI 배치 제안'이 생겼어요. 축 라벨(예: 약함 ↔ 강함, 순한 ↔ 강한 표현)을 보고 관련 있는 태그만 골라 X·Y를 5단계로 배치해줘요. 지금까지 손으로만 찍던 좌표를 AI가 초안으로 깔아주고, 적용한 뒤 그리드에서 드래그로 미세조정하면 돼요." },
+      { type: "new", text: "🎛️ 후보 범위를 고를 수 있어요 — '자주 쓰는 태그만(2회+)'과 '이미 배치된 것도 재배치' 토글. 기본은 아직 안 놓은 자주 쓰는 태그만(안전하게 추가만). 이미 배치한 게 있으면 그 기준에 맞춰 더 정확하게 제안해요." },
+      { type: "improve", text: "🛡️ 안전장치: 축 라벨이 비어 있으면 막아주고, '전체 적용'이 기존 배치를 덮어쓸 땐 먼저 확인해요. 저장을 눌러야 분석에 반영되니 검토 후 적용하세요. 전송은 예전처럼 태그와 축 라벨만 — 작품 제목·감상은 안 나가요." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.12", date: "2026-06-20",
     title: "⚡ AI 점검 — 상반(반대 의미) 관계 추천",
@@ -32932,6 +33080,10 @@ function AppContent() {
   const [coordinateSystems, setCoordinateSystems] = useState(null); // {coord_id: {...}, ...}
   const [coordManageOpen, setCoordManageOpen] = useState(false); // 좌표계 관리 모달
   const [editingCoordSystem, setEditingCoordSystem] = useState(null); // 편집 중인 좌표계
+  const [coordAiSuggestions, setCoordAiSuggestions] = useState([]); // 🆕 v7.28.13: 좌표계 AI 배치 제안 (세션·드래프트)
+  const [coordAiBusy, setCoordAiBusy] = useState(false); // 🆕 v7.28.13
+  const [coordOnlyFrequent, setCoordOnlyFrequent] = useState(true); // 🆕 v7.28.13: 후보 2회+만 (끄면 1회 포함)
+  const [coordIncludePlaced, setCoordIncludePlaced] = useState(false); // 🆕 v7.28.13: 이미 배치된 것도 재배치(덮어쓰기)
   const [editingCoordTag, setEditingCoordTag] = useState(null); // 편집 중인 태그 {tag, x, y}
   const [coordPickerOpen, setCoordPickerOpen] = useState(false); // 🆕 v3.5.12: 좌표계 일괄 태그 추가
 
@@ -38187,6 +38339,97 @@ function AppContent() {
     setTagHealthData(prev => prev ? { ...prev, oppositeCandidates: (prev.oppositeCandidates || []).filter(c => synPairKey(c.a, c.b) !== key) } : prev);
   }
 
+  // 🆕 v7.28.13: 좌표(0~1) ↔ 버킷(1~5) 변환 + 위치→축 라벨 근사
+  function coordToBucket(v) { return Math.min(5, Math.max(1, Math.round((Number(v) || 0) * 4) + 1)); }
+  function bucketToCoord(b) { return (Math.min(5, Math.max(1, Math.round(Number(b)))) - 1) / 4; }
+  function coordPosLabel(v, neg, pos) {
+    const n = Number(v) || 0;
+    if (n <= 0.15) return `매우 ${neg}`;
+    if (n <= 0.4) return `${neg} 쪽`;
+    if (n < 0.6) return "중간";
+    if (n < 0.85) return `${pos} 쪽`;
+    return `매우 ${pos}`;
+  }
+  // 🆕 v7.28.13: 제안 1개 적용 (드래프트에 추가/덮어쓰기) — 저장 전까진 분석 영향 없음
+  function applyCoordSuggestion(s) {
+    if (!s) return;
+    setEditingCoordSystem(prev => prev ? { ...prev, tags: { ...(prev.tags || {}), [s.tag]: { x: s.x, y: s.y } } } : prev);
+    setCoordAiSuggestions(prev => prev.filter(x => x.tag !== s.tag));
+  }
+  // 🆕 v7.28.13: 전체 적용 — 덮어쓰기 있으면 확인(메타분석 ④ 풋건 방지)
+  function applyAllCoordSuggestions() {
+    const sugg = coordAiSuggestions;
+    if (!sugg.length) return;
+    const overwrites = sugg.filter(s => s.existing).length;
+    const doApply = () => {
+      setEditingCoordSystem(prev => {
+        if (!prev) return prev;
+        const tags = { ...(prev.tags || {}) };
+        for (const s of sugg) tags[s.tag] = { x: s.x, y: s.y };
+        return { ...prev, tags };
+      });
+      setCoordAiSuggestions([]);
+    };
+    if (overwrites > 0) {
+      Alert.alert("전체 적용", `${sugg.length}개를 적용해요. 그중 ${overwrites}개는 기존 배치를 덮어써요. 계속할까요?`, [{ text: "취소", style: "cancel" }, { text: "적용", onPress: doApply }]);
+    } else { doApply(); }
+  }
+
+  // 🆕 v7.28.13: 좌표계 AI 배치 제안 실행 (축 라벨 가드 + 후보 수집 + 검증)
+  async function runAiCoordPlacement() {
+    const provider = aiProvider === "gemini" ? "gemini" : "claude";
+    const key = ((provider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim();
+    if (!key) { Alert.alert("AI 배치", `먼저 설정 > 🏷️ 태그에서 ${provider === "gemini" ? "Gemini" : "Claude"} API 키를 입력해 주세요.`); return; }
+    const sys = editingCoordSystem;
+    if (!sys) return;
+    const xn = (sys.xAxis?.negative || "").trim(), xp = (sys.xAxis?.positive || "").trim();
+    const yn = (sys.yAxis?.negative || "").trim(), yp = (sys.yAxis?.positive || "").trim();
+    const isArrow = (s) => !s || s === "←" || s === "→" || s === "↑" || s === "↓";
+    if (isArrow(xn) || isArrow(xp) || isArrow(yn) || isArrow(yp)) {
+      Alert.alert("배치 불가", "먼저 X·Y 축 라벨(예: 약함 ↔ 강함)을 채워 주세요. 라벨이 있어야 AI가 의미를 알 수 있어요.");
+      return;
+    }
+    setCoordAiBusy(true);
+    setCoordAiSuggestions([]);
+    try {
+      const placed = sys.tags || {};
+      const placedKeys = new Set(Object.keys(placed).map(t => normalizeTagKey(t)));
+      const freq = new Map(); const disp = new Map();
+      for (const n of (list || [])) {
+        const raw = [...parseMajorSub(n.major_genre), ...parseMajorSub(n.sub_genre), ...((n.tags || "").split(",").map(t => t.trim()).filter(Boolean))];
+        const seen = new Set();
+        for (const t of raw) { const k2 = normalizeTagKey(t); if (!k2 || seen.has(k2)) continue; seen.add(k2); freq.set(k2, (freq.get(k2) || 0) + 1); if (!disp.has(k2)) disp.set(k2, t); }
+      }
+      const minFreq = coordOnlyFrequent ? 2 : 1;
+      let entries = [...freq.entries()].filter(([, f]) => f >= minFreq);
+      if (!coordIncludePlaced) entries = entries.filter(([k]) => !placedKeys.has(k));
+      const tags = entries.sort((a, b) => b[1] - a[1]).slice(0, 100).map(([k]) => disp.get(k));
+      if (tags.length < 1) { Alert.alert("AI 배치", coordIncludePlaced ? "배치할 태그가 없어요." : "새로 배치할 태그가 없어요. (이미 다 놓였거나 후보 부족 — 범위를 넓혀 보세요)"); setCoordAiBusy(false); return; }
+      const anchors = Object.entries(placed).slice(0, 40).map(([tag, p]) => ({ tag, xb: coordToBucket(p?.x), yb: coordToBucket(p?.y) }));
+      const ctx = { axes: { xn, xp, yn, yp, name: sys.name || "좌표계" }, anchors, maxTokens: 4096 };
+      const { placements } = provider === "gemini"
+        ? await callGeminiForPlacements(tags, key, GEMINI_AI_MODEL, ctx)
+        : await callClaudeForPlacements(tags, key, SYNONYM_AI_MODEL, ctx);
+      const dispByKey = new Map(tags.map(t => [normalizeTagKey(t), t]));
+      const seenP = new Set(); const sugg = [];
+      for (const p of (placements || [])) {
+        const t = p?.tag; if (!t) continue;
+        const k = normalizeTagKey(t);
+        if (!dispByKey.has(k) || seenP.has(k)) continue; seenP.add(k);
+        if (!Number.isFinite(Number(p.xb)) || !Number.isFinite(Number(p.yb))) continue;
+        const dt = dispByKey.get(k);
+        const ex = placed[dt] || placed[t] || null;
+        sugg.push({ tag: dt, x: bucketToCoord(p.xb), y: bucketToCoord(p.yb), reason: p.reason ? String(p.reason) : "", existing: ex ? { x: ex.x, y: ex.y } : null });
+      }
+      setCoordAiSuggestions(sugg);
+      if (!sugg.length) Alert.alert("AI 배치", "이 좌표계와 관련된 태그를 찾지 못했어요. 축 라벨을 더 구체적으로 하거나 범위를 넓혀 보세요.");
+    } catch (e) {
+      Alert.alert("AI 배치 실패", e?.message || String(e));
+    } finally {
+      setCoordAiBusy(false);
+    }
+  }
+
   // 🤖 v7.27.0: Claude API 키 저장 (app_meta — 슬롯 DB, 백업엔 미포함)
   async function saveClaudeApiKey(key) {
     const k = (key || "").trim();
@@ -38406,6 +38649,9 @@ function AppContent() {
       try { const arr2 = await getAppMeta("opposite_dismissed"); if (Array.isArray(arr2)) setDismissedOppPairs(new Set(arr2)); } catch {}
     })();
   }, []);
+
+  // 🆕 v7.28.13: 좌표계 전환/모달 닫힘 시 AI 배치 제안 초기화 (스테일 방지)
+  useEffect(() => { setCoordAiSuggestions([]); }, [editingCoordSystem?.id, coordManageOpen]);
 
   async function saveHiddenTags(tags) {
     setHiddenTags(tags);
@@ -61116,7 +61362,60 @@ async function importJSON() {
                     </TouchableOpacity>
                   </View>
                 </View>
-                
+
+                {/* 🆕 v7.28.13: 🤖 AI 자동 배치 제안 (축 라벨 → 관련 태그 1~5 버킷 배치) */}
+                <View style={{ backgroundColor: C.chip, borderRadius: 12, padding: 12, marginBottom: 10 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                    <Text style={{ color: C.text, fontWeight: "800", fontSize: 13 }}>🤖 AI 배치 제안</Text>
+                    <TouchableOpacity
+                      disabled={coordAiBusy}
+                      onPress={runAiCoordPlacement}
+                      style={{ backgroundColor: coordAiBusy ? C.line : (isDark ? "#3730a3" : "#4338ca"), paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8, opacity: coordAiBusy ? 0.6 : 1 }}
+                    >
+                      <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>{coordAiBusy ? "분석 중…" : "제안 받기"}</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={{ color: C.sub, fontSize: 10.5, lineHeight: 15, marginTop: 6 }}>
+                    축 라벨을 보고 관련 태그를 5단계로 배치해줘요. 적용 후 그리드에서 드래그로 미세조정하세요. 이미 배치된 게 있으면 그 기준에 맞춰 더 정확해져요. (태그·축 라벨만 전송)
+                  </Text>
+                  <View style={{ flexDirection: "row", gap: 16, marginTop: 8, flexWrap: "wrap" }}>
+                    {[
+                      { on: coordOnlyFrequent, set: () => setCoordOnlyFrequent(v => !v), label: "자주 쓰는 태그만 (2회+)" },
+                      { on: coordIncludePlaced, set: () => setCoordIncludePlaced(v => !v), label: "이미 배치된 것도 재배치" },
+                    ].map((t, i) => (
+                      <TouchableOpacity key={i} onPress={t.set} style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                        <View style={{ width: 17, height: 17, borderRadius: 5, borderWidth: 2, borderColor: t.on ? C.primary : C.line, backgroundColor: t.on ? C.primary : "transparent", alignItems: "center", justifyContent: "center" }}>
+                          {t.on ? <Text style={{ color: "#fff", fontSize: 11, fontWeight: "900" }}>✓</Text> : null}
+                        </View>
+                        <Text style={{ color: C.sub, fontSize: 11.5 }}>{t.label}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  {coordAiSuggestions.length > 0 && (
+                    <View style={{ marginTop: 10 }}>
+                      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                        <Text style={{ color: C.text, fontWeight: "700", fontSize: 12 }}>제안 {coordAiSuggestions.length}개</Text>
+                        <TouchableOpacity onPress={applyAllCoordSuggestions} style={{ backgroundColor: C.primary, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 7 }}>
+                          <Text style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}>전체 적용</Text>
+                        </TouchableOpacity>
+                      </View>
+                      {coordAiSuggestions.slice(0, 40).map((s) => (
+                        <View key={s.tag} style={{ flexDirection: "row", alignItems: "center", backgroundColor: C.bg, borderRadius: 9, paddingHorizontal: 10, paddingVertical: 7, marginBottom: 5 }}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ color: C.text, fontSize: 13, fontWeight: "700" }}>{s.tag}{s.existing ? "  ↻" : ""}</Text>
+                            <Text style={{ color: C.sub, fontSize: 10.5, marginTop: 1 }}>
+                              X: {coordPosLabel(s.x, editingCoordSystem.xAxis?.negative || "낮음", editingCoordSystem.xAxis?.positive || "높음")} · Y: {coordPosLabel(s.y, editingCoordSystem.yAxis?.negative || "낮음", editingCoordSystem.yAxis?.positive || "높음")}{s.reason ? ` · ${s.reason}` : ""}
+                            </Text>
+                          </View>
+                          <TouchableOpacity onPress={() => applyCoordSuggestion(s)} style={{ paddingHorizontal: 11, paddingVertical: 6, borderRadius: 7, backgroundColor: isDark ? "#1e3a5f" : "#eff6ff", borderWidth: 1, borderColor: isDark ? "#3b82f6" : "#93c5fd" }}>
+                            <Text style={{ color: isDark ? "#93c5fd" : "#1d4ed8", fontWeight: "700", fontSize: 12 }}>적용</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                </View>
+
                 {/* 🆕 v3.5.12: 좌표계 일괄 태그 추가 피커 */}
                 <TagPickerModal
                   visible={coordPickerOpen}
