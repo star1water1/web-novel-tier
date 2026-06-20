@@ -2,9 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.1 (AI 유의어 점검 — 사용자 맥락 주입)                             ║
+ * ║  버전: 7.28.2 (유의어 후보 — 좌표계 신호 / 설계 전 축 완성)                   ║
  * ║  최종 수정: 2026-06-20                                                        ║
  * ║  총 라인 수: 약 61,440줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📐 v7.28.2 유의어 후보 — 좌표계 신호 (사용자 의미 공간) (2026-06-20)            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [축3 완성] 사용자가 좌표계에 배치한 태그 거리를 신호로. categorizeRelation      ║
+ * ║ "synonym"(xDiff<0.1,yDiff<0.15)→0.9, "nuance"(xDiff<0.15)→0.72. 글자가 전혀     ║
+ * ║ 달라도 사용자가 의미상 가깝게 둔 쌍을 로컬 포착(습관 무관·AI 불필요).           ║
+ * ║                                                                              ║
+ * ║ [구조] computeSynonymCandidates를 byKey 중복제거로 재작성 — 형태·좌표 후보를    ║
+ * ║ 한 곳에서 합치고 같은그룹/거절/상반 일괄 컷. opts.coordinateSystems 추가.       ║
+ * ║ 4축(관계·유형·학습·AI맥락) + 좌표 = 설계 전 축 구현 완료.                       ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12282,6 +12294,8 @@ function computeSynonymCandidates(novels, tagRelations, opts = {}) {
   const MIN_FREQ = opts.minFreq || 2;
   const MAX_RESULTS = opts.maxResults || 40;
   const t2g = tagRelations?.tagToGroup || {};
+  const dismissed = opts.dismissed instanceof Set ? opts.dismissed : null;
+  const coordSys = opts.coordinateSystems && typeof opts.coordinateSystems === "object" ? opts.coordinateSystems : null;
 
   const tagFreq = new Map();     // normKey → 사용 작품 수
   const tagDisplay = new Map();  // normKey → Map(표기 → 횟수)
@@ -12313,35 +12327,60 @@ function computeSynonymCandidates(novels, tagRelations, opts = {}) {
   };
   const groupOf = (k) => t2g[displayOf(k)] || t2g[k] || null;
 
-  const keys = [...tagFreq.entries()].filter(([, f]) => f >= MIN_FREQ).map(([k]) => k).sort();
-  const dismissed = opts.dismissed instanceof Set ? opts.dismissed : null;
+  // 후보 누적 + 중복 제거. 같은 그룹/거절/상반은 여기서 일괄 컷(형태·좌표 공통).
+  const byKey = new Map();
+  const addCand = (da, db, score, reason, suggest) => {
+    const ka = normalizeTagKey(da), kb = normalizeTagKey(db);
+    if (!ka || !kb || ka === kb) return;
+    const gA = groupOf(ka), gB = groupOf(kb);
+    if (gA && gB && gA === gB) return;                // 이미 같은 그룹
+    const pk = ka <= kb ? `${ka}|${kb}` : `${kb}|${ka}`;
+    if (dismissed && dismissed.has(pk)) return;        // 거절 이력 (로컬·AI 공통)
+    if (isOppositePair(da, db, tagRelations)) return;  // 사용자가 상반이라 지정
+    const ex = byKey.get(pk);
+    if (ex) {
+      if (score > ex.score) { ex.score = score; ex.suggest = suggest; }
+      if (reason && !ex.reasons.includes(reason)) ex.reasons.push(reason);
+    } else {
+      byKey.set(pk, { a: da, b: db, score, minFreq: Math.min(tagFreq.get(ka) || 0, tagFreq.get(kb) || 0), reasons: reason ? [reason] : [], suggest });
+    }
+  };
 
-  // 🔧 v7.27.1: 형태(글자) 신호만 — 동시출현은 태깅 습관에 의존해 부적절.
-  // 🔧 v7.28.0: 사용자가 묶은 같은 그룹 / 거절 이력 / 상반 관계는 후보에서 제외.
-  const candidates = [];
+  // ① 형태(글자) 신호 — 어근·접미사·오타. 동시출현은 미사용(습관 편향 회피, v7.27.1).
+  const keys = [...tagFreq.entries()].filter(([, f]) => f >= MIN_FREQ).map(([k]) => k).sort();
   for (let i = 0; i < keys.length; i++) {
     const ka = keys[i];
-    const fa = tagFreq.get(ka);
-    const ga = groupOf(ka);
     for (let j = i + 1; j < keys.length; j++) {
       const kb = keys[j];
       if (Math.abs(ka.length - kb.length) > 4) continue; // 길이차 가지치기
       const morph = morphSynonymScore(ka, kb);
       if (morph.score < 0.45) continue;
-      const gb = groupOf(kb);
-      if (ga && gb && ga === gb) continue; // 이미 같은 그룹
-      if (dismissed && dismissed.has(`${ka}|${kb}`)) continue; // 이전에 무시한 쌍 (keys 정렬됨 → ka<=kb)
-      const da = displayOf(ka), db = displayOf(kb);
-      if (isOppositePair(da, db, tagRelations)) continue; // 사용자가 상반이라 지정한 쌍
-      candidates.push({
-        a: da, b: db,
-        score: morph.score,
-        minFreq: Math.min(fa, tagFreq.get(kb)),
-        reasons: [morph.reason].filter(Boolean),
-        suggest: morph.score >= 0.9 ? "merge" : "group",
-      });
+      addCand(displayOf(ka), displayOf(kb), morph.score, morph.reason, morph.score >= 0.9 ? "merge" : "group");
     }
   }
+
+  // 🔧 v7.28.2: ③ 좌표계 신호 — 사용자가 같은 좌표계에 가깝게 배치한 태그는
+  //   '의미상 가깝다'고 직접 표시한 것(습관 무관). 형태로 못 잡는 유의어를 로컬 포착.
+  if (coordSys) {
+    for (const sys of Object.values(coordSys)) {
+      const tp = sys && sys.tags;
+      if (!tp || typeof tp !== "object") continue;
+      const names = Object.keys(tp);
+      for (let i = 0; i < names.length; i++) {
+        const pa = tp[names[i]];
+        if (!pa) continue;
+        for (let j = i + 1; j < names.length; j++) {
+          const pb = tp[names[j]];
+          if (!pb) continue;
+          const rel = categorizeRelation(Math.abs((pa.x || 0) - (pb.x || 0)), Math.abs((pa.y || 0) - (pb.y || 0)));
+          if (rel === "synonym") addCand(names[i], names[j], 0.9, `좌표상 동의어 위치 (${sys.name || "좌표계"})`, "group");
+          else if (rel === "nuance") addCand(names[i], names[j], 0.72, `좌표상 인접 (${sys.name || "좌표계"})`, "group");
+        }
+      }
+    }
+  }
+
+  const candidates = [...byKey.values()];
   candidates.sort((x, y) => (y.score - x.score) || (y.minFreq - x.minFreq));
   return candidates.slice(0, MAX_RESULTS);
 }
@@ -13830,7 +13869,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.1";
+const APP_VERSION = "7.28.2";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -13856,6 +13895,14 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.2", date: "2026-06-20",
+    title: "📐 유의어 후보 — 좌표계 신호 추가",
+    highlights: [
+      { type: "improve", text: "📐 태그 좌표계를 쓰신다면, 같은 좌표계에서 가깝게 배치한 태그(직접 '의미가 가깝다'고 둔 것)도 유의어 후보로 잡아요. 글자가 전혀 달라도 — 좌표상 붙여둔 두 태그면 — 추천에 떠서, AI 없이도 의미 유의어를 찾을 수 있어요." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.1", date: "2026-06-20",
     title: "🤖 AI 유의어 점검 — 내 취향 맥락 반영",
@@ -37423,7 +37470,7 @@ function AppContent() {
     try {
       const health = computeTagHealth();
       // 🧩 v7.26.0: 유의어 후보(어근 공유) 동시 계산 — 표기 변형(clusters)과 별개 섹션
-      try { health.synonymCandidates = computeSynonymCandidates(list, tagRelations, { dismissed: dismissedSynPairs }); }
+      try { health.synonymCandidates = computeSynonymCandidates(list, tagRelations, { dismissed: dismissedSynPairs, coordinateSystems }); }
       catch (se) { console.warn("[synonym] 계산 실패:", se?.message); health.synonymCandidates = []; }
       setTagHealthData(health);
     }
