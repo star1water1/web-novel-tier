@@ -2,9 +2,28 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.6 (보류 항목 정리 — 데이터/마이그레이션/검증 churn 6건)          ║
+ * ║  버전: 7.28.7 (남은 저위험 항목 정리 — UI/백업/이미지/정렬 8건)              ║
  * ║  최종 수정: 2026-06-20                                                        ║
- * ║  총 라인 수: 약 62,300줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 62,350줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛡️ v7.28.7 남은 저위험 항목 정리 — UI/백업/이미지/정렬 8건 (2026-06-20)         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [폴더 필터] 삭제된 폴더를 가리키는 필터가 복원되면 빈 Set→전체 작품 숨김 →      ║
+ * ║ 유효하지 않은 폴더 필터는 ALL로 폴백(folderFilteredIds + folders dep).          ║
+ * ║ [일괄 정렬] hybrid/manual에서 '레이팅' 정렬이 동결 ELO를 써 무의미 →            ║
+ * ║ globalTierRankMap(patrick truth)으로 정렬해 표시 순서와 일치.                   ║
+ * ║ [좌표계 이름변경] 같은 좌표계의 다른 기존 태그 이름으로 바꾸면 그 좌표를 말없이  ║
+ * ║ 덮어쓰던 데이터 손실 → 충돌 경고 후 중단.                                       ║
+ * ║ [이미지] compressAndSaveImage 변환 실패 시 원본 ext 그대로 저장(HEIC 등 깨짐) → ║
+ * ║ JPEG 재인코딩 우선 시도 후 최후에만 원본 폴백.                                  ║
+ * ║ [백업 무승부] winner_id NULL(무승부/무효) 매치가 복원 시 'A승'으로 둔갑 → f의    ║
+ * ║ bit2로 보존(구버전 백업 f∈{0..3}이라 하위호환).                                 ║
+ * ║ [수동 프리셋] 적용 시 manual_order 미재정렬로 병합 티어에서 충돌 → hybrid처럼    ║
+ * ║ 영향 티어 rebalanceTierOrder.                                                  ║
+ * ║ [인사이트] '과대평가 태그' 매칭을 정규화 비교로(공백/alias 변형도 잡힘).         ║
+ * ║ [홈 정렬] '티어순' 정렬이 임계값 편집 후 stale → deps에 tierSystemConfig 추가.   ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -13797,8 +13816,21 @@ async function compressAndSaveImage(sourceUri, maxSize, quality, ext = "jpg") {
 
     return saved;
   } catch (e) {
-    console.warn("[compressAndSaveImage] 실패, 원본 저장 폴백:", e.message);
-    return await saveCoverToLibrary(sourceUri, "original", ext);
+    console.warn("[compressAndSaveImage] 실패, JPEG 재인코딩 폴백:", e.message);
+    // 🛡️ FIX: 원본 ext 그대로 저장하면 HEIC 등 RN이 못 그리는 포맷이 깨진 채 저장됨.
+    //   먼저 리사이즈 없이 JPEG로만 재인코딩 시도(리사이즈/메모리 실패였다면 성공) → 렌더 가능.
+    //   그것도 실패(예: 코덱 디코딩 불가)하면 최후로 원본 저장.
+    try {
+      const jpg = await ImageManipulator.manipulateAsync(sourceUri, [], {
+        compress: quality, format: ImageManipulator.SaveFormat.JPEG,
+      });
+      const saved = await saveCoverToLibrary(jpg.uri, "original", "jpg");
+      if (jpg.uri !== sourceUri) FileSystem.deleteAsync(jpg.uri, { idempotent: true }).catch(() => {});
+      return saved;
+    } catch (e2) {
+      console.warn("[compressAndSaveImage] JPEG 재인코딩도 실패, 원본 저장:", e2.message);
+      return await saveCoverToLibrary(sourceUri, "original", ext);
+    }
   }
 }
 
@@ -13996,7 +14028,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.6";
+const APP_VERSION = "7.28.7";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -14022,6 +14054,18 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.7", date: "2026-06-20",
+    title: "🛡️ 남은 저위험 항목 정리 — UI/백업/이미지/정렬",
+    highlights: [
+      { type: "fix", text: "📁 삭제된 폴더를 가리키는 필터 때문에 작품 목록이 통째로 비어 보이던 문제를 고쳤어요. 이제 그런 경우 자동으로 '전체'로 돌아가요." },
+      { type: "fix", text: "📐 좌표계에서 태그 이름을 이미 있는 다른 태그 이름으로 바꾸면, 그 태그의 위치가 말없이 덮어써지던 문제를 막았어요(이제 알려주고 막아요)." },
+      { type: "fix", text: "🖼️ 일부 기기에서 특정 이미지(HEIC 등)를 표지/갤러리로 넣을 때 깨진 채 저장되던 문제를, JPEG로 다시 변환해 저장하도록 개선했어요." },
+      { type: "fix", text: "🗳️ 백업에 무승부(승자 없음) 대진 기록이 복원될 때 'A 승리'로 잘못 바뀌던 문제를 고쳤어요." },
+      { type: "fix", text: "🎚️ 일괄 편집/직접 배정 등에서 정렬·순서가 어긋나던 자잘한 문제들과, 취향 분석의 '과대평가 태그' 인식 누락을 함께 정리했어요." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.6", date: "2026-06-20",
     title: "🛡️ 보류 항목 정리 — 데이터/마이그레이션/검증",
@@ -31866,7 +31910,10 @@ function generateBehaviorInsights(staticGenres, dynamicGenres, staticTags, dynam
     
     // 정적 빈도 높은데 동적 승률 낮은 태그 (과대평가)
     for (const st of staticTags.slice(0, 8)) {
-      const dynMatch = dynamicTags.find(dt => dt.tag === (st.tag || st.genre));
+      // 🛡️ FIX: 원시 문자열 === 비교 → 정규화 비교(공백/alias 변형도 매칭). 이전엔 그룹화/표기
+      //   차이로 dynMatch가 안 잡혀 '과대평가 태그' 인사이트가 누락되던 기능 갭.
+      const _stKey = normalizeTagKey(st.tag || st.genre || "");
+      const dynMatch = dynamicTags.find(dt => normalizeTagKey(dt.tag || dt.genre || "") === _stKey);
       if (dynMatch && dynMatch.winRate < 0.40 && dynMatch.sample >= 8) {
         insights.push({
           type: "overrated_tag",
@@ -33594,12 +33641,15 @@ function AppContent() {
   // 📂 폴더 필터용 파생 상태 (Set.has()로 O(1) 조회)
   const folderFilteredIds = useMemo(() => {
     if (filterFolder === "ALL") return null;
+    // 🛡️ FIX: 존재하지 않는 폴더(삭제됨/백업 불일치)를 가리키면 빈 Set→전체 작품이 숨겨짐.
+    //   유효하지 않은 필터는 ALL로 폴백(빈 화면 + 해제 버튼 없음 방지).
+    if (!folders.some(f => f.id === filterFolder)) return null;
     const ids = new Set();
     novelFolderMap.forEach((folderIds, novelId) => {
       if (folderIds.includes(filterFolder)) ids.add(novelId);
     });
     return ids;
-  }, [filterFolder, novelFolderMap]);
+  }, [filterFolder, novelFolderMap, folders]);
 
   /* =========================================================
      🆕 고급 필터 함수
@@ -43053,7 +43103,9 @@ function AppContent() {
       });
     }
     return result;
-  }, [homeQuery, list, homeSortKey, homeSortDir, filterTier, filterPlatform, filterGenre, filterStatus, searchIncludeTags, searchExcludeTags, searchExcludeStatus, searchExcludeWorkStatus, folderFilteredIds, tagRelations, awardMetaMap]);
+    // 🛡️ FIX: appSettings.tierSystemConfig를 deps에 추가 — '티어순' 정렬 시 임계값/티어 편집 후
+    //   list 변동 없이도 재정렬되도록(이전엔 globalTierConfig만 바뀌고 memo deps 미반영 → stale).
+  }, [homeQuery, list, homeSortKey, homeSortDir, filterTier, filterPlatform, filterGenre, filterStatus, searchIncludeTags, searchExcludeTags, searchExcludeStatus, searchExcludeWorkStatus, folderFilteredIds, tagRelations, awardMetaMap, appSettings.tierSystemConfig]);
 
   // 공용 검색 필터 (bulk/search)
   const filtered = useMemo(() => {
@@ -43096,7 +43148,17 @@ function AppContent() {
   const bulkFiltered = useMemo(() => {
     let result = [...filtered];
     if (bulkSortKey === "rating") {
-      result.sort((a, b) => b.rating - a.rating);
+      // 🛡️ FIX: hybrid/manual 모드에선 ELO rating이 동결값이라 무의미(레이팅 칩도 숨김) →
+      //   tier 순위(globalTierRankMap, patrick truth: 0=상위)로 정렬해 표시 순서와 일치시킴.
+      if (globalTierConfig.mode === "hybrid" || globalTierConfig.mode === "manual") {
+        result.sort((a, b) => {
+          const ra = globalTierRankMap.has(a.id) ? globalTierRankMap.get(a.id) : Infinity;
+          const rb = globalTierRankMap.has(b.id) ? globalTierRankMap.get(b.id) : Infinity;
+          return ra - rb;
+        });
+      } else {
+        result.sort((a, b) => b.rating - a.rating);
+      }
     } else if (bulkSortKey === "title") {
       result.sort((a, b) =>
         (a.title || "").localeCompare(b.title || "")
@@ -44461,10 +44523,13 @@ async function buildUltraCompactBackup(novels, matches, coverImages = null) {
     const idxB = idToIdx.has(m.b_id) ? idToIdx.get(m.b_id) : 65535;
     const idxW = m.winner_id && idToIdx.has(m.winner_id) ? idToIdx.get(m.winner_id) : -1;
     
-    // f: 0=A승user, 1=B승user, 2=A승auto, 3=B승auto
+    // f: bit0=B승, bit1=auto, bit2=무승부(winner_id NULL)
     const isAuto = m.decided_by === "auto" ? 2 : 0;
     const isB = idxW === idxB ? 1 : 0;
-    const f = isAuto + isB;
+    // 🛡️ FIX: winner_id가 NULL(무승부/무효)이면 bit2(=4)로 보존 — 이전엔 idxW=-1→isB=0→복원 시
+    //   'A승'으로 둔갑(무승부가 결정승으로 오염). 구버전 백업은 f∈{0..3}이라 bit2=0 → 하위호환.
+    const noWinner = idxW < 0 ? 4 : 0;
+    const f = isAuto + isB + noWinner;
 
     if (use2Bytes) {
       matchBytes.push((idxA >> 8) & 255, idxA & 255);
@@ -45337,8 +45402,8 @@ async function importJSON() {
                 const b_id = idxB < idList.length ? idList[idxB] : null;
                 if (!a_id || !b_id) continue;
 
-                // f: 0=A승user, 1=B승user, 2=A승auto, 3=B승auto
-                const winner_id = (f & 1) ? b_id : a_id;
+                // f: bit0=B승, bit1=auto, bit2=무승부(winner_id NULL). 구버전 백업은 bit2 없음 → 하위호환.
+                const winner_id = (f & 4) ? null : ((f & 1) ? b_id : a_id);
                 const decided_by = (f & 2) ? "auto" : "user";
 
                 matchQueries.push({
@@ -54707,12 +54772,19 @@ async function importJSON() {
                               if (newConfig.mode === "manual") {
                                 const novels = await all("SELECT id, rating, manual_tier FROM novels");
                                 const queries = [];
+                                const affectedTiers = new Set();
                                 for (const n of (novels || [])) {
                                   const currentTier = getDisplayTier(n, oldConfig);
                                   const mappedTier = migrateTierKey(currentTier, oldConfig, newConfig);
                                   queries.push({ sql: "UPDATE novels SET manual_tier=? WHERE id=?", params: [mappedTier, n.id] });
+                                  if (mappedTier) affectedTiers.add(mappedTier);
                                 }
                                 if (queries.length > 0) await execBatch(queries);
+                                // 🛡️ FIX: 여러 옛 티어가 한 새 티어로 합쳐지면 manual_order가 충돌(중복)한다.
+                                //   hybrid 분기처럼 영향 티어를 reflow해 gap=100 불변식 회복(정렬 비결정성 해소).
+                                for (const tk of affectedTiers) {
+                                  await rebalanceTierOrder(tk);
+                                }
                               } else if (newConfig.mode === "hybrid") {
                                 // 🆕 v6.2: hybrid 프리셋 — 마이그레이션만 (백필 없음, getDisplayTier가 ELO fallback)
                                 // 새 tier 시스템에 없는 manual_tier만 변환
@@ -60726,16 +60798,23 @@ async function importJSON() {
                   <View style={{ flexDirection: "row", gap: 8 }}>
                     <TouchableOpacity
                       onPress={() => {
-                        if (!editingCoordTag.tag.trim()) {
+                        const newName = (editingCoordTag.tag || "").trim();
+                        if (!newName) {
                           Alert.alert("알림", "태그 이름을 입력하세요.");
                           return;
                         }
                         const newTags = { ...editingCoordSystem.tags };
+                        // 🛡️ FIX: 새 이름이 같은 좌표계의 다른 기존 태그와 충돌하면 그 태그의 좌표를
+                        //   말없이 덮어쓰던 문제 — 충돌 시 경고하고 중단(원래 태그 편집은 영향 없음).
+                        if (newName !== editingCoordTag.originalTag && newTags[newName] !== undefined) {
+                          Alert.alert("알림", `'${newName}'은(는) 이미 이 좌표계에 있는 태그예요.\n다른 이름을 쓰거나 기존 태그를 편집하세요.`);
+                          return;
+                        }
                         // 기존 태그 이름 변경 시 이전 것 삭제
-                        if (!editingCoordTag.isNew && editingCoordTag.originalTag !== editingCoordTag.tag) {
+                        if (!editingCoordTag.isNew && editingCoordTag.originalTag !== newName) {
                           delete newTags[editingCoordTag.originalTag];
                         }
-                        newTags[editingCoordTag.tag.trim()] = { x: editingCoordTag.x, y: editingCoordTag.y };
+                        newTags[newName] = { x: editingCoordTag.x, y: editingCoordTag.y };
                         setEditingCoordSystem({ ...editingCoordSystem, tags: newTags });
                         setEditingCoordTag(null);
                       }}
