@@ -2,9 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.13 (좌표계 AI 자동 배치 — 축 라벨→관련 태그 버킷 배치)           ║
+ * ║  버전: 7.28.14 (AI 태그 추천 — 작품 추가/편집 시 장르·태그·강도 제안)        ║
  * ║  최종 수정: 2026-06-20                                                        ║
  * ║  총 라인 수: 약 62,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🏷️ v7.28.14 AI 태그 추천 — 작품 추가/편집 시 장르·태그·강도 제안 (2026-06-20)║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 작품 추가/편집 폼에 '🤖 AI 태그 추천': 제목(+작가·앵커)으로 대/부장르·일반   ║
+ * ║ 태그를 제안. 사용자 태깅 성향(평균 개수·자주 쓰는 어휘) 보정 → '이 사람처럼'.║
+ * ║ 섹션 칩(신뢰도 프리체크) 선택 → 기존 태그에 '병합'(덮어쓰기 X).              ║
+ * ║                                                                              ║
+ * ║ [옵션] 감상 참고(옵트인)·강도(1~5) 제안·표준 태그까지 토글. [안전] 어휘 필터 ║
+ * ║ (v1 닫힘)·장르 화이트리스트·저신뢰 미체크·제목 없으면 거부. 등록=개별 state, ║
+ * ║ 편집=editItem 분기(openTagModal 패턴). 신규 callClaude/GeminiForTagging.     ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12915,6 +12927,148 @@ async function callGeminiForPlacements(tags, apiKey, model = GEMINI_AI_MODEL, co
   return { placements: Array.isArray(placements) ? placements : [] };
 }
 
+/* =========================================================
+   🆕 v7.28.14: AI 태그 추천 — 제목(+작가·앵커·옵트인 감상)으로 대/부장르·태그·
+   강도 제안. 사용자 태깅 프로필(개수·어휘) 보정. 어휘 필터는 호출자(run)에서.
+   ========================================================= */
+function buildTaggingPrompt(context = {}) {
+  const c = context;
+  let s = `다음 웹소설 작품에 어울리는 분류를 추천하세요.\n제목: "${c.title || ""}"`;
+  if (c.author) s += `\n작가: "${c.author}"`;
+  if (Array.isArray(c.existingTags) && c.existingTags.length) s += `\n이미 단 태그(유지·보완 대상, 중복 제안 금지): ${c.existingTags.join(", ")}`;
+  if (c.note) s += `\n사용자 감상(참고): ${String(c.note).slice(0, 600)}`;
+  if (c.profile) {
+    s += `\n\n[이 사용자의 태깅 성향 — 개수·어휘를 이대로 맞추세요]`;
+    if (c.profile.avgTags) s += `\n- 작품당 보통 ${c.profile.avgTags}개 정도 답니다.`;
+    if (Array.isArray(c.profile.topTags) && c.profile.topTags.length) s += `\n- 자주 쓰는 태그: ${c.profile.topTags.join(", ")}`;
+  }
+  if (Array.isArray(c.majorOptions) && c.majorOptions.length) s += `\n\n대장르는 다음 중에서만 고르세요: ${c.majorOptions.join(", ")}`;
+  if (Array.isArray(c.subOptions) && c.subOptions.length) s += `\n부장르는 다음 중에서만 고르세요: ${c.subOptions.join(", ")}`;
+  s += `\n\n대장르(majorGenres)·부장르(subGenres)·일반 태그(tags)로 나눠 추천하세요. 확실한 것 위주로, 애매하면 confidence를 low로. 작품을 모르면 지어내지 말고 적게 답하세요. 일반 태그는 위 '자주 쓰는 태그' 스타일을 우선 활용하세요.`;
+  if (c.wantIntensity) s += ` 각 일반 태그에 작품 내 강도 intensity(1~5)도 매기세요(애매하면 3).`;
+  return s;
+}
+
+async function callClaudeForTagging(context = {}, apiKey, model = SYNONYM_AI_MODEL) {
+  if (!apiKey) throw new Error("API 키가 없습니다");
+  const promptText = buildTaggingPrompt(context);
+  const tool = {
+    name: "report_tags",
+    description: "웹소설 작품의 대장르·부장르·일반 태그를 추천한다",
+    input_schema: {
+      type: "object",
+      properties: {
+        majorGenres: { type: "array", items: { type: "string" }, description: "대장르 (제시된 목록에서만)" },
+        subGenres: { type: "array", items: { type: "string" }, description: "부장르 (제시된 목록에서만)" },
+        tags: {
+          type: "array",
+          description: "일반 태그. 확실한 것 위주.",
+          items: {
+            type: "object",
+            properties: {
+              tag: { type: "string", description: "태그명" },
+              confidence: { type: "string", description: "확신도: high | med | low" },
+              intensity: { type: "integer", description: "작품 내 강도 1~5 (선택)" },
+              reason: { type: "string", description: "짧은 근거" },
+            },
+            required: ["tag"],
+          },
+        },
+      },
+      required: ["tags"],
+    },
+  };
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({
+      model,
+      max_tokens: 2048,
+      tools: [tool],
+      tool_choice: { type: "tool", name: "report_tags" },
+      messages: [{ role: "user", content: promptText }],
+    }),
+  });
+  if (!res.ok) {
+    let detail = "";
+    try { detail = (await res.json())?.error?.message || ""; } catch {}
+    if (res.status === 401) throw new Error("API 키가 올바르지 않아요 (401)");
+    if (res.status === 429) throw new Error("요청이 많아요. 잠시 후 다시 시도 (429)");
+    throw new Error(`API 오류 ${res.status}${detail ? ": " + detail.slice(0, 120) : ""}`);
+  }
+  const data = await res.json();
+  const toolUse = (data.content || []).find(b => b.type === "tool_use");
+  const inp = toolUse?.input || {};
+  return {
+    majorGenres: Array.isArray(inp.majorGenres) ? inp.majorGenres : [],
+    subGenres: Array.isArray(inp.subGenres) ? inp.subGenres : [],
+    tags: Array.isArray(inp.tags) ? inp.tags : [],
+  };
+}
+
+async function callGeminiForTagging(context = {}, apiKey, model = GEMINI_AI_MODEL) {
+  if (!apiKey) throw new Error("API 키가 없습니다");
+  const promptText = buildTaggingPrompt(context);
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: promptText }] }],
+      generationConfig: {
+        temperature: 0.2,
+        maxOutputTokens: 2048,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: "OBJECT",
+          properties: {
+            majorGenres: { type: "ARRAY", items: { type: "STRING" } },
+            subGenres: { type: "ARRAY", items: { type: "STRING" } },
+            tags: {
+              type: "ARRAY",
+              items: {
+                type: "OBJECT",
+                properties: {
+                  tag: { type: "STRING" },
+                  confidence: { type: "STRING" },
+                  intensity: { type: "INTEGER" },
+                  reason: { type: "STRING" },
+                },
+                required: ["tag"],
+                propertyOrdering: ["tag", "confidence", "intensity", "reason"],
+              },
+            },
+          },
+          required: ["tags"],
+          propertyOrdering: ["majorGenres", "subGenres", "tags"],
+        },
+      },
+    }),
+  });
+  if (!res.ok) {
+    let detail = "";
+    try { detail = (await res.json())?.error?.message || ""; } catch {}
+    if (res.status === 400 && /API key not valid|API_KEY_INVALID/i.test(detail)) throw new Error("API 키가 올바르지 않아요 (400)");
+    if (res.status === 401 || res.status === 403) throw new Error(`API 키가 올바르지 않아요 (${res.status})`);
+    if (res.status === 429) throw new Error("무료 한도를 초과했어요. 잠시 후 다시 시도 (429)");
+    throw new Error(`API 오류 ${res.status}${detail ? ": " + detail.slice(0, 120) : ""}`);
+  }
+  const data = await res.json();
+  const cand = (data.candidates || [])[0];
+  const text = (cand?.content?.parts || []).map(p => p?.text || "").join("");
+  if (!text) {
+    if (data?.promptFeedback?.blockReason) throw new Error("요청이 차단됐어요: " + data.promptFeedback.blockReason);
+    return { majorGenres: [], subGenres: [], tags: [] };
+  }
+  let parsed;
+  try { parsed = JSON.parse(text); } catch { return { majorGenres: [], subGenres: [], tags: [] }; }
+  return {
+    majorGenres: Array.isArray(parsed?.majorGenres) ? parsed.majorGenres : [],
+    subGenres: Array.isArray(parsed?.subGenres) ? parsed.subGenres : [],
+    tags: Array.isArray(parsed?.tags) ? parsed.tags : [],
+  };
+}
+
 /**
  * 🆕 v3.5.12: 태그 목록에서 대상 태그 찾기 (공백 무시 매칭)
  * 찾으면 목록 내 원본 문자열 반환, 없으면 null
@@ -14350,7 +14504,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.13";
+const APP_VERSION = "7.28.14";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -14376,6 +14530,16 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.14", date: "2026-06-20",
+    title: "🏷️ AI 태그 추천 (작품 추가·편집)",
+    highlights: [
+      { type: "new", text: "🏷️ 작품을 추가하거나 편집할 때 '🤖 AI 태그 추천'이 생겼어요. 제목(+작가)을 보고 대장르·부장르·태그를 제안해줘요. 유명작은 꽤 정확하고, 모르는 작품은 솔직히 적게 답해요. 제안은 섹션별 칩으로 떠서 탭으로 켜고 끈 뒤 '선택 적용'하면 돼요." },
+      { type: "new", text: "🎯 '이 사람처럼' 태깅해요 — 평소 작품당 태그 개수와 자주 쓰는 어휘를 참고해 내 스타일에 맞춰 제안해요. 적용은 기존 태그에 '추가'만 하고 덮어쓰지 않아요." },
+      { type: "new", text: "🎛️ 토글로 조절: '감상도 참고'(더 정확·감상 전송, 기본 꺼짐), '태그 강도(1~5) 제안', '표준 태그까지'(내 어휘에 없는 태그도 — 새 장르 입문 때 유용). 전송은 제목·작가·태그만(감상은 토글 시), 키는 기기에만 저장돼요." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.13", date: "2026-06-20",
     title: "📐 좌표계 AI 자동 배치",
@@ -32623,6 +32787,14 @@ function AppContent() {
   const [aiProvider, setAiProvider] = useState("gemini"); // 🆕 v7.28.9 AI 제공자 ("claude"|"gemini") · 🆕 v7.28.10 기본값 Gemini(무료)
   const [apiKeyHelpModalOpen, setApiKeyHelpModalOpen] = useState(false); // 🆕 v7.28.10: API 키 발급 방법 안내 모달
   const [aiWideScan, setAiWideScan] = useState(false); // 🆕 v7.28.11: 넓게 점검(옵트인) — 1회 태그 포함·상한 400
+  // 🆕 v7.28.14: AI 태그 추천 (작품 추가/편집)
+  const [aiTagModalOpen, setAiTagModalOpen] = useState(false);
+  const [aiTagTarget, setAiTagTarget] = useState("new"); // "new"(등록 폼) | "edit"(편집 모달)
+  const [aiTagBusy, setAiTagBusy] = useState(false);
+  const [aiTagSuggest, setAiTagSuggest] = useState(null); // { major:[{name,checked}], sub:[...], tags:[{tag,intensity,confidence,reason,checked}] }
+  const [aiTagUseNote, setAiTagUseNote] = useState(false); // 옵트인: 감상도 전송
+  const [aiTagSuggestIntensity, setAiTagSuggestIntensity] = useState(false); // 강도 제안 토글
+  const [aiTagStdVocab, setAiTagStdVocab] = useState(false); // 표준 일반태그까지 포함
   const [dismissedSynPairs, setDismissedSynPairs] = useState(() => new Set()); // 🔧 v7.28.0: 유의어 후보 거절 이력 (로컬·AI 공통)
   const [dismissedOppPairs, setDismissedOppPairs] = useState(() => new Set()); // 🆕 v7.28.12: 상반 후보 거절 이력
   const [tagHealthBusy, setTagHealthBusy] = useState(false);
@@ -38428,6 +38600,128 @@ function AppContent() {
     } finally {
       setCoordAiBusy(false);
     }
+  }
+
+  // 🆕 v7.28.14: AI 태그 추천 — 모달 열기 (target: "new" 등록폼 | "edit" 편집모달)
+  function openAiTagModal(target) {
+    setAiTagTarget(target === "edit" ? "edit" : "new");
+    setAiTagSuggest(null);
+    setAiTagModalOpen(true);
+  }
+  // 현재 폼 드래프트 읽기 (target별 · 사용자 탭 시점이라 state가 최신)
+  function readTagDraft(target) {
+    if (target === "edit") {
+      const ei = editItem || {};
+      return { title: (ei.title || "").trim(), author: (ei.author || "").trim(), note: ei.note || "", major: parseGenreArray(ei.major_genre), sub: parseGenreArray(ei.sub_genre), tagsStr: ei.tags || "", tagData: safeParseJSON(ei.tag_data, []) || [] };
+    }
+    return { title: (title || "").trim(), author: (author || "").trim(), note: note || "", major: Array.isArray(newMajorGenre) ? newMajorGenre : [], sub: Array.isArray(newSubGenre) ? newSubGenre : [], tagsStr: tags || "", tagData: Array.isArray(newTagData) ? newTagData : [] };
+  }
+
+  // 🆕 v7.28.14: AI 태그 추천 실행 — 프로필 보정 + 어휘 필터 + 분류
+  async function runAiTagSuggest() {
+    const provider = aiProvider === "gemini" ? "gemini" : "claude";
+    const key = ((provider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim();
+    if (!key) { Alert.alert("AI 태그", `먼저 설정 > 🏷️ 태그에서 ${provider === "gemini" ? "Gemini" : "Claude"} API 키를 입력해 주세요.`); return; }
+    const draft = readTagDraft(aiTagTarget);
+    if (!draft.title) { Alert.alert("AI 태그", "제목을 먼저 입력해 주세요. 제목을 보고 추천해요."); return; }
+    setAiTagBusy(true);
+    setAiTagSuggest(null);
+    try {
+      // 사용자 어휘·프로필 집계
+      const freq = new Map(); const disp = new Map(); let totalTagCount = 0, worksWithTags = 0;
+      for (const n of (list || [])) {
+        const g = (n.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+        const raw = [...parseMajorSub(n.major_genre), ...parseMajorSub(n.sub_genre), ...g];
+        const seen = new Set();
+        for (const t of raw) { const k = normalizeTagKey(t); if (!k || seen.has(k)) continue; seen.add(k); freq.set(k, (freq.get(k) || 0) + 1); if (!disp.has(k)) disp.set(k, t); }
+        if (seen.size > 0) { totalTagCount += seen.size; worksWithTags++; }
+      }
+      const topTags = [...freq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([k]) => disp.get(k));
+      const avgTags = worksWithTags ? Math.max(2, Math.round(totalTagCount / worksWithTags)) : 0;
+      const majorVocab = (Array.isArray(userMajorGenres) && userMajorGenres.length ? userMajorGenres : FACTORY_MAJOR_GENRES);
+      const subVocab = (Array.isArray(userSubGenres) && userSubGenres.length ? userSubGenres : FACTORY_SUB_GENRES);
+      const majorMap = new Map(majorVocab.map(t => [normalizeTagKey(t), t]));
+      const subMap = new Map(subVocab.map(t => [normalizeTagKey(t), t]));
+      // 일반 태그 허용: 사용 태그 + (표준 토글) 기본 일반태그
+      const generalMap = new Map();
+      for (const [k, d] of disp.entries()) generalMap.set(k, d);
+      if (aiTagStdVocab && typeof ALL_DEFAULT_TAGS !== "undefined" && Array.isArray(ALL_DEFAULT_TAGS)) {
+        for (const t of ALL_DEFAULT_TAGS) { const k = normalizeTagKey(t); if (!generalMap.has(k)) generalMap.set(k, t); }
+      }
+      const existingTags = deduplicateTags((draft.tagsStr || "").split(",").map(t => t.trim()).filter(Boolean));
+      const existingKeys = new Set(existingTags.map(t => normalizeTagKey(t)));
+      const ctx = {
+        title: draft.title, author: draft.author, existingTags,
+        note: aiTagUseNote ? draft.note : null,
+        profile: { avgTags, topTags },
+        majorOptions: majorVocab.slice(0, 40), subOptions: subVocab.slice(0, 60),
+        wantIntensity: aiTagSuggestIntensity,
+      };
+      const out = provider === "gemini"
+        ? await callGeminiForTagging(ctx, key, GEMINI_AI_MODEL)
+        : await callClaudeForTagging(ctx, key, SYNONYM_AI_MODEL);
+      // 분류·필터·정규화
+      const majSug = []; const subSug = []; const seenM = new Set(), seenS = new Set();
+      const pushMajor = (name) => { const k = normalizeTagKey(name); if (!majorMap.has(k) || seenM.has(k) || existingKeys.has(k)) return; seenM.add(k); majSug.push({ name: majorMap.get(k), checked: true }); };
+      const pushSub = (name) => { const k = normalizeTagKey(name); if (!subMap.has(k) || seenS.has(k) || existingKeys.has(k)) return; seenS.add(k); subSug.push({ name: subMap.get(k), checked: true }); };
+      for (const m of (out.majorGenres || [])) pushMajor(m);
+      for (const s of (out.subGenres || [])) pushSub(s);
+      const tagSug = []; const seenT = new Set();
+      for (const it of (out.tags || [])) {
+        const name = it?.tag; if (!name) continue;
+        const k = normalizeTagKey(name); if (!k || seenT.has(k) || existingKeys.has(k)) continue;
+        if (majorMap.has(k)) { pushMajor(name); continue; } // 장르 오분류 재배치
+        if (subMap.has(k)) { pushSub(name); continue; }
+        if (!generalMap.has(k)) continue; // 닫힌 어휘 (v1: 새 태그 제외)
+        seenT.add(k);
+        const conf = String(it.confidence || "med").toLowerCase();
+        const intv = aiTagSuggestIntensity ? Math.min(5, Math.max(1, Math.round(Number(it.intensity) || 3))) : 3;
+        tagSug.push({ tag: generalMap.get(k), intensity: intv, confidence: conf, reason: it.reason ? String(it.reason) : "", checked: conf !== "low" });
+      }
+      const total = majSug.length + subSug.length + tagSug.length;
+      setAiTagSuggest({ major: majSug, sub: subSug, tags: tagSug });
+      if (!total) Alert.alert("AI 태그", "추천할 게 마땅치 않아요. 작품을 모르거나 어휘가 부족할 수 있어요. '표준 태그까지'를 켜거나 제목·작가를 확인해 주세요.");
+    } catch (e) {
+      Alert.alert("AI 태그 실패", e?.message || String(e));
+    } finally {
+      setAiTagBusy(false);
+    }
+  }
+
+  // 추천 항목 체크 토글
+  function toggleAiTagItem(kind, idx) {
+    setAiTagSuggest(prev => prev ? { ...prev, [kind]: prev[kind].map((it, i) => i === idx ? { ...it, checked: !it.checked } : it) } : prev);
+  }
+
+  // 🆕 v7.28.14: 선택한 추천을 폼 드래프트에 '병합' 적용 (덮어쓰기 없음 — 기존 태그 보존)
+  function applyAiTagSuggestions() {
+    const sug = aiTagSuggest;
+    if (!sug) return;
+    const selMajor = sug.major.filter(x => x.checked).map(x => x.name);
+    const selSub = sug.sub.filter(x => x.checked).map(x => x.name);
+    const selTags = sug.tags.filter(x => x.checked);
+    if (!selMajor.length && !selSub.length && !selTags.length) { Alert.alert("AI 태그", "적용할 항목을 선택해 주세요."); return; }
+    const target = aiTagTarget;
+    const draft = readTagDraft(target);
+    const majorSet = new Set(draft.major.map(t => normalizeTagKey(t)));
+    const subSet = new Set(draft.sub.map(t => normalizeTagKey(t)));
+    const curGeneral = (draft.tagsStr || "").split(",").map(t => t.trim()).filter(Boolean)
+      .filter(t => { const k = normalizeTagKey(t); return !majorSet.has(k) && !subSet.has(k); });
+    const major2 = deduplicateTags([...draft.major, ...selMajor]);
+    const sub2 = deduplicateTags([...draft.sub, ...selSub]);
+    const general2 = deduplicateTags([...curGeneral, ...selTags.map(s => s.tag)]);
+    const tdMap = new Map();
+    for (const e of (draft.tagData || [])) { if (e && e.tag) tdMap.set(normalizeTagKey(e.tag), { tag: e.tag, intensity: Math.min(5, Math.max(1, Number(e.intensity) || 3)) }); }
+    for (const s of selTags) { const k = normalizeTagKey(s.tag); if (!tdMap.has(k)) tdMap.set(k, { tag: s.tag, intensity: Math.min(5, Math.max(1, Number(s.intensity) || 3)) }); }
+    const tagData2 = [...tdMap.values()];
+    const tagsStr2 = deduplicateTags([...major2, ...sub2, ...general2]).join(", ");
+    if (target === "edit") {
+      updateEditItem(prev => prev ? { ...prev, tags: tagsStr2, major_genre: JSON.stringify(major2), sub_genre: JSON.stringify(sub2), tag_data: JSON.stringify(tagData2) } : prev);
+    } else {
+      setNewMajorGenre(major2); setNewSubGenre(sub2); setNewTagData(tagData2); setTags(tagsStr2);
+    }
+    setAiTagModalOpen(false);
+    setAiTagSuggest(null);
   }
 
   // 🤖 v7.27.0: Claude API 키 저장 (app_meta — 슬롯 DB, 백업엔 미포함)
@@ -47256,6 +47550,10 @@ async function importJSON() {
                   theme={C}
                 />
               </View>
+              {/* 🆕 v7.28.14: AI 태그 추천 (등록 폼) */}
+              <TouchableOpacity onPress={() => openAiTagModal("new")} style={{ alignSelf: "flex-start", marginTop: 8, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 9, backgroundColor: isDark ? "#312e81" : "#eef2ff", borderWidth: 1, borderColor: isDark ? "#4f46e5" : "#c7d2fe" }}>
+                <Text style={{ color: isDark ? "#c7d2fe" : "#4338ca", fontWeight: "700", fontSize: 13 }}>🤖 AI 태그 추천</Text>
+              </TouchableOpacity>
               <Label style={{ marginTop: 10 }}>연재처(복수 선택 가능)</Label>
               <PlatformChips
                 platforms={platforms}
@@ -59724,6 +60022,10 @@ async function importJSON() {
                     theme={C}
                   />
                 </View>
+                {/* 🆕 v7.28.14: AI 태그 추천 (편집 모달) */}
+                <TouchableOpacity onPress={() => openAiTagModal("edit")} style={{ alignSelf: "flex-start", marginTop: 8, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 9, backgroundColor: isDark ? "#312e81" : "#eef2ff", borderWidth: 1, borderColor: isDark ? "#4f46e5" : "#c7d2fe" }}>
+                  <Text style={{ color: isDark ? "#c7d2fe" : "#4338ca", fontWeight: "700", fontSize: 13 }}>🤖 AI 태그 추천</Text>
+                </TouchableOpacity>
 
                 <Label style={{ marginTop: 10 }}>연재처</Label>
                 <PlatformChips
@@ -62848,6 +63150,78 @@ async function importJSON() {
         </View>
       </Modal>
       )}
+
+      {/* 🆕 v7.28.14: AI 태그 추천 모달 (등록·편집 공용 — aiTagTarget 분기) */}
+      <Modal visible={aiTagModalOpen} animationType="fade" transparent statusBarTranslucent onRequestClose={() => setAiTagModalOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center" }}>
+          <TouchableOpacity style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} activeOpacity={1} onPress={() => setAiTagModalOpen(false)} />
+          <View style={{ backgroundColor: C.card, borderRadius: 20, padding: 18, width: "92%", maxWidth: 460, maxHeight: "88%" }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>🤖 AI 태그 추천</Text>
+              <TouchableOpacity onPress={() => setAiTagModalOpen(false)}><Text style={{ fontSize: 22, color: C.sub }}>×</Text></TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <View style={{ gap: 8, marginBottom: 10 }}>
+                {[
+                  { on: aiTagUseNote, set: () => setAiTagUseNote(v => !v), label: "감상도 참고 (더 정확 · 감상 내용도 전송)" },
+                  { on: aiTagSuggestIntensity, set: () => setAiTagSuggestIntensity(v => !v), label: "태그 강도(1~5)도 제안" },
+                  { on: aiTagStdVocab, set: () => setAiTagStdVocab(v => !v), label: "표준 태그까지 (내 어휘에 없어도)" },
+                ].map((t, i) => (
+                  <TouchableOpacity key={i} onPress={t.set} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                    <View style={{ width: 18, height: 18, borderRadius: 5, borderWidth: 2, borderColor: t.on ? C.primary : C.line, backgroundColor: t.on ? C.primary : "transparent", alignItems: "center", justifyContent: "center" }}>
+                      {t.on ? <Text style={{ color: "#fff", fontSize: 11, fontWeight: "900" }}>✓</Text> : null}
+                    </View>
+                    <Text style={{ color: C.sub, fontSize: 12 }}>{t.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <TouchableOpacity disabled={aiTagBusy} onPress={runAiTagSuggest} style={{ backgroundColor: aiTagBusy ? C.line : (isDark ? "#3730a3" : "#4338ca"), borderRadius: 12, paddingVertical: 12, alignItems: "center", marginBottom: 4, opacity: aiTagBusy ? 0.6 : 1 }}>
+                <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>{aiTagBusy ? "분석 중…" : "제목 보고 추천 받기"}</Text>
+              </TouchableOpacity>
+              <Text style={{ color: C.sub, fontSize: 10, lineHeight: 14, marginBottom: 10 }}>
+                제목·작가·이미 단 태그가 전송돼요(감상은 위 토글 시에만). 내 태깅 성향(개수·자주 쓰는 태그)에 맞춰 추천하고, 적용은 기존 태그에 '추가'만 해요(덮어쓰기 없음).
+              </Text>
+              {aiTagSuggest && (() => {
+                const sections = [
+                  { kind: "major", title: "대장르", items: aiTagSuggest.major || [] },
+                  { kind: "sub", title: "부장르", items: aiTagSuggest.sub || [] },
+                  { kind: "tags", title: "태그", items: aiTagSuggest.tags || [] },
+                ];
+                const total = sections.reduce((a, s) => a + s.items.length, 0);
+                if (!total) return <Text style={{ color: C.sub, fontSize: 13, marginBottom: 8 }}>추천 결과가 없어요.</Text>;
+                return (
+                  <View>
+                    {sections.map(sec => sec.items.length > 0 ? (
+                      <View key={sec.kind} style={{ marginBottom: 10 }}>
+                        <Text style={{ color: C.text, fontWeight: "700", fontSize: 12, marginBottom: 5 }}>{sec.title} ({sec.items.length})</Text>
+                        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                          {sec.items.map((it, i) => {
+                            const label = sec.kind === "tags" ? it.tag : it.name;
+                            const on = it.checked;
+                            const low = sec.kind === "tags" && it.confidence === "low";
+                            return (
+                              <TouchableOpacity key={label + i} onPress={() => toggleAiTagItem(sec.kind, i)}
+                                style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 16, backgroundColor: on ? (isDark ? "#3730a3" : "#eef2ff") : C.bg, borderWidth: 1, borderColor: on ? (isDark ? "#6366f1" : "#c7d2fe") : C.line }}>
+                                <Text style={{ color: on ? (isDark ? "#c7d2fe" : "#4338ca") : C.sub, fontSize: 12.5, fontWeight: on ? "700" : "500" }}>
+                                  {on ? "✓ " : ""}{label}{sec.kind === "tags" && aiTagSuggestIntensity ? ` ·${it.intensity}` : ""}{low ? " ?" : ""}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      </View>
+                    ) : null)}
+                    <TouchableOpacity onPress={applyAiTagSuggestions} style={{ backgroundColor: C.primary, borderRadius: 12, paddingVertical: 12, alignItems: "center", marginTop: 4 }}>
+                      <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>선택 적용</Text>
+                    </TouchableOpacity>
+                    <Text style={{ color: C.sub, fontSize: 10, marginTop: 6 }}>탭으로 켜고 끄세요. '?'는 확신 낮음(기본 꺼짐). 강도는 적용 후 태그 화면에서 조정돼요.</Text>
+                  </View>
+                );
+              })()}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* 🧹 v3.5.5: 커스텀 초기화 모달 */}
       <Modal
