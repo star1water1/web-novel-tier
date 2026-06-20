@@ -2,9 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.27.1 (유의어 후보 — 태깅 습관 편향 제거)                             ║
+ * ║  버전: 7.28.0 (유의어 추천 — 관계 인식 + 거절 학습)                           ║
  * ║  최종 수정: 2026-06-20                                                        ║
  * ║  총 라인 수: 약 61,440줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🧠 v7.28.0 유의어 추천 — 관계 인식 + 거절 학습 (2026-06-20)                     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [축1·2: 사용자 관계 자산 + 유형 구분] 상반 그룹으로 연결된 쌍은 유의어 후보에서 ║
+ * ║ 제외(isOppositePair). 같은 유사 그룹/거절 이력도 제외. 잘못 묶는 걸 막는 게     ║
+ * ║ 잘 묶는 것만큼 중요 — 상반/계층을 유의어로 묶으면 분석이 왜곡되므로.            ║
+ * ║                                                                              ║
+ * ║ [축3: 학습 루프] '무시'를 app_meta(synonym_dismissed)에 영구 기억 → 로컬·AI     ║
+ * ║ 양쪽 후보 생성에서 제외. AI도 같은 쌍을 두 번 안 들고 옴(편한 AI를 더 정확히).  ║
+ * ║                                                                              ║
+ * ║ [신규] synPairKey, isOppositePair, dismissSynonymPair, dismissedSynPairs.      ║
+ * ║ computeSynonymCandidates(opts.dismissed). 동시출현 미사용 유지(습관 편향 회피). ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12234,7 +12248,24 @@ function morphSynonymScore(ka, kb) {
   return { score: 0, reason: null };
 }
 
-// 라이브러리 전반에서 유의어 후보 쌍 발굴 (순수 함수 — 형태 신호만)
+// 정규화된 쌍 키 (순서 무관) — 거절 이력/중복 판정에 사용
+function synPairKey(a, b) {
+  const ka = normalizeTagKey(a), kb = normalizeTagKey(b);
+  return ka <= kb ? `${ka}|${kb}` : `${kb}|${ka}`;
+}
+
+// 🔧 v7.28.0: 두 태그가 사용자가 지정한 '상반 관계'인지 — 상반이면 유의어가 아니므로 후보 제외
+function isOppositePair(ta, tb, rel) {
+  const t2g = rel?.tagToGroup || {}, groups = rel?.groups || {};
+  const ga = t2g[ta] || t2g[normalizeTag(ta)];
+  const gb = t2g[tb] || t2g[normalizeTag(tb)];
+  if (!ga || !gb || ga === gb) return false;
+  const A = groups[ga], B = groups[gb];
+  if (!A || !B) return false;
+  return (A.type === "opposite" && A.relatedGroupId === gb) || (B.type === "opposite" && B.relatedGroupId === ga);
+}
+
+// 라이브러리 전반에서 유의어 후보 쌍 발굴 (순수 함수 — 형태 + 사용자 관계/거절 신호)
 function computeSynonymCandidates(novels, tagRelations, opts = {}) {
   const MIN_FREQ = opts.minFreq || 2;
   const MAX_RESULTS = opts.maxResults || 40;
@@ -12271,9 +12302,10 @@ function computeSynonymCandidates(novels, tagRelations, opts = {}) {
   const groupOf = (k) => t2g[displayOf(k)] || t2g[k] || null;
 
   const keys = [...tagFreq.entries()].filter(([, f]) => f >= MIN_FREQ).map(([k]) => k).sort();
+  const dismissed = opts.dismissed instanceof Set ? opts.dismissed : null;
 
-  // 🔧 v7.27.1: 형태(글자) 신호만 사용. 동시출현은 태깅 습관에 의존해
-  //   유의어 판별 기준으로 부적절(한 작품에 유의어를 둘 다 다는지가 사람마다 다름).
+  // 🔧 v7.27.1: 형태(글자) 신호만 — 동시출현은 태깅 습관에 의존해 부적절.
+  // 🔧 v7.28.0: 사용자가 묶은 같은 그룹 / 거절 이력 / 상반 관계는 후보에서 제외.
   const candidates = [];
   for (let i = 0; i < keys.length; i++) {
     const ka = keys[i];
@@ -12286,8 +12318,11 @@ function computeSynonymCandidates(novels, tagRelations, opts = {}) {
       if (morph.score < 0.45) continue;
       const gb = groupOf(kb);
       if (ga && gb && ga === gb) continue; // 이미 같은 그룹
+      if (dismissed && dismissed.has(`${ka}|${kb}`)) continue; // 이전에 무시한 쌍 (keys 정렬됨 → ka<=kb)
+      const da = displayOf(ka), db = displayOf(kb);
+      if (isOppositePair(da, db, tagRelations)) continue; // 사용자가 상반이라 지정한 쌍
       candidates.push({
-        a: displayOf(ka), b: displayOf(kb),
+        a: da, b: db,
         score: morph.score,
         minFreq: Math.min(fa, tagFreq.get(kb)),
         reasons: [morph.reason].filter(Boolean),
@@ -13775,7 +13810,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.27.1";
+const APP_VERSION = "7.28.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -13801,6 +13836,15 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.0", date: "2026-06-20",
+    title: "🧠 유의어 추천 — 관계 인식 + 거절 학습",
+    highlights: [
+      { type: "improve", text: "🧩 유의어 후보가 더 똑똑해졌어요. 이미 '상반'으로 지정한 태그 쌍은 후보에서 빼고(예: 먼치킨↔성장처럼 반대로 묶어둔 것), 한 번 '무시'한 쌍은 기억해서 다시 추천하지 않아요." },
+      { type: "improve", text: "🤖 이 학습은 AI 점검에도 똑같이 적용돼요. 무시했거나 상반으로 지정한 쌍은 AI도 두 번 들고 오지 않아, 쓸수록 추천이 내 기준에 맞게 다듬어져요." },
+    ],
+    details: [],
+  },
   {
     version: "7.27.1", date: "2026-06-20",
     title: "🔧 유의어 후보 — 태깅 습관 편향 제거",
@@ -31886,6 +31930,7 @@ function AppContent() {
   const [tagHealthModalOpen, setTagHealthModalOpen] = useState(false);
   const [tagHealthData, setTagHealthData] = useState(null);
   const [claudeApiKey, setClaudeApiKey] = useState(""); // 🤖 v7.27.0: AI 유의어 점검용 (app_meta 저장, 백업엔 미포함)
+  const [dismissedSynPairs, setDismissedSynPairs] = useState(() => new Set()); // 🔧 v7.28.0: 유의어 후보 거절 이력 (로컬·AI 공통)
   const [tagHealthBusy, setTagHealthBusy] = useState(false);
 
   // 🏆 티어 검토 시스템 (v2.5)
@@ -37350,7 +37395,7 @@ function AppContent() {
     try {
       const health = computeTagHealth();
       // 🧩 v7.26.0: 유의어 후보(어근 공유) 동시 계산 — 표기 변형(clusters)과 별개 섹션
-      try { health.synonymCandidates = computeSynonymCandidates(list, tagRelations); }
+      try { health.synonymCandidates = computeSynonymCandidates(list, tagRelations, { dismissed: dismissedSynPairs }); }
       catch (se) { console.warn("[synonym] 계산 실패:", se?.message); health.synonymCandidates = []; }
       setTagHealthData(health);
     }
@@ -37412,6 +37457,13 @@ function AppContent() {
     setTagHealthData(prev => prev ? { ...prev, synonymCandidates: (prev.synonymCandidates || []).filter(c => !(c.a === tagA && c.b === tagB)) } : prev);
   }
 
+  // 🔧 v7.28.0: 유의어 후보 거절 — app_meta에 기억해 다시 추천하지 않음 (로컬·AI 공통)
+  function dismissSynonymPair(tagA, tagB) {
+    const key = synPairKey(tagA, tagB);
+    setDismissedSynPairs(prev => { const n = new Set(prev); n.add(key); deferSetAppMeta("synonym_dismissed", [...n]); return n; });
+    setTagHealthData(prev => prev ? { ...prev, synonymCandidates: (prev.synonymCandidates || []).filter(c => synPairKey(c.a, c.b) !== key) } : prev);
+  }
+
   // 🤖 v7.27.0: Claude API 키 저장 (app_meta — 슬롯 DB, 백업엔 미포함)
   async function saveClaudeApiKey(key) {
     const k = (key || "").trim();
@@ -37442,6 +37494,8 @@ function AppContent() {
         const uniq = [...new Set(gt)];
         for (let i = 1; i < uniq.length; i++) {
           if (isSameTag(uniq[0], uniq[i])) continue;
+          if (dismissedSynPairs.has(synPairKey(uniq[0], uniq[i]))) continue; // 🔧 v7.28.0: 무시 이력 (AI도 같은 실수 반복 안 함)
+          if (isOppositePair(uniq[0], uniq[i], tagRelations)) continue; // 사용자가 상반이라 지정한 쌍
           aiCands.push({ a: uniq[0], b: uniq[i], score: 0.85, minFreq: 0, reasons: ["AI" + (g.reason ? ": " + g.reason : "")], suggest: "group", ai: true });
         }
       }
@@ -37551,6 +37605,11 @@ function AppContent() {
   // 🤖 v7.27.0: AI 유의어 점검용 Claude API 키 로드 (슬롯 DB의 app_meta)
   useEffect(() => {
     (async () => { try { const k = await getAppMeta("claude_api_key"); setClaudeApiKey(typeof k === "string" ? k : ""); } catch {} })();
+  }, []);
+
+  // 🔧 v7.28.0: 유의어 후보 거절 이력 로드 (다시 추천하지 않기 위함)
+  useEffect(() => {
+    (async () => { try { const arr = await getAppMeta("synonym_dismissed"); if (Array.isArray(arr)) setDismissedSynPairs(new Set(arr)); } catch {} })();
   }, []);
 
   async function saveHiddenTags(tags) {
@@ -61419,7 +61478,7 @@ async function importJSON() {
                       <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>묶기</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      onPress={() => setTagHealthData(prev => prev ? { ...prev, synonymCandidates: (prev.synonymCandidates || []).filter(x => !(x.a === c.a && x.b === c.b)) } : prev)}
+                      onPress={() => dismissSynonymPair(c.a, c.b)}
                       style={{ paddingHorizontal: 10, paddingVertical: 7, borderRadius: 8, backgroundColor: C.card, borderWidth: 1, borderColor: C.line, marginLeft: 6 }}
                     >
                       <Text style={{ color: C.sub, fontWeight: "700", fontSize: 13 }}>무시</Text>
