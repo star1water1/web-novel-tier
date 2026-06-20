@@ -2,9 +2,35 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.2 (유의어 후보 — 좌표계 신호 / 설계 전 축 완성)                   ║
+ * ║  버전: 7.28.3 (코드 전반 버그 점검 — 데이터 손실/중복 6건 수정)               ║
  * ║  최종 수정: 2026-06-20                                                        ║
- * ║  총 라인 수: 약 61,440줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 62,100줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛡️ v7.28.3 코드 전반 버그 점검 — 데이터 손실/중복 6건 수정 (2026-06-20)         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [Critical/데이터손실] 앱 시작 시 verifyDataIntegrity가 globalTierConfig 로드     ║
+ * ║ 전에 실행 → 기본 티어(S/A/B+/B/B-/C)로 검사하여 커스텀 프리셋(상/중/하,          ║
+ * ║ A~F, 추천/보통/비추천, 점수형 등) 사용자의 manual_tier/manual_order를 전부       ║
+ * ║ 삭제하던 1회성 영구 손실. 무결성 검사 전에 저장된 tierSystemConfig/              ║
+ * ║ suspicionConfig를 선로드(아래 설정 로드와 멱등).                                ║
+ * ║                                                                              ║
+ * ║ [백업/데이터손실] created_at·read_count_updated_at이 BASE_TIMESTAMP(2024-01-01) ║
+ * ║ 이전이면 export `>0` 게이트로 누락 → import 시 Date.now()로 리셋. 예정작(ca)처럼 ║
+ * ║ 무조건 저장 + import `!= null` 복원으로 음수 오프셋 보존.                        ║
+ * ║                                                                              ║
+ * ║ [태그/중복] removeTagAndSyncGenres·tagsStringToTagData가 alias+canonical 동시   ║
+ * ║ 보유 시 major/sub_genre·tag_data에 중복 저장 → deduplicateTags/정규화 dedup.    ║
+ * ║ getTagCategory toLowerCase→isSameTag(공백/alias 변형 '미분류' 방지).            ║
+ * ║                                                                              ║
+ * ║ [슬롯] deleteSlot에서 _recoveryAttempted Set 미정리 → 같은 ID 재사용 슬롯이      ║
+ * ║ 세션 내 복구 차단되던 문제. 삭제 시 플래그 제거.                                 ║
+ * ║                                                                              ║
+ * ║ [점검 범위] 7개 영역 병렬 정적 분석(매칭엔진/하이브리드검증/DB·마이그레이션/     ║
+ * ║ ELO·티어·통계/백업·복원/태그/React훅). 매칭엔진·React훅·하이브리드 코어는        ║
+ * ║ 무결 확인 — 위 6건만 실수정. detectAutomaticSuspects 재큐잉은 의도된 영구       ║
+ * ║ 카운터 설계라 미변경.                                                          ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -6498,6 +6524,9 @@ async function deleteSlot(slotId) {
   
   meta.slots.splice(idx, 1);
   await saveSlotMeta(meta);
+  // 🛡️ FIX: 슬롯 ID는 재사용(최소 빈 정수)되므로, 삭제 시 세션 복구 시도 플래그를 비워
+  //   같은 ID로 새 슬롯이 생성됐을 때 복구가 차단되지 않도록 한다.
+  _recoveryAttempted.delete(slotId);
   return { success: true };
 }
 
@@ -11018,10 +11047,12 @@ function removeTagAndSyncGenres(tags, tagToRemove, userMajorGenres = [], userSub
   const allMajor = getAllMajorTags(tagAttributes, userMajorGenres);
   const allSub = getAllSubTags(tagAttributes, userSubGenres);
   // 🔧 v3.5.13: isSameTag/findSameTag 사용으로 통일
-  const detectedMajor = newTags.filter(tag => allMajor.some(m => isSameTag(m, tag)))
-    .map(tag => findSameTag(allMajor, tag) || tag);
-  const detectedSub = newTags.filter(tag => allSub.some(s => isSameTag(s, tag)))
-    .map(tag => findSameTag(allSub, tag) || tag);
+  // 🛡️ FIX: alias+canonical을 함께 보유한 작품(예: "현판"+"현대판타지")은 둘 다 같은 canonical로
+  //   매핑되어 중복 발생 → major_genre=["현대판타지","현대판타지"]가 DB에 저장됨. deduplicateTags로 제거.
+  const detectedMajor = deduplicateTags(newTags.filter(tag => allMajor.some(m => isSameTag(m, tag)))
+    .map(tag => findSameTag(allMajor, tag) || tag));
+  const detectedSub = deduplicateTags(newTags.filter(tag => allSub.some(s => isSameTag(s, tag)))
+    .map(tag => findSameTag(allSub, tag) || tag));
   
   // 🔧 v3.5.8: tag_data에서도 동기 제거 (매칭 점수/선호도 분석 정합성)
   // 🔧 v3.5.13: isSameTag 사용으로 통일 (공백/alias 변형도 정확히 제거)
@@ -11443,16 +11474,18 @@ function countTagUsage(novels) {
 // 🆕 v3.5.9: 태그 카테고리 조회 (기본 + 커스텀 카테고리)
 // 반환값: { category: "분위기/톤", isCustom: false } 또는 null (미분류)
 function getTagCategory(tag, customTagCategories = {}) {
+  // 🛡️ FIX: toLowerCase()만 비교하던 것을 isSameTag로 통일 — 모듈 표준(공백/alias 정규화)과
+  //   불일치하여 "노로맨스"(=노맨스 alias), "먼치킨 주인공"(공백 변형) 등이 "미분류"로 빠지던 문제.
   // 기본 카테고리 검색
   for (const [category, tagList] of Object.entries(GENERAL_TAGS)) {
-    if (tagList.some(t => t.toLowerCase() === tag.toLowerCase())) {
+    if (tagList.some(t => isSameTag(t, tag))) {
       return { category, isCustom: false };
     }
   }
   // 커스텀 카테고리 검색
   if (customTagCategories && typeof customTagCategories === "object") {
     for (const [catName, catTags] of Object.entries(customTagCategories)) {
-      if (Array.isArray(catTags) && catTags.some(t => t.toLowerCase() === tag.toLowerCase())) {
+      if (Array.isArray(catTags) && catTags.some(t => isSameTag(t, tag))) {
         return { category: catName, isCustom: true };
       }
     }
@@ -12524,10 +12557,18 @@ function tagDataToString(tagData) {
 function tagsStringToTagData(tagsStr, defaultIntensity = 3) {
   if (!tagsStr) return [];
   const tags = tagsStr.split(",").map(t => t.trim()).filter(Boolean);
-  return tags.map(tag => ({
-    tag: normalizeTag(tag),
-    intensity: defaultIntensity,
-  }));
+  // 🛡️ FIX: normalizeTag로 alias/공백 변형을 canonical로 모은 뒤 중복 제거.
+  //   (이전: dedup 누락 → "현판, 현대판타지"가 [현대판타지, 현대판타지]로 DB에 영속)
+  const seen = new Set();
+  const result = [];
+  for (const tag of tags) {
+    const nt = normalizeTag(tag);
+    const key = normalizeTagKey(nt);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push({ tag: nt, intensity: defaultIntensity });
+  }
+  return result;
 }
 
 /**
@@ -13869,7 +13910,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.2";
+const APP_VERSION = "7.28.3";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -13895,6 +13936,17 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.3", date: "2026-06-20",
+    title: "🛡️ 코드 전반 버그 점검 — 데이터 손실/중복 수정",
+    highlights: [
+      { type: "fix", text: "🛡️ 커스텀 티어(상/중/하, A~F, 추천/보통/비추천, 점수형 등)를 쓰시는 분이 앱을 켤 때, 직접 배정한 티어·순서가 한꺼번에 지워지던 심각한 문제를 고쳤어요. 설정을 읽기 전에 무결성 검사가 먼저 돌아 '기본 티어가 아니면 잘못된 값'으로 오해하던 것이 원인이었어요." },
+      { type: "fix", text: "💾 백업/복원에서 2024년 1월 1일 이전 등록일이 사라져 복원 시 '오늘 날짜'로 바뀌던 문제를 고쳤어요. 이제 과거 날짜도 그대로 보존돼요." },
+      { type: "fix", text: "🏷️ 별칭과 정식 명칭을 함께 단 작품(예: '현판'+'현대판타지')에서 장르가 중복 저장되던 문제, 그리고 일부 별칭·띄어쓰기 변형 태그가 분석에서 '미분류'로 빠지던 문제를 고쳤어요." },
+      { type: "fix", text: "🗂️ 슬롯을 삭제한 뒤 같은 자리에 새 슬롯을 만들면, 같은 세션에서 복구가 막히던 문제를 고쳤어요." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.2", date: "2026-06-20",
     title: "📐 유의어 후보 — 좌표계 신호 추가",
@@ -33475,6 +33527,26 @@ function AppContent() {
           }
           
           // 🔧 v3.5.8: 데이터 무결성 자동 검증 (앱 시작 시 1회)
+          // 🛡️ FIX: verifyDataIntegrity 섹션(d)는 manual_tier가 globalTierConfig의 활성 티어에
+          //   없으면 클리어한다. 그런데 globalTierConfig는 아래 설정 로드(~33600)에서야 사용자
+          //   값으로 설정되므로, 여기서 선로드하지 않으면 기본 티어(S/A/B+/B/B-/C)로 검사 →
+          //   커스텀 프리셋(상/중/하, A/B/C/D/F, 추천/보통/비추천 등) 사용자의 manual_tier/
+          //   manual_order가 전부 삭제되는 데이터 손실 발생. 무결성 검사 전에 선로드한다.
+          //   (아래 설정 로드에서 동일하게 재설정 — 멱등. globalSuspicionConfig도 동일 이유로 선로드.)
+          try {
+            const _preSettings = await getAppMeta("app_settings");
+            if (_preSettings && typeof _preSettings === "object") {
+              if (_preSettings.tierSystemConfig) {
+                const _tsc = { ...DEFAULT_TIER_SYSTEM_CONFIG, ..._preSettings.tierSystemConfig };
+                if (_preSettings.tierSystemConfig.tiers) _tsc.tiers = _preSettings.tierSystemConfig.tiers;
+                globalTierConfig = _tsc;
+                rebuildTierLookup(globalTierConfig);
+              }
+              if (_preSettings.suspicionConfig) {
+                globalSuspicionConfig = { ...DEFAULT_SUSPICION_CONFIG, ..._preSettings.suspicionConfig };
+              }
+            }
+          } catch (e) { console.warn("[무결성] 선설정 로드 실패:", e?.message); }
           await verifyDataIntegrity({ silent: true });
           
           if (!mounted) return;
@@ -44053,8 +44125,11 @@ async function buildUltraCompactBackup(novels, matches, coverImages = null) {
     if (awards && awards !== "[]") opt.a = awards;
     if (note) opt.n = note;
     if (link) opt.l = link;
-    if (createdSec > 0) opt.c = createdSec;
-    if (updatedSec > 0) opt.u = updatedSec;
+    // 🛡️ FIX: 이전 `if (… > 0)` 게이트는 BASE_TIMESTAMP(2024-01-01) 이전 created_at의
+    //   음수 오프셋을 누락시켜, 임포트 시 Date.now()로 리셋되는 날짜 손실을 유발했다.
+    //   예정작(ca)처럼 무조건 저장하고, 임포트는 `!= null`로 복원한다.
+    opt.c = createdSec;
+    opt.u = updatedSec;
     // 대장르/부장르 (JSON 배열 문자열)
     const majorGenre = (n.major_genre || "").trim();
     const subGenre = (n.sub_genre || "").trim();
@@ -44896,8 +44971,10 @@ async function importJSON() {
                 const note = opt.n || "";
                 const link = opt.l || "";
                 const coverImage = opt.i || "";
-                const createdAt = opt.c ? (baseTs + opt.c) * 1000 : defaultDate;
-                const readCountUpdatedAt = opt.u ? (baseTs + opt.u) * 1000 : defaultDate;
+                // 🛡️ FIX: opt.c가 0(정확히 BASE_TIMESTAMP)·음수(2024 이전)일 때 truthy 검사로
+                //   누락되던 문제 → `!= null`로 복원 (음수 오프셋도 정상 복원)
+                const createdAt = (opt.c != null) ? (baseTs + opt.c) * 1000 : defaultDate;
+                const readCountUpdatedAt = (opt.u != null) ? (baseTs + opt.u) * 1000 : defaultDate;
                 // 대장르/부장르
                 const majorGenre = opt.mg || "";
                 const subGenre = opt.sg || "";
