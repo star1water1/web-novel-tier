@@ -2,9 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.10 (AI 점검 기본 Gemini 무료 + API 키 발급 안내 모달)            ║
+ * ║  버전: 7.28.11 (AI 점검 넓게 점검 옵트인 + 인앱 버전/가이드 동기화)          ║
  * ║  최종 수정: 2026-06-20                                                        ║
  * ║  총 라인 수: 약 62,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔍 v7.28.11 AI 점검 — 넓게 점검 옵트인 + 인앱 버전/가이드 동기화 (2026-06-20)║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [넓게 점검] 태그 헬스에 옵트인 토글 추가. 기본은 2회+·상위 200개(빠름),      ║
+ * ║ 켜면 1회 태그 포함·상한 400 + 응답 토큰 상향(Claude 4096→8192/Gemini 8192)   ║
+ * ║ 으로 그룹 잘림 방지. aiWideScan state + app_meta(ai_wide_scan) 영속.         ║
+ * ║ callClaude/GeminiForSynonyms가 context.maxTokens 사용하도록 확장.            ║
+ * ║                                                                              ║
+ * ║ [인앱 동기화] APP_VERSION 7.28.8→7.28.11(다음 실행 시 새 소식 모달),         ║
+ * ║ CHANGELOG_DATA에 무료(제미나이)·발급 안내·넓게 점검 통합 항목 추가,          ║
+ * ║ 기능 가이드(태그 헬스 팁) 갱신.                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12636,7 +12649,7 @@ async function callClaudeForSynonyms(tags, apiKey, model = SYNONYM_AI_MODEL, con
     headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
     body: JSON.stringify({
       model,
-      max_tokens: 4096,
+      max_tokens: context.maxTokens || 4096, // 🆕 v7.28.11: 넓게 점검 시 상향(잘림 방지)
       tools: [tool],
       tool_choice: { type: "tool", name: "report_synonyms" },
       messages: [{ role: "user", content: promptText }],
@@ -12669,6 +12682,7 @@ async function callGeminiForSynonyms(tags, apiKey, model = GEMINI_AI_MODEL, cont
       contents: [{ role: "user", parts: [{ text: promptText }] }],
       generationConfig: {
         temperature: 0.2,
+        maxOutputTokens: context.maxTokens || 8192, // 🆕 v7.28.11: 넓게 점검 시 상향(잘림 방지)
         responseMimeType: "application/json",
         // Gemini Schema는 protobuf 열거형 → 타입은 대문자(OBJECT/ARRAY/STRING)가 문서 표준
         responseSchema: {
@@ -14149,7 +14163,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.8";
+const APP_VERSION = "7.28.11";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -14175,6 +14189,17 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.11", date: "2026-06-20",
+    title: "🤖 AI 유의어 점검 — 무료(제미나이) 지원 · 발급 안내 · 넓게 점검",
+    highlights: [
+      { type: "new", text: "💸 AI 유의어 점검을 '무료'로 쓸 수 있어요. 구글 제미나이(Gemini) 무료 키를 넣으면 — 카드 등록 없이 — 통계가 못 잡는 의미 유의어(먼치킨 ↔ 사기캐)까지 찾아줘요. 기본 제공자도 무료(Gemini)로 바뀌었어요. (Claude는 유료 옵션으로 계속 선택 가능)" },
+      { type: "new", text: "📖 설정 > 🏷️ 태그에 'API 키 발급 방법 자세히 보기'를 추가했어요. 제공자별 단계와 발급 페이지 바로가기를 친절하게 안내해요. (Claude는 Max 구독과 별개로 과금된다는 점도 안내)" },
+      { type: "new", text: "🔍 '넓게 점검' 옵션을 추가했어요. 평소엔 2회 이상 쓴 태그 위주로 빠르게 보고, 켜면 1회만 쓴 태그까지 최대 400개를 더 꼼꼼히 점검해요(후보·시간은 늘어요)." },
+      { type: "improve", text: "🔒 키는 예전처럼 '이 기기'에만 저장되고 백업엔 들어가지 않아요. 점검할 때 전송되는 건 태그 목록뿐 — 작품 제목·감상·점수는 전송하지 않아요." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.8", date: "2026-06-20",
     title: "🔎 자체 검토 후속 — 직전 수정 보완",
@@ -16078,7 +16103,7 @@ const GUIDE_CONTENT = [
         tips: [
           "🔀 중복 표기 — \"현판\"·\"현대판타지\"처럼 같은 뜻 다른 표기를 대표 표기로 한 번에 통일해요. (v7.22.2)",
           "🧩 유의어 후보 — 어근이 같아 보이는 태그(예: 회귀 ↔ 회귀물, 판타지 ↔ 환타지)를 자동으로 찾아 '묶기'를 제안해요. 묶으면 유사 그룹이 돼 취향 분석에서 같은 요인으로 취급되고, 표기 자체는 그대로 유지돼요. (v7.26.0)",
-          "🤖 AI로 더 찾기 — Claude API 키를 넣으면(설정 > 태그) 글자는 달라도 뜻이 같은 유의어(먼치킨 ↔ 사기캐)까지 AI가 찾아줘요. 기본은 꺼져 있는 선택 기능이고, 키는 이 기기에만 저장돼요. 점검할 때만 태그 목록이 전송돼요. (v7.27.0)",
+          "🤖 AI로 더 찾기 — 글자는 달라도 뜻이 같은 유의어(먼치킨 ↔ 사기캐)까지 AI가 찾아줘요. 무료로 쓰려면 설정 > 태그에서 제공자를 'Gemini(무료)'로 두고 무료 키만 넣으면 돼요(기본이 무료예요). 같은 화면의 'API 키 발급 방법 자세히 보기'에 단계가 안내돼 있어요. '넓게 점검'을 켜면 1회만 쓴 태그까지 더 꼼꼼히 봐요. 선택 기능이고, 키는 이 기기에만 저장·점검할 때만 태그 목록이 전송돼요. (v7.28.11)",
           "🧠 한 번 '무시'했거나 '상반'으로 지정한 쌍은 다시 추천하지 않아요 — AI 점검에도 똑같이 적용돼 쓸수록 내 기준에 맞게 다듬어져요. (v7.28.0)",
           "📐 태그 좌표계를 쓰면, 좌표상 가깝게 둔 태그(직접 의미가 가깝다고 둔 것)도 유의어 후보로 잡아줘요. (v7.28.2)",
         ],
@@ -32390,6 +32415,7 @@ function AppContent() {
   const [geminiApiKey, setGeminiApiKey] = useState(""); // 🆕 v7.28.9: 무료 대안(Gemini) 키 (app_meta 저장, 백업엔 미포함)
   const [aiProvider, setAiProvider] = useState("gemini"); // 🆕 v7.28.9 AI 제공자 ("claude"|"gemini") · 🆕 v7.28.10 기본값 Gemini(무료)
   const [apiKeyHelpModalOpen, setApiKeyHelpModalOpen] = useState(false); // 🆕 v7.28.10: API 키 발급 방법 안내 모달
+  const [aiWideScan, setAiWideScan] = useState(false); // 🆕 v7.28.11: 넓게 점검(옵트인) — 1회 태그 포함·상한 400
   const [dismissedSynPairs, setDismissedSynPairs] = useState(() => new Set()); // 🔧 v7.28.0: 유의어 후보 거절 이력 (로컬·AI 공통)
   const [tagHealthBusy, setTagHealthBusy] = useState(false);
 
@@ -38079,6 +38105,13 @@ function AppContent() {
     try { await setAppMeta("ai_synonym_provider", v); } catch (e) { console.warn("[ai] 제공자 저장 실패:", e?.message); }
   }
 
+  // 🆕 v7.28.11: '넓게 점검' 토글 저장 (1회 태그 포함 + 상한 400 + 응답 상한 상향)
+  async function saveAiWideScan(v) {
+    const on = !!v;
+    setAiWideScan(on);
+    try { await setAppMeta("ai_wide_scan", on); } catch (e) { console.warn("[ai] 넓게 점검 저장 실패:", e?.message); }
+  }
+
   // 🤖 v7.27.0: AI 유의어 점검 — 자기 키로 호출, 결과를 후보 목록에 병합 (🆕 v7.28.9: 제공자 분기 Claude/Gemini)
   async function runAiSynonymScan() {
     const provider = aiProvider === "gemini" ? "gemini" : "claude";
@@ -38091,15 +38124,18 @@ function AppContent() {
     }
     setTagHealthBusy(true);
     try {
-      // 빈도 2+ 유니크 태그 수집 (상위 200개 — 토큰 절약)
+      // 유니크 태그 빈도 집계 (아래에서 모드별로 minFreq·상한 적용 — 토큰 절약)
       const freq = new Map(); const disp = new Map();
       for (const n of (list || [])) {
         const raw = [...parseMajorSub(n.major_genre), ...parseMajorSub(n.sub_genre), ...((n.tags || "").split(",").map(t => t.trim()).filter(Boolean))];
         const seen = new Set();
         for (const t of raw) { const k2 = normalizeTagKey(t); if (!k2 || seen.has(k2)) continue; seen.add(k2); freq.set(k2, (freq.get(k2) || 0) + 1); if (!disp.has(k2)) disp.set(k2, t); }
       }
-      const tags = [...freq.entries()].filter(([, f]) => f >= 2).sort((a, b) => b[1] - a[1]).slice(0, 200).map(([k]) => disp.get(k));
-      if (tags.length < 2) { Alert.alert("AI 점검", "분석할 태그가 부족해요. (2회 이상 쓰인 태그가 2개 이상 필요)"); return; }
+      // 🆕 v7.28.11: 넓게 점검이면 1회 태그도 포함 + 상한 400, 평소엔 2회+·상한 200
+      const minFreq = aiWideScan ? 1 : 2;
+      const cap = aiWideScan ? 400 : 200;
+      const tags = [...freq.entries()].filter(([, f]) => f >= minFreq).sort((a, b) => b[1] - a[1]).slice(0, cap).map(([k]) => disp.get(k));
+      if (tags.length < 2) { Alert.alert("AI 점검", "분석할 태그가 부족해요. (점검할 태그가 2개 이상 필요)"); return; }
       // 🔧 v7.28.1: 사용자 맥락 구성 — 기존 유사/상반 그룹 + 거절 이력을 AI에 전달
       const relGroups = tagRelations?.groups || {};
       const similarGroups = Object.values(relGroups).filter(g => g.type === "similar" && (g.tags || []).length >= 2).map(g => g.tags).slice(0, 30);
@@ -38112,9 +38148,11 @@ function AppContent() {
         if (a && b) oppositePairs.push([a, b]);
       }
       const dismissedPairs = [...dismissedSynPairs].map(pk => { const [ka, kb] = pk.split("|"); return [disp.get(ka) || ka, disp.get(kb) || kb]; }).slice(0, 50);
+      // 🆕 v7.28.11: 넓게 점검 시 응답 상한 상향(그룹 많아도 잘리지 않게)
+      const ctx = { similarGroups, oppositePairs, dismissedPairs, maxTokens: aiWideScan ? 8192 : 4096 };
       const groups = provider === "gemini"
-        ? await callGeminiForSynonyms(tags, key, GEMINI_AI_MODEL, { similarGroups, oppositePairs, dismissedPairs })
-        : await callClaudeForSynonyms(tags, key, SYNONYM_AI_MODEL, { similarGroups, oppositePairs, dismissedPairs });
+        ? await callGeminiForSynonyms(tags, key, GEMINI_AI_MODEL, ctx)
+        : await callClaudeForSynonyms(tags, key, SYNONYM_AI_MODEL, ctx);
       const tagset = new Set(tags.map(t => normalizeTagKey(t)));
       const aiCands = [];
       for (const g of (groups || [])) {
@@ -38236,6 +38274,7 @@ function AppContent() {
       try { const k = await getAppMeta("claude_api_key"); setClaudeApiKey(typeof k === "string" ? k : ""); } catch {}
       try { const gk = await getAppMeta("gemini_api_key"); setGeminiApiKey(typeof gk === "string" ? gk : ""); } catch {}
       try { const p = await getAppMeta("ai_synonym_provider"); if (p === "gemini" || p === "claude") setAiProvider(p); } catch {}
+      try { const w = await getAppMeta("ai_wide_scan"); if (typeof w === "boolean") setAiWideScan(w); } catch {} // 🆕 v7.28.11
     })();
   }, []);
 
@@ -62312,6 +62351,13 @@ async function importJSON() {
                   </TouchableOpacity>
                 );
               })()}
+              {/* 🆕 v7.28.11: '넓게 점검' 토글 (옵트인) — 기본은 2회+·200개, 켜면 1회+·400개 */}
+              <TouchableOpacity onPress={() => saveAiWideScan(!aiWideScan)} style={{ flexDirection: "row", alignItems: "center", gap: 8, alignSelf: "flex-start", marginBottom: 12 }}>
+                <View style={{ width: 20, height: 20, borderRadius: 6, borderWidth: 2, borderColor: aiWideScan ? C.primary : C.line, backgroundColor: aiWideScan ? C.primary : "transparent", alignItems: "center", justifyContent: "center" }}>
+                  {aiWideScan ? <Text style={{ color: "#fff", fontSize: 12, fontWeight: "900" }}>✓</Text> : null}
+                </View>
+                <Text style={{ color: C.sub, fontSize: 12, flexShrink: 1 }}>넓게 점검 — 1회만 쓴 태그도 포함 · 최대 400개 (더 꼼꼼하지만 후보·시간 늘어요)</Text>
+              </TouchableOpacity>
               {(tagHealthData?.synonymCandidates || []).length === 0 ? (
                 <Text style={{ color: C.sub, fontSize: 13, marginBottom: 16 }}>발견된 유의어 후보가 없어요 ✓</Text>
               ) : (
