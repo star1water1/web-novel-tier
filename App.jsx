@@ -2,9 +2,28 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.4 (코드 전반 버그 점검 2차 — 데이터 손실/누수/손상 추가 수정)     ║
+ * ║  버전: 7.28.5 (코드 전반 버그 점검 3차 — 내보내기/생명주기 견고화)           ║
  * ║  최종 수정: 2026-06-20                                                        ║
- * ║  총 라인 수: 약 62,200줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 62,230줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛡️ v7.28.5 코드 전반 버그 점검 3차 — 내보내기/생명주기 견고화 (2026-06-20)      ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [수상 내보내기] 작품별 captureRef에 catch가 없어, 수상 1개가 한도 초과로 분할   ║
+ * ║ 전에 throw하면 나머지 상이 전부 누락되던 문제 → 티어 내보내기처럼 상별 격리      ║
+ * ║ (실패 상은 건너뛰고 계속, 이름을 종료 안내에 표시).                             ║
+ * ║                                                                              ║
+ * ║ [앱 생명주기] AppState 핸들러가 lastState를 모든 await 이후에만 갱신 → async    ║
+ * ║ 핸들러가 flush await에 멈춘 사이 들어온 다음 이벤트가 stale lastState를 읽어,    ║
+ * ║ active→background→active 빠른 전환 시 포그라운드 DB 재초기화(리셋·리로드)가      ║
+ * ║ 통째로 스킵되던 경쟁 → lastState를 await 이전에 동기 갱신.                       ║
+ * ║                                                                              ║
+ * ║ [점검 범위] 3차 3영역(이미지·캡처 내보내기/app_meta 영속·슬롯 생명주기/유의어·   ║
+ * ║ 차트·표시 헬퍼). 차트·헬퍼·유의어 엔진은 무결 확인(모든 나눗셈 0가드·차트 빈     ║
+ * ║ 데이터 가드·날짜 TZ 안전). 미수정(저위험): deferSetAppMeta 세대 가드(공유 버퍼   ║
+ * ║ 특성상 단순 가드가 새 슬롯 기록 유실 유발 — flushAllPendingWrites로 충분 방어),  ║
+ * ║ parseInt radix(현대 JS 무해)·유의어 minFreq 정렬(표시 순서만).                  ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -13938,7 +13957,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.4";
+const APP_VERSION = "7.28.5";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -13964,6 +13983,15 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.5", date: "2026-06-20",
+    title: "🛡️ 코드 전반 버그 점검 3차 — 내보내기/생명주기 견고화",
+    highlights: [
+      { type: "fix", text: "🏆 수상 결과 이미지를 저장할 때, 수상 한 개가 너무 커서 실패하면 그 뒤 수상들까지 전부 저장되지 않던 문제를 고쳤어요. 이제 문제가 된 수상만 건너뛰고 나머지는 정상 저장돼요." },
+      { type: "fix", text: "🔄 앱을 빠르게 백그라운드↔포그라운드로 전환할 때, 드물게 데이터가 새로고침되지 않고 예전 화면이 남던 문제를 고쳤어요. 긴 시간 백그라운드에 있다 돌아와도 안정적으로 다시 불러와요." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.4", date: "2026-06-20",
     title: "🛡️ 코드 전반 버그 점검 2차 — 데이터 손실/누수 수정",
@@ -23939,6 +23967,14 @@ const AwardsScreen = memo(({
               });
             }
           }
+        } catch (capErr) {
+          // 🛡️ FIX: 한 상의 캡처/저장 실패(예: 한도 초과 award가 분할 전 captureRef에서 throw)가
+          //   outer catch까지 전파되어 나머지 상이 전부 누락되던 문제 — 티어 내보내기처럼 상별로
+          //   격리해 건너뛰고 계속한다. 사용자 취소(ref off)면 전체 중단.
+          if (!isAwardExportingRef.current) break;
+          console.warn(`[award_export] ${award.name} 캡처 실패:`, capErr?.message);
+          Breadcrumbs.add("award_export", "award_failed", { awardId: award.id, msg: capErr?.message });
+          skippedNames.push(award.name);
         } finally {
           if (awardUri) await FileSystem.deleteAsync(awardUri, { idempotent: true }).catch(() => {});
         }
@@ -34545,10 +34581,17 @@ function AppContent() {
     let lastBackgroundTime = 0;
 
     const subscription = AppState.addEventListener("change", async (nextAppState) => {
+      // 🛡️ FIX: lastState를 await 이전에 동기적으로 갱신한다. 이전엔 핸들러 끝(모든 await 이후)에서만
+      //   갱신해, async 핸들러가 await에 멈춘 사이 다음 이벤트가 들어오면 stale lastState를 읽었다.
+      //   → active→background→active 빠른 전환 시 background 핸들러가 flush await 중이면 두 번째
+      //   (foreground) 이벤트가 lastState를 여전히 "active"로 보고 포그라운드 재초기화(DB 리셋/
+      //   리로드)를 통째로 스킵 → 긴 백그라운드 후 죽은 DB·낡은 목록이 그대로 남던 경쟁.
+      const prevState = lastState;
+      lastState = nextAppState;
       PerfMonitor.trackLifecycle(nextAppState === "active" ? "foreground" : "background"); // 🔬
       Breadcrumbs.lifecycle(nextAppState === "active" ? "foreground" : "background");
       // 포그라운드 → 백그라운드 전환 시: 큐 플러시
-      if (lastState === "active" && nextAppState.match(/inactive|background/)) {
+      if (prevState === "active" && nextAppState.match(/inactive|background/)) {
         console.log("앱 백그라운드 전환 - 큐 플러시 + DB 정리");
         lastBackgroundTime = Date.now();
         try {
@@ -34559,7 +34602,7 @@ function AppContent() {
       }
 
       // 백그라운드 → 포그라운드 전환 시
-      if (lastState.match(/inactive|background/) && nextAppState === "active") {
+      if (prevState.match(/inactive|background/) && nextAppState === "active") {
         // 🔧 DB 최적화: 짧은 BG (< 5초)에서는 연결 검증만, 리셋 스킵
         // 빠른 앱 전환(멀티태스킹)에서 불필요한 resetDbConnection 9회 → 최소화
         // 🆕 v7.0.2: lastBackgroundTime 우선 사용 (PerfMonitor 의존 제거)
@@ -34618,9 +34661,9 @@ function AppContent() {
           }
         }
       }
-      lastState = nextAppState;
+      // (lastState는 핸들러 상단에서 이미 동기 갱신함)
     });
-    
+
     return () => {
       subscription.remove();
     };
