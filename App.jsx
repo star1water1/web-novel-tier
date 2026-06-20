@@ -2,9 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.26.0 (유의어 후보 자동 추천 — 태그 헬스 통합)                        ║
+ * ║  버전: 7.27.0 (AI 유의어 점검 — 옵트인 LLM 추천)                              ║
  * ║  최종 수정: 2026-06-20                                                        ║
  * ║  총 라인 수: 약 61,440줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🤖 v7.27.0 AI 유의어 점검 (옵트인 LLM 추천) (2026-06-20)                        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [기능] 태그 헬스에 '🤖 AI로 더 찾기' 추가. 형태/통계(로컬, v7.26.0)가 못 잡는   ║
+ * ║ '의미만 같은' 유의어(먼치킨↔사기캐)를 사용자 자기 Claude API 키로 발굴.         ║
+ * ║ 기본 OFF — 키 입력 시에만 활성(완전 옵트인).                                    ║
+ * ║                                                                              ║
+ * ║ [구현] 모바일 네이티브 fetch 직접 호출(브라우저 아님 → CORS 무관). 단일 호출 +  ║
+ * ║ tool_use로 그룹 JSON 강제. 기본 모델 Haiku(SYNONYM_AI_MODEL 상수로 교체 가능).  ║
+ * ║ 빈도 2+ 상위 200개 태그만 전송(토큰 절약). 결과는 로컬 후보에 중복제거 병합.    ║
+ * ║                                                                              ║
+ * ║ [보안] 키는 app_meta(슬롯 DB)에 저장 — 백업 export 대상 아님. 설정>🏷️태그에     ║
+ * ║ secureTextEntry 입력란. 점검 시에만 태그 전송(작품 제목·감상은 전송 X).         ║
+ * ║ 신규: callClaudeForSynonyms, runAiSynonymScan, saveClaudeApiKey.              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12285,6 +12301,68 @@ function computeSynonymCandidates(novels, tagRelations, opts = {}) {
   return candidates.slice(0, MAX_RESULTS);
 }
 
+/* =========================================================
+   🤖 v7.27.0: AI 유의어 점검 (옵트인) — 사용자 자기 키로 Claude API 직접 호출
+   - 모바일 네이티브는 브라우저가 아니라 CORS 없음 → fetch 직접 호출 가능.
+   - 단일 호출 + tool_use로 그룹 JSON 강제(구조화 출력). 가끔 누르는 버튼.
+   - 형태/통계가 못 잡는 '의미만 같은' 유의어(먼치킨↔사기캐)를 LLM이 담당.
+   - 기본 Haiku(저렴·충분, 1회 ~20원). 더 미묘한 의미까지 원하면 아래 상수를
+     "claude-sonnet-4-6" 또는 "claude-opus-4-8"로 바꾸면 된다(비용↑).
+   ========================================================= */
+const SYNONYM_AI_MODEL = "claude-haiku-4-5";
+
+async function callClaudeForSynonyms(tags, apiKey, model = SYNONYM_AI_MODEL) {
+  if (!apiKey) throw new Error("API 키가 없습니다");
+  if (!tags || tags.length === 0) return [];
+  const tool = {
+    name: "report_synonyms",
+    description: "의미가 같거나 매우 비슷한 웹소설 태그들을 그룹으로 보고한다",
+    input_schema: {
+      type: "object",
+      properties: {
+        groups: {
+          type: "array",
+          description: "유의어 그룹 목록. 확실한 것만 포함.",
+          items: {
+            type: "object",
+            properties: {
+              tags: { type: "array", items: { type: "string" }, description: "같은 의미의 태그들 (2개 이상, 입력 목록의 표기 그대로)" },
+              reason: { type: "string", description: "묶은 이유 (짧게)" },
+            },
+            required: ["tags"],
+          },
+        },
+      },
+      required: ["groups"],
+    },
+  };
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({
+      model,
+      max_tokens: 4096,
+      tools: [tool],
+      tool_choice: { type: "tool", name: "report_synonyms" },
+      messages: [{
+        role: "user",
+        content: "다음은 한 사용자의 웹소설 태그 목록입니다. 표기만 다른 게 아니라 '뜻이 같거나 거의 같은' 유의어/동의어끼리 그룹으로 묶어 주세요. 예: 먼치킨/사기캐/최강, 회귀/회귀물. 애매하면 묶지 마세요. 반드시 입력 목록에 있는 표기만 사용하세요.\n\n태그: " + tags.join(", "),
+      }],
+    }),
+  });
+  if (!res.ok) {
+    let detail = "";
+    try { detail = (await res.json())?.error?.message || ""; } catch {}
+    if (res.status === 401) throw new Error("API 키가 올바르지 않아요 (401)");
+    if (res.status === 429) throw new Error("요청이 많아요. 잠시 후 다시 시도 (429)");
+    throw new Error(`API 오류 ${res.status}${detail ? ": " + detail.slice(0, 120) : ""}`);
+  }
+  const data = await res.json();
+  const toolUse = (data.content || []).find(b => b.type === "tool_use");
+  const groups = toolUse?.input?.groups;
+  return Array.isArray(groups) ? groups : [];
+}
+
 /**
  * 🆕 v3.5.12: 태그 목록에서 대상 태그 찾기 (공백 무시 매칭)
  * 찾으면 목록 내 원본 문자열 반환, 없으면 null
@@ -13699,7 +13777,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.26.0";
+const APP_VERSION = "7.27.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -13725,6 +13803,15 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.27.0", date: "2026-06-20",
+    title: "🤖 AI 유의어 점검 (옵트인)",
+    highlights: [
+      { type: "new", text: "🤖 '태그 헬스 점검'에 'AI로 더 찾기'가 생겼어요. Claude API 키를 넣으면, 통계로는 못 잡는 '뜻만 같은' 유의어(예: 먼치킨↔사기캐, 회귀↔리턴)까지 AI가 찾아 추천해요. 기본은 꺼져 있고, 원할 때만 쓰는 선택 기능이에요." },
+      { type: "improve", text: "🔒 API 키는 이 기기에만 저장되고 백업 파일엔 포함되지 않아요. 점검할 때만 '태그 목록'이 전송되고, 작품 제목·감상 같은 개인 내용은 전송되지 않아요. (모델은 가장 저렴한 Haiku 기본, 1회 점검 약 20원)" },
+    ],
+    details: [],
+  },
   {
     version: "7.26.0", date: "2026-06-20",
     title: "🧩 유의어 후보 자동 추천 (태그 헬스)",
@@ -31792,6 +31879,7 @@ function AppContent() {
   // 🆕 v7.22.2: 태그 헬스 패널 (변형 클러스터 병합 + 끊어진 관계 정리)
   const [tagHealthModalOpen, setTagHealthModalOpen] = useState(false);
   const [tagHealthData, setTagHealthData] = useState(null);
+  const [claudeApiKey, setClaudeApiKey] = useState(""); // 🤖 v7.27.0: AI 유의어 점검용 (app_meta 저장, 백업엔 미포함)
   const [tagHealthBusy, setTagHealthBusy] = useState(false);
 
   // 🏆 티어 검토 시스템 (v2.5)
@@ -37318,6 +37406,53 @@ function AppContent() {
     setTagHealthData(prev => prev ? { ...prev, synonymCandidates: (prev.synonymCandidates || []).filter(c => !(c.a === tagA && c.b === tagB)) } : prev);
   }
 
+  // 🤖 v7.27.0: Claude API 키 저장 (app_meta — 슬롯 DB, 백업엔 미포함)
+  async function saveClaudeApiKey(key) {
+    const k = (key || "").trim();
+    setClaudeApiKey(k);
+    try { await setAppMeta("claude_api_key", k); } catch (e) { console.warn("[ai] 키 저장 실패:", e?.message); }
+  }
+
+  // 🤖 v7.27.0: AI 유의어 점검 — 자기 키로 Claude 호출, 결과를 후보 목록에 병합
+  async function runAiSynonymScan() {
+    const key = (claudeApiKey || "").trim();
+    if (!key) { Alert.alert("AI 점검", "먼저 설정 > 🏷️ 태그에서 Claude API 키를 입력해 주세요."); return; }
+    setTagHealthBusy(true);
+    try {
+      // 빈도 2+ 유니크 태그 수집 (상위 200개 — 토큰 절약)
+      const freq = new Map(); const disp = new Map();
+      for (const n of (list || [])) {
+        const raw = [...parseMajorSub(n.major_genre), ...parseMajorSub(n.sub_genre), ...((n.tags || "").split(",").map(t => t.trim()).filter(Boolean))];
+        const seen = new Set();
+        for (const t of raw) { const k2 = normalizeTagKey(t); if (!k2 || seen.has(k2)) continue; seen.add(k2); freq.set(k2, (freq.get(k2) || 0) + 1); if (!disp.has(k2)) disp.set(k2, t); }
+      }
+      const tags = [...freq.entries()].filter(([, f]) => f >= 2).sort((a, b) => b[1] - a[1]).slice(0, 200).map(([k]) => disp.get(k));
+      if (tags.length < 2) { Alert.alert("AI 점검", "분석할 태그가 부족해요. (2회 이상 쓰인 태그가 2개 이상 필요)"); return; }
+      const groups = await callClaudeForSynonyms(tags, key);
+      const tagset = new Set(tags.map(t => normalizeTagKey(t)));
+      const aiCands = [];
+      for (const g of (groups || [])) {
+        const gt = (g.tags || []).filter(t => t && tagset.has(normalizeTagKey(t)));
+        const uniq = [...new Set(gt)];
+        for (let i = 1; i < uniq.length; i++) {
+          if (isSameTag(uniq[0], uniq[i])) continue;
+          aiCands.push({ a: uniq[0], b: uniq[i], score: 0.85, minFreq: 0, reasons: ["AI" + (g.reason ? ": " + g.reason : "")], suggest: "group", ai: true });
+        }
+      }
+      setTagHealthData(prev => {
+        const existing = (prev?.synonymCandidates) || [];
+        const seen = new Set(existing.map(c => `${normalizeTagKey(c.a)}|${normalizeTagKey(c.b)}`));
+        const fresh = aiCands.filter(c => { const kk = `${normalizeTagKey(c.a)}|${normalizeTagKey(c.b)}`; if (seen.has(kk)) return false; seen.add(kk); return true; });
+        return { ...(prev || {}), synonymCandidates: [...fresh, ...existing] };
+      });
+      Alert.alert("AI 점검 완료", `유의어 후보 ${aiCands.length}개를 찾았어요.${aiCands.length ? "\n위쪽 '유의어 후보'에서 확인하세요." : ""}`);
+    } catch (e) {
+      Alert.alert("AI 점검 실패", e?.message || String(e));
+    } finally {
+      setTagHealthBusy(false);
+    }
+  }
+
   // 끊어진 관계 정리: dangling relatedGroupId NULL화 + 존재 않는 그룹 가리키는 tagToGroup 제거
   function cleanupTagRelationsHealth() {
     setTagRelations(prev => {
@@ -37406,6 +37541,11 @@ function AppContent() {
       setReviewSelectedIds([]);
     }
   }, [screen]);
+
+  // 🤖 v7.27.0: AI 유의어 점검용 Claude API 키 로드 (슬롯 DB의 app_meta)
+  useEffect(() => {
+    (async () => { try { const k = await getAppMeta("claude_api_key"); setClaudeApiKey(typeof k === "string" ? k : ""); } catch {} })();
+  }, []);
 
   async function saveHiddenTags(tags) {
     setHiddenTags(tags);
@@ -54550,6 +54690,38 @@ async function importJSON() {
                 </Text>
               </TouchableOpacity>
 
+              {/* 🤖 v7.27.0: AI 유의어 점검 API 키 (선택·옵트인) */}
+              <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+                <Text style={{ color: C.text, fontWeight: "700", fontSize: 14, marginBottom: 4 }}>🤖 AI 유의어 점검 (선택)</Text>
+                <Text style={{ color: C.sub, fontSize: 11, lineHeight: 16, marginBottom: 10 }}>
+                  Claude API 키를 넣으면 태그 헬스의 '🤖 AI로 더 찾기'가 켜져요. 통계가 못 잡는 의미 유의어(예: 먼치킨↔사기캐)까지 추천받을 수 있어요. 키는 이 기기에만 저장되고 백업엔 포함되지 않아요. 점검할 때만 태그 목록이 전송돼요(작품 제목·감상 등은 전송 안 함).
+                </Text>
+                <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+                  <TextInput
+                    value={claudeApiKey}
+                    onChangeText={setClaudeApiKey}
+                    placeholder="sk-ant-..."
+                    placeholderTextColor={C.sub}
+                    secureTextEntry
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    style={{ flex: 1, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, color: C.text, fontSize: 13 }}
+                  />
+                  <TouchableOpacity
+                    onPress={() => { saveClaudeApiKey(claudeApiKey); Alert.alert("저장됨", (claudeApiKey || "").trim() ? "API 키를 저장했어요." : "API 키를 비웠어요."); }}
+                    style={{ backgroundColor: C.primary, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 }}
+                  >
+                    <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>저장</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={{ color: (claudeApiKey || "").trim() ? (isDark ? "#4ade80" : "#16a34a") : C.sub, fontSize: 11, marginTop: 6 }}>
+                  {(claudeApiKey || "").trim() ? "✓ 키 입력됨 · 모델 Haiku (1회 점검 ~20원)" : "키 미설정 — AI 점검 비활성"}
+                </Text>
+                <Text style={{ color: C.sub, fontSize: 10, marginTop: 4 }}>
+                  키 발급: console.anthropic.com → API Keys
+                </Text>
+              </View>
+
               {/* 빠른 유틸리티 */}
               <View style={{ flexDirection: "row", gap: 8, marginBottom: 16 }}>
                 <TouchableOpacity
@@ -61212,6 +61384,16 @@ async function importJSON() {
               <Text style={{ color: C.sub, fontSize: 11, marginBottom: 6 }}>
                 어근이 같아 보이는 태그예요(예: 회귀 ↔ 회귀물). '묶기'를 누르면 유사 그룹으로 등록돼 취향 분석에서 같은 요인으로 취급됩니다. 표기 자체는 그대로 유지돼요.
               </Text>
+              {/* 🤖 v7.27.0: AI 옵트인 — 형태/통계가 못 잡는 의미 유의어까지 LLM이 추천 */}
+              <TouchableOpacity
+                disabled={tagHealthBusy}
+                onPress={runAiSynonymScan}
+                style={{ flexDirection: "row", alignItems: "center", alignSelf: "flex-start", gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, backgroundColor: claudeApiKey ? (isDark ? "#3730a3" : "#eef2ff") : C.chip, borderWidth: 1, borderColor: claudeApiKey ? (isDark ? "#4f46e5" : "#c7d2fe") : C.line, marginBottom: 8, opacity: tagHealthBusy ? 0.5 : 1 }}
+              >
+                <Text style={{ color: claudeApiKey ? (isDark ? "#c7d2fe" : "#4338ca") : C.sub, fontWeight: "700", fontSize: 13 }}>
+                  🤖 AI로 더 찾기 {claudeApiKey ? "" : "(설정 > 태그에서 키 입력)"}
+                </Text>
+              </TouchableOpacity>
               {(tagHealthData?.synonymCandidates || []).length === 0 ? (
                 <Text style={{ color: C.sub, fontSize: 13, marginBottom: 16 }}>발견된 유의어 후보가 없어요 ✓</Text>
               ) : (
