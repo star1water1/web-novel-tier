@@ -223,9 +223,9 @@ function normalizeFromHtml(html, url) {
 
 ## 8. 빌드 순서 & 현재 상태
 
-- [x] **0. 파싱 엔진 프로토타입 검증** (§5, node 테스트 통과) — App.jsx 미이식
-- [ ] **1. 엔진 이식**: §5 함수 + `fetchNovelMeta(url)` 라이브 래퍼를 App.jsx에 (OTA 가능, egress 불필요 — 단 라이브 정확도는 실측 전까지 미확정)
-- [ ] **2. 확인 모달**: `aiTagSuggest` 패턴으로 현재값↔가져온값 diff + 체크 적용 (공통, 4화면 재사용)
+- [x] **0. 파싱 엔진 프로토타입 검증** (§5, node 테스트 통과)
+- [x] **1. 엔진 이식** (v7.28.25): `SCRAPER_PLATFORMS`/`detectPlatformFromUrl`/`scraperExtractMetaTags`/`scraperExtractJsonLd`/`scraperNormalizeFromHtml`/`scraperRefineByPlatform`/`fetchNovelMeta`/`searchNovels`(stub) 를 App.jsx에 이식. callGeminiForOCR 직후 모듈 블록. **미배선**(UI 호출 없음). 라이브 정확도는 실측 전까지 미확정.
+- [ ] **2. 확인 모달**: `aiTagSuggest` 패턴으로 현재값↔가져온값 diff + 체크 적용 (공통, 4화면 재사용) ← **다음**
 - [ ] **3. 4화면 배선**: 신규등록·예정등록·보충탭·편집모달에 "🔗 불러오기" 진입점 + 표지 다운로드 연결
 - [ ] **4. 제목 검색(메인)**: `searchNovels(query)` → 후보 picker → 선택 → 엔진. ★**플랫폼 검색 엔드포인트 실측 필요**
 - [ ] **5. 클립보드 감지** (expo-clipboard, 리빌드)

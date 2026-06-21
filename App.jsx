@@ -2,9 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.24 (명대사 이미지 OCR — 비전으로 텍스트 추출·검색)               ║
+ * ║  버전: 7.28.25 (플랫폼 메타 스크래퍼 — 골격 엔진 이식, 미배선)               ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 62,990줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 63,140줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔗 v7.28.25 플랫폼 메타 스크래퍼 — 골격 엔진 (2026-06-21)                    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 원본 플랫폼 페이지에서 작품 메타(제목·작가·표지·회차·완결·줄거리·장르)를      ║
+ * ║ 직접 추출하는 공통 엔진 이식. LLM 검색의 마이너작 환각을 원천 회피.           ║
+ * ║ [엔진] scraperNormalizeFromHtml: OpenGraph + JSON-LD(Book/CreativeWork) 우선  ║
+ * ║   파싱(합성 HTML 3종 node 검증). detectPlatformFromUrl(5개 등록).             ║
+ * ║ [디스패처] fetchNovelMeta(url): RN 네이티브 fetch(=CORS 없음, 프록시 불필요)  ║
+ * ║   → 정규화 메타. searchNovels(query): 제목검색(엔드포인트 실측 후 구현, stub).║
+ * ║ * 아직 UI 미배선 — 다음 단계: 확인 모달 + 4화면(등록·예정·보충·편집) 배선.    ║
+ * ║   설계·진행상황·재개법: docs/scraper-plan.md                                  ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -13400,6 +13413,129 @@ async function callGeminiForOCR(base64, mimeType, apiKey, model = GEMINI_AI_MODE
   if (!text && data?.promptFeedback?.blockReason) throw new Error("요청이 차단됐어요: " + data.promptFeedback.blockReason);
   if (!text && cand?.finishReason === "MAX_TOKENS") throw new Error("AI 응답이 길이 제한에 걸렸어요. 잠시 후 다시 시도해 주세요.");
   return text;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🔗 v7.28.25 플랫폼 메타데이터 스크래퍼 — 골격(엔진 + 디스패처) · 설계: docs/scraper-plan.md
+//   원본 플랫폼 페이지에서 작품 메타를 직접 추출(LLM 환각 없음). RN 네이티브 fetch =
+//   CORS 없음 → 프록시 불필요. 파싱은 OpenGraph + JSON-LD(Book/CreativeWork) 우선.
+//   플랫폼별 정밀화(회차/완결 표기)·제목검색 엔드포인트는 실측 후 채움(현재 미배선).
+// ═══════════════════════════════════════════════════════════════════════════
+const SCRAPER_UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile Safari/537.36";
+const SCRAPER_PLATFORMS = [
+  { key: "노벨피아", host: "novelpia.com" },
+  { key: "문피아", host: "munpia.com" },
+  { key: "네이버시리즈", host: "series.naver.com" },
+  { key: "리디", host: "ridibooks.com" },
+  { key: "카카오페이지", host: "page.kakao.com" },
+];
+
+function detectPlatformFromUrl(url) {
+  const u = (url || "").toLowerCase();
+  for (const p of SCRAPER_PLATFORMS) if (u.includes(p.host)) return p.key;
+  return null;
+}
+
+// <meta property/name/itemprop=... content=...> → { key(소문자): content } (속성 순서 무관)
+function scraperExtractMetaTags(html) {
+  const out = {};
+  const tags = html.match(/<meta\b[^>]*>/gi) || [];
+  for (const tag of tags) {
+    const key = (tag.match(/\b(?:property|name|itemprop)\s*=\s*["']([^"']+)["']/i) || [])[1];
+    const content = (tag.match(/\bcontent\s*=\s*["']([^"']*)["']/i) || [])[1];
+    if (key && content != null && out[key.toLowerCase()] == null) out[key.toLowerCase()] = content;
+  }
+  return out;
+}
+
+// 모든 <script type="application/ld+json"> 파싱 + @graph/배열 평탄화
+function scraperExtractJsonLd(html) {
+  const blocks = [];
+  const re = /<script\b[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let m;
+  while ((m = re.exec(html))) {
+    try {
+      const parsed = JSON.parse(m[1].trim());
+      const arr = Array.isArray(parsed) ? parsed
+        : (parsed["@graph"] && Array.isArray(parsed["@graph"]) ? parsed["@graph"] : [parsed]);
+      for (const o of arr) if (o && typeof o === "object") blocks.push(o);
+    } catch { /* 깨진 ld+json 스킵 */ }
+  }
+  return blocks;
+}
+
+// HTML → 정규화 메타. OG + JSON-LD 우선. (작은 헬퍼는 전역 충돌 방지 위해 로컬)
+function scraperNormalizeFromHtml(html, url) {
+  const pickType = (blocks, types) => blocks.find(b => {
+    const t = b["@type"]; const ts = Array.isArray(t) ? t : [t];
+    return ts.some(x => types.includes(String(x)));
+  });
+  const asText = (v) => (typeof v === "string" ? v : (v && typeof v === "object" ? (v.name || v.url || "") : "")) || "";
+  const firstImg = (img) => Array.isArray(img) ? firstImg(img[0]) : asText(img);
+
+  const platform = detectPlatformFromUrl(url);
+  const og = scraperExtractMetaTags(html);
+  const ld = scraperExtractJsonLd(html);
+  const book = pickType(ld, ["Book", "CreativeWork", "CreativeWorkSeries", "Product", "WebPage"]) || ld[0] || {};
+
+  const title = (asText(book.name) || og["og:title"] || og["twitter:title"] || "").trim();
+  let author = "";
+  if (book.author) author = Array.isArray(book.author) ? book.author.map(asText).filter(Boolean).join(", ") : asText(book.author);
+  if (!author) author = og["author"] || og["og:novel:author"] || "";
+  author = (author || "").trim();
+  const coverUrl = (firstImg(book.image) || og["og:image"] || og["twitter:image"] || "").trim();
+  const synopsis = (asText(book.description) || og["og:description"] || "").trim();
+  let genres = book.genre || og["og:novel:genre"] || og["genre"] || "";
+  genres = Array.isArray(genres) ? genres.map(g => String(g).trim()).filter(Boolean)
+    : (genres ? String(genres).split(/[,/|·]/).map(s => s.trim()).filter(Boolean) : []);
+
+  let workStatus = null;
+  if (/완결|completed/i.test(html)) workStatus = "completed";
+  else if (/연재\s*중|연재중|ongoing/i.test(html)) workStatus = "ongoing";
+
+  let totalEpisodes = null;
+  const ne = book.numberOfEpisodes || book.numberOfPages;
+  if (ne != null && !isNaN(Number(ne))) totalEpisodes = Number(ne);
+  if (totalEpisodes == null) {
+    const mm = html.match(/(?:전체|총)\s*([0-9,]+)\s*화/);
+    if (mm) totalEpisodes = Number(mm[1].replace(/,/g, ""));
+  }
+
+  return { ok: !!title, platform, url, title, author, coverUrl, synopsis, genres, workStatus, totalEpisodes };
+}
+
+// 플랫폼별 정밀화 후크 — 실측 후 회차/완결/작가 보정. 현재는 공통 결과 그대로.
+function scraperRefineByPlatform(meta, html, platform) {
+  // TODO(노벨피아·문피아·시리즈·리디·카카페): 실제 HTML 기준 보정. docs/scraper-plan.md §7.1
+  return meta;
+}
+
+// URL → 정규화 메타 (라이브 fetch). RN 네이티브 fetch라 CORS 없음 → 프록시 불필요.
+async function fetchNovelMeta(url, opts = {}) {
+  if (!url || !/^https?:\/\//i.test(String(url).trim())) throw new Error("올바른 링크가 아니에요 (http/https URL 필요)");
+  url = String(url).trim();
+  const platform = detectPlatformFromUrl(url);
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
+  let res;
+  try {
+    res = await fetch(url, { headers: { "User-Agent": SCRAPER_UA, "Accept-Language": "ko,en;q=0.8" }, signal });
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error("응답이 없어 중단했어요 (시간 초과)");
+    throw new Error("페이지를 불러오지 못했어요: " + (e?.message || e));
+  } finally { cleanup(); }
+  if (!res.ok) throw new Error(`페이지 오류 ${res.status}${res.status === 403 ? " (접근 차단/로그인 필요일 수 있어요)" : ""}`);
+  const html = await res.text();
+  let meta = scraperNormalizeFromHtml(html, url);
+  meta = scraperRefineByPlatform(meta, html, platform);
+  if (!meta || !meta.ok || !meta.title) throw new Error("이 페이지에서 작품 정보를 찾지 못했어요. (지원 안 되는 페이지이거나 구조가 바뀌었을 수 있어요)");
+  return meta;
+}
+
+// 제목 → 후보[] (플랫폼별 검색 엔드포인트 실측 후 구현). 현재 미구현.
+async function searchNovels(query, opts = {}) {
+  void query; void opts;
+  // TODO: 플랫폼별 검색/자동완성 엔드포인트 실측 후 → [{ title, author, coverUrl, url, platform }]
+  throw new Error("제목 검색은 준비 중이에요. 지금은 작품 링크로 ‘🔗 불러오기’를 써 주세요.");
 }
 
 /**
