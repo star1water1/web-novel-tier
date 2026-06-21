@@ -2,9 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.20 (AI 키·제공자 전역 공유 — 모든 슬롯에서 동작)                 ║
+ * ║  버전: 7.28.21 (LLM 경미 결함 정리 — 토큰잘림·first-wins·레이스 + 가이드)    ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 62,720줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 62,740줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.28.21 LLM 경미 결함 3건 정리 + 기능 가이드 갱신 (2026-06-21)           ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [토큰 잘림] Gemini 응답이 길이 제한(MAX_TOKENS)에 걸려 잘리면 JSON 파싱 실패  ║
+ * ║ →조용히 '결과 없음'이던 것을, finishReason 확인해 안내 오류로 노출(3개 호출). ║
+ * ║ [first-wins] 일괄 적용 시 같은 신규 태그가 여러 작품에서 다른 속성으로 충돌   ║
+ * ║ 하면 last-wins(비결정적 느낌)→첫 설정 우선(sentSetByBatch)로 결정화.          ║
+ * ║ [슬롯 레이스] AI 점검·좌표 배치 진행 중 슬롯 전환 시 결과가 새 슬롯에 적용되던 ║
+ * ║ 레이스 → _slotGeneration 스냅샷 가드로 이전 슬롯 결과 폐기.                   ║
+ * ║ [가이드] AI 태그 추천(단일)·미태깅 일괄 태그·좌표 AI 배치·전역 키·타임아웃을  ║
+ * ║ 기능 가이드(GUIDE_CONTENT)에 반영.                                            ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12907,7 +12920,7 @@ async function callGeminiForSynonyms(tags, apiKey, model = GEMINI_AI_MODEL, cont
     return { groups: [], opposites: [] };
   }
   let parsed;
-  try { parsed = JSON.parse(text); } catch { return { groups: [], opposites: [] }; }
+  try { parsed = JSON.parse(text); } catch { if (cand?.finishReason === "MAX_TOKENS") throw new Error("AI 응답이 길이 제한에 걸렸어요. '넓게 점검'을 끄거나 태그가 적은 슬롯에서 다시 시도해 주세요."); return { groups: [], opposites: [] }; }
   const groups = parsed?.groups;
   const opposites = parsed?.opposites;
   return { groups: Array.isArray(groups) ? groups : [], opposites: Array.isArray(opposites) ? opposites : [] };
@@ -13050,7 +13063,7 @@ async function callGeminiForPlacements(tags, apiKey, model = GEMINI_AI_MODEL, co
     return { placements: [] };
   }
   let parsed;
-  try { parsed = JSON.parse(text); } catch { return { placements: [] }; }
+  try { parsed = JSON.parse(text); } catch { if (cand?.finishReason === "MAX_TOKENS") throw new Error("AI 응답이 길이 제한에 걸렸어요. 점검 범위를 좁혀 다시 시도해 주세요."); return { placements: [] }; }
   const placements = parsed?.placements;
   return { placements: Array.isArray(placements) ? placements : [] };
 }
@@ -13223,7 +13236,7 @@ async function callGeminiForTagging(context = {}, apiKey, model = GEMINI_AI_MODE
     return { majorGenres: [], subGenres: [], tags: [] };
   }
   let parsed;
-  try { parsed = JSON.parse(text); } catch { return { majorGenres: [], subGenres: [], tags: [] }; }
+  try { parsed = JSON.parse(text); } catch { if (cand?.finishReason === "MAX_TOKENS") throw new Error("AI 응답이 길이 제한에 걸렸어요. 잠시 후 다시 시도해 주세요."); return { majorGenres: [], subGenres: [], tags: [] }; }
   return {
     majorGenres: Array.isArray(parsed?.majorGenres) ? parsed.majorGenres : [],
     subGenres: Array.isArray(parsed?.subGenres) ? parsed.subGenres : [],
@@ -14666,7 +14679,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.20";
+const APP_VERSION = "7.28.21";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -14692,6 +14705,17 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.21", date: "2026-06-21",
+    title: "🔧 AI 기능 마무리 손질",
+    highlights: [
+      { type: "fix", text: "✂️ AI 응답이 너무 길어 잘리면 조용히 '결과 없음'으로 끝나던 것을, 이제 '길이 제한에 걸렸어요'라고 알려주고 범위를 좁히도록 안내해요." },
+      { type: "fix", text: "🏷️ 일괄 태그에서 같은 새 태그를 여러 작품에 적용할 때 속성(긍정/부정)이 들쭉날쭉하던 것을, 먼저 정한 값으로 일관되게 적용하도록 정리했어요." },
+      { type: "fix", text: "🗂️ AI 점검·좌표 배치 도중 슬롯을 바꾸면 결과가 엉뚱한 슬롯에 적용될 수 있던 문제를 막았어요." },
+      { type: "improve", text: "📖 기능 가이드에 AI 태그 추천·미태깅 일괄 태그·좌표 AI 배치·키 전역 공유 안내를 추가했어요." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.20", date: "2026-06-21",
     title: "🌐 AI 키, 모든 슬롯에서 공유",
@@ -16499,6 +16523,7 @@ const GUIDE_CONTENT = [
           "태그는 쉼표(,)로 여러 개를 한번에 입력할 수 있어요.",
           "태그 관계(유사/상반)를 설정하면 취향 분석이 더 정밀해져요.",
           "🩺 설정 > 태그 관리 > '태그 헬스 점검'에서 표기 변형 통일은 물론, 어근이 같은 유의어(회귀 ↔ 회귀물)나 뜻이 같은 유의어(AI 옵션)까지 찾아 묶을 수 있어요. (v7.26.0~)",
+          "🤖 작품 추가·편집 화면의 '🤖 AI 태그 추천'으로 제목(작가)만 보고 대/부장르·태그를 제안받을 수 있어요 — 내 태깅 성향에 맞춰 추천하고, 고른 것만 기존 태그에 '추가'돼요(덮어쓰기 없음). 새 태그 속성은 기본 '추천만'이라 배지를 탭해야 적용되고, 길게 누르면 해제돼요. (v7.28.14~)",
         ],
       },
     ],
@@ -16697,6 +16722,9 @@ const GUIDE_CONTENT = [
           "🤖 AI로 더 찾기 — 글자는 달라도 뜻이 같은 유의어(먼치킨 ↔ 사기캐)와, 뜻이 정반대인 상반 쌍(먼치킨 ↔ 약자)까지 AI가 한 번에 찾아줘요. 유의어는 '🧩 유의어 후보', 상반은 '⚡ 상반 후보'에서 등록하면 돼요. 무료로 쓰려면 설정 > 태그에서 제공자를 'Gemini(무료)'로 두고 무료 키만 넣으면 돼요(기본이 무료예요). 같은 화면의 'API 키 발급 방법 자세히 보기'에 단계가 안내돼 있어요. '넓게 점검'을 켜면 1회만 쓴 태그까지 더 꼼꼼히 봐요. 선택 기능이고, 키는 이 기기에만 저장·점검할 때만 태그 목록이 전송돼요. (v7.28.12)",
           "🧠 한 번 '무시'했거나 '상반'으로 지정한 쌍은 다시 추천하지 않아요 — AI 점검에도 똑같이 적용돼 쓸수록 내 기준에 맞게 다듬어져요. (v7.28.0)",
           "📐 태그 좌표계를 쓰면, 좌표상 가깝게 둔 태그(직접 의미가 가깝다고 둔 것)도 유의어 후보로 잡아줘요. (v7.28.2)",
+          "📦 미태깅 작품 일괄 태그 — 설정 > 🏷️ 태그에서 태그가 없거나 적은 작품을 골라(최대 20개) 한 번에 AI 추천을 받아요. 작품별 카드에서 고른 태그만 '전체 적용'으로 반영돼요(기존 태그 보존). '모두 펼치기'·'신규 모두 선택'으로 빠르게 검토할 수 있어요. (v7.28.16~)",
+          "📐 좌표계 편집의 '🤖 AI 배치 제안'으로 축 라벨(예: 약함 ↔ 강함)에 맞춰 태그 위치를 1~5로 제안받을 수 있어요. (v7.28.13)",
+          "🌐 AI 키·제공자는 한 번만 넣으면 모든 슬롯에서 그대로 동작해요. 응답이 없을 땐 30초 후 자동으로 빠져나와 '점검 중'에 무한정 갇히지 않아요. (v7.28.19~20)",
         ],
       },
     ],
@@ -38802,6 +38830,7 @@ function AppContent() {
       Alert.alert("배치 불가", "먼저 X·Y 축 라벨(예: 약함 ↔ 강함)을 채워 주세요. 라벨이 있어야 AI가 의미를 알 수 있어요.");
       return;
     }
+    const _scanGen = _slotGeneration; // 🆕 v7.28.21: 슬롯 전환 레이스 가드
     setCoordAiBusy(true);
     setCoordAiSuggestions([]);
     try {
@@ -38834,6 +38863,7 @@ function AppContent() {
         const ex = placed[dt] || placed[t] || null;
         sugg.push({ tag: dt, x: bucketToCoord(p.xb), y: bucketToCoord(p.yb), reason: p.reason ? String(p.reason) : "", existing: ex ? { x: ex.x, y: ex.y } : null });
       }
+      if (_slotGeneration !== _scanGen) return; // 🆕 v7.28.21: 슬롯 전환됨 → 이전 슬롯 결과 폐기
       setCoordAiSuggestions(sugg);
       if (!sugg.length) Alert.alert("AI 배치", "이 좌표계와 관련된 태그를 찾지 못했어요. 축 라벨을 더 구체적으로 하거나 범위를 넓혀 보세요.");
     } catch (e) {
@@ -39143,7 +39173,7 @@ function AppContent() {
   async function applyBatchTagSuggestions() {
     const results = batchResults.filter(r => r.status === "ok" && r.suggest);
     const byId = new Map((list || []).map(n => [n.id, n]));
-    const updates = []; const newTagSet = new Map(); const mergedSent = { ...tagSentiments }; let sentChanged = false; let appliedWorks = 0, appliedTags = 0;
+    const updates = []; const newTagSet = new Map(); const mergedSent = { ...tagSentiments }; const sentSetByBatch = new Set(); let sentChanged = false; let appliedWorks = 0, appliedTags = 0;
     for (const r of results) {
       const n = byId.get(r.id); if (!n) continue; // 삭제된 작품 skip
       const sg = r.suggest;
@@ -39169,7 +39199,7 @@ function AppContent() {
       for (const s of selNew) {
         if (s.needsRegister) { const nk = normalizeTagKey(s.tag); if (!newTagSet.has(nk)) newTagSet.set(nk, s.tag); }
         const sv = (s.sent === "positive" || s.sent === "negative") ? s.sent : null;
-        if (sv) { mergedSent[s.tag] = sv; sentChanged = true; }
+        if (sv && !sentSetByBatch.has(s.tag)) { mergedSent[s.tag] = sv; sentSetByBatch.add(s.tag); sentChanged = true; } // 🆕 v7.28.21: 같은 신규 태그가 여러 작품에서 충돌 시 first-wins(결정적)
       }
       updates.push({ sql: "UPDATE novels SET tags=?, major_genre=?, sub_genre=?, tag_data=? WHERE id=?", params: [tagsStr2, JSON.stringify(major2), JSON.stringify(sub2), JSON.stringify([...tdMap.values()]), r.id] });
       appliedWorks++; appliedTags += selCount;
@@ -39223,6 +39253,7 @@ function AppContent() {
         : "먼저 설정 > 🏷️ 태그에서 Claude API 키를 입력해 주세요.");
       return;
     }
+    const _scanGen = _slotGeneration; // 🆕 v7.28.21: 슬롯 전환 레이스 가드(결과를 새 슬롯에 적용 방지)
     setTagHealthBusy(true);
     try {
       // 유니크 태그 빈도 집계 (아래에서 모드별로 minFreq·상한 적용 — 토큰 절약)
@@ -39281,6 +39312,7 @@ function AppContent() {
         if (isOppositePair(a, b, tagRelations)) continue; // 이미 상반으로 등록됨
         oppCands.push({ a, b, reason: o.reason ? String(o.reason) : "", ai: true });
       }
+      if (_slotGeneration !== _scanGen) return; // 🆕 v7.28.21: 슬롯 전환됨 → 이전 슬롯 결과 폐기
       setTagHealthData(prev => {
         const existing = (prev?.synonymCandidates) || [];
         const seen = new Set(existing.map(c => `${normalizeTagKey(c.a)}|${normalizeTagKey(c.b)}`));
