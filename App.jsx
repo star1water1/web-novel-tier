@@ -2,9 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.25 (플랫폼 메타 스크래퍼 — 골격 엔진 이식, 미배선)               ║
+ * ║  버전: 7.28.26 (스크래퍼 — 확인 모달 + 신규등록 "🔗 불러오기" 배선)          ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 63,140줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 63,210줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔗 v7.28.26 스크래퍼 — 확인 모달 + 신규등록 배선 (2026-06-21)                ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 엔진(v7.28.25) 위에 UI 골격을 올림. 신규 등록의 작품 링크칸 아래 "🔗 링크에서 ║
+ * ║ 정보 불러오기" 버튼 → fetchNovelMeta → 확인 모달.                            ║
+ * ║ [확인 모달] buildScrapeItems가 현재값↔가져온값 비교 항목 생성. 빈 칸만 기본   ║
+ * ║   체크(안전), 체크한 것만 적용. 4화면 공용(ctx.apply 분기) — 지금은 신규만 배선.║
+ * ║ [적용] 표지는 원격 URL→saveCoverToLibrary(downloadAsync)로 다운로드 후 경로.  ║
+ * ║   제목·작가·줄거리→메모·총회차·연재상태 폼 setter 반영.                       ║
+ * ║ * 라이브 fetch는 기기에서 동작(개발환경 egress와 무관). 장르 매핑·제목검색·   ║
+ * ║   예정/보충/편집 배선·클립보드/공유는 다음 단계. docs/scraper-plan.md         ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -13536,6 +13549,30 @@ async function searchNovels(query, opts = {}) {
   void query; void opts;
   // TODO: 플랫폼별 검색/자동완성 엔드포인트 실측 후 → [{ title, author, coverUrl, url, platform }]
   throw new Error("제목 검색은 준비 중이에요. 지금은 작품 링크로 ‘🔗 불러오기’를 써 주세요.");
+}
+
+// 정규화 메타 + 현재값 → 확인 모달용 항목 [{ key, label, value(적용값), display, current, checked }].
+// 동일하면 제외, 기본 체크는 "현재 비어있는 칸"만(=빈 칸 채우기 안전 기본). 장르 매핑은 후속.
+function buildScrapeItems(meta, current = {}) {
+  if (!meta) return [];
+  const items = [];
+  const wsDisp = (w) => w === "completed" ? "완결" : w === "ongoing" ? "연재중" : "";
+  const push = (key, label, value, display, curDisplay) => {
+    const disp = (display == null ? "" : String(display)).trim();
+    if (!disp) return;
+    const cur = (curDisplay == null ? "" : String(curDisplay)).trim();
+    if (disp === cur) return; // 동일하면 표시 안 함
+    items.push({ key, label, value, display: disp, current: cur, checked: !cur });
+  };
+  push("title", "제목", meta.title, meta.title, current.title);
+  push("author", "작가", meta.author, meta.author, current.author);
+  push("note", "줄거리 → 메모", meta.synopsis, meta.synopsis, current.note);
+  push("total_episodes", "총 회차", meta.totalEpisodes,
+    meta.totalEpisodes != null ? `${meta.totalEpisodes}화` : "",
+    current.total_episodes ? `${current.total_episodes}화` : "");
+  push("work_status", "연재 상태", meta.workStatus, wsDisp(meta.workStatus), wsDisp(current.work_status));
+  if (meta.coverUrl) items.push({ key: "cover", label: "표지", value: meta.coverUrl, display: "가져오기", current: current.cover ? "있음" : "없음", checked: !current.cover });
+  return items;
 }
 
 /**
@@ -33372,6 +33409,9 @@ function AppContent() {
   const [aiWideScan, setAiWideScan] = useState(false); // 🆕 v7.28.11: 넓게 점검(옵트인) — 1회 태그 포함·상한 400
   // 🆕 v7.28.14: AI 태그 추천 (작품 추가/편집)
   const [aiTagModalOpen, setAiTagModalOpen] = useState(false);
+  // 🔗 v7.28.26 스크래퍼: 링크에서 메타 불러오기 — 로딩 플래그 + 확인 모달({meta,items,apply,label})
+  const [scrapeLoading, setScrapeLoading] = useState(false);
+  const [scrapeModal, setScrapeModal] = useState(null);
   const [aiTagTarget, setAiTagTarget] = useState("new"); // "new"(등록 폼) | "edit"(편집 모달)
   const [aiTagBusy, setAiTagBusy] = useState(false);
   const [ocrBusyIdx, setOcrBusyIdx] = useState(-1); // 🔤 v7.28.24 명대사 OCR 진행 인덱스 (-1=없음, qi=해당 항목, -2=전체)
@@ -39384,6 +39424,50 @@ function AppContent() {
       Alert.alert("명대사 OCR", `완료: ${ok}개 추출${fail ? `, ${fail}개 실패/빈값` : ""}`);
     } finally {
       setOcrBusyIdx(-1);
+    }
+  }
+
+  // 🔗 v7.28.26 스크래퍼: URL에서 메타 fetch → 확인 모달 오픈. ctx = { label, getCurrent(), apply(fields) }
+  async function runScrapeFromUrl(url, ctx) {
+    const u = (url || "").trim();
+    if (!u) { Alert.alert("불러오기", "작품 링크를 먼저 입력해 주세요."); return; }
+    if (scrapeLoading) return;
+    setScrapeLoading(true);
+    try {
+      const meta = await fetchNovelMeta(u);
+      const items = buildScrapeItems(meta, ctx?.getCurrent ? ctx.getCurrent() : {});
+      if (items.length === 0) { Alert.alert("불러오기", `‘${meta.title || "작품"}’ — 새로 채울 정보가 없어요.`); return; }
+      setScrapeModal({ meta, items, apply: ctx?.apply, label: ctx?.label || "" });
+    } catch (e) {
+      Alert.alert("불러오기 실패", e?.message || String(e));
+    } finally {
+      setScrapeLoading(false);
+    }
+  }
+
+  // 확인 모달에서 체크된 항목만 적용. 표지는 원격 URL → saveCoverToLibrary로 다운로드 후 경로 전달.
+  async function applyScrapeSelection() {
+    const m = scrapeModal;
+    if (!m || !m.items || typeof m.apply !== "function") { setScrapeModal(null); return; }
+    const selected = m.items.filter(it => it.checked);
+    if (selected.length === 0) { setScrapeModal(null); return; }
+    setScrapeLoading(true);
+    try {
+      const out = {};
+      for (const it of selected) { if (it.key !== "cover") out[it.key] = it.value; }
+      const coverItem = selected.find(it => it.key === "cover");
+      if (coverItem && coverItem.value) {
+        const ext = String(coverItem.value).toLowerCase().includes(".png") ? "png" : "jpg";
+        const saved = await saveCoverToLibrary(coverItem.value, "light", ext);
+        if (saved && !saved.error && saved.file_path) out.cover = saved.file_path;
+        else Alert.alert("표지", "표지 이미지를 가져오지 못했어요. 나머지는 적용돼요.");
+      }
+      m.apply(out);
+      setScrapeModal(null);
+    } catch (e) {
+      Alert.alert("적용 실패", e?.message || String(e));
+    } finally {
+      setScrapeLoading(false);
     }
   }
 
@@ -48629,6 +48713,27 @@ async function importJSON() {
   autoCapitalize="none"
   autoCorrect={false}
 />
+{/* 🔗 v7.28.26: 링크에서 작품 정보(제목·작가·표지·회차·완결·줄거리) 불러오기 */}
+<TouchableOpacity
+  onPress={() => runScrapeFromUrl(newLink, {
+    label: "신규 등록",
+    getCurrent: () => ({ title, author, note, total_episodes: totalEpisodes, work_status: newWorkStatus, cover: newCoverImage }),
+    apply: (f) => {
+      if (f.title != null) setTitle(f.title);
+      if (f.author != null) setAuthor(f.author);
+      if (f.note != null) setNote(f.note);
+      if (f.total_episodes != null) setTotalEpisodes(String(f.total_episodes));
+      if (f.work_status != null) setNewWorkStatus(f.work_status);
+      if (f.cover != null) setNewCoverImage(f.cover);
+    },
+  })}
+  disabled={scrapeLoading}
+  style={{ marginTop: 6, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: scrapeLoading ? 0.5 : 1 }}
+>
+  <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>
+    {scrapeLoading ? "불러오는 중…" : "🔗 링크에서 정보 불러오기"}
+  </Text>
+</TouchableOpacity>
 
 <Label style={{ marginTop: 10 }}>메모</Label>
 <Input
@@ -64158,6 +64263,43 @@ async function importJSON() {
         </View>
       </Modal>
       )}
+
+      {/* 🔗 v7.28.26: 스크래퍼 확인 모달 (링크 불러오기 — 4화면 공용, ctx.apply 분기) */}
+      <Modal visible={!!scrapeModal} animationType="fade" transparent statusBarTranslucent onRequestClose={() => setScrapeModal(null)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center" }}>
+          <TouchableOpacity style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} activeOpacity={1} onPress={() => setScrapeModal(null)} />
+          <View style={{ backgroundColor: C.card, borderRadius: 20, padding: 18, width: "92%", maxWidth: 460, maxHeight: "88%" }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>🔗 정보 불러오기{scrapeModal?.label ? ` · ${scrapeModal.label}` : ""}</Text>
+              <TouchableOpacity onPress={() => setScrapeModal(null)}><Text style={{ fontSize: 22, color: C.sub }}>×</Text></TouchableOpacity>
+            </View>
+            <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
+              {(scrapeModal?.meta?.platform || "원본")}에서 가져옴 · 체크한 항목만 적용돼요.
+            </Text>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {(scrapeModal?.items || []).map((it, idx) => (
+                <TouchableOpacity key={it.key} activeOpacity={0.7}
+                  onPress={() => setScrapeModal(prev => prev ? { ...prev, items: prev.items.map((x, i) => i === idx ? { ...x, checked: !x.checked } : x) } : prev)}
+                  style={{ flexDirection: "row", alignItems: "flex-start", gap: 8, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: C.line }}
+                >
+                  <View style={{ width: 18, height: 18, borderRadius: 5, borderWidth: 2, marginTop: 2, borderColor: it.checked ? C.primary : C.line, backgroundColor: it.checked ? C.primary : "transparent", alignItems: "center", justifyContent: "center" }}>
+                    {it.checked ? <Text style={{ color: "#fff", fontSize: 11, fontWeight: "900" }}>✓</Text> : null}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: C.sub, fontSize: 11, marginBottom: 2 }}>{it.label}</Text>
+                    <Text style={{ color: C.text, fontSize: 14, fontWeight: "600" }} numberOfLines={4}>{it.display}</Text>
+                    {it.current ? <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>현재: {it.current}</Text> : null}
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity onPress={applyScrapeSelection} disabled={scrapeLoading}
+              style={{ marginTop: 12, backgroundColor: C.primary, paddingVertical: 12, borderRadius: 10, alignItems: "center", opacity: scrapeLoading ? 0.6 : 1 }}>
+              <Text style={{ color: "#fff", fontWeight: "800", fontSize: 15 }}>{scrapeLoading ? "적용 중…" : "선택 적용"}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* 🆕 v7.28.14: AI 태그 추천 모달 (등록·편집 공용 — aiTagTarget 분기) */}
       <Modal visible={aiTagModalOpen} animationType="fade" transparent statusBarTranslucent onRequestClose={() => setAiTagModalOpen(false)}>
