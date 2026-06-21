@@ -2,9 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.16 (미태깅 작품 일괄 AI 태그 + 신규 속성 '추천만' 기본화)        ║
- * ║  최종 수정: 2026-06-20                                                        ║
- * ║  총 라인 수: 약 62,500줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 7.28.17 (일괄 태그 견고화 — 타임아웃·즉시취소·검토 UI·등록 1회)      ║
+ * ║  최종 수정: 2026-06-21                                                        ║
+ * ║  총 라인 수: 약 62,600줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛡️ v7.28.17 일괄 태그 견고화 — 타임아웃·즉시취소·검토UI·등록1회 (2026-06-21) ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [갇힘 해소] AI 호출에 30초 타임아웃(AbortController) — 응답 없으면 자동 중단  ║
+ * ║ 후 다음 작품으로. '취소'는 진행 중 요청까지 즉시 끊음. 단일 추천도 동일 보호. ║
+ * ║                                                                              ║
+ * ║ [검토 UI] 결과에 '모두 펼치기/접기'·'신규 모두 선택' 일괄 컨트롤 + '선택 전체 ║
+ * ║ 적용'·'다시 선택' 하단 고정(긴 목록에서도 접근). 신규 태그도 강도 표시.       ║
+ * ║                                                                              ║
+ * ║ [등록 1회] 신규 커스텀 태그 다건을 batchAddTagsToRegistry로 1회 등록(=1 DB    ║
+ * ║ write) — 루프 등록의 영속 누락 방지. 단일·일괄 공통 적용.                     ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12982,7 +12995,16 @@ function buildTaggingPrompt(context = {}) {
   return s;
 }
 
-async function callClaudeForTagging(context = {}, apiKey, model = SYNONYM_AI_MODEL) {
+// 🆕 v7.28.17: 행(hang) 방지. 외부 취소 신호가 있으면 그대로 사용(호출자가 타임아웃·취소 관리),
+//   없으면 내부 타임아웃 컨트롤러를 생성. addEventListener 미사용으로 RN 폴리필 차이에 안전.
+function resolveAbortSignal(opts) {
+  if (opts && opts.signal) return { signal: opts.signal, cleanup: () => {} };
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => { try { ctrl.abort(); } catch {} }, (opts && opts.timeoutMs) || 30000);
+  return { signal: ctrl.signal, cleanup: () => clearTimeout(timer) };
+}
+
+async function callClaudeForTagging(context = {}, apiKey, model = SYNONYM_AI_MODEL, opts = {}) {
   if (!apiKey) throw new Error("API 키가 없습니다");
   const promptText = buildTaggingPrompt(context);
   const tool = {
@@ -13012,17 +13034,25 @@ async function callClaudeForTagging(context = {}, apiKey, model = SYNONYM_AI_MOD
       required: ["tags"],
     },
   };
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({
-      model,
-      max_tokens: 2048,
-      tools: [tool],
-      tool_choice: { type: "tool", name: "report_tags" },
-      messages: [{ role: "user", content: promptText }],
-    }),
-  });
+  const { signal, cleanup } = resolveAbortSignal(opts);
+  let res;
+  try {
+    res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model,
+        max_tokens: 2048,
+        tools: [tool],
+        tool_choice: { type: "tool", name: "report_tags" },
+        messages: [{ role: "user", content: promptText }],
+      }),
+      signal,
+    });
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error("응답이 없어 중단했어요 (시간 초과/취소)");
+    throw e;
+  } finally { cleanup(); }
   if (!res.ok) {
     let detail = "";
     try { detail = (await res.json())?.error?.message || ""; } catch {}
@@ -13040,46 +13070,54 @@ async function callClaudeForTagging(context = {}, apiKey, model = SYNONYM_AI_MOD
   };
 }
 
-async function callGeminiForTagging(context = {}, apiKey, model = GEMINI_AI_MODEL) {
+async function callGeminiForTagging(context = {}, apiKey, model = GEMINI_AI_MODEL, opts = {}) {
   if (!apiKey) throw new Error("API 키가 없습니다");
   const promptText = buildTaggingPrompt(context);
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ role: "user", parts: [{ text: promptText }] }],
-      generationConfig: {
-        temperature: 0.2,
-        maxOutputTokens: 2048,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: "OBJECT",
-          properties: {
-            majorGenres: { type: "ARRAY", items: { type: "STRING" } },
-            subGenres: { type: "ARRAY", items: { type: "STRING" } },
-            tags: {
-              type: "ARRAY",
-              items: {
-                type: "OBJECT",
-                properties: {
-                  tag: { type: "STRING" },
-                  confidence: { type: "STRING" },
-                  sentiment: { type: "STRING" },
-                  intensity: { type: "INTEGER" },
-                  reason: { type: "STRING" },
+  const { signal, cleanup } = resolveAbortSignal(opts);
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: promptText }] }],
+        generationConfig: {
+          temperature: 0.2,
+          maxOutputTokens: 2048,
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: "OBJECT",
+            properties: {
+              majorGenres: { type: "ARRAY", items: { type: "STRING" } },
+              subGenres: { type: "ARRAY", items: { type: "STRING" } },
+              tags: {
+                type: "ARRAY",
+                items: {
+                  type: "OBJECT",
+                  properties: {
+                    tag: { type: "STRING" },
+                    confidence: { type: "STRING" },
+                    sentiment: { type: "STRING" },
+                    intensity: { type: "INTEGER" },
+                    reason: { type: "STRING" },
+                  },
+                  required: ["tag"],
+                  propertyOrdering: ["tag", "confidence", "sentiment", "intensity", "reason"],
                 },
-                required: ["tag"],
-                propertyOrdering: ["tag", "confidence", "sentiment", "intensity", "reason"],
               },
             },
+            required: ["tags"],
+            propertyOrdering: ["majorGenres", "subGenres", "tags"],
           },
-          required: ["tags"],
-          propertyOrdering: ["majorGenres", "subGenres", "tags"],
         },
-      },
-    }),
-  });
+      }),
+      signal,
+    });
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error("응답이 없어 중단했어요 (시간 초과/취소)");
+    throw e;
+  } finally { cleanup(); }
   if (!res.ok) {
     let detail = "";
     try { detail = (await res.json())?.error?.message || ""; } catch {}
@@ -14539,7 +14577,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.16";
+const APP_VERSION = "7.28.17";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -14565,6 +14603,16 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.17", date: "2026-06-21",
+    title: "🛡️ 일괄 태그 더 안정적으로",
+    highlights: [
+      { type: "improve", text: "⏱️ AI 추천이 응답하지 않을 때 30초 후 자동으로 넘어가고, '취소'를 누르면 진행 중인 요청까지 즉시 멈춰요. 더 이상 분석 중 화면에 갇히지 않아요. (단일 추천도 동일하게 보호)" },
+      { type: "improve", text: "📋 일괄 결과에 '모두 펼치기/접기'·'신규 모두 선택' 버튼이 생기고, '선택 전체 적용'·'다시 선택'이 화면 하단에 고정돼요. 작품이 많아도 한눈에 검토하고 바로 적용할 수 있어요." },
+      { type: "fix", text: "🏷️ 새로 만든 커스텀 태그를 여러 개 한 번에 추가할 때 일부가 태그 목록에 저장되지 않던 문제를 고쳤어요. (단일·일괄 공통)" },
+    ],
+    details: [],
+  },
   {
     version: "7.28.16", date: "2026-06-20",
     title: "🤖 미태깅 작품 일괄 AI 태그",
@@ -32859,6 +32907,7 @@ function AppContent() {
   const [batchProgress, setBatchProgress] = useState({ done: 0, total: 0 });
   const [batchResults, setBatchResults] = useState([]); // [{id,title,author,suggest,status,expanded}]
   const batchCancelRef = useRef(false);
+  const batchAbortRef = useRef(null); // 🆕 v7.28.17: 진행 중 요청 즉시 취소용
   const [dismissedSynPairs, setDismissedSynPairs] = useState(() => new Set()); // 🔧 v7.28.0: 유의어 후보 거절 이력 (로컬·AI 공통)
   const [dismissedOppPairs, setDismissedOppPairs] = useState(() => new Set()); // 🆕 v7.28.12: 상반 후보 거절 이력
   const [tagHealthBusy, setTagHealthBusy] = useState(false);
@@ -38817,12 +38866,13 @@ function AppContent() {
     // 🆕 v7.28.15 신규 태그: 커스텀 등록(addTagToRegistry=functional·중복무시, 루프 안전) +
     //   속성은 stale-closure 방지 위해 한 번에 병합 저장(M1)
     if (selNew.length) {
-      let sentChanged = false; const mergedSent = { ...tagSentiments };
+      let sentChanged = false; const mergedSent = { ...tagSentiments }; const toRegister = [];
       for (const s of selNew) {
-        if (s.needsRegister) addTagToRegistry(s.tag);
+        if (s.needsRegister) toRegister.push(s.tag);
         const sv = (s.sent === "positive" || s.sent === "negative") ? s.sent : null; // 적용된 속성만(추천만/중립은 미적용)
         if (sv) { mergedSent[s.tag] = sv; sentChanged = true; }
       }
+      if (toRegister.length) batchAddTagsToRegistry(toRegister); // 🔧 v7.28.17: 다건 신규 태그 1회 등록
       if (sentChanged) saveTagSentiments(mergedSent);
     }
     if (target === "edit") {
@@ -38861,6 +38911,13 @@ function AppContent() {
       return { ...r, suggest: { ...r.suggest, tagsNew: r.suggest.tagsNew.map((it, i) => i === idx ? { ...it, sent: nextSentApply(it.sent, it.sentSuggest) } : it) } };
     }));
   }
+  // 🆕 v7.28.17: 결과 검토 일괄 컨트롤 (다건 펼치기/신규 선택/재선택)
+  function setAllBatchExpanded(val) { setBatchResults(prev => prev.map(r => (r.status === "ok" && r.suggest) ? { ...r, expanded: val } : r)); }
+  function selectAllBatchNew() {
+    setBatchResults(prev => prev.map(r => (r.suggest && r.suggest.tagsNew && r.suggest.tagsNew.length)
+      ? { ...r, suggest: { ...r.suggest, tagsNew: r.suggest.tagsNew.map(it => ({ ...it, checked: true })) } } : r));
+  }
+  function resetBatchToSelection() { setBatchResults([]); setBatchProgress({ done: 0, total: 0 }); } // 선택 화면으로(작품 선택 유지)
   // 순차 호출(스로틀·취소·429 백오프). 어휘/분류는 단일 모드와 동일 규칙(배치용 복제).
   async function runBatchTagSuggest(works) {
     const provider = aiProvider === "gemini" ? "gemini" : "claude";
@@ -38927,15 +38984,18 @@ function AppContent() {
         const existingKeys = new Set(existingTags.map(t => normalizeTagKey(t)));
         const ctx = { title: (n.title || "").trim(), author: (n.author || "").trim(), existingTags, profile: { avgTags, topTags }, majorOptions: majorVocab.slice(0, 40), subOptions: subVocab.slice(0, 60), wantIntensity: aiTagSuggestIntensity, allowNew };
         let res;
+        const ctrl = new AbortController(); batchAbortRef.current = ctrl; // 🆕 v7.28.17: 취소 버튼이 이 요청을 즉시 끊을 수 있게
+        const to = setTimeout(() => { try { ctrl.abort(); } catch {} }, 30000); // 🆕 v7.28.17: 응답 없는 요청 30초 후 자동 중단(다음 작품으로)
         try {
-          const out = provider === "gemini" ? await callGeminiForTagging(ctx, key, GEMINI_AI_MODEL) : await callClaudeForTagging(ctx, key, SYNONYM_AI_MODEL);
+          const out = provider === "gemini" ? await callGeminiForTagging(ctx, key, GEMINI_AI_MODEL, { signal: ctrl.signal }) : await callClaudeForTagging(ctx, key, SYNONYM_AI_MODEL, { signal: ctrl.signal });
           const sg = classify(out, existingKeys);
           const tot = sg.major.length + sg.sub.length + sg.tagsExisting.length + sg.tagsNew.length;
           res = { id: n.id, title: n.title, author: n.author, suggest: sg, status: tot > 0 ? "ok" : "empty", expanded: false };
         } catch (e) {
+          if (batchCancelRef.current) break; // 🆕 v7.28.17: 사용자 취소 → 에러 행 남기지 않고 종료
           res = { id: n.id, title: n.title, author: n.author, suggest: null, status: "error", error: e?.message || String(e), expanded: false };
           if (/429|한도/.test(e?.message || "")) await sleep(2500); // 429 백오프
-        }
+        } finally { clearTimeout(to); batchAbortRef.current = null; }
         setBatchResults(prev => [...prev, res]);
         setBatchProgress({ done: i + 1, total: works.length });
         if (i < works.length - 1 && !batchCancelRef.current) await sleep(700); // 스로틀(무료 한도 보호)
@@ -38980,7 +39040,7 @@ function AppContent() {
     if (!updates.length) { Alert.alert("AI 태그", "적용할 작품·태그를 선택해 주세요."); return; }
     try {
       await execBatch(updates);
-      for (const tg of newTagSet.values()) addTagToRegistry(tg); // functional·중복무시 → 루프 안전
+      batchAddTagsToRegistry([...newTagSet.values()]); // 🔧 v7.28.17: 1회 등록(다건 영속 보장)
       if (sentChanged) saveTagSentiments(mergedSent); // 속성 1회 저장(stale-closure 방지)
       await loadList();
       setBatchTagOpen(false); setBatchResults([]); setBatchSelIds(new Set());
@@ -39436,6 +39496,25 @@ function AppContent() {
       if (newGeneralTags[category].some(t => isSameTag(t, tag))) return prev;
       newGeneralTags[category] = [...newGeneralTags[category], tag];
       return { ...prev, generalTags: newGeneralTags };
+    });
+  }
+
+  // 🆕 v7.28.17: 다수 신규 태그를 1회 updateTagRegistryFn으로 등록 (= 1회 DB write).
+  //   루프 addTagToRegistry는 React 배칭상 첫 호출만 영속될 수 있어 다건엔 이 함수를 사용.
+  function batchAddTagsToRegistry(tags, category = "📁 사용자 태그") {
+    if (!tags || !tags.length) return;
+    updateTagRegistryFn(prev => {
+      const newGeneralTags = { ...prev.generalTags };
+      let changed = false;
+      for (const tag of tags) {
+        if (!tag) continue;
+        if (ALL_DEFAULT_TAGS.some(t => isSameTag(t, tag))) continue;
+        if (!newGeneralTags[category]) newGeneralTags[category] = [];
+        if (newGeneralTags[category].some(t => isSameTag(t, tag))) continue; // 기존·직전 추가분 중복 무시
+        newGeneralTags[category] = [...newGeneralTags[category], tag];
+        changed = true;
+      }
+      return changed ? { ...prev, generalTags: newGeneralTags } : prev;
     });
   }
 
@@ -63541,6 +63620,7 @@ async function importJSON() {
               const cands = (list || []).filter(n => ((n.tags || "").split(",").filter(s => s.trim()).length) < batchThreshold);
               const hasResults = batchResults.length > 0;
               return (
+                <>
                 <ScrollView showsVerticalScrollIndicator={false} style={{ flex: 1 }}>
                   {!hasResults && !batchBusy ? (
                     <View>
@@ -63588,11 +63668,27 @@ async function importJSON() {
                   {batchBusy ? (
                     <View style={{ alignItems: "center", paddingVertical: 16 }}>
                       <Text style={{ color: C.text, fontWeight: "700", fontSize: 14, marginBottom: 8 }}>분석 중… {batchProgress.done}/{batchProgress.total}</Text>
-                      <TouchableOpacity onPress={() => { batchCancelRef.current = true; }} style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 9, borderWidth: 1, borderColor: C.warn }}>
+                      <TouchableOpacity onPress={() => { batchCancelRef.current = true; try { batchAbortRef.current?.abort(); } catch {} }} style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 9, borderWidth: 1, borderColor: C.warn }}>
                         <Text style={{ color: C.warn, fontWeight: "700", fontSize: 13 }}>취소(지금까지 결과 유지)</Text>
                       </TouchableOpacity>
                     </View>
                   ) : null}
+                  {hasResults && !batchBusy ? (() => {
+                    const okCards = batchResults.filter(r => r.status === "ok" && r.suggest);
+                    if (!okCards.length) return null;
+                    const allExpanded = okCards.every(r => r.expanded);
+                    return (
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                        <Text style={{ color: C.sub, fontSize: 11, flex: 1 }}>결과 {okCards.length}개</Text>
+                        <TouchableOpacity onPress={() => setAllBatchExpanded(!allExpanded)} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: C.line }}>
+                          <Text style={{ color: C.text, fontSize: 11, fontWeight: "700" }}>{allExpanded ? "모두 접기" : "모두 펼치기"}</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={selectAllBatchNew} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: C.line }}>
+                          <Text style={{ color: C.text, fontSize: 11, fontWeight: "700" }}>신규 모두 선택</Text>
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  })() : null}
                   {hasResults ? batchResults.map((r, wi) => {
                     if (r.status === "error") return <Text key={r.id + "_" + wi} numberOfLines={1} style={{ color: C.warn, fontSize: 12, marginBottom: 6 }}>⚠ {r.title} — {r.error}</Text>;
                     const sg = r.suggest;
@@ -63623,7 +63719,7 @@ async function importJSON() {
                                 {sg.tagsNew.map((it, i) => { const on = it.checked; const applied = it.sent != null; const sm = ({ positive: { t: "긍정", c: isDark ? "#4ade80" : "#16a34a" }, negative: { t: "부정", c: isDark ? "#f87171" : "#dc2626" }, neutral: { t: "중립", c: C.sub } })[applied ? it.sent : it.sentSuggest] || { t: "중립", c: C.sub }; return (
                                   <View key={it.tag + i} style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 5 }}>
                                     <TouchableOpacity onPress={() => toggleBatchItem(wi, "tagsNew", i)} style={{ flex: 1, paddingHorizontal: 9, paddingVertical: 5, borderRadius: 8, backgroundColor: on ? (isDark ? "#3730a3" : "#eef2ff") : C.bg, borderWidth: 1, borderColor: on ? (isDark ? "#6366f1" : "#c7d2fe") : C.line }}>
-                                      <Text style={{ color: on ? (isDark ? "#c7d2fe" : "#4338ca") : C.sub, fontSize: 12, fontWeight: on ? "700" : "500" }}>{on ? "✓ " : ""}{it.tag}{it.similarTo ? ` ↔ 비슷:${it.similarTo}` : ""}</Text>
+                                      <Text style={{ color: on ? (isDark ? "#c7d2fe" : "#4338ca") : C.sub, fontSize: 12, fontWeight: on ? "700" : "500" }}>{on ? "✓ " : ""}{it.tag}{aiTagSuggestIntensity ? ` ·${it.intensity}` : ""}{it.similarTo ? ` ↔ 비슷:${it.similarTo}` : ""}</Text>
                                     </TouchableOpacity>
                                     <TouchableOpacity onPress={() => cycleBatchSentiment(wi, i)} style={{ paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: sm.c, backgroundColor: applied ? sm.c : "transparent" }}>
                                       <Text style={{ color: applied ? "#fff" : sm.c, fontSize: 10.5, fontWeight: "700" }}>{applied ? `${sm.t}✓` : `추천 ${sm.t}`}</Text>
@@ -63636,12 +63732,19 @@ async function importJSON() {
                       </View>
                     );
                   }) : null}
-                  {hasResults && !batchBusy ? (
-                    <TouchableOpacity onPress={applyBatchTagSuggestions} style={{ backgroundColor: C.primary, borderRadius: 12, paddingVertical: 13, alignItems: "center", marginTop: 6, marginBottom: 30 }}>
+                </ScrollView>
+                {/* 🆕 v7.28.17: 적용/재선택 하단 고정 (긴 결과에서도 항상 접근) */}
+                {hasResults && !batchBusy ? (
+                  <View style={{ flexDirection: "row", gap: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: C.line }}>
+                    <TouchableOpacity onPress={resetBatchToSelection} style={{ paddingHorizontal: 16, borderRadius: 12, justifyContent: "center", alignItems: "center", borderWidth: 1, borderColor: C.line }}>
+                      <Text style={{ color: C.text, fontWeight: "700", fontSize: 13 }}>다시 선택</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={applyBatchTagSuggestions} style={{ flex: 1, backgroundColor: C.primary, borderRadius: 12, paddingVertical: 13, alignItems: "center" }}>
                       <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>선택 전체 적용</Text>
                     </TouchableOpacity>
-                  ) : null}
-                </ScrollView>
+                  </View>
+                ) : null}
+                </>
               );
             })()}
           </View>
