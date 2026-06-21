@@ -2,9 +2,26 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.31 (스크래퍼 — 리디 줄거리 접두 정리)                           ║
+ * ║  버전: 7.28.32 (UX — 제목검색 위치·AI 제공자 전역 명확화·명언탭 단건 OCR)   ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 63,620줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 63,690줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.28.32 사용 피드백 반영 — 3건 (2026-06-21, 폰 실측)                     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [제목검색 위치] "🔎 제목으로 검색" 버튼을 링크칸 옆 → 제목 입력란 바로 아래로 ║
+ * ║   이동(신규·예정·편집). 검색은 제목 기반이라 거기가 자연스러움. 링크칸엔      ║
+ * ║   "🔗 링크에서 정보 불러오기"만.                                             ║
+ * ║ [AI 제공자 전역 명확화] 제공자·키 토글이 '🤖 AI 유의어 점검'에 묻혀 있어,     ║
+ * ║   OCR·태그추천·정보불러오기까지 모든 AI 공용임을 모르고 Claude 키만 요구받던  ║
+ * ║   혼란 해소. 섹션명을 '🤖 AI 제공자 · API 키 (모든 AI 기능 공용)'로 + 현재    ║
+ * ║   선택 제공자 표시 + 키 미설정 안내문도 '제공자 전환 가능' 문구로. (기본 무료 ║
+ * ║   Gemini — 코드 분기는 원래부터 정상, 토글이 Claude였던 게 원인)              ║
+ * ║ [명언탭 단건 OCR] 이미지 명대사를 편집 모달 안 들어가도 💬명언 탭에서 바로     ║
+ * ║   "🔤 OCR" → 해당 작품 memorable_quote[qIndex].ocrText 저장(검색 포함). 본작/ ║
+ * ║   예정 테이블 분기 + 목록 새로고침(saveQuoteQuickEdit 패턴). 추출 텍스트는     ║
+ * ║   카드에 표시.                                                               ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -33696,6 +33713,7 @@ function AppContent() {
   const [aiTagTarget, setAiTagTarget] = useState("new"); // "new"(등록 폼) | "edit"(편집 모달)
   const [aiTagBusy, setAiTagBusy] = useState(false);
   const [ocrBusyIdx, setOcrBusyIdx] = useState(-1); // 🔤 v7.28.24 명대사 OCR 진행 인덱스 (-1=없음, qi=해당 항목, -2=전체)
+  const [quoteTabOcrId, setQuoteTabOcrId] = useState(null); // 🔤 v7.28.32 명언 탭 단건 OCR 진행 카드 id (null=없음)
   const [aiTagSuggest, setAiTagSuggest] = useState(null); // { major:[{name,checked}], sub:[...], tags:[{tag,intensity,confidence,reason,checked}] }
   const [aiTagUseNote, setAiTagUseNote] = useState(false); // 옵트인: 감상도 전송
   const [aiTagUseFewshot, setAiTagUseFewshot] = useState(false); // 🆕 v7.28.15 옵트인: 비슷한 내 작품 예시(제목+태그) 전송
@@ -34769,6 +34787,8 @@ function AppContent() {
           quoteStyle: img ? null : getQuoteStyle(q), // 🆕 v7.8.0: 텍스트 서식
           isImage: img,
           imageUri: img ? q.uri : null,
+          ocrText: img ? (q.ocrText || "") : "", // 🔤 v7.28.32: 명언 탭 단건 OCR 결과(이미지 명대사)
+          mimeType: img ? (q.mimeType || null) : null,
           title: n.title,
           author: n.author || "작가 미상",
           tier: t,
@@ -39478,7 +39498,7 @@ function AppContent() {
   async function runAiCoordPlacement() {
     const provider = aiProvider === "gemini" ? "gemini" : "claude";
     const key = ((provider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim();
-    if (!key) { Alert.alert("AI 배치", `먼저 설정 > 🏷️ 태그에서 ${provider === "gemini" ? "Gemini" : "Claude"} API 키를 입력해 주세요.`); return; }
+    if (!key) { Alert.alert("AI 배치", `먼저 설정 > 🏷️ 태그의 ‘AI 제공자·API 키’에서 ${provider === "gemini" ? "Gemini" : "Claude"} 키를 넣거나, 제공자를 바꿔 주세요.`); return; }
     const sys = editingCoordSystem;
     if (!sys) return;
     const xn = (sys.xAxis?.negative || "").trim(), xp = (sys.xAxis?.positive || "").trim();
@@ -39550,7 +39570,7 @@ function AppContent() {
   async function runAiTagSuggest() {
     const provider = aiProvider === "gemini" ? "gemini" : "claude";
     const key = ((provider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim();
-    if (!key) { Alert.alert("AI 태그", `먼저 설정 > 🏷️ 태그에서 ${provider === "gemini" ? "Gemini" : "Claude"} API 키를 입력해 주세요.`); return; }
+    if (!key) { Alert.alert("AI 태그", `먼저 설정 > 🏷️ 태그의 ‘AI 제공자·API 키’에서 ${provider === "gemini" ? "Gemini" : "Claude"} 키를 넣거나, 제공자를 바꿔 주세요.`); return; }
     const draft = readTagDraft(aiTagTarget);
     if (!draft.title) { Alert.alert("AI 태그", "제목을 먼저 입력해 주세요. 제목을 보고 추천해요."); return; }
     setAiTagBusy(true);
@@ -39657,7 +39677,7 @@ function AppContent() {
     if (!isImageQuote(q) || !q.uri) return;
     const provider = aiProvider === "gemini" ? "gemini" : "claude";
     const key = ((provider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim();
-    if (!key) { Alert.alert("명대사 OCR", `먼저 설정 > 🏷️ 태그에서 ${provider === "gemini" ? "Gemini" : "Claude"} API 키를 입력해 주세요.`); return; }
+    if (!key) { Alert.alert("명대사 OCR", `먼저 설정 > 🏷️ 태그의 ‘AI 제공자·API 키’에서 ${provider === "gemini" ? "Gemini" : "Claude"} 키를 넣거나, 제공자를 바꿔 주세요.`); return; }
     setOcrBusyIdx(qi);
     try {
       const { base64, mimeType } = await readImageForOcr(q.uri);
@@ -39680,7 +39700,7 @@ function AppContent() {
     if (ocrBusyIdx !== -1) return;
     const provider = aiProvider === "gemini" ? "gemini" : "claude";
     const key = ((provider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim();
-    if (!key) { Alert.alert("명대사 OCR", `먼저 설정 > 🏷️ 태그에서 ${provider === "gemini" ? "Gemini" : "Claude"} API 키를 입력해 주세요.`); return; }
+    if (!key) { Alert.alert("명대사 OCR", `먼저 설정 > 🏷️ 태그의 ‘AI 제공자·API 키’에서 ${provider === "gemini" ? "Gemini" : "Claude"} 키를 넣거나, 제공자를 바꿔 주세요.`); return; }
     const targets = editQuotes
       .map((q, i) => ({ uri: q && q.uri, i, has: !!(q && q.ocrText && String(q.ocrText).trim()), img: isImageQuote(q) }))
       .filter(t => t.img && t.uri && !t.has);
@@ -39705,6 +39725,41 @@ function AppContent() {
       Alert.alert("명대사 OCR", `완료: ${ok}개 추출${fail ? `, ${fail}개 실패/빈값` : ""}`);
     } finally {
       setOcrBusyIdx(-1);
+    }
+  }
+
+  // 🔤 v7.28.32 명언 탭 단건 OCR — 이미지 명대사 카드 1건을 추출 → 해당 작품 memorable_quote[qIndex].ocrText 저장.
+  //   편집 모달 진입 없이 탭에서 바로. 저장 패턴은 saveQuoteQuickEdit 미러(본작/예정 테이블 분기 + 목록 새로고침).
+  async function runQuoteOcrForCard(card) {
+    if (!card || !card.isImage || !card.imageUri) return;
+    if (quoteTabOcrId != null) return;
+    const provider = aiProvider === "gemini" ? "gemini" : "claude";
+    const key = ((provider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim();
+    if (!key) { Alert.alert("명대사 OCR", `먼저 설정 > 🏷️ 태그의 ‘AI 제공자·API 키’에서 ${provider === "gemini" ? "Gemini" : "Claude"} 키를 넣거나, 제공자를 바꿔 주세요.`); return; }
+    setQuoteTabOcrId(card.id);
+    try {
+      const { base64, mimeType } = await readImageForOcr(card.imageUri);
+      if (!base64) throw new Error("이미지를 읽지 못했어요.");
+      const text = provider === "gemini"
+        ? await callGeminiForOCR(base64, mimeType, key, GEMINI_AI_MODEL, { timeoutMs: 40000 })
+        : await callClaudeForOCR(base64, mimeType, key, SYNONYM_AI_MODEL, { timeoutMs: 40000 });
+      const clean = (text || "").trim();
+      if (!clean) { Alert.alert("명대사 OCR", "이미지에서 텍스트를 찾지 못했어요."); return; }
+      const tbl = card.isPlanned ? "planned_novels" : "novels";
+      const row = await first(`SELECT memorable_quote FROM ${tbl} WHERE id=?`, [card.novelId]);
+      const quotes = parseQuotes(row?.memorable_quote || "");
+      if (card.qIndex < 0 || card.qIndex >= quotes.length || !isImageQuote(quotes[card.qIndex])) {
+        Alert.alert("명대사 OCR", "문장을 찾을 수 없어요 (목록이 변경됐을 수 있어요)."); return;
+      }
+      const q = quotes[card.qIndex];
+      quotes[card.qIndex] = (q && typeof q === "object") ? { ...q, ocrText: clean } : { type: "image", uri: card.imageUri, ocrText: clean };
+      await exec(`UPDATE ${tbl} SET memorable_quote=? WHERE id=?`, [serializeQuotes(quotes), card.novelId]);
+      if (card.isPlanned) await loadPlannedList(); else await loadList(undefined, undefined, "quoteOcr");
+      Alert.alert("명대사 OCR", "텍스트를 추출해 저장했어요. 이제 이 명대사도 검색돼요.");
+    } catch (e) {
+      Alert.alert("명대사 OCR 실패", e?.message || String(e));
+    } finally {
+      setQuoteTabOcrId(null);
     }
   }
 
@@ -39940,7 +39995,7 @@ function AppContent() {
   async function runBatchTagSuggest(works) {
     const provider = aiProvider === "gemini" ? "gemini" : "claude";
     const key = ((provider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim();
-    if (!key) { Alert.alert("AI 태그", `먼저 설정 > 🏷️ 태그에서 ${provider === "gemini" ? "Gemini" : "Claude"} API 키를 입력해 주세요.`); return; }
+    if (!key) { Alert.alert("AI 태그", `먼저 설정 > 🏷️ 태그의 ‘AI 제공자·API 키’에서 ${provider === "gemini" ? "Gemini" : "Claude"} 키를 넣거나, 제공자를 바꿔 주세요.`); return; }
     if (!works || !works.length) { Alert.alert("AI 태그", "작품을 선택해 주세요."); return; }
     const freq = new Map(); const disp = new Map(); let totalTagCount = 0, worksWithTags = 0;
     for (const n of (list || [])) {
@@ -48871,6 +48926,14 @@ async function importJSON() {
 
               <Label>제목</Label>
               <Input value={title} onChangeText={setTitle} placeholder="제목" />
+              {/* 🔎 v7.28.32: 제목으로 검색 — 제목칸 바로 아래(검색은 제목 기반이라 여기가 자연스러움) */}
+              <TouchableOpacity
+                onPress={() => openTitleSearch(scrapeCtxNew())}
+                disabled={scrapeLoading || searchBusy}
+                style={{ marginTop: 6, alignSelf: "flex-start", backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 7, paddingHorizontal: 12, borderRadius: 8, opacity: (scrapeLoading || searchBusy) ? 0.5 : 1 }}
+              >
+                <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>🔎 제목으로 검색해 채우기</Text>
+              </TouchableOpacity>
               {/* 🆕 v3.4.1 #10: 실시간 중복 체크 경고 */}
               {titleDuplicateInfo && (
                 <View style={{ 
@@ -49085,25 +49148,16 @@ async function importJSON() {
   autoCapitalize="none"
   autoCorrect={false}
 />
-{/* 🔗 v7.28.26 / 🔎 v7.28.29: 링크 불러오기 + 제목 검색(신규) */}
-<View style={{ flexDirection: "row", gap: 6, marginTop: 6 }}>
-  <TouchableOpacity
-    onPress={() => runScrapeFromUrl(newLink, scrapeCtxNew())}
-    disabled={scrapeLoading}
-    style={{ flex: 1, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: scrapeLoading ? 0.5 : 1 }}
-  >
-    <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>
-      {scrapeLoading ? "불러오는 중…" : "🔗 링크에서"}
-    </Text>
-  </TouchableOpacity>
-  <TouchableOpacity
-    onPress={() => openTitleSearch(scrapeCtxNew())}
-    disabled={scrapeLoading || searchBusy}
-    style={{ flex: 1, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: (scrapeLoading || searchBusy) ? 0.5 : 1 }}
-  >
-    <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>🔎 제목 검색</Text>
-  </TouchableOpacity>
-</View>
+{/* 🔗 v7.28.26 / 🔎 v7.28.32: 링크에서 불러오기 (제목 검색 버튼은 제목칸 옆으로 이동) */}
+<TouchableOpacity
+  onPress={() => runScrapeFromUrl(newLink, scrapeCtxNew())}
+  disabled={scrapeLoading}
+  style={{ marginTop: 6, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: scrapeLoading ? 0.5 : 1 }}
+>
+  <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>
+    {scrapeLoading ? "불러오는 중…" : "🔗 링크에서 정보 불러오기"}
+  </Text>
+</TouchableOpacity>
 
 <Label style={{ marginTop: 10 }}>메모</Label>
 <Input
@@ -50396,11 +50450,19 @@ async function importJSON() {
             {/* 예정 작품 등록 폼 (v3.4.2 간소화) */}
             <Section title="예정 작품 추가">
               <Label>제목 *</Label>
-              <Input 
-                value={plannedTitle} 
-                onChangeText={setPlannedTitle} 
-                placeholder="작품 제목" 
+              <Input
+                value={plannedTitle}
+                onChangeText={setPlannedTitle}
+                placeholder="작품 제목"
               />
+              {/* 🔎 v7.28.32: 제목으로 검색 — 제목칸 바로 아래 */}
+              <TouchableOpacity
+                onPress={() => openTitleSearch(scrapeCtxPlanned())}
+                disabled={scrapeLoading || searchBusy}
+                style={{ marginTop: 6, alignSelf: "flex-start", backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 7, paddingHorizontal: 12, borderRadius: 8, opacity: (scrapeLoading || searchBusy) ? 0.5 : 1 }}
+              >
+                <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>🔎 제목으로 검색해 채우기</Text>
+              </TouchableOpacity>
               {/* 중복 체크 */}
               {plannedTitleDuplicateInfo && (
                 <View style={{ 
@@ -50538,24 +50600,15 @@ async function importJSON() {
                 autoCapitalize="none"
                 autoCorrect={false}
               />
-              <View style={{ flexDirection: "row", gap: 6, marginTop: 6 }}>
-                <TouchableOpacity
-                  onPress={() => runScrapeFromUrl(plannedLink, scrapeCtxPlanned())}
-                  disabled={scrapeLoading}
-                  style={{ flex: 1, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: scrapeLoading ? 0.5 : 1 }}
-                >
-                  <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>
-                    {scrapeLoading ? "불러오는 중…" : "🔗 링크에서"}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => openTitleSearch(scrapeCtxPlanned())}
-                  disabled={scrapeLoading || searchBusy}
-                  style={{ flex: 1, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: (scrapeLoading || searchBusy) ? 0.5 : 1 }}
-                >
-                  <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>🔎 제목 검색</Text>
-                </TouchableOpacity>
-              </View>
+              <TouchableOpacity
+                onPress={() => runScrapeFromUrl(plannedLink, scrapeCtxPlanned())}
+                disabled={scrapeLoading}
+                style={{ marginTop: 6, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: scrapeLoading ? 0.5 : 1 }}
+              >
+                <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>
+                  {scrapeLoading ? "불러오는 중…" : "🔗 링크에서 정보 불러오기"}
+                </Text>
+              </TouchableOpacity>
 
               <Label style={{ marginTop: 10 }}>표지 이미지</Label>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -56522,7 +56575,19 @@ async function importJSON() {
                             >
                               <Text style={{ color: onBg || C.text, fontSize: 12, fontWeight: "700" }}>✏️ 꾸미기</Text>
                             </TouchableOpacity>
-                          ) : null}
+                          ) : (
+                            /* 🔤 v7.28.32: 이미지 명대사 단건 OCR — 텍스트 추출→저장(검색 가능해짐) */
+                            <TouchableOpacity
+                              activeOpacity={0.7}
+                              disabled={quoteTabOcrId != null}
+                              onPress={() => runQuoteOcrForCard(card)}
+                              style={{ backgroundColor: hasCustomBg ? (lightOnBg ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.12)") : C.chip, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, opacity: quoteTabOcrId != null ? 0.5 : 1 }}
+                            >
+                              <Text style={{ color: onBg || C.text, fontSize: 12, fontWeight: "700" }}>
+                                {quoteTabOcrId === card.id ? "OCR 중…" : (card.ocrText ? "🔤 다시 OCR" : "🔤 OCR")}
+                              </Text>
+                            </TouchableOpacity>
+                          )}
                           {card.majorGenre ? (
                             <View style={{
                               backgroundColor: C.chip,
@@ -56571,6 +56636,12 @@ async function importJSON() {
                             {card.quote ? (
                               <Text style={{ fontSize: 13, color: C.sub, fontStyle: "italic", textAlign: "center", marginTop: 4 }}>
                                 {card.quote}
+                              </Text>
+                            ) : null}
+                            {/* 🔤 v7.28.32: OCR 추출 텍스트(있으면) — 검색됨을 확인 */}
+                            {card.ocrText ? (
+                              <Text numberOfLines={3} style={{ fontSize: 12, color: C.sub, textAlign: "center", marginTop: 6, opacity: 0.85 }}>
+                                🔤 {card.ocrText}
                               </Text>
                             ) : null}
                           </View>
@@ -57666,9 +57737,12 @@ async function importJSON() {
                 <Text style={{ color: isDark ? "#c7d2fe" : "#4338ca", fontSize: 15, fontWeight: "700" }}>🤖 미태깅 작품 일괄 태그</Text>
               </TouchableOpacity>
 
-              {/* 🤖 v7.27.0 / 🆕 v7.28.9: AI 유의어 점검 — 제공자 선택(Gemini 무료 · Claude 유료) */}
+              {/* 🤖 v7.27.0 / 🆕 v7.28.9 / 🔧 v7.28.32: AI 제공자·키 — 모든 AI 기능 공용(유의어 점검 전용 아님) */}
               <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
-                <Text style={{ color: C.text, fontWeight: "700", fontSize: 14, marginBottom: 8 }}>🤖 AI 유의어 점검 (선택)</Text>
+                <Text style={{ color: C.text, fontWeight: "700", fontSize: 14, marginBottom: 4 }}>🤖 AI 제공자 · API 키 (모든 AI 기능 공용)</Text>
+                <Text style={{ color: C.sub, fontSize: 11, lineHeight: 16, marginBottom: 10 }}>
+                  명대사 OCR · 태그 추천 · 정보 불러오기 · 유의어 점검 — 모든 AI 기능이 아래 설정을 함께 써요. 제공자를 고르고 그 키만 넣으면 돼요. 기본은 무료 Gemini예요. (지금 ‘{aiProvider === "gemini" ? "Gemini" : "Claude"}’ 선택됨)
+                </Text>
                 {/* 제공자 토글 */}
                 <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
                   {[{ id: "gemini", label: "Gemini (무료)" }, { id: "claude", label: "Claude (유료)" }].map((opt) => {
@@ -57687,7 +57761,7 @@ async function importJSON() {
                 {aiProvider === "gemini" ? (
                   <>
                     <Text style={{ color: C.sub, fontSize: 11, lineHeight: 16, marginBottom: 10 }}>
-                      Google Gemini API 키를 넣으면 태그 헬스의 '🤖 AI로 더 찾기'가 켜져요. 무료 한도로 쓸 수 있어요(과금 없음). 통계가 못 잡는 의미 유의어(예: 먼치킨↔사기캐)까지 추천받아요. 키는 이 기기에만 저장되고 백업엔 포함되지 않아요. 점검할 때만 태그 목록이 전송돼요(작품 제목·감상 등은 전송 안 함).
+                      Google Gemini API 키 하나로 모든 AI 기능(태그 추천·명대사 OCR·정보 불러오기·유의어 점검)이 켜져요. 무료 한도로 쓸 수 있어요(카드 등록·과금 없음). 키는 이 기기에만 저장되고 백업엔 포함되지 않아요. 기능마다 필요한 것만 전송돼요(OCR=이미지, 태그추천=제목·감상, 유의어=태그 목록).
                     </Text>
                     <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
                       <TextInput
@@ -57717,7 +57791,7 @@ async function importJSON() {
                 ) : (
                   <>
                     <Text style={{ color: C.sub, fontSize: 11, lineHeight: 16, marginBottom: 10 }}>
-                      Claude API 키를 넣으면 태그 헬스의 '🤖 AI로 더 찾기'가 켜져요. 통계가 못 잡는 의미 유의어(예: 먼치킨↔사기캐)까지 추천받을 수 있어요. 키는 이 기기에만 저장되고 백업엔 포함되지 않아요. 점검할 때만 태그 목록이 전송돼요(작품 제목·감상 등은 전송 안 함).
+                      Claude API 키 하나로 모든 AI 기능(태그 추천·명대사 OCR·정보 불러오기·유의어 점검)이 켜져요. (Claude는 Max 구독과 별개로 과금돼요.) 키는 이 기기에만 저장되고 백업엔 포함되지 않아요. 기능마다 필요한 것만 전송돼요(OCR=이미지, 태그추천=제목·감상, 유의어=태그 목록).
                     </Text>
                     <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
                       <TextInput
@@ -61432,6 +61506,14 @@ async function importJSON() {
                     updateEditItem(prev => prev ? { ...prev, title: t } : null)
                   }
                 />
+                {/* 🔎 v7.28.32: 제목으로 검색 — 제목칸 바로 아래 */}
+                <TouchableOpacity
+                  onPress={() => openTitleSearch(scrapeCtxEdit())}
+                  disabled={scrapeLoading || searchBusy}
+                  style={{ marginTop: 6, alignSelf: "flex-start", backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 7, paddingHorizontal: 12, borderRadius: 8, opacity: (scrapeLoading || searchBusy) ? 0.5 : 1 }}
+                >
+                  <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>🔎 제목으로 검색해 채우기</Text>
+                </TouchableOpacity>
 
                 <Label style={{ marginTop: 10 }}>작가</Label>
                 <Input
@@ -61613,25 +61695,16 @@ async function importJSON() {
   autoCapitalize="none"
   autoCorrect={false}
 />
-{/* 🔗 v7.28.27: 링크에서 정보 불러오기 (편집) */}
-<View style={{ flexDirection: "row", gap: 6, marginTop: 6 }}>
-  <TouchableOpacity
-    onPress={() => runScrapeFromUrl(editLink, scrapeCtxEdit())}
-    disabled={scrapeLoading}
-    style={{ flex: 1, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: scrapeLoading ? 0.5 : 1 }}
-  >
-    <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>
-      {scrapeLoading ? "불러오는 중…" : "🔗 링크에서"}
-    </Text>
-  </TouchableOpacity>
-  <TouchableOpacity
-    onPress={() => openTitleSearch(scrapeCtxEdit())}
-    disabled={scrapeLoading || searchBusy}
-    style={{ flex: 1, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: (scrapeLoading || searchBusy) ? 0.5 : 1 }}
-  >
-    <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>🔎 제목 검색</Text>
-  </TouchableOpacity>
-</View>
+{/* 🔗 v7.28.27 / 🔎 v7.28.32: 링크에서 불러오기 (제목 검색 버튼은 제목칸 옆으로 이동) */}
+<TouchableOpacity
+  onPress={() => runScrapeFromUrl(editLink, scrapeCtxEdit())}
+  disabled={scrapeLoading}
+  style={{ marginTop: 6, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: scrapeLoading ? 0.5 : 1 }}
+>
+  <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>
+    {scrapeLoading ? "불러오는 중…" : "🔗 링크에서 정보 불러오기"}
+  </Text>
+</TouchableOpacity>
 
 {/* 📚 v3.0.4: 다회독 카운트 */}
 <Label style={{ marginTop: 10 }}>다회독 횟수</Label>
