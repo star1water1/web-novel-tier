@@ -2,9 +2,26 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.28 (스크래퍼 — 네트워크 강화·차단 판별·검증 하네스)             ║
+ * ║  버전: 7.28.29 (스크래퍼 — 라이브 검증·카카오/리디 정밀화·제목 검색)        ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 63,315줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 63,540줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔗 v7.28.29 스크래퍼 — 라이브 검증 + 카카오/리디 정밀화 + 제목 검색 (06-21)  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 이 세션 egress가 열려(리디·카카오 도달) 실제 페이지로 엔진을 검증·정밀화.    ║
+ * ║ [버그] JSON-LD에 Organization만 있을 때 ld[0] 폴백이 사이트명을 제목으로      ║
+ * ║   덮어쓰던 문제 수정(카카오=제목이 "카카오페이지"로) — 비작품 블록 폴백 제외. ║
+ * ║ [카카오] scraperRefineKakao: __NEXT_DATA__에서 장르(subcategory)·연재상태     ║
+ * ║   (onIssue)·작가 보강. 한 페이지에 웹소설+웹툰화가 함께 실려 URL content id    ║
+ * ║   (seriesId)로 정확 매칭(완결 오판 방지). [리디] 공통 JSON-LD Book로 제목·     ║
+ * ║   작가·장르·완결·회차 정확 — 보정 불필요(실측 확인).                          ║
+ * ║ [제목검색 Stage4] searchNovels→리디 서버렌더 검색(__NEXT_DATA__) 후보 picker  ║
+ * ║   모달. 4화면 모두 "🔎 제목 검색" 버튼(ctx 공용) → 후보 선택 시 기존 확인      ║
+ * ║   모달로 합류. (카카오 검색=GraphQL/차단, 타 플랫폼=폰 실측 후 확장)           ║
+ * ║ [검증] 실측 페이지 축약 픽스처(카카오 흑백무제·리디 위키쓰는용사·리디 검색)    ║
+ * ║   추가 → docs/scraper-test.mjs 41/41 통과. docs/scraper-plan.md §7·§8·§10 갱신.║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -13533,7 +13550,12 @@ function scraperNormalizeFromHtml(html, url) {
   const platform = detectPlatformFromUrl(url);
   const og = scraperExtractMetaTags(html);
   const ld = scraperExtractJsonLd(html);
-  const book = pickType(ld, ["Book", "CreativeWork", "CreativeWorkSeries", "Product", "WebPage"]) || ld[0] || {};
+  // ld[0] 무조건 폴백 금지(실측 버그): 사이트 단위 Organization/WebSite 블록의 name이
+  //   진짜 og:title을 덮어쓰는 문제(카카오페이지=ld에 Organization만 존재 → 제목이 "카카오페이지"로).
+  //   → 작품류를 우선 선택, 없으면 비작품(사이트/내비) 블록을 제외한 첫 블록만 폴백.
+  const NON_WORK_LD = ["Organization", "WebSite", "BreadcrumbList", "SearchAction", "SiteNavigationElement", "ItemList"];
+  const isNonWorkLd = (b) => { const t = b && b["@type"]; const ts = Array.isArray(t) ? t : [t]; return ts.some(x => NON_WORK_LD.includes(String(x))); };
+  const book = pickType(ld, ["Book", "CreativeWork", "CreativeWorkSeries", "Product", "WebPage"]) || ld.find(b => b && !isNonWorkLd(b)) || {};
 
   const title = (asText(book.name) || og["og:title"] || og["twitter:title"] || "").trim();
   let author = "";
@@ -13561,9 +13583,64 @@ function scraperNormalizeFromHtml(html, url) {
   return { ok: !!title, platform, url, title, author, coverUrl, synopsis, genres, workStatus, totalEpisodes };
 }
 
-// 플랫폼별 정밀화 후크 — 실측 후 회차/완결/작가 보정. 현재는 공통 결과 그대로.
+// Next.js SSR 내장 데이터(__NEXT_DATA__) 추출 — 카카오페이지/리디 등 SPA가 페이지에 심는 JSON.
+function scraperExtractNextData(html) {
+  const m = (html || "").match(/<script\b[^>]*\bid\s*=\s*["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i);
+  if (!m) return null;
+  try { return JSON.parse(m[1].trim()); } catch { return null; }
+}
+
+// 객체 트리에서 pred를 만족하는 첫 노드(DFS, 깊이 제한) — 경로가 바뀌어도 견디는 탐색.
+function scraperDeepFind(root, pred, maxDepth = 14) {
+  const stack = [[root, 0]];
+  while (stack.length) {
+    const [o, d] = stack.pop();
+    if (!o || typeof o !== "object" || d > maxDepth) continue;
+    try { if (pred(o)) return o; } catch { /* pred 예외 무시 */ }
+    if (Array.isArray(o)) { for (const v of o) stack.push([v, d + 1]); }
+    else for (const k in o) stack.push([o[k], d + 1]);
+  }
+  return null;
+}
+
+// 플랫폼별 정밀화 — 공통 OG/JSON-LD가 못 싣는 고유 필드를 내장 JSON에서 보강(실측 기반).
+//   리디: 공통 엔진이 제목·작가·장르·완결·회차 모두 정확(JSON-LD Book) → 보정 불필요.
+//   카카오페이지: ld는 Organization뿐 → __NEXT_DATA__에서 장르·연재상태·작가 보강. docs §7.1
 function scraperRefineByPlatform(meta, html, platform) {
-  // TODO(노벨피아·문피아·시리즈·리디·카카페): 실제 HTML 기준 보정. docs/scraper-plan.md §7.1
+  try {
+    if (platform === "카카오페이지") return scraperRefineKakao(meta, html);
+  } catch { /* 정밀화 실패해도 공통 결과는 유지 */ }
+  return meta;
+}
+
+function scraperRefineKakao(meta, html) {
+  const nd = scraperExtractNextData(html);
+  if (!nd) return meta;
+  // metaInfo: ogTitle(깨끗한 제목)·author 보유. content: categoryType/onIssue/subcategory(장르) 보유.
+  const metaInfo = scraperDeepFind(nd, (o) => typeof o.ogTitle === "string");
+  // 한 페이지에 웹소설+웹툰화가 함께 실릴 수 있음(제목 동일, seriesId/연재상태 다름) → URL의 content id로 정확 매칭.
+  //   실패 시 웹소설(Webnovel) 우선, 그래도 없으면 onIssue 보유 첫 노드.
+  const hasOverview = (o) => typeof o.onIssue === "string" && (o.categoryType != null || o.subcategory != null);
+  const idm = String(meta.url || "").match(/\/content\/(\d+)/);
+  const wantId = idm ? Number(idm[1]) : null;
+  const content =
+    (wantId != null && scraperDeepFind(nd, (o) => hasOverview(o) && Number(o.seriesId) === wantId)) ||
+    scraperDeepFind(nd, (o) => hasOverview(o) && /novel/i.test(String(o.categoryType))) ||
+    scraperDeepFind(nd, hasOverview);
+  if (metaInfo) {
+    if (!meta.title) meta.title = String(metaInfo.ogTitle || metaInfo.title || "").replace(/\s*-\s*(웹소설|웹툰)\s*$/, "").trim();
+    if (!meta.author && metaInfo.author) meta.author = String(metaInfo.author).trim();
+  }
+  if (content) {
+    if (!meta.title && content.title) meta.title = String(content.title).trim();
+    if (!meta.author && content.authors) meta.author = String(content.authors).trim();
+    // 장르·연재상태는 구조화 데이터가 정답 → 공통 본문-텍스트 휴리스틱 결과를 덮어씀.
+    //   (카카오 __NEXT_DATA__엔 "연재" 같은 라벨이 섞여 있어 본문 정규식이 오판할 수 있음.)
+    if (content.subcategory) meta.genres = [String(content.subcategory).trim()];
+    if (content.onIssue === "End") meta.workStatus = "completed";
+    else if (content.onIssue === "Ing") meta.workStatus = "ongoing";
+  }
+  meta.ok = !!meta.title;
   return meta;
 }
 
@@ -13609,11 +13686,72 @@ async function fetchNovelMeta(url, opts = {}) {
   return meta;
 }
 
-// 제목 → 후보[] (플랫폼별 검색 엔드포인트 실측 후 구현). 현재 미구현.
+// 제목 → 후보[] { title, author, coverUrl, url, platform, category }. 후보 선택 → fetchNovelMeta(url).
+//   실측으로 디스커버리 완료된 플랫폼만 활성. 현재: 리디(서버렌더 검색 페이지의 __NEXT_DATA__).
+//   ※ 노벨피아/문피아/시리즈/카카오는 검색 엔드포인트가 비공개·GraphQL·차단 → 폰 환경 실측 후 확장(docs §7.1·§9).
 async function searchNovels(query, opts = {}) {
-  void query; void opts;
-  // TODO: 플랫폼별 검색/자동완성 엔드포인트 실측 후 → [{ title, author, coverUrl, url, platform }]
-  throw new Error("제목 검색은 준비 중이에요. 지금은 작품 링크로 ‘🔗 불러오기’를 써 주세요.");
+  const q = (query || "").trim();
+  if (!q) throw new Error("검색할 제목을 입력해 주세요.");
+  const results = await searchRidi(q, opts);
+  if (!results.length) throw new Error(`‘${q}’ 검색 결과가 없어요. 다른 제목으로 시도하거나, 작품 링크로 ‘🔗 불러오기’를 써 주세요.`);
+  return results;
+}
+
+// 리디 검색 — 검색 결과 페이지는 서버렌더(__NEXT_DATA__에 결과 내장)라 별도 API 불필요.
+async function searchRidi(query, opts = {}) {
+  const url = "https://ridibooks.com/search?q=" + encodeURIComponent(query);
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
+  let res, html = "";
+  try {
+    res = await fetch(url, { headers: SCRAPER_HEADERS, redirect: "follow", signal });
+    html = await res.text();
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error("검색 응답이 없어 중단했어요 (시간 초과)");
+    throw new Error("검색을 불러오지 못했어요: " + (e?.message || e));
+  } finally { cleanup(); }
+  const block = scraperDetectBlock(res.status, html);
+  if (block.blocked) throw new Error(`리디 검색을 바로 못 했어요. ${block.hint}`);
+  return parseRidiSearch(html);
+}
+
+// 리디 검색 결과 페이지 HTML → 후보[]. books[].book 배열을 경로 변동에 견디게 재귀 탐색.
+function parseRidiSearch(html) {
+  const nd = scraperExtractNextData(html);
+  if (!nd) return [];
+  const asTitle = (t) => typeof t === "string" ? t : (t && typeof t === "object" ? (t.main || t.name || "") : "");
+  const out = [], seen = new Set();
+  const visit = (o) => {
+    if (!o || typeof o !== "object") return;
+    if (Array.isArray(o.books)) {
+      for (const entry of o.books) {
+        const b = entry && entry.book ? entry.book : entry;
+        if (!b || typeof b !== "object") continue;
+        const id = b.id;
+        const title = (asTitle(b.title) || b.webTitle || "").replace(/^\[[^\]]*\]\s*/, "").trim();
+        if (!id || !title || seen.has(id)) continue;
+        seen.add(id);
+        const all = Array.isArray(b.authors) ? b.authors : [];
+        const writers = all.filter(a => a && !/ILLUST|TRANSLAT|EDITOR/i.test(a.role || "")).map(a => a && a.name).filter(Boolean);
+        const cats = Array.isArray(b.categories) ? b.categories : [];
+        const top = cats.find(c => c && c.parentId === 0) || cats[cats.length - 1] || {};
+        const category = top.name || "";
+        out.push({
+          title,
+          author: (writers.length ? writers : all.map(a => a && a.name)).filter(Boolean).join(", "),
+          url: "https://ridibooks.com/books/" + id,
+          coverUrl: "https://img.ridicdn.net/cover/" + id + "/small",
+          platform: "리디",
+          category,
+          isComic: /웹툰|만화/.test(category),
+        });
+      }
+    }
+    if (Array.isArray(o)) { for (const v of o) visit(v); }
+    else for (const k in o) visit(o[k]);
+  };
+  visit(nd);
+  out.sort((a, b) => (a.isComic === b.isComic) ? 0 : (a.isComic ? 1 : -1)); // 소설 먼저, 웹툰/만화 뒤로
+  return out.slice(0, 30);
 }
 
 // 정규화 메타 + 현재값 → 확인 모달용 항목 [{ key, label, value(적용값), display, current, checked }].
@@ -33477,6 +33615,11 @@ function AppContent() {
   // 🔗 v7.28.26 스크래퍼: 링크에서 메타 불러오기 — 로딩 플래그 + 확인 모달({meta,items,apply,label})
   const [scrapeLoading, setScrapeLoading] = useState(false);
   const [scrapeModal, setScrapeModal] = useState(null);
+  // 🔎 v7.28.29 제목 검색(Stage 4): picker 모달 — { ctx } 열림 + 검색어/결과/진행
+  const [searchModal, setSearchModal] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchBusy, setSearchBusy] = useState(false);
   const [aiTagTarget, setAiTagTarget] = useState("new"); // "new"(등록 폼) | "edit"(편집 모달)
   const [aiTagBusy, setAiTagBusy] = useState(false);
   const [ocrBusyIdx, setOcrBusyIdx] = useState(-1); // 🔤 v7.28.24 명대사 OCR 진행 인덱스 (-1=없음, qi=해당 항목, -2=전체)
@@ -39535,6 +39678,86 @@ function AppContent() {
     } finally {
       setScrapeLoading(false);
     }
+  }
+
+  // 🔗 v7.28.29: 4화면 스크래퍼 컨텍스트({getCurrent, apply, fields?, label}) — 링크 불러오기·제목검색 공용.
+  //   getCurrent/apply는 현재 렌더의 state·setter를 클로저로 잡음(빌더는 매 렌더 호출). 중복 정의 방지.
+  const scrapeCtxNew = () => ({
+    label: "신규 등록",
+    getCurrent: () => ({ title, author, note, total_episodes: totalEpisodes, work_status: newWorkStatus, cover: newCoverImage }),
+    apply: (f) => {
+      if (f.title != null) setTitle(f.title);
+      if (f.author != null) setAuthor(f.author);
+      if (f.note != null) setNote(f.note);
+      if (f.total_episodes != null) setTotalEpisodes(String(f.total_episodes));
+      if (f.work_status != null) setNewWorkStatus(f.work_status);
+      if (f.cover != null) setNewCoverImage(f.cover);
+    },
+  });
+  const scrapeCtxPlanned = () => ({
+    label: "예정 등록",
+    getCurrent: () => ({ title: plannedTitle, author: plannedAuthor, note: plannedNote, total_episodes: plannedTotalEpisodes, work_status: plannedWorkStatus, cover: plannedCoverImage }),
+    apply: (f) => {
+      if (f.title != null) setPlannedTitle(f.title);
+      if (f.author != null) setPlannedAuthor(f.author);
+      if (f.note != null) setPlannedNote(f.note);
+      if (f.total_episodes != null) setPlannedTotalEpisodes(String(f.total_episodes));
+      if (f.work_status != null) setPlannedWorkStatus(f.work_status);
+      if (f.cover != null) setPlannedCoverImage(f.cover);
+    },
+  });
+  const scrapeCtxSupplement = () => ({
+    label: "보충",
+    fields: ["author", "note", "total_episodes", "work_status", "cover"],
+    getCurrent: () => ({ author: editItem?.author, note: editItem?.note, total_episodes: editItem?.total_episodes, work_status: editItem?.work_status, cover: editItem?.cover_image }),
+    apply: (f) => updateEditItem(prev => prev ? {
+      ...prev,
+      ...(f.author != null ? { author: f.author } : {}),
+      ...(f.note != null ? { note: f.note } : {}),
+      ...(f.total_episodes != null ? { total_episodes: Number(f.total_episodes) || 0 } : {}),
+      ...(f.work_status != null ? { work_status: f.work_status } : {}),
+      ...(f.cover != null ? { cover_image: f.cover } : {}),
+    } : prev),
+  });
+  const scrapeCtxEdit = () => ({
+    label: "편집",
+    getCurrent: () => ({ title: editItem?.title, author: editItem?.author, note: editItem?.note, total_episodes: editItem?.total_episodes, work_status: editWorkStatus, cover: editCoverImage }),
+    apply: (f) => {
+      updateEditItem(prev => prev ? {
+        ...prev,
+        ...(f.title != null ? { title: f.title } : {}),
+        ...(f.author != null ? { author: f.author } : {}),
+        ...(f.note != null ? { note: f.note } : {}),
+        ...(f.total_episodes != null ? { total_episodes: Number(f.total_episodes) || 0 } : {}),
+      } : prev);
+      if (f.work_status != null) setEditWorkStatus(f.work_status);
+      if (f.cover != null) setEditCoverImageSync(f.cover);
+    },
+  });
+
+  // 🔎 v7.28.29 제목 검색(Stage 4): 입력 → searchNovels(현재 리디) → 후보 picker → 선택 시 fetchNovelMeta로 합류.
+  function openTitleSearch(ctx) {
+    if (scrapeLoading || searchBusy) return;
+    setSearchQuery(""); setSearchResults([]); setSearchModal({ ctx });
+  }
+  async function runTitleSearch() {
+    const q = (searchQuery || "").trim();
+    if (!q) { Alert.alert("제목 검색", "검색할 제목을 입력해 주세요."); return; }
+    if (searchBusy) return;
+    setSearchBusy(true); setSearchResults([]);
+    try {
+      const r = await searchNovels(q);
+      setSearchResults(r);
+    } catch (e) {
+      Alert.alert("제목 검색", e?.message || String(e));
+    } finally {
+      setSearchBusy(false);
+    }
+  }
+  async function pickSearchCandidate(cand) {
+    const ctx = searchModal?.ctx;
+    setSearchModal(null); setSearchResults([]); setSearchQuery("");
+    if (cand?.url && ctx) await runScrapeFromUrl(cand.url, ctx); // 후보 → 기존 확인 모달 경로 합류
   }
 
   // 추천 항목 체크 토글
@@ -48779,27 +49002,25 @@ async function importJSON() {
   autoCapitalize="none"
   autoCorrect={false}
 />
-{/* 🔗 v7.28.26: 링크에서 작품 정보(제목·작가·표지·회차·완결·줄거리) 불러오기 */}
-<TouchableOpacity
-  onPress={() => runScrapeFromUrl(newLink, {
-    label: "신규 등록",
-    getCurrent: () => ({ title, author, note, total_episodes: totalEpisodes, work_status: newWorkStatus, cover: newCoverImage }),
-    apply: (f) => {
-      if (f.title != null) setTitle(f.title);
-      if (f.author != null) setAuthor(f.author);
-      if (f.note != null) setNote(f.note);
-      if (f.total_episodes != null) setTotalEpisodes(String(f.total_episodes));
-      if (f.work_status != null) setNewWorkStatus(f.work_status);
-      if (f.cover != null) setNewCoverImage(f.cover);
-    },
-  })}
-  disabled={scrapeLoading}
-  style={{ marginTop: 6, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: scrapeLoading ? 0.5 : 1 }}
->
-  <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>
-    {scrapeLoading ? "불러오는 중…" : "🔗 링크에서 정보 불러오기"}
-  </Text>
-</TouchableOpacity>
+{/* 🔗 v7.28.26 / 🔎 v7.28.29: 링크 불러오기 + 제목 검색(신규) */}
+<View style={{ flexDirection: "row", gap: 6, marginTop: 6 }}>
+  <TouchableOpacity
+    onPress={() => runScrapeFromUrl(newLink, scrapeCtxNew())}
+    disabled={scrapeLoading}
+    style={{ flex: 1, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: scrapeLoading ? 0.5 : 1 }}
+  >
+    <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>
+      {scrapeLoading ? "불러오는 중…" : "🔗 링크에서"}
+    </Text>
+  </TouchableOpacity>
+  <TouchableOpacity
+    onPress={() => openTitleSearch(scrapeCtxNew())}
+    disabled={scrapeLoading || searchBusy}
+    style={{ flex: 1, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: (scrapeLoading || searchBusy) ? 0.5 : 1 }}
+  >
+    <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>🔎 제목 검색</Text>
+  </TouchableOpacity>
+</View>
 
 <Label style={{ marginTop: 10 }}>메모</Label>
 <Input
@@ -50234,26 +50455,24 @@ async function importJSON() {
                 autoCapitalize="none"
                 autoCorrect={false}
               />
-              <TouchableOpacity
-                onPress={() => runScrapeFromUrl(plannedLink, {
-                  label: "예정 등록",
-                  getCurrent: () => ({ title: plannedTitle, author: plannedAuthor, note: plannedNote, total_episodes: plannedTotalEpisodes, work_status: plannedWorkStatus, cover: plannedCoverImage }),
-                  apply: (f) => {
-                    if (f.title != null) setPlannedTitle(f.title);
-                    if (f.author != null) setPlannedAuthor(f.author);
-                    if (f.note != null) setPlannedNote(f.note);
-                    if (f.total_episodes != null) setPlannedTotalEpisodes(String(f.total_episodes));
-                    if (f.work_status != null) setPlannedWorkStatus(f.work_status);
-                    if (f.cover != null) setPlannedCoverImage(f.cover);
-                  },
-                })}
-                disabled={scrapeLoading}
-                style={{ marginTop: 6, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: scrapeLoading ? 0.5 : 1 }}
-              >
-                <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>
-                  {scrapeLoading ? "불러오는 중…" : "🔗 링크에서 정보 불러오기"}
-                </Text>
-              </TouchableOpacity>
+              <View style={{ flexDirection: "row", gap: 6, marginTop: 6 }}>
+                <TouchableOpacity
+                  onPress={() => runScrapeFromUrl(plannedLink, scrapeCtxPlanned())}
+                  disabled={scrapeLoading}
+                  style={{ flex: 1, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: scrapeLoading ? 0.5 : 1 }}
+                >
+                  <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>
+                    {scrapeLoading ? "불러오는 중…" : "🔗 링크에서"}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => openTitleSearch(scrapeCtxPlanned())}
+                  disabled={scrapeLoading || searchBusy}
+                  style={{ flex: 1, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: (scrapeLoading || searchBusy) ? 0.5 : 1 }}
+                >
+                  <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>🔎 제목 검색</Text>
+                </TouchableOpacity>
+              </View>
 
               <Label style={{ marginTop: 10 }}>표지 이미지</Label>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -52948,27 +53167,24 @@ async function importJSON() {
                       autoCorrect={false}
                     />
                     {/* 🔗 v7.28.27: 링크에서 정보 불러오기 (보충 — title 제외, 누락칸 채움) */}
-                    <TouchableOpacity
-                      onPress={() => runScrapeFromUrl(editItem?.link, {
-                        label: "보충",
-                        fields: ["author", "note", "total_episodes", "work_status", "cover"],
-                        getCurrent: () => ({ author: editItem?.author, note: editItem?.note, total_episodes: editItem?.total_episodes, work_status: editItem?.work_status, cover: editItem?.cover_image }),
-                        apply: (f) => updateEditItem(prev => prev ? {
-                          ...prev,
-                          ...(f.author != null ? { author: f.author } : {}),
-                          ...(f.note != null ? { note: f.note } : {}),
-                          ...(f.total_episodes != null ? { total_episodes: Number(f.total_episodes) || 0 } : {}),
-                          ...(f.work_status != null ? { work_status: f.work_status } : {}),
-                          ...(f.cover != null ? { cover_image: f.cover } : {}),
-                        } : prev),
-                      })}
-                      disabled={scrapeLoading}
-                      style={{ marginTop: 6, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: scrapeLoading ? 0.5 : 1 }}
-                    >
-                      <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>
-                        {scrapeLoading ? "불러오는 중…" : "🔗 링크에서 정보 불러오기"}
-                      </Text>
-                    </TouchableOpacity>
+                    <View style={{ flexDirection: "row", gap: 6, marginTop: 6 }}>
+                      <TouchableOpacity
+                        onPress={() => runScrapeFromUrl(editItem?.link, scrapeCtxSupplement())}
+                        disabled={scrapeLoading}
+                        style={{ flex: 1, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: scrapeLoading ? 0.5 : 1 }}
+                      >
+                        <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>
+                          {scrapeLoading ? "불러오는 중…" : "🔗 링크에서"}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => openTitleSearch(scrapeCtxSupplement())}
+                        disabled={scrapeLoading || searchBusy}
+                        style={{ flex: 1, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: (scrapeLoading || searchBusy) ? 0.5 : 1 }}
+                      >
+                        <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>🔎 제목 검색</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
 
                   {/* 🔧 v3.5.6: 읽기 상태 */}
@@ -61315,29 +61531,24 @@ async function importJSON() {
   autoCorrect={false}
 />
 {/* 🔗 v7.28.27: 링크에서 정보 불러오기 (편집) */}
-<TouchableOpacity
-  onPress={() => runScrapeFromUrl(editLink, {
-    label: "편집",
-    getCurrent: () => ({ title: editItem?.title, author: editItem?.author, note: editItem?.note, total_episodes: editItem?.total_episodes, work_status: editWorkStatus, cover: editCoverImage }),
-    apply: (f) => {
-      updateEditItem(prev => prev ? {
-        ...prev,
-        ...(f.title != null ? { title: f.title } : {}),
-        ...(f.author != null ? { author: f.author } : {}),
-        ...(f.note != null ? { note: f.note } : {}),
-        ...(f.total_episodes != null ? { total_episodes: Number(f.total_episodes) || 0 } : {}),
-      } : prev);
-      if (f.work_status != null) setEditWorkStatus(f.work_status);
-      if (f.cover != null) setEditCoverImageSync(f.cover);
-    },
-  })}
-  disabled={scrapeLoading}
-  style={{ marginTop: 6, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: scrapeLoading ? 0.5 : 1 }}
->
-  <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>
-    {scrapeLoading ? "불러오는 중…" : "🔗 링크에서 정보 불러오기"}
-  </Text>
-</TouchableOpacity>
+<View style={{ flexDirection: "row", gap: 6, marginTop: 6 }}>
+  <TouchableOpacity
+    onPress={() => runScrapeFromUrl(editLink, scrapeCtxEdit())}
+    disabled={scrapeLoading}
+    style={{ flex: 1, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: scrapeLoading ? 0.5 : 1 }}
+  >
+    <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>
+      {scrapeLoading ? "불러오는 중…" : "🔗 링크에서"}
+    </Text>
+  </TouchableOpacity>
+  <TouchableOpacity
+    onPress={() => openTitleSearch(scrapeCtxEdit())}
+    disabled={scrapeLoading || searchBusy}
+    style={{ flex: 1, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: (scrapeLoading || searchBusy) ? 0.5 : 1 }}
+  >
+    <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>🔎 제목 검색</Text>
+  </TouchableOpacity>
+</View>
 
 {/* 📚 v3.0.4: 다회독 카운트 */}
 <Label style={{ marginTop: 10 }}>다회독 횟수</Label>
@@ -64439,6 +64650,56 @@ async function importJSON() {
               style={{ marginTop: 12, backgroundColor: C.primary, paddingVertical: 12, borderRadius: 10, alignItems: "center", opacity: scrapeLoading ? 0.6 : 1 }}>
               <Text style={{ color: "#fff", fontWeight: "800", fontSize: 15 }}>{scrapeLoading ? "적용 중…" : "선택 적용"}</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 🔎 v7.28.29: 제목 검색 picker (4화면 공용 — 후보 선택 시 fetchNovelMeta 경로로 합류). 현재 리디 지원. */}
+      <Modal visible={!!searchModal} animationType="fade" transparent statusBarTranslucent onRequestClose={() => setSearchModal(null)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center" }}>
+          <TouchableOpacity style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} activeOpacity={1} onPress={() => setSearchModal(null)} />
+          <View style={{ backgroundColor: C.card, borderRadius: 20, padding: 18, width: "92%", maxWidth: 460, maxHeight: "88%" }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>🔎 제목으로 검색{searchModal?.ctx?.label ? ` · ${searchModal.ctx.label}` : ""}</Text>
+              <TouchableOpacity onPress={() => setSearchModal(null)}><Text style={{ fontSize: 22, color: C.sub }}>×</Text></TouchableOpacity>
+            </View>
+            <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>제목을 검색해 후보를 고르면 정보를 불러와요. (현재 리디 지원 · 작품 링크는 ‘🔗 링크에서’)</Text>
+            <View style={{ flexDirection: "row", gap: 6, marginBottom: 10 }}>
+              <TextInput
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                placeholder="작품 제목"
+                placeholderTextColor={C.sub}
+                onSubmitEditing={runTitleSearch}
+                returnKeyType="search"
+                autoCapitalize="none"
+                autoCorrect={false}
+                style={{ flex: 1, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, color: C.text, fontSize: 14 }}
+              />
+              <TouchableOpacity onPress={runTitleSearch} disabled={searchBusy}
+                style={{ backgroundColor: C.primary, paddingHorizontal: 16, borderRadius: 10, alignItems: "center", justifyContent: "center", opacity: searchBusy ? 0.6 : 1 }}>
+                <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>{searchBusy ? "검색 중…" : "검색"}</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {searchBusy && searchResults.length === 0 ? (
+                <Text style={{ color: C.sub, fontSize: 13, textAlign: "center", paddingVertical: 20 }}>검색 중…</Text>
+              ) : null}
+              {!searchBusy && searchResults.length === 0 ? (
+                <Text style={{ color: C.sub, fontSize: 12, textAlign: "center", paddingVertical: 20 }}>제목을 입력하고 검색하세요.</Text>
+              ) : null}
+              {searchResults.map((c, idx) => (
+                <TouchableOpacity key={c.url || idx} activeOpacity={0.7} onPress={() => pickSearchCandidate(c)}
+                  style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: C.text, fontSize: 14, fontWeight: "700" }} numberOfLines={2}>{c.title}</Text>
+                    {c.author ? <Text style={{ color: C.sub, fontSize: 12, marginTop: 2 }} numberOfLines={1}>{c.author}</Text> : null}
+                    <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>{c.platform}{c.category ? ` · ${c.category}` : ""}</Text>
+                  </View>
+                  <Text style={{ color: C.primary, fontSize: 18 }}>›</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
           </View>
         </View>
       </Modal>

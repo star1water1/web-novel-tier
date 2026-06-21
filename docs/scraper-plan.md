@@ -3,8 +3,10 @@
 > **이 문서의 목적**: 세션 간 연속성을 위한 기록. 스크래퍼 기능에 대해 합의한 설계·결정·검증 결과·빌드 순서·남은 과제·코드 앵커를 담는다.
 > **새 세션은 이 문서를 읽고 그대로 이어서 진행하면 된다.** (대화 맥락은 세션마다 초기화되지만 git에 커밋된 이 문서는 따라온다.)
 >
-> 작업 브랜치: `claude/magical-mayer-ob48ts` (직전 `claude/festive-einstein-fub63d`와 동일 계보를 이어받음 — 새 작업은 이 브랜치에)
+> 작업 브랜치: `claude/wonderful-rubin-5xsmo1` (직전 `claude/magical-mayer-ob48ts`와 동일 계보 — 새 작업은 이 브랜치에)
 > 관련 기 적용분: 명대사 이미지 OCR(v7.28.24), 보충탭 무작위 정렬(v7.28.23)
+>
+> **⚡ 2026-06-21 진행(v7.28.29)**: 이 세션 egress가 (이전과 달리) **리디·카카오페이지에 도달** → 실제 페이지로 엔진을 **라이브 검증·정밀화**했다. ① OG/JSON-LD 폴백 버그 수정(§5.1), ② 카카오 `__NEXT_DATA__` 정밀화(장르·완결·작가, 웹소설/웹툰화 seriesId 분리), ③ 리디 제목검색(Stage 4) picker — searchNovels→리디 서버렌더 검색, 4화면 "🔎 제목 검색" 버튼, ④ 실측 픽스처 3종 + 회귀 41/41. 자세한 건 §5.1·§7·§8·§10.1.
 
 ---
 
@@ -177,6 +179,13 @@ function normalizeFromHtml(html, url) {
 - **B** (OG만): 제목/표지/줄거리/연재중 추출, 작가 공란(없음) → degrade ✅
 - **C** (`@graph` 안 Book, author=문자열, image=객체, numberOfPages): 변형 구조 정확 파싱 ✅
 
+### 5.1 라이브 실측으로 드러난 버그 & 수정 (v7.28.29)
+
+- **🐞 비작품 JSON-LD 폴백이 제목을 덮어씀**: `book = pickType(...) || ld[0] || {}`에서, 페이지에 **작품 블록이 없고 `Organization`만 있을 때**(카카오페이지가 그렇다) `ld[0]`=Organization을 집어 그 `name`("카카오페이지")이 진짜 `og:title`을 이김 → 모든 카카오 작품 제목이 "카카오페이지"로 나옴.
+  - **수정**: `ld.find(b => !비작품(b))`로 폴백을 **비작품(Organization/WebSite/BreadcrumbList/SearchAction/SiteNavigationElement/ItemList) 제외** 블록으로 한정. 그래도 없으면 `{}` → OG로 정상 degrade. (회귀 테스트: "카카오 제목(흑백무제)")
+- **🐞 본문-텍스트 완결 휴리스틱이 정밀화를 가로막음**: 공통 엔진의 `/완결|연재중/` 정규식이 **내장 JSON 안의 라벨**("연재" 등)을 잡아 `workStatus`를 먼저 채우면, `if(!meta.workStatus)` 게이트 때문에 플랫폼 정밀화가 못 덮어씀(카카오 완결작이 "연재중"으로).
+  - **수정**: 카카오 정밀화는 구조화 신호(`onIssue`)를 **무조건 우선**(게이트 제거). 장르(`subcategory`)도 동일.
+
 ---
 
 ## 6. App.jsx 통합 지점 (코드 앵커)
@@ -205,13 +214,17 @@ function normalizeFromHtml(html, url) {
 
 ## 7. 플랫폼별 가능 범위 (실측으로 확정 필요)
 
-| 플랫폼 | 구조 | 제목·작가·표지·회차·완결·줄거리 | 난이도 |
-|---|---|---|---|
-| 노벨피아 | 서버렌더 상세페이지 | 🟢 대부분 | 쉬움 (**PoC 1순위**) |
-| 문피아 | 전통 서버렌더 HTML | 🟢 대부분 | 쉬움 |
-| 네이버 시리즈 | 서버렌더 + `ld+json` | 🟡 | 쉬움~중 |
-| 리디 | SPA + `__PRELOADED_STATE__` | 🟡 내장 JSON | 중 |
-| 카카오페이지 | GraphQL SPA + 안티봇 | 🔴 | 어려움(부분 가능성/추가작업) |
+| 플랫폼 | 구조 | URL→메타 (제목·작가·표지·회차·완결·줄거리) | 제목검색 | 난이도 |
+|---|---|---|---|---|
+| 노벨피아 | 서버렌더 상세페이지 | 🟡 미실측(개발IP 차단) — 폰에서 확인 | 미실측 | 쉬움(추정) |
+| 문피아 | 전통 서버렌더 HTML | 🟡 미실측(CF 챌린지) — 폰에서 확인 | 미실측 | 쉬움(추정) |
+| 네이버 시리즈 | 서버렌더 + `ld+json` | 🟡 미실측(egress 비허용) | 미실측 | 쉬움~중 |
+| 리디 | Next.js SSR(`__NEXT_DATA__`+JSON-LD Book) | **🟢 실측 완벽**(공통 엔진만으로 제목·작가·장르·완결·회차) | **🟢 구현**(SSR 검색) | 중→**완료** |
+| 카카오페이지 | Next.js SSR(`__NEXT_DATA__`) + GraphQL | **🟢 실측 동작**(OG+`__NEXT_DATA__` 정밀화) | 🔴 GraphQL(302)·SSR결과 없음 → 보류 | URL은 쉬움 / 검색 어려움 |
+
+> **실측 메모(v7.28.29, 이 세션 egress)**: 리디·카카오는 **Next.js**라 페이지에 `__NEXT_DATA__`(작품 전체 데이터)가 통째로 박혀 있다.
+> - **리디**: JSON-LD `Book`(author=Person, genre, image, description) + 본문 "총 N화"/"완결" → 공통 엔진이 **보정 없이** 정확. 검색은 `ridibooks.com/search?q=`가 서버렌더라 `__NEXT_DATA__`의 `books[].book`을 긁어 후보 생성(검색 *서브도메인* `search.ridibooks.com`은 egress 비허용이지만 SSR 페이지로 우회).
+> - **카카오**: 상세 JSON-LD는 `Organization`뿐 → 제목·작가·표지·줄거리는 OG/`<meta author>`, **장르·완결은 `__NEXT_DATA__`의 `content.subcategory`/`content.onIssue`**(End=완결/Ing=연재). 같은 `/content/{id}` 페이지에 **웹소설+웹툰화가 함께** 실리니(제목 동일, seriesId/연재상태 다름) **URL의 content id=seriesId로 정확히 골라야** 완결 오판이 없다. 검색은 GraphQL(POST 302)뿐이고 검색결과 SSR엔 데이터 없음 → **보류**(폰/토큰 확보 후 재도전).
 
 ### 7.1 플랫폼 범위 = **전부** (사용자 확정)
 
@@ -228,7 +241,9 @@ function normalizeFromHtml(html, url) {
 - [x] **2. 확인 모달** (v7.28.26): `scrapeModal` state + `buildScrapeItems`(현재값↔가져온값 diff, 빈 칸만 기본 체크) + 모달 JSX(체크 적용). `aiTagModal` 오버레이 패턴 미러. **4화면 공용**(`ctx.apply` 분기) — 표지는 원격 URL→`saveCoverToLibrary`(downloadAsync)→경로.
 - [x] **3. 4화면 배선** (v7.28.27): 신규·예정·보충·편집 모두 "🔗 링크에서 정보 불러오기" 진입점. 신규/예정=자체 setter(예정은 링크칸 신설), 편집=updateEditItem+setEditWorkStatus+setEditCoverImageSync, 보충=updateEditItem(title은 보충 저장 미포함이라 `ctx.fields`로 제외). 모달은 `ctx.apply` 분기로 4화면 공용.
 - [x] **3.5 네트워크 강화 + 차단 판별 + 검증 하네스** (v7.28.28): `SCRAPER_HEADERS`(Accept/sec-ch-ua/Sec-Fetch-* 등 브라우저급 헤더로 교체) + `scraperDetectBlock(status,html)`(Cloudflare 챌린지/403/429/503/캡차 식별 → "정보 없음"과 구분해 안내). `fetchNovelMeta`가 본문을 항상 읽고 차단을 우선 판정. 실측 차단 응답을 `docs/scraper-fixtures/`에 보존, `docs/scraper-test.mjs`가 App.jsx 실제 함수를 추출해 회귀(파싱 §5 + 차단판별 + 플랫폼판별, **27/27 통과**). ※ 개발환경 egress 실측 결과는 §10.
-- [ ] **4. 제목 검색(메인)**: `searchNovels(query)` → 후보 picker → 선택 → 엔진. ★**플랫폼 검색 엔드포인트 실측 필요** (개발 IP 차단으로 라이브 실측은 폰/주거망에서 — §9·§10·§11)
+- [x] **3.6 라이브 검증 + 카카오/리디 정밀화** (v7.28.29): 이 세션 egress가 리디·카카오에 도달 → 실제 페이지로 엔진 검증. **OG/JSON-LD 폴백 버그 수정**(§5.1) + **`scraperRefineKakao`**(`__NEXT_DATA__` 장르·완결·작가, seriesId로 웹소설/웹툰화 분리). 리디는 공통 엔진만으로 정확(보정 불필요, 실측). 실측 축약 픽스처 3종 + 회귀 41/41.
+- [x] **4. 제목 검색(메인) — 리디** (v7.28.29): `searchNovels(query)`→`searchRidi`(서버렌더 검색 페이지 `__NEXT_DATA__`의 `books[].book` 파싱)→후보 picker 모달→선택 시 `runScrapeFromUrl(url, ctx)`로 기존 확인 모달 합류. **4화면 모두 "🔎 제목 검색" 버튼**(ctx 빌더 공용: `scrapeCtxNew/Planned/Supplement/Edit`). ⚠️ **리디만 구현** — 카카오 검색=GraphQL/SSR결과 없음(보류), 노벨피아·문피아·시리즈=개발IP 차단으로 엔드포인트 미실측(폰/주거망에서 추가).
+- [ ] **4b. 제목 검색 — 나머지 플랫폼**: 노벨피아/문피아/시리즈 검색 엔드포인트 폰 실측 후 `searchNovels`에 추가. 카카오는 GraphQL 토큰/persisted query 필요.
 - [ ] **5. 클립보드 감지** (expo-clipboard, 리빌드)
 - [ ] **6. 공유 시트** (Android intent filter / config plugin, 리빌드)
 
@@ -249,6 +264,21 @@ function normalizeFromHtml(html, url) {
 - **변경은 "새 세션"부터 적용**(현재 세션 컨테이너는 기존 정책 유지). 문서: https://code.claude.com/docs/en/claude-code-on-the-web (Network access)
 - egress는 **개발 편의용일 뿐 실제 앱과 무관**(앱은 폰에서 정상 인터넷). 안 켜도 일반 OG/JSON-LD 엔진으로 진행 가능, 정밀화만 기기 응답으로.
 
+### 10.2 egress 재실측 (2026-06-21 후속, 브랜치 `claude/wonderful-rubin-5xsmo1`)
+
+이전 세션과 **정책이 달라져** 일부 플랫폼이 도달 가능해졌다(세션마다 egress가 다를 수 있음):
+
+| 호스트 | 응답 | 의미 |
+|---|---|---|
+| `page.kakao.com` | **200 (풀 HTML)** | ✅ 도달 — `__NEXT_DATA__` 포함. 상세 라이브 검증·정밀화 완료 |
+| `ridibooks.com` | **200 (상세/검색 SSR)** | ✅ 도달 — JSON-LD Book + `__NEXT_DATA__`. URL→메타·제목검색 검증 완료 |
+| `search.ridibooks.com` | DNS 실패 | 검색 *서브도메인*은 비허용 → `ridibooks.com/search` SSR로 우회 |
+| `series.naver.com` | `Blocked by egress policy` | 여전히 비허용 |
+| `novelpia.com` | 403(awselb/nginx) | datacenter IP 차단(이전과 동일) |
+| `www.munpia.com` | 403 `cf-mitigated: challenge` | Cloudflare 챌린지(이전과 동일) |
+
+**교훈**: egress 허용목록은 **세션마다 바뀔 수 있으니, 새 세션 첫 단계에서 직접 재실측**(`curl`)하고 도달되는 플랫폼은 라이브로 검증·정밀화한다. 도달 안 되는 건 폰 캡처 픽스처로.
+
 ### 10.1 이 환경 egress 실측 (2026-06-21, 브랜치 `claude/magical-mayer-ob48ts`)
 
 | 호스트 | egress | origin 응답 | 의미 |
@@ -265,14 +295,22 @@ function normalizeFromHtml(html, url) {
 
 ## 11. 새 세션에서 이어가는 법
 
-1. 같은 저장소 `star1water1/web-novel-tier`, 브랜치 **`claude/magical-mayer-ob48ts`**(직전 작업 계보)로 새 세션 시작.
-2. 지시: **"docs/scraper-plan.md 읽고 PoC 이어서 진행해줘."**
-3. 그 세션은 이 문서로 풀 컨텍스트를 복원하고 §8 빌드 순서대로 진행한다.
+1. 같은 저장소 `star1water1/web-novel-tier`, 브랜치 **`claude/wonderful-rubin-5xsmo1`**(현재 작업 계보)로 새 세션 시작.
+2. 지시: **"docs/scraper-plan.md 읽고 이어서 진행해줘."**
+3. 그 세션은 이 문서로 풀 컨텍스트를 복원하고, **첫 단계로 egress 재실측**(§10.2) 후 §8 빌드 순서대로 진행한다.
 
-### 11.1 라이브 검증 루프 (개발 IP 차단이 확인됐으므로 — §10.1)
+### 11.1 라이브 검증 루프 — 도달 가능 플랫폼은 라이브로, 막힌 건 폰 캡처로
 
-엔진/모달/배선/네트워크는 완성·검증됨. **남은 불확실성은 "실제 플랫폼 페이지가 어떤 필드를 싣는가"뿐이고, 그건 폰에서만 확인 가능**:
+엔진/모달/배선/네트워크/제목검색(리디)은 완성·검증됨. egress는 **세션마다 다를 수 있으니** 먼저 재실측한다:
 
-- **(A) 폰 직접 테스트(권장)**: 실제 앱(v7.28.28+)에서 노벨피아/문피아 작품 링크로 "🔗 불러오기" → ① 정상 추출되면 제목·작가·표지·회차·완결이 맞는지 확인, ② 차단 안내가 뜨면 종류(보안확인/접근차단) 보고. 이 결과로 `scraperRefineByPlatform`을 데이터 기반 정밀화.
-- **(B) HTML 캡처 → 픽스처**: 폰 브라우저에서 작품 상세 '페이지 소스 보기'/공유로 HTML 확보 → `docs/scraper-fixtures/<플랫폼>-<작품>.html`로 저장 → `docs/scraper-test.mjs`에 케이스 추가 → 파싱/정밀화를 오프라인으로 안전하게 개발.
-- **오프라인 회귀**: `node docs/scraper-test.mjs` (네트워크 불필요, App.jsx 실제 함수 추출 실행).
+- **(0) egress 재실측(먼저)**: `curl -sS -A "<모바일 UA>" https://<host>` 로 5개 플랫폼 도달 확인(§10.2가 예시). 도달되면 라이브로, 아니면 폰 캡처 픽스처로.
+- **(A) 폰 직접 테스트(개발IP 차단 플랫폼)**: 실제 앱(v7.28.29+)에서 노벨피아/문피아 작품 링크로 "🔗 링크에서" → ① 정상이면 제목·작가·표지·회차·완결 검증, ② 차단 안내면 종류 보고. 이 결과로 `scraperRefineByPlatform`에 해당 플랫폼 분기 추가(카카오 `scraperRefineKakao` 패턴 참고).
+- **(B) HTML 캡처 → 픽스처**: 폰 브라우저 '페이지 소스 보기'로 HTML 확보 → `docs/scraper-fixtures/<플랫폼>-<작품>.html`(실측 페이지의 `<head>` meta + JSON-LD + `__NEXT_DATA__`만 남긴 축약본으로 OK) → `docs/scraper-test.mjs`에 케이스 추가.
+- **오프라인 회귀**: `node docs/scraper-test.mjs` (네트워크 불필요, App.jsx 실제 함수 vm 추출 실행 — 현재 **41/41**).
+- **JSX 문법 게이트**: `npx esbuild App.jsx --loader:.jsx=jsx --bundle=false --outfile=/dev/null` (UI 수정 후 전체 파싱 확인 — RN 빌드 없이 문법만).
+
+### 11.2 다음 우선순위(권장 순서)
+
+1. **제목검색 타 플랫폼**(Stage 4b): 폰에서 노벨피아/문피아/시리즈 검색 URL·응답 실측 → `searchNovels`에 분기 추가(`searchRidi` 패턴 그대로). 카카오는 GraphQL 토큰 확보가 선결.
+2. **장르 매핑**: 가져온 플랫폼 장르(예: 카카오 "무협", 리디 "퓨전 판타지")를 앱 어휘(`MAJOR_GENRES`/`SUB_GENRES`)로 정규화(후보 제시). 현재는 원문 그대로 `genres`에 담김.
+3. **클립보드/공유 시트**(Stage 5·6, 리빌드 필요).

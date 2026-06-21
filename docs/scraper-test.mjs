@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, SCRAPER_HEADERS, SCRAPER_UA };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, scraperExtractNextData, SCRAPER_HEADERS, SCRAPER_UA };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 const sandbox = { console, fetch() { throw new Error("no net"); }, resolveAbortSignal: () => ({ signal: undefined, cleanup() {} }) };
@@ -85,6 +85,31 @@ eq("detect unknown→null", S.detectPlatformFromUrl("https://example.com/x"), nu
 // ── 헤더 강화 확인 ───────────────────────────────────────────────────────────
 truthy("SCRAPER_HEADERS sec-ch-ua 존재", S.SCRAPER_HEADERS["sec-ch-ua"]);
 truthy("SCRAPER_HEADERS Sec-Fetch-Mode 존재", S.SCRAPER_HEADERS["Sec-Fetch-Mode"]);
+
+// ── ④ 실측 라이브 픽스처(카카오페이지·리디, 이 세션 egress로 직접 캡처) ────────────
+//   엔진+정밀화가 실제 페이지에서 제목·작가·장르·완결·회차·검색 후보를 바르게 뽑는지 회귀.
+//   (fixtures는 실제 페이지의 head meta + JSON-LD + __NEXT_DATA__를 보존한 축약본 — docs/scraper-plan.md §11.1B)
+const refine = (html, url) => { const m = S.scraperNormalizeFromHtml(html, url); return S.scraperRefineByPlatform(m, html, m.platform); };
+
+const kk = refine(fx("kakao-novel-heukbaekmuje.html"), "https://page.kakao.com/content/56598258");
+eq("카카오 제목(흑백무제, Organization 폴백 버그 회귀)", kk.title, "흑백무제");
+eq("카카오 작가(현임, meta author)", kk.author, "현임");
+eq("카카오 장르(무협, __NEXT_DATA__ subcategory)", kk.genres, ["무협"]);
+eq("카카오 완결(onIssue=End, 웹툰화 노드와 seriesId로 분리)", kk.workStatus, "completed");
+truthy("카카오 표지 URL", kk.coverUrl);
+
+const rd = refine(fx("ridi-book-wiki.html"), "https://ridibooks.com/books/425094972");
+eq("리디 제목", rd.title, "위키 쓰는 용사");
+eq("리디 작가(JSON-LD Person)", rd.author, "로드워리어");
+eq("리디 장르", rd.genres, ["퓨전 판타지"]);
+eq("리디 완결", rd.workStatus, "completed");
+eq("리디 회차(총 260화)", rd.totalEpisodes, 260);
+
+const sr = S.parseRidiSearch(fx("ridi-search-yongsa.html"));
+truthy("리디 검색 후보 ≥1개", sr.length >= 1);
+truthy("리디 후보 url=/books/{id}", /ridibooks\.com\/books\/\d+/.test(sr[0] && sr[0].url));
+truthy("리디 후보 제목 존재", sr[0] && sr[0].title);
+eq("리디 후보 플랫폼 라벨", sr[0] && sr[0].platform, "리디");
 
 console.log(`\n${fail === 0 ? "🎉 ALL PASS" : "⚠️  FAILED"}  pass=${pass} fail=${fail}`);
 process.exit(fail === 0 ? 0 : 1);
