@@ -244,9 +244,9 @@ function normalizeFromHtml(html, url) {
 - [x] **3.6 라이브 검증 + 카카오/리디 정밀화** (v7.28.29): 이 세션 egress가 리디·카카오에 도달 → 실제 페이지로 엔진 검증. **OG/JSON-LD 폴백 버그 수정**(§5.1) + **`scraperRefineKakao`**(`__NEXT_DATA__` 장르·완결·작가, seriesId로 웹소설/웹툰화 분리). 리디는 공통 엔진만으로 정확(보정 불필요, 실측). 실측 축약 픽스처 3종 + 회귀 41/41.
 - [x] **4. 제목 검색(메인) — 리디** (v7.28.29, UI 위치 v7.28.32): `searchNovels(query)`→`searchRidi`(서버렌더 검색 페이지 `__NEXT_DATA__`의 `books[].book` 파싱)→후보 picker 모달→선택 시 `runScrapeFromUrl(url, ctx)`로 기존 확인 모달 합류. **"🔎 제목으로 검색" 버튼은 제목 입력란 바로 아래**(신규·예정·편집 — 폰 피드백으로 링크칸 옆에서 이동), 링크칸엔 "🔗 링크에서". ctx 빌더 공용(`scrapeCtxNew/Planned/Supplement/Edit`). ⚠️ **리디만 구현** — 카카오 검색=GraphQL/SSR결과 없음(보류), 노벨피아·문피아·시리즈=개발IP 차단으로 엔드포인트 미실측(폰/주거망에서 추가).
 - [x] **4.5 장르 매핑** (v7.28.30): `mapScrapedGenres`로 플랫폼 장르를 앱 어휘(`MAJOR_GENRES`/`SUB_GENRES`)에 공백·대소문자 무시 매칭 → 확인 모달에 대장르/부장르 후보 항목 추가(이전엔 가져와도 버려졌음). 4화면 ctx 배선(신규·예정=배열 state, 편집·보충=JSON 문자열). 실측 매핑(카카오 "무협", 리디 "퓨전 판타지"→"퓨전판타지") + 회귀 48/48.
-- [ ] **4b. 제목 검색 — 나머지 플랫폼**: 노벨피아/문피아/시리즈 검색 엔드포인트 폰 실측 후 `searchNovels`에 추가. 카카오는 GraphQL 토큰/persisted query 필요.
-- [ ] **5. 클립보드 감지** (expo-clipboard, 리빌드)
-- [ ] **6. 공유 시트** (Android intent filter / config plugin, 리빌드)
+- [ ] **4b. 제목 검색 — 나머지 플랫폼**: 노벨피아/문피아/시리즈 검색 엔드포인트 폰 실측 후 `searchNovels`에 추가. 카카오는 GraphQL 토큰/persisted query 필요. (2026-06-21 재실측: 개발 egress는 여전히 novelpia/munpia 403·naver 비허용·kakao GraphQL 302 → 폰 전용)
+- [x] **5. 클립보드 감지** (v7.28.37): `expo-clipboard` 추가. 4화면(신규·예정·보충·편집) 링크칸 옆 "📋" 버튼 → `pasteLinkAndFetch`: 클립보드 텍스트에서 지원 플랫폼 URL(`extractSupportedUrl`) 추출 → 링크칸 채우고 바로 `runScrapeFromUrl`. (자동 감지 대신 1탭 유저 트리거 — iOS 붙여넣기 알림/포커스 타이밍 회피, 더 견고.) ※ 네이티브 모듈이라 **리빌드 후 동작**.
+- [ ] **6. 공유 시트** (Android `ACTION_SEND` intent filter): 받는 쪽은 Expo 코어에 없어 `expo-share-intent`(config plugin) 같은 라이브러리 필요. **빌드 설정 변경 + 검증 불가(이 환경)** 위험으로 보류 — 클립보드(Stage 5)가 같은 시나리오("링크 복사→앱에서 1탭")를 대부분 커버. 추가하려면: dep + app.json `plugins`에 share-intent + 런치 시 공유 텍스트→신규등록 링크 라우팅.
 
 ---
 

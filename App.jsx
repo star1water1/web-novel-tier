@@ -2,9 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.36 (태그 삭제 전 영향력 안내)                                   ║
+ * ║  버전: 7.28.37 (스크래퍼 Stage 5 — 클립보드 링크 1탭 불러오기)              ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 63,840줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 63,890줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📋 v7.28.37 스크래퍼 Stage 5 — 클립보드 링크 1탭 불러오기 (2026-06-21)       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ "지금 읽는 작품" 링크를 복사해 등록 화면에서 📋 한 번이면 메타 자동 불러옴.   ║
+ * ║ [모듈] expo-clipboard 추가(SDK54 ~8.0.8). [추출] extractSupportedUrl —       ║
+ * ║   텍스트에서 지원 플랫폼 URL만 골라냄. [핸들러] pasteLinkAndFetch — 클립보드  ║
+ * ║   읽기→URL 추출→링크칸 채우고 바로 runScrapeFromUrl(확인 모달 합류).          ║
+ * ║ 4화면(신규·예정·보충·편집) 링크칸 옆 "📋" 버튼. 자동 감지 대신 1탭 유저       ║
+ * ║   트리거(iOS 붙여넣기 알림·포커스 타이밍 회피 → 더 견고).                     ║
+ * ║ ※ 네이티브 모듈 → 리빌드 후 동작. egress 재실측: 타 플랫폼 검색은 여전히 폰   ║
+ * ║   전용(novelpia/munpia 403·naver 비허용·kakao GraphQL 302). Stage 6(공유시트) ║
+ * ║   는 받는 쪽 라이브러리(expo-share-intent) 필요 → 보류(클립보드가 대부분 커버).║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -6641,6 +6655,7 @@ import * as NavigationBar from "expo-navigation-bar";
 import * as FileSystem from "expo-file-system/legacy"; // 🔧 v3.5.3: SDK 54 신규 API 불안정 → 레거시 API 사용
 import * as ImageManipulator from "expo-image-manipulator"; // 📷 명대사 이미지 압축
 import * as MediaLibrary from "expo-media-library"; // 📷 v7.4.0 티어표 갤러리 저장
+import * as Clipboard from "expo-clipboard"; // 📋 v7.28.37 클립보드 링크 감지(스크래퍼 Stage 5)
 import { captureRef } from "react-native-view-shot"; // 📷 v7.4.0 티어표 캡처
 // 🆕 v7.8.0: 명대사 텍스트 서식 — 한글 웹폰트 번들 (expo-font + @expo-google-fonts)
 import { useFonts as useExpoFonts } from "expo-font";
@@ -13621,6 +13636,17 @@ const SCRAPER_PLATFORMS = [
 function detectPlatformFromUrl(url) {
   const u = (url || "").toLowerCase();
   for (const p of SCRAPER_PLATFORMS) if (u.includes(p.host)) return p.key;
+  return null;
+}
+
+// 📋 v7.28.37 텍스트(클립보드/공유)에서 지원 플랫폼 작품 URL만 추출 — 첫 매칭 1건, 끝의 구두점 정리.
+function extractSupportedUrl(text) {
+  if (!text) return null;
+  const urls = String(text).match(/https?:\/\/[^\s"'<>]+/gi) || [];
+  for (const u of urls) {
+    const clean = u.replace(/[.,)\]}>]+$/, "");
+    if (detectPlatformFromUrl(clean)) return clean;
+  }
   return null;
 }
 
@@ -39872,6 +39898,17 @@ function AppContent() {
     }
   }
 
+  // 📋 v7.28.37 클립보드 1탭 불러오기 — 클립보드에 지원 작품 링크가 있으면 링크칸 채우고 바로 fetch.
+  async function pasteLinkAndFetch(applyLink, ctx) {
+    if (scrapeLoading) return;
+    let txt = "";
+    try { txt = await Clipboard.getStringAsync(); } catch { Alert.alert("클립보드", "클립보드를 읽지 못했어요."); return; }
+    const url = extractSupportedUrl(txt);
+    if (!url) { Alert.alert("클립보드", "클립보드에서 지원하는 작품 링크를 찾지 못했어요.\n(노벨피아·문피아·네이버시리즈·리디·카카오페이지)"); return; }
+    if (typeof applyLink === "function") applyLink(url);
+    await runScrapeFromUrl(url, ctx);
+  }
+
   // 🔗 v7.28.26 스크래퍼: URL에서 메타 fetch → 확인 모달 오픈. ctx = { label, getCurrent(), apply(fields) }
   async function runScrapeFromUrl(url, ctx) {
     const u = (url || "").trim();
@@ -49310,16 +49347,25 @@ async function importJSON() {
   autoCapitalize="none"
   autoCorrect={false}
 />
-{/* 🔗 v7.28.26 / 🔎 v7.28.32: 링크에서 불러오기 (제목 검색 버튼은 제목칸 옆으로 이동) */}
-<TouchableOpacity
-  onPress={() => runScrapeFromUrl(newLink, scrapeCtxNew())}
-  disabled={scrapeLoading}
-  style={{ marginTop: 6, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: scrapeLoading ? 0.5 : 1 }}
->
-  <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>
-    {scrapeLoading ? "불러오는 중…" : "🔗 링크에서 정보 불러오기"}
-  </Text>
-</TouchableOpacity>
+{/* 🔗 v7.28.26 / 🔎 v7.28.32 / 📋 v7.28.37: 링크 불러오기 + 클립보드 1탭 */}
+<View style={{ flexDirection: "row", gap: 6, marginTop: 6 }}>
+  <TouchableOpacity
+    onPress={() => runScrapeFromUrl(newLink, scrapeCtxNew())}
+    disabled={scrapeLoading}
+    style={{ flex: 1, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: scrapeLoading ? 0.5 : 1 }}
+  >
+    <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>
+      {scrapeLoading ? "불러오는 중…" : "🔗 링크에서 정보 불러오기"}
+    </Text>
+  </TouchableOpacity>
+  <TouchableOpacity
+    onPress={() => pasteLinkAndFetch(setNewLink, scrapeCtxNew())}
+    disabled={scrapeLoading}
+    style={{ backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, paddingHorizontal: 14, borderRadius: 8, alignItems: "center", justifyContent: "center", opacity: scrapeLoading ? 0.5 : 1 }}
+  >
+    <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>📋</Text>
+  </TouchableOpacity>
+</View>
 
 <Label style={{ marginTop: 10 }}>메모</Label>
 <Input
@@ -50766,15 +50812,24 @@ async function importJSON() {
                 autoCapitalize="none"
                 autoCorrect={false}
               />
-              <TouchableOpacity
-                onPress={() => runScrapeFromUrl(plannedLink, scrapeCtxPlanned())}
-                disabled={scrapeLoading}
-                style={{ marginTop: 6, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: scrapeLoading ? 0.5 : 1 }}
-              >
-                <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>
-                  {scrapeLoading ? "불러오는 중…" : "🔗 링크에서 정보 불러오기"}
-                </Text>
-              </TouchableOpacity>
+              <View style={{ flexDirection: "row", gap: 6, marginTop: 6 }}>
+                <TouchableOpacity
+                  onPress={() => runScrapeFromUrl(plannedLink, scrapeCtxPlanned())}
+                  disabled={scrapeLoading}
+                  style={{ flex: 1, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: scrapeLoading ? 0.5 : 1 }}
+                >
+                  <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>
+                    {scrapeLoading ? "불러오는 중…" : "🔗 링크에서 정보 불러오기"}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => pasteLinkAndFetch(setPlannedLink, scrapeCtxPlanned())}
+                  disabled={scrapeLoading}
+                  style={{ backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, paddingHorizontal: 14, borderRadius: 8, alignItems: "center", justifyContent: "center", opacity: scrapeLoading ? 0.5 : 1 }}
+                >
+                  <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>📋</Text>
+                </TouchableOpacity>
+              </View>
 
               <Label style={{ marginTop: 10 }}>표지 이미지</Label>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -53489,6 +53544,13 @@ async function importJSON() {
                         style={{ flex: 1, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: (scrapeLoading || searchBusy) ? 0.5 : 1 }}
                       >
                         <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>🔎 제목 검색</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => pasteLinkAndFetch((v) => updateEditItem(prev => prev ? { ...prev, link: v } : prev), scrapeCtxSupplement())}
+                        disabled={scrapeLoading}
+                        style={{ backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, paddingHorizontal: 12, borderRadius: 8, alignItems: "center", justifyContent: "center", opacity: scrapeLoading ? 0.5 : 1 }}
+                      >
+                        <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>📋</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -61877,16 +61939,25 @@ async function importJSON() {
   autoCapitalize="none"
   autoCorrect={false}
 />
-{/* 🔗 v7.28.27 / 🔎 v7.28.32: 링크에서 불러오기 (제목 검색 버튼은 제목칸 옆으로 이동) */}
-<TouchableOpacity
-  onPress={() => runScrapeFromUrl(editLink, scrapeCtxEdit())}
-  disabled={scrapeLoading}
-  style={{ marginTop: 6, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: scrapeLoading ? 0.5 : 1 }}
->
-  <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>
-    {scrapeLoading ? "불러오는 중…" : "🔗 링크에서 정보 불러오기"}
-  </Text>
-</TouchableOpacity>
+{/* 🔗 v7.28.27 / 🔎 v7.28.32 / 📋 v7.28.37: 링크 불러오기 + 클립보드 1탭 */}
+<View style={{ flexDirection: "row", gap: 6, marginTop: 6 }}>
+  <TouchableOpacity
+    onPress={() => runScrapeFromUrl(editLink, scrapeCtxEdit())}
+    disabled={scrapeLoading}
+    style={{ flex: 1, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: scrapeLoading ? 0.5 : 1 }}
+  >
+    <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>
+      {scrapeLoading ? "불러오는 중…" : "🔗 링크에서 정보 불러오기"}
+    </Text>
+  </TouchableOpacity>
+  <TouchableOpacity
+    onPress={() => pasteLinkAndFetch(setEditLink, scrapeCtxEdit())}
+    disabled={scrapeLoading}
+    style={{ backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, paddingHorizontal: 14, borderRadius: 8, alignItems: "center", justifyContent: "center", opacity: scrapeLoading ? 0.5 : 1 }}
+  >
+    <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>📋</Text>
+  </TouchableOpacity>
+</View>
 
 {/* 📚 v3.0.4: 다회독 카운트 */}
 <Label style={{ marginTop: 10 }}>다회독 횟수</Label>
