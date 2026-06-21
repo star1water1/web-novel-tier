@@ -223,7 +223,7 @@ function normalizeFromHtml(html, url) {
 | 카카오페이지 | Next.js SSR(`__NEXT_DATA__`) + GraphQL | **🟢 실측 동작**(OG+`__NEXT_DATA__` 정밀화) | 🔴 GraphQL(302)·SSR결과 없음 → 보류 | URL은 쉬움 / 검색 어려움 |
 
 > **실측 메모(v7.28.29, 이 세션 egress)**: 리디·카카오는 **Next.js**라 페이지에 `__NEXT_DATA__`(작품 전체 데이터)가 통째로 박혀 있다.
-> - **리디**: JSON-LD `Book`(author=Person, genre, image, description) + 본문 "총 N화"/"완결" → 공통 엔진이 **보정 없이** 정확. 검색은 `ridibooks.com/search?q=`가 서버렌더라 `__NEXT_DATA__`의 `books[].book`을 긁어 후보 생성(검색 *서브도메인* `search.ridibooks.com`은 egress 비허용이지만 SSR 페이지로 우회).
+> - **리디**: JSON-LD `Book`(author=Person, genre, image, description) + 본문 "총 N화"/"완결" → 공통 엔진이 **보정 없이** 정확. 단 **줄거리는 "{제목} 작품소개: {본문}" 형식**이라 중복 제목·라벨을 `scraperRefineRidi`가 제거(v7.28.31, 폰 실측 피드백). 본문 끝 "…" 잘림은 리디가 og/JSON-LD에 싣는 한계(전체본은 `__NEXT_DATA__`에도 없음). 검색은 `ridibooks.com/search?q=`가 서버렌더라 `__NEXT_DATA__`의 `books[].book`을 긁어 후보 생성(검색 *서브도메인* `search.ridibooks.com`은 egress 비허용이지만 SSR 페이지로 우회).
 > - **카카오**: 상세 JSON-LD는 `Organization`뿐 → 제목·작가·표지·줄거리는 OG/`<meta author>`, **장르·완결은 `__NEXT_DATA__`의 `content.subcategory`/`content.onIssue`**(End=완결/Ing=연재). 같은 `/content/{id}` 페이지에 **웹소설+웹툰화가 함께** 실리니(제목 동일, seriesId/연재상태 다름) **URL의 content id=seriesId로 정확히 골라야** 완결 오판이 없다. 검색은 GraphQL(POST 302)뿐이고 검색결과 SSR엔 데이터 없음 → **보류**(폰/토큰 확보 후 재도전).
 
 ### 7.1 플랫폼 범위 = **전부** (사용자 확정)
@@ -305,7 +305,8 @@ function normalizeFromHtml(html, url) {
 엔진/모달/배선/네트워크/제목검색(리디)은 완성·검증됨. egress는 **세션마다 다를 수 있으니** 먼저 재실측한다:
 
 - **(0) egress 재실측(먼저)**: `curl -sS -A "<모바일 UA>" https://<host>` 로 5개 플랫폼 도달 확인(§10.2가 예시). 도달되면 라이브로, 아니면 폰 캡처 픽스처로.
-- **(A) 폰 직접 테스트(개발IP 차단 플랫폼)**: 실제 앱(v7.28.29+)에서 노벨피아/문피아 작품 링크로 "🔗 링크에서" → ① 정상이면 제목·작가·표지·회차·완결 검증, ② 차단 안내면 종류 보고. 이 결과로 `scraperRefineByPlatform`에 해당 플랫폼 분기 추가(카카오 `scraperRefineKakao` 패턴 참고).
+- **✅ 폰 실측 성공(리디, 2026-06-21)**: 실제 기기에서 리디 작품 "🔗 링크에서" → 제목·작가·줄거리·표지·완결 정상 추출 확인(신규 등록 확인 모달). 이 피드백으로 리디 줄거리 접두 정리 추가(v7.28.31).
+- **(A) 폰 직접 테스트(개발IP 차단 플랫폼)**: 실제 앱(v7.28.29+)에서 노벨피아/문피아 작품 링크로 "🔗 링크에서" → ① 정상이면 제목·작가·표지·회차·완결 검증, ② 차단 안내면 종류 보고. 이 결과로 `scraperRefineByPlatform`에 해당 플랫폼 분기 추가(카카오 `scraperRefineKakao`·리디 `scraperRefineRidi` 패턴 참고).
 - **(B) HTML 캡처 → 픽스처**: 폰 브라우저 '페이지 소스 보기'로 HTML 확보 → `docs/scraper-fixtures/<플랫폼>-<작품>.html`(실측 페이지의 `<head>` meta + JSON-LD + `__NEXT_DATA__`만 남긴 축약본으로 OK) → `docs/scraper-test.mjs`에 케이스 추가.
 - **오프라인 회귀**: `node docs/scraper-test.mjs` (네트워크 불필요, App.jsx 실제 함수 vm 추출 실행 — 현재 **41/41**).
 - **JSX 문법 게이트**: `npx esbuild App.jsx --loader:.jsx=jsx --bundle=false --outfile=/dev/null` (UI 수정 후 전체 파싱 확인 — RN 빌드 없이 문법만).

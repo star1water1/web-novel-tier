@@ -108,6 +108,7 @@ eq("리디 작가(JSON-LD Person)", rd.author, "로드워리어");
 eq("리디 장르", rd.genres, ["퓨전 판타지"]);
 eq("리디 완결", rd.workStatus, "completed");
 eq("리디 회차(총 260화)", rd.totalEpisodes, 260);
+eq("리디 줄거리 접두(제목·작품소개:) 제거", rd.synopsis, "다른 놈이 창칼 쓸 때 나는 위키 쓴다....");
 
 const sr = S.parseRidiSearch(fx("ridi-search-yongsa.html"));
 truthy("리디 검색 후보 ≥1개", sr.length >= 1);
