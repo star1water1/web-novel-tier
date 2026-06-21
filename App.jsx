@@ -2,9 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.15 (AI 태그 추천 정밀화 — few-shot·기존/신규 분리·신규 속성)     ║
+ * ║  버전: 7.28.16 (미태깅 작품 일괄 AI 태그 + 신규 속성 '추천만' 기본화)        ║
  * ║  최종 수정: 2026-06-20                                                        ║
  * ║  총 라인 수: 약 62,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🤖 v7.28.16 미태깅 작품 일괄 AI 태그 + 신규 속성 '추천만' (2026-06-20)       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [일괄] 설정>태그에 '미태깅 작품 일괄 태그'. 후보(태그 없음/2·4 미만) 선택    ║
+ * ║ (최대 20)→순차 호출(진행률·취소·스로틀·429 백오프). 작품별 접이식 카드로     ║
+ * ║ 기존/신규 분리 표시, 칩 선택 → execBatch 1트랜잭션 병합(덮어쓰기 X).         ║
+ * ║ 신규 등록·속성은 전역 1회(stale-closure 방지). 단일 모드 분류 규칙 재사용.   ║
+ * ║                                                                              ║
+ * ║ [속성 추천만] 단일·일괄 공통 — 신규 태그 속성은 기본 '추천만'(미적용),      ║
+ * ║ 배지 1탭으로 추천값 적용·재탭으로 변경/해제. 기존 태그 속성은 불변.          ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -14527,7 +14539,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.15";
+const APP_VERSION = "7.28.16";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -14553,6 +14565,16 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.16", date: "2026-06-20",
+    title: "🤖 미태깅 작품 일괄 AI 태그",
+    highlights: [
+      { type: "new", text: "🤖 설정 > 🏷️ 태그에 '미태깅 작품 일괄 태그'가 생겼어요. 태그가 없거나 적은 작품을 골라(최대 20개) 한 번에 AI 추천을 받아요. 진행률이 보이고 도중에 취소할 수 있어요." },
+      { type: "new", text: "📋 작품별 접이식 카드로 결과를 보여줘요 — 단일 추천처럼 기존/신규 태그가 나뉘어 있고, 칩을 탭해 고른 것만 '전체 적용'으로 한 번에 반영해요. 기존 태그는 보존하고 추가만 해요." },
+      { type: "improve", text: "🎭 새 태그의 속성(긍정·중립·부정)은 이제 '추천만' 보여주는 게 기본이에요. 배지를 한 번 탭하면 추천 속성이 적용되고, 다시 탭해 바꾸거나 끌 수 있어요. (단일·일괄 공통, 기존 태그 속성은 그대로)" },
+    ],
+    details: [],
+  },
   {
     version: "7.28.15", date: "2026-06-20",
     title: "🏷️ AI 태그 추천 더 똑똑하게 (정밀 보정·기존/신규 분리)",
@@ -32829,6 +32851,14 @@ function AppContent() {
   const [aiTagUseFewshot, setAiTagUseFewshot] = useState(false); // 🆕 v7.28.15 옵트인: 비슷한 내 작품 예시(제목+태그) 전송
   const [aiTagSuggestIntensity, setAiTagSuggestIntensity] = useState(false); // 강도 제안 토글
   const [aiTagVocabMode, setAiTagVocabMode] = useState("mine"); // 🆕 v7.28.15 어휘 범위: "mine"(내 태그)|"std"(표준까지)|"new"(새 태그 허용)
+  // 🆕 v7.28.16: 미태깅 작품 일괄 태그
+  const [batchTagOpen, setBatchTagOpen] = useState(false);
+  const [batchThreshold, setBatchThreshold] = useState(1); // 후보: 태그 수 < N (1=없음·2·4)
+  const [batchSelIds, setBatchSelIds] = useState(() => new Set()); // 선택 작품 id
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchProgress, setBatchProgress] = useState({ done: 0, total: 0 });
+  const [batchResults, setBatchResults] = useState([]); // [{id,title,author,suggest,status,expanded}]
+  const batchCancelRef = useRef(false);
   const [dismissedSynPairs, setDismissedSynPairs] = useState(() => new Set()); // 🔧 v7.28.0: 유의어 후보 거절 이력 (로컬·AI 공통)
   const [dismissedOppPairs, setDismissedOppPairs] = useState(() => new Set()); // 🆕 v7.28.12: 상반 후보 거절 이력
   const [tagHealthBusy, setTagHealthBusy] = useState(false);
@@ -38740,9 +38770,9 @@ function AppContent() {
         if (usedKeys.has(k)) {
           tagsExisting.push({ tag: disp.get(k), intensity: intv, confidence: conf, checked: conf !== "low" });
         } else if (stdMap.has(k) && (mode === "std" || mode === "new")) {
-          tagsNew.push({ tag: stdMap.get(k), intensity: intv, confidence: conf, sentiment: sentOf(it.sentiment), needsRegister: false, similarTo: null, checked: false });
+          tagsNew.push({ tag: stdMap.get(k), intensity: intv, confidence: conf, sentSuggest: sentOf(it.sentiment), sent: null, needsRegister: false, similarTo: null, checked: false });
         } else if (allowNew) {
-          tagsNew.push({ tag: name, intensity: intv, confidence: conf, sentiment: sentOf(it.sentiment), needsRegister: true, similarTo: findSimilarUsed(k), checked: false });
+          tagsNew.push({ tag: name, intensity: intv, confidence: conf, sentSuggest: sentOf(it.sentiment), sent: null, needsRegister: true, similarTo: findSimilarUsed(k), checked: false });
         }
       }
       const total = majSug.length + subSug.length + tagsExisting.length + tagsNew.length;
@@ -38790,7 +38820,7 @@ function AppContent() {
       let sentChanged = false; const mergedSent = { ...tagSentiments };
       for (const s of selNew) {
         if (s.needsRegister) addTagToRegistry(s.tag);
-        const sv = (s.sentiment === "positive" || s.sentiment === "negative") ? s.sentiment : null;
+        const sv = (s.sent === "positive" || s.sent === "negative") ? s.sent : null; // 적용된 속성만(추천만/중립은 미적용)
         if (sv) { mergedSent[s.tag] = sv; sentChanged = true; }
       }
       if (sentChanged) saveTagSentiments(mergedSent);
@@ -38804,14 +38834,158 @@ function AppContent() {
     setAiTagSuggest(null);
   }
 
-  // 🆕 v7.28.15 신규 태그 속성 순환 (중립→긍정→부정)
+  // 🆕 v7.28.15 신규 태그 속성: 추천만(null) → 추천값 적용 → 전체 순환 → 다시 추천만
+  //   (기본 null=적용 안 함·추천만 표시, 한 탭이면 추천 속성 적용)
+  function nextSentApply(cur, sug) {
+    const order = ["positive", "neutral", "negative"];
+    if (cur == null) return sug; // 추천만 → 추천 속성 적용 (쉬운 1탭)
+    const ni = (order.indexOf(cur) + 1) % 3;
+    return order[ni] === sug ? null : order[ni]; // 한 바퀴 돌면 다시 추천만(해제)
+  }
   function cycleAiTagSentiment(idx) {
-    setAiTagSuggest(prev => {
-      if (!prev || !prev.tagsNew) return prev;
-      const order = ["neutral", "positive", "negative"];
-      const tagsNew = prev.tagsNew.map((it, i) => i === idx ? { ...it, sentiment: order[(order.indexOf(it.sentiment) + 1) % 3] } : it);
-      return { ...prev, tagsNew };
-    });
+    setAiTagSuggest(prev => prev && prev.tagsNew ? { ...prev, tagsNew: prev.tagsNew.map((it, i) => i === idx ? { ...it, sent: nextSentApply(it.sent, it.sentSuggest) } : it) } : prev);
+  }
+
+  // 🆕 v7.28.16: 미태깅 작품 일괄 태그
+  function openBatchTagModal() { setBatchResults([]); setBatchSelIds(new Set()); setBatchProgress({ done: 0, total: 0 }); setBatchTagOpen(true); }
+  function toggleBatchExpand(wi) { setBatchResults(prev => prev.map((r, i) => i === wi ? { ...r, expanded: !r.expanded } : r)); }
+  function toggleBatchItem(wi, kind, idx) {
+    setBatchResults(prev => prev.map((r, ri) => {
+      if (ri !== wi || !r.suggest || !r.suggest[kind]) return r;
+      return { ...r, suggest: { ...r.suggest, [kind]: r.suggest[kind].map((it, i) => i === idx ? { ...it, checked: !it.checked } : it) } };
+    }));
+  }
+  function cycleBatchSentiment(wi, idx) {
+    setBatchResults(prev => prev.map((r, ri) => {
+      if (ri !== wi || !r.suggest || !r.suggest.tagsNew) return r;
+      return { ...r, suggest: { ...r.suggest, tagsNew: r.suggest.tagsNew.map((it, i) => i === idx ? { ...it, sent: nextSentApply(it.sent, it.sentSuggest) } : it) } };
+    }));
+  }
+  // 순차 호출(스로틀·취소·429 백오프). 어휘/분류는 단일 모드와 동일 규칙(배치용 복제).
+  async function runBatchTagSuggest(works) {
+    const provider = aiProvider === "gemini" ? "gemini" : "claude";
+    const key = ((provider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim();
+    if (!key) { Alert.alert("AI 태그", `먼저 설정 > 🏷️ 태그에서 ${provider === "gemini" ? "Gemini" : "Claude"} API 키를 입력해 주세요.`); return; }
+    if (!works || !works.length) { Alert.alert("AI 태그", "작품을 선택해 주세요."); return; }
+    const freq = new Map(); const disp = new Map(); let totalTagCount = 0, worksWithTags = 0;
+    for (const n of (list || [])) {
+      const g = (n.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+      const raw = [...parseMajorSub(n.major_genre), ...parseMajorSub(n.sub_genre), ...g];
+      const seen = new Set();
+      for (const t of raw) { const k = normalizeTagKey(t); if (!k || seen.has(k)) continue; seen.add(k); freq.set(k, (freq.get(k) || 0) + 1); if (!disp.has(k)) disp.set(k, t); }
+      if (seen.size > 0) { totalTagCount += seen.size; worksWithTags++; }
+    }
+    const topTags = [...freq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([k]) => disp.get(k));
+    const avgTags = worksWithTags ? Math.max(2, Math.round(totalTagCount / worksWithTags)) : 0;
+    const usedKeys = new Set(disp.keys()); const usedList = [...disp.entries()];
+    const majorVocab = (Array.isArray(userMajorGenres) && userMajorGenres.length ? userMajorGenres : FACTORY_MAJOR_GENRES);
+    const subVocab = (Array.isArray(userSubGenres) && userSubGenres.length ? userSubGenres : FACTORY_SUB_GENRES);
+    const majorMap = new Map(majorVocab.map(t => [normalizeTagKey(t), t]));
+    const subMap = new Map(subVocab.map(t => [normalizeTagKey(t), t]));
+    const stdMap = new Map();
+    if (typeof ALL_DEFAULT_TAGS !== "undefined" && Array.isArray(ALL_DEFAULT_TAGS)) for (const t of ALL_DEFAULT_TAGS) { const k = normalizeTagKey(t); if (!majorMap.has(k) && !subMap.has(k) && !stdMap.has(k)) stdMap.set(k, t); }
+    const mode = aiTagVocabMode === "std" ? "std" : aiTagVocabMode === "new" ? "new" : "mine";
+    const allowNew = mode === "new";
+    const sentOf = (v) => { const x = String(v || "").toLowerCase(); return (x === "positive" || x === "negative") ? x : "neutral"; };
+    const findSimilarUsed = (k) => {
+      for (const [uk, ud] of usedList) {
+        if (uk === k) continue;
+        if (uk.length >= 2 && k.length >= 2 && (k.startsWith(uk) || uk.startsWith(k) || k.endsWith(uk) || uk.endsWith(k)) && Math.abs(uk.length - k.length) <= 3) return ud;
+        if (Math.max(uk.length, k.length) >= 3 && levenshtein(uk, k) <= 1) return ud;
+      }
+      return null;
+    };
+    const classify = (out, existingKeys) => {
+      const majSug = []; const subSug = []; const seenM = new Set(), seenS = new Set();
+      const pushMajor = (name) => { const k = normalizeTagKey(name); if (!majorMap.has(k) || seenM.has(k) || existingKeys.has(k)) return; seenM.add(k); majSug.push({ name: majorMap.get(k), checked: true }); };
+      const pushSub = (name) => { const k = normalizeTagKey(name); if (!subMap.has(k) || seenS.has(k) || existingKeys.has(k)) return; seenS.add(k); subSug.push({ name: subMap.get(k), checked: true }); };
+      for (const m of (out.majorGenres || [])) pushMajor(m);
+      for (const s of (out.subGenres || [])) pushSub(s);
+      const tagsExisting = []; const tagsNew = []; const seenT = new Set();
+      for (const it of (out.tags || [])) {
+        const nm = it?.tag; if (!nm) continue;
+        const k = normalizeTagKey(nm); if (!k || seenT.has(k) || existingKeys.has(k)) continue;
+        if (majorMap.has(k)) { pushMajor(nm); continue; }
+        if (subMap.has(k)) { pushSub(nm); continue; }
+        seenT.add(k);
+        const conf = String(it.confidence || "med").toLowerCase();
+        const intv = aiTagSuggestIntensity ? Math.min(5, Math.max(1, Math.round(Number(it.intensity) || 3))) : 3;
+        if (usedKeys.has(k)) tagsExisting.push({ tag: disp.get(k), intensity: intv, confidence: conf, checked: conf !== "low" });
+        else if (stdMap.has(k) && (mode === "std" || mode === "new")) tagsNew.push({ tag: stdMap.get(k), intensity: intv, confidence: conf, sentSuggest: sentOf(it.sentiment), sent: null, needsRegister: false, similarTo: null, checked: false });
+        else if (allowNew) tagsNew.push({ tag: nm, intensity: intv, confidence: conf, sentSuggest: sentOf(it.sentiment), sent: null, needsRegister: true, similarTo: findSimilarUsed(k), checked: false });
+      }
+      return { major: majSug, sub: subSug, tagsExisting, tagsNew };
+    };
+    batchCancelRef.current = false;
+    setBatchBusy(true); setBatchResults([]); setBatchProgress({ done: 0, total: works.length });
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    try {
+      for (let i = 0; i < works.length; i++) {
+        if (batchCancelRef.current) break;
+        const n = works[i];
+        const existingTags = deduplicateTags((n.tags || "").split(",").map(t => t.trim()).filter(Boolean));
+        const existingKeys = new Set(existingTags.map(t => normalizeTagKey(t)));
+        const ctx = { title: (n.title || "").trim(), author: (n.author || "").trim(), existingTags, profile: { avgTags, topTags }, majorOptions: majorVocab.slice(0, 40), subOptions: subVocab.slice(0, 60), wantIntensity: aiTagSuggestIntensity, allowNew };
+        let res;
+        try {
+          const out = provider === "gemini" ? await callGeminiForTagging(ctx, key, GEMINI_AI_MODEL) : await callClaudeForTagging(ctx, key, SYNONYM_AI_MODEL);
+          const sg = classify(out, existingKeys);
+          const tot = sg.major.length + sg.sub.length + sg.tagsExisting.length + sg.tagsNew.length;
+          res = { id: n.id, title: n.title, author: n.author, suggest: sg, status: tot > 0 ? "ok" : "empty", expanded: false };
+        } catch (e) {
+          res = { id: n.id, title: n.title, author: n.author, suggest: null, status: "error", error: e?.message || String(e), expanded: false };
+          if (/429|한도/.test(e?.message || "")) await sleep(2500); // 429 백오프
+        }
+        setBatchResults(prev => [...prev, res]);
+        setBatchProgress({ done: i + 1, total: works.length });
+        if (i < works.length - 1 && !batchCancelRef.current) await sleep(700); // 스로틀(무료 한도 보호)
+      }
+    } finally { setBatchBusy(false); }
+  }
+  // 선택 항목만 각 작품에 병합 적용 (execBatch 1트랜잭션 + 신규 등록/속성 전역 1회)
+  async function applyBatchTagSuggestions() {
+    const results = batchResults.filter(r => r.status === "ok" && r.suggest);
+    const byId = new Map((list || []).map(n => [n.id, n]));
+    const updates = []; const newTagSet = new Map(); const mergedSent = { ...tagSentiments }; let sentChanged = false; let appliedWorks = 0, appliedTags = 0;
+    for (const r of results) {
+      const n = byId.get(r.id); if (!n) continue; // 삭제된 작품 skip
+      const sg = r.suggest;
+      const selMajor = sg.major.filter(x => x.checked).map(x => x.name);
+      const selSub = sg.sub.filter(x => x.checked).map(x => x.name);
+      const selExisting = sg.tagsExisting.filter(x => x.checked);
+      const selNew = sg.tagsNew.filter(x => x.checked);
+      const selCount = selMajor.length + selSub.length + selExisting.length + selNew.length;
+      if (!selCount) continue;
+      const curMajor = parseGenreArray(n.major_genre); const curSub = parseGenreArray(n.sub_genre);
+      const curTagData = safeParseJSON(n.tag_data, []) || [];
+      const majorSet = new Set(curMajor.map(t => normalizeTagKey(t)));
+      const subSet = new Set(curSub.map(t => normalizeTagKey(t)));
+      const curGeneral = (n.tags || "").split(",").map(t => t.trim()).filter(Boolean).filter(t => { const k = normalizeTagKey(t); return !majorSet.has(k) && !subSet.has(k); });
+      const allGen = [...selExisting, ...selNew];
+      const major2 = deduplicateTags([...curMajor, ...selMajor]);
+      const sub2 = deduplicateTags([...curSub, ...selSub]);
+      const general2 = deduplicateTags([...curGeneral, ...allGen.map(s => s.tag)]);
+      const tdMap = new Map();
+      for (const e of curTagData) { if (e && e.tag) tdMap.set(normalizeTagKey(e.tag), { tag: e.tag, intensity: Math.min(5, Math.max(1, Number(e.intensity) || 3)) }); }
+      for (const s of allGen) { const k = normalizeTagKey(s.tag); if (!tdMap.has(k)) tdMap.set(k, { tag: s.tag, intensity: Math.min(5, Math.max(1, Number(s.intensity) || 3)) }); }
+      const tagsStr2 = deduplicateTags([...major2, ...sub2, ...general2]).join(", ");
+      for (const s of selNew) {
+        if (s.needsRegister) { const nk = normalizeTagKey(s.tag); if (!newTagSet.has(nk)) newTagSet.set(nk, s.tag); }
+        const sv = (s.sent === "positive" || s.sent === "negative") ? s.sent : null;
+        if (sv) { mergedSent[s.tag] = sv; sentChanged = true; }
+      }
+      updates.push({ sql: "UPDATE novels SET tags=?, major_genre=?, sub_genre=?, tag_data=? WHERE id=?", params: [tagsStr2, JSON.stringify(major2), JSON.stringify(sub2), JSON.stringify([...tdMap.values()]), r.id] });
+      appliedWorks++; appliedTags += selCount;
+    }
+    if (!updates.length) { Alert.alert("AI 태그", "적용할 작품·태그를 선택해 주세요."); return; }
+    try {
+      await execBatch(updates);
+      for (const tg of newTagSet.values()) addTagToRegistry(tg); // functional·중복무시 → 루프 안전
+      if (sentChanged) saveTagSentiments(mergedSent); // 속성 1회 저장(stale-closure 방지)
+      await loadList();
+      setBatchTagOpen(false); setBatchResults([]); setBatchSelIds(new Set());
+      Alert.alert("일괄 적용 완료", `${appliedWorks}개 작품에 태그 ${appliedTags}개를 추가했어요.`);
+    } catch (e) { Alert.alert("적용 실패", e?.message || String(e)); }
   }
 
   // 🤖 v7.27.0: Claude API 키 저장 (app_meta — 슬롯 DB, 백업엔 미포함)
@@ -56260,6 +56434,14 @@ async function importJSON() {
                 </Text>
               </TouchableOpacity>
 
+              {/* 🆕 v7.28.16: 미태깅 작품 일괄 AI 태그 */}
+              <TouchableOpacity
+                onPress={openBatchTagModal}
+                style={{ backgroundColor: isDark ? "#312e81" : "#eef2ff", padding: 14, borderRadius: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", marginBottom: 16, borderWidth: 1, borderColor: isDark ? "#4f46e5" : "#c7d2fe" }}
+              >
+                <Text style={{ color: isDark ? "#c7d2fe" : "#4338ca", fontSize: 15, fontWeight: "700" }}>🤖 미태깅 작품 일괄 태그</Text>
+              </TouchableOpacity>
+
               {/* 🤖 v7.27.0 / 🆕 v7.28.9: AI 유의어 점검 — 제공자 선택(Gemini 무료 · Claude 유료) */}
               <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
                 <Text style={{ color: C.text, fontWeight: "700", fontSize: 14, marginBottom: 8 }}>🤖 AI 유의어 점검 (선택)</Text>
@@ -63316,9 +63498,9 @@ async function importJSON() {
                     {newItems.length > 0 ? (
                       <View style={{ marginBottom: 10 }}>
                         <Text style={{ color: C.text, fontWeight: "700", fontSize: 12, marginBottom: 2 }}>태그 · 신규 (어휘에 없음) ({newItems.length})</Text>
-                        <Text style={{ color: C.sub, fontSize: 10, marginBottom: 5 }}>적용하면 새로 등록돼요. 속성(긍정/중립/부정) 배지를 탭해 바꿀 수 있어요.</Text>
+                        <Text style={{ color: C.sub, fontSize: 10, marginBottom: 5 }}>적용하면 새로 등록돼요. 속성은 기본 '추천만' — 배지를 탭하면 적용돼요(다시 탭해 변경/해제).</Text>
                         {newItems.map((it, i) => {
-                          const on = it.checked; const sm = sentMeta[it.sentiment] || sentMeta.neutral;
+                          const on = it.checked; const applied = it.sent != null; const sm = sentMeta[applied ? it.sent : it.sentSuggest] || sentMeta.neutral;
                           return (
                             <View key={it.tag + i} style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 5 }}>
                               <TouchableOpacity onPress={() => toggleAiTagItem("tagsNew", i)} style={{ flex: 1, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 9, backgroundColor: on ? (isDark ? "#3730a3" : "#eef2ff") : C.bg, borderWidth: 1, borderColor: on ? (isDark ? "#6366f1" : "#c7d2fe") : C.line }}>
@@ -63326,8 +63508,8 @@ async function importJSON() {
                                   {on ? "✓ " : ""}{it.tag}{aiTagSuggestIntensity ? ` ·${it.intensity}` : ""}{it.similarTo ? `  ↔ 비슷: ${it.similarTo}` : ""}
                                 </Text>
                               </TouchableOpacity>
-                              <TouchableOpacity onPress={() => cycleAiTagSentiment(i)} style={{ paddingHorizontal: 9, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: sm.c }}>
-                                <Text style={{ color: sm.c, fontSize: 11, fontWeight: "700" }}>{sm.t}</Text>
+                              <TouchableOpacity onPress={() => cycleAiTagSentiment(i)} style={{ paddingHorizontal: 9, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: sm.c, backgroundColor: applied ? sm.c : "transparent" }}>
+                                <Text style={{ color: applied ? "#fff" : sm.c, fontSize: 11, fontWeight: "700" }}>{applied ? `${sm.t} ✓` : `추천 ${sm.t}`}</Text>
                               </TouchableOpacity>
                             </View>
                           );
@@ -63342,6 +63524,126 @@ async function importJSON() {
                 );
               })()}
             </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 🆕 v7.28.16: 미태깅 작품 일괄 태그 모달 */}
+      <Modal visible={batchTagOpen} animationType="slide" transparent statusBarTranslucent onRequestClose={() => { if (!batchBusy) setBatchTagOpen(false); }}>
+        <View style={{ flex: 1, backgroundColor: C.modal }}>
+          <TouchableOpacity style={{ height: Math.round(Dimensions.get("window").height * 0.06) }} activeOpacity={1} onPress={() => { if (!batchBusy) setBatchTagOpen(false); }} />
+          <View style={{ backgroundColor: C.card, borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: 16, flex: 1 }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>🤖 미태깅 작품 일괄 태그</Text>
+              <TouchableOpacity onPress={() => { if (!batchBusy) setBatchTagOpen(false); }}><Text style={{ fontSize: 22, color: C.sub }}>×</Text></TouchableOpacity>
+            </View>
+            {(() => {
+              const cands = (list || []).filter(n => ((n.tags || "").split(",").filter(s => s.trim()).length) < batchThreshold);
+              const hasResults = batchResults.length > 0;
+              return (
+                <ScrollView showsVerticalScrollIndicator={false} style={{ flex: 1 }}>
+                  {!hasResults && !batchBusy ? (
+                    <View>
+                      <Text style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>대상: 태그가 적은 작품</Text>
+                      <View style={{ flexDirection: "row", gap: 6, marginBottom: 10 }}>
+                        {[{ v: 1, l: "태그 없음" }, { v: 2, l: "2개 미만" }, { v: 4, l: "4개 미만" }].map(o => {
+                          const on = batchThreshold === o.v;
+                          return (<TouchableOpacity key={o.v} onPress={() => { setBatchThreshold(o.v); setBatchSelIds(new Set()); }} style={{ flex: 1, paddingVertical: 8, borderRadius: 9, alignItems: "center", backgroundColor: on ? C.primary : C.bg, borderWidth: 1, borderColor: on ? C.primary : C.line }}><Text style={{ color: on ? "#fff" : C.sub, fontWeight: "700", fontSize: 12 }}>{o.l}</Text></TouchableOpacity>);
+                        })}
+                      </View>
+                      <Text style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>어휘 범위</Text>
+                      <View style={{ flexDirection: "row", gap: 6, marginBottom: 8 }}>
+                        {[{ id: "mine", label: "내 태그만" }, { id: "std", label: "표준까지" }, { id: "new", label: "새 태그 허용" }].map(opt => {
+                          const on = aiTagVocabMode === opt.id;
+                          return (<TouchableOpacity key={opt.id} onPress={() => setAiTagVocabMode(opt.id)} style={{ flex: 1, paddingVertical: 7, borderRadius: 8, alignItems: "center", backgroundColor: on ? C.primary : C.bg, borderWidth: 1, borderColor: on ? C.primary : C.line }}><Text style={{ color: on ? "#fff" : C.sub, fontWeight: "700", fontSize: 11 }}>{opt.label}</Text></TouchableOpacity>);
+                        })}
+                      </View>
+                      <TouchableOpacity onPress={() => setAiTagSuggestIntensity(v => !v)} style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                        <View style={{ width: 18, height: 18, borderRadius: 5, borderWidth: 2, borderColor: aiTagSuggestIntensity ? C.primary : C.line, backgroundColor: aiTagSuggestIntensity ? C.primary : "transparent", alignItems: "center", justifyContent: "center" }}>{aiTagSuggestIntensity ? <Text style={{ color: "#fff", fontSize: 11, fontWeight: "900" }}>✓</Text> : null}</View>
+                        <Text style={{ color: C.sub, fontSize: 12 }}>태그 강도(1~5)도 제안</Text>
+                      </TouchableOpacity>
+                      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                        <Text style={{ color: C.text, fontWeight: "700", fontSize: 13 }}>후보 {cands.length}개 · 선택 {batchSelIds.size}</Text>
+                        <TouchableOpacity onPress={() => setBatchSelIds(prev => prev.size >= Math.min(cands.length, 20) ? new Set() : new Set(cands.slice(0, 20).map(n => n.id)))}>
+                          <Text style={{ color: C.primary, fontWeight: "700", fontSize: 12 }}>{batchSelIds.size >= Math.min(cands.length, 20) && cands.length ? "전체 해제" : "전체 선택(최대 20)"}</Text>
+                        </TouchableOpacity>
+                      </View>
+                      {cands.length === 0 ? (
+                        <Text style={{ color: C.sub, fontSize: 13, marginBottom: 10 }}>대상 작품이 없어요 ✓</Text>
+                      ) : cands.slice(0, 200).map(n => {
+                        const on = batchSelIds.has(n.id); const cap = batchSelIds.size >= 20 && !on;
+                        return (
+                          <TouchableOpacity key={n.id} disabled={cap} onPress={() => setBatchSelIds(prev => { const s = new Set(prev); if (s.has(n.id)) s.delete(n.id); else s.add(n.id); return s; })} style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 7, opacity: cap ? 0.4 : 1 }}>
+                            <View style={{ width: 18, height: 18, borderRadius: 5, borderWidth: 2, borderColor: on ? C.primary : C.line, backgroundColor: on ? C.primary : "transparent", alignItems: "center", justifyContent: "center" }}>{on ? <Text style={{ color: "#fff", fontSize: 11, fontWeight: "900" }}>✓</Text> : null}</View>
+                            <Text numberOfLines={1} style={{ flex: 1, color: C.text, fontSize: 13 }}>{n.title}{n.author ? ` · ${n.author}` : ""}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                      <Text style={{ color: C.sub, fontSize: 10, marginTop: 8 }}>선택 작품을 하나씩 분석해요(무료 한도 보호로 최대 20개). 제목·작가·이미 단 태그만 전송.</Text>
+                      <TouchableOpacity disabled={!batchSelIds.size} onPress={() => runBatchTagSuggest(cands.filter(n => batchSelIds.has(n.id)).slice(0, 20))} style={{ backgroundColor: batchSelIds.size ? (isDark ? "#3730a3" : "#4338ca") : C.line, borderRadius: 12, paddingVertical: 13, alignItems: "center", marginTop: 10, marginBottom: 30 }}>
+                        <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>추천 시작 ({Math.min(batchSelIds.size, 20)}개)</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
+                  {batchBusy ? (
+                    <View style={{ alignItems: "center", paddingVertical: 16 }}>
+                      <Text style={{ color: C.text, fontWeight: "700", fontSize: 14, marginBottom: 8 }}>분석 중… {batchProgress.done}/{batchProgress.total}</Text>
+                      <TouchableOpacity onPress={() => { batchCancelRef.current = true; }} style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 9, borderWidth: 1, borderColor: C.warn }}>
+                        <Text style={{ color: C.warn, fontWeight: "700", fontSize: 13 }}>취소(지금까지 결과 유지)</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
+                  {hasResults ? batchResults.map((r, wi) => {
+                    if (r.status === "error") return <Text key={r.id + "_" + wi} numberOfLines={1} style={{ color: C.warn, fontSize: 12, marginBottom: 6 }}>⚠ {r.title} — {r.error}</Text>;
+                    const sg = r.suggest;
+                    const cnt = sg ? (sg.major.length + sg.sub.length + sg.tagsExisting.length + sg.tagsNew.length) : 0;
+                    if (r.status === "empty" || !cnt) return <Text key={r.id + "_" + wi} numberOfLines={1} style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>· {r.title} — 추천 없음</Text>;
+                    return (
+                      <View key={r.id + "_" + wi} style={{ backgroundColor: C.chip, borderRadius: 12, padding: 10, marginBottom: 8 }}>
+                        <TouchableOpacity onPress={() => toggleBatchExpand(wi)} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                          <Text numberOfLines={1} style={{ flex: 1, color: C.text, fontWeight: "700", fontSize: 13 }}>{r.expanded ? "▾ " : "▸ "}{r.title}</Text>
+                          <Text style={{ color: C.sub, fontSize: 11 }}>기존 {sg.tagsExisting.length}·신규 {sg.tagsNew.length}</Text>
+                        </TouchableOpacity>
+                        {r.expanded ? (
+                          <View style={{ marginTop: 8 }}>
+                            {[{ kind: "major", title: "대장르" }, { kind: "sub", title: "부장르" }, { kind: "tagsExisting", title: "태그·기존" }].map(sec => (sg[sec.kind] || []).length > 0 ? (
+                              <View key={sec.kind} style={{ marginBottom: 8 }}>
+                                <Text style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>{sec.title}</Text>
+                                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 5 }}>
+                                  {sg[sec.kind].map((it, i) => { const label = (sec.kind === "tagsExisting") ? it.tag : it.name; const on = it.checked; return (
+                                    <TouchableOpacity key={label + i} onPress={() => toggleBatchItem(wi, sec.kind, i)} style={{ paddingHorizontal: 9, paddingVertical: 5, borderRadius: 14, backgroundColor: on ? (isDark ? "#3730a3" : "#eef2ff") : C.bg, borderWidth: 1, borderColor: on ? (isDark ? "#6366f1" : "#c7d2fe") : C.line }}>
+                                      <Text style={{ color: on ? (isDark ? "#c7d2fe" : "#4338ca") : C.sub, fontSize: 12, fontWeight: on ? "700" : "500" }}>{on ? "✓ " : ""}{label}{sec.kind === "tagsExisting" && aiTagSuggestIntensity ? ` ·${it.intensity}` : ""}</Text>
+                                    </TouchableOpacity>); })}
+                                </View>
+                              </View>
+                            ) : null)}
+                            {sg.tagsNew.length > 0 ? (
+                              <View>
+                                <Text style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>태그·신규 (속성 추천만 · 배지 탭 적용)</Text>
+                                {sg.tagsNew.map((it, i) => { const on = it.checked; const applied = it.sent != null; const sm = ({ positive: { t: "긍정", c: isDark ? "#4ade80" : "#16a34a" }, negative: { t: "부정", c: isDark ? "#f87171" : "#dc2626" }, neutral: { t: "중립", c: C.sub } })[applied ? it.sent : it.sentSuggest] || { t: "중립", c: C.sub }; return (
+                                  <View key={it.tag + i} style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                                    <TouchableOpacity onPress={() => toggleBatchItem(wi, "tagsNew", i)} style={{ flex: 1, paddingHorizontal: 9, paddingVertical: 5, borderRadius: 8, backgroundColor: on ? (isDark ? "#3730a3" : "#eef2ff") : C.bg, borderWidth: 1, borderColor: on ? (isDark ? "#6366f1" : "#c7d2fe") : C.line }}>
+                                      <Text style={{ color: on ? (isDark ? "#c7d2fe" : "#4338ca") : C.sub, fontSize: 12, fontWeight: on ? "700" : "500" }}>{on ? "✓ " : ""}{it.tag}{it.similarTo ? ` ↔ 비슷:${it.similarTo}` : ""}</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity onPress={() => cycleBatchSentiment(wi, i)} style={{ paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: sm.c, backgroundColor: applied ? sm.c : "transparent" }}>
+                                      <Text style={{ color: applied ? "#fff" : sm.c, fontSize: 10.5, fontWeight: "700" }}>{applied ? `${sm.t}✓` : `추천 ${sm.t}`}</Text>
+                                    </TouchableOpacity>
+                                  </View>); })}
+                              </View>
+                            ) : null}
+                          </View>
+                        ) : null}
+                      </View>
+                    );
+                  }) : null}
+                  {hasResults && !batchBusy ? (
+                    <TouchableOpacity onPress={applyBatchTagSuggestions} style={{ backgroundColor: C.primary, borderRadius: 12, paddingVertical: 13, alignItems: "center", marginTop: 6, marginBottom: 30 }}>
+                      <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>선택 전체 적용</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </ScrollView>
+              );
+            })()}
           </View>
         </View>
       </Modal>
