@@ -2,9 +2,20 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.33 (AI UX — '텍스트 추출' 용어 + 무료 한도 사용량 카운터)        ║
+ * ║  버전: 7.28.34 (보충·예정탭 AI 태그 추천 추가)                              ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 63,730줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 63,750줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🤖 v7.28.34 보충·예정탭 AI 태그 추천 (2026-06-21)                            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 기존 신규·편집에만 있던 AI 태그 추천을 예정 등록·보충탭에도 추가.            ║
+ * ║ [보충] editItem을 공유하므로 "edit" 타깃 버튼만 추가(로직 변경 없음).        ║
+ * ║ [예정] 별도 "planned" 타깃 신설 — openAiTagModal·readTagDraft·              ║
+ * ║   applyAiTagSuggestions 분기. 예정 폼은 농도(tag_data) 미수집이라 장르·태그  ║
+ * ║   만 반영(setPlannedMajorGenre/SubGenre/Tags).                              ║
+ * ║ 진입점 4곳: 신규·예정·보충·편집 모두 "🤖 AI 태그 추천".                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -39591,7 +39602,8 @@ function AppContent() {
 
   // 🆕 v7.28.14: AI 태그 추천 — 모달 열기 (target: "new" 등록폼 | "edit" 편집모달)
   function openAiTagModal(target) {
-    setAiTagTarget(target === "edit" ? "edit" : "new");
+    // 🆕 v7.28.34: 보충탭은 editItem 공유라 "edit"로 동작. 예정 등록은 별도 "planned" 타깃.
+    setAiTagTarget(["edit", "planned"].includes(target) ? target : "new");
     setAiTagSuggest(null);
     setAiTagModalOpen(true);
   }
@@ -39600,6 +39612,10 @@ function AppContent() {
     if (target === "edit") {
       const ei = editItem || {};
       return { title: (ei.title || "").trim(), author: (ei.author || "").trim(), note: ei.note || "", major: parseGenreArray(ei.major_genre), sub: parseGenreArray(ei.sub_genre), tagsStr: ei.tags || "", tagData: safeParseJSON(ei.tag_data, []) || [] };
+    }
+    if (target === "planned") {
+      // 🆕 v7.28.34: 예정 등록 폼 — tag_data(농도)는 예정에선 미수집이라 [] (저장 시 빈값)
+      return { title: (plannedTitle || "").trim(), author: (plannedAuthor || "").trim(), note: plannedNote || "", major: Array.isArray(plannedMajorGenre) ? plannedMajorGenre : [], sub: Array.isArray(plannedSubGenre) ? plannedSubGenre : [], tagsStr: plannedTags || "", tagData: [] };
     }
     return { title: (title || "").trim(), author: (author || "").trim(), note: note || "", major: Array.isArray(newMajorGenre) ? newMajorGenre : [], sub: Array.isArray(newSubGenre) ? newSubGenre : [], tagsStr: tags || "", tagData: Array.isArray(newTagData) ? newTagData : [] };
   }
@@ -39979,6 +39995,9 @@ function AppContent() {
     }
     if (target === "edit") {
       updateEditItem(prev => prev ? { ...prev, tags: tagsStr2, major_genre: JSON.stringify(major2), sub_genre: JSON.stringify(sub2), tag_data: JSON.stringify(tagData2) } : prev);
+    } else if (target === "planned") {
+      // 🆕 v7.28.34: 예정 등록 — 장르·태그만 반영(농도 tag_data는 예정 폼에서 미수집)
+      setPlannedMajorGenre(major2); setPlannedSubGenre(sub2); setPlannedTags(tagsStr2);
     } else {
       setNewMajorGenre(major2); setNewSubGenre(sub2); setNewTagData(tagData2); setTags(tagsStr2);
     }
@@ -50595,7 +50614,11 @@ async function importJSON() {
                   theme={C}
                 />
               </View>
-              
+              {/* 🆕 v7.28.34: AI 태그 추천 (예정 등록) */}
+              <TouchableOpacity onPress={() => openAiTagModal("planned")} style={{ alignSelf: "flex-start", marginTop: 8, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 9, backgroundColor: isDark ? "#312e81" : "#eef2ff", borderWidth: 1, borderColor: isDark ? "#4f46e5" : "#c7d2fe" }}>
+                <Text style={{ color: isDark ? "#c7d2fe" : "#4338ca", fontWeight: "700", fontSize: 13 }}>🤖 AI 태그 추천</Text>
+              </TouchableOpacity>
+
               <Label style={{ marginTop: 10 }}>우선순위</Label>
               <View style={{ flexDirection: "row", gap: 8 }}>
                 {[1, 2, 3, 4, 5].map((p) => (
@@ -53324,6 +53347,10 @@ async function importJSON() {
                       theme={C}
                     />
                   </View>
+                  {/* 🆕 v7.28.34: AI 태그 추천 (보충 — editItem 공유라 edit 타깃) */}
+                  <TouchableOpacity onPress={() => openAiTagModal("edit")} style={{ alignSelf: "flex-start", marginTop: 8, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 9, backgroundColor: isDark ? "#312e81" : "#eef2ff", borderWidth: 1, borderColor: isDark ? "#4f46e5" : "#c7d2fe" }}>
+                    <Text style={{ color: isDark ? "#c7d2fe" : "#4338ca", fontWeight: "700", fontSize: 13 }}>🤖 AI 태그 추천</Text>
+                  </TouchableOpacity>
 
                   {/* 🔧 v3.5.6: 작품 링크 */}
                   <View style={supplementCurrentNovel.issues.includes("link") ? { 
