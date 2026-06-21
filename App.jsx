@@ -2,9 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.29 (스크래퍼 — 라이브 검증·카카오/리디 정밀화·제목 검색)        ║
+ * ║  버전: 7.28.30 (스크래퍼 — 장르 매핑: 플랫폼 장르→앱 어휘 후보)             ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 63,540줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 63,600줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔎 v7.28.30 스크래퍼 — 장르 매핑 (2026-06-21)                                ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 스크래퍼가 가져온 플랫폼 장르가 지금까지 확인 모달에 안 뜨고 버려지던 것을    ║
+ * ║ 앱 어휘로 매핑해 후보로 제시(빈칸이면 기본 체크).                             ║
+ * ║ [매핑] mapScrapedGenres: 공백·대소문자 무시로 MAJOR_GENRES/SUB_GENRES와 대조  ║
+ * ║   → 매칭 시 앱 정식 표기로 치환("퓨전 판타지"→"퓨전판타지"), 대분류 우선.      ║
+ * ║   미매칭은 대개 대분류 성격이라 원문 유지(사용자가 취사). 실측: 카카오 "무협",║
+ * ║   리디 "퓨전 판타지" 정상 매핑.                                              ║
+ * ║ [모달] buildScrapeItems에 대장르·부장르 항목 추가 — 현재값과 합쳐(중복 제거)  ║
+ * ║   value는 적용할 최종 배열. 새로 추가될 게 없으면 항목 숨김.                  ║
+ * ║ [배선] 4화면 ctx(getCurrent/apply)에 major_genre/sub_genre — 신규·예정은      ║
+ * ║   배열 state, 편집·보충은 JSON 문자열(DB 컬럼) 변환. 보충 fields에도 추가.    ║
+ * ║ [검증] docs/scraper-test.mjs 41→48건 통과(매핑·모달 항목). docs §4 갱신.      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -13756,6 +13772,27 @@ function parseRidiSearch(html) {
 
 // 정규화 메타 + 현재값 → 확인 모달용 항목 [{ key, label, value(적용값), display, current, checked }].
 // 동일하면 제외, 기본 체크는 "현재 비어있는 칸"만(=빈 칸 채우기 안전 기본). 장르 매핑은 후속.
+// 🔎 v7.28.30: 플랫폼 장르 문자열 → 앱 어휘(MAJOR_GENRES/SUB_GENRES)로 매핑.
+//   공백·대소문자 무시 매칭("퓨전 판타지"→"퓨전판타지"), 매칭 시 앱 정식 표기로 치환, 대분류 우선.
+//   못 찾으면 플랫폼 장르는 대개 대분류 성격이라 major 후보로 원문 유지(사용자가 확인 모달에서 취사).
+//   vocab은 테스트 주입용 인자(기본: 전역 등록 어휘). 별칭(로판 등)까지 필요하면 normalizeTag 도입 여지.
+function mapScrapedGenres(rawGenres, majorVocab = (typeof MAJOR_GENRES !== "undefined" ? MAJOR_GENRES : []), subVocab = (typeof SUB_GENRES !== "undefined" ? SUB_GENRES : [])) {
+  const norm = (s) => String(s == null ? "" : s).replace(/\s+/g, "").toLowerCase();
+  const findIn = (vocab, g) => (Array.isArray(vocab) ? vocab.find(v => norm(v) === norm(g)) : null) || null;
+  const major = [], sub = [];
+  const pushUniq = (arr, v) => { if (v && !arr.some(x => norm(x) === norm(v))) arr.push(v); };
+  for (const raw of (Array.isArray(rawGenres) ? rawGenres : [])) {
+    const g = String(raw == null ? "" : raw).trim();
+    if (!g) continue;
+    const mj = findIn(majorVocab, g);
+    if (mj) { pushUniq(major, mj); continue; }
+    const sb = findIn(subVocab, g);
+    if (sb) { pushUniq(sub, sb); continue; }
+    pushUniq(major, g); // 미매칭 → 대분류 후보(원문 유지)
+  }
+  return { major, sub };
+}
+
 function buildScrapeItems(meta, current = {}) {
   if (!meta) return [];
   const items = [];
@@ -13774,6 +13811,18 @@ function buildScrapeItems(meta, current = {}) {
     meta.totalEpisodes != null ? `${meta.totalEpisodes}화` : "",
     current.total_episodes ? `${current.total_episodes}화` : "");
   push("work_status", "연재 상태", meta.workStatus, wsDisp(meta.workStatus), wsDisp(current.work_status));
+  // 🔎 v7.28.30: 장르 — 앱 어휘로 매핑 후 현재값과 합쳐(중복 제거) 후보 제시. value는 적용할 최종 배열.
+  const gnorm = (s) => String(s == null ? "" : s).replace(/\s+/g, "").toLowerCase();
+  const mergeGen = (cur, add) => { const out = [...cur]; for (const v of add) if (!out.some(x => gnorm(x) === gnorm(v))) out.push(v); return out; };
+  const sameSet = (a, b) => a.length === b.length && a.every(x => b.some(y => gnorm(x) === gnorm(y)));
+  const gmap = mapScrapedGenres(meta.genres);
+  for (const [key, label, add] of [["major_genre", "대장르", gmap.major], ["sub_genre", "부장르", gmap.sub]]) {
+    if (!add.length) continue;
+    const cur = parseGenreArray(current[key]);
+    const merged = mergeGen(cur, add);
+    if (sameSet(merged, cur)) continue; // 새로 추가될 게 없으면 표시 안 함
+    items.push({ key, label, value: merged, display: add.join(", "), current: cur.join(", "), checked: cur.length === 0 });
+  }
   if (meta.coverUrl) items.push({ key: "cover", label: "표지", value: meta.coverUrl, display: "가져오기", current: current.cover ? "있음" : "없음", checked: !current.cover });
   return items;
 }
@@ -39682,9 +39731,11 @@ function AppContent() {
 
   // 🔗 v7.28.29: 4화면 스크래퍼 컨텍스트({getCurrent, apply, fields?, label}) — 링크 불러오기·제목검색 공용.
   //   getCurrent/apply는 현재 렌더의 state·setter를 클로저로 잡음(빌더는 매 렌더 호출). 중복 정의 방지.
+  // 장르 적용값(배열) → 편집/보충 DB 컬럼용 JSON 문자열(빈 배열은 ""). 신규/예정은 배열 state 그대로.
+  const genJson = (arr) => (Array.isArray(arr) && arr.length ? JSON.stringify(arr) : "");
   const scrapeCtxNew = () => ({
     label: "신규 등록",
-    getCurrent: () => ({ title, author, note, total_episodes: totalEpisodes, work_status: newWorkStatus, cover: newCoverImage }),
+    getCurrent: () => ({ title, author, note, total_episodes: totalEpisodes, work_status: newWorkStatus, cover: newCoverImage, major_genre: newMajorGenre, sub_genre: newSubGenre }),
     apply: (f) => {
       if (f.title != null) setTitle(f.title);
       if (f.author != null) setAuthor(f.author);
@@ -39692,11 +39743,13 @@ function AppContent() {
       if (f.total_episodes != null) setTotalEpisodes(String(f.total_episodes));
       if (f.work_status != null) setNewWorkStatus(f.work_status);
       if (f.cover != null) setNewCoverImage(f.cover);
+      if (f.major_genre != null) setNewMajorGenre(f.major_genre);
+      if (f.sub_genre != null) setNewSubGenre(f.sub_genre);
     },
   });
   const scrapeCtxPlanned = () => ({
     label: "예정 등록",
-    getCurrent: () => ({ title: plannedTitle, author: plannedAuthor, note: plannedNote, total_episodes: plannedTotalEpisodes, work_status: plannedWorkStatus, cover: plannedCoverImage }),
+    getCurrent: () => ({ title: plannedTitle, author: plannedAuthor, note: plannedNote, total_episodes: plannedTotalEpisodes, work_status: plannedWorkStatus, cover: plannedCoverImage, major_genre: plannedMajorGenre, sub_genre: plannedSubGenre }),
     apply: (f) => {
       if (f.title != null) setPlannedTitle(f.title);
       if (f.author != null) setPlannedAuthor(f.author);
@@ -39704,12 +39757,14 @@ function AppContent() {
       if (f.total_episodes != null) setPlannedTotalEpisodes(String(f.total_episodes));
       if (f.work_status != null) setPlannedWorkStatus(f.work_status);
       if (f.cover != null) setPlannedCoverImage(f.cover);
+      if (f.major_genre != null) setPlannedMajorGenre(f.major_genre);
+      if (f.sub_genre != null) setPlannedSubGenre(f.sub_genre);
     },
   });
   const scrapeCtxSupplement = () => ({
     label: "보충",
-    fields: ["author", "note", "total_episodes", "work_status", "cover"],
-    getCurrent: () => ({ author: editItem?.author, note: editItem?.note, total_episodes: editItem?.total_episodes, work_status: editItem?.work_status, cover: editItem?.cover_image }),
+    fields: ["author", "note", "total_episodes", "work_status", "cover", "major_genre", "sub_genre"],
+    getCurrent: () => ({ author: editItem?.author, note: editItem?.note, total_episodes: editItem?.total_episodes, work_status: editItem?.work_status, cover: editItem?.cover_image, major_genre: editItem?.major_genre, sub_genre: editItem?.sub_genre }),
     apply: (f) => updateEditItem(prev => prev ? {
       ...prev,
       ...(f.author != null ? { author: f.author } : {}),
@@ -39717,11 +39772,13 @@ function AppContent() {
       ...(f.total_episodes != null ? { total_episodes: Number(f.total_episodes) || 0 } : {}),
       ...(f.work_status != null ? { work_status: f.work_status } : {}),
       ...(f.cover != null ? { cover_image: f.cover } : {}),
+      ...(f.major_genre != null ? { major_genre: genJson(f.major_genre) } : {}),
+      ...(f.sub_genre != null ? { sub_genre: genJson(f.sub_genre) } : {}),
     } : prev),
   });
   const scrapeCtxEdit = () => ({
     label: "편집",
-    getCurrent: () => ({ title: editItem?.title, author: editItem?.author, note: editItem?.note, total_episodes: editItem?.total_episodes, work_status: editWorkStatus, cover: editCoverImage }),
+    getCurrent: () => ({ title: editItem?.title, author: editItem?.author, note: editItem?.note, total_episodes: editItem?.total_episodes, work_status: editWorkStatus, cover: editCoverImage, major_genre: editItem?.major_genre, sub_genre: editItem?.sub_genre }),
     apply: (f) => {
       updateEditItem(prev => prev ? {
         ...prev,
@@ -39729,6 +39786,8 @@ function AppContent() {
         ...(f.author != null ? { author: f.author } : {}),
         ...(f.note != null ? { note: f.note } : {}),
         ...(f.total_episodes != null ? { total_episodes: Number(f.total_episodes) || 0 } : {}),
+        ...(f.major_genre != null ? { major_genre: genJson(f.major_genre) } : {}),
+        ...(f.sub_genre != null ? { sub_genre: genJson(f.sub_genre) } : {}),
       } : prev);
       if (f.work_status != null) setEditWorkStatus(f.work_status);
       if (f.cover != null) setEditCoverImageSync(f.cover);

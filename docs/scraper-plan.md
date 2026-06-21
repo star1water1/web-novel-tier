@@ -76,7 +76,7 @@ fetchNovelMeta(url)        // 디스패처
 | 표지 이미지 | `cover_image` | **긁은 URL → `saveCoverToLibrary(url)` → 로컬 저장** (downloadAsync 이미 지원) |
 | 총 회차 | `total_episodes` | 숫자 파싱 |
 | 완결/연재 | `work_status` | `completed`/`ongoing` 매핑 |
-| 장르 | `major_genre`/`sub_genre` | 앱 어휘로 매핑(후보 제시) |
+| 장르 | `major_genre`/`sub_genre` | **✅ 구현(v7.28.30)** `mapScrapedGenres`: 공백·대소문자 무시로 `MAJOR_GENRES`/`SUB_GENRES`와 대조 → 매칭 시 앱 정식 표기로 치환(예: "퓨전 판타지"→"퓨전판타지"), 대분류 우선. 미매칭은 대분류 후보로 원문 유지. 확인 모달에 대장르/부장르 항목으로 후보 제시(현재값과 합쳐 중복 제거). ※ 별칭(로판 등)까지 필요하면 `normalizeTag` 도입 여지 |
 | 줄거리 | `note` | 그대로(선택) |
 | 플랫폼 태그 | `tags` | **후보로만** 제시(플랫폼마다 체계 달라 1:1 아님 → 사용자 정리 또는 후속 AI 정규화) |
 | 플랫폼 | `platforms` | URL 도메인으로 자동판별 |
@@ -243,6 +243,7 @@ function normalizeFromHtml(html, url) {
 - [x] **3.5 네트워크 강화 + 차단 판별 + 검증 하네스** (v7.28.28): `SCRAPER_HEADERS`(Accept/sec-ch-ua/Sec-Fetch-* 등 브라우저급 헤더로 교체) + `scraperDetectBlock(status,html)`(Cloudflare 챌린지/403/429/503/캡차 식별 → "정보 없음"과 구분해 안내). `fetchNovelMeta`가 본문을 항상 읽고 차단을 우선 판정. 실측 차단 응답을 `docs/scraper-fixtures/`에 보존, `docs/scraper-test.mjs`가 App.jsx 실제 함수를 추출해 회귀(파싱 §5 + 차단판별 + 플랫폼판별, **27/27 통과**). ※ 개발환경 egress 실측 결과는 §10.
 - [x] **3.6 라이브 검증 + 카카오/리디 정밀화** (v7.28.29): 이 세션 egress가 리디·카카오에 도달 → 실제 페이지로 엔진 검증. **OG/JSON-LD 폴백 버그 수정**(§5.1) + **`scraperRefineKakao`**(`__NEXT_DATA__` 장르·완결·작가, seriesId로 웹소설/웹툰화 분리). 리디는 공통 엔진만으로 정확(보정 불필요, 실측). 실측 축약 픽스처 3종 + 회귀 41/41.
 - [x] **4. 제목 검색(메인) — 리디** (v7.28.29): `searchNovels(query)`→`searchRidi`(서버렌더 검색 페이지 `__NEXT_DATA__`의 `books[].book` 파싱)→후보 picker 모달→선택 시 `runScrapeFromUrl(url, ctx)`로 기존 확인 모달 합류. **4화면 모두 "🔎 제목 검색" 버튼**(ctx 빌더 공용: `scrapeCtxNew/Planned/Supplement/Edit`). ⚠️ **리디만 구현** — 카카오 검색=GraphQL/SSR결과 없음(보류), 노벨피아·문피아·시리즈=개발IP 차단으로 엔드포인트 미실측(폰/주거망에서 추가).
+- [x] **4.5 장르 매핑** (v7.28.30): `mapScrapedGenres`로 플랫폼 장르를 앱 어휘(`MAJOR_GENRES`/`SUB_GENRES`)에 공백·대소문자 무시 매칭 → 확인 모달에 대장르/부장르 후보 항목 추가(이전엔 가져와도 버려졌음). 4화면 ctx 배선(신규·예정=배열 state, 편집·보충=JSON 문자열). 실측 매핑(카카오 "무협", 리디 "퓨전 판타지"→"퓨전판타지") + 회귀 48/48.
 - [ ] **4b. 제목 검색 — 나머지 플랫폼**: 노벨피아/문피아/시리즈 검색 엔드포인트 폰 실측 후 `searchNovels`에 추가. 카카오는 GraphQL 토큰/persisted query 필요.
 - [ ] **5. 클립보드 감지** (expo-clipboard, 리빌드)
 - [ ] **6. 공유 시트** (Android intent filter / config plugin, 리빌드)
@@ -312,5 +313,7 @@ function normalizeFromHtml(html, url) {
 ### 11.2 다음 우선순위(권장 순서)
 
 1. **제목검색 타 플랫폼**(Stage 4b): 폰에서 노벨피아/문피아/시리즈 검색 URL·응답 실측 → `searchNovels`에 분기 추가(`searchRidi` 패턴 그대로). 카카오는 GraphQL 토큰 확보가 선결.
-2. **장르 매핑**: 가져온 플랫폼 장르(예: 카카오 "무협", 리디 "퓨전 판타지")를 앱 어휘(`MAJOR_GENRES`/`SUB_GENRES`)로 정규화(후보 제시). 현재는 원문 그대로 `genres`에 담김.
-3. **클립보드/공유 시트**(Stage 5·6, 리빌드 필요).
+2. **클립보드/공유 시트**(Stage 5·6, 리빌드 필요).
+3. (선택) **장르 별칭 매핑 강화**: 현재 `mapScrapedGenres`는 공백·대소문자만 무시. "로판"→"로맨스판타지" 같은 별칭까지 잡으려면 `normalizeTag`(TAG_ALIASES) 경유로 교체(슬라이스 밖 의존 → 테스트 하네스도 조정 필요).
+
+> ✅ **완료**: 장르 매핑(v7.28.30) — 플랫폼 장르→앱 어휘 후보 제시.

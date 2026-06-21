@@ -16,10 +16,14 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, scraperExtractNextData, SCRAPER_HEADERS, SCRAPER_UA };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, SCRAPER_HEADERS, SCRAPER_UA };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
+// buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
 const sandbox = { console, fetch() { throw new Error("no net"); }, resolveAbortSignal: () => ({ signal: undefined, cleanup() {} }) };
+sandbox.parseGenreArray = (value) => { if (!value) return []; if (Array.isArray(value)) return value; try { const p = JSON.parse(value); return Array.isArray(p) ? p : [p]; } catch { return value ? [value] : []; } };
+sandbox.MAJOR_GENRES = ["판타지", "무협", "퓨전판타지", "로맨스판타지", "현대판타지", "로맨스", "BL"];
+sandbox.SUB_GENRES = ["회귀", "환생", "헌터", "빙의"];
 sandbox.globalThis = sandbox;
 vm.createContext(sandbox);
 vm.runInContext(slice, sandbox, { filename: "App.jsx#scraper" });
@@ -110,6 +114,18 @@ truthy("리디 검색 후보 ≥1개", sr.length >= 1);
 truthy("리디 후보 url=/books/{id}", /ridibooks\.com\/books\/\d+/.test(sr[0] && sr[0].url));
 truthy("리디 후보 제목 존재", sr[0] && sr[0].title);
 eq("리디 후보 플랫폼 라벨", sr[0] && sr[0].platform, "리디");
+
+// ── ⑤ 장르 매핑(v7.28.30) — 플랫폼 장르 → 앱 어휘 + 확인 모달 항목 ──────────────
+eq("장르 매핑: 공백 정규화(퓨전 판타지→퓨전판타지)", S.mapScrapedGenres(["퓨전 판타지"], ["퓨전판타지", "무협"], ["회귀"]).major, ["퓨전판타지"]);
+eq("장르 매핑: 대분류 정확", S.mapScrapedGenres(["무협"], ["무협", "판타지"], ["회귀"]), { major: ["무협"], sub: [] });
+eq("장르 매핑: 부장르 분류", S.mapScrapedGenres(["회귀"], ["무협"], ["회귀", "환생"]), { major: [], sub: ["회귀"] });
+eq("장르 매핑: 미매칭→대분류 후보(원문)", S.mapScrapedGenres(["듣보장르"], ["무협"], ["회귀"]).major, ["듣보장르"]);
+const giNew = S.buildScrapeItems({ title: "T", genres: ["무협", "회귀"] }, { major_genre: "[]", sub_genre: "[]" });
+const mjItem = giNew.find(it => it.key === "major_genre");
+const sbItem = giNew.find(it => it.key === "sub_genre");
+truthy("buildScrapeItems 대장르 항목(value=[무협], 빈칸→체크)", mjItem && JSON.stringify(mjItem.value) === JSON.stringify(["무협"]) && mjItem.checked === true);
+truthy("buildScrapeItems 부장르 항목(value=[회귀])", sbItem && JSON.stringify(sbItem.value) === JSON.stringify(["회귀"]));
+truthy("buildScrapeItems 이미 있는 장르는 항목 제외", !S.buildScrapeItems({ title: "T", genres: ["무협"] }, { major_genre: '["무협"]' }).find(it => it.key === "major_genre"));
 
 console.log(`\n${fail === 0 ? "🎉 ALL PASS" : "⚠️  FAILED"}  pass=${pass} fail=${fail}`);
 process.exit(fail === 0 ? 0 : 1);
