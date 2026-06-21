@@ -2,9 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.32 (UX — 제목검색 위치·AI 제공자 전역 명확화·명언탭 단건 OCR)   ║
+ * ║  버전: 7.28.33 (AI UX — '텍스트 추출' 용어 + 무료 한도 사용량 카운터)        ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 63,690줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 63,730줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔢 v7.28.33 AI 용어 친화화 + 무료 한도 사용량 카운터 (2026-06-21)            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [용어] 사용자에게 보이던 'OCR'을 전부 '텍스트 추출'로 — 명언탭/편집 버튼      ║
+ * ║   ("🔤 텍스트 추출"·"전체 텍스트 추출"·"추출 중…") + 알림 제목("명대사       ║
+ * ║   텍스트 추출"). 함수명 등 내부 코드는 유지.                                  ║
+ * ║ [사용량 카운터] Gemini 무료는 분당 요청 수(RPM)에 가장 잘 걸림(특히 일괄).    ║
+ * ║   API가 잔량을 안 줘서 정확 표시는 불가 → 앱이 보낸 호출을 인메모리로 세어     ║
+ * ║   설정>태그 AI 섹션에 '최근 1분 N회 · 최근 1시간 N회'(추정) 표시 + 안내.      ║
+ * ║   recordAiCall()을 8개 호출 함수(Claude/Gemini × 유의어·배치·태그·추출)에     ║
+ * ║   삽입, aiUsageSummary()로 집계. 프로젝트 단위 한도라 실제와 다를 수 있음 명시.║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12941,8 +12954,26 @@ function buildSynonymPromptText(tags, context = {}) {
     "둘 다 확실한 것만 넣고, 애매하면 비워 두세요. 반드시 입력 목록에 있는 표기만 사용하세요. '같다'고 묶인 건 상반이 아니고, 상반은 유의어가 아닙니다. 아래에 사용자의 기존 묶음/상반/거절 예시가 있으면 그 취향과 결정을 존중하세요." + ctxText + "\n\n태그: " + tags.join(", ");
 }
 
+// 🔢 v7.28.33 AI 호출 사용량(로컬 추정) — 무료 한도 감 잡기용. 인메모리(이번 실행 기준).
+//   Gemini 무료는 '분당 요청 수(RPM)'에 가장 잘 걸려서, 분당/시간당 횟수를 보여 준다.
+//   ※ 한도는 프로젝트 단위라 실제와 다를 수 있고(다른 기기·앱 공유), 앱이 보낸 호출만 셈.
+const _aiCallLog = [];
+function recordAiCall() {
+  const now = Date.now();
+  _aiCallLog.push(now);
+  const cut = now - 3600000; // 1시간 초과분 정리(메모리 상한)
+  while (_aiCallLog.length && _aiCallLog[0] < cut) _aiCallLog.shift();
+}
+function aiUsageSummary() {
+  const now = Date.now();
+  let lastMin = 0;
+  for (let i = _aiCallLog.length - 1; i >= 0 && _aiCallLog[i] > now - 60000; i--) lastMin++;
+  return { lastMin, lastHour: _aiCallLog.length };
+}
+
 async function callClaudeForSynonyms(tags, apiKey, model = SYNONYM_AI_MODEL, context = {}) {
   if (!apiKey) throw new Error("API 키가 없습니다");
+  recordAiCall(); // 🔢 v7.28.33 사용량 집계(로컬 추정)
   if (!tags || tags.length === 0) return { groups: [], opposites: [] };
   const promptText = buildSynonymPromptText(tags, context);
   const tool = {
@@ -13017,6 +13048,7 @@ async function callClaudeForSynonyms(tags, apiKey, model = SYNONYM_AI_MODEL, con
 // responseSchema로 구조화 출력 강제(=Claude의 tool_use 대응). 키는 쿼리 파라미터로 전달.
 async function callGeminiForSynonyms(tags, apiKey, model = GEMINI_AI_MODEL, context = {}) {
   if (!apiKey) throw new Error("API 키가 없습니다");
+  recordAiCall(); // 🔢 v7.28.33 사용량 집계(로컬 추정)
   if (!tags || tags.length === 0) return { groups: [], opposites: [] };
   const promptText = buildSynonymPromptText(tags, context);
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
@@ -13111,6 +13143,7 @@ function buildPlacementPromptText(tags, context = {}) {
 
 async function callClaudeForPlacements(tags, apiKey, model = SYNONYM_AI_MODEL, context = {}) {
   if (!apiKey) throw new Error("API 키가 없습니다");
+  recordAiCall(); // 🔢 v7.28.33 사용량 집계(로컬 추정)
   if (!tags || tags.length === 0) return { placements: [] };
   const ax = context.axes || {};
   const promptText = buildPlacementPromptText(tags, context);
@@ -13172,6 +13205,7 @@ async function callClaudeForPlacements(tags, apiKey, model = SYNONYM_AI_MODEL, c
 
 async function callGeminiForPlacements(tags, apiKey, model = GEMINI_AI_MODEL, context = {}) {
   if (!apiKey) throw new Error("API 키가 없습니다");
+  recordAiCall(); // 🔢 v7.28.33 사용량 집계(로컬 추정)
   if (!tags || tags.length === 0) return { placements: [] };
   const promptText = buildPlacementPromptText(tags, context);
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
@@ -13277,6 +13311,7 @@ function resolveAbortSignal(opts) {
 
 async function callClaudeForTagging(context = {}, apiKey, model = SYNONYM_AI_MODEL, opts = {}) {
   if (!apiKey) throw new Error("API 키가 없습니다");
+  recordAiCall(); // 🔢 v7.28.33 사용량 집계(로컬 추정)
   const promptText = buildTaggingPrompt(context);
   const tool = {
     name: "report_tags",
@@ -13343,6 +13378,7 @@ async function callClaudeForTagging(context = {}, apiKey, model = SYNONYM_AI_MOD
 
 async function callGeminiForTagging(context = {}, apiKey, model = GEMINI_AI_MODEL, opts = {}) {
   if (!apiKey) throw new Error("API 키가 없습니다");
+  recordAiCall(); // 🔢 v7.28.33 사용량 집계(로컬 추정)
   const promptText = buildTaggingPrompt(context);
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
   const { signal, cleanup } = resolveAbortSignal(opts);
@@ -13447,6 +13483,7 @@ async function readImageForOcr(uri) {
 
 async function callClaudeForOCR(base64, mimeType, apiKey, model = SYNONYM_AI_MODEL, opts = {}) {
   if (!apiKey) throw new Error("API 키가 없습니다");
+  recordAiCall(); // 🔢 v7.28.33 사용량 집계(로컬 추정)
   const { signal, cleanup } = resolveAbortSignal(opts);
   let res;
   try {
@@ -13480,6 +13517,7 @@ async function callClaudeForOCR(base64, mimeType, apiKey, model = SYNONYM_AI_MOD
 
 async function callGeminiForOCR(base64, mimeType, apiKey, model = GEMINI_AI_MODEL, opts = {}) {
   if (!apiKey) throw new Error("API 키가 없습니다");
+  recordAiCall(); // 🔢 v7.28.33 사용량 집계(로컬 추정)
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
   const { signal, cleanup } = resolveAbortSignal(opts);
   let res;
@@ -39677,7 +39715,7 @@ function AppContent() {
     if (!isImageQuote(q) || !q.uri) return;
     const provider = aiProvider === "gemini" ? "gemini" : "claude";
     const key = ((provider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim();
-    if (!key) { Alert.alert("명대사 OCR", `먼저 설정 > 🏷️ 태그의 ‘AI 제공자·API 키’에서 ${provider === "gemini" ? "Gemini" : "Claude"} 키를 넣거나, 제공자를 바꿔 주세요.`); return; }
+    if (!key) { Alert.alert("명대사 텍스트 추출", `먼저 설정 > 🏷️ 태그의 ‘AI 제공자·API 키’에서 ${provider === "gemini" ? "Gemini" : "Claude"} 키를 넣거나, 제공자를 바꿔 주세요.`); return; }
     setOcrBusyIdx(qi);
     try {
       const { base64, mimeType } = await readImageForOcr(q.uri);
@@ -39686,10 +39724,10 @@ function AppContent() {
         ? await callGeminiForOCR(base64, mimeType, key, GEMINI_AI_MODEL, { timeoutMs: 40000 })
         : await callClaudeForOCR(base64, mimeType, key, SYNONYM_AI_MODEL, { timeoutMs: 40000 });
       const clean = (text || "").trim();
-      if (!clean) { Alert.alert("명대사 OCR", "이미지에서 텍스트를 찾지 못했어요."); return; }
+      if (!clean) { Alert.alert("명대사 텍스트 추출", "이미지에서 텍스트를 찾지 못했어요."); return; }
       setEditQuotes(prev => { const u = [...prev]; if (u[qi] && isImageQuote(u[qi]) && u[qi].uri === q.uri) u[qi] = { ...u[qi], ocrText: clean }; return u; });
     } catch (e) {
-      Alert.alert("명대사 OCR 실패", e?.message || String(e));
+      Alert.alert("명대사 텍스트 추출 실패", e?.message || String(e));
     } finally {
       setOcrBusyIdx(-1);
     }
@@ -39700,11 +39738,11 @@ function AppContent() {
     if (ocrBusyIdx !== -1) return;
     const provider = aiProvider === "gemini" ? "gemini" : "claude";
     const key = ((provider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim();
-    if (!key) { Alert.alert("명대사 OCR", `먼저 설정 > 🏷️ 태그의 ‘AI 제공자·API 키’에서 ${provider === "gemini" ? "Gemini" : "Claude"} 키를 넣거나, 제공자를 바꿔 주세요.`); return; }
+    if (!key) { Alert.alert("명대사 텍스트 추출", `먼저 설정 > 🏷️ 태그의 ‘AI 제공자·API 키’에서 ${provider === "gemini" ? "Gemini" : "Claude"} 키를 넣거나, 제공자를 바꿔 주세요.`); return; }
     const targets = editQuotes
       .map((q, i) => ({ uri: q && q.uri, i, has: !!(q && q.ocrText && String(q.ocrText).trim()), img: isImageQuote(q) }))
       .filter(t => t.img && t.uri && !t.has);
-    if (targets.length === 0) { Alert.alert("명대사 OCR", "추출할 이미지가 없어요. (이미 텍스트가 있거나 이미지 명대사가 없음)"); return; }
+    if (targets.length === 0) { Alert.alert("명대사 텍스트 추출", "추출할 이미지가 없어요. (이미 텍스트가 있거나 이미지 명대사가 없음)"); return; }
     setOcrBusyIdx(-2);
     let ok = 0, fail = 0;
     try {
@@ -39722,7 +39760,7 @@ function AppContent() {
           } else fail++;
         } catch { fail++; }
       }
-      Alert.alert("명대사 OCR", `완료: ${ok}개 추출${fail ? `, ${fail}개 실패/빈값` : ""}`);
+      Alert.alert("명대사 텍스트 추출", `완료: ${ok}개 추출${fail ? `, ${fail}개 실패/빈값` : ""}`);
     } finally {
       setOcrBusyIdx(-1);
     }
@@ -39735,7 +39773,7 @@ function AppContent() {
     if (quoteTabOcrId != null) return;
     const provider = aiProvider === "gemini" ? "gemini" : "claude";
     const key = ((provider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim();
-    if (!key) { Alert.alert("명대사 OCR", `먼저 설정 > 🏷️ 태그의 ‘AI 제공자·API 키’에서 ${provider === "gemini" ? "Gemini" : "Claude"} 키를 넣거나, 제공자를 바꿔 주세요.`); return; }
+    if (!key) { Alert.alert("명대사 텍스트 추출", `먼저 설정 > 🏷️ 태그의 ‘AI 제공자·API 키’에서 ${provider === "gemini" ? "Gemini" : "Claude"} 키를 넣거나, 제공자를 바꿔 주세요.`); return; }
     setQuoteTabOcrId(card.id);
     try {
       const { base64, mimeType } = await readImageForOcr(card.imageUri);
@@ -39744,20 +39782,20 @@ function AppContent() {
         ? await callGeminiForOCR(base64, mimeType, key, GEMINI_AI_MODEL, { timeoutMs: 40000 })
         : await callClaudeForOCR(base64, mimeType, key, SYNONYM_AI_MODEL, { timeoutMs: 40000 });
       const clean = (text || "").trim();
-      if (!clean) { Alert.alert("명대사 OCR", "이미지에서 텍스트를 찾지 못했어요."); return; }
+      if (!clean) { Alert.alert("명대사 텍스트 추출", "이미지에서 텍스트를 찾지 못했어요."); return; }
       const tbl = card.isPlanned ? "planned_novels" : "novels";
       const row = await first(`SELECT memorable_quote FROM ${tbl} WHERE id=?`, [card.novelId]);
       const quotes = parseQuotes(row?.memorable_quote || "");
       if (card.qIndex < 0 || card.qIndex >= quotes.length || !isImageQuote(quotes[card.qIndex])) {
-        Alert.alert("명대사 OCR", "문장을 찾을 수 없어요 (목록이 변경됐을 수 있어요)."); return;
+        Alert.alert("명대사 텍스트 추출", "문장을 찾을 수 없어요 (목록이 변경됐을 수 있어요)."); return;
       }
       const q = quotes[card.qIndex];
       quotes[card.qIndex] = (q && typeof q === "object") ? { ...q, ocrText: clean } : { type: "image", uri: card.imageUri, ocrText: clean };
       await exec(`UPDATE ${tbl} SET memorable_quote=? WHERE id=?`, [serializeQuotes(quotes), card.novelId]);
       if (card.isPlanned) await loadPlannedList(); else await loadList(undefined, undefined, "quoteOcr");
-      Alert.alert("명대사 OCR", "텍스트를 추출해 저장했어요. 이제 이 명대사도 검색돼요.");
+      Alert.alert("명대사 텍스트 추출", "텍스트를 추출해 저장했어요. 이제 이 명대사도 검색돼요.");
     } catch (e) {
-      Alert.alert("명대사 OCR 실패", e?.message || String(e));
+      Alert.alert("명대사 텍스트 추출 실패", e?.message || String(e));
     } finally {
       setQuoteTabOcrId(null);
     }
@@ -56584,7 +56622,7 @@ async function importJSON() {
                               style={{ backgroundColor: hasCustomBg ? (lightOnBg ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.12)") : C.chip, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, opacity: quoteTabOcrId != null ? 0.5 : 1 }}
                             >
                               <Text style={{ color: onBg || C.text, fontSize: 12, fontWeight: "700" }}>
-                                {quoteTabOcrId === card.id ? "OCR 중…" : (card.ocrText ? "🔤 다시 OCR" : "🔤 OCR")}
+                                {quoteTabOcrId === card.id ? "추출 중…" : (card.ocrText ? "🔤 다시 추출" : "🔤 텍스트 추출")}
                               </Text>
                             </TouchableOpacity>
                           )}
@@ -57823,6 +57861,18 @@ async function importJSON() {
                 <TouchableOpacity onPress={() => setApiKeyHelpModalOpen(true)} style={{ alignSelf: "flex-start", marginTop: 12 }}>
                   <Text style={{ color: C.primary, fontSize: 12.5, fontWeight: "800", textDecorationLine: "underline" }}>📖 API 키 발급 방법 자세히 보기</Text>
                 </TouchableOpacity>
+                {/* 🔢 v7.28.33: AI 사용량(로컬 추정) — 무료 한도 감 잡기용 */}
+                {(() => { const u = aiUsageSummary(); return (
+                  <View style={{ marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.line }}>
+                    <Text style={{ color: C.text, fontSize: 12.5, fontWeight: "800" }}>📊 이번 실행 중 보낸 AI 요청</Text>
+                    <Text style={{ color: u.lastMin >= 10 ? (isDark ? "#fbbf24" : "#d97706") : C.text, fontSize: 13, fontWeight: "700", marginTop: 5 }}>
+                      최근 1분 {u.lastMin}회 · 최근 1시간 {u.lastHour}회
+                    </Text>
+                    <Text style={{ color: C.sub, fontSize: 10.5, marginTop: 5, lineHeight: 15 }}>
+                      무료 한도는 ‘분당 요청 수’에 가장 잘 걸려요(특히 일괄 기능이 한 번에 여러 번 호출). 앱이 보낸 호출만 센 추정치예요 — 한도는 프로젝트 단위라 다른 기기·앱과 공유하면 실제와 다를 수 있어요. 막히면 1분쯤 뒤 다시 시도하거나, 위에서 Claude로 바꿔 보세요.
+                    </Text>
+                  </View>
+                ); })()}
               </View>
 
               {/* 🆕 v7.28.10: API 키 발급 안내 모달 (제공자별 단계·주의·바로가기) */}
@@ -61983,7 +62033,7 @@ async function importJSON() {
                             style={{ backgroundColor: isDark ? "#3b2f5f" : "#ede9fe", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, opacity: ocrBusyIdx !== -1 ? 0.5 : 1 }}
                           >
                             <Text style={{ color: isDark ? "#c4b5fd" : "#6d28d9", fontWeight: "700", fontSize: 12 }}>
-                              {ocrBusyIdx === -2 ? "OCR 중…" : "🔤 전체 OCR"}
+                              {ocrBusyIdx === -2 ? "추출 중…" : "🔤 전체 텍스트 추출"}
                             </Text>
                           </TouchableOpacity>
                         ) : null}
