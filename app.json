@@ -5,19 +5,28 @@
     "scheme": "noveltier",
     "orientation": "portrait",
     "platforms": ["android", "ios"],
+    "icon": "./icon.png",
     "splash": {
+      "image": "./splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0B0F1A"
+      "backgroundColor": "#060A16"
     },
     "assetBundlePatterns": ["**/*"],
     "newArchEnabled": false,
     "android": {
       "package": "com.star1water.noveltier",
-      "softwareKeyboardLayoutMode": "resize"
+      "softwareKeyboardLayoutMode": "resize",
+      "adaptiveIcon": {
+        "foregroundImage": "./adaptive-icon.png",
+        "backgroundColor": "#070F26"
+      }
     },
     "ios": {
       "bundleIdentifier": "com.star1water.noveltier",
       "supportsTablet": true
+    },
+    "web": {
+      "favicon": "./favicon.png"
     },
     "plugins": [
       [
