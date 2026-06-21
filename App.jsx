@@ -2,9 +2,24 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.27 (스크래퍼 — 4화면 전체 배선: 신규·예정·보충·편집)             ║
+ * ║  버전: 7.28.28 (스크래퍼 — 네트워크 강화·차단 판별·검증 하네스)             ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 63,280줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 63,315줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔗 v7.28.28 스크래퍼 — 네트워크 강화 + 차단 판별 + 검증 하네스 (2026-06-21)  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 라이브 fetch를 폰 실사용에 맞게 견고화하고, 차단을 사용자에게 구분해 안내.    ║
+ * ║ [헤더] SCRAPER_HEADERS — Accept/sec-ch-ua/Sec-Fetch-* 등 브라우저급 헤더로     ║
+ * ║   교체(기존 UA+Accept-Language만 → WAF 통과율↑). UA도 실제 Chrome 문자열.     ║
+ * ║ [차단판별] scraperDetectBlock(status,html): Cloudflare 챌린지·403·429·503·    ║
+ * ║   캡차를 식별해 "정보 없음"과 구분, 폰에서 직접 열라는 안내로 분기.            ║
+ * ║ [실측] 개발환경 egress 직접 확인 → 노벨피아=datacenter IP 차단(nginx403),     ║
+ * ║   문피아=Cloudflare 챌린지. 둘 다 폰(주거망)에선 정상 기대. 실측 차단응답을    ║
+ * ║   docs/scraper-fixtures/에 보존 + docs/scraper-test.mjs(엔진·차단판별 27/27). ║
+ * ║ * 라이브 HTML 검증은 폰에서 "🔗 불러오기"로(개발 IP는 차단). 다음: 결과 기반  ║
+ * ║   scraperRefineByPlatform 정밀화 + 제목검색 엔드포인트. docs/scraper-plan.md  ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -13447,7 +13462,23 @@ async function callGeminiForOCR(base64, mimeType, apiKey, model = GEMINI_AI_MODE
 //   CORS 없음 → 프록시 불필요. 파싱은 OpenGraph + JSON-LD(Book/CreativeWork) 우선.
 //   플랫폼별 정밀화(회차/완결 표기)·제목검색 엔드포인트는 실측 후 채움(현재 미배선).
 // ═══════════════════════════════════════════════════════════════════════════
-const SCRAPER_UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile Safari/537.36";
+const SCRAPER_UA = "Mozilla/5.0 (Linux; Android 14; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
+// 브라우저에 최대한 가까운 요청 헤더 — 비브라우저 요청을 거르는 WAF/안티봇 통과율↑ (§9 안티봇/UA).
+//   실제 앱은 폰(주거망 IP)이라 datacenter 차단이 없으니, 헤더만 사람 브라우저처럼 맞추면 충분.
+//   RN 네이티브 fetch는 브라우저와 달리 sec-ch-ua/Sec-Fetch-* 같은 제한 헤더도 보낼 수 있음.
+const SCRAPER_HEADERS = {
+  "User-Agent": SCRAPER_UA,
+  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+  "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
+  "Upgrade-Insecure-Requests": "1",
+  "sec-ch-ua": '"Chromium";v="120", "Not?A_Brand";v="24", "Google Chrome";v="120"',
+  "sec-ch-ua-mobile": "?1",
+  "sec-ch-ua-platform": '"Android"',
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "none",
+  "Sec-Fetch-User": "?1",
+};
 const SCRAPER_PLATFORMS = [
   { key: "노벨피아", host: "novelpia.com" },
   { key: "문피아", host: "munpia.com" },
@@ -13536,21 +13567,42 @@ function scraperRefineByPlatform(meta, html, platform) {
   return meta;
 }
 
+// 응답이 작품 정보가 아니라 차단/챌린지/로그인 벽인지 판별 → 사용자에게 명확한 안내.
+//   폰에서 직접 열면 풀리는 종류(보안확인/로그인)와 "정보 없음"을 구분. 실측: docs/scraper-fixtures.
+function scraperDetectBlock(status, html) {
+  const h = html || "";
+  // Cloudflare/Turnstile 등 JS 보안확인 — 요청 헤더로는 못 뚫음(브라우저/폰에서 직접 열어야)
+  if (/challenges\.cloudflare\.com|_cf_chl_opt|cf[-_]chl|cf-mitigated|Just a moment|Attention Required|로봇이 아닙니다|are you (a )?human|\/cdn-cgi\/challenge/i.test(h))
+    return { blocked: true, kind: "challenge", hint: "보안 확인(캡차) 페이지가 떴어요. 폰 브라우저에서 작품을 한 번 연 뒤 다시 시도해 주세요." };
+  if (status === 429)
+    return { blocked: true, kind: "ratelimit", hint: "요청이 많아 잠시 제한됐어요. 잠시 후 다시 시도해 주세요." };
+  if (status === 401 || status === 403)
+    return { blocked: true, kind: "forbidden", hint: "접근이 막혀 있어요(로그인 필요 또는 자동 접근 차단). 폰 브라우저에서 직접 열어 주세요." };
+  if (status === 503)
+    return { blocked: true, kind: "challenge", hint: "자동 접근 방지 페이지예요. 잠시 후 또는 폰 브라우저에서 직접 열어 주세요." };
+  return { blocked: false };
+}
+
 // URL → 정규화 메타 (라이브 fetch). RN 네이티브 fetch라 CORS 없음 → 프록시 불필요.
+//   차단/챌린지는 scraperDetectBlock로 구분해 안내(개발환경 datacenter IP는 막혀도 폰은 통과).
 async function fetchNovelMeta(url, opts = {}) {
   if (!url || !/^https?:\/\//i.test(String(url).trim())) throw new Error("올바른 링크가 아니에요 (http/https URL 필요)");
   url = String(url).trim();
   const platform = detectPlatformFromUrl(url);
   const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
-  let res;
+  let res, html = "";
   try {
-    res = await fetch(url, { headers: { "User-Agent": SCRAPER_UA, "Accept-Language": "ko,en;q=0.8" }, signal });
+    res = await fetch(url, { headers: SCRAPER_HEADERS, redirect: "follow", signal });
+    html = await res.text();
   } catch (e) {
     if (e?.name === "AbortError") throw new Error("응답이 없어 중단했어요 (시간 초과)");
     throw new Error("페이지를 불러오지 못했어요: " + (e?.message || e));
   } finally { cleanup(); }
-  if (!res.ok) throw new Error(`페이지 오류 ${res.status}${res.status === 403 ? " (접근 차단/로그인 필요일 수 있어요)" : ""}`);
-  const html = await res.text();
+
+  const block = scraperDetectBlock(res.status, html);
+  if (block.blocked) throw new Error(`${platform ? platform + " " : ""}정보를 바로 못 가져왔어요. ${block.hint}`);
+  if (!res.ok) throw new Error(`페이지 오류 ${res.status}`);
+
   let meta = scraperNormalizeFromHtml(html, url);
   meta = scraperRefineByPlatform(meta, html, platform);
   if (!meta || !meta.ok || !meta.title) throw new Error("이 페이지에서 작품 정보를 찾지 못했어요. (지원 안 되는 페이지이거나 구조가 바뀌었을 수 있어요)");

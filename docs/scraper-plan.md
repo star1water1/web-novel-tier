@@ -3,7 +3,7 @@
 > **이 문서의 목적**: 세션 간 연속성을 위한 기록. 스크래퍼 기능에 대해 합의한 설계·결정·검증 결과·빌드 순서·남은 과제·코드 앵커를 담는다.
 > **새 세션은 이 문서를 읽고 그대로 이어서 진행하면 된다.** (대화 맥락은 세션마다 초기화되지만 git에 커밋된 이 문서는 따라온다.)
 >
-> 작업 브랜치: `claude/festive-einstein-fub63d`
+> 작업 브랜치: `claude/magical-mayer-ob48ts` (직전 `claude/festive-einstein-fub63d`와 동일 계보를 이어받음 — 새 작업은 이 브랜치에)
 > 관련 기 적용분: 명대사 이미지 OCR(v7.28.24), 보충탭 무작위 정렬(v7.28.23)
 
 ---
@@ -227,7 +227,8 @@ function normalizeFromHtml(html, url) {
 - [x] **1. 엔진 이식** (v7.28.25): `SCRAPER_PLATFORMS`/`detectPlatformFromUrl`/`scraperExtractMetaTags`/`scraperExtractJsonLd`/`scraperNormalizeFromHtml`/`scraperRefineByPlatform`/`fetchNovelMeta`/`searchNovels`(stub) 를 App.jsx에 이식. callGeminiForOCR 직후 모듈 블록. **미배선**(UI 호출 없음). 라이브 정확도는 실측 전까지 미확정.
 - [x] **2. 확인 모달** (v7.28.26): `scrapeModal` state + `buildScrapeItems`(현재값↔가져온값 diff, 빈 칸만 기본 체크) + 모달 JSX(체크 적용). `aiTagModal` 오버레이 패턴 미러. **4화면 공용**(`ctx.apply` 분기) — 표지는 원격 URL→`saveCoverToLibrary`(downloadAsync)→경로.
 - [x] **3. 4화면 배선** (v7.28.27): 신규·예정·보충·편집 모두 "🔗 링크에서 정보 불러오기" 진입점. 신규/예정=자체 setter(예정은 링크칸 신설), 편집=updateEditItem+setEditWorkStatus+setEditCoverImageSync, 보충=updateEditItem(title은 보충 저장 미포함이라 `ctx.fields`로 제외). 모달은 `ctx.apply` 분기로 4화면 공용.
-- [ ] **4. 제목 검색(메인)**: `searchNovels(query)` → 후보 picker → 선택 → 엔진. ★**플랫폼 검색 엔드포인트 실측 필요**
+- [x] **3.5 네트워크 강화 + 차단 판별 + 검증 하네스** (v7.28.28): `SCRAPER_HEADERS`(Accept/sec-ch-ua/Sec-Fetch-* 등 브라우저급 헤더로 교체) + `scraperDetectBlock(status,html)`(Cloudflare 챌린지/403/429/503/캡차 식별 → "정보 없음"과 구분해 안내). `fetchNovelMeta`가 본문을 항상 읽고 차단을 우선 판정. 실측 차단 응답을 `docs/scraper-fixtures/`에 보존, `docs/scraper-test.mjs`가 App.jsx 실제 함수를 추출해 회귀(파싱 §5 + 차단판별 + 플랫폼판별, **27/27 통과**). ※ 개발환경 egress 실측 결과는 §10.
+- [ ] **4. 제목 검색(메인)**: `searchNovels(query)` → 후보 picker → 선택 → 엔진. ★**플랫폼 검색 엔드포인트 실측 필요** (개발 IP 차단으로 라이브 실측은 폰/주거망에서 — §9·§10·§11)
 - [ ] **5. 클립보드 감지** (expo-clipboard, 리빌드)
 - [ ] **6. 공유 시트** (Android intent filter / config plugin, 리빌드)
 
@@ -235,9 +236,9 @@ function normalizeFromHtml(html, url) {
 
 ## 9. 남은 과제 / 막힌 것
 
-- **노벨피아 실제 HTML 구조 확인** — 상세페이지가 OG/JSON-LD에 어떤 필드를 싣는지, 회차/완결 표기. (egress 켜진 새 세션에서 직접 fetch, 또는 사용자 기기 응답으로 확인)
-- **제목 검색 엔드포인트 디스커버리** — 메인 입력인데 추측 불가. 플랫폼 검색/자동완성 JSON 엔드포인트를 실측해야 함.
-- **안티봇/UA** — 데이터센터 IP·비브라우저 차단 가능. 브라우저 UA 필수, 호출당 1회. (단, 실제 앱은 폰이라 datacenter IP 이슈 없음 — 개발 환경 fetch와 폰 응답이 다를 수 있음을 유의)
+- **노벨피아 실제 HTML 구조 확인** — 상세페이지가 OG/JSON-LD에 어떤 필드를 싣는지, 회차/완결 표기. **(2026-06-21 실측: 개발환경 IP는 노벨피아 awselb가 nginx 403으로 전면 차단 → 라이브 HTML 확인 불가.)** ⇒ **폰(주거망)에서 "🔗 불러오기"로 직접 확인**하는 게 현실적 경로. 회차·완결·작가 정밀화(`scraperRefineByPlatform`)는 그 결과를 받아 데이터 기반으로 채운다. (또는 실제 페이지 HTML을 캡처해 `docs/scraper-fixtures/`에 넣고 `scraper-test.mjs`로 검증)
+- **제목 검색 엔드포인트 디스커버리** — 메인 입력인데 추측 불가. 플랫폼 검색/자동완성 JSON 엔드포인트를 실측해야 함. **개발 IP 차단으로 이 세션에선 실측 불가** — 폰/주거망 또는 사용자 기기 응답으로 확인 필요.
+- **안티봇/UA** — **(2026-06-21 실측 & v7.28.28 대응)** 노벨피아=datacenter IP 차단(nginx 403, 풀 브라우저 헤더로도 안 풀림 → IP 기반), 문피아=Cloudflare JS 챌린지(`cf-mitigated: challenge`, 헤더로 불가). **실제 앱은 폰(주거망 IP)이라 두 경우 모두 통과 기대.** 대응: `SCRAPER_HEADERS`로 브라우저급 헤더 전송 + `scraperDetectBlock`로 차단/챌린지를 사용자에게 명확히 안내(폰 브라우저에서 직접 열기 유도). 호출당 1회 원칙 유지.
 - **ToS** — 사용자가 자기 서재에 1건씩 붙여넣는 **개인용 on-demand** 원칙(대량 스크래핑 아님). 결과 캐시·재배포 금지.
 
 ---
@@ -248,10 +249,30 @@ function normalizeFromHtml(html, url) {
 - **변경은 "새 세션"부터 적용**(현재 세션 컨테이너는 기존 정책 유지). 문서: https://code.claude.com/docs/en/claude-code-on-the-web (Network access)
 - egress는 **개발 편의용일 뿐 실제 앱과 무관**(앱은 폰에서 정상 인터넷). 안 켜도 일반 OG/JSON-LD 엔진으로 진행 가능, 정밀화만 기기 응답으로.
 
+### 10.1 이 환경 egress 실측 (2026-06-21, 브랜치 `claude/magical-mayer-ob48ts`)
+
+| 호스트 | egress | origin 응답 | 의미 |
+|---|---|---|---|
+| `novelpia.com` | ✅ 허용 | **403 (awselb/nginx)** | 도메인은 도달하나 **datacenter IP 전면 차단**. 풀 브라우저 헤더로도 안 풀림 |
+| `www.munpia.com` | ✅ 허용 | **403 `cf-mitigated: challenge`** | **Cloudflare JS 챌린지** — 순수 fetch 불가 |
+| `series.naver.com` | ❌ 차단 | `Blocked by egress policy` | 이 환경 허용목록에 없음 |
+| `ridibooks.com` / `page.kakao.com` | ❌ 차단 | `Host not in allowlist` | 허용목록에 없음 |
+| `web.archive.org` / `google` / `duckduckgo` | ❌ 차단 | `Host not in allowlist` | 캐시 우회로도 막힘 |
+
+**결론**: 이 개발환경에선 **어떤 플랫폼도 라이브 HTML/검색 실측이 불가**(허용된 노벨피아·문피아조차 IP/챌린지로 막힘, 우회용 archive·검색엔진은 비허용). → **라이브 검증은 폰에서.** 실측 차단 응답 2종은 `docs/scraper-fixtures/`에 보존(회귀 테스트에 사용). 다음 세션에서 라이브가 꼭 필요하면 egress에 `*.novelpia.com`만으로는 부족(IP 차단)하므로, 폰 캡처 HTML을 픽스처로 넣는 방식이 더 확실.
+
 ---
 
 ## 11. 새 세션에서 이어가는 법
 
-1. 같은 저장소 `star1water1/web-novel-tier`, 같은 브랜치 **`claude/festive-einstein-fub63d`**, **egress를 추가한 환경**으로 새 세션 시작.
-2. 지시: **"docs/scraper-plan.md 읽고 노벨피아 PoC 이어서 진행해줘."**
-3. 그 세션은 이 문서로 풀 컨텍스트를 복원하고 §8 빌드 순서대로 진행한다(egress 있으면 노벨피아 실측까지).
+1. 같은 저장소 `star1water1/web-novel-tier`, 브랜치 **`claude/magical-mayer-ob48ts`**(직전 작업 계보)로 새 세션 시작.
+2. 지시: **"docs/scraper-plan.md 읽고 PoC 이어서 진행해줘."**
+3. 그 세션은 이 문서로 풀 컨텍스트를 복원하고 §8 빌드 순서대로 진행한다.
+
+### 11.1 라이브 검증 루프 (개발 IP 차단이 확인됐으므로 — §10.1)
+
+엔진/모달/배선/네트워크는 완성·검증됨. **남은 불확실성은 "실제 플랫폼 페이지가 어떤 필드를 싣는가"뿐이고, 그건 폰에서만 확인 가능**:
+
+- **(A) 폰 직접 테스트(권장)**: 실제 앱(v7.28.28+)에서 노벨피아/문피아 작품 링크로 "🔗 불러오기" → ① 정상 추출되면 제목·작가·표지·회차·완결이 맞는지 확인, ② 차단 안내가 뜨면 종류(보안확인/접근차단) 보고. 이 결과로 `scraperRefineByPlatform`을 데이터 기반 정밀화.
+- **(B) HTML 캡처 → 픽스처**: 폰 브라우저에서 작품 상세 '페이지 소스 보기'/공유로 HTML 확보 → `docs/scraper-fixtures/<플랫폼>-<작품>.html`로 저장 → `docs/scraper-test.mjs`에 케이스 추가 → 파싱/정밀화를 오프라인으로 안전하게 개발.
+- **오프라인 회귀**: `node docs/scraper-test.mjs` (네트워크 불필요, App.jsx 실제 함수 추출 실행).
