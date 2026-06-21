@@ -226,7 +226,7 @@ function normalizeFromHtml(html, url) {
 - [x] **0. 파싱 엔진 프로토타입 검증** (§5, node 테스트 통과)
 - [x] **1. 엔진 이식** (v7.28.25): `SCRAPER_PLATFORMS`/`detectPlatformFromUrl`/`scraperExtractMetaTags`/`scraperExtractJsonLd`/`scraperNormalizeFromHtml`/`scraperRefineByPlatform`/`fetchNovelMeta`/`searchNovels`(stub) 를 App.jsx에 이식. callGeminiForOCR 직후 모듈 블록. **미배선**(UI 호출 없음). 라이브 정확도는 실측 전까지 미확정.
 - [x] **2. 확인 모달** (v7.28.26): `scrapeModal` state + `buildScrapeItems`(현재값↔가져온값 diff, 빈 칸만 기본 체크) + 모달 JSX(체크 적용). `aiTagModal` 오버레이 패턴 미러. **4화면 공용**(`ctx.apply` 분기) — 표지는 원격 URL→`saveCoverToLibrary`(downloadAsync)→경로.
-- [~] **3. 4화면 배선**: **신규등록 완료**(v7.28.26 — 링크칸 아래 "🔗 링크에서 정보 불러오기" 버튼, `runScrapeFromUrl(newLink, ctx)`). 남음: 예정등록·보충탭·편집모달(각 `ctx={label,getCurrent,apply}`만 추가하면 됨).
+- [x] **3. 4화면 배선** (v7.28.27): 신규·예정·보충·편집 모두 "🔗 링크에서 정보 불러오기" 진입점. 신규/예정=자체 setter(예정은 링크칸 신설), 편집=updateEditItem+setEditWorkStatus+setEditCoverImageSync, 보충=updateEditItem(title은 보충 저장 미포함이라 `ctx.fields`로 제외). 모달은 `ctx.apply` 분기로 4화면 공용.
 - [ ] **4. 제목 검색(메인)**: `searchNovels(query)` → 후보 picker → 선택 → 엔진. ★**플랫폼 검색 엔드포인트 실측 필요**
 - [ ] **5. 클립보드 감지** (expo-clipboard, 리빌드)
 - [ ] **6. 공유 시트** (Android intent filter / config plugin, 리빌드)

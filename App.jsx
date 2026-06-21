@@ -2,9 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.26 (스크래퍼 — 확인 모달 + 신규등록 "🔗 불러오기" 배선)          ║
+ * ║  버전: 7.28.27 (스크래퍼 — 4화면 전체 배선: 신규·예정·보충·편집)             ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 63,210줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 63,280줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔗 v7.28.27 스크래퍼 — 4화면 전체 배선 (2026-06-21)                          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 확인 모달(v7.28.26)을 4개 진입점에 모두 연결 — "🔗 링크에서 정보 불러오기".  ║
+ * ║ [신규/예정] 자체 폼 setter로 반영(예정엔 링크 입력칸도 신설).                ║
+ * ║ [편집] title/author/note/회차→updateEditItem, 상태→setEditWorkStatus,        ║
+ * ║   표지→setEditCoverImageSync(cover_library 정합 유지).                        ║
+ * ║ [보충] editItem 직접 편집(updateEditItem). title은 보충 저장 미포함이라       ║
+ * ║   ctx.fields로 제외 — 누락칸(작가·회차·상태·표지·줄거리)만 채움.              ║
+ * ║ * 골격 완성: 엔진+모달+전 진입점. 남은 건 장르 매핑·제목검색(엔드포인트       ║
+ * ║   실측)·클립보드/공유(리빌드). docs/scraper-plan.md                          ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -39435,7 +39448,8 @@ function AppContent() {
     setScrapeLoading(true);
     try {
       const meta = await fetchNovelMeta(u);
-      const items = buildScrapeItems(meta, ctx?.getCurrent ? ctx.getCurrent() : {});
+      let items = buildScrapeItems(meta, ctx?.getCurrent ? ctx.getCurrent() : {});
+      if (Array.isArray(ctx?.fields)) items = items.filter(it => ctx.fields.includes(it.key)); // 화면별 허용 필드(예: 보충=title 제외)
       if (items.length === 0) { Alert.alert("불러오기", `‘${meta.title || "작품"}’ — 새로 채울 정보가 없어요.`); return; }
       setScrapeModal({ meta, items, apply: ctx?.apply, label: ctx?.label || "" });
     } catch (e) {
@@ -50152,13 +50166,43 @@ async function importJSON() {
               </View>
               
               <Label style={{ marginTop: 10 }}>전체 회차 수</Label>
-              <Input 
-                value={plannedTotalEpisodes} 
-                onChangeText={setPlannedTotalEpisodes} 
-                placeholder="예: 120 (모르면 비워두세요)" 
+              <Input
+                value={plannedTotalEpisodes}
+                onChangeText={setPlannedTotalEpisodes}
+                placeholder="예: 120 (모르면 비워두세요)"
                 keyboardType="number-pad"
               />
-              
+
+              {/* 🔗 v7.28.27: 작품 링크 + 불러오기 (예정 등록) */}
+              <Label style={{ marginTop: 10 }}>작품 링크(선택)</Label>
+              <Input
+                value={plannedLink}
+                onChangeText={setPlannedLink}
+                placeholder="https://novelpia.com/novel/..."
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <TouchableOpacity
+                onPress={() => runScrapeFromUrl(plannedLink, {
+                  label: "예정 등록",
+                  getCurrent: () => ({ title: plannedTitle, author: plannedAuthor, note: plannedNote, total_episodes: plannedTotalEpisodes, work_status: plannedWorkStatus, cover: plannedCoverImage }),
+                  apply: (f) => {
+                    if (f.title != null) setPlannedTitle(f.title);
+                    if (f.author != null) setPlannedAuthor(f.author);
+                    if (f.note != null) setPlannedNote(f.note);
+                    if (f.total_episodes != null) setPlannedTotalEpisodes(String(f.total_episodes));
+                    if (f.work_status != null) setPlannedWorkStatus(f.work_status);
+                    if (f.cover != null) setPlannedCoverImage(f.cover);
+                  },
+                })}
+                disabled={scrapeLoading}
+                style={{ marginTop: 6, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: scrapeLoading ? 0.5 : 1 }}
+              >
+                <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>
+                  {scrapeLoading ? "불러오는 중…" : "🔗 링크에서 정보 불러오기"}
+                </Text>
+              </TouchableOpacity>
+
               <Label style={{ marginTop: 10 }}>표지 이미지</Label>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                 {plannedCoverImage ? (
@@ -52851,6 +52895,28 @@ async function importJSON() {
                       autoCapitalize="none"
                       autoCorrect={false}
                     />
+                    {/* 🔗 v7.28.27: 링크에서 정보 불러오기 (보충 — title 제외, 누락칸 채움) */}
+                    <TouchableOpacity
+                      onPress={() => runScrapeFromUrl(editItem?.link, {
+                        label: "보충",
+                        fields: ["author", "note", "total_episodes", "work_status", "cover"],
+                        getCurrent: () => ({ author: editItem?.author, note: editItem?.note, total_episodes: editItem?.total_episodes, work_status: editItem?.work_status, cover: editItem?.cover_image }),
+                        apply: (f) => updateEditItem(prev => prev ? {
+                          ...prev,
+                          ...(f.author != null ? { author: f.author } : {}),
+                          ...(f.note != null ? { note: f.note } : {}),
+                          ...(f.total_episodes != null ? { total_episodes: Number(f.total_episodes) || 0 } : {}),
+                          ...(f.work_status != null ? { work_status: f.work_status } : {}),
+                          ...(f.cover != null ? { cover_image: f.cover } : {}),
+                        } : prev),
+                      })}
+                      disabled={scrapeLoading}
+                      style={{ marginTop: 6, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: scrapeLoading ? 0.5 : 1 }}
+                    >
+                      <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>
+                        {scrapeLoading ? "불러오는 중…" : "🔗 링크에서 정보 불러오기"}
+                      </Text>
+                    </TouchableOpacity>
                   </View>
 
                   {/* 🔧 v3.5.6: 읽기 상태 */}
@@ -61196,6 +61262,30 @@ async function importJSON() {
   autoCapitalize="none"
   autoCorrect={false}
 />
+{/* 🔗 v7.28.27: 링크에서 정보 불러오기 (편집) */}
+<TouchableOpacity
+  onPress={() => runScrapeFromUrl(editLink, {
+    label: "편집",
+    getCurrent: () => ({ title: editItem?.title, author: editItem?.author, note: editItem?.note, total_episodes: editItem?.total_episodes, work_status: editWorkStatus, cover: editCoverImage }),
+    apply: (f) => {
+      updateEditItem(prev => prev ? {
+        ...prev,
+        ...(f.title != null ? { title: f.title } : {}),
+        ...(f.author != null ? { author: f.author } : {}),
+        ...(f.note != null ? { note: f.note } : {}),
+        ...(f.total_episodes != null ? { total_episodes: Number(f.total_episodes) || 0 } : {}),
+      } : prev);
+      if (f.work_status != null) setEditWorkStatus(f.work_status);
+      if (f.cover != null) setEditCoverImageSync(f.cover);
+    },
+  })}
+  disabled={scrapeLoading}
+  style={{ marginTop: 6, backgroundColor: isDark ? "#0e7490" : "#cffafe", paddingVertical: 9, borderRadius: 8, alignItems: "center", opacity: scrapeLoading ? 0.5 : 1 }}
+>
+  <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>
+    {scrapeLoading ? "불러오는 중…" : "🔗 링크에서 정보 불러오기"}
+  </Text>
+</TouchableOpacity>
 
 {/* 📚 v3.0.4: 다회독 카운트 */}
 <Label style={{ marginTop: 10 }}>다회독 횟수</Label>
