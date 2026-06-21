@@ -2,9 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.22 (오래 걸리는 작업 진행 표시 — 이미지 처리·백업 복원 진행률)   ║
+ * ║  버전: 7.28.23 (보충탭 정렬에 🎲 무작위 옵션 추가)                           ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 62,770줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 62,790줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🎲 v7.28.23 보충탭 무작위 정렬 옵션 (2026-06-21)                             ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 보충작이 뜨는 순서를 무작위로 선택할 수 있는 "🎲 무작위" 정렬 칩 추가.       ║
+ * ║ 기존 티어/이슈/레이팅/이름순과 동일 위치(보충 설정 > 정렬)에 배치.           ║
+ * ║ [구현] seededShuffleValue(id, seed): id+seed 결정적 의사난수. 같은 seed면     ║
+ * ║   리렌더·작품 저장(목록 재계산) 후에도 순서 안정 → 한 작품씩 넘겨도 일관된    ║
+ * ║   무작위 순서 유지(저장할 때마다 튀지 않음). 🎲 칩을 다시 탭하면 seed 재생성  ║
+ * ║   해 새 순서로 섞임. supplementShuffleSeed state(세션 한정, 미영속).          ║
+ * ║ * supplementSort는 기존대로 영속 → 재시작 시 무작위 모드는 유지되나 seed는    ║
+ * ║   새로 생성되어 매 실행 새 순서(무작위 취지에 부합).                          ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -8009,6 +8022,19 @@ function uuid() {
     return v.toString(16);
   });
   return `${timestamp}${counter}-${random}`;
+}
+
+// 🎲 v7.28.23 보충탭 무작위 정렬용: id+seed 기반 결정적 의사난수(0~1).
+// 같은 seed에선 리렌더/작품 저장(목록 재계산) 후에도 순서가 안정 → 한 작품씩
+// 넘겨도 일관된 무작위 순서 유지. seed를 바꾸면(🎲 다시 탭) 새 순서로 섞인다.
+function seededShuffleValue(id, seed) {
+  let h = (seed >>> 0) ^ 0x9e3779b9;
+  const s = String(id);
+  for (let i = 0; i < s.length; i++) {
+    h = Math.imul(h ^ s.charCodeAt(i), 0x01000193) >>> 0;
+  }
+  h ^= h >>> 15; h = Math.imul(h, 0x2c1b3c6d) >>> 0; h ^= h >>> 12;
+  return (h >>> 0) / 4294967296;
 }
 
 // 🆕 v7.3.0: progressCb 옵션 — initDb 진행 단계를 UI overlay에 표시.
@@ -33462,7 +33488,8 @@ function AppContent() {
   const [savedSupplementId, setSavedSupplementId] = useState(null); // 🔧 v3.0.2: 저장 후 이동용 ID
   // 🔧 v3.5.6: 보충 탭 강화
   const [supplementFilter, setSupplementFilter] = useState("all"); // "all"|"tags"|"author"|"totalEpisodes"|"readCount"|"majorGenre"|"subGenre"|"platform"
-  const [supplementSort, setSupplementSort] = useState("tier"); // "tier"|"issues"|"title"|"rating"
+  const [supplementSort, setSupplementSort] = useState("tier"); // "tier"|"issues"|"title"|"rating"|"random"
+  const [supplementShuffleSeed, setSupplementShuffleSeed] = useState(() => (Math.random() * 0xffffffff) >>> 0); // 🎲 무작위 정렬 시드 (🎲 칩 탭마다 재생성)
   const [supplementSessionCount, setSupplementSessionCount] = useState(0); // 세션 내 보충 완료 수
   const [supplementRecentDone, setSupplementRecentDone] = useState([]); // 최근 완료 [{id, title, issues, timestamp}]
   const [supplementShowDone, setSupplementShowDone] = useState(false); // 완료 목록 표시 토글
@@ -47699,11 +47726,14 @@ async function importJSON() {
         return (a.novel.title || "").localeCompare(b.novel.title || "");
       } else if (supplementSort === "rating") {
         return (b.novel.rating || 0) - (a.novel.rating || 0);
+      } else if (supplementSort === "random") {
+        // 🎲 v7.28.23: seed 기반 결정적 셔플 — 같은 seed면 순서 안정(작품 저장 후에도 유지)
+        return seededShuffleValue(a.novel.id, supplementShuffleSeed) - seededShuffleValue(b.novel.id, supplementShuffleSeed);
       }
       return 0;
     });
     return filtered;
-  }, [supplementListAll, supplementFilter, supplementSort]);
+  }, [supplementListAll, supplementFilter, supplementSort, supplementShuffleSeed]);
 
   // 📝 보충 대상 건수
   const supplementCount = supplementList.length;
@@ -52024,6 +52054,8 @@ async function importJSON() {
                   <Chip label="⚠️ 이슈 많은 순" active={supplementSort === "issues"} onPress={() => setSupplementSort("issues")} />
                   <Chip label="⭐ 레이팅순" active={supplementSort === "rating"} onPress={() => setSupplementSort("rating")} />
                   <Chip label="🔤 이름순" active={supplementSort === "title"} onPress={() => setSupplementSort("title")} />
+                  {/* 🎲 v7.28.23: 무작위 — 탭할 때마다 시드 재생성해 새로 섞음 */}
+                  <Chip label="🎲 무작위" active={supplementSort === "random"} onPress={() => { setSupplementShuffleSeed((Math.random() * 0xffffffff) >>> 0); setSupplementSort("random"); }} />
                 </View>
 
                 {supplementFilter !== "all" && (
