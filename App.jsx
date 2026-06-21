@@ -2,9 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.23 (보충탭 정렬에 🎲 무작위 옵션 추가)                           ║
+ * ║  버전: 7.28.24 (명대사 이미지 OCR — 비전으로 텍스트 추출·검색)               ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 62,790줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 62,990줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔤 v7.28.24 명대사 이미지 OCR (2026-06-21)                                   ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 이미지로만 저장돼 검색이 안 되던 명대사를 비전 AI로 텍스트화(이후 임베딩     ║
+ * ║ 등 분석 입력으로도 재활용 가능).                                             ║
+ * ║ [호출] callClaude/GeminiForOCR — 기존 태그추천과 같은 키/제공자/타임아웃     ║
+ * ║   배관 재사용(새 설정·새 벤더 없음). 저장본(최대2048px)은 readImageForOcr로   ║
+ * ║   1536px JPEG 다운스케일 후 base64 전송(페이로드·지연 절감, 임시파일 정리).   ║
+ * ║ [저장] image quote 객체에 ocrText 필드 추가 — serialize/parseQuotes가 그대로  ║
+ * ║   보존하므로 DB 마이그레이션 불필요. 추출문은 편집 가능(수정해도 저장).        ║
+ * ║ [UI] 편집 모달 이미지 명대사에 "🔤 텍스트 추출/다시 추출" + 헤더 "🔤 전체     ║
+ * ║   OCR"(ocrText 없는 이미지 일괄). ocrBusyIdx로 진행 표시.                     ║
+ * ║ [검색] 그동안 검색 bank에 빠져있던 명대사(텍스트/OCR/캡션)를 포함 →           ║
+ * ║   getNovelQuoteSearchText + novelQuoteSearchMap(list 메모이즈)로 홈 검색 반영.║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -13283,6 +13299,109 @@ async function callGeminiForTagging(context = {}, apiKey, model = GEMINI_AI_MODE
   };
 }
 
+// 🔤 v7.28.24 명대사 OCR — 이미지 명대사(스크린샷)에서 본문 텍스트만 추출(비전).
+//   추출 결과는 image quote 객체의 ocrText 필드로 저장 → 검색·분석에 활용.
+const OCR_PROMPT =
+  "이 이미지는 웹소설 한 장면(명대사/지문/대화)을 캡처한 것입니다. 이미지에 보이는 본문 텍스트만 " +
+  "원문 그대로, 줄바꿈을 보존해 한국어로 옮겨 적어 주세요. 대사·지문·나레이션 같은 작품 본문만 추출하고, " +
+  "UI 버튼·시간·배터리·페이지번호·작품제목/화수 같은 군더더기나 당신의 설명·해설은 절대 넣지 마세요. " +
+  "텍스트가 전혀 없으면 빈 문자열만 반환하세요.";
+
+function imageMimeFromUri(uri) {
+  const u = (uri || "").toLowerCase();
+  if (u.endsWith(".png")) return "image/png";
+  if (u.endsWith(".webp")) return "image/webp";
+  if (u.endsWith(".gif")) return "image/gif";
+  return "image/jpeg";
+}
+
+// 저장본은 최대 2048px/품질1.0라 그대로 보내면 무거움 → OCR용으로 다운스케일한 JPEG base64 생성.
+// 실패 시 원본을 그대로 읽어 폴백. 반환: { base64, mimeType }.
+async function readImageForOcr(uri) {
+  let tempUri = null, mimeType = imageMimeFromUri(uri), readUri = uri;
+  try {
+    const m = await ImageManipulator.manipulateAsync(uri, [{ resize: { width: 1536 } }], { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG });
+    if (m?.uri) { readUri = m.uri; mimeType = "image/jpeg"; if (m.uri !== uri) tempUri = m.uri; }
+  } catch { /* 다운스케일 실패 → 원본 그대로 사용 */ }
+  try {
+    const base64 = await FileSystem.readAsStringAsync(readUri, { encoding: FileSystem.EncodingType.Base64 });
+    return { base64, mimeType };
+  } finally {
+    if (tempUri) FileSystem.deleteAsync(tempUri, { idempotent: true }).catch(() => {});
+  }
+}
+
+async function callClaudeForOCR(base64, mimeType, apiKey, model = SYNONYM_AI_MODEL, opts = {}) {
+  if (!apiKey) throw new Error("API 키가 없습니다");
+  const { signal, cleanup } = resolveAbortSignal(opts);
+  let res;
+  try {
+    res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model,
+        max_tokens: 2048,
+        messages: [{ role: "user", content: [
+          { type: "image", source: { type: "base64", media_type: mimeType, data: base64 } },
+          { type: "text", text: OCR_PROMPT },
+        ] }],
+      }),
+      signal,
+    });
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error("응답이 없어 중단했어요 (시간 초과/취소)");
+    throw e;
+  } finally { cleanup(); }
+  if (!res.ok) {
+    let detail = "";
+    try { detail = (await res.json())?.error?.message || ""; } catch {}
+    if (res.status === 401) throw new Error("API 키가 올바르지 않아요 (401)");
+    if (res.status === 429) throw new Error("요청이 많아요. 잠시 후 다시 시도 (429)");
+    throw new Error(`API 오류 ${res.status}${detail ? ": " + detail.slice(0, 120) : ""}`);
+  }
+  const data = await res.json();
+  return (data.content || []).filter(b => b.type === "text").map(b => b.text || "").join("").trim();
+}
+
+async function callGeminiForOCR(base64, mimeType, apiKey, model = GEMINI_AI_MODEL, opts = {}) {
+  if (!apiKey) throw new Error("API 키가 없습니다");
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const { signal, cleanup } = resolveAbortSignal(opts);
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [
+          { inlineData: { mimeType, data: base64 } },
+          { text: OCR_PROMPT },
+        ] }],
+        generationConfig: { temperature: 0, maxOutputTokens: 2048 },
+      }),
+      signal,
+    });
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error("응답이 없어 중단했어요 (시간 초과/취소)");
+    throw e;
+  } finally { cleanup(); }
+  if (!res.ok) {
+    let detail = "";
+    try { detail = (await res.json())?.error?.message || ""; } catch {}
+    if (res.status === 400 && /API key not valid|API_KEY_INVALID/i.test(detail)) throw new Error("API 키가 올바르지 않아요 (400)");
+    if (res.status === 401 || res.status === 403) throw new Error(`API 키가 올바르지 않아요 (${res.status})`);
+    if (res.status === 429) throw new Error("무료 한도를 초과했어요. 잠시 후 다시 시도 (429)");
+    throw new Error(`API 오류 ${res.status}${detail ? ": " + detail.slice(0, 120) : ""}`);
+  }
+  const data = await res.json();
+  const cand = (data.candidates || [])[0];
+  const text = (cand?.content?.parts || []).map(p => p?.text || "").join("").trim();
+  if (!text && data?.promptFeedback?.blockReason) throw new Error("요청이 차단됐어요: " + data.promptFeedback.blockReason);
+  if (!text && cand?.finishReason === "MAX_TOKENS") throw new Error("AI 응답이 길이 제한에 걸렸어요. 잠시 후 다시 시도해 주세요.");
+  return text;
+}
+
 /**
  * 🆕 v3.5.12: 태그 목록에서 대상 태그 찾기 (공백 무시 매칭)
  * 찾으면 목록 내 원본 문자열 반환, 없으면 null
@@ -13837,6 +13956,24 @@ function getQuoteText(q) {
   if (typeof q === "string") return q;
   if (q && typeof q === "object" && q.type === "text") return q.text || "";
   return "";
+}
+// 🔤 v7.28.24 검색용: 작품 명대사에서 검색 가능한 텍스트 모음(평문/서식 텍스트 + 이미지 OCR + 캡션).
+//   이미지 명대사도 OCR(ocrText)하면 이 텍스트에 포함되어 검색됨.
+function getNovelQuoteSearchText(n) {
+  const raw = (n && n.memorable_quote) ? String(n.memorable_quote) : "";
+  if (!raw.trim()) return "";
+  try {
+    const parts = [];
+    for (const q of parseQuotes(raw)) {
+      if (typeof q === "string") { if (q.trim()) parts.push(q); }
+      else if (q && typeof q === "object") {
+        if (q.type === "text" && q.text) parts.push(q.text);
+        if (q.ocrText) parts.push(q.ocrText);
+        if (q.caption) parts.push(q.caption);
+      }
+    }
+    return parts.join(" ");
+  } catch { return ""; }
 }
 function getQuoteStyle(q) {
   return (q && typeof q === "object" && q.type === "text" && q.style && typeof q.style === "object") ? q.style : null;
@@ -33101,6 +33238,7 @@ function AppContent() {
   const [aiTagModalOpen, setAiTagModalOpen] = useState(false);
   const [aiTagTarget, setAiTagTarget] = useState("new"); // "new"(등록 폼) | "edit"(편집 모달)
   const [aiTagBusy, setAiTagBusy] = useState(false);
+  const [ocrBusyIdx, setOcrBusyIdx] = useState(-1); // 🔤 v7.28.24 명대사 OCR 진행 인덱스 (-1=없음, qi=해당 항목, -2=전체)
   const [aiTagSuggest, setAiTagSuggest] = useState(null); // { major:[{name,checked}], sub:[...], tags:[{tag,intensity,confidence,reason,checked}] }
   const [aiTagUseNote, setAiTagUseNote] = useState(false); // 옵트인: 감상도 전송
   const [aiTagUseFewshot, setAiTagUseFewshot] = useState(false); // 🆕 v7.28.15 옵트인: 비슷한 내 작품 예시(제목+태그) 전송
@@ -39055,6 +39193,64 @@ function AppContent() {
     }
   }
 
+  // 🔤 v7.28.24 명대사 OCR — 이미지 명대사 1건을 텍스트로 추출 → editQuotes[qi].ocrText 저장
+  async function runQuoteOcr(qi) {
+    if (ocrBusyIdx !== -1) return;
+    const q = editQuotes[qi];
+    if (!isImageQuote(q) || !q.uri) return;
+    const provider = aiProvider === "gemini" ? "gemini" : "claude";
+    const key = ((provider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim();
+    if (!key) { Alert.alert("명대사 OCR", `먼저 설정 > 🏷️ 태그에서 ${provider === "gemini" ? "Gemini" : "Claude"} API 키를 입력해 주세요.`); return; }
+    setOcrBusyIdx(qi);
+    try {
+      const { base64, mimeType } = await readImageForOcr(q.uri);
+      if (!base64) throw new Error("이미지를 읽지 못했어요.");
+      const text = provider === "gemini"
+        ? await callGeminiForOCR(base64, mimeType, key, GEMINI_AI_MODEL, { timeoutMs: 40000 })
+        : await callClaudeForOCR(base64, mimeType, key, SYNONYM_AI_MODEL, { timeoutMs: 40000 });
+      const clean = (text || "").trim();
+      if (!clean) { Alert.alert("명대사 OCR", "이미지에서 텍스트를 찾지 못했어요."); return; }
+      setEditQuotes(prev => { const u = [...prev]; if (u[qi] && isImageQuote(u[qi]) && u[qi].uri === q.uri) u[qi] = { ...u[qi], ocrText: clean }; return u; });
+    } catch (e) {
+      Alert.alert("명대사 OCR 실패", e?.message || String(e));
+    } finally {
+      setOcrBusyIdx(-1);
+    }
+  }
+
+  // 🔤 v7.28.24 명대사 OCR(전체) — ocrText 없는 이미지 명대사 일괄 추출
+  async function runAllQuoteOcr() {
+    if (ocrBusyIdx !== -1) return;
+    const provider = aiProvider === "gemini" ? "gemini" : "claude";
+    const key = ((provider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim();
+    if (!key) { Alert.alert("명대사 OCR", `먼저 설정 > 🏷️ 태그에서 ${provider === "gemini" ? "Gemini" : "Claude"} API 키를 입력해 주세요.`); return; }
+    const targets = editQuotes
+      .map((q, i) => ({ uri: q && q.uri, i, has: !!(q && q.ocrText && String(q.ocrText).trim()), img: isImageQuote(q) }))
+      .filter(t => t.img && t.uri && !t.has);
+    if (targets.length === 0) { Alert.alert("명대사 OCR", "추출할 이미지가 없어요. (이미 텍스트가 있거나 이미지 명대사가 없음)"); return; }
+    setOcrBusyIdx(-2);
+    let ok = 0, fail = 0;
+    try {
+      for (const t of targets) {
+        try {
+          const { base64, mimeType } = await readImageForOcr(t.uri);
+          if (!base64) { fail++; continue; }
+          const text = provider === "gemini"
+            ? await callGeminiForOCR(base64, mimeType, key, GEMINI_AI_MODEL, { timeoutMs: 40000 })
+            : await callClaudeForOCR(base64, mimeType, key, SYNONYM_AI_MODEL, { timeoutMs: 40000 });
+          const clean = (text || "").trim();
+          if (clean) {
+            setEditQuotes(prev => { const u = [...prev]; if (u[t.i] && isImageQuote(u[t.i]) && u[t.i].uri === t.uri) u[t.i] = { ...u[t.i], ocrText: clean }; return u; });
+            ok++;
+          } else fail++;
+        } catch { fail++; }
+      }
+      Alert.alert("명대사 OCR", `완료: ${ok}개 추출${fail ? `, ${fail}개 실패/빈값` : ""}`);
+    } finally {
+      setOcrBusyIdx(-1);
+    }
+  }
+
   // 추천 항목 체크 토글
   function toggleAiTagItem(kind, idx) {
     setAiTagSuggest(prev => prev ? { ...prev, [kind]: prev[kind].map((it, i) => i === idx ? { ...it, checked: !it.checked } : it) } : prev);
@@ -44527,6 +44723,16 @@ function AppContent() {
   // 🔧 v7.13.0: 동적(사용자 생성) 상 id→메타 매핑 — 검색/표시에서 사용자 상 이름 해석용
   const awardMetaMap = useMemo(() => buildAwardMetaMap(awardSystemSettings), [awardSystemSettings]);
 
+  // 🔤 v7.28.24 명대사 검색 인덱스 (id→검색텍스트). list 변동 시만 재계산(검색 키스트로크마다 parseQuotes 방지).
+  const novelQuoteSearchMap = useMemo(() => {
+    const m = new Map();
+    for (const n of (list || [])) {
+      const t = getNovelQuoteSearchText(n);
+      if (t) m.set(n.id, t);
+    }
+    return m;
+  }, [list]);
+
   const homeFiltered = useMemo(() => {
     const q = homeQuery.toLowerCase().trim();
     let result = list;
@@ -44569,7 +44775,8 @@ function AppContent() {
         const plats = parsePlatforms(n.platforms);
         const awardText = awardsToSearchText(n.awards, awardMetaMap, awardSystemSettings);
         const aliasesText = parseNovelAliases(n.aliases).join(" ");
-        const bank = [n.title, n.author, n.tags, n.note, awardText, aliasesText, ...(plats || [])].join(" ").toLowerCase();
+        const quoteText = novelQuoteSearchMap.get(n.id) || ""; // 🔤 v7.28.24 명대사(텍스트/OCR/캡션)
+        const bank = [n.title, n.author, n.tags, n.note, awardText, aliasesText, quoteText, ...(plats || [])].join(" ").toLowerCase();
         
         // 확장된 검색어 중 하나라도 매칭되면 통과
         return searchVariants.some(variant => bank.includes(variant));
@@ -44604,7 +44811,7 @@ function AppContent() {
     return result;
     // 🛡️ FIX: appSettings.tierSystemConfig를 deps에 추가 — '티어순' 정렬 시 임계값/티어 편집 후
     //   list 변동 없이도 재정렬되도록(이전엔 globalTierConfig만 바뀌고 memo deps 미반영 → stale).
-  }, [homeQuery, list, homeSortKey, homeSortDir, filterTier, filterPlatform, filterGenre, filterStatus, searchIncludeTags, searchExcludeTags, searchExcludeStatus, searchExcludeWorkStatus, folderFilteredIds, tagRelations, awardMetaMap, appSettings.tierSystemConfig]);
+  }, [homeQuery, list, homeSortKey, homeSortDir, filterTier, filterPlatform, filterGenre, filterStatus, searchIncludeTags, searchExcludeTags, searchExcludeStatus, searchExcludeWorkStatus, folderFilteredIds, tagRelations, awardMetaMap, novelQuoteSearchMap, appSettings.tierSystemConfig]);
 
   // 공용 검색 필터 (bulk/search)
   const filtered = useMemo(() => {
@@ -61019,6 +61226,17 @@ async function importJSON() {
                             {batchImporting ? "처리중..." : `📷 일괄 (${imgCount}/${QUOTE_IMAGE_MAX_COUNT})`}
                           </Text>
                         </TouchableOpacity>
+                        {imgCount > 0 ? (
+                          <TouchableOpacity
+                            onPress={runAllQuoteOcr}
+                            disabled={ocrBusyIdx !== -1}
+                            style={{ backgroundColor: isDark ? "#3b2f5f" : "#ede9fe", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, opacity: ocrBusyIdx !== -1 ? 0.5 : 1 }}
+                          >
+                            <Text style={{ color: isDark ? "#c4b5fd" : "#6d28d9", fontWeight: "700", fontSize: 12 }}>
+                              {ocrBusyIdx === -2 ? "OCR 중…" : "🔤 전체 OCR"}
+                            </Text>
+                          </TouchableOpacity>
+                        ) : null}
                         </>
                         );
                       })()}
@@ -61089,6 +61307,29 @@ async function importJSON() {
                                 marginTop: 6,
                               }}
                             />
+                            {/* 🔤 v7.28.24 OCR: 이미지 → 텍스트 추출 (검색에 포함) */}
+                            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 }}>
+                              <TouchableOpacity
+                                onPress={() => runQuoteOcr(qi)}
+                                disabled={ocrBusyIdx !== -1}
+                                style={{ backgroundColor: isDark ? "#3b2f5f" : "#ede9fe", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, opacity: ocrBusyIdx !== -1 ? 0.5 : 1 }}
+                              >
+                                <Text style={{ color: isDark ? "#c4b5fd" : "#6d28d9", fontWeight: "700", fontSize: 12 }}>
+                                  {ocrBusyIdx === qi ? "추출 중…" : (q.ocrText ? "🔤 다시 추출" : "🔤 텍스트 추출")}
+                                </Text>
+                              </TouchableOpacity>
+                              {q.ocrText ? <Text style={{ color: C.sub, fontSize: 11 }}>검색에 포함됨</Text> : null}
+                            </View>
+                            {q.ocrText ? (
+                              <TextInput
+                                value={q.ocrText}
+                                onChangeText={(t) => setEditQuotes(prev => { const u = [...prev]; if (u[qi] && isImageQuote(u[qi])) u[qi] = { ...u[qi], ocrText: t }; return u; })}
+                                placeholder="추출된 텍스트 (수정 가능)"
+                                placeholderTextColor={C.sub}
+                                multiline
+                                style={{ backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8, padding: 8, fontSize: 13, color: C.text, marginTop: 6, minHeight: 44, textAlignVertical: "top" }}
+                              />
+                            ) : null}
                           </View>
                         ) : (
                         <>
