@@ -2,9 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.21 (LLM 경미 결함 정리 — 토큰잘림·first-wins·레이스 + 가이드)    ║
+ * ║  버전: 7.28.22 (오래 걸리는 작업 진행 표시 — 이미지 처리·백업 복원 진행률)   ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 62,740줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 62,770줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ ⏳ v7.28.22 오래 걸리는 작업 진행 표시 보강 (2026-06-21)                     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ "렉인지 작동인지" 구분되도록 피드백 없던 무거운 작업에 표시 추가.            ║
+ * ║ [이미지] compressAndSaveImage를 모듈 콜백(setImageBusyCallback)으로 감싸     ║
+ * ║ 명대사·갤러리 단일 이미지 압축/저장 시 '🖼️ 이미지 처리 중' 오버레이(250ms+   ║
+ * ║ 만 표시→빠른 처리 깜빡임 없음). 10+ 호출처를 한 번에 커버.                   ║
+ * ║ [백업 복원] importJSON 작품·대진 execBatch에 onProgress 연결 → 전역 진행바    ║
+ * ║ (N/M)로 표시. 종료 시 진행바 정리. (대용량 복원이 멈춘 듯 보이던 문제 해소)  ║
+ * ║ * 기존 인프라(전역 오버레이·표지·갤러리·수상·내보내기 진행 모달·AI busy)는    ║
+ * ║   이미 충분 — 누락 2곳만 보강.                                               ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -14430,7 +14443,20 @@ async function saveCoverToLibrary(sourceUri, compressionLevel = "light", ext = "
  * @param ext - 파일 확장자
  * @returns { id, file_path, file_size } 또는 { error }
  */
+// 🆕 v7.28.22: 이미지 압축/저장 진행 표시 — 여러 호출처(명대사·갤러리 이미지 등)를 한 번에 커버.
+//   모듈 콜백(setImageBusyCallback)으로 컴포넌트에 begin/end를 알려 작은 오버레이를 띄움.
+let _imageBusyCount = 0;
+let _imageBusyCb = null;
+function setImageBusyCallback(cb) { _imageBusyCb = cb; }
+function _notifyImageBusy() { if (_imageBusyCb) { try { _imageBusyCb(_imageBusyCount > 0); } catch {} } }
+
 async function compressAndSaveImage(sourceUri, maxSize, quality, ext = "jpg") {
+  _imageBusyCount++; _notifyImageBusy();
+  try { return await _compressAndSaveImageImpl(sourceUri, maxSize, quality, ext); }
+  finally { _imageBusyCount = Math.max(0, _imageBusyCount - 1); _notifyImageBusy(); }
+}
+
+async function _compressAndSaveImageImpl(sourceUri, maxSize, quality, ext = "jpg") {
   try {
     // GIF는 압축 스킵 (애니메이션 손실 방지)
     if (ext === "gif") {
@@ -14679,7 +14705,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.21";
+const APP_VERSION = "7.28.22";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -14705,6 +14731,15 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.22", date: "2026-06-21",
+    title: "⏳ 처리 중 표시 보강",
+    highlights: [
+      { type: "improve", text: "🖼️ 명대사·갤러리 이미지를 넣을 때 '이미지 처리 중' 표시가 떠요. 큰 사진을 고른 뒤 멈춘 듯 보이던 순간이 사라졌어요. (빠르게 끝나면 표시 안 떠요)" },
+      { type: "improve", text: "💾 백업 복원이 작품·대진 기록을 몇 개까지 처리했는지 진행바(N/M)로 보여줘요. 대용량 복원이 멈춘 건지 진행 중인지 한눈에 알 수 있어요." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.21", date: "2026-06-21",
     title: "🔧 AI 기능 마무리 손질",
@@ -32927,6 +32962,7 @@ function AppContent() {
   const [galleryEditCaption, setGalleryEditCaption] = useState("");
   const [galleryChangeNovelTarget, setGalleryChangeNovelTarget] = useState(null);
   const [galleryLoading, setGalleryLoading] = useState(false);
+  const [imageBusy, setImageBusy] = useState(false); // 🆕 v7.28.22: 이미지 압축/저장 진행(명대사·갤러리 등 공용)
   const [galleryNovelPickerOpen, setGalleryNovelPickerOpen] = useState(false);
   const [galleryCaptionEditOpen, setGalleryCaptionEditOpen] = useState(false);
   const [galleryCaptionEditId, setGalleryCaptionEditId] = useState(null);
@@ -39418,6 +39454,16 @@ function AppContent() {
       setReviewSelectedIds([]);
     }
   }, [screen]);
+
+  // 🆕 v7.28.22: 이미지 압축/저장 busy 표시 등록 (250ms 이상 걸릴 때만 표시 — 빠른 처리엔 깜빡임 없음)
+  useEffect(() => {
+    let timer = null;
+    setImageBusyCallback((busy) => {
+      if (busy) { if (!timer) timer = setTimeout(() => { timer = null; setImageBusy(true); }, 250); }
+      else { if (timer) { clearTimeout(timer); timer = null; } setImageBusy(false); }
+    });
+    return () => { if (timer) clearTimeout(timer); setImageBusyCallback(null); };
+  }, []);
 
   // 🤖 v7.27.0: AI 키/제공자 로드 — 🆕 v7.28.20: 전역 파일(모든 슬롯 공유)에서 로드.
   //   슬롯 무관이라 슬롯 전환 시 갱신 불필요(상태 유지). 기존 per-slot app_meta는 1회 마이그레이션.
@@ -46782,7 +46828,7 @@ async function importJSON() {
                 });
               }
 
-              if (novelQueries.length > 0) await execBatch(novelQueries);
+              if (novelQueries.length > 0) await execBatch(novelQueries, (cur, tot) => setLoadingProgress({ current: cur, total: tot, label: "작품 복원 중..." })); // 🆕 v7.28.22: 진행률
               // 🛠️ v7.3.3: 별도 bulk UPDATE 제거 — INSERT에 baseline 포함으로 트랜잭션 일관성 확보
 
               // 🔧 v3.5.8: 복원 직후 삽입 검증
@@ -46839,7 +46885,8 @@ async function importJSON() {
                 });
               }
 
-              if (matchQueries.length > 0) await execBatch(matchQueries);
+              if (matchQueries.length > 0) await execBatch(matchQueries, (cur, tot) => setLoadingProgress({ current: cur, total: tot, label: "대진 기록 복원 중..." })); // 🆕 v7.28.22: 진행률
+              setLoadingProgress({ label: "마무리 중..." }); // 나머지(설정·폴더·갤러리 등) 복원 — 스피너 유지
 
               // ⚙️ 설정 복원 (v2.6)
               if (data.S && typeof data.S === "object") {
@@ -47356,8 +47403,9 @@ async function importJSON() {
               setImportOpen(false);
               setImportText("");
               setImportValidation(null);
+              setLoadingProgress(null); // 🆕 v7.28.22: 진행바 정리
               setIsLoading(false);
-              
+
               const extraInfo = data.S ? "\n(설정 복원됨)" : "";
               const histInfo = data.H ? `\n(티어 히스토리 ${data.H.length}건 복원)` : "";
               const analysisInfo = analysisRestored ? "\n(분석 데이터 복원됨)" : "";
@@ -47406,6 +47454,7 @@ async function importJSON() {
                 } else {
                   Alert.alert("오류", "복원 준비 중 오류가 발생했습니다.\n기존 데이터는 유지됩니다.\n\n" + (restoreErr.message || restoreErr));
                 }
+                setLoadingProgress(null); // 🆕 v7.28.22: 진행바 정리
                 setIsLoading(false);
               }
             },
@@ -47880,6 +47929,15 @@ async function importJSON() {
         translucent={appSettings.fullscreenMode === true}
       />
       <ProgressOverlay />
+      {/* 🆕 v7.28.22: 이미지 압축/저장 진행(명대사·갤러리 단일 이미지 등) — 전역 오버레이가 없을 때만 */}
+      {imageBusy && !isLoading ? (
+        <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: C.overlay, justifyContent: "center", alignItems: "center", zIndex: 998 }}>
+          <View style={{ backgroundColor: C.card, paddingHorizontal: 24, paddingVertical: 20, borderRadius: 14, alignItems: "center" }}>
+            <ActivityIndicator size="large" color={C.primary} />
+            <Text style={{ color: C.text, marginTop: 10, fontSize: 13, fontWeight: "600" }}>🖼️ 이미지 처리 중…</Text>
+          </View>
+        </View>
+      ) : null}
       {/* 🆕 v7.4.0 이미지 내보내기 진행 모달 — 캡처에 포함되지 않도록 별도 운영 */}
       <Modal
         visible={!!exportProgress}
