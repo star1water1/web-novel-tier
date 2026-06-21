@@ -2,9 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.17 (일괄 태그 견고화 — 타임아웃·즉시취소·검토 UI·등록 1회)      ║
+ * ║  버전: 7.28.18 (일괄 태그 사용성 — 설정분리·길게눌러해제·키 사전안내)       ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 62,600줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 62,650줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🎨 v7.28.18 일괄 태그 사용성 — 설정분리·길게눌러해제·키 사전안내 (2026-06-21)║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [설정 분리] 일괄 모달의 어휘 범위·강도 토글을 단일 추천 폼과 분리(batchVocab  ║
+ * ║ Mode/batchIntensity). 일괄에서 바꿔도 작품 추가/편집 추천에 영향 없음.        ║
+ * ║                                                                              ║
+ * ║ [속성 해제] 신규 태그 속성 배지를 길게 누르면 즉시 '추천만'(미적용)으로 해제   ║
+ * ║ (resetAiTagSentiment/resetBatchSentiment). 4단 순환을 끝까지 안 돌려도 됨.    ║
+ * ║                                                                              ║
+ * ║ [키 사전안내] 일괄 모달에서 현재 제공자 키가 없으면 경고 배너 + '추천 시작'    ║
+ * ║ 비활성('API 키 필요') — 헛호출 방지(시작 후 알림 → 사전 차단으로 개선).        ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -14577,7 +14590,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.17";
+const APP_VERSION = "7.28.18";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -14603,6 +14616,16 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.18", date: "2026-06-21",
+    title: "🎨 일괄 태그 더 쓰기 편하게",
+    highlights: [
+      { type: "improve", text: "⚙️ 일괄 태그의 '어휘 범위'·'강도' 설정이 작품 추가/편집의 AI 추천과 분리됐어요. 일괄에서 바꿔도 다른 곳 설정은 그대로예요." },
+      { type: "improve", text: "🎭 새 태그 속성 배지를 길게 누르면 바로 '추천만'(미적용)으로 되돌릴 수 있어요. 끝까지 탭해서 돌릴 필요가 없어요." },
+      { type: "improve", text: "🔑 API 키가 없으면 일괄 태그 화면에서 미리 알려주고 '추천 시작'을 막아, 괜히 시작했다가 실패하는 일을 줄였어요." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.17", date: "2026-06-21",
     title: "🛡️ 일괄 태그 더 안정적으로",
@@ -32908,6 +32931,9 @@ function AppContent() {
   const [batchResults, setBatchResults] = useState([]); // [{id,title,author,suggest,status,expanded}]
   const batchCancelRef = useRef(false);
   const batchAbortRef = useRef(null); // 🆕 v7.28.17: 진행 중 요청 즉시 취소용
+  // 🆕 v7.28.18: 일괄 전용 어휘/강도 (단일 추천 폼 설정과 분리 — 상호 간섭 방지)
+  const [batchVocabMode, setBatchVocabMode] = useState("mine");
+  const [batchIntensity, setBatchIntensity] = useState(false);
   const [dismissedSynPairs, setDismissedSynPairs] = useState(() => new Set()); // 🔧 v7.28.0: 유의어 후보 거절 이력 (로컬·AI 공통)
   const [dismissedOppPairs, setDismissedOppPairs] = useState(() => new Set()); // 🆕 v7.28.12: 상반 후보 거절 이력
   const [tagHealthBusy, setTagHealthBusy] = useState(false);
@@ -38895,6 +38921,10 @@ function AppContent() {
   function cycleAiTagSentiment(idx) {
     setAiTagSuggest(prev => prev && prev.tagsNew ? { ...prev, tagsNew: prev.tagsNew.map((it, i) => i === idx ? { ...it, sent: nextSentApply(it.sent, it.sentSuggest) } : it) } : prev);
   }
+  // 🆕 v7.28.18: 길게 누르면 속성 즉시 '추천만'(미적용)으로 해제
+  function resetAiTagSentiment(idx) {
+    setAiTagSuggest(prev => prev && prev.tagsNew ? { ...prev, tagsNew: prev.tagsNew.map((it, i) => i === idx ? { ...it, sent: null } : it) } : prev);
+  }
 
   // 🆕 v7.28.16: 미태깅 작품 일괄 태그
   function openBatchTagModal() { setBatchResults([]); setBatchSelIds(new Set()); setBatchProgress({ done: 0, total: 0 }); setBatchTagOpen(true); }
@@ -38918,6 +38948,11 @@ function AppContent() {
       ? { ...r, suggest: { ...r.suggest, tagsNew: r.suggest.tagsNew.map(it => ({ ...it, checked: true })) } } : r));
   }
   function resetBatchToSelection() { setBatchResults([]); setBatchProgress({ done: 0, total: 0 }); } // 선택 화면으로(작품 선택 유지)
+  // 🆕 v7.28.18: 길게 누르면 속성 즉시 '추천만'(미적용)으로 해제
+  function resetBatchSentiment(wi, idx) {
+    setBatchResults(prev => prev.map((r, ri) => (ri === wi && r.suggest && r.suggest.tagsNew)
+      ? { ...r, suggest: { ...r.suggest, tagsNew: r.suggest.tagsNew.map((it, i) => i === idx ? { ...it, sent: null } : it) } } : r));
+  }
   // 순차 호출(스로틀·취소·429 백오프). 어휘/분류는 단일 모드와 동일 규칙(배치용 복제).
   async function runBatchTagSuggest(works) {
     const provider = aiProvider === "gemini" ? "gemini" : "claude";
@@ -38941,7 +38976,7 @@ function AppContent() {
     const subMap = new Map(subVocab.map(t => [normalizeTagKey(t), t]));
     const stdMap = new Map();
     if (typeof ALL_DEFAULT_TAGS !== "undefined" && Array.isArray(ALL_DEFAULT_TAGS)) for (const t of ALL_DEFAULT_TAGS) { const k = normalizeTagKey(t); if (!majorMap.has(k) && !subMap.has(k) && !stdMap.has(k)) stdMap.set(k, t); }
-    const mode = aiTagVocabMode === "std" ? "std" : aiTagVocabMode === "new" ? "new" : "mine";
+    const mode = batchVocabMode === "std" ? "std" : batchVocabMode === "new" ? "new" : "mine";
     const allowNew = mode === "new";
     const sentOf = (v) => { const x = String(v || "").toLowerCase(); return (x === "positive" || x === "negative") ? x : "neutral"; };
     const findSimilarUsed = (k) => {
@@ -38966,7 +39001,7 @@ function AppContent() {
         if (subMap.has(k)) { pushSub(nm); continue; }
         seenT.add(k);
         const conf = String(it.confidence || "med").toLowerCase();
-        const intv = aiTagSuggestIntensity ? Math.min(5, Math.max(1, Math.round(Number(it.intensity) || 3))) : 3;
+        const intv = batchIntensity ? Math.min(5, Math.max(1, Math.round(Number(it.intensity) || 3))) : 3;
         if (usedKeys.has(k)) tagsExisting.push({ tag: disp.get(k), intensity: intv, confidence: conf, checked: conf !== "low" });
         else if (stdMap.has(k) && (mode === "std" || mode === "new")) tagsNew.push({ tag: stdMap.get(k), intensity: intv, confidence: conf, sentSuggest: sentOf(it.sentiment), sent: null, needsRegister: false, similarTo: null, checked: false });
         else if (allowNew) tagsNew.push({ tag: nm, intensity: intv, confidence: conf, sentSuggest: sentOf(it.sentiment), sent: null, needsRegister: true, similarTo: findSimilarUsed(k), checked: false });
@@ -38982,7 +39017,7 @@ function AppContent() {
         const n = works[i];
         const existingTags = deduplicateTags((n.tags || "").split(",").map(t => t.trim()).filter(Boolean));
         const existingKeys = new Set(existingTags.map(t => normalizeTagKey(t)));
-        const ctx = { title: (n.title || "").trim(), author: (n.author || "").trim(), existingTags, profile: { avgTags, topTags }, majorOptions: majorVocab.slice(0, 40), subOptions: subVocab.slice(0, 60), wantIntensity: aiTagSuggestIntensity, allowNew };
+        const ctx = { title: (n.title || "").trim(), author: (n.author || "").trim(), existingTags, profile: { avgTags, topTags }, majorOptions: majorVocab.slice(0, 40), subOptions: subVocab.slice(0, 60), wantIntensity: batchIntensity, allowNew };
         let res;
         const ctrl = new AbortController(); batchAbortRef.current = ctrl; // 🆕 v7.28.17: 취소 버튼이 이 요청을 즉시 끊을 수 있게
         const to = setTimeout(() => { try { ctrl.abort(); } catch {} }, 30000); // 🆕 v7.28.17: 응답 없는 요청 30초 후 자동 중단(다음 작품으로)
@@ -63577,7 +63612,7 @@ async function importJSON() {
                     {newItems.length > 0 ? (
                       <View style={{ marginBottom: 10 }}>
                         <Text style={{ color: C.text, fontWeight: "700", fontSize: 12, marginBottom: 2 }}>태그 · 신규 (어휘에 없음) ({newItems.length})</Text>
-                        <Text style={{ color: C.sub, fontSize: 10, marginBottom: 5 }}>적용하면 새로 등록돼요. 속성은 기본 '추천만' — 배지를 탭하면 적용돼요(다시 탭해 변경/해제).</Text>
+                        <Text style={{ color: C.sub, fontSize: 10, marginBottom: 5 }}>적용하면 새로 등록돼요. 속성은 기본 '추천만' — 배지를 탭하면 적용·다시 탭해 변경, 길게 누르면 해제.</Text>
                         {newItems.map((it, i) => {
                           const on = it.checked; const applied = it.sent != null; const sm = sentMeta[applied ? it.sent : it.sentSuggest] || sentMeta.neutral;
                           return (
@@ -63587,7 +63622,7 @@ async function importJSON() {
                                   {on ? "✓ " : ""}{it.tag}{aiTagSuggestIntensity ? ` ·${it.intensity}` : ""}{it.similarTo ? `  ↔ 비슷: ${it.similarTo}` : ""}
                                 </Text>
                               </TouchableOpacity>
-                              <TouchableOpacity onPress={() => cycleAiTagSentiment(i)} style={{ paddingHorizontal: 9, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: sm.c, backgroundColor: applied ? sm.c : "transparent" }}>
+                              <TouchableOpacity onPress={() => cycleAiTagSentiment(i)} onLongPress={() => resetAiTagSentiment(i)} style={{ paddingHorizontal: 9, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: sm.c, backgroundColor: applied ? sm.c : "transparent" }}>
                                 <Text style={{ color: applied ? "#fff" : sm.c, fontSize: 11, fontWeight: "700" }}>{applied ? `${sm.t} ✓` : `추천 ${sm.t}`}</Text>
                               </TouchableOpacity>
                             </View>
@@ -63619,11 +63654,19 @@ async function importJSON() {
             {(() => {
               const cands = (list || []).filter(n => ((n.tags || "").split(",").filter(s => s.trim()).length) < batchThreshold);
               const hasResults = batchResults.length > 0;
+              const batchProvider = aiProvider === "gemini" ? "gemini" : "claude";
+              const batchHasKey = ((batchProvider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim().length > 0;
               return (
                 <>
                 <ScrollView showsVerticalScrollIndicator={false} style={{ flex: 1 }}>
                   {!hasResults && !batchBusy ? (
                     <View>
+                      {!batchHasKey ? (
+                        <View style={{ backgroundColor: isDark ? "#3f2d0f" : "#fef3c7", borderRadius: 10, padding: 10, marginBottom: 10, borderWidth: 1, borderColor: isDark ? "#b45309" : "#fcd34d" }}>
+                          <Text style={{ color: isDark ? "#fde68a" : "#92400e", fontSize: 12, fontWeight: "700" }}>⚠ {batchProvider === "gemini" ? "Gemini" : "Claude"} API 키가 없어요</Text>
+                          <Text style={{ color: isDark ? "#fde68a" : "#92400e", fontSize: 11, marginTop: 2 }}>설정 &gt; 🏷️ 태그에서 키를 먼저 입력해 주세요. (Gemini는 무료)</Text>
+                        </View>
+                      ) : null}
                       <Text style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>대상: 태그가 적은 작품</Text>
                       <View style={{ flexDirection: "row", gap: 6, marginBottom: 10 }}>
                         {[{ v: 1, l: "태그 없음" }, { v: 2, l: "2개 미만" }, { v: 4, l: "4개 미만" }].map(o => {
@@ -63634,12 +63677,12 @@ async function importJSON() {
                       <Text style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>어휘 범위</Text>
                       <View style={{ flexDirection: "row", gap: 6, marginBottom: 8 }}>
                         {[{ id: "mine", label: "내 태그만" }, { id: "std", label: "표준까지" }, { id: "new", label: "새 태그 허용" }].map(opt => {
-                          const on = aiTagVocabMode === opt.id;
-                          return (<TouchableOpacity key={opt.id} onPress={() => setAiTagVocabMode(opt.id)} style={{ flex: 1, paddingVertical: 7, borderRadius: 8, alignItems: "center", backgroundColor: on ? C.primary : C.bg, borderWidth: 1, borderColor: on ? C.primary : C.line }}><Text style={{ color: on ? "#fff" : C.sub, fontWeight: "700", fontSize: 11 }}>{opt.label}</Text></TouchableOpacity>);
+                          const on = batchVocabMode === opt.id;
+                          return (<TouchableOpacity key={opt.id} onPress={() => setBatchVocabMode(opt.id)} style={{ flex: 1, paddingVertical: 7, borderRadius: 8, alignItems: "center", backgroundColor: on ? C.primary : C.bg, borderWidth: 1, borderColor: on ? C.primary : C.line }}><Text style={{ color: on ? "#fff" : C.sub, fontWeight: "700", fontSize: 11 }}>{opt.label}</Text></TouchableOpacity>);
                         })}
                       </View>
-                      <TouchableOpacity onPress={() => setAiTagSuggestIntensity(v => !v)} style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 }}>
-                        <View style={{ width: 18, height: 18, borderRadius: 5, borderWidth: 2, borderColor: aiTagSuggestIntensity ? C.primary : C.line, backgroundColor: aiTagSuggestIntensity ? C.primary : "transparent", alignItems: "center", justifyContent: "center" }}>{aiTagSuggestIntensity ? <Text style={{ color: "#fff", fontSize: 11, fontWeight: "900" }}>✓</Text> : null}</View>
+                      <TouchableOpacity onPress={() => setBatchIntensity(v => !v)} style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                        <View style={{ width: 18, height: 18, borderRadius: 5, borderWidth: 2, borderColor: batchIntensity ? C.primary : C.line, backgroundColor: batchIntensity ? C.primary : "transparent", alignItems: "center", justifyContent: "center" }}>{batchIntensity ? <Text style={{ color: "#fff", fontSize: 11, fontWeight: "900" }}>✓</Text> : null}</View>
                         <Text style={{ color: C.sub, fontSize: 12 }}>태그 강도(1~5)도 제안</Text>
                       </TouchableOpacity>
                       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
@@ -63660,8 +63703,8 @@ async function importJSON() {
                         );
                       })}
                       <Text style={{ color: C.sub, fontSize: 10, marginTop: 8 }}>선택 작품을 하나씩 분석해요(무료 한도 보호로 최대 20개). 제목·작가·이미 단 태그만 전송.</Text>
-                      <TouchableOpacity disabled={!batchSelIds.size} onPress={() => runBatchTagSuggest(cands.filter(n => batchSelIds.has(n.id)).slice(0, 20))} style={{ backgroundColor: batchSelIds.size ? (isDark ? "#3730a3" : "#4338ca") : C.line, borderRadius: 12, paddingVertical: 13, alignItems: "center", marginTop: 10, marginBottom: 30 }}>
-                        <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>추천 시작 ({Math.min(batchSelIds.size, 20)}개)</Text>
+                      <TouchableOpacity disabled={!batchSelIds.size || !batchHasKey} onPress={() => runBatchTagSuggest(cands.filter(n => batchSelIds.has(n.id)).slice(0, 20))} style={{ backgroundColor: (batchSelIds.size && batchHasKey) ? (isDark ? "#3730a3" : "#4338ca") : C.line, borderRadius: 12, paddingVertical: 13, alignItems: "center", marginTop: 10, marginBottom: 30 }}>
+                        <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>{batchHasKey ? `추천 시작 (${Math.min(batchSelIds.size, 20)}개)` : "API 키 필요"}</Text>
                       </TouchableOpacity>
                     </View>
                   ) : null}
@@ -63708,20 +63751,20 @@ async function importJSON() {
                                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 5 }}>
                                   {sg[sec.kind].map((it, i) => { const label = (sec.kind === "tagsExisting") ? it.tag : it.name; const on = it.checked; return (
                                     <TouchableOpacity key={label + i} onPress={() => toggleBatchItem(wi, sec.kind, i)} style={{ paddingHorizontal: 9, paddingVertical: 5, borderRadius: 14, backgroundColor: on ? (isDark ? "#3730a3" : "#eef2ff") : C.bg, borderWidth: 1, borderColor: on ? (isDark ? "#6366f1" : "#c7d2fe") : C.line }}>
-                                      <Text style={{ color: on ? (isDark ? "#c7d2fe" : "#4338ca") : C.sub, fontSize: 12, fontWeight: on ? "700" : "500" }}>{on ? "✓ " : ""}{label}{sec.kind === "tagsExisting" && aiTagSuggestIntensity ? ` ·${it.intensity}` : ""}</Text>
+                                      <Text style={{ color: on ? (isDark ? "#c7d2fe" : "#4338ca") : C.sub, fontSize: 12, fontWeight: on ? "700" : "500" }}>{on ? "✓ " : ""}{label}{sec.kind === "tagsExisting" && batchIntensity ? ` ·${it.intensity}` : ""}</Text>
                                     </TouchableOpacity>); })}
                                 </View>
                               </View>
                             ) : null)}
                             {sg.tagsNew.length > 0 ? (
                               <View>
-                                <Text style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>태그·신규 (속성 추천만 · 배지 탭 적용)</Text>
+                                <Text style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>태그·신규 (속성 추천만 · 배지 탭 적용 · 길게눌러 해제)</Text>
                                 {sg.tagsNew.map((it, i) => { const on = it.checked; const applied = it.sent != null; const sm = ({ positive: { t: "긍정", c: isDark ? "#4ade80" : "#16a34a" }, negative: { t: "부정", c: isDark ? "#f87171" : "#dc2626" }, neutral: { t: "중립", c: C.sub } })[applied ? it.sent : it.sentSuggest] || { t: "중립", c: C.sub }; return (
                                   <View key={it.tag + i} style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 5 }}>
                                     <TouchableOpacity onPress={() => toggleBatchItem(wi, "tagsNew", i)} style={{ flex: 1, paddingHorizontal: 9, paddingVertical: 5, borderRadius: 8, backgroundColor: on ? (isDark ? "#3730a3" : "#eef2ff") : C.bg, borderWidth: 1, borderColor: on ? (isDark ? "#6366f1" : "#c7d2fe") : C.line }}>
-                                      <Text style={{ color: on ? (isDark ? "#c7d2fe" : "#4338ca") : C.sub, fontSize: 12, fontWeight: on ? "700" : "500" }}>{on ? "✓ " : ""}{it.tag}{aiTagSuggestIntensity ? ` ·${it.intensity}` : ""}{it.similarTo ? ` ↔ 비슷:${it.similarTo}` : ""}</Text>
+                                      <Text style={{ color: on ? (isDark ? "#c7d2fe" : "#4338ca") : C.sub, fontSize: 12, fontWeight: on ? "700" : "500" }}>{on ? "✓ " : ""}{it.tag}{batchIntensity ? ` ·${it.intensity}` : ""}{it.similarTo ? ` ↔ 비슷:${it.similarTo}` : ""}</Text>
                                     </TouchableOpacity>
-                                    <TouchableOpacity onPress={() => cycleBatchSentiment(wi, i)} style={{ paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: sm.c, backgroundColor: applied ? sm.c : "transparent" }}>
+                                    <TouchableOpacity onPress={() => cycleBatchSentiment(wi, i)} onLongPress={() => resetBatchSentiment(wi, i)} style={{ paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: sm.c, backgroundColor: applied ? sm.c : "transparent" }}>
                                       <Text style={{ color: applied ? "#fff" : sm.c, fontSize: 10.5, fontWeight: "700" }}>{applied ? `${sm.t}✓` : `추천 ${sm.t}`}</Text>
                                     </TouchableOpacity>
                                   </View>); })}
