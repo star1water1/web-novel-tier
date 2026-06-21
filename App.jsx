@@ -2,9 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.34 (보충·예정탭 AI 태그 추천 추가)                              ║
+ * ║  버전: 7.28.35 (취향분석 — 작가 종합 평가: 표본 보정·일관성)                ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 63,750줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 63,790줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📊 v7.28.35 취향분석 — 고평가 작가를 '점수 단독'이 아니라 종합 평가 (06-21)  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ "고평가 작가"가 평균점수 편향(ratingBias) 한 값으로만 줄 서던 걸 보완.        ║
+ * ║ [표본 보정] adjBias = 수축평균(shrunkMean, k=4) − 전역평균 → 표본 적은        ║
+ * ║   작가의 극단 편향을 자동 완화. 판단·라벨을 adjBias로(점수 척도 무관).        ║
+ * ║ [일관성] 작가 점수 편차(std)를 라이브러리 전체 편차와 비교 → 🎯 꾸준한 평가 / ║
+ * ║   🌗 기복 있음 칩. (표본 3+ 일 때만)                                          ║
+ * ║ [표본] 5작 미만은 '표본 N작' 칩. '신뢰도순' 토글이 작가 목록에도 적용         ║
+ * ║   (adjRating 정렬). ※ 인사이트·이상치는 이미 평균±1σ 상대 + 행동신호 기반.    ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -29578,16 +29590,18 @@ const TasteAnalysisScreen = memo(({
           <Text style={{ color: C.sub, fontSize: 12, marginBottom: 12 }}>
             2작품 이상 읽은 작가 · 평점 편향 분석
           </Text>
-          {loyalAuthors.slice(0, 7).map((a, i) => {
-            // 점수 편향 표시 — 🔧 v7.20.6: tier 모드는 점수 델타 대신 질적 표현
+          {sortByConfidence(loyalAuthors).slice(0, 7).map((a, i) => {
+            // 🆕 v7.28.35: 점수 단독이 아니라 표본 보정 편향(adjBias)으로 판단 — 표본 적으면 자동 완화.
+            const dispBias = a.adjBias != null ? a.adjBias : a.ratingBias;
+            const small = a.count < SMALL_SAMPLE;
             const biasText = isTierMode
-              ? (a.ratingBias > 10 ? "고평가 경향" : a.ratingBias < -10 ? "저평가 경향" : "평균 수준")
-              : (a.ratingBias > 0
-                  ? `+${a.ratingBias.toFixed(0)}점 고평가`
-                  : a.ratingBias < -10
-                    ? `${a.ratingBias.toFixed(0)}점 저평가`
+              ? (dispBias > 10 ? "고평가 경향" : dispBias < -10 ? "저평가 경향" : "평균 수준")
+              : (dispBias > 5
+                  ? `+${dispBias.toFixed(0)}점 고평가`
+                  : dispBias < -10
+                    ? `${dispBias.toFixed(0)}점 저평가`
                     : "평균 수준");
-            const biasColor = a.ratingBias > 20 ? C.ok : a.ratingBias < -20 ? C.warn : C.sub;
+            const biasColor = dispBias > 20 ? C.ok : dispBias < -20 ? C.warn : C.sub;
 
             // 작품 목록 (점수 포함) — 🔧 v7.20.6: tier 모드는 티어 라벨
             const novelList = a.novels.slice(0, 3).map(n =>
@@ -29628,6 +29642,22 @@ const TasteAnalysisScreen = memo(({
                       {biasText}
                     </Text>
                   </View>
+                  {/* 🆕 v7.28.35: 일관성(편차) · 표본 칩 — 점수만이 아니라 꾸준함/신뢰도도 함께 */}
+                  {a.consistency === "high" && (
+                    <View style={{ backgroundColor: isDark ? "#064e3b" : "#d1fae5", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12, marginLeft: 6 }}>
+                      <Text style={{ color: isDark ? "#6ee7b7" : "#047857", fontSize: 11, fontWeight: "700" }}>🎯 꾸준한 평가</Text>
+                    </View>
+                  )}
+                  {a.consistency === "low" && (
+                    <View style={{ backgroundColor: isDark ? "#3f3f46" : "#f4f4f5", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12, marginLeft: 6 }}>
+                      <Text style={{ color: C.sub, fontSize: 11, fontWeight: "700" }}>🌗 기복 있음</Text>
+                    </View>
+                  )}
+                  {small && (
+                    <View style={{ backgroundColor: isDark ? "#422006" : "#fef3c7", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12, marginLeft: 6 }}>
+                      <Text style={{ color: isDark ? "#fcd34d" : "#b45309", fontSize: 11, fontWeight: "700" }}>표본 {a.count}작</Text>
+                    </View>
+                  )}
                   {/* 🆕 v7.0.4: 작가 단위 연중 비율 칩 (count≥3 AND rate≥40% 시) */}
                   {a.tooManyDiscontinued && (
                     <View style={{
@@ -32463,6 +32493,9 @@ async function analyzePreferences(novels, matches) {
     authorStats[author].totalEpisodes += Number(n.total_episodes) || 0;
   }
   
+  // 🆕 v7.28.35: 작가 종합 분석 보강 — 점수 단독이 아니라 표본 보정(수축평균)·일관성(편차)도 본다.
+  const stdOf = (arr) => { if (!arr || arr.length < 2) return 0; const m = avg(arr); return Math.sqrt(arr.reduce((s, x) => s + (x - m) * (x - m), 0) / arr.length); };
+  const authorGlobalStd = stdOf(reliable.map(n => n.prefScore)); // 라이브러리 전체 점수 편차(척도 기준)
   // 작가별 특징 분석
   const loyalAuthors = Object.entries(authorStats)
     .filter(([_, stat]) => stat.count >= 2)
@@ -32501,6 +32534,14 @@ async function analyzePreferences(novels, matches) {
       const tooManyDiscontinued = stat.count >= 3 && discontinuedRate >= 0.40;
       if (tooManyDiscontinued) features.push(`연중 비율 높음 (${stat.discontinuedCount}/${stat.count})`);
 
+      // 🆕 v7.28.35: 표본 보정 편향(수축평균) + 일관성(점수 편차) — 표본 적은 극단값을 완화하고,
+      //   꾸준히 고평가 vs 들쭉날쭉을 구분(전역 편차 대비 판정이라 점수 척도 무관).
+      const adj = shrunkMean(stat.ratings, basicStats.avgRating);
+      const rstd = stdOf(stat.ratings);
+      const consistency = (stat.count >= 3 && authorGlobalStd > 0)
+        ? (rstd <= authorGlobalStd * 0.6 ? "high" : rstd >= authorGlobalStd * 1.2 ? "low" : "mid")
+        : null;
+
       return {
         author,
         count: stat.count,
@@ -32516,8 +32557,12 @@ async function analyzePreferences(novels, matches) {
         tooManyDiscontinued,
         totalRead: stat.totalRead,
         features: features.join(" · ") || "분석 중",
-        // 점수 편향 (평균 대비)
+        // 점수 편향 (평균 대비) — raw + 표본 보정
         ratingBias: avg(stat.ratings) - basicStats.avgRating,
+        adjRating: adj,                                  // 🆕 신뢰도 정렬 키(수축평균)
+        adjBias: adj - basicStats.avgRating,             // 🆕 표본 보정 편향(판단은 이걸로)
+        ratingStd: rstd,                                 // 🆕 점수 편차
+        consistency,                                     // 🆕 "high"|"mid"|"low"|null
       };
     })
     .sort((a, b) => b.avgRating - a.avgRating);
