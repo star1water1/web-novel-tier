@@ -2,9 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.18 (일괄 태그 사용성 — 설정분리·길게눌러해제·키 사전안내)       ║
+ * ║  버전: 7.28.19 (AI 점검·좌표 배치 타임아웃 + 거절 이력 슬롯 격리)            ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 62,650줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 62,700줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛡️ v7.28.19 AI 호출 타임아웃 확대 + 거절 이력 슬롯 격리 (2026-06-21)         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [타임아웃 확대] v7.28.17은 태그 추천만 보호 → AI 유의어 점검·좌표 자동배치    ║
+ * ║ 호출(callClaude/GeminiForSynonyms·Placements)도 30초 타임아웃 추가. 응답이    ║
+ * ║ 없을 때 '점검 중'·'배치 중'에 무한 갇히지 않고 오류로 빠져나옴.               ║
+ * ║                                                                              ║
+ * ║ [거절 이력 슬롯 격리] 유의어/상반 '거절' 이력(dismissed)이 슬롯 전환 시       ║
+ * ║ 재로딩 안 돼(마운트 effect []), 이전 슬롯 쌍이 잔류→새 슬롯 app_meta에         ║
+ * ║ 교차오염되던 누수 수정. 슬롯 전환 핸들러에서 새 슬롯 값으로 재로딩.           ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12754,17 +12766,25 @@ async function callClaudeForSynonyms(tags, apiKey, model = SYNONYM_AI_MODEL, con
       required: ["groups"],
     },
   };
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({
-      model,
-      max_tokens: context.maxTokens || 4096, // 🆕 v7.28.11: 넓게 점검 시 상향(잘림 방지)
-      tools: [tool],
-      tool_choice: { type: "tool", name: "report_synonyms" },
-      messages: [{ role: "user", content: promptText }],
-    }),
-  });
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: 30000 }); // 🆕 v7.28.19: 행 방지(30초)
+  let res;
+  try {
+    res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model,
+        max_tokens: context.maxTokens || 4096, // 🆕 v7.28.11: 넓게 점검 시 상향(잘림 방지)
+        tools: [tool],
+        tool_choice: { type: "tool", name: "report_synonyms" },
+        messages: [{ role: "user", content: promptText }],
+      }),
+      signal,
+    });
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error("응답이 없어 중단했어요 (시간 초과)");
+    throw e;
+  } finally { cleanup(); }
   if (!res.ok) {
     let detail = "";
     try { detail = (await res.json())?.error?.message || ""; } catch {}
@@ -12786,7 +12806,10 @@ async function callGeminiForSynonyms(tags, apiKey, model = GEMINI_AI_MODEL, cont
   if (!tags || tags.length === 0) return { groups: [], opposites: [] };
   const promptText = buildSynonymPromptText(tags, context);
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-  const res = await fetch(url, {
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: 30000 }); // 🆕 v7.28.19: 행 방지(30초)
+  let res;
+  try {
+    res = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -12830,7 +12853,12 @@ async function callGeminiForSynonyms(tags, apiKey, model = GEMINI_AI_MODEL, cont
         },
       },
     }),
-  });
+      signal,
+    });
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error("응답이 없어 중단했어요 (시간 초과)");
+    throw e;
+  } finally { cleanup(); }
   if (!res.ok) {
     let detail = "";
     try { detail = (await res.json())?.error?.message || ""; } catch {}
@@ -12896,17 +12924,25 @@ async function callClaudeForPlacements(tags, apiKey, model = SYNONYM_AI_MODEL, c
       required: ["placements"],
     },
   };
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({
-      model,
-      max_tokens: context.maxTokens || 4096,
-      tools: [tool],
-      tool_choice: { type: "tool", name: "report_placements" },
-      messages: [{ role: "user", content: promptText }],
-    }),
-  });
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: 30000 }); // 🆕 v7.28.19: 행 방지(30초)
+  let res;
+  try {
+    res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model,
+        max_tokens: context.maxTokens || 4096,
+        tools: [tool],
+        tool_choice: { type: "tool", name: "report_placements" },
+        messages: [{ role: "user", content: promptText }],
+      }),
+      signal,
+    });
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error("응답이 없어 중단했어요 (시간 초과)");
+    throw e;
+  } finally { cleanup(); }
   if (!res.ok) {
     let detail = "";
     try { detail = (await res.json())?.error?.message || ""; } catch {}
@@ -12925,7 +12961,10 @@ async function callGeminiForPlacements(tags, apiKey, model = GEMINI_AI_MODEL, co
   if (!tags || tags.length === 0) return { placements: [] };
   const promptText = buildPlacementPromptText(tags, context);
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-  const res = await fetch(url, {
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: 30000 }); // 🆕 v7.28.19: 행 방지(30초)
+  let res;
+  try {
+    res = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -12957,7 +12996,12 @@ async function callGeminiForPlacements(tags, apiKey, model = GEMINI_AI_MODEL, co
         },
       },
     }),
-  });
+      signal,
+    });
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error("응답이 없어 중단했어요 (시간 초과)");
+    throw e;
+  } finally { cleanup(); }
   if (!res.ok) {
     let detail = "";
     try { detail = (await res.json())?.error?.message || ""; } catch {}
@@ -14590,7 +14634,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.18";
+const APP_VERSION = "7.28.19";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -14616,6 +14660,15 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.19", date: "2026-06-21",
+    title: "🛡️ AI 점검·배치 안정화",
+    highlights: [
+      { type: "fix", text: "⏱️ AI 유의어 점검과 좌표계 자동 배치도 30초 타임아웃이 생겼어요. 응답이 없을 때 '점검 중'·'배치 중' 화면에 무한정 갇히지 않고 오류로 안내돼요. (태그 추천에 이어 확대 적용)" },
+      { type: "fix", text: "🗂️ 유의어/상반 '거절' 기록이 슬롯을 바꿔도 섞이지 않게 고쳤어요. 이전엔 다른 슬롯의 거절 기록이 남아 현재 슬롯에 잘못 저장될 수 있었어요." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.18", date: "2026-06-21",
     title: "🎨 일괄 태그 더 쓰기 편하게",
@@ -35119,6 +35172,14 @@ function AppContent() {
         getAppMeta("tag_last_tab"),            // 22
         getAppMeta("tag_preview_expanded"),    // 23
       ]);
+
+      // 🆕 v7.28.19: AI 유의어/상반 거절 이력도 슬롯 격리 (마운트 effect는 []이라 슬롯 전환 시 미갱신 →
+      //   이전 슬롯 거절 쌍이 잔류해 새 슬롯 app_meta에 교차오염되던 누수 차단). 새 슬롯 값으로 교체.
+      try {
+        const [synD, oppD] = await Promise.all([getAppMeta("synonym_dismissed"), getAppMeta("opposite_dismissed")]);
+        setDismissedSynPairs(new Set(Array.isArray(synD) ? synD : []));
+        setDismissedOppPairs(new Set(Array.isArray(oppD) ? oppD : []));
+      } catch {}
 
       // 5. state 복원 (간소화 — 핵심 데이터만)
       if (savedPlatformCovers && typeof savedPlatformCovers === "object") setPlatformCovers(savedPlatformCovers);
