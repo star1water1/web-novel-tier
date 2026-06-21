@@ -2,9 +2,20 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.19 (AI 점검·좌표 배치 타임아웃 + 거절 이력 슬롯 격리)            ║
+ * ║  버전: 7.28.20 (AI 키·제공자 전역 공유 — 모든 슬롯에서 동작)                 ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 62,700줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 62,720줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🌐 v7.28.20 AI 키·제공자·넓게점검 전역 공유 (2026-06-21)                     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ AI 키/제공자/넓게점검을 슬롯 DB(app_meta)→전역 파일(ai_config.json)로 이전.  ║
+ * ║ 한 번 입력하면 모든 슬롯에서 동작·일관(슬롯 전환/재시작과 무관). 슬롯 전환    ║
+ * ║ 시 미갱신으로 값이 어긋나던 문제 해소. 기존 per-slot 값은 첫 실행 시 1회       ║
+ * ║ 마이그레이션. 전역 파일은 슬롯 DB가 아니라 백업에도 미포함(보안 유지).        ║
+ * ║ saveClaude/Gemini/Provider/WideScan → saveGlobalAiConfig. (거절 이력은        ║
+ * ║ 슬롯 데이터이므로 v7.28.19대로 슬롯별 격리 유지)                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -6720,6 +6731,27 @@ async function saveSlotMeta(meta) {
   } catch (e) {
     console.warn("슬롯 메타 저장 실패:", e);
   }
+}
+
+// 🆕 v7.28.20: AI 설정(키·제공자·넓게점검)은 슬롯과 무관한 '전역' — 한 번 입력하면 모든 슬롯에서 동작.
+//   슬롯 DB(app_meta)가 아닌 전역 파일에 저장 → 슬롯 전환·백업 복원과 독립. (백업에도 미포함 유지)
+const GLOBAL_AI_CONFIG_PATH = FileSystem.documentDirectory + "ai_config.json";
+async function loadGlobalAiConfig() {
+  try {
+    const info = await FileSystem.getInfoAsync(GLOBAL_AI_CONFIG_PATH);
+    if (!info.exists) return null;
+    const raw = await FileSystem.readAsStringAsync(GLOBAL_AI_CONFIG_PATH);
+    const cfg = JSON.parse(raw);
+    return (cfg && typeof cfg === "object") ? cfg : null;
+  } catch (e) { console.warn("AI 설정 로드 실패:", e?.message); return null; }
+}
+async function saveGlobalAiConfig(patch) {
+  try {
+    const cur = (await loadGlobalAiConfig()) || {};
+    const next = { ...cur, ...patch };
+    await FileSystem.writeAsStringAsync(GLOBAL_AI_CONFIG_PATH, JSON.stringify(next));
+    return next;
+  } catch (e) { console.warn("AI 설정 저장 실패:", e?.message); return null; }
 }
 
 // 슬롯 생성 (이름 지정, 다음 빈 ID 자동 할당)
@@ -14634,7 +14666,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.19";
+const APP_VERSION = "7.28.20";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -14660,6 +14692,15 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.20", date: "2026-06-21",
+    title: "🌐 AI 키, 모든 슬롯에서 공유",
+    highlights: [
+      { type: "improve", text: "🔑 AI API 키·제공자·'넓게 점검' 설정을 한 번만 입력하면 모든 데이터 슬롯에서 그대로 동작해요. 슬롯을 바꿔도 다시 입력할 필요가 없어요. (기존에 입력한 키는 자동으로 옮겨와요)" },
+      { type: "improve", text: "🔒 키는 여전히 기기에만 저장되고 백업에는 포함되지 않아요." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.19", date: "2026-06-21",
     title: "🛡️ AI 점검·배치 안정화",
@@ -39144,32 +39185,32 @@ function AppContent() {
     } catch (e) { Alert.alert("적용 실패", e?.message || String(e)); }
   }
 
-  // 🤖 v7.27.0: Claude API 키 저장 (app_meta — 슬롯 DB, 백업엔 미포함)
+  // 🤖 v7.27.0: Claude API 키 저장 · 🆕 v7.28.20: 전역 파일(모든 슬롯 공유, 백업엔 미포함)
   async function saveClaudeApiKey(key) {
     const k = (key || "").trim();
     setClaudeApiKey(k);
-    try { await setAppMeta("claude_api_key", k); } catch (e) { console.warn("[ai] 키 저장 실패:", e?.message); }
+    try { await saveGlobalAiConfig({ claude_api_key: k }); } catch (e) { console.warn("[ai] 키 저장 실패:", e?.message); }
   }
 
-  // 🆕 v7.28.9: Gemini API 키 저장 (무료 대안 — app_meta, 백업엔 미포함)
+  // 🆕 v7.28.9: Gemini API 키 저장 (무료 대안) · 🆕 v7.28.20: 전역 파일
   async function saveGeminiApiKey(key) {
     const k = (key || "").trim();
     setGeminiApiKey(k);
-    try { await setAppMeta("gemini_api_key", k); } catch (e) { console.warn("[ai] Gemini 키 저장 실패:", e?.message); }
+    try { await saveGlobalAiConfig({ gemini_api_key: k }); } catch (e) { console.warn("[ai] Gemini 키 저장 실패:", e?.message); }
   }
 
-  // 🆕 v7.28.9: AI 제공자 선택 저장 (claude | gemini)
+  // 🆕 v7.28.9: AI 제공자 선택 저장 (claude | gemini) · 🆕 v7.28.20: 전역 파일
   async function saveAiProvider(p) {
     const v = p === "gemini" ? "gemini" : "claude";
     setAiProvider(v);
-    try { await setAppMeta("ai_synonym_provider", v); } catch (e) { console.warn("[ai] 제공자 저장 실패:", e?.message); }
+    try { await saveGlobalAiConfig({ ai_provider: v }); } catch (e) { console.warn("[ai] 제공자 저장 실패:", e?.message); }
   }
 
-  // 🆕 v7.28.11: '넓게 점검' 토글 저장 (1회 태그 포함 + 상한 400 + 응답 상한 상향)
+  // 🆕 v7.28.11: '넓게 점검' 토글 저장 · 🆕 v7.28.20: 전역 파일
   async function saveAiWideScan(v) {
     const on = !!v;
     setAiWideScan(on);
-    try { await setAppMeta("ai_wide_scan", on); } catch (e) { console.warn("[ai] 넓게 점검 저장 실패:", e?.message); }
+    try { await saveGlobalAiConfig({ ai_wide_scan: on }); } catch (e) { console.warn("[ai] 넓게 점검 저장 실패:", e?.message); }
   }
 
   // 🤖 v7.27.0: AI 유의어 점검 — 자기 키로 호출, 결과를 후보 목록에 병합 (🆕 v7.28.9: 제공자 분기 Claude/Gemini)
@@ -39346,13 +39387,34 @@ function AppContent() {
     }
   }, [screen]);
 
-  // 🤖 v7.27.0: AI 유의어 점검용 키/제공자 로드 (슬롯 DB의 app_meta) — 🆕 v7.28.9: Gemini·제공자 추가
+  // 🤖 v7.27.0: AI 키/제공자 로드 — 🆕 v7.28.20: 전역 파일(모든 슬롯 공유)에서 로드.
+  //   슬롯 무관이라 슬롯 전환 시 갱신 불필요(상태 유지). 기존 per-slot app_meta는 1회 마이그레이션.
   useEffect(() => {
     (async () => {
-      try { const k = await getAppMeta("claude_api_key"); setClaudeApiKey(typeof k === "string" ? k : ""); } catch {}
-      try { const gk = await getAppMeta("gemini_api_key"); setGeminiApiKey(typeof gk === "string" ? gk : ""); } catch {}
-      try { const p = await getAppMeta("ai_synonym_provider"); if (p === "gemini" || p === "claude") setAiProvider(p); } catch {}
-      try { const w = await getAppMeta("ai_wide_scan"); if (typeof w === "boolean") setAiWideScan(w); } catch {} // 🆕 v7.28.11
+      let cfg = await loadGlobalAiConfig();
+      if (!cfg) {
+        // 마이그레이션: 기존 per-slot app_meta → 전역 (값이 실제로 있을 때만 전역 파일 생성)
+        try {
+          const [k, gk, p, w] = await Promise.all([
+            getAppMeta("claude_api_key"), getAppMeta("gemini_api_key"),
+            getAppMeta("ai_synonym_provider"), getAppMeta("ai_wide_scan"),
+          ]);
+          const migrated = {
+            claude_api_key: typeof k === "string" ? k : "",
+            gemini_api_key: typeof gk === "string" ? gk : "",
+            ai_provider: (p === "gemini" || p === "claude") ? p : "gemini",
+            ai_wide_scan: typeof w === "boolean" ? w : false,
+          };
+          if (migrated.claude_api_key || migrated.gemini_api_key || p === "claude" || p === "gemini" || typeof w === "boolean") {
+            await saveGlobalAiConfig(migrated);
+          }
+          cfg = migrated;
+        } catch { cfg = {}; }
+      }
+      setClaudeApiKey(typeof cfg.claude_api_key === "string" ? cfg.claude_api_key : "");
+      setGeminiApiKey(typeof cfg.gemini_api_key === "string" ? cfg.gemini_api_key : "");
+      if (cfg.ai_provider === "gemini" || cfg.ai_provider === "claude") setAiProvider(cfg.ai_provider);
+      if (typeof cfg.ai_wide_scan === "boolean") setAiWideScan(cfg.ai_wide_scan);
     })();
   }, []);
 
