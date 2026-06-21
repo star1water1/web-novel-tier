@@ -2,9 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.14 (AI 태그 추천 — 작품 추가/편집 시 장르·태그·강도 제안)        ║
+ * ║  버전: 7.28.15 (AI 태그 추천 정밀화 — few-shot·기존/신규 분리·신규 속성)     ║
  * ║  최종 수정: 2026-06-20                                                        ║
  * ║  총 라인 수: 약 62,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🏷️ v7.28.15 AI 태그 추천 정밀화 — few-shot·기존/신규 분리·속성 (2026-06-20)║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [정밀 보정] 옵트인 — 비슷한 내 작품(작가>대장르>태그풍부) 3개의 제목→태그를 ║
+ * ║ few-shot 주입 → 내 실제 태깅 모방. [어휘 범위 3단] 내 태그만/표준까지/새 태그.║
+ * ║                                                                              ║
+ * ║ [기존/신규 분리] 태그를 '기존(내 어휘)'·'신규(없음)'로 나눠 제시. 신규는     ║
+ * ║ 속성(긍정/중립/부정)까지 제안(탭 조정)·기본 미체크. 적용 시 커스텀 등록 +    ║
+ * ║ 속성 일괄 저장(stale-closure 방지). 기존 속성은 불변.                        ║
+ * ║                                                                              ║
+ * ║ [가드] 기존 태그 변형은 '↔비슷:X' 경고(난립 방지)·속성 대부분 중립 유도·     ║
+ * ║ 예시 태그 10개 cap. 전송은 태그·축 외 제목+예시(옵트인 시).                  ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -12942,9 +12956,16 @@ function buildTaggingPrompt(context = {}) {
     if (c.profile.avgTags) s += `\n- 작품당 보통 ${c.profile.avgTags}개 정도 답니다.`;
     if (Array.isArray(c.profile.topTags) && c.profile.topTags.length) s += `\n- 자주 쓰는 태그: ${c.profile.topTags.join(", ")}`;
   }
+  if (Array.isArray(c.examples) && c.examples.length) {
+    s += `\n\n[이 사용자가 비슷한 작품을 태깅한 예시 — 어휘·개수·결을 이대로 따라하세요]`;
+    for (const ex of c.examples.slice(0, 4)) s += `\n- 「${ex.title}」${ex.author ? `(${ex.author})` : ""} → ${(ex.tags || []).slice(0, 10).join(", ")}`;
+  }
   if (Array.isArray(c.majorOptions) && c.majorOptions.length) s += `\n\n대장르는 다음 중에서만 고르세요: ${c.majorOptions.join(", ")}`;
   if (Array.isArray(c.subOptions) && c.subOptions.length) s += `\n부장르는 다음 중에서만 고르세요: ${c.subOptions.join(", ")}`;
   s += `\n\n대장르(majorGenres)·부장르(subGenres)·일반 태그(tags)로 나눠 추천하세요. 확실한 것 위주로, 애매하면 confidence를 low로. 작품을 모르면 지어내지 말고 적게 답하세요. 일반 태그는 위 '자주 쓰는 태그' 스타일을 우선 활용하세요.`;
+  if (c.allowNew) s += ` 목록·어휘에 없는 새 태그도 꼭 필요할 때만 제안 가능하되 남발 금지, 기존 태그의 변형(예: '먼치킨'이 있는데 '먼치킨물')은 만들지 마세요.`;
+  else s += ` 알려진 일반적인 태그 위주로만 제안하세요.`;
+  s += ` 각 일반 태그에 sentiment(positive/neutral/negative)도 매기되, 대부분은 neutral입니다. 명확히 좋게 받아들여지는 것(예: 사이다=positive)·나쁘게 받아들여지는 것(예: 고구마=negative)만 valence를 주세요.`;
   if (c.wantIntensity) s += ` 각 일반 태그에 작품 내 강도 intensity(1~5)도 매기세요(애매하면 3).`;
   return s;
 }
@@ -12968,6 +12989,7 @@ async function callClaudeForTagging(context = {}, apiKey, model = SYNONYM_AI_MOD
             properties: {
               tag: { type: "string", description: "태그명" },
               confidence: { type: "string", description: "확신도: high | med | low" },
+              sentiment: { type: "string", description: "감정 속성: positive | neutral | negative (대부분 neutral)" },
               intensity: { type: "integer", description: "작품 내 강도 1~5 (선택)" },
               reason: { type: "string", description: "짧은 근거" },
             },
@@ -13031,11 +13053,12 @@ async function callGeminiForTagging(context = {}, apiKey, model = GEMINI_AI_MODE
                 properties: {
                   tag: { type: "STRING" },
                   confidence: { type: "STRING" },
+                  sentiment: { type: "STRING" },
                   intensity: { type: "INTEGER" },
                   reason: { type: "STRING" },
                 },
                 required: ["tag"],
-                propertyOrdering: ["tag", "confidence", "intensity", "reason"],
+                propertyOrdering: ["tag", "confidence", "sentiment", "intensity", "reason"],
               },
             },
           },
@@ -14504,7 +14527,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.14";
+const APP_VERSION = "7.28.15";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -14530,6 +14553,16 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.15", date: "2026-06-20",
+    title: "🏷️ AI 태그 추천 더 똑똑하게 (정밀 보정·기존/신규 분리)",
+    highlights: [
+      { type: "new", text: "🎯 '정밀 보정'을 켜면, 비슷한 내 작품(같은 작가 우선)을 예시로 참고해 더 내 스타일에 가깝게 추천해요. 켤 때만 비슷한 작품의 제목·태그가 전송돼요(옵트인)." },
+      { type: "new", text: "🆕 추천 태그를 '기존(내 어휘)'과 '신규(내 어휘에 없음)'로 나눠 보여줘요. '어휘 범위'를 내 태그만/표준까지/새 태그 허용으로 고를 수 있어요 — 새 장르에 입문할 때 유용해요." },
+      { type: "new", text: "🎭 새 태그는 속성(긍정·중립·부정)까지 추천해줘서, 등록하자마자 취향 분석에 제대로 반영돼요. 배지를 탭해 바꿀 수 있고, 기존에 쓰던 태그가 있으면 '↔ 비슷: ○○'로 알려줘 중복 생성을 막아줘요. (기존 태그의 속성은 절대 안 건드려요)" },
+    ],
+    details: [],
+  },
   {
     version: "7.28.14", date: "2026-06-20",
     title: "🏷️ AI 태그 추천 (작품 추가·편집)",
@@ -32793,8 +32826,9 @@ function AppContent() {
   const [aiTagBusy, setAiTagBusy] = useState(false);
   const [aiTagSuggest, setAiTagSuggest] = useState(null); // { major:[{name,checked}], sub:[...], tags:[{tag,intensity,confidence,reason,checked}] }
   const [aiTagUseNote, setAiTagUseNote] = useState(false); // 옵트인: 감상도 전송
+  const [aiTagUseFewshot, setAiTagUseFewshot] = useState(false); // 🆕 v7.28.15 옵트인: 비슷한 내 작품 예시(제목+태그) 전송
   const [aiTagSuggestIntensity, setAiTagSuggestIntensity] = useState(false); // 강도 제안 토글
-  const [aiTagStdVocab, setAiTagStdVocab] = useState(false); // 표준 일반태그까지 포함
+  const [aiTagVocabMode, setAiTagVocabMode] = useState("mine"); // 🆕 v7.28.15 어휘 범위: "mine"(내 태그)|"std"(표준까지)|"new"(새 태그 허용)
   const [dismissedSynPairs, setDismissedSynPairs] = useState(() => new Set()); // 🔧 v7.28.0: 유의어 후보 거절 이력 (로컬·AI 공통)
   const [dismissedOppPairs, setDismissedOppPairs] = useState(() => new Set()); // 🆕 v7.28.12: 상반 후보 거절 이력
   const [tagHealthBusy, setTagHealthBusy] = useState(false);
@@ -38638,49 +38672,82 @@ function AppContent() {
       }
       const topTags = [...freq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([k]) => disp.get(k));
       const avgTags = worksWithTags ? Math.max(2, Math.round(totalTagCount / worksWithTags)) : 0;
+      const usedKeys = new Set(disp.keys()); const usedList = [...disp.entries()];
       const majorVocab = (Array.isArray(userMajorGenres) && userMajorGenres.length ? userMajorGenres : FACTORY_MAJOR_GENRES);
       const subVocab = (Array.isArray(userSubGenres) && userSubGenres.length ? userSubGenres : FACTORY_SUB_GENRES);
       const majorMap = new Map(majorVocab.map(t => [normalizeTagKey(t), t]));
       const subMap = new Map(subVocab.map(t => [normalizeTagKey(t), t]));
-      // 일반 태그 허용: 사용 태그 + (표준 토글) 기본 일반태그
-      const generalMap = new Map();
-      for (const [k, d] of disp.entries()) generalMap.set(k, d);
-      if (aiTagStdVocab && typeof ALL_DEFAULT_TAGS !== "undefined" && Array.isArray(ALL_DEFAULT_TAGS)) {
-        for (const t of ALL_DEFAULT_TAGS) { const k = normalizeTagKey(t); if (!generalMap.has(k)) generalMap.set(k, t); }
+      // 표준 일반태그 키맵(장르 제외)
+      const stdMap = new Map();
+      if (typeof ALL_DEFAULT_TAGS !== "undefined" && Array.isArray(ALL_DEFAULT_TAGS)) for (const t of ALL_DEFAULT_TAGS) { const k = normalizeTagKey(t); if (!majorMap.has(k) && !subMap.has(k) && !stdMap.has(k)) stdMap.set(k, t); }
+      const mode = aiTagVocabMode === "std" ? "std" : aiTagVocabMode === "new" ? "new" : "mine";
+      const allowNew = mode === "new";
+      // 🆕 v7.28.15 few-shot 예시(옵트인): 같은 작가>같은 대장르>태그 풍부 순으로 3개
+      let examples = [];
+      if (aiTagUseFewshot) {
+        const curId = (aiTagTarget === "edit" && editItem) ? editItem.id : null;
+        const draftAuthorKey = (draft.author || "").trim().toLowerCase();
+        const draftMajorKeys = new Set(draft.major.map(t => normalizeTagKey(t)));
+        const scored = [];
+        for (const n of (list || [])) {
+          if (curId && n.id === curId) continue;
+          const tg = deduplicateTags([...parseMajorSub(n.major_genre), ...parseMajorSub(n.sub_genre), ...((n.tags || "").split(",").map(t => t.trim()).filter(Boolean))]);
+          if (tg.length < 2) continue;
+          let sc = Math.min(tg.length, 8) * 0.1;
+          if (draftAuthorKey && (n.author || "").trim().toLowerCase() === draftAuthorKey) sc += 5;
+          if (draftMajorKeys.size) { const nm = parseMajorSub(n.major_genre).map(t => normalizeTagKey(t)); if (nm.some(k => draftMajorKeys.has(k))) sc += 2; }
+          scored.push({ n, tg, sc });
+        }
+        scored.sort((a, b) => b.sc - a.sc);
+        examples = scored.slice(0, 3).map(({ n, tg }) => ({ title: n.title, author: n.author, tags: tg.slice(0, 10) }));
       }
       const existingTags = deduplicateTags((draft.tagsStr || "").split(",").map(t => t.trim()).filter(Boolean));
       const existingKeys = new Set(existingTags.map(t => normalizeTagKey(t)));
       const ctx = {
         title: draft.title, author: draft.author, existingTags,
         note: aiTagUseNote ? draft.note : null,
-        profile: { avgTags, topTags },
+        profile: { avgTags, topTags }, examples,
         majorOptions: majorVocab.slice(0, 40), subOptions: subVocab.slice(0, 60),
-        wantIntensity: aiTagSuggestIntensity,
+        wantIntensity: aiTagSuggestIntensity, allowNew,
       };
       const out = provider === "gemini"
         ? await callGeminiForTagging(ctx, key, GEMINI_AI_MODEL)
         : await callClaudeForTagging(ctx, key, SYNONYM_AI_MODEL);
-      // 분류·필터·정규화
+      // 분류·필터: 장르 / 기존(used) / 신규(표준 미사용·창작)
       const majSug = []; const subSug = []; const seenM = new Set(), seenS = new Set();
       const pushMajor = (name) => { const k = normalizeTagKey(name); if (!majorMap.has(k) || seenM.has(k) || existingKeys.has(k)) return; seenM.add(k); majSug.push({ name: majorMap.get(k), checked: true }); };
       const pushSub = (name) => { const k = normalizeTagKey(name); if (!subMap.has(k) || seenS.has(k) || existingKeys.has(k)) return; seenS.add(k); subSug.push({ name: subMap.get(k), checked: true }); };
       for (const m of (out.majorGenres || [])) pushMajor(m);
       for (const s of (out.subGenres || [])) pushSub(s);
-      const tagSug = []; const seenT = new Set();
+      const sentOf = (v) => { const x = String(v || "").toLowerCase(); return (x === "positive" || x === "negative") ? x : "neutral"; };
+      const findSimilarUsed = (k) => {
+        for (const [uk, ud] of usedList) {
+          if (uk === k) continue;
+          if (uk.length >= 2 && k.length >= 2 && (k.startsWith(uk) || uk.startsWith(k) || k.endsWith(uk) || uk.endsWith(k)) && Math.abs(uk.length - k.length) <= 3) return ud;
+          if (Math.max(uk.length, k.length) >= 3 && levenshtein(uk, k) <= 1) return ud;
+        }
+        return null;
+      };
+      const tagsExisting = []; const tagsNew = []; const seenT = new Set();
       for (const it of (out.tags || [])) {
         const name = it?.tag; if (!name) continue;
         const k = normalizeTagKey(name); if (!k || seenT.has(k) || existingKeys.has(k)) continue;
         if (majorMap.has(k)) { pushMajor(name); continue; } // 장르 오분류 재배치
         if (subMap.has(k)) { pushSub(name); continue; }
-        if (!generalMap.has(k)) continue; // 닫힌 어휘 (v1: 새 태그 제외)
         seenT.add(k);
         const conf = String(it.confidence || "med").toLowerCase();
         const intv = aiTagSuggestIntensity ? Math.min(5, Math.max(1, Math.round(Number(it.intensity) || 3))) : 3;
-        tagSug.push({ tag: generalMap.get(k), intensity: intv, confidence: conf, reason: it.reason ? String(it.reason) : "", checked: conf !== "low" });
+        if (usedKeys.has(k)) {
+          tagsExisting.push({ tag: disp.get(k), intensity: intv, confidence: conf, checked: conf !== "low" });
+        } else if (stdMap.has(k) && (mode === "std" || mode === "new")) {
+          tagsNew.push({ tag: stdMap.get(k), intensity: intv, confidence: conf, sentiment: sentOf(it.sentiment), needsRegister: false, similarTo: null, checked: false });
+        } else if (allowNew) {
+          tagsNew.push({ tag: name, intensity: intv, confidence: conf, sentiment: sentOf(it.sentiment), needsRegister: true, similarTo: findSimilarUsed(k), checked: false });
+        }
       }
-      const total = majSug.length + subSug.length + tagSug.length;
-      setAiTagSuggest({ major: majSug, sub: subSug, tags: tagSug });
-      if (!total) Alert.alert("AI 태그", "추천할 게 마땅치 않아요. 작품을 모르거나 어휘가 부족할 수 있어요. '표준 태그까지'를 켜거나 제목·작가를 확인해 주세요.");
+      const total = majSug.length + subSug.length + tagsExisting.length + tagsNew.length;
+      setAiTagSuggest({ major: majSug, sub: subSug, tagsExisting, tagsNew });
+      if (!total) Alert.alert("AI 태그", "추천할 게 마땅치 않아요. 작품을 모르거나 어휘가 부족할 수 있어요. '어휘 범위'를 넓히거나 제목·작가를 확인해 주세요.");
     } catch (e) {
       Alert.alert("AI 태그 실패", e?.message || String(e));
     } finally {
@@ -38697,24 +38764,37 @@ function AppContent() {
   function applyAiTagSuggestions() {
     const sug = aiTagSuggest;
     if (!sug) return;
-    const selMajor = sug.major.filter(x => x.checked).map(x => x.name);
-    const selSub = sug.sub.filter(x => x.checked).map(x => x.name);
-    const selTags = sug.tags.filter(x => x.checked);
-    if (!selMajor.length && !selSub.length && !selTags.length) { Alert.alert("AI 태그", "적용할 항목을 선택해 주세요."); return; }
+    const selMajor = (sug.major || []).filter(x => x.checked).map(x => x.name);
+    const selSub = (sug.sub || []).filter(x => x.checked).map(x => x.name);
+    const selExisting = (sug.tagsExisting || []).filter(x => x.checked);
+    const selNew = (sug.tagsNew || []).filter(x => x.checked);
+    if (!selMajor.length && !selSub.length && !selExisting.length && !selNew.length) { Alert.alert("AI 태그", "적용할 항목을 선택해 주세요."); return; }
     const target = aiTagTarget;
     const draft = readTagDraft(target);
     const majorSet = new Set(draft.major.map(t => normalizeTagKey(t)));
     const subSet = new Set(draft.sub.map(t => normalizeTagKey(t)));
     const curGeneral = (draft.tagsStr || "").split(",").map(t => t.trim()).filter(Boolean)
       .filter(t => { const k = normalizeTagKey(t); return !majorSet.has(k) && !subSet.has(k); });
+    const allGen = [...selExisting, ...selNew]; // {tag, intensity}
     const major2 = deduplicateTags([...draft.major, ...selMajor]);
     const sub2 = deduplicateTags([...draft.sub, ...selSub]);
-    const general2 = deduplicateTags([...curGeneral, ...selTags.map(s => s.tag)]);
+    const general2 = deduplicateTags([...curGeneral, ...allGen.map(s => s.tag)]);
     const tdMap = new Map();
     for (const e of (draft.tagData || [])) { if (e && e.tag) tdMap.set(normalizeTagKey(e.tag), { tag: e.tag, intensity: Math.min(5, Math.max(1, Number(e.intensity) || 3)) }); }
-    for (const s of selTags) { const k = normalizeTagKey(s.tag); if (!tdMap.has(k)) tdMap.set(k, { tag: s.tag, intensity: Math.min(5, Math.max(1, Number(s.intensity) || 3)) }); }
+    for (const s of allGen) { const k = normalizeTagKey(s.tag); if (!tdMap.has(k)) tdMap.set(k, { tag: s.tag, intensity: Math.min(5, Math.max(1, Number(s.intensity) || 3)) }); }
     const tagData2 = [...tdMap.values()];
     const tagsStr2 = deduplicateTags([...major2, ...sub2, ...general2]).join(", ");
+    // 🆕 v7.28.15 신규 태그: 커스텀 등록(addTagToRegistry=functional·중복무시, 루프 안전) +
+    //   속성은 stale-closure 방지 위해 한 번에 병합 저장(M1)
+    if (selNew.length) {
+      let sentChanged = false; const mergedSent = { ...tagSentiments };
+      for (const s of selNew) {
+        if (s.needsRegister) addTagToRegistry(s.tag);
+        const sv = (s.sentiment === "positive" || s.sentiment === "negative") ? s.sentiment : null;
+        if (sv) { mergedSent[s.tag] = sv; sentChanged = true; }
+      }
+      if (sentChanged) saveTagSentiments(mergedSent);
+    }
     if (target === "edit") {
       updateEditItem(prev => prev ? { ...prev, tags: tagsStr2, major_genre: JSON.stringify(major2), sub_genre: JSON.stringify(sub2), tag_data: JSON.stringify(tagData2) } : prev);
     } else {
@@ -38722,6 +38802,16 @@ function AppContent() {
     }
     setAiTagModalOpen(false);
     setAiTagSuggest(null);
+  }
+
+  // 🆕 v7.28.15 신규 태그 속성 순환 (중립→긍정→부정)
+  function cycleAiTagSentiment(idx) {
+    setAiTagSuggest(prev => {
+      if (!prev || !prev.tagsNew) return prev;
+      const order = ["neutral", "positive", "negative"];
+      const tagsNew = prev.tagsNew.map((it, i) => i === idx ? { ...it, sentiment: order[(order.indexOf(it.sentiment) + 1) % 3] } : it);
+      return { ...prev, tagsNew };
+    });
   }
 
   // 🤖 v7.27.0: Claude API 키 저장 (app_meta — 슬롯 DB, 백업엔 미포함)
@@ -63164,8 +63254,8 @@ async function importJSON() {
               <View style={{ gap: 8, marginBottom: 10 }}>
                 {[
                   { on: aiTagUseNote, set: () => setAiTagUseNote(v => !v), label: "감상도 참고 (더 정확 · 감상 내용도 전송)" },
+                  { on: aiTagUseFewshot, set: () => setAiTagUseFewshot(v => !v), label: "정밀 보정 (비슷한 내 작품 예시 참고 · 제목 더 전송)" },
                   { on: aiTagSuggestIntensity, set: () => setAiTagSuggestIntensity(v => !v), label: "태그 강도(1~5)도 제안" },
-                  { on: aiTagStdVocab, set: () => setAiTagStdVocab(v => !v), label: "표준 태그까지 (내 어휘에 없어도)" },
                 ].map((t, i) => (
                   <TouchableOpacity key={i} onPress={t.set} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                     <View style={{ width: 18, height: 18, borderRadius: 5, borderWidth: 2, borderColor: t.on ? C.primary : C.line, backgroundColor: t.on ? C.primary : "transparent", alignItems: "center", justifyContent: "center" }}>
@@ -63175,35 +63265,47 @@ async function importJSON() {
                   </TouchableOpacity>
                 ))}
               </View>
+              <Text style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>어휘 범위</Text>
+              <View style={{ flexDirection: "row", gap: 6, marginBottom: 10 }}>
+                {[{ id: "mine", label: "내 태그만" }, { id: "std", label: "표준까지" }, { id: "new", label: "새 태그 허용" }].map(opt => {
+                  const on = aiTagVocabMode === opt.id;
+                  return (
+                    <TouchableOpacity key={opt.id} onPress={() => setAiTagVocabMode(opt.id)} style={{ flex: 1, paddingVertical: 8, borderRadius: 9, alignItems: "center", backgroundColor: on ? C.primary : C.bg, borderWidth: 1, borderColor: on ? C.primary : C.line }}>
+                      <Text style={{ color: on ? "#fff" : C.sub, fontWeight: "700", fontSize: 11.5 }}>{opt.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
               <TouchableOpacity disabled={aiTagBusy} onPress={runAiTagSuggest} style={{ backgroundColor: aiTagBusy ? C.line : (isDark ? "#3730a3" : "#4338ca"), borderRadius: 12, paddingVertical: 12, alignItems: "center", marginBottom: 4, opacity: aiTagBusy ? 0.6 : 1 }}>
                 <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>{aiTagBusy ? "분석 중…" : "제목 보고 추천 받기"}</Text>
               </TouchableOpacity>
               <Text style={{ color: C.sub, fontSize: 10, lineHeight: 14, marginBottom: 10 }}>
-                제목·작가·이미 단 태그가 전송돼요(감상은 위 토글 시에만). 내 태깅 성향(개수·자주 쓰는 태그)에 맞춰 추천하고, 적용은 기존 태그에 '추가'만 해요(덮어쓰기 없음).
+                제목·작가·이미 단 태그가 전송돼요{aiTagUseNote ? " + 감상" : ""}{aiTagUseFewshot ? " + 비슷한 내 작품 제목·태그" : ""}. 내 태깅 성향에 맞춰 추천하고, 적용은 기존 태그에 '추가'만 해요(덮어쓰기 없음).
               </Text>
               {aiTagSuggest && (() => {
-                const sections = [
+                const genreSecs = [
                   { kind: "major", title: "대장르", items: aiTagSuggest.major || [] },
                   { kind: "sub", title: "부장르", items: aiTagSuggest.sub || [] },
-                  { kind: "tags", title: "태그", items: aiTagSuggest.tags || [] },
+                  { kind: "tagsExisting", title: "태그 · 기존(내 어휘)", items: aiTagSuggest.tagsExisting || [] },
                 ];
-                const total = sections.reduce((a, s) => a + s.items.length, 0);
+                const newItems = aiTagSuggest.tagsNew || [];
+                const total = genreSecs.reduce((a, s) => a + s.items.length, 0) + newItems.length;
                 if (!total) return <Text style={{ color: C.sub, fontSize: 13, marginBottom: 8 }}>추천 결과가 없어요.</Text>;
+                const sentMeta = { positive: { t: "긍정", c: isDark ? "#4ade80" : "#16a34a" }, negative: { t: "부정", c: isDark ? "#f87171" : "#dc2626" }, neutral: { t: "중립", c: C.sub } };
                 return (
                   <View>
-                    {sections.map(sec => sec.items.length > 0 ? (
+                    {genreSecs.map(sec => sec.items.length > 0 ? (
                       <View key={sec.kind} style={{ marginBottom: 10 }}>
                         <Text style={{ color: C.text, fontWeight: "700", fontSize: 12, marginBottom: 5 }}>{sec.title} ({sec.items.length})</Text>
                         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
                           {sec.items.map((it, i) => {
-                            const label = sec.kind === "tags" ? it.tag : it.name;
-                            const on = it.checked;
-                            const low = sec.kind === "tags" && it.confidence === "low";
+                            const label = (sec.kind === "major" || sec.kind === "sub") ? it.name : it.tag;
+                            const on = it.checked; const low = it.confidence === "low";
                             return (
                               <TouchableOpacity key={label + i} onPress={() => toggleAiTagItem(sec.kind, i)}
                                 style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 16, backgroundColor: on ? (isDark ? "#3730a3" : "#eef2ff") : C.bg, borderWidth: 1, borderColor: on ? (isDark ? "#6366f1" : "#c7d2fe") : C.line }}>
                                 <Text style={{ color: on ? (isDark ? "#c7d2fe" : "#4338ca") : C.sub, fontSize: 12.5, fontWeight: on ? "700" : "500" }}>
-                                  {on ? "✓ " : ""}{label}{sec.kind === "tags" && aiTagSuggestIntensity ? ` ·${it.intensity}` : ""}{low ? " ?" : ""}
+                                  {on ? "✓ " : ""}{label}{sec.kind === "tagsExisting" && aiTagSuggestIntensity ? ` ·${it.intensity}` : ""}{low ? " ?" : ""}
                                 </Text>
                               </TouchableOpacity>
                             );
@@ -63211,10 +63313,31 @@ async function importJSON() {
                         </View>
                       </View>
                     ) : null)}
+                    {newItems.length > 0 ? (
+                      <View style={{ marginBottom: 10 }}>
+                        <Text style={{ color: C.text, fontWeight: "700", fontSize: 12, marginBottom: 2 }}>태그 · 신규 (어휘에 없음) ({newItems.length})</Text>
+                        <Text style={{ color: C.sub, fontSize: 10, marginBottom: 5 }}>적용하면 새로 등록돼요. 속성(긍정/중립/부정) 배지를 탭해 바꿀 수 있어요.</Text>
+                        {newItems.map((it, i) => {
+                          const on = it.checked; const sm = sentMeta[it.sentiment] || sentMeta.neutral;
+                          return (
+                            <View key={it.tag + i} style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                              <TouchableOpacity onPress={() => toggleAiTagItem("tagsNew", i)} style={{ flex: 1, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 9, backgroundColor: on ? (isDark ? "#3730a3" : "#eef2ff") : C.bg, borderWidth: 1, borderColor: on ? (isDark ? "#6366f1" : "#c7d2fe") : C.line }}>
+                                <Text style={{ color: on ? (isDark ? "#c7d2fe" : "#4338ca") : C.sub, fontSize: 12.5, fontWeight: on ? "700" : "500" }}>
+                                  {on ? "✓ " : ""}{it.tag}{aiTagSuggestIntensity ? ` ·${it.intensity}` : ""}{it.similarTo ? `  ↔ 비슷: ${it.similarTo}` : ""}
+                                </Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity onPress={() => cycleAiTagSentiment(i)} style={{ paddingHorizontal: 9, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: sm.c }}>
+                                <Text style={{ color: sm.c, fontSize: 11, fontWeight: "700" }}>{sm.t}</Text>
+                              </TouchableOpacity>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    ) : null}
                     <TouchableOpacity onPress={applyAiTagSuggestions} style={{ backgroundColor: C.primary, borderRadius: 12, paddingVertical: 12, alignItems: "center", marginTop: 4 }}>
                       <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>선택 적용</Text>
                     </TouchableOpacity>
-                    <Text style={{ color: C.sub, fontSize: 10, marginTop: 6 }}>탭으로 켜고 끄세요. '?'는 확신 낮음(기본 꺼짐). 강도는 적용 후 태그 화면에서 조정돼요.</Text>
+                    <Text style={{ color: C.sub, fontSize: 10, marginTop: 6 }}>탭으로 켜고 끄세요. '?'는 확신 낮음. 신규는 기본 꺼짐 — 검토 후 켜세요. 강도는 적용 후 태그 화면에서 조정돼요.</Text>
                   </View>
                 );
               })()}
