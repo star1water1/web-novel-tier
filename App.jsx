@@ -2,9 +2,19 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.35 (취향분석 — 작가 종합 평가: 표본 보정·일관성)                ║
+ * ║  버전: 7.28.36 (태그 삭제 전 영향력 안내)                                   ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 63,790줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 63,840줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🗑️ v7.28.36 태그 삭제 전 '영향력' 안내 (2026-06-21)                          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 태그 전체 삭제 확인창에 그 태그의 발자국을 집계해 보여줌(되돌릴 수 없으니).   ║
+ * ║ [computeTagImpact] ① 사용 작품 수/보유작 대비 %, ② 취향 신호(매칭 모드:      ║
+ * ║   이 태그 작품 평균 vs 전체 평점 차), ③ 좌표/스펙트럼 소속, ④ 선호/기피·     ║
+ * ║   고정 속성, ⑤ 취향 학습 데이터(preference_patterns) 건수(삭제 시 함께 정리). ║
+ * ║ deleteTagGlobally가 삭제 전 이 요약을 Alert에 표시. (단건 '전체 삭제' 경로)   ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -41551,10 +41561,60 @@ function AppContent() {
   }
 
   // 전체 범위에서 태그 삭제 (작품 데이터에서도 제거)
+  // 🆕 v7.28.36: 태그 삭제 영향력 — 지우기 전에 이 태그가 분석·취향·좌표에서 어떤 역할인지 집계.
+  async function computeTagImpact(tag) {
+    const novels = Array.isArray(list) ? list : [];
+    const total = novels.length;
+    const hasTag = (n) =>
+      (n.tags || "").split(",").some(t => isSameTag(t, tag)) ||
+      parseMajorSub(n.major_genre).some(g => isSameTag(g, tag)) ||
+      parseMajorSub(n.sub_genre).some(g => isSameTag(g, tag));
+    const used = novels.filter(hasTag);
+    const usedCount = used.length;
+    const coverage = total > 0 ? Math.round((usedCount / total) * 100) : 0;
+    // 취향 신호: ELO 매칭 모드에서만 평점이 의미(척도) → 그 외 모드에선 생략
+    let delta = null;
+    if (globalTierConfig?.mode === "match" && usedCount >= 2 && total >= 2) {
+      const r = (n) => Number(n.rating) || 1500;
+      const avgAll = novels.reduce((s, n) => s + r(n), 0) / total;
+      const avgWith = used.reduce((s, n) => s + r(n), 0) / usedCount;
+      delta = Math.round(avgWith - avgAll);
+    }
+    // 좌표/스펙트럼 소속
+    const spectra = [];
+    for (const id in TAG_SPECTRUM_GROUPS) {
+      const g = TAG_SPECTRUM_GROUPS[id];
+      if (g && Array.isArray(g.tags) && g.tags.some(t => isSameTag(t, tag))) spectra.push(g.label || g.name || id);
+    }
+    const sentiment = (tagSentiments && (tagSentiments[tag] || tagSentiments[normalizeTag(tag)])) || null;
+    const pinned = Array.isArray(pinnedTags) && pinnedTags.some(t => isSameTag(t, tag));
+    // 취향 학습 데이터(삭제 시 함께 정리되는 것과 동일 키/카테고리로 집계)
+    let learned = 0;
+    try {
+      const _nt = normalizeTag(tag);
+      const keys = [...new Set([`tag:${tag}`, `tag:${_nt}`, `genre:${tag}`, `genre:${_nt}`])];
+      const ph = keys.map(() => "?").join(",");
+      const row = await first(`SELECT COUNT(*) c FROM preference_patterns WHERE category IN ('tag_power','tag_aversion','genre_affinity') AND pattern_key IN (${ph});`, keys);
+      learned = row?.c || 0;
+    } catch {}
+    return { usedCount, total, coverage, delta, spectra, sentiment, pinned, learned };
+  }
+  function formatTagImpact(imp) {
+    const lines = [`• 사용 작품 ${imp.usedCount}개 (보유작의 ${imp.coverage}%)`];
+    if (imp.delta != null) lines.push(`• 이 태그 작품 평균이 전체보다 ${imp.delta > 0 ? "+" : ""}${imp.delta}점 (취향 신호)`);
+    if (imp.spectra.length) lines.push(`• 좌표/스펙트럼 '${imp.spectra.join(", ")}'에서 사용 중`);
+    if (imp.sentiment) lines.push(`• ${imp.sentiment === "positive" ? "선호(➕)" : imp.sentiment === "negative" ? "기피(➖)" : "속성"} 표시됨`);
+    if (imp.pinned) lines.push(`• 고정된 태그`);
+    if (imp.learned > 0) lines.push(`• 취향 학습 데이터 ${imp.learned}건 (삭제 시 함께 정리)`);
+    return lines.join("\n");
+  }
+
   async function deleteTagGlobally(tag) {
+    let impactMsg = "";
+    try { impactMsg = formatTagImpact(await computeTagImpact(tag)); } catch {}
     Alert.alert(
       "전체 삭제",
-      `"${tag}" 태그를 모든 작품에서 삭제합니다.\n이 작업은 되돌릴 수 없습니다.`,
+      `"${tag}" 태그를 모든 작품에서 삭제합니다.\n\n${impactMsg ? "📊 이 태그의 영향력\n" + impactMsg + "\n\n" : ""}이 작업은 되돌릴 수 없습니다.`,
       [
         { text: "취소" },
         {
