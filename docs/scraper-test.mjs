@@ -200,15 +200,25 @@ eq("문피아 배지 없는 작품은 ongoing", ms[2].meta.workStatus, "ongoing"
 
 // ── ⑤ 장르 매핑(v7.28.30) — 플랫폼 장르 → 앱 어휘 + 확인 모달 항목 ──────────────
 eq("장르 매핑: 공백 정규화(퓨전 판타지→퓨전판타지)", S.mapScrapedGenres(["퓨전 판타지"], ["퓨전판타지", "무협"], ["회귀"]).major, ["퓨전판타지"]);
-eq("장르 매핑: 대분류 정확", S.mapScrapedGenres(["무협"], ["무협", "판타지"], ["회귀"]), { major: ["무협"], sub: [] });
-eq("장르 매핑: 부장르 분류", S.mapScrapedGenres(["회귀"], ["무협"], ["회귀", "환생"]), { major: [], sub: ["회귀"] });
-eq("장르 매핑: 미매칭→대분류 후보(원문)", S.mapScrapedGenres(["듣보장르"], ["무협"], ["회귀"]).major, ["듣보장르"]);
+eq("장르 매핑: 대분류 정확", S.mapScrapedGenres(["무협"], ["무협", "판타지"], ["회귀"]), { major: ["무협"], sub: [], tags: [] });
+eq("장르 매핑: 부장르 분류", S.mapScrapedGenres(["회귀"], ["무협"], ["회귀", "환생"]), { major: [], sub: ["회귀"], tags: [] });
+eq("장르 매핑: 미매칭→일반 태그(v7.28.45)", S.mapScrapedGenres(["듣보장르"], ["무협"], ["회귀"]).tags, ["듣보장르"]);
+eq("장르 매핑: 미매칭은 대장르에 안 넣음", S.mapScrapedGenres(["듣보장르"], ["무협"], ["회귀"]).major, []);
 const giNew = S.buildScrapeItems({ title: "T", genres: ["무협", "회귀"] }, { major_genre: "[]", sub_genre: "[]" });
 const mjItem = giNew.find(it => it.key === "major_genre");
 const sbItem = giNew.find(it => it.key === "sub_genre");
 truthy("buildScrapeItems 대장르 항목(value=[무협], 빈칸→체크)", mjItem && JSON.stringify(mjItem.value) === JSON.stringify(["무협"]) && mjItem.checked === true);
 truthy("buildScrapeItems 부장르 항목(value=[회귀])", sbItem && JSON.stringify(sbItem.value) === JSON.stringify(["회귀"]));
 truthy("buildScrapeItems 이미 있는 장르는 항목 제외", !S.buildScrapeItems({ title: "T", genres: ["무협"] }, { major_genre: '["무협"]' }).find(it => it.key === "major_genre"));
+// v7.28.45: 미매칭 키워드 → 태그 항목, 연재 연도 항목
+const giTag = S.buildScrapeItems({ title: "T", genres: ["판타지", "하렘", "집착"], startYear: 2024, endYear: 0 }, {});
+truthy("buildScrapeItems 태그 항목(미매칭 키워드 하렘/집착)", (() => { const t = giTag.find(it => it.key === "tags"); return t && /하렘/.test(t.value) && /집착/.test(t.value); })());
+truthy("buildScrapeItems 판타지는 대장르(태그 아님)", (() => { const t = giTag.find(it => it.key === "tags"); return t && !/판타지/.test(t.value); })());
+truthy("buildScrapeItems 시작연도 항목(2024)", (() => { const y = giTag.find(it => it.key === "start_year"); return y && Number(y.value) === 2024; })());
+truthy("buildScrapeItems 종료연도 0이면 항목 없음", !giTag.find(it => it.key === "end_year"));
+truthy("buildScrapeItems 태그 이미 있으면 추가분만/없으면 제외", !S.buildScrapeItems({ title: "T", genres: ["하렘"] }, { tags: "하렘" }).find(it => it.key === "tags"));
+eq("노벨피아 meta 시작연도(start 0000→reg 2026)", nv[0].meta.startYear, 2026);
+eq("노벨피아 meta 종료연도(미완결→null)", nv[0].meta.endYear, null);
 
 console.log(`\n${fail === 0 ? "🎉 ALL PASS" : "⚠️  FAILED"}  pass=${pass} fail=${fail}`);
 process.exit(fail === 0 ? 0 : 1);
