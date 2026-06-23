@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, scraperDecodeEntities, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, SCRAPER_HEADERS, SCRAPER_UA };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, mergeSearchResults, scraperDecodeEntities, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, SCRAPER_HEADERS, SCRAPER_UA };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -151,6 +151,29 @@ eq("노벨피아 전부 소설(isComic=false)", nv.every(x => x.isComic === fals
 eq("노벨피아 id 중복 없음(4건)", new Set(nv.map(x => x.url)).size, 4);
 eq("노벨피아 status≠200/깨진 JSON → 빈 배열", S.parseNovelpiaSearch('{"status":403}'), []);
 eq("노벨피아 비JSON → 빈 배열", S.parseNovelpiaSearch('<html>not json</html>'), []);
+// 노벨피아 후보는 상세 재긁기용 meta 동봉(제목/작가/줄거리/완결/회차/장르)
+truthy("노벨피아 후보에 meta 동봉", nv[0].meta && nv[0].meta.title === "일인칭 빌런 시점");
+eq("노벨피아 meta 작가(검색 API 값)", nv[0].meta.author, "둥이둥");
+eq("노벨피아 meta 줄거리", nv[0].meta.synopsis, "나는 이 세계의 비극을 일으킨다.");
+eq("노벨피아 meta 장르(전체 배열)", nv[0].meta.genres.length, 10);
+eq("노벨피아 meta 연재상태(is_complete=0→ongoing)", nv[0].meta.workStatus, "ongoing");
+eq("노벨피아 meta 회차(count_book=2)", nv[0].meta.totalEpisodes, 2);
+eq("노벨피아 meta 회차 0이면 null", nv[1].meta.totalEpisodes, null);
+
+// ── ④'''' 검색 결과 병합(v7.28.43) — 관련도 정렬 + 플랫폼 균형 + 리디 노이즈 후순위 ──
+const mLists = [
+  [ { title: "회귀수선전(回歸修仙傳)", platform: "네이버시리즈", isComic: false }, { title: "무적철검", platform: "네이버시리즈", isComic: false } ],
+  [ { title: "복원수선전 1화", platform: "리디", isComic: false }, { title: "헌터 수선전 1화", platform: "리디", isComic: false } ], // 부분매칭 노이즈
+  [ { title: "회귀수선전(回歸修仙傳)", platform: "문피아", isComic: false } ],
+  [ { title: "회귀수선전 외전", platform: "노벨피아", isComic: false } ],
+];
+const mg = S.mergeSearchResults(mLists, "회귀수선전");
+eq("병합 총 6건", mg.length, 6);
+truthy("병합 1위는 회귀수선전 관련(정확/시작 일치)", /회귀수선전/.test(mg[0].title));
+truthy("리디 부분매칭 노이즈는 시리즈/문피아/노벨 뒤로", mg.findIndex(x => x.platform === "리디") > mg.findIndex(x => x.platform === "네이버시리즈"));
+truthy("상위 3건은 모두 회귀수선전 관련(시리즈·문피아·노벨 골고루)", mg.slice(0, 3).every(x => /회귀수선전/.test(x.title)));
+eq("상위 3건 플랫폼 골고루(중복 없이 3종)", new Set(mg.slice(0, 3).map(x => x.platform)).size, 3);
+eq("perPlatform 상한 적용", S.mergeSearchResults([Array.from({length: 30}, (_, i) => ({ title: "회귀수선전 " + i, platform: "리디", isComic: false }))], "회귀수선전", { perPlatform: 12 }).length, 12);
 
 // ── ④'' 문피아 검색 파싱(v7.28.40, 폰 캡처 실측 픽스처) ─────────────────────────
 //   <ul id=list_ul> 서버렌더 4건 + 하단 JS 렌더 템플릿 디코이 → 디코이 제외 4건만.

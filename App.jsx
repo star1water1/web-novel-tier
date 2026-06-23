@@ -2,12 +2,24 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.42 (스크래퍼 Stage 4b — 노벨피아 제목 검색, 4플랫폼 완성)        ║
+ * ║  버전: 7.28.43 (검색 결과 정리 — 관련도 정렬·플랫폼 균형·노벨피아 메타)      ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 64,150줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 64,200줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔎 v7.28.43 검색 결과 정리 + 노벨피아 등록 정확화 (2026-06-21)               ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 실사용 피드백: 리디가 부분매칭("수선전")으로 회차/권까지 폭넓게 쏟아지고,      ║
+ * ║ 정렬이 없어 정확 일치가 안 위로 옴 + 노벨피아 불러오기 제목/작가 부정확.       ║
+ * ║ • mergeSearchResults: 관련도(정확>시작>포함>부분) 점수 + 플랫폼 균형          ║
+ * ║   (라운드로빈, 플랫폼당 상위 12개) → 노이즈 후순위·정확매칭 최상위.            ║
+ * ║ • parseRidiSearch: 개별 회차/권('… N화/N권') 상품 제외.                       ║
+ * ║ • 노벨피아: 상세가 SPA라 og 부실(제목에 사이트명, 작가=Devlife) → 검색 API     ║
+ * ║   메타(제목·작가·줄거리·완결·회차·장르)를 후보에 동봉, 선택 시 상세 재긁기      ║
+ * ║   없이 그대로 등록(openScrapeFromMeta 분리, pickSearchCandidate 분기).        ║
+ * ║ • 회귀 테스트 +13 → 101/101 통과. (문피아 미노출은 빌드 후 재확인 필요)        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 🔎 v7.28.42 스크래퍼 Stage 4b — 노벨피아 제목 검색 (2026-06-21)              ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 노벨피아는 SPA라 화면 HTML엔 결과가 없고, 내부 JSON API에서 받아옴(실측 확인).║
@@ -13902,17 +13914,45 @@ async function fetchNovelMeta(url, opts = {}) {
 async function searchNovels(query, opts = {}) {
   const q = (query || "").trim();
   if (!q) throw new Error("검색할 제목을 입력해 주세요.");
-  // 🔎 v7.28.42: 리디+네이버시리즈+문피아+노벨피아 병렬 검색(allSettled — 한쪽 차단/실패해도 나머지 노출).
+  // 🔎 v7.28.43: 4개 플랫폼 병렬(allSettled) → 관련도·플랫폼 균형 병합.
   const settled = await Promise.allSettled([searchRidi(q, opts), searchNaverSeries(q, opts), searchMunpia(q, opts), searchNovelpia(q, opts)]);
-  const results = [];
   const errs = [];
-  for (const s of settled) { if (s.status === "fulfilled") results.push(...(s.value || [])); else if (s.reason) errs.push(s.reason); }
-  if (!results.length) {
-    if (errs.length && errs.length >= settled.length) throw errs[0]; // 전부 실패 → 첫 실패 사유 전달
+  const lists = settled.map(s => { if (s.status === "fulfilled") return s.value || []; if (s.reason) errs.push(s.reason); return []; });
+  const merged = mergeSearchResults(lists, q);
+  if (!merged.length) {
+    if (errs.length >= settled.length && errs[0]) throw errs[0]; // 전부 실패 → 첫 실패 사유
     throw new Error(`‘${q}’ 검색 결과가 없어요. 다른 제목으로 시도하거나, 작품 링크로 ‘🔗 불러오기’를 써 주세요.`);
   }
-  results.sort((a, b) => (a.isComic === b.isComic) ? 0 : (a.isComic ? 1 : -1)); // 소설 먼저, 웹툰/만화 뒤로
-  return results.slice(0, 40);
+  return merged;
+}
+
+// 여러 플랫폼 결과 병합 — 검색어 관련도(정확>시작>포함>부분) 정렬 + 플랫폼 균형(라운드로빈) + 상한.
+//   리디처럼 부분매칭을 폭넓게 주는 플랫폼의 노이즈를 점수로 뒤로 밀고, 플랫폼당 상위 N개만 골고루 노출.
+function mergeSearchResults(lists, query, opts = {}) {
+  const perPlatform = opts.perPlatform || 12;
+  const limit = opts.limit || 40;
+  const norm = (t) => String(t == null ? "" : t).toLowerCase().replace(/[\s()[\]<>!?,.·:;'"~+\-_/|]/g, "");
+  const nq = norm(query);
+  const score = (title) => {
+    const nt = norm(title);
+    if (!nt || !nq) return 0;
+    if (nt === nq) return 100;        // 정확 일치
+    if (nt.startsWith(nq)) return 80; // 시작 일치
+    if (nt.includes(nq)) return 60;   // 제목에 검색어 포함
+    if (nq.includes(nt)) return 30;   // 짧은 제목이 검색어에 포함
+    return 10;                        // 부분 토큰 매칭(대개 노이즈)
+  };
+  const tagged = [];
+  for (const arr of (Array.isArray(lists) ? lists : [])) {
+    (Array.isArray(arr) ? arr : [])
+      .map(it => ({ it, sc: score(it && it.title) }))
+      .sort((a, b) => b.sc - a.sc)
+      .slice(0, perPlatform)
+      .forEach((x, rank) => tagged.push({ it: x.it, sc: x.sc, rank }));
+  }
+  // 관련도 desc → 같은 점수면 플랫폼 내 순위 asc(각 플랫폼 1등이 먼저 = 골고루) → 소설 우선
+  tagged.sort((a, b) => (b.sc - a.sc) || (a.rank - b.rank) || ((a.it.isComic ? 1 : 0) - (b.it.isComic ? 1 : 0)));
+  return tagged.map(x => x.it).slice(0, limit);
 }
 
 // 리디 검색 — 검색 결과 페이지는 서버렌더(__NEXT_DATA__에 결과 내장)라 별도 API 불필요.
@@ -13947,6 +13987,7 @@ function parseRidiSearch(html) {
         const id = b.id;
         const title = (asTitle(b.title) || b.webTitle || "").replace(/^\[[^\]]*\]\s*/, "").trim();
         if (!id || !title || seen.has(id)) continue;
+        if (/\s\d+\s*(화|권)$/.test(title)) continue; // 🔎 v7.28.43: 개별 회차/권 상품 제외(검색 노이즈)
         seen.add(id);
         const all = Array.isArray(b.authors) ? b.authors : [];
         const writers = all.filter(a => a && !/ILLUST|TRANSLAT|EDITOR/i.test(a.role || "")).map(a => a && a.name).filter(Boolean);
@@ -14124,14 +14165,23 @@ function parseNovelpiaSearch(jsonText) {
     let coverUrl = String(it.cover_url || "");
     if (coverUrl.startsWith("//")) coverUrl = "https:" + coverUrl;
     const genres = Array.isArray(it.novel_genre_arr) ? it.novel_genre_arr.filter(Boolean) : [];
+    const author = String(it.writer_nick == null ? "" : it.writer_nick).trim();
+    const url = "https://novelpia.com/novel/" + id;
+    const ep = Number(it.count_book);
     out.push({
-      title,
-      author: String(it.writer_nick == null ? "" : it.writer_nick).trim(),
-      url: "https://novelpia.com/novel/" + id,
-      coverUrl,
+      title, author, url, coverUrl,
       platform: "노벨피아",
       category: genres.slice(0, 3).join(", "), // 태그가 많아 앞 3개만 표시용
       isComic: false,
+      // 🔎 v7.28.43: 노벨피아 상세는 SPA라 og가 부실(제목에 사이트명·작가 기본값) →
+      //   검색 API가 준 정확한 메타를 그대로 등록에 사용(상세 재긁기 생략).
+      meta: {
+        ok: true, platform: "노벨피아", url, title, author, coverUrl,
+        synopsis: String(it.novel_story == null ? "" : it.novel_story).trim(),
+        genres,
+        workStatus: Number(it.is_complete) === 1 ? "completed" : "ongoing",
+        totalEpisodes: ep > 0 ? ep : null,
+      },
     });
     if (out.length >= 30) break;
   }
@@ -40178,6 +40228,15 @@ function AppContent() {
   }
 
   // 🔗 v7.28.26 스크래퍼: URL에서 메타 fetch → 확인 모달 오픈. ctx = { label, getCurrent(), apply(fields) }
+  // 메타(정규화 완료) → 확인 모달 오픈. URL 긁기/검색 메타 직접 사용 공용 경로.
+  function openScrapeFromMeta(meta, ctx) {
+    if (!meta || !meta.title) { Alert.alert("불러오기", "이 작품의 정보를 찾지 못했어요."); return false; }
+    let items = buildScrapeItems(meta, ctx?.getCurrent ? ctx.getCurrent() : {});
+    if (Array.isArray(ctx?.fields)) items = items.filter(it => ctx.fields.includes(it.key)); // 화면별 허용 필드(예: 보충=title 제외)
+    if (items.length === 0) { Alert.alert("불러오기", `‘${meta.title || "작품"}’ — 새로 채울 정보가 없어요.`); return false; }
+    setScrapeModal({ meta, items, apply: ctx?.apply, label: ctx?.label || "" });
+    return true;
+  }
   async function runScrapeFromUrl(url, ctx) {
     const u = (url || "").trim();
     if (!u) { Alert.alert("불러오기", "작품 링크를 먼저 입력해 주세요."); return; }
@@ -40185,10 +40244,7 @@ function AppContent() {
     setScrapeLoading(true);
     try {
       const meta = await fetchNovelMeta(u);
-      let items = buildScrapeItems(meta, ctx?.getCurrent ? ctx.getCurrent() : {});
-      if (Array.isArray(ctx?.fields)) items = items.filter(it => ctx.fields.includes(it.key)); // 화면별 허용 필드(예: 보충=title 제외)
-      if (items.length === 0) { Alert.alert("불러오기", `‘${meta.title || "작품"}’ — 새로 채울 정보가 없어요.`); return; }
-      setScrapeModal({ meta, items, apply: ctx?.apply, label: ctx?.label || "" });
+      openScrapeFromMeta(meta, ctx);
     } catch (e) {
       Alert.alert("불러오기 실패", e?.message || String(e));
     } finally {
@@ -40309,7 +40365,10 @@ function AppContent() {
   async function pickSearchCandidate(cand) {
     const ctx = searchModal?.ctx;
     setSearchModal(null); setSearchResults([]); setSearchQuery("");
-    if (cand?.url && ctx) await runScrapeFromUrl(cand.url, ctx); // 후보 → 기존 확인 모달 경로 합류
+    if (!ctx) return;
+    // 🔎 v7.28.43: 검색 API가 충분한 메타를 준 경우(노벨피아) 상세 재긁기 없이 그대로 사용(SPA og 부실 회피).
+    if (cand?.meta && cand.meta.title) openScrapeFromMeta(cand.meta, ctx);
+    else if (cand?.url) await runScrapeFromUrl(cand.url, ctx); // 그 외(리디·네이버·문피아)는 상세 페이지 긁기
   }
 
   // 추천 항목 체크 토글

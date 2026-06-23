@@ -250,6 +250,7 @@ function normalizeFromHtml(html, url) {
   - [x] **노벨피아** (v7.28.42): SPA라 화면 HTML엔 결과 없음 → 내부 **JSON API** `GET /proc/novel?cmd=novel_search&search_type=all&search_val={kw}&page=1&rows=30` 사용(쿠키 없이 `status:200`+`list` 반환 실측 확인). `parseNovelpiaSearch`: `list[]`를 제목(`novel_name`)·작가(`writer_nick`)·표지(`cover_url`, `//`→https)·장르(`novel_genre_arr` 앞3개)·detail(`/novel/{novel_no}`)로 매핑. `status≠200`/비JSON → 빈 배열. 픽스처 `novelpia-search-hoegwi.json` + 회귀 13건.
   - 카카오는 검색이 GraphQL(302·인증)이라 보류.
   - **→ 4b 완료: 리디·네이버시리즈·문피아·노벨피아 4플랫폼 제목 검색(`searchNovels` 4-way 병렬). 카카오만 보류.**
+- [x] **4c. 검색 결과 품질·등록 정확화** (v7.28.43, 실사용 피드백): `mergeSearchResults`로 관련도(정확>시작>포함>부분) 정렬 + 플랫폼 균형(라운드로빈, 플랫폼당 12개) → 리디 부분매칭 노이즈 후순위. `parseRidiSearch`가 개별 회차/권(`… N화/N권`) 제외. 노벨피아는 상세가 SPA라 og 부실(제목 사이트명·작가 Devlife) → 검색 API 메타를 후보에 동봉해 상세 재긁기 없이 등록(`openScrapeFromMeta`). ⚠️ **문피아 미노출 — 빌드 후 재확인 필요**(균형 정렬로 보이면 OK, 여전히 0이면 쿠키 없는 fetch 점검).
 - [x] **5. 클립보드 감지** (v7.28.37): `expo-clipboard` 추가. 4화면(신규·예정·보충·편집) 링크칸 옆 "📋" 버튼 → `pasteLinkAndFetch`: 클립보드 텍스트에서 지원 플랫폼 URL(`extractSupportedUrl`) 추출 → 링크칸 채우고 바로 `runScrapeFromUrl`. (자동 감지 대신 1탭 유저 트리거 — iOS 붙여넣기 알림/포커스 타이밍 회피, 더 견고.) ※ 네이티브 모듈이라 **리빌드 후 동작**.
 - [ ] **6. 공유 시트** (Android `ACTION_SEND` intent filter): 받는 쪽은 Expo 코어에 없어 `expo-share-intent`(config plugin) 같은 라이브러리 필요. **빌드 설정 변경 + 검증 불가(이 환경)** 위험으로 보류 — 클립보드(Stage 5)가 같은 시나리오("링크 복사→앱에서 1탭")를 대부분 커버. 추가하려면: dep + app.json `plugins`에 share-intent + 런치 시 공유 텍스트→신규등록 링크 라우팅.
 
