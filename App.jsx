@@ -2,9 +2,20 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.37 (스크래퍼 Stage 5 — 클립보드 링크 1탭 불러오기)              ║
+ * ║  버전: 7.28.38 (스크래퍼 Stage 4b 준비 — '긁기 진단' 검색 원본 캡처 도구)   ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 63,890줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 63,960줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.28.38 스크래퍼 Stage 4b 준비 — '긁기 진단' 검색 원본 캡처 (2026-06-21)║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 타 플랫폼(네이버시리즈·문피아·노벨피아) 제목검색은 개발환경에서 페이지를 못   ║
+ * ║ 가져와(IP/CF 차단) 파서를 못 만들었음 → 폰이 직접 캡처하는 진단 도구 추가.    ║
+ * ║ [설정>태그] '🔧 긁기 진단' — 검색 결과 URL 붙여넣기(예시 칩 4종) → captureScrape║
+ * ║   Source가 폰에서 fetch → status·크기·차단·__NEXT_DATA__/ld+json·작품링크     ║
+ * ║   후보 요약 표시 → '원본 복사'(클립보드)로 채팅에 붙여넣어 정확한 파서 구현.   ║
+ * ║ ※ 다음: 사용자가 캡처한 실제 원본으로 searchNaverSeries/Munpia/Novelpia 구현. ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -33840,6 +33851,10 @@ function AppContent() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [searchBusy, setSearchBusy] = useState(false);
+  // 🔧 v7.28.38 긁기 진단: 폰에서 검색 원본 캡처(타 플랫폼 제목검색 파서 개발용)
+  const [scrapeDiagUrl, setScrapeDiagUrl] = useState("");
+  const [scrapeDiagOut, setScrapeDiagOut] = useState(null);
+  const [scrapeDiagBusy, setScrapeDiagBusy] = useState(false);
   const [aiTagTarget, setAiTagTarget] = useState("new"); // "new"(등록 폼) | "edit"(편집 모달)
   const [aiTagBusy, setAiTagBusy] = useState(false);
   const [ocrBusyIdx, setOcrBusyIdx] = useState(-1); // 🔤 v7.28.24 명대사 OCR 진행 인덱스 (-1=없음, qi=해당 항목, -2=전체)
@@ -39907,6 +39922,40 @@ function AppContent() {
     if (!url) { Alert.alert("클립보드", "클립보드에서 지원하는 작품 링크를 찾지 못했어요.\n(노벨피아·문피아·네이버시리즈·리디·카카오페이지)"); return; }
     if (typeof applyLink === "function") applyLink(url);
     await runScrapeFromUrl(url, ctx);
+  }
+
+  // 🔧 v7.28.38 긁기 진단 — 폰이 직접 검색 URL을 받아 원본을 캡처(개발 IP는 막혀도 폰은 통과).
+  //   결과 원본/요약을 클립보드로 복사 → 채팅에 붙여넣으면 타 플랫폼 제목검색 파서를 정확히 구현.
+  async function captureScrapeSource() {
+    const url = (scrapeDiagUrl || "").trim();
+    if (!/^https?:\/\//i.test(url)) { Alert.alert("긁기 진단", "검색 결과 URL을 붙여넣어 주세요 (http/https로 시작)."); return; }
+    if (scrapeDiagBusy) return;
+    setScrapeDiagBusy(true); setScrapeDiagOut(null);
+    const { signal, cleanup } = resolveAbortSignal({ timeoutMs: 20000 });
+    try {
+      const res = await fetch(url, { headers: SCRAPER_HEADERS, redirect: "follow", signal });
+      const html = await res.text();
+      const block = scraperDetectBlock(res.status, html);
+      const nd = scraperExtractNextData(html);
+      const ld = scraperExtractJsonLd(html);
+      // 작품 상세 링크 후보(플랫폼별 패턴) — URL 패턴/샘플 ID 파악용
+      const re = /(?:href|content)\s*=\s*"([^"]*(?:productNo=\d+|\/novel\/\d+|\/viewer\/\d+|\/books?\/\d+|\/content\/\d+|novel_no=\d+|wid=\d+)[^"]*)"/gi;
+      const hrefs = []; const seen = new Set(); let m;
+      while ((m = re.exec(html)) && hrefs.length < 20) { if (!seen.has(m[1])) { seen.add(m[1]); hrefs.push(m[1]); } }
+      const summary =
+        `URL: ${url}\nstatus=${res.status} · size=${html.length.toLocaleString()}자 · 차단=${block.blocked ? block.kind : "아님"}\n` +
+        `__NEXT_DATA__: ${nd ? "있음" : "없음"} · ld+json: ${ld.length}개\n` +
+        `작품링크 후보(${hrefs.length}):\n${hrefs.length ? hrefs.join("\n") : "(못 찾음 — '원본 복사'로 전체를 보내 주세요)"}`;
+      setScrapeDiagOut({ url, status: res.status, size: html.length, html, summary });
+    } catch (e) {
+      Alert.alert("긁기 진단", "가져오지 못했어요: " + (e?.name === "AbortError" ? "시간 초과" : (e?.message || e)));
+    } finally { cleanup(); setScrapeDiagBusy(false); }
+  }
+  async function copyScrapeSource(which) {
+    const out = scrapeDiagOut; if (!out) return;
+    const text = which === "summary" ? out.summary : out.html;
+    try { await Clipboard.setStringAsync(text); Alert.alert("복사됨", `${which === "summary" ? "요약" : `원본 ${out.size.toLocaleString()}자`}을 클립보드에 복사했어요. 채팅에 붙여넣어 주세요.`); }
+    catch { Alert.alert("복사", "복사하지 못했어요."); }
   }
 
   // 🔗 v7.28.26 스크래퍼: URL에서 메타 fetch → 확인 모달 오픈. ctx = { label, getCurrent(), apply(fields) }
@@ -58067,6 +58116,53 @@ async function importJSON() {
                     </Text>
                   </View>
                 ); })()}
+              </View>
+
+              {/* 🔧 v7.28.38: 긁기 진단 — 폰에서 검색 원본 캡처(타 플랫폼 제목검색 파서 개발용) */}
+              <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+                <Text style={{ color: C.text, fontWeight: "700", fontSize: 14, marginBottom: 4 }}>🔧 긁기 진단 (검색 원본 캡처)</Text>
+                <Text style={{ color: C.sub, fontSize: 11, lineHeight: 16, marginBottom: 8 }}>
+                  폰 브라우저에서 플랫폼 검색을 한 뒤 그 주소를 복사해 붙여넣고 ‘캡처’를 누르면, 폰이 직접 가져온 원본을 보여줘요. ‘원본 복사’로 복사해 채팅에 붙여넣으면 제목검색을 정확히 붙일 수 있어요. (아래 칩은 예시 주소 — 결과가 이상하면 폰 브라우저의 실제 검색 주소를 붙여넣어 주세요.)
+                </Text>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                  {[
+                    { label: "네이버시리즈", url: "https://series.naver.com/search/search.series?t=novel&q=검" },
+                    { label: "문피아", url: "https://www.munpia.com/page/search?text=검" },
+                    { label: "노벨피아", url: "https://novelpia.com/search/all/검" },
+                    { label: "리디", url: "https://ridibooks.com/search?q=검" },
+                  ].map(p => (
+                    <TouchableOpacity key={p.label} onPress={() => setScrapeDiagUrl(p.url)} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line }}>
+                      <Text style={{ color: C.text, fontSize: 12 }}>{p.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <TextInput
+                  value={scrapeDiagUrl}
+                  onChangeText={setScrapeDiagUrl}
+                  placeholder="검색 결과 URL 붙여넣기"
+                  placeholderTextColor={C.sub}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  multiline
+                  style={{ backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, color: C.text, fontSize: 12, minHeight: 44 }}
+                />
+                <TouchableOpacity onPress={captureScrapeSource} disabled={scrapeDiagBusy}
+                  style={{ marginTop: 8, backgroundColor: C.primary, paddingVertical: 11, borderRadius: 10, alignItems: "center", opacity: scrapeDiagBusy ? 0.6 : 1 }}>
+                  <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>{scrapeDiagBusy ? "가져오는 중…" : "캡처"}</Text>
+                </TouchableOpacity>
+                {scrapeDiagOut ? (
+                  <View style={{ marginTop: 10, backgroundColor: C.bg, borderRadius: 10, padding: 10, borderWidth: 1, borderColor: C.line }}>
+                    <Text selectable style={{ color: C.text, fontSize: 11, lineHeight: 16 }}>{scrapeDiagOut.summary}</Text>
+                    <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                      <TouchableOpacity onPress={() => copyScrapeSource("full")} style={{ flex: 1, backgroundColor: C.primary, paddingVertical: 9, borderRadius: 8, alignItems: "center" }}>
+                        <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>📋 원본 복사</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => copyScrapeSource("summary")} style={{ flex: 1, backgroundColor: C.chip, paddingVertical: 9, borderRadius: 8, alignItems: "center", borderWidth: 1, borderColor: C.line }}>
+                        <Text style={{ color: C.text, fontWeight: "700", fontSize: 13 }}>📋 요약만</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ) : null}
               </View>
 
               {/* 🆕 v7.28.10: API 키 발급 안내 모달 (제공자별 단계·주의·바로가기) */}
