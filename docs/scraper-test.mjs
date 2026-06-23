@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, SCRAPER_HEADERS, SCRAPER_UA };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, scraperDecodeEntities, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, SCRAPER_HEADERS, SCRAPER_UA };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -115,6 +115,25 @@ truthy("리디 검색 후보 ≥1개", sr.length >= 1);
 truthy("리디 후보 url=/books/{id}", /ridibooks\.com\/books\/\d+/.test(sr[0] && sr[0].url));
 truthy("리디 후보 제목 존재", sr[0] && sr[0].title);
 eq("리디 후보 플랫폼 라벨", sr[0] && sr[0].platform, "리디");
+
+// ── ④' 네이버시리즈 검색 파싱(v7.28.39, 폰 캡처 실측 픽스처) ────────────────────
+//   itemList SSR <li class="lst"> 4건 + 클라이언트 템플릿/푸터폼 디코이 → 디코이 제외 4건만.
+const ns = S.parseNaverSeriesSearch(fx("naver-series-search.html"));
+eq("네이버시리즈 후보 4건(템플릿·푸터 디코이 제외)", ns.length, 4);
+eq("네이버시리즈 후보1 제목", ns[0].title, "무적철검");
+eq("네이버시리즈 후보1 작가", ns[0].author, "미송검");
+eq("네이버시리즈 후보1 장르", ns[0].category, "무협");
+eq("네이버시리즈 후보1 url(series.naver.com 절대경로)", ns[0].url, "https://series.naver.com/novel/detail.series?productNo=5445580");
+eq("네이버시리즈 후보1 플랫폼 라벨", ns[0].platform, "네이버시리즈");
+truthy("네이버시리즈 후보1 표지(comicthumb)", /comicthumb-phinf\.pstatic\.net/.test(ns[0].coverUrl));
+eq("네이버시리즈 후보2 장르(판타지)", ns[1].category, "판타지");
+eq("네이버시리즈 후보3 CJK·괄호 제목 보존", ns[2].title, "도비검무(刀飛劍務)");
+eq("네이버시리즈 후보4 대괄호·공백 제목 보존", ns[3].title, "검중검 [단행본]");
+eq("네이버시리즈 전부 소설(isComic=false)", ns.every(x => x.isComic === false), true);
+eq("네이버시리즈 productNo 중복 없음", new Set(ns.map(x => x.url)).size, 4);
+// 엔티티 디코드
+eq("디코드 &amp; → &", S.scraperDecodeEntities("A&amp;B"), "A&B");
+eq("디코드 숫자참조 &#39; → '", S.scraperDecodeEntities("it&#39;s"), "it's");
 
 // ── ⑤ 장르 매핑(v7.28.30) — 플랫폼 장르 → 앱 어휘 + 확인 모달 항목 ──────────────
 eq("장르 매핑: 공백 정규화(퓨전 판타지→퓨전판타지)", S.mapScrapedGenres(["퓨전 판타지"], ["퓨전판타지", "무협"], ["회귀"]).major, ["퓨전판타지"]);

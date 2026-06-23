@@ -2,12 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.38 (스크래퍼 Stage 4b 준비 — '긁기 진단' 검색 원본 캡처 도구)   ║
+ * ║  버전: 7.28.39 (스크래퍼 Stage 4b — 네이버시리즈 제목 검색 구현)             ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 63,960줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 64,020줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔎 v7.28.39 스크래퍼 Stage 4b — 네이버시리즈 제목 검색 (2026-06-21)          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ '긁기 진단'으로 폰이 캡처한 실제 검색 원본(itemList SSR)으로 파서 구현.        ║
+ * ║ • parseNaverSeriesSearch: <ul id=itemList>의 <li class=lst>를 작품링크        ║
+ * ║   (/{novel|comic|ebook}/detail.series?productNo=N) 앵커로 추출 → 제목(img     ║
+ * ║   alt 우선)·작가·장르(info_writer)·표지·detail URL. searchTemplate 더미·푸터  ║
+ * ║   폼은 앵커 패턴으로 자동 제외. scraperDecodeEntities 추가.                    ║
+ * ║ • searchNovels: 리디+네이버시리즈 Promise.allSettled 병렬(한쪽 차단해도 노출).║
+ * ║ • 회귀 테스트 +14 (실측 축약 픽스처 naver-series-search.html) → 63/63 통과.    ║
+ * ║ ※ 남은 Stage 4b: 문피아·노벨피아(동일 '긁기 진단' 캡처 대기). 카카오는 보류.  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 🔧 v7.28.38 스크래퍼 Stage 4b 준비 — '긁기 진단' 검색 원본 캡처 (2026-06-21)║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 타 플랫폼(네이버시리즈·문피아·노벨피아) 제목검색은 개발환경에서 페이지를 못   ║
@@ -13857,9 +13868,17 @@ async function fetchNovelMeta(url, opts = {}) {
 async function searchNovels(query, opts = {}) {
   const q = (query || "").trim();
   if (!q) throw new Error("검색할 제목을 입력해 주세요.");
-  const results = await searchRidi(q, opts);
-  if (!results.length) throw new Error(`‘${q}’ 검색 결과가 없어요. 다른 제목으로 시도하거나, 작품 링크로 ‘🔗 불러오기’를 써 주세요.`);
-  return results;
+  // 🔎 v7.28.39: 리디 + 네이버시리즈 병렬 검색(allSettled — 한쪽 차단/실패해도 나머지 노출).
+  const settled = await Promise.allSettled([searchRidi(q, opts), searchNaverSeries(q, opts)]);
+  const results = [];
+  const errs = [];
+  for (const s of settled) { if (s.status === "fulfilled") results.push(...(s.value || [])); else if (s.reason) errs.push(s.reason); }
+  if (!results.length) {
+    if (errs.length && errs.length >= settled.length) throw errs[0]; // 전부 실패 → 첫 실패 사유 전달
+    throw new Error(`‘${q}’ 검색 결과가 없어요. 다른 제목으로 시도하거나, 작품 링크로 ‘🔗 불러오기’를 써 주세요.`);
+  }
+  results.sort((a, b) => (a.isComic === b.isComic) ? 0 : (a.isComic ? 1 : -1)); // 소설 먼저, 웹툰/만화 뒤로
+  return results.slice(0, 40);
 }
 
 // 리디 검색 — 검색 결과 페이지는 서버렌더(__NEXT_DATA__에 결과 내장)라 별도 API 불필요.
@@ -13917,6 +13936,68 @@ function parseRidiSearch(html) {
   visit(nd);
   out.sort((a, b) => (a.isComic === b.isComic) ? 0 : (a.isComic ? 1 : -1)); // 소설 먼저, 웹툰/만화 뒤로
   return out.slice(0, 30);
+}
+
+// HTML 엔티티 디코드(검색 결과 텍스트용 — 명명·숫자 참조 일부). 안전 폴백.
+function scraperDecodeEntities(s) {
+  return String(s == null ? "" : s)
+    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"').replace(/&apos;|&#0?39;|&#x27;/gi, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#(\d+);/g, (_, d) => { try { return String.fromCodePoint(Number(d)); } catch { return _; } })
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => { try { return String.fromCodePoint(parseInt(h, 16)); } catch { return _; } });
+}
+
+// 네이버시리즈 제목 검색 — 모바일 검색 페이지가 서버렌더(itemList SSR)라 HTML 직접 파싱.
+async function searchNaverSeries(query, opts = {}) {
+  const url = "https://series.naver.com/search/search.series?t=novel&q=" + encodeURIComponent(query);
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
+  let res, html = "";
+  try {
+    res = await fetch(url, { headers: SCRAPER_HEADERS, redirect: "follow", signal });
+    html = await res.text();
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error("검색 응답이 없어 중단했어요 (시간 초과)");
+    throw new Error("검색을 불러오지 못했어요: " + (e?.message || e));
+  } finally { cleanup(); }
+  const block = scraperDetectBlock(res.status, html);
+  if (block.blocked) throw new Error(`네이버시리즈 검색을 바로 못 했어요. ${block.hint}`);
+  return parseNaverSeriesSearch(html);
+}
+
+// 네이버시리즈 검색 결과 HTML → 후보[]. <ul id="itemList">의 <li class="lst"> 아이템을
+//   실제 작품 링크(/{novel|comic|ebook}/detail.series?productNo=NNN)로 앵커.
+//   ⚠️ <script id="searchTemplate">의 {=productURL} 더미·푸터 검색폼은 이 앵커로 자동 제외.
+function parseNaverSeriesSearch(html) {
+  const out = [], seen = new Set();
+  const dec = (s) => scraperDecodeEntities(String(s || "").replace(/<[^>]+>/g, "")).replace(/\s+/g, " ").trim();
+  const itemRe = /<a\s+href="(\/(novel|comic|ebook)\/detail\.series\?productNo=(\d+))"[\s\S]*?<\/a>/gi;
+  let m;
+  while ((m = itemRe.exec(html)) && out.length < 30) {
+    const path = m[1], section = m[2], id = m[3], block = m[0];
+    if (seen.has(id)) continue;
+    // 제목: img alt(titleWithoutStringTag = 태그 없는 원제) 우선, 폴백 <h5 class="tit">
+    let title = dec((block.match(/<img[^>]*\balt="([^"]*)"/i) || [])[1] || "");
+    if (!title) title = dec((block.match(/<h5[^>]*class="tit"[^>]*>([\s\S]*?)<\/h5>/i) || [])[1] || "");
+    if (!title) continue;
+    const coverUrl = (block.match(/<img[^>]*\bsrc="([^"]+)"/i) || [])[1] || "";
+    // 장르 + 작가: <p class="...info_writer...">  장르 <em class="bar">|</em> <span class="author">작가</span>
+    const writerBlock = (block.match(/<p[^>]*class="[^"]*info_writer[^"]*"[^>]*>([\s\S]*?)<\/p>/i) || [])[1] || "";
+    const category = dec((writerBlock.split(/<em\b/i)[0] || ""));
+    const authors = []; let am; const aRe = /<span[^>]*class="author"[^>]*>([\s\S]*?)<\/span>/gi;
+    while ((am = aRe.exec(writerBlock))) { const a = dec(am[1]); if (a) authors.push(a); }
+    seen.add(id);
+    out.push({
+      title,
+      author: authors.join(", "),
+      url: "https://series.naver.com" + path,
+      coverUrl,
+      platform: "네이버시리즈",
+      category,
+      isComic: section === "comic",
+    });
+  }
+  return out;
 }
 
 // 정규화 메타 + 현재값 → 확인 모달용 항목 [{ key, label, value(적용값), display, current, checked }].
