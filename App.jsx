@@ -2,9 +2,18 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.40 (스크래퍼 Stage 4b — 문피아 제목 검색 구현)                   ║
+ * ║  버전: 7.28.41 (문피아 검색 URL 교정 — detailSearchV2 라우트)                ║
  * ║  최종 수정: 2026-06-21                                                        ║
  * ║  총 라인 수: 약 64,090줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.28.41 문피아 검색 URL 교정 (2026-06-21)                                ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ v7.28.40의 /page/search?text= 는 /main으로 바운스(실측)되어 검색 불가였음.    ║
+ * ║ 캡처 페이지의 topsearch()/MoveToPC()가 쓰는 실제 라우트로 교정:                ║
+ * ║   /?menu=detailSearchV2&action=search&searchKey=all&keyword= . 진단 칩도 동일. ║
+ * ║ 파서(parseMunpiaSearch)·픽스처·테스트는 그대로 유효(실제 결과 페이지 기반).    ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -14018,7 +14027,8 @@ function parseNaverSeriesSearch(html) {
 async function searchMunpia(query, opts = {}) {
   const q = (query || "").trim();
   if (q.length < 2) return []; // 문피아 서버 정책: 2자 이상만 검색
-  const url = "https://www.munpia.com/page/search?text=" + encodeURIComponent(q);
+  // 실제 검색 URL은 페이지의 topsearch()/MoveToPC()가 쓰는 detailSearchV2 라우트(=실측 확인).
+  const url = "https://www.munpia.com/?menu=detailSearchV2&action=search&searchKey=all&keyword=" + encodeURIComponent(q);
   const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
   let res, html = "";
   try {
@@ -58277,7 +58287,7 @@ async function importJSON() {
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
                   {[
                     { label: "네이버시리즈", url: "https://series.naver.com/search/search.series?t=novel&q=검" },
-                    { label: "문피아", url: "https://www.munpia.com/page/search?text=회귀" },
+                    { label: "문피아", url: "https://www.munpia.com/?menu=detailSearchV2&action=search&searchKey=all&keyword=회귀" },
                     { label: "노벨피아", url: "https://novelpia.com/search/all/회귀" },
                     { label: "리디", url: "https://ridibooks.com/search?q=검" },
                   ].map(p => (
