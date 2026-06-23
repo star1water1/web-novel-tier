@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, scraperDecodeEntities, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, SCRAPER_HEADERS, SCRAPER_UA };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, scraperDecodeEntities, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, SCRAPER_HEADERS, SCRAPER_UA };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -134,6 +134,23 @@ eq("네이버시리즈 productNo 중복 없음", new Set(ns.map(x => x.url)).siz
 // 엔티티 디코드
 eq("디코드 &amp; → &", S.scraperDecodeEntities("A&amp;B"), "A&B");
 eq("디코드 숫자참조 &#39; → '", S.scraperDecodeEntities("it&#39;s"), "it's");
+
+// ── ④''' 노벨피아 검색 파싱(v7.28.42, 폰 캡처 실측 JSON API) ─────────────────────
+//   /proc/novel JSON → list[] 매핑. (SPA라 HTML엔 결과 없음 — 내부 API에서 받음)
+const nv = S.parseNovelpiaSearch(fx("novelpia-search-hoegwi.json"));
+eq("노벨피아 후보 4건", nv.length, 4);
+eq("노벨피아 후보1 제목", nv[0].title, "일인칭 빌런 시점");
+eq("노벨피아 후보1 작가", nv[0].author, "둥이둥");
+eq("노벨피아 후보1 url(/novel/{id})", nv[0].url, "https://novelpia.com/novel/436348");
+eq("노벨피아 후보1 표지(// → https:)", nv[0].coverUrl, "https://images.novelpia.com/imagebox/cover/166eca7e88654af412ea592a670efecc_596155_ori.wimg");
+eq("노벨피아 후보1 장르(태그 앞 3개)", nv[0].category, "판타지, 하렘, 빙의");
+eq("노벨피아 후보1 플랫폼 라벨", nv[0].platform, "노벨피아");
+eq("노벨피아 기본표지도 https 보정", nv[1].coverUrl, "https://images.novelpia.com/img/layout/readycover4.png");
+eq("노벨피아 후보4 제목(공백·한글)", nv[3].title, "나를 죽인 성기사의 몸으로 회귀했다");
+eq("노벨피아 전부 소설(isComic=false)", nv.every(x => x.isComic === false), true);
+eq("노벨피아 id 중복 없음(4건)", new Set(nv.map(x => x.url)).size, 4);
+eq("노벨피아 status≠200/깨진 JSON → 빈 배열", S.parseNovelpiaSearch('{"status":403}'), []);
+eq("노벨피아 비JSON → 빈 배열", S.parseNovelpiaSearch('<html>not json</html>'), []);
 
 // ── ④'' 문피아 검색 파싱(v7.28.40, 폰 캡처 실측 픽스처) ─────────────────────────
 //   <ul id=list_ul> 서버렌더 4건 + 하단 JS 렌더 템플릿 디코이 → 디코이 제외 4건만.

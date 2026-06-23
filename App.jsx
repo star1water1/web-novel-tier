@@ -2,12 +2,24 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.41 (문피아 검색 URL 교정 — detailSearchV2 라우트)                ║
+ * ║  버전: 7.28.42 (스크래퍼 Stage 4b — 노벨피아 제목 검색, 4플랫폼 완성)        ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 64,090줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 64,150줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔎 v7.28.42 스크래퍼 Stage 4b — 노벨피아 제목 검색 (2026-06-21)              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 노벨피아는 SPA라 화면 HTML엔 결과가 없고, 내부 JSON API에서 받아옴(실측 확인).║
+ * ║ • searchNovelpia: /proc/novel?cmd=novel_search&search_type=all&search_val=..  ║
+ * ║   (쿠키 없이 status:200 + list 반환 확인). parseNovelpiaSearch: list[]를      ║
+ * ║   제목(novel_name)·작가(writer_nick)·표지(cover_url, //→https)·장르           ║
+ * ║   (novel_genre_arr 앞3개)·detail(/novel/{novel_no})로 매핑. status≠200/비JSON ║
+ * ║   → 빈 배열(조용히 degrade).                                                  ║
+ * ║ • searchNovels: 리디+네이버시리즈+문피아+노벨피아 4-way 병렬(allSettled).     ║
+ * ║   → 제목 검색 4개 플랫폼 완성(카카오만 GraphQL+인증으로 보류).                 ║
+ * ║ • 진단 칩: 노벨피아를 JSON API URL로 교체. 회귀 테스트 +13 → 88/88 통과.       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 🔧 v7.28.41 문피아 검색 URL 교정 (2026-06-21)                                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ v7.28.40의 /page/search?text= 는 /main으로 바운스(실측)되어 검색 불가였음.    ║
@@ -13890,8 +13902,8 @@ async function fetchNovelMeta(url, opts = {}) {
 async function searchNovels(query, opts = {}) {
   const q = (query || "").trim();
   if (!q) throw new Error("검색할 제목을 입력해 주세요.");
-  // 🔎 v7.28.40: 리디 + 네이버시리즈 + 문피아 병렬 검색(allSettled — 한쪽 차단/실패해도 나머지 노출).
-  const settled = await Promise.allSettled([searchRidi(q, opts), searchNaverSeries(q, opts), searchMunpia(q, opts)]);
+  // 🔎 v7.28.42: 리디+네이버시리즈+문피아+노벨피아 병렬 검색(allSettled — 한쪽 차단/실패해도 나머지 노출).
+  const settled = await Promise.allSettled([searchRidi(q, opts), searchNaverSeries(q, opts), searchMunpia(q, opts), searchNovelpia(q, opts)]);
   const results = [];
   const errs = [];
   for (const s of settled) { if (s.status === "fulfilled") results.push(...(s.value || [])); else if (s.reason) errs.push(s.reason); }
@@ -14075,6 +14087,53 @@ function parseMunpiaSearch(html) {
       category,
       isComic: false,
     });
+  }
+  return out;
+}
+
+// 노벨피아 제목 검색 — SPA라 화면엔 결과가 없고, 내부 JSON API(/proc/novel)에서 받아옴(실측).
+async function searchNovelpia(query, opts = {}) {
+  const q = (query || "").trim();
+  if (!q) return [];
+  const url = "https://novelpia.com/proc/novel?cmd=novel_search&search_type=all&search_val="
+    + encodeURIComponent(q) + "&page=1&rows=30&sort_col=last_viewdate&list_display=list";
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
+  let res, text = "";
+  try {
+    res = await fetch(url, { headers: SCRAPER_HEADERS, redirect: "follow", signal });
+    text = await res.text();
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error("검색 응답이 없어 중단했어요 (시간 초과)");
+    throw new Error("검색을 불러오지 못했어요: " + (e?.message || e));
+  } finally { cleanup(); }
+  return parseNovelpiaSearch(text);
+}
+
+// 노벨피아 검색 JSON({status, list:[{novel_no, novel_name, writer_nick, cover_url, novel_genre_arr}], ...}) → 후보[].
+function parseNovelpiaSearch(jsonText) {
+  let data;
+  try { data = JSON.parse(jsonText); } catch { return []; }
+  if (!data || Number(data.status) !== 200 || !Array.isArray(data.list)) return [];
+  const out = [], seen = new Set();
+  for (const it of data.list) {
+    if (!it || typeof it !== "object") continue;
+    const id = it.novel_no;
+    const title = String(it.novel_name == null ? "" : it.novel_name).trim();
+    if (!id || !title || seen.has(id)) continue;
+    seen.add(id);
+    let coverUrl = String(it.cover_url || "");
+    if (coverUrl.startsWith("//")) coverUrl = "https:" + coverUrl;
+    const genres = Array.isArray(it.novel_genre_arr) ? it.novel_genre_arr.filter(Boolean) : [];
+    out.push({
+      title,
+      author: String(it.writer_nick == null ? "" : it.writer_nick).trim(),
+      url: "https://novelpia.com/novel/" + id,
+      coverUrl,
+      platform: "노벨피아",
+      category: genres.slice(0, 3).join(", "), // 태그가 많아 앞 3개만 표시용
+      isComic: false,
+    });
+    if (out.length >= 30) break;
   }
   return out;
 }
@@ -58288,7 +58347,7 @@ async function importJSON() {
                   {[
                     { label: "네이버시리즈", url: "https://series.naver.com/search/search.series?t=novel&q=검" },
                     { label: "문피아", url: "https://www.munpia.com/?menu=detailSearchV2&action=search&searchKey=all&keyword=회귀" },
-                    { label: "노벨피아", url: "https://novelpia.com/search/all/회귀" },
+                    { label: "노벨피아", url: "https://novelpia.com/proc/novel?cmd=novel_search&search_type=all&search_val=회귀&page=1&rows=30" },
                     { label: "리디", url: "https://ridibooks.com/search?q=검" },
                   ].map(p => (
                     <TouchableOpacity key={p.label} onPress={() => setScrapeDiagUrl(p.url)} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line }}>
