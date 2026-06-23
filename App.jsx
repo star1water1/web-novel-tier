@@ -2,12 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.43 (검색 결과 정리 — 관련도 정렬·플랫폼 균형·노벨피아 메타)      ║
+ * ║  버전: 7.28.44 (문피아 검색 도메인 교정 mm + 메타 동봉)                      ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 64,200줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 64,210줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.28.44 문피아 검색 도메인 교정(mm) + 메타 동봉 (2026-06-21)             ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 문피아 검색이 0건이던 원인 = 도메인(로그인 무관). 실측 확인:                   ║
+ * ║   www=PC(모바일 UA에서 /main 바운스), m=새 React SPA(결과 JS로드),            ║
+ * ║   mm=구버전 SSR(list_ul) ← 우리 파서가 읽는 구조. → searchMunpia·진단 칩을     ║
+ * ║   mm.munpia.com으로 교정.                                                     ║
+ * ║ • parseMunpiaSearch: 검색 SSR이 줄거리(작품소개)·완결(배지)·회차(총 N화)·장르  ║
+ * ║   까지 주므로 노벨피아처럼 meta 동봉 → 선택 시 상세 재긁기 없이 정확 등록.      ║
+ * ║   detail url도 mm 도메인으로.                                                  ║
+ * ║ • 회귀 테스트 +6 → 107/107 통과. 카카오만 보류, 4플랫폼 검색+등록 정상화.      ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 🔎 v7.28.43 검색 결과 정리 + 노벨피아 등록 정확화 (2026-06-21)               ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 실사용 피드백: 리디가 부분매칭("수선전")으로 회차/권까지 폭넓게 쏟아지고,      ║
@@ -14080,8 +14091,8 @@ function parseNaverSeriesSearch(html) {
 async function searchMunpia(query, opts = {}) {
   const q = (query || "").trim();
   if (q.length < 2) return []; // 문피아 서버 정책: 2자 이상만 검색
-  // 실제 검색 URL은 페이지의 topsearch()/MoveToPC()가 쓰는 detailSearchV2 라우트(=실측 확인).
-  const url = "https://www.munpia.com/?menu=detailSearchV2&action=search&searchKey=all&keyword=" + encodeURIComponent(q);
+  // 구버전 SSR(list_ul) 도메인은 mm.munpia.com(실측). www=PC는 모바일 UA에서 /main 바운스, m=새 React SPA.
+  const url = "https://mm.munpia.com/?menu=detailSearchV2&action=search&searchKey=all&keyword=" + encodeURIComponent(q);
   const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
   let res, html = "";
   try {
@@ -14118,15 +14129,20 @@ function parseMunpiaSearch(html) {
     const author = dec((authorRaw.split(/&nbsp;|<span/i)[0] || ""));
     let coverUrl = (block.match(/<img[^>]*\bsrc="([^"]+)"/i) || [])[1] || "";
     if (coverUrl.startsWith("//")) coverUrl = "https:" + coverUrl;
+    // 검색 SSR이 줄거리(작품소개)·완결·회차까지 줌 → 노벨피아처럼 메타 동봉(상세 재긁기 생략)
+    const synopsis = dec((block.match(/<div[^>]*class="detail"[^>]*>[\s\S]*?<h3>[\s\S]*?<\/h3>\s*<p>([\s\S]*?)<\/p>/i) || [])[1] || "");
+    const workStatus = /class="i_complete"/.test(titleRaw) ? "completed" : "ongoing";
+    const epM = authorRaw.match(/총\s*([0-9,]+)\s*(?:화|권)/);
+    const totalEpisodes = epM ? Number(epM[1].replace(/,/g, "")) : null;
+    const genres = category ? category.split(/[,/·]/).map(s => s.trim()).filter(Boolean) : [];
+    const url = "https://mm.munpia.com/?menu=novel&id=" + id + "&renewal2=TRUE";
     seen.add(id);
     out.push({
-      title,
-      author,
-      url: "https://www.munpia.com/?menu=novel&id=" + id + "&renewal2=TRUE",
-      coverUrl,
+      title, author, url, coverUrl,
       platform: "문피아",
       category,
       isComic: false,
+      meta: { ok: true, platform: "문피아", url, title, author, coverUrl, synopsis, genres, workStatus, totalEpisodes },
     });
   }
   return out;
@@ -58405,7 +58421,7 @@ async function importJSON() {
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
                   {[
                     { label: "네이버시리즈", url: "https://series.naver.com/search/search.series?t=novel&q=검" },
-                    { label: "문피아", url: "https://www.munpia.com/?menu=detailSearchV2&action=search&searchKey=all&keyword=회귀" },
+                    { label: "문피아", url: "https://mm.munpia.com/?menu=detailSearchV2&action=search&searchKey=all&keyword=회귀" },
                     { label: "노벨피아", url: "https://novelpia.com/proc/novel?cmd=novel_search&search_type=all&search_val=회귀&page=1&rows=30" },
                     { label: "리디", url: "https://ridibooks.com/search?q=검" },
                   ].map(p => (

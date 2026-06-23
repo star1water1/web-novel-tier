@@ -182,7 +182,7 @@ eq("문피아 후보 4건(JS 렌더 템플릿 디코이 제외)", ms.length, 4);
 eq("문피아 후보1 제목(complete 배지 통째 제거)", ms[0].title, "회귀수선전(回歸修仙傳)");
 eq("문피아 후보1 작가(첫 구분선 앞)", ms[0].author, "엄청난");
 eq("문피아 후보1 장르", ms[0].category, "무협, 퓨전");
-eq("문피아 후보1 url(menu=novel&id)", ms[0].url, "https://www.munpia.com/?menu=novel&id=346981&renewal2=TRUE");
+eq("문피아 후보1 url(mm 도메인 menu=novel&id)", ms[0].url, "https://mm.munpia.com/?menu=novel&id=346981&renewal2=TRUE");
 eq("문피아 후보1 플랫폼 라벨", ms[0].platform, "문피아");
 truthy("문피아 후보1 표지(// → https 보정)", /^https:\/\/cdn1\.munpia\.com\//.test(ms[0].coverUrl));
 eq("문피아 후보3 배지 없는 제목 보존", ms[2].title, "회귀했는데 세상이 안 망함");
@@ -190,6 +190,13 @@ eq("문피아 후보3 작가 특수문자(仙宇) 보존", ms[2].author, "선우
 eq("문피아 후보4 작가 ™ 보존", ms[3].author, "소라게™");
 eq("문피아 전부 소설(isComic=false)", ms.every(x => x.isComic === false), true);
 eq("문피아 id 중복 없음(4건)", new Set(ms.map(x => x.url)).size, 4);
+// 검색 SSR 메타 동봉(상세 재긁기 생략) — 줄거리/완결/회차/장르
+truthy("문피아 후보에 meta 동봉", ms[0].meta && ms[0].meta.title === "회귀수선전(回歸修仙傳)");
+truthy("문피아 meta 줄거리(작품소개)", /워크샵/.test(ms[0].meta.synopsis));
+eq("문피아 meta 완결(complete 배지)", ms[0].meta.workStatus, "completed");
+eq("문피아 meta 회차(총 863화)", ms[0].meta.totalEpisodes, 863);
+eq("문피아 meta 장르 분리(무협/퓨전)", ms[0].meta.genres, ["무협", "퓨전"]);
+eq("문피아 배지 없는 작품은 ongoing", ms[2].meta.workStatus, "ongoing");
 
 // ── ⑤ 장르 매핑(v7.28.30) — 플랫폼 장르 → 앱 어휘 + 확인 모달 항목 ──────────────
 eq("장르 매핑: 공백 정규화(퓨전 판타지→퓨전판타지)", S.mapScrapedGenres(["퓨전 판타지"], ["퓨전판타지", "무협"], ["회귀"]).major, ["퓨전판타지"]);
