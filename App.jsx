@@ -2,12 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.39 (스크래퍼 Stage 4b — 네이버시리즈 제목 검색 구현)             ║
+ * ║  버전: 7.28.40 (스크래퍼 Stage 4b — 문피아 제목 검색 구현)                   ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 64,020줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 64,090줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔎 v7.28.40 스크래퍼 Stage 4b — 문피아 제목 검색 (2026-06-21)                ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ '긁기 진단' 폰 캡처로 문피아 검색이 서버렌더(<ul id=list_ul>)임을 확인.        ║
+ * ║ • parseMunpiaSearch: list_ul의 <li onclick=...view_novel(ID)>에서 제목(배지   ║
+ * ║   span 제거)·작가(첫 구분선 앞)·장르·표지(//→https)·detail URL(?menu=novel&   ║
+ * ║   id=) 추출. 하단 JS 렌더 템플릿(작은따옴표 onclick)·추천영역은 슬라이스+큰    ║
+ * ║   따옴표 view_novel(숫자) 앵커로 제외. ⚠️ 2자 미만은 문피아가 /main 바운스 →  ║
+ * ║   searchMunpia가 빈 결과로 단축.                                              ║
+ * ║ • searchNovels: 리디+네이버시리즈+문피아 3-way 병렬(allSettled).              ║
+ * ║ • 긁기 진단 칩: 문피아/노벨피아 예시어 2자(회귀)로 수정(1자는 바운스).         ║
+ * ║ • 회귀 테스트 +12 (munpia-search-hoegwi.html) → 75/75 통과.                    ║
+ * ║ ※ 남은 4b: 노벨피아(캡처 대기). 카카오는 GraphQL(인증) 보류.                   ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 🔎 v7.28.39 스크래퍼 Stage 4b — 네이버시리즈 제목 검색 (2026-06-21)          ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ '긁기 진단'으로 폰이 캡처한 실제 검색 원본(itemList SSR)으로 파서 구현.        ║
@@ -13868,8 +13881,8 @@ async function fetchNovelMeta(url, opts = {}) {
 async function searchNovels(query, opts = {}) {
   const q = (query || "").trim();
   if (!q) throw new Error("검색할 제목을 입력해 주세요.");
-  // 🔎 v7.28.39: 리디 + 네이버시리즈 병렬 검색(allSettled — 한쪽 차단/실패해도 나머지 노출).
-  const settled = await Promise.allSettled([searchRidi(q, opts), searchNaverSeries(q, opts)]);
+  // 🔎 v7.28.40: 리디 + 네이버시리즈 + 문피아 병렬 검색(allSettled — 한쪽 차단/실패해도 나머지 노출).
+  const settled = await Promise.allSettled([searchRidi(q, opts), searchNaverSeries(q, opts), searchMunpia(q, opts)]);
   const results = [];
   const errs = [];
   for (const s of settled) { if (s.status === "fulfilled") results.push(...(s.value || [])); else if (s.reason) errs.push(s.reason); }
@@ -13995,6 +14008,62 @@ function parseNaverSeriesSearch(html) {
       platform: "네이버시리즈",
       category,
       isComic: section === "comic",
+    });
+  }
+  return out;
+}
+
+// 문피아 제목 검색 — 모바일 검색 페이지가 서버렌더(<ul id=list_ul> SSR).
+//   ⚠️ 검색어 2자 미만은 문피아가 /main으로 바운스 → 빈 결과로 단축.
+async function searchMunpia(query, opts = {}) {
+  const q = (query || "").trim();
+  if (q.length < 2) return []; // 문피아 서버 정책: 2자 이상만 검색
+  const url = "https://www.munpia.com/page/search?text=" + encodeURIComponent(q);
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
+  let res, html = "";
+  try {
+    res = await fetch(url, { headers: SCRAPER_HEADERS, redirect: "follow", signal });
+    html = await res.text();
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error("검색 응답이 없어 중단했어요 (시간 초과)");
+    throw new Error("검색을 불러오지 못했어요: " + (e?.message || e));
+  } finally { cleanup(); }
+  const block = scraperDetectBlock(res.status, html);
+  if (block.blocked) throw new Error(`문피아 검색을 바로 못 했어요. ${block.hint}`);
+  return parseMunpiaSearch(html);
+}
+
+// 문피아 검색 결과 HTML → 후보[]. <ul id=list_ul>의 <li onclick="...view_novel(ID,...">를 추출.
+//   ⚠️ 하단 <script>의 JS 렌더 템플릿(작은따옴표 onclick·{=entry} 보간)·작품추천 영역은
+//   list_ul 슬라이스 + 큰따옴표 view_novel(숫자) 앵커로 자동 제외.
+function parseMunpiaSearch(html) {
+  const out = [], seen = new Set();
+  const dec = (s) => scraperDecodeEntities(String(s || "").replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+  const listBlock = (html.match(/<ul[^>]*id="list_ul"[^>]*>([\s\S]*?)<\/ul>/i) || [])[1] || "";
+  const itemRe = /<li[^>]*onclick="[^"]*view_novel\((\d+)[\s\S]*?<\/li>/gi;
+  let m;
+  while ((m = itemRe.exec(listBlock)) && out.length < 30) {
+    const id = m[1], block = m[0];
+    if (seen.has(id)) continue;
+    // 제목: 배지 span(complete/new/rental 등) 통째로 제거 후 텍스트
+    const titleRaw = (block.match(/<p[^>]*class="title"[^>]*>([\s\S]*?)<\/p>/i) || [])[1] || "";
+    const title = dec(titleRaw.replace(/<span\b[^>]*>[\s\S]*?<\/span>/gi, ""));
+    if (!title) continue;
+    const category = dec((block.match(/<p[^>]*class="genre"[^>]*>([\s\S]*?)<\/p>/i) || [])[1] || "");
+    // 작가: <p class="author"> 첫 구분선(&nbsp;/divide-line) 앞 = 작가명
+    const authorRaw = (block.match(/<p[^>]*class="author"[^>]*>([\s\S]*?)<\/p>/i) || [])[1] || "";
+    const author = dec((authorRaw.split(/&nbsp;|<span/i)[0] || ""));
+    let coverUrl = (block.match(/<img[^>]*\bsrc="([^"]+)"/i) || [])[1] || "";
+    if (coverUrl.startsWith("//")) coverUrl = "https:" + coverUrl;
+    seen.add(id);
+    out.push({
+      title,
+      author,
+      url: "https://www.munpia.com/?menu=novel&id=" + id + "&renewal2=TRUE",
+      coverUrl,
+      platform: "문피아",
+      category,
+      isComic: false,
     });
   }
   return out;
@@ -58208,8 +58277,8 @@ async function importJSON() {
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
                   {[
                     { label: "네이버시리즈", url: "https://series.naver.com/search/search.series?t=novel&q=검" },
-                    { label: "문피아", url: "https://www.munpia.com/page/search?text=검" },
-                    { label: "노벨피아", url: "https://novelpia.com/search/all/검" },
+                    { label: "문피아", url: "https://www.munpia.com/page/search?text=회귀" },
+                    { label: "노벨피아", url: "https://novelpia.com/search/all/회귀" },
                     { label: "리디", url: "https://ridibooks.com/search?q=검" },
                   ].map(p => (
                     <TouchableOpacity key={p.label} onPress={() => setScrapeDiagUrl(p.url)} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line }}>

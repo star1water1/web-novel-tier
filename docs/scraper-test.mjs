@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, scraperDecodeEntities, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, SCRAPER_HEADERS, SCRAPER_UA };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, scraperDecodeEntities, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, SCRAPER_HEADERS, SCRAPER_UA };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -134,6 +134,22 @@ eq("네이버시리즈 productNo 중복 없음", new Set(ns.map(x => x.url)).siz
 // 엔티티 디코드
 eq("디코드 &amp; → &", S.scraperDecodeEntities("A&amp;B"), "A&B");
 eq("디코드 숫자참조 &#39; → '", S.scraperDecodeEntities("it&#39;s"), "it's");
+
+// ── ④'' 문피아 검색 파싱(v7.28.40, 폰 캡처 실측 픽스처) ─────────────────────────
+//   <ul id=list_ul> 서버렌더 4건 + 하단 JS 렌더 템플릿 디코이 → 디코이 제외 4건만.
+const ms = S.parseMunpiaSearch(fx("munpia-search-hoegwi.html"));
+eq("문피아 후보 4건(JS 렌더 템플릿 디코이 제외)", ms.length, 4);
+eq("문피아 후보1 제목(complete 배지 통째 제거)", ms[0].title, "회귀수선전(回歸修仙傳)");
+eq("문피아 후보1 작가(첫 구분선 앞)", ms[0].author, "엄청난");
+eq("문피아 후보1 장르", ms[0].category, "무협, 퓨전");
+eq("문피아 후보1 url(menu=novel&id)", ms[0].url, "https://www.munpia.com/?menu=novel&id=346981&renewal2=TRUE");
+eq("문피아 후보1 플랫폼 라벨", ms[0].platform, "문피아");
+truthy("문피아 후보1 표지(// → https 보정)", /^https:\/\/cdn1\.munpia\.com\//.test(ms[0].coverUrl));
+eq("문피아 후보3 배지 없는 제목 보존", ms[2].title, "회귀했는데 세상이 안 망함");
+eq("문피아 후보3 작가 특수문자(仙宇) 보존", ms[2].author, "선우(仙宇)");
+eq("문피아 후보4 작가 ™ 보존", ms[3].author, "소라게™");
+eq("문피아 전부 소설(isComic=false)", ms.every(x => x.isComic === false), true);
+eq("문피아 id 중복 없음(4건)", new Set(ms.map(x => x.url)).size, 4);
 
 // ── ⑤ 장르 매핑(v7.28.30) — 플랫폼 장르 → 앱 어휘 + 확인 모달 항목 ──────────────
 eq("장르 매핑: 공백 정규화(퓨전 판타지→퓨전판타지)", S.mapScrapedGenres(["퓨전 판타지"], ["퓨전판타지", "무협"], ["회귀"]).major, ["퓨전판타지"]);
