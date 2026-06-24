@@ -2,12 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.48 (인앱 버전 동기화 + 기능 가이드·새 소식 갱신)                  ║
+ * ║  버전: 7.28.49 (불러오기 — 줄거리 #해시태그 → 태그 보강 + 전면 검수)          ║
  * ║  최종 수정: 2026-06-24                                                        ║
- * ║  총 라인 수: 약 64,320줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 64,340줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🏷️ v7.28.49 줄거리 #해시태그 → 태그 보강 + 등록값 전면 검수 (2026-06-24)     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 검수: buildScrapeItems→모달→applyScrapeSelection→apply→폼 state→INSERT 전     ║
+ * ║ 경로가 신규/예정 모두 정상(태그·연도·링크·연재처). 실측 메타로 회귀 테스트.    ║
+ * ║ 플랫폼별 태그량 차이 확인: 노벨피아=키워드 ~10개(풍부), 문피아=장르2~3, 리디·  ║
+ * ║ 네이버=장르1. 카카오 ld keywords는 제목/작가라 태그 부적합.                    ║
+ * ║ • scraperExtractHashtags: 줄거리 #해시태그(#회귀 #겜천재) 추출 → mapScraped   ║
+ * ║   Genres 거쳐 소재성은 부장르, 그 외는 일반 태그로 분류(노벨피아·문피아 보강). ║
+ * ║ • 회귀 테스트 +8 → 133/133.                                                   ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 📖 v7.28.48 인앱 버전 동기화 + 기능 가이드·새 소식 갱신 (2026-06-24)         ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 그동안 헤더만 올리고 APP_VERSION이 7.28.22에 멈춰 '새 소식' 모달이 안 떴음.    ║
@@ -14084,6 +14094,22 @@ function scraperDecodeEntities(s) {
     .replace(/&#x([0-9a-f]+);/gi, (_, h) => { try { return String.fromCodePoint(parseInt(h, 16)); } catch { return _; } });
 }
 
+// 🔧 v7.28.49: 줄거리 등 텍스트의 #해시태그 → 태그 후보. 노벨피아·문피아 작품소개에 자주(#회귀 #헌터물).
+//   2~12자만(문장형 #지랄맞은인연류 일부 배제), 중복 제거, 최대 12개.
+function scraperExtractHashtags(text) {
+  const out = [], seen = new Set();
+  const re = /#([0-9A-Za-z가-힣ㄱ-ㅎㅏ-ㅣ]{2,12})(?![0-9A-Za-z가-힣])/g;
+  let m;
+  while ((m = re.exec(String(text == null ? "" : text))) && out.length < 12) {
+    const t = m[1].trim();
+    const k = t.toLowerCase();
+    if (t.length < 2 || seen.has(k)) continue;
+    seen.add(k);
+    out.push(t);
+  }
+  return out;
+}
+
 // 네이버시리즈 제목 검색 — 모바일 검색 페이지가 서버렌더(itemList SSR)라 HTML 직접 파싱.
 async function searchNaverSeries(query, opts = {}) {
   const url = "https://series.naver.com/search/search.series?t=novel&q=" + encodeURIComponent(query);
@@ -14309,7 +14335,9 @@ function buildScrapeItems(meta, current = {}) {
   const gnorm = (s) => String(s == null ? "" : s).replace(/\s+/g, "").toLowerCase();
   const mergeGen = (cur, add) => { const out = [...cur]; for (const v of add) if (!out.some(x => gnorm(x) === gnorm(v))) out.push(v); return out; };
   const sameSet = (a, b) => a.length === b.length && a.every(x => b.some(y => gnorm(x) === gnorm(y)));
-  const gmap = mapScrapedGenres(meta.genres);
+  // 🔧 v7.28.49: 줄거리 #해시태그도 장르 매핑에 포함 → 소재성(#회귀)은 부장르, 그 외(#겜천재)는 일반 태그로.
+  const metaGenreArr = Array.isArray(meta.genres) ? meta.genres : (meta.genres ? [meta.genres] : []);
+  const gmap = mapScrapedGenres([...metaGenreArr, ...scraperExtractHashtags(meta.synopsis)]);
   for (const [key, label, add] of [["major_genre", "대장르", gmap.major], ["sub_genre", "부장르", gmap.sub]]) {
     if (!add.length) continue;
     const cur = parseGenreArray(current[key]);
@@ -14317,7 +14345,7 @@ function buildScrapeItems(meta, current = {}) {
     if (sameSet(merged, cur)) continue; // 새로 추가될 게 없으면 표시 안 함
     items.push({ key, label, value: merged, display: add.join(", "), current: cur.join(", "), checked: cur.length === 0 });
   }
-  // 🔧 v7.28.45/47: 일반 태그 — 앱 장르 어휘 밖 키워드(하렘/집착 등) + 연령등급(19금). 기존 태그에 '병합' 제안.
+  // 🔧 v7.28.45/47/49: 일반 태그 — 장르 어휘 밖 키워드 + 연령(19금) + 줄거리 #해시태그. 기존 태그에 '병합'.
   const addTags = [...(gmap.tags || [])];
   if (meta.ageTag) addTags.push(meta.ageTag);
   if (addTags.length) {
@@ -15806,7 +15834,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.48";
+const APP_VERSION = "7.28.49";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -15833,10 +15861,11 @@ function compareVersions(a, b) {
 
 const CHANGELOG_DATA = [
   {
-    version: "7.28.48", date: "2026-06-24",
+    version: "7.28.49", date: "2026-06-24",
     title: "🔎 제목으로 검색 + 불러오기 대폭 강화",
     highlights: [
       { type: "new", text: "🔎 작품을 제목만으로 검색해서 등록할 수 있어요. 리디·네이버시리즈·문피아·노벨피아 4개 플랫폼을 한 번에 찾아 관련도순으로 보여줘요. (등록·예정·편집 화면의 ‘🔎 제목으로 검색’)" },
+      { type: "improve", text: "🏷️ 줄거리 속 #해시태그(예: #회귀 #겜천재)도 태그로 가져와요. 플랫폼마다 주는 태그 양이 달라(노벨피아가 가장 풍부) 작품소개의 해시태그로 보강해요." },
       { type: "improve", text: "🔗 링크나 검색으로 불러오면 제목·작가·줄거리·장르·태그·연재상태·연재 시작/종료연도·표지·연재처·작품 링크까지 자동으로 채워져요. 19금은 태그로 들어가요." },
       { type: "fix", text: "🏷️ 불러온 태그가 작품에 적용되지 않던 문제를 고쳤어요. 플랫폼 고유 키워드(하렘·집착 등)도 일반 태그로 들어가요." },
       { type: "new", text: "🔧 설정 > 🏷️ 태그에 ‘긁기 진단’을 추가했어요. 잘 안 긁히는 플랫폼의 검색 원본을 폰에서 직접 캡처해 개선에 쓸 수 있어요." },

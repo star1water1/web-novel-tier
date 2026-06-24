@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, mergeSearchResults, scraperDecodeEntities, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, SCRAPER_HEADERS, SCRAPER_UA };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, mergeSearchResults, scraperDecodeEntities, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, SCRAPER_HEADERS, SCRAPER_UA };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -234,6 +234,11 @@ eq("노벨피아 비성인(15세)은 ageTag null", nv[0].meta.ageTag, null);
   truthy("[검수] 문피아 검색메타 → 연재처 항목", mpI.some(i => i.key === "platforms"));
   truthy("[검수] 문피아 검색메타 → 시작연도 항목 없음(검색에 연도 데이터 없음)", !mpI.some(i => i.key === "start_year"));
 }
+// === v7.28.49: 줄거리 #해시태그 추출 → 태그 보강(노벨피아·문피아 작품소개) ===
+eq("해시태그 추출(중복 제거·순서)", S.scraperExtractHashtags("줄거리 #회귀 #헌터물 #회귀!"), ["회귀", "헌터물"]);
+eq("해시태그 없으면 빈 배열", S.scraperExtractHashtags("해시태그 없는 평범한 줄거리"), []);
+truthy("줄거리 #해시태그 → 소재성(회귀)은 부장르로", (() => { const it = S.buildScrapeItems({ title: "T", genres: [], synopsis: "내용 #회귀 #겜천재" }, {}); const s = it.find(i => i.key === "sub_genre"); return s && /회귀/.test(s.display); })());
+truthy("줄거리 #해시태그 → 그 외(겜천재)는 일반 태그로", (() => { const it = S.buildScrapeItems({ title: "T", genres: [], synopsis: "내용 #회귀 #겜천재" }, {}); const t = it.find(i => i.key === "tags"); return t && /겜천재/.test(t.value); })());
 truthy("buildScrapeItems 연령등급(19금)을 태그로", (() => { const t = S.buildScrapeItems({ title: "T", genres: ["판타지"], ageTag: "19금" }, {}).find(it => it.key === "tags"); return t && /19금/.test(t.value); })());
 // v7.28.46: 작품 링크·연재처 항목
 const giLP = S.buildScrapeItems({ title: "T", url: "https://novelpia.com/novel/1", platform: "노벨피아" }, {});
