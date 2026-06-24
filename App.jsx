@@ -2,12 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.52 (제목검색 — 이미 등록된 작품이면 기존작 편집)                  ║
+ * ║  버전: 7.28.53 (링크 불러오기도 — 이미 등록된 작품이면 기존작 편집)           ║
  * ║  최종 수정: 2026-06-24                                                        ║
- * ║  총 라인 수: 약 64,430줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 64,440줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔁 v7.28.53 링크 불러오기도 기존작 편집 분기 + 판정 일원화 (2026-06-24)      ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ v7.28.52(제목검색)에 이어 '🔗 링크에서 불러오기'에도 동일 적용. 신규/예정      ║
+ * ║ 등록에서 이미 등록된 작품이면 새로 추가 대신 기존작 편집(비교·선택) 제안.      ║
+ * ║ • 판정/분기를 공통 길목 openScrapeFromMeta로 일원화 — 제목검색·링크 모두 커버. ║
+ * ║   pickSearchCandidate의 중복 분기 제거(단순 분기로 환원), skipDupCheck로 재진입║
+ * ║   제어(새로 등록/기존작 적용은 재판정 생략). 스크랩된 최종 제목으로 판정.      ║
+ * ║ • 보충/편집 불러오기(kind 없음)는 판정 제외 — 기존 동작 무변경.               ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 🔁 v7.28.52 제목검색 — 이미 등록된 작품이면 기존작 편집 (2026-06-24)         ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 제목 검색 후보가 이미 등록된 작품이면 새로 추가(중복) 대신, 가져온 정보를      ║
@@ -15863,7 +15872,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.52";
+const APP_VERSION = "7.28.53";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -15889,6 +15898,14 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.53", date: "2026-06-24",
+    title: "🔁 링크 불러오기도 — 이미 등록된 작품은 기존작 수정",
+    highlights: [
+      { type: "new", text: "🔗 ‘링크에서 불러오기’로 가져온 작품도, 이미 목록에 있으면 새로 만들지 않고 ‘기존 작품 수정’으로 이어갈 수 있어요. 제목으로 검색할 때와 똑같이, 가져온 정보를 항목별로 비교해 원하는 것만 반영하세요. (신규·예정 등록 화면)" },
+    ],
+    details: [],
+  },
   {
     version: "7.28.52", date: "2026-06-24",
     title: "🔁 제목검색 — 이미 등록된 작품은 기존작 수정",
@@ -40444,8 +40461,25 @@ function AppContent() {
 
   // 🔗 v7.28.26 스크래퍼: URL에서 메타 fetch → 확인 모달 오픈. ctx = { label, getCurrent(), apply(fields) }
   // 메타(정규화 완료) → 확인 모달 오픈. URL 긁기/검색 메타 직접 사용 공용 경로.
-  function openScrapeFromMeta(meta, ctx) {
+  function openScrapeFromMeta(meta, ctx, skipDupCheck = false) {
     if (!meta || !meta.title) { Alert.alert("불러오기", "이 작품의 정보를 찾지 못했어요."); return false; }
+    // 🆕 v7.28.53: 신규/예정 등록(제목검색·링크 불러오기 공용)에서 이미 등록된 작품이면, 새로 추가 대신 기존작 편집(필드별 비교·선택 적용) 제안
+    if (!skipDupCheck && (ctx?.kind === "new" || ctx?.kind === "planned")) {
+      const existing = findExistingNovelByTitle(meta.title, meta.author);
+      if (existing) {
+        Alert.alert(
+          "이미 등록된 작품",
+          `‘${existing.title}’은(는) 이미 목록에 있어요.\n새로 추가하지 않고, 가져온 정보를 기존 작품과 비교해 원하는 항목만 반영할 수 있어요.`,
+          [
+            { text: "취소", style: "cancel" },
+            { text: "새로 등록", onPress: () => openScrapeFromMeta(meta, ctx, true) },
+            // 기존 작품 편집 모달을 먼저 띄운 뒤(rAF) 비교 모달을 위에 올림 — 편집 모달 자체 제목검색과 동일한 스태킹
+            { text: "기존 작품 수정", onPress: () => { openEdit(existing); requestAnimationFrame(() => openScrapeFromMeta(meta, editCtxForExisting(existing), true)); } },
+          ]
+        );
+        return false;
+      }
+    }
     let items = buildScrapeItems(meta, ctx?.getCurrent ? ctx.getCurrent() : {});
     if (Array.isArray(ctx?.fields)) items = items.filter(it => ctx.fields.includes(it.key)); // 화면별 허용 필드(예: 보충=title 제외)
     if (items.length === 0) { Alert.alert("불러오기", `‘${meta.title || "작품"}’ — 새로 채울 정보가 없어요.`); return false; }
@@ -40606,7 +40640,7 @@ function AppContent() {
       setSearchBusy(false);
     }
   }
-  // 🆕 v7.28.52: 제목 검색 후보가 이미 등록된 작품인지 판정 (공백·대소문자 무시 제목 매칭, 작가 보조)
+  // 🆕 v7.28.52: 가져온 작품(제목검색·링크 불러오기)이 이미 등록된 작품인지 판정 (공백·대소문자 무시 제목 매칭, 작가 보조)
   const normTitleForMatch = (s) => String(s == null ? "" : s).replace(/\s+/g, "").toLowerCase();
   function findExistingNovelByTitle(title, author) {
     const t = normTitleForMatch(title);
@@ -40635,28 +40669,9 @@ function AppContent() {
     setSearchModal(null); setSearchResults([]); setSearchQuery("");
     if (!ctx) return;
     // 🔎 v7.28.43: 검색 API가 충분한 메타를 준 경우(노벨피아) 상세 재긁기 없이 그대로 사용(SPA og 부실 회피).
-    const runWith = (useCtx) => {
-      if (cand?.meta && cand.meta.title) { openScrapeFromMeta(cand.meta, useCtx); return; }
-      if (cand?.url) return runScrapeFromUrl(cand.url, useCtx); // 그 외(리디·네이버·문피아)는 상세 페이지 긁기
-    };
-    // 🆕 v7.28.52: 신규/예정 등록 검색에서 이미 등록된 작품을 고르면, 새로 추가 대신 기존작 편집(필드별 비교·선택 적용) 제안
-    const existing = (ctx.kind === "new" || ctx.kind === "planned")
-      ? findExistingNovelByTitle(cand?.meta?.title || cand?.title, cand?.meta?.author || cand?.author)
-      : null;
-    if (existing) {
-      Alert.alert(
-        "이미 등록된 작품",
-        `‘${existing.title}’은(는) 이미 목록에 있어요.\n새로 추가하지 않고, 가져온 정보를 기존 작품과 비교해 원하는 항목만 반영할 수 있어요.`,
-        [
-          { text: "취소", style: "cancel" },
-          { text: "새로 등록", onPress: () => { runWith(ctx); } },
-          // 기존 작품 편집 모달을 먼저 띄운 뒤(rAF) 비교 모달을 위에 올림 — 편집 모달 자체 제목검색과 동일한 스태킹
-          { text: "기존 작품 수정", onPress: () => { openEdit(existing); requestAnimationFrame(() => runWith(editCtxForExisting(existing))); } },
-        ]
-      );
-      return;
-    }
-    await runWith(ctx);
+    //   🆕 v7.28.53: 이미 등록된 작품 판정/기존작 편집 분기는 openScrapeFromMeta로 일원화(제목검색·링크 공용).
+    if (cand?.meta && cand.meta.title) openScrapeFromMeta(cand.meta, ctx);
+    else if (cand?.url) await runScrapeFromUrl(cand.url, ctx); // 그 외(리디·네이버·문피아)는 상세 페이지 긁기
   }
 
   // 추천 항목 체크 토글
