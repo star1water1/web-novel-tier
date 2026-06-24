@@ -190,6 +190,11 @@ eq("문피아 후보3 배지 없는 제목 보존", ms[2].title, "회귀했는�
 eq("문피아 후보3 작가 특수문자(仙宇) 보존", ms[2].author, "선우(仙宇)");
 eq("문피아 후보4 작가 ™ 보존", ms[3].author, "소라게™");
 eq("문피아 전부 소설(isComic=false)", ms.every(x => x.isComic === false), true);
+// v7.28.57: 완결작 완결연도(작가줄 끝 날짜=최근 연재일=완결 시점) / 연재중은 null / 시작연도는 검색에 없음
+eq("문피아 후보1 완결연도(완결·2025-12-31)", ms[0].meta.endYear, 2025);
+eq("문피아 후보3 완결연도 null(연재중)", ms[2].meta.endYear, null);
+eq("문피아 후보4 완결연도(완결·2020-08-21)", ms[3].meta.endYear, 2020);
+eq("문피아 시작연도는 미제공(null)", ms[0].meta.startYear, null);
 eq("문피아 id 중복 없음(4건)", new Set(ms.map(x => x.url)).size, 4);
 // 검색 SSR 메타 동봉(상세 재긁기 생략) — 줄거리/완결/회차/장르
 truthy("문피아 후보에 meta 동봉", ms[0].meta && ms[0].meta.title === "회귀수선전(回歸修仙傳)");

@@ -2,12 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.56 (네이버시리즈 완결연도 보강 — moreDetail 업데이트일)            ║
+ * ║  버전: 7.28.57 (문피아 완결연도 — 검색 작가줄 최근 연재일)                     ║
  * ║  최종 수정: 2026-06-24                                                        ║
- * ║  총 라인 수: 약 64,810줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 64,820줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📅 v7.28.57 문피아 완결연도 추출 (2026-06-24)                                ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 사용자 폰 캡처(문피아 '회귀' 검색)로 구조 확인: <p class=author> 끝에          ║
+ * ║ '작가 | 총 N화 | YYYY-MM-DD'. 이 날짜 = 최근 연재일 → 완결작은 마지막 연재가    ║
+ * ║ 곧 완결 시점(실측 일치: 쥐뿔도없는회귀 2018·역대급톱스타 2019·그랜드슬램 2021).║
+ * ║ • parseMunpiaSearch: 완결작 endYear 추출(연재중 null). startYear는 검색에 없음.║
+ * ║ • 회귀 테스트 +4 → 146/146. (네이버 완결연도 v7.28.56와 동일 패턴)            ║
+ * ║ 정리: 완결연도=노벨피아·네이버(완결)·문피아(완결) / 시작연도=노벨피아·리디.    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 📅 v7.28.56 네이버시리즈 완결연도 보강 (2026-06-24)                          ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 실측 분석: 네이버 작품 상세는 JSON-LD가 없고 날짜가 클라이언트 렌더라 SSR엔     ║
@@ -14305,6 +14314,11 @@ function parseMunpiaSearch(html) {
     const totalEpisodes = epM ? Number(epM[1].replace(/,/g, "")) : null;
     const genres = category ? category.split(/[,/·]/).map(s => s.trim()).filter(Boolean) : [];
     const ageTag = /i_adult|label_19/i.test(block) ? "19금" : null; // 🔧 v7.28.47: 성인 배지 → 태그
+    // 🆕 v7.28.57: 작가줄 끝 날짜(YYYY-MM-DD)=최근 연재일. 완결작은 마지막 연재≈완결 → endYear(완결연도).
+    //   (실측: 쥐뿔도없는회귀 2018·역대급톱스타 2019·그랜드슬램 2021 등 완결연도 일치). 시작일은 검색에 없어 startYear=null.
+    const dM = authorRaw.match(/(20\d\d)-[0-9]{1,2}-[0-9]{1,2}/);
+    const lastY = dM ? Number(dM[1]) : 0;
+    const endYear = (workStatus === "completed" && lastY >= 1990 && lastY <= 2099) ? lastY : null;
     const url = "https://mm.munpia.com/?menu=novel&id=" + id + "&renewal2=TRUE";
     seen.add(id);
     out.push({
@@ -14312,7 +14326,7 @@ function parseMunpiaSearch(html) {
       platform: "문피아",
       category,
       isComic: false,
-      meta: { ok: true, platform: "문피아", url, title, author, coverUrl, synopsis, genres, workStatus, totalEpisodes, ageTag },
+      meta: { ok: true, platform: "문피아", url, title, author, coverUrl, synopsis, genres, workStatus, totalEpisodes, startYear: null, endYear, ageTag },
     });
   }
   return out;
@@ -15944,7 +15958,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.56";
+const APP_VERSION = "7.28.57";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -15970,6 +15984,15 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.57", date: "2026-06-24",
+    title: "📅 문피아 완결연도도 가져오기",
+    highlights: [
+      { type: "new", text: "📅 문피아 완결작도 완결 연도를 자동으로 가져와요. (검색 결과의 최근 연재일을 쓰는데, 완결작은 그게 완결 시점이에요.)" },
+      { type: "improve", text: "ℹ️ 이제 완결연도는 노벨피아·네이버시리즈·문피아 완결작에서 자동으로 들어와요. 연재 시작연도는 노벨피아·리디에서 들어오고, 그 외는 플랫폼이 안 줘서 수동 입력만 가능해요." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.56", date: "2026-06-24",
     title: "📅 네이버시리즈 완결연도 가져오기",
