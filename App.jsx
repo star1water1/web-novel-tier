@@ -2,12 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.49 (불러오기 — 줄거리 #해시태그 → 태그 보강 + 전면 검수)          ║
+ * ║  버전: 7.28.50 (등록란 비우기 버튼 — 홈탭/예정탭)                             ║
  * ║  최종 수정: 2026-06-24                                                        ║
- * ║  총 라인 수: 약 64,340줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 64,360줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🧹 v7.28.50 등록란 비우기 버튼 (2026-06-24)                                  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 홈탭(신규 작품 추가)·예정탭(예정 작품 추가) 등록 폼에 '비우기' 버튼 추가.      ║
+ * ║ 입력 내용이 있으면 확인 다이얼로그 후 전 항목 초기화.                          ║
+ * ║ • clearNovelForm / clearPlannedForm 추출: addNovel·addPlannedNovel 성공 후    ║
+ * ║   초기화 로직을 재사용(단일 소스화). 비우기 버튼도 동일 함수 호출.            ║
+ * ║ • clearNovelForm(deleteQuoteImages): 등록 없이 비우면 추적 중인 명대사 배경   ║
+ * ║   이미지 파일까지 삭제(고아 방지, 기존 실패-정리 패턴 재사용). 성공 시엔 유지. ║
+ * ║ • UI: 추가 버튼을 row로 감싸 PrimaryButton(flex:1)+OutlineButton('비우기').    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 🏷️ v7.28.49 줄거리 #해시태그 → 태그 보강 + 등록값 전면 검수 (2026-06-24)     ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 검수: buildScrapeItems→모달→applyScrapeSelection→apply→폼 state→INSERT 전     ║
@@ -15834,7 +15844,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.49";
+const APP_VERSION = "7.28.50";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -15860,6 +15870,15 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.50", date: "2026-06-24",
+    title: "🧹 등록란 비우기 버튼",
+    highlights: [
+      { type: "new", text: "🧹 작품 등록란에 ‘비우기’ 버튼을 추가했어요. 홈탭(신규 작품 추가)·예정탭(예정 작품 추가)에서 입력하던 내용을 한 번에 모두 지울 수 있어요." },
+      { type: "improve", text: "🛟 입력한 내용이 있을 땐 실수로 지우지 않도록 확인을 한 번 물어봐요. 비우면 추가하던 명대사 배경 이미지도 함께 정리돼요." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.49", date: "2026-06-24",
     title: "🔎 제목으로 검색 + 불러오기 대폭 강화",
@@ -36871,6 +36890,48 @@ function AppContent() {
     }
   }
   
+  // 🆕 v7.28.50: 예정 작품 등록 폼 전체 초기화 (재사용: addPlannedNovel 성공 후 + 등록란 비우기 버튼)
+  function clearPlannedForm() {
+    setPlannedTitle("");
+    setPlannedAuthor("");
+    setPlannedTags("");
+    setPlannedNote("");
+    setPlannedTotalEpisodes("");
+    setPlannedPlatforms([]);
+    setPlannedCoverImage("");
+    setPlannedLink("");
+    setPlannedWorkStatus("ongoing");
+    setPlannedStartYear(0); // 🔧 v7.6.0 (포트 v3.12.3)
+    setPlannedEndYear(0);
+    setPlannedMajorGenre([]);
+    setPlannedSubGenre([]);
+    setPlannedPriority(3);
+    // 🆕 v3.4: 새 필드 초기화
+    setPlannedExpectedRating("1500");
+    setPlannedExpectedTier("");
+    setPlannedInterestLevel(3);
+    setPlannedDiscoverySource("");
+    setPlannedFirstChapterRead(false);
+    setPlannedScheduledStart("");
+    setPlannedSimilarNovels([]);
+    setPlannedWhyInterested("");
+  }
+  // 🆕 v7.28.50: 예정탭 등록란 비우기 버튼 — 입력 내용이 있으면 확인 후 초기화
+  function confirmClearPlannedForm() {
+    const hasContent = !!(
+      plannedTitle.trim() || plannedAuthor.trim() || plannedTags.trim() ||
+      plannedNote.trim() || plannedTotalEpisodes.trim() || plannedPlatforms.length ||
+      plannedCoverImage || plannedLink.trim() || plannedMajorGenre.length ||
+      plannedSubGenre.length || plannedExpectedTier || plannedDiscoverySource.trim() ||
+      plannedScheduledStart.trim() || plannedSimilarNovels.length || plannedWhyInterested.trim()
+    );
+    if (!hasContent) { clearPlannedForm(); return; }
+    Alert.alert("등록란 비우기", "입력한 내용을 모두 지울까요?", [
+      { text: "취소", style: "cancel" },
+      { text: "비우기", style: "destructive", onPress: clearPlannedForm },
+    ]);
+  }
+
   async function addPlannedNovel() {
     const _pt = PerfMonitor.enabled ? Date.now() : 0; // 🔬
     const t = (plannedTitle || "").trim();
@@ -36935,31 +36996,9 @@ function AppContent() {
       // 🔧 v3.5.9: 텍스트 입력 태그 → customTags 동기화 (태그 관리 모달 연동)
       syncTagsToCustom(plannedTags.trim());
       
-      // 폼 초기화
-      setPlannedTitle("");
-      setPlannedAuthor("");
-      setPlannedTags("");
-      setPlannedNote("");
-      setPlannedTotalEpisodes("");
-      setPlannedPlatforms([]);
-      setPlannedCoverImage("");
-      setPlannedLink("");
-      setPlannedWorkStatus("ongoing");
-      setPlannedStartYear(0); // 🔧 v7.6.0 (포트 v3.12.3)
-      setPlannedEndYear(0);
-      setPlannedMajorGenre([]);
-      setPlannedSubGenre([]);
-      setPlannedPriority(3);
-      // 🆕 v3.4: 새 필드 초기화
-      setPlannedExpectedRating("1500");
-      setPlannedExpectedTier("");
-      setPlannedInterestLevel(3);
-      setPlannedDiscoverySource("");
-      setPlannedFirstChapterRead(false);
-      setPlannedScheduledStart("");
-      setPlannedSimilarNovels([]);
-      setPlannedWhyInterested("");
-      
+      // 폼 초기화 (🆕 v7.28.50: clearPlannedForm 재사용 — 비우기 버튼과 동일)
+      clearPlannedForm();
+
       await loadPlannedList();
       
       // 🖼️ v3.4.5: 표지가 있으면 라이브러리 상태 업데이트
@@ -43263,6 +43302,57 @@ function AppContent() {
     );
   }, []);
 
+  // 🆕 v7.28.50: 신규 작품 등록 폼 전체 초기화 (재사용: addNovel 성공 후 + 등록란 비우기 버튼)
+  // deleteQuoteImages=true: 추적 중인 명대사 배경 이미지 파일까지 삭제(고아 방지).
+  //   등록 성공 시엔 false — 저장된 작품이 파일을 사용하므로 추적만 해제하고 파일은 유지.
+  function clearNovelForm({ deleteQuoteImages = false } = {}) {
+    setTitle("");
+    setAuthor("");
+    setTags("");
+    setPlatforms([]);
+    setNote("");
+    setMemorableQuote([]); // 💬 인상깊은 문장 초기화
+    setRegQuoteStyleIdx(-1); // 🆕 v7.9.1: 서식 패널 초기화
+    if (deleteQuoteImages && regQuoteImagesRef.current.length > 0) {
+      // 📷 v3.6.2 패턴: 등록 안 하고 비우면 추가했던 명대사 이미지가 고아가 되므로 삭제
+      for (const uri of regQuoteImagesRef.current) {
+        FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+      }
+    }
+    regQuoteImagesRef.current = []; // 📷 추적 해제 (성공=파일 유지 / 비우기=위에서 삭제)
+    setReadCount("");
+    setTotalEpisodes("");
+    setRereadCount("1"); // 다회독 초기화
+    setNewStatus("reading");
+    setNewWorkStatus("ongoing");
+    setNewCoverImage("");
+    setNewLink("");
+    setNewMajorGenre([]);
+    setNewSubGenre([]);
+    setNewTagData([]); // 🏷️ v5.0
+    setNewGaidenStatus("none");
+    setNewGaidenReadCount("");
+    setNewGaidenTotalEpisodes("");
+    setNewManualTier(""); // 🆕 v6.0: 등록 시 티어 선택 초기화
+    setNewStartYear(0); // 🔧 v7.6.0 (포트 v3.12.0)
+    setNewEndYear(0);
+  }
+  // 🆕 v7.28.50: 홈탭 등록란 비우기 버튼 — 입력 내용이 있으면 확인 후 초기화
+  function confirmClearNovelForm() {
+    const hasContent = !!(
+      title.trim() || author.trim() || tags.trim() || note.trim() ||
+      platforms.length || readCount.trim() || totalEpisodes.trim() ||
+      newLink.trim() || newCoverImage || memorableQuote.length ||
+      newMajorGenre.length || newSubGenre.length || newTagData.length ||
+      newManualTier || newGaidenReadCount.trim() || newGaidenTotalEpisodes.trim()
+    );
+    if (!hasContent) { clearNovelForm({ deleteQuoteImages: true }); return; }
+    Alert.alert("등록란 비우기", "입력한 내용을 모두 지울까요?", [
+      { text: "취소", style: "cancel" },
+      { text: "비우기", style: "destructive", onPress: () => clearNovelForm({ deleteQuoteImages: true }) },
+    ]);
+  }
+
   async function addNovel() {
     const _pt = PerfMonitor.enabled ? Date.now() : 0; // 🔬
     const t = (title || "").trim();
@@ -43380,30 +43470,8 @@ function AppContent() {
       ]);
       // 🔧 v3.5.9: 텍스트 입력 태그 → customTags 동기화 (태그 관리 모달 연동)
       syncTagsToCustom(tags.trim());
-      setTitle("");
-      setAuthor("");
-      setTags("");
-      setPlatforms([]);
-      setNote("");
-      setMemorableQuote([]); // 💬 인상깊은 문장 초기화
-      setRegQuoteStyleIdx(-1); // 🆕 v7.9.1: 서식 패널 초기화
-      regQuoteImagesRef.current = []; // 📷 v3.6.2: 등록 성공 → 추적 해제 (파일 유지)
-      setReadCount("");
-      setTotalEpisodes("");
-      setRereadCount("1"); // 다회독 초기화
-      setNewStatus("reading");
-      setNewWorkStatus("ongoing");
-      setNewCoverImage("");
-      setNewLink("");
-      setNewMajorGenre([]);
-      setNewSubGenre([]);
-      setNewTagData([]); // 🏷️ v5.0
-      setNewGaidenStatus("none");
-      setNewGaidenReadCount("");
-      setNewGaidenTotalEpisodes("");
-      setNewManualTier(""); // 🆕 v6.0: 등록 시 티어 선택 초기화
-      setNewStartYear(0); // 🔧 v7.6.0 (포트 v3.12.0)
-      setNewEndYear(0);
+      // 🆕 v7.28.50: clearNovelForm 재사용 — 등록 성공이므로 명대사 이미지 파일은 유지(추적만 해제)
+      clearNovelForm();
       await loadList(undefined, undefined, "register");
       await refreshDailyRecommendation(false);
       
@@ -50092,12 +50160,20 @@ async function importJSON() {
                 </View>
               )}
 
-              <PrimaryButton
-                title="작품 추가"
-                onPress={addNovel}
-                style={{ marginTop: 12 }}
-                disabled={isLoading || (globalTierConfig.mode === "manual" && !newManualTier)}
-              />
+              {/* 🆕 v7.28.50: 등록란 비우기 버튼 — 추가 버튼 옆 보조 액션 */}
+              <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+                <PrimaryButton
+                  title="작품 추가"
+                  onPress={addNovel}
+                  style={{ flex: 1 }}
+                  disabled={isLoading || (globalTierConfig.mode === "manual" && !newManualTier)}
+                />
+                <OutlineButton
+                  title="비우기"
+                  onPress={confirmClearNovelForm}
+                  color={C.warn}
+                />
+              </View>
             </Section>
 
             <H>작품 목록</H>
@@ -51361,11 +51437,19 @@ async function importJSON() {
                 multiline
               />
               
-              <PrimaryButton
-                title="예정 작품 추가"
-                onPress={addPlannedNovel}
-                style={{ marginTop: 12 }}
-              />
+              {/* 🆕 v7.28.50: 등록란 비우기 버튼 — 추가 버튼 옆 보조 액션 */}
+              <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+                <PrimaryButton
+                  title="예정 작품 추가"
+                  onPress={addPlannedNovel}
+                  style={{ flex: 1 }}
+                />
+                <OutlineButton
+                  title="비우기"
+                  onPress={confirmClearPlannedForm}
+                  color={C.warn}
+                />
+              </View>
             </Section>
             
             {/* 검색 및 정렬 */}
