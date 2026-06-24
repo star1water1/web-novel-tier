@@ -22,6 +22,7 @@ slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags,
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
 const sandbox = { console, fetch() { throw new Error("no net"); }, resolveAbortSignal: () => ({ signal: undefined, cleanup() {} }) };
 sandbox.parseGenreArray = (value) => { if (!value) return []; if (Array.isArray(value)) return value; try { const p = JSON.parse(value); return Array.isArray(p) ? p : [p]; } catch { return value ? [value] : []; } };
+sandbox.parsePlatforms = (p) => { try { const a = JSON.parse(p || "[]"); return Array.isArray(a) ? a : []; } catch { return []; } }; // buildScrapeItems가 슬라이스 밖 parsePlatforms 참조
 sandbox.MAJOR_GENRES = ["판타지", "무협", "퓨전판타지", "로맨스판타지", "현대판타지", "로맨스", "BL"];
 sandbox.SUB_GENRES = ["회귀", "환생", "헌터", "빙의"];
 sandbox.globalThis = sandbox;
@@ -219,6 +220,12 @@ truthy("buildScrapeItems 종료연도 0이면 항목 없음", !giTag.find(it => 
 truthy("buildScrapeItems 태그 이미 있으면 추가분만/없으면 제외", !S.buildScrapeItems({ title: "T", genres: ["하렘"] }, { tags: "하렘" }).find(it => it.key === "tags"));
 eq("노벨피아 meta 시작연도(start 0000→reg 2026)", nv[0].meta.startYear, 2026);
 eq("노벨피아 meta 종료연도(미완결→null)", nv[0].meta.endYear, null);
+// v7.28.46: 작품 링크·연재처 항목
+const giLP = S.buildScrapeItems({ title: "T", url: "https://novelpia.com/novel/1", platform: "노벨피아" }, {});
+truthy("buildScrapeItems 작품링크 항목", (() => { const l = giLP.find(it => it.key === "link"); return l && l.value === "https://novelpia.com/novel/1"; })());
+truthy("buildScrapeItems 연재처 항목(노벨피아)", (() => { const p = giLP.find(it => it.key === "platforms"); return p && JSON.stringify(p.value) === JSON.stringify(["노벨피아"]); })());
+truthy("buildScrapeItems 동일 링크·연재처면 항목 제외", (() => { const it2 = S.buildScrapeItems({ title: "T", url: "https://x/1", platform: "리디" }, { link: "https://x/1", platforms: ["리디"] }); return !it2.find(i => i.key === "link") && !it2.find(i => i.key === "platforms"); })());
+truthy("buildScrapeItems 연재처 병합(기존 리디 + 노벨피아)", (() => { const p = S.buildScrapeItems({ title: "T", platform: "노벨피아" }, { platforms: ["리디"] }).find(it => it.key === "platforms"); return p && JSON.stringify(p.value) === JSON.stringify(["리디", "노벨피아"]); })());
 
 console.log(`\n${fail === 0 ? "🎉 ALL PASS" : "⚠️  FAILED"}  pass=${pass} fail=${fail}`);
 process.exit(fail === 0 ? 0 : 1);

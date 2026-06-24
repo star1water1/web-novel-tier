@@ -2,12 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.45 (불러오기 태그 적용 버그 수정 + 연재 연도 긁기)               ║
+ * ║  버전: 7.28.46 (불러오기 — 작품 링크·연재처 자동 채움)                        ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 64,260줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 64,290줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.28.46 불러오기 — 작품 링크·연재처 자동 채움 (2026-06-21)               ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 전수 검토: 스크래퍼가 url·platform을 알면서도 link·platforms 컬럼을 안 채워    ║
+ * ║ 등록 후 작품 페이지로 못 가던 누락 발견.                                       ║
+ * ║ • buildScrapeItems: '작품 링크'(meta.url)·'연재처'(meta.platform, 기존에 병합) ║
+ * ║   항목 추가. 4개 ctx(신규/예정/보충/편집) getCurrent·apply에 platforms·link    ║
+ * ║   반영(편집 link는 editLink 별도 state).                                      ║
+ * ║ • 이로써 긁는 값 전부 저장 연결: 제목·작가·줄거리·회차·연재상태·대/부장르·태그· ║
+ * ║   표지·시작/종료연도·작품링크·연재처. 회귀 테스트 +4 → 119/119.               ║
+ * ║ ※ 연령등급(19금/15세)은 스키마 컬럼 부재 — 추가는 별도 결정.                   ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 🔧 v7.28.45 불러오기 태그 적용 버그 수정 + 연재 연도 (2026-06-21)            ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 실사용: 불러오기로 가져온 태그가 작품에 적용 안 됨. 원인 = 검색 장르가         ║
@@ -14290,6 +14301,15 @@ function buildScrapeItems(meta, current = {}) {
     const mergedTags = mergeGen(curTagsArr, gmap.tags);
     if (!sameSet(mergedTags, curTagsArr)) {
       items.push({ key: "tags", label: "태그", value: mergedTags.join(", "), display: gmap.tags.join(", "), current: curTagsArr.join(", "), checked: true });
+    }
+  }
+  // 🔧 v7.28.46: 작품 링크·연재처 — 스크래퍼가 url·platform을 알지만 그동안 등록에 미반영이었음.
+  if (meta.url) push("link", "작품 링크", meta.url, meta.url, current.link);
+  if (meta.platform) {
+    const curPlat = Array.isArray(current.platforms) ? current.platforms : parsePlatforms(current.platforms);
+    const mergedPlat = mergeGen(curPlat, [meta.platform]);
+    if (!sameSet(mergedPlat, curPlat)) {
+      items.push({ key: "platforms", label: "연재처", value: mergedPlat, display: meta.platform, current: curPlat.join(", "), checked: true });
     }
   }
   if (meta.coverUrl) items.push({ key: "cover", label: "표지", value: meta.coverUrl, display: "가져오기", current: current.cover ? "있음" : "없음", checked: !current.cover });
@@ -40335,7 +40355,7 @@ function AppContent() {
   const genJson = (arr) => (Array.isArray(arr) && arr.length ? JSON.stringify(arr) : "");
   const scrapeCtxNew = () => ({
     label: "신규 등록",
-    getCurrent: () => ({ title, author, note, tags, total_episodes: totalEpisodes, work_status: newWorkStatus, cover: newCoverImage, major_genre: newMajorGenre, sub_genre: newSubGenre, start_year: newStartYear, end_year: newEndYear }),
+    getCurrent: () => ({ title, author, note, tags, total_episodes: totalEpisodes, work_status: newWorkStatus, cover: newCoverImage, major_genre: newMajorGenre, sub_genre: newSubGenre, start_year: newStartYear, end_year: newEndYear, platforms, link: newLink }),
     apply: (f) => {
       if (f.title != null) setTitle(f.title);
       if (f.author != null) setAuthor(f.author);
@@ -40348,11 +40368,13 @@ function AppContent() {
       if (f.sub_genre != null) setNewSubGenre(f.sub_genre);
       if (f.start_year != null) setNewStartYear(Number(f.start_year) || 0);
       if (f.end_year != null) setNewEndYear(Number(f.end_year) || 0);
+      if (f.platforms != null) setPlatforms(f.platforms);
+      if (f.link != null) setNewLink(f.link);
     },
   });
   const scrapeCtxPlanned = () => ({
     label: "예정 등록",
-    getCurrent: () => ({ title: plannedTitle, author: plannedAuthor, note: plannedNote, tags: plannedTags, total_episodes: plannedTotalEpisodes, work_status: plannedWorkStatus, cover: plannedCoverImage, major_genre: plannedMajorGenre, sub_genre: plannedSubGenre, start_year: plannedStartYear, end_year: plannedEndYear }),
+    getCurrent: () => ({ title: plannedTitle, author: plannedAuthor, note: plannedNote, tags: plannedTags, total_episodes: plannedTotalEpisodes, work_status: plannedWorkStatus, cover: plannedCoverImage, major_genre: plannedMajorGenre, sub_genre: plannedSubGenre, start_year: plannedStartYear, end_year: plannedEndYear, platforms: plannedPlatforms, link: plannedLink }),
     apply: (f) => {
       if (f.title != null) setPlannedTitle(f.title);
       if (f.author != null) setPlannedAuthor(f.author);
@@ -40365,12 +40387,14 @@ function AppContent() {
       if (f.sub_genre != null) setPlannedSubGenre(f.sub_genre);
       if (f.start_year != null) setPlannedStartYear(Number(f.start_year) || 0);
       if (f.end_year != null) setPlannedEndYear(Number(f.end_year) || 0);
+      if (f.platforms != null) setPlannedPlatforms(f.platforms);
+      if (f.link != null) setPlannedLink(f.link);
     },
   });
   const scrapeCtxSupplement = () => ({
     label: "보충",
-    fields: ["author", "note", "tags", "total_episodes", "work_status", "cover", "major_genre", "sub_genre", "start_year", "end_year"],
-    getCurrent: () => ({ author: editItem?.author, note: editItem?.note, tags: editItem?.tags, total_episodes: editItem?.total_episodes, work_status: editItem?.work_status, cover: editItem?.cover_image, major_genre: editItem?.major_genre, sub_genre: editItem?.sub_genre, start_year: editItem?.start_year, end_year: editItem?.end_year }),
+    fields: ["author", "note", "tags", "total_episodes", "work_status", "cover", "major_genre", "sub_genre", "start_year", "end_year", "platforms", "link"],
+    getCurrent: () => ({ author: editItem?.author, note: editItem?.note, tags: editItem?.tags, total_episodes: editItem?.total_episodes, work_status: editItem?.work_status, cover: editItem?.cover_image, major_genre: editItem?.major_genre, sub_genre: editItem?.sub_genre, start_year: editItem?.start_year, end_year: editItem?.end_year, platforms: editItem?.platforms, link: editItem?.link }),
     apply: (f) => updateEditItem(prev => prev ? {
       ...prev,
       ...(f.author != null ? { author: f.author } : {}),
@@ -40383,11 +40407,13 @@ function AppContent() {
       ...(f.sub_genre != null ? { sub_genre: genJson(f.sub_genre) } : {}),
       ...(f.start_year != null ? { start_year: Number(f.start_year) || 0 } : {}),
       ...(f.end_year != null ? { end_year: Number(f.end_year) || 0 } : {}),
+      ...(f.platforms != null ? { platforms: genJson(f.platforms) } : {}),
+      ...(f.link != null ? { link: f.link } : {}),
     } : prev),
   });
   const scrapeCtxEdit = () => ({
     label: "편집",
-    getCurrent: () => ({ title: editItem?.title, author: editItem?.author, note: editItem?.note, tags: editItem?.tags, total_episodes: editItem?.total_episodes, work_status: editWorkStatus, cover: editCoverImage, major_genre: editItem?.major_genre, sub_genre: editItem?.sub_genre, start_year: editStartYear, end_year: editEndYear }),
+    getCurrent: () => ({ title: editItem?.title, author: editItem?.author, note: editItem?.note, tags: editItem?.tags, total_episodes: editItem?.total_episodes, work_status: editWorkStatus, cover: editCoverImage, major_genre: editItem?.major_genre, sub_genre: editItem?.sub_genre, start_year: editStartYear, end_year: editEndYear, platforms: editItem?.platforms, link: editLink }),
     apply: (f) => {
       updateEditItem(prev => prev ? {
         ...prev,
@@ -40398,11 +40424,13 @@ function AppContent() {
         ...(f.total_episodes != null ? { total_episodes: Number(f.total_episodes) || 0 } : {}),
         ...(f.major_genre != null ? { major_genre: genJson(f.major_genre) } : {}),
         ...(f.sub_genre != null ? { sub_genre: genJson(f.sub_genre) } : {}),
+        ...(f.platforms != null ? { platforms: genJson(f.platforms) } : {}),
       } : prev);
       if (f.work_status != null) setEditWorkStatus(f.work_status);
       if (f.cover != null) setEditCoverImageSync(f.cover);
       if (f.start_year != null) setEditStartYear(Number(f.start_year) || 0); // 편집은 연도가 별도 state
       if (f.end_year != null) setEditEndYear(Number(f.end_year) || 0);
+      if (f.link != null) setEditLink(f.link); // 편집은 링크가 별도 state
     },
   });
 
