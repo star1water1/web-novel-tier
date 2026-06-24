@@ -221,6 +221,19 @@ truthy("buildScrapeItems 태그 이미 있으면 추가분만/없으면 제외",
 eq("노벨피아 meta 시작연도(start 0000→reg 2026)", nv[0].meta.startYear, 2026);
 eq("노벨피아 meta 종료연도(미완결→null)", nv[0].meta.endYear, null);
 eq("노벨피아 비성인(15세)은 ageTag null", nv[0].meta.ageTag, null);
+// === 전면 검수(v7.28.49): 실측 검색 메타 → buildScrapeItems가 태그·연도·링크·연재처 항목을 실제로 만드는가 ===
+{
+  const npI = S.buildScrapeItems(nv[0].meta, {}); // 노벨피아 검색 후보 메타(신규 등록 가정)
+  truthy("[검수] 노벨피아 검색메타 → 태그 항목 생성", npI.some(i => i.key === "tags"));
+  truthy("[검수] 노벨피아 검색메타 → 시작연도 항목(2026)", npI.some(i => i.key === "start_year" && Number(i.value) === 2026));
+  truthy("[검수] 노벨피아 검색메타 → 대장르 항목", npI.some(i => i.key === "major_genre"));
+  truthy("[검수] 노벨피아 검색메타 → 작품링크 항목", npI.some(i => i.key === "link"));
+  truthy("[검수] 노벨피아 검색메타 → 연재처 항목", npI.some(i => i.key === "platforms"));
+  const mpI = S.buildScrapeItems(ms[0].meta, {}); // 문피아 검색 후보 메타
+  truthy("[검수] 문피아 검색메타 → 태그 항목 생성", mpI.some(i => i.key === "tags"));
+  truthy("[검수] 문피아 검색메타 → 연재처 항목", mpI.some(i => i.key === "platforms"));
+  truthy("[검수] 문피아 검색메타 → 시작연도 항목 없음(검색에 연도 데이터 없음)", !mpI.some(i => i.key === "start_year"));
+}
 truthy("buildScrapeItems 연령등급(19금)을 태그로", (() => { const t = S.buildScrapeItems({ title: "T", genres: ["판타지"], ageTag: "19금" }, {}).find(it => it.key === "tags"); return t && /19금/.test(t.value); })());
 // v7.28.46: 작품 링크·연재처 항목
 const giLP = S.buildScrapeItems({ title: "T", url: "https://novelpia.com/novel/1", platform: "노벨피아" }, {});
