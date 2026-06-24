@@ -2,12 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.53 (링크 불러오기도 — 이미 등록된 작품이면 기존작 편집)           ║
+ * ║  버전: 7.28.54 (일괄 추가 Phase① — 여러 제목 순차 검색·긁기 → 일괄 등록)      ║
  * ║  최종 수정: 2026-06-24                                                        ║
- * ║  총 라인 수: 약 64,440줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 64,760줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📚 v7.28.54 일괄 추가 Phase① — 여러 작품 한 번에 검색·등록 (2026-06-24)      ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 신규 등록 화면에 '📚 여러 작품 한 번에 추가(일괄)' 진입점. 3단계 모달:         ║
+ * ║ ①제목 여러 줄 입력 → ②한 건씩 후보 원터치 선택·긁기(자동으로 다음 작품) →      ║
+ * ║ ③검토 후 일괄 등록. 엔진 재사용(searchNovels/fetchNovelMeta/mapScrapedGenres). ║
+ * ║ • metaToDraft: 스크랩 메타 → 등록 드래프트(장르 매핑·태그·연재상태·연도·표지).  ║
+ * ║ • registerBatchAddDrafts: addNovel INSERT 스키마 그대로 미러(중복 스킵·장르     ║
+ * ║   자동감지·manual_order 산출·표지 라이브러리 다운로드·최근변화 기록·진행률).    ║
+ * ║ ※ Phase②(전작품 회차·완결 갱신)·③(완결일·연중 3상태·알림)은 다음 단계.        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 🔁 v7.28.53 링크 불러오기도 기존작 편집 분기 + 판정 일원화 (2026-06-24)      ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ v7.28.52(제목검색)에 이어 '🔗 링크에서 불러오기'에도 동일 적용. 신규/예정      ║
@@ -15872,7 +15882,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.53";
+const APP_VERSION = "7.28.54";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -15898,6 +15908,15 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.54", date: "2026-06-24",
+    title: "📚 여러 작품 한 번에 추가 (일괄)",
+    highlights: [
+      { type: "new", text: "📚 신규 등록 화면의 ‘여러 작품 한 번에 추가(일괄)’ 버튼으로, 제목을 한 줄에 하나씩 적으면 차례대로 검색해 후보를 한 번만 탭해 정보를 가져오고, 마지막에 모아서 일괄 등록할 수 있어요." },
+      { type: "new", text: "🔎 제목·작가·줄거리·장르·태그·연재상태·연재연도·표지·연재처가 자동으로 채워져요. 검색 결과가 없으면 검색어를 고쳐 재검색하거나 ‘제목만 추가’로 넘어갈 수 있어요." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.53", date: "2026-06-24",
     title: "🔁 링크 불러오기도 — 이미 등록된 작품은 기존작 수정",
@@ -34332,6 +34351,17 @@ function AppContent() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [searchBusy, setSearchBusy] = useState(false);
+  // 🆕 v7.28.54 (일괄추가 Phase①): 여러 제목을 순차 검색·긁기 → 일괄 등록
+  const [batchAddOpen, setBatchAddOpen] = useState(false);
+  const [batchAddStage, setBatchAddStage] = useState("input"); // input | search | review
+  const [batchAddInput, setBatchAddInput] = useState("");
+  const [batchAddQueue, setBatchAddQueue] = useState([]); // 처리할 제목 배열
+  const [batchAddIdx, setBatchAddIdx] = useState(0);
+  const [batchAddQuery, setBatchAddQuery] = useState(""); // 현재 항목 검색어(수정 가능)
+  const [batchAddCandidates, setBatchAddCandidates] = useState([]);
+  const [batchAddBusy, setBatchAddBusy] = useState(false);
+  const [batchAddDrafts, setBatchAddDrafts] = useState([]); // 긁어온 등록 대기 목록
+  const [batchAddProgress, setBatchAddProgress] = useState(null); // {current,total} 등록 진행률
   // 🔧 v7.28.38 긁기 진단: 폰에서 검색 원본 캡처(타 플랫폼 제목검색 파서 개발용)
   const [scrapeDiagUrl, setScrapeDiagUrl] = useState("");
   const [scrapeDiagOut, setScrapeDiagOut] = useState(null);
@@ -40672,6 +40702,191 @@ function AppContent() {
     //   🆕 v7.28.53: 이미 등록된 작품 판정/기존작 편집 분기는 openScrapeFromMeta로 일원화(제목검색·링크 공용).
     if (cand?.meta && cand.meta.title) openScrapeFromMeta(cand.meta, ctx);
     else if (cand?.url) await runScrapeFromUrl(cand.url, ctx); // 그 외(리디·네이버·문피아)는 상세 페이지 긁기
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 🆕 v7.28.54 (일괄추가 Phase①): 여러 제목을 순차 검색·긁기 → 일괄 등록
+  //   엔진 재사용: searchNovels / fetchNovelMeta / mapScrapedGenres(buildScrapeItems와 동일 매핑).
+  //   등록은 addNovel의 INSERT 스키마를 그대로 미러(중복 스킵·장르 자동감지·manual_order 산출).
+  // ───────────────────────────────────────────────────────────────────────────
+  function metaToDraft(meta) {
+    const gmap = mapScrapedGenres([
+      ...(Array.isArray(meta.genres) ? meta.genres : (meta.genres ? [meta.genres] : [])),
+      ...scraperExtractHashtags(meta.synopsis),
+    ]);
+    const tagsArr = [...(gmap.tags || [])];
+    if (meta.ageTag) tagsArr.push(meta.ageTag);
+    return {
+      title: (meta.title || "").trim(),
+      author: (meta.author || "").trim(),
+      note: (meta.synopsis || "").trim(),
+      tags: tagsArr.join(", "),
+      platforms: meta.platform ? [meta.platform] : [],
+      total_episodes: Number(meta.totalEpisodes) || 0,
+      work_status: meta.workStatus || "ongoing",
+      major_genre: gmap.major || [],
+      sub_genre: gmap.sub || [],
+      start_year: Number(meta.startYear) || 0,
+      end_year: Number(meta.endYear) || 0,
+      link: meta.url || "",
+      platform: meta.platform || "",
+      coverUrl: meta.coverUrl || "",
+    };
+  }
+  function openBatchAdd() {
+    setBatchAddStage("input");
+    setBatchAddInput("");
+    setBatchAddQueue([]);
+    setBatchAddIdx(0);
+    setBatchAddQuery("");
+    setBatchAddCandidates([]);
+    setBatchAddDrafts([]);
+    setBatchAddProgress(null);
+    setBatchAddBusy(false);
+    setBatchAddOpen(true);
+  }
+  function closeBatchAdd() {
+    if (batchAddProgress) return; // DB 등록 진행 중엔 닫기 금지(검색/긁기 중엔 허용)
+    setBatchAddOpen(false);
+  }
+  async function runBatchAddSearchFor(title) {
+    const q = (title || "").trim();
+    setBatchAddQuery(q);
+    setBatchAddCandidates([]);
+    if (!q) return;
+    setBatchAddBusy(true);
+    try {
+      const r = await searchNovels(q);
+      setBatchAddCandidates(r);
+    } catch (e) {
+      setBatchAddCandidates([]);
+    } finally {
+      setBatchAddBusy(false);
+    }
+  }
+  function startBatchAddSearch() {
+    const uniq = [...new Set(batchAddInput.split("\n").map(s => s.trim()).filter(Boolean))];
+    if (uniq.length === 0) { Alert.alert("일괄 추가", "추가할 작품 제목을 한 줄에 하나씩 입력해 주세요."); return; }
+    setBatchAddQueue(uniq);
+    setBatchAddIdx(0);
+    setBatchAddDrafts([]);
+    setBatchAddStage("search");
+    runBatchAddSearchFor(uniq[0]);
+  }
+  function advanceBatchAdd() {
+    const next = batchAddIdx + 1;
+    if (next >= batchAddQueue.length) {
+      setBatchAddIdx(next);
+      setBatchAddCandidates([]);
+      setBatchAddStage("review");
+    } else {
+      setBatchAddIdx(next);
+      runBatchAddSearchFor(batchAddQueue[next]);
+    }
+  }
+  async function pickBatchAddCandidate(cand) {
+    if (batchAddBusy) return;
+    setBatchAddBusy(true);
+    try {
+      let meta = (cand?.meta && cand.meta.title) ? cand.meta : (cand?.url ? await fetchNovelMeta(cand.url) : null);
+      if (meta && meta.title) setBatchAddDrafts(prev => [...prev, metaToDraft(meta)]);
+      else Alert.alert("일괄 추가", "정보를 가져오지 못해 이 작품은 건너뜁니다.");
+    } catch (e) {
+      Alert.alert("일괄 추가", (e?.message || "긁기 실패") + " — 건너뜁니다.");
+    } finally {
+      setBatchAddBusy(false);
+      advanceBatchAdd();
+    }
+  }
+  function addBatchAddTitleOnly() {
+    // 검색 결과가 없거나 직접 추가: 현재 제목만으로 등록 대기에 추가
+    const t = (batchAddQuery || batchAddQueue[batchAddIdx] || "").trim();
+    if (t) setBatchAddDrafts(prev => [...prev, {
+      title: t, author: "", note: "", tags: "", platforms: [], total_episodes: 0,
+      work_status: "ongoing", major_genre: [], sub_genre: [], start_year: 0, end_year: 0,
+      link: "", platform: "", coverUrl: "",
+    }]);
+    advanceBatchAdd();
+  }
+  function skipBatchAddCurrent() {
+    if (batchAddBusy) return;
+    advanceBatchAdd();
+  }
+  function removeBatchAddDraft(i) {
+    setBatchAddDrafts(prev => prev.filter((_, idx) => idx !== i));
+  }
+  async function registerBatchAddDrafts() {
+    if (batchAddBusy) return;
+    const drafts = batchAddDrafts;
+    if (!drafts.length) { Alert.alert("일괄 추가", "등록할 작품이 없어요."); return; }
+    setBatchAddBusy(true);
+    setBatchAddProgress({ current: 0, total: drafts.length });
+    let registered = 0, skipped = 0, coverTouched = false;
+    try {
+      for (let i = 0; i < drafts.length; i++) {
+        setBatchAddProgress({ current: i, total: drafts.length });
+        const d = drafts[i];
+        const t = (d.title || "").trim();
+        if (!t) { skipped++; continue; }
+        // 본목록 + 예정목록 중복 스킵 (addNovel과 동일)
+        const dup = await first("SELECT id FROM novels WHERE title=?", [t]);
+        const dupP = await first("SELECT id FROM planned_novels WHERE title=?", [t]);
+        if (dup || dupP) { skipped++; continue; }
+        const detected = detectGenres(d.tags || "");
+        const finalMajor = (d.major_genre && d.major_genre.length) ? JSON.stringify(d.major_genre)
+          : (detected.majorGenre ? JSON.stringify([detected.majorGenre]) : "");
+        const finalSub = (d.sub_genre && d.sub_genre.length) ? JSON.stringify(d.sub_genre)
+          : (detected.subGenre ? JSON.stringify([detected.subGenre]) : "");
+        const id = uuid();
+        const now = Date.now();
+        let manualOrder = 0;
+        try {
+          const mr = await first("SELECT MAX(manual_order) AS m FROM novels WHERE manual_tier IS NULL OR manual_tier=''");
+          manualOrder = (Number(mr?.m) || 0) + 100;
+        } catch {}
+        // 표지: 원격 URL → 라이브러리 다운로드(실패는 무시하고 표지 없이 등록)
+        let coverPath = "";
+        if (d.coverUrl) {
+          try {
+            const ext = String(d.coverUrl).toLowerCase().includes(".png") ? "png" : "jpg";
+            const saved = await saveCoverToLibrary(d.coverUrl, "light", ext);
+            if (saved && !saved.error && saved.file_path) coverPath = saved.file_path;
+          } catch {}
+        }
+        await execBatch([{
+          sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order,read_count_baseline,start_year,end_year)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+          params: [
+            id, t, (d.author || "").trim(), deduplicateTagString(d.tags || "") || "",
+            JSON.stringify(d.platforms || []), (d.note || "").trim(),
+            0, globalTierConfig.defaultRating || 1500, 350, 0, 0, 0, globalTierConfig.defaultTier || "C",
+            now, "", Number(d.total_episodes) || 0, "reading", 0, coverPath, (d.link || "").trim(),
+            d.work_status || "ongoing", now, finalMajor, finalSub, "none", 0, 0, 1, "", "", "",
+            null, manualOrder, 0, Number(d.start_year) || 0, Number(d.end_year) || 0,
+          ],
+        }]);
+        if (coverPath) { coverTouched = true; try { await applyNovelCover(id, coverPath, null); } catch {} }
+        try {
+          await addRecentChange(id, t, "new", {
+            author: (d.author || "").trim() || "-",
+            majorGenre: (d.major_genre && d.major_genre.length) ? d.major_genre.join(", ") : "-",
+          });
+        } catch {}
+        if (d.tags) { try { syncTagsToCustom(d.tags); } catch {} }
+        registered++;
+      }
+      if (coverTouched) { try { await loadCoverLibrary(); } catch {} }
+      await loadList(undefined, undefined, "batchAdd");
+      await refreshDailyRecommendation(false);
+      setBatchAddProgress(null);
+      setBatchAddBusy(false);
+      setBatchAddOpen(false);
+      Alert.alert("일괄 추가 완료", `${registered}개 작품을 등록했어요.${skipped ? `\n${skipped}개는 중복/빈 제목이라 건너뛰었어요.` : ""}`);
+    } catch (e) {
+      setBatchAddProgress(null);
+      setBatchAddBusy(false);
+      Alert.alert("일괄 추가 오류", (e?.message || String(e)) + `\n(여기까지 ${registered}개 등록됨)`);
+    }
   }
 
   // 추천 항목 체크 토글
@@ -50279,6 +50494,13 @@ async function importJSON() {
                   color={C.warn}
                 />
               </View>
+              {/* 🆕 v7.28.54: 여러 작품을 제목검색으로 한 번에 추가 */}
+              <OutlineButton
+                title="📚 여러 작품 한 번에 추가 (일괄)"
+                onPress={openBatchAdd}
+                color={C.primary}
+                style={{ marginTop: 8 }}
+              />
             </Section>
 
             <H>작품 목록</H>
@@ -65799,6 +66021,116 @@ async function importJSON() {
               style={{ marginTop: 12, backgroundColor: C.primary, paddingVertical: 12, borderRadius: 10, alignItems: "center", opacity: scrapeLoading ? 0.6 : 1 }}>
               <Text style={{ color: "#fff", fontWeight: "800", fontSize: 15 }}>{scrapeLoading ? "적용 중…" : "선택 적용"}</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 🆕 v7.28.54: 일괄 추가 모달 — 여러 제목 순차 검색·원터치 선택·긁기 → 일괄 등록 */}
+      <Modal visible={batchAddOpen} animationType="fade" transparent statusBarTranslucent onRequestClose={closeBatchAdd}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center" }}>
+          <View style={{ backgroundColor: C.card, borderRadius: 20, padding: 18, width: "92%", maxWidth: 480, maxHeight: "90%" }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>
+                📚 일괄 추가{batchAddStage === "search" ? ` · ${Math.min(batchAddIdx + 1, batchAddQueue.length)}/${batchAddQueue.length}` : batchAddStage === "review" ? ` · 검토 ${batchAddDrafts.length}개` : ""}
+              </Text>
+              <TouchableOpacity onPress={closeBatchAdd} disabled={!!batchAddProgress}><Text style={{ fontSize: 22, color: batchAddProgress ? C.line : C.sub }}>×</Text></TouchableOpacity>
+            </View>
+
+            {/* ── 입력 단계 ── */}
+            {batchAddStage === "input" && (
+              <View>
+                <Text style={{ color: C.sub, fontSize: 13, marginBottom: 8, lineHeight: 19 }}>추가할 작품 제목을 한 줄에 하나씩 입력하세요. 차례대로 검색해, 후보를 한 번(원터치)만 탭하면 정보를 가져오고 다음 작품으로 넘어갑니다.</Text>
+                <TextInput
+                  value={batchAddInput}
+                  onChangeText={setBatchAddInput}
+                  placeholder={"전지적 독자 시점\n나 혼자만 레벨업\n화산귀환"}
+                  placeholderTextColor={C.sub}
+                  multiline
+                  style={{ minHeight: 150, maxHeight: 260, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 12, padding: 12, color: C.text, fontSize: 15, textAlignVertical: "top" }}
+                />
+                <Text style={{ color: C.sub, fontSize: 11, marginTop: 6 }}>
+                  {batchAddInput.split("\n").map(s => s.trim()).filter(Boolean).length}개 제목
+                </Text>
+                <PrimaryButton title="검색 시작" onPress={startBatchAddSearch} style={{ marginTop: 12 }} />
+              </View>
+            )}
+
+            {/* ── 검색·선택 단계 ── */}
+            {batchAddStage === "search" && (
+              <View>
+                <View style={{ flexDirection: "row", gap: 6, marginBottom: 8 }}>
+                  <TextInput
+                    value={batchAddQuery}
+                    onChangeText={setBatchAddQuery}
+                    placeholder="검색어"
+                    placeholderTextColor={C.sub}
+                    onSubmitEditing={() => runBatchAddSearchFor(batchAddQuery)}
+                    returnKeyType="search"
+                    autoCorrect={false}
+                    style={{ flex: 1, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, color: C.text, fontSize: 14 }}
+                  />
+                  <TouchableOpacity onPress={() => runBatchAddSearchFor(batchAddQuery)} disabled={batchAddBusy} style={{ backgroundColor: C.primary, paddingHorizontal: 14, borderRadius: 10, alignItems: "center", justifyContent: "center", opacity: batchAddBusy ? 0.6 : 1 }}>
+                    <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>{batchAddBusy ? "검색중" : "재검색"}</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>가져온 {batchAddDrafts.length}개 · 원하는 후보를 한 번 탭하면 다음 작품으로 넘어가요.</Text>
+                <ScrollView style={{ maxHeight: 340 }} showsVerticalScrollIndicator={false}>
+                  {batchAddBusy && batchAddCandidates.length === 0 ? (
+                    <Text style={{ color: C.sub, fontSize: 13, textAlign: "center", paddingVertical: 20 }}>검색 중…</Text>
+                  ) : null}
+                  {!batchAddBusy && batchAddCandidates.length === 0 ? (
+                    <Text style={{ color: C.sub, fontSize: 12, textAlign: "center", paddingVertical: 16 }}>검색 결과가 없어요. 검색어를 고쳐 재검색하거나 아래에서 넘어가세요.</Text>
+                  ) : null}
+                  {batchAddCandidates.map((c, idx) => (
+                    <TouchableOpacity key={c.url || idx} activeOpacity={0.7} disabled={batchAddBusy} onPress={() => pickBatchAddCandidate(c)}
+                      style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line, opacity: batchAddBusy ? 0.5 : 1 }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: C.text, fontSize: 14, fontWeight: "700" }} numberOfLines={2}>{c.title}</Text>
+                        {c.author ? <Text style={{ color: C.sub, fontSize: 12, marginTop: 2 }} numberOfLines={1}>{c.author}</Text> : null}
+                        <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>{c.platform}{c.category ? ` · ${c.category}` : ""}</Text>
+                      </View>
+                      <Text style={{ color: C.primary, fontSize: 20, fontWeight: "800" }}>＋</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                  <OutlineButton title="제목만 추가" onPress={addBatchAddTitleOnly} color={C.sub} style={{ flex: 1 }} />
+                  <OutlineButton title="건너뛰기 ▶" onPress={skipBatchAddCurrent} color={C.sub} style={{ flex: 1 }} />
+                </View>
+              </View>
+            )}
+
+            {/* ── 검토·등록 단계 ── */}
+            {batchAddStage === "review" && (
+              <View>
+                {batchAddProgress ? (
+                  <Text style={{ color: C.primary, fontSize: 13, textAlign: "center", paddingVertical: 8, fontWeight: "700" }}>등록 중… {Math.min(batchAddProgress.current + 1, batchAddProgress.total)}/{batchAddProgress.total}</Text>
+                ) : null}
+                {batchAddDrafts.length === 0 ? (
+                  <Text style={{ color: C.sub, fontSize: 13, textAlign: "center", paddingVertical: 24 }}>가져온 작품이 없어요. 닫고 다시 시도해 주세요.</Text>
+                ) : (
+                  <ScrollView style={{ maxHeight: 400 }} showsVerticalScrollIndicator={false}>
+                    {batchAddDrafts.map((d, idx) => (
+                      <View key={idx} style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: C.line }}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ color: C.text, fontSize: 14, fontWeight: "700" }} numberOfLines={1}>{d.title}</Text>
+                          <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }} numberOfLines={1}>
+                            {[d.author, d.platform, d.total_episodes ? `${d.total_episodes}화` : "", d.work_status === "completed" ? "완결" : (d.work_status === "ongoing" ? "연재중" : "")].filter(Boolean).join(" · ") || "정보 없음"}
+                          </Text>
+                        </View>
+                        <TouchableOpacity onPress={() => removeBatchAddDraft(idx)} disabled={batchAddBusy}><Text style={{ color: batchAddBusy ? C.line : C.warn, fontSize: 18 }}>✕</Text></TouchableOpacity>
+                      </View>
+                    ))}
+                  </ScrollView>
+                )}
+                <PrimaryButton
+                  title={batchAddBusy ? "등록 중…" : `일괄 등록 (${batchAddDrafts.length}개)`}
+                  onPress={registerBatchAddDrafts}
+                  disabled={batchAddBusy || batchAddDrafts.length === 0}
+                  style={{ marginTop: 12 }}
+                />
+              </View>
+            )}
           </View>
         </View>
       </Modal>
