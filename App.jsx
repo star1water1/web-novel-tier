@@ -2,12 +2,20 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.46 (불러오기 — 작품 링크·연재처 자동 채움)                        ║
+ * ║  버전: 7.28.47 (불러오기 — 연령등급(19금)을 태그로 보존)                      ║
  * ║  최종 수정: 2026-06-21                                                        ║
- * ║  총 라인 수: 약 64,290줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 64,300줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.28.47 불러오기 — 연령등급(19금)을 태그로 (2026-06-21)                  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 연령등급은 스키마 컬럼이 없어, 사용자 제안대로 별도 컬럼 대신 '19금' 태그로     ║
+ * ║ 보존(기존 태그 필터/검색에 그대로 녹아듦). 15세·전체는 대부분이라 생략.        ║
+ * ║ • meta.ageTag 추가: 노벨피아 novel_age=19, 문피아 성인배지(i_adult/label_19), ║
+ * ║   상세 JSON-LD contentRating. buildScrapeItems 태그 항목에 합쳐 제시.          ║
+ * ║ • 회귀 테스트 +2 → 121/121.                                                   ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 🔧 v7.28.46 불러오기 — 작품 링크·연재처 자동 채움 (2026-06-21)               ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 전수 검토: 스크래퍼가 url·platform을 알면서도 link·platforms 컬럼을 안 채워    ║
@@ -13829,7 +13837,11 @@ function scraperNormalizeFromHtml(html, url) {
   const dpm = dp.match(/(19[89]\d|20\d{2})/);
   if (dpm) { const y = Number(dpm[1]); if (y >= 1980 && y <= 2099) startYear = y; }
 
-  return { ok: !!title, platform, url, title, author, coverUrl, synopsis, genres, workStatus, totalEpisodes, startYear, endYear: null };
+  // 🔧 v7.28.47: 연령등급(19금)을 태그로 — JSON-LD contentRating/연령 메타에서만(본문 휴리스틱은 오탐 위험이라 제외)
+  const cr = String(book.contentRating || og["og:restrictions:age"] || og["rating"] || "");
+  const ageTag = /\b19\b|adult|성인|청소년\s*이용\s*불가/i.test(cr) ? "19금" : null;
+
+  return { ok: !!title, platform, url, title, author, coverUrl, synopsis, genres, workStatus, totalEpisodes, startYear, endYear: null, ageTag };
 }
 
 // Next.js SSR 내장 데이터(__NEXT_DATA__) 추출 — 카카오페이지/리디 등 SPA가 페이지에 심는 JSON.
@@ -14165,6 +14177,7 @@ function parseMunpiaSearch(html) {
     const epM = authorRaw.match(/총\s*([0-9,]+)\s*(?:화|권)/);
     const totalEpisodes = epM ? Number(epM[1].replace(/,/g, "")) : null;
     const genres = category ? category.split(/[,/·]/).map(s => s.trim()).filter(Boolean) : [];
+    const ageTag = /i_adult|label_19/i.test(block) ? "19금" : null; // 🔧 v7.28.47: 성인 배지 → 태그
     const url = "https://mm.munpia.com/?menu=novel&id=" + id + "&renewal2=TRUE";
     seen.add(id);
     out.push({
@@ -14172,7 +14185,7 @@ function parseMunpiaSearch(html) {
       platform: "문피아",
       category,
       isComic: false,
-      meta: { ok: true, platform: "문피아", url, title, author, coverUrl, synopsis, genres, workStatus, totalEpisodes },
+      meta: { ok: true, platform: "문피아", url, title, author, coverUrl, synopsis, genres, workStatus, totalEpisodes, ageTag },
     });
   }
   return out;
@@ -14217,6 +14230,7 @@ function parseNovelpiaSearch(jsonText) {
     const ep = Number(it.count_book);
     const startYear = yearFrom(it.start_date) || yearFrom(it.reg_date) || null; // 연재 시작일 우선, 없으면 등록일
     const endYear = Number(it.is_complete) === 1 ? yearFrom(it.complete_date) : null; // 완결작만 종료연도
+    const ageTag = Number(it.novel_age) === 19 ? "19금" : null; // 🔧 v7.28.47: 연령등급은 태그로 보존
     out.push({
       title, author, url, coverUrl,
       platform: "노벨피아",
@@ -14230,7 +14244,7 @@ function parseNovelpiaSearch(jsonText) {
         genres,
         workStatus: Number(it.is_complete) === 1 ? "completed" : "ongoing",
         totalEpisodes: ep > 0 ? ep : null,
-        startYear, endYear,
+        startYear, endYear, ageTag,
       },
     });
     if (out.length >= 30) break;
@@ -14295,12 +14309,14 @@ function buildScrapeItems(meta, current = {}) {
     if (sameSet(merged, cur)) continue; // 새로 추가될 게 없으면 표시 안 함
     items.push({ key, label, value: merged, display: add.join(", "), current: cur.join(", "), checked: cur.length === 0 });
   }
-  // 🔧 v7.28.45: 일반 태그 — 앱 장르 어휘 밖 키워드(노벨피아 하렘/집착 등). 기존 태그에 '병합' 제안.
-  if (gmap.tags && gmap.tags.length) {
+  // 🔧 v7.28.45/47: 일반 태그 — 앱 장르 어휘 밖 키워드(하렘/집착 등) + 연령등급(19금). 기존 태그에 '병합' 제안.
+  const addTags = [...(gmap.tags || [])];
+  if (meta.ageTag) addTags.push(meta.ageTag);
+  if (addTags.length) {
     const curTagsArr = String(current.tags || "").split(",").map(s => s.trim()).filter(Boolean);
-    const mergedTags = mergeGen(curTagsArr, gmap.tags);
+    const mergedTags = mergeGen(curTagsArr, addTags);
     if (!sameSet(mergedTags, curTagsArr)) {
-      items.push({ key: "tags", label: "태그", value: mergedTags.join(", "), display: gmap.tags.join(", "), current: curTagsArr.join(", "), checked: true });
+      items.push({ key: "tags", label: "태그", value: mergedTags.join(", "), display: addTags.join(", "), current: curTagsArr.join(", "), checked: true });
     }
   }
   // 🔧 v7.28.46: 작품 링크·연재처 — 스크래퍼가 url·platform을 알지만 그동안 등록에 미반영이었음.

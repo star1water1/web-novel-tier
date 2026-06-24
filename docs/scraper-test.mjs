@@ -220,6 +220,8 @@ truthy("buildScrapeItems 종료연도 0이면 항목 없음", !giTag.find(it => 
 truthy("buildScrapeItems 태그 이미 있으면 추가분만/없으면 제외", !S.buildScrapeItems({ title: "T", genres: ["하렘"] }, { tags: "하렘" }).find(it => it.key === "tags"));
 eq("노벨피아 meta 시작연도(start 0000→reg 2026)", nv[0].meta.startYear, 2026);
 eq("노벨피아 meta 종료연도(미완결→null)", nv[0].meta.endYear, null);
+eq("노벨피아 비성인(15세)은 ageTag null", nv[0].meta.ageTag, null);
+truthy("buildScrapeItems 연령등급(19금)을 태그로", (() => { const t = S.buildScrapeItems({ title: "T", genres: ["판타지"], ageTag: "19금" }, {}).find(it => it.key === "tags"); return t && /19금/.test(t.value); })());
 // v7.28.46: 작품 링크·연재처 항목
 const giLP = S.buildScrapeItems({ title: "T", url: "https://novelpia.com/novel/1", platform: "노벨피아" }, {});
 truthy("buildScrapeItems 작품링크 항목", (() => { const l = giLP.find(it => it.key === "link"); return l && l.value === "https://novelpia.com/novel/1"; })());
