@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, mergeSearchResults, scraperDecodeEntities, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, SCRAPER_HEADERS, SCRAPER_UA };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, mergeSearchResults, scraperDecodeEntities, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, canonicalPlatform, SCRAPER_HEADERS, SCRAPER_UA };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -246,6 +246,21 @@ truthy("buildScrapeItems 작품링크 항목", (() => { const l = giLP.find(it =
 truthy("buildScrapeItems 연재처 항목(노벨피아)", (() => { const p = giLP.find(it => it.key === "platforms"); return p && JSON.stringify(p.value) === JSON.stringify(["노벨피아"]); })());
 truthy("buildScrapeItems 동일 링크·연재처면 항목 제외", (() => { const it2 = S.buildScrapeItems({ title: "T", url: "https://x/1", platform: "리디" }, { link: "https://x/1", platforms: ["리디"] }); return !it2.find(i => i.key === "link") && !it2.find(i => i.key === "platforms"); })());
 truthy("buildScrapeItems 연재처 병합(기존 리디 + 노벨피아)", (() => { const p = S.buildScrapeItems({ title: "T", platform: "노벨피아" }, { platforms: ["리디"] }).find(it => it.key === "platforms"); return p && JSON.stringify(p.value) === JSON.stringify(["리디", "노벨피아"]); })());
+
+// ── v7.28.55 플랫폼 동의어 정규화 ──────────────────────────────────────────
+eq("canonical 네이버시리즈→시리즈", S.canonicalPlatform("네이버시리즈"), "시리즈");
+eq("canonical 카카오페이지→카카페", S.canonicalPlatform("카카오페이지"), "카카페");
+eq("canonical 리디북스→리디", S.canonicalPlatform("리디북스"), "리디");
+eq("canonical 표준명 유지(노벨피아)", S.canonicalPlatform("노벨피아"), "노벨피아");
+eq("canonical 모르는 플랫폼 원본 유지", S.canonicalPlatform("브릿G"), "브릿G");
+truthy("buildScrapeItems: 스크랩 네이버시리즈 vs 기존 시리즈 → 연재처 항목 없음(동의어)", (() => {
+  const it = S.buildScrapeItems({ title: "T", platform: "네이버시리즈" }, { platforms: ["시리즈"] });
+  return !it.find(i => i.key === "platforms");
+})());
+// ── v7.28.56 네이버 완결연도(moreDetail 업데이트일) ─────────────────────────
+eq("parseNaverUpdateYear: dt/dd 업데이트 → 연도", S.parseNaverUpdateYear('<dl class="info_v5"><dt>작가</dt><dd>남희성</dd><dt>업데이트</dt><dd>2019.07.03.</dd></dl>'), 2019);
+eq("parseNaverUpdateYear: 업데이트 없으면 null", S.parseNaverUpdateYear('<dl><dt>작가</dt><dd>X</dd></dl>'), null);
+eq("parseNaverUpdateYear: 범위 밖(1899) → null", S.parseNaverUpdateYear('<dt>업데이트</dt><dd>1899.01.01.</dd>'), null);
 
 console.log(`\n${fail === 0 ? "🎉 ALL PASS" : "⚠️  FAILED"}  pass=${pass} fail=${fail}`);
 process.exit(fail === 0 ? 0 : 1);

@@ -2,12 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.55 (플랫폼 동의어 정규화 — 네이버시리즈→시리즈, 카카오페이지→카카페)║
+ * ║  버전: 7.28.56 (네이버시리즈 완결연도 보강 — moreDetail 업데이트일)            ║
  * ║  최종 수정: 2026-06-24                                                        ║
- * ║  총 라인 수: 약 64,780줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 64,810줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📅 v7.28.56 네이버시리즈 완결연도 보강 (2026-06-24)                          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 실측 분석: 네이버 작품 상세는 JSON-LD가 없고 날짜가 클라이언트 렌더라 SSR엔     ║
+ * ║ 연재 시작/완결일이 안 실림(시작연도는 자동 추출 불가). 단, moreDetail.series    ║
+ * ║ (SSR)의 <dt>업데이트</dt><dd>YYYY.MM.DD</dd>가 완결작에선 사실상 완결 시점.     ║
+ * ║ (실측: 달빛조각사 2019.07.03=완결연도 2019, 전독시 연재중은 미사용)            ║
+ * ║ • parseNaverUpdateYear(순수·테스트) + fetchNaverCompletionYear(moreDetail 1회  ║
+ * ║   추가 fetch). fetchNovelMeta: 네이버 완결작 & endYear 없을 때만 보강.         ║
+ * ║ • 회귀 테스트 +9(동의어 5·연재처 1·완결연도 3) → 142/142.                      ║
+ * ║ ※ 문피아 연도는 개발환경 403이라 미확인 — 폰 '긁기 진단' 캡처로 후속.          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 🔌 v7.28.55 플랫폼 동의어 정규화 — 연재처 중복 방지 (2026-06-24)             ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 사용자 보고: 네이버시리즈에서 가져오면 기존 '시리즈' 작품에 매핑 안 되고        ║
@@ -14012,6 +14023,27 @@ function scraperDetectBlock(status, html) {
 
 // URL → 정규화 메타 (라이브 fetch). RN 네이티브 fetch라 CORS 없음 → 프록시 불필요.
 //   차단/챌린지는 scraperDetectBlock로 구분해 안내(개발환경 datacenter IP는 막혀도 폰은 통과).
+// 🆕 v7.28.56: 네이버시리즈 moreDetail SSR의 <dt>업데이트</dt><dd>YYYY.MM.DD</dd> → 연도(순수 함수, 테스트용).
+//   완결작에선 '마지막 업데이트'가 사실상 완결 시점(실측: 달빛조각사 2019.07.03 = 완결연도 2019).
+function parseNaverUpdateYear(html) {
+  const m = String(html == null ? "" : html).match(/<dt>\s*업데이트\s*<\/dt>\s*<dd>\s*(20\d\d)\.[0-9]{1,2}\.[0-9]{1,2}/);
+  const y = m ? Number(m[1]) : 0;
+  return (y >= 1990 && y <= 2099) ? y : null;
+}
+// 🆕 v7.28.56: 네이버 작품 상세는 날짜가 클라이언트 렌더라 SSR에 없음 → moreDetail.series(SSR)에서 완결연도 보강.
+//   완결작에 한해 호출(연재중 업데이트일은 '최근 연재'라 완결연도 아님). 실패는 조용히 null.
+async function fetchNaverCompletionYear(url, opts = {}) {
+  const pn = (String(url).match(/productNo=(\d+)/) || [])[1];
+  if (!pn) return null;
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 15000 });
+  try {
+    const res = await fetch("https://series.naver.com/novel/moreDetail.series?productNo=" + pn, { headers: SCRAPER_HEADERS, redirect: "follow", signal });
+    const html = await res.text();
+    return parseNaverUpdateYear(html);
+  } catch {
+    return null;
+  } finally { cleanup(); }
+}
 async function fetchNovelMeta(url, opts = {}) {
   if (!url || !/^https?:\/\//i.test(String(url).trim())) throw new Error("올바른 링크가 아니에요 (http/https URL 필요)");
   url = String(url).trim();
@@ -14033,6 +14065,10 @@ async function fetchNovelMeta(url, opts = {}) {
   let meta = scraperNormalizeFromHtml(html, url);
   meta = scraperRefineByPlatform(meta, html, platform);
   if (!meta || !meta.ok || !meta.title) throw new Error("이 페이지에서 작품 정보를 찾지 못했어요. (지원 안 되는 페이지이거나 구조가 바뀌었을 수 있어요)");
+  // 🆕 v7.28.56: 네이버시리즈 완결작 — moreDetail.series(SSR)에서 완결연도 보강(상세엔 날짜가 없음). 실패는 무시.
+  if (platform === "네이버시리즈" && meta.workStatus === "completed" && !meta.endYear) {
+    try { const ey = await fetchNaverCompletionYear(url, opts); if (ey) meta = { ...meta, endYear: ey }; } catch {}
+  }
   return meta;
 }
 
@@ -15908,7 +15944,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.55";
+const APP_VERSION = "7.28.56";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -15934,6 +15970,15 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.56", date: "2026-06-24",
+    title: "📅 네이버시리즈 완결연도 가져오기",
+    highlights: [
+      { type: "new", text: "📅 네이버시리즈 완결작은 완결 연도를 자동으로 가져와요. (작품 상세에 날짜가 안 실려 있어, 완결작은 마지막 업데이트일을 완결 시점으로 사용해요.)" },
+      { type: "improve", text: "ℹ️ 네이버는 ‘연재 시작연도’가 페이지에 아예 노출되지 않아 자동 입력이 안 돼요. 노벨피아는 시작·완결연도 모두, 리디는 시작연도가 들어와요. 문피아 연도는 점검 중이에요." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.55", date: "2026-06-24",
     title: "🔌 연재처(플랫폼) 이름 자동 정리",
