@@ -2,12 +2,20 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.50 (등록란 비우기 버튼 — 홈탭/예정탭)                             ║
+ * ║  버전: 7.28.51 (명언탭 다시 섞기 + 제목 입력값 즉시 검색)                     ║
  * ║  최종 수정: 2026-06-24                                                        ║
- * ║  총 라인 수: 약 64,360줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 64,390줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔀 v7.28.51 명언탭 다시 섞기 + 제목 입력값 즉시 검색 (2026-06-24)            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ ① 명언탭: '다시 섞기' 버튼 추가 — 셔플 모드에서도 새 랜덤 순서로 재정렬.       ║
+ * ║   기존 토글(셔플↔원래순서)을 [🔀 섞기/다시 섞기]+[원래순서] 2버튼으로 분리.    ║
+ * ║ ② 제목 검색: 제목 입력란에 값이 있으면 '제목으로 검색' 시 모달을 열며 그 값으로║
+ * ║   즉시 검색(다시 입력 불필요). openTitleSearch가 ctx.getCurrent().title 프리셋,║
+ * ║   runTitleSearch(explicitQ)로 state 갱신 지연 없이 검색. 신규/예정/편집 적용.  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 🧹 v7.28.50 등록란 비우기 버튼 (2026-06-24)                                  ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 홈탭(신규 작품 추가)·예정탭(예정 작품 추가) 등록 폼에 '비우기' 버튼 추가.      ║
@@ -15844,7 +15852,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.50";
+const APP_VERSION = "7.28.51";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -15870,6 +15878,15 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.51", date: "2026-06-24",
+    title: "🔀 명언 다시 섞기 + 제목 즉시 검색",
+    highlights: [
+      { type: "new", text: "🔀 명언탭에 ‘다시 섞기’ 버튼을 추가했어요. 셔플된 상태에서도 한 번에 새로운 순서로 다시 섞을 수 있고, ‘원래순서’ 버튼으로 처음 순서로 되돌릴 수 있어요." },
+      { type: "improve", text: "🔎 제목을 입력란에 적어두고 ‘제목으로 검색’을 누르면, 그 제목으로 바로 검색돼요. 검색창에 다시 입력할 필요가 없어요. (등록·예정·편집 화면)" },
+    ],
+    details: [],
+  },
   {
     version: "7.28.50", date: "2026-06-24",
     title: "🧹 등록란 비우기 버튼",
@@ -40544,10 +40561,17 @@ function AppContent() {
   // 🔎 v7.28.29 제목 검색(Stage 4): 입력 → searchNovels(현재 리디) → 후보 picker → 선택 시 fetchNovelMeta로 합류.
   function openTitleSearch(ctx) {
     if (scrapeLoading || searchBusy) return;
-    setSearchQuery(""); setSearchResults([]); setSearchModal({ ctx });
+    // 🆕 v7.28.51: 제목 입력란에 이미 입력한 제목이 있으면, 모달을 열며 그 값으로 즉시 검색(다시 입력 불필요)
+    const preset = (ctx?.getCurrent?.()?.title || "").trim();
+    setSearchResults([]);
+    setSearchQuery(preset);
+    setSearchModal({ ctx });
+    if (preset) runTitleSearch(preset);
   }
-  async function runTitleSearch() {
-    const q = (searchQuery || "").trim();
+  async function runTitleSearch(explicitQ) {
+    // 🆕 v7.28.51: explicitQ가 문자열이면 그 값으로 검색(openTitleSearch 자동 검색용).
+    //   onPress/onSubmitEditing이 넘기는 이벤트 객체는 무시하고 입력창(searchQuery) 값을 사용.
+    const q = (typeof explicitQ === "string" ? explicitQ : (searchQuery || "")).trim();
     if (!q) { Alert.alert("제목 검색", "검색할 제목을 입력해 주세요."); return; }
     if (searchBusy) return;
     setSearchBusy(true); setSearchResults([]);
@@ -57272,25 +57296,43 @@ async function importJSON() {
                   padding: 12,
                   borderRadius: 12,
                 }}>
-                  <Text style={{ color: C.sub, fontSize: 13 }}>
+                  <Text style={{ color: C.sub, fontSize: 13, flexShrink: 1 }} numberOfLines={1}>
                     총 {total}개 · {new Set(quotesCards.map(q => q.novelId)).size}작품
                   </Text>
+                  {/* 🆕 v7.28.51: 다시 섞기 — 셔플 모드에서도 새 랜덤 순서로 재정렬. 원래순서 복귀는 별도 버튼으로 분리 */}
                   <View style={{ flexDirection: "row", gap: 8 }}>
                     <TouchableOpacity
-                      onPress={quotesShuffled ? resetOrder : doShuffle}
-                      style={{ 
-                        backgroundColor: quotesShuffled ? C.primary : C.chip, 
-                        paddingHorizontal: 12, 
-                        paddingVertical: 6, 
+                      onPress={doShuffle}
+                      style={{
+                        backgroundColor: C.primary,
+                        paddingHorizontal: 12,
+                        paddingVertical: 6,
                         borderRadius: 8,
                         flexDirection: "row",
                         alignItems: "center",
                       }}
                     >
-                      <Text style={{ color: quotesShuffled ? "#fff" : C.text, fontWeight: "700", fontSize: 13 }}>
-                        🔀 {quotesShuffled ? "원래순서" : "셔플"}
+                      <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>
+                        🔀 {quotesShuffled ? "다시 섞기" : "셔플"}
                       </Text>
                     </TouchableOpacity>
+                    {quotesShuffled && (
+                      <TouchableOpacity
+                        onPress={resetOrder}
+                        style={{
+                          backgroundColor: C.chip,
+                          paddingHorizontal: 12,
+                          paddingVertical: 6,
+                          borderRadius: 8,
+                          flexDirection: "row",
+                          alignItems: "center",
+                        }}
+                      >
+                        <Text style={{ color: C.text, fontWeight: "700", fontSize: 13 }}>
+                          원래순서
+                        </Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 </View>
                 
