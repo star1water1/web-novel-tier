@@ -2,12 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.54 (일괄 추가 Phase① — 여러 제목 순차 검색·긁기 → 일괄 등록)      ║
+ * ║  버전: 7.28.55 (플랫폼 동의어 정규화 — 네이버시리즈→시리즈, 카카오페이지→카카페)║
  * ║  최종 수정: 2026-06-24                                                        ║
- * ║  총 라인 수: 약 64,760줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 64,780줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔌 v7.28.55 플랫폼 동의어 정규화 — 연재처 중복 방지 (2026-06-24)             ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 사용자 보고: 네이버시리즈에서 가져오면 기존 '시리즈' 작품에 매핑 안 되고        ║
+ * ║ 별도 연재처로 추가됨. 원인: 스크래퍼 라벨('네이버시리즈'/'카카오페이지') ≠      ║
+ * ║ 앱 표준('시리즈'/'카카페', FACTORY_PLATFORM_OPTIONS).                          ║
+ * ║ • canonicalPlatform + PLATFORM_SYNONYMS 추가(공백·대소문자 무시 매핑).         ║
+ * ║ • buildScrapeItems 연재처 병합: 스크랩·기존 플랫폼 모두 정규화(중복 방지+구     ║
+ * ║   데이터 자가치유). metaToDraft(일괄추가)도 정규화.                            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 📚 v7.28.54 일괄 추가 Phase① — 여러 작품 한 번에 검색·등록 (2026-06-24)      ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 신규 등록 화면에 '📚 여러 작품 한 번에 추가(일괄)' 진입점. 3단계 모달:         ║
@@ -14357,6 +14366,21 @@ function mapScrapedGenres(rawGenres, majorVocab = (typeof MAJOR_GENRES !== "unde
   return { major, sub, tags };
 }
 
+// 🆕 v7.28.55: 플랫폼 동의어 → 앱 표준명 정규화.
+//   스크래퍼는 '네이버시리즈'/'카카오페이지' 라벨을 쓰지만 앱 표준(FACTORY_PLATFORM_OPTIONS)은 '시리즈'/'카카페'.
+//   정규화 없이는 동일 작품에 표준명과 스크랩명이 따로 붙어 중복 연재처가 생김(사용자 보고).
+const PLATFORM_SYNONYMS = {
+  "네이버시리즈": "시리즈", "naverseries": "시리즈", "네이버": "시리즈", "시리즈": "시리즈",
+  "카카오페이지": "카카페", "카카오": "카카페", "kakaopage": "카카페", "kakao": "카카페", "카카페": "카카페",
+  "리디북스": "리디", "ridibooks": "리디", "ridi": "리디",
+  "novelpia": "노벨피아", "munpia": "문피아",
+};
+function canonicalPlatform(name) {
+  const raw = String(name == null ? "" : name).trim();
+  if (!raw) return raw;
+  const key = raw.replace(/\s+/g, "").toLowerCase();
+  return PLATFORM_SYNONYMS[key] || raw; // 모르는 플랫폼은 원본 유지
+}
 function buildScrapeItems(meta, current = {}) {
   if (!meta) return [];
   const items = [];
@@ -14406,10 +14430,12 @@ function buildScrapeItems(meta, current = {}) {
   // 🔧 v7.28.46: 작품 링크·연재처 — 스크래퍼가 url·platform을 알지만 그동안 등록에 미반영이었음.
   if (meta.url) push("link", "작품 링크", meta.url, meta.url, current.link);
   if (meta.platform) {
-    const curPlat = Array.isArray(current.platforms) ? current.platforms : parsePlatforms(current.platforms);
-    const mergedPlat = mergeGen(curPlat, [meta.platform]);
+    // 🆕 v7.28.55: 스크랩 플랫폼·기존 플랫폼 모두 표준명으로 정규화 → '네이버시리즈'와 '시리즈'가 따로 붙는 중복 방지
+    const scrapedPlat = canonicalPlatform(meta.platform);
+    const curPlat = (Array.isArray(current.platforms) ? current.platforms : parsePlatforms(current.platforms)).map(canonicalPlatform);
+    const mergedPlat = mergeGen(curPlat, [scrapedPlat]);
     if (!sameSet(mergedPlat, curPlat)) {
-      items.push({ key: "platforms", label: "연재처", value: mergedPlat, display: meta.platform, current: curPlat.join(", "), checked: true });
+      items.push({ key: "platforms", label: "연재처", value: mergedPlat, display: scrapedPlat, current: curPlat.join(", "), checked: true });
     }
   }
   if (meta.coverUrl) items.push({ key: "cover", label: "표지", value: meta.coverUrl, display: "가져오기", current: current.cover ? "있음" : "없음", checked: !current.cover });
@@ -15882,7 +15908,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.54";
+const APP_VERSION = "7.28.55";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -15908,6 +15934,14 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.55", date: "2026-06-24",
+    title: "🔌 연재처(플랫폼) 이름 자동 정리",
+    highlights: [
+      { type: "fix", text: "🔌 불러오기·일괄추가에서 ‘네이버시리즈’는 ‘시리즈’로, ‘카카오페이지’는 ‘카카페’로 자동 정리돼요. 같은 작품에 ‘시리즈’와 ‘네이버시리즈’가 따로 붙어 중복되던 문제를 고쳤어요." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.54", date: "2026-06-24",
     title: "📚 여러 작품 한 번에 추가 (일괄)",
@@ -40721,7 +40755,7 @@ function AppContent() {
       author: (meta.author || "").trim(),
       note: (meta.synopsis || "").trim(),
       tags: tagsArr.join(", "),
-      platforms: meta.platform ? [meta.platform] : [],
+      platforms: meta.platform ? [canonicalPlatform(meta.platform)] : [], // 🆕 v7.28.55: 동의어 정규화
       total_episodes: Number(meta.totalEpisodes) || 0,
       work_status: meta.workStatus || "ongoing",
       major_genre: gmap.major || [],
@@ -40729,7 +40763,7 @@ function AppContent() {
       start_year: Number(meta.startYear) || 0,
       end_year: Number(meta.endYear) || 0,
       link: meta.url || "",
-      platform: meta.platform || "",
+      platform: canonicalPlatform(meta.platform || ""), // 🆕 v7.28.55: 표시·정규화
       coverUrl: meta.coverUrl || "",
     };
   }
