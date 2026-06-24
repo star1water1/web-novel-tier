@@ -2,12 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.51 (명언탭 다시 섞기 + 제목 입력값 즉시 검색)                     ║
+ * ║  버전: 7.28.52 (제목검색 — 이미 등록된 작품이면 기존작 편집)                  ║
  * ║  최종 수정: 2026-06-24                                                        ║
- * ║  총 라인 수: 약 64,390줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 64,430줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔁 v7.28.52 제목검색 — 이미 등록된 작품이면 기존작 편집 (2026-06-24)         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 제목 검색 후보가 이미 등록된 작품이면 새로 추가(중복) 대신, 가져온 정보를      ║
+ * ║ 기존작과 필드별 비교 후 원하는 항목만 덮어쓰기/추가하도록 편집 흐름으로 분기.  ║
+ * ║ • 판정: findExistingNovelByTitle — 공백·대소문자 무시 제목 매칭(작가 보조).    ║
+ * ║   scrapeCtxNew/Planned에 kind 마커 추가(신규/예정 검색에서만 판정).            ║
+ * ║ • 분기: pickSearchCandidate에서 Alert([취소]/[새로 등록]/[기존 작품 수정]).    ║
+ * ║   '기존 작품 수정' → openEdit(기존작) + 비교 모달(editCtxForExisting). 저장은   ║
+ * ║   기존 saveEdit 재사용(영속화·hybrid 트리거·태그/표지 정합 그대로). 편집 모달   ║
+ * ║   자체 제목검색과 동일한 스태킹·apply 경로라 신규 영속화 코드 없음.            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 🔀 v7.28.51 명언탭 다시 섞기 + 제목 입력값 즉시 검색 (2026-06-24)            ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ ① 명언탭: '다시 섞기' 버튼 추가 — 셔플 모드에서도 새 랜덤 순서로 재정렬.       ║
@@ -15852,7 +15863,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.51";
+const APP_VERSION = "7.28.52";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -15878,6 +15889,15 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.52", date: "2026-06-24",
+    title: "🔁 제목검색 — 이미 등록된 작품은 기존작 수정",
+    highlights: [
+      { type: "new", text: "🔁 제목으로 검색해 고른 작품이 이미 목록에 있으면, 똑같은 작품을 새로 만들지 않고 ‘기존 작품 수정’으로 이어갈 수 있어요. 가져온 정보를 기존 작품과 항목별로 비교해 원하는 것만 덮어쓰거나 추가하세요. (신규·예정 등록 화면)" },
+      { type: "improve", text: "🧩 비교·적용 후에는 평소 편집 모달에서 그대로 저장돼요. 제목·작가·줄거리·회차·연재상태·연도·장르·태그·표지·연재처·링크를 골라서 반영할 수 있어요." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.51", date: "2026-06-24",
     title: "🔀 명언 다시 섞기 + 제목 즉시 검색",
@@ -40479,6 +40499,7 @@ function AppContent() {
   const genJson = (arr) => (Array.isArray(arr) && arr.length ? JSON.stringify(arr) : "");
   const scrapeCtxNew = () => ({
     label: "신규 등록",
+    kind: "new", // 🆕 v7.28.52: 제목검색 중복 판정용(이미 등록된 작품이면 기존작 편집 제안)
     getCurrent: () => ({ title, author, note, tags, total_episodes: totalEpisodes, work_status: newWorkStatus, cover: newCoverImage, major_genre: newMajorGenre, sub_genre: newSubGenre, start_year: newStartYear, end_year: newEndYear, platforms, link: newLink }),
     apply: (f) => {
       if (f.title != null) setTitle(f.title);
@@ -40498,6 +40519,7 @@ function AppContent() {
   });
   const scrapeCtxPlanned = () => ({
     label: "예정 등록",
+    kind: "planned", // 🆕 v7.28.52: 제목검색 중복 판정용
     getCurrent: () => ({ title: plannedTitle, author: plannedAuthor, note: plannedNote, tags: plannedTags, total_episodes: plannedTotalEpisodes, work_status: plannedWorkStatus, cover: plannedCoverImage, major_genre: plannedMajorGenre, sub_genre: plannedSubGenre, start_year: plannedStartYear, end_year: plannedEndYear, platforms: plannedPlatforms, link: plannedLink }),
     apply: (f) => {
       if (f.title != null) setPlannedTitle(f.title);
@@ -40584,13 +40606,57 @@ function AppContent() {
       setSearchBusy(false);
     }
   }
+  // 🆕 v7.28.52: 제목 검색 후보가 이미 등록된 작품인지 판정 (공백·대소문자 무시 제목 매칭, 작가 보조)
+  const normTitleForMatch = (s) => String(s == null ? "" : s).replace(/\s+/g, "").toLowerCase();
+  function findExistingNovelByTitle(title, author) {
+    const t = normTitleForMatch(title);
+    if (!t) return null;
+    const cands = (list || []).filter(n => normTitleForMatch(n.title) === t);
+    if (cands.length === 0) return null;
+    const a = normTitleForMatch(author);
+    if (a) { const byAuthor = cands.find(n => normTitleForMatch(n.author) === a); if (byAuthor) return byAuthor; }
+    return cands[0];
+  }
+  // 🆕 v7.28.52: 기존작에 스크랩 값을 '비교 후 선택 적용'하기 위한 ctx. getCurrent는 work를 직접 참조(openEdit의
+  //   setEditItem이 비동기라 같은 틱엔 editItem 미반영), apply는 편집 ctx 재사용(updateEditItem 등) → 저장은 saveEdit.
+  const editCtxForExisting = (work) => ({
+    label: "기존 작품 수정",
+    apply: scrapeCtxEdit().apply,
+    getCurrent: () => ({
+      title: work.title, author: work.author, note: work.note, tags: work.tags,
+      total_episodes: work.total_episodes, work_status: work.work_status,
+      cover: work.cover_image, major_genre: work.major_genre, sub_genre: work.sub_genre,
+      start_year: work.start_year, end_year: work.end_year,
+      platforms: work.platforms, link: work.link,
+    }),
+  });
   async function pickSearchCandidate(cand) {
     const ctx = searchModal?.ctx;
     setSearchModal(null); setSearchResults([]); setSearchQuery("");
     if (!ctx) return;
     // 🔎 v7.28.43: 검색 API가 충분한 메타를 준 경우(노벨피아) 상세 재긁기 없이 그대로 사용(SPA og 부실 회피).
-    if (cand?.meta && cand.meta.title) openScrapeFromMeta(cand.meta, ctx);
-    else if (cand?.url) await runScrapeFromUrl(cand.url, ctx); // 그 외(리디·네이버·문피아)는 상세 페이지 긁기
+    const runWith = (useCtx) => {
+      if (cand?.meta && cand.meta.title) { openScrapeFromMeta(cand.meta, useCtx); return; }
+      if (cand?.url) return runScrapeFromUrl(cand.url, useCtx); // 그 외(리디·네이버·문피아)는 상세 페이지 긁기
+    };
+    // 🆕 v7.28.52: 신규/예정 등록 검색에서 이미 등록된 작품을 고르면, 새로 추가 대신 기존작 편집(필드별 비교·선택 적용) 제안
+    const existing = (ctx.kind === "new" || ctx.kind === "planned")
+      ? findExistingNovelByTitle(cand?.meta?.title || cand?.title, cand?.meta?.author || cand?.author)
+      : null;
+    if (existing) {
+      Alert.alert(
+        "이미 등록된 작품",
+        `‘${existing.title}’은(는) 이미 목록에 있어요.\n새로 추가하지 않고, 가져온 정보를 기존 작품과 비교해 원하는 항목만 반영할 수 있어요.`,
+        [
+          { text: "취소", style: "cancel" },
+          { text: "새로 등록", onPress: () => { runWith(ctx); } },
+          // 기존 작품 편집 모달을 먼저 띄운 뒤(rAF) 비교 모달을 위에 올림 — 편집 모달 자체 제목검색과 동일한 스태킹
+          { text: "기존 작품 수정", onPress: () => { openEdit(existing); requestAnimationFrame(() => runWith(editCtxForExisting(existing))); } },
+        ]
+      );
+      return;
+    }
+    await runWith(ctx);
   }
 
   // 추천 항목 체크 토글
