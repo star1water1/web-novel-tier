@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, mergeSearchResults, scraperDecodeEntities, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, canonicalPlatform, parseMunpiaSearchJson, SCRAPER_HEADERS, SCRAPER_UA };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, mergeSearchResults, scraperDecodeEntities, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, parseMunpiaSearchJson, SCRAPER_HEADERS, SCRAPER_UA };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -209,6 +209,18 @@ eq("문피아 JSON 후보3 시작연도(2024)", mj[2].meta.startYear, 2024);
 eq("문피아 JSON 후보3 연재중 상태", mj[2].meta.workStatus, "ongoing");
 truthy("문피아 JSON 표지(cdn1+tb.jpg)", /^https:\/\/cdn1\.munpia\.com\/.*tb\.jpg$/.test(mj[1].meta.coverUrl));
 eq("문피아 JSON 회차수(863)", mj[0].meta.totalEpisodes, 863);
+// v7.28.61: 완결일(ms) + 연중(dropped) + 날짜 헬퍼
+eq("문피아 JSON 후보1 완결일(역타임스탬프 ms)", mj[0].meta.completedAt, (10000000000 - 8232824800) * 1000);
+eq("문피아 JSON 후보3 연재중 → 완결일 0", mj[2].meta.completedAt, 0);
+truthy("scraperDateToTs YYYY.MM.DD → 2019", new Date(S.scraperDateToTs("2019.07.03")).getUTCFullYear() === 2019);
+truthy("scraperDateToTs YYYY-MM-DD HH:MM → 2018", new Date(S.scraperDateToTs("2018-01-29 10:00:00")).getUTCFullYear() === 2018);
+eq("scraperDateToTs 잘못된 값 → 0", S.scraperDateToTs("없음"), 0);
+truthy("parseNaverUpdateTs dt/dd → 2019", new Date(S.parseNaverUpdateTs('<dt>업데이트</dt><dd>2019.07.03.</dd>')).getUTCFullYear() === 2019);
+eq("parseNaverUpdateTs 없으면 0", S.parseNaverUpdateTs('<dl></dl>'), 0);
+// 문피아 연중(nvOptDiscontinued>0, nvOptFinish=0) → dropped
+const mjDisc = S.parseMunpiaSearchJson(JSON.stringify({ list: [{ nvSrl: "1", nvTitle: "연중작", nvAuthor: "A", nvNgCode: "pl.serial", genreStr: "판타지", nvSumEntry: "100", nvTimeReg: "1483930800", nvTimeUpdate: "8483668900", nvOptFinish: "0", nvOptDiscontinued: "1600000000", nvOptAdult: "" }] }));
+eq("문피아 JSON 연중작 → dropped(연중)", mjDisc[0].meta.workStatus, "dropped");
+eq("문피아 JSON 연중작 완결일 0", mjDisc[0].meta.completedAt, 0);
 eq("문피아 id 중복 없음(4건)", new Set(ms.map(x => x.url)).size, 4);
 // 검색 SSR 메타 동봉(상세 재긁기 생략) — 줄거리/완결/회차/장르
 truthy("문피아 후보에 meta 동봉", ms[0].meta && ms[0].meta.title === "회귀수선전(回歸修仙傳)");

@@ -2,12 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.60 (자동갱신 강화 — 노벨피아·문피아 검색 API ID 매칭)              ║
+ * ║  버전: 7.28.61 (Phase③ 완결일 컬럼 + 연중 감지 + 완결/연중 알림)              ║
  * ║  최종 수정: 2026-06-24                                                        ║
- * ║  총 라인 수: 약 65,170줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 65,210줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📅 v7.28.61 Phase③ 완결일 + 연중 감지 + 완결/연중 알림 (2026-06-24)         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ work_status는 이미 5상태(연재중/완결/휴재/연중/서비스종료) — 신규는 완결일.    ║
+ * ║ • completed_at 컬럼 신설(novels·planned, ms 타임스탬프). scraperDateToTs.      ║
+ * ║ • 완결일 스크랩: 노벨피아 complete_date·문피아 nvTimeUpdate·네이버 moreDetail   ║
+ * ║   업데이트일. 연중 감지: 문피아 nvOptDiscontinued→dropped(연중).               ║
+ * ║ • 일괄 갱신: 완결일 채움(빈 값만)·연중 전환(연재중→연중)·완결/연중 시 알림.     ║
+ * ║   편집 모달에 완결일 표시. wsDisp 5상태 보강. 회귀 +9 → 167/167.              ║
+ * ║ ※ 연중 자동감지는 문피아만(노벨피아 검색API는 is_complete 이진·연중 미노출);    ║
+ * ║   다른 플랫폼 연중은 수동 마킹(기존 5상태 칩).                                 ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 🔄 v7.28.60 일괄 자동갱신 강화 — 노벨피아·문피아 검색 API 매칭 (2026-06-24) ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 노벨피아·문피아 상세 페이지는 SPA/빈약이라 회차·연도가 덜 잡힘 → 자동갱신 시    ║
@@ -8525,6 +8536,7 @@ async function initDb(progressCb) {
     ["cover_image", "TEXT", "''"],
     ["link", "TEXT", "''"],
     ["work_status", "TEXT", "'ongoing'"],
+    ["completed_at", "INTEGER", "0"], // 🆕 v7.28.61: 완결일(ms 타임스탬프, 0=미설정)
     ["read_count_updated_at", "INTEGER", "1737072000000"],
     ["major_genre", "TEXT", "''"],
     ["sub_genre", "TEXT", "''"],
@@ -8664,6 +8676,7 @@ async function initDb(progressCb) {
   // 🔧 v7.6.0 (포트 v3.12.3): 예정작 연재 시작/종료 연도
   await ensureColumn("planned_novels", "start_year", "INTEGER", "0");
   await ensureColumn("planned_novels", "end_year", "INTEGER", "0");
+  await ensureColumn("planned_novels", "completed_at", "INTEGER", "0"); // 🆕 v7.28.61: 완결일
 
   // 🖼️ v3.4.5: 표지 라이브러리 테이블
   await database.runAsync(`CREATE TABLE IF NOT EXISTS cover_library (
@@ -13967,7 +13980,7 @@ function scraperNormalizeFromHtml(html, url) {
   const cr = String(book.contentRating || og["og:restrictions:age"] || og["rating"] || "");
   const ageTag = /\b19\b|adult|성인|청소년\s*이용\s*불가/i.test(cr) ? "19금" : null;
 
-  return { ok: !!title, platform, url, title, author, coverUrl, synopsis, genres, workStatus, totalEpisodes, startYear, endYear: null, ageTag };
+  return { ok: !!title, platform, url, title, author, coverUrl, synopsis, genres, workStatus, totalEpisodes, startYear, endYear: null, completedAt: 0, ageTag };
 }
 
 // Next.js SSR 내장 데이터(__NEXT_DATA__) 추출 — 카카오페이지/리디 등 SPA가 페이지에 심는 JSON.
@@ -14065,23 +14078,36 @@ function scraperDetectBlock(status, html) {
 //   차단/챌린지는 scraperDetectBlock로 구분해 안내(개발환경 datacenter IP는 막혀도 폰은 통과).
 // 🆕 v7.28.56: 네이버시리즈 moreDetail SSR의 <dt>업데이트</dt><dd>YYYY.MM.DD</dd> → 연도(순수 함수, 테스트용).
 //   완결작에선 '마지막 업데이트'가 사실상 완결 시점(실측: 달빛조각사 2019.07.03 = 완결연도 2019).
+// 🆕 v7.28.61: 날짜 문자열("YYYY-MM-DD ...", "YYYY.MM.DD") → ms 타임스탬프(UTC 자정 — KST 표시에서 같은 날짜). 0=실패.
+function scraperDateToTs(s) {
+  const m = String(s == null ? "" : s).match(/(20\d\d)[.\-](\d{1,2})[.\-](\d{1,2})/);
+  if (!m) return 0;
+  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return 0;
+  return Date.UTC(y, mo - 1, d);
+}
 function parseNaverUpdateYear(html) {
   const m = String(html == null ? "" : html).match(/<dt>\s*업데이트\s*<\/dt>\s*<dd>\s*(20\d\d)\.[0-9]{1,2}\.[0-9]{1,2}/);
   const y = m ? Number(m[1]) : 0;
   return (y >= 1990 && y <= 2099) ? y : null;
 }
-// 🆕 v7.28.56: 네이버 작품 상세는 날짜가 클라이언트 렌더라 SSR에 없음 → moreDetail.series(SSR)에서 완결연도 보강.
-//   완결작에 한해 호출(연재중 업데이트일은 '최근 연재'라 완결연도 아님). 실패는 조용히 null.
-async function fetchNaverCompletionYear(url, opts = {}) {
+// 🆕 v7.28.61: moreDetail 업데이트일 → ms 타임스탬프(완결작 완결일). 없으면 0.
+function parseNaverUpdateTs(html) {
+  const m = String(html == null ? "" : html).match(/<dt>\s*업데이트\s*<\/dt>\s*<dd>\s*(20\d\d\.[0-9]{1,2}\.[0-9]{1,2})/);
+  return m ? scraperDateToTs(m[1]) : 0;
+}
+// 🆕 v7.28.56/61: 네이버 작품 상세는 날짜가 클라이언트 렌더라 SSR에 없음 → moreDetail.series(SSR)의 업데이트일.
+//   완결작에 한해 호출(연재중 업데이트일은 '최근 연재'). {year, ts} 반환. 실패는 조용히 {null,0}.
+async function fetchNaverCompletion(url, opts = {}) {
   const pn = (String(url).match(/productNo=(\d+)/) || [])[1];
-  if (!pn) return null;
+  if (!pn) return { year: null, ts: 0 };
   const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 15000 });
   try {
     const res = await fetch("https://series.naver.com/novel/moreDetail.series?productNo=" + pn, { headers: SCRAPER_HEADERS, redirect: "follow", signal });
     const html = await res.text();
-    return parseNaverUpdateYear(html);
+    return { year: parseNaverUpdateYear(html), ts: parseNaverUpdateTs(html) };
   } catch {
-    return null;
+    return { year: null, ts: 0 };
   } finally { cleanup(); }
 }
 async function fetchNovelMeta(url, opts = {}) {
@@ -14107,7 +14133,7 @@ async function fetchNovelMeta(url, opts = {}) {
   if (!meta || !meta.ok || !meta.title) throw new Error("이 페이지에서 작품 정보를 찾지 못했어요. (지원 안 되는 페이지이거나 구조가 바뀌었을 수 있어요)");
   // 🆕 v7.28.56: 네이버시리즈 완결작 — moreDetail.series(SSR)에서 완결연도 보강(상세엔 날짜가 없음). 실패는 무시.
   if (platform === "네이버시리즈" && meta.workStatus === "completed" && !meta.endYear) {
-    try { const ey = await fetchNaverCompletionYear(url, opts); if (ey) meta = { ...meta, endYear: ey }; } catch {}
+    try { const c = await fetchNaverCompletion(url, opts); if (c.year) meta = { ...meta, endYear: c.year, completedAt: c.ts || meta.completedAt || 0 }; } catch {}
   }
   return meta;
 }
@@ -14320,13 +14346,17 @@ function parseMunpiaSearchJson(jsonText) {
     const genres = String(it.genreStr || "").split(/[,/·]/).map(s => s.trim()).filter(Boolean);
     const totalEpisodes = Number(it.nvSumEntry) > 0 ? Number(it.nvSumEntry) : null;
     const completed = Number(it.nvOptFinish) > 0;
+    const discontinued = Number(it.nvOptDiscontinued) > 0; // 🆕 v7.28.61: 연중(연재중단)
     const startYear = yearOf(it.nvTimeReg);
-    // 완결연도 = 마지막 연재 시각(역타임스탬프 환원 TM-nvTimeUpdate). 완결작만. nvOptFinish는 재출간 시 갱신돼 부정확이라 미사용.
-    let endYear = null;
+    // 완결연도·완결일 = 마지막 연재 시각(역타임스탬프 환원 TM-nvTimeUpdate). 완결작만. nvOptFinish는 재출간 시 갱신돼 부정확이라 미사용.
+    let endYear = null, completedAt = 0;
     if (completed) {
       const u = Number(it.nvTimeUpdate);
-      endYear = yearOf((u > 0 && u < TM) ? (TM - u) : Number(it.nvTimeReg));
+      const realUpd = (u > 0 && u < TM) ? (TM - u) : Number(it.nvTimeReg);
+      endYear = yearOf(realUpd);
+      completedAt = realUpd > 0 ? realUpd * 1000 : 0; // 🆕 v7.28.61: 완결일(ms)
     }
+    const workStatus = completed ? "completed" : (discontinued ? "dropped" : "ongoing"); // dropped=연중
     const ageTag = String(it.nvOptAdult || "") === "Y" ? "19금" : null;
     const url = "https://mm.munpia.com/?menu=novel&id=" + id + "&renewal2=TRUE";
     out.push({
@@ -14334,7 +14364,7 @@ function parseMunpiaSearchJson(jsonText) {
       platform: "문피아",
       category: genres.join(", "),
       isComic: false,
-      meta: { ok: true, platform: "문피아", url, title, author, coverUrl, synopsis: String(it.nvStory == null ? "" : it.nvStory).trim(), genres, workStatus: completed ? "completed" : "ongoing", totalEpisodes, startYear, endYear, ageTag },
+      meta: { ok: true, platform: "문피아", url, title, author, coverUrl, synopsis: String(it.nvStory == null ? "" : it.nvStory).trim(), genres, workStatus, totalEpisodes, startYear, endYear, completedAt, ageTag },
     });
     if (out.length >= 30) break;
   }
@@ -14402,9 +14432,10 @@ function parseMunpiaSearch(html) {
     const ageTag = /i_adult|label_19/i.test(block) ? "19금" : null; // 🔧 v7.28.47: 성인 배지 → 태그
     // 🆕 v7.28.57: 작가줄 끝 날짜(YYYY-MM-DD)=최근 연재일. 완결작은 마지막 연재≈완결 → endYear(완결연도).
     //   (실측: 쥐뿔도없는회귀 2018·역대급톱스타 2019·그랜드슬램 2021 등 완결연도 일치). 시작일은 검색에 없어 startYear=null.
-    const dM = authorRaw.match(/(20\d\d)-[0-9]{1,2}-[0-9]{1,2}/);
-    const lastY = dM ? Number(dM[1]) : 0;
+    const dM = authorRaw.match(/(20\d\d-[0-9]{1,2}-[0-9]{1,2})/);
+    const lastY = dM ? Number(dM[1].slice(0, 4)) : 0;
     const endYear = (workStatus === "completed" && lastY >= 1990 && lastY <= 2099) ? lastY : null;
+    const completedAt = (workStatus === "completed" && dM) ? scraperDateToTs(dM[1]) : 0; // 🆕 v7.28.61: 완결일
     const url = "https://mm.munpia.com/?menu=novel&id=" + id + "&renewal2=TRUE";
     seen.add(id);
     out.push({
@@ -14412,7 +14443,7 @@ function parseMunpiaSearch(html) {
       platform: "문피아",
       category,
       isComic: false,
-      meta: { ok: true, platform: "문피아", url, title, author, coverUrl, synopsis, genres, workStatus, totalEpisodes, startYear: null, endYear, ageTag },
+      meta: { ok: true, platform: "문피아", url, title, author, coverUrl, synopsis, genres, workStatus, totalEpisodes, startYear: null, endYear, completedAt, ageTag },
     });
   }
   return out;
@@ -14457,6 +14488,7 @@ function parseNovelpiaSearch(jsonText) {
     const ep = Number(it.count_book);
     const startYear = yearFrom(it.start_date) || yearFrom(it.reg_date) || null; // 연재 시작일 우선, 없으면 등록일
     const endYear = Number(it.is_complete) === 1 ? yearFrom(it.complete_date) : null; // 완결작만 종료연도
+    const completedAt = Number(it.is_complete) === 1 ? scraperDateToTs(it.complete_date) : 0; // 🆕 v7.28.61: 완결일(풀데이터)
     const ageTag = Number(it.novel_age) === 19 ? "19금" : null; // 🔧 v7.28.47: 연령등급은 태그로 보존
     out.push({
       title, author, url, coverUrl,
@@ -14471,7 +14503,7 @@ function parseNovelpiaSearch(jsonText) {
         genres,
         workStatus: Number(it.is_complete) === 1 ? "completed" : "ongoing",
         totalEpisodes: ep > 0 ? ep : null,
-        startYear, endYear, ageTag,
+        startYear, endYear, completedAt, ageTag,
       },
     });
     if (out.length >= 30) break;
@@ -14520,7 +14552,7 @@ function canonicalPlatform(name) {
 function buildScrapeItems(meta, current = {}) {
   if (!meta) return [];
   const items = [];
-  const wsDisp = (w) => w === "completed" ? "완결" : w === "ongoing" ? "연재중" : "";
+  const wsDisp = (w) => ({ ongoing: "연재중", completed: "완결", hiatus: "휴재", dropped: "연중", discontinued: "서비스종료" }[w] || ""); // 🆕 v7.28.61: 5상태
   const push = (key, label, value, display, curDisplay) => {
     const disp = (display == null ? "" : String(display)).trim();
     if (!disp) return;
@@ -16044,7 +16076,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.60";
+const APP_VERSION = "7.28.61";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -16070,6 +16102,16 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.61", date: "2026-06-24",
+    title: "📅 완결일 + 완결·연중 알림",
+    highlights: [
+      { type: "new", text: "📅 작품의 완결일을 자동으로 가져와 저장해요(노벨피아·문피아·네이버 완결작). 편집 화면에서 완결일이 보여요." },
+      { type: "new", text: "📢 일괄 갱신에서 새로 완결되거나 연중(연재중단)된 작품이 있으면 알림으로 알려줘요. 문피아는 연중도 자동 감지해요." },
+      { type: "improve", text: "🛟 완결일은 비어 있을 때만 채우고, 완결/연중 전환은 연재중에서만 바꿔요(직접 설정한 상태는 보존)." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.60", date: "2026-06-24",
     title: "🔄 일괄 갱신 — 노벨피아·문피아 정확도 강화",
@@ -41133,11 +41175,18 @@ function AppContent() {
     const sets = [], params = [], changes = [];
     const curEp = Number(work.total_episodes) || 0, newEp = Number(meta.totalEpisodes) || 0;
     if (newEp > curEp) { sets.push("total_episodes=?"); params.push(newEp); changes.push(`회차 ${curEp}→${newEp}`); }
-    if (meta.workStatus === "completed" && (work.work_status || "ongoing") !== "completed") { sets.push("work_status=?"); params.push("completed"); changes.push("✅완결 전환"); }
+    // 🆕 v7.28.61: 완결/연중 전환 — 완결은 연재중→완결만, 연중(dropped)은 연재중→연중만 (역전 금지)
+    const curWs = work.work_status || "ongoing";
+    if (meta.workStatus === "completed" && curWs !== "completed") { sets.push("work_status=?"); params.push("completed"); changes.push("✅완결 전환"); }
+    else if (meta.workStatus === "dropped" && curWs === "ongoing") { sets.push("work_status=?"); params.push("dropped"); changes.push("⏸연중 전환"); }
     const curSy = Number(work.start_year) || 0, newSy = Number(meta.startYear) || 0;
     if (curSy === 0 && newSy > 0) { sets.push("start_year=?"); params.push(newSy); changes.push(`시작 ${newSy}`); }
     const curEy = Number(work.end_year) || 0, newEy = Number(meta.endYear) || 0;
     if (curEy === 0 && newEy > 0) { sets.push("end_year=?"); params.push(newEy); changes.push(`완결연도 ${newEy}`); }
+    // 🆕 v7.28.61: 완결일 채우기 — 완결작인데 비어있고 스크랩 완결일 있으면 (기존값 보존)
+    const curCa = Number(work.completed_at) || 0, newCa = Number(meta.completedAt) || 0;
+    const willComplete = meta.workStatus === "completed" || curWs === "completed";
+    if (willComplete && curCa === 0 && newCa > 0) { sets.push("completed_at=?"); params.push(newCa); changes.push("완결일"); }
     if (!sets.length) return null;
     params.push(work.id);
     await exec(`UPDATE ${table} SET ${sets.join(", ")} WHERE id=?`, params);
@@ -41210,6 +41259,12 @@ function AppContent() {
     try { await loadList(undefined, undefined, "bulkUpdate"); } catch {}
     try { await loadPlannedList(); } catch {}
     setBulkUpdateStage("done");
+    // 🆕 v7.28.61: 완결/연중 전환 작품 알림
+    const nComplete = results.filter(r => r.changes.some(c => c.includes("완결 전환"))).length;
+    const nDropped = results.filter(r => r.changes.some(c => c.includes("연중 전환"))).length;
+    if (nComplete || nDropped) {
+      Alert.alert("📢 상태 변경 알림", [nComplete ? `🎉 완결 전환 ${nComplete}개` : "", nDropped ? `⏸ 연중 전환 ${nDropped}개` : ""].filter(Boolean).join("\n") + "\n\n새로 완결/연중된 작품이 있어요. 완료 목록에서 확인하세요.");
+    }
   }
   function startBulkMapping() {
     const unlinked = bulkAllWorks().filter(w => !(w.link || "").trim());
@@ -63226,6 +63281,12 @@ async function importJSON() {
                     />
                   ))}
                 </View>
+                {/* 🆕 v7.28.61: 완결일(스크랩으로 채워짐) 표시 */}
+                {Number(editItem?.completed_at) > 0 ? (
+                  <Text style={{ color: C.sub, fontSize: 12, marginTop: 6 }}>
+                    📅 완결일: {(() => { const d = new Date(Number(editItem.completed_at)); return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`; })()}
+                  </Text>
+                ) : null}
 
                 {/* 🔧 v7.6.0 (포트 v3.12.0): 연재 연도 */}
                 <View style={{ marginTop: 10, flexDirection: "row", gap: 8 }}>
