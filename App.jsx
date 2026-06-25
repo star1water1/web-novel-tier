@@ -2,11 +2,18 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.30.0 (추천 탭 재평가 추천작 — 매칭 모드)                             ║
+ * ║  버전: 7.30.1 (재평가 추천작 비율 모드 확장)                                  ║
  * ║  최종 수정: 2026-06-25                                                        ║
- * ║  총 라인 수: 약 68,240줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 68,250줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔄 v7.30.1 재평가 추천작 — 비율(ratio) 모드 확장 (2026-06-25)                 ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ v7.30.0 재평가 추천작을 ratio 모드에도 노출. ratio는 티어가 백분위라          ║
+ * ║ 레이팅 경계 가중을 끄고 불확실도(rd)만으로 랭킹. 티어 뱃지는 getDisplayTier   ║
+ * ║ 로 모드별 정확 표시(ratio=globalRatioTierMap). match 동작·점수는 불변.        ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔄 v7.30.0 재평가 추천작 — 추천 탭 새 섹션(매칭 모드 전용) (2026-06-25)       ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -16152,7 +16159,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.30.0";
+const APP_VERSION = "7.30.1";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -36103,12 +36110,14 @@ function AppContent() {
     return map;
   }, [list]);
 
-  // 🆕 v7.30.0: 재평가 추천작 (match 모드 전용) — 티어가 아직 불확실한(미정착 rd>150 또는 미평가) 작품을
-  //   종합 점수로 랭킹: 불확실도(rd) + 티어 경계 근접도(재평가 시 등급 변동 가능성) + 미평가 가산.
-  //   엔진 비변경: list의 rd/match_count/rating만 사용. hybrid는 의심작(suspicion_score)이 같은 역할.
-  //   ※ ratio는 티어가 비율(백분위)로 산정돼 레이팅 임계값 경계가 맞지 않으므로 제외(사용자 지침: 매칭모드 한정).
+  // 🆕 v7.30.0 / 확장 v7.30.1: 재평가 추천작 (매칭·비율 모드) — 티어가 아직 불확실한(미정착 rd>150
+  //   또는 미평가) 작품을 종합 점수로 랭킹: 불확실도(rd) + 티어 경계 근접도(재평가 시 등급 변동 가능성)
+  //   + 미평가 가산. 엔진 비변경: list의 rd/match_count/rating만 사용. hybrid는 의심작이 같은 역할.
+  //   ※ ratio는 티어가 비율(백분위)이라 레이팅 경계가 안 맞으므로 경계 가중 OFF(불확실도만으로 랭킹).
   const reevalCandidates = useMemo(() => {
-    if (globalTierConfig.mode !== "match") return [];
+    const mode = globalTierConfig.mode;
+    if (mode !== "match" && mode !== "ratio") return [];
+    const useBoundary = mode === "match"; // ratio: 경계(레이팅 임계값) 부적합 → 불확실도만
     // 티어 임계값(경계) — 경계 근접도 계산용 (오름차순)
     const thresholds = (globalTierConfig.tiers || [])
       .map(t => Number(t.threshold))
@@ -36131,8 +36140,8 @@ function AppContent() {
       if (!unsettled && !neverMatched) continue; // 정착 + 매칭 이력 있으면 제외
       const rating = Number(n.rating) || 1500;
       const uNorm = Math.max(0, Math.min(1, (rd - 60) / (350 - 60)));          // 불확실도 0~1
-      const dist = distToBoundary(rating);
-      const bNorm = Number.isFinite(dist) ? Math.max(0, Math.min(1, 1 - dist / BWIN)) : 0; // 경계 근접 0~1
+      const dist = useBoundary ? distToBoundary(rating) : Infinity;
+      const bNorm = (useBoundary && Number.isFinite(dist)) ? Math.max(0, Math.min(1, 1 - dist / BWIN)) : 0; // 경계 근접 0~1 (ratio=0)
       const score = 0.55 * uNorm + 0.35 * bNorm + (neverMatched ? 0.10 : 0);
       // 사유 라벨 (우선순위: 미평가 > 경계 근접 > 표본 부족 > 불확실)
       let reason;
@@ -52340,23 +52349,24 @@ async function importJSON() {
       )}
     </Section>
 
-    {/* ════ 🔄 재평가 추천작 (match 모드 전용) — v7.30.0 ════
-       티어가 불확실(미정착·미평가)한 작품을 종합 점수로 랭킹. 탭 → 그 작품 집중 매칭. */}
-    {globalTierConfig.mode === "match" && reevalCandidates.length > 0 && (
+    {/* ════ 🔄 재평가 추천작 (매칭·비율 모드) — v7.30.0 / 확장 v7.30.1 ════
+       티어가 불확실(미정착·미평가)한 작품을 종합 점수로 랭킹. 탭 → 그 작품 집중 매칭.
+       ratio는 백분위 티어라 경계 가중 OFF(불확실도만). hybrid는 의심작이 담당. */}
+    {(globalTierConfig.mode === "match" || globalTierConfig.mode === "ratio") && reevalCandidates.length > 0 && (
       <Section title={`🔄 재평가 추천작 (${reevalCandidates.length})`}>
         <Text style={{ color: C.sub, fontSize: 12, marginBottom: 10, lineHeight: 18 }}>
           티어가 아직 불확실한(미정착·미평가) 작품이에요. 탭하면 그 작품을 집중 매칭해 자리를 빠르게 확정할 수 있어요.
         </Text>
         <View style={{ gap: 6 }}>
           {reevalCandidates.slice(0, 8).map((c, idx) => {
-            const tier = tierFromRating(c.rating, globalTierConfig);
+            const nv = listMap.get(c.id);
+            const tier = nv ? getDisplayTier(nv, globalTierConfig) : tierFromRating(c.rating, globalTierConfig); // 모드별 정확 티어(ratio=백분위)
             const uPct = Math.round(Math.max(8, Math.min(100, ((c.rd - 60) / (350 - 60)) * 100)));
             return (
               <TouchableOpacity
                 key={c.id}
                 activeOpacity={0.7}
                 onPress={() => {
-                  const nv = listMap.get(c.id);
                   if (!nv) { Alert.alert("안내", "작품을 찾을 수 없습니다. 목록을 새로고침해주세요."); return; }
                   setFocusMatchNovel(nv);   // 특정 작품 집중 매칭 지정
                   setPair(null);            // 포커스 반영 즉시 재추첨 (effect: screen==="match" && !pair)
