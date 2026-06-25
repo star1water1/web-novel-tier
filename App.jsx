@@ -2,11 +2,20 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.30.1 (재평가 추천작 비율 모드 확장)                                  ║
+ * ║  버전: 7.31.0 (일괄추가 확장 + 명대사 부분삭제)                               ║
  * ║  최종 수정: 2026-06-25                                                        ║
- * ║  총 라인 수: 약 68,250줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 68,360줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🧩 v7.31.0 일괄추가 확장 + 명대사 이미지/텍스트 부분삭제 (2026-06-25)         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ • 일괄추가: 예정탭에도 '여러 작품 한 번에 추가' 버튼 — 예정 대상이면          ║
+ * ║   planned_novels로 등록(batchAddTarget). 티어표 내보내기 텍스트를 그대로      ║
+ * ║   붙여넣어도 제목만 자동 추출(parseBatchTitles: 🏆/【…티어】/번호접두 처리).  ║
+ * ║ • 명대사: OCR 추출된 이미지 명대사에서 텍스트만 삭제 또는 이미지만            ║
+ * ║   삭제(텍스트 유지) 선택 가능(작품 편집 모달). 기존 전체삭제 유지.            ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔄 v7.30.1 재평가 추천작 — 비율(ratio) 모드 확장 (2026-06-25)                 ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -15149,6 +15158,26 @@ function formatPlatformShort(platforms) {
   return `${plats[0]} +${plats.length - 1}`;
 }
 
+// 🆕 v7.31.0: 일괄추가 입력 파서 — 한 줄에 하나씩(기존)뿐 아니라 '티어표 내보내기' 텍스트도 수용.
+//   • "🏆 …" 머리말, "【B+티어】" 섹션 헤더, 빈 줄 무시
+//   • "  1. 제목" 같은 번호 접두( N. / N) )를 떼고 제목만 추출
+//   • 중복 제거(순서 유지)
+function parseBatchTitles(text) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of String(text == null ? "" : text).split("\n")) {
+    let s = raw.trim();
+    if (!s) continue;
+    if (s.startsWith("🏆")) continue;            // 티어표 머리말
+    if (/^【.*】$/.test(s)) continue;             // 【…티어】 섹션 헤더
+    s = s.replace(/^\d+\s*[.)]\s*/, "").trim();   // "1. 제목" / "1) 제목" → "제목"
+    if (!s || seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  return out;
+}
+
 function getWinRate(wins, losses) {
   const total = (wins || 0) + (losses || 0);
   return total > 0 ? ((wins || 0) / total * 100).toFixed(1) : "-";
@@ -16159,7 +16188,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.30.1";
+const APP_VERSION = "7.31.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -35021,6 +35050,7 @@ function AppContent() {
   const [searchBusy, setSearchBusy] = useState(false);
   // 🆕 v7.28.54 (일괄추가 Phase①): 여러 제목을 순차 검색·긁기 → 일괄 등록
   const [batchAddOpen, setBatchAddOpen] = useState(false);
+  const [batchAddTarget, setBatchAddTarget] = useState("novels"); // 🆕 v7.31.0: "novels"(본목록) | "planned"(예정탭에서 진입)
   const [batchAddStage, setBatchAddStage] = useState("input"); // input | search | review
   const [batchAddInput, setBatchAddInput] = useState("");
   const [batchAddQueue, setBatchAddQueue] = useState([]); // 처리할 제목 배열
@@ -41508,7 +41538,8 @@ function AppContent() {
       coverUrl: meta.coverUrl || "",
     };
   }
-  function openBatchAdd() {
+  function openBatchAdd(target) {
+    setBatchAddTarget(target === "planned" ? "planned" : "novels"); // 🆕 v7.31.0 (이벤트 객체 전달 방어: "planned"만 예정)
     setBatchAddStage("input");
     setBatchAddInput("");
     setBatchAddQueue([]);
@@ -41550,8 +41581,8 @@ function AppContent() {
     }
   }
   function startBatchAddSearch() {
-    const uniq = [...new Set(batchAddInput.split("\n").map(s => s.trim()).filter(Boolean))];
-    if (uniq.length === 0) { Alert.alert("일괄 추가", "추가할 작품 제목을 한 줄에 하나씩 입력해 주세요."); return; }
+    const uniq = parseBatchTitles(batchAddInput); // 🆕 v7.31.0: 제목 목록 + 티어표 텍스트 모두 수용
+    if (uniq.length === 0) { Alert.alert("일괄 추가", "추가할 작품 제목을 한 줄에 하나씩 입력하거나, 티어표 내보내기 텍스트를 붙여넣어 주세요."); return; }
     setBatchAddQueue(uniq);
     setBatchAddIdx(0);
     setBatchAddDrafts([]);
@@ -41616,11 +41647,13 @@ function AppContent() {
         const d = drafts[i];
         const t = (d.title || "").trim();
         if (!t) { skipped++; continue; }
-        // 본목록 중복 → 모드에 따라: skip(건너뛰기) / edit(비교·반영 대상 수집). 예정목록 중복은 스킵.
+        // 🆕 v7.31.0: 예정 대상이면 planned_novels로, 본목록 대상이면 novels로 등록.
+        const isPlannedTarget = batchAddTarget === "planned";
+        // 중복 체크(본목록+예정 양쪽). 본목록 대상 + edit 모드만 기존작 비교, 그 외(예정 대상 포함) 스킵.
         const dup = await first("SELECT id FROM novels WHERE title=?", [t]);
         const dupP = await first("SELECT id FROM planned_novels WHERE title=?", [t]);
         if (dup || dupP) {
-          const existing = (dup && batchAddDupMode === "edit") ? (list || []).find(n => n.id === dup.id) : null;
+          const existing = (!isPlannedTarget && dup && batchAddDupMode === "edit") ? (list || []).find(n => n.id === dup.id) : null;
           if (existing && d._meta) dups.push({ meta: d._meta, existing });
           else skipped++;
           continue;
@@ -41632,11 +41665,6 @@ function AppContent() {
           : (detected.subGenre ? JSON.stringify([detected.subGenre]) : "");
         const id = uuid();
         const now = Date.now();
-        let manualOrder = 0;
-        try {
-          const mr = await first("SELECT MAX(manual_order) AS m FROM novels WHERE manual_tier IS NULL OR manual_tier=''");
-          manualOrder = (Number(mr?.m) || 0) + 100;
-        } catch {}
         // 표지: 원격 URL → 라이브러리 다운로드(실패는 무시하고 표지 없이 등록)
         let coverPath = "";
         if (d.coverUrl) {
@@ -41646,31 +41674,55 @@ function AppContent() {
             if (saved && !saved.error && saved.file_path) coverPath = saved.file_path;
           } catch {}
         }
-        await execBatch([{
-          sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order,read_count_baseline,start_year,end_year)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-          params: [
-            id, t, (d.author || "").trim(), deduplicateTagString(d.tags || "") || "",
-            JSON.stringify(d.platforms || []), (d.note || "").trim(),
-            0, globalTierConfig.defaultRating || 1500, 350, 0, 0, 0, globalTierConfig.defaultTier || "C",
-            now, "", Number(d.total_episodes) || 0, "reading", 0, coverPath, (d.link || "").trim(),
-            d.work_status || "ongoing", now, finalMajor, finalSub, "none", 0, 0, 1, "", "", "",
-            null, manualOrder, 0, Number(d.start_year) || 0, Number(d.end_year) || 0,
-          ],
-        }]);
-        if (coverPath) { coverTouched = true; try { await applyNovelCover(id, coverPath, null); } catch {} }
-        try {
-          await addRecentChange(id, t, "new", {
-            author: (d.author || "").trim() || "-",
-            majorGenre: (d.major_genre && d.major_genre.length) ? d.major_genre.join(", ") : "-",
-          });
-        } catch {}
+        if (isPlannedTarget) {
+          // 예정 등록: 핵심 컬럼만 INSERT (나머지는 스키마 기본값). 레이팅/티어 필드 없음.
+          await exec(
+            `INSERT INTO planned_novels (id,title,author,tags,platforms,note,total_episodes,cover_image,link,work_status,major_genre,sub_genre,priority,created_at,tag_data,start_year,end_year)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+            [
+              id, t, (d.author || "").trim(), deduplicateTagString(d.tags || "") || "",
+              JSON.stringify(d.platforms || []), (d.note || "").trim(), Number(d.total_episodes) || 0,
+              coverPath, (d.link || "").trim(), d.work_status || "ongoing", finalMajor, finalSub,
+              0, now, "", Number(d.start_year) || 0, Number(d.end_year) || 0,
+            ]
+          );
+          if (coverPath) { coverTouched = true; try { await updateCoverStatus(coverPath, id, "used"); } catch {} }
+        } else {
+          let manualOrder = 0;
+          try {
+            const mr = await first("SELECT MAX(manual_order) AS m FROM novels WHERE manual_tier IS NULL OR manual_tier=''");
+            manualOrder = (Number(mr?.m) || 0) + 100;
+          } catch {}
+          await execBatch([{
+            sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order,read_count_baseline,start_year,end_year)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+            params: [
+              id, t, (d.author || "").trim(), deduplicateTagString(d.tags || "") || "",
+              JSON.stringify(d.platforms || []), (d.note || "").trim(),
+              0, globalTierConfig.defaultRating || 1500, 350, 0, 0, 0, globalTierConfig.defaultTier || "C",
+              now, "", Number(d.total_episodes) || 0, "reading", 0, coverPath, (d.link || "").trim(),
+              d.work_status || "ongoing", now, finalMajor, finalSub, "none", 0, 0, 1, "", "", "",
+              null, manualOrder, 0, Number(d.start_year) || 0, Number(d.end_year) || 0,
+            ],
+          }]);
+          if (coverPath) { coverTouched = true; try { await applyNovelCover(id, coverPath, null); } catch {} }
+          try {
+            await addRecentChange(id, t, "new", {
+              author: (d.author || "").trim() || "-",
+              majorGenre: (d.major_genre && d.major_genre.length) ? d.major_genre.join(", ") : "-",
+            });
+          } catch {}
+        }
         if (d.tags) { try { syncTagsToCustom(d.tags); } catch {} }
         registered++;
       }
       if (coverTouched) { try { await loadCoverLibrary(); } catch {} }
-      await loadList(undefined, undefined, "batchAdd");
-      await refreshDailyRecommendation(false);
+      if (batchAddTarget === "planned") {
+        await loadPlannedList(); // 🆕 v7.31.0: 예정 대상은 예정목록만 갱신
+      } else {
+        await loadList(undefined, undefined, "batchAdd");
+        await refreshDailyRecommendation(false);
+      }
       setBatchAddProgress(null);
       setBatchAddBusy(false);
       const tail = `${skipped ? ` · ${skipped}개 건너뜀` : ""}${cancelled ? " · ⏹중단됨" : ""}`;
@@ -52731,6 +52783,13 @@ async function importJSON() {
 
             {/* 예정 작품 등록 폼 (v3.4.2 간소화) */}
             <Section title="예정 작품 추가">
+              {/* 🆕 v7.31.0: 예정 목록 일괄 추가 (제목 목록/티어표 텍스트 → 예정작 일괄 등록) */}
+              <OutlineButton
+                title="📚 여러 작품 한 번에 추가 (일괄)"
+                onPress={() => openBatchAdd("planned")}
+                color={C.primary}
+                style={{ marginBottom: 12 }}
+              />
               <Label>제목 *</Label>
               <Input
                 value={plannedTitle}
@@ -64623,6 +64682,7 @@ async function importJSON() {
                               {q.ocrText ? <Text style={{ color: C.sub, fontSize: 11 }}>검색에 포함됨</Text> : null}
                             </View>
                             {q.ocrText ? (
+                              <>
                               <TextInput
                                 value={q.ocrText}
                                 onChangeText={(t) => setEditQuotes(prev => { const u = [...prev]; if (u[qi] && isImageQuote(u[qi])) u[qi] = { ...u[qi], ocrText: t }; return u; })}
@@ -64631,6 +64691,29 @@ async function importJSON() {
                                 multiline
                                 style={{ backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8, padding: 8, fontSize: 13, color: C.text, marginTop: 6, minHeight: 44, textAlignVertical: "top" }}
                               />
+                              {/* 🆕 v7.31.0: 이미지/텍스트 부분 삭제 — 텍스트만 지우거나, 이미지만 지우고 추출 텍스트를 일반 명대사로 남김 */}
+                              <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
+                                <TouchableOpacity
+                                  onPress={() => setEditQuotes(prev => { const u = [...prev]; const cur = u[qi]; if (cur && isImageQuote(cur)) { const { ocrText, ...rest } = cur; u[qi] = rest; } return u; })}
+                                  style={{ flex: 1, alignItems: "center", paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: C.line, backgroundColor: C.card }}
+                                >
+                                  <Text style={{ color: C.warn, fontSize: 11, fontWeight: "700" }}>🗑️ 텍스트만 삭제</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  onPress={() => setEditQuotes(prev => {
+                                    const u = [...prev]; const cur = u[qi];
+                                    if (cur && isImageQuote(cur)) {
+                                      if (cur.uri) { removedQuoteImagesRef.current.push(cur.uri); editNewQuoteImagesRef.current = editNewQuoteImagesRef.current.filter(x => x !== cur.uri); }
+                                      u[qi] = String(cur.ocrText || "").trim(); // 이미지 제거 → 추출 텍스트를 일반 명대사로
+                                    }
+                                    return u;
+                                  })}
+                                  style={{ flex: 1, alignItems: "center", paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: C.line, backgroundColor: C.card }}
+                                >
+                                  <Text style={{ color: C.warn, fontSize: 11, fontWeight: "700" }}>🖼️ 이미지만 삭제(텍스트 유지)</Text>
+                                </TouchableOpacity>
+                              </View>
+                              </>
                             ) : null}
                           </View>
                         ) : (
@@ -67471,7 +67554,7 @@ async function importJSON() {
           <View style={{ backgroundColor: C.card, borderRadius: 20, padding: 18, width: "92%", maxWidth: 480, maxHeight: "90%" }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>
-                📚 일괄 추가{batchAddStage === "search" ? ` · ${Math.min(batchAddIdx + 1, batchAddQueue.length)}/${batchAddQueue.length}` : batchAddStage === "review" ? ` · 검토 ${batchAddDrafts.length}개` : batchAddStage === "dups" ? ` · 이미 등록 ${batchAddDups.length}개` : ""}
+                📚 {batchAddTarget === "planned" ? "예정 " : ""}일괄 추가{batchAddStage === "search" ? ` · ${Math.min(batchAddIdx + 1, batchAddQueue.length)}/${batchAddQueue.length}` : batchAddStage === "review" ? ` · 검토 ${batchAddDrafts.length}개` : batchAddStage === "dups" ? ` · 이미 등록 ${batchAddDups.length}개` : ""}
               </Text>
               <TouchableOpacity onPress={closeBatchAdd} disabled={!!batchAddProgress}><Text style={{ fontSize: 22, color: batchAddProgress ? C.line : C.sub }}>×</Text></TouchableOpacity>
             </View>
@@ -67479,7 +67562,13 @@ async function importJSON() {
             {/* ── 입력 단계 ── */}
             {batchAddStage === "input" && (
               <View>
-                <Text style={{ color: C.sub, fontSize: 13, marginBottom: 8, lineHeight: 19 }}>추가할 작품 제목을 한 줄에 하나씩 입력하세요. 차례대로 검색해, 후보를 한 번(원터치)만 탭하면 정보를 가져오고 다음 작품으로 넘어갑니다.</Text>
+                <Text style={{ color: C.sub, fontSize: 13, marginBottom: 8, lineHeight: 19 }}>
+                  {batchAddTarget === "planned" ? "예정 목록에 한 번에 추가합니다. " : ""}추가할 작품 제목을 한 줄에 하나씩 입력하세요. 차례대로 검색해, 후보를 한 번(원터치)만 탭하면 정보를 가져오고 다음 작품으로 넘어갑니다.
+                </Text>
+                {/* 🆕 v7.31.0: 티어표 내보내기 텍스트 그대로 붙여넣기 안내 */}
+                <Text style={{ color: C.sub, fontSize: 11, marginBottom: 8 }}>
+                  💡 티어표 내보내기 텍스트(🏆 / 【…티어】 / "1. 제목")를 그대로 붙여넣어도 제목만 자동으로 걸러냅니다.
+                </Text>
                 <TextInput
                   value={batchAddInput}
                   onChangeText={setBatchAddInput}
@@ -67489,9 +67578,10 @@ async function importJSON() {
                   style={{ minHeight: 150, maxHeight: 260, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 12, padding: 12, color: C.text, fontSize: 15, textAlignVertical: "top" }}
                 />
                 <Text style={{ color: C.sub, fontSize: 11, marginTop: 6 }}>
-                  {batchAddInput.split("\n").map(s => s.trim()).filter(Boolean).length}개 제목
+                  {parseBatchTitles(batchAddInput).length}개 제목
                 </Text>
-                {/* 🆕 v7.28.63: 이미 등록된 작품 처리 방식 (기본 건너뛰기) */}
+                {/* 🆕 v7.28.63: 이미 등록된 작품 처리 방식 (기본 건너뛰기) — 예정 대상은 항상 건너뛰기 */}
+                {batchAddTarget !== "planned" && (<>
                 <Text style={{ color: C.sub, fontSize: 12, marginTop: 12, marginBottom: 6 }}>이미 등록된 작품은?</Text>
                 <View style={{ flexDirection: "row", gap: 8 }}>
                   {[["skip", "건너뛰기"], ["edit", "기존작 비교·편집"]].map(([k, lbl]) => (
@@ -67501,6 +67591,7 @@ async function importJSON() {
                     </TouchableOpacity>
                   ))}
                 </View>
+                </>)}
                 <PrimaryButton title="검색 시작" onPress={startBatchAddSearch} style={{ marginTop: 12 }} />
               </View>
             )}
