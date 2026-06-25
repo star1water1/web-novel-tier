@@ -2,12 +2,24 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.57 (문피아 완결연도 — 검색 작가줄 최근 연재일)                     ║
+ * ║  버전: 7.28.58 (문피아 시작연도+완결연도 — 검색 AJAX JSON)                     ║
  * ║  최종 수정: 2026-06-24                                                        ║
- * ║  총 라인 수: 약 64,820줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 64,890줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📅 v7.28.58 문피아 시작연도+완결연도 (검색 AJAX JSON) (2026-06-24)           ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 사용자 폰 캡처(문피아 검색 AJAX JSON)로 확인: nvTimeReg(등록=연재 시작)·        ║
+ * ║ nvOptFinish(완결 플래그)·nvTimeUpdate(정렬용 역타임스탬프=1e10-실제)를 줌.      ║
+ * ║ SSR HTML(날짜 1개)과 달리 시작·완결을 분리 산출 가능.                          ║
+ * ║ • parseMunpiaSearchJson 신설(시작연도=nvTimeReg, 완결연도=완결작의 역타임스탬프 ║
+ * ║   환원). nvOptFinish는 재출간 시 갱신돼 부정확이라 미사용. searchMunpia AJAX     ║
+ * ║   우선·SSR 폴백(비-JSON/빈결과 시). 실측: 쥐뿔도 시작2017·완결2018 등.          ║
+ * ║ • 회귀 테스트 +12 → 158/158.                                                  ║
+ * ║ 정리: 시작연도=노벨피아·리디·문피아 / 완결연도=노벨피아·네이버·문피아. 네이버    ║
+ * ║   시작연도만 플랫폼 미노출로 불가.                                             ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 📅 v7.28.57 문피아 완결연도 추출 (2026-06-24)                                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 사용자 폰 캡처(문피아 '회귀' 검색)로 구조 확인: <p class=author> 끝에          ║
@@ -14266,10 +14278,65 @@ function parseNaverSeriesSearch(html) {
 
 // 문피아 제목 검색 — 모바일 검색 페이지가 서버렌더(<ul id=list_ul> SSR).
 //   ⚠️ 검색어 2자 미만은 문피아가 /main으로 바운스 → 빈 결과로 단축.
+// 🆕 v7.28.58: 문피아 검색 AJAX(JSON) 파서 — SSR HTML과 달리 nvTimeReg(등록=연재 시작)·nvOptFinish(완결 플래그)·
+//   nvTimeUpdate(정렬용 역타임스탬프=10000000000-실제 시각)를 줘서 시작연도+완결연도를 둘 다 산출.
+//   실측 검증: 쥐뿔도없는회귀 시작2017·완결2018 / 1993회귀재벌 시작2019·완결2020(nvOptFinish 2024는 재출간이라 미사용).
+function parseMunpiaSearchJson(jsonText) {
+  let data;
+  try { data = JSON.parse(jsonText); } catch { return []; }
+  if (!data || !Array.isArray(data.list)) return [];
+  const TM = 10000000000;
+  const yearOf = (ts) => { const n = Number(ts); if (!(n > 0)) return null; const y = new Date((n + 32400) * 1000).getUTCFullYear(); return (y >= 1990 && y <= 2099) ? y : null; }; // KST(+9h) 기준 연도
+  const out = [], seen = new Set();
+  for (const it of data.list) {
+    if (!it || typeof it !== "object") continue;
+    const id = String(it.nvSrl == null ? "" : it.nvSrl);
+    const title = String(it.nvTitle == null ? "" : it.nvTitle).trim();
+    if (!id || !title || seen.has(id)) continue;
+    if (String(it.nvNgCode || "").startsWith("cm.")) continue; // cm.*=웹툰 제외(소설만)
+    seen.add(id);
+    const author = String(it.nvAuthor == null ? "" : it.nvAuthor).trim();
+    const cc = String(it.nvCoverCustom || "").trim();
+    const coverUrl = cc ? ("https://cdn1.munpia.com/" + cc.replace(/^\//, "") + "tb.jpg") : ""; // get_cover: 경로+썸네일 접미
+    const genres = String(it.genreStr || "").split(/[,/·]/).map(s => s.trim()).filter(Boolean);
+    const totalEpisodes = Number(it.nvSumEntry) > 0 ? Number(it.nvSumEntry) : null;
+    const completed = Number(it.nvOptFinish) > 0;
+    const startYear = yearOf(it.nvTimeReg);
+    // 완결연도 = 마지막 연재 시각(역타임스탬프 환원 TM-nvTimeUpdate). 완결작만. nvOptFinish는 재출간 시 갱신돼 부정확이라 미사용.
+    let endYear = null;
+    if (completed) {
+      const u = Number(it.nvTimeUpdate);
+      endYear = yearOf((u > 0 && u < TM) ? (TM - u) : Number(it.nvTimeReg));
+    }
+    const ageTag = String(it.nvOptAdult || "") === "Y" ? "19금" : null;
+    const url = "https://mm.munpia.com/?menu=novel&id=" + id + "&renewal2=TRUE";
+    out.push({
+      title, author, url, coverUrl,
+      platform: "문피아",
+      category: genres.join(", "),
+      isComic: false,
+      meta: { ok: true, platform: "문피아", url, title, author, coverUrl, synopsis: String(it.nvStory == null ? "" : it.nvStory).trim(), genres, workStatus: completed ? "completed" : "ongoing", totalEpisodes, startYear, endYear, ageTag },
+    });
+    if (out.length >= 30) break;
+  }
+  return out;
+}
 async function searchMunpia(query, opts = {}) {
   const q = (query || "").trim();
   if (q.length < 2) return []; // 문피아 서버 정책: 2자 이상만 검색
-  // 구버전 SSR(list_ul) 도메인은 mm.munpia.com(실측). www=PC는 모바일 UA에서 /main 바운스, m=새 React SPA.
+  // 🆕 v7.28.58: AJAX JSON 우선 — 시작연도(nvTimeReg)·완결연도까지 산출. 비-JSON(차단)·빈 결과면 SSR HTML 폴백.
+  try {
+    const ajaxUrl = "https://mm.munpia.com/?ajx=1&menu=detailSearchV2&action=search&searchKey=all&keyword=" + encodeURIComponent(q) + "&page=1";
+    const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
+    let aj = "";
+    try {
+      const r = await fetch(ajaxUrl, { headers: { ...SCRAPER_HEADERS, "X-Requested-With": "XMLHttpRequest", "Accept": "application/json, text/javascript, */*; q=0.01" }, redirect: "follow", signal });
+      aj = await r.text();
+    } finally { cleanup(); }
+    const parsed = parseMunpiaSearchJson(aj); // 차단 HTML 등 비-JSON이면 [] → 폴백
+    if (parsed.length) return parsed;
+  } catch {}
+  // 폴백: 구버전 SSR(list_ul). www=PC는 모바일 UA에서 /main 바운스, m=새 React SPA → mm 도메인.
   const url = "https://mm.munpia.com/?menu=detailSearchV2&action=search&searchKey=all&keyword=" + encodeURIComponent(q);
   const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
   let res, html = "";
@@ -15958,7 +16025,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.57";
+const APP_VERSION = "7.28.58";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -15984,6 +16051,15 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.58", date: "2026-06-24",
+    title: "📅 문피아 연재 시작연도까지 가져오기",
+    highlights: [
+      { type: "new", text: "📅 문피아 작품은 연재 시작연도와 완결연도를 모두 자동으로 가져와요. (검색 데이터의 등록일=시작, 마지막 연재일=완결을 사용해요.)" },
+      { type: "improve", text: "ℹ️ 이제 시작연도는 노벨피아·리디·문피아에서, 완결연도는 노벨피아·네이버시리즈·문피아 완결작에서 자동으로 들어와요. (네이버 시작연도는 페이지에 없어 수동 입력만 가능)" },
+    ],
+    details: [],
+  },
   {
     version: "7.28.57", date: "2026-06-24",
     title: "📅 문피아 완결연도도 가져오기",
