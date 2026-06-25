@@ -2,11 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.31.1 (Claude 모델 선택 + 토큰 사용량)                                ║
+ * ║  버전: 7.31.2 (제목검색 줄거리 정제 + 장르 오태그 수정)                       ║
  * ║  최종 수정: 2026-06-25                                                        ║
- * ║  총 라인 수: 약 68,450줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 68,470줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔎 v7.31.2 제목검색 줄거리 정제(엔티티/접두) + 장르 추출 보정 (2026-06-25)    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ • 메모: 스크랩 줄거리의 HTML 엔티티(&lt; &gt; &#039;)를 디코드하고, 일부      ║
+ * ║   플랫폼이 붙이는 메타 접두("225화 완결, #태그, 줄거리:")를 제거해 본문만     ║
+ * ║   저장(scraperCleanSynopsis). buildScrapeItems·metaToDraft(일괄) 공통.        ║
+ * ║ • 장르: 줄거리 #해시태그를 디코드 후 추출 → &#039;에서 '039' 오태그가         ║
+ * ║   끼던 문제 수정. #판타지 등은 그대로 대장르로 매핑.                          ║
+ * ║ • 회귀 테스트 +5 → 181/181.                                                   ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🤖 v7.31.1 Claude 모델 선택 + 토큰 사용량 현황 (2026-06-25)                   ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -14378,6 +14388,21 @@ function scraperDecodeEntities(s) {
     .replace(/&#x([0-9a-f]+);/gi, (_, h) => { try { return String.fromCodePoint(parseInt(h, 16)); } catch { return _; } });
 }
 
+// 🆕 v7.31.2: 줄거리 → 메모 정제. (1) HTML 엔티티 디코드(&lt; &gt; &#039; 등),
+//   (2) 일부 플랫폼이 설명을 "225화 완결, #NOVEL, #판타지, …, 줄거리: 본문" 형태로 주는 경우
+//      메타 접두(회차/상태/해시태그)를 떼고 실제 줄거리 본문만 남긴다.
+//   ※ 장르 해시태그는 원본(meta.synopsis)에서 따로 추출하므로 여기서 떼도 장르 매핑엔 영향 없음.
+function scraperCleanSynopsis(s) {
+  let t = scraperDecodeEntities(s).replace(/\r/g, "").trim();
+  const m = t.match(/줄거리\s*[:：]\s*/);
+  if (m && m.index != null && m.index <= 120) {
+    const prefix = t.slice(0, m.index);
+    // 접두가 메타(회차/완결/연재/휴재/해시태그)로 보일 때만 제거 — 오탐 방지
+    if (/(\d+\s*화|완결|연재|휴재|연중|#)/.test(prefix)) t = t.slice(m.index + m[0].length).trim();
+  }
+  return t;
+}
+
 // 🔧 v7.28.49: 줄거리 등 텍스트의 #해시태그 → 태그 후보. 노벨피아·문피아 작품소개에 자주(#회귀 #헌터물).
 //   2~12자만(문장형 #지랄맞은인연류 일부 배제), 중복 제거, 최대 12개.
 function scraperExtractHashtags(text) {
@@ -14698,7 +14723,8 @@ function buildScrapeItems(meta, current = {}) {
   };
   push("title", "제목", meta.title, meta.title, current.title);
   push("author", "작가", meta.author, meta.author, current.author);
-  push("note", "줄거리 → 메모", meta.synopsis, meta.synopsis, current.note);
+  const cleanSyn = scraperCleanSynopsis(meta.synopsis); // 🆕 v7.31.2: 엔티티 디코드 + 메타 접두 제거
+  push("note", "줄거리 → 메모", cleanSyn, cleanSyn, current.note);
   push("total_episodes", "총 회차", meta.totalEpisodes,
     meta.totalEpisodes != null ? `${meta.totalEpisodes}화` : "",
     current.total_episodes ? `${current.total_episodes}화` : "");
@@ -14713,7 +14739,7 @@ function buildScrapeItems(meta, current = {}) {
   const sameSet = (a, b) => a.length === b.length && a.every(x => b.some(y => gnorm(x) === gnorm(y)));
   // 🔧 v7.28.49: 줄거리 #해시태그도 장르 매핑에 포함 → 소재성(#회귀)은 부장르, 그 외(#겜천재)는 일반 태그로.
   const metaGenreArr = Array.isArray(meta.genres) ? meta.genres : (meta.genres ? [meta.genres] : []);
-  const gmap = mapScrapedGenres([...metaGenreArr, ...scraperExtractHashtags(meta.synopsis)]);
+  const gmap = mapScrapedGenres([...metaGenreArr, ...scraperExtractHashtags(scraperDecodeEntities(meta.synopsis))]); // 🔧 v7.31.2: 엔티티 디코드 후 추출(&#039;→ '039' 오태그 방지)
   for (const [key, label, add] of [["major_genre", "대장르", gmap.major], ["sub_genre", "부장르", gmap.sub]]) {
     if (!add.length) continue;
     const cur = parseGenreArray(current[key]);
@@ -16232,7 +16258,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.31.1";
+const APP_VERSION = "7.31.2";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -41563,14 +41589,14 @@ function AppContent() {
   function metaToDraft(meta) {
     const gmap = mapScrapedGenres([
       ...(Array.isArray(meta.genres) ? meta.genres : (meta.genres ? [meta.genres] : [])),
-      ...scraperExtractHashtags(meta.synopsis),
+      ...scraperExtractHashtags(scraperDecodeEntities(meta.synopsis)), // 🔧 v7.31.2: 엔티티 디코드 후 추출(오태그 방지)
     ]);
     const tagsArr = [...(gmap.tags || [])];
     if (meta.ageTag) tagsArr.push(meta.ageTag);
     return {
       title: (meta.title || "").trim(),
       author: (meta.author || "").trim(),
-      note: (meta.synopsis || "").trim(),
+      note: scraperCleanSynopsis(meta.synopsis), // 🆕 v7.31.2: 엔티티 디코드 + 메타 접두 제거
       tags: tagsArr.join(", "),
       platforms: meta.platform ? [canonicalPlatform(meta.platform)] : [], // 🆕 v7.28.55: 동의어 정규화
       total_episodes: Number(meta.totalEpisodes) || 0,

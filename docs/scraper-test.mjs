@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, mergeSearchResults, scraperDecodeEntities, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, SCRAPER_HEADERS, SCRAPER_UA };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, mergeSearchResults, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, SCRAPER_HEADERS, SCRAPER_UA };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -265,7 +265,12 @@ eq("노벨피아 비성인(15세)은 ageTag null", nv[0].meta.ageTag, null);
   truthy("[검수] 문피아 검색메타 → 연재처 항목", mpI.some(i => i.key === "platforms"));
   truthy("[검수] 문피아 검색메타 → 시작연도 항목 없음(검색에 연도 데이터 없음)", !mpI.some(i => i.key === "start_year"));
 }
-// === v7.28.49: 줄거리 #해시태그 추출 → 태그 보강(노벨피아·문피아 작품소개) ===
+// === v7.31.2: 줄거리 정제(엔티티 디코드 + 메타 접두 제거) + 엔티티 오태그 방지 ===
+truthy("scraperCleanSynopsis: HTML 엔티티 디코드(&lt; &gt; &#039;)", (() => { const c = S.scraperCleanSynopsis("소설 &lt;제목&gt; 이야기 &#039;엑스&#039;"); return c.includes("<제목>") && c.includes("'엑스'") && !/&lt;|&#039;/.test(c); })());
+truthy("scraperCleanSynopsis: 메타 접두(N화 완결, #태그, 줄거리:) 제거", (() => { const c = S.scraperCleanSynopsis("225화 완결, #NOVEL, #판타지, 줄거리: 본문 시작"); return c === "본문 시작"; })());
+truthy("scraperCleanSynopsis: 메타 접두 아니면 원문 유지(오탐 없음)", (() => { const c = S.scraperCleanSynopsis("그는 학생이었다. 줄거리: 본문 안 단어"); return c.startsWith("그는 학생"); })());
+truthy("buildScrapeItems note: 엔티티 디코드 + 접두 제거 반영", (() => { const it = S.buildScrapeItems({ title: "T", synopsis: "120화 연재중, #판타지, 줄거리: 모험 &amp; 성장" }, {}); const n = it.find(i => i.key === "note"); return n && n.value === "모험 & 성장"; })());
+truthy("buildScrapeItems 대장르: 엔티티(&#039;) 섞인 줄거리에서도 #판타지→대장르, '039' 오태그 없음", (() => { const it = S.buildScrapeItems({ title: "T", genres: [], synopsis: "#판타지 줄거리 &#039;엑스&#039;" }, {}); const mj = it.find(i => i.key === "major_genre"); const tg = it.find(i => i.key === "tags"); return mj && /판타지/.test(mj.display) && !(tg && /039/.test(tg.value)); })());
 eq("해시태그 추출(중복 제거·순서)", S.scraperExtractHashtags("줄거리 #회귀 #헌터물 #회귀!"), ["회귀", "헌터물"]);
 eq("해시태그 없으면 빈 배열", S.scraperExtractHashtags("해시태그 없는 평범한 줄거리"), []);
 truthy("줄거리 #해시태그 → 소재성(회귀)은 부장르로", (() => { const it = S.buildScrapeItems({ title: "T", genres: [], synopsis: "내용 #회귀 #겜천재" }, {}); const s = it.find(i => i.key === "sub_genre"); return s && /회귀/.test(s.display); })());
