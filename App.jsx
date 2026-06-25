@@ -2,12 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.61 (Phase③ 완결일 컬럼 + 연중 감지 + 완결/연중 알림)              ║
+ * ║  버전: 7.28.62 (일괄 등록 중복 → 스킵 대신 기존작 비교·선택 반영)             ║
  * ║  최종 수정: 2026-06-24                                                        ║
- * ║  총 라인 수: 약 65,210줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 65,290줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔁 v7.28.62 일괄 등록 중복 → 기존작 비교·선택 반영 (2026-06-24)              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 일괄 추가(Phase①)에서 이미 등록된 작품을 그냥 스킵하던 것을, 단일 제목검색과   ║
+ * ║ 동일하게 '기존작과 비교 후 선택 필드만 덮어쓰기/추가'로 편집 가능하게.          ║
+ * ║ • pick 시 원본 meta(_meta) 보존. register: 본목록 중복은 스킵 대신 수집 →      ║
+ * ║   '이미 등록됨' 단계에서 작품별 '비교·반영'. dbApplyCtxForExisting로 편집 모달  ║
+ * ║   없이 buildScrapeItems 비교 모달 → 선택 필드만 novels에 직접 UPDATE.          ║
+ * ║ • applyScrapeSelection await m.apply(async DB 반영 대기·동기 apply 무해).      ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 📅 v7.28.61 Phase③ 완결일 + 연중 감지 + 완결/연중 알림 (2026-06-24)         ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ work_status는 이미 5상태(연재중/완결/휴재/연중/서비스종료) — 신규는 완결일.    ║
@@ -16076,7 +16085,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.61";
+const APP_VERSION = "7.28.62";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -16102,6 +16111,14 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.62", date: "2026-06-24",
+    title: "🔁 일괄 추가 — 이미 등록된 작품은 비교·반영",
+    highlights: [
+      { type: "new", text: "🔁 여러 작품 일괄 추가에서 이미 등록된 작품을 그냥 건너뛰지 않고, ‘이미 등록됨’ 목록에서 작품마다 가져온 정보를 기존작과 비교해 원하는 항목만 덮어쓰거나 추가할 수 있어요." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.61", date: "2026-06-24",
     title: "📅 완결일 + 완결·연중 알림",
@@ -34619,6 +34636,9 @@ function AppContent() {
   const [batchAddBusy, setBatchAddBusy] = useState(false);
   const [batchAddDrafts, setBatchAddDrafts] = useState([]); // 긁어온 등록 대기 목록
   const [batchAddProgress, setBatchAddProgress] = useState(null); // {current,total} 등록 진행률
+  // 🆕 v7.28.62: 일괄 등록 시 이미 등록된 작품 — 스킵 대신 기존작과 비교·선택 반영
+  const [batchAddDups, setBatchAddDups] = useState([]); // [{meta, existing}]
+  const [batchAddDupSummary, setBatchAddDupSummary] = useState("");
   // 🆕 v7.28.59 (일괄갱신 Phase②): 전작품(+예정) 회차·완결여부·연도 웹 재스크랩 갱신 (링크 자동 / 미링크 1회 매핑 후 자동)
   const [bulkUpdateOpen, setBulkUpdateOpen] = useState(false);
   const [bulkUpdateStage, setBulkUpdateStage] = useState("menu"); // menu | running | mapping | done
@@ -40818,7 +40838,7 @@ function AppContent() {
         if (saved && !saved.error && saved.file_path) out.cover = saved.file_path;
         else Alert.alert("표지", "표지 이미지를 가져오지 못했어요. 나머지는 적용돼요.");
       }
-      m.apply(out);
+      await m.apply(out); // 🆕 v7.28.62: async apply(예: 기존작 DB 직접 반영) 완료까지 대기. 동기 apply는 무해.
       setScrapeModal(null);
     } catch (e) {
       Alert.alert("적용 실패", e?.message || String(e));
@@ -40964,6 +40984,41 @@ function AppContent() {
       platforms: work.platforms, link: work.link,
     }),
   });
+  // 🆕 v7.28.62: 일괄 등록의 '이미 등록됨' 작품을 비교·반영하기 위한 ctx — 편집 모달 없이 선택 필드를 DB에 직접 UPDATE.
+  //   getCurrent는 work 직접 참조(scrapeCtxEdit 미러), apply는 선택 필드만 novels에 UPDATE + 태그/표지/리로드.
+  const dbApplyCtxForExisting = (work) => ({
+    label: "기존작 비교·반영",
+    getCurrent: () => ({
+      title: work.title, author: work.author, note: work.note, tags: work.tags,
+      total_episodes: work.total_episodes, work_status: work.work_status,
+      cover: work.cover_image, major_genre: work.major_genre, sub_genre: work.sub_genre,
+      start_year: work.start_year, end_year: work.end_year,
+      platforms: work.platforms, link: work.link,
+    }),
+    apply: async (f) => {
+      const sets = [], params = [];
+      const pushSet = (col, val) => { sets.push(col + "=?"); params.push(val); };
+      if (f.title != null) pushSet("title", f.title);
+      if (f.author != null) pushSet("author", f.author);
+      if (f.note != null) pushSet("note", f.note);
+      if (f.tags != null) pushSet("tags", deduplicateTagString(String(f.tags)) || String(f.tags));
+      if (f.total_episodes != null) pushSet("total_episodes", Number(f.total_episodes) || 0);
+      if (f.work_status != null) pushSet("work_status", f.work_status);
+      if (f.start_year != null) pushSet("start_year", Number(f.start_year) || 0);
+      if (f.end_year != null) pushSet("end_year", Number(f.end_year) || 0);
+      if (f.link != null) pushSet("link", f.link);
+      if (f.major_genre != null) pushSet("major_genre", genJson(f.major_genre));
+      if (f.sub_genre != null) pushSet("sub_genre", genJson(f.sub_genre));
+      if (f.platforms != null) pushSet("platforms", genJson(f.platforms));
+      if (f.cover != null) pushSet("cover_image", f.cover);
+      if (!sets.length) return;
+      params.push(work.id);
+      await exec(`UPDATE novels SET ${sets.join(", ")} WHERE id=?`, params);
+      if (f.tags != null) { try { syncTagsToCustom(String(f.tags)); } catch {} }
+      if (f.cover != null) { try { await applyNovelCover(work.id, f.cover, null); await loadCoverLibrary(); } catch {} }
+      try { await loadList(undefined, undefined, "batchDupApply"); } catch {}
+    },
+  });
   async function pickSearchCandidate(cand) {
     const ctx = searchModal?.ctx;
     setSearchModal(null); setSearchResults([]); setSearchQuery("");
@@ -41011,6 +41066,8 @@ function AppContent() {
     setBatchAddQuery("");
     setBatchAddCandidates([]);
     setBatchAddDrafts([]);
+    setBatchAddDups([]);
+    setBatchAddDupSummary("");
     setBatchAddProgress(null);
     setBatchAddBusy(false);
     setBatchAddOpen(true);
@@ -41059,7 +41116,7 @@ function AppContent() {
     setBatchAddBusy(true);
     try {
       let meta = (cand?.meta && cand.meta.title) ? cand.meta : (cand?.url ? await fetchNovelMeta(cand.url) : null);
-      if (meta && meta.title) setBatchAddDrafts(prev => [...prev, metaToDraft(meta)]);
+      if (meta && meta.title) setBatchAddDrafts(prev => [...prev, { ...metaToDraft(meta), _meta: meta }]); // 🆕 v7.28.62: 원본 meta 보존(중복 시 비교용)
       else Alert.alert("일괄 추가", "정보를 가져오지 못해 이 작품은 건너뜁니다.");
     } catch (e) {
       Alert.alert("일괄 추가", (e?.message || "긁기 실패") + " — 건너뜁니다.");
@@ -41092,16 +41149,22 @@ function AppContent() {
     setBatchAddBusy(true);
     setBatchAddProgress({ current: 0, total: drafts.length });
     let registered = 0, skipped = 0, coverTouched = false;
+    const dups = []; // 🆕 v7.28.62: 이미 등록된(본목록) 작품 — 스킵 대신 비교·반영 대상으로 수집
     try {
       for (let i = 0; i < drafts.length; i++) {
         setBatchAddProgress({ current: i, total: drafts.length });
         const d = drafts[i];
         const t = (d.title || "").trim();
         if (!t) { skipped++; continue; }
-        // 본목록 + 예정목록 중복 스킵 (addNovel과 동일)
+        // 본목록 중복 → 비교·반영 대상으로 수집(원본 meta 있을 때) / 예정목록 중복은 스킵
         const dup = await first("SELECT id FROM novels WHERE title=?", [t]);
         const dupP = await first("SELECT id FROM planned_novels WHERE title=?", [t]);
-        if (dup || dupP) { skipped++; continue; }
+        if (dup || dupP) {
+          const existing = dup ? (list || []).find(n => n.id === dup.id) : null;
+          if (existing && d._meta) dups.push({ meta: d._meta, existing });
+          else skipped++;
+          continue;
+        }
         const detected = detectGenres(d.tags || "");
         const finalMajor = (d.major_genre && d.major_genre.length) ? JSON.stringify(d.major_genre)
           : (detected.majorGenre ? JSON.stringify([detected.majorGenre]) : "");
@@ -41150,8 +41213,15 @@ function AppContent() {
       await refreshDailyRecommendation(false);
       setBatchAddProgress(null);
       setBatchAddBusy(false);
-      setBatchAddOpen(false);
-      Alert.alert("일괄 추가 완료", `${registered}개 작품을 등록했어요.${skipped ? `\n${skipped}개는 중복/빈 제목이라 건너뛰었어요.` : ""}`);
+      if (dups.length) {
+        // 🆕 v7.28.62: 이미 등록된 작품은 비교·반영 단계로 (스킵 X)
+        setBatchAddDups(dups);
+        setBatchAddDupSummary(`${registered}개 등록${skipped ? ` · ${skipped}개 건너뜀` : ""}`);
+        setBatchAddStage("dups");
+      } else {
+        setBatchAddOpen(false);
+        Alert.alert("일괄 추가 완료", `${registered}개 작품을 등록했어요.${skipped ? `\n${skipped}개는 중복/빈 제목이라 건너뛰었어요.` : ""}`);
+      }
     } catch (e) {
       setBatchAddProgress(null);
       setBatchAddBusy(false);
@@ -66572,7 +66642,7 @@ async function importJSON() {
           <View style={{ backgroundColor: C.card, borderRadius: 20, padding: 18, width: "92%", maxWidth: 480, maxHeight: "90%" }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>
-                📚 일괄 추가{batchAddStage === "search" ? ` · ${Math.min(batchAddIdx + 1, batchAddQueue.length)}/${batchAddQueue.length}` : batchAddStage === "review" ? ` · 검토 ${batchAddDrafts.length}개` : ""}
+                📚 일괄 추가{batchAddStage === "search" ? ` · ${Math.min(batchAddIdx + 1, batchAddQueue.length)}/${batchAddQueue.length}` : batchAddStage === "review" ? ` · 검토 ${batchAddDrafts.length}개` : batchAddStage === "dups" ? ` · 이미 등록 ${batchAddDups.length}개` : ""}
               </Text>
               <TouchableOpacity onPress={closeBatchAdd} disabled={!!batchAddProgress}><Text style={{ fontSize: 22, color: batchAddProgress ? C.line : C.sub }}>×</Text></TouchableOpacity>
             </View>
@@ -66670,6 +66740,32 @@ async function importJSON() {
                   disabled={batchAddBusy || batchAddDrafts.length === 0}
                   style={{ marginTop: 12 }}
                 />
+              </View>
+            )}
+
+            {/* ── 이미 등록됨 비교·반영 단계 ── */}
+            {batchAddStage === "dups" && (
+              <View>
+                <Text style={{ color: C.text, fontSize: 13, fontWeight: "700", marginBottom: 4 }}>✅ {batchAddDupSummary}</Text>
+                <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8, lineHeight: 17 }}>
+                  아래 {batchAddDups.length}개는 이미 등록된 작품이에요. 각 작품을 눌러 가져온 정보를 기존작과 비교해 원하는 항목만 반영하세요.
+                </Text>
+                <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={false}>
+                  {batchAddDups.map((dp, idx) => (
+                    <TouchableOpacity key={idx} activeOpacity={0.7}
+                      onPress={() => openScrapeFromMeta(dp.meta, dbApplyCtxForExisting(dp.existing))}
+                      style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: C.text, fontSize: 14, fontWeight: "700" }} numberOfLines={1}>{dp.existing.title}</Text>
+                        <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }} numberOfLines={1}>
+                          {[dp.meta.author, dp.meta.platform, dp.meta.totalEpisodes ? `${dp.meta.totalEpisodes}화` : ""].filter(Boolean).join(" · ") || "비교·반영"}
+                        </Text>
+                      </View>
+                      <Text style={{ color: C.primary, fontSize: 13, fontWeight: "800" }}>비교·반영 ›</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+                <PrimaryButton title="완료" onPress={() => setBatchAddOpen(false)} style={{ marginTop: 12 }} />
               </View>
             )}
           </View>
