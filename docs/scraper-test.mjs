@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, mergeSearchResults, scraperDecodeEntities, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, parseMunpiaSearchJson, SCRAPER_HEADERS, SCRAPER_UA };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, mergeSearchResults, scraperDecodeEntities, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, SCRAPER_HEADERS, SCRAPER_UA };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -287,6 +287,26 @@ eq("canonical 모르는 플랫폼 원본 유지", S.canonicalPlatform("브릿G")
 truthy("buildScrapeItems: 스크랩 네이버시리즈 vs 기존 시리즈 → 연재처 항목 없음(동의어)", (() => {
   const it = S.buildScrapeItems({ title: "T", platform: "네이버시리즈" }, { platforms: ["시리즈"] });
   return !it.find(i => i.key === "platforms");
+})());
+// ── v7.28.64 링크 플랫폼 → 연재처 자동 병합 ────────────────────────────────
+eq("mergePlatformFromLink: 빈 연재처 + 노벨피아 링크 → [노벨피아]",
+  JSON.stringify(S.mergePlatformFromLink([], "https://novelpia.com/novel/123")), JSON.stringify(["노벨피아"]));
+eq("mergePlatformFromLink: 리디만 있는데 노벨피아 링크 → 추가",
+  JSON.stringify(S.mergePlatformFromLink(["리디"], "https://novelpia.com/novel/123")), JSON.stringify(["리디", "노벨피아"]));
+eq("mergePlatformFromLink: 네이버시리즈 링크 → 표준명(시리즈)로 추가",
+  JSON.stringify(S.mergePlatformFromLink(["리디"], "https://series.naver.com/novel/detail.series?productNo=1")), JSON.stringify(["리디", "시리즈"]));
+truthy("mergePlatformFromLink: 이미 시리즈 보유 + 네이버시리즈 링크 → 중복 추가 없음(동의어)",
+  S.mergePlatformFromLink(["시리즈"], "https://series.naver.com/novel/detail.series?productNo=1").length === 1);
+truthy("mergePlatformFromLink: 이미 노벨피아 보유 + 노벨피아 링크 → 불변",
+  S.mergePlatformFromLink(["노벨피아"], "https://novelpia.com/novel/1").length === 1);
+eq("mergePlatformFromLink: 지원 안 하는/빈 링크 → 원본 그대로",
+  JSON.stringify(S.mergePlatformFromLink(["리디"], "https://example.com/x")), JSON.stringify(["리디"]));
+eq("mergePlatformFromLink: 빈 링크 → 원본 그대로",
+  JSON.stringify(S.mergePlatformFromLink(["리디"], "")), JSON.stringify(["리디"]));
+eq("mergePlatformFromLink: 문피아 링크 → 추가",
+  JSON.stringify(S.mergePlatformFromLink([], "https://novel.munpia.com/123")), JSON.stringify(["문피아"]));
+truthy("mergePlatformFromLink: 원본 배열 불변(side-effect 없음)", (() => {
+  const orig = ["리디"]; S.mergePlatformFromLink(orig, "https://novelpia.com/novel/1"); return orig.length === 1;
 })());
 // ── v7.28.56 네이버 완결연도(moreDetail 업데이트일) ─────────────────────────
 eq("parseNaverUpdateYear: dt/dd 업데이트 → 연도", S.parseNaverUpdateYear('<dl class="info_v5"><dt>작가</dt><dd>남희성</dd><dt>업데이트</dt><dd>2019.07.03.</dd></dl>'), 2019);

@@ -2,12 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.63 (일괄 작업 중 저장·중단 + 중복 처리 옵션 선택)                ║
+ * ║  버전: 7.28.64 (작품 링크 연결 시 그 플랫폼을 연재처에 자동 추가)            ║
  * ║  최종 수정: 2026-06-25                                                        ║
  * ║  총 라인 수: 약 67,600줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔌 v7.28.64 링크의 플랫폼을 연재처에 자동 병합 (2026-06-25)                  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 등록·편집·일괄 링크 매핑·일괄 갱신에서 작품 링크가 기존 연재처와 다른 플랫폼   ║
+ * ║ 이면 그 플랫폼을 연재처에 자동 추가(표준명 기준, 동의어 중복 방지).            ║
+ * ║ • 신규 헬퍼 mergePlatformFromLink(arr,link): detectPlatformFromUrl→canonical.  ║
+ * ║   배열만 받아 테스트 슬라이스 밖 의존(parsePlatforms) 회피, 불변 반환.         ║
+ * ║ • 적용: addNovel·saveEdit·addPlannedNovel·savePlannedEdit(등록/편집) +         ║
+ * ║   pickBulkMapCandidate(링크 연결)·applyScrapedUpdateToWork(자동갱신).          ║
+ * ║   매핑 경로는 병합본을 applyScrapedUpdateToWork에 넘겨 멱등(중복 추가 방지).   ║
+ * ║ • 회귀 테스트 +9 → 176/176.                                                   ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ ⏹ v7.28.63 일괄 작업 중 저장·중단 + 중복 처리 옵션 (2026-06-25)              ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 일괄 등록·일괄 링크 매핑 등 장시간 작업을 도중에 멈추고 여기까지 저장 가능.     ║
@@ -14568,6 +14579,17 @@ function canonicalPlatform(name) {
   const key = raw.replace(/\s+/g, "").toLowerCase();
   return PLATFORM_SYNONYMS[key] || raw; // 모르는 플랫폼은 원본 유지
 }
+// 🆕 v7.28.64: 작품 링크의 플랫폼이 연재처 배열(arr)에 없으면 표준명으로 추가.
+//   링크가 지원 플랫폼이 아니거나 이미(동의어 포함) 있으면 원본 배열 그대로 반환(불변).
+//   * arr은 배열만 받음(호출부에서 parsePlatforms 선처리) — 테스트 슬라이스 밖 의존 회피.
+function mergePlatformFromLink(arr, link) {
+  const base = Array.isArray(arr) ? arr.slice() : [];
+  const key = detectPlatformFromUrl(link);
+  if (!key) return base;
+  const canon = canonicalPlatform(key);
+  if (base.some(p => canonicalPlatform(p) === canon)) return base; // 이미 동일 연재처(동의어 매핑 포함)
+  return [...base, canon];
+}
 function buildScrapeItems(meta, current = {}) {
   if (!meta) return [];
   const items = [];
@@ -16095,7 +16117,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.63";
+const APP_VERSION = "7.28.64";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -16121,6 +16143,15 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.64", date: "2026-06-25",
+    title: "🔌 링크 연결하면 그 플랫폼을 연재처에 자동 추가",
+    highlights: [
+      { type: "new", text: "🔌 작품을 등록·편집하거나 링크를 연결할 때, 그 링크가 기존 연재처와 다른 플랫폼(예: 리디만 있는데 노벨피아 링크)이면 해당 연재처를 자동으로 추가해요." },
+      { type: "improve", text: "🧩 ‘네이버시리즈/시리즈’처럼 같은 곳을 다르게 부르는 경우는 중복으로 추가하지 않고 표준 이름으로 정리해요." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.63", date: "2026-06-25",
     title: "⏹ 일괄 작업 중 저장·중단 + 중복 처리 옵션",
@@ -37359,7 +37390,7 @@ function AppContent() {
           t,
           plannedAuthor.trim(),
           plannedTags.trim(),
-          JSON.stringify(plannedPlatforms),
+          JSON.stringify(mergePlatformFromLink(plannedPlatforms, plannedLink)), // 🆕 v7.28.64: 링크 플랫폼 연재처 자동 병합
           plannedNote.trim(),
           Number(plannedTotalEpisodes) || 0,
           plannedCoverImage,
@@ -37500,7 +37531,7 @@ function AppContent() {
           newTitle,
           n.author?.trim() || "",
           n.tags?.trim() || "",
-          n.platforms || "[]",
+          JSON.stringify(mergePlatformFromLink(parsePlatforms(n.platforms), n.link)), // 🆕 v7.28.64: 링크 플랫폼 연재처 자동 병합
           n.note?.trim() || "",
           Number(n.total_episodes) || 0,
           newCover,
@@ -41291,6 +41322,10 @@ function AppContent() {
     const curCa = Number(work.completed_at) || 0, newCa = Number(meta.completedAt) || 0;
     const willComplete = meta.workStatus === "completed" || curWs === "completed";
     if (willComplete && curCa === 0 && newCa > 0) { sets.push("completed_at=?"); params.push(newCa); changes.push("완결일"); }
+    // 🆕 v7.28.64: 저장된 링크의 플랫폼이 연재처에 없으면 자동 추가(자동갱신·매핑 일관성)
+    const curPlats = parsePlatforms(work.platforms);
+    const mergedPlats = mergePlatformFromLink(curPlats, work.link);
+    if (mergedPlats.length !== curPlats.length) { sets.push("platforms=?"); params.push(JSON.stringify(mergedPlats)); changes.push("연재처 +" + mergedPlats[mergedPlats.length - 1]); }
     if (!sets.length) return null;
     params.push(work.id);
     await exec(`UPDATE ${table} SET ${sets.join(", ")} WHERE id=?`, params);
@@ -41401,9 +41436,16 @@ function AppContent() {
       const link = (meta && meta.url) || cand?.url || "";
       if (work && link) {
         const table = work._planned ? "planned_novels" : "novels";
-        await exec(`UPDATE ${table} SET link=? WHERE id=?`, [link, work.id]);
+        // 🆕 v7.28.64: 링크 연결 시 그 플랫폼을 연재처에 자동 병합(기존과 다른 플랫폼이면 추가)
+        const curPlats = parsePlatforms(work.platforms);
+        const mergedPlats = mergePlatformFromLink(curPlats, link);
+        const platChanged = mergedPlats.length !== curPlats.length;
+        if (platChanged) await exec(`UPDATE ${table} SET link=?, platforms=? WHERE id=?`, [link, JSON.stringify(mergedPlats), work.id]);
+        else await exec(`UPDATE ${table} SET link=? WHERE id=?`, [link, work.id]);
         let changes = ["🔗 링크 연결"];
-        if (meta) { try { const c = await applyScrapedUpdateToWork({ ...work, link }, meta); if (c) changes = changes.concat(c); } catch {} }
+        if (platChanged) changes.push("연재처 +" + mergedPlats[mergedPlats.length - 1]);
+        // 병합된 platforms를 넘겨 applyScrapedUpdateToWork의 중복 추가 방지(멱등)
+        if (meta) { try { const c = await applyScrapedUpdateToWork({ ...work, link, platforms: JSON.stringify(mergedPlats) }, meta); if (c) changes = changes.concat(c); } catch {} }
         setBulkUpdateResults(prev => [...prev, { title: work.title, planned: work._planned, changes }]);
       } else {
         Alert.alert("링크 연결", "정보를 가져오지 못해 건너뜁니다.");
@@ -44288,7 +44330,7 @@ function AppContent() {
             t,
             author.trim(),
             deduplicateTagString(tags) || "", // 🔧 v3.5.14: 작품 내 태그 중복 제거
-            JSON.stringify(platforms),
+            JSON.stringify(mergePlatformFromLink(platforms, newLink)), // 🆕 v7.28.64: 링크 플랫폼 연재처 자동 병합
             note.trim(),
             _initialReadCount,
             globalTierConfig.defaultRating || 1500, // 🆕 v6.0: config 기반 기본 레이팅
@@ -45363,6 +45405,8 @@ function AppContent() {
       
       const newCreatedAt = parseDate(editCreatedAt) || n.created_at || Date.now();
       const newReadCountUpdatedAt = parseDate(editReadCountUpdatedAt) || (readCountChanged ? Date.now() : (n.read_count_updated_at || Date.now()));
+      // 🆕 v7.28.64: 작품 링크의 플랫폼이 연재처에 없으면 자동 추가(다른 플랫폼 링크 연결 시)
+      const editPlatformsMerged = mergePlatformFromLink(editPlatforms, editLink);
 
       await exec(
         "UPDATE novels SET title=?, author=?, tags=?, note=?, platforms=?, read_count=?, awards=?, total_episodes=?, status=?, cover_image=?, link=?, work_status=?, read_count_updated_at=?, major_genre=?, sub_genre=?, gaiden_status=?, gaiden_read_count=?, gaiden_total_episodes=?, created_at=?, reread_count=?, tag_data=?, memorable_quote=?, aliases=?, start_year=?, end_year=? WHERE id=?;",
@@ -45371,7 +45415,7 @@ function AppContent() {
           n.author?.trim() || "",
           deduplicateTagString(n.tags) || "", // 🔧 v3.5.14: 작품 내 태그 중복 제거
           n.note?.trim() || "",
-          JSON.stringify(editPlatforms),
+          JSON.stringify(editPlatformsMerged),
           newReadCount,
           awardsPayload,
           Number(n.total_episodes) || 0,
@@ -45498,7 +45542,7 @@ function AppContent() {
             total_episodes: String(Number(n.total_episodes) || 0),
             cover_image: editCoverImage || "",
             tag_data: n.tag_data || "",
-            platforms: JSON.stringify(editPlatforms),
+            platforms: JSON.stringify(editPlatformsMerged), // 🆕 v7.28.64: 링크 병합 반영값과 일치
             status: editStatus,
             work_status: editWorkStatus,
             link: editLink.trim() || "",
