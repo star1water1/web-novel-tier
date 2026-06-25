@@ -2,11 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.29.0 (분석 탭 연간 리캡 — 연도별 독서 결산)                          ║
+ * ║  버전: 7.30.0 (추천 탭 재평가 추천작 — 매칭 모드)                             ║
  * ║  최종 수정: 2026-06-25                                                        ║
- * ║  총 라인 수: 약 68,140줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 68,240줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔄 v7.30.0 재평가 추천작 — 추천 탭 새 섹션(매칭 모드 전용) (2026-06-25)       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 매칭 모드에서 티어가 불확실한(미정착 rd>150·미평가) 작품을 추천 탭에 별도     ║
+ * ║ 섹션으로 랭킹. 탭하면 그 작품을 집중 매칭(focusMatchNovel)해 자리 확정.       ║
+ * ║ • 종합 점수: 불확실도(rd) + 티어 경계 근접도(재평가 시 등급 변동 가능성)      ║
+ * ║   + 미평가 가산. 사유 라벨(미평가/경계근처/표본부족/불확실) + 불확실도 막대.  ║
+ * ║ • 신규: reevalCandidates useMemo(list) — match 모드만. 기존 MATCH_SETTLED_RD  ║
+ * ║   (150)·focusMatchNovel·setPair(null) 재사용(엔진 비변경).                    ║
+ * ║ • hybrid는 의심작(suspicion_score), ratio는 비율 티어라 경계 부적합 → 제외.   ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 📅 v7.29.0 연간 리캡 — 분석 탭 새 그룹(연도별 독서 결산) (2026-06-25)         ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -16141,7 +16152,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.29.0";
+const APP_VERSION = "7.30.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -36091,7 +36102,52 @@ function AppContent() {
     for (const n of list) map.set(n.id, n);
     return map;
   }, [list]);
-  
+
+  // 🆕 v7.30.0: 재평가 추천작 (match 모드 전용) — 티어가 아직 불확실한(미정착 rd>150 또는 미평가) 작품을
+  //   종합 점수로 랭킹: 불확실도(rd) + 티어 경계 근접도(재평가 시 등급 변동 가능성) + 미평가 가산.
+  //   엔진 비변경: list의 rd/match_count/rating만 사용. hybrid는 의심작(suspicion_score)이 같은 역할.
+  //   ※ ratio는 티어가 비율(백분위)로 산정돼 레이팅 임계값 경계가 맞지 않으므로 제외(사용자 지침: 매칭모드 한정).
+  const reevalCandidates = useMemo(() => {
+    if (globalTierConfig.mode !== "match") return [];
+    // 티어 임계값(경계) — 경계 근접도 계산용 (오름차순)
+    const thresholds = (globalTierConfig.tiers || [])
+      .map(t => Number(t.threshold))
+      .filter(v => Number.isFinite(v) && v > 0)
+      .sort((a, b) => a - b);
+    const distToBoundary = (rating) => {
+      if (!thresholds.length) return Infinity;
+      let best = Infinity;
+      for (const th of thresholds) { const d = Math.abs(rating - th); if (d < best) best = d; }
+      return best;
+    };
+    const BWIN = 120; // 경계 근접으로 볼 레이팅 거리(매칭 1~2회 스윙 폭 근사)
+    const out = [];
+    for (const n of list) {
+      if (Number(n.match_ban)) continue; // 매칭 제외 작품은 재평가 대상 아님
+      const rd = Number(n.rd) || 350;
+      const mc = Number(n.match_count) || 0;
+      const unsettled = rd > MATCH_SETTLED_RD; // 미정착(불확실)
+      const neverMatched = mc === 0;           // 미평가
+      if (!unsettled && !neverMatched) continue; // 정착 + 매칭 이력 있으면 제외
+      const rating = Number(n.rating) || 1500;
+      const uNorm = Math.max(0, Math.min(1, (rd - 60) / (350 - 60)));          // 불확실도 0~1
+      const dist = distToBoundary(rating);
+      const bNorm = Number.isFinite(dist) ? Math.max(0, Math.min(1, 1 - dist / BWIN)) : 0; // 경계 근접 0~1
+      const score = 0.55 * uNorm + 0.35 * bNorm + (neverMatched ? 0.10 : 0);
+      // 사유 라벨 (우선순위: 미평가 > 경계 근접 > 표본 부족 > 불확실)
+      let reason;
+      if (neverMatched) reason = "미평가 (0전)";
+      else if (bNorm >= 0.5) reason = "티어 경계 근처";
+      else if (mc < 5) reason = `표본 부족 (${mc}전)`;
+      else reason = "레이팅 불확실";
+      out.push({ id: n.id, title: n.title, rating, rd, mc, score, bNorm, neverMatched, reason });
+    }
+    out.sort((a, b) => b.score - a.score || b.rd - a.rd || a.mc - b.mc);
+    return out;
+    // globalTierConfig는 quotesCards 등 기존 패턴처럼 직접 참조(모드/임계값 변경은 list 재로드 시 반영)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [list]);
+
   const compareNovels = useMemo(() => compareIds.map(id => listMap.get(id)).filter(Boolean), [compareIds, listMap]);
   
   // 💬 v3.5.4: 명언 카드 데이터 (list 변경 시 재계산)
@@ -52283,6 +52339,57 @@ async function importJSON() {
         })()
       )}
     </Section>
+
+    {/* ════ 🔄 재평가 추천작 (match 모드 전용) — v7.30.0 ════
+       티어가 불확실(미정착·미평가)한 작품을 종합 점수로 랭킹. 탭 → 그 작품 집중 매칭. */}
+    {globalTierConfig.mode === "match" && reevalCandidates.length > 0 && (
+      <Section title={`🔄 재평가 추천작 (${reevalCandidates.length})`}>
+        <Text style={{ color: C.sub, fontSize: 12, marginBottom: 10, lineHeight: 18 }}>
+          티어가 아직 불확실한(미정착·미평가) 작품이에요. 탭하면 그 작품을 집중 매칭해 자리를 빠르게 확정할 수 있어요.
+        </Text>
+        <View style={{ gap: 6 }}>
+          {reevalCandidates.slice(0, 8).map((c, idx) => {
+            const tier = tierFromRating(c.rating, globalTierConfig);
+            const uPct = Math.round(Math.max(8, Math.min(100, ((c.rd - 60) / (350 - 60)) * 100)));
+            return (
+              <TouchableOpacity
+                key={c.id}
+                activeOpacity={0.7}
+                onPress={() => {
+                  const nv = listMap.get(c.id);
+                  if (!nv) { Alert.alert("안내", "작품을 찾을 수 없습니다. 목록을 새로고침해주세요."); return; }
+                  setFocusMatchNovel(nv);   // 특정 작품 집중 매칭 지정
+                  setPair(null);            // 포커스 반영 즉시 재추첨 (effect: screen==="match" && !pair)
+                  setScreen("match");       // 매칭 탭으로 이동해 바로 재평가
+                }}
+                style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 7, paddingHorizontal: 8, backgroundColor: C.chip, borderRadius: 10 }}
+              >
+                <Text style={{ color: C.sub, fontSize: 12, fontWeight: "800", width: 16, textAlign: "center" }}>{idx + 1}</Text>
+                <View style={{ minWidth: 30, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: getTierColor(tier, globalTierConfig) }}>
+                  <Text style={{ color: "#fff", fontWeight: "800", fontSize: 11, textAlign: "center" }}>{getTierLabel(tier, globalTierConfig)}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: C.text, fontSize: 13, fontWeight: "600" }} numberOfLines={1}>{c.title}</Text>
+                  <Text style={{ color: C.sub, fontSize: 11 }}>{c.reason} · {c.mc}전 · rd {Math.round(c.rd)}</Text>
+                </View>
+                {/* 불확실도 막대 (경계 근처면 빨강, 아니면 주황) */}
+                <View style={{ width: 40 }}>
+                  <View style={{ height: 6, backgroundColor: C.bg, borderRadius: 3, overflow: "hidden" }}>
+                    <View style={{ width: `${uPct}%`, height: "100%", backgroundColor: c.bNorm >= 0.5 ? "#ef4444" : "#f59e0b" }} />
+                  </View>
+                </View>
+                <Text style={{ fontSize: 14 }}>🎯</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        {reevalCandidates.length > 8 && (
+          <Text style={{ color: C.sub, fontSize: 11, marginTop: 8 }}>
+            외 {reevalCandidates.length - 8}작 더 · 매칭할수록 rd가 낮아져(≤{MATCH_SETTLED_RD}) 자리가 확정돼요.
+          </Text>
+        )}
+      </Section>
+    )}
 
     {/* --- 최근 추천 히스토리 --- */}
     {recoHistory && recoHistory.length > 0 && (
