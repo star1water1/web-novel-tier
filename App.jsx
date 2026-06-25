@@ -2,12 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.64 (작품 링크 연결 시 그 플랫폼을 연재처에 자동 추가)            ║
+ * ║  버전: 7.28.65 (예정탭 보충 하위탭 + '최신' 필터 — 홈/순위/일괄)             ║
  * ║  최종 수정: 2026-06-25                                                        ║
- * ║  총 라인 수: 약 67,600줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 67,970줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📝 v7.28.65 예정 보충 하위탭 + '최신' 필터 (2026-06-25)                      ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ ① 예정탭 '보충' 하위탭: 정보 부족 예정작 탐지(예정 관련 필드만) → 필터/정렬   ║
+ * ║   목록 → 작품 탭 시 기존 예정 편집 모달로 수정. isPlannedSupplementTarget +    ║
+ * ║   plannedSupplementList/IssueCounts. 본편 보충 설정 재사용(enabled 게이트 무시).║
+ * ║ ② '최신' 필터(홈/순위/일괄 공용 토글 filterLatest): isLatestNovel = NEW 뱃지   ║
+ * ║   (등록 30일) 또는 최근 랭크 이동(recentRankMovedIds). recentRankMovedIds =    ║
+ * ║   recentChanges 중 tier_change/order_change/auto_tier/tier_review(유지기간 내).║
+ * ║ • 랭크 이동 기록 신설: recordRankChange(1시간 합치기로 ▲▼ 홍수 방지) →         ║
+ * ║   swapRating(order)·moveToTierPosition·batchSetTier·인라인칩·saveEdit(tier).   ║
+ * ║   typeConfig에 order_change(↕️순위) 추가. 전체 내보내기 시 최신 필터 자동 해제. ║
+ * ║ • 회귀 테스트 영향 없음(176/176 유지).                                        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 🔌 v7.28.64 링크의 플랫폼을 연재처에 자동 병합 (2026-06-25)                  ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 등록·편집·일괄 링크 매핑·일괄 갱신에서 작품 링크가 기존 연재처와 다른 플랫폼   ║
@@ -16117,7 +16130,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.64";
+const APP_VERSION = "7.28.65";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -16143,6 +16156,16 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.65", date: "2026-06-25",
+    title: "📝 예정 보충 탭 + 🆕 최신 필터",
+    highlights: [
+      { type: "new", text: "📝 예정 작품에도 ‘보충’ 탭이 생겼어요. 정보가 부족한 예정작을 한눈에 찾아, 부족한 항목별로 걸러보고 작품을 누르면 바로 편집 창에서 채울 수 있어요." },
+      { type: "new", text: "🆕 홈·순위·일괄 탭에 ‘최신만’ 필터를 추가했어요. 켜면 최근 등록된 작품(NEW)이나 최근 티어·순위가 바뀐 작품만 모아 볼 수 있어요." },
+      { type: "improve", text: "↕️ 작품의 순위·티어를 바꾸면 ‘최신 변화’ 기록에도 남아요(▲▼ 연타는 한 건으로 묶어 기록)." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.64", date: "2026-06-25",
     title: "🔌 링크 연결하면 그 플랫폼을 연재처에 자동 추가",
@@ -34581,6 +34604,7 @@ function AppContent() {
   const [filterGenre, setFilterGenre] = useState("ALL");
   const [filterStatus, setFilterStatus] = useState("ALL");
   const [filterFolder, setFilterFolder] = useState("ALL"); // 📂 v3.7.0: 폴더 필터
+  const [filterLatest, setFilterLatest] = useState(false); // 🆕 v7.28.65: '최신' 필터 — NEW 뱃지 또는 최근 랭크 이동 작품만 (홈/순위/일괄 공용 토글)
 
   // 🔧 v7.6.0 (포트 v3.12.1): 홈 정렬/필터 영속화
   const homeSortInitRef = useRef(false); // 초기 복원 완료 전 저장 방지
@@ -35106,6 +35130,10 @@ function AppContent() {
   const [supplementSessionCount, setSupplementSessionCount] = useState(0); // 세션 내 보충 완료 수
   const [supplementRecentDone, setSupplementRecentDone] = useState([]); // 최근 완료 [{id, title, issues, timestamp}]
   const [supplementShowDone, setSupplementShowDone] = useState(false); // 완료 목록 표시 토글
+  // 🆕 v7.28.65: 예정탭 보충 하위탭 — 부족 항목 탐지 후 기존 예정 편집 모달로 수정(가벼운 버전)
+  const [plannedSupplementFilter, setPlannedSupplementFilter] = useState("all"); // "all"|이슈키
+  const [plannedSupplementSort, setPlannedSupplementSort] = useState("issues"); // "issues"|"title"|"priority"|"random"
+  const [plannedSupplementShuffleSeed, setPlannedSupplementShuffleSeed] = useState(() => (Math.random() * 0xffffffff) >>> 0);
 
   // 🏷️ 태그 선택 모달
   const [tagModalOpen, setTagModalOpen] = useState(false);
@@ -35597,13 +35625,14 @@ function AppContent() {
 
     Breadcrumbs.add("export", "start", { scope, visible: rankedEntries.length });
 
-    const filterWasActive = !!rankQuery || rankTier !== "ALL";
+    const filterWasActive = !!rankQuery || rankTier !== "ALL" || filterLatest; // 🆕 v7.28.65: '최신' 필터도 포함
     const willResetFilter = scope === "all" && filterWasActive;
 
     try {
       if (willResetFilter) {
         setRankQuery("");
         setRankTier("ALL");
+        setFilterLatest(false); // 🆕 v7.28.65: 전체 내보내기 시 '최신' 필터도 해제(전수 캡처 보장)
         // rankedEntriesRef가 새 길이로 동기화될 때까지 폴링 (timing 의존 회피)
         const expectedFullCount = (list || []).length;
         await waitForRankedEntriesCount(expectedFullCount);
@@ -36148,6 +36177,7 @@ function AppContent() {
       if (filterGenre !== "ALL" && (getFirstGenre(n.major_genre) || deriveMajorGenre(n.tags)) !== filterGenre) return false;
       if (filterStatus !== "ALL" && (n.status || "reading") !== filterStatus) return false;
       if (folderFilteredIds !== null && !folderFilteredIds.has(n.id)) return false;
+      if (filterLatest && !isLatestNovel(n)) return false; // 🆕 v7.28.65: '최신' 필터(NEW 또는 최근 랭크 이동)
       return true;
     });
   }
@@ -44172,7 +44202,32 @@ function AppContent() {
       return updated;
     });
   }, []);
-  
+
+  // 🆕 v7.28.65: 랭크 이동(티어/순위)을 최신 기록에 남김 — '최신' 필터의 '랭크 이동' 신호.
+  //   동일 작품의 직전 랭크이동(tier_change/order_change)이 1시간 내면 합쳐 최신화(▲/▼ 연타 홍수 방지).
+  //   type: "tier_change"(교차 티어, details {from,to}) | "order_change"(같은 티어 순위, details {dir}).
+  const recordRankChange = useCallback((novelId, novelTitle, type, details = {}) => {
+    if (!novelId) return;
+    setRecentChanges(prev => {
+      const now = Date.now();
+      const COALESCE_MS = 60 * 60 * 1000;
+      const i = prev.findIndex(c => c.novelId === novelId && (c.type === "tier_change" || c.type === "order_change"));
+      let updated;
+      if (i !== -1 && now - (prev[i].timestamp || 0) < COALESCE_MS) {
+        const old = prev[i];
+        const merged = {
+          ...old, type, novelTitle, timestamp: now,
+          details: { ...old.details, ...details, from: old.details?.from ?? details.from, count: (old.details?.count || 1) + 1 },
+        };
+        updated = [merged, ...prev.slice(0, i), ...prev.slice(i + 1)];
+      } else {
+        updated = [{ id: uuid(), novelId, novelTitle, type, details: { ...details, count: 1 }, timestamp: now }, ...prev].slice(0, 500);
+      }
+      safeDefer(() => deferSetAppMeta("recent_changes", updated));
+      return updated;
+    });
+  }, []);
+
   // 📰 v3.0: 최신 변화 기록 전체 삭제
   const clearRecentChanges = useCallback(async () => {
     Alert.alert(
@@ -45494,6 +45549,10 @@ function AppContent() {
       // 🆕 v7.0.2: 클리어 path 분리 — meta_edit(잘못된 underrated) 대신 tier_change(overrated)
       // 🆕 v7.4.13: read_progress 트리거 제거 — 30회 누적은 manual_tier 의심 시그널로 약함.
       // 사용자 비전 "noise 줄여 정말 의심스러운 것만" 정합. baseline 컬럼은 유지(데이터 손실 회피)되지만 더 이상 참조되지 않음.
+      // 🆕 v7.28.65: 최신 기록 — 편집 모달 티어 변경도 랭크 이동으로 기록(모든 모드, hybrid 게이트 밖)
+      if (_v7TierChanged) {
+        recordRankChange(n.id, newTitle, "tier_change", { from: _v7TierChanged.fromDisplayTier ? getTierLabel(_v7TierChanged.fromDisplayTier, globalTierConfig) : "미분류", to: getTierLabel(_v7TierChanged.to, globalTierConfig) });
+      }
       if (globalTierConfig.mode === "hybrid") {
         try {
           if (_v7TierChanged) {
@@ -47110,7 +47169,7 @@ function AppContent() {
     return result;
     // 🛡️ FIX: appSettings.tierSystemConfig를 deps에 추가 — '티어순' 정렬 시 임계값/티어 편집 후
     //   list 변동 없이도 재정렬되도록(이전엔 globalTierConfig만 바뀌고 memo deps 미반영 → stale).
-  }, [homeQuery, list, homeSortKey, homeSortDir, filterTier, filterPlatform, filterGenre, filterStatus, searchIncludeTags, searchExcludeTags, searchExcludeStatus, searchExcludeWorkStatus, folderFilteredIds, tagRelations, awardMetaMap, novelQuoteSearchMap, appSettings.tierSystemConfig]);
+  }, [homeQuery, list, homeSortKey, homeSortDir, filterTier, filterPlatform, filterGenre, filterStatus, filterLatest, isLatestNovel, searchIncludeTags, searchExcludeTags, searchExcludeStatus, searchExcludeWorkStatus, folderFilteredIds, tagRelations, awardMetaMap, novelQuoteSearchMap, appSettings.tierSystemConfig]);
 
   // 공용 검색 필터 (bulk/search)
   const filtered = useMemo(() => {
@@ -47152,6 +47211,7 @@ function AppContent() {
 
   const bulkFiltered = useMemo(() => {
     let result = [...filtered];
+    if (filterLatest) result = result.filter(isLatestNovel); // 🆕 v7.28.65: '최신' 필터(NEW 또는 최근 랭크 이동)
     if (bulkSortKey === "rating") {
       // 🛡️ FIX: hybrid/manual 모드에선 ELO rating이 동결값이라 무의미(레이팅 칩도 숨김) →
       //   tier 순위(globalTierRankMap, patrick truth: 0=상위)로 정렬해 표시 순서와 일치시킴.
@@ -47178,7 +47238,7 @@ function AppContent() {
       });
     }
     return result;
-  }, [filtered, bulkSortKey]);
+  }, [filtered, bulkSortKey, filterLatest, isLatestNovel]);
 
   // 🔹 매칭용: 특정 작품 고정 선택 후보 리스트
   const focusMatchCandidates = useMemo(() => {
@@ -47262,12 +47322,13 @@ function AppContent() {
         .toLowerCase();
 
       if (q && !bank.includes(q)) continue;
+      if (filterLatest && !isLatestNovel(n)) continue; // 🆕 v7.28.65: '최신' 필터(전역 순위는 유지, 표시만 한정)
 
       result.push({ item: n, rank, tier: t });
     }
 
     return result;
-  }, [list, rankQuery, rankTier, screen]);
+  }, [list, rankQuery, rankTier, screen, filterLatest, isLatestNovel]);
 
   // 🆕 v7.4.0 stale closure 회피 — 비동기 export 함수에서 최신 rankedEntries 참조용
   const rankedEntriesRef = useRef(rankedEntries);
@@ -47851,6 +47912,8 @@ function AppContent() {
           prevTier: prev.manual_tier, newTier: tierKey,
           prevManualOrder: prev.manual_order,
         });
+        // 🆕 v7.28.65: 최신 기록 — 일괄 티어 변경도 랭크 이동으로 기록(모든 모드)
+        recordRankChange(id, prev.title || "", "tier_change", { from: prev.manual_tier ? getTierLabel(prev.manual_tier) : "미분류", to: getTierLabel(tierKey) });
       }
       if (changes.length > 0) {
         pushUndo("tier_batch", { changes }, `${changes.length}개 작품 티어 일괄 변경`);
@@ -47887,6 +47950,8 @@ function AppContent() {
   async function swapRating(idA, ratingA, idB, ratingB) {
     if (idA === idB) return; // 동일 작품 방어 (빠른 연타 시)
     const mode = globalTierConfig.mode;
+    const moverTitle = (list.find(n => n.id === idA)?.title) || ""; // 🆕 v7.28.65: 최신 기록용 제목
+    let moveDir = null; // 🆕 v7.28.65: 순위 이동 방향(up/down)
 
     // 🆕 v7.0.14: hybrid 검증 세션 in-flight 작품의 ▲/▼는 차단 (M9c 패턴 — inline chip과 동일)
     // 시퀀스 진행 중 manual_order 변경은 finalize와 충돌 → 자리 예측 오작동
@@ -47942,6 +48007,7 @@ function AppContent() {
           ]);
           suspicionForHybrid = oA > oB ? "underrated" : "overrated"; // 작은 order = 위
         }
+        moveDir = suspicionForHybrid === "underrated" ? "up" : "down"; // 🆕 v7.28.65: -50/작은 order = 상승
         // 🆕 v7.0: hybrid 모드 — 사용자 path 트리거
         // 🆕 v7.0.2: idB도 함께 enqueue (역방향 의심) — 양쪽이 모두 변위했으므로 양쪽 검증 필요
         if (mode === "hybrid") {
@@ -47958,6 +48024,7 @@ function AppContent() {
         }
       } else {
         // match 모드: 기존 ELO rating 교환
+        moveDir = (ratingB >= ratingA) ? "up" : "down"; // 🆕 v7.28.65: idA가 더 높은 rating으로 = 상승
         if (ratingA === ratingB) {
           await execBatch([
             { sql: "UPDATE novels SET rating=? WHERE id=?", params: [ratingB + 1, idA] },
@@ -47969,6 +48036,8 @@ function AppContent() {
           ]);
         }
       }
+      // 🆕 v7.28.65: 최신 기록 — 수동 순위 이동(모든 모드). 자동매칭 중엔 기록 안 함.
+      if (moveDir && !isAutoMatchingRef.current) recordRankChange(idA, moverTitle, "order_change", { dir: moveDir });
       await loadList(undefined, undefined, "tierManage");
     } catch (e) {
       // 🛠️ v7.0.14: 외부 caller가 await 미적용으로 호출하므로 여기서 swallow.
@@ -48073,6 +48142,13 @@ function AppContent() {
         } catch (e) {
           console.warn("[v7.4.9] dropSlot enqueueVerification 실패:", e?.message);
         }
+      }
+
+      // 🆕 v7.28.65: 최신 기록 — 드래그 이동도 랭크 이동으로 기록(모든 모드)
+      if (isTierChange) {
+        recordRankChange(novelId, prev.title || "", "tier_change", { from: prevTier ? getTierLabel(prevTier) : "미분류", to: getTierLabel(targetTier) });
+      } else if (prevSameTierIdx >= 0 && clampedIdx !== prevSameTierIdx) {
+        recordRankChange(novelId, prev.title || "", "order_change", { dir: clampedIdx < prevSameTierIdx ? "up" : "down" });
       }
 
       await loadList(undefined, undefined, "tierManage");
@@ -50264,6 +50340,106 @@ async function importJSON() {
     return counts;
   }, [supplementListAll]);
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // 🆕 v7.28.65: 예정탭 보충 — 예정작 관련 필드만 점검(읽은회차·읽기상태·문장 제외).
+  //   본편 보충 설정(appSettings.supplement)의 임계/플래그를 재사용하되 enabled 게이트는
+  //   무시(예정 '보충' 하위탭 진입 자체가 opt-in). 수정은 기존 예정 편집 모달로 위임.
+  // ─────────────────────────────────────────────────────────────────────────
+  const isPlannedSupplementTarget = useCallback((novel) => {
+    const settings = appSettings.supplement || DEFAULT_SETTINGS.supplement;
+    const novelTags = (novel.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+    const hasMajorFromTags = novelTags.some(t => allMajorTagsSet.has(normalizeTagKey(t)));
+    const hasSubFromTags = novelTags.some(t => allSubTagsSet.has(normalizeTagKey(t)));
+    const excludeTagsSet = new Set(settings.excludeTags || ["취향아님"]);
+    let negativeCount = 0;
+    for (const tag of novelTags) {
+      if (getTagSentiment(tag, tagSentiments) === TAG_SENTIMENT.NEGATIVE) negativeCount++;
+      if (excludeTagsSet.has(tag)) negativeCount = Math.max(negativeCount, settings.excludeNegativeTagCount);
+    }
+    if (negativeCount >= settings.excludeNegativeTagCount) return false;
+
+    const issues = [];
+    if (novelTags.length < settings.minTags) issues.push("tags");
+    if (settings.requireAuthor && !novel.author?.trim()) issues.push("author");
+    if (settings.requireTotalEpisodes && (!novel.total_episodes || novel.total_episodes <= 0)) issues.push("totalEpisodes");
+    if (settings.requireMajorGenre && !novel.major_genre?.trim() && !hasMajorFromTags) issues.push("majorGenre");
+    if (settings.requireSubGenre && !novel.sub_genre?.trim() && !hasSubFromTags) issues.push("subGenre");
+    if (settings.requirePlatform && parsePlatforms(novel.platforms).length === 0) issues.push("platform");
+    if (settings.requireCover && !novel.cover_image?.trim()) issues.push("cover");
+    if (settings.requireLink && !novel.link?.trim()) issues.push("link");
+    if (settings.requireNote && !novel.note?.trim()) issues.push("note");
+    if (settings.requireWorkStatus && (!novel.work_status || novel.work_status === "ongoing")) issues.push("workStatus");
+    if (novelTags.length >= 3) {
+      if (settings.requireQualityMajorGenre && !novel.major_genre?.trim() && !hasMajorFromTags) issues.push("no_major_genre");
+      if (settings.requireQualitySubGenre && !novel.sub_genre?.trim() && !hasSubFromTags) issues.push("no_sub_genre");
+      if (settings.requireIntensityTuning) {
+        const tagData = parseTagData(novel.tag_data);
+        if (tagData.length >= 3 && tagData.every(t => t.intensity === 3 || t.intensity === undefined)) issues.push("allDefaultIntensity");
+      }
+    }
+    return issues.length > 0 ? issues : false;
+  }, [appSettings.supplement, tagSentiments, allMajorTagsSet, allSubTagsSet]);
+
+  const plannedSupplementListAll = useMemo(() => {
+    return plannedList
+      .map(n => ({ novel: n, issues: isPlannedSupplementTarget(n) }))
+      .filter(item => item.issues !== false);
+  }, [plannedList, isPlannedSupplementTarget]);
+
+  const plannedSupplementList = useMemo(() => {
+    let filtered = plannedSupplementListAll;
+    if (plannedSupplementFilter !== "all") {
+      filtered = filtered.filter(item => item.issues.includes(plannedSupplementFilter));
+    }
+    const sorted = [...filtered];
+    sorted.sort((a, b) => {
+      if (plannedSupplementSort === "issues") return b.issues.length - a.issues.length;
+      if (plannedSupplementSort === "title") return (a.novel.title || "").localeCompare(b.novel.title || "");
+      if (plannedSupplementSort === "priority") return (Number(b.novel.priority) || 3) - (Number(a.novel.priority) || 3);
+      if (plannedSupplementSort === "random") return seededShuffleValue(a.novel.id, plannedSupplementShuffleSeed) - seededShuffleValue(b.novel.id, plannedSupplementShuffleSeed);
+      return 0;
+    });
+    return sorted;
+  }, [plannedSupplementListAll, plannedSupplementFilter, plannedSupplementSort, plannedSupplementShuffleSeed]);
+
+  const plannedSupplementCount = plannedSupplementList.length;
+  const plannedSupplementTotalCount = plannedSupplementListAll.length;
+
+  const plannedSupplementIssueCounts = useMemo(() => {
+    const counts = { tags: 0, author: 0, totalEpisodes: 0, majorGenre: 0, subGenre: 0, platform: 0, cover: 0, link: 0, note: 0, workStatus: 0, no_major_genre: 0, no_sub_genre: 0, allDefaultIntensity: 0 };
+    for (const item of plannedSupplementListAll) {
+      for (const issue of item.issues) if (counts[issue] !== undefined) counts[issue]++;
+    }
+    return counts;
+  }, [plannedSupplementListAll]);
+
+  // 필터 0건 자동 리셋(고착 방지)
+  useEffect(() => {
+    if (plannedSupplementFilter !== "all" && plannedSupplementCount === 0 && plannedSupplementTotalCount > 0) {
+      setPlannedSupplementFilter("all");
+    }
+  }, [plannedSupplementFilter, plannedSupplementCount, plannedSupplementTotalCount]);
+
+  // 🆕 v7.28.65: '최신' 필터 — 최근 랭크 이동(티어/순위) 작품 ID 집합.
+  //   retention window(최신 기록 유지기간, 기본 30일) 내 tier_change/order_change/auto_tier/tier_review 엔트리의 novelId.
+  const recentRankMovedIds = useMemo(() => {
+    const now = Date.now();
+    const days = appSettings.recentChanges?.retentionDays;
+    const windowMs = (Number.isFinite(days) && days > 0 ? days : 30) * 86400000;
+    const RANK_TYPES = new Set(["tier_change", "order_change", "auto_tier", "tier_review"]);
+    const s = new Set();
+    for (const c of recentChanges) {
+      if (RANK_TYPES.has(c.type) && (now - (c.timestamp || 0)) <= windowMs) s.add(c.novelId);
+    }
+    return s;
+  }, [recentChanges, appSettings.recentChanges]);
+
+  // 🆕 v7.28.65: '최신' 판정 — NEW 뱃지(등록 30일 이내) 또는 최근 랭크 이동.
+  const isLatestNovel = useCallback((n) => {
+    if (!n) return false;
+    return isNewNovel(n.created_at) || recentRankMovedIds.has(n.id);
+  }, [recentRankMovedIds]);
+
   // 🔧 v3.0.2: 저장 후 다음 작품으로 자동 이동 (supplementList 변경 시 트리거)
   useEffect(() => {
     if (savedSupplementId) {
@@ -51162,6 +51338,12 @@ async function importJSON() {
                   </View>
                 </>
               )}
+              {/* 🆕 v7.28.65: '최신' 필터 — NEW 뱃지(등록 30일) 또는 최근 티어/순위 이동 */}
+              <Label style={{ marginTop: 8 }}>최신</Label>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center" }}>
+                <Chip label="🆕 최신만" active={filterLatest} onPress={() => setFilterLatest(v => !v)} />
+                <Text style={{ color: C.sub, fontSize: 11, marginLeft: 4 }}>NEW 또는 최근 티어/순위 이동</Text>
+              </View>
             </Section>
 
             <Section title="검색 / 정렬">
@@ -51885,6 +52067,11 @@ async function importJSON() {
                   />
                 ))}
               </View>
+              {/* 🆕 v7.28.65: '최신' 필터 — NEW 또는 최근 티어/순위 이동 */}
+              <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
+                <Chip label="🆕 최신만" active={filterLatest} onPress={() => setFilterLatest(v => !v)} />
+                <Text style={{ color: C.sub, fontSize: 11, marginLeft: 4 }}>NEW 또는 최근 티어/순위 이동</Text>
+              </View>
             </Section>
 
             {/* 🛠️ v7.4.10: v7.4.6 구조로 revert — <View ref={tierImageRef}>가 <Section>을 wrap.
@@ -52084,6 +52271,7 @@ async function importJSON() {
             <View style={{ flexDirection: "row", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
               {[
                 { key: "list", label: "📋 목록" },
+                { key: "supplement", label: "📝 보충" },
                 { key: "bulk", label: "✏️ 일괄편집" },
               ].map(t => (
                 <TouchableOpacity
@@ -52614,6 +52802,133 @@ async function importJSON() {
             {/* ════ /list sub-tab ════ */}
             </>)}
 
+            {/* ════ 🆕 v7.28.65: supplement sub-tab (예정 보충) ════ */}
+            {plannedSubTab === "supplement" && (<>
+              <View style={{
+                backgroundColor: isDark ? "#422006" : "#fffbeb", padding: 12, borderRadius: 12, marginBottom: 16,
+                borderLeftWidth: 4, borderLeftColor: "#f59e0b",
+              }}>
+                <Text style={{ color: isDark ? "#fcd34d" : "#92400e", fontSize: 13, lineHeight: 20 }}>
+                  📝 정보가 부족한 예정 작품을 찾아 보충해요.{"\n"}
+                  작품을 누르면 편집 창이 열려 바로 수정할 수 있어요. (기준은 본편 보충 설정을 따름)
+                </Text>
+              </View>
+
+              <Section title="보충 현황">
+                <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+                  <View style={{ backgroundColor: "#f59e0b", paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, minWidth: 90 }}>
+                    <Text style={{ color: "#fff", fontWeight: "800", fontSize: 18 }}>{plannedSupplementTotalCount}</Text>
+                    <Text style={{ color: "rgba(255,255,255,0.85)", fontSize: 11 }}>보충 대상</Text>
+                  </View>
+                  <View style={{ backgroundColor: C.chip, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, minWidth: 90 }}>
+                    <Text style={{ color: C.text, fontWeight: "700", fontSize: 18 }}>{plannedList.length}</Text>
+                    <Text style={{ color: C.sub, fontSize: 11 }}>전체 예정</Text>
+                  </View>
+                </View>
+                {plannedList.length > 0 && (
+                  <View>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
+                      <Text style={{ color: C.sub, fontSize: 12 }}>보충 완료율</Text>
+                      <Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>
+                        {((1 - plannedSupplementTotalCount / plannedList.length) * 100).toFixed(0)}% ({plannedList.length - plannedSupplementTotalCount}/{plannedList.length})
+                      </Text>
+                    </View>
+                    <View style={{ height: 8, backgroundColor: C.chip, borderRadius: 4, overflow: "hidden" }}>
+                      <View style={{ height: "100%", width: `${Math.max(2, (1 - plannedSupplementTotalCount / plannedList.length) * 100)}%`, backgroundColor: plannedSupplementTotalCount === 0 ? "#22c55e" : "#f59e0b", borderRadius: 4 }} />
+                    </View>
+                  </View>
+                )}
+              </Section>
+
+              {plannedSupplementTotalCount > 0 && (
+                <Section title="필터 / 정렬">
+                  <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>이슈별 필터</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+                    <View style={{ flexDirection: "row", gap: 6 }}>
+                      <Chip label={`전체 (${plannedSupplementTotalCount})`} active={plannedSupplementFilter === "all"} onPress={() => setPlannedSupplementFilter("all")} />
+                      {[
+                        ["tags", "🏷️ 태그"], ["author", "✍️ 작가"], ["majorGenre", "📚 대장르"], ["subGenre", "📖 부장르"],
+                        ["totalEpisodes", "📊 전체회차"], ["platform", "📱 플랫폼"], ["cover", "🖼️ 표지"], ["link", "🔗 링크"],
+                        ["note", "📝 메모"], ["workStatus", "📡 연재상태"], ["allDefaultIntensity", "🎚️ 농도조절"],
+                        ["no_major_genre", "🔴 대장르누락"], ["no_sub_genre", "🟡 부장르누락"],
+                      ].map(([k, lbl]) => plannedSupplementIssueCounts[k] > 0 && (
+                        <Chip key={k} label={`${lbl} (${plannedSupplementIssueCounts[k]})`} active={plannedSupplementFilter === k} onPress={() => setPlannedSupplementFilter(k)} />
+                      ))}
+                    </View>
+                  </ScrollView>
+                  <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>정렬</Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+                    <Chip label="⚠️ 이슈 많은 순" active={plannedSupplementSort === "issues"} onPress={() => setPlannedSupplementSort("issues")} />
+                    <Chip label="⭐ 우선순위순" active={plannedSupplementSort === "priority"} onPress={() => setPlannedSupplementSort("priority")} />
+                    <Chip label="🔤 이름순" active={plannedSupplementSort === "title"} onPress={() => setPlannedSupplementSort("title")} />
+                    <Chip label="🎲 무작위" active={plannedSupplementSort === "random"} onPress={() => { setPlannedSupplementShuffleSeed((Math.random() * 0xffffffff) >>> 0); setPlannedSupplementSort("random"); }} />
+                  </View>
+                  {plannedSupplementFilter !== "all" && (
+                    <Text style={{ color: C.primary, fontSize: 12, marginTop: 6 }}>필터 적용: {plannedSupplementCount}개 / 전체 {plannedSupplementTotalCount}개</Text>
+                  )}
+                </Section>
+              )}
+
+              {plannedSupplementTotalCount === 0 ? (
+                <Section title="✅ 완료">
+                  <View style={{ alignItems: "center", paddingVertical: 36 }}>
+                    <Text style={{ fontSize: 44, marginBottom: 10 }}>🎉</Text>
+                    <Text style={{ fontSize: 16, fontWeight: "700", color: C.text, marginBottom: 6 }}>보충할 예정 작품이 없어요</Text>
+                    <Text style={{ color: C.sub, fontSize: 13, textAlign: "center" }}>모든 예정 작품의 정보가 충분히 채워져 있어요.</Text>
+                  </View>
+                </Section>
+              ) : (
+                <Section title={`보충 목록 (${plannedSupplementCount}작)`}>
+                  {(() => {
+                    const LBL = { tags: "🏷️태그", author: "✍️작가", totalEpisodes: "📊회차", majorGenre: "📚대장르", subGenre: "📖부장르", platform: "📱플랫폼", cover: "🖼️표지", link: "🔗링크", note: "📝메모", workStatus: "📡연재상태", no_major_genre: "🔴대장르", no_sub_genre: "🟡부장르", allDefaultIntensity: "🎚️농도" };
+                    return (
+                      <FlatList
+                        data={plannedSupplementList}
+                        keyExtractor={(item, index) => item?.novel?.id || `psup-${index}`}
+                        scrollEnabled={false}
+                        initialNumToRender={10}
+                        maxToRenderPerBatch={5}
+                        windowSize={3}
+                        renderItem={({ item }) => {
+                          const n = item.novel;
+                          return (
+                            <TouchableOpacity
+                              onPress={() => {
+                                updatePlannedEditItem({ ...n });
+                                setPlannedQuoteStyleIdx(-1);
+                                removedQuoteImagesRef.current = [];
+                                editNewQuoteImagesRef.current = [];
+                                setPlannedEditGalleryCount(0);
+                                first("SELECT COUNT(*) as c FROM gallery_images WHERE novel_id=?", [n.id])
+                                  .then(r => setPlannedEditGalleryCount(r?.c || 0)).catch(() => {});
+                                deferOpen(setPlannedEditOpen);
+                              }}
+                              style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line }}
+                            >
+                              <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 6 }}>
+                                <Text style={{ flex: 1, color: C.text, fontSize: 14, fontWeight: "700" }} numberOfLines={1}>{n.title || "(제목 없음)"}</Text>
+                                <View style={{ backgroundColor: "#f59e0b", borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2, marginLeft: 6 }}>
+                                  <Text style={{ color: "#fff", fontSize: 11, fontWeight: "800" }}>{item.issues.length}개</Text>
+                                </View>
+                              </View>
+                              {n.author?.trim() ? <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }} numberOfLines={1}>✍️ {n.author.trim()}</Text> : null}
+                              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }}>
+                                {item.issues.map(iss => (
+                                  <View key={iss} style={{ backgroundColor: C.chip, borderRadius: 8, paddingHorizontal: 7, paddingVertical: 3 }}>
+                                    <Text style={{ color: C.sub, fontSize: 11 }}>{LBL[iss] || iss}</Text>
+                                  </View>
+                                ))}
+                              </View>
+                            </TouchableOpacity>
+                          );
+                        }}
+                      />
+                    );
+                  })()}
+                </Section>
+              )}
+            </>)}
+
             {/* ════ 🆕 v7.3.0: bulk sub-tab (일괄편집) ════ */}
             {plannedSubTab === "bulk" && (() => {
               // 검색 필터링
@@ -52830,6 +53145,7 @@ async function importJSON() {
             new: { icon: "🆕", label: "신규", color: "#10b981", bg: isDark ? "rgba(16,185,129,0.12)" : "#d1fae5" },
             award: { icon: "🏆", label: "수상", color: "#f59e0b", bg: isDark ? "rgba(245,158,11,0.12)" : "#fef3c7" },
             tier_change: { icon: "📊", label: "티어", color: "#8b5cf6", bg: isDark ? "rgba(139,92,246,0.12)" : "#ede9fe" },
+            order_change: { icon: "↕️", label: "순위", color: "#14b8a6", bg: isDark ? "rgba(20,184,166,0.12)" : "#ccfbf1" }, // 🆕 v7.28.65: 같은 티어 순위 이동
             tier_review: { icon: "✅", label: "심사", color: "#3b82f6", bg: isDark ? "rgba(59,130,246,0.12)" : "#dbeafe" },
             read_count: { icon: "📖", label: "읽음", color: "#06b6d4", bg: isDark ? "rgba(6,182,212,0.12)" : "#cffafe" },
             title_change: { icon: "✏️", label: "제목", color: "#ec4899", bg: isDark ? "rgba(236,72,153,0.12)" : "#fce7f3" },
@@ -52915,6 +53231,10 @@ async function importJSON() {
               // 🆕 v7.2.0: 가등록 전환 — fromTier 표시 (있을 시)
               const fromTier = changes[0]?.details?.fromTier;
               return fromTier ? `${fromTier} → 가등록` : "진등록 → 가등록";
+            } else if (type === "order_change") {
+              // 🆕 v7.28.65: 같은 티어 순위 이동 — 방향 표시
+              const dir = changes[0]?.details?.dir;
+              return dir === "up" ? "▲ 순위 상승" : dir === "down" ? "▼ 순위 하락" : "순위 변경";
             }
             return "";
           };
@@ -55780,6 +56100,8 @@ async function importJSON() {
                                       prevTier: item.manual_tier, newTier: tk,
                                       prevManualOrder,
                                     }, `${item.title} 티어 변경 (인라인)`);
+                                    // 🆕 v7.28.65: 최신 기록 — 인라인 티어 변경(모든 모드)
+                                    recordRankChange(item.id, item.title, "tier_change", { from: oldTier ? getTierLabel(oldTier, globalTierConfig) : "미분류", to: getTierLabel(tk, globalTierConfig) });
                                     // 🆕 v7.0: hybrid 모드 — 사용자 path 트리거
                                     if (globalTierConfig.mode === "hybrid") {
                                       const order = getActiveTierOrder(globalTierConfig);
@@ -57091,6 +57413,11 @@ async function importJSON() {
                     onPress={() => setBulkSortKey(key)}
                   />
                 ))}
+              </View>
+              {/* 🆕 v7.28.65: '최신' 필터 — NEW 또는 최근 티어/순위 이동 */}
+              <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", marginTop: 10 }}>
+                <Chip label="🆕 최신만" active={filterLatest} onPress={() => setFilterLatest(v => !v)} />
+                <Text style={{ color: C.sub, fontSize: 11, marginLeft: 4 }}>NEW 또는 최근 티어/순위 이동</Text>
               </View>
             </Section>
 
