@@ -2,12 +2,20 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.59 (Phase② 전작품 회차·완결 일괄 갱신 — 링크 자동/미링크 매핑)     ║
+ * ║  버전: 7.28.60 (자동갱신 강화 — 노벨피아·문피아 검색 API ID 매칭)              ║
  * ║  최종 수정: 2026-06-24                                                        ║
- * ║  총 라인 수: 약 65,140줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 65,170줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔄 v7.28.60 일괄 자동갱신 강화 — 노벨피아·문피아 검색 API 매칭 (2026-06-24) ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 노벨피아·문피아 상세 페이지는 SPA/빈약이라 회차·연도가 덜 잡힘 → 자동갱신 시    ║
+ * ║ 검색 API(풍부)로 저장 링크의 작품ID를 매칭해 메타 확보(fetchMetaForUpdate).     ║
+ * ║ • 노벨피아: link의 /novel/ID → searchNovelpia(title)에서 동일 url 매칭.         ║
+ * ║   문피아: link의 id=ID → searchMunpia(title) AJAX JSON에서 매칭. 못 찾으면      ║
+ * ║   상세(fetchNovelMeta) 폴백. 리디·네이버·카카오는 상세 직접(기존대로 양호).     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 🔄 v7.28.59 Phase② 전작품 회차·완결여부 일괄 갱신 (2026-06-24)              ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 대량 탭 '🔄 웹에서 회차·완결 갱신' — 전작품(+예정) 회차·완결여부·연재연도를     ║
@@ -16036,7 +16044,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.59";
+const APP_VERSION = "7.28.60";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -16062,6 +16070,14 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.60", date: "2026-06-24",
+    title: "🔄 일괄 갱신 — 노벨피아·문피아 정확도 강화",
+    highlights: [
+      { type: "improve", text: "🔄 회차·완결 일괄 갱신에서 노벨피아·문피아 작품도 회차·연재연도가 잘 들어와요. 작품 페이지(앱 화면) 대신 검색 정보로 정확히 맞춰 가져오도록 개선했어요." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.59", date: "2026-06-24",
     title: "🔄 회차·완결 일괄 갱신 (전작품)",
@@ -41143,6 +41159,31 @@ function AppContent() {
     if (bulkUpdateProgress) return; // 갱신/매핑 진행 중엔 닫기 금지
     setBulkUpdateOpen(false);
   }
+  // 🆕 v7.28.60: 자동갱신 강화 — 노벨피아·문피아는 상세 페이지(SPA/빈약) 대신 검색 API(풍부한 회차·연도)로
+  //   저장된 링크의 작품ID를 매칭해 메타 확보. 못 찾으면 상세 페이지(fetchNovelMeta)로 폴백. 그 외는 상세 직접.
+  async function fetchMetaForUpdate(link, title, opts) {
+    const platform = detectPlatformFromUrl(link);
+    const idOf = (re) => (String(link).match(re) || [])[1];
+    if (platform === "노벨피아") {
+      const id = idOf(/\/novel\/(\d+)/);
+      if (id) {
+        try {
+          const hit = (await searchNovelpia(title || "", opts)).find(c => c.url && c.url.includes("/novel/" + id) && c.meta);
+          if (hit) return hit.meta;
+        } catch {}
+      }
+    } else if (platform === "문피아") {
+      const id = idOf(/[?&]id=(\d+)/) || idOf(/\/novel\/(\d+)/);
+      if (id) {
+        try {
+          const hit = (await searchMunpia(title || "", opts)).find(c => c.url && c.url.includes("id=" + id) && c.meta);
+          if (hit) return hit.meta;
+        } catch {}
+      }
+    }
+    // 리디·네이버·카카오, 또는 위에서 ID 매칭 실패 → 상세 페이지 직접
+    return await fetchNovelMeta(link, opts);
+  }
   async function runBulkAutoUpdate() {
     if (bulkUpdateBusy) return;
     const works = bulkAllWorks().filter(w => (w.link || "").trim());
@@ -41159,7 +41200,7 @@ function AppContent() {
       setBulkUpdateProgress({ current: i, total: works.length });
       const w = works[i];
       try {
-        const meta = await fetchNovelMeta(w.link);
+        const meta = await fetchMetaForUpdate(w.link, w.title);
         const changes = await applyScrapedUpdateToWork(w, meta);
         if (changes && changes.length) { results.push({ title: w.title, planned: w._planned, changes }); setBulkUpdateResults([...results]); }
       } catch (e) { failed++; setBulkUpdateFailed(failed); }
