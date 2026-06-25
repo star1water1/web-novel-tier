@@ -2,12 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.58 (문피아 시작연도+완결연도 — 검색 AJAX JSON)                     ║
+ * ║  버전: 7.28.59 (Phase② 전작품 회차·완결 일괄 갱신 — 링크 자동/미링크 매핑)     ║
  * ║  최종 수정: 2026-06-24                                                        ║
- * ║  총 라인 수: 약 64,890줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 65,140줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔄 v7.28.59 Phase② 전작품 회차·완결여부 일괄 갱신 (2026-06-24)              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 대량 탭 '🔄 웹에서 회차·완결 갱신' — 전작품(+예정) 회차·완결여부·연재연도를     ║
+ * ║ 웹에서 재스크랩해 갱신. 링크 있으면 자동, 없으면 1회 검색·선택해 링크 연결 후    ║
+ * ║ 자동(매핑된 작품은 다음부터 자동). 4단계 모달: 메뉴/자동갱신/매핑/완료요약.     ║
+ * ║ • 보수적 적용: 회차=증가만, 완결=연재중→완결 전환만, 연도=빈 칸만(사용자값 보존)║
+ * ║   → applyScrapedUpdateToWork(novels/planned 공용 UPDATE). 진행률·중단·실패 집계.║
+ * ║ • fetchNovelMeta(link) 재사용 — 완결 감지는 광범위(상세 '완결' 텍스트), 회차/   ║
+ * ║   연도는 플랫폼 상세 지원도에 따름. 완료 요약에 '완결 전환' 강조.              ║
+ * ║ ※ Phase③(완결일 컬럼·연중 3상태·완결 알림)은 다음 단계.                       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 📅 v7.28.58 문피아 시작연도+완결연도 (검색 AJAX JSON) (2026-06-24)           ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 사용자 폰 캡처(문피아 검색 AJAX JSON)로 확인: nvTimeReg(등록=연재 시작)·        ║
@@ -16025,7 +16036,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.58";
+const APP_VERSION = "7.28.59";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -16051,6 +16062,16 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.59", date: "2026-06-24",
+    title: "🔄 회차·완결 일괄 갱신 (전작품)",
+    highlights: [
+      { type: "new", text: "🔄 대량 탭에 ‘회차·완결 일괄 갱신’을 추가했어요. 전 작품(예정 포함)의 회차·완결여부·연재연도를 웹에서 다시 가져와 한 번에 갱신해요." },
+      { type: "new", text: "🔗 작품 링크가 있으면 자동으로 갱신하고, 링크가 없으면 한 번 검색해 연결하면 다음부터는 자동이에요. 완료 후 무엇이 바뀌었는지(특히 완결 전환) 목록으로 보여줘요." },
+      { type: "improve", text: "🛟 안전하게: 회차는 늘어난 경우만, 완결은 연재중→완결 전환만, 연재연도는 비어 있을 때만 채워요(직접 입력한 값은 보존)." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.58", date: "2026-06-24",
     title: "📅 문피아 연재 시작연도까지 가져오기",
@@ -34540,6 +34561,19 @@ function AppContent() {
   const [batchAddBusy, setBatchAddBusy] = useState(false);
   const [batchAddDrafts, setBatchAddDrafts] = useState([]); // 긁어온 등록 대기 목록
   const [batchAddProgress, setBatchAddProgress] = useState(null); // {current,total} 등록 진행률
+  // 🆕 v7.28.59 (일괄갱신 Phase②): 전작품(+예정) 회차·완결여부·연도 웹 재스크랩 갱신 (링크 자동 / 미링크 1회 매핑 후 자동)
+  const [bulkUpdateOpen, setBulkUpdateOpen] = useState(false);
+  const [bulkUpdateStage, setBulkUpdateStage] = useState("menu"); // menu | running | mapping | done
+  const [bulkUpdateBusy, setBulkUpdateBusy] = useState(false);
+  const [bulkUpdateProgress, setBulkUpdateProgress] = useState(null); // {current,total} (DB 갱신 중 = 닫기/취소 가드)
+  const [bulkUpdateResults, setBulkUpdateResults] = useState([]); // [{title, planned, changes:[...]}]
+  const [bulkUpdateStats, setBulkUpdateStats] = useState({ linked: 0, unlinked: 0, total: 0 });
+  const [bulkUpdateFailed, setBulkUpdateFailed] = useState(0);
+  const bulkUpdateCancelRef = useRef(false);
+  const [bulkMapQueue, setBulkMapQueue] = useState([]); // 링크 없는 작품들(순차 매핑)
+  const [bulkMapIdx, setBulkMapIdx] = useState(0);
+  const [bulkMapQuery, setBulkMapQuery] = useState("");
+  const [bulkMapCandidates, setBulkMapCandidates] = useState([]);
   // 🔧 v7.28.38 긁기 진단: 폰에서 검색 원본 캡처(타 플랫폼 제목검색 파서 개발용)
   const [scrapeDiagUrl, setScrapeDiagUrl] = useState("");
   const [scrapeDiagOut, setScrapeDiagOut] = useState(null);
@@ -41065,6 +41099,127 @@ function AppContent() {
       setBatchAddBusy(false);
       Alert.alert("일괄 추가 오류", (e?.message || String(e)) + `\n(여기까지 ${registered}개 등록됨)`);
     }
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 🆕 v7.28.59 (일괄갱신 Phase②): 전작품(+예정) 회차·완결여부·연도 웹 재스크랩 갱신
+  //   링크 있는 작품 → fetchNovelMeta(link)로 자동 갱신 / 링크 없는 작품 → 1회 검색·선택해 링크 연결 후 자동.
+  //   보수적 적용: 회차는 증가만, 완결은 ongoing→completed 전환만, 연도는 빈 칸만 채움(사용자값 미덮어씀).
+  // ───────────────────────────────────────────────────────────────────────────
+  function bulkAllWorks() {
+    return [
+      ...(list || []).map(n => ({ ...n, _planned: false })),
+      ...(plannedList || []).map(p => ({ ...p, _planned: true })),
+    ];
+  }
+  async function applyScrapedUpdateToWork(work, meta) {
+    const table = work._planned ? "planned_novels" : "novels";
+    const sets = [], params = [], changes = [];
+    const curEp = Number(work.total_episodes) || 0, newEp = Number(meta.totalEpisodes) || 0;
+    if (newEp > curEp) { sets.push("total_episodes=?"); params.push(newEp); changes.push(`회차 ${curEp}→${newEp}`); }
+    if (meta.workStatus === "completed" && (work.work_status || "ongoing") !== "completed") { sets.push("work_status=?"); params.push("completed"); changes.push("✅완결 전환"); }
+    const curSy = Number(work.start_year) || 0, newSy = Number(meta.startYear) || 0;
+    if (curSy === 0 && newSy > 0) { sets.push("start_year=?"); params.push(newSy); changes.push(`시작 ${newSy}`); }
+    const curEy = Number(work.end_year) || 0, newEy = Number(meta.endYear) || 0;
+    if (curEy === 0 && newEy > 0) { sets.push("end_year=?"); params.push(newEy); changes.push(`완결연도 ${newEy}`); }
+    if (!sets.length) return null;
+    params.push(work.id);
+    await exec(`UPDATE ${table} SET ${sets.join(", ")} WHERE id=?`, params);
+    return changes;
+  }
+  function openBulkUpdate() {
+    const works = bulkAllWorks();
+    const linked = works.filter(w => (w.link || "").trim()).length;
+    setBulkUpdateStats({ linked, unlinked: works.length - linked, total: works.length });
+    setBulkUpdateStage("menu");
+    setBulkUpdateResults([]);
+    setBulkUpdateProgress(null);
+    setBulkUpdateFailed(0);
+    setBulkUpdateBusy(false);
+    bulkUpdateCancelRef.current = false;
+    setBulkUpdateOpen(true);
+  }
+  function closeBulkUpdate() {
+    if (bulkUpdateProgress) return; // 갱신/매핑 진행 중엔 닫기 금지
+    setBulkUpdateOpen(false);
+  }
+  async function runBulkAutoUpdate() {
+    if (bulkUpdateBusy) return;
+    const works = bulkAllWorks().filter(w => (w.link || "").trim());
+    if (!works.length) { Alert.alert("일괄 갱신", "작품 링크가 있는 작품이 없어요.\n‘링크 연결’로 먼저 매핑해 주세요."); return; }
+    setBulkUpdateBusy(true);
+    bulkUpdateCancelRef.current = false;
+    setBulkUpdateStage("running");
+    setBulkUpdateResults([]);
+    setBulkUpdateFailed(0);
+    setBulkUpdateProgress({ current: 0, total: works.length });
+    const results = []; let failed = 0;
+    for (let i = 0; i < works.length; i++) {
+      if (bulkUpdateCancelRef.current) break;
+      setBulkUpdateProgress({ current: i, total: works.length });
+      const w = works[i];
+      try {
+        const meta = await fetchNovelMeta(w.link);
+        const changes = await applyScrapedUpdateToWork(w, meta);
+        if (changes && changes.length) { results.push({ title: w.title, planned: w._planned, changes }); setBulkUpdateResults([...results]); }
+      } catch (e) { failed++; setBulkUpdateFailed(failed); }
+    }
+    setBulkUpdateProgress(null);
+    setBulkUpdateBusy(false);
+    try { await loadList(undefined, undefined, "bulkUpdate"); } catch {}
+    try { await loadPlannedList(); } catch {}
+    setBulkUpdateStage("done");
+  }
+  function startBulkMapping() {
+    const unlinked = bulkAllWorks().filter(w => !(w.link || "").trim());
+    if (!unlinked.length) { Alert.alert("링크 연결", "링크가 없는 작품이 없어요. 모두 연결돼 있어요."); return; }
+    setBulkMapQueue(unlinked);
+    setBulkMapIdx(0);
+    setBulkUpdateResults([]);
+    setBulkUpdateStage("mapping");
+    runBulkMapSearchFor(unlinked[0]);
+  }
+  async function runBulkMapSearchFor(work) {
+    const q = (work?.title || "").trim();
+    setBulkMapQuery(q);
+    setBulkMapCandidates([]);
+    if (!q) return;
+    setBulkUpdateBusy(true);
+    try { setBulkMapCandidates(await searchNovels(q)); } catch (e) { setBulkMapCandidates([]); } finally { setBulkUpdateBusy(false); }
+  }
+  function advanceBulkMap() {
+    const next = bulkMapIdx + 1;
+    if (next >= bulkMapQueue.length) { setBulkMapIdx(next); setBulkMapCandidates([]); setBulkUpdateStage("done"); finishBulkMapping(); }
+    else { setBulkMapIdx(next); runBulkMapSearchFor(bulkMapQueue[next]); }
+  }
+  async function pickBulkMapCandidate(cand) {
+    if (bulkUpdateBusy) return;
+    const work = bulkMapQueue[bulkMapIdx];
+    setBulkUpdateBusy(true);
+    try {
+      let meta = (cand?.meta && cand.meta.title) ? cand.meta : (cand?.url ? await fetchNovelMeta(cand.url) : null);
+      const link = (meta && meta.url) || cand?.url || "";
+      if (work && link) {
+        const table = work._planned ? "planned_novels" : "novels";
+        await exec(`UPDATE ${table} SET link=? WHERE id=?`, [link, work.id]);
+        let changes = ["🔗 링크 연결"];
+        if (meta) { try { const c = await applyScrapedUpdateToWork({ ...work, link }, meta); if (c) changes = changes.concat(c); } catch {} }
+        setBulkUpdateResults(prev => [...prev, { title: work.title, planned: work._planned, changes }]);
+      } else {
+        Alert.alert("링크 연결", "정보를 가져오지 못해 건너뜁니다.");
+      }
+    } catch (e) {
+      Alert.alert("링크 연결", (e?.message || "실패") + " — 건너뜁니다.");
+    } finally {
+      setBulkUpdateBusy(false);
+      advanceBulkMap();
+    }
+  }
+  function skipBulkMap() { if (bulkUpdateBusy) return; advanceBulkMap(); }
+  async function finishBulkMapping() {
+    // 매핑 후 목록 새로고침
+    try { await loadList(undefined, undefined, "bulkMap"); } catch {}
+    try { await loadPlannedList(); } catch {}
   }
 
   // 추천 항목 체크 토글
@@ -56656,6 +56811,13 @@ async function importJSON() {
         {screen === "bulk" && (
           <>
             <H>🔧 대량 편집 모드</H>
+            {/* 🆕 v7.28.59: 전작품 회차·완결 일괄 갱신 (선택 불필요 — 전체 대상) */}
+            <Section title="🔄 웹에서 회차·완결 갱신">
+              <Text style={{ color: C.sub, fontSize: 13, marginBottom: 8, lineHeight: 19 }}>
+                전 작품(예정 포함)의 회차·완결여부·연재연도를 웹에서 다시 가져와 갱신해요. 작품 링크가 있으면 자동, 없으면 한 번 검색해 연결하면 다음부터 자동이에요.
+              </Text>
+              <PrimaryButton title="🔄 회차·완결 일괄 갱신" onPress={openBulkUpdate} />
+            </Section>
             <Section title="선택 / 검색">
               <Input
                 value={query}
@@ -66199,6 +66361,105 @@ async function importJSON() {
               style={{ marginTop: 12, backgroundColor: C.primary, paddingVertical: 12, borderRadius: 10, alignItems: "center", opacity: scrapeLoading ? 0.6 : 1 }}>
               <Text style={{ color: "#fff", fontWeight: "800", fontSize: 15 }}>{scrapeLoading ? "적용 중…" : "선택 적용"}</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 🆕 v7.28.59: 회차·완결 일괄 갱신 모달 (메뉴/자동갱신/매핑/완료) */}
+      <Modal visible={bulkUpdateOpen} animationType="fade" transparent statusBarTranslucent onRequestClose={closeBulkUpdate}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center" }}>
+          <View style={{ backgroundColor: C.card, borderRadius: 20, padding: 18, width: "92%", maxWidth: 480, maxHeight: "90%" }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>🔄 회차·완결 일괄 갱신</Text>
+              <TouchableOpacity onPress={closeBulkUpdate} disabled={!!bulkUpdateProgress}><Text style={{ fontSize: 22, color: bulkUpdateProgress ? C.line : C.sub }}>×</Text></TouchableOpacity>
+            </View>
+
+            {bulkUpdateStage === "menu" && (
+              <View>
+                <Text style={{ color: C.sub, fontSize: 13, marginBottom: 12, lineHeight: 19 }}>
+                  총 {bulkUpdateStats.total}개 · 링크 있음 {bulkUpdateStats.linked}개 / 링크 없음 {bulkUpdateStats.unlinked}개{"\n"}
+                  회차는 늘어난 경우만, 완결은 연재중→완결 전환만, 연재연도는 비어 있을 때만 채워요(기존 값 보존).
+                </Text>
+                <PrimaryButton title={`🔄 링크 있는 ${bulkUpdateStats.linked}개 자동 갱신`} onPress={runBulkAutoUpdate} disabled={bulkUpdateStats.linked === 0} style={{ marginBottom: 8 }} />
+                <OutlineButton title={`🔗 링크 없는 ${bulkUpdateStats.unlinked}개 연결하기`} onPress={startBulkMapping} color={C.primary} />
+                <Text style={{ color: C.sub, fontSize: 11, marginTop: 10, lineHeight: 16 }}>
+                  ※ 작품이 많으면 한 작품씩 순서대로 처리해 시간이 걸려요. 노벨피아 19금·일부 플랫폼은 가져오기가 제한될 수 있어요.
+                </Text>
+              </View>
+            )}
+
+            {bulkUpdateStage === "running" && (
+              <View>
+                {bulkUpdateProgress ? (
+                  <>
+                    <Text style={{ color: C.primary, fontSize: 14, textAlign: "center", fontWeight: "700", marginBottom: 4 }}>갱신 중… {bulkUpdateProgress.current + 1}/{bulkUpdateProgress.total}</Text>
+                    <Text style={{ color: C.sub, fontSize: 12, textAlign: "center", marginBottom: 8 }}>변경 {bulkUpdateResults.length} · 실패 {bulkUpdateFailed}</Text>
+                  </>
+                ) : null}
+                <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator={false}>
+                  {bulkUpdateResults.map((r, idx) => (
+                    <View key={idx} style={{ paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: C.line }}>
+                      <Text style={{ color: C.text, fontSize: 13, fontWeight: "700" }} numberOfLines={1}>{r.planned ? "📋 " : ""}{r.title}</Text>
+                      <Text style={{ color: C.sub, fontSize: 12, marginTop: 1 }}>{r.changes.join(" · ")}</Text>
+                    </View>
+                  ))}
+                </ScrollView>
+                <OutlineButton title="중단" onPress={() => { bulkUpdateCancelRef.current = true; }} color={C.warn} style={{ marginTop: 10 }} />
+              </View>
+            )}
+
+            {bulkUpdateStage === "mapping" && (
+              <View>
+                <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>링크 연결 {Math.min(bulkMapIdx + 1, bulkMapQueue.length)}/{bulkMapQueue.length} · 연결 {bulkUpdateResults.length}</Text>
+                <Text style={{ color: C.text, fontSize: 15, fontWeight: "800", marginBottom: 8 }} numberOfLines={1}>
+                  {bulkMapQueue[bulkMapIdx]?._planned ? "📋 " : ""}{bulkMapQueue[bulkMapIdx]?.title || ""}
+                </Text>
+                <View style={{ flexDirection: "row", gap: 6, marginBottom: 8 }}>
+                  <TextInput value={bulkMapQuery} onChangeText={setBulkMapQuery} placeholder="검색어" placeholderTextColor={C.sub} onSubmitEditing={() => runBulkMapSearchFor({ title: bulkMapQuery })} returnKeyType="search" autoCorrect={false}
+                    style={{ flex: 1, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, color: C.text, fontSize: 14 }} />
+                  <TouchableOpacity onPress={() => runBulkMapSearchFor({ title: bulkMapQuery })} disabled={bulkUpdateBusy} style={{ backgroundColor: C.primary, paddingHorizontal: 14, borderRadius: 10, alignItems: "center", justifyContent: "center", opacity: bulkUpdateBusy ? 0.6 : 1 }}>
+                    <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>{bulkUpdateBusy ? "검색중" : "재검색"}</Text>
+                  </TouchableOpacity>
+                </View>
+                <ScrollView style={{ maxHeight: 300 }} showsVerticalScrollIndicator={false}>
+                  {bulkUpdateBusy && bulkMapCandidates.length === 0 ? <Text style={{ color: C.sub, fontSize: 13, textAlign: "center", paddingVertical: 16 }}>검색 중…</Text> : null}
+                  {!bulkUpdateBusy && bulkMapCandidates.length === 0 ? <Text style={{ color: C.sub, fontSize: 12, textAlign: "center", paddingVertical: 14 }}>결과가 없어요. 검색어를 고치거나 건너뛰세요.</Text> : null}
+                  {bulkMapCandidates.map((c, idx) => (
+                    <TouchableOpacity key={c.url || idx} activeOpacity={0.7} disabled={bulkUpdateBusy} onPress={() => pickBulkMapCandidate(c)}
+                      style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: C.line, opacity: bulkUpdateBusy ? 0.5 : 1 }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: C.text, fontSize: 14, fontWeight: "700" }} numberOfLines={2}>{c.title}</Text>
+                        {c.author ? <Text style={{ color: C.sub, fontSize: 12, marginTop: 2 }} numberOfLines={1}>{c.author}</Text> : null}
+                        <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>{c.platform}{c.category ? ` · ${c.category}` : ""}</Text>
+                      </View>
+                      <Text style={{ color: C.primary, fontSize: 18 }}>🔗</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+                <OutlineButton title="건너뛰기 ▶" onPress={skipBulkMap} color={C.sub} style={{ marginTop: 10 }} />
+              </View>
+            )}
+
+            {bulkUpdateStage === "done" && (
+              <View>
+                <Text style={{ color: C.text, fontSize: 14, fontWeight: "700", textAlign: "center", marginBottom: 8 }}>
+                  완료 · 변경 {bulkUpdateResults.length}개{bulkUpdateFailed ? ` · 실패 ${bulkUpdateFailed}개` : ""}
+                </Text>
+                {bulkUpdateResults.length === 0 ? (
+                  <Text style={{ color: C.sub, fontSize: 13, textAlign: "center", paddingVertical: 16 }}>변경된 작품이 없어요.</Text>
+                ) : (
+                  <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={false}>
+                    {bulkUpdateResults.map((r, idx) => (
+                      <View key={idx} style={{ paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: C.line }}>
+                        <Text style={{ color: C.text, fontSize: 13, fontWeight: "700" }} numberOfLines={1}>{r.planned ? "📋 " : ""}{r.title}</Text>
+                        <Text style={{ color: C.sub, fontSize: 12, marginTop: 1 }}>{r.changes.join(" · ")}</Text>
+                      </View>
+                    ))}
+                  </ScrollView>
+                )}
+                <PrimaryButton title="닫기" onPress={() => setBulkUpdateOpen(false)} style={{ marginTop: 12 }} />
+              </View>
+            )}
           </View>
         </View>
       </Modal>
