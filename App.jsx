@@ -2,12 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.62 (일괄 등록 중복 → 스킵 대신 기존작 비교·선택 반영)             ║
- * ║  최종 수정: 2026-06-24                                                        ║
- * ║  총 라인 수: 약 65,290줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 7.28.63 (일괄 작업 중 저장·중단 + 중복 처리 옵션 선택)                ║
+ * ║  최종 수정: 2026-06-25                                                        ║
+ * ║  총 라인 수: 약 67,600줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ ⏹ v7.28.63 일괄 작업 중 저장·중단 + 중복 처리 옵션 (2026-06-25)              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 일괄 등록·일괄 링크 매핑 등 장시간 작업을 도중에 멈추고 여기까지 저장 가능.     ║
+ * ║ • 일괄 추가: pick 단계 '여기까지 검토(N)' 버튼(goToBatchReview)으로 조기 검토. ║
+ * ║   review 진행 중 '중단(여기까지 저장)'(batchAddCancelRef) → 루프 안전 중단,    ║
+ * ║   registered/skipped 집계 + '⏹중단됨' 표기. 중복 처리(스킵/편집)는 입력 단계  ║
+ * ║   에서 batchAddDupMode 토글로 선택 — 기본 'skip'(건너뛰기).                    ║
+ * ║ • 일괄 링크 매핑(Phase②): 매핑 단계 '중단(저장)'(stopBulkMapping)으로 여기까지 ║
+ * ║   매핑분 반영 후 종료. 건너뛰기(skipBulkMap)와 나란히 배치.                    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 🔁 v7.28.62 일괄 등록 중복 → 기존작 비교·선택 반영 (2026-06-24)              ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║ 일괄 추가(Phase①)에서 이미 등록된 작품을 그냥 스킵하던 것을, 단일 제목검색과   ║
@@ -16085,7 +16095,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.62";
+const APP_VERSION = "7.28.63";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -16111,6 +16121,16 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.28.63", date: "2026-06-25",
+    title: "⏹ 일괄 작업 중 저장·중단 + 중복 처리 옵션",
+    highlights: [
+      { type: "new", text: "⏹ 일괄 등록·일괄 링크 매핑을 도중에 멈출 수 있어요. ‘중단(여기까지 저장)’을 누르면 지금까지 처리한 작품은 그대로 저장하고 안전하게 끝나요." },
+      { type: "new", text: "✅ 작품을 고르는 중에 ‘여기까지 검토’를 눌러 더 담지 않고 바로 등록 단계로 넘어갈 수 있어요." },
+      { type: "improve", text: "🔁 이미 등록된 작품을 만났을 때 건너뛸지(기본) 기존작과 비교·편집할지를 시작할 때 한 번만 정해요." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.62", date: "2026-06-24",
     title: "🔁 일괄 추가 — 이미 등록된 작품은 비교·반영",
@@ -34639,6 +34659,9 @@ function AppContent() {
   // 🆕 v7.28.62: 일괄 등록 시 이미 등록된 작품 — 스킵 대신 기존작과 비교·선택 반영
   const [batchAddDups, setBatchAddDups] = useState([]); // [{meta, existing}]
   const [batchAddDupSummary, setBatchAddDupSummary] = useState("");
+  // 🆕 v7.28.63: 중복 처리 모드(시작 시 선택, 기본 skip) + 등록 중단 ref
+  const [batchAddDupMode, setBatchAddDupMode] = useState("skip"); // "skip" | "edit"
+  const batchAddCancelRef = useRef(false);
   // 🆕 v7.28.59 (일괄갱신 Phase②): 전작품(+예정) 회차·완결여부·연도 웹 재스크랩 갱신 (링크 자동 / 미링크 1회 매핑 후 자동)
   const [bulkUpdateOpen, setBulkUpdateOpen] = useState(false);
   const [bulkUpdateStage, setBulkUpdateStage] = useState("menu"); // menu | running | mapping | done
@@ -41068,9 +41091,17 @@ function AppContent() {
     setBatchAddDrafts([]);
     setBatchAddDups([]);
     setBatchAddDupSummary("");
+    setBatchAddDupMode("skip"); // 🆕 v7.28.63: 기본 건너뛰기
+    batchAddCancelRef.current = false;
     setBatchAddProgress(null);
     setBatchAddBusy(false);
     setBatchAddOpen(true);
+  }
+  // 🆕 v7.28.63: 검색·선택 단계에서 그만 고르고 검토로(여기까지 등록)
+  function goToBatchReview() {
+    if (batchAddDrafts.length === 0) { Alert.alert("일괄 추가", "아직 가져온 작품이 없어요."); return; }
+    setBatchAddCandidates([]);
+    setBatchAddStage("review");
   }
   function closeBatchAdd() {
     if (batchAddProgress) return; // DB 등록 진행 중엔 닫기 금지(검색/긁기 중엔 허용)
@@ -41147,20 +41178,22 @@ function AppContent() {
     const drafts = batchAddDrafts;
     if (!drafts.length) { Alert.alert("일괄 추가", "등록할 작품이 없어요."); return; }
     setBatchAddBusy(true);
+    batchAddCancelRef.current = false; // 🆕 v7.28.63: 중단 ref 초기화
     setBatchAddProgress({ current: 0, total: drafts.length });
-    let registered = 0, skipped = 0, coverTouched = false;
+    let registered = 0, skipped = 0, coverTouched = false, cancelled = false;
     const dups = []; // 🆕 v7.28.62: 이미 등록된(본목록) 작품 — 스킵 대신 비교·반영 대상으로 수집
     try {
       for (let i = 0; i < drafts.length; i++) {
+        if (batchAddCancelRef.current) { cancelled = true; break; } // 🆕 v7.28.63: 도중 중단(여기까지 저장됨)
         setBatchAddProgress({ current: i, total: drafts.length });
         const d = drafts[i];
         const t = (d.title || "").trim();
         if (!t) { skipped++; continue; }
-        // 본목록 중복 → 비교·반영 대상으로 수집(원본 meta 있을 때) / 예정목록 중복은 스킵
+        // 본목록 중복 → 모드에 따라: skip(건너뛰기) / edit(비교·반영 대상 수집). 예정목록 중복은 스킵.
         const dup = await first("SELECT id FROM novels WHERE title=?", [t]);
         const dupP = await first("SELECT id FROM planned_novels WHERE title=?", [t]);
         if (dup || dupP) {
-          const existing = dup ? (list || []).find(n => n.id === dup.id) : null;
+          const existing = (dup && batchAddDupMode === "edit") ? (list || []).find(n => n.id === dup.id) : null;
           if (existing && d._meta) dups.push({ meta: d._meta, existing });
           else skipped++;
           continue;
@@ -41213,14 +41246,15 @@ function AppContent() {
       await refreshDailyRecommendation(false);
       setBatchAddProgress(null);
       setBatchAddBusy(false);
+      const tail = `${skipped ? ` · ${skipped}개 건너뜀` : ""}${cancelled ? " · ⏹중단됨" : ""}`;
       if (dups.length) {
         // 🆕 v7.28.62: 이미 등록된 작품은 비교·반영 단계로 (스킵 X)
         setBatchAddDups(dups);
-        setBatchAddDupSummary(`${registered}개 등록${skipped ? ` · ${skipped}개 건너뜀` : ""}`);
+        setBatchAddDupSummary(`${registered}개 등록${tail}`);
         setBatchAddStage("dups");
       } else {
         setBatchAddOpen(false);
-        Alert.alert("일괄 추가 완료", `${registered}개 작품을 등록했어요.${skipped ? `\n${skipped}개는 중복/빈 제목이라 건너뛰었어요.` : ""}`);
+        Alert.alert(cancelled ? "일괄 추가 중단" : "일괄 추가 완료", `${registered}개 작품을 등록했어요.${tail}`);
       }
     } catch (e) {
       setBatchAddProgress(null);
@@ -41382,6 +41416,8 @@ function AppContent() {
     }
   }
   function skipBulkMap() { if (bulkUpdateBusy) return; advanceBulkMap(); }
+  // 🆕 v7.28.63: 매핑 도중 중단 — 여기까지 연결한 건 이미 저장됨, 완료 단계로
+  function stopBulkMapping() { if (bulkUpdateBusy) return; setBulkMapCandidates([]); setBulkUpdateStage("done"); finishBulkMapping(); }
   async function finishBulkMapping() {
     // 매핑 후 목록 새로고침
     try { await loadList(undefined, undefined, "bulkMap"); } catch {}
@@ -66608,7 +66644,11 @@ async function importJSON() {
                     </TouchableOpacity>
                   ))}
                 </ScrollView>
-                <OutlineButton title="건너뛰기 ▶" onPress={skipBulkMap} color={C.sub} style={{ marginTop: 10 }} />
+                {/* 🆕 v7.28.63: 건너뛰기 / 중단(여기까지 연결한 건 저장됨) */}
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                  <OutlineButton title="건너뛰기 ▶" onPress={skipBulkMap} color={C.sub} style={{ flex: 1 }} />
+                  <OutlineButton title="⏹ 중단(저장)" onPress={stopBulkMapping} color={C.warn} style={{ flex: 1 }} />
+                </View>
               </View>
             )}
 
@@ -66662,6 +66702,16 @@ async function importJSON() {
                 <Text style={{ color: C.sub, fontSize: 11, marginTop: 6 }}>
                   {batchAddInput.split("\n").map(s => s.trim()).filter(Boolean).length}개 제목
                 </Text>
+                {/* 🆕 v7.28.63: 이미 등록된 작품 처리 방식 (기본 건너뛰기) */}
+                <Text style={{ color: C.sub, fontSize: 12, marginTop: 12, marginBottom: 6 }}>이미 등록된 작품은?</Text>
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  {[["skip", "건너뛰기"], ["edit", "기존작 비교·편집"]].map(([k, lbl]) => (
+                    <TouchableOpacity key={k} onPress={() => setBatchAddDupMode(k)}
+                      style={{ flex: 1, paddingVertical: 9, borderRadius: 10, alignItems: "center", backgroundColor: batchAddDupMode === k ? C.primary : C.bg, borderWidth: 1, borderColor: batchAddDupMode === k ? C.primary : C.line }}>
+                      <Text style={{ color: batchAddDupMode === k ? "#fff" : C.sub, fontWeight: "700", fontSize: 13 }}>{lbl}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
                 <PrimaryButton title="검색 시작" onPress={startBatchAddSearch} style={{ marginTop: 12 }} />
               </View>
             )}
@@ -66708,6 +66758,8 @@ async function importJSON() {
                   <OutlineButton title="제목만 추가" onPress={addBatchAddTitleOnly} color={C.sub} style={{ flex: 1 }} />
                   <OutlineButton title="건너뛰기 ▶" onPress={skipBatchAddCurrent} color={C.sub} style={{ flex: 1 }} />
                 </View>
+                {/* 🆕 v7.28.63: 그만 고르고 여기까지 등록 검토 */}
+                <OutlineButton title={`✅ 여기까지 검토 (${batchAddDrafts.length})`} onPress={goToBatchReview} color={C.primary} style={{ marginTop: 8 }} />
               </View>
             )}
 
@@ -66740,6 +66792,10 @@ async function importJSON() {
                   disabled={batchAddBusy || batchAddDrafts.length === 0}
                   style={{ marginTop: 12 }}
                 />
+                {/* 🆕 v7.28.63: 등록 진행 중 중단(여기까지 저장됨) */}
+                {batchAddProgress ? (
+                  <OutlineButton title="⏹ 중단 (여기까지 저장)" onPress={() => { batchAddCancelRef.current = true; }} color={C.warn} style={{ marginTop: 8 }} />
+                ) : null}
               </View>
             )}
 
