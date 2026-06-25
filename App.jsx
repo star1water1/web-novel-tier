@@ -2,11 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.28.65 (예정탭 보충 하위탭 + '최신' 필터 — 홈/순위/일괄)             ║
+ * ║  버전: 7.29.0 (분석 탭 연간 리캡 — 연도별 독서 결산)                          ║
  * ║  최종 수정: 2026-06-25                                                        ║
- * ║  총 라인 수: 약 67,970줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 68,140줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📅 v7.29.0 연간 리캡 — 분석 탭 새 그룹(연도별 독서 결산) (2026-06-25)         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 취향 분석 탭에 '📅 연간 리캡' 그룹 신설. 작품 추가(등록) 연도 기준으로        ║
+ * ║ 연도별 독서 결산을 보여준다. 연도 선택 칩(전체/연도) + 선택 기간 요약.        ║
+ * ║ • 집계: 읽은 편수·작품수·완독·다회독 / 플랫폼별(작품수·편수) / 장르 경향      ║
+ * ║   (대·부) / 고평가 작품(모드별 티어·레이팅 정렬) / 가장많이읽은작품 / 작가.   ║
+ * ║ • 신규: recapData useMemo(list,tierMode) — early-return 전 배치(hooks 규칙),  ║
+ * ║   recapYear state, SECTION_GROUPS에 recap 그룹 추가(전 모드 노출).            ║
+ * ║ • 한계: 회차 단위 독서 로그 없음 → created_at(등록일) 연도로 편수 근사.       ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 📝 v7.28.65 예정 보충 하위탭 + '최신' 필터 (2026-06-25)                      ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -16130,7 +16141,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.28.65";
+const APP_VERSION = "7.29.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -28296,6 +28307,8 @@ const HeatmapRow = memo(({ data, theme }) => {
 // 🆕 v7.1: "🏆 티어 인사이트" 그룹 추가 — hybrid/manual에서만 노출 (mode-aware filter)
 const SECTION_GROUPS = [
   { key: "stats",    label: "📊 통계",       sections: ["basicStats", "categoryAnalysis", "anomalies"] },
+  // 🆕 v7.29.0: 연간 리캡 — 작품 추가(등록) 연도 기준 연도별 독서 결산 (전 모드 노출)
+  { key: "recap",    label: "📅 연간 리캡",   sections: ["recapYearly"] },
   { key: "genreTag", label: "🏷️ 장르·태그",  sections: ["majorGenre", "subGenre", "coordPref", "spectrum"] },
   { key: "tier",     label: "🏆 티어 인사이트", sections: ["tierDistribution", "tierConcentration", "tierStratificationHeatmap", "tierEntropy", "tierInversion", "awardTier"] },
   { key: "matching", label: "⚔️ 매칭 행동",  sections: ["matchAnalysis", "matchBehavior", "matchConsist", "simGroupConsist"] },
@@ -28329,10 +28342,13 @@ const TasteAnalysisScreen = memo(({
   // 🆕 v3.4: 여러 섹션 동시 펼침 가능 (Set 사용)
   const [expandedSections, setExpandedSections] = useState(new Set());
   const [errorMsg, setErrorMsg] = useState(null);
-  // 🆕 v6.2: 그룹 단위 펼침 상태 (기본: stats만)
-  const [expandedGroups, setExpandedGroups] = useState(new Set(["stats"]));
+  // 🆕 v6.2: 그룹 단위 펼침 상태 (기본: stats + recap)
+  // 🆕 v7.29.0: 신규 'recap'(연간 리캡) 기본 펼침 — 신규 기능 발견성. (영속 상태 있으면 그쪽 우선)
+  const [expandedGroups, setExpandedGroups] = useState(new Set(["stats", "recap"]));
   // 🆕 v7.24.0 (🅗): 신뢰도(표본 보정) 정렬 모드 — on이면 장르/태그/조합을 adjRating(수축평균)으로 정렬·표시
   const [confidenceSort, setConfidenceSort] = useState(false);
+  // 🆕 v7.29.0: 연간 리캡에서 선택된 연도 ("all" | 숫자). null=자동(최신 연도)
+  const [recapYear, setRecapYear] = useState(null);
 
   // 🆕 v6.2: 첫 마운트 시 영속 상태 로드 (slot별 자동 분리: app_meta는 slot DB 격리)
   useEffect(() => {
@@ -29096,6 +29112,110 @@ const TasteAnalysisScreen = memo(({
       .sort((a, b) => b.weightedCount - a.weightedCount);
   }, [analysis, customTagCategories]);
 
+  // 🆕 v7.29.0: 연간 리캡 데이터 — 작품 추가(created_at) 연도 기준 버킷팅 후 연도별/전체 결산 집계.
+  //   ※ 회차 단위 독서 로그가 없으므로 '읽은 편수'는 등록 연도 작품의 read_count 합으로 근사(앱 데이터 한계).
+  //   early-return 전에 위치(hooks 규칙). list만 의존하지만 tierMode 변경 시 고평가 정렬(globalTierConfig) 갱신 위해 deps 포함.
+  const recapData = useMemo(() => {
+    const rows = Array.isArray(list) ? list : [];
+    // 장르 JSON 배열 파싱 (기존 패턴: JSON.parse 후 배열/단일/문자열 모두 수용)
+    const parseGenreList = (v) => {
+      if (!v) return [];
+      try {
+        const parsed = JSON.parse(v);
+        if (Array.isArray(parsed)) return parsed.filter(Boolean);
+        if (parsed) return [String(parsed)];
+      } catch {
+        const s = String(v).trim();
+        if (s) return [s];
+      }
+      return [];
+    };
+    // 고평가 정렬 비교자 (compareNovels와 동일 규칙) — 티어모드: manual_tier→manual_order→rating, 그 외: rating
+    const isManualOrHybridLocal = globalTierConfig.mode === "hybrid" || globalTierConfig.mode === "manual";
+    const tierOrder = getActiveTierOrder(globalTierConfig);
+    const compareForTop = (a, b) => {
+      if (isManualOrHybridLocal) {
+        const idxA = a.manual_tier ? tierOrder.indexOf(a.manual_tier) : -1;
+        const idxB = b.manual_tier ? tierOrder.indexOf(b.manual_tier) : -1;
+        const ta = idxA === -1 ? tierOrder.length : idxA;
+        const tb = idxB === -1 ? tierOrder.length : idxB;
+        if (ta !== tb) return ta - tb;
+        const oa = Number(a.manual_order) || 0;
+        const ob = Number(b.manual_order) || 0;
+        if (oa !== ob) return oa - ob;
+        return (b.rating || 0) - (a.rating || 0);
+      }
+      return (b.rating || 0) - (a.rating || 0);
+    };
+    const summarize = (novels) => {
+      let readCount = 0, totalEp = 0, completedCount = 0, droppedCount = 0, readingCount = 0, rereadNovelCount = 0;
+      const platMap = new Map();    // canon → { count, reads }
+      const majorMap = new Map();   // genre → count
+      const subMap = new Map();     // genre → count
+      const authorMap = new Map();  // author → { count, reads }
+      for (const n of novels) {
+        const rc = Number(n.read_count) || 0;
+        readCount += rc;
+        totalEp += Number(n.total_episodes) || 0;
+        if (n.status === "completed") completedCount++;
+        else if (n.status === "dropped") droppedCount++;
+        else if (n.status === "reading") readingCount++;
+        if ((Number(n.reread_count) || 1) > 1) rereadNovelCount++;
+        // 플랫폼 (작품당 표준명 중복 제거)
+        const seenP = new Set();
+        for (const p of parsePlatforms(n.platforms)) {
+          const canon = canonicalPlatform(p);
+          if (!canon || seenP.has(canon)) continue;
+          seenP.add(canon);
+          const cur = platMap.get(canon) || { count: 0, reads: 0 };
+          cur.count += 1; cur.reads += rc;
+          platMap.set(canon, cur);
+        }
+        // 장르
+        for (const g of parseGenreList(n.major_genre)) majorMap.set(g, (majorMap.get(g) || 0) + 1);
+        for (const g of parseGenreList(n.sub_genre)) subMap.set(g, (subMap.get(g) || 0) + 1);
+        // 작가
+        const au = (n.author || "").trim();
+        if (au) {
+          const cur = authorMap.get(au) || { count: 0, reads: 0 };
+          cur.count += 1; cur.reads += rc;
+          authorMap.set(au, cur);
+        }
+      }
+      return {
+        novelCount: novels.length, readCount, totalEp,
+        completedCount, droppedCount, readingCount, rereadNovelCount,
+        platforms: Array.from(platMap, ([platform, v]) => ({ platform, ...v }))
+          .sort((a, b) => b.reads - a.reads || b.count - a.count),
+        majorGenres: Array.from(majorMap, ([genre, count]) => ({ genre, count }))
+          .sort((a, b) => b.count - a.count),
+        subGenres: Array.from(subMap, ([genre, count]) => ({ genre, count }))
+          .sort((a, b) => b.count - a.count),
+        authors: Array.from(authorMap, ([author, v]) => ({ author, ...v }))
+          .sort((a, b) => b.count - a.count || b.reads - a.reads),
+        highRated: [...novels].sort(compareForTop).slice(0, 5),
+        mostRead: novels.filter(n => (Number(n.read_count) || 0) > 0)
+          .sort((a, b) => (Number(b.read_count) || 0) - (Number(a.read_count) || 0))
+          .slice(0, 5),
+      };
+    };
+    // 연도 버킷팅
+    const byYear = new Map();
+    let noDateCount = 0;
+    for (const n of rows) {
+      const ts = Number(n.created_at) || 0;
+      const y = ts ? new Date(ts).getFullYear() : NaN;
+      if (!Number.isFinite(y) || y < 2000 || y > 2100) { noDateCount++; continue; }
+      if (!byYear.has(y)) byYear.set(y, []);
+      byYear.get(y).push(n);
+    }
+    const years = Array.from(byYear.keys()).sort((a, b) => b - a); // 최신 연도 우선
+    const perYear = {};
+    for (const [y, ns] of byYear) perYear[y] = summarize(ns);
+    return { years, perYear, all: summarize(rows), noDateCount, total: rows.length };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [list, tierMode]);
+
   if (!list || list.length === 0) {
     return (
       <>
@@ -29426,6 +29546,187 @@ const TasteAnalysisScreen = memo(({
       {/* ═══════════════════════════════════════════════════════════════
          📊 세부 분석 섹션들 (기본 접힘)
          ═══════════════════════════════════════════════════════════════ */}
+
+      {/* ═══════════════════════════════════════════════════════════════
+         📅 연간 리캡 (그룹: recap) — v7.29.0
+         작품 추가(등록) 연도 기준 연도별 독서 결산. 전 모드 노출.
+         ═══════════════════════════════════════════════════════════════ */}
+      {isGroupExpanded("recap") && (() => {
+        const recapKeys = ["all", ...recapData.years];
+        const selKey = (recapYear != null && recapKeys.includes(recapYear))
+          ? recapYear
+          : (recapData.years.length > 0 ? recapData.years[0] : "all");
+        const cur = selKey === "all" ? recapData.all : (recapData.perYear[selKey] || recapData.all);
+        const platBasis = cur.platforms.some(p => p.reads > 0) ? "reads" : "count";
+        const maxPlat = Math.max(1, ...cur.platforms.map(p => p[platBasis]));
+        const maxGenre = Math.max(1, ...cur.majorGenres.map(g => g.count));
+        return (
+          <Section title="📅 연간 리캡">
+            <Text style={{ color: C.sub, fontSize: 11, marginBottom: 10 }}>
+              작품 추가(등록) 연도 기준 · 전체 {recapData.total}작 중 {recapData.total - recapData.noDateCount}작 집계
+              {recapData.noDateCount > 0 ? ` (등록일 미상 ${recapData.noDateCount}작 제외)` : ""}
+            </Text>
+
+            {/* 연도 선택 칩 */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={{ marginBottom: 14 }}
+              contentContainerStyle={{ gap: 6, paddingRight: 4 }}
+            >
+              {recapKeys.map(k => {
+                const active = k === selKey;
+                const label = k === "all" ? "전체" : `${k}년`;
+                return (
+                  <TouchableOpacity
+                    key={String(k)}
+                    onPress={() => setRecapYear(k)}
+                    activeOpacity={0.7}
+                    style={{
+                      backgroundColor: active ? C.primary : C.chip,
+                      paddingHorizontal: 14, paddingVertical: 7, borderRadius: 16,
+                      borderWidth: 1, borderColor: active ? C.primary : C.line,
+                    }}
+                  >
+                    <Text style={{ color: active ? "#fff" : C.sub, fontSize: 13, fontWeight: "700" }}>{label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            {cur.novelCount === 0 ? (
+              <Text style={{ color: C.sub, fontSize: 13, paddingVertical: 16, textAlign: "center" }}>
+                이 기간에 추가한 작품이 없습니다.
+              </Text>
+            ) : (
+              <View style={{ gap: 18 }}>
+                {/* 헤드라인 수치 */}
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  {[
+                    { label: "읽은 편수", value: cur.readCount.toLocaleString(), color: "#f59e0b" },
+                    { label: "작품수", value: cur.novelCount, color: C.primary },
+                    { label: "완독", value: cur.completedCount, color: C.ok },
+                    { label: "다회독", value: cur.rereadNovelCount, color: "#8b5cf6" },
+                  ].map((it, i) => (
+                    <View key={i} style={{
+                      flex: 1, backgroundColor: isDark ? "#1e293b" : "#f8fafc",
+                      paddingVertical: 12, paddingHorizontal: 4, borderRadius: 12,
+                      alignItems: "center", borderWidth: 1, borderColor: C.line,
+                    }}>
+                      <Text style={{ color: it.color, fontSize: 20, fontWeight: "800" }}>{it.value}</Text>
+                      <Text style={{ color: C.sub, fontSize: 10, marginTop: 2 }}>{it.label}</Text>
+                    </View>
+                  ))}
+                </View>
+
+                {/* 플랫폼별 (작품수 · 읽은 편수) */}
+                {cur.platforms.length > 0 && (
+                  <View>
+                    <Text style={{ color: C.text, fontSize: 14, fontWeight: "800", marginBottom: 8 }}>📱 플랫폼별</Text>
+                    <View style={{ gap: 6 }}>
+                      {cur.platforms.map((p, i) => (
+                        <View key={i} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                          <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", width: 88 }} numberOfLines={1}>{p.platform}</Text>
+                          <View style={{ flex: 1, height: 16, backgroundColor: C.bg, borderRadius: 8, overflow: "hidden" }}>
+                            <View style={{ width: `${Math.max(3, (p[platBasis] / maxPlat) * 100)}%`, height: "100%", backgroundColor: C.primary, opacity: 0.75 }} />
+                          </View>
+                          <Text style={{ color: C.sub, fontSize: 11, width: 108, textAlign: "right" }}>
+                            {p.count}작 · {p.reads.toLocaleString()}편
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                )}
+
+                {/* 장르 경향 (대장르 막대 + 부장르 칩) */}
+                {cur.majorGenres.length > 0 && (
+                  <View>
+                    <Text style={{ color: C.text, fontSize: 14, fontWeight: "800", marginBottom: 8 }}>🏷️ 장르 경향</Text>
+                    <View style={{ gap: 6 }}>
+                      {cur.majorGenres.slice(0, 8).map((g, i) => (
+                        <View key={i} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                          <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", width: 68 }} numberOfLines={1}>{g.genre}</Text>
+                          <View style={{ flex: 1, height: 14, backgroundColor: C.bg, borderRadius: 7, overflow: "hidden" }}>
+                            <View style={{ width: `${Math.max(4, (g.count / maxGenre) * 100)}%`, height: "100%", backgroundColor: "#22c55e", opacity: 0.7 }} />
+                          </View>
+                          <Text style={{ color: C.sub, fontSize: 11, width: 40, textAlign: "right" }}>{g.count}작</Text>
+                        </View>
+                      ))}
+                    </View>
+                    {cur.subGenres.length > 0 && (
+                      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
+                        {cur.subGenres.slice(0, 10).map((g, i) => (
+                          <View key={i} style={{ backgroundColor: C.chip, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12 }}>
+                            <Text style={{ color: C.sub, fontSize: 11, fontWeight: "600" }}>{g.genre} {g.count}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+                )}
+
+                {/* 고평가 작품 (모드별 정렬: 티어모드=manual_tier/order, 그 외=rating) */}
+                {cur.highRated.length > 0 && (
+                  <View>
+                    <Text style={{ color: C.text, fontSize: 14, fontWeight: "800", marginBottom: 8 }}>⭐ 고평가 작품</Text>
+                    <View style={{ gap: 6 }}>
+                      {cur.highRated.map((n, i) => {
+                        const tierKey = n.manual_tier || n.tier || "C";
+                        return (
+                          <View key={n.id || i} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                            <View style={{ minWidth: 30, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: getTierColor(tierKey, globalTierConfig) }}>
+                              <Text style={{ color: "#fff", fontWeight: "800", fontSize: 11, textAlign: "center" }}>{getTierLabel(tierKey, globalTierConfig)}</Text>
+                            </View>
+                            <Text style={{ color: C.text, fontSize: 13, flex: 1 }} numberOfLines={1}>{n.title}</Text>
+                            {!isTierMode && (
+                              <Text style={{ color: C.sub, fontSize: 11 }}>{Math.round(Number(n.rating) || 0)}</Text>
+                            )}
+                          </View>
+                        );
+                      })}
+                    </View>
+                  </View>
+                )}
+
+                {/* 가장 많이 읽은 작품 */}
+                {cur.mostRead.length > 0 && (
+                  <View>
+                    <Text style={{ color: C.text, fontSize: 14, fontWeight: "800", marginBottom: 8 }}>🔥 가장 많이 읽은 작품</Text>
+                    <View style={{ gap: 6 }}>
+                      {cur.mostRead.map((n, i) => (
+                        <View key={n.id || i} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                          <Text style={{ color: C.sub, fontSize: 12, fontWeight: "800", width: 18 }}>{i + 1}</Text>
+                          <Text style={{ color: C.text, fontSize: 13, flex: 1 }} numberOfLines={1}>{n.title}</Text>
+                          <Text style={{ color: "#f59e0b", fontSize: 12, fontWeight: "700" }}>
+                            {(Number(n.read_count) || 0).toLocaleString()}편{(Number(n.total_episodes) || 0) > 0 ? ` / ${(Number(n.total_episodes) || 0).toLocaleString()}` : ""}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                )}
+
+                {/* 많이 읽은 작가 */}
+                {cur.authors.length > 0 && (
+                  <View>
+                    <Text style={{ color: C.text, fontSize: 14, fontWeight: "800", marginBottom: 8 }}>✍️ 많이 읽은 작가</Text>
+                    <View style={{ gap: 6 }}>
+                      {cur.authors.slice(0, 6).map((a, i) => (
+                        <View key={i} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                          <Text style={{ color: C.sub, fontSize: 12, fontWeight: "800", width: 18 }}>{i + 1}</Text>
+                          <Text style={{ color: C.text, fontSize: 13, flex: 1 }} numberOfLines={1}>{a.author}</Text>
+                          <Text style={{ color: C.sub, fontSize: 11 }}>{a.count}작 · {a.reads.toLocaleString()}편</Text>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                )}
+              </View>
+            )}
+          </Section>
+        );
+      })()}
 
       {/* 📊 기본 통계 (그룹: stats) */}
       {isGroupExpanded("stats") && (
