@@ -2,11 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.31.0 (일괄추가 확장 + 명대사 부분삭제)                               ║
+ * ║  버전: 7.31.1 (Claude 모델 선택 + 토큰 사용량)                                ║
  * ║  최종 수정: 2026-06-25                                                        ║
- * ║  총 라인 수: 약 68,360줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 68,450줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🤖 v7.31.1 Claude 모델 선택 + 토큰 사용량 현황 (2026-06-25)                   ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ • 설정 'Claude API'에 모델 선택(Haiku 4.5/Sonnet 4.6/Opus 4.8) 추가.          ║
+ * ║   ai_config.json(claude_model) 영속 + 전역 globalAiModel로 모든               ║
+ * ║   callClaude*(태그추천·OCR·정보불러오기·유의어)에 우선 적용.                  ║
+ * ║ • 누적 토큰 사용량: Claude 응답 usage(입력/출력, 캐시 포함)를 호출수·         ║
+ * ║   모델별로 합산 표시 + 초기화. recordAiTokens. 조직 청구 API는 제외           ║
+ * ║   (admin 키 필요) — 실제 청구는 console.anthropic.com 안내.                   ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🧩 v7.31.0 일괄추가 확장 + 명대사 이미지/텍스트 부분삭제 (2026-06-25)         ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -13314,6 +13324,32 @@ const SYNONYM_AI_MODEL = "claude-haiku-4-5";
 // 🆕 v7.28.9: 무료 대안 — Google Gemini (AI Studio 무료 한도). Flash 계열 = 무료·충분.
 const GEMINI_AI_MODEL = "gemini-2.5-flash";
 
+// 🆕 v7.31.1: 사용자 선택 Claude 모델 (설정에서 변경, ai_config.json 영속). callClaude* 호출에 우선 적용.
+//   globalTierConfig 패턴과 동일하게 모듈 전역 mutable로 두고, 설정 로드/변경 시 갱신.
+let globalAiModel = SYNONYM_AI_MODEL;
+const CLAUDE_MODEL_OPTIONS = [
+  { id: "claude-haiku-4-5",  label: "Haiku 4.5",  desc: "빠르고 저렴 (기본)" },
+  { id: "claude-sonnet-4-6", label: "Sonnet 4.6", desc: "균형 · 중간 비용" },
+  { id: "claude-opus-4-8",   label: "Opus 4.8",   desc: "최고 품질 · 고가" },
+];
+// 🆕 v7.31.1: 누적 토큰 사용량(전 슬롯 공통, ai_config.json 영속). Claude 응답 usage에서 집계.
+//   ※ 조직 단위 청구/사용량 API는 admin 키가 필요해 일반 키로는 못 불러옴 → 앱이 보낸 호출의 토큰만 누적.
+let _aiUsage = { calls: 0, input: 0, output: 0, byModel: {} };
+let _aiUsageOnChange = null; // App이 등록하는 setter(설정 화면 라이브 갱신)
+function recordAiTokens(model, usage) {
+  if (!usage) return;
+  const inn = (Number(usage.input_tokens) || 0) + (Number(usage.cache_creation_input_tokens) || 0) + (Number(usage.cache_read_input_tokens) || 0);
+  const out = Number(usage.output_tokens) || 0;
+  if (!inn && !out) return;
+  _aiUsage.calls += 1; _aiUsage.input += inn; _aiUsage.output += out;
+  const m = model || "?";
+  const bm = _aiUsage.byModel[m] || { calls: 0, input: 0, output: 0 };
+  bm.calls += 1; bm.input += inn; bm.output += out;
+  _aiUsage.byModel = { ..._aiUsage.byModel, [m]: bm };
+  try { saveGlobalAiConfig({ ai_usage: _aiUsage }); } catch {}
+  try { _aiUsageOnChange && _aiUsageOnChange({ ..._aiUsage, byModel: { ..._aiUsage.byModel } }); } catch {}
+}
+
 // 🆕 v7.28.9: 유의어 점검 프롬프트 빌더 (Claude·Gemini 공통) — 단일 출처로 분기 방지
 // 🆕 v7.28.12: 유의어(groups)에 더해 상반 쌍(opposites)까지 한 번에 요청
 function buildSynonymPromptText(tags, context = {}) {
@@ -13353,6 +13389,7 @@ function aiUsageSummary() {
 async function callClaudeForSynonyms(tags, apiKey, model = SYNONYM_AI_MODEL, context = {}) {
   if (!apiKey) throw new Error("API 키가 없습니다");
   recordAiCall(); // 🔢 v7.28.33 사용량 집계(로컬 추정)
+  if (globalAiModel) model = globalAiModel; // 🆕 v7.31.1 사용자 선택 모델 우선
   if (!tags || tags.length === 0) return { groups: [], opposites: [] };
   const promptText = buildSynonymPromptText(tags, context);
   const tool = {
@@ -13417,6 +13454,7 @@ async function callClaudeForSynonyms(tags, apiKey, model = SYNONYM_AI_MODEL, con
     throw new Error(`API 오류 ${res.status}${detail ? ": " + detail.slice(0, 120) : ""}`);
   }
   const data = await res.json();
+  try { recordAiTokens(model, data.usage); } catch {} // 🆕 v7.31.1 토큰 사용량 집계
   const toolUse = (data.content || []).find(b => b.type === "tool_use");
   const groups = toolUse?.input?.groups;
   const opposites = toolUse?.input?.opposites;
@@ -13523,6 +13561,7 @@ function buildPlacementPromptText(tags, context = {}) {
 async function callClaudeForPlacements(tags, apiKey, model = SYNONYM_AI_MODEL, context = {}) {
   if (!apiKey) throw new Error("API 키가 없습니다");
   recordAiCall(); // 🔢 v7.28.33 사용량 집계(로컬 추정)
+  if (globalAiModel) model = globalAiModel; // 🆕 v7.31.1 사용자 선택 모델 우선
   if (!tags || tags.length === 0) return { placements: [] };
   const ax = context.axes || {};
   const promptText = buildPlacementPromptText(tags, context);
@@ -13577,6 +13616,7 @@ async function callClaudeForPlacements(tags, apiKey, model = SYNONYM_AI_MODEL, c
     throw new Error(`API 오류 ${res.status}${detail ? ": " + detail.slice(0, 120) : ""}`);
   }
   const data = await res.json();
+  try { recordAiTokens(model, data.usage); } catch {} // 🆕 v7.31.1 토큰 사용량 집계
   const toolUse = (data.content || []).find(b => b.type === "tool_use");
   const placements = toolUse?.input?.placements;
   return { placements: Array.isArray(placements) ? placements : [] };
@@ -13691,6 +13731,7 @@ function resolveAbortSignal(opts) {
 async function callClaudeForTagging(context = {}, apiKey, model = SYNONYM_AI_MODEL, opts = {}) {
   if (!apiKey) throw new Error("API 키가 없습니다");
   recordAiCall(); // 🔢 v7.28.33 사용량 집계(로컬 추정)
+  if (globalAiModel) model = globalAiModel; // 🆕 v7.31.1 사용자 선택 모델 우선
   const promptText = buildTaggingPrompt(context);
   const tool = {
     name: "report_tags",
@@ -13746,6 +13787,7 @@ async function callClaudeForTagging(context = {}, apiKey, model = SYNONYM_AI_MOD
     throw new Error(`API 오류 ${res.status}${detail ? ": " + detail.slice(0, 120) : ""}`);
   }
   const data = await res.json();
+  try { recordAiTokens(model, data.usage); } catch {} // 🆕 v7.31.1 토큰 사용량 집계
   const toolUse = (data.content || []).find(b => b.type === "tool_use");
   const inp = toolUse?.input || {};
   return {
@@ -13863,6 +13905,7 @@ async function readImageForOcr(uri) {
 async function callClaudeForOCR(base64, mimeType, apiKey, model = SYNONYM_AI_MODEL, opts = {}) {
   if (!apiKey) throw new Error("API 키가 없습니다");
   recordAiCall(); // 🔢 v7.28.33 사용량 집계(로컬 추정)
+  if (globalAiModel) model = globalAiModel; // 🆕 v7.31.1 사용자 선택 모델 우선
   const { signal, cleanup } = resolveAbortSignal(opts);
   let res;
   try {
@@ -13891,6 +13934,7 @@ async function callClaudeForOCR(base64, mimeType, apiKey, model = SYNONYM_AI_MOD
     throw new Error(`API 오류 ${res.status}${detail ? ": " + detail.slice(0, 120) : ""}`);
   }
   const data = await res.json();
+  try { recordAiTokens(model, data.usage); } catch {} // 🆕 v7.31.1 토큰 사용량 집계
   return (data.content || []).filter(b => b.type === "text").map(b => b.text || "").join("").trim();
 }
 
@@ -16188,7 +16232,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.31.0";
+const APP_VERSION = "7.31.1";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -35036,6 +35080,8 @@ function AppContent() {
   const [claudeApiKey, setClaudeApiKey] = useState(""); // 🤖 v7.27.0: AI 유의어 점검용 (app_meta 저장, 백업엔 미포함)
   const [geminiApiKey, setGeminiApiKey] = useState(""); // 🆕 v7.28.9: 무료 대안(Gemini) 키 (app_meta 저장, 백업엔 미포함)
   const [aiProvider, setAiProvider] = useState("gemini"); // 🆕 v7.28.9 AI 제공자 ("claude"|"gemini") · 🆕 v7.28.10 기본값 Gemini(무료)
+  const [claudeModel, setClaudeModel] = useState(SYNONYM_AI_MODEL); // 🆕 v7.31.1: 사용자 선택 Claude 모델 (ai_config 영속)
+  const [aiUsage, setAiUsage] = useState({ calls: 0, input: 0, output: 0, byModel: {} }); // 🆕 v7.31.1: 누적 토큰 사용량
   const [apiKeyHelpModalOpen, setApiKeyHelpModalOpen] = useState(false); // 🆕 v7.28.10: API 키 발급 방법 안내 모달
   const [aiWideScan, setAiWideScan] = useState(false); // 🆕 v7.28.11: 넓게 점검(옵트인) — 1회 태그 포함·상한 400
   // 🆕 v7.28.14: AI 태그 추천 (작품 추가/편집)
@@ -42146,6 +42192,18 @@ function AppContent() {
     setClaudeApiKey(k);
     try { await saveGlobalAiConfig({ claude_api_key: k }); } catch (e) { console.warn("[ai] 키 저장 실패:", e?.message); }
   }
+  // 🆕 v7.31.1: Claude 모델 선택 저장 (전역 mutable + ai_config 영속)
+  async function saveClaudeModel(m) {
+    const id = CLAUDE_MODEL_OPTIONS.some(o => o.id === m) ? m : SYNONYM_AI_MODEL;
+    globalAiModel = id; setClaudeModel(id);
+    try { await saveGlobalAiConfig({ claude_model: id }); } catch (e) { console.warn("[ai] 모델 저장 실패:", e?.message); }
+  }
+  // 🆕 v7.31.1: 누적 토큰 사용량 초기화
+  async function resetAiUsage() {
+    _aiUsage = { calls: 0, input: 0, output: 0, byModel: {} };
+    setAiUsage({ ..._aiUsage });
+    try { await saveGlobalAiConfig({ ai_usage: _aiUsage }); } catch {}
+  }
 
   // 🆕 v7.28.9: Gemini API 키 저장 (무료 대안) · 🆕 v7.28.20: 전역 파일
   async function saveGeminiApiKey(key) {
@@ -42382,7 +42440,20 @@ function AppContent() {
       setGeminiApiKey(typeof cfg.gemini_api_key === "string" ? cfg.gemini_api_key : "");
       if (cfg.ai_provider === "gemini" || cfg.ai_provider === "claude") setAiProvider(cfg.ai_provider);
       if (typeof cfg.ai_wide_scan === "boolean") setAiWideScan(cfg.ai_wide_scan);
+      // 🆕 v7.31.1: Claude 모델 선택 + 누적 토큰 사용량 복원
+      if (typeof cfg.claude_model === "string" && CLAUDE_MODEL_OPTIONS.some(o => o.id === cfg.claude_model)) {
+        globalAiModel = cfg.claude_model; setClaudeModel(cfg.claude_model);
+      }
+      if (cfg.ai_usage && typeof cfg.ai_usage === "object") {
+        _aiUsage = {
+          calls: Number(cfg.ai_usage.calls) || 0, input: Number(cfg.ai_usage.input) || 0,
+          output: Number(cfg.ai_usage.output) || 0, byModel: cfg.ai_usage.byModel || {},
+        };
+        setAiUsage({ ..._aiUsage });
+      }
+      _aiUsageOnChange = setAiUsage; // 응답 집계 시 라이브 갱신
     })();
+    return () => { _aiUsageOnChange = null; };
   }, []);
 
   // 🔧 v7.28.0: 유의어 후보 거절 이력 로드 (다시 추천하지 않기 위함) — 🆕 v7.28.12: 상반 거절도
@@ -60349,10 +60420,27 @@ async function importJSON() {
                       </TouchableOpacity>
                     </View>
                     <Text style={{ color: (claudeApiKey || "").trim() ? (isDark ? "#4ade80" : "#16a34a") : C.sub, fontSize: 11, marginTop: 6 }}>
-                      {(claudeApiKey || "").trim() ? "✓ 키 입력됨 · 모델 Haiku (1회 점검 ~20원)" : "키 미설정 — AI 점검 비활성"}
+                      {(claudeApiKey || "").trim() ? `✓ 키 입력됨 · 모델 ${(CLAUDE_MODEL_OPTIONS.find(o => o.id === claudeModel) || {}).label || claudeModel}` : "키 미설정 — AI 점검 비활성"}
                     </Text>
                     <Text style={{ color: C.sub, fontSize: 10, marginTop: 4 }}>
                       키 발급: console.anthropic.com → API Keys
+                    </Text>
+                    {/* 🆕 v7.31.1: Claude 모델 선택 — 태그추천·OCR·정보불러오기·유의어 공통 적용 */}
+                    <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", marginTop: 14, marginBottom: 6 }}>🤖 Claude 모델</Text>
+                    <View style={{ flexDirection: "row", gap: 6 }}>
+                      {CLAUDE_MODEL_OPTIONS.map(o => {
+                        const on = claudeModel === o.id;
+                        return (
+                          <TouchableOpacity key={o.id} onPress={() => saveClaudeModel(o.id)} activeOpacity={0.7}
+                            style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 6, borderRadius: 10, alignItems: "center", backgroundColor: on ? C.primary : C.bg, borderWidth: 1, borderColor: on ? C.primary : C.line }}>
+                            <Text style={{ color: on ? "#fff" : C.text, fontWeight: "800", fontSize: 12 }}>{o.label}</Text>
+                            <Text style={{ color: on ? "#e0e7ff" : C.sub, fontSize: 9, marginTop: 2, textAlign: "center" }}>{o.desc}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                    <Text style={{ color: C.sub, fontSize: 10, marginTop: 6, lineHeight: 14 }}>
+                      모든 AI 기능이 이 모델을 사용해요. 품질이 필요하면 Sonnet/Opus, 비용·속도 우선이면 Haiku.
                     </Text>
                   </>
                 )}
@@ -60370,6 +60458,26 @@ async function importJSON() {
                     <Text style={{ color: C.sub, fontSize: 10.5, marginTop: 5, lineHeight: 15 }}>
                       무료 한도는 ‘분당 요청 수’에 가장 잘 걸려요(특히 일괄 기능이 한 번에 여러 번 호출). 앱이 보낸 호출만 센 추정치예요 — 한도는 프로젝트 단위라 다른 기기·앱과 공유하면 실제와 다를 수 있어요. 막히면 1분쯤 뒤 다시 시도하거나, 위에서 Claude로 바꿔 보세요.
                     </Text>
+                    {/* 🆕 v7.31.1: Claude 누적 토큰 사용량 (응답 usage 합산, 전 슬롯 공통) */}
+                    {aiUsage.calls > 0 ? (
+                      <View style={{ marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: C.line }}>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "800" }}>🧮 Claude 누적 토큰 (이 기기)</Text>
+                        <Text style={{ color: C.text, fontSize: 12.5, fontWeight: "700", marginTop: 4 }}>
+                          호출 {aiUsage.calls.toLocaleString()}회 · 입력 {aiUsage.input.toLocaleString()} · 출력 {aiUsage.output.toLocaleString()} 토큰
+                        </Text>
+                        {Object.entries(aiUsage.byModel || {}).map(([m, v]) => (
+                          <Text key={m} style={{ color: C.sub, fontSize: 10.5, marginTop: 2 }}>
+                            · {(CLAUDE_MODEL_OPTIONS.find(o => o.id === m) || {}).label || m}: {Number(v.calls).toLocaleString()}회 · 입력 {Number(v.input).toLocaleString()} · 출력 {Number(v.output).toLocaleString()}
+                          </Text>
+                        ))}
+                        <TouchableOpacity onPress={resetAiUsage} style={{ alignSelf: "flex-start", marginTop: 8, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: C.line }}>
+                          <Text style={{ color: C.warn, fontSize: 11, fontWeight: "700" }}>누적 초기화</Text>
+                        </TouchableOpacity>
+                        <Text style={{ color: C.sub, fontSize: 10, marginTop: 6, lineHeight: 14 }}>
+                          앱이 보낸 Claude 호출의 응답 토큰만 합산했어요. 실제 청구·잔여 한도는 console.anthropic.com에서 확인하세요(조직 사용량 API는 admin 키 필요).
+                        </Text>
+                      </View>
+                    ) : null}
                   </View>
                 ); })()}
               </View>
