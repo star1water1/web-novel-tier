@@ -2,11 +2,20 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.31.3 (보충 정렬저장·대량 티어·제미나이 수정·표기 최신화)             ║
+ * ║  버전: 7.32.0 (상반 태그 다중 허용)                                           ║
  * ║  최종 수정: 2026-06-26                                                        ║
- * ║  총 라인 수: 약 68,540줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 68,600줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ ↔️ v7.32.0 상반 태그 다중 허용 (2026-06-26)                                   ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 한 태그에 상반을 여러 개 지정 가능. AI 추천 상반 적용 시 '이미 다른 태그와    ║
+ * ║ 상반'이라며 거부되던 문제 해결. 기존 1:1 그룹 링크(relatedGroupId)는 유지,    ║
+ * ║ 추가 상반은 tagRelations.oppositePairs(쌍 목록)에 적재. acceptOppositePair    ║
+ * ║ 거부 제거(같은 유의어 그룹만 차단), isOppositePair·상반분석·AI 맥락이 쌍      ║
+ * ║ 목록도 인식. tag_relations에 영속(백업 포함). 1차 상반은 그룹 링크로 등록.    ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔧 v7.31.3 보충 정렬저장·대량 티어·제미나이 응답·카카오 안내 (2026-06-26)     ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -13230,6 +13239,9 @@ function synPairKey(a, b) {
 
 // 🔧 v7.28.0: 두 태그가 사용자가 지정한 '상반 관계'인지 — 상반이면 유의어가 아니므로 후보 제외
 function isOppositePair(ta, tb, rel) {
+  // 🆕 v7.32.0: 다중 상반 — 쌍 목록(oppositePairs)에 있으면 상반
+  const op = rel?.oppositePairs;
+  if (Array.isArray(op) && op.some(p => Array.isArray(p) && p.length >= 2 && ((isSameTag(p[0], ta) && isSameTag(p[1], tb)) || (isSameTag(p[0], tb) && isSameTag(p[1], ta))))) return true;
   const t2g = rel?.tagToGroup || {}, groups = rel?.groups || {};
   const ga = t2g[ta] || t2g[normalizeTag(ta)];
   const gb = t2g[tb] || t2g[normalizeTag(tb)];
@@ -16279,7 +16291,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.31.3";
+const APP_VERSION = "7.32.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -16305,6 +16317,14 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.32.0", date: "2026-06-26",
+    title: "↔️ 상반 태그 여러 개 허용",
+    highlights: [
+      { type: "improve", text: "↔️ 한 태그에 상반 태그를 여러 개 둘 수 있어요. AI가 추천한 상반을 적용할 때 ‘이미 다른 태그와 상반’이라며 거부되던 문제를 고쳤어요(예: 먼치킨 ↔ 성장형, 먼치킨 ↔ 약자). 취향분석의 상반 분석에도 함께 반영돼요." },
+    ],
+    details: [],
+  },
   {
     version: "7.31.3", date: "2026-06-26",
     title: "🔧 보충 정렬 저장 · 대량 티어 · 제미나이 응답 · 카카오 안내",
@@ -28879,7 +28899,41 @@ const TasteAnalysisScreen = memo(({
         });
       }
     }
-    
+
+    // 🆕 v7.32.0: 다중 상반(쌍 목록) — 태그 vs 태그 직접 비교 (그룹 링크 외 추가 상반)
+    const calcStatsPair = (novels) => {
+      if (novels.length === 0) return { count: 0, avgRating: 0, completedRate: 0, droppedRate: 0 };
+      const ratings = novels.map(n => getPrefScore(n, globalTierConfig));
+      const completed = novels.filter(n => n.status === "completed").length;
+      const dropped = novels.filter(n => n.status === "dropped").length;
+      return { count: novels.length, avgRating: ratings.reduce((a, b) => a + b, 0) / ratings.length, completedRate: completed / novels.length, droppedRate: dropped / novels.length };
+    };
+    for (const pair of (tagRelations.oppositePairs || [])) {
+      if (!Array.isArray(pair) || pair.length < 2 || !pair[0] || !pair[1]) continue;
+      const ta = pair[0], tb = pair[1];
+      const pk = synPairKey(ta, tb);
+      if (processedPairs.has(pk)) continue;
+      processedPairs.add(pk);
+      const aNov = [], bNov = [];
+      for (const novel of list) {
+        const nt = (novel.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+        const hasA = nt.some(t => isSameTag(t, ta));
+        const hasB = nt.some(t => isSameTag(t, tb));
+        if (hasA && !hasB) aNov.push(novel);
+        else if (hasB && !hasA) bNov.push(novel);
+      }
+      const sA = calcStatsPair(aNov), sB = calcStatsPair(bNov);
+      if (sA.count >= 1 && sB.count >= 1) {
+        const preference = sA.avgRating > sB.avgRating + 50 ? "A" : sB.avgRating > sA.avgRating + 50 ? "B" : "neutral";
+        results.push({
+          groupA: { id: `flat_${pk}_a`, name: ta, tags: [ta], stats: sA },
+          groupB: { id: `flat_${pk}_b`, name: tb, tags: [tb], stats: sB },
+          preference,
+          ratingDiff: Math.abs(sA.avgRating - sB.avgRating),
+        });
+      }
+    }
+
     return results.length > 0 ? results : null;
   }, [tagRelations, list]);
 
@@ -35167,6 +35221,7 @@ function AppContent() {
   const [tagRelations, setTagRelations] = useState({
     groups: {},      // { groupId: { id, tags: [], type: "similar"|"opposite", name } }
     tagToGroup: {},  // { tag: groupId } - 빠른 조회용
+    oppositePairs: [], // 🆕 v7.32.0: 다중 상반 — 그룹 1:1 링크 외 추가 상반 쌍 [[tagA, tagB], ...]
   });
   const [tagRelationModalOpen, setTagRelationModalOpen] = useState(false);
   const [tagRelationTarget, setTagRelationTarget] = useState(null); // 선택된 태그
@@ -41017,33 +41072,43 @@ function AppContent() {
   // 🆕 v7.28.12: 상반 관계 수락 — 두 태그를 opposite로 연결 (acceptSynonymGroup 미러 + 점유 가드)
   function acceptOppositePair(tagA, tagB) {
     if (!tagA || !tagB || isSameTag(tagA, tagB)) return;
-    // 선검사: 같은 그룹(이미 유의어)·한쪽이 이미 다른 관계에 점유되면 자동 연결 거부 (현재 렌더 스냅샷)
+    // 🆕 v7.32.0: 다중 상반 허용 — 한쪽이 이미 다른 상반에 묶여 있어도 거부하지 않고 '쌍 목록'에 추가.
+    //   여전히 막는 경우: 두 태그가 같은 '유의어' 그룹(같다고 묶은 것을 상반으로 둘 수 없음).
     {
       const r = tagRelations || {};
       const gA = r.tagToGroup?.[tagA], gB = r.tagToGroup?.[tagB];
       if (gA && gA === gB) { Alert.alert("연결 불가", "이미 같은 유의어 그룹이에요. 상반으로 둘 수 없어요."); return; }
-      const occupied = (gid) => { const g = gid && r.groups?.[gid]; return !!(g && ((g.tags || []).length > 1 || g.relatedGroupId)); };
-      if (occupied(gA) || occupied(gB)) { Alert.alert("연결 불가", "한쪽 태그가 이미 다른 묶음/상반 관계에 속해 있어요.\n'태그 관계'에서 직접 연결해 주세요."); return; }
     }
     setTagRelations(prev => {
-      const relations = { groups: { ...(prev?.groups || {}) }, tagToGroup: { ...(prev?.tagToGroup || {}) } };
+      const relations = {
+        groups: { ...(prev?.groups || {}) },
+        tagToGroup: { ...(prev?.tagToGroup || {}) },
+        oppositePairs: [...(prev?.oppositePairs || [])],
+      };
       const gA = relations.tagToGroup[tagA];
       const gB = relations.tagToGroup[tagB];
       if (gA && gA === gB) return prev;
-      const occ = (gid) => { const g = gid && relations.groups[gid]; return !!(g && ((g.tags || []).length > 1 || g.relatedGroupId)); };
-      if (occ(gA) || occ(gB)) return prev; // 동시성 가드 (선검사와 동일 기준)
-      const ensure = (tag, gid) => {
-        if (gid && relations.groups[gid]) return gid;
-        const id = `opp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
-        relations.groups[id] = { id, name: `${tag}`, type: "opposite", tags: [tag], relatedGroupId: null, createdAt: Date.now() };
-        relations.tagToGroup[tag] = id;
-        return id;
-      };
-      const idA = ensure(tagA, gA);
-      const idB = ensure(tagB, gB);
-      if (idA === idB) return prev;
-      relations.groups[idA] = { ...relations.groups[idA], type: "opposite", relatedGroupId: idB };
-      relations.groups[idB] = { ...relations.groups[idB], type: "opposite", relatedGroupId: idA };
+      if (isOppositePair(tagA, tagB, relations)) return prev; // 이미 상반(그룹/쌍) — 중복 방지
+      // 양쪽 모두 '비점유'(단일 태그·상반 링크 없음)면 1차 상반은 그룹 링크로(태그 관계 편집기·분석에 그대로 노출).
+      const free = (gid) => { const g = gid && relations.groups[gid]; return !gid || !g || ((g.tags || []).length <= 1 && !g.relatedGroupId); };
+      if (free(gA) && free(gB)) {
+        const ensure = (tag, gid) => {
+          if (gid && relations.groups[gid]) return gid;
+          const id = `opp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+          relations.groups[id] = { id, name: `${tag}`, type: "opposite", tags: [tag], relatedGroupId: null, createdAt: Date.now() };
+          relations.tagToGroup[tag] = id;
+          return id;
+        };
+        const idA = ensure(tagA, gA);
+        const idB = ensure(tagB, gB);
+        if (idA !== idB) {
+          relations.groups[idA] = { ...relations.groups[idA], type: "opposite", relatedGroupId: idB };
+          relations.groups[idB] = { ...relations.groups[idB], type: "opposite", relatedGroupId: idA };
+        }
+      } else {
+        // 한쪽이 이미 다른 관계에 속함 → 추가 상반을 쌍 목록에 등록(개수 제한 없음)
+        relations.oppositePairs.push([tagA, tagB]);
+      }
       deferSetAppMeta("tag_relations", relations);
       return relations;
     });
@@ -42368,6 +42433,14 @@ function AppContent() {
         const pk = [gid, g.relatedGroupId].sort().join("|"); if (seenOpp.has(pk)) continue; seenOpp.add(pk);
         const a = (g.tags || [])[0], b = (other.tags || [])[0];
         if (a && b) oppositePairs.push([a, b]);
+      }
+      // 🆕 v7.32.0: 다중 상반 쌍 목록도 맥락으로 전달 (재추천 방지)
+      for (const p of (tagRelations?.oppositePairs || [])) {
+        if (Array.isArray(p) && p.length >= 2 && p[0] && p[1]) {
+          const pk = synPairKey(p[0], p[1]);
+          if (seenOpp.has(pk)) continue; seenOpp.add(pk);
+          oppositePairs.push([p[0], p[1]]);
+        }
       }
       const dismissedPairs = [...dismissedSynPairs].map(pk => { const [ka, kb] = pk.split("|"); return [disp.get(ka) || ka, disp.get(kb) || kb]; }).slice(0, 50);
       // 🆕 v7.28.12: 상반 거절 이력도 맥락으로 전달 (같은 실수 반복 방지)
