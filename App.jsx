@@ -2,11 +2,24 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.31.2 (제목검색 줄거리 정제 + 장르 오태그 수정)                       ║
- * ║  최종 수정: 2026-06-25                                                        ║
- * ║  총 라인 수: 약 68,470줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 7.31.3 (보충 정렬저장·대량 티어·제미나이 수정·표기 최신화)             ║
+ * ║  최종 수정: 2026-06-26                                                        ║
+ * ║  총 라인 수: 약 68,540줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.31.3 보충 정렬저장·대량 티어·제미나이 응답·카카오 안내 (2026-06-26)     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ • 예정 '보충' 하위탭 정렬/필터 영속화(plannedSupplementSort/Filter →          ║
+ * ║   tab_sort_settings 저장·복원·슬롯전환). 본편 보충은 기존부터 영속.           ║
+ * ║ • 대량 탭 '티어 일괄 변경'을 전 모드 노출(기존 manual/hybrid 한정 →           ║
+ * ║   match/ratio 포함; 수동 티어=표시 덮어쓰기 안내). batchSetTier 재사용.       ║
+ * ║ • 제미나이 4개 호출에 thinkingConfig{thinkingBudget:0} — 2.5 Flash 사고       ║
+ * ║   토큰이 출력 예산 잠식해 빈/잘린 응답 나던 문제 수정(+일부 토큰 상향).       ║
+ * ║ • 카카오페이지 링크: CSR+로그인 차단이라 실패 시 명확 안내(+pagew 호스트      ║
+ * ║   인식, 오해 소지 가이드 문구 갱신). 자동 불러오기는 구조상 제한.             ║
+ * ║ • 인앱 변경이력에 v7.29.0~v7.31.3 추가(LLM 모델선택·사용량 등 표기 최신화).   ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔎 v7.31.2 제목검색 줄거리 정제(엔티티/접두) + 장르 추출 보정 (2026-06-25)    ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -13489,6 +13502,7 @@ async function callGeminiForSynonyms(tags, apiKey, model = GEMINI_AI_MODEL, cont
       contents: [{ role: "user", parts: [{ text: promptText }] }],
       generationConfig: {
         temperature: 0.2,
+        thinkingConfig: { thinkingBudget: 0 }, // 🆕 v7.31.3: 2.5 Flash 사고 토큰이 출력 예산을 잠식해 빈/잘린 응답 → 비활성
         maxOutputTokens: context.maxTokens || 8192, // 🆕 v7.28.11: 넓게 점검 시 상향(잘림 방지)
         responseMimeType: "application/json",
         // Gemini Schema는 protobuf 열거형 → 타입은 대문자(OBJECT/ARRAY/STRING)가 문서 표준
@@ -13648,6 +13662,7 @@ async function callGeminiForPlacements(tags, apiKey, model = GEMINI_AI_MODEL, co
       contents: [{ role: "user", parts: [{ text: promptText }] }],
       generationConfig: {
         temperature: 0.2,
+        thinkingConfig: { thinkingBudget: 0 }, // 🆕 v7.31.3: 사고 토큰 비활성(출력 예산 확보)
         maxOutputTokens: context.maxTokens || 4096,
         responseMimeType: "application/json",
         responseSchema: {
@@ -13822,7 +13837,8 @@ async function callGeminiForTagging(context = {}, apiKey, model = GEMINI_AI_MODE
         contents: [{ role: "user", parts: [{ text: promptText }] }],
         generationConfig: {
           temperature: 0.2,
-          maxOutputTokens: 2048,
+          thinkingConfig: { thinkingBudget: 0 }, // 🆕 v7.31.3: 사고 토큰 비활성
+          maxOutputTokens: 4096,
           responseMimeType: "application/json",
           responseSchema: {
             type: "OBJECT",
@@ -13963,7 +13979,7 @@ async function callGeminiForOCR(base64, mimeType, apiKey, model = GEMINI_AI_MODE
           { inlineData: { mimeType, data: base64 } },
           { text: OCR_PROMPT },
         ] }],
-        generationConfig: { temperature: 0, maxOutputTokens: 2048 },
+        generationConfig: { temperature: 0, thinkingConfig: { thinkingBudget: 0 }, maxOutputTokens: 4096 }, // 🆕 v7.31.3: 사고 토큰 비활성 + 여유
       }),
       signal,
     });
@@ -14016,6 +14032,7 @@ const SCRAPER_PLATFORMS = [
   { key: "네이버시리즈", host: "series.naver.com" },
   { key: "리디", host: "ridibooks.com" },
   { key: "카카오페이지", host: "page.kakao.com" },
+  { key: "카카오페이지", host: "pagew.kakao.com" }, // 🆕 v7.31.3: 웹 변형 호스트도 카카오페이지로 인식
 ];
 
 function detectPlatformFromUrl(url) {
@@ -14265,7 +14282,11 @@ async function fetchNovelMeta(url, opts = {}) {
 
   let meta = scraperNormalizeFromHtml(html, url);
   meta = scraperRefineByPlatform(meta, html, platform);
-  if (!meta || !meta.ok || !meta.title) throw new Error("이 페이지에서 작품 정보를 찾지 못했어요. (지원 안 되는 페이지이거나 구조가 바뀌었을 수 있어요)");
+  if (!meta || !meta.ok || !meta.title) {
+    // 🆕 v7.31.3: 카카오페이지는 작품 페이지가 로그인 기반 CSR(동적 렌더)이라 링크만으론 정보 추출 불가 → 명확 안내
+    if (platform === "카카오페이지") throw new Error("카카오페이지는 작품 페이지가 로그인 기반으로 동적 표시돼, 링크만으로는 정보를 가져오기 어려워요. 제목·작가·회차를 직접 입력하시거나, 같은 작품이 시리즈·리디·노벨피아·문피아에 있으면 그 링크로 불러오세요.");
+    throw new Error("이 페이지에서 작품 정보를 찾지 못했어요. (지원 안 되는 페이지이거나 구조가 바뀌었을 수 있어요)");
+  }
   // 🆕 v7.28.56: 네이버시리즈 완결작 — moreDetail.series(SSR)에서 완결연도 보강(상세엔 날짜가 없음). 실패는 무시.
   if (platform === "네이버시리즈" && meta.workStatus === "completed" && !meta.endYear) {
     try { const c = await fetchNaverCompletion(url, opts); if (c.year) meta = { ...meta, endYear: c.year, completedAt: c.ts || meta.completedAt || 0 }; } catch {}
@@ -16258,7 +16279,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.31.2";
+const APP_VERSION = "7.31.3";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -16284,6 +16305,61 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.31.3", date: "2026-06-26",
+    title: "🔧 보충 정렬 저장 · 대량 티어 · 제미나이 응답 · 카카오 안내",
+    highlights: [
+      { type: "fix", text: "🎲 예정 ‘보충’ 탭의 정렬·필터 선택이 앱을 껐다 켜도 유지돼요." },
+      { type: "new", text: "🏆 대량(편집) 탭에서 선택한 작품들에 티어를 한 번에 적용할 수 있어요(모든 모드). 매칭·비율 모드에선 수동 티어로 지정돼 표시 티어를 덮어써요(작품 편집에서 해제 가능)." },
+      { type: "fix", text: "🤖 제미나이(무료) 응답이 길이 제한에 막혀 비거나 잘리던 문제를 고쳤어요(2.5 Flash 사고 토큰 비활성). 태그 추천·유의어·좌표·OCR이 정상 동작해요." },
+      { type: "improve", text: "🟡 카카오페이지는 페이지가 로그인 기반으로 동적 표시돼 링크 자동 불러오기가 어려워요 — 이제 그럴 때 명확히 안내해요(직접 입력 또는 같은 작품의 다른 플랫폼 링크 권장)." },
+    ],
+    details: [],
+  },
+  {
+    version: "7.31.2", date: "2026-06-25",
+    title: "🔎 제목검색 줄거리 정리 + 장르 추출 보정",
+    highlights: [
+      { type: "fix", text: "📝 제목검색·보충으로 채운 줄거리에서 &lt; &gt; 같은 깨진 기호를 정상 문자로 바꾸고, ‘225화 완결, #태그, 줄거리:’ 같은 군더더기 앞부분을 떼어 본문만 메모에 넣어요." },
+      { type: "fix", text: "🏷️ 줄거리 속 장르 해시태그(#판타지 등)에서 대장르를 더 정확히 뽑아요(엉뚱한 ‘039’ 태그가 끼던 문제 수정)." },
+    ],
+    details: [],
+  },
+  {
+    version: "7.31.1", date: "2026-06-25",
+    title: "🤖 Claude 모델 선택 + 사용량",
+    highlights: [
+      { type: "new", text: "🤖 설정의 Claude API에서 모델을 고를 수 있어요 — Haiku 4.5(빠르고 저렴)·Sonnet 4.6(균형)·Opus 4.8(최고 품질). 태그 추천·OCR·정보 불러오기·유의어 점검 모두 선택한 모델로 동작해요." },
+      { type: "new", text: "🧮 Claude 누적 토큰 사용량(입력/출력·모델별)을 설정에서 보고 초기화할 수 있어요. (실제 청구·잔여 한도는 console.anthropic.com에서 확인하세요.)" },
+    ],
+    details: [],
+  },
+  {
+    version: "7.31.0", date: "2026-06-25",
+    title: "📚 일괄추가 확장 + 명대사 부분삭제",
+    highlights: [
+      { type: "new", text: "📚 예정 탭에도 ‘여러 작품 한 번에 추가’ 버튼이 생겼어요(예정 목록으로 일괄 등록)." },
+      { type: "new", text: "📋 일괄추가 입력칸에 ‘티어표 내보내기’ 텍스트를 그대로 붙여넣어도 제목만 알아서 골라내요." },
+      { type: "new", text: "🖼️ OCR로 텍스트를 뽑은 이미지 명대사에서 ‘텍스트만 삭제’ 또는 ‘이미지만 삭제(텍스트 유지)’를 고를 수 있어요." },
+    ],
+    details: [],
+  },
+  {
+    version: "7.30.0", date: "2026-06-25",
+    title: "🔄 재평가 추천작 (매칭·비율 모드)",
+    highlights: [
+      { type: "new", text: "🔄 추천 탭에 ‘재평가 추천작’이 생겼어요. 티어가 아직 불확실한(미정착·미평가) 작품을 종합 점수로 모아 보여주고, 탭하면 그 작품을 바로 집중 매칭해 자리를 확정할 수 있어요. (하이브리드의 의심작에 대응하는 매칭 모드 기능)" },
+    ],
+    details: [],
+  },
+  {
+    version: "7.29.0", date: "2026-06-25",
+    title: "📅 연간 리캡",
+    highlights: [
+      { type: "new", text: "📅 분석 탭에 ‘연간 리캡’ 그룹이 생겼어요. 연도별로 읽은 편수·작품수, 플랫폼별 집계, 장르 경향, 고평가 작품, 많이 읽은 작품·작가를 한눈에 볼 수 있어요(작품 추가 연도 기준)." },
+    ],
+    details: [],
+  },
   {
     version: "7.28.65", date: "2026-06-25",
     title: "📝 예정 보충 탭 + 🆕 최신 필터",
@@ -18231,7 +18307,7 @@ const GUIDE_CONTENT = [
         description: "제목, 작가, 장르 태그, 플랫폼, 표지 이미지, 인상깊은 문장 등을 입력해 작품을 등록합니다. 제목 검색이나 링크로 정보를 자동으로 불러올 수도 있어요.",
         tips: [
           "🔎 제목만 입력하고 ‘제목으로 검색’을 누르면 리디·네이버시리즈·문피아·노벨피아에서 작품을 찾아 제목·작가·줄거리·장르·태그·연재상태·연재연도·표지·연재처를 자동으로 채워줘요. (v7.28.47)",
-          "🔗 작품 페이지 주소가 있으면 ‘링크에서 불러오기’로 같은 정보를 가져올 수 있어요. 카카오페이지 작품은 이 방법으로 등록하세요. (v7.28.47)",
+          "🔗 작품 페이지 주소가 있으면 ‘링크에서 불러오기’로 같은 정보를 가져올 수 있어요(리디·네이버시리즈·문피아·노벨피아). ※ 카카오페이지는 페이지가 로그인 기반으로 동적 표시돼 링크 자동 불러오기가 어려워요 — 직접 입력하거나 같은 작품의 다른 플랫폼 링크를 쓰세요. (v7.31.3)",
           "📋 불러온 값은 확인 모달에서 항목별로 체크해 적용해요 — 기존에 채워둔 칸은 건드리지 않고 빈 칸만 기본 선택돼요.",
           "제목과 작가만 입력해도 바로 등록할 수 있어요.",
           "태그는 취향 분석과 추천에 활용되니 꼼꼼히 입력하면 좋아요.",
@@ -35047,9 +35123,10 @@ function AppContent() {
     deferSetAppMeta("tab_sort_settings", {
       plannedSortKey, plannedSortDir, plannedFilterPlatform,
       bulkSortKey, supplementSort, supplementFilter,
+      plannedSupplementSort, plannedSupplementFilter, // 🆕 v7.31.3: 예정 보충 하위탭 정렬/필터 영속
       awardFilter, recentFilter,
     });
-  }, [plannedSortKey, plannedSortDir, plannedFilterPlatform, bulkSortKey, supplementSort, supplementFilter, awardFilter, recentFilter]);
+  }, [plannedSortKey, plannedSortDir, plannedFilterPlatform, bulkSortKey, supplementSort, supplementFilter, plannedSupplementSort, plannedSupplementFilter, awardFilter, recentFilter]);
 
   // 📂 v3.7.0: 폴더 시스템
   const [folders, setFolders] = useState([]);
@@ -36955,6 +37032,8 @@ function AppContent() {
             if (s.bulkSortKey) setBulkSortKey(s.bulkSortKey);
             if (s.supplementSort) setSupplementSort(s.supplementSort);
             if (s.supplementFilter) setSupplementFilter(s.supplementFilter);
+            if (s.plannedSupplementSort) setPlannedSupplementSort(s.plannedSupplementSort); // 🆕 v7.31.3
+            if (s.plannedSupplementFilter) setPlannedSupplementFilter(s.plannedSupplementFilter); // 🆕 v7.31.3
             if (s.awardFilter && typeof s.awardFilter === "object") setAwardFilter(prev => ({ ...prev, ...s.awardFilter })); // 객체: spread-merge(불리언 false 보존)
             if (s.recentFilter) setRecentFilter(s.recentFilter);
           }
@@ -37550,6 +37629,8 @@ function AppContent() {
         setBulkSortKey(s.bulkSortKey || "rating");
         setSupplementSort(s.supplementSort || "tier");
         setSupplementFilter(s.supplementFilter || "all");
+        setPlannedSupplementSort(s.plannedSupplementSort || "issues"); // 🆕 v7.31.3
+        setPlannedSupplementFilter(s.plannedSupplementFilter || "all"); // 🆕 v7.31.3
         setAwardFilter((s.awardFilter && typeof s.awardFilter === "object") ? { awardId: "all", tierMin: null, excludeDropped: false, excludeDiscontinued: false, ...s.awardFilter } : { awardId: "all", tierMin: null, excludeDropped: false, excludeDiscontinued: false });
         setRecentFilter(s.recentFilter || "all");
       }
@@ -58149,13 +58230,19 @@ async function importJSON() {
                 ))}
               </View>
 
-              {/* 🆕 v6.1: 티어 일괄 변경 (manual/hybrid 모드) */}
-              {(globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid") && (
+              {/* 🆕 v6.1 / v7.31.3: 티어 일괄 변경 — 전 모드 노출(batchSetTier는 모든 모드 지원).
+                  match/ratio에선 수동 티어로 지정돼 표시 티어를 덮어씀(편집에서 해제 가능). */}
+              {getActiveTierOrder(globalTierConfig).length > 0 && (
                 <>
                   <View style={{ height: 12 }} />
                   <Text style={{ fontWeight: "700", marginBottom: 6, color: C.text }}>
                     티어 일괄 변경
                   </Text>
+                  {(globalTierConfig.mode === "match" || globalTierConfig.mode === "ratio") && (
+                    <Text style={{ color: C.sub, fontSize: 11, marginBottom: 6 }}>
+                      매칭/비율 모드에선 수동 티어로 지정돼 표시 티어를 덮어써요(작품 편집에서 해제 가능).
+                    </Text>
+                  )}
                   <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
                     {getActiveTierOrder(globalTierConfig).map(tierKey => (
                       <TouchableOpacity
