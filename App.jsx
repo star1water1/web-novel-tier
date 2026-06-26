@@ -2,11 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.38.0 (노벨피아 성인물 링크 불러오기)                                 ║
+ * ║  버전: 7.39.0 (검색 사이트 온오프 · 조아라 추가)                              ║
  * ║  최종 수정: 2026-06-26                                                        ║
- * ║  총 라인 수: 약 69,300줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 69,360줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔎 v7.39.0 제목검색 사이트 온오프 · 조아라 추가 (2026-06-26)                  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 제목검색이 조회할 사이트(리디·네이버시리즈·문피아·노벨피아)를 설정에서        ║
+ * ║ 켜고 끌 수 있게 함 — 다중 병렬이라 안 쓰는 곳을 끄면 빠름. 모듈 전역          ║
+ * ║ globalSearchPlatforms + searchNovels 분기 + ai_config(search_platforms)       ║
+ * ║ 영속(globalAiModel과 동일 패턴). 조아라는 FACTORY 연재처로 추가(URL맵),       ║
+ * ║ 단 작품 페이지가 앱 전용 API(키 잠금)·CSR이라 자동 불러오기는 미지원 →        ║
+ * ║ fetchNovelMeta에서 조아라 링크는 직접 입력 안내. 노벨피아 로그인(성인         ║
+ * ║ 표지·검색)은 부담 대비 이득 작아 보류(검토 결과). 회귀 테스트 +2(200).        ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔞 v7.38.0 노벨피아 성인물 링크 불러오기 (2026-06-26)                         ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -14514,6 +14525,8 @@ async function fetchNovelMeta(url, opts = {}) {
   if (!url || !/^https?:\/\//i.test(String(url).trim())) throw new Error("올바른 링크가 아니에요 (http/https URL 필요)");
   url = String(url).trim();
   const platform = detectPlatformFromUrl(url);
+  // 🆕 v7.39.0: 조아라는 작품 페이지가 앱 전용 API(키 잠금)·CSR이라 링크만으론 메타 추출이 안 됨 → 명확 안내(직접 입력).
+  if (/(?:^|\/\/|\.)joara\.com/i.test(url)) throw new Error("조아라는 작품 페이지가 로그인·앱 전용으로 표시돼, 링크만으로는 정보를 가져오기 어려워요. 제목·작가·줄거리는 직접 입력하시고, 연재처에서 ‘조아라’를 선택해 주세요.");
   // 🆕 v7.38.0: 노벨피아는 단건 API(get_novel)가 SPA HTML보다 정확하고 성인물(19금)도 비로그인으로 취득 →
   //   /novel/{id}면 API 우선, 성공 시 그대로 반환(무거운 HTML 안 받음). 실패하면 아래 공통 HTML 폴백.
   if (platform === "노벨피아") {
@@ -14551,11 +14564,23 @@ async function fetchNovelMeta(url, opts = {}) {
 // 제목 → 후보[] { title, author, coverUrl, url, platform, category }. 후보 선택 → fetchNovelMeta(url).
 //   실측으로 디스커버리 완료된 플랫폼만 활성. 현재: 리디(서버렌더 검색 페이지의 __NEXT_DATA__).
 //   ※ 노벨피아/문피아/시리즈/카카오는 검색 엔드포인트가 비공개·GraphQL·차단 → 폰 환경 실측 후 확장(docs §7.1·§9).
+// 🆕 v7.39.0: 제목 검색 대상 플랫폼 온오프(사용자 설정). 검색은 다중 플랫폼 병렬이라 느릴 수 있어,
+//   필요 없는 곳은 꺼서 빠르게. 모듈 전역(globalAiModel과 동일 패턴) — 컴포넌트가 설정 로드 시 채운다.
+//   카카페·조아라는 제목 검색 엔드포인트가 막혀 있어 목록에서 제외(링크 불러오기만 지원).
+const SEARCH_PLATFORMS = ["리디", "네이버시리즈", "문피아", "노벨피아"];
+let globalSearchPlatforms = null; // null=전체 활성(기본). { [name]: boolean }
+function isSearchPlatformOn(name) {
+  if (!globalSearchPlatforms || typeof globalSearchPlatforms !== "object") return true;
+  return globalSearchPlatforms[name] !== false; // 명시적 false만 비활성(미지정은 켜짐)
+}
 async function searchNovels(query, opts = {}) {
   const q = (query || "").trim();
   if (!q) throw new Error("검색할 제목을 입력해 주세요.");
-  // 🔎 v7.28.43: 4개 플랫폼 병렬(allSettled) → 관련도·플랫폼 균형 병합.
-  const settled = await Promise.allSettled([searchRidi(q, opts), searchNaverSeries(q, opts), searchMunpia(q, opts), searchNovelpia(q, opts)]);
+  // 🔎 v7.28.43: 플랫폼 병렬(allSettled) → 관련도·플랫폼 균형 병합. 🆕 v7.39.0: 사용자가 켠 플랫폼만 조회.
+  const runners = { "리디": searchRidi, "네이버시리즈": searchNaverSeries, "문피아": searchMunpia, "노벨피아": searchNovelpia };
+  const active = SEARCH_PLATFORMS.filter(isSearchPlatformOn);
+  if (!active.length) throw new Error("검색할 사이트가 모두 꺼져 있어요. 설정 › ‘검색 사이트’에서 한 곳 이상 켜 주세요.");
+  const settled = await Promise.allSettled(active.map(name => runners[name](q, opts)));
   const errs = [];
   const lists = settled.map(s => { if (s.status === "fulfilled") return s.value || []; if (s.reason) errs.push(s.reason); return []; });
   const merged = mergeSearchResults(lists, q);
@@ -15469,13 +15494,14 @@ const DarkTheme = {
    상수
    ========================================================= */
 // 🆕 플랫폼: 팩토리 기본값 + 런타임 변수 (태그 레지스트리 패턴)
-const FACTORY_PLATFORM_OPTIONS = ["문피아", "리디", "카카페", "노벨피아", "시리즈"];
+const FACTORY_PLATFORM_OPTIONS = ["문피아", "리디", "카카페", "노벨피아", "시리즈", "조아라"]; // 🆕 v7.39.0: 조아라(수동 연재처)
 const FACTORY_PLATFORM_URLS = {
   "문피아": "https://www.munpia.com",
   "리디": "https://ridibooks.com",
   "카카페": "https://page.kakao.com",
   "노벨피아": "https://novelpia.com",
   "시리즈": "https://series.naver.com",
+  "조아라": "https://www.joara.com", // 🆕 v7.39.0: 자동 불러오기는 미지원(앱 전용 API·CSR) — 연재처 태그/바로가기용
 };
 let PLATFORM_OPTIONS = [...FACTORY_PLATFORM_OPTIONS];
 let PLATFORM_URLS = { ...FACTORY_PLATFORM_URLS };
@@ -16564,7 +16590,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.38.0";
+const APP_VERSION = "7.39.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -16590,6 +16616,18 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.39.0", date: "2026-06-26",
+    title: "🔎 검색 사이트 온오프 · 조아라 추가",
+    highlights: [
+      { type: "new", text: "🔎 ‘제목으로 검색’이 조회할 사이트를 설정에서 켜고 끌 수 있어요(리디·네이버 시리즈·문피아·노벨피아). 여러 곳을 동시에 찾아 느릴 때, 안 쓰는 곳을 꺼 두면 빨라져요. (설정 › ‘제목 검색 사이트’)" },
+      { type: "new", text: "🟢 조아라를 연재처 목록에 추가했어요. 작품을 ‘조아라’로 표시·바로가기 할 수 있어요." },
+    ],
+    details: [
+      "조아라는 작품 페이지가 앱 전용 API(키 잠금)·동적 렌더라, 링크만으로 정보를 자동으로 가져오긴 어려워요. 그래서 조아라는 연재처(수동 선택)로만 추가했고, 제목·작가·줄거리는 직접 입력하면 돼요. 조아라 링크로 ‘불러오기’하면 그 점을 안내해요.",
+      "노벨피아 ‘성인 표지·성인 검색 노출’까지 풀려면 노벨피아 로그인(본인인증된 계정)이 필요해요. 이득에 비해 부담(로그인 처리·보안)이 커서 이번엔 넣지 않았어요 — 성인물 메타는 v7.38.0대로 작품 링크 ‘불러오기’로 가져오면 됩니다(표지만 직접 추가).",
+    ],
+  },
   {
     version: "7.38.0", date: "2026-06-26",
     title: "🔞 노벨피아 성인물 링크 불러오기",
@@ -18648,7 +18686,7 @@ const GUIDE_CONTENT = [
         title: "작품 등록하기", icon: "📝", tabs: ["홈"], tabKey: "home",
         description: "제목, 작가, 장르 태그, 플랫폼, 표지 이미지, 인상깊은 문장 등을 입력해 작품을 등록합니다. 제목 검색이나 링크로 정보를 자동으로 불러올 수도 있어요.",
         tips: [
-          "🔎 제목만 입력하고 ‘제목으로 검색’을 누르면 리디·네이버시리즈·문피아·노벨피아에서 작품을 찾아 제목·작가·줄거리·장르·태그·연재상태·연재연도·표지·연재처를 자동으로 채워줘요. (v7.28.47)",
+          "🔎 제목만 입력하고 ‘제목으로 검색’을 누르면 리디·네이버시리즈·문피아·노벨피아에서 작품을 찾아 제목·작가·줄거리·장르·태그·연재상태·연재연도·표지·연재처를 자동으로 채워줘요. 동시에 여러 곳을 찾아 느릴 땐, 설정 › ‘제목 검색 사이트’에서 안 쓰는 곳을 꺼 두면 빨라져요. (v7.39.0)",
           "🔗 작품 페이지 주소가 있으면 ‘링크에서 불러오기’로 같은 정보를 가져올 수 있어요(리디·네이버시리즈·문피아·노벨피아·카카오페이지). 카카오페이지는 작품 페이지 주소(page.kakao.com/content/…)에서 제목·작가·줄거리·장르·연재상태·연재연도를 가져와요. (v7.37.0)",
           "🔞 노벨피아 성인물(19금)은 제목 ‘검색’엔 안 떠요(노벨피아가 비로그인 검색에서 19금을 숨김) — 작품 페이지 링크로 ‘불러오기’하면 제목·작가·줄거리·장르·19금·완결·연재연도가 들어와요. 표지는 성인 게이트라 비어 있어 직접 추가하면 돼요. (v7.38.0)",
           "📋 불러온 값은 확인 모달에서 항목별로 체크해 적용해요 — 기존에 채워둔 칸은 건드리지 않고 빈 칸만 기본 선택돼요.",
@@ -35576,6 +35614,7 @@ function AppContent() {
   const [aiUsage, setAiUsage] = useState({ calls: 0, input: 0, output: 0, byModel: {} }); // 🆕 v7.31.1: 누적 토큰 사용량
   const [apiKeyHelpModalOpen, setApiKeyHelpModalOpen] = useState(false); // 🆕 v7.28.10: API 키 발급 방법 안내 모달
   const [aiWideScan, setAiWideScan] = useState(false); // 🆕 v7.28.11: 넓게 점검(옵트인) — 1회 태그 포함·상한 400
+  const [searchPlatforms, setSearchPlatforms] = useState({ "리디": true, "네이버시리즈": true, "문피아": true, "노벨피아": true }); // 🆕 v7.39.0: 제목검색 대상 사이트 온오프(ai_config 영속, 전역 globalSearchPlatforms 동기화)
   // 🆕 v7.28.14: AI 태그 추천 (작품 추가/편집)
   const [aiTagModalOpen, setAiTagModalOpen] = useState(false);
   // 🔗 v7.28.26 스크래퍼: 링크에서 메타 불러오기 — 로딩 플래그 + 확인 모달({meta,items,apply,label})
@@ -42755,6 +42794,16 @@ function AppContent() {
     try { await saveGlobalAiConfig({ ai_provider: v }); } catch (e) { console.warn("[ai] 제공자 저장 실패:", e?.message); }
   }
 
+  // 🆕 v7.39.0: 제목검색 대상 사이트 토글 — 전역(globalSearchPlatforms) 동기화 + ai_config 영속.
+  function toggleSearchPlatform(name) {
+    setSearchPlatforms(prev => {
+      const next = { ...prev, [name]: prev[name] === false };
+      globalSearchPlatforms = { ...next };
+      try { saveGlobalAiConfig({ search_platforms: next }); } catch (e) { console.warn("[search] 검색 사이트 설정 저장 실패:", e?.message); }
+      return next;
+    });
+  }
+
   // 🆕 v7.33.0: 유형그룹 로드 — 없으면 기본 GENERAL_TAGS + 커스텀 카테고리에서 1회 시드(흡수, 비파괴)
   useEffect(() => {
     (async () => {
@@ -43172,6 +43221,11 @@ function AppContent() {
       // 🆕 v7.31.1: Claude 모델 선택 + 누적 토큰 사용량 복원
       if (typeof cfg.claude_model === "string" && CLAUDE_MODEL_OPTIONS.some(o => o.id === cfg.claude_model)) {
         globalAiModel = cfg.claude_model; setClaudeModel(cfg.claude_model);
+      }
+      // 🆕 v7.39.0: 제목검색 대상 플랫폼 온오프 복원(전역 동기화)
+      if (cfg.search_platforms && typeof cfg.search_platforms === "object") {
+        const sp = {}; for (const name of SEARCH_PLATFORMS) sp[name] = cfg.search_platforms[name] !== false;
+        globalSearchPlatforms = sp; setSearchPlatforms(sp);
       }
       if (cfg.ai_usage && typeof cfg.ai_usage === "object") {
         _aiUsage = {
@@ -61227,6 +61281,28 @@ async function importJSON() {
                     ) : null}
                   </View>
                 ); })()}
+              </View>
+
+              {/* 🆕 v7.39.0: 제목 검색 대상 사이트 온오프 — 다중 플랫폼 병렬이라 안 쓰는 곳은 꺼서 빠르게 */}
+              <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+                <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>🔎 제목 검색 사이트</Text>
+                <Text style={{ color: C.sub, fontSize: 11.5, marginTop: 5, lineHeight: 16 }}>
+                  ‘제목으로 검색’이 동시에 조회할 사이트예요. 여러 곳을 한꺼번에 찾느라 느릴 수 있어, 안 쓰는 곳은 꺼 두면 빨라져요. (카카오페이지·조아라는 제목 검색이 막혀 있어 작품 링크 ‘🔗 불러오기’만 돼요.)
+                </Text>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+                  {SEARCH_PLATFORMS.map(name => {
+                    const on = searchPlatforms[name] !== false;
+                    return (
+                      <TouchableOpacity key={name} onPress={() => toggleSearchPlatform(name)} activeOpacity={0.7}
+                        style={{ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 999, backgroundColor: on ? C.primary : C.bg, borderWidth: 1, borderColor: on ? C.primary : C.line }}>
+                        <Text style={{ color: on ? "#fff" : C.sub, fontWeight: "800", fontSize: 12.5 }}>{on ? "✓ " : ""}{name === "네이버시리즈" ? "네이버 시리즈" : name}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                {SEARCH_PLATFORMS.every(n => searchPlatforms[n] === false) && (
+                  <Text style={{ color: C.warn, fontSize: 11, marginTop: 8, fontWeight: "700" }}>⚠️ 모두 꺼져 있어요 — 한 곳 이상 켜야 제목 검색이 돼요.</Text>
+                )}
               </View>
 
               {/* 🔧 v7.28.38: 긁기 진단 — 폰에서 검색 원본 캡처(타 플랫폼 제목검색 파서 개발용) */}

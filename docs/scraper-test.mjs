@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, SCRAPER_HEADERS, SCRAPER_UA };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, SCRAPER_HEADERS, SCRAPER_UA };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -153,6 +153,10 @@ eq("노벨피아 비성인 ageTag 없음/연재중", { a: nc.ageTag, s: nc.workS
 eq("노벨피아 get_novel status≠200 → null", S.parseNovelpiaGetNovel(JSON.stringify({ status: 403 }), "x"), null);
 eq("노벨피아 get_novel 깨진 JSON → null", S.parseNovelpiaGetNovel("<html>nope", "x"), null);
 eq("노벨피아 genres novel_genre 문자열 폴백", S.novelpiaItemToMeta({ novel_no: 1, novel_name: "t", novel_genre: '["로맨스","여사친"]' }).genres, ["로맨스", "여사친"]);
+
+// ── v7.39.0: 제목 검색 사이트 온오프(기본 전체 활성) ───────────────────────────
+eq("검색 사이트 목록(검색 가능 4종)", S.SEARCH_PLATFORMS, ["리디", "네이버시리즈", "문피아", "노벨피아"]);
+eq("검색 사이트 기본 전체 ON(globalSearchPlatforms null)", S.SEARCH_PLATFORMS.map(S.isSearchPlatformOn), [true, true, true, true]);
 
 // ── ④' 네이버시리즈 검색 파싱(v7.28.39, 폰 캡처 실측 픽스처) ────────────────────
 //   itemList SSR <li class="lst"> 4건 + 클라이언트 템플릿/푸터폼 디코이 → 디코이 제외 4건만.
