@@ -2,11 +2,20 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.36.0 (창작자 어시스트 — 랜덤 작품 구성 / Phase 4)                    ║
+ * ║  버전: 7.36.1 (구 카테고리 편집기 정리 / Phase 3 마무리)                      ║
  * ║  최종 수정: 2026-06-26                                                        ║
- * ║  총 라인 수: 약 69,230줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 69,220줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🧹 v7.36.1 구 카테고리 편집기 잔여 코드 정리 (Phase 3 마무리) (2026-06-26)    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 유형그룹이 흡수한 구 '태그 카테고리 관리' 편집기의 비활성 잔여 코드를         ║
+ * ║ 완전 제거(v7.34.0에서 {false}로 숨겨둔 Section + TagPickerModal, 약 251줄).   ║
+ * ║ 더는 쓰이지 않는 cat* UI 상태 7개도 정리. customTagCategories는 백업          ║
+ * ║ 호환·TagPickerModal 분류 표시용으로만 잔존(라이브 편집은 유형그룹 담당).      ║
+ * ║ 사용자 가시 동작 변화 없음(편집기는 이미 v7.34.0부터 비노출). 파싱 통과.      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🎲 v7.36.0 창작자 어시스트 — 랜덤 작품 구성 (Phase 4) (2026-06-26)            ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -16488,7 +16497,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.36.0";
+const APP_VERSION = "7.36.1";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -35929,13 +35938,9 @@ function AppContent() {
   const [customTagCategories, setCustomTagCategories] = useState({}); // 🆕 v3.5.9: 커스텀 태그 카테고리 { "카테고리명": ["tag1", "tag2"] }
   // 🆕 v7.33.0: 유형그룹(계층 태그 분류) — 카테고리 흡수. { nodes: { [id]: {id,name,parentId,order,tags:[원문]} } }
   const [typeGroups, setTypeGroups] = useState({ nodes: {} });
-  const [catNewName, setCatNewName] = useState(""); // 📂 카테고리 관리: 새 카테고리명
-  const [catExpanded, setCatExpanded] = useState(null); // 📂 카테고리 관리: 펼쳐진 카테고리명
-  const [catTagInput, setCatTagInput] = useState(""); // 📂 카테고리 관리: 태그 추가 입력
-  const [catPickerOpen, setCatPickerOpen] = useState(false); // 🆕 v3.5.12: TagPickerModal
-  const [catPickerTarget, setCatPickerTarget] = useState(""); // 대상 카테고리명
-  const [catRenamingName, setCatRenamingName] = useState(null); // 🔧 v3.5.11: Android 이름 변경 대상 카테고리
-  const [catRenameInput, setCatRenameInput] = useState(""); // 🔧 v3.5.11: Android 이름 변경 입력값
+  // 🆕 v7.36.1: 구 카테고리 편집기 제거(유형그룹이 흡수) — 관련 UI 상태(catNewName/catExpanded/
+  //   catTagInput/catPickerOpen/catPickerTarget/catRenamingName/catRenameInput) 정리.
+  //   customTagCategories(위)는 백업 호환·TagPickerModal 분류 표시용으로만 잔존(라이브 편집은 유형그룹).
   // 🆕 v7.34.0: 유형그룹(유형 ▸ 세부유형) 관리 UI 상태
   const [tgExpanded, setTgExpanded] = useState(null);     // 펼친 최상위 유형 id
   const [tgNewTopName, setTgNewTopName] = useState("");    // 새 유형명
@@ -61625,257 +61630,6 @@ async function importJSON() {
                 </View>
               </View>
             </Modal>
-
-            {/* (구) 카테고리 편집기 — v7.34.0에서 유형그룹으로 흡수, 비표시(다음 정리 때 제거) */}
-            {false && (
-            <Section title="📂 태그 카테고리 관리">
-              <Text style={{ color: C.sub, marginBottom: 12 }}>
-                태그를 카테고리로 분류하여 관리하고 분석에 활용합니다.{"\n"}
-                기본 13개 카테고리 외에 사용자 카테고리를 자유롭게 추가할 수 있습니다.
-              </Text>
-              
-              {/* 새 카테고리 추가 */}
-              <View style={{ flexDirection: "row", marginBottom: 16, gap: 8 }}>
-                <View style={{ flex: 1 }}>
-                  <TagSearchInput
-                    value={catNewName}
-                    onChangeText={setCatNewName}
-                    onSelectTag={(tag) => setCatNewName(tag)}
-                    placeholder="새 카테고리명 입력"
-                    allTags={[]}
-                    theme={C}
-                  />
-                </View>
-                <TouchableOpacity
-                  onPress={() => {
-                    const name = catNewName.trim();
-                    if (!name) return;
-                    if (customTagCategories[name]) {
-                      Alert.alert("알림", "이미 존재하는 카테고리입니다.");
-                      return;
-                    }
-                    if (GENERAL_TAGS[name] || Object.keys(GENERAL_TAGS).some(k => k === `📂 ${name}`)) {
-                      Alert.alert("알림", "기본 카테고리와 이름이 중복됩니다.");
-                      return;
-                    }
-                    const next = { ...customTagCategories, [name]: [] };
-                    setCustomTagCategories(next);
-                    setAppMeta("custom_tag_categories", next);
-                    setCatNewName("");
-                    setCatExpanded(name);
-                  }}
-                  disabled={!catNewName.trim()}
-                  style={{
-                    backgroundColor: catNewName.trim() ? C.primary : C.chip,
-                    paddingHorizontal: 16,
-                    borderRadius: 12,
-                    justifyContent: "center",
-                  }}
-                >
-                  <Text style={{ color: catNewName.trim() ? "#fff" : C.sub, fontWeight: "700" }}>추가</Text>
-                </TouchableOpacity>
-              </View>
-              
-              {/* 기존 카테고리 목록 */}
-              {Object.keys(customTagCategories).length === 0 ? (
-                <View style={{ padding: 20, alignItems: "center", backgroundColor: C.bg, borderRadius: 12 }}>
-                  <Text style={{ color: C.sub }}>아직 커스텀 카테고리가 없습니다</Text>
-                </View>
-              ) : (
-                Object.entries(customTagCategories).map(([catName, rawCatTags]) => {
-                  // 🔧 v3.5.9: 방어 - 배열이 아닌 경우 빈 배열로 폴백 (손상된 데이터 방어)
-                  const catTags = Array.isArray(rawCatTags) ? rawCatTags : [];
-                  const isExpanded = catExpanded === catName;
-                  return (
-                    <View key={catName} style={{ marginBottom: 8, backgroundColor: C.bg, borderRadius: 12, overflow: "hidden" }}>
-                      {/* 카테고리 헤더 */}
-                      <TouchableOpacity
-                        onPress={() => {
-                          setCatExpanded(isExpanded ? null : catName);
-                          // 🔧 v3.5.9: 카테고리 전환 시 태그 입력 초기화 (다른 카테고리 입력값 잔류 방지)
-                          if (!isExpanded) setCatTagInput("");
-                        }}
-                        onLongPress={() => {
-                          Alert.alert(
-                            `📂 ${catName}`,
-                            `${catTags.length}개 태그`,
-                            [
-                              { text: "이름 변경", onPress: () => {
-                                if (Platform.OS === "ios" && Alert.prompt) {
-                                  Alert.prompt("카테고리 이름 변경", `"${catName}"의 새 이름을 입력하세요`, (newName) => {
-                                    if (!newName?.trim() || newName.trim() === catName) return;
-                                    const trimmed = newName.trim();
-                                    if (customTagCategories[trimmed]) { Alert.alert("알림", "이미 존재하는 이름입니다."); return; }
-                                    const next = { ...customTagCategories };
-                                    next[trimmed] = next[catName];
-                                    delete next[catName];
-                                    setCustomTagCategories(next);
-                                    setAppMeta("custom_tag_categories", next);
-                                    if (catExpanded === catName) setCatExpanded(trimmed);
-                                  }, "plain-text", catName);
-                                } else {
-                                  // 🔧 v3.5.11: Android 인라인 이름 변경 모드 진입
-                                  setCatRenamingName(catName);
-                                  setCatRenameInput(catName);
-                                  setCatExpanded(catName); // 해당 카테고리 펼치기
-                                }
-                              }},
-                              { text: "삭제", style: "destructive", onPress: () => {
-                                Alert.alert("삭제 확인", `"${catName}" 카테고리를 삭제할까요?\n(태그 자체는 삭제되지 않습니다)`, [
-                                  { text: "취소", style: "cancel" },
-                                  { text: "삭제", style: "destructive", onPress: () => {
-                                    const next = { ...customTagCategories };
-                                    delete next[catName];
-                                    setCustomTagCategories(next);
-                                    setAppMeta("custom_tag_categories", next);
-                                    if (catExpanded === catName) setCatExpanded(null);
-                                  }},
-                                ]);
-                              }},
-                              { text: "닫기", style: "cancel" },
-                            ]
-                          );
-                        }}
-                        style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 12 }}
-                      >
-                        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                          <Text style={{ color: C.text, fontWeight: "700", fontSize: 15 }}>📂 {catName}</Text>
-                          <View style={{ backgroundColor: C.primary + "20", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 }}>
-                            <Text style={{ color: C.primary, fontSize: 12, fontWeight: "700" }}>{catTags.length}</Text>
-                          </View>
-                        </View>
-                        <Text style={{ color: C.sub, fontSize: 16 }}>{isExpanded ? "▼" : "▶"}</Text>
-                      </TouchableOpacity>
-                      
-                      {/* 펼쳐진 내용 */}
-                      {isExpanded && (
-                        <View style={{ padding: 12, paddingTop: 0 }}>
-                          {/* 🔧 v3.5.11: Android 인라인 이름 변경 UI */}
-                          {catRenamingName === catName && (
-                            <View style={{ flexDirection: "row", marginBottom: 10, gap: 8, backgroundColor: C.card, padding: 8, borderRadius: 10, borderWidth: 1, borderColor: C.primary }}>
-                              <TextInput
-                                value={catRenameInput}
-                                onChangeText={setCatRenameInput}
-                                placeholder="새 카테고리 이름"
-                                placeholderTextColor={C.sub}
-                                autoFocus
-                                style={{ flex: 1, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, fontSize: 14, color: C.text }}
-                              />
-                              <TouchableOpacity
-                                onPress={() => {
-                                  const trimmed = catRenameInput.trim();
-                                  if (!trimmed || trimmed === catName) { setCatRenamingName(null); return; }
-                                  if (customTagCategories[trimmed]) { Alert.alert("알림", "이미 존재하는 이름입니다."); return; }
-                                  const next = { ...customTagCategories };
-                                  next[trimmed] = next[catName];
-                                  delete next[catName];
-                                  setCustomTagCategories(next);
-                                  setAppMeta("custom_tag_categories", next);
-                                  setCatExpanded(trimmed);
-                                  setCatRenamingName(null);
-                                }}
-                                disabled={!catRenameInput.trim() || catRenameInput.trim() === catName}
-                                style={{ backgroundColor: catRenameInput.trim() && catRenameInput.trim() !== catName ? C.primary : C.chip, paddingHorizontal: 12, borderRadius: 8, justifyContent: "center" }}
-                              >
-                                <Text style={{ color: catRenameInput.trim() && catRenameInput.trim() !== catName ? "#fff" : C.sub, fontWeight: "700", fontSize: 13 }}>변경</Text>
-                              </TouchableOpacity>
-                              <TouchableOpacity
-                                onPress={() => setCatRenamingName(null)}
-                                style={{ paddingHorizontal: 8, justifyContent: "center" }}
-                              >
-                                <Text style={{ color: C.sub, fontWeight: "700", fontSize: 13 }}>취소</Text>
-                              </TouchableOpacity>
-                            </View>
-                          )}
-                          {/* 태그 추가 — 🔧 v3.5.12: TagPickerModal로 교체 */}
-                          <TouchableOpacity
-                            onPress={() => {
-                              setCatPickerTarget(catName);
-                              setCatPickerOpen(true);
-                            }}
-                            style={{
-                              backgroundColor: isDark ? "#1e3a5f" : "#eff6ff",
-                              padding: 12, borderRadius: 10, marginBottom: 10,
-                              borderWidth: 1, borderColor: isDark ? "#3b82f6" : "#93c5fd",
-                              alignItems: "center",
-                            }}
-                          >
-                            <Text style={{ color: isDark ? "#93c5fd" : "#1d4ed8", fontWeight: "700", fontSize: 13 }}>
-                              🏷️ 태그 선택하여 추가
-                            </Text>
-                          </TouchableOpacity>
-                          
-                          {/* 태그 칩 목록 */}
-                          {catTags.length === 0 ? (
-                            <Text style={{ color: C.sub, fontSize: 13, textAlign: "center", paddingVertical: 10 }}>
-                              태그를 추가해주세요
-                            </Text>
-                          ) : (
-                            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-                              {catTags.map(tag => (
-                                <View key={tag} style={{
-                                  flexDirection: "row", alignItems: "center",
-                                  backgroundColor: C.primary + "15", paddingLeft: 10, paddingRight: 4,
-                                  paddingVertical: 5, borderRadius: 999,
-                                }}>
-                                  <Text style={{ color: C.text, fontSize: 13, fontWeight: "600" }}>{tag}</Text>
-                                  <TouchableOpacity
-                                    onPress={() => {
-                                      const next = { ...customTagCategories, [catName]: catTags.filter(t => t !== tag) };
-                                      setCustomTagCategories(next);
-                                      setAppMeta("custom_tag_categories", next);
-                                    }}
-                                    style={{ padding: 4 }}
-                                  >
-                                    <Text style={{ color: "#ef4444", fontSize: 11, fontWeight: "700" }}>✕</Text>
-                                  </TouchableOpacity>
-                                </View>
-                              ))}
-                            </View>
-                          )}
-                          
-                          <Text style={{ color: C.sub, fontSize: 10, marginTop: 8 }}>
-                            길게 누르면 이름 변경/삭제 · 분석에서 카테고리별 통계 확인 가능
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-                  );
-                })
-              )}
-              
-              {/* 기본 카테고리 현황 */}
-              <View style={{ marginTop: 12, padding: 12, backgroundColor: C.bg, borderRadius: 12 }}>
-                <Text style={{ color: C.sub, fontSize: 12, fontWeight: "600", marginBottom: 6 }}>📋 기본 카테고리 ({Object.keys(GENERAL_TAGS).length}개)</Text>
-                <Text style={{ color: C.sub, fontSize: 11, lineHeight: 18 }}>
-                  {Object.entries(GENERAL_TAGS).map(([cat, tags]) => `${cat} (${tags.length})`).join(" · ")}
-                </Text>
-              </View>
-            </Section>
-            )}
-
-            {/* 🆕 v3.5.12: 카테고리 태그 추가용 TagPickerModal */}
-            <TagPickerModal
-              visible={catPickerOpen}
-              onClose={() => setCatPickerOpen(false)}
-              onConfirm={(tags) => {
-                if (!catPickerTarget || !customTagCategories[catPickerTarget]) return;
-                const existing = customTagCategories[catPickerTarget] || [];
-                const newTags = tags.filter(t => !existing.some(et => isSameTag(et, t)));
-                if (newTags.length === 0) return;
-                const next = { ...customTagCategories, [catPickerTarget]: [...existing, ...newTags] };
-                setCustomTagCategories(next);
-                setAppMeta("custom_tag_categories", next);
-              }}
-              allTags={allTagsForSearch}
-              excludeTags={catPickerTarget ? (customTagCategories[catPickerTarget] || []) : []}
-              title={`"${catPickerTarget}" 카테고리에 태그 추가`}
-              customTags={customTags}
-              userMajorGenres={userMajorGenres}
-              userSubGenres={userSubGenres}
-              customTagCategories={customTagCategories}
-              theme={C}
-            />
 
             {/* 🔗 v3.0.4: 조합 요소 관리 */}
             <Section title="🔗 조합식 태그 요소 관리">
