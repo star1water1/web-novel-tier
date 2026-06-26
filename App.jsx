@@ -2,11 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.32.0 (상반 태그 다중 허용)                                           ║
+ * ║  버전: 7.33.0 (유형그룹 토대 — 카테고리 흡수 시드/영속/백업)                  ║
  * ║  최종 수정: 2026-06-26                                                        ║
- * ║  총 라인 수: 약 68,600줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 68,680줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🗂️ v7.33.0 유형그룹(계층 태그 분류) Phase 1a — 토대 (2026-06-26)             ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 카테고리를 흡수하는 계층형 태그 분류 '유형그룹' 도입 시작(이번엔 토대만).     ║
+ * ║ typeGroups state(nodes:{id,name,parentId,order,tags[원문]}) + 기본            ║
+ * ║ GENERAL_TAGS+커스텀 카테고리에서 1회 시드(seedTypeGroupsFrom, 비파괴) +       ║
+ * ║ 슬롯별 로드/영속(tag_type_groups) + 백업(TM.tg, ctc도 호환 유지).             ║
+ * ║ buildTagToNodes 파생 인덱스(정규화, 겹침 패싯). 같은 이름 최상위 병합.        ║
+ * ║ 다음: 관리 UI(유형▸세부유형, 1b) + 취향분석 2단 집계 연동(1c).                ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ ↔️ v7.32.0 상반 태그 다중 허용 (2026-06-26)                                   ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -12410,6 +12420,38 @@ function getTagCategory(tag, customTagCategories = {}) {
   return null;
 }
 
+// 🆕 v7.33.0: 유형그룹(계층 태그 분류) — flat 카테고리(기본 GENERAL_TAGS + 커스텀)를 흡수해 시드.
+//   노드 shape: { id, name, parentId|null, order, tags:[원문] }. 같은 이름 최상위는 병합(원문 dedup).
+//   2단계 UI지만 parentId 체인이라 임의 깊이 확장 가능. 조회 인덱스는 buildTagToNodes로 파생(정규화).
+function seedTypeGroupsFrom(generalTags, customCats) {
+  const nodes = {}; let order = 0; const byName = {};
+  const add = (name, tags) => {
+    const nm = String(name == null ? "" : name).trim();
+    if (!nm) return;
+    const clean = Array.isArray(tags) ? [...new Set(tags.filter(Boolean))] : [];
+    if (byName[nm]) { const ex = nodes[byName[nm]]; ex.tags = [...new Set([...ex.tags, ...clean])]; return; }
+    const id = `tg_seed_${order}`;
+    nodes[id] = { id, name: nm, parentId: null, order: order++, tags: clean };
+    byName[nm] = id;
+  };
+  for (const [name, tags] of Object.entries(generalTags || {})) add(name, tags);
+  for (const [name, tags] of Object.entries(customCats || {})) add(name, tags);
+  return { nodes };
+}
+function hasTypeGroupNodes(tg) { return !!(tg && tg.nodes && Object.keys(tg.nodes).length > 0); }
+// 파생 인덱스: 정규화 태그키 → [nodeId] (한 태그가 여러 노드에 소속 가능 = 겹침 패싯)
+function buildTagToNodes(typeGroups) {
+  const idx = {};
+  for (const n of Object.values(typeGroups?.nodes || {})) {
+    for (const t of (n.tags || [])) {
+      const k = normalizeTagKey(t);
+      if (!k) continue;
+      (idx[k] = idx[k] || []).push(n.id);
+    }
+  }
+  return idx;
+}
+
 function sortTagsByUsage(tags, usageCounts) {
   return [...tags].sort((a, b) => {
     const countA = usageCounts[a] || 0;
@@ -16291,7 +16333,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.32.0";
+const APP_VERSION = "7.33.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -35694,6 +35736,8 @@ function AppContent() {
   // 🔧 v3.6.1: tagRegistry에서 자동 파생 (setter 제거 → 이중 저장소 원천 차단)
   const customTags = useMemo(() => deriveCustomTags(tagRegistry), [tagRegistry]);
   const [customTagCategories, setCustomTagCategories] = useState({}); // 🆕 v3.5.9: 커스텀 태그 카테고리 { "카테고리명": ["tag1", "tag2"] }
+  // 🆕 v7.33.0: 유형그룹(계층 태그 분류) — 카테고리 흡수. { nodes: { [id]: {id,name,parentId,order,tags:[원문]} } }
+  const [typeGroups, setTypeGroups] = useState({ nodes: {} });
   const [catNewName, setCatNewName] = useState(""); // 📂 카테고리 관리: 새 카테고리명
   const [catExpanded, setCatExpanded] = useState(null); // 📂 카테고리 관리: 펼쳐진 카테고리명
   const [catTagInput, setCatTagInput] = useState(""); // 📂 카테고리 관리: 태그 추가 입력
@@ -37558,6 +37602,18 @@ function AppContent() {
         const [synD, oppD] = await Promise.all([getAppMeta("synonym_dismissed"), getAppMeta("opposite_dismissed")]);
         setDismissedSynPairs(new Set(Array.isArray(synD) ? synD : []));
         setDismissedOppPairs(new Set(Array.isArray(oppD) ? oppD : []));
+      } catch {}
+
+      // 🆕 v7.33.0: 유형그룹도 슬롯 격리 로드(없으면 시드)
+      try {
+        const tg = await getAppMeta("tag_type_groups");
+        if (hasTypeGroupNodes(tg)) setTypeGroups(tg);
+        else {
+          const custom = (await getAppMeta("custom_tag_categories")) || {};
+          const seeded = seedTypeGroupsFrom(GENERAL_TAGS, custom);
+          setTypeGroups(seeded);
+          await setAppMeta("tag_type_groups", seeded);
+        }
       } catch {}
 
       // 5. state 복원 (간소화 — 핵심 데이터만)
@@ -42390,6 +42446,20 @@ function AppContent() {
     setAiProvider(v);
     try { await saveGlobalAiConfig({ ai_provider: v }); } catch (e) { console.warn("[ai] 제공자 저장 실패:", e?.message); }
   }
+
+  // 🆕 v7.33.0: 유형그룹 로드 — 없으면 기본 GENERAL_TAGS + 커스텀 카테고리에서 1회 시드(흡수, 비파괴)
+  useEffect(() => {
+    (async () => {
+      try {
+        const saved = await getAppMeta("tag_type_groups");
+        if (hasTypeGroupNodes(saved)) { setTypeGroups(saved); return; }
+        const custom = (await getAppMeta("custom_tag_categories")) || {};
+        const seeded = seedTypeGroupsFrom(GENERAL_TAGS, custom);
+        setTypeGroups(seeded);
+        await setAppMeta("tag_type_groups", seeded);
+      } catch {}
+    })();
+  }, []);
 
   // 🆕 v7.28.11: '넓게 점검' 토글 저장 · 🆕 v7.28.20: 전역 파일
   async function saveAiWideScan(v) {
@@ -49542,7 +49612,9 @@ async function exportJSON() {
     // (구 버전 복원 시 cbt 필드가 없어도 문제 없음)
     // 🆕 v3.5.9: 커스텀 태그 카테고리
     if (customTagCategories && Object.keys(customTagCategories).length > 0) tagMeta.ctc = customTagCategories;
-    
+    // 🆕 v7.33.0: 유형그룹(계층 태그 분류). ctc도 함께 유지(구버전 앱 호환)
+    if (typeGroups && typeGroups.nodes && Object.keys(typeGroups.nodes).length > 0) tagMeta.tg = typeGroups;
+
     if (Object.keys(tagMeta).length > 0) {
       payload.TM = tagMeta;
     }
@@ -50328,6 +50400,15 @@ async function importJSON() {
                 if (data.TM.ctc && typeof data.TM.ctc === "object") {
                   setCustomTagCategories(data.TM.ctc);
                   await setAppMeta("custom_tag_categories", data.TM.ctc);
+                }
+                // 🆕 v7.33.0: 유형그룹 복원 — 백업에 있으면 그대로, 없고 카테고리만 있으면 거기서 시드
+                if (data.TM.tg && data.TM.tg.nodes && typeof data.TM.tg.nodes === "object") {
+                  setTypeGroups(data.TM.tg);
+                  await setAppMeta("tag_type_groups", data.TM.tg);
+                } else if (data.TM.ctc && typeof data.TM.ctc === "object") {
+                  const seededTG = seedTypeGroupsFrom(GENERAL_TAGS, data.TM.ctc);
+                  setTypeGroups(seededTG);
+                  await setAppMeta("tag_type_groups", seededTG);
                 }
                 tagMetaRestored = true;
               }
