@@ -2,11 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.34.0 (유형그룹 관리 UI + 취향분석 연동 — 카테고리 흡수)              ║
+ * ║  버전: 7.35.0 (유형그룹 AI 자동 분류 — Phase 2)                               ║
  * ║  최종 수정: 2026-06-26                                                        ║
- * ║  총 라인 수: 약 68,900줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 69,120줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🤖 v7.35.0 유형그룹 AI 자동 분류 (Phase 2) (2026-06-26)                       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 설정>유형그룹에 'AI로 자동 분류' 추가 — 미배정 라이브러리 태그를 현재         ║
+ * ║ 트리(유형 ▸ 세부유형 라벨)에 배치 제안 → 검토 모달에서 체크 적용.             ║
+ * ║ 한 태그 다중 유형 가능(겹침). callClaude/GeminiForTypeGroups                  ║
+ * ║ (report_typegroups, thinkingBudget0) + runAiTypeGroupScan/apply….             ║
+ * ║ 빈도순 후보 cap(120/넓게200), 이미배정·미존재라벨·중복 스킵.                  ║
+ * ║ 로직 테스트 통과. ※관리/모달 UI 폰 미검증. 남음: Phase 4 창작자 어시스트.     ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🗂️ v7.34.0 유형그룹 관리 UI + 취향분석 연동 (Phase 1b/1c) (2026-06-26)       ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -13633,6 +13643,132 @@ async function callGeminiForSynonyms(tags, apiKey, model = GEMINI_AI_MODEL, cont
 }
 
 /* =========================================================
+   🆕 v7.35.0: 유형그룹 AI 자동 분류 — 사용자의 유형그룹(유형 ▸ 세부유형) 목록을
+   주고, 태그를 가장 알맞은 분류(라벨 그대로)로 배치 제안. categories는 빈 배열 가능.
+   Claude tool_use / Gemini responseSchema 공용. 입력: 태그 + 분류 라벨만.
+   ========================================================= */
+function buildTypeGroupPromptText(tags, categoryLabels) {
+  const cats = (categoryLabels || []).slice(0, 200).map(c => `- ${c}`).join("\n");
+  return "다음은 한 사용자의 웹소설 태그 '유형 분류' 목록입니다(유형 ▸ 세부유형).\n" + cats +
+    "\n\n아래 태그들을 위 분류 중 가장 알맞은 곳에 배치하세요.\n" +
+    "- 반드시 위 목록에 있는 분류 라벨(표기 그대로)만 사용하세요. 새 분류를 만들지 마세요.\n" +
+    "- 한 태그가 여러 분류에 들어갈 수 있어요(확실한 경우만).\n" +
+    "- 애매하거나 맞는 분류가 없으면 categories를 빈 배열로 두세요(억지 배치 금지).\n" +
+    "- '유형 ▸ 세부유형'처럼 세부가 더 구체적이면 세부 라벨을 우선하세요.\n\n태그: " + tags.join(", ");
+}
+async function callClaudeForTypeGroups(tags, categoryLabels, apiKey, model = SYNONYM_AI_MODEL, opts = {}) {
+  if (!apiKey) throw new Error("API 키가 없습니다");
+  recordAiCall();
+  if (globalAiModel) model = globalAiModel;
+  if (!tags || tags.length === 0 || !categoryLabels || categoryLabels.length === 0) return { assignments: [] };
+  const promptText = buildTypeGroupPromptText(tags, categoryLabels);
+  const tool = {
+    name: "report_typegroups",
+    description: "각 태그를 알맞은 유형 분류 라벨에 배치한다",
+    input_schema: {
+      type: "object",
+      properties: {
+        assignments: {
+          type: "array",
+          description: "태그별 분류 배치. 확실한 것만.",
+          items: {
+            type: "object",
+            properties: {
+              tag: { type: "string", description: "입력 태그(표기 그대로)" },
+              categories: { type: "array", items: { type: "string" }, description: "배치할 분류 라벨들(목록의 표기 그대로). 없으면 빈 배열." },
+            },
+            required: ["tag", "categories"],
+          },
+        },
+      },
+      required: ["assignments"],
+    },
+  };
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: 30000 });
+  let res;
+  try {
+    res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model, max_tokens: opts.maxTokens || 4096, tools: [tool], tool_choice: { type: "tool", name: "report_typegroups" }, messages: [{ role: "user", content: promptText }] }),
+      signal,
+    });
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error("응답이 없어 중단했어요 (시간 초과)");
+    throw e;
+  } finally { cleanup(); }
+  if (!res.ok) {
+    let detail = ""; try { detail = (await res.json())?.error?.message || ""; } catch {}
+    if (res.status === 401) throw new Error("API 키가 올바르지 않아요 (401)");
+    if (res.status === 429) throw new Error("요청이 많아요. 잠시 후 다시 시도 (429)");
+    throw new Error(`API 오류 ${res.status}${detail ? ": " + detail.slice(0, 120) : ""}`);
+  }
+  const data = await res.json();
+  try { recordAiTokens(model, data.usage); } catch {}
+  const toolUse = (data.content || []).find(b => b.type === "tool_use");
+  const assignments = toolUse?.input?.assignments;
+  return { assignments: Array.isArray(assignments) ? assignments : [] };
+}
+async function callGeminiForTypeGroups(tags, categoryLabels, apiKey, model = GEMINI_AI_MODEL, opts = {}) {
+  if (!apiKey) throw new Error("API 키가 없습니다");
+  recordAiCall();
+  if (!tags || tags.length === 0 || !categoryLabels || categoryLabels.length === 0) return { assignments: [] };
+  const promptText = buildTypeGroupPromptText(tags, categoryLabels);
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: 30000 });
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: promptText }] }],
+        generationConfig: {
+          temperature: 0.2,
+          thinkingConfig: { thinkingBudget: 0 },
+          maxOutputTokens: opts.maxTokens || 8192,
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: "OBJECT",
+            properties: {
+              assignments: {
+                type: "ARRAY",
+                items: {
+                  type: "OBJECT",
+                  properties: { tag: { type: "STRING" }, categories: { type: "ARRAY", items: { type: "STRING" } } },
+                  required: ["tag", "categories"],
+                  propertyOrdering: ["tag", "categories"],
+                },
+              },
+            },
+            required: ["assignments"],
+            propertyOrdering: ["assignments"],
+          },
+        },
+      }),
+      signal,
+    });
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error("응답이 없어 중단했어요 (시간 초과)");
+    throw e;
+  } finally { cleanup(); }
+  if (!res.ok) {
+    let detail = ""; try { detail = (await res.json())?.error?.message || ""; } catch {}
+    if (res.status === 400 && /API key not valid|API_KEY_INVALID/i.test(detail)) throw new Error("API 키가 올바르지 않아요 (400)");
+    if (res.status === 401 || res.status === 403) throw new Error(`API 키가 올바르지 않아요 (${res.status})`);
+    if (res.status === 429) throw new Error("무료 한도를 초과했어요. 잠시 후 다시 시도 (429)");
+    throw new Error(`API 오류 ${res.status}${detail ? ": " + detail.slice(0, 120) : ""}`);
+  }
+  const data = await res.json();
+  const cand = (data.candidates || [])[0];
+  const text = (cand?.content?.parts || []).map(p => p?.text || "").join("");
+  if (!text) { if (data?.promptFeedback?.blockReason) throw new Error("요청이 차단됐어요: " + data.promptFeedback.blockReason); return { assignments: [] }; }
+  let parsed;
+  try { parsed = JSON.parse(text); } catch { if (cand?.finishReason === "MAX_TOKENS") throw new Error("AI 응답이 길이 제한에 걸렸어요. 태그가 적은 슬롯에서 다시 시도해 주세요."); return { assignments: [] }; }
+  return { assignments: Array.isArray(parsed?.assignments) ? parsed.assignments : [] };
+}
+
+/* =========================================================
    🆕 v7.28.13: 좌표계 AI 자동 배치 — 축 라벨을 보고 관련 태그를
    1~5 버킷 위치로 제안(연속값 가짜정밀 대신 범주 → LLM 신뢰성↑).
    전송은 태그 + 축 라벨만. Claude tool_use / Gemini responseSchema 공용.
@@ -16343,7 +16479,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.34.0";
+const APP_VERSION = "7.35.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -16369,6 +16505,14 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.35.0", date: "2026-06-26",
+    title: "🤖 유형그룹 AI 자동 분류",
+    highlights: [
+      { type: "new", text: "🤖 설정 › 태그 유형그룹에서 'AI로 자동 분류'를 누르면, 아직 분류 안 된 내 태그들을 AI가 알맞은 '유형 ▸ 세부유형'에 배치 제안해요. 제안을 체크해서 한 번에 적용할 수 있어요(한 태그가 여러 유형에 들어갈 수 있어요). Claude/Gemini 키를 사용해요." },
+    ],
+    details: [],
+  },
   {
     version: "7.34.0", date: "2026-06-26",
     title: "🗂️ 태그 유형그룹 (유형 ▸ 세부유형)",
@@ -35784,6 +35928,10 @@ function AppContent() {
   const [tgRenameInput, setTgRenameInput] = useState("");
   const [tgPickerOpen, setTgPickerOpen] = useState(false); // 태그 선택 모달
   const [tgPickerTarget, setTgPickerTarget] = useState(null); // 태그 배정 대상 노드 id
+  // 🆕 v7.35.0: 유형그룹 AI 자동 분류
+  const [aiTgBusy, setAiTgBusy] = useState(false);
+  const [aiTgModalOpen, setAiTgModalOpen] = useState(false);
+  const [aiTgSuggest, setAiTgSuggest] = useState([]); // [{ tag, id(nodeId), label, checked }]
   const [comboTags, setComboTags] = useState([]); // 🔗 조합식 태그 (예: "먼치킨 히로인")
   const [customComboTraits, setCustomComboTraits] = useState([]); // 🔗 v3.0.4: 사용자 추가 조합 특성
   const [customComboTargets, setCustomComboTargets] = useState([]); // 🔗 v3.0.4: 사용자 추가 조합 대상
@@ -42567,6 +42715,60 @@ function AppContent() {
       { text: "취소", style: "cancel" },
       { text: "복원", style: "destructive", onPress: () => { const seeded = seedTypeGroupsFrom(GENERAL_TAGS, {}); persistTypeGroups(seeded); setTgExpanded(null); } },
     ]);
+  }
+
+  // 🆕 v7.35.0 (Phase 2): 유형그룹 AI 자동 분류 — 미배정 태그를 현재 유형그룹 트리에 배치 제안(확인 후 적용)
+  async function runAiTypeGroupScan() {
+    const provider = aiProvider === "gemini" ? "gemini" : "claude";
+    const key = ((provider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim();
+    if (!key) { Alert.alert("AI 자동 분류", `먼저 설정 › Claude API에서 ${provider === "gemini" ? "Gemini" : "Claude"} API 키를 입력해 주세요.`); return; }
+    const nodes = typeGroups?.nodes || {};
+    if (!Object.keys(nodes).length) { Alert.alert("AI 자동 분류", "먼저 유형그룹(유형/세부유형)을 만들어 주세요."); return; }
+    // 분류 라벨(유형 ▸ 세부유형) + 라벨→nodeId 맵
+    const pathOf = (n) => { const parts = [n.name]; let p = n.parentId, g = 0; while (p && nodes[p] && g++ < 10) { parts.unshift(nodes[p].name); p = nodes[p].parentId; } return parts.join(" ▸ "); };
+    const labelToId = {}; const labels = [];
+    for (const n of Object.values(nodes)) { const lb = pathOf(n); labelToId[lb] = n.id; labels.push(lb); }
+    // 후보 태그: 라이브러리 태그(빈도순) 중 아직 어느 노드에도 없는 것
+    const idx = buildTagToNodes(typeGroups);
+    const freq = new Map(), disp = new Map();
+    for (const nv of (list || [])) {
+      const seen = new Set();
+      for (const t of ((nv.tags || "").split(",").map(s => s.trim()).filter(Boolean))) { const k = normalizeTagKey(t); if (!k || seen.has(k)) continue; seen.add(k); freq.set(k, (freq.get(k) || 0) + 1); if (!disp.has(k)) disp.set(k, t); }
+    }
+    const candidates = [...freq.entries()].filter(([k]) => !idx[k]).sort((a, b) => b[1] - a[1]).slice(0, aiWideScan ? 200 : 120).map(([k]) => disp.get(k));
+    if (candidates.length === 0) { Alert.alert("AI 자동 분류", "분류할 새 태그가 없어요. (라이브러리 태그가 이미 다 배정됨)"); return; }
+    setAiTgBusy(true);
+    try {
+      const { assignments } = provider === "gemini"
+        ? await callGeminiForTypeGroups(candidates, labels, key, GEMINI_AI_MODEL, { maxTokens: aiWideScan ? 8192 : 4096 })
+        : await callClaudeForTypeGroups(candidates, labels, key, SYNONYM_AI_MODEL, { maxTokens: aiWideScan ? 8192 : 4096 });
+      const candSet = new Set(candidates.map(t => normalizeTagKey(t)));
+      const out = [];
+      for (const a of (assignments || [])) {
+        const tag = a?.tag; if (!tag || !candSet.has(normalizeTagKey(tag))) continue;
+        for (const lb of (a.categories || [])) {
+          const id = labelToId[lb]; if (!id) continue;
+          if ((nodes[id].tags || []).some(t => isSameTag(t, tag))) continue; // 이미 있음
+          if (out.some(o => o.id === id && isSameTag(o.tag, tag))) continue; // 중복
+          out.push({ tag, id, label: lb, checked: true });
+        }
+      }
+      if (out.length === 0) { Alert.alert("AI 자동 분류", "추가로 배치할 제안이 없어요."); return; }
+      setAiTgSuggest(out);
+      setAiTgModalOpen(true);
+    } catch (e) {
+      Alert.alert("AI 자동 분류 실패", e?.message || String(e));
+    } finally { setAiTgBusy(false); }
+  }
+  function applyAiTypeGroupSuggestions() {
+    const checked = aiTgSuggest.filter(s => s.checked);
+    if (!checked.length) { setAiTgModalOpen(false); return; }
+    const byNode = {};
+    for (const s of checked) (byNode[s.id] = byNode[s.id] || []).push(s.tag);
+    for (const [id, tags] of Object.entries(byNode)) assignTagsToTypeGroup(id, tags);
+    setAiTgModalOpen(false);
+    setAiTgSuggest([]);
+    Alert.alert("AI 자동 분류", `${checked.length}건을 유형그룹에 반영했어요.`);
   }
 
   // 🆕 v7.28.11: '넓게 점검' 토글 저장 · 🆕 v7.28.20: 전역 파일
@@ -61157,7 +61359,10 @@ async function importJSON() {
                   <Text style={{ color: tgNewTopName.trim() ? "#fff" : C.sub, fontWeight: "700" }}>추가</Text>
                 </TouchableOpacity>
               </View>
-              <OutlineButton title="↩️ 기본값 복원" onPress={resetTypeGroupsToDefault} color={C.sub} style={{ marginBottom: 12 }} />
+              <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
+                <OutlineButton title={aiTgBusy ? "AI 분류 중…" : "🤖 AI로 자동 분류"} onPress={runAiTypeGroupScan} disabled={aiTgBusy} color={C.primary} style={{ flex: 1 }} />
+                <OutlineButton title="↩️ 기본값 복원" onPress={resetTypeGroupsToDefault} color={C.sub} style={{ flex: 1 }} />
+              </View>
               {/* 유형 목록 */}
               {(() => {
                 const nodes = typeGroups?.nodes || {};
@@ -61256,6 +61461,34 @@ async function importJSON() {
               customTagCategories={customTagCategories}
               theme={C}
             />
+
+            {/* 🆕 v7.35.0: AI 자동 분류 제안 검토 모달 */}
+            <Modal visible={aiTgModalOpen} transparent animationType="fade" onRequestClose={() => setAiTgModalOpen(false)}>
+              <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center" }}>
+                <View style={{ backgroundColor: C.card, borderRadius: 20, padding: 18, width: "92%", maxWidth: 480, maxHeight: "86%" }}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                    <Text style={{ fontSize: 17, fontWeight: "800", color: C.text }}>🤖 AI 자동 분류 ({aiTgSuggest.filter(s => s.checked).length}/{aiTgSuggest.length})</Text>
+                    <TouchableOpacity onPress={() => setAiTgModalOpen(false)}><Text style={{ fontSize: 22, color: C.sub }}>×</Text></TouchableOpacity>
+                  </View>
+                  <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>적용할 항목을 체크하세요. 태그가 해당 유형그룹에 추가됩니다(겹침 허용).</Text>
+                  <ScrollView style={{ maxHeight: 400 }} showsVerticalScrollIndicator={false}>
+                    {aiTgSuggest.map((s, i) => (
+                      <TouchableOpacity key={i} onPress={() => setAiTgSuggest(prev => prev.map((x, j) => j === i ? { ...x, checked: !x.checked } : x))}
+                        style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: C.line }}>
+                        <Text style={{ fontSize: 15 }}>{s.checked ? "☑️" : "⬜"}</Text>
+                        <Text style={{ color: C.text, fontSize: 14, fontWeight: "700" }}>{s.tag}</Text>
+                        <Text style={{ color: C.sub, fontSize: 12 }}>→</Text>
+                        <Text style={{ color: C.primary, fontSize: 13, fontWeight: "600", flex: 1 }} numberOfLines={1}>{s.label}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                  <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+                    <OutlineButton title="전체 선택/해제" onPress={() => { const allChecked = aiTgSuggest.every(s => s.checked); setAiTgSuggest(prev => prev.map(x => ({ ...x, checked: !allChecked }))); }} color={C.sub} style={{ flex: 1 }} />
+                    <PrimaryButton title={`적용 (${aiTgSuggest.filter(s => s.checked).length})`} onPress={applyAiTypeGroupSuggestions} style={{ flex: 1 }} />
+                  </View>
+                </View>
+              </View>
+            </Modal>
 
             {/* (구) 카테고리 편집기 — v7.34.0에서 유형그룹으로 흡수, 비표시(다음 정리 때 제거) */}
             {false && (
