@@ -102,6 +102,11 @@ eq("카카오 작가(현임, meta author)", kk.author, "현임");
 eq("카카오 장르(무협, __NEXT_DATA__ subcategory)", kk.genres, ["무협"]);
 eq("카카오 완결(onIssue=End, 웹툰화 노드와 seriesId로 분리)", kk.workStatus, "completed");
 truthy("카카오 표지 URL", kk.coverUrl);
+// 🆕 v7.37.0: 줄거리는 본편 content.description(전체 본문, 줄바꿈 보존)에서, 시작연도는 startSaleDt에서 —
+//   같은 페이지의 웹툰화 노드(전란…/2024)에 덮이지 않고 주소 content id(56598258)의 본편을 정확히 집는다.
+truthy("카카오 줄거리=본편 description(웹툰판 '전란…' 아님)", kk.synopsis && kk.synopsis.startsWith("최초로 흑도를 통합한 흑도대종사"));
+truthy("카카오 줄거리 줄바꿈(\\n) 보존", /\n/.test(kk.synopsis));
+eq("카카오 연재 시작연도(본편 startSaleDt 2021, 웹툰 2024 아님)", kk.startYear, 2021);
 
 const rd = refine(fx("ridi-book-wiki.html"), "https://ridibooks.com/books/425094972");
 eq("리디 제목", rd.title, "위키 쓰는 용사");
