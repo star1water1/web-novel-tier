@@ -2,11 +2,20 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.35.0 (유형그룹 AI 자동 분류 — Phase 2)                               ║
+ * ║  버전: 7.36.0 (창작자 어시스트 — 랜덤 작품 구성 / Phase 4)                    ║
  * ║  최종 수정: 2026-06-26                                                        ║
- * ║  총 라인 수: 약 69,120줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 69,230줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🎲 v7.36.0 창작자 어시스트 — 랜덤 작품 구성 (Phase 4) (2026-06-26)            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 유형그룹 로드맵 마무리(Phase 1~4 완성). 설정>유형그룹에 '창작자 어시스트'     ║
+ * ║ — 유형(top)을 슬롯, 하위 트리 태그를 후보로 무작위 추출해 작품 골격 제안.     ║
+ * ║ 순수 랜덤/취향 가중(평균 이상 작품 태그 가중) · 슬롯당 1~3개 · 슬롯           ║
+ * ║ 포함/제외 · 🔒슬롯 고정 후 나머지만 다시 생성. generateComposition +          ║
+ * ║ composer modal. 로직 테스트(서브트리/추출/고정) 통과. ※UI 폰 미검증.          ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🤖 v7.35.0 유형그룹 AI 자동 분류 (Phase 2) (2026-06-26)                       ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -16479,7 +16488,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.35.0";
+const APP_VERSION = "7.36.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -16505,6 +16514,14 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.36.0", date: "2026-06-26",
+    title: "🎲 창작자 어시스트 (랜덤 작품 구성)",
+    highlights: [
+      { type: "new", text: "🎲 설정 › 태그 유형그룹에 '창작자 어시스트'가 생겼어요. 유형그룹을 슬롯 삼아 태그를 무작위로 뽑아 작품 골격을 제안해요. 순수 랜덤/취향 가중 중 선택, 슬롯당 태그 수 조절, 마음에 드는 슬롯은 🔒고정하고 나머지만 다시 굴릴 수 있어요." },
+    ],
+    details: [],
+  },
   {
     version: "7.35.0", date: "2026-06-26",
     title: "🤖 유형그룹 AI 자동 분류",
@@ -35932,6 +35949,13 @@ function AppContent() {
   const [aiTgBusy, setAiTgBusy] = useState(false);
   const [aiTgModalOpen, setAiTgModalOpen] = useState(false);
   const [aiTgSuggest, setAiTgSuggest] = useState([]); // [{ tag, id(nodeId), label, checked }]
+  // 🆕 v7.36.0 (Phase 4): 창작자 어시스트(랜덤 작품 구성)
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [composerExcluded, setComposerExcluded] = useState(new Set()); // 제외한 유형(슬롯) id
+  const [composerMode, setComposerMode] = useState("random"); // "random" | "taste"
+  const [composerCount, setComposerCount] = useState(1); // 슬롯당 뽑을 태그 수
+  const [composerResult, setComposerResult] = useState([]); // [{ nodeId, nodeName, tags:[] }]
+  const [composerLocked, setComposerLocked] = useState(new Set()); // 다시 생성 시 유지할 슬롯 id
   const [comboTags, setComboTags] = useState([]); // 🔗 조합식 태그 (예: "먼치킨 히로인")
   const [customComboTraits, setCustomComboTraits] = useState([]); // 🔗 v3.0.4: 사용자 추가 조합 특성
   const [customComboTargets, setCustomComboTargets] = useState([]); // 🔗 v3.0.4: 사용자 추가 조합 대상
@@ -42769,6 +42793,54 @@ function AppContent() {
     setAiTgModalOpen(false);
     setAiTgSuggest([]);
     Alert.alert("AI 자동 분류", `${checked.length}건을 유형그룹에 반영했어요.`);
+  }
+
+  // 🆕 v7.36.0 (Phase 4): 창작자 어시스트 — 유형그룹(유형)을 슬롯 삼아 태그를 뽑아 작품 골격 제안
+  function generateComposition(reroll = false) {
+    const nodes = typeGroups?.nodes || {};
+    const tops = Object.values(nodes).filter(n => !n.parentId).sort((a, b) => (a.order || 0) - (b.order || 0));
+    const subtreeTags = (topId) => {
+      const acc = [], seen = new Set();
+      const visit = (id) => { if (seen.has(id)) return; seen.add(id); const n = nodes[id]; if (!n) return; acc.push(...(n.tags || [])); for (const c of Object.values(nodes)) if ((c.parentId || null) === id) visit(c.id); };
+      visit(topId);
+      return [...new Set(acc.filter(Boolean))];
+    };
+    const eligible = tops.filter(t => !composerExcluded.has(t.id) && subtreeTags(t.id).length > 0);
+    if (!eligible.length) { Alert.alert("창작자 어시스트", "구성에 쓸 태그가 있는 유형이 없어요. 유형그룹에 태그를 배정하거나(또는 AI 자동 분류) 슬롯 선택을 확인하세요."); return; }
+    // 취향 가중치(선택): 사용자 평균 이상 작품의 태그에 가중
+    let tagGood = null;
+    if (composerMode === "taste" && (list || []).length) {
+      tagGood = new Map();
+      const scores = list.map(n => getPrefScore(n, globalTierConfig));
+      const mean = scores.reduce((a, b) => a + b, 0) / (scores.length || 1);
+      for (const n of list) {
+        const sc = getPrefScore(n, globalTierConfig);
+        const w = sc >= mean ? 1 + (sc - mean) / 120 : 0.25;
+        for (const t of (n.tags || "").split(",").map(s => s.trim()).filter(Boolean)) { const k = normalizeTagKey(t); tagGood.set(k, (tagGood.get(k) || 0) + w); }
+      }
+    }
+    const weightOf = (tag) => tagGood ? (tagGood.get(normalizeTagKey(tag)) || 0) + 0.15 : 1;
+    const pickN = (pool, count) => {
+      const avail = [...new Set(pool)]; const out = [];
+      for (let i = 0; i < count && avail.length; i++) {
+        let idx;
+        if (tagGood) { const ws = avail.map(weightOf); const tot = ws.reduce((a, b) => a + b, 0) || 1; let r = Math.random() * tot; idx = 0; while (idx < ws.length - 1) { r -= ws[idx]; if (r <= 0) break; idx++; } }
+        else idx = Math.floor(Math.random() * avail.length);
+        out.push(avail[idx]); avail.splice(idx, 1);
+      }
+      return out;
+    };
+    const prevMap = {}; if (reroll) for (const r of composerResult) prevMap[r.nodeId] = r;
+    const result = eligible.map(t => (reroll && composerLocked.has(t.id) && prevMap[t.id])
+      ? prevMap[t.id]
+      : { nodeId: t.id, nodeName: t.name, tags: pickN(subtreeTags(t.id), Math.max(1, composerCount)) });
+    setComposerResult(result);
+  }
+  function toggleComposerLock(nodeId) {
+    setComposerLocked(prev => { const n = new Set(prev); n.has(nodeId) ? n.delete(nodeId) : n.add(nodeId); return n; });
+  }
+  function toggleComposerSlot(nodeId) {
+    setComposerExcluded(prev => { const n = new Set(prev); n.has(nodeId) ? n.delete(nodeId) : n.add(nodeId); return n; });
   }
 
   // 🆕 v7.28.11: '넓게 점검' 토글 저장 · 🆕 v7.28.20: 전역 파일
@@ -61363,6 +61435,7 @@ async function importJSON() {
                 <OutlineButton title={aiTgBusy ? "AI 분류 중…" : "🤖 AI로 자동 분류"} onPress={runAiTypeGroupScan} disabled={aiTgBusy} color={C.primary} style={{ flex: 1 }} />
                 <OutlineButton title="↩️ 기본값 복원" onPress={resetTypeGroupsToDefault} color={C.sub} style={{ flex: 1 }} />
               </View>
+              <OutlineButton title="🎲 창작자 어시스트 (랜덤 작품 구성)" onPress={() => { setComposerResult([]); setComposerLocked(new Set()); setComposerExcluded(new Set()); setComposerOpen(true); }} color="#8b5cf6" style={{ marginBottom: 12 }} />
               {/* 유형 목록 */}
               {(() => {
                 const nodes = typeGroups?.nodes || {};
@@ -61486,6 +61559,69 @@ async function importJSON() {
                     <OutlineButton title="전체 선택/해제" onPress={() => { const allChecked = aiTgSuggest.every(s => s.checked); setAiTgSuggest(prev => prev.map(x => ({ ...x, checked: !allChecked }))); }} color={C.sub} style={{ flex: 1 }} />
                     <PrimaryButton title={`적용 (${aiTgSuggest.filter(s => s.checked).length})`} onPress={applyAiTypeGroupSuggestions} style={{ flex: 1 }} />
                   </View>
+                </View>
+              </View>
+            </Modal>
+
+            {/* 🆕 v7.36.0: 창작자 어시스트 (랜덤 작품 구성) */}
+            <Modal visible={composerOpen} transparent animationType="fade" onRequestClose={() => setComposerOpen(false)}>
+              <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center" }}>
+                <View style={{ backgroundColor: C.card, borderRadius: 20, padding: 18, width: "92%", maxWidth: 480, maxHeight: "88%" }}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <Text style={{ fontSize: 17, fontWeight: "800", color: C.text }}>🎲 창작자 어시스트</Text>
+                    <TouchableOpacity onPress={() => setComposerOpen(false)}><Text style={{ fontSize: 22, color: C.sub }}>×</Text></TouchableOpacity>
+                  </View>
+                  <Text style={{ color: C.sub, fontSize: 12, marginBottom: 10 }}>유형그룹을 '슬롯'으로 삼아 태그를 무작위로 뽑아 작품 골격을 제안해요. 슬롯·모드를 고르고 생성하세요.</Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                    {[["random", "🎲 순수 랜덤"], ["taste", "⭐ 취향 가중"]].map(([k, lbl]) => (
+                      <TouchableOpacity key={k} onPress={() => setComposerMode(k)} style={{ flex: 1, paddingVertical: 8, borderRadius: 10, alignItems: "center", backgroundColor: composerMode === k ? C.primary : C.bg, borderWidth: 1, borderColor: composerMode === k ? C.primary : C.line }}>
+                        <Text style={{ color: composerMode === k ? "#fff" : C.sub, fontWeight: "700", fontSize: 12 }}>{lbl}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                    <Text style={{ color: C.sub, fontSize: 13 }}>슬롯당 태그</Text>
+                    <TouchableOpacity onPress={() => setComposerCount(c => Math.max(1, c - 1))} style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, alignItems: "center", justifyContent: "center" }}><Text style={{ color: C.text, fontWeight: "800" }}>−</Text></TouchableOpacity>
+                    <Text style={{ color: C.text, fontWeight: "800", width: 20, textAlign: "center" }}>{composerCount}</Text>
+                    <TouchableOpacity onPress={() => setComposerCount(c => Math.min(3, c + 1))} style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, alignItems: "center", justifyContent: "center" }}><Text style={{ color: C.text, fontWeight: "800" }}>+</Text></TouchableOpacity>
+                  </View>
+                  {(() => {
+                    const nodes = typeGroups?.nodes || {};
+                    const subCount = (topId) => { let c = 0; const seen = new Set(); const visit = (id) => { if (seen.has(id)) return; seen.add(id); const n = nodes[id]; if (!n) return; c += (n.tags || []).length; for (const ch of Object.values(nodes)) if ((ch.parentId || null) === id) visit(ch.id); }; visit(topId); return c; };
+                    const tops = Object.values(nodes).filter(n => !n.parentId).sort((a, b) => (a.order || 0) - (b.order || 0)).filter(t => subCount(t.id) > 0);
+                    if (!tops.length) return <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>태그가 배정된 유형이 없어요. 먼저 유형그룹에 태그를 넣어주세요(또는 AI 자동 분류).</Text>;
+                    return (
+                      <View style={{ marginBottom: 10 }}>
+                        <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>슬롯(유형) — 탭해서 포함/제외</Text>
+                        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                          {tops.map(t => { const on = !composerExcluded.has(t.id); return (
+                            <TouchableOpacity key={t.id} onPress={() => toggleComposerSlot(t.id)} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: on ? C.primary : C.bg, borderWidth: 1, borderColor: on ? C.primary : C.line }}>
+                              <Text style={{ color: on ? "#fff" : C.sub, fontSize: 12, fontWeight: "700" }}>{t.name}</Text>
+                            </TouchableOpacity>
+                          ); })}
+                        </View>
+                      </View>
+                    );
+                  })()}
+                  <PrimaryButton title={composerResult.length > 0 ? "🎲 다시 생성" : "🎲 생성"} onPress={() => generateComposition(composerResult.length > 0)} style={{ marginBottom: 10 }} />
+                  <ScrollView style={{ maxHeight: 300 }} showsVerticalScrollIndicator={false}>
+                    {composerResult.length === 0 ? (
+                      <Text style={{ color: C.sub, fontSize: 13, textAlign: "center", paddingVertical: 16 }}>생성을 누르면 유형별로 태그를 무작위로 뽑아 보여줘요.</Text>
+                    ) : composerResult.map(r => { const locked = composerLocked.has(r.nodeId); return (
+                      <TouchableOpacity key={r.nodeId} onPress={() => toggleComposerLock(r.nodeId)} style={{ backgroundColor: C.bg, borderRadius: 10, padding: 10, marginBottom: 6, borderWidth: 1, borderColor: locked ? "#8b5cf6" : C.line }}>
+                        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                          <Text style={{ color: C.sub, fontSize: 12, fontWeight: "700" }}>🗂️ {r.nodeName}</Text>
+                          <Text style={{ fontSize: 12 }}>{locked ? "🔒 고정" : "🎲"}</Text>
+                        </View>
+                        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                          {r.tags.length ? r.tags.map((tg, i) => (
+                            <View key={i} style={{ backgroundColor: "#8b5cf6" + "22", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999 }}><Text style={{ color: isDark ? "#c4b5fd" : "#6d28d9", fontSize: 13, fontWeight: "700" }}>{tg}</Text></View>
+                          )) : <Text style={{ color: C.sub, fontSize: 12 }}>(없음)</Text>}
+                        </View>
+                      </TouchableOpacity>
+                    ); })}
+                  </ScrollView>
+                  {composerResult.length > 0 && <Text style={{ color: C.sub, fontSize: 10, marginTop: 8 }}>슬롯을 탭하면 🔒고정 — '다시 생성' 시 고정된 슬롯은 유지돼요.</Text>}
                 </View>
               </View>
             </Modal>
