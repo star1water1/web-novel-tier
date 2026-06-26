@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, mergeSearchResults, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, SCRAPER_HEADERS, SCRAPER_UA };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, SCRAPER_HEADERS, SCRAPER_UA };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -121,6 +121,38 @@ truthy("리디 검색 후보 ≥1개", sr.length >= 1);
 truthy("리디 후보 url=/books/{id}", /ridibooks\.com\/books\/\d+/.test(sr[0] && sr[0].url));
 truthy("리디 후보 제목 존재", sr[0] && sr[0].title);
 eq("리디 후보 플랫폼 라벨", sr[0] && sr[0].platform, "리디");
+
+// ── ④'' 노벨피아 단건 상세 API get_novel(v7.38.0) — 성인물(19금) 비로그인 취득 ─────
+//   검색 API와 동일 스키마. 19금은 제목/작가/장르/줄거리/연/회차 다 오고 표지만 게이트(플레이스홀더).
+const npAdult = JSON.stringify({ status: 200, code: "0000", novel: {
+  novel_no: 397834, novel_name: "19금 음지 버튜버 양지에 데뷔함.", novel_age: 19,
+  writer_nick: "백발성애자", novel_genre_arr: ["현대", "라이트노벨", "하렘", "버튜버", "고수위"],
+  novel_story: "19금 음지 방송하던 버튜버인 내가.\r\n\r\n시청자의 말에 양지로.", is_complete: 1, count_book: 122,
+  start_date: "2025-12-07 19:12:11", complete_date: "2026-04-09 23:41:55",
+  cover_img: "//images.novelpia.com/img/novel/adult_cover_img.jpg", novel_img: "//images.novelpia.com/img/novel/adult_cover_img.jpg",
+} });
+const na = S.parseNovelpiaGetNovel(npAdult, "https://novelpia.com/novel/397834");
+eq("노벨피아 19금 제목(사이트명 접두 없음)", na.title, "19금 음지 버튜버 양지에 데뷔함.");
+eq("노벨피아 19금 작가(og 'Devlife' 더미 아님)", na.author, "백발성애자");
+eq("노벨피아 19금 장르 배열", na.genres, ["현대", "라이트노벨", "하렘", "버튜버", "고수위"]);
+eq("노벨피아 19금 → 19금 태그", na.ageTag, "19금");
+eq("노벨피아 19금 완결/회차", { s: na.workStatus, ep: na.totalEpisodes }, { s: "completed", ep: 122 });
+eq("노벨피아 19금 시작·완결연도", { sy: na.startYear, ey: na.endYear }, { sy: 2025, ey: 2026 });
+eq("노벨피아 19금 표지=플레이스홀더라 빈칸", na.coverUrl, "");
+truthy("노벨피아 19금 줄거리 줄바꿈 보존", /\n/.test(na.synopsis));
+eq("노벨피아 단건 url=원본 링크 보존", na.url, "https://novelpia.com/novel/397834");
+// 비성인: cover_img 실제 표지 → https 보정, 19금 태그 없음
+const npClean = JSON.stringify({ status: 200, novel: {
+  novel_no: 434044, novel_name: "마법소녀들에게 사랑받는 바텐더가 되었다", novel_age: 0, writer_nick: "힐링조아",
+  novel_genre_arr: ["판타지"], novel_story: "줄거리", is_complete: 0, count_book: 10, start_date: "2024-01-01",
+  cover_img: "//images.novelpia.com/imagebox/cover/abc_q_ori.file",
+} });
+const nc = S.parseNovelpiaGetNovel(npClean, "https://novelpia.com/novel/434044");
+eq("노벨피아 비성인 표지 https 보정", nc.coverUrl, "https://images.novelpia.com/imagebox/cover/abc_q_ori.file");
+eq("노벨피아 비성인 ageTag 없음/연재중", { a: nc.ageTag, s: nc.workStatus }, { a: null, s: "ongoing" });
+eq("노벨피아 get_novel status≠200 → null", S.parseNovelpiaGetNovel(JSON.stringify({ status: 403 }), "x"), null);
+eq("노벨피아 get_novel 깨진 JSON → null", S.parseNovelpiaGetNovel("<html>nope", "x"), null);
+eq("노벨피아 genres novel_genre 문자열 폴백", S.novelpiaItemToMeta({ novel_no: 1, novel_name: "t", novel_genre: '["로맨스","여사친"]' }).genres, ["로맨스", "여사친"]);
 
 // ── ④' 네이버시리즈 검색 파싱(v7.28.39, 폰 캡처 실측 픽스처) ────────────────────
 //   itemList SSR <li class="lst"> 4건 + 클라이언트 템플릿/푸터폼 디코이 → 디코이 제외 4건만.

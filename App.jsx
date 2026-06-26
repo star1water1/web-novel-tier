@@ -2,11 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.37.0 (카카오페이지 링크 불러오기 지원)                               ║
+ * ║  버전: 7.38.0 (노벨피아 성인물 링크 불러오기)                                 ║
  * ║  최종 수정: 2026-06-26                                                        ║
- * ║  총 라인 수: 약 69,260줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 69,300줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔞 v7.38.0 노벨피아 성인물 링크 불러오기 (2026-06-26)                         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 노벨피아 상세는 SPA라 링크 불러오기가 부실했고 성인물(19금)은 더 막혔다.      ║
+ * ║ 작품 단건 API(/proc/novel?cmd=get_novel)가 로그인 없이 19금 포함 전체         ║
+ * ║ 메타를 검색 API와 동일 스키마로 주는 걸 확인 → 링크 불러오기를 이 JSON        ║
+ * ║ 경로로 전환. 제목·작가·줄거리·장르·19금·완결·연재연도·회차 정확 취득          ║
+ * ║ (표지만 성인 게이트라 비움). novelpiaItemToMeta로 검색/단건 매핑 공유.        ║
+ * ║ ※ 제목검색은 19금 미노출(노벨피아 비로그인 필터) → 성인물은 링크로.           ║
+ * ║ 회귀 테스트 +14(198). UI 폰 미검증.                                           ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🟡 v7.37.0 카카오페이지 링크 불러오기 지원 (2026-06-26)                       ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -14503,6 +14514,12 @@ async function fetchNovelMeta(url, opts = {}) {
   if (!url || !/^https?:\/\//i.test(String(url).trim())) throw new Error("올바른 링크가 아니에요 (http/https URL 필요)");
   url = String(url).trim();
   const platform = detectPlatformFromUrl(url);
+  // 🆕 v7.38.0: 노벨피아는 단건 API(get_novel)가 SPA HTML보다 정확하고 성인물(19금)도 비로그인으로 취득 →
+  //   /novel/{id}면 API 우선, 성공 시 그대로 반환(무거운 HTML 안 받음). 실패하면 아래 공통 HTML 폴백.
+  if (platform === "노벨피아") {
+    const npNo = (url.match(/\/novel\/(\d+)/) || [])[1];
+    if (npNo) { try { const m = await fetchNovelpiaByNo(npNo, opts); if (m && m.ok && m.title) return m; } catch { /* API 실패 → HTML 폴백 */ } }
+  }
   const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
   let res, html = "";
   try {
@@ -14875,48 +14892,79 @@ async function searchNovelpia(query, opts = {}) {
   return parseNovelpiaSearch(text);
 }
 
-// 노벨피아 검색 JSON({status, list:[{novel_no, novel_name, writer_nick, cover_url, novel_genre_arr}], ...}) → 후보[].
+// 노벨피아 작품 객체(검색 list 항목 ≡ get_novel.novel, 동일 스키마) → 정규화 meta(scraperNormalizeFromHtml과 같은 모양).
+//   cover 필드: 검색=cover_url / 단건=cover_img·novel_img. 성인물 표지는 게이트 플레이스홀더(adult_cover_img)라 저장 안 함(빈 칸).
+function novelpiaItemToMeta(it) {
+  if (!it || typeof it !== "object") return null;
+  const id = it.novel_no;
+  const title = String(it.novel_name == null ? "" : it.novel_name).trim();
+  if (!id || !title) return null;
+  const yearFrom = (s) => { const m = String(s == null ? "" : s).match(/^(\d{4})/); const y = m ? Number(m[1]) : 0; return (y >= 1990 && y <= 2099) ? y : null; };
+  let coverUrl = String(it.cover_url || it.cover_img || it.novel_img || "");
+  if (coverUrl.startsWith("//")) coverUrl = "https:" + coverUrl;
+  if (/adult_cover_img/i.test(coverUrl)) coverUrl = ""; // 성인물 표지 게이트 플레이스홀더 → 미저장
+  let genres = Array.isArray(it.novel_genre_arr) ? it.novel_genre_arr.filter(Boolean) : [];
+  if (!genres.length && typeof it.novel_genre === "string") { try { const a = JSON.parse(it.novel_genre); if (Array.isArray(a)) genres = a.filter(Boolean); } catch { /* 비JSON 장르 문자열 무시 */ } }
+  const ep = Number(it.count_book);
+  const complete = Number(it.is_complete) === 1;
+  return {
+    ok: true, platform: "노벨피아", url: "https://novelpia.com/novel/" + id,
+    title, author: String(it.writer_nick == null ? "" : it.writer_nick).trim(), coverUrl,
+    synopsis: String(it.novel_story == null ? "" : it.novel_story).trim(),
+    genres,
+    workStatus: complete ? "completed" : "ongoing",
+    totalEpisodes: ep > 0 ? ep : null,
+    startYear: yearFrom(it.start_date) || yearFrom(it.reg_date) || null, // 연재 시작일 우선, 없으면 등록일
+    endYear: complete ? yearFrom(it.complete_date) : null,               // 완결작만 종료연도
+    completedAt: complete ? scraperDateToTs(it.complete_date) : 0,       // 🆕 v7.28.61: 완결일(풀데이터)
+    ageTag: Number(it.novel_age) === 19 ? "19금" : null,                 // 🔧 v7.28.47: 연령등급은 태그로 보존
+  };
+}
+
+// 노벨피아 검색 JSON({status, list:[…동일 스키마]}) → 후보[]. 항목→메타 변환은 novelpiaItemToMeta 공유.
 function parseNovelpiaSearch(jsonText) {
   let data;
   try { data = JSON.parse(jsonText); } catch { return []; }
   if (!data || Number(data.status) !== 200 || !Array.isArray(data.list)) return [];
-  const yearFrom = (s) => { const m = String(s == null ? "" : s).match(/^(\d{4})/); const y = m ? Number(m[1]) : 0; return (y >= 1990 && y <= 2099) ? y : null; };
   const out = [], seen = new Set();
   for (const it of data.list) {
-    if (!it || typeof it !== "object") continue;
-    const id = it.novel_no;
-    const title = String(it.novel_name == null ? "" : it.novel_name).trim();
-    if (!id || !title || seen.has(id)) continue;
-    seen.add(id);
-    let coverUrl = String(it.cover_url || "");
-    if (coverUrl.startsWith("//")) coverUrl = "https:" + coverUrl;
-    const genres = Array.isArray(it.novel_genre_arr) ? it.novel_genre_arr.filter(Boolean) : [];
-    const author = String(it.writer_nick == null ? "" : it.writer_nick).trim();
-    const url = "https://novelpia.com/novel/" + id;
-    const ep = Number(it.count_book);
-    const startYear = yearFrom(it.start_date) || yearFrom(it.reg_date) || null; // 연재 시작일 우선, 없으면 등록일
-    const endYear = Number(it.is_complete) === 1 ? yearFrom(it.complete_date) : null; // 완결작만 종료연도
-    const completedAt = Number(it.is_complete) === 1 ? scraperDateToTs(it.complete_date) : 0; // 🆕 v7.28.61: 완결일(풀데이터)
-    const ageTag = Number(it.novel_age) === 19 ? "19금" : null; // 🔧 v7.28.47: 연령등급은 태그로 보존
+    if (!it || (it.novel_no != null && seen.has(it.novel_no))) continue;
+    const meta = novelpiaItemToMeta(it);
+    if (!meta) continue;
+    seen.add(it.novel_no);
     out.push({
-      title, author, url, coverUrl,
+      title: meta.title, author: meta.author, url: meta.url, coverUrl: meta.coverUrl,
       platform: "노벨피아",
-      category: genres.slice(0, 3).join(", "), // 태그가 많아 앞 3개만 표시용
+      category: (meta.genres || []).slice(0, 3).join(", "), // 태그가 많아 앞 3개만 표시용
       isComic: false,
       // 🔎 v7.28.43: 노벨피아 상세는 SPA라 og가 부실(제목에 사이트명·작가 기본값) →
-      //   검색 API가 준 정확한 메타를 그대로 등록에 사용(상세 재긁기 생략).
-      meta: {
-        ok: true, platform: "노벨피아", url, title, author, coverUrl,
-        synopsis: String(it.novel_story == null ? "" : it.novel_story).trim(),
-        genres,
-        workStatus: Number(it.is_complete) === 1 ? "completed" : "ongoing",
-        totalEpisodes: ep > 0 ? ep : null,
-        startYear, endYear, completedAt, ageTag,
-      },
+      //   API가 준 정확한 메타를 그대로 등록에 사용(상세 재긁기 생략).
+      meta,
     });
     if (out.length >= 30) break;
   }
   return out;
+}
+
+// 🆕 v7.38.0: 노벨피아 단건 상세 API(get_novel) — 로그인 없이 19금 포함 전체 메타(검색과 동일 스키마).
+//   링크 불러오기에서 SPA HTML(og 부실 + 성인 표지/작가 게이트) 대신 이 JSON으로 정확히 가져온다.
+function parseNovelpiaGetNovel(jsonText, url) {
+  let data;
+  try { data = JSON.parse(jsonText); } catch { return null; }
+  if (!data || Number(data.status) !== 200 || !data.novel) return null;
+  const meta = novelpiaItemToMeta(data.novel);
+  if (meta && url) meta.url = url; // 사용자가 붙여넣은 원본 링크 보존
+  return meta;
+}
+async function fetchNovelpiaByNo(no, opts = {}) {
+  const api = "https://novelpia.com/proc/novel?cmd=get_novel&novel_no=" + encodeURIComponent(no);
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
+  try {
+    const res = await fetch(api, { headers: SCRAPER_HEADERS, redirect: "follow", signal });
+    if (!res.ok) return null;
+    return parseNovelpiaGetNovel(await res.text(), "https://novelpia.com/novel/" + no);
+  } catch { return null; }
+  finally { cleanup(); }
 }
 
 // 정규화 메타 + 현재값 → 확인 모달용 항목 [{ key, label, value(적용값), display, current, checked }].
@@ -16516,7 +16564,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.37.0";
+const APP_VERSION = "7.38.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -16542,6 +16590,18 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.38.0", date: "2026-06-26",
+    title: "🔞 노벨피아 성인물 링크 불러오기",
+    highlights: [
+      { type: "new", text: "🔞 노벨피아 성인물(19금)도 작품 링크 ‘🔗 불러오기’로 제목·작가·줄거리·장르·19금·완결·연재연도·회차가 들어와요. (표지는 노벨피아가 비로그인엔 가려두어 비어 있어요 — 직접 추가하면 돼요.)" },
+      { type: "improve", text: "🟢 노벨피아 링크 불러오기 정확도도 전반적으로 좋아졌어요. 예전엔 상세가 SPA라 제목에 사이트명이 붙는 등 부정확했는데, 이제 작품 단건 정보를 직접 받아와 제목·작가·장르가 정확해요." },
+    ],
+    details: [
+      "노벨피아 상세 페이지는 SPA라 링크만으론 정보가 부실했는데, 작품 단건 API(get_novel)가 로그인 없이 성인물 포함 전체 메타를 검색 API와 동일한 형태로 주는 걸 확인해 그쪽으로 전환했어요.",
+      "성인물은 제목 ‘검색’ 결과엔 여전히 안 떠요(노벨피아가 비로그인 검색에서 19금을 숨김) — 성인물은 작품 페이지 링크로 불러오면 됩니다.",
+    ],
+  },
   {
     version: "7.37.0", date: "2026-06-26",
     title: "🟡 카카오페이지 링크 불러오기 지원",
@@ -18590,6 +18650,7 @@ const GUIDE_CONTENT = [
         tips: [
           "🔎 제목만 입력하고 ‘제목으로 검색’을 누르면 리디·네이버시리즈·문피아·노벨피아에서 작품을 찾아 제목·작가·줄거리·장르·태그·연재상태·연재연도·표지·연재처를 자동으로 채워줘요. (v7.28.47)",
           "🔗 작품 페이지 주소가 있으면 ‘링크에서 불러오기’로 같은 정보를 가져올 수 있어요(리디·네이버시리즈·문피아·노벨피아·카카오페이지). 카카오페이지는 작품 페이지 주소(page.kakao.com/content/…)에서 제목·작가·줄거리·장르·연재상태·연재연도를 가져와요. (v7.37.0)",
+          "🔞 노벨피아 성인물(19금)은 제목 ‘검색’엔 안 떠요(노벨피아가 비로그인 검색에서 19금을 숨김) — 작품 페이지 링크로 ‘불러오기’하면 제목·작가·줄거리·장르·19금·완결·연재연도가 들어와요. 표지는 성인 게이트라 비어 있어 직접 추가하면 돼요. (v7.38.0)",
           "📋 불러온 값은 확인 모달에서 항목별로 체크해 적용해요 — 기존에 채워둔 칸은 건드리지 않고 빈 칸만 기본 선택돼요.",
           "제목과 작가만 입력해도 바로 등록할 수 있어요.",
           "태그는 취향 분석과 추천에 활용되니 꼼꼼히 입력하면 좋아요.",
