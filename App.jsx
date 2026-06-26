@@ -2,11 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.33.0 (유형그룹 토대 — 카테고리 흡수 시드/영속/백업)                  ║
+ * ║  버전: 7.34.0 (유형그룹 관리 UI + 취향분석 연동 — 카테고리 흡수)              ║
  * ║  최종 수정: 2026-06-26                                                        ║
- * ║  총 라인 수: 약 68,680줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 68,900줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🗂️ v7.34.0 유형그룹 관리 UI + 취향분석 연동 (Phase 1b/1c) (2026-06-26)       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ Phase 1a 토대 위에 관리 UI·분석 연동 완성. 설정>태그관리의 카테고리           ║
+ * ║ 편집기를 '유형 ▸ 세부유형' 트리 편집기로 대체(생성/이름변경/삭제[자식         ║
+ * ║ 승격]/태그배정/기본복원). CRUD: add/rename/delete/assign/removeTag/reset.     ║
+ * ║ 취향분석 categoryStats를 typeGroups 집계로 전환(자식→상위 롤업, 겹침          ║
+ * ║ 패싯, 미분류). 구 카테고리 편집기는 {false}로 비활성(다음 정리 때 제거).      ║
+ * ║ 로직 테스트 통과. 남음: Phase 2 AI 분류 / Phase 4 창작자 어시스트.            ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🗂️ v7.33.0 유형그룹(계층 태그 분류) Phase 1a — 토대 (2026-06-26)             ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -16333,7 +16343,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.33.0";
+const APP_VERSION = "7.34.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -16359,6 +16369,15 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.34.0", date: "2026-06-26",
+    title: "🗂️ 태그 유형그룹 (유형 ▸ 세부유형)",
+    highlights: [
+      { type: "new", text: "🗂️ 설정 › 태그 관리에 '태그 유형그룹'이 생겼어요. 태그를 '유형 ▸ 세부유형' 2단계로 분류하고, 한 태그를 여러 유형에 넣을 수 있어요(겹침). 기존 카테고리(기본 13종 + 내 카테고리)를 자동으로 흡수했고, 자유롭게 추가·이름변경·삭제할 수 있어요." },
+      { type: "improve", text: "📊 분석 탭 '카테고리별 선호도'가 유형그룹 기준으로 집계돼요(세부유형은 상위 유형으로 합산, 겹침 반영). 백업에도 함께 저장됩니다." },
+    ],
+    details: [],
+  },
   {
     version: "7.32.0", date: "2026-06-26",
     title: "↔️ 상반 태그 여러 개 허용",
@@ -28586,6 +28605,7 @@ const TasteAnalysisScreen = memo(({
   tagCoOccurrences = {},  // 🆕 v3.2.1: 공동 출현 통계
   coordinateSystems = null,  // 🆕 v3.2.1: 사용자 정의 좌표계
   customTagCategories = {},  // 🆕 v3.5.9: 커스텀 태그 카테고리
+  typeGroups = { nodes: {} },  // 🆕 v7.34.0: 유형그룹(계층 분류) — categoryStats 집계원
   tagAttributes = {},  // 🔧 v3.5.15d: 유사그룹 일관성 등에서 isTagTitle 사용
   hiddenTags = [],  // 🆕 숨김 태그 필터용
   tierMode,  // 🆕 v7.0.2: 모드 변경 시 memo 재렌더 트리거 (직접 globalTierConfig.mode 참조하면 prop 변동 없어 stale)
@@ -29376,20 +29396,30 @@ const TasteAnalysisScreen = memo(({
 
   // 🆕 v3.5.9: 카테고리별 태그 분석 (기본 + 커스텀 카테고리)
   // 🔧 v3.5.13: early return 전으로 이동 (hooks 규칙 위반 수정)
+  // 🆕 v7.34.0: 유형그룹(유형 ▸ 세부유형) 기준 집계로 전환. 태그는 소속 유형(최상위 ancestor)으로 롤업,
+  //   한 태그가 여러 유형에 속하면 각 유형에 모두 집계(겹침 패싯 — 합계 100% 아닐 수 있음). 미소속은 '미분류'.
   const categoryStats = useMemo(() => {
     const tagAnal = analysis?.tagAnalysis;
     if (!tagAnal || tagAnal.length === 0) return [];
-    const catMap = {}; // { categoryName: { count, weightedCount, ratings: [], tags: [] } }
+    const nodes = typeGroups?.nodes || {};
+    const rootNameOf = (id) => { let n = nodes[id], g = 0; while (n && n.parentId && nodes[n.parentId] && g++ < 30) n = nodes[n.parentId]; return n ? n.name : null; };
+    // 정규화 태그키 → 소속 최상위 유형 이름 집합
+    const tagToRoots = {};
+    for (const n of Object.values(nodes)) {
+      const rn = rootNameOf(n.id); if (!rn) continue;
+      for (const t of (n.tags || [])) { const k = normalizeTagKey(t); if (!k) continue; (tagToRoots[k] = tagToRoots[k] || new Set()).add(rn); }
+    }
+    const catMap = {};
     for (const ta of tagAnal) {
-      const catInfo = getTagCategory(ta.tag, customTagCategories);
-      const catName = catInfo ? catInfo.category.replace(/^📂 /, "") : "미분류";
-      if (!catMap[catName]) {
-        catMap[catName] = { category: catName, count: 0, weightedCount: 0, ratings: [], tags: [], isCustom: catInfo?.isCustom || false };
+      const roots = tagToRoots[normalizeTagKey(ta.tag)];
+      const cats = (roots && roots.size) ? [...roots] : ["미분류"];
+      for (const catName of cats) {
+        if (!catMap[catName]) catMap[catName] = { category: catName, count: 0, weightedCount: 0, ratings: [], tags: [], isCustom: false };
+        catMap[catName].count += ta.count;
+        catMap[catName].weightedCount += ta.weightedCount;
+        catMap[catName].ratings.push(ta.avgRating);
+        catMap[catName].tags.push(ta.tag);
       }
-      catMap[catName].count += ta.count;
-      catMap[catName].weightedCount += ta.weightedCount;
-      catMap[catName].ratings.push(ta.avgRating);
-      catMap[catName].tags.push(ta.tag);
     }
     return Object.values(catMap)
       .map(c => ({
@@ -29399,7 +29429,7 @@ const TasteAnalysisScreen = memo(({
       }))
       .filter(c => c.count >= 2)
       .sort((a, b) => b.weightedCount - a.weightedCount);
-  }, [analysis, customTagCategories]);
+  }, [analysis, typeGroups]);
 
   // 🆕 v7.29.0: 연간 리캡 데이터 — 작품 추가(created_at) 연도 기준 버킷팅 후 연도별/전체 결산 집계.
   //   ※ 회차 단위 독서 로그가 없으므로 '읽은 편수'는 등록 연도 작품의 read_count 합으로 근사(앱 데이터 한계).
@@ -35745,6 +35775,15 @@ function AppContent() {
   const [catPickerTarget, setCatPickerTarget] = useState(""); // 대상 카테고리명
   const [catRenamingName, setCatRenamingName] = useState(null); // 🔧 v3.5.11: Android 이름 변경 대상 카테고리
   const [catRenameInput, setCatRenameInput] = useState(""); // 🔧 v3.5.11: Android 이름 변경 입력값
+  // 🆕 v7.34.0: 유형그룹(유형 ▸ 세부유형) 관리 UI 상태
+  const [tgExpanded, setTgExpanded] = useState(null);     // 펼친 최상위 유형 id
+  const [tgNewTopName, setTgNewTopName] = useState("");    // 새 유형명
+  const [tgChildName, setTgChildName] = useState("");      // 새 세부유형명
+  const [tgChildParent, setTgChildParent] = useState(null);// 세부유형 추가 대상 유형 id (입력 표시용)
+  const [tgRenamingId, setTgRenamingId] = useState(null);  // 인라인 이름변경 대상 노드 id
+  const [tgRenameInput, setTgRenameInput] = useState("");
+  const [tgPickerOpen, setTgPickerOpen] = useState(false); // 태그 선택 모달
+  const [tgPickerTarget, setTgPickerTarget] = useState(null); // 태그 배정 대상 노드 id
   const [comboTags, setComboTags] = useState([]); // 🔗 조합식 태그 (예: "먼치킨 히로인")
   const [customComboTraits, setCustomComboTraits] = useState([]); // 🔗 v3.0.4: 사용자 추가 조합 특성
   const [customComboTargets, setCustomComboTargets] = useState([]); // 🔗 v3.0.4: 사용자 추가 조합 대상
@@ -42460,6 +42499,75 @@ function AppContent() {
       } catch {}
     })();
   }, []);
+
+  // 🆕 v7.34.0: 유형그룹 CRUD (영속은 fire-and-forget). 노드: {id,name,parentId,order,tags[원문]}
+  const persistTypeGroups = (next) => { setTypeGroups(next); setAppMeta("tag_type_groups", next).catch(() => {}); };
+  function tgGenId() { return `tg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`; }
+  function tgChildrenOf(nodes, parentId) {
+    return Object.values(nodes || {}).filter(n => (n.parentId || null) === (parentId || null)).sort((a, b) => (a.order || 0) - (b.order || 0));
+  }
+  function addTypeGroupNode(name, parentId = null) {
+    const nm = (name || "").trim();
+    if (!nm) return;
+    setTypeGroups(prev => {
+      const nodes = { ...(prev?.nodes || {}) };
+      const sibs = tgChildrenOf(nodes, parentId);
+      if (sibs.some(s => s.name === nm)) { Alert.alert("알림", "같은 위치에 같은 이름이 이미 있어요."); return prev; }
+      const order = sibs.length ? Math.max(...sibs.map(s => s.order || 0)) + 1 : 0;
+      const id = tgGenId();
+      nodes[id] = { id, name: nm, parentId: parentId || null, order, tags: [] };
+      const next = { ...prev, nodes };
+      setAppMeta("tag_type_groups", next).catch(() => {});
+      return next;
+    });
+  }
+  function renameTypeGroupNode(id, name) {
+    const nm = (name || "").trim();
+    if (!nm) return;
+    setTypeGroups(prev => {
+      const n = prev?.nodes?.[id]; if (!n) return prev;
+      const next = { ...prev, nodes: { ...prev.nodes, [id]: { ...n, name: nm } } };
+      setAppMeta("tag_type_groups", next).catch(() => {});
+      return next;
+    });
+  }
+  function deleteTypeGroupNode(id) {
+    setTypeGroups(prev => {
+      const nodes = { ...(prev?.nodes || {}) };
+      if (!nodes[id]) return prev;
+      // 자식은 최상위로 승격(덜 파괴적), 노드만 삭제
+      for (const k of Object.keys(nodes)) if ((nodes[k].parentId || null) === id) nodes[k] = { ...nodes[k], parentId: null };
+      delete nodes[id];
+      const next = { ...prev, nodes };
+      setAppMeta("tag_type_groups", next).catch(() => {});
+      return next;
+    });
+  }
+  function assignTagsToTypeGroup(id, tags) {
+    setTypeGroups(prev => {
+      const n = prev?.nodes?.[id]; if (!n) return prev;
+      const cur = n.tags || [];
+      const add = (tags || []).filter(t => t && !cur.some(e => isSameTag(e, t)));
+      if (!add.length) return prev;
+      const next = { ...prev, nodes: { ...prev.nodes, [id]: { ...n, tags: [...cur, ...add] } } };
+      setAppMeta("tag_type_groups", next).catch(() => {});
+      return next;
+    });
+  }
+  function removeTagFromTypeGroup(id, tag) {
+    setTypeGroups(prev => {
+      const n = prev?.nodes?.[id]; if (!n) return prev;
+      const next = { ...prev, nodes: { ...prev.nodes, [id]: { ...n, tags: (n.tags || []).filter(t => !isSameTag(t, tag)) } } };
+      setAppMeta("tag_type_groups", next).catch(() => {});
+      return next;
+    });
+  }
+  function resetTypeGroupsToDefault() {
+    Alert.alert("기본값 복원", "유형그룹을 기본(앱 기본 분류)으로 되돌릴까요?\n직접 만든 유형·세부유형·배정은 사라집니다. (태그 자체는 유지)", [
+      { text: "취소", style: "cancel" },
+      { text: "복원", style: "destructive", onPress: () => { const seeded = seedTypeGroupsFrom(GENERAL_TAGS, {}); persistTypeGroups(seeded); setTgExpanded(null); } },
+    ]);
+  }
 
   // 🆕 v7.28.11: '넓게 점검' 토글 저장 · 🆕 v7.28.20: 전역 파일
   async function saveAiWideScan(v) {
@@ -57835,6 +57943,7 @@ async function importJSON() {
             tagCoOccurrences={tagCoOccurrences}
             coordinateSystems={coordinateSystems}
             customTagCategories={customTagCategories}
+            typeGroups={typeGroups}
             tagAttributes={tagAttributes}
             hiddenTags={hiddenTags}
             tierMode={globalTierConfig.mode}
@@ -61033,7 +61142,123 @@ async function importJSON() {
               </View>
             </Section>
 
-            {/* 📂 v3.5.9: 커스텀 태그 카테고리 관리 */}
+            {/* 🆕 v7.34.0: 태그 유형그룹(유형 ▸ 세부유형) — 기존 카테고리를 흡수/대체 */}
+            <Section title="🗂️ 태그 유형그룹 (유형 ▸ 세부유형)">
+              <Text style={{ color: C.sub, marginBottom: 10, fontSize: 12, lineHeight: 18 }}>
+                태그를 '유형 ▸ 세부유형'으로 분류합니다. 앱 기본 분류를 흡수했고 자유롭게 편집할 수 있어요.
+                한 태그가 여러 유형에 속할 수 있고(겹침), 분석 탭의 '카테고리별 선호도'에 반영됩니다.
+              </Text>
+              {/* 새 유형 추가 */}
+              <View style={{ flexDirection: "row", marginBottom: 8, gap: 8 }}>
+                <TextInput value={tgNewTopName} onChangeText={setTgNewTopName} placeholder="새 유형(대분류) 이름" placeholderTextColor={C.sub}
+                  style={{ flex: 1, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 9, color: C.text, fontSize: 14 }} />
+                <TouchableOpacity onPress={() => { addTypeGroupNode(tgNewTopName, null); setTgNewTopName(""); }} disabled={!tgNewTopName.trim()}
+                  style={{ backgroundColor: tgNewTopName.trim() ? C.primary : C.chip, paddingHorizontal: 16, borderRadius: 12, justifyContent: "center" }}>
+                  <Text style={{ color: tgNewTopName.trim() ? "#fff" : C.sub, fontWeight: "700" }}>추가</Text>
+                </TouchableOpacity>
+              </View>
+              <OutlineButton title="↩️ 기본값 복원" onPress={resetTypeGroupsToDefault} color={C.sub} style={{ marginBottom: 12 }} />
+              {/* 유형 목록 */}
+              {(() => {
+                const nodes = typeGroups?.nodes || {};
+                const tops = Object.values(nodes).filter(n => !n.parentId).sort((a, b) => (a.order || 0) - (b.order || 0));
+                if (tops.length === 0) return (<View style={{ padding: 20, alignItems: "center", backgroundColor: C.bg, borderRadius: 12 }}><Text style={{ color: C.sub }}>유형이 없습니다. 위에서 추가하세요.</Text></View>);
+                const renameRow = (id) => (
+                  <View style={{ flexDirection: "row", marginBottom: 8, gap: 8, backgroundColor: C.card, padding: 8, borderRadius: 10, borderWidth: 1, borderColor: C.primary }}>
+                    <TextInput value={tgRenameInput} onChangeText={setTgRenameInput} placeholder="새 이름" placeholderTextColor={C.sub} autoFocus
+                      style={{ flex: 1, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, fontSize: 14, color: C.text }} />
+                    <TouchableOpacity onPress={() => { renameTypeGroupNode(id, tgRenameInput); setTgRenamingId(null); }} style={{ backgroundColor: C.primary, paddingHorizontal: 12, borderRadius: 8, justifyContent: "center" }}>
+                      <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>변경</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => setTgRenamingId(null)} style={{ paddingHorizontal: 8, justifyContent: "center" }}><Text style={{ color: C.sub, fontWeight: "700", fontSize: 13 }}>취소</Text></TouchableOpacity>
+                  </View>
+                );
+                const nodeMenu = (id, name) => Alert.alert(name, "", [
+                  { text: "이름 변경", onPress: () => { setTgRenamingId(id); setTgRenameInput(name); } },
+                  { text: "삭제", style: "destructive", onPress: () => Alert.alert("삭제 확인", `"${name}"을(를) 삭제할까요?\n(하위 세부유형은 최상위로 이동, 태그 자체는 유지)`, [{ text: "취소", style: "cancel" }, { text: "삭제", style: "destructive", onPress: () => deleteTypeGroupNode(id) }]) },
+                  { text: "닫기", style: "cancel" },
+                ]);
+                const tagChips = (node) => ((node.tags || []).length === 0
+                  ? <Text style={{ color: C.sub, fontSize: 12, paddingVertical: 4 }}>배정된 태그 없음</Text>
+                  : <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                      {(node.tags || []).map(tag => (
+                        <View key={tag} style={{ flexDirection: "row", alignItems: "center", backgroundColor: C.primary + "15", paddingLeft: 10, paddingRight: 4, paddingVertical: 5, borderRadius: 999 }}>
+                          <Text style={{ color: C.text, fontSize: 13, fontWeight: "600" }}>{tag}</Text>
+                          <TouchableOpacity onPress={() => removeTagFromTypeGroup(node.id, tag)} style={{ padding: 4 }}><Text style={{ color: "#ef4444", fontSize: 11, fontWeight: "700" }}>✕</Text></TouchableOpacity>
+                        </View>
+                      ))}
+                    </View>);
+                const addTagBtn = (id) => (
+                  <TouchableOpacity onPress={() => { setTgPickerTarget(id); setTgPickerOpen(true); }} style={{ backgroundColor: isDark ? "#1e3a5f" : "#eff6ff", padding: 10, borderRadius: 10, marginVertical: 8, borderWidth: 1, borderColor: isDark ? "#3b82f6" : "#93c5fd", alignItems: "center" }}>
+                    <Text style={{ color: isDark ? "#93c5fd" : "#1d4ed8", fontWeight: "700", fontSize: 13 }}>🏷️ 태그 선택하여 추가</Text>
+                  </TouchableOpacity>
+                );
+                return tops.map(top => {
+                  const kids = Object.values(nodes).filter(n => n.parentId === top.id).sort((a, b) => (a.order || 0) - (b.order || 0));
+                  const open = tgExpanded === top.id;
+                  return (
+                    <View key={top.id} style={{ marginBottom: 8, backgroundColor: C.bg, borderRadius: 12, overflow: "hidden" }}>
+                      <TouchableOpacity onPress={() => setTgExpanded(open ? null : top.id)} onLongPress={() => nodeMenu(top.id, top.name)}
+                        style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 12 }}>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1 }}>
+                          <Text style={{ color: C.text, fontWeight: "700", fontSize: 15 }} numberOfLines={1}>🗂️ {top.name}</Text>
+                          <View style={{ backgroundColor: C.primary + "20", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 }}>
+                            <Text style={{ color: C.primary, fontSize: 11, fontWeight: "700" }}>{(top.tags || []).length}태그·세부{kids.length}</Text>
+                          </View>
+                        </View>
+                        <Text style={{ color: C.sub, fontSize: 16 }}>{open ? "▼" : "▶"}</Text>
+                      </TouchableOpacity>
+                      {open && (
+                        <View style={{ padding: 12, paddingTop: 0 }}>
+                          {tgRenamingId === top.id && renameRow(top.id)}
+                          {addTagBtn(top.id)}
+                          {tagChips(top)}
+                          <Text style={{ color: C.sub, fontSize: 12, fontWeight: "700", marginTop: 12, marginBottom: 6 }}>세부유형</Text>
+                          {kids.map(ch => (
+                            <View key={ch.id} style={{ backgroundColor: C.card, borderRadius: 10, padding: 10, marginBottom: 6, borderWidth: 1, borderColor: C.line }}>
+                              <TouchableOpacity onLongPress={() => nodeMenu(ch.id, ch.name)} style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                                <Text style={{ color: C.text, fontSize: 14, fontWeight: "600", flex: 1 }} numberOfLines={1}>↳ {ch.name}</Text>
+                                <Text style={{ color: C.primary, fontSize: 11, fontWeight: "700" }}>{(ch.tags || []).length}</Text>
+                              </TouchableOpacity>
+                              {tgRenamingId === ch.id && renameRow(ch.id)}
+                              {addTagBtn(ch.id)}
+                              {tagChips(ch)}
+                            </View>
+                          ))}
+                          <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
+                            <TextInput value={tgChildParent === top.id ? tgChildName : ""} onFocus={() => setTgChildParent(top.id)} onChangeText={(t) => { setTgChildParent(top.id); setTgChildName(t); }} placeholder="세부유형 추가" placeholderTextColor={C.sub}
+                              style={{ flex: 1, backgroundColor: C.card, borderWidth: 1, borderColor: C.line, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, fontSize: 13, color: C.text }} />
+                            <TouchableOpacity onPress={() => { if (tgChildParent === top.id && tgChildName.trim()) { addTypeGroupNode(tgChildName, top.id); setTgChildName(""); } }}
+                              style={{ backgroundColor: (tgChildParent === top.id && tgChildName.trim()) ? C.primary : C.chip, paddingHorizontal: 12, borderRadius: 8, justifyContent: "center" }}>
+                              <Text style={{ color: (tgChildParent === top.id && tgChildName.trim()) ? "#fff" : C.sub, fontWeight: "700", fontSize: 13 }}>추가</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      )}
+                    </View>
+                  );
+                });
+              })()}
+              <Text style={{ color: C.sub, fontSize: 10, marginTop: 8 }}>유형/세부유형을 길게 누르면 이름 변경·삭제. 한 태그를 여러 유형에 넣을 수 있어요(겹침 분석).</Text>
+            </Section>
+
+            {/* 🆕 v7.34.0: 유형그룹 태그 선택 모달 */}
+            <TagPickerModal
+              visible={tgPickerOpen}
+              onClose={() => setTgPickerOpen(false)}
+              onConfirm={(tags) => { if (tgPickerTarget) assignTagsToTypeGroup(tgPickerTarget, tags); }}
+              allTags={allTagsForSearch}
+              excludeTags={tgPickerTarget ? (typeGroups?.nodes?.[tgPickerTarget]?.tags || []) : []}
+              title="유형그룹에 태그 추가"
+              customTags={customTags}
+              userMajorGenres={userMajorGenres}
+              userSubGenres={userSubGenres}
+              customTagCategories={customTagCategories}
+              theme={C}
+            />
+
+            {/* (구) 카테고리 편집기 — v7.34.0에서 유형그룹으로 흡수, 비표시(다음 정리 때 제거) */}
+            {false && (
             <Section title="📂 태그 카테고리 관리">
               <Text style={{ color: C.sub, marginBottom: 12 }}>
                 태그를 카테고리로 분류하여 관리하고 분석에 활용합니다.{"\n"}
@@ -61258,7 +61483,8 @@ async function importJSON() {
                 </Text>
               </View>
             </Section>
-            
+            )}
+
             {/* 🆕 v3.5.12: 카테고리 태그 추가용 TagPickerModal */}
             <TagPickerModal
               visible={catPickerOpen}
