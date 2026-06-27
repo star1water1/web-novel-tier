@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, applyEpisodeSplitToMeta, parseKakaoProductList, parseKakaoViewerDate, SCRAPER_HEADERS, SCRAPER_UA };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, applyEpisodeSplitToMeta, parseKakaoProductList, parseKakaoViewerDate, parseMunpiaEntries, SCRAPER_HEADERS, SCRAPER_UA };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -561,6 +561,30 @@ eq("pickRidiGaidenSeries: 빈 목록 → []", S.pickRidiGaidenSeries({ title: "x
   eq("카카오 viewerInfo: lastReleasedDate → ts", S.parseKakaoViewerDate(view), S.scraperDateToTs("2020-06-01"));
   eq("카카오 viewerInfo: 날짜 없음 → 0", S.parseKakaoViewerDate('{"data":{"viewerInfo":{"item":{}}}}'), 0);
   eq("카카오 viewerInfo: 비JSON → 0", S.parseKakaoViewerDate("err"), 0);
+}
+
+// 🆕 v7.41.5: 문피아 회차 JSON 파서 (신 SPA API — result.list의 title+createdAt, 실측 구조)
+{
+  const basic = JSON.stringify({ result: { total: 3, next: false, sliceEntryId: null, list: [
+    { num: 3, title: "외전 1화", createdAt: "2023-08-09T10:00:00" },
+    { num: 2, title: "320화 (완결)", createdAt: "2021-10-04T10:00:00" },
+    { num: 1, title: "1화", createdAt: "2021-01-01T10:25:00" },
+  ] } });
+  const p = S.parseMunpiaEntries(basic);
+  eq("문피아: 3회차", p.episodes.length, 3);
+  eq("문피아: 외전 제목", p.episodes[0].title, "외전 1화");
+  eq("문피아: createdAt(ISO) → ts", p.episodes[1].ts, S.scraperDateToTs("2021-10-04"));
+  eq("문피아: next=false", p.next, false);
+  eq("문피아: 본편 '완결' 오탐 없음", S.isGaidenTitle(p.episodes[1].title), false);
+  const sp = S.splitEpisodesByGaiden(p.episodes);
+  eq("문피아 split: 외전 1화", sp.gaidenCount, 1);
+  eq("문피아 split: 본편 완결일=2021-10-04", sp.mainCompletedAt, S.scraperDateToTs("2021-10-04"));
+  // result.entries 폴백 + next/sliceEntryId(paid)
+  const paid = JSON.stringify({ result: { next: true, sliceEntryId: 555, entries: [{ title: "외전 2화", createdAt: "2023-09-01T00:00:00" }] } });
+  const pp = S.parseMunpiaEntries(paid);
+  eq("문피아: entries 폴백", pp.episodes.length, 1);
+  eq("문피아: sliceEntryId(paid cursor)", pp.sliceEntryId, 555);
+  eq("문피아: 비JSON/구조이상 → null", S.parseMunpiaEntries("<html>"), null);
 }
 
 console.log(`\n${fail === 0 ? "🎉 ALL PASS" : "⚠️  FAILED"}  pass=${pass} fail=${fail}`);

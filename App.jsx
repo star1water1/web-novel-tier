@@ -2,11 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.41.4 (본편/외전 분리 — 카카오페이지 확장, 폰 검증 대기)               ║
+ * ║  버전: 7.41.5 (본편/외전 분리 — 문피아 확장 + 로그인, 폰 검증 대기)            ║
  * ║  최종 수정: 2026-06-27                                                        ║
  * ║  총 라인 수: 약 69,360줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🟡 v7.41.5 본편/외전 분리 — 문피아 + 로그인 (폰 검증 대기) (2026-06-27)       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 폰 캡처로 확인: 문피아는 구버전 #episode_table 폐기 → 완전 SPA. 전체 회차목록   ║
+ * ║ (외전 포함)은 로그인 게이트(paid 엔드포인트). 신 API 회차 구조는 실측 확인       ║
+ * ║ (createdAt+title). parseMunpiaEntries(result.list/entries) + fetchMunpia        ║
+ * ║ EpisodeSplit: ≤100화는 익명 기본API, 큰 작품은 로그인 paid(order=LATEST=최신순  ║
+ * ║ →외전 앞, sliceEntryId 커서). 문피아 WebView 로그인 추가(노벨피아와 동일 패턴,  ║
+ * ║ 네이티브 쿠키스토어 자동첨부). fetchNovelMeta·일괄갱신 통합. 전부 방어적(무회귀).║
+ * ║ 순수 파서 회귀 +10 → 293/293. ※우리 DC IP는 문피아 CF 차단 → paid 동작·now    ║
+ * ║ 파라미터·로그인 흐름 폰 검증 필요(시험 기능). 카카오와 함께 폰 1회 확인 후 조정.║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🟡 v7.41.4 본편/외전 분리 — 카카오페이지 (폰 검증 대기) (2026-06-27)          ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -14840,6 +14852,47 @@ async function fetchKakaoEpisodeSplit(url, opts = {}) {
   }
   return { mainCompletedAt, hasGaiden: gaiden.length > 0, gaidenCount: gaiden.length, gaidenStartAt, gaidenCompletedAt };
 }
+// 🆕 v7.41.5: 문피아 회차목록 JSON 파서 — 신 SPA API. result.list(또는 entries)의 {title, createdAt(ISO)} → [{title, ts}].
+//   기본 엔드포인트(/api/v1/mobile/novel-detail/{id}/chapters)와 로그인 paid 엔드포인트가 같은 회차 구조(실측 createdAt+title). 순수.
+const MUNPIA_NOW_MAX = 9999999999999; // paid 엔드포인트 now 파라미터(공개=완결작이라 미래값으로 전체 포함)
+function parseMunpiaEntries(jsonText) {
+  let j; try { j = JSON.parse(jsonText); } catch { return null; }
+  const r = j && j.result;
+  if (!r || typeof r !== "object") return null;
+  const arr = Array.isArray(r.list) ? r.list : (Array.isArray(r.entries) ? r.entries : null);
+  if (!arr) return null;
+  const episodes = arr.map(e => e ? { title: String(e.title == null ? "" : e.title), ts: scraperDateToTs(String(e.createdAt == null ? "" : e.createdAt)) } : null).filter(Boolean);
+  return { episodes, next: !!r.next, sliceEntryId: r.sliceEntryId, total: Number(r.total) || 0 };
+}
+async function fetchMunpiaEpisodeSplit(url, opts = {}) {
+  const id = (String(url).match(/[?&]id=(\d+)/) || String(url).match(/\/(?:n|novel)\/(\d+)/) || String(url).match(/munpia\.com\/(\d+)/) || [])[1];
+  if (!id) return null;
+  const apiGet = async (path) => {
+    const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
+    try {
+      // m.munpia.com/api — 로그인 세션 쿠키는 네이티브 쿠키스토어가 자동 첨부(동일 출처).
+      const res = await fetch("https://m.munpia.com" + path, { headers: { ...SCRAPER_HEADERS, "Accept": "application/json", "Referer": "https://m.munpia.com/" }, redirect: "follow", signal });
+      if (!res.ok) return null;
+      return await res.text();
+    } catch { return null; } finally { cleanup(); }
+  };
+  // 1) 기본 회차목록 — 전체가 한 번에 오면(≤100, next=false) 로그인 없이 분리.
+  const basic = parseMunpiaEntries(await apiGet("/api/v1/mobile/novel-detail/" + id + "/chapters"));
+  if (basic && basic.episodes.length && !basic.next) return splitEpisodesByGaiden(basic.episodes);
+  // 2) 큰 작품(next=true) — 로그인 세션 + paid/selective(order=LATEST=최신순 → 외전 앞). 경계(본편 등장)까지 수집.
+  let collected = [], slice = "", pages = 0;
+  while (pages < 20) {
+    const txt = await apiGet("/api/v1/paid/order/selective/novels/" + id + "/entries?order=LATEST&size=100&sliceEntryId=" + encodeURIComponent(slice) + "&now=" + MUNPIA_NOW_MAX);
+    const p = parseMunpiaEntries(txt);
+    if (!p || !p.episodes.length) break;
+    collected = collected.concat(p.episodes);
+    pages++;
+    if (collected.some(e => !isGaidenTitle(e.title)) || !p.next || p.sliceEntryId == null) break;
+    slice = String(p.sliceEntryId);
+  }
+  if (!collected.length) return null;
+  return splitEpisodesByGaiden(collected);
+}
 // 🆕 v7.41.1: 분리 결과(split)를 meta에 적용(네이버·노벨피아 공통). 본편 완결일·연도, 외전 회차수·시작/완결일·상태, total=본편(전체-외전).
 function applyEpisodeSplitToMeta(meta, split, opts) {
   if (!meta || !split) return meta;
@@ -15037,6 +15090,10 @@ async function fetchNovelMeta(url, opts = {}) {
   //   ※total 신뢰도 불확실 → noTotalAdjust. 직전 content 페이지 GET으로 _kpwtkn 쿠키가 잡혀 GraphQL 인증됨(네이티브 쿠키스토어).
   if (platform === "카카오페이지" && meta.workStatus === "completed") {
     try { const sp = await fetchKakaoEpisodeSplit(url, opts); if (sp && (sp.mainCompletedAt || sp.hasGaiden)) applyEpisodeSplitToMeta(meta, sp, { noTotalAdjust: true }); } catch {}
+  }
+  // 🆕 v7.41.5: 문피아 완결작 — 신 SPA 회차API. ≤100화는 익명, 큰 작품은 로그인 paid 엔드포인트로 본편/외전 분리.
+  if (platform === "문피아" && meta.workStatus === "completed") {
+    try { const sp = await fetchMunpiaEpisodeSplit(url, opts); if (sp && (sp.mainCompletedAt || sp.hasGaiden)) applyEpisodeSplitToMeta(meta, sp); } catch {}
   }
   return meta;
 }
@@ -17070,7 +17127,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.41.4";
+const APP_VERSION = "7.41.5";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -17096,6 +17153,17 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.41.5", date: "2026-06-27",
+    title: "🌿 본편/외전 분리 — 문피아도 (시험)",
+    highlights: [
+      { type: "new", text: "🌿 문피아 완결작도 본편/외전 완결일을 분리해서 가져오도록 추가했어요. 100화 이하 작품은 바로 되고, 회차가 많은 작품은 설정 › ‘문피아 로그인’을 하면 전체 회차를 받아 분리해요." },
+    ],
+    details: [
+      "문피아가 사이트를 새로 바꾸면서, 긴 작품의 전체 회차 목록은 로그인해야 받을 수 있게 됐어요. 시험 기능이라 일부 작품에서 안 될 수 있고, 그땐 기존 방식으로 자동 대체돼요(정보가 비뚤어지진 않아요).",
+      "이번 카카오·문피아는 접근 방식이 까다로워 실제 기기에서 한 번 확인이 더 필요한 단계예요.",
+    ],
+  },
   {
     version: "7.41.4", date: "2026-06-27",
     title: "🌿 본편/외전 분리 — 카카오도 (시험)",
@@ -36191,6 +36259,9 @@ function AppContent() {
   const [npLoggedIn, setNpLoggedIn] = useState(false); // 🔐 v7.40.0: 노벨피아 로그인 여부(쿠키는 OS 스토어, 여기엔 상태만)
   const [npLoginModalOpen, setNpLoginModalOpen] = useState(false); // 🔐 v7.40.0: 노벨피아 WebView 로그인 모달
   const [npBusy, setNpBusy] = useState(false); // 🔐 v7.40.0: 로그인 확인/로그아웃 진행 중
+  const [mpLoggedIn, setMpLoggedIn] = useState(false); // 🔐 v7.41.5: 문피아 로그인 여부(큰 작품 전체 회차목록=로그인 필요)
+  const [mpLoginModalOpen, setMpLoginModalOpen] = useState(false);
+  const [mpBusy, setMpBusy] = useState(false);
   // 🆕 v7.28.14: AI 태그 추천 (작품 추가/편집)
   const [aiTagModalOpen, setAiTagModalOpen] = useState(false);
   // 🔗 v7.28.26 스크래퍼: 링크에서 메타 불러오기 — 로딩 플래그 + 확인 모달({meta,items,apply,label})
@@ -43040,7 +43111,11 @@ function AppContent() {
       if (id) {
         try {
           const hit = (await searchMunpia(title || "", opts)).find(c => c.url && c.url.includes("id=" + id) && c.meta);
-          if (hit) return hit.meta;
+          if (hit) {
+            // 🆕 v7.41.5: 완결작이면 회차목록으로 본편/외전 분리 보강(검색 meta엔 회차 분리 정보 없음)
+            if (hit.meta && hit.meta.workStatus === "completed") { try { const sp = await fetchMunpiaEpisodeSplit(link, opts); if (sp && (sp.mainCompletedAt || sp.hasGaiden)) applyEpisodeSplitToMeta(hit.meta, sp); } catch {} }
+            return hit.meta;
+          }
         } catch {}
       }
     }
@@ -43458,6 +43533,31 @@ function AppContent() {
       try { await saveGlobalAiConfig({ np_logged_in: false }); } catch {}
       Alert.alert("로그아웃됨", "노벨피아 로그인 세션을 지웠어요.");
     } finally { setNpBusy(false); }
+  }
+
+  // 🔐 v7.41.5: 문피아 로그인 — 회차 많은 작품의 '전체 회차목록'(외전 포함)은 로그인 세션이 있어야 받을 수 있음.
+  //   쿠키는 OS 스토어에 두고 API fetch에 자동 첨부(동일 출처 m.munpia.com). 여기선 로그인 여부만 추적/표시.
+  async function refreshMpSession() {
+    try { const jar = await CookieManager.get("https://m.munpia.com"); return !!(jar && typeof jar === "object" && Object.keys(jar).length > 0); }
+    catch (e) { console.warn("[mp] 쿠키 조회 실패:", e?.message); return false; }
+  }
+  async function confirmMpLogin() {
+    setMpBusy(true);
+    try {
+      try { await CookieManager.flush(); } catch {}
+      const has = await refreshMpSession();
+      setMpLoginModalOpen(false);
+      if (has) {
+        setMpLoggedIn(true);
+        try { await saveGlobalAiConfig({ mp_logged_in: true }); } catch {}
+        Alert.alert("문피아 로그인 완료", "이제 회차 많은 완결작도 본편/외전 완결일을 분리해 가져와요. (외전이 안 잡히면 로그인이 덜 됐을 수 있어요 — 다시 시도해 주세요.)");
+      } else { setMpLoggedIn(false); Alert.alert("로그인이 확인되지 않았어요", "문피아에 로그인한 뒤 다시 ‘로그인 완료’를 눌러 주세요."); }
+    } finally { setMpBusy(false); }
+  }
+  async function logoutMp() {
+    setMpLoggedIn(false);
+    try { await saveGlobalAiConfig({ mp_logged_in: false }); } catch {}
+    Alert.alert("로그아웃 표시", "문피아 로그인 표시를 해제했어요. (완전 로그아웃은 문피아 사이트에서 하세요.)");
   }
 
   // 🆕 v7.33.0: 유형그룹 로드 — 없으면 기본 GENERAL_TAGS + 커스텀 카테고리에서 1회 시드(흡수, 비파괴)
@@ -43889,6 +43989,12 @@ function AppContent() {
         const has = await refreshNpSession();
         if (has) setNpLoggedIn(true);
         else { globalNpCookie = null; setNpLoggedIn(false); try { await saveGlobalAiConfig({ np_logged_in: false }); } catch {} }
+      }
+      // 🔐 v7.41.5: 문피아 로그인 복원 — 쿠키 살아있으면 유지, 만료 시 자동 해제.
+      if (cfg.mp_logged_in === true) {
+        const has = await refreshMpSession();
+        setMpLoggedIn(has);
+        if (!has) { try { await saveGlobalAiConfig({ mp_logged_in: false }); } catch {} }
       }
       if (cfg.ai_usage && typeof cfg.ai_usage === "object") {
         _aiUsage = {
@@ -61997,6 +62103,35 @@ async function importJSON() {
                 </Text>
               </View>
 
+              {/* 🔐 v7.41.5: 문피아 로그인 — 회차 많은 완결작의 전체 회차목록(외전 포함)을 받아 본편/외전 분리 */}
+              <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                  <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>🔐 문피아 로그인</Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: mpLoggedIn ? "#22c55e" : C.line }} />
+                    <Text style={{ color: mpLoggedIn ? "#22c55e" : C.sub, fontSize: 12, fontWeight: "800" }}>{mpLoggedIn ? "로그인됨" : "로그인 안 됨"}</Text>
+                  </View>
+                </View>
+                <Text style={{ color: C.sub, fontSize: 11.5, marginTop: 5, lineHeight: 16 }}>
+                  문피아는 회차가 많은 작품의 ‘전체 회차목록’을 로그인해야 받을 수 있어요. 로그인하면 완결작의 본편/외전 완결일을 분리해 가져와요(100화 이하 작품은 로그인 없이도 돼요). 로그인 정보는 휴대폰 쿠키 저장소에만 보관돼요.
+                </Text>
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                  <TouchableOpacity onPress={() => setMpLoginModalOpen(true)} disabled={mpBusy} activeOpacity={0.7}
+                    style={{ paddingVertical: 9, paddingHorizontal: 16, borderRadius: 999, backgroundColor: C.primary, opacity: mpBusy ? 0.5 : 1 }}>
+                    <Text style={{ color: "#fff", fontWeight: "800", fontSize: 12.5 }}>{mpLoggedIn ? "다시 로그인" : "문피아 로그인"}</Text>
+                  </TouchableOpacity>
+                  {mpLoggedIn && (
+                    <TouchableOpacity onPress={logoutMp} disabled={mpBusy} activeOpacity={0.7}
+                      style={{ paddingVertical: 9, paddingHorizontal: 16, borderRadius: 999, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, opacity: mpBusy ? 0.5 : 1 }}>
+                      <Text style={{ color: C.sub, fontWeight: "800", fontSize: 12.5 }}>로그아웃 표시</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+                <Text style={{ color: C.sub, fontSize: 10, marginTop: 8, lineHeight: 14 }}>
+                  ※ 시험 기능 — 문피아 회차 API 접근 방식이 까다로워 일부 작품에서 안 될 수 있어요. 안 되면 기존 방식으로 자동 대체돼요.
+                </Text>
+              </View>
+
               {/* 🔧 v7.28.38: 긁기 진단 — 폰에서 검색 원본 캡처(타 플랫폼 제목검색 파서 개발용) */}
               <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
                 <Text style={{ color: C.text, fontWeight: "700", fontSize: 14, marginBottom: 4 }}>🔧 긁기 진단 (검색 원본 캡처)</Text>
@@ -62066,6 +62201,44 @@ async function importJSON() {
                   {npLoginModalOpen && (
                     <WebView
                       source={{ uri: "https://novelpia.com/login/" }}
+                      userAgent={SCRAPER_UA}
+                      sharedCookiesEnabled
+                      thirdPartyCookiesEnabled
+                      domStorageEnabled
+                      javaScriptEnabled
+                      startInLoadingState
+                      renderLoading={() => (
+                        <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "center", alignItems: "center", backgroundColor: C.bg }}>
+                          <ActivityIndicator size="large" color={C.primary} />
+                        </View>
+                      )}
+                      style={{ flex: 1, backgroundColor: C.bg }}
+                    />
+                  )}
+                </SafeAreaView>
+              </Modal>
+
+              {/* 🔐 v7.41.5: 문피아 WebView 로그인 모달 */}
+              <Modal visible={mpLoginModalOpen} animationType="slide" statusBarTranslucent onRequestClose={() => setMpLoginModalOpen(false)}>
+                <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line }}>
+                    <TouchableOpacity onPress={() => setMpLoginModalOpen(false)} activeOpacity={0.7} style={{ padding: 6 }}>
+                      <Text style={{ color: C.sub, fontSize: 15, fontWeight: "800" }}>✕ 닫기</Text>
+                    </TouchableOpacity>
+                    <Text style={{ color: C.text, fontSize: 15, fontWeight: "800" }}>문피아 로그인</Text>
+                    <TouchableOpacity onPress={confirmMpLogin} disabled={mpBusy} activeOpacity={0.7}
+                      style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, backgroundColor: C.primary, opacity: mpBusy ? 0.5 : 1 }}>
+                      <Text style={{ color: "#fff", fontSize: 13, fontWeight: "800" }}>{mpBusy ? "확인 중…" : "로그인 완료"}</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={{ paddingHorizontal: 14, paddingVertical: 8, backgroundColor: C.chip }}>
+                    <Text style={{ color: C.sub, fontSize: 11.5, lineHeight: 16 }}>
+                      문피아에 로그인한 뒤, 위 오른쪽 ‘로그인 완료’를 눌러 주세요. 로그인 정보는 휴대폰 쿠키 저장소에만 보관돼요.
+                    </Text>
+                  </View>
+                  {mpLoginModalOpen && (
+                    <WebView
+                      source={{ uri: "https://m.munpia.com/" }}
                       userAgent={SCRAPER_UA}
                       sharedCookiesEnabled
                       thirdPartyCookiesEnabled
