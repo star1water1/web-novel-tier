@@ -2,11 +2,20 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.40.2 (네이버 작가 누락 수정 — 검색 후보 작가/표지 폴백 보강)          ║
+ * ║  버전: 7.40.3 (일괄 등록 완결일 보존 — 신규 등록 completed_at 누락 수정)        ║
  * ║  최종 수정: 2026-06-27                                                        ║
  * ║  총 라인 수: 약 69,360줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🧩 v7.40.3 일괄 등록 완결일 보존 — 신규 등록 completed_at 누락 (2026-06-27)   ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 메타 소비경로 감사: 업데이트(applyScrapedUpdateToWork)는 완결일을 저장하나      ║
+ * ║ 신규 일괄 등록은 start/end_year만 쓰고 completed_at(완결일 ms)을 버렸다.        ║
+ * ║ metaToDraft에 completed_at 추가 + 일괄 INSERT 2곳(novels·planned_novels)에      ║
+ * ║ 컬럼/값 추가(플레이스홀더 18·37 검증). 단건 신규/예정 확인모달 경로의 완결일은   ║
+ * ║ 4개 ctx(fields/getCurrent/apply)+state라 별도 결정 필요 — 다음 단계로 보류.     ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🩹 v7.40.2 네이버 작가 누락 수정 — 검색 후보 폴백 보강 (2026-06-27)           ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -16729,7 +16738,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.40.2";
+const APP_VERSION = "7.40.3";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -16755,6 +16764,13 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.40.3", date: "2026-06-27",
+    title: "🧩 일괄 등록에도 완결일 저장",
+    highlights: [
+      { type: "fix", text: "🧩 작품을 일괄로 등록할 때 완결일이 빠지던 걸 고쳤어요. 이제 완결작은 일괄 등록에서도 완결일이 함께 저장돼요." },
+    ],
+  },
   {
     version: "7.40.2", date: "2026-06-27",
     title: "🩹 네이버 작가 누락 수정",
@@ -42332,6 +42348,7 @@ function AppContent() {
       sub_genre: gmap.sub || [],
       start_year: Number(meta.startYear) || 0,
       end_year: Number(meta.endYear) || 0,
+      completed_at: Number(meta.completedAt) || 0, // 🆕 v7.40.3: 완결일(ms) — 일괄 등록에서도 보존
       link: meta.url || "",
       platform: canonicalPlatform(meta.platform || ""), // 🆕 v7.28.55: 표시·정규화
       coverUrl: meta.coverUrl || "",
@@ -42418,7 +42435,7 @@ function AppContent() {
     const t = (batchAddQuery || batchAddQueue[batchAddIdx] || "").trim();
     if (t) setBatchAddDrafts(prev => [...prev, {
       title: t, author: "", note: "", tags: "", platforms: [], total_episodes: 0,
-      work_status: "ongoing", major_genre: [], sub_genre: [], start_year: 0, end_year: 0,
+      work_status: "ongoing", major_genre: [], sub_genre: [], start_year: 0, end_year: 0, completed_at: 0,
       link: "", platform: "", coverUrl: "",
     }]);
     advanceBatchAdd();
@@ -42476,13 +42493,13 @@ function AppContent() {
         if (isPlannedTarget) {
           // 예정 등록: 핵심 컬럼만 INSERT (나머지는 스키마 기본값). 레이팅/티어 필드 없음.
           await exec(
-            `INSERT INTO planned_novels (id,title,author,tags,platforms,note,total_episodes,cover_image,link,work_status,major_genre,sub_genre,priority,created_at,tag_data,start_year,end_year)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+            `INSERT INTO planned_novels (id,title,author,tags,platforms,note,total_episodes,cover_image,link,work_status,major_genre,sub_genre,priority,created_at,tag_data,start_year,end_year,completed_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
             [
               id, t, (d.author || "").trim(), deduplicateTagString(d.tags || "") || "",
               JSON.stringify(d.platforms || []), (d.note || "").trim(), Number(d.total_episodes) || 0,
               coverPath, (d.link || "").trim(), d.work_status || "ongoing", finalMajor, finalSub,
-              0, now, "", Number(d.start_year) || 0, Number(d.end_year) || 0,
+              0, now, "", Number(d.start_year) || 0, Number(d.end_year) || 0, Number(d.completed_at) || 0, // 🆕 v7.40.3: 완결일
             ]
           );
           if (coverPath) { coverTouched = true; try { await updateCoverStatus(coverPath, id, "used"); } catch {} }
@@ -42493,15 +42510,15 @@ function AppContent() {
             manualOrder = (Number(mr?.m) || 0) + 100;
           } catch {}
           await execBatch([{
-            sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order,read_count_baseline,start_year,end_year)
-              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+            sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order,read_count_baseline,start_year,end_year,completed_at)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
             params: [
               id, t, (d.author || "").trim(), deduplicateTagString(d.tags || "") || "",
               JSON.stringify(d.platforms || []), (d.note || "").trim(),
               0, globalTierConfig.defaultRating || 1500, 350, 0, 0, 0, globalTierConfig.defaultTier || "C",
               now, "", Number(d.total_episodes) || 0, "reading", 0, coverPath, (d.link || "").trim(),
               d.work_status || "ongoing", now, finalMajor, finalSub, "none", 0, 0, 1, "", "", "",
-              null, manualOrder, 0, Number(d.start_year) || 0, Number(d.end_year) || 0,
+              null, manualOrder, 0, Number(d.start_year) || 0, Number(d.end_year) || 0, Number(d.completed_at) || 0, // 🆕 v7.40.3: 완결일
             ],
           }]);
           if (coverPath) { coverTouched = true; try { await applyNovelCover(id, coverPath, null); } catch {} }
