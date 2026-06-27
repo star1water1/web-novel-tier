@@ -2,11 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.44.8 (편집·보충 경로 외전/완결일 파리티 + 보충 누락 버그 수정)        ║
+ * ║  버전: 7.44.9 (예정 경로 외전/완결일 파리티 — 5경로 완전 대등)                 ║
  * ║  최종 수정: 2026-06-27                                                        ║
- * ║  총 라인 수: 약 69,710줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 69,730줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🧩 v7.44.9 예정 경로 외전/완결일 파리티 — 5경로 완전 대등 (2026-06-27)        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 마지막 경로(예정 등록) 배선으로 불러오기 5경로 모두 외전/완결일 대등화 완료:   ║
+ * ║ plannedCompletedAt/GaidenStatus/GaidenTotalEpisodes/GaidenStartAt/Gaiden       ║
+ * ║ CompletedAt state 신설 + addPlannedNovel INSERT 5컬럼(30=30=30 검증) +          ║
+ * ║ scrapeCtxPlanned getCurrent·apply·supportsGaiden + clearPlannedForm 리셋 +      ║
+ * ║ convertPlannedToNovel(예정→본작) 3컬럼 round-trip(38=38=38 검증).               ║
+ * ║ → 일괄·보충·편집·신규(링크/단건)·예정 전부 외전/완결일 처리. 회귀 331/331.      ║
+ * ║ ※예정 폼엔 외전 입력 UI는 없음(불러오기로만 채워 저장·전환 시 본작에 반영).     ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🧩 v7.44.8 편집·보충 외전/완결일 파리티 + 보충 누락 버그 수정 (2026-06-27)    ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -36977,6 +36988,12 @@ function AppContent() {
   // 🔧 v7.6.0 (포트 v3.12.3): 예정작 연재 연도
   const [plannedStartYear, setPlannedStartYear] = useState(0);
   const [plannedEndYear, setPlannedEndYear] = useState(0);
+  // 🆕 v7.44.9: 예정작 외전/완결일(불러오기로 채움 → addPlannedNovel 저장 → convert 시 본작으로 round-trip). 5경로 파리티.
+  const [plannedCompletedAt, setPlannedCompletedAt] = useState(0);
+  const [plannedGaidenStatus, setPlannedGaidenStatus] = useState("none");
+  const [plannedGaidenTotalEpisodes, setPlannedGaidenTotalEpisodes] = useState("");
+  const [plannedGaidenStartAt, setPlannedGaidenStartAt] = useState(0);
+  const [plannedGaidenCompletedAt, setPlannedGaidenCompletedAt] = useState(0);
   const [plannedMajorGenre, setPlannedMajorGenre] = useState([]);
   const [plannedSubGenre, setPlannedSubGenre] = useState([]);
   const [plannedPriority, setPlannedPriority] = useState(3); // 1~5 (5가 가장 높음)
@@ -39393,6 +39410,7 @@ function AppContent() {
     setPlannedWorkStatus("ongoing");
     setPlannedStartYear(0); // 🔧 v7.6.0 (포트 v3.12.3)
     setPlannedEndYear(0);
+    setPlannedCompletedAt(0); setPlannedGaidenStatus("none"); setPlannedGaidenTotalEpisodes(""); setPlannedGaidenStartAt(0); setPlannedGaidenCompletedAt(0); // 🆕 v7.44.9
     setPlannedMajorGenre([]);
     setPlannedSubGenre([]);
     setPlannedPriority(3);
@@ -39445,8 +39463,8 @@ function AppContent() {
       const now = Date.now();
       
       await exec(
-        `INSERT INTO planned_novels (id,title,author,tags,platforms,note,total_episodes,cover_image,link,work_status,major_genre,sub_genre,priority,created_at,expected_rating,expected_tier,interest_level,discovery_source,first_chapter_read,scheduled_start_date,similar_novels,why_interested,tag_data,start_year,end_year)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+        `INSERT INTO planned_novels (id,title,author,tags,platforms,note,total_episodes,cover_image,link,work_status,major_genre,sub_genre,priority,created_at,expected_rating,expected_tier,interest_level,discovery_source,first_chapter_read,scheduled_start_date,similar_novels,why_interested,tag_data,start_year,end_year,completed_at,gaiden_status,gaiden_total_episodes,gaiden_start_at,gaiden_completed_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
         [
           id,
           t,
@@ -39480,6 +39498,11 @@ function AppContent() {
           "", // 🔧 v3.9.2: tag_data 누락 수정 (UPDATE에는 있으나 INSERT에 빠져있었음)
           Number(plannedStartYear) || 0, // 🔧 v7.6.0 (포트 v3.12.3)
           Number(plannedEndYear) || 0,
+          Number(plannedCompletedAt) || 0,       // 🆕 v7.44.9: 본편 완결일
+          plannedGaidenStatus || "none",         // 🆕 v7.44.9
+          Number(plannedGaidenTotalEpisodes) || 0,
+          Number(plannedGaidenStartAt) || 0,
+          Number(plannedGaidenCompletedAt) || 0,
         ]
       );
 
@@ -39749,8 +39772,8 @@ function AppContent() {
       const _baselineToRestore = Number(planned.read_count_baseline) || (Number(planned.read_count) || initialReadCount);
       await execBatch([
         {
-          sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order,start_year,end_year)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+          sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order,start_year,end_year,completed_at,gaiden_start_at,gaiden_completed_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
           params: [
             id,
             planned.title,
@@ -39788,6 +39811,9 @@ function AppContent() {
             // 🔧 v7.6.0: 예정→본작 전환 시 연재 연도 round-trip 보존
             Number(planned.start_year) || 0,
             Number(planned.end_year) || 0,
+            Number(planned.completed_at) || 0,       // 🆕 v7.44.9: 본편 완결일 round-trip
+            Number(planned.gaiden_start_at) || 0,    // 🆕 v7.44.9
+            Number(planned.gaiden_completed_at) || 0,
           ],
         },
         {
@@ -43062,7 +43088,8 @@ function AppContent() {
     label: "예정 등록",
     kind: "planned", // 🆕 v7.28.52: 제목검색 중복 판정용
     freshTarget: true, // 🆕 v7.44.7: 예정도 빈 폼 → 긁어온 값 기본 체크 ON
-    getCurrent: () => ({ title: plannedTitle, author: plannedAuthor, note: plannedNote, tags: plannedTags, total_episodes: plannedTotalEpisodes, work_status: plannedWorkStatus, cover: plannedCoverImage, major_genre: plannedMajorGenre, sub_genre: plannedSubGenre, start_year: plannedStartYear, end_year: plannedEndYear, platforms: plannedPlatforms, link: plannedLink }),
+    supportsGaiden: true, // 🆕 v7.44.9: 예정도 외전/완결일 저장 배선 완료(addPlannedNovel INSERT + convert round-trip)
+    getCurrent: () => ({ title: plannedTitle, author: plannedAuthor, note: plannedNote, tags: plannedTags, total_episodes: plannedTotalEpisodes, work_status: plannedWorkStatus, cover: plannedCoverImage, major_genre: plannedMajorGenre, sub_genre: plannedSubGenre, start_year: plannedStartYear, end_year: plannedEndYear, platforms: plannedPlatforms, link: plannedLink, completed_at: plannedCompletedAt, gaiden_status: plannedGaidenStatus, gaiden_total_episodes: plannedGaidenTotalEpisodes, gaiden_start_at: plannedGaidenStartAt, gaiden_completed_at: plannedGaidenCompletedAt }),
     apply: (f) => {
       if (f.title != null) setPlannedTitle(f.title);
       if (f.author != null) setPlannedAuthor(f.author);
@@ -43077,6 +43104,12 @@ function AppContent() {
       if (f.end_year != null) setPlannedEndYear(Number(f.end_year) || 0);
       if (f.platforms != null) setPlannedPlatforms(f.platforms);
       if (f.link != null) setPlannedLink(f.link);
+      // 🆕 v7.44.9: 외전·완결일 반영
+      if (f.completed_at != null) setPlannedCompletedAt(Number(f.completed_at) || 0);
+      if (f.gaiden_status != null) setPlannedGaidenStatus(f.gaiden_status);
+      if (f.gaiden_total_episodes != null) setPlannedGaidenTotalEpisodes(String(f.gaiden_total_episodes));
+      if (f.gaiden_start_at != null) setPlannedGaidenStartAt(Number(f.gaiden_start_at) || 0);
+      if (f.gaiden_completed_at != null) setPlannedGaidenCompletedAt(Number(f.gaiden_completed_at) || 0);
     },
   });
   const scrapeCtxSupplement = () => ({
