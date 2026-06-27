@@ -2,11 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.44.1 (카카오 가로채기 후킹 강화 — responseType 안전 + 실패 진단)      ║
+ * ║  버전: 7.44.2 (카카오 공유링크(series_id=) 인식 + 캡처 라우팅)                 ║
  * ║  최종 수정: 2026-06-27                                                        ║
- * ║  총 라인 수: 약 69,580줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 69,600줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔗 v7.44.2 카카오 공유링크(series_id=) 인식 + 캡처 라우팅 (2026-06-27)        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 폰 보고: 캡처가 아예 안 뜨고 즉시 일반 에러. 원인: 붙여넣은 URL이 /content/    ║
+ * ║ {id}가 아니라 공유링크(...n_source=sh_more&series_id=69296192) — host도        ║
+ * ║ page.kakao가 아닐 수 있어 '카카오 미인식' → 캡처 분기 자체를 안 탐.            ║
+ * ║ 수정: kakaoSeriesIdFromUrl로 /content/{id}+series_id=/seriesId= 쿼리 모두      ║
+ * ║ 추출. fetchNovelMeta에 카카오 조기 분기 신설 — seriesId 잡히면 정규 URL        ║
+ * ║ (page.kakao/content/{id})로 캡처(주)→토큰(폴백), 성공 반환/실패는 카카오       ║
+ * ║ 전용 안내. HTML 경로(무의미) 건너뜀. 회귀 +4 → 314/314.                        ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🩹 v7.44.1 카카오 가로채기 후킹 강화 + 실패 진단 (2026-06-27)                 ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -14959,9 +14970,15 @@ const KAKAO_OVERVIEW_Q = "query contentHomeOverview($seriesId: Long!) { contentH
 //   일반 브라우저 UA로 POST하면 안티봇 HTML 벽(200이지만 JSON 아님)이 떠 — 이 마커로 통과 시도.
 const KAKAO_GQL_UA = SCRAPER_UA + " KakaoPageWeb/graphql";
 const KAKAO_GQL_HEADERS = { ...SCRAPER_HEADERS, "User-Agent": KAKAO_GQL_UA, "Accept": "application/json, text/plain, */*", "Content-Type": "application/json", "Origin": "https://page.kakao.com" };
+// 🆕 v7.44.2: 카카오 seriesId 추출 — /content/{id} 경로 + 공유링크 쿼리(series_id=/seriesId=, n_source=sh_more 등) 모두 대응.
+function kakaoSeriesIdFromUrl(url) {
+  const s = String(url || "");
+  const m = s.match(/\/content\/(\d+)/) || s.match(/[?&]series_?id=(\d+)/i);
+  return m ? m[1] : null;
+}
 const KAKAO_GQL_ENDPOINTS = ["https://page.kakao.com/graphql", "https://api-page.kakao.com/graphql"]; // 🆕 v7.43.0: page(익명 _kawlt) 우선, 실패 시 api-page
 async function fetchKakaoMetaGql(url, opts = {}) {
-  const sid = (String(url).match(/\/content\/(\d+)/) || [])[1];
+  const sid = kakaoSeriesIdFromUrl(url);
   if (!sid) return null;
   const body = JSON.stringify({ query: KAKAO_OVERVIEW_Q, operationName: "contentHomeOverview", variables: { seriesId: Number(sid) } });
   for (const ep of KAKAO_GQL_ENDPOINTS) {
@@ -15211,6 +15228,17 @@ async function fetchNovelMeta(url, opts = {}) {
       if (m.workStatus === "completed") { try { const sp = await fetchNovelpiaEpisodeSplit(url, opts); if (sp) applyEpisodeSplitToMeta(m, sp); } catch {} }
       return m;
     } } catch { /* API 실패 → HTML 폴백 */ } }
+  }
+  // 🆕 v7.44.2: 카카오 — /content/{id} + 공유링크(series_id=/seriesId=, host가 page.kakao가 아닐 수도) 모두 인식.
+  //   카카오는 풀-CSR+서명난독화라 HTML 경로가 무의미 → seriesId 잡히면 여기서 캡처(주)·토큰(폴백)으로 끝냄.
+  const kkSid = kakaoSeriesIdFromUrl(url);
+  if (kkSid && (platform === "카카오페이지" || /kakao/i.test(url) || !platform)) {
+    const canonical = "https://page.kakao.com/content/" + kkSid;
+    let km = null;
+    if (globalKakaoCapture) { try { km = await globalKakaoCapture(canonical, opts); } catch {} }
+    if (!km || !km.ok || !km.title) { try { km = await fetchKakaoMetaGql(canonical, opts); } catch {} }
+    if (km && km.ok && km.title) return km;
+    throw new Error("카카오 작품 정보를 가져오지 못했어요. 잠시 후 다시 시도하거나, 작품 링크가 맞는지 확인해 주세요. (계속 안 되면 제목·작가·날짜는 직접 입력해 주세요.)");
   }
   const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
   let res, html = "";
