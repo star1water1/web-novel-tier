@@ -2,11 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.44.11 (보충 경로 외전/완결일·연도 저장 복구 — editItem 단일 모델化)  ║
+ * ║  버전: 7.44.12 (기존작 비교·반영 2경로 외전/완결일 파리티 — 6경로 대등)       ║
  * ║  최종 수정: 2026-06-27                                                        ║
- * ║  총 라인 수: 약 71,090줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 71,110줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🧩 v7.44.12 기존작 비교·반영 2경로 외전/완결일 파리티 (2026-06-27)            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 검수 후속: 신규/예정/일괄 등록 중 동일 제목 감지 시 라우팅되는 '기존작 반영'    ║
+ * ║ 2경로(editCtxForExisting=단건 '기존 작품 수정', dbApplyCtxForExisting=일괄     ║
+ * ║ '비교·반영')에 supportsGaiden가 없어 본편완결일·외전 비교 항목이 안 떠 기존     ║
+ * ║ 완결작을 그 경로로는 갱신 불가했음(4정규 경로와 비대칭). 수정: ①두 ctx에        ║
+ * ║ supportsGaiden:true + getCurrent에 completed_at·gaiden_* 5필드 추가(diff 정확). ║
+ * ║ ②단건은 apply=applyEditFields가 이미 처리(편집모달 saveEdit 저장). ③일괄은      ║
+ * ║ apply의 직접 UPDATE pushSet에 5컬럼 추가(스키마 기존재, 무변경). freshTarget    ║
+ * ║ 부재라 기존 외전값 보유 시 자동체크 안 됨(사용자 명시 선택만 적용 — 무회귀).    ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🛠 v7.44.11 보충 경로 외전/완결일·연도 저장 복구 — editItem 단일 모델 (2026-06-27)║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -43222,6 +43234,10 @@ function AppContent() {
   //   setEditItem이 비동기라 같은 틱엔 editItem 미반영), apply는 편집 ctx 재사용(updateEditItem 등) → 저장은 saveEdit.
   const editCtxForExisting = (work) => ({
     label: "기존 작품 수정",
+    // 🆕 v7.44.12: 기존작 비교·반영도 외전/완결일 항목 노출. apply=applyEditFields가 이미 completed_at/
+    //   gaiden_* 를 편집 state에 반영하고(43062-43066) 편집모달 saveEdit이 해당 컬럼을 저장(48087-48089)하므로
+    //   getCurrent 5필드 + supportsGaiden 추가만으로 4정규 경로(신규·예정·보충·편집)와 파리티 성립.
+    supportsGaiden: true,
     apply: scrapeCtxEdit().apply,
     getCurrent: () => ({
       title: work.title, author: work.author, note: work.note, tags: work.tags,
@@ -43229,18 +43245,25 @@ function AppContent() {
       cover: work.cover_image, major_genre: work.major_genre, sub_genre: work.sub_genre,
       start_year: work.start_year, end_year: work.end_year,
       platforms: work.platforms, link: work.link,
+      completed_at: work.completed_at, gaiden_status: work.gaiden_status,
+      gaiden_total_episodes: work.gaiden_total_episodes,
+      gaiden_start_at: work.gaiden_start_at, gaiden_completed_at: work.gaiden_completed_at,
     }),
   });
   // 🆕 v7.28.62: 일괄 등록의 '이미 등록됨' 작품을 비교·반영하기 위한 ctx — 편집 모달 없이 선택 필드를 DB에 직접 UPDATE.
   //   getCurrent는 work 직접 참조(scrapeCtxEdit 미러), apply는 선택 필드만 novels에 UPDATE + 태그/표지/리로드.
   const dbApplyCtxForExisting = (work) => ({
     label: "기존작 비교·반영",
+    supportsGaiden: true, // 🆕 v7.44.12: 일괄 dup 비교·반영도 외전/완결일 항목 노출 + 직접 UPDATE 배선(아래 apply)
     getCurrent: () => ({
       title: work.title, author: work.author, note: work.note, tags: work.tags,
       total_episodes: work.total_episodes, work_status: work.work_status,
       cover: work.cover_image, major_genre: work.major_genre, sub_genre: work.sub_genre,
       start_year: work.start_year, end_year: work.end_year,
       platforms: work.platforms, link: work.link,
+      completed_at: work.completed_at, gaiden_status: work.gaiden_status,
+      gaiden_total_episodes: work.gaiden_total_episodes,
+      gaiden_start_at: work.gaiden_start_at, gaiden_completed_at: work.gaiden_completed_at,
     }),
     apply: async (f) => {
       const sets = [], params = [];
@@ -43258,6 +43281,12 @@ function AppContent() {
       if (f.sub_genre != null) pushSet("sub_genre", genJson(f.sub_genre));
       if (f.platforms != null) pushSet("platforms", genJson(f.platforms));
       if (f.cover != null) pushSet("cover_image", f.cover);
+      // 🆕 v7.44.12: 외전/완결일 파리티 — 컬럼은 기존 스키마에 존재(saveEdit/보충에서 사용 중이라 스키마 변경 불필요)
+      if (f.completed_at != null) pushSet("completed_at", Number(f.completed_at) || 0);
+      if (f.gaiden_status != null) pushSet("gaiden_status", f.gaiden_status);
+      if (f.gaiden_total_episodes != null) pushSet("gaiden_total_episodes", Number(f.gaiden_total_episodes) || 0);
+      if (f.gaiden_start_at != null) pushSet("gaiden_start_at", Number(f.gaiden_start_at) || 0);
+      if (f.gaiden_completed_at != null) pushSet("gaiden_completed_at", Number(f.gaiden_completed_at) || 0);
       if (!sets.length) return;
       params.push(work.id);
       await exec(`UPDATE novels SET ${sets.join(", ")} WHERE id=?`, params);
