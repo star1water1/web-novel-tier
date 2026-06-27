@@ -2,11 +2,19 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.45.0 (대량 태그 AI 스캔 청크화 — 천+ 태그 타임아웃 해소)             ║
+ * ║  버전: 7.45.1 (티어 색상 선택 UX 개선 — 순환 탭 → 팔레트 그리드 2탭)          ║
  * ║  최종 수정: 2026-06-27                                                        ║
- * ║  총 라인 수: 약 71,180줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 71,200줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🎨 v7.45.1 티어 색상 선택 UX — 순환 탭 → 팔레트 그리드 (2026-06-27)           ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 종전: 티어 색 스와치가 '1탭=다음 색 순환'이라 원하는 색까지 최대 21탭(역방향·  ║
+ * ║ 직접선택 불가). 개선: 스와치 탭 → 그 행 아래로 22색 팔레트 그리드 펼침 → 1탭   ║
+ * ║ 선택(총 2탭). tierColorPickerIdx state로 펼친 행 관리, 현재색 테두리 강조,     ║
+ * ║ TIER_COLOR_PALETTE 재사용. 색 데이터/저장 경로(saveAppSettings) 불변.         ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🚀 v7.45.0 대량 태그 AI 스캔 청크화 — 천+ 태그 타임아웃 해소 (2026-06-27)     ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -36553,6 +36561,7 @@ function AppContent() {
   const editNewQuoteImagesRef = useRef([]); // 📷 v6.0.1: 편집 모달에서 새로 추가된 이미지 URI 추적 (취소 시 정리)
   const regQuoteImagesRef = useRef([]); // 📷 v3.6.2: 등록 폼에서 추가된 이미지 URI 추적 (실패/취소 시 정리)
   const [settingsSubTab, setSettingsSubTab] = useState("ranking"); // 🆕 Phase 2: 설정 서브탭 (v7.21: "ranking" | "display" | "tags" | "data" | "backup" | "diag" | "info")
+  const [tierColorPickerIdx, setTierColorPickerIdx] = useState(-1); // 🆕 v7.45.1: 티어 색상 팔레트 펼친 행 인덱스(-1=없음). 탭→팔레트 펼침→1탭 선택
   // 🎨 v3.8.0: 갤러리 시스템
   const [gallerySubTab, setGallerySubTab] = useState("view");
   const [galleryImages, setGalleryImages] = useState([]);
@@ -62253,17 +62262,12 @@ async function importJSON() {
                   return (
                     <>
                       {tiersForUI.map((t, idx) => (
-                        <View key={`tier-${idx}`} style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                          {/* 색상 스와치 */}
+                        <View key={`tier-${idx}`}>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                          {/* 🆕 v7.45.1: 색상 스와치 — 탭하면 아래로 팔레트 펼침(종전: 1탭=다음색 순환, 원하는 색까지 최대 21탭 필요) */}
                           <TouchableOpacity
-                            onPress={() => {
-                              const currentIdx = TIER_COLOR_PALETTE.indexOf(t.color);
-                              const nextColor = TIER_COLOR_PALETTE[(currentIdx + 1) % TIER_COLOR_PALETTE.length];
-                              const newTiers = [...tiersForUI];
-                              newTiers[idx] = { ...newTiers[idx], color: nextColor };
-                              saveAppSettings({ tierSystemConfig: { ...tsc, tiers: newTiers } });
-                            }}
-                            style={{ backgroundColor: t.color, width: 28, height: 28, borderRadius: 8, borderWidth: 2, borderColor: "rgba(255,255,255,0.3)" }}
+                            onPress={() => setTierColorPickerIdx(prev => prev === idx ? -1 : idx)}
+                            style={{ backgroundColor: t.color, width: 28, height: 28, borderRadius: 8, borderWidth: 2, borderColor: tierColorPickerIdx === idx ? C.text : "rgba(255,255,255,0.3)" }}
                           />
                           {/* 라벨 입력 (key는 불변 — label만 변경) */}
                           <TextInput
@@ -62403,6 +62407,24 @@ async function importJSON() {
                               <Text style={{ color: C.warn, fontSize: 14 }}>✕</Text>
                             </TouchableOpacity>
                           )}
+                        </View>
+                        {/* 🆕 v7.45.1: 색상 팔레트 펼침 — 행 아래 22색 그리드에서 1탭 선택(총 2탭) */}
+                        {tierColorPickerIdx === idx && (
+                          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 10, marginLeft: 2 }}>
+                            {TIER_COLOR_PALETTE.map((col) => (
+                              <TouchableOpacity
+                                key={col}
+                                onPress={() => {
+                                  const newTiers = [...tiersForUI];
+                                  newTiers[idx] = { ...newTiers[idx], color: col };
+                                  saveAppSettings({ tierSystemConfig: { ...tsc, tiers: newTiers } });
+                                  setTierColorPickerIdx(-1);
+                                }}
+                                style={{ backgroundColor: col, width: 32, height: 32, borderRadius: 8, borderWidth: t.color === col ? 3 : 1, borderColor: t.color === col ? C.text : "rgba(255,255,255,0.4)" }}
+                              />
+                            ))}
+                          </View>
+                        )}
                         </View>
                       ))}
                       {/* 티어 추가 버튼 (최대 10개) */}
