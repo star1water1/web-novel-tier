@@ -2,11 +2,26 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.41.0 (본편/외전 분리 — 네이버 본편 완결일·외전 시작/완결일 자동)      ║
+ * ║  버전: 7.41.1 (본편/외전 분리 — 노벨피아 확장 + 공통 분리기)                   ║
  * ║  최종 수정: 2026-06-27                                                        ║
  * ║  총 라인 수: 약 69,360줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🌿 v7.41.1 본편/외전 분리 — 노벨피아 확장 (2026-06-27)                        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 조사 재검토: 노벨피아·리디·카카오·문피아의 "회차 날짜 불가"는 대부분 우리       ║
+ * ║ 조사환경(DC IP·프록시·WebFetch 차단) 탓이고 폰/정상헤더면 가능. 노벨피아는      ║
+ * ║ 환경차단도 없어 실제 응답을 직접 받아 구조 확정 → 우선 구현.                   ║
+ * ║ • splitEpisodesByGaiden(episodes:[{title,ts}]) 공통 분리기 추출(네이버도 사용). ║
+ * ║   각 플랫폼 페처는 회차목록을 [{title,ts}]로 정규화만 하면 됨.                  ║
+ * ║ • parseNovelpiaEpisodeList: proc/episode_list HTML(tr.ep_style5, 제목=배지·     ║
+ * ║   아이콘 제거, 날짜=ep_style2 NanumSquareOTF YY.MM.DD, 주석 ep_style3 무시).    ║
+ * ║   실측(novel 50000·113155) 구조 확정. fetchNovelpiaEpisodeSplit(sort=UP 최신순).║
+ * ║ • applyEpisodeSplitToMeta 공통 적용. fetchNovelMeta 노벨피아 완결작 + 일괄      ║
+ * ║   갱신(fetchMetaForUpdate)에 통합 → 재취득·덮어쓰기로 노벨피아도 본편/외전 분리.║
+ * ║ 회귀 +16 → 253/253. ※실제 네트워크 호출은 폰 실측 권장(파서는 실데이터 검증).  ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🌿 v7.41.0 본편/외전 분리 — 본편 완결일·외전 시작/완결일 자동 (2026-06-27)    ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -14685,6 +14700,62 @@ async function fetchNaverEpisodeSplit(url, opts = {}) {
     return parseNaverEpisodeSplit(await res.text());
   } catch { return null; } finally { cleanup(); }
 }
+// 🆕 v7.41.1: 노벨피아 회차목록(proc/episode_list HTML) → [{title, ts}]. 행=tr.ep_style5, 제목=td.font12 첫 <b>(배지 span.b_*·아이콘 제거),
+//   날짜=ep_style2 내 NanumSquareOTF <b>의 YY.MM.DD(주석 <!--ep_style3--> 제외). 실측(novel 50000·113155)으로 구조 확정. 순수.
+function parseNovelpiaEpisodeList(html) {
+  const blocks = String(html || "").split(/<tr class="ep_style5"/).slice(1);
+  const out = [];
+  for (const b of blocks) {
+    const tm = b.match(/<td[^>]*class="font12"[^>]*>([\s\S]*?)<\/b>/);
+    let title = tm ? tm[1] : "";
+    title = title.replace(/<span[^>]*class="b_[^"]*"[^>]*>[\s\S]*?<\/span>/gi, "") // 무료/유료/19 등 배지 제거
+                 .replace(/<[^>]+>/g, "").replace(/&nbsp;/gi, " ").replace(/\s+/g, " ").trim();
+    const nc = b.replace(/<!--[\s\S]*?-->/g, ""); // 주석 처리된 ep_style3 날짜 무시
+    const dm = nc.match(/NanumSquareOTF[^>]*>\s*(\d{2})\.(\d{2})\.(\d{2})/);
+    let ts = 0;
+    if (dm) { const y = 2000 + Number(dm[1]), mo = Number(dm[2]), d = Number(dm[3]); if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) ts = Date.UTC(y, mo - 1, d); }
+    if (title || ts) out.push({ title, ts });
+  }
+  return out;
+}
+async function fetchNovelpiaEpisodeSplit(url, opts = {}) {
+  const no = (String(url).match(/\/novel\/(\d+)/) || [])[1];
+  if (!no) return null;
+  const post = async (page) => {
+    const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
+    try {
+      // sort=UP=최신순(외전이 앞). 페이지당 20. POST 폼.
+      const res = await fetch("https://novelpia.com/proc/episode_list", {
+        method: "POST",
+        headers: { ...SCRAPER_HEADERS, "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8", "X-Requested-With": "XMLHttpRequest" },
+        body: "novel_no=" + no + "&sort=UP&page=" + page, redirect: "follow", signal,
+      });
+      if (!res.ok) return [];
+      return parseNovelpiaEpisodeList(await res.text());
+    } catch { return []; } finally { cleanup(); }
+  };
+  let eps = await post(0);
+  if (!eps.length) return null;
+  // 최신 20이 전부 외전이면(본편 경계 못 찾음) 한 페이지 더 — 외전 20개 초과인 드문 경우 대비
+  if (eps.every(e => isGaidenTitle(e.title))) { const more = await post(1); if (more.length) eps = eps.concat(more); }
+  return splitEpisodesByGaiden(eps);
+}
+// 🆕 v7.41.1: 분리 결과(split)를 meta에 적용(네이버·노벨피아 공통). 본편 완결일·연도, 외전 회차수·시작/완결일·상태, total=본편(전체-외전).
+function applyEpisodeSplitToMeta(meta, split) {
+  if (!meta || !split || !split.mainCompletedAt) return meta;
+  const y = new Date(split.mainCompletedAt).getUTCFullYear();
+  meta.completedAt = split.mainCompletedAt;
+  if (y >= 1990 && y <= 2099) meta.endYear = y;
+  if (split.hasGaiden) {
+    meta.gaidenCount = split.gaidenCount;
+    meta.gaidenStartAt = split.gaidenStartAt;
+    meta.gaidenCompletedAt = split.gaidenCompletedAt;
+    meta.gaidenStatus = "completed"; // 본편 완결작의 과거 외전 → 완결 기본(사용자 편집 가능)
+    const total = Number(meta.totalEpisodes) || 0;
+    if (total > split.gaidenCount) meta.totalEpisodes = total - split.gaidenCount; // 본편 회차수
+  }
+  return meta;
+}
 // 🆕 v7.40.1: 리디 완결일 — 리디는 권 단위 출판이라 상세 JSON-LD datePublished는 '1권(연재 시작)'이고 완결일이 없다.
 //   book-api 단건(비로그인 JSON)에서 완결 플래그(is_completed)+마지막 권 id(last_volume_id)를 얻고, 그 권을
 //   한 번 더 조회해 출간일(ridibooks_publish/ebook_publish)을 완결일로 쓴다(실측: 무직전생 2024-06-12 일치).
@@ -14736,7 +14807,11 @@ async function fetchNovelMeta(url, opts = {}) {
   //   /novel/{id}면 API 우선, 성공 시 그대로 반환(무거운 HTML 안 받음). 실패하면 아래 공통 HTML 폴백.
   if (platform === "노벨피아") {
     const npNo = (url.match(/\/novel\/(\d+)/) || [])[1];
-    if (npNo) { try { const m = await fetchNovelpiaByNo(npNo, opts); if (m && m.ok && m.title) return m; } catch { /* API 실패 → HTML 폴백 */ } }
+    if (npNo) { try { const m = await fetchNovelpiaByNo(npNo, opts); if (m && m.ok && m.title) {
+      // 🆕 v7.41.1: 완결작이면 회차목록(proc/episode_list)으로 본편/외전 분리 보강(공통 적용).
+      if (m.workStatus === "completed") { try { const sp = await fetchNovelpiaEpisodeSplit(url, opts); if (sp && sp.mainCompletedAt) applyEpisodeSplitToMeta(m, sp); } catch {} }
+      return m;
+    } } catch { /* API 실패 → HTML 폴백 */ } }
   }
   const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
   let res, html = "";
@@ -14763,26 +14838,12 @@ async function fetchNovelMeta(url, opts = {}) {
   if (platform === "네이버시리즈" && meta.startYear == null) {
     try { const sy = await fetchNaverStartYear(url, opts); if (sy) meta = { ...meta, startYear: sy }; } catch {}
   }
-  // 🆕 v7.41.0: 네이버시리즈 완결작 — 회차목록(DESC)으로 본편/외전 분리. 본편 완결일·외전 시작/완결일·외전 회차수 산출.
-  //   total_episodes는 본편 기준(전체-외전)으로 보정. 회차목록 실패 시 moreDetail 업데이트일로 폴백(종전 동작).
+  // 🆕 v7.41.0: 네이버시리즈 완결작 — 회차목록(DESC)으로 본편/외전 분리(공통 applyEpisodeSplitToMeta). 실패 시 moreDetail 폴백(종전).
   if (platform === "네이버시리즈" && meta.workStatus === "completed") {
     let split = null;
     try { split = await fetchNaverEpisodeSplit(url, opts); } catch {}
-    if (split && split.mainCompletedAt) {
-      const y = new Date(split.mainCompletedAt).getUTCFullYear();
-      meta = { ...meta, completedAt: split.mainCompletedAt, endYear: (y >= 1990 && y <= 2099) ? y : meta.endYear };
-      if (split.hasGaiden) {
-        const total = Number(meta.totalEpisodes) || 0;
-        meta = {
-          ...meta,
-          gaidenCount: split.gaidenCount,
-          gaidenStartAt: split.gaidenStartAt,
-          gaidenCompletedAt: split.gaidenCompletedAt,
-          gaidenStatus: "completed", // 본편 완결작의 과거 외전 → 완결로 기본(사용자 편집 가능)
-          totalEpisodes: total > split.gaidenCount ? total - split.gaidenCount : total, // 본편 회차수
-        };
-      }
-    } else if (!meta.endYear) {
+    if (split && split.mainCompletedAt) applyEpisodeSplitToMeta(meta, split);
+    else if (!meta.endYear) {
       try { const c = await fetchNaverCompletion(url, opts); if (c.year) meta = { ...meta, endYear: c.year, completedAt: c.ts || meta.completedAt || 0 }; } catch {}
     }
   }
@@ -16822,7 +16883,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.41.0";
+const APP_VERSION = "7.41.1";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -16848,6 +16909,17 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.41.1", date: "2026-06-27",
+    title: "🌿 본편/외전 분리 — 노벨피아도",
+    highlights: [
+      { type: "new", text: "🌿 노벨피아 완결작도 ‘본편 완결일’과 ‘외전 시작·완결일’을 따로 가져와요(회차 제목의 ‘외전’ 표기로 분리). 네이버 시리즈에 이어 두 번째 지원 플랫폼이에요." },
+    ],
+    details: [
+      "기존에 ‘마지막 회차=완결’로 잡힌 노벨피아 작품은 ‘대량 › 재취득·덮어쓰기’에서 노벨피아를 골라 한 번 돌리면 본편/외전 기준으로 정리돼요.",
+      "리디·카카오·문피아도 회차/권 날짜를 받을 수 있는 걸 확인했어요(다음 차례). 자동 분리가 애매하면 편집에서 직접 고칠 수 있어요.",
+    ],
+  },
   {
     version: "7.41.0", date: "2026-06-27",
     title: "🌿 본편/외전 완결일 분리 (네이버)",
@@ -42741,7 +42813,11 @@ function AppContent() {
       if (id) {
         try {
           const hit = (await searchNovelpia(title || "", opts)).find(c => c.url && c.url.includes("/novel/" + id) && c.meta);
-          if (hit) return hit.meta;
+          if (hit) {
+            // 🆕 v7.41.1: 완결작이면 회차목록으로 본편/외전 분리 보강(검색 meta엔 회차 분리 정보 없음)
+            if (hit.meta && hit.meta.workStatus === "completed") { try { const sp = await fetchNovelpiaEpisodeSplit(link, opts); if (sp && sp.mainCompletedAt) applyEpisodeSplitToMeta(hit.meta, sp); } catch {} }
+            return hit.meta;
+          }
         } catch {}
       }
     } else if (platform === "문피아") {
