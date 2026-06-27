@@ -2,11 +2,26 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.44.7 (문피아 detail API 메타 + 표지 헤더 + 완결작 체크 기본 ON)       ║
+ * ║  버전: 7.44.8 (편집·보충 경로 외전/완결일 파리티 + 보충 누락 버그 수정)        ║
  * ║  최종 수정: 2026-06-27                                                        ║
- * ║  총 라인 수: 약 69,680줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 69,710줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🧩 v7.44.8 편집·보충 외전/완결일 파리티 + 보충 누락 버그 수정 (2026-06-27)    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 4경로(일괄·보충·단건·링크) 대등화 마무리. 편집모달 상태모델 단일화:            ║
+ * ║ ① applyEditFields 공용 헬퍼 — editItem(직접컬럼) vs 편집 state(saveEdit가 읽는 ║
+ * ║   값)를 필드별 올바른 싱크로 일괄 반영. 보충(supplement)·편집(edit) 공용.       ║
+ * ║   → 종전 '보충'이 연재상태·연도·표지·링크를 editItem에만 써 saveEdit에 안       ║
+ * ║   실리던 잠재 버그 동시 수정.                                                  ║
+ * ║ ② 본편완결일·외전 시작/완결일 편집 state(editCompletedAt 등) 신설 + openEdit    ║
+ * ║   초기화 + saveEdit UPDATE 3컬럼 추가(28+id=29 검증) + 적용 헬퍼/getCurrent/    ║
+ * ║   fields 배선. 외전상태·외전회차도 보충/편집에서 적용되도록 추가.              ║
+ * ║ ③ 편집모달 완결일·외전 표시를 editItem→편집 state 소스로(불러오기 즉시 반영).   ║
+ * ║ 이제 신규·보충·편집·일괄 모두 외전/완결일 대등 처리. 회귀 331/331.             ║
+ * ║ ※예정(planned)은 사용자 4경로 외 + 외전 UI 부재 → 게이트 OFF(무회귀) 유지.     ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔧 v7.44.7 문피아 메타 보강 + 표지 다운로드 + 완결작 체크 기본 (2026-06-27)   ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -36788,6 +36803,10 @@ function AppContent() {
   const [editGaidenStatus, setEditGaidenStatus] = useState("none");
   const [editGaidenReadCount, setEditGaidenReadCount] = useState("");
   const [editGaidenTotalEpisodes, setEditGaidenTotalEpisodes] = useState("");
+  // 🆕 v7.44.8: 편집용 본편 완결일·외전 시작/완결일(ms ts) — 불러오기로 채우고 saveEdit에 영속(4경로 파리티).
+  const [editCompletedAt, setEditCompletedAt] = useState(0);
+  const [editGaidenStartAt, setEditGaidenStartAt] = useState(0);
+  const [editGaidenCompletedAt, setEditGaidenCompletedAt] = useState(0);
   // 📚 v3.0.4: 다회독 카운트 (편집)
   const [editRereadCount, setEditRereadCount] = useState("1");
   // 💬 인상깊은 문장 (편집)
@@ -42985,6 +43004,32 @@ function AppContent() {
   //   getCurrent/apply는 현재 렌더의 state·setter를 클로저로 잡음(빌더는 매 렌더 호출). 중복 정의 방지.
   // 장르 적용값(배열) → 편집/보충 DB 컬럼용 JSON 문자열(빈 배열은 ""). 신규/예정은 배열 state 그대로.
   const genJson = (arr) => (Array.isArray(arr) && arr.length ? JSON.stringify(arr) : "");
+  // 🆕 v7.44.8: 편집 모달 적용 단일화 — editItem(직접 컬럼) vs 편집 state(saveEdit가 읽는 값)를 필드별 올바른 싱크로 일괄 반영.
+  //   보충(supplement)·편집(edit) 공용 → 종전 보충이 state-backed 필드(연재상태/연도/표지/링크)를 editItem에만 써 saveEdit에
+  //   안 실리던 잠재 버그 동시 수정. + 외전상태·외전회차·본편완결일·외전 시작/완결일 추가(4경로 파리티).
+  const applyEditFields = (f) => {
+    updateEditItem(prev => prev ? {
+      ...prev,
+      ...(f.title != null ? { title: f.title } : {}),
+      ...(f.author != null ? { author: f.author } : {}),
+      ...(f.note != null ? { note: f.note } : {}),
+      ...(f.tags != null ? { tags: f.tags } : {}),
+      ...(f.total_episodes != null ? { total_episodes: Number(f.total_episodes) || 0 } : {}),
+      ...(f.major_genre != null ? { major_genre: genJson(f.major_genre) } : {}),
+      ...(f.sub_genre != null ? { sub_genre: genJson(f.sub_genre) } : {}),
+      ...(f.platforms != null ? { platforms: genJson(f.platforms) } : {}),
+    } : prev);
+    if (f.work_status != null) setEditWorkStatus(f.work_status);
+    if (f.cover != null) setEditCoverImageSync(f.cover);
+    if (f.start_year != null) setEditStartYear(Number(f.start_year) || 0);
+    if (f.end_year != null) setEditEndYear(Number(f.end_year) || 0);
+    if (f.link != null) setEditLink(f.link);
+    if (f.completed_at != null) setEditCompletedAt(Number(f.completed_at) || 0);
+    if (f.gaiden_status != null) setEditGaidenStatus(f.gaiden_status);
+    if (f.gaiden_total_episodes != null) setEditGaidenTotalEpisodes(String(f.gaiden_total_episodes));
+    if (f.gaiden_start_at != null) setEditGaidenStartAt(Number(f.gaiden_start_at) || 0);
+    if (f.gaiden_completed_at != null) setEditGaidenCompletedAt(Number(f.gaiden_completed_at) || 0);
+  };
   const scrapeCtxNew = () => ({
     label: "신규 등록",
     kind: "new", // 🆕 v7.28.52: 제목검색 중복 판정용(이미 등록된 작품이면 기존작 편집 제안)
@@ -43036,45 +43081,16 @@ function AppContent() {
   });
   const scrapeCtxSupplement = () => ({
     label: "보충",
-    fields: ["author", "note", "tags", "total_episodes", "work_status", "cover", "major_genre", "sub_genre", "start_year", "end_year", "platforms", "link"],
-    getCurrent: () => ({ author: editItem?.author, note: editItem?.note, tags: editItem?.tags, total_episodes: editItem?.total_episodes, work_status: editItem?.work_status, cover: editItem?.cover_image, major_genre: editItem?.major_genre, sub_genre: editItem?.sub_genre, start_year: editItem?.start_year, end_year: editItem?.end_year, platforms: editItem?.platforms, link: editItem?.link }),
-    apply: (f) => updateEditItem(prev => prev ? {
-      ...prev,
-      ...(f.author != null ? { author: f.author } : {}),
-      ...(f.note != null ? { note: f.note } : {}),
-      ...(f.tags != null ? { tags: f.tags } : {}),
-      ...(f.total_episodes != null ? { total_episodes: Number(f.total_episodes) || 0 } : {}),
-      ...(f.work_status != null ? { work_status: f.work_status } : {}),
-      ...(f.cover != null ? { cover_image: f.cover } : {}),
-      ...(f.major_genre != null ? { major_genre: genJson(f.major_genre) } : {}),
-      ...(f.sub_genre != null ? { sub_genre: genJson(f.sub_genre) } : {}),
-      ...(f.start_year != null ? { start_year: Number(f.start_year) || 0 } : {}),
-      ...(f.end_year != null ? { end_year: Number(f.end_year) || 0 } : {}),
-      ...(f.platforms != null ? { platforms: genJson(f.platforms) } : {}),
-      ...(f.link != null ? { link: f.link } : {}),
-    } : prev),
+    supportsGaiden: true, // 🆕 v7.44.8: 기존작 보충도 외전/완결일 반영(saveEdit 배선 완료)
+    fields: ["author", "note", "tags", "total_episodes", "work_status", "cover", "major_genre", "sub_genre", "start_year", "end_year", "platforms", "link", "completed_at", "gaiden_status", "gaiden_total_episodes", "gaiden_start_at", "gaiden_completed_at"],
+    getCurrent: () => ({ author: editItem?.author, note: editItem?.note, tags: editItem?.tags, total_episodes: editItem?.total_episodes, work_status: editWorkStatus, cover: editCoverImage, major_genre: editItem?.major_genre, sub_genre: editItem?.sub_genre, start_year: editStartYear, end_year: editEndYear, platforms: editItem?.platforms, link: editLink, completed_at: editCompletedAt, gaiden_status: editGaidenStatus, gaiden_total_episodes: editGaidenTotalEpisodes, gaiden_start_at: editGaidenStartAt, gaiden_completed_at: editGaidenCompletedAt }),
+    apply: applyEditFields, // 🆕 v7.44.8: 편집과 동일 단일 적용(보충이 state-backed 필드를 누락하던 버그 동시 수정)
   });
   const scrapeCtxEdit = () => ({
     label: "편집",
-    getCurrent: () => ({ title: editItem?.title, author: editItem?.author, note: editItem?.note, tags: editItem?.tags, total_episodes: editItem?.total_episodes, work_status: editWorkStatus, cover: editCoverImage, major_genre: editItem?.major_genre, sub_genre: editItem?.sub_genre, start_year: editStartYear, end_year: editEndYear, platforms: editItem?.platforms, link: editLink }),
-    apply: (f) => {
-      updateEditItem(prev => prev ? {
-        ...prev,
-        ...(f.title != null ? { title: f.title } : {}),
-        ...(f.author != null ? { author: f.author } : {}),
-        ...(f.note != null ? { note: f.note } : {}),
-        ...(f.tags != null ? { tags: f.tags } : {}),
-        ...(f.total_episodes != null ? { total_episodes: Number(f.total_episodes) || 0 } : {}),
-        ...(f.major_genre != null ? { major_genre: genJson(f.major_genre) } : {}),
-        ...(f.sub_genre != null ? { sub_genre: genJson(f.sub_genre) } : {}),
-        ...(f.platforms != null ? { platforms: genJson(f.platforms) } : {}),
-      } : prev);
-      if (f.work_status != null) setEditWorkStatus(f.work_status);
-      if (f.cover != null) setEditCoverImageSync(f.cover);
-      if (f.start_year != null) setEditStartYear(Number(f.start_year) || 0); // 편집은 연도가 별도 state
-      if (f.end_year != null) setEditEndYear(Number(f.end_year) || 0);
-      if (f.link != null) setEditLink(f.link); // 편집은 링크가 별도 state
-    },
+    supportsGaiden: true, // 🆕 v7.44.8
+    getCurrent: () => ({ title: editItem?.title, author: editItem?.author, note: editItem?.note, tags: editItem?.tags, total_episodes: editItem?.total_episodes, work_status: editWorkStatus, cover: editCoverImage, major_genre: editItem?.major_genre, sub_genre: editItem?.sub_genre, start_year: editStartYear, end_year: editEndYear, platforms: editItem?.platforms, link: editLink, completed_at: editCompletedAt, gaiden_status: editGaidenStatus, gaiden_total_episodes: editGaidenTotalEpisodes, gaiden_start_at: editGaidenStartAt, gaiden_completed_at: editGaidenCompletedAt }),
+    apply: applyEditFields,
   });
 
   // 🔎 v7.28.29 제목 검색(Stage 4): 입력 → searchNovels(현재 리디) → 후보 picker → 선택 시 fetchNovelMeta로 합류.
@@ -47727,6 +47743,9 @@ function AppContent() {
     setEditGaidenStatus(n.gaiden_status || "none");
     setEditGaidenReadCount(String(n.gaiden_read_count || 0));
     setEditGaidenTotalEpisodes(String(n.gaiden_total_episodes || 0));
+    setEditCompletedAt(Number(n.completed_at) || 0); // 🆕 v7.44.8
+    setEditGaidenStartAt(Number(n.gaiden_start_at) || 0);
+    setEditGaidenCompletedAt(Number(n.gaiden_completed_at) || 0);
     
     // 📚 v3.0.4: 다회독 카운트 로드
     setEditRereadCount(String(n.reread_count || 1));
@@ -47996,7 +48015,7 @@ function AppContent() {
       const editPlatformsMerged = mergePlatformFromLink(editPlatforms, editLink);
 
       await exec(
-        "UPDATE novels SET title=?, author=?, tags=?, note=?, platforms=?, read_count=?, awards=?, total_episodes=?, status=?, cover_image=?, link=?, work_status=?, read_count_updated_at=?, major_genre=?, sub_genre=?, gaiden_status=?, gaiden_read_count=?, gaiden_total_episodes=?, created_at=?, reread_count=?, tag_data=?, memorable_quote=?, aliases=?, start_year=?, end_year=? WHERE id=?;",
+        "UPDATE novels SET title=?, author=?, tags=?, note=?, platforms=?, read_count=?, awards=?, total_episodes=?, status=?, cover_image=?, link=?, work_status=?, read_count_updated_at=?, major_genre=?, sub_genre=?, gaiden_status=?, gaiden_read_count=?, gaiden_total_episodes=?, created_at=?, reread_count=?, tag_data=?, memorable_quote=?, aliases=?, start_year=?, end_year=?, completed_at=?, gaiden_start_at=?, gaiden_completed_at=? WHERE id=?;",
         [
           newTitle,
           n.author?.trim() || "",
@@ -48023,6 +48042,9 @@ function AppContent() {
           n.aliases || "", // 🏷️ 작품 별명 유지
           Number(editStartYear) || 0, // 🔧 v7.6.0 (포트 v3.12.0)
           Number(editEndYear) || 0,
+          Number(editCompletedAt) || 0,       // 🆕 v7.44.8: 본편 완결일
+          Number(editGaidenStartAt) || 0,     // 🆕 v7.44.8: 외전 시작일
+          Number(editGaidenCompletedAt) || 0, // 🆕 v7.44.8: 외전 완결일
           n.id,
         ]
       );
@@ -66638,8 +66660,9 @@ async function importJSON() {
                 {(() => {
                   // 🆕 v7.41.0: 본편/외전 완결일 분리 표시 (외전 데이터 있으면 '본편 완결일'로 명시 + 외전 줄 추가)
                   const fmtD = (ms) => { const d = new Date(Number(ms)); return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`; };
-                  const ca = Number(editItem?.completed_at) || 0;
-                  const gEp = Number(editItem?.gaiden_total_episodes) || 0, gSt = Number(editItem?.gaiden_start_at) || 0, gCa = Number(editItem?.gaiden_completed_at) || 0;
+                  // 🔧 v7.44.8: 편집 state를 소스로(불러오기 적용 시 즉시 반영 + saveEdit와 동일 값). 종전 editItem 직접참조는 적용 후 미갱신.
+                  const ca = Number(editCompletedAt) || 0;
+                  const gEp = Number(editGaidenTotalEpisodes) || 0, gSt = Number(editGaidenStartAt) || 0, gCa = Number(editGaidenCompletedAt) || 0;
                   const hasG = gEp > 0 || gSt > 0 || gCa > 0;
                   if (!ca && !hasG) return null;
                   return (
