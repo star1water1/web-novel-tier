@@ -2,11 +2,26 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.41.1 (본편/외전 분리 — 노벨피아 확장 + 공통 분리기)                   ║
+ * ║  버전: 7.41.2 (본편/외전 분리 — 리디 확장 + 리디 출간일 버그 수정)             ║
  * ║  최종 수정: 2026-06-27                                                        ║
  * ║  총 라인 수: 약 69,360줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🌿 v7.41.2 본편/외전 분리 — 리디 확장 + 출간일 버그 수정 (2026-06-27)         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 실데이터 직접 취득으로 확정(book-api·search-api는 curl 차단이나 정상 핑거       ║
+ * ║ 프린트면 가능). 리디는 권 단위·외전이 별도 시리즈라 회차모델과 다름:            ║
+ * ║ • 🐛 ridiPublishDate가 book.ebook_publish(최상위)를 읽어 항상 빈 결과 →         ║
+ * ║   book.publish.ebook_publish(중첩)로 수정. v7.40.1 리디 완결일이 실은 미동작.   ║
+ * ║ • parseRidiSearchSeries: search-api JSON(books[].series_prices_info.series_id·  ║
+ * ║   opened_last_volume_id·book_count·코믹플래그·작가). pickRidiGaidenSeries:      ║
+ * ║   본편 제목으로 시작+동저자+코믹제외로 외전 시리즈 선별(실측 무직전생 사족편).  ║
+ * ║ • fetchRidiSplit: 본편 완결일(마지막 권)+외전 시작/완결일·권수·연재상태(외전이   ║
+ * ║   아직 연재중이면 gaiden ongoing 반영). applyEpisodeSplitToMeta noTotalAdjust   ║
+ * ║   (외전 별도 시리즈라 본편 권수 미보정)·gaidenStatus 전파.                      ║
+ * ║ 회귀 +12 → 265/265. ※다중 fetch라 Cloudflare 레이트리밋·폰 실측 주의.          ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🌿 v7.41.1 본편/외전 분리 — 노벨피아 확장 (2026-06-27)                        ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -14741,7 +14756,7 @@ async function fetchNovelpiaEpisodeSplit(url, opts = {}) {
   return splitEpisodesByGaiden(eps);
 }
 // 🆕 v7.41.1: 분리 결과(split)를 meta에 적용(네이버·노벨피아 공통). 본편 완결일·연도, 외전 회차수·시작/완결일·상태, total=본편(전체-외전).
-function applyEpisodeSplitToMeta(meta, split) {
+function applyEpisodeSplitToMeta(meta, split, opts) {
   if (!meta || !split || !split.mainCompletedAt) return meta;
   const y = new Date(split.mainCompletedAt).getUTCFullYear();
   meta.completedAt = split.mainCompletedAt;
@@ -14750,9 +14765,13 @@ function applyEpisodeSplitToMeta(meta, split) {
     meta.gaidenCount = split.gaidenCount;
     meta.gaidenStartAt = split.gaidenStartAt;
     meta.gaidenCompletedAt = split.gaidenCompletedAt;
-    meta.gaidenStatus = "completed"; // 본편 완결작의 과거 외전 → 완결 기본(사용자 편집 가능)
-    const total = Number(meta.totalEpisodes) || 0;
-    if (total > split.gaidenCount) meta.totalEpisodes = total - split.gaidenCount; // 본편 회차수
+    meta.gaidenStatus = split.gaidenStatus || "completed"; // 분리기가 외전 연재상태 알면(리디) 반영, 아니면 완결 기본(사용자 편집 가능)
+    // 🆕 v7.41.2: 회차모델(네이버·노벨피아)은 외전이 total에 포함되어 본편=전체-외전으로 보정.
+    //   리디는 외전이 '별도 시리즈'라 본편 권수에 안 섞임 → noTotalAdjust로 보정 생략.
+    if (!(opts && opts.noTotalAdjust)) {
+      const total = Number(meta.totalEpisodes) || 0;
+      if (total > split.gaidenCount) meta.totalEpisodes = total - split.gaidenCount; // 본편 회차수
+    }
   }
   return meta;
 }
@@ -14762,30 +14781,97 @@ function applyEpisodeSplitToMeta(meta, split) {
 //   {year, ts} 반환. 비완결/실패는 조용히 {null,0}. ※Cloudflare 레이트리밋 가능 — 완결작·endYear 없을 때만 1~2회.
 function ridiBookOf(json) { return (json && (json.book || json.data || json)) || null; }
 function ridiPublishDate(book) {
-  const d = String((book && (book.ridibooks_publish || book.ebook_publish || book.publish_date)) || "");
+  // 🔧 v7.41.2: 출간일은 book-api에서 book.publish 하위(중첩)에 있음 — 기존 최상위 참조는 항상 빈 결과였던 버그.
+  const pub = (book && book.publish) || book || {};
+  const d = String((pub.ebook_publish || pub.ridibooks_publish || (book && book.publish_date)) || "");
   const m = d.match(/(20\d\d|19[89]\d)[.\-](\d{1,2})[.\-](\d{1,2})/);
   if (!m) return { year: null, ts: 0 };
   const y = Number(m[1]);
   return { year: (y >= 1990 && y <= 2099) ? y : null, ts: scraperDateToTs(d) };
 }
-async function fetchRidiCompletion(url, opts = {}) {
-  const bid = (String(url).match(/\/books\/(\d+)/) || [])[1];
-  if (!bid) return { year: null, ts: 0 };
+async function fetchRidiBook(id, opts = {}) {
   const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 15000 });
   try {
-    const res = await fetch("https://book-api.ridibooks.com/books/" + bid, { headers: SCRAPER_HEADERS, redirect: "follow", signal });
-    if (!res.ok) return { year: null, ts: 0 };
-    const book = ridiBookOf(await res.json());
-    const prop = book && book.series && book.series.property;
-    const completed = !!prop && (prop.is_completed === true || prop.is_serial_complete === true || prop.is_serial_completed === true);
-    if (!completed) return { year: null, ts: 0 };
-    const lastId = prop.last_volume_id;
-    if (lastId && String(lastId) !== bid) { // 마지막 권 출간일 = 완결일(가장 정확)
-      const res2 = await fetch("https://book-api.ridibooks.com/books/" + lastId, { headers: SCRAPER_HEADERS, redirect: "follow", signal });
-      if (res2.ok) { const out = ridiPublishDate(ridiBookOf(await res2.json())); if (out.year) return out; }
+    const res = await fetch("https://book-api.ridibooks.com/books/" + id, { headers: SCRAPER_HEADERS, redirect: "follow", signal });
+    if (!res.ok) return null;
+    return ridiBookOf(await res.json());
+  } catch { return null; } finally { cleanup(); }
+}
+// 🆕 v7.41.2: 리디 search-api JSON → 시리즈 목록[{seriesId,title,lastVolumeId,bookCount,isComic,author}]. 외전은 별도 series라 검색으로 형제 발견. 순수.
+function parseRidiSearchSeries(jsonText) {
+  let data; try { data = JSON.parse(jsonText); } catch { return []; }
+  const books = data && Array.isArray(data.books) ? data.books : [];
+  const out = [], seen = new Set();
+  for (const b of books) {
+    const sp = b && Array.isArray(b.series_prices_info) ? b.series_prices_info[0] : null;
+    const seriesId = String((sp && sp.series_id) || (b && b.b_id) || "");
+    if (!seriesId || seen.has(seriesId)) continue;
+    seen.add(seriesId);
+    const ai = Array.isArray(b && b.authors_info) ? b.authors_info : [];
+    const writer = ai.find(a => /story_writer|original_author|^author$|^writer$/i.test((a && a.role) || "")) || ai[0];
+    out.push({
+      seriesId,
+      title: String((b && b.title) || ""),
+      lastVolumeId: String((b && b.opened_last_volume_id) || ""),
+      bookCount: Number(b && b.book_count) || 0,
+      isComic: /만화|코믹/.test(String((b && b.parent_category_name) || "") + " " + String((b && b.title) || "")),
+      author: writer ? String(writer.name || "") : "",
+    });
+  }
+  return out;
+}
+// 🆕 v7.41.2: 본편 기준 외전 시리즈 선별 — 제목이 본편으로 시작 + 본편 시리즈 아님 + 코믹 제외 + (작가 동일 시). 순수.
+function pickRidiGaidenSeries(base, list) {
+  const norm = (t) => String(t || "").replace(/\[[^\]]*\]/g, "").replace(/\s+/g, " ").trim(); // [e북]/[코믹] 접두 제거
+  const baseT = norm(base && base.title);
+  if (!baseT) return [];
+  return (Array.isArray(list) ? list : []).filter(s =>
+    s && s.seriesId && String(s.seriesId) !== String(base && base.seriesId) &&
+    !s.isComic &&
+    norm(s.title) !== baseT &&
+    norm(s.title).indexOf(baseT) === 0 && // 본편 제목으로 시작(예: "무직전생 ~사족 편~")
+    (!(base && base.author) || !s.author || s.author === base.author)
+  );
+}
+async function fetchRidiSeriesSearch(keyword, opts = {}) {
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 15000 });
+  try {
+    const res = await fetch("https://search-api.ridibooks.com/search?keyword=" + encodeURIComponent(keyword) + "&where=book&what=instant", { headers: SCRAPER_HEADERS, redirect: "follow", signal });
+    if (!res.ok) return [];
+    return parseRidiSearchSeries(await res.text());
+  } catch { return []; } finally { cleanup(); }
+}
+// 🆕 v7.41.2: 리디 본편 완결일 + 외전(별도 시리즈) 시작/완결일·권수. 리디는 권 단위·외전 별도 시리즈라 회차모델과 다름.
+//   { mainCompletedAt, hasGaiden, gaidenCount, gaidenStartAt, gaidenCompletedAt } 반환. 비완결/실패 null. ※Cloudflare 레이트리밋 주의(다중 fetch).
+async function fetchRidiSplit(url, opts = {}) {
+  const bid = (String(url).match(/\/books\/(\d+)/) || [])[1];
+  if (!bid) return null;
+  const book = await fetchRidiBook(bid, opts);
+  const prop = book && book.series && book.series.property;
+  const completed = !!prop && (prop.is_completed === true || prop.is_serial_complete === true || prop.is_serial_completed === true);
+  if (!completed) return null;
+  const sid = String((book.series && book.series.id) || bid);
+  const baseTitle = String(prop.title || "");
+  // 본편 완결일 = 마지막 권 출간일(없으면 이 책)
+  const lastId = prop.last_volume_id;
+  let mainTs = 0;
+  if (lastId && String(lastId) !== bid) { const lb = await fetchRidiBook(lastId, opts); mainTs = ridiPublishDate(lb).ts || ridiPublishDate(book).ts; }
+  else mainTs = ridiPublishDate(book).ts;
+  // 외전 시리즈 발견(검색) → 각 외전 시리즈의 1권(시작)·마지막 권(완결) 출간일 + 외전 연재상태
+  let gaidenStart = 0, gaidenEnd = 0, gaidenCount = 0, gaidenOngoing = false;
+  try {
+    const list = await fetchRidiSeriesSearch(baseTitle, opts);
+    const baseEntry = list.find(s => s.seriesId === sid);
+    const gaiden = pickRidiGaidenSeries({ title: baseTitle, author: baseEntry ? baseEntry.author : "", seriesId: sid }, list);
+    for (const g of gaiden) {
+      gaidenCount += g.bookCount;
+      const v1 = await fetchRidiBook(g.seriesId, opts); const st = ridiPublishDate(v1).ts; if (st && (!gaidenStart || st < gaidenStart)) gaidenStart = st;
+      const gp = v1 && v1.series && v1.series.property; // 외전 시리즈 완결 여부(아직 연재 중일 수 있음 — 무직전생 사족편)
+      if (gp && !(gp.is_completed === true || gp.is_serial_complete === true || gp.is_serial_completed === true)) gaidenOngoing = true;
+      const lv = (g.lastVolumeId && g.lastVolumeId !== g.seriesId) ? await fetchRidiBook(g.lastVolumeId, opts) : v1; const en = ridiPublishDate(lv).ts; if (en > gaidenEnd) gaidenEnd = en;
     }
-    return ridiPublishDate(book); // 마지막 권 id 없거나 자기 자신 → 이 책 출간일로 폴백
-  } catch { return { year: null, ts: 0 }; } finally { cleanup(); }
+  } catch {}
+  return { mainCompletedAt: mainTs, hasGaiden: gaidenCount > 0, gaidenCount, gaidenStartAt: gaidenStart, gaidenCompletedAt: gaidenEnd, gaidenStatus: gaidenCount > 0 ? (gaidenOngoing ? "ongoing" : "completed") : undefined };
 }
 // 🆕 v7.40.2: 검색 후보가 가진 기본값(작가·표지)을 상세 긁기 결과에 폴백 보강.
 //   네이버시리즈는 검색 결과 카드엔 작가(<span class="author">)가 있지만 상세 SSR엔 없어,
@@ -14847,9 +14933,10 @@ async function fetchNovelMeta(url, opts = {}) {
       try { const c = await fetchNaverCompletion(url, opts); if (c.year) meta = { ...meta, endYear: c.year, completedAt: c.ts || meta.completedAt || 0 }; } catch {}
     }
   }
-  // 🆕 v7.40.1: 리디 완결일 보강 — 상세 JSON-LD는 1권(시작) 날짜뿐 → book-api 마지막 권 출간일을 완결일로. 완결작 & endYear 비었을 때만.
-  if (platform === "리디" && meta.workStatus === "completed" && !meta.endYear) {
-    try { const c = await fetchRidiCompletion(url, opts); if (c.year) meta = { ...meta, endYear: c.year, completedAt: c.ts || meta.completedAt || 0 }; } catch {}
+  // 🆕 v7.41.2: 리디 완결작 — book-api 마지막 권 출간일=본편 완결일 + 검색으로 외전(별도 시리즈) 시작/완결일·권수 보강.
+  //   외전은 별도 series라 total 보정 생략(noTotalAdjust). 상세 JSON-LD는 1권(시작) 날짜뿐이라 본편 완결일은 여기서 채움.
+  if (platform === "리디" && meta.workStatus === "completed") {
+    try { const sp = await fetchRidiSplit(url, opts); if (sp && sp.mainCompletedAt) applyEpisodeSplitToMeta(meta, sp, { noTotalAdjust: true }); } catch {}
   }
   return meta;
 }
@@ -16883,7 +16970,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.41.1";
+const APP_VERSION = "7.41.2";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -16909,6 +16996,17 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.41.2", date: "2026-06-27",
+    title: "🌿 본편/외전 분리 — 리디도",
+    highlights: [
+      { type: "new", text: "🌿 리디북스 완결작도 ‘본편 완결일’과 ‘외전 시작·완결일’을 따로 가져와요. 리디는 외전이 별도 시리즈라, 같은 작품의 외전 시리즈를 찾아 그 출간일을 가져와요(외전이 아직 연재 중이면 그렇게 표시)." },
+      { type: "fix", text: "🐛 리디 완결일이 실제로는 안 들어오던 문제를 고쳤어요(출간일 위치 오류). 이제 마지막 권 출간일을 완결일로 정확히 가져와요." },
+    ],
+    details: [
+      "리디는 ‘무직전생’ / ‘무직전생 ~사족 편~’처럼 본편과 외전이 다른 시리즈예요. 제목·작가로 외전 시리즈를 찾아 분리해요. 기존 작품은 ‘대량 › 재취득·덮어쓰기’에서 리디를 골라 정리할 수 있어요.",
+    ],
+  },
   {
     version: "7.41.1", date: "2026-06-27",
     title: "🌿 본편/외전 분리 — 노벨피아도",

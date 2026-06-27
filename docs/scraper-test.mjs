@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, SCRAPER_HEADERS, SCRAPER_UA };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, SCRAPER_HEADERS, SCRAPER_UA };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -488,6 +488,31 @@ eq("splitEpisodes: 외전 없음", S.splitEpisodesByGaiden([{ title: "1화", ts:
   eq("노벨피아 split: 외전 시작/완결=21.03.01", sp.gaidenStartAt, S.scraperDateToTs("2021-03-01"));
 }
 eq("노벨피아: 빈 HTML → []", S.parseNovelpiaEpisodeList("<table></table>").length, 0);
+
+// 🆕 v7.41.2: 리디 출간일 중첩 구조(book.publish.ebook_publish) 버그 수정
+eq("ridiPublishDate: 중첩 publish.ebook_publish", S.ridiPublishDate({ publish: { ebook_publish: "2024-06-12T00:00:00+09:00" } }).year, 2024);
+eq("ridiPublishDate: 중첩 우선, 최상위 폴백 유지", S.ridiPublishDate({ ridibooks_publish: "2018-10-02" }).year, 2018);
+// 🆕 v7.41.2: 리디 외전(별도 시리즈) 검색 발견 — 실측 무직전생 구조 기반
+{
+  const ridiSearch = JSON.stringify({ books: [
+    { title: "무직전생", series_prices_info: [{ series_id: "505013198" }], opened_last_volume_id: "505083089", book_count: 26, parent_category_name: "라이트노벨", authors_info: [{ role: "story_writer", name: "리후진 나 마고노테" }] },
+    { title: "무직전생 ~사족 편~", series_prices_info: [{ series_id: "505088480" }], opened_last_volume_id: "505088999", book_count: 3, parent_category_name: "라이트노벨", authors_info: [{ role: "story_writer", name: "리후진 나 마고노테" }] },
+    { title: "[코믹] 무직전생 ~이세계에 갔으면~", series_prices_info: [{ series_id: "505024392" }], opened_last_volume_id: "505105971", book_count: 20, parent_category_name: "만화 e북", authors_info: [{ role: "illustrator", name: "후지카와 유카" }] },
+  ] });
+  const list = S.parseRidiSearchSeries(ridiSearch);
+  eq("리디 검색: 3 시리즈", list.length, 3);
+  eq("리디 검색: 본편 series_id", list[0].seriesId, "505013198");
+  eq("리디 검색: 외전 lastVolumeId", list[1].lastVolumeId, "505088999");
+  eq("리디 검색: 코믹 플래그", list[2].isComic, true);
+  eq("리디 검색: 작가(story_writer)", list[0].author, "리후진 나 마고노테");
+  const base = { title: "무직전생", author: "리후진 나 마고노테", seriesId: "505013198" };
+  const gaiden = S.pickRidiGaidenSeries(base, list);
+  eq("리디 외전선별: 1건(사족 편만)", gaiden.length, 1);
+  eq("리디 외전선별: 외전 시리즈 id", gaiden[0].seriesId, "505088480");
+  eq("리디 외전선별: 본편 자신 제외", gaiden.some(g => g.seriesId === "505013198"), false);
+  eq("리디 외전선별: 코믹 제외", gaiden.some(g => g.isComic), false);
+}
+eq("pickRidiGaidenSeries: 빈 목록 → []", S.pickRidiGaidenSeries({ title: "x", seriesId: "1" }, []).length, 0);
 
 console.log(`\n${fail === 0 ? "🎉 ALL PASS" : "⚠️  FAILED"}  pass=${pass} fail=${fail}`);
 process.exit(fail === 0 ? 0 : 1);
