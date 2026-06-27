@@ -2,11 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.41.5 (본편/외전 분리 — 문피아 확장 + 로그인, 폰 검증 대기)            ║
+ * ║  버전: 7.41.6 (카카오·문피아 외전 분리 시험 토글 — 불러오기 방해 수정)         ║
  * ║  최종 수정: 2026-06-27                                                        ║
  * ║  총 라인 수: 약 69,360줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🩹 v7.41.6 카카오·문피아 외전 분리 → 시험 토글(기본 OFF) (2026-06-27)         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 사용자 보고: 카카페 링크 불러오기 안 됨. 원인: v7.41.4 카카오 외전 분리          ║
+ * ║ (page.kakao GraphQL POST)가 불러오기 핵심 경로에 들어가 차단/지연 유발.         ║
+ * ║ 미검증 시험기능을 기본 경로에 둔 게 잘못. → globalGaidenExp 토글 신설(기본       ║
+ * ║ OFF). 카카오·문피아 분리는 ON일 때만 동작(설정 ‘🧪 카카오·문피아 외전 분리').    ║
+ * ║ 네이버·노벨피아·리디(검증완료)는 항상 ON 유지. 기본값에서 카카오/문피아          ║
+ * ║ 불러오기는 종전(lastSlideAddedDate 등)대로 정상 동작. ai_config(gaiden_exp)     ║
+ * ║ 영속 + 부팅 복원. 회귀 293/293 유지.                                          ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🟡 v7.41.5 본편/외전 분리 — 문피아 + 로그인 (폰 검증 대기) (2026-06-27)       ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -14428,6 +14439,8 @@ const SCRAPER_HEADERS = {
 //   API fetch에 Cookie 헤더를 "명시 주입"(네이티브 쿠키 자동전달 의존 X — 안드로이드 외 동작·Fresco 이미지까지 일관).
 //   globalNpCookie는 컴포넌트(App)가 부팅/로그인 시 CookieManager.get으로 채운다 — 이 슬라이스엔 네이티브 import 없음(오프라인 회귀 테스트 보존).
 let globalNpCookie = null; // "name=val; name2=val2" 형태 or null(비로그인)
+// 🔧 v7.41.6: 카카오·문피아 본편/외전 분리는 폰 검증 전 '시험' 기능 — 기본 OFF(불러오기 핵심 경로 방해 방지). 사용자가 설정에서 켤 때만 동작.
+let globalGaidenExp = false;
 function npHeaders(extra) {
   const h = { ...SCRAPER_HEADERS, ...(extra || {}) };
   if (globalNpCookie) h.Cookie = globalNpCookie; // 로그인 시에만 첨부 → 비로그인 동작은 종전과 100% 동일(무회귀)
@@ -15088,11 +15101,11 @@ async function fetchNovelMeta(url, opts = {}) {
   }
   // 🆕 v7.41.4: 카카오 완결작 — GraphQL(contentHomeProductList+viewerInfo)로 본편/외전 분리. 실패 시 기존 lastSlideAddedDate 완결일 유지(무회귀).
   //   ※total 신뢰도 불확실 → noTotalAdjust. 직전 content 페이지 GET으로 _kpwtkn 쿠키가 잡혀 GraphQL 인증됨(네이티브 쿠키스토어).
-  if (platform === "카카오페이지" && meta.workStatus === "completed") {
+  if (globalGaidenExp && platform === "카카오페이지" && meta.workStatus === "completed") { // 🔧 v7.41.6: 시험 토글 ON일 때만(불러오기 방해 방지)
     try { const sp = await fetchKakaoEpisodeSplit(url, opts); if (sp && (sp.mainCompletedAt || sp.hasGaiden)) applyEpisodeSplitToMeta(meta, sp, { noTotalAdjust: true }); } catch {}
   }
   // 🆕 v7.41.5: 문피아 완결작 — 신 SPA 회차API. ≤100화는 익명, 큰 작품은 로그인 paid 엔드포인트로 본편/외전 분리.
-  if (platform === "문피아" && meta.workStatus === "completed") {
+  if (globalGaidenExp && platform === "문피아" && meta.workStatus === "completed") { // 🔧 v7.41.6: 시험 토글 ON일 때만
     try { const sp = await fetchMunpiaEpisodeSplit(url, opts); if (sp && (sp.mainCompletedAt || sp.hasGaiden)) applyEpisodeSplitToMeta(meta, sp); } catch {}
   }
   return meta;
@@ -17127,7 +17140,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.41.5";
+const APP_VERSION = "7.41.6";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -17153,6 +17166,16 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.41.6", date: "2026-06-27",
+    title: "🩹 카카오 불러오기 정상화 + 외전 분리 시험 토글",
+    highlights: [
+      { type: "fix", text: "🩹 카카오페이지 링크 불러오기가 막히거나 느려지던 문제를 고쳤어요. 카카오·문피아 외전 분리는 아직 검증 전이라, 기본은 꺼두고 ‘설정 › 🧪 카카오·문피아 외전 분리(시험)’에서 직접 켜는 방식으로 바꿨어요." },
+    ],
+    details: [
+      "네이버·노벨피아·리디 외전 분리는 검증돼서 계속 켜져 있어요. 카카오·문피아만 시험 토글로 분리했어요(켜면 불러오기에 회차 조회가 추가돼 느려질 수 있어요).",
+    ],
+  },
   {
     version: "7.41.5", date: "2026-06-27",
     title: "🌿 본편/외전 분리 — 문피아도 (시험)",
@@ -36262,6 +36285,7 @@ function AppContent() {
   const [mpLoggedIn, setMpLoggedIn] = useState(false); // 🔐 v7.41.5: 문피아 로그인 여부(큰 작품 전체 회차목록=로그인 필요)
   const [mpLoginModalOpen, setMpLoginModalOpen] = useState(false);
   const [mpBusy, setMpBusy] = useState(false);
+  const [gaidenExp, setGaidenExp] = useState(false); // 🔧 v7.41.6: 카카오·문피아 본편/외전 분리(시험) 켜기 — 기본 OFF
   // 🆕 v7.28.14: AI 태그 추천 (작품 추가/편집)
   const [aiTagModalOpen, setAiTagModalOpen] = useState(false);
   // 🔗 v7.28.26 스크래퍼: 링크에서 메타 불러오기 — 로딩 플래그 + 확인 모달({meta,items,apply,label})
@@ -43113,7 +43137,7 @@ function AppContent() {
           const hit = (await searchMunpia(title || "", opts)).find(c => c.url && c.url.includes("id=" + id) && c.meta);
           if (hit) {
             // 🆕 v7.41.5: 완결작이면 회차목록으로 본편/외전 분리 보강(검색 meta엔 회차 분리 정보 없음)
-            if (hit.meta && hit.meta.workStatus === "completed") { try { const sp = await fetchMunpiaEpisodeSplit(link, opts); if (sp && (sp.mainCompletedAt || sp.hasGaiden)) applyEpisodeSplitToMeta(hit.meta, sp); } catch {} }
+            if (globalGaidenExp && hit.meta && hit.meta.workStatus === "completed") { try { const sp = await fetchMunpiaEpisodeSplit(link, opts); if (sp && (sp.mainCompletedAt || sp.hasGaiden)) applyEpisodeSplitToMeta(hit.meta, sp); } catch {} }
             return hit.meta;
           }
         } catch {}
@@ -43559,6 +43583,12 @@ function AppContent() {
     try { await saveGlobalAiConfig({ mp_logged_in: false }); } catch {}
     Alert.alert("로그아웃 표시", "문피아 로그인 표시를 해제했어요. (완전 로그아웃은 문피아 사이트에서 하세요.)");
   }
+  // 🔧 v7.41.6: 카카오·문피아 외전 분리(시험) 토글 — 전역 동기화 + 영속.
+  function toggleGaidenExp() {
+    const next = !gaidenExp;
+    setGaidenExp(next); globalGaidenExp = next;
+    try { saveGlobalAiConfig({ gaiden_exp: next }); } catch (e) { console.warn("[gaiden] 설정 저장 실패:", e?.message); }
+  }
 
   // 🆕 v7.33.0: 유형그룹 로드 — 없으면 기본 GENERAL_TAGS + 커스텀 카테고리에서 1회 시드(흡수, 비파괴)
   useEffect(() => {
@@ -43996,6 +44026,8 @@ function AppContent() {
         setMpLoggedIn(has);
         if (!has) { try { await saveGlobalAiConfig({ mp_logged_in: false }); } catch {} }
       }
+      // 🔧 v7.41.6: 외전 분리(시험) 토글 복원
+      if (cfg.gaiden_exp === true) { globalGaidenExp = true; setGaidenExp(true); }
       if (cfg.ai_usage && typeof cfg.ai_usage === "object") {
         _aiUsage = {
           calls: Number(cfg.ai_usage.calls) || 0, input: Number(cfg.ai_usage.input) || 0,
@@ -62130,6 +62162,17 @@ async function importJSON() {
                 <Text style={{ color: C.sub, fontSize: 10, marginTop: 8, lineHeight: 14 }}>
                   ※ 시험 기능 — 문피아 회차 API 접근 방식이 까다로워 일부 작품에서 안 될 수 있어요. 안 되면 기존 방식으로 자동 대체돼요.
                 </Text>
+              </View>
+
+              {/* 🔧 v7.41.6: 카카오·문피아 외전 분리(시험) 토글 — 기본 OFF. 켜면 불러오기에 회차API 호출이 추가됨(느려지거나 일부 작품 실패 가능). */}
+              <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                <View style={{ flex: 1, paddingRight: 10 }}>
+                  <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>🧪 카카오·문피아 외전 분리 (시험)</Text>
+                  <Text style={{ color: C.sub, fontSize: 11.5, marginTop: 4, lineHeight: 16 }}>
+                    카카오·문피아 완결작의 본편/외전 완결일을 분리해 가져와요. 검증 전이라 기본은 꺼져 있어요. 켜면 불러오기 때 회차 정보를 추가로 받아 느려지거나 일부 작품에서 불러오기가 막힐 수 있어요. (네이버·노벨피아·리디 분리는 항상 켜져 있어요.)
+                  </Text>
+                </View>
+                <Switch value={gaidenExp} onValueChange={toggleGaidenExp} />
               </View>
 
               {/* 🔧 v7.28.38: 긁기 진단 — 폰에서 검색 원본 캡처(타 플랫폼 제목검색 파서 개발용) */}
