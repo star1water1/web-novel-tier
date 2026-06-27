@@ -2,11 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.44.12 (기존작 비교·반영 2경로 외전/완결일 파리티 — 6경로 대등)       ║
+ * ║  버전: 7.45.0 (대량 태그 AI 스캔 청크화 — 천+ 태그 타임아웃 해소)             ║
  * ║  최종 수정: 2026-06-27                                                        ║
- * ║  총 라인 수: 약 71,110줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 71,180줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🚀 v7.45.0 대량 태그 AI 스캔 청크화 — 천+ 태그 타임아웃 해소 (2026-06-27)     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 문제: 태그 ~1000개에서 AI 자동분류·유의어점검이 시간초과로 못 씀. 원인은 단일   ║
+ * ║ 거대 요청이 고정 30초 컷(resolveAbortSignal)·출력토큰 한도를 넘김(특히 느린    ║
+ * ║ Opus 4.8). 해법: 태그를 AI_SCAN_CHUNK_SIZE(120)씩 나눠 순차 호출 → 각 호출이   ║
+ * ║ 빨리 끝나 타임아웃 자체를 회피. ①유형그룹: 태그가 라벨에 독립 배정 → 청크       ║
+ * ║ 무손실(라벨 전 청크 공유, 청크 간 전역 dedup). ②유의어/상반: 정규화키 사전정렬  ║
+ * ║ 청킹(닮은 태그 같은 청크) + '대표 재조정' 패스(그룹에 묶인 태그 재비교)로 청크   ║
+ * ║ 경계 누락 최소화. 청크별 실패 격리(한 청크 실패가 전체 중단 X) + 진행률 표시.   ║
+ * ║ 후보 상한 상향(유형그룹 200/120→1500/600, 유의어 400/200→1000/400).            ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🧩 v7.44.12 기존작 비교·반영 2경로 외전/완결일 파리티 (2026-06-27)            ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -13843,6 +13855,10 @@ function computeSynonymCandidates(novels, tagRelations, opts = {}) {
 const SYNONYM_AI_MODEL = "claude-haiku-4-5";
 // 🆕 v7.28.9: 무료 대안 — Google Gemini (AI Studio 무료 한도). Flash 계열 = 무료·충분.
 const GEMINI_AI_MODEL = "gemini-2.5-flash";
+// 🆕 v7.45.0: 대량 태그(수백~천+) AI 스캔 청크 크기. 1회 요청에 태그를 N개씩만 담아 30초
+//   고정 타임아웃(resolveAbortSignal) + 출력 토큰 한도(MAX_TOKENS)를 모두 회피. 유형그룹은
+//   태그 독립 배정이라 무손실, 유의어는 정규화키 사전정렬 청킹 + 대표 재조정으로 경계 손실 최소화.
+const AI_SCAN_CHUNK_SIZE = 120;
 
 // 🆕 v7.31.1: 사용자 선택 Claude 모델 (설정에서 변경, ai_config.json 영속). callClaude* 호출에 우선 적용.
 //   globalTierConfig 패턴과 동일하게 모듈 전역 mutable로 두고, 설정 로드/변경 시 갱신.
@@ -37160,6 +37176,7 @@ function AppContent() {
   const [tgPickerTarget, setTgPickerTarget] = useState(null); // 태그 배정 대상 노드 id
   // 🆕 v7.35.0: 유형그룹 AI 자동 분류
   const [aiTgBusy, setAiTgBusy] = useState(false);
+  const [aiScanProgress, setAiScanProgress] = useState(null); // 🆕 v7.45.0: 대량 AI 스캔 진행률 {done,total} (유형그룹·유의어 공용 — 동시 실행 안 함)
   const [aiTgModalOpen, setAiTgModalOpen] = useState(false);
   const [aiTgSuggest, setAiTgSuggest] = useState([]); // [{ tag, id(nodeId), label, checked }]
   // 🆕 v7.36.0 (Phase 4): 창작자 어시스트(랜덤 작품 구성)
@@ -44273,30 +44290,48 @@ function AppContent() {
       const seen = new Set();
       for (const t of ((nv.tags || "").split(",").map(s => s.trim()).filter(Boolean))) { const k = normalizeTagKey(t); if (!k || seen.has(k)) continue; seen.add(k); freq.set(k, (freq.get(k) || 0) + 1); if (!disp.has(k)) disp.set(k, t); }
     }
-    const candidates = [...freq.entries()].filter(([k]) => !idx[k]).sort((a, b) => b[1] - a[1]).slice(0, aiWideScan ? 200 : 120).map(([k]) => disp.get(k));
+    const candidates = [...freq.entries()].filter(([k]) => !idx[k]).sort((a, b) => b[1] - a[1]).slice(0, aiWideScan ? 1500 : 600).map(([k]) => disp.get(k)); // 🆕 v7.45.0: 청크화로 대량 처리 가능 → 상한 상향(200/120 → 1500/600)
     if (candidates.length === 0) { Alert.alert("AI 자동 분류", "분류할 새 태그가 없어요. (라이브러리 태그가 이미 다 배정됨)"); return; }
     setAiTgBusy(true);
     try {
-      const { assignments } = provider === "gemini"
-        ? await callGeminiForTypeGroups(candidates, labels, key, GEMINI_AI_MODEL, { maxTokens: aiWideScan ? 8192 : 4096 })
-        : await callClaudeForTypeGroups(candidates, labels, key, SYNONYM_AI_MODEL, { maxTokens: aiWideScan ? 8192 : 4096 });
+      // 🆕 v7.45.0: 후보를 청크로 나눠 순차 호출(태그는 라벨에 독립 배정 → 청크 경계 무손실). 라벨은 모든 청크 공유.
+      const chunks = [];
+      for (let i = 0; i < candidates.length; i += AI_SCAN_CHUNK_SIZE) chunks.push(candidates.slice(i, i + AI_SCAN_CHUNK_SIZE));
+      setAiScanProgress({ done: 0, total: chunks.length });
       const candSet = new Set(candidates.map(t => normalizeTagKey(t)));
       const out = [];
-      for (const a of (assignments || [])) {
-        const tag = a?.tag; if (!tag || !candSet.has(normalizeTagKey(tag))) continue;
-        for (const lb of (a.categories || [])) {
-          const id = labelToId[lb]; if (!id) continue;
-          if ((nodes[id].tags || []).some(t => isSameTag(t, tag))) continue; // 이미 있음
-          if (out.some(o => o.id === id && isSameTag(o.tag, tag))) continue; // 중복
-          out.push({ tag, id, label: lb, checked: true });
+      const seenOut = new Set(); // 청크 간 전역 중복 제거(id|정규화태그)
+      let failed = 0;
+      for (let ci = 0; ci < chunks.length; ci++) {
+        let assignments = [];
+        try {
+          const r = provider === "gemini"
+            ? await callGeminiForTypeGroups(chunks[ci], labels, key, GEMINI_AI_MODEL, { maxTokens: aiWideScan ? 8192 : 4096 })
+            : await callClaudeForTypeGroups(chunks[ci], labels, key, SYNONYM_AI_MODEL, { maxTokens: aiWideScan ? 8192 : 4096 });
+          assignments = r?.assignments || [];
+        } catch (e) { failed++; } // 청크별 실패 격리(한 청크 타임아웃이 전체를 죽이지 않음)
+        for (const a of assignments) {
+          const tag = a?.tag; if (!tag || !candSet.has(normalizeTagKey(tag))) continue;
+          for (const lb of (a.categories || [])) {
+            const id = labelToId[lb]; if (!id) continue;
+            if ((nodes[id].tags || []).some(t => isSameTag(t, tag))) continue; // 이미 있음
+            const dk = id + "|" + normalizeTagKey(tag);
+            if (seenOut.has(dk)) continue; seenOut.add(dk); // 중복(청크 간 포함)
+            out.push({ tag, id, label: lb, checked: true });
+          }
         }
+        setAiScanProgress({ done: ci + 1, total: chunks.length });
       }
-      if (out.length === 0) { Alert.alert("AI 자동 분류", "추가로 배치할 제안이 없어요."); return; }
+      if (out.length === 0) {
+        Alert.alert("AI 자동 분류", failed ? `제안이 없어요. (청크 ${failed}/${chunks.length} 실패)` : "추가로 배치할 제안이 없어요.");
+        return;
+      }
       setAiTgSuggest(out);
       setAiTgModalOpen(true);
+      if (failed) Alert.alert("AI 자동 분류", `일부 청크(${failed}/${chunks.length})가 실패했지만 나머지 ${out.length}건 제안을 보여드려요.`);
     } catch (e) {
       Alert.alert("AI 자동 분류 실패", e?.message || String(e));
-    } finally { setAiTgBusy(false); }
+    } finally { setAiTgBusy(false); setAiScanProgress(null); }
   }
   function applyAiTypeGroupSuggestions() {
     const checked = aiTgSuggest.filter(s => s.checked);
@@ -44386,7 +44421,7 @@ function AppContent() {
       }
       // 🆕 v7.28.11: 넓게 점검이면 1회 태그도 포함 + 상한 400, 평소엔 2회+·상한 200
       const minFreq = aiWideScan ? 1 : 2;
-      const cap = aiWideScan ? 400 : 200;
+      const cap = aiWideScan ? 1000 : 400; // 🆕 v7.45.0: 청크화+대표재조정으로 대량 처리 가능 → 상한 상향(400/200 → 1000/400)
       const tags = [...freq.entries()].filter(([, f]) => f >= minFreq).sort((a, b) => b[1] - a[1]).slice(0, cap).map(([k]) => disp.get(k));
       if (tags.length < 2) { Alert.alert("AI 점검", "분석할 태그가 부족해요. (점검할 태그가 2개 이상 필요)"); return; }
       // 🔧 v7.28.1: 사용자 맥락 구성 — 기존 유사/상반 그룹 + 거절 이력을 AI에 전달
@@ -44413,33 +44448,58 @@ function AppContent() {
       const dismissedOppositePairs = [...dismissedOppPairs].map(pk => { const [ka, kb] = pk.split("|"); return [disp.get(ka) || ka, disp.get(kb) || kb]; }).slice(0, 50);
       // 🆕 v7.28.11: 넓게 점검 시 응답 상한 상향(그룹 많아도 잘리지 않게)
       const ctx = { similarGroups, oppositePairs, dismissedPairs, dismissedOppositePairs, maxTokens: aiWideScan ? 8192 : 4096 };
-      // 🆕 v7.28.12: 한 번 호출로 유의어(groups) + 상반(opposites) 동시 수신
-      const { groups, opposites } = provider === "gemini"
-        ? await callGeminiForSynonyms(tags, key, GEMINI_AI_MODEL, ctx)
-        : await callClaudeForSynonyms(tags, key, SYNONYM_AI_MODEL, ctx);
+      // 🆕 v7.45.0: 대량 태그 청크화 — 정규화키 사전정렬로 글자 닮은 유의어(X/X물 등)를 같은 청크에 모으고,
+      //   청크별 호출 후 그룹에 묶인 '대표' 태그를 한 번 더 비교(재조정)해 청크 경계에서 갈린 쌍을 복구.
       const tagset = new Set(tags.map(t => normalizeTagKey(t)));
-      const aiCands = [];
-      for (const g of (groups || [])) {
-        const gt = (g.tags || []).filter(t => t && tagset.has(normalizeTagKey(t)));
-        const uniq = [...new Set(gt)];
-        for (let i = 1; i < uniq.length; i++) {
-          if (isSameTag(uniq[0], uniq[i])) continue;
-          if (dismissedSynPairs.has(synPairKey(uniq[0], uniq[i]))) continue; // 🔧 v7.28.0: 무시 이력 (AI도 같은 실수 반복 안 함)
-          if (isOppositePair(uniq[0], uniq[i], tagRelations)) continue; // 사용자가 상반이라 지정한 쌍
-          aiCands.push({ a: uniq[0], b: uniq[i], score: 0.85, minFreq: 0, reasons: ["AI" + (g.reason ? ": " + g.reason : "")], suggest: "group", ai: true });
-        }
-      }
-      // 🆕 v7.28.12: 상반 후보 가공 (입력 태그 한정 · 중복/이미상반/거절 제외)
+      const aiCands = []; const seenSynPair = new Set();
       const oppCands = []; const seenOppPair = new Set();
-      for (const o of (opposites || [])) {
-        const a = o?.a, b = o?.b;
-        if (!a || !b || isSameTag(a, b)) continue;
-        if (!tagset.has(normalizeTagKey(a)) || !tagset.has(normalizeTagKey(b))) continue;
-        const pk = synPairKey(a, b);
-        if (seenOppPair.has(pk)) continue; seenOppPair.add(pk);
-        if (dismissedOppPairs.has(pk)) continue;
-        if (isOppositePair(a, b, tagRelations)) continue; // 이미 상반으로 등록됨
-        oppCands.push({ a, b, reason: o.reason ? String(o.reason) : "", ai: true });
+      // 한 호출 결과({groups,opposites})를 후보로 가공·누적 (청크/재조정 공용 — 게이팅 로직 단일화)
+      const ingest = ({ groups, opposites } = {}) => {
+        for (const g of (groups || [])) {
+          const gt = (g.tags || []).filter(t => t && tagset.has(normalizeTagKey(t)));
+          const uniq = [...new Set(gt)];
+          for (let i = 1; i < uniq.length; i++) {
+            if (isSameTag(uniq[0], uniq[i])) continue;
+            const pk = synPairKey(uniq[0], uniq[i]);
+            if (seenSynPair.has(pk)) continue;                              // 청크 간 중복 쌍 제거
+            if (dismissedSynPairs.has(pk)) continue;                        // 무시 이력(AI도 같은 실수 반복 안 함)
+            if (isOppositePair(uniq[0], uniq[i], tagRelations)) continue;   // 사용자가 상반이라 지정한 쌍
+            seenSynPair.add(pk);
+            aiCands.push({ a: uniq[0], b: uniq[i], score: 0.85, minFreq: 0, reasons: ["AI" + (g.reason ? ": " + g.reason : "")], suggest: "group", ai: true });
+          }
+        }
+        for (const o of (opposites || [])) {
+          const a = o?.a, b = o?.b;
+          if (!a || !b || isSameTag(a, b)) continue;
+          if (!tagset.has(normalizeTagKey(a)) || !tagset.has(normalizeTagKey(b))) continue;
+          const pk = synPairKey(a, b);
+          if (seenOppPair.has(pk)) continue; seenOppPair.add(pk);
+          if (dismissedOppPairs.has(pk)) continue;
+          if (isOppositePair(a, b, tagRelations)) continue; // 이미 상반으로 등록됨
+          oppCands.push({ a, b, reason: o.reason ? String(o.reason) : "", ai: true });
+        }
+      };
+      const callSyn = (chunkTags) => provider === "gemini"
+        ? callGeminiForSynonyms(chunkTags, key, GEMINI_AI_MODEL, ctx)
+        : callClaudeForSynonyms(chunkTags, key, SYNONYM_AI_MODEL, ctx);
+      // 사전정렬 청킹(정규화키 기준 → 접두 닮은 태그가 인접해 같은 청크에 들어감)
+      const sortedTags = [...tags].sort((x, y) => { const kx = normalizeTagKey(x), ky = normalizeTagKey(y); return kx < ky ? -1 : kx > ky ? 1 : 0; });
+      const chunks = [];
+      for (let i = 0; i < sortedTags.length; i += AI_SCAN_CHUNK_SIZE) chunks.push(sortedTags.slice(i, i + AI_SCAN_CHUNK_SIZE));
+      const reconN = chunks.length > 1 ? 1 : 0; // 청크가 2개 이상일 때만 재조정 패스
+      setAiScanProgress({ done: 0, total: chunks.length + reconN });
+      let failed = 0;
+      for (let ci = 0; ci < chunks.length; ci++) {
+        try { ingest(await callSyn(chunks[ci])); } catch (e) { failed++; } // 청크별 실패 격리(한 청크 타임아웃이 전체를 안 죽임)
+        setAiScanProgress({ done: ci + 1, total: chunks.length + reconN });
+      }
+      // 대표 재조정: 청크에서 후보로 묶인 태그들(=대표)을 모아 한 번 더 비교 → 청크 경계에서 갈린 쌍 복구
+      if (reconN) {
+        const recon = []; const rseen = new Set();
+        for (const c of aiCands) for (const t of [c.a, c.b]) { const k = normalizeTagKey(t); if (k && !rseen.has(k)) { rseen.add(k); recon.push(t); } }
+        const reconSet = recon.slice(0, AI_SCAN_CHUNK_SIZE);
+        if (reconSet.length >= 2) { try { ingest(await callSyn(reconSet)); } catch (e) { failed++; } }
+        setAiScanProgress({ done: chunks.length + 1, total: chunks.length + 1 });
       }
       if (_slotGeneration !== _scanGen) return; // 🆕 v7.28.21: 슬롯 전환됨 → 이전 슬롯 결과 폐기
       setTagHealthData(prev => {
@@ -44451,11 +44511,12 @@ function AppContent() {
         const freshOpp = oppCands.filter(c => { const k = synPairKey(c.a, c.b); if (seenO.has(k)) return false; seenO.add(k); return true; });
         return { ...(prev || {}), synonymCandidates: [...fresh, ...existing], oppositeCandidates: [...freshOpp, ...existingOpp] };
       });
-      Alert.alert("AI 점검 완료", `유의어 후보 ${aiCands.length}개, 상반 후보 ${oppCands.length}개를 찾았어요.${(aiCands.length || oppCands.length) ? "\n아래 '유의어 후보'·'상반 후보'에서 확인하세요." : ""}`);
+      Alert.alert("AI 점검 완료", `유의어 후보 ${aiCands.length}개, 상반 후보 ${oppCands.length}개를 찾았어요.${failed ? `\n(청크 ${failed}개 실패 — 나머지 결과만 반영)` : ""}${(aiCands.length || oppCands.length) ? "\n아래 '유의어 후보'·'상반 후보'에서 확인하세요." : ""}`);
     } catch (e) {
       Alert.alert("AI 점검 실패", e?.message || String(e));
     } finally {
       setTagHealthBusy(false);
+      setAiScanProgress(null);
     }
   }
 
@@ -63287,7 +63348,7 @@ async function importJSON() {
                 </TouchableOpacity>
               </View>
               <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
-                <OutlineButton title={aiTgBusy ? "AI 분류 중…" : "🤖 AI로 자동 분류"} onPress={runAiTypeGroupScan} disabled={aiTgBusy} color={C.primary} style={{ flex: 1 }} />
+                <OutlineButton title={aiTgBusy ? (aiScanProgress ? `AI 분류 중… ${aiScanProgress.done}/${aiScanProgress.total}` : "AI 분류 중…") : "🤖 AI로 자동 분류"} onPress={runAiTypeGroupScan} disabled={aiTgBusy} color={C.primary} style={{ flex: 1 }} />
                 <OutlineButton title="↩️ 기본값 복원" onPress={resetTypeGroupsToDefault} color={C.sub} style={{ flex: 1 }} />
               </View>
               <OutlineButton title="🎲 창작자 어시스트 (랜덤 작품 구성)" onPress={() => { setComposerResult([]); setComposerLocked(new Set()); setComposerExcluded(new Set()); setComposerOpen(true); }} color="#8b5cf6" style={{ marginBottom: 12 }} />
@@ -69841,7 +69902,7 @@ async function importJSON() {
             <Text style={{ color: C.sub, fontSize: 12, marginBottom: 12 }}>
               같은 뜻인데 표기가 다른 태그(별칭·띄어쓰기 변형)와 끊어진 관계를 찾아 줍니다. 병합할 대표 표기를 탭하면 모든 작품에서 통일돼요.
             </Text>
-            {tagHealthBusy && <Text style={{ color: C.primary, fontSize: 13, marginBottom: 8 }}>처리 중…</Text>}
+            {tagHealthBusy && <Text style={{ color: C.primary, fontSize: 13, marginBottom: 8 }}>{aiScanProgress ? `AI 점검 중… ${aiScanProgress.done}/${aiScanProgress.total}` : "처리 중…"}</Text>}
             <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled">
               {/* 변형 클러스터 */}
               <Text style={{ color: C.text, fontWeight: "800", fontSize: 14, marginBottom: 6 }}>
