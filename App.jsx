@@ -2,11 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.44.0 (카카오 응답 가로채기 WebView — 난독화 우회, 불러오기 복구)      ║
+ * ║  버전: 7.44.1 (카카오 가로채기 후킹 강화 — responseType 안전 + 실패 진단)      ║
  * ║  최종 수정: 2026-06-27                                                        ║
- * ║  총 라인 수: 약 69,560줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 69,580줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🩹 v7.44.1 카카오 가로채기 후킹 강화 + 실패 진단 (2026-06-27)                 ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 폰 보고: v7.44.0 캡처가 30s 타임아웃(응답 못 잡음). 원인 추정: axios 기본       ║
+ * ║ responseType='json' → XHR responseText 접근이 예외 → 조용히 누락. 수정:        ║
+ * ║ ①XHR 후킹을 responseType별 분기(json=this.response 직렬화, text=responseText). ║
+ * ║ ②fetch URL도 추출. ③탐지 조건 완화(contentHomeOverview + onIssue/startSaleDt/   ║
+ * ║ lastSlideAddedDate 중 하나). ④진단 채널(kkdbg): 후킹 설치 여부·관찰된 요청      ║
+ * ║ URL·overview 응답 목격 여부를 모아, 타임아웃 시 Alert로 표시(원인 자가진단).    ║
+ * ║ 무회귀. 회귀 310/310.                                                          ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🛰️ v7.44.0 카카오 응답 가로채기 WebView — 난독화 우회 (2026-06-27)            ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -14516,12 +14527,16 @@ let globalKkCookie = null; // "name=val; ..." 형태 or null(미부트스트랩)
 //   globalKakaoCapture는 App 컴포넌트가 WebView 캡처 구현을 주입한다(슬라이스 밖 React 의존이라 여기선 후크만).
 let globalKakaoCapture = null; // (url, opts) => Promise<meta|null>
 // 카카오 페이지에 주입: fetch·XHR을 후킹해 contentHomeOverview 응답을 postMessage. 앱 JS보다 먼저 실행(beforeContentLoaded).
+//   🔧 v7.44.1: responseType='json'(axios 기본)이면 responseText 접근이 예외 → this.response 우선. + 실패 진단용 요청 로그(kkdbg) 전송.
 const KAKAO_CAPTURE_JS = "(function(){if(window.__kkCap)return;window.__kkCap=1;" +
   "function P(o){try{window.ReactNativeWebView.postMessage(JSON.stringify(o));}catch(e){}}" +
-  "function H(t){return typeof t==='string'&&t.indexOf('contentHomeOverview')>-1&&t.indexOf('\"content\"')>-1;}" +
-  "try{var of=window.fetch;window.fetch=function(){return of.apply(this,arguments).then(function(r){try{r.clone().text().then(function(t){if(H(t))P({t:'kk',ok:true,body:t});}).catch(function(){});}catch(e){}return r;});};}catch(e){}" +
-  "try{var os=XMLHttpRequest.prototype.send;XMLHttpRequest.prototype.send=function(){try{this.addEventListener('load',function(){try{var t=this.responseText;if(H(t))P({t:'kk',ok:true,body:t});}catch(e){}});}catch(e){}return os.apply(this,arguments);};}catch(e){}" +
-  "})();true;";
+  "function H(t){return typeof t==='string'&&t.indexOf('contentHomeOverview')>-1&&(t.indexOf('onIssue')>-1||t.indexOf('startSaleDt')>-1||t.indexOf('lastSlideAddedDate')>-1||t.indexOf('\"content\"')>-1);}" +
+  "function D(u,t){try{var s=String(u||'');if(s.indexOf('graphql')>-1||s.indexOf('kakao.com')>-1||(typeof t==='string'&&t.indexOf('contentHomeOverview')>-1))P({t:'kkdbg',u:s.slice(0,90),l:(t?t.length:0),ov:H(t)});}catch(e){}}" +
+  "function G(u,t){D(u,t);if(H(t))P({t:'kk',ok:true,body:t});}" +
+  "try{var of=window.fetch;window.fetch=function(){var a=arguments,u=(a[0]&&a[0].url)?a[0].url:a[0];return of.apply(this,a).then(function(r){try{r.clone().text().then(function(t){G(u,t);}).catch(function(){});}catch(e){}return r;});};}catch(e){}" +
+  "try{var oo=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){this.__u=u;return oo.apply(this,arguments);};" +
+  "var os=XMLHttpRequest.prototype.send;XMLHttpRequest.prototype.send=function(){var x=this;try{x.addEventListener('load',function(){var t='';try{var rt=x.responseType;if(rt===''||rt==='text'){t=x.responseText;}else if(rt==='json'){t=JSON.stringify(x.response);}else{t=(typeof x.response==='string')?x.response:'';}}catch(e){try{t=JSON.stringify(x.response);}catch(e2){}}G(x.__u,t);});}catch(e){}return os.apply(this,arguments);};}catch(e){}" +
+  "P({t:'kkdbg',u:'__hook_installed__',l:0,ov:false});})();true;";
 // 🔧 v7.41.6: 카카오·문피아 본편/외전 분리는 폰 검증 전 '시험' 기능 — 기본 OFF(불러오기 핵심 경로 방해 방지). 사용자가 설정에서 켤 때만 동작.
 let globalGaidenExp = true; // 🔧 v7.42.0: 카카오·문피아 본편/외전 분리 — 기본 ON(끄려면 설정 토글). 종전 기본 OFF는 오진단(불러오기 실패는 카카오 CSR 탓).
 function npHeaders(extra) {
@@ -36434,6 +36449,7 @@ function AppContent() {
   const [kkBusy, setKkBusy] = useState(false);
   const [kkCaptureUrl, setKkCaptureUrl] = useState(null); // 🆕 v7.44.0: 응답 가로채기 진행 중인 카카오 content URL(설정 시 캡처 WebView 마운트)
   const kkCaptureResolver = useRef(null); // { finish, timer } — onMessage/타임아웃이 캡처 Promise를 종료
+  const kkCaptureDbg = useRef([]); // 🔧 v7.44.1: WebView가 관찰한 요청 로그(실패 시 진단 표시용)
   // 🆕 v7.28.14: AI 태그 추천 (작품 추가/편집)
   const [aiTagModalOpen, setAiTagModalOpen] = useState(false);
   // 🔗 v7.28.26 스크래퍼: 링크에서 메타 불러오기 — 로딩 플래그 + 확인 모달({meta,items,apply,label})
@@ -43780,12 +43796,21 @@ function AppContent() {
   useEffect(() => {
     globalKakaoCapture = (url) => new Promise((resolve) => {
       if (kkCaptureResolver.current) { resolve(null); return; } // 동시 1건만(중첩 캡처 방지)
-      const finish = (meta) => {
+      kkCaptureDbg.current = [];
+      const finish = (meta, reason) => {
         const r = kkCaptureResolver.current; if (!r) return;
         clearTimeout(r.timer); kkCaptureResolver.current = null; setKkCaptureUrl(null);
+        if (!meta && reason === "timeout") { // 🔧 v7.44.1: 실패 진단 — WebView가 본 요청 로그 표시
+          const log = kkCaptureDbg.current;
+          const installed = log.some(d => d.u === "__hook_installed__");
+          const ovSeen = log.some(d => d.ov);
+          const lines = log.filter(d => d.u !== "__hook_installed__").slice(-12).map(d => `${d.ov ? "★" : "·"} ${d.u} (${d.l})`);
+          Alert.alert("카카오 정보를 못 받았어요",
+            `후킹 설치: ${installed ? "✅" : "❌(주입 실패)"} · overview 응답: ${ovSeen ? "✅ 봤는데 파싱 실패" : "❌ 못 봄"}\n관찰된 요청(${log.length}):\n${lines.length ? lines.join("\n") : "(요청 0건 — 페이지가 안 열렸거나 차단)"}\n\n이 내용을 캡처해 채팅에 보내 주세요.`);
+        }
         resolve(meta && meta.ok ? meta : null);
       };
-      const timer = setTimeout(() => finish(null), 30000); // 30s 안에 응답 없으면 포기(상위에서 일반 안내)
+      const timer = setTimeout(() => finish(null, "timeout"), 30000); // 30s 안에 응답 없으면 포기
       kkCaptureResolver.current = { finish, timer, url };
       setKkCaptureUrl(url);
     });
@@ -43794,7 +43819,9 @@ function AppContent() {
   function onKkCaptureMessage(e) {
     const r = kkCaptureResolver.current; if (!r) return;
     let p = null; try { p = JSON.parse(e?.nativeEvent?.data); } catch { return; }
-    if (!p || p.t !== "kk" || !p.ok || !p.body) return;
+    if (!p) return;
+    if (p.t === "kkdbg") { if (kkCaptureDbg.current.length < 60) kkCaptureDbg.current.push({ u: p.u, l: p.l, ov: p.ov }); return; }
+    if (p.t !== "kk" || !p.ok || !p.body) return;
     const meta = parseKakaoOverview(p.body, r.url || "");
     if (meta && meta.ok && meta.title) r.finish(meta); // 매칭 안 되면 계속 대기(타임아웃이 종료)
   }
