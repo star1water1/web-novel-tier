@@ -2,11 +2,20 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.44.9 (예정 경로 외전/완결일 파리티 — 5경로 완전 대등)                 ║
+ * ║  버전: 7.44.10 (신규·예정 폼에 외전/완결일 표시 — 불러온 값 가시화)            ║
  * ║  최종 수정: 2026-06-27                                                        ║
- * ║  총 라인 수: 약 69,730줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 69,760줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 👁 v7.44.10 신규·예정 폼에 외전/완결일 표시 — 불러온 값 가시화 (2026-06-27)   ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 종전 본편완결일·외전 시작/완결일은 편집모달에만 표시 → 신규 추가·예정 폼에선    ║
+ * ║ 불러와도 안 보였음(저장은 됨). 두 폼에 읽기전용 요약 줄 추가:                  ║
+ * ║ 📅 (본편)완결일 + 🌿 외전 {상태}{회차}{시작/완결일}. state(newCompletedAt 등    ║
+ * ║ /plannedCompletedAt 등) 소스 → 불러오기 즉시 반영. 예정은 외전 상태도 함께     ║
+ * ║ 표시(입력 UI 부재 보완). 회귀 331/331. 불러오기 5경로 가시성까지 대등 완료.    ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🧩 v7.44.9 예정 경로 외전/완결일 파리티 — 5경로 완전 대등 (2026-06-27)        ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -53565,6 +53574,20 @@ async function importJSON() {
   </View>
 )}
 
+{/* 🆕 v7.44.10: 불러오기로 채워진 본편 완결일·외전 시작/완결일(자동 채움 — 읽기전용 표시) */}
+{(() => {
+  const fmtD = (ms) => { const d = new Date(Number(ms)); return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`; };
+  const ca = Number(newCompletedAt) || 0, gSt = Number(newGaidenStartAt) || 0, gCa = Number(newGaidenCompletedAt) || 0, gEp = Number(newGaidenTotalEpisodes) || 0;
+  const hasG = gSt > 0 || gCa > 0;
+  if (!ca && !hasG) return null;
+  return (
+    <View style={{ marginTop: 8 }}>
+      {ca > 0 ? <Text style={{ color: C.sub, fontSize: 12 }}>📅 {hasG ? "본편 완결일" : "완결일"}: {fmtD(ca)}</Text> : null}
+      {hasG ? <Text style={{ color: C.sub, fontSize: 12, marginTop: 3 }}>🌿 외전{gEp > 0 ? ` ${gEp}화` : ""}{gSt > 0 ? ` · 시작 ${fmtD(gSt)}` : ""}{gCa > 0 ? ` · 완결 ${fmtD(gCa)}` : ""}</Text> : null}
+    </View>
+  );
+})()}
+
 {/* 🔗 작품 링크 */}
 <Label style={{ marginTop: 10 }}>작품 링크(선택)</Label>
 <Input
@@ -55143,6 +55166,21 @@ async function importJSON() {
                   <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>📋</Text>
                 </TouchableOpacity>
               </View>
+
+              {/* 🆕 v7.44.10: 예정 — 불러오기로 채워진 외전 상태·본편 완결일·외전 시작/완결일 요약(읽기전용). 예정 폼엔 외전 입력 UI가 없어 표시로 확인. */}
+              {(() => {
+                const fmtD = (ms) => { const d = new Date(Number(ms)); return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`; };
+                const ca = Number(plannedCompletedAt) || 0, gSt = Number(plannedGaidenStartAt) || 0, gCa = Number(plannedGaidenCompletedAt) || 0, gEp = Number(plannedGaidenTotalEpisodes) || 0;
+                const gs = (plannedGaidenStatus && plannedGaidenStatus !== "none") ? ({ ongoing: "외전 연재중", completed: "외전 완결" }[plannedGaidenStatus] || "") : "";
+                const hasG = gSt > 0 || gCa > 0 || !!gs;
+                if (!ca && !hasG) return null;
+                return (
+                  <View style={{ marginTop: 8 }}>
+                    {ca > 0 ? <Text style={{ color: C.sub, fontSize: 12 }}>📅 {hasG ? "본편 완결일" : "완결일"}: {fmtD(ca)}</Text> : null}
+                    {hasG ? <Text style={{ color: C.sub, fontSize: 12, marginTop: 3 }}>🌿 {gs || "외전"}{gEp > 0 ? ` ${gEp}화` : ""}{gSt > 0 ? ` · 시작 ${fmtD(gSt)}` : ""}{gCa > 0 ? ` · 완결 ${fmtD(gCa)}` : ""}</Text> : null}
+                  </View>
+                );
+              })()}
 
               <Label style={{ marginTop: 10 }}>표지 이미지</Label>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
