@@ -2,11 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.39.1 (검색 사이트 토글 setState 부수효과 분리)                       ║
+ * ║  버전: 7.40.0 (노벨피아 로그인 — 성인물 검색/메타 게이트 해제)                 ║
  * ║  최종 수정: 2026-06-27                                                        ║
  * ║  총 라인 수: 약 69,360줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔐 v7.40.0 노벨피아 로그인 — 성인물 검색/메타 게이트 해제 (2026-06-27)        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 비로그인은 노벨피아가 19금을 제목검색에서 숨기고 표지를 게이트한다. 설정에     ║
+ * ║ WebView 로그인(react-native-webview)을 추가 — 본인인증된 계정으로 1회 로그인.  ║
+ * ║ 세션 쿠키는 OS 쿠키스토어(@react-native-cookies/cookies)에만 두고 앱 DB엔      ║
+ * ║ 저장 안 함(브라우저와 동일). searchNovelpia·fetchNovelpiaByNo가 npHeaders()로   ║
+ * ║ Cookie를 명시 주입 → 19금 검색 노출 + 정확한 메타. 로그인 여부만 ai_config     ║
+ * ║ 영속(np_logged_in), 부팅 시 refreshNpSession이 쿠키 유효성 재검증. ※성인 표지   ║
+ * ║ 이미지는 정책상 로그인 후에도 안 보일 수 있어 직접 추가 안내. ※네이티브 의존    ║
+ * ║ 추가 → EAS 재빌드 필요(`npx expo install` 권장). ※폰 실측 필요(쿠키 흐름).     ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔧 v7.39.1 검색 사이트 토글 부수효과 분리 (2026-06-27)                        ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -7117,6 +7129,8 @@ import * as ImageManipulator from "expo-image-manipulator"; // 📷 명대사 �
 import * as MediaLibrary from "expo-media-library"; // 📷 v7.4.0 티어표 갤러리 저장
 import * as Clipboard from "expo-clipboard"; // 📋 v7.28.37 클립보드 링크 감지(스크래퍼 Stage 5)
 import { captureRef } from "react-native-view-shot"; // 📷 v7.4.0 티어표 캡처
+import { WebView } from "react-native-webview"; // 🔐 v7.40.0 노벨피아 로그인(성인물 게이트 해제) — WebView 로그인
+import CookieManager from "@react-native-cookies/cookies"; // 🔐 v7.40.0 OS 쿠키스토어 읽기(세션 쿠키 → fetch 주입)
 // 🆕 v7.8.0: 명대사 텍스트 서식 — 한글 웹폰트 번들 (expo-font + @expo-google-fonts)
 import { useFonts as useExpoFonts } from "expo-font";
 import { NanumGothic_400Regular, NanumGothic_700Bold } from "@expo-google-fonts/nanum-gothic";
@@ -14285,6 +14299,17 @@ const SCRAPER_HEADERS = {
   "Sec-Fetch-Site": "none",
   "Sec-Fetch-User": "?1",
 };
+// 🔐 v7.40.0: 노벨피아 로그인 세션 — 성인물(19금) 검색 노출·표지 게이트 해제용.
+//   쿠키는 OS 쿠키스토어(@react-native-cookies/cookies)에만 두고(브라우저와 동일) 앱 DB엔 저장하지 않는다.
+//   API fetch에 Cookie 헤더를 "명시 주입"(네이티브 쿠키 자동전달 의존 X — 안드로이드 외 동작·Fresco 이미지까지 일관).
+//   globalNpCookie는 컴포넌트(App)가 부팅/로그인 시 CookieManager.get으로 채운다 — 이 슬라이스엔 네이티브 import 없음(오프라인 회귀 테스트 보존).
+let globalNpCookie = null; // "name=val; name2=val2" 형태 or null(비로그인)
+function isNpLoggedIn() { return !!globalNpCookie; }
+function npHeaders(extra) {
+  const h = { ...SCRAPER_HEADERS, ...(extra || {}) };
+  if (globalNpCookie) h.Cookie = globalNpCookie; // 로그인 시에만 첨부 → 비로그인 동작은 종전과 100% 동일(무회귀)
+  return h;
+}
 const SCRAPER_PLATFORMS = [
   { key: "노벨피아", host: "novelpia.com" },
   { key: "문피아", host: "munpia.com" },
@@ -14916,7 +14941,7 @@ async function searchNovelpia(query, opts = {}) {
   const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
   let res, text = "";
   try {
-    res = await fetch(url, { headers: SCRAPER_HEADERS, redirect: "follow", signal });
+    res = await fetch(url, { headers: npHeaders(), redirect: "follow", signal }); // 🔐 v7.40.0: 로그인 시 Cookie 첨부 → 19금 검색 노출
     text = await res.text();
   } catch (e) {
     if (e?.name === "AbortError") throw new Error("검색 응답이 없어 중단했어요 (시간 초과)");
@@ -14993,7 +15018,7 @@ async function fetchNovelpiaByNo(no, opts = {}) {
   const api = "https://novelpia.com/proc/novel?cmd=get_novel&novel_no=" + encodeURIComponent(no);
   const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
   try {
-    const res = await fetch(api, { headers: SCRAPER_HEADERS, redirect: "follow", signal });
+    const res = await fetch(api, { headers: npHeaders(), redirect: "follow", signal }); // 🔐 v7.40.0: 로그인 시 Cookie 첨부 → 19금 표지 URL 취득
     if (!res.ok) return null;
     return parseNovelpiaGetNovel(await res.text(), "https://novelpia.com/novel/" + no);
   } catch { return null; }
@@ -16598,7 +16623,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.39.1";
+const APP_VERSION = "7.40.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -16624,6 +16649,17 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.40.0", date: "2026-06-27",
+    title: "🔐 노벨피아 로그인 (성인물 검색·정보)",
+    highlights: [
+      { type: "new", text: "🔐 노벨피아에 로그인할 수 있어요(설정 › ‘노벨피아 로그인’). 로그인하면 성인물(19금)도 ‘제목으로 검색’에 뜨고, 작품 정보를 더 정확히 불러와요. 본인인증된 계정으로 한 번 로그인하면 돼요." },
+    ],
+    details: [
+      "로그인 정보(쿠키)는 휴대폰의 쿠키 저장소에만 보관되고 앱이 따로 저장하지 않아요(브라우저와 동일). ‘로그아웃’을 누르면 깨끗이 지워져요.",
+      "성인 표지 이미지는 노벨피아 정책에 따라 로그인 후에도 안 보일 수 있어요 — 그땐 표지만 직접 추가하면 정보는 다 채워져요.",
+    ],
+  },
   {
     version: "7.39.1", date: "2026-06-27",
     title: "🔧 검색 사이트 토글 안정화",
@@ -18703,7 +18739,7 @@ const GUIDE_CONTENT = [
         tips: [
           "🔎 제목만 입력하고 ‘제목으로 검색’을 누르면 리디·네이버시리즈·문피아·노벨피아에서 작품을 찾아 제목·작가·줄거리·장르·태그·연재상태·연재연도·표지·연재처를 자동으로 채워줘요. 동시에 여러 곳을 찾아 느릴 땐, 설정 › ‘제목 검색 사이트’에서 안 쓰는 곳을 꺼 두면 빨라져요. (v7.39.0)",
           "🔗 작품 페이지 주소가 있으면 ‘링크에서 불러오기’로 같은 정보를 가져올 수 있어요(리디·네이버시리즈·문피아·노벨피아·카카오페이지). 카카오페이지는 작품 페이지 주소(page.kakao.com/content/…)에서 제목·작가·줄거리·장르·연재상태·연재연도를 가져와요. (v7.37.0)",
-          "🔞 노벨피아 성인물(19금)은 제목 ‘검색’엔 안 떠요(노벨피아가 비로그인 검색에서 19금을 숨김) — 작품 페이지 링크로 ‘불러오기’하면 제목·작가·줄거리·장르·19금·완결·연재연도가 들어와요. 표지는 성인 게이트라 비어 있어 직접 추가하면 돼요. (v7.38.0)",
+          "🔞 노벨피아 성인물(19금)은 비로그인 상태에선 제목 ‘검색’에 안 떠요(노벨피아가 숨김) — 설정 › ‘노벨피아 로그인’으로 로그인하면 검색에 떠요. 로그인 전이라도 작품 페이지 링크로 ‘불러오기’하면 제목·작가·줄거리·장르·19금·완결·연재연도가 들어와요. 표지는 성인 게이트라 비어 있을 수 있어 직접 추가하면 돼요. (v7.40.0)",
           "📋 불러온 값은 확인 모달에서 항목별로 체크해 적용해요 — 기존에 채워둔 칸은 건드리지 않고 빈 칸만 기본 선택돼요.",
           "제목과 작가만 입력해도 바로 등록할 수 있어요.",
           "태그는 취향 분석과 추천에 활용되니 꼼꼼히 입력하면 좋아요.",
@@ -35630,6 +35666,9 @@ function AppContent() {
   const [apiKeyHelpModalOpen, setApiKeyHelpModalOpen] = useState(false); // 🆕 v7.28.10: API 키 발급 방법 안내 모달
   const [aiWideScan, setAiWideScan] = useState(false); // 🆕 v7.28.11: 넓게 점검(옵트인) — 1회 태그 포함·상한 400
   const [searchPlatforms, setSearchPlatforms] = useState({ "리디": true, "네이버시리즈": true, "문피아": true, "노벨피아": true }); // 🆕 v7.39.0: 제목검색 대상 사이트 온오프(ai_config 영속, 전역 globalSearchPlatforms 동기화)
+  const [npLoggedIn, setNpLoggedIn] = useState(false); // 🔐 v7.40.0: 노벨피아 로그인 여부(쿠키는 OS 스토어, 여기엔 상태만)
+  const [npLoginModalOpen, setNpLoginModalOpen] = useState(false); // 🔐 v7.40.0: 노벨피아 WebView 로그인 모달
+  const [npBusy, setNpBusy] = useState(false); // 🔐 v7.40.0: 로그인 확인/로그아웃 진행 중
   // 🆕 v7.28.14: AI 태그 추천 (작품 추가/편집)
   const [aiTagModalOpen, setAiTagModalOpen] = useState(false);
   // 🔗 v7.28.26 스크래퍼: 링크에서 메타 불러오기 — 로딩 플래그 + 확인 모달({meta,items,apply,label})
@@ -42819,6 +42858,52 @@ function AppContent() {
     try { saveGlobalAiConfig({ search_platforms: next }); } catch (e) { console.warn("[search] 검색 사이트 설정 저장 실패:", e?.message); }
   }
 
+  // 🔐 v7.40.0: 노벨피아 쿠키 동기화 — OS 쿠키스토어(CookieManager)에서 현재 노벨피아 쿠키를 읽어 전역 globalNpCookie에 채움.
+  //   쿠키는 앱 DB에 저장하지 않음(브라우저와 동일). 이름 기반 로그인 판별은 노벨피아 구현 의존이라 불가 →
+  //   "사용자가 로그인 완료를 눌렀다"는 명시적 의도(np_logged_in)를 신뢰하고, 쿠키 존재 여부만 반환한다.
+  //   반환: 노벨피아 쿠키가 하나라도 있으면 true(세션 유효 추정), 없으면 globalNpCookie=null + false.
+  async function refreshNpSession() {
+    try {
+      const jar = await CookieManager.get("https://novelpia.com"); // get(url): httpOnly 포함 현재 쿠키 맵
+      const entries = jar && typeof jar === "object" ? Object.values(jar).filter(c => c && c.name && c.value) : [];
+      const cookieStr = entries.map(c => `${c.name}=${c.value}`).join("; ");
+      globalNpCookie = cookieStr || null;
+      return !!cookieStr;
+    } catch (e) {
+      console.warn("[np] 쿠키 조회 실패:", e?.message);
+      globalNpCookie = null; return false;
+    }
+  }
+
+  // 🔐 v7.40.0: WebView 로그인 완료 처리 — 쿠키 영속(flush) 후 동기화. 쿠키가 잡히면 사용자 의도를 신뢰해 로그인 확정.
+  async function confirmNpLogin() {
+    setNpBusy(true);
+    try {
+      try { await CookieManager.flush(); } catch { /* iOS 등 flush 미지원 — 무시 */ } // 안드로이드: 세션 쿠키 디스크 영속
+      const has = await refreshNpSession();
+      setNpLoginModalOpen(false);
+      if (has) {
+        setNpLoggedIn(true);
+        try { await saveGlobalAiConfig({ np_logged_in: true }); } catch { /* 영속 실패는 치명 아님 */ }
+        Alert.alert("노벨피아 로그인 완료", "이제 성인물(19금)도 제목 검색에 뜨고, 작품 정보를 더 정확히 불러와요. (만약 19금이 안 뜨면, 로그인이 덜 됐을 수 있어요 — 다시 시도해 주세요.)");
+      } else {
+        globalNpCookie = null; setNpLoggedIn(false);
+        Alert.alert("로그인이 확인되지 않았어요", "노벨피아에 로그인(필요 시 본인인증)한 뒤 다시 ‘로그인 완료’를 눌러 주세요.");
+      }
+    } finally { setNpBusy(false); }
+  }
+
+  // 🔐 v7.40.0: 노벨피아 로그아웃 — OS 쿠키 삭제 + 전역/상태/영속 초기화.
+  async function logoutNp() {
+    setNpBusy(true);
+    try {
+      try { await CookieManager.clearAll(); } catch (e) { console.warn("[np] 쿠키 삭제 실패:", e?.message); }
+      globalNpCookie = null; setNpLoggedIn(false);
+      try { await saveGlobalAiConfig({ np_logged_in: false }); } catch {}
+      Alert.alert("로그아웃됨", "노벨피아 로그인 세션을 지웠어요.");
+    } finally { setNpBusy(false); }
+  }
+
   // 🆕 v7.33.0: 유형그룹 로드 — 없으면 기본 GENERAL_TAGS + 커스텀 카테고리에서 1회 시드(흡수, 비파괴)
   useEffect(() => {
     (async () => {
@@ -43241,6 +43326,13 @@ function AppContent() {
       if (cfg.search_platforms && typeof cfg.search_platforms === "object") {
         const sp = {}; for (const name of SEARCH_PLATFORMS) sp[name] = cfg.search_platforms[name] !== false;
         globalSearchPlatforms = sp; setSearchPlatforms(sp);
+      }
+      // 🔐 v7.40.0: 노벨피아 로그인 복원 — 의도(np_logged_in)가 true면 OS 쿠키가 아직 살아있는지 검증해 globalNpCookie 채움.
+      //   쿠키가 만료/삭제됐으면 자동 로그아웃 처리(상태·영속 false). 의도가 false/없으면 비로그인 유지(쿠키 미주입).
+      if (cfg.np_logged_in === true) {
+        const has = await refreshNpSession();
+        if (has) setNpLoggedIn(true);
+        else { globalNpCookie = null; setNpLoggedIn(false); try { await saveGlobalAiConfig({ np_logged_in: false }); } catch {} }
       }
       if (cfg.ai_usage && typeof cfg.ai_usage === "object") {
         _aiUsage = {
@@ -61320,6 +61412,35 @@ async function importJSON() {
                 )}
               </View>
 
+              {/* 🔐 v7.40.0: 노벨피아 로그인 — 성인물(19금) 제목검색 노출 + 표지/메타 게이트 해제 */}
+              <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                  <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>🔐 노벨피아 로그인</Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: npLoggedIn ? "#22c55e" : C.line }} />
+                    <Text style={{ color: npLoggedIn ? "#22c55e" : C.sub, fontSize: 12, fontWeight: "800" }}>{npLoggedIn ? "로그인됨" : "로그인 안 됨"}</Text>
+                  </View>
+                </View>
+                <Text style={{ color: C.sub, fontSize: 11.5, marginTop: 5, lineHeight: 16 }}>
+                  노벨피아에 로그인하면 성인물(19금)도 ‘제목으로 검색’에 뜨고, 작품 정보를 더 정확히 불러와요. 본인인증된 계정으로 한 번 로그인하면 돼요. 로그인 정보는 휴대폰의 쿠키 저장소에만 보관되고 앱이 따로 저장하지 않아요(브라우저와 동일).
+                </Text>
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                  <TouchableOpacity onPress={() => setNpLoginModalOpen(true)} disabled={npBusy} activeOpacity={0.7}
+                    style={{ paddingVertical: 9, paddingHorizontal: 16, borderRadius: 999, backgroundColor: C.primary, opacity: npBusy ? 0.5 : 1 }}>
+                    <Text style={{ color: "#fff", fontWeight: "800", fontSize: 12.5 }}>{npLoggedIn ? "다시 로그인" : "노벨피아 로그인"}</Text>
+                  </TouchableOpacity>
+                  {npLoggedIn && (
+                    <TouchableOpacity onPress={logoutNp} disabled={npBusy} activeOpacity={0.7}
+                      style={{ paddingVertical: 9, paddingHorizontal: 16, borderRadius: 999, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, opacity: npBusy ? 0.5 : 1 }}>
+                      <Text style={{ color: C.sub, fontWeight: "800", fontSize: 12.5 }}>로그아웃</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+                <Text style={{ color: C.sub, fontSize: 10, marginTop: 8, lineHeight: 14 }}>
+                  ※ 성인 표지 이미지는 노벨피아 정책에 따라 로그인 후에도 안 보일 수 있어요. 그땐 표지만 직접 추가하면 돼요.
+                </Text>
+              </View>
+
               {/* 🔧 v7.28.38: 긁기 진단 — 폰에서 검색 원본 캡처(타 플랫폼 제목검색 파서 개발용) */}
               <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
                 <Text style={{ color: C.text, fontWeight: "700", fontSize: 14, marginBottom: 4 }}>🔧 긁기 진단 (검색 원본 캡처)</Text>
@@ -61368,6 +61489,44 @@ async function importJSON() {
               </View>
 
               {/* 🆕 v7.28.10: API 키 발급 안내 모달 (제공자별 단계·주의·바로가기) */}
+              {/* 🔐 v7.40.0: 노벨피아 WebView 로그인 모달 — 사용자가 직접 로그인 → ‘로그인 완료’로 세션 캡처 */}
+              <Modal visible={npLoginModalOpen} animationType="slide" statusBarTranslucent onRequestClose={() => setNpLoginModalOpen(false)}>
+                <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line }}>
+                    <TouchableOpacity onPress={() => setNpLoginModalOpen(false)} activeOpacity={0.7} style={{ padding: 6 }}>
+                      <Text style={{ color: C.sub, fontSize: 15, fontWeight: "800" }}>✕ 닫기</Text>
+                    </TouchableOpacity>
+                    <Text style={{ color: C.text, fontSize: 15, fontWeight: "800" }}>노벨피아 로그인</Text>
+                    <TouchableOpacity onPress={confirmNpLogin} disabled={npBusy} activeOpacity={0.7}
+                      style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, backgroundColor: C.primary, opacity: npBusy ? 0.5 : 1 }}>
+                      <Text style={{ color: "#fff", fontSize: 13, fontWeight: "800" }}>{npBusy ? "확인 중…" : "로그인 완료"}</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={{ paddingHorizontal: 14, paddingVertical: 8, backgroundColor: C.chip }}>
+                    <Text style={{ color: C.sub, fontSize: 11.5, lineHeight: 16 }}>
+                      노벨피아에 로그인(필요 시 본인인증)한 뒤, 위 오른쪽 ‘로그인 완료’를 눌러 주세요. 로그인 정보는 휴대폰 쿠키 저장소에만 보관돼요.
+                    </Text>
+                  </View>
+                  {npLoginModalOpen && (
+                    <WebView
+                      source={{ uri: "https://novelpia.com/login/" }}
+                      userAgent={SCRAPER_UA}
+                      sharedCookiesEnabled
+                      thirdPartyCookiesEnabled
+                      domStorageEnabled
+                      javaScriptEnabled
+                      startInLoadingState
+                      renderLoading={() => (
+                        <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "center", alignItems: "center", backgroundColor: C.bg }}>
+                          <ActivityIndicator size="large" color={C.primary} />
+                        </View>
+                      )}
+                      style={{ flex: 1, backgroundColor: C.bg }}
+                    />
+                  )}
+                </SafeAreaView>
+              </Modal>
+
               <Modal visible={apiKeyHelpModalOpen} animationType="fade" transparent statusBarTranslucent onRequestClose={() => setApiKeyHelpModalOpen(false)}>
                 <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center" }}>
                   <TouchableOpacity style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} activeOpacity={1} onPress={() => setApiKeyHelpModalOpen(false)} />
