@@ -2,11 +2,20 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.44.3 (카카오 캡처 진단을 실패 알림 본문에 표시 + 클립보드 복사)       ║
+ * ║  버전: 7.44.4 (카카오 캡처 WebView 가시화 + 로딩 생명주기 진단)                ║
  * ║  최종 수정: 2026-06-27                                                        ║
- * ║  총 라인 수: 약 69,600줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 69,610줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 👁 v7.44.4 카카오 캡처 WebView 가시화 + 로딩 생명주기 진단 (2026-06-27)       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 폰 진단: 후킹설치 X·요청 0건·로딩오류 0 = WebView가 아무것도 안 함(투명모달    ║
+ * ║ +opacity0.25에서 Android가 렌더/JS 실행 안 했을 가능성). 수정: 캡처 WebView를   ║
+ * ║ 불투명·전체화면(상단 배너+취소)으로 실제 노출 → JS 실행 보장. 주입 스크립트     ║
+ * ║ before+after 양쪽 + 매 실행마다 __run__, 1.5s 생존핑 전송. onLoadStart/End/    ║
+ * ║ Nav 생명주기를 진단에 기록 → '페이지 로드 자체가 됐는지' 확정. 회귀 314/314.   ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔎 v7.44.3 카카오 캡처 진단 가시화 — 실패 알림 본문+클립보드 (2026-06-27)     ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -14549,15 +14558,19 @@ let globalKkCookie = null; // "name=val; ..." 형태 or null(미부트스트랩)
 let globalKakaoCapture = null; // (url, opts) => Promise<meta|null>
 // 카카오 페이지에 주입: fetch·XHR을 후킹해 contentHomeOverview 응답을 postMessage. 앱 JS보다 먼저 실행(beforeContentLoaded).
 //   🔧 v7.44.1: responseType='json'(axios 기본)이면 responseText 접근이 예외 → this.response 우선. + 실패 진단용 요청 로그(kkdbg) 전송.
-const KAKAO_CAPTURE_JS = "(function(){if(window.__kkCap)return;window.__kkCap=1;" +
+const KAKAO_CAPTURE_JS = "(function(){" +
   "function P(o){try{window.ReactNativeWebView.postMessage(JSON.stringify(o));}catch(e){}}" +
+  "P({t:'kkdbg',u:'__run__',l:0,ov:false});" + // 매 주입 호출마다(before/after 어느 게 떴는지)
+  "if(window.__kkCap){return;}window.__kkCap=1;" +
   "function H(t){return typeof t==='string'&&t.indexOf('contentHomeOverview')>-1&&(t.indexOf('onIssue')>-1||t.indexOf('startSaleDt')>-1||t.indexOf('lastSlideAddedDate')>-1||t.indexOf('\"content\"')>-1);}" +
   "function D(u,t){try{var s=String(u||'');if(s.indexOf('graphql')>-1||s.indexOf('kakao.com')>-1||(typeof t==='string'&&t.indexOf('contentHomeOverview')>-1))P({t:'kkdbg',u:s.slice(0,90),l:(t?t.length:0),ov:H(t)});}catch(e){}}" +
   "function G(u,t){D(u,t);if(H(t))P({t:'kk',ok:true,body:t});}" +
   "try{var of=window.fetch;window.fetch=function(){var a=arguments,u=(a[0]&&a[0].url)?a[0].url:a[0];return of.apply(this,a).then(function(r){try{r.clone().text().then(function(t){G(u,t);}).catch(function(){});}catch(e){}return r;});};}catch(e){}" +
   "try{var oo=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){this.__u=u;return oo.apply(this,arguments);};" +
   "var os=XMLHttpRequest.prototype.send;XMLHttpRequest.prototype.send=function(){var x=this;try{x.addEventListener('load',function(){var t='';try{var rt=x.responseType;if(rt===''||rt==='text'){t=x.responseText;}else if(rt==='json'){t=JSON.stringify(x.response);}else{t=(typeof x.response==='string')?x.response:'';}}catch(e){try{t=JSON.stringify(x.response);}catch(e2){}}G(x.__u,t);});}catch(e){}return os.apply(this,arguments);};}catch(e){}" +
-  "P({t:'kkdbg',u:'__hook_installed__',l:0,ov:false});})();true;";
+  "P({t:'kkdbg',u:'__hook_installed__',l:0,ov:false});" +
+  "setTimeout(function(){P({t:'kkdbg',u:'__alive_'+(document.querySelectorAll('script').length)+'s__',l:0,ov:false});},1500);" + // 1.5s 후 생존+스크립트수(JS 실행 증거)
+  "})();true;";
 // 🔧 v7.41.6: 카카오·문피아 본편/외전 분리는 폰 검증 전 '시험' 기능 — 기본 OFF(불러오기 핵심 경로 방해 방지). 사용자가 설정에서 켤 때만 동작.
 let globalGaidenExp = true; // 🔧 v7.42.0: 카카오·문피아 본편/외전 분리 — 기본 ON(끄려면 설정 토글). 종전 기본 OFF는 오진단(불러오기 실패는 카카오 CSR 탓).
 function npHeaders(extra) {
@@ -43863,6 +43876,7 @@ function AppContent() {
     if (meta && meta.ok && meta.title) r.finish(meta); // 매칭 안 되면 계속 대기(타임아웃이 종료)
   }
   function onKkCaptureError(reason) { const r = kkCaptureResolver.current; if (r) { kkCaptureDbg.current.push({ u: "__load_error__:" + String(reason).slice(0, 50), l: 0, ov: false }); } } // 🔧 v7.44.3: 로딩 오류 기록
+  function onKkCaptureNote(tag) { if (kkCaptureResolver.current && kkCaptureDbg.current.length < 60) kkCaptureDbg.current.push({ u: String(tag).slice(0, 70), l: 0, ov: false }); } // 🔧 v7.44.4: 로딩 생명주기 기록
 
   // 🔐 v7.41.5: 문피아 로그인 — 회차 많은 작품의 '전체 회차목록'(외전 포함)은 로그인 세션이 있어야 받을 수 있음.
   //   쿠키는 OS 스토어에 두고 API fetch에 자동 첨부(동일 출처 m.munpia.com). 여기선 로그인 여부만 추적/표시.
@@ -62678,35 +62692,38 @@ async function importJSON() {
                 </SafeAreaView>
               </Modal>
 
-              {/* 🆕 v7.44.0: 카카오 응답 가로채기 WebView — 카카오 페이지를 열어 앱 JS가 보낸 contentHomeOverview 응답을 가로챔. 로딩 오버레이로 가림 */}
-              <Modal visible={!!kkCaptureUrl} animationType="fade" transparent statusBarTranslucent onRequestClose={() => { const r = kkCaptureResolver.current; if (r) r.finish(null); }}>
-                <View style={{ flex: 1, backgroundColor: C.bg }}>
+              {/* 🆕 v7.44.0/v7.44.4: 카카오 응답 가로채기 WebView — 실제로 보이게(불투명) 띄워 JS 실행 보장. 상단 배너로 안내, 페이지는 그대로 노출 */}
+              <Modal visible={!!kkCaptureUrl} animationType="slide" statusBarTranslucent onRequestClose={() => { const r = kkCaptureResolver.current; if (r) r.finish(null); }}>
+                <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line }}>
+                    <ActivityIndicator size="small" color={C.primary} />
+                    <Text style={{ color: C.text, fontSize: 13.5, fontWeight: "800", flex: 1 }}>카카오에서 작품 정보를 가져오는 중…</Text>
+                    <TouchableOpacity onPress={() => { const r = kkCaptureResolver.current; if (r) r.finish(null); }} activeOpacity={0.7} style={{ paddingVertical: 6, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1, borderColor: C.line }}>
+                      <Text style={{ color: C.sub, fontSize: 12.5, fontWeight: "800" }}>취소</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={{ color: C.sub, fontSize: 11, paddingHorizontal: 14, paddingVertical: 6, backgroundColor: C.chip }}>페이지가 다 뜨면 자동으로 정보를 받아 닫혀요. (보안상 페이지를 직접 열어야 정보를 줘요)</Text>
                   {kkCaptureUrl && (
                     <WebView
                       source={{ uri: kkCaptureUrl }}
                       userAgent={SCRAPER_UA}
                       injectedJavaScriptBeforeContentLoaded={KAKAO_CAPTURE_JS}
+                      injectedJavaScript={KAKAO_CAPTURE_JS}
                       onMessage={onKkCaptureMessage}
+                      onLoadStart={() => onKkCaptureNote("__loadstart__")}
+                      onLoadEnd={(ev) => onKkCaptureNote("__loadend__:" + (ev?.nativeEvent?.url || "").slice(0, 50))}
+                      onNavigationStateChange={(s) => onKkCaptureNote("__nav__:" + (s?.url || "").slice(0, 50))}
                       onError={(ev) => onKkCaptureError(ev?.nativeEvent?.description || "load error")}
                       onHttpError={(ev) => onKkCaptureError("http " + (ev?.nativeEvent?.statusCode || "?"))}
                       sharedCookiesEnabled
                       thirdPartyCookiesEnabled
                       domStorageEnabled
                       javaScriptEnabled
-                      style={{ flex: 1, opacity: 0.25, backgroundColor: C.bg }}
+                      originWhitelist={["*"]}
+                      style={{ flex: 1, backgroundColor: C.bg }}
                     />
                   )}
-                  <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "center", alignItems: "center" }} pointerEvents="box-none">
-                    <View style={{ backgroundColor: C.card, borderRadius: 18, paddingVertical: 22, paddingHorizontal: 26, alignItems: "center", maxWidth: 300, borderWidth: 1, borderColor: C.line }}>
-                      <ActivityIndicator size="large" color={C.primary} />
-                      <Text style={{ color: C.text, fontSize: 14, fontWeight: "800", marginTop: 14 }}>카카오에서 작품 정보를 가져오는 중…</Text>
-                      <Text style={{ color: C.sub, fontSize: 11.5, marginTop: 6, textAlign: "center", lineHeight: 16 }}>카카오페이지가 보안상 일반 요청을 막아, 잠깐 페이지를 열어 정보를 받아와요. 자동으로 닫혀요.</Text>
-                      <TouchableOpacity onPress={() => { const r = kkCaptureResolver.current; if (r) r.finish(null); }} activeOpacity={0.7} style={{ marginTop: 14, paddingVertical: 7, paddingHorizontal: 18, borderRadius: 999, borderWidth: 1, borderColor: C.line }}>
-                        <Text style={{ color: C.sub, fontSize: 12.5, fontWeight: "800" }}>취소</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                </View>
+                </SafeAreaView>
               </Modal>
 
               <Modal visible={apiKeyHelpModalOpen} animationType="fade" transparent statusBarTranslucent onRequestClose={() => setApiKeyHelpModalOpen(false)}>
