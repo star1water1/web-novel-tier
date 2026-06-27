@@ -2,11 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.40.0 (노벨피아 로그인 — 성인물 검색/메타 게이트 해제)                 ║
+ * ║  버전: 7.40.1 (연재 시작/완결일 보강 — 네이버 시작·리디 완결·카카오 완결)      ║
  * ║  최종 수정: 2026-06-27                                                        ║
  * ║  총 라인 수: 약 69,360줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📅 v7.40.1 연재 시작/완결일 보강 — 못 잡던 플랫폼 3종 (2026-06-27)            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 공개 크롤러 교차조사로 못 잡던 날짜의 출처를 확보:                             ║
+ * ║ • 네이버시리즈 '연재 시작연도'(그동안 미노출로 불가): 모바일 회차목록 API       ║
+ * ║   m.series volumeMoreList?sortOrder=ASC&display=1의 1화 lastVolumeUpdateDate.  ║
+ * ║   (실측: 전독시 2018·화산귀환 2019) fetchNaverStartYear, 시작연도 빌 때만 1회. ║
+ * ║ • 리디 '완결일'(권 단위라 datePublished=1권뿐): book-api 단건 → is_completed   ║
+ * ║   +last_volume_id → 마지막 권 출간일(ridibooks_publish). (실측: 무직전생       ║
+ * ║   2024-06-12) fetchRidiCompletion, 완결작·endYear 빌 때만. ※CF 레이트리밋 주의.║
+ * ║ • 카카오페이지 '완결일': __NEXT_DATA__ content.lastSlideAddedDate(startSaleDt   ║
+ * ║   형제 필드, 추가 호출 0). onIssue==="End"일 때만 완결일로.                    ║
+ * ║ 회귀 테스트 +16 → 216/216. ※네이버/리디는 실호출 폰 실측 권장(파서는 검증됨). ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔐 v7.40.0 노벨피아 로그인 — 성인물 검색/메타 게이트 해제 (2026-06-27)        ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -14497,6 +14511,17 @@ function scraperRefineKakao(meta, html) {
       const sy = String(content.startSaleDt).match(/(20\d\d|19[89]\d)/);
       if (sy) { const y = Number(sy[1]); if (y >= 1980 && y <= 2099) meta.startYear = y; }
     }
+    // 🆕 v7.40.1: 완결일 — content.lastSlideAddedDate(마지막 회차 추가일, ISO "YYYY-MM-DDThh:mm:ss…").
+    //   startSaleDt의 형제 필드로 같은 content 객체에 있음(추가 호출 0). 완결작(onIssue==="End")일 때만 완결일로 사용.
+    if (content.onIssue === "End" && content.lastSlideAddedDate) {
+      const ds = String(content.lastSlideAddedDate);
+      const em = ds.match(/(20\d\d)-(\d{1,2})-(\d{1,2})/);
+      if (em) {
+        const ey = Number(em[1]);
+        if (meta.endYear == null && ey >= 1980 && ey <= 2099) meta.endYear = ey;
+        if (!meta.completedAt) { const ts = scraperDateToTs(ds); if (ts) meta.completedAt = ts; }
+      }
+    }
   }
   meta.ok = !!meta.title;
   return meta;
@@ -14554,6 +14579,59 @@ async function fetchNaverCompletion(url, opts = {}) {
     return { year: null, ts: 0 };
   } finally { cleanup(); }
 }
+// 🆕 v7.40.1: 네이버시리즈 연재 시작연도 — 상세 SSR엔 시작일이 없음. 모바일 회차목록 API(volumeMoreList)를
+//   ASC(오래된 순)·display=1로 호출하면 가장 오래된 회차의 lastVolumeUpdateDate가 곧 연재 시작일.
+//   (실측 교차검증: 전지적 독자 시점 2018·화산귀환 2019 = 실제 런칭연도 일치. 비로그인·무헤더 200 JSON.)
+function parseNaverStartYear(jsonText) {
+  let data; try { data = JSON.parse(jsonText); } catch { return null; }
+  const arr = data && Array.isArray(data.resultData) ? data.resultData : [];
+  const d = arr.length ? String((arr[0] && arr[0].lastVolumeUpdateDate) || "") : "";
+  const m = d.match(/(20\d\d|19[89]\d)/);
+  const y = m ? Number(m[1]) : 0;
+  return (y >= 1990 && y <= 2099) ? y : null;
+}
+async function fetchNaverStartYear(url, opts = {}) {
+  const pn = (String(url).match(/productNo=(\d+)/) || [])[1];
+  if (!pn) return null;
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 15000 });
+  try {
+    // display 파라미터 필수(없으면 400). 1건만 받아 가볍게. PC 호스트는 모바일로 302 → 처음부터 m.series.
+    const res = await fetch("https://m.series.naver.com/novel/volumeMoreList.series?productNo=" + pn + "&sortOrder=ASC&display=1", { headers: SCRAPER_HEADERS, redirect: "follow", signal });
+    if (!res.ok) return null;
+    return parseNaverStartYear(await res.text());
+  } catch { return null; } finally { cleanup(); }
+}
+// 🆕 v7.40.1: 리디 완결일 — 리디는 권 단위 출판이라 상세 JSON-LD datePublished는 '1권(연재 시작)'이고 완결일이 없다.
+//   book-api 단건(비로그인 JSON)에서 완결 플래그(is_completed)+마지막 권 id(last_volume_id)를 얻고, 그 권을
+//   한 번 더 조회해 출간일(ridibooks_publish/ebook_publish)을 완결일로 쓴다(실측: 무직전생 2024-06-12 일치).
+//   {year, ts} 반환. 비완결/실패는 조용히 {null,0}. ※Cloudflare 레이트리밋 가능 — 완결작·endYear 없을 때만 1~2회.
+function ridiBookOf(json) { return (json && (json.book || json.data || json)) || null; }
+function ridiPublishDate(book) {
+  const d = String((book && (book.ridibooks_publish || book.ebook_publish || book.publish_date)) || "");
+  const m = d.match(/(20\d\d|19[89]\d)[.\-](\d{1,2})[.\-](\d{1,2})/);
+  if (!m) return { year: null, ts: 0 };
+  const y = Number(m[1]);
+  return { year: (y >= 1990 && y <= 2099) ? y : null, ts: scraperDateToTs(d) };
+}
+async function fetchRidiCompletion(url, opts = {}) {
+  const bid = (String(url).match(/\/books\/(\d+)/) || [])[1];
+  if (!bid) return { year: null, ts: 0 };
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 15000 });
+  try {
+    const res = await fetch("https://book-api.ridibooks.com/books/" + bid, { headers: SCRAPER_HEADERS, redirect: "follow", signal });
+    if (!res.ok) return { year: null, ts: 0 };
+    const book = ridiBookOf(await res.json());
+    const prop = book && book.series && book.series.property;
+    const completed = !!prop && (prop.is_completed === true || prop.is_serial_complete === true || prop.is_serial_completed === true);
+    if (!completed) return { year: null, ts: 0 };
+    const lastId = prop.last_volume_id;
+    if (lastId && String(lastId) !== bid) { // 마지막 권 출간일 = 완결일(가장 정확)
+      const res2 = await fetch("https://book-api.ridibooks.com/books/" + lastId, { headers: SCRAPER_HEADERS, redirect: "follow", signal });
+      if (res2.ok) { const out = ridiPublishDate(ridiBookOf(await res2.json())); if (out.year) return out; }
+    }
+    return ridiPublishDate(book); // 마지막 권 id 없거나 자기 자신 → 이 책 출간일로 폴백
+  } catch { return { year: null, ts: 0 }; } finally { cleanup(); }
+}
 async function fetchNovelMeta(url, opts = {}) {
   if (!url || !/^https?:\/\//i.test(String(url).trim())) throw new Error("올바른 링크가 아니에요 (http/https URL 필요)");
   url = String(url).trim();
@@ -14590,6 +14668,14 @@ async function fetchNovelMeta(url, opts = {}) {
   // 🆕 v7.28.56: 네이버시리즈 완결작 — moreDetail.series(SSR)에서 완결연도 보강(상세엔 날짜가 없음). 실패는 무시.
   if (platform === "네이버시리즈" && meta.workStatus === "completed" && !meta.endYear) {
     try { const c = await fetchNaverCompletion(url, opts); if (c.year) meta = { ...meta, endYear: c.year, completedAt: c.ts || meta.completedAt || 0 }; } catch {}
+  }
+  // 🆕 v7.40.1: 네이버시리즈 연재 시작연도 보강 — 상세 SSR엔 시작일이 없어 회차목록 API로 1화 등록일을 가져옴. 시작연도 비었을 때만.
+  if (platform === "네이버시리즈" && meta.startYear == null) {
+    try { const sy = await fetchNaverStartYear(url, opts); if (sy) meta = { ...meta, startYear: sy }; } catch {}
+  }
+  // 🆕 v7.40.1: 리디 완결일 보강 — 상세 JSON-LD는 1권(시작) 날짜뿐 → book-api 마지막 권 출간일을 완결일로. 완결작 & endYear 비었을 때만.
+  if (platform === "리디" && meta.workStatus === "completed" && !meta.endYear) {
+    try { const c = await fetchRidiCompletion(url, opts); if (c.year) meta = { ...meta, endYear: c.year, completedAt: c.ts || meta.completedAt || 0 }; } catch {}
   }
   return meta;
 }
@@ -16623,7 +16709,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.40.0";
+const APP_VERSION = "7.40.1";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -16649,6 +16735,16 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.40.1", date: "2026-06-27",
+    title: "📅 연재 시작·완결일 더 채워요",
+    highlights: [
+      { type: "improve", text: "📅 그동안 못 가져오던 날짜를 보강했어요 — 네이버 시리즈의 ‘연재 시작연도’, 리디·카카오페이지의 ‘완결일’을 작품 정보 불러올 때 자동으로 채워줘요(가능한 작품에 한해)." },
+    ],
+    details: [
+      "네이버 시리즈는 시작일이 작품 페이지에 안 실려서 회차 목록에서 첫 화 등록일을 시작일로 가져와요. 리디는 ‘권 단위’라 마지막 권 출간일을 완결일로 써요. 카카오페이지는 마지막 회차 등록일을 완결일로 써요(완결작만).",
+    ],
+  },
   {
     version: "7.40.0", date: "2026-06-27",
     title: "🔐 노벨피아 로그인 (성인물 검색·정보)",

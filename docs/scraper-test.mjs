@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, SCRAPER_HEADERS, SCRAPER_UA };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, SCRAPER_HEADERS, SCRAPER_UA };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -358,6 +358,49 @@ truthy("mergePlatformFromLink: 원본 배열 불변(side-effect 없음)", (() =>
 eq("parseNaverUpdateYear: dt/dd 업데이트 → 연도", S.parseNaverUpdateYear('<dl class="info_v5"><dt>작가</dt><dd>남희성</dd><dt>업데이트</dt><dd>2019.07.03.</dd></dl>'), 2019);
 eq("parseNaverUpdateYear: 업데이트 없으면 null", S.parseNaverUpdateYear('<dl><dt>작가</dt><dd>X</dd></dl>'), null);
 eq("parseNaverUpdateYear: 범위 밖(1899) → null", S.parseNaverUpdateYear('<dt>업데이트</dt><dd>1899.01.01.</dd>'), null);
+
+// ── 🆕 v7.40.1: 네이버 시작연도(회차목록 API) ────────────────────────────────
+eq("parseNaverStartYear: ASC 1화 등록일 → 시작연도", S.parseNaverStartYear('{"resultData":[{"lastVolumeUpdateDate":"2018-05-21 00:03:19"}]}'), 2018);
+eq("parseNaverStartYear: 화산귀환 2019", S.parseNaverStartYear('{"resultData":[{"volumeName":"序","lastVolumeUpdateDate":"2019-04-25 10:00:00"}]}'), 2019);
+eq("parseNaverStartYear: 빈 목록 → null", S.parseNaverStartYear('{"resultData":[]}'), null);
+eq("parseNaverStartYear: 날짜 null(미채움 필드) → null", S.parseNaverStartYear('{"resultData":[{"registerDate":null,"lastVolumeUpdateDate":null}]}'), null);
+eq("parseNaverStartYear: 비JSON(400 에러페이지) → null", S.parseNaverStartYear('<html>서비스에 접속할 수 없습니다</html>'), null);
+
+// ── 🆕 v7.40.1: 리디 완결일(book-api 마지막 권 출간일) ───────────────────────
+eq("ridiBookOf: {book:{…}} 언랩", S.ridiBookOf({ book: { id: 1 } }), { id: 1 });
+eq("ridiBookOf: 래퍼 없는 단건 그대로", S.ridiBookOf({ id: 2 }), { id: 2 });
+eq("ridiPublishDate: ridibooks_publish(ISO) → 완결연도", S.ridiPublishDate({ ridibooks_publish: "2024-06-12T06:30:01+09:00" }).year, 2024);
+eq("ridiPublishDate: 완결일 ts = 해당 날짜 자정(UTC)", S.ridiPublishDate({ ridibooks_publish: "2024-06-12T06:30:01+09:00" }).ts, S.scraperDateToTs("2024-06-12"));
+eq("ridiPublishDate: ebook_publish 폴백", S.ridiPublishDate({ ebook_publish: "2018-10-02" }).year, 2018);
+eq("ridiPublishDate: 날짜 없음 → {null,0}", S.ridiPublishDate({}), { year: null, ts: 0 });
+
+// ── 🆕 v7.40.1: 카카오페이지 완결일(content.lastSlideAddedDate) ───────────────
+{
+  const kkNext = '<html><head><meta property="og:title" content="완결웹소설"></head><body>' +
+    '<script id="__NEXT_DATA__" type="application/json">' +
+    JSON.stringify({ props: { pageProps: { dehydratedState: { node: {
+      ogTitle: "완결웹소설",
+      seriesId: 777, title: "완결웹소설", authors: "김작가", categoryType: "Novel", subcategory: "판타지",
+      onIssue: "End", startSaleDt: "2019-03-01", lastSlideAddedDate: "2022-11-30T09:00:00+09:00",
+    } } } } }) + '</script></body></html>';
+  const km0 = S.scraperNormalizeFromHtml(kkNext, "https://page.kakao.com/content/777");
+  const km = S.scraperRefineByPlatform(km0, kkNext, "카카오페이지");
+  eq("카카오: 완결작 endYear = lastSlideAddedDate 연도", km.endYear, 2022);
+  eq("카카오: 완결일 ts = lastSlideAddedDate 날짜", km.completedAt, S.scraperDateToTs("2022-11-30"));
+  eq("카카오: 시작연도는 startSaleDt 유지", km.startYear, 2019);
+}
+{
+  // 연재중(Ing)이면 lastSlideAddedDate가 있어도 완결일로 쓰지 않음
+  const kkIng = '<html><head><meta property="og:title" content="연재중작"></head><body>' +
+    '<script id="__NEXT_DATA__" type="application/json">' +
+    JSON.stringify({ props: { pageProps: { node: {
+      ogTitle: "연재중작", seriesId: 888, title: "연재중작", authors: "이작가", categoryType: "Novel", subcategory: "현대판타지",
+      onIssue: "Ing", startSaleDt: "2023-01-01", lastSlideAddedDate: "2024-05-05T09:00:00+09:00",
+    } } } }) + '</script></body></html>';
+  const im = S.scraperRefineByPlatform(S.scraperNormalizeFromHtml(kkIng, "https://page.kakao.com/content/888"), kkIng, "카카오페이지");
+  eq("카카오: 연재중은 완결일 미설정", im.completedAt, 0);
+  eq("카카오: 연재중은 endYear null", im.endYear, null);
+}
 
 console.log(`\n${fail === 0 ? "🎉 ALL PASS" : "⚠️  FAILED"}  pass=${pass} fail=${fail}`);
 process.exit(fail === 0 ? 0 : 1);
