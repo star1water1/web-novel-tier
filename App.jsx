@@ -2,11 +2,28 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.41.6 (카카오·문피아 외전 분리 시험 토글 — 불러오기 방해 수정)         ║
+ * ║  버전: 7.42.0 (카카오 링크 불러오기 복구 — GraphQL 메타 + 외전분리 기본 ON)    ║
  * ║  최종 수정: 2026-06-27                                                        ║
- * ║  총 라인 수: 약 69,360줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 69,410줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🟢 v7.42.0 카카오 링크 불러오기 복구 + 외전 분리 기본 ON (2026-06-27)         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 사용자 보고: ①카카페 링크 불러오기 안 됨('작품 정보를 찾지 못했어요')          ║
+ * ║ ②문피아 외전 분리도 안 됨(이전과 동일). 실측 진단:                             ║
+ * ║ ① 카카오가 작품 페이지를 풀-CSR로 전환 → SSR(__NEXT_DATA__)에서 작품 메타       ║
+ * ║   (ogTitle/onIssue/startSaleDt/lastSlideAddedDate)가 사라짐. og:title이         ║
+ * ║   "카카오페이지"로만 떠 HTML 파서(scraperRefineKakao)가 전면 실패. → GraphQL    ║
+ * ║   contentHomeOverview 폴백 신설(parseKakaoOverview+fetchKakaoMetaGql). 쿼리·    ║
+ * ║   응답경로는 korea-webtoon-api 검증분 + 본 repo 픽스처(흑백무제) 실데이터로     ║
+ * ║   확인. HTML 실패 시에만 호출(무회귀). Referer=작품URL(없으면 403).            ║
+ * ║ ② 문피아·카카오 외전 분리가 v7.41.6 globalGaidenExp 게이트(기본 OFF)에 막혀     ║
+ * ║   안 돌던 것 — 그 게이트는 ①의 오진단(불러오기 실패는 메타추출 탓이지 분리 탓   ║
+ * ║   아님). → 기본 ON 전환(설정에서 끌 수 있는 안전밸브로 유지). 문피아 회차API는  ║
+ * ║   우리 IP서 익명 동작 확인(≤100화 분리 가능, 큰 작품은 로그인 paid 필요).      ║
+ * ║ 회귀 +17 → 310/310. ※카카오 GraphQL은 우리 DC IP 302 차단 → 폰(주거망) 동작.  ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🩹 v7.41.6 카카오·문피아 외전 분리 → 시험 토글(기본 OFF) (2026-06-27)         ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -14440,7 +14457,7 @@ const SCRAPER_HEADERS = {
 //   globalNpCookie는 컴포넌트(App)가 부팅/로그인 시 CookieManager.get으로 채운다 — 이 슬라이스엔 네이티브 import 없음(오프라인 회귀 테스트 보존).
 let globalNpCookie = null; // "name=val; name2=val2" 형태 or null(비로그인)
 // 🔧 v7.41.6: 카카오·문피아 본편/외전 분리는 폰 검증 전 '시험' 기능 — 기본 OFF(불러오기 핵심 경로 방해 방지). 사용자가 설정에서 켤 때만 동작.
-let globalGaidenExp = false;
+let globalGaidenExp = true; // 🔧 v7.42.0: 카카오·문피아 본편/외전 분리 — 기본 ON(끄려면 설정 토글). 종전 기본 OFF는 오진단(불러오기 실패는 카카오 CSR 탓).
 function npHeaders(extra) {
   const h = { ...SCRAPER_HEADERS, ...(extra || {}) };
   if (globalNpCookie) h.Cookie = globalNpCookie; // 로그인 시에만 첨부 → 비로그인 동작은 종전과 100% 동일(무회귀)
@@ -14825,6 +14842,53 @@ function parseKakaoViewerDate(jsonText) {
   const d = it && it.lastReleasedDate; // ISO 'YYYY-MM-DD…'
   return d ? scraperDateToTs(String(d)) : 0;
 }
+// 🆕 v7.42.0: 카카오 GraphQL contentHomeOverview 응답 → 정규화 meta(scraperNormalizeFromHtml과 동일 모양).
+//   카카오가 작품 페이지를 풀-CSR로 바꾼 뒤(2026~) SSR(__NEXT_DATA__)에 작품 메타(ogTitle/onIssue/startSaleDt
+//   /lastSlideAddedDate)가 사라짐 → og:title이 "카카오페이지"로만 떠 링크 불러오기가 깨졌음. 이 경로가 새 메인 취득.
+//   응답: data.contentHomeOverview.content.{title,authors,onIssue,subcategory,startSaleDt,lastSlideAddedDate,description,thumbnail}.
+//   쿼리·필드는 korea-webtoon-api 검증분 + 본 repo 픽스처(kakao-novel-heukbaekmuje)로 확인. 순수 함수(테스트용).
+function parseKakaoOverview(jsonText, url) {
+  let j; try { j = JSON.parse(jsonText); } catch { return null; }
+  const c = j && j.data && j.data.contentHomeOverview && j.data.contentHomeOverview.content;
+  if (!c || typeof c !== "object") return null;
+  const title = String(c.title == null ? "" : c.title).replace(/\s*-\s*(웹소설|웹툰)\s*$/, "").trim();
+  if (!title) return null;
+  const author = String(c.authors == null ? "" : c.authors).trim();
+  const synopsis = String(c.description == null ? "" : c.description).trim();
+  const genres = c.subcategory ? [String(c.subcategory).trim()] : [];
+  let workStatus = null;
+  if (c.onIssue === "End") workStatus = "completed";
+  else if (c.onIssue === "Ing") workStatus = "ongoing";
+  let startYear = null;
+  if (c.startSaleDt) { const m = String(c.startSaleDt).match(/(20\d\d|19[89]\d)/); if (m) { const y = Number(m[1]); if (y >= 1980 && y <= 2099) startYear = y; } }
+  let endYear = null, completedAt = 0;
+  if (workStatus === "completed" && c.lastSlideAddedDate) {
+    const ds = String(c.lastSlideAddedDate);
+    const em = ds.match(/(20\d\d)-(\d{1,2})-(\d{1,2})/);
+    if (em) { const ey = Number(em[1]); if (ey >= 1980 && ey <= 2099) endYear = ey; const ts = scraperDateToTs(ds); if (ts) completedAt = ts; }
+  }
+  const ageTag = (c.ageGrade != null && /adult|19|성인|청소년\s*이용\s*불가/i.test(String(c.ageGrade))) ? "19금" : null;
+  return { ok: true, platform: "카카오페이지", url: url || "", title, author, coverUrl: String(c.thumbnail == null ? "" : c.thumbnail).trim(), synopsis, genres, workStatus, totalEpisodes: null, startYear, endYear, completedAt, ageTag };
+}
+// 🆕 v7.42.0: 카카오 메타 취득 — page.kakao.com/graphql contentHomeOverview(익명 _kpwtkn 쿠키). HTML SSR이 메타를 잃은 뒤의 폴백.
+//   Referer 미설정 시 403(korea-webtoon-api 주석) → 작품 URL을 Referer로. 직전 content GET으로 _kpwtkn 확보(네이티브 쿠키스토어).
+//   ※우리 DC IP는 page.kakao 302 차단 → 폰(주거망)에서만 동작. 실패는 조용히 null(상위에서 기존 안내).
+const KAKAO_OVERVIEW_Q = "query contentHomeOverview($seriesId: Long!) { contentHomeOverview(seriesId: $seriesId) { content { seriesId title thumbnail category categoryType subcategory onIssue authors description pubPeriod ageGrade lastSlideAddedDate startSaleDt } } }";
+async function fetchKakaoMetaGql(url, opts = {}) {
+  const sid = (String(url).match(/\/content\/(\d+)/) || [])[1];
+  if (!sid) return null;
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
+  try {
+    const res = await fetch("https://page.kakao.com/graphql", {
+      method: "POST",
+      headers: { ...SCRAPER_HEADERS, "Content-Type": "application/json", "Referer": url, "Origin": "https://page.kakao.com" },
+      body: JSON.stringify({ query: KAKAO_OVERVIEW_Q, operationName: "contentHomeOverview", variables: { seriesId: Number(sid) } }),
+      redirect: "follow", signal,
+    });
+    if (!res.ok) return null;
+    return parseKakaoOverview(await res.text(), url);
+  } catch { return null; } finally { cleanup(); }
+}
 async function fetchKakaoEpisodeSplit(url, opts = {}) {
   const sid = (String(url).match(/\/content\/(\d+)/) || [])[1];
   if (!sid) return null;
@@ -15076,6 +15140,11 @@ async function fetchNovelMeta(url, opts = {}) {
 
   let meta = scraperNormalizeFromHtml(html, url);
   meta = scraperRefineByPlatform(meta, html, platform);
+  // 🆕 v7.42.0: 카카오 풀-CSR 전환 폴백 — SSR(__NEXT_DATA__)에 작품 메타가 사라져 HTML만으론 실패(og:title="카카오페이지").
+  //   GraphQL contentHomeOverview로 제목·작가·장르·연재상태·시작/완결일을 직접 취득(폰 주거망에서 동작). 무회귀(폴백만).
+  if (platform === "카카오페이지" && (!meta || !meta.ok || !meta.title)) {
+    try { const gm = await fetchKakaoMetaGql(url, opts); if (gm && gm.ok && gm.title) meta = gm; } catch {}
+  }
   if (!meta || !meta.ok || !meta.title) {
     // 🆕 v7.37.0: 카카오페이지도 작품 페이지가 SSR(__NEXT_DATA__)이라 링크로 불러와짐 — v7.31.3의 '미지원' 안내 철회.
     //   드물게 실패(일시 차단/구조 변경)할 땐 다른 플랫폼과 동일한 일반 안내로 처리한다.
@@ -15101,11 +15170,11 @@ async function fetchNovelMeta(url, opts = {}) {
   }
   // 🆕 v7.41.4: 카카오 완결작 — GraphQL(contentHomeProductList+viewerInfo)로 본편/외전 분리. 실패 시 기존 lastSlideAddedDate 완결일 유지(무회귀).
   //   ※total 신뢰도 불확실 → noTotalAdjust. 직전 content 페이지 GET으로 _kpwtkn 쿠키가 잡혀 GraphQL 인증됨(네이티브 쿠키스토어).
-  if (globalGaidenExp && platform === "카카오페이지" && meta.workStatus === "completed") { // 🔧 v7.41.6: 시험 토글 ON일 때만(불러오기 방해 방지)
+  if (globalGaidenExp && platform === "카카오페이지" && meta.workStatus === "completed") { // 🔧 v7.42.0: 기본 ON(설정에서 끌 수 있음). 메타는 위 GraphQL 폴백으로 이미 취득됨.
     try { const sp = await fetchKakaoEpisodeSplit(url, opts); if (sp && (sp.mainCompletedAt || sp.hasGaiden)) applyEpisodeSplitToMeta(meta, sp, { noTotalAdjust: true }); } catch {}
   }
   // 🆕 v7.41.5: 문피아 완결작 — 신 SPA 회차API. ≤100화는 익명, 큰 작품은 로그인 paid 엔드포인트로 본편/외전 분리.
-  if (globalGaidenExp && platform === "문피아" && meta.workStatus === "completed") { // 🔧 v7.41.6: 시험 토글 ON일 때만
+  if (globalGaidenExp && platform === "문피아" && meta.workStatus === "completed") { // 🔧 v7.42.0: 기본 ON(설정에서 끌 수 있음)
     try { const sp = await fetchMunpiaEpisodeSplit(url, opts); if (sp && (sp.mainCompletedAt || sp.hasGaiden)) applyEpisodeSplitToMeta(meta, sp); } catch {}
   }
   return meta;
@@ -36285,7 +36354,7 @@ function AppContent() {
   const [mpLoggedIn, setMpLoggedIn] = useState(false); // 🔐 v7.41.5: 문피아 로그인 여부(큰 작품 전체 회차목록=로그인 필요)
   const [mpLoginModalOpen, setMpLoginModalOpen] = useState(false);
   const [mpBusy, setMpBusy] = useState(false);
-  const [gaidenExp, setGaidenExp] = useState(false); // 🔧 v7.41.6: 카카오·문피아 본편/외전 분리(시험) 켜기 — 기본 OFF
+  const [gaidenExp, setGaidenExp] = useState(true); // 🔧 v7.42.0: 카카오·문피아 본편/외전 분리 — 기본 ON(설정에서 끌 수 있음)
   // 🆕 v7.28.14: AI 태그 추천 (작품 추가/편집)
   const [aiTagModalOpen, setAiTagModalOpen] = useState(false);
   // 🔗 v7.28.26 스크래퍼: 링크에서 메타 불러오기 — 로딩 플래그 + 확인 모달({meta,items,apply,label})
@@ -44027,7 +44096,7 @@ function AppContent() {
         if (!has) { try { await saveGlobalAiConfig({ mp_logged_in: false }); } catch {} }
       }
       // 🔧 v7.41.6: 외전 분리(시험) 토글 복원
-      if (cfg.gaiden_exp === true) { globalGaidenExp = true; setGaidenExp(true); }
+      if (cfg.gaiden_exp === false) { globalGaidenExp = false; setGaidenExp(false); } // 🔧 v7.42.0: 기본 ON — 명시적 false만 끔
       if (cfg.ai_usage && typeof cfg.ai_usage === "object") {
         _aiUsage = {
           calls: Number(cfg.ai_usage.calls) || 0, input: Number(cfg.ai_usage.input) || 0,
@@ -62164,12 +62233,12 @@ async function importJSON() {
                 </Text>
               </View>
 
-              {/* 🔧 v7.41.6: 카카오·문피아 외전 분리(시험) 토글 — 기본 OFF. 켜면 불러오기에 회차API 호출이 추가됨(느려지거나 일부 작품 실패 가능). */}
+              {/* 🔧 v7.42.0: 카카오·문피아 외전 분리 토글 — 기본 ON(끌 수 있는 안전밸브). 끄면 완결일만 가져옴(외전 분리 생략). */}
               <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
                 <View style={{ flex: 1, paddingRight: 10 }}>
-                  <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>🧪 카카오·문피아 외전 분리 (시험)</Text>
+                  <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>🌿 카카오·문피아 외전 분리</Text>
                   <Text style={{ color: C.sub, fontSize: 11.5, marginTop: 4, lineHeight: 16 }}>
-                    카카오·문피아 완결작의 본편/외전 완결일을 분리해 가져와요. 검증 전이라 기본은 꺼져 있어요. 켜면 불러오기 때 회차 정보를 추가로 받아 느려지거나 일부 작품에서 불러오기가 막힐 수 있어요. (네이버·노벨피아·리디 분리는 항상 켜져 있어요.)
+                    카카오·문피아 완결작의 본편/외전 완결일을 따로 가져와요. 기본으로 켜져 있어요. 불러오기 때 회차 정보를 추가로 받으니, 느리거나 일부 작품에서 불러오기가 막히면 꺼 주세요. (네이버·노벨피아·리디 분리는 항상 켜져 있어요.)
                   </Text>
                 </View>
                 <Switch value={gaidenExp} onValueChange={toggleGaidenExp} />

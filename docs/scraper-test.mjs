@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, applyEpisodeSplitToMeta, parseKakaoProductList, parseKakaoViewerDate, parseMunpiaEntries, SCRAPER_HEADERS, SCRAPER_UA };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, applyEpisodeSplitToMeta, parseKakaoProductList, parseKakaoViewerDate, parseKakaoOverview, parseMunpiaEntries, SCRAPER_HEADERS, SCRAPER_UA };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -561,6 +561,34 @@ eq("pickRidiGaidenSeries: 빈 목록 → []", S.pickRidiGaidenSeries({ title: "x
   eq("카카오 viewerInfo: lastReleasedDate → ts", S.parseKakaoViewerDate(view), S.scraperDateToTs("2020-06-01"));
   eq("카카오 viewerInfo: 날짜 없음 → 0", S.parseKakaoViewerDate('{"data":{"viewerInfo":{"item":{}}}}'), 0);
   eq("카카오 viewerInfo: 비JSON → 0", S.parseKakaoViewerDate("err"), 0);
+}
+
+// 🆕 v7.42.0: 카카오 GraphQL contentHomeOverview → 정규화 meta (풀-CSR 전환 후 메인 취득 경로)
+//   응답 모양은 본 repo 픽스처(kakao-novel-heukbaekmuje)로 확인한 실데이터 기준.
+{
+  const ov = (c) => JSON.stringify({ data: { contentHomeOverview: { content: c } } });
+  const real = ov({ seriesId: 56598258, title: "흑백무제", authors: "현임", category: "웹소설", categoryType: "Webnovel",
+    subcategory: "무협", onIssue: "End", startSaleDt: "2021-02-26T12:00:47+09:00", lastSlideAddedDate: "2025-08-08T17:00:04+09:00",
+    description: "줄거리 본문\n둘째 줄", pubPeriod: "월, 화, 수, 목, 금", ageGrade: "All", thumbnail: "//dn-img-page.kakao.com/x.jpg" });
+  const m = S.parseKakaoOverview(real, "https://page.kakao.com/content/56598258");
+  eq("카카오 overview: ok", m.ok, true);
+  eq("카카오 overview: 제목", m.title, "흑백무제");
+  eq("카카오 overview: 작가", m.author, "현임");
+  eq("카카오 overview: 장르=subcategory", m.genres, ["무협"]);
+  eq("카카오 overview: 완결(End)", m.workStatus, "completed");
+  eq("카카오 overview: 시작연도=startSaleDt", m.startYear, 2021);
+  eq("카카오 overview: 완결연도=lastSlideAddedDate", m.endYear, 2025);
+  eq("카카오 overview: 완결일 ts", m.completedAt, S.scraperDateToTs("2025-08-08"));
+  eq("카카오 overview: 줄거리 줄바꿈 보존", m.synopsis, "줄거리 본문\n둘째 줄");
+  eq("카카오 overview: 플랫폼/URL", [m.platform, m.url], ["카카오페이지", "https://page.kakao.com/content/56598258"]);
+  eq("카카오 overview: 썸네일=coverUrl", m.coverUrl, "//dn-img-page.kakao.com/x.jpg");
+  const ing = S.parseKakaoOverview(ov({ title: "연재작", onIssue: "Ing", startSaleDt: "2024-01-02T00:00:00+09:00", lastSlideAddedDate: "2024-06-01T00:00:00+09:00" }), "u");
+  eq("카카오 overview: 연재중(Ing)", ing.workStatus, "ongoing");
+  eq("카카오 overview: 연재중은 완결일 비움", [ing.endYear, ing.completedAt], [null, 0]);
+  eq("카카오 overview: 19금 등급 태그", S.parseKakaoOverview(ov({ title: "성인작", onIssue: "End", ageGrade: "Adult" }), "u").ageTag, "19금");
+  eq("카카오 overview: 제목 없음 → null", S.parseKakaoOverview(ov({ onIssue: "End" }), "u"), null);
+  eq("카카오 overview: content 없음 → null", S.parseKakaoOverview('{"data":{"contentHomeOverview":{}}}', "u"), null);
+  eq("카카오 overview: 비JSON → null", S.parseKakaoOverview("<html>", "u"), null);
 }
 
 // 🆕 v7.41.5: 문피아 회차 JSON 파서 (신 SPA API — result.list의 title+createdAt, 실측 구조)
