@@ -2,11 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.42.2 (카카오 GraphQL 전용 UA(KakaoPageWeb/graphql) 시도)              ║
+ * ║  버전: 7.43.0 (카카오 세션 WebView 부트스트랩 — _kawlt 익명 토큰 캡처)         ║
  * ║  최종 수정: 2026-06-27                                                        ║
- * ║  총 라인 수: 약 69,440줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 69,520줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔓 v7.43.0 카카오 세션 WebView 부트스트랩(_kawlt 익명 토큰) (2026-06-27)      ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ v7.42.2 폰 캡처 확정: page.kakao /graphql은 일반UA·전용UA 둘 다 동일 HTML 벽   ║
+ * ║ (1541B), api-page=권한인증실패. 즉 UA 문제 아님 — 카카오 GraphQL은 JS가        ║
+ * ║ 발급하는 _kawlt 익명 토큰 쿠키가 없으면 벽(페이지 feature.kawltcookie=true).    ║
+ * ║ fetch만으론 JS 미실행 → 토큰 못 얻음. 해법: 숨은 WebView로 page.kakao를 1회     ║
+ * ║ 열어 JS가 _kawlt를 OS 쿠키스토어에 심게 하고(로그인 불필요), CookieManager로    ║
+ * ║ 캡처해 globalKkCookie에 저장 → GraphQL fetch에 Cookie로 명시 첨부(노벨피아      ║
+ * ║ 패턴). 설정 ‘🔑 카카오 세션’ 카드 + WebView 모달 + 부팅 복원(kk_session).       ║
+ * ║ fetchKakaoMetaGql은 page→api-page 순차 폴백. 긁기 진단도 토큰 첨부+상태 표시.   ║
+ * ║ ※폰 검증 필요(우리 DC IP는 302라 불가) — _kawlt만으로 벽이 풀리는지 폰 확인.    ║
+ * ║ 무회귀(파서·기존 경로 동일, 토큰 없으면 종전과 같음). 회귀 310/310.            ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔑 v7.42.2 카카오 GraphQL 전용 UA(KakaoPageWeb/graphql) 시도 (2026-06-27)     ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -14480,6 +14494,10 @@ const SCRAPER_HEADERS = {
 //   API fetch에 Cookie 헤더를 "명시 주입"(네이티브 쿠키 자동전달 의존 X — 안드로이드 외 동작·Fresco 이미지까지 일관).
 //   globalNpCookie는 컴포넌트(App)가 부팅/로그인 시 CookieManager.get으로 채운다 — 이 슬라이스엔 네이티브 import 없음(오프라인 회귀 테스트 보존).
 let globalNpCookie = null; // "name=val; name2=val2" 형태 or null(비로그인)
+// 🆕 v7.43.0: 카카오 익명 토큰(_kawlt) 쿠키 — 카카오 GraphQL은 JS가 발급하는 _kawlt 쿠키가 없으면 HTML 벽(폰 실측).
+//   숨은 WebView로 page.kakao.com을 한 번 열면 JS가 _kawlt를 OS 쿠키스토어에 심음 → 여기에 캡처해 GraphQL fetch에 명시 첨부.
+//   로그인 불필요(익명 토큰). 컴포넌트(App)가 세션 새로고침/부팅 시 CookieManager.get으로 채운다.
+let globalKkCookie = null; // "name=val; ..." 형태 or null(미부트스트랩)
 // 🔧 v7.41.6: 카카오·문피아 본편/외전 분리는 폰 검증 전 '시험' 기능 — 기본 OFF(불러오기 핵심 경로 방해 방지). 사용자가 설정에서 켤 때만 동작.
 let globalGaidenExp = true; // 🔧 v7.42.0: 카카오·문피아 본편/외전 분리 — 기본 ON(끄려면 설정 토글). 종전 기본 OFF는 오진단(불러오기 실패는 카카오 CSR 탓).
 function npHeaders(extra) {
@@ -14902,20 +14920,23 @@ const KAKAO_OVERVIEW_Q = "query contentHomeOverview($seriesId: Long!) { contentH
 //   일반 브라우저 UA로 POST하면 안티봇 HTML 벽(200이지만 JSON 아님)이 떠 — 이 마커로 통과 시도.
 const KAKAO_GQL_UA = SCRAPER_UA + " KakaoPageWeb/graphql";
 const KAKAO_GQL_HEADERS = { ...SCRAPER_HEADERS, "User-Agent": KAKAO_GQL_UA, "Accept": "application/json, text/plain, */*", "Content-Type": "application/json", "Origin": "https://page.kakao.com" };
+const KAKAO_GQL_ENDPOINTS = ["https://page.kakao.com/graphql", "https://api-page.kakao.com/graphql"]; // 🆕 v7.43.0: page(익명 _kawlt) 우선, 실패 시 api-page
 async function fetchKakaoMetaGql(url, opts = {}) {
   const sid = (String(url).match(/\/content\/(\d+)/) || [])[1];
   if (!sid) return null;
-  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
-  try {
-    const res = await fetch("https://page.kakao.com/graphql", {
-      method: "POST",
-      headers: { ...KAKAO_GQL_HEADERS, "Referer": url },
-      body: JSON.stringify({ query: KAKAO_OVERVIEW_Q, operationName: "contentHomeOverview", variables: { seriesId: Number(sid) } }),
-      redirect: "follow", signal,
-    });
-    if (!res.ok) return null;
-    return parseKakaoOverview(await res.text(), url);
-  } catch { return null; } finally { cleanup(); }
+  const body = JSON.stringify({ query: KAKAO_OVERVIEW_Q, operationName: "contentHomeOverview", variables: { seriesId: Number(sid) } });
+  for (const ep of KAKAO_GQL_ENDPOINTS) {
+    const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
+    try {
+      const res = await fetch(ep, {
+        method: "POST",
+        headers: { ...KAKAO_GQL_HEADERS, "Referer": url, ...(globalKkCookie ? { Cookie: globalKkCookie } : {}) }, // 🆕 v7.43.0: _kawlt 익명 토큰 첨부
+        body, redirect: "follow", signal,
+      });
+      if (res.ok) { const m = parseKakaoOverview(await res.text(), url); if (m && m.ok) return m; } // 벽(HTML)/인증실패면 parse=null → 다음 엔드포인트
+    } catch { /* 다음 엔드포인트 */ } finally { cleanup(); }
+  }
+  return null;
 }
 async function fetchKakaoEpisodeSplit(url, opts = {}) {
   const sid = (String(url).match(/\/content\/(\d+)/) || [])[1];
@@ -36383,6 +36404,9 @@ function AppContent() {
   const [mpLoginModalOpen, setMpLoginModalOpen] = useState(false);
   const [mpBusy, setMpBusy] = useState(false);
   const [gaidenExp, setGaidenExp] = useState(true); // 🔧 v7.42.0: 카카오·문피아 본편/외전 분리 — 기본 ON(설정에서 끌 수 있음)
+  const [kkReady, setKkReady] = useState(false); // 🆕 v7.43.0: 카카오 익명 토큰(_kawlt) 부트스트랩 완료 여부(쿠키 캡처됨)
+  const [kkSessionModalOpen, setKkSessionModalOpen] = useState(false); // 🆕 v7.43.0: 카카오 세션 부트스트랩 WebView 모달
+  const [kkBusy, setKkBusy] = useState(false);
   // 🆕 v7.28.14: AI 태그 추천 (작품 추가/편집)
   const [aiTagModalOpen, setAiTagModalOpen] = useState(false);
   // 🔗 v7.28.26 스크래퍼: 링크에서 메타 불러오기 — 로딩 플래그 + 확인 모달({meta,items,apply,label})
@@ -42639,12 +42663,14 @@ function AppContent() {
       let kakaoProbe = "";
       const ksid = (url.match(/\/content\/(\d+)/) || [])[1];
       if (ksid && /kakao/i.test(url)) {
+        kakaoProbe += `\n[토큰] globalKkCookie=${globalKkCookie ? "있음(" + globalKkCookie.split(";").map(s => s.trim().split("=")[0]).filter(Boolean).join(",") + ")" : "없음 — 설정>카카오 세션 새로고침 먼저"}\n`;
         const body = JSON.stringify({ query: KAKAO_OVERVIEW_Q, operationName: "contentHomeOverview", variables: { seriesId: Number(ksid) } });
         // 🆕 v7.42.2: 후보별로 '일반 UA' vs '전용 GraphQL UA(KakaoPageWeb/graphql)'를 비교 — 안티봇 벽이 UA 때문인지 확정.
+        const ck = globalKkCookie ? { Cookie: globalKkCookie } : {}; // 🆕 v7.43.0: 부트스트랩된 _kawlt 토큰
         const trials = [
-          { ep: "https://page.kakao.com/graphql", hdr: { ...SCRAPER_HEADERS, "Content-Type": "application/json", "Origin": "https://page.kakao.com" }, tag: "page+일반UA" },
-          { ep: "https://page.kakao.com/graphql", hdr: { ...KAKAO_GQL_HEADERS }, tag: "page+전용UA" },
-          { ep: "https://api-page.kakao.com/graphql", hdr: { ...KAKAO_GQL_HEADERS }, tag: "api-page+전용UA" },
+          { ep: "https://page.kakao.com/graphql", hdr: { ...KAKAO_GQL_HEADERS, ...ck }, tag: "page+전용UA+토큰" },
+          { ep: "https://api-page.kakao.com/graphql", hdr: { ...KAKAO_GQL_HEADERS, ...ck }, tag: "api-page+전용UA+토큰" },
+          { ep: "https://page.kakao.com/graphql", hdr: { ...SCRAPER_HEADERS, "Content-Type": "application/json", "Origin": "https://page.kakao.com" }, tag: "page+일반UA(토큰無)" },
         ];
         for (const t of trials) {
           const { signal: s2, cleanup: c2 } = resolveAbortSignal({ timeoutMs: 15000 });
@@ -43680,6 +43706,48 @@ function AppContent() {
     } finally { setNpBusy(false); }
   }
 
+  // 🆕 v7.43.0: 카카오 익명 토큰(_kawlt) 동기화 — OS 쿠키스토어에서 page.kakao.com 쿠키를 읽어 globalKkCookie에 채움.
+  //   로그인 아님(익명 토큰). WebView가 page.kakao.com을 열어 JS가 쿠키를 심으면, 여기서 캡처해 GraphQL fetch에 명시 첨부.
+  //   반환: 쿠키가 하나라도 있으면 true(부트스트랩됨), 없으면 globalKkCookie=null + false.
+  async function refreshKkSession() {
+    try {
+      const jar = await CookieManager.get("https://page.kakao.com");
+      const entries = jar && typeof jar === "object" ? Object.values(jar).filter(c => c && c.name && c.value) : [];
+      const cookieStr = entries.map(c => `${c.name}=${c.value}`).join("; ");
+      globalKkCookie = cookieStr || null;
+      return !!cookieStr;
+    } catch (e) {
+      console.warn("[kk] 쿠키 조회 실패:", e?.message);
+      globalKkCookie = null; return false;
+    }
+  }
+  // 🆕 v7.43.0: WebView 부트스트랩 완료 처리 — 쿠키 flush 후 동기화. 카카오 페이지 JS가 _kawlt를 심었으면 캡처 성공.
+  async function confirmKkSession() {
+    setKkBusy(true);
+    try {
+      try { await CookieManager.flush(); } catch {}
+      const has = await refreshKkSession();
+      setKkSessionModalOpen(false);
+      if (has) {
+        setKkReady(true);
+        try { await saveGlobalAiConfig({ kk_session: true }); } catch {}
+        Alert.alert("카카오 세션 준비됨", "카카오 익명 토큰을 받았어요. 이제 카카오페이지 링크 ‘🔗 불러오기’를 시도해 보세요. (안 되면 ‘긁기 진단’의 카카오 칩으로 응답을 캡처해 보내 주세요.)");
+      } else {
+        globalKkCookie = null; setKkReady(false);
+        Alert.alert("토큰을 못 받았어요", "카카오페이지가 다 열릴 때까지(로딩 원이 사라질 때까지) 잠깐 기다린 뒤 ‘완료’를 눌러 주세요. 로그인은 필요 없어요.");
+      }
+    } finally { setKkBusy(false); }
+  }
+  async function clearKkSession() {
+    setKkBusy(true);
+    try {
+      try { await CookieManager.clearAll(); } catch (e) { console.warn("[kk] 쿠키 삭제 실패:", e?.message); }
+      globalKkCookie = null; setKkReady(false);
+      try { await saveGlobalAiConfig({ kk_session: false }); } catch {}
+      Alert.alert("초기화됨", "카카오 세션 토큰을 지웠어요.");
+    } finally { setKkBusy(false); }
+  }
+
   // 🔐 v7.41.5: 문피아 로그인 — 회차 많은 작품의 '전체 회차목록'(외전 포함)은 로그인 세션이 있어야 받을 수 있음.
   //   쿠키는 OS 스토어에 두고 API fetch에 자동 첨부(동일 출처 m.munpia.com). 여기선 로그인 여부만 추적/표시.
   async function refreshMpSession() {
@@ -44149,6 +44217,12 @@ function AppContent() {
       }
       // 🔧 v7.41.6: 외전 분리(시험) 토글 복원
       if (cfg.gaiden_exp === false) { globalGaidenExp = false; setGaidenExp(false); } // 🔧 v7.42.0: 기본 ON — 명시적 false만 끔
+      // 🆕 v7.43.0: 카카오 익명 토큰 복원 — 부트스트랩 의도가 있으면 OS 쿠키가 아직 살아있는지 검증해 globalKkCookie 채움.
+      if (cfg.kk_session === true) {
+        const has = await refreshKkSession();
+        setKkReady(has);
+        if (!has) { globalKkCookie = null; try { await saveGlobalAiConfig({ kk_session: false }); } catch {} }
+      }
       if (cfg.ai_usage && typeof cfg.ai_usage === "object") {
         _aiUsage = {
           calls: Number(cfg.ai_usage.calls) || 0, input: Number(cfg.ai_usage.input) || 0,
@@ -62285,6 +62359,35 @@ async function importJSON() {
                 </Text>
               </View>
 
+              {/* 🆕 v7.43.0: 카카오 세션 — 카카오 GraphQL은 JS가 발급하는 익명 토큰(_kawlt)이 있어야 응답함. WebView로 1회 부트스트랩 */}
+              <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                  <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>🔑 카카오 세션 (불러오기용)</Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: kkReady ? "#22c55e" : C.line }} />
+                    <Text style={{ color: kkReady ? "#22c55e" : C.sub, fontSize: 12, fontWeight: "800" }}>{kkReady ? "준비됨" : "준비 안 됨"}</Text>
+                  </View>
+                </View>
+                <Text style={{ color: C.sub, fontSize: 11.5, marginTop: 5, lineHeight: 16 }}>
+                  카카오페이지는 보안상 작품 정보를 일반 요청으로는 안 줘요. ‘세션 준비’를 누르면 카카오 페이지를 잠깐 열어 익명 토큰만 받아와요(로그인 불필요). 한 번 받으면 카카오 링크 ‘🔗 불러오기’가 동작해요. 안 되면 다시 눌러 갱신하세요.
+                </Text>
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                  <TouchableOpacity onPress={() => setKkSessionModalOpen(true)} disabled={kkBusy} activeOpacity={0.7}
+                    style={{ paddingVertical: 9, paddingHorizontal: 16, borderRadius: 999, backgroundColor: C.primary, opacity: kkBusy ? 0.5 : 1 }}>
+                    <Text style={{ color: "#fff", fontWeight: "800", fontSize: 12.5 }}>{kkReady ? "세션 갱신" : "세션 준비"}</Text>
+                  </TouchableOpacity>
+                  {kkReady && (
+                    <TouchableOpacity onPress={clearKkSession} disabled={kkBusy} activeOpacity={0.7}
+                      style={{ paddingVertical: 9, paddingHorizontal: 16, borderRadius: 999, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, opacity: kkBusy ? 0.5 : 1 }}>
+                      <Text style={{ color: C.sub, fontWeight: "800", fontSize: 12.5 }}>초기화</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+                <Text style={{ color: C.sub, fontSize: 10, marginTop: 8, lineHeight: 14 }}>
+                  ※ 시험 기능(폰 검증 중) — 카카오가 막아둔 구조라 안 될 수도 있어요. 안 되면 ‘긁기 진단 › 카카오’로 응답을 캡처해 보내 주세요.
+                </Text>
+              </View>
+
               {/* 🔧 v7.42.0: 카카오·문피아 외전 분리 토글 — 기본 ON(끌 수 있는 안전밸브). 끄면 완결일만 가져옴(외전 분리 생략). */}
               <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
                 <View style={{ flex: 1, paddingRight: 10 }}>
@@ -62404,6 +62507,44 @@ async function importJSON() {
                   {mpLoginModalOpen && (
                     <WebView
                       source={{ uri: "https://m.munpia.com/" }}
+                      userAgent={SCRAPER_UA}
+                      sharedCookiesEnabled
+                      thirdPartyCookiesEnabled
+                      domStorageEnabled
+                      javaScriptEnabled
+                      startInLoadingState
+                      renderLoading={() => (
+                        <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "center", alignItems: "center", backgroundColor: C.bg }}>
+                          <ActivityIndicator size="large" color={C.primary} />
+                        </View>
+                      )}
+                      style={{ flex: 1, backgroundColor: C.bg }}
+                    />
+                  )}
+                </SafeAreaView>
+              </Modal>
+
+              {/* 🆕 v7.43.0: 카카오 세션 부트스트랩 WebView — 카카오 페이지를 열어 JS가 _kawlt 익명 토큰을 쿠키에 심게 함(로그인 불필요) */}
+              <Modal visible={kkSessionModalOpen} animationType="slide" statusBarTranslucent onRequestClose={() => setKkSessionModalOpen(false)}>
+                <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line }}>
+                    <TouchableOpacity onPress={() => setKkSessionModalOpen(false)} activeOpacity={0.7} style={{ padding: 6 }}>
+                      <Text style={{ color: C.sub, fontSize: 15, fontWeight: "800" }}>✕ 닫기</Text>
+                    </TouchableOpacity>
+                    <Text style={{ color: C.text, fontSize: 15, fontWeight: "800" }}>카카오 세션 준비</Text>
+                    <TouchableOpacity onPress={confirmKkSession} disabled={kkBusy} activeOpacity={0.7}
+                      style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, backgroundColor: C.primary, opacity: kkBusy ? 0.5 : 1 }}>
+                      <Text style={{ color: "#fff", fontSize: 13, fontWeight: "800" }}>{kkBusy ? "확인 중…" : "완료"}</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={{ paddingHorizontal: 14, paddingVertical: 8, backgroundColor: C.chip }}>
+                    <Text style={{ color: C.sub, fontSize: 11.5, lineHeight: 16 }}>
+                      카카오페이지가 다 뜰 때까지(로딩 원이 사라질 때까지) 잠깐 기다린 뒤, 오른쪽 위 ‘완료’를 눌러 주세요. 로그인은 필요 없어요 — 익명 토큰만 받아와요.
+                    </Text>
+                  </View>
+                  {kkSessionModalOpen && (
+                    <WebView
+                      source={{ uri: "https://page.kakao.com/content/53705302" }}
                       userAgent={SCRAPER_UA}
                       sharedCookiesEnabled
                       thirdPartyCookiesEnabled
