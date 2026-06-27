@@ -2,11 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.44.2 (카카오 공유링크(series_id=) 인식 + 캡처 라우팅)                 ║
+ * ║  버전: 7.44.3 (카카오 캡처 진단을 실패 알림 본문에 표시 + 클립보드 복사)       ║
  * ║  최종 수정: 2026-06-27                                                        ║
  * ║  총 라인 수: 약 69,600줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔎 v7.44.3 카카오 캡처 진단 가시화 — 실패 알림 본문+클립보드 (2026-06-27)     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 폰 보고: 진단 알림이 떴다가 직후 '불러오기 실패' 알림에 덮여 못 읽음(두 알림    ║
+ * ║ 충돌). 수정: globalKakaoCapture가 {ok,meta,diag} 반환 → 조기분기가 diag를       ║
+ * ║ throw 메시지 본문에 실어 단일 '불러오기 실패' 알림으로 표시(덮어쓰기 원천차단)  ║
+ * ║ + 진단을 클립보드 자동복사. 진단엔 후킹설치·overview목격·관찰요청 목록 포함.    ║
+ * ║ WebView onError/onHttpError로 로딩오류도 기록. 중복 late 카카오 분기 제거       ║
+ * ║ (조기분기로 일원화). 회귀 314/314.                                            ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔗 v7.44.2 카카오 공유링크(series_id=) 인식 + 캡처 라우팅 (2026-06-27)        ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -15234,11 +15244,14 @@ async function fetchNovelMeta(url, opts = {}) {
   const kkSid = kakaoSeriesIdFromUrl(url);
   if (kkSid && (platform === "카카오페이지" || /kakao/i.test(url) || !platform)) {
     const canonical = "https://page.kakao.com/content/" + kkSid;
-    let km = null;
-    if (globalKakaoCapture) { try { km = await globalKakaoCapture(canonical, opts); } catch {} }
-    if (!km || !km.ok || !km.title) { try { km = await fetchKakaoMetaGql(canonical, opts); } catch {} }
+    let cap = null;
+    if (globalKakaoCapture) { try { cap = await globalKakaoCapture(canonical, opts); } catch (e) { cap = { ok: false, diag: "캡처 예외: " + (e?.message || e) }; } }
+    if (cap && cap.ok && cap.meta && cap.meta.title) return cap.meta;
+    let km = null; try { km = await fetchKakaoMetaGql(canonical, opts); } catch {}
     if (km && km.ok && km.title) return km;
-    throw new Error("카카오 작품 정보를 가져오지 못했어요. 잠시 후 다시 시도하거나, 작품 링크가 맞는지 확인해 주세요. (계속 안 되면 제목·작가·날짜는 직접 입력해 주세요.)");
+    // 🔧 v7.44.3: 캡처 진단을 단일 알림 본문에 실어 보여줌(별도 알림이 덮지 않게)+클립보드 복사됨.
+    const diag = (cap && cap.diag) ? ("\n\n[진단(복사됨)] sid=" + kkSid + "\n" + cap.diag) : (globalKakaoCapture ? "" : "\n(캡처 모듈 미초기화)");
+    throw new Error("카카오 정보를 가져오지 못했어요." + diag + "\n\n위 내용을 캡처/붙여넣기로 보내 주세요.");
   }
   const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
   let res, html = "";
@@ -15256,12 +15269,7 @@ async function fetchNovelMeta(url, opts = {}) {
 
   let meta = scraperNormalizeFromHtml(html, url);
   meta = scraperRefineByPlatform(meta, html, platform);
-  // 🆕 v7.42.0/v7.44.0: 카카오 풀-CSR 폴백 — SSR(__NEXT_DATA__)에 작품 메타가 사라져 HTML만으론 실패(og:title="카카오페이지").
-  //   카카오 GraphQL은 서명/난독화로 직접 fetch가 막힘 → ①숨은 WebView로 실제 클라 응답 가로채기(주경로) ②토큰 직접 GraphQL(완화 대비 폴백).
-  if (platform === "카카오페이지" && (!meta || !meta.ok || !meta.title)) {
-    if (globalKakaoCapture) { try { const gm = await globalKakaoCapture(url, opts); if (gm && gm.ok && gm.title) meta = gm; } catch {} }
-    if (!meta || !meta.ok || !meta.title) { try { const gm = await fetchKakaoMetaGql(url, opts); if (gm && gm.ok && gm.title) meta = gm; } catch {} }
-  }
+  // ※카카오는 위 조기 분기(seriesId 기반 WebView 캡처)에서 처리·종료됨 — 여기 HTML 경로엔 도달 안 함.
   if (!meta || !meta.ok || !meta.title) {
     // 🆕 v7.37.0: 카카오페이지도 작품 페이지가 SSR(__NEXT_DATA__)이라 링크로 불러와짐 — v7.31.3의 '미지원' 안내 철회.
     //   드물게 실패(일시 차단/구조 변경)할 땐 다른 플랫폼과 동일한 일반 안내로 처리한다.
@@ -43822,23 +43830,24 @@ function AppContent() {
   // 🆕 v7.44.0: 카카오 응답 가로채기 브리지 — fetchNovelMeta(슬라이스 밖)가 globalKakaoCapture(url)로 호출 →
   //   캡처 WebView 마운트(kkCaptureUrl) → 카카오 앱 JS가 보낸 contentHomeOverview 응답을 onMessage로 수신 → Promise 종료.
   useEffect(() => {
+    // 🔧 v7.44.3: 캡처 결과를 {ok, meta, diag}로 반환 — 실패 진단을 throw 메시지에 실어 단일 알림으로 보여줌(덮어쓰기 방지)+클립보드 복사.
     globalKakaoCapture = (url) => new Promise((resolve) => {
-      if (kkCaptureResolver.current) { resolve(null); return; } // 동시 1건만(중첩 캡처 방지)
+      if (kkCaptureResolver.current) { resolve({ ok: false, diag: "이미 다른 카카오 캡처가 진행 중" }); return; }
       kkCaptureDbg.current = [];
       const finish = (meta, reason) => {
         const r = kkCaptureResolver.current; if (!r) return;
         clearTimeout(r.timer); kkCaptureResolver.current = null; setKkCaptureUrl(null);
-        if (!meta && reason === "timeout") { // 🔧 v7.44.1: 실패 진단 — WebView가 본 요청 로그 표시
-          const log = kkCaptureDbg.current;
-          const installed = log.some(d => d.u === "__hook_installed__");
-          const ovSeen = log.some(d => d.ov);
-          const lines = log.filter(d => d.u !== "__hook_installed__").slice(-12).map(d => `${d.ov ? "★" : "·"} ${d.u} (${d.l})`);
-          Alert.alert("카카오 정보를 못 받았어요",
-            `후킹 설치: ${installed ? "✅" : "❌(주입 실패)"} · overview 응답: ${ovSeen ? "✅ 봤는데 파싱 실패" : "❌ 못 봄"}\n관찰된 요청(${log.length}):\n${lines.length ? lines.join("\n") : "(요청 0건 — 페이지가 안 열렸거나 차단)"}\n\n이 내용을 캡처해 채팅에 보내 주세요.`);
-        }
-        resolve(meta && meta.ok ? meta : null);
+        if (meta && meta.ok) { resolve({ ok: true, meta }); return; }
+        const log = kkCaptureDbg.current;
+        const installed = log.some(d => d.u === "__hook_installed__");
+        const ovSeen = log.some(d => d.ov);
+        const reqs = log.filter(d => d.u !== "__hook_installed__");
+        const lines = reqs.slice(-14).map(d => `${d.ov ? "★" : "·"} ${d.u} (${d.l})`);
+        const diag = `사유: ${reason || "실패"}\n후킹설치: ${installed ? "O" : "X(주입실패)"} · overview응답: ${ovSeen ? "O(파싱실패)" : "X(못봄)"} · 요청 ${reqs.length}건\n` + (lines.length ? lines.join("\n") : "(요청 0건 — 페이지 미로딩/차단)");
+        try { Clipboard.setStringAsync("[카카오 캡처 진단]\nURL:" + (r.url || "") + "\n" + diag); } catch {}
+        resolve({ ok: false, diag });
       };
-      const timer = setTimeout(() => finish(null, "timeout"), 30000); // 30s 안에 응답 없으면 포기
+      const timer = setTimeout(() => finish(null, "timeout(30s)"), 30000);
       kkCaptureResolver.current = { finish, timer, url };
       setKkCaptureUrl(url);
     });
@@ -43853,6 +43862,7 @@ function AppContent() {
     const meta = parseKakaoOverview(p.body, r.url || "");
     if (meta && meta.ok && meta.title) r.finish(meta); // 매칭 안 되면 계속 대기(타임아웃이 종료)
   }
+  function onKkCaptureError(reason) { const r = kkCaptureResolver.current; if (r) { kkCaptureDbg.current.push({ u: "__load_error__:" + String(reason).slice(0, 50), l: 0, ov: false }); } } // 🔧 v7.44.3: 로딩 오류 기록
 
   // 🔐 v7.41.5: 문피아 로그인 — 회차 많은 작품의 '전체 회차목록'(외전 포함)은 로그인 세션이 있어야 받을 수 있음.
   //   쿠키는 OS 스토어에 두고 API fetch에 자동 첨부(동일 출처 m.munpia.com). 여기선 로그인 여부만 추적/표시.
@@ -62677,6 +62687,8 @@ async function importJSON() {
                       userAgent={SCRAPER_UA}
                       injectedJavaScriptBeforeContentLoaded={KAKAO_CAPTURE_JS}
                       onMessage={onKkCaptureMessage}
+                      onError={(ev) => onKkCaptureError(ev?.nativeEvent?.description || "load error")}
+                      onHttpError={(ev) => onKkCaptureError("http " + (ev?.nativeEvent?.statusCode || "?"))}
                       sharedCookiesEnabled
                       thirdPartyCookiesEnabled
                       domStorageEnabled
