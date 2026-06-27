@@ -2,11 +2,24 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.43.0 (카카오 세션 WebView 부트스트랩 — _kawlt 익명 토큰 캡처)         ║
+ * ║  버전: 7.44.0 (카카오 응답 가로채기 WebView — 난독화 우회, 불러오기 복구)      ║
  * ║  최종 수정: 2026-06-27                                                        ║
- * ║  총 라인 수: 약 69,520줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 69,560줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛰️ v7.44.0 카카오 응답 가로채기 WebView — 난독화 우회 (2026-06-27)            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ v7.43.0 폰 캡처 확정: WebView 쿠키 부트스트랩은 성공(_kpwtkn 등 전부 캡처)     ║
+ * ║ 했으나, 그 쿠키를 다 실어도 page.kakao /graphql은 동일 HTML 벽. 즉 차단이       ║
+ * ║ 쿠키가 아니라 서명/난독화 레벨(window.ecvars=AES 복호화로 서명헤더·엔드포인트    ║
+ * ║ 생성). fetch 흉내로는 불가 확정. → 발상 전환: 흉내 대신 '진짜 클라'가 보내게.    ║
+ * ║ 숨은 WebView(page.kakao/content/{id})에 fetch·XHR 후킹 JS를 beforeContentLoaded ║
+ * ║ 로 주입 → 카카오 앱 JS가 보낸 contentHomeOverview 응답을 가로채 postMessage →   ║
+ * ║ RN onMessage가 parseKakaoOverview로 메타화. globalKakaoCapture 브리지로         ║
+ * ║ fetchNovelMeta(슬라이스 밖)와 연결. 로딩 오버레이+취소+30s 타임아웃. 무회귀     ║
+ * ║ (캡처 실패 시 토큰 fetch 폴백→기존 안내). 회귀 310/310. ※폰 최종 검증.         ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔓 v7.43.0 카카오 세션 WebView 부트스트랩(_kawlt 익명 토큰) (2026-06-27)      ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -14498,6 +14511,17 @@ let globalNpCookie = null; // "name=val; name2=val2" 형태 or null(비로그인
 //   숨은 WebView로 page.kakao.com을 한 번 열면 JS가 _kawlt를 OS 쿠키스토어에 심음 → 여기에 캡처해 GraphQL fetch에 명시 첨부.
 //   로그인 불필요(익명 토큰). 컴포넌트(App)가 세션 새로고침/부팅 시 CookieManager.get으로 채운다.
 let globalKkCookie = null; // "name=val; ..." 형태 or null(미부트스트랩)
+// 🆕 v7.44.0: 카카오 GraphQL은 서명/난독화(window.ecvars 복호화)로 fetch 흉내가 불가(폰 실측: 쿠키 다 실어도 HTML 벽).
+//   유일 해법 — 숨은 WebView에서 카카오 앱 JS가 직접 요청을 보내게 하고 그 응답을 가로채(injected fetch/XHR 후킹) RN으로 넘김.
+//   globalKakaoCapture는 App 컴포넌트가 WebView 캡처 구현을 주입한다(슬라이스 밖 React 의존이라 여기선 후크만).
+let globalKakaoCapture = null; // (url, opts) => Promise<meta|null>
+// 카카오 페이지에 주입: fetch·XHR을 후킹해 contentHomeOverview 응답을 postMessage. 앱 JS보다 먼저 실행(beforeContentLoaded).
+const KAKAO_CAPTURE_JS = "(function(){if(window.__kkCap)return;window.__kkCap=1;" +
+  "function P(o){try{window.ReactNativeWebView.postMessage(JSON.stringify(o));}catch(e){}}" +
+  "function H(t){return typeof t==='string'&&t.indexOf('contentHomeOverview')>-1&&t.indexOf('\"content\"')>-1;}" +
+  "try{var of=window.fetch;window.fetch=function(){return of.apply(this,arguments).then(function(r){try{r.clone().text().then(function(t){if(H(t))P({t:'kk',ok:true,body:t});}).catch(function(){});}catch(e){}return r;});};}catch(e){}" +
+  "try{var os=XMLHttpRequest.prototype.send;XMLHttpRequest.prototype.send=function(){try{this.addEventListener('load',function(){try{var t=this.responseText;if(H(t))P({t:'kk',ok:true,body:t});}catch(e){}});}catch(e){}return os.apply(this,arguments);};}catch(e){}" +
+  "})();true;";
 // 🔧 v7.41.6: 카카오·문피아 본편/외전 분리는 폰 검증 전 '시험' 기능 — 기본 OFF(불러오기 핵심 경로 방해 방지). 사용자가 설정에서 켤 때만 동작.
 let globalGaidenExp = true; // 🔧 v7.42.0: 카카오·문피아 본편/외전 분리 — 기본 ON(끄려면 설정 토글). 종전 기본 OFF는 오진단(불러오기 실패는 카카오 CSR 탓).
 function npHeaders(extra) {
@@ -15189,10 +15213,11 @@ async function fetchNovelMeta(url, opts = {}) {
 
   let meta = scraperNormalizeFromHtml(html, url);
   meta = scraperRefineByPlatform(meta, html, platform);
-  // 🆕 v7.42.0: 카카오 풀-CSR 전환 폴백 — SSR(__NEXT_DATA__)에 작품 메타가 사라져 HTML만으론 실패(og:title="카카오페이지").
-  //   GraphQL contentHomeOverview로 제목·작가·장르·연재상태·시작/완결일을 직접 취득(폰 주거망에서 동작). 무회귀(폴백만).
+  // 🆕 v7.42.0/v7.44.0: 카카오 풀-CSR 폴백 — SSR(__NEXT_DATA__)에 작품 메타가 사라져 HTML만으론 실패(og:title="카카오페이지").
+  //   카카오 GraphQL은 서명/난독화로 직접 fetch가 막힘 → ①숨은 WebView로 실제 클라 응답 가로채기(주경로) ②토큰 직접 GraphQL(완화 대비 폴백).
   if (platform === "카카오페이지" && (!meta || !meta.ok || !meta.title)) {
-    try { const gm = await fetchKakaoMetaGql(url, opts); if (gm && gm.ok && gm.title) meta = gm; } catch {}
+    if (globalKakaoCapture) { try { const gm = await globalKakaoCapture(url, opts); if (gm && gm.ok && gm.title) meta = gm; } catch {} }
+    if (!meta || !meta.ok || !meta.title) { try { const gm = await fetchKakaoMetaGql(url, opts); if (gm && gm.ok && gm.title) meta = gm; } catch {} }
   }
   if (!meta || !meta.ok || !meta.title) {
     // 🆕 v7.37.0: 카카오페이지도 작품 페이지가 SSR(__NEXT_DATA__)이라 링크로 불러와짐 — v7.31.3의 '미지원' 안내 철회.
@@ -36407,6 +36432,8 @@ function AppContent() {
   const [kkReady, setKkReady] = useState(false); // 🆕 v7.43.0: 카카오 익명 토큰(_kawlt) 부트스트랩 완료 여부(쿠키 캡처됨)
   const [kkSessionModalOpen, setKkSessionModalOpen] = useState(false); // 🆕 v7.43.0: 카카오 세션 부트스트랩 WebView 모달
   const [kkBusy, setKkBusy] = useState(false);
+  const [kkCaptureUrl, setKkCaptureUrl] = useState(null); // 🆕 v7.44.0: 응답 가로채기 진행 중인 카카오 content URL(설정 시 캡처 WebView 마운트)
+  const kkCaptureResolver = useRef(null); // { finish, timer } — onMessage/타임아웃이 캡처 Promise를 종료
   // 🆕 v7.28.14: AI 태그 추천 (작품 추가/편집)
   const [aiTagModalOpen, setAiTagModalOpen] = useState(false);
   // 🔗 v7.28.26 스크래퍼: 링크에서 메타 불러오기 — 로딩 플래그 + 확인 모달({meta,items,apply,label})
@@ -43746,6 +43773,30 @@ function AppContent() {
       try { await saveGlobalAiConfig({ kk_session: false }); } catch {}
       Alert.alert("초기화됨", "카카오 세션 토큰을 지웠어요.");
     } finally { setKkBusy(false); }
+  }
+
+  // 🆕 v7.44.0: 카카오 응답 가로채기 브리지 — fetchNovelMeta(슬라이스 밖)가 globalKakaoCapture(url)로 호출 →
+  //   캡처 WebView 마운트(kkCaptureUrl) → 카카오 앱 JS가 보낸 contentHomeOverview 응답을 onMessage로 수신 → Promise 종료.
+  useEffect(() => {
+    globalKakaoCapture = (url) => new Promise((resolve) => {
+      if (kkCaptureResolver.current) { resolve(null); return; } // 동시 1건만(중첩 캡처 방지)
+      const finish = (meta) => {
+        const r = kkCaptureResolver.current; if (!r) return;
+        clearTimeout(r.timer); kkCaptureResolver.current = null; setKkCaptureUrl(null);
+        resolve(meta && meta.ok ? meta : null);
+      };
+      const timer = setTimeout(() => finish(null), 30000); // 30s 안에 응답 없으면 포기(상위에서 일반 안내)
+      kkCaptureResolver.current = { finish, timer, url };
+      setKkCaptureUrl(url);
+    });
+    return () => { globalKakaoCapture = null; const r = kkCaptureResolver.current; if (r) { clearTimeout(r.timer); kkCaptureResolver.current = null; } };
+  }, []);
+  function onKkCaptureMessage(e) {
+    const r = kkCaptureResolver.current; if (!r) return;
+    let p = null; try { p = JSON.parse(e?.nativeEvent?.data); } catch { return; }
+    if (!p || p.t !== "kk" || !p.ok || !p.body) return;
+    const meta = parseKakaoOverview(p.body, r.url || "");
+    if (meta && meta.ok && meta.title) r.finish(meta); // 매칭 안 되면 계속 대기(타임아웃이 종료)
   }
 
   // 🔐 v7.41.5: 문피아 로그인 — 회차 많은 작품의 '전체 회차목록'(외전 포함)은 로그인 세션이 있어야 받을 수 있음.
@@ -62560,6 +62611,35 @@ async function importJSON() {
                     />
                   )}
                 </SafeAreaView>
+              </Modal>
+
+              {/* 🆕 v7.44.0: 카카오 응답 가로채기 WebView — 카카오 페이지를 열어 앱 JS가 보낸 contentHomeOverview 응답을 가로챔. 로딩 오버레이로 가림 */}
+              <Modal visible={!!kkCaptureUrl} animationType="fade" transparent statusBarTranslucent onRequestClose={() => { const r = kkCaptureResolver.current; if (r) r.finish(null); }}>
+                <View style={{ flex: 1, backgroundColor: C.bg }}>
+                  {kkCaptureUrl && (
+                    <WebView
+                      source={{ uri: kkCaptureUrl }}
+                      userAgent={SCRAPER_UA}
+                      injectedJavaScriptBeforeContentLoaded={KAKAO_CAPTURE_JS}
+                      onMessage={onKkCaptureMessage}
+                      sharedCookiesEnabled
+                      thirdPartyCookiesEnabled
+                      domStorageEnabled
+                      javaScriptEnabled
+                      style={{ flex: 1, opacity: 0.25, backgroundColor: C.bg }}
+                    />
+                  )}
+                  <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "center", alignItems: "center" }} pointerEvents="box-none">
+                    <View style={{ backgroundColor: C.card, borderRadius: 18, paddingVertical: 22, paddingHorizontal: 26, alignItems: "center", maxWidth: 300, borderWidth: 1, borderColor: C.line }}>
+                      <ActivityIndicator size="large" color={C.primary} />
+                      <Text style={{ color: C.text, fontSize: 14, fontWeight: "800", marginTop: 14 }}>카카오에서 작품 정보를 가져오는 중…</Text>
+                      <Text style={{ color: C.sub, fontSize: 11.5, marginTop: 6, textAlign: "center", lineHeight: 16 }}>카카오페이지가 보안상 일반 요청을 막아, 잠깐 페이지를 열어 정보를 받아와요. 자동으로 닫혀요.</Text>
+                      <TouchableOpacity onPress={() => { const r = kkCaptureResolver.current; if (r) r.finish(null); }} activeOpacity={0.7} style={{ marginTop: 14, paddingVertical: 7, paddingHorizontal: 18, borderRadius: 999, borderWidth: 1, borderColor: C.line }}>
+                        <Text style={{ color: C.sub, fontSize: 12.5, fontWeight: "800" }}>취소</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
               </Modal>
 
               <Modal visible={apiKeyHelpModalOpen} animationType="fade" transparent statusBarTranslucent onRequestClose={() => setApiKeyHelpModalOpen(false)}>
