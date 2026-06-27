@@ -2,11 +2,24 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.42.0 (카카오 링크 불러오기 복구 — GraphQL 메타 + 외전분리 기본 ON)    ║
+ * ║  버전: 7.42.1 (카카오 GraphQL 폰 실측 진단 — 긁기 진단에 GQL 프로브 추가)      ║
  * ║  최종 수정: 2026-06-27                                                        ║
- * ║  총 라인 수: 약 69,410줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 69,430줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔬 v7.42.1 카카오 GraphQL 폰 실측 진단 추가 (2026-06-27)                      ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ v7.42.0 폰 테스트 결과: 카카오 링크 여전히 '작품 정보를 찾지 못했어요'(동일).  ║
+ * ║ 즉 폰(주거망)에서도 fetchKakaoMetaGql이 null — GraphQL 호출 자체가 실패.       ║
+ * ║ 원인 후보: ①엔드포인트 이동(page.kakao.com/graphql가 옛 크롤러 기준 — 카카오는 ║
+ * ║ 빌드시 주입 env로 BFF 호스트 결정, 번들서 실호스트 확정 불가) ②_kpwtkn 토큰    ║
+ * ║ 미발급 ③APQ(persisted query)만 허용. DC IP는 302라 환경상 판별 불가.           ║
+ * ║ → '🔧 긁기 진단'을 확장: 카카오 content 링크 입력 시 page/bff/api-page 3개      ║
+ * ║ 엔드포인트로 contentHomeOverview POST를 실제로 쏴 status+body를 그대로 캡처.    ║
+ * ║ 폰 1회 캡처로 어디가 200/JSON을 주는지 확정 → 다음 버전서 엔드포인트 교정.      ║
+ * ║ (코드 경로/파서는 v7.42.0 유지 — 무회귀. 진단 도구만 추가.) 회귀 310/310.      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🟢 v7.42.0 카카오 링크 불러오기 복구 + 외전 분리 기본 ON (2026-06-27)         ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -42605,11 +42618,29 @@ function AppContent() {
       const re = /(?:href|content)\s*=\s*"([^"]*(?:productNo=\d+|\/novel\/\d+|\/viewer\/\d+|\/books?\/\d+|\/content\/\d+|novel_no=\d+|wid=\d+)[^"]*)"/gi;
       const hrefs = []; const seen = new Set(); let m;
       while ((m = re.exec(html)) && hrefs.length < 20) { if (!seen.has(m[1])) { seen.add(m[1]); hrefs.push(m[1]); } }
+      // 🆕 v7.42.1: 카카오 content URL이면 GraphQL(contentHomeOverview)도 함께 찔러 '실제' 응답을 캡처 — 폰 실측 진단용.
+      //   page.kakao(웹 BFF)·api-page(앱 인증) 후보를 모두 시도해 어디가 200/JSON을 주는지 한 번에 확인.
+      //   직전 위 GET(content 페이지)으로 _kpwtkn 쿠키가 잡힌 상태에서 호출됨(네이티브 쿠키스토어).
+      let kakaoProbe = "";
+      const ksid = (url.match(/\/content\/(\d+)/) || [])[1];
+      if (ksid && /kakao/i.test(url)) {
+        const eps = ["https://page.kakao.com/graphql", "https://bff-page.kakao.com/graphql", "https://api-page.kakao.com/graphql"];
+        for (const ep of eps) {
+          const { signal: s2, cleanup: c2 } = resolveAbortSignal({ timeoutMs: 15000 });
+          try {
+            const pr = await fetch(ep, { method: "POST", headers: { ...SCRAPER_HEADERS, "Content-Type": "application/json", "Referer": url, "Origin": "https://page.kakao.com" }, body: JSON.stringify({ query: KAKAO_OVERVIEW_Q, operationName: "contentHomeOverview", variables: { seriesId: Number(ksid) } }), redirect: "follow", signal: s2 });
+            const body = await pr.text();
+            kakaoProbe += `\n[GQL ${ep}]\n  status=${pr.status} len=${body.length}\n  ${body.slice(0, 1000).replace(/\n/g, "\n  ")}\n`;
+          } catch (e2) { kakaoProbe += `\n[GQL ${ep}] ERR ${e2?.name === "AbortError" ? "timeout" : (e2?.message || e2)}\n`; }
+          finally { c2(); }
+        }
+      }
       const summary =
         `URL: ${url}\nstatus=${res.status} · size=${html.length.toLocaleString()}자 · 차단=${block.blocked ? block.kind : "아님"}\n` +
         `__NEXT_DATA__: ${nd ? "있음" : "없음"} · ld+json: ${ld.length}개\n` +
-        `작품링크 후보(${hrefs.length}):\n${hrefs.length ? hrefs.join("\n") : "(못 찾음 — '원본 복사'로 전체를 보내 주세요)"}`;
-      setScrapeDiagOut({ url, status: res.status, size: html.length, html, summary });
+        `작품링크 후보(${hrefs.length}):\n${hrefs.length ? hrefs.join("\n") : "(못 찾음 — '원본 복사'로 전체를 보내 주세요)"}` +
+        (kakaoProbe ? `\n\n=== 카카오 GraphQL 실측 ===${kakaoProbe}` : "");
+      setScrapeDiagOut({ url, status: res.status, size: html.length, html: html + kakaoProbe, summary });
     } catch (e) {
       Alert.alert("긁기 진단", "가져오지 못했어요: " + (e?.name === "AbortError" ? "시간 초과" : (e?.message || e)));
     } finally { cleanup(); setScrapeDiagBusy(false); }
@@ -62248,7 +62279,7 @@ async function importJSON() {
               <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
                 <Text style={{ color: C.text, fontWeight: "700", fontSize: 14, marginBottom: 4 }}>🔧 긁기 진단 (검색 원본 캡처)</Text>
                 <Text style={{ color: C.sub, fontSize: 11, lineHeight: 16, marginBottom: 8 }}>
-                  폰 브라우저에서 플랫폼 검색을 한 뒤 그 주소를 복사해 붙여넣고 ‘캡처’를 누르면, 폰이 직접 가져온 원본을 보여줘요. ‘원본 복사’로 복사해 채팅에 붙여넣으면 제목검색을 정확히 붙일 수 있어요. (아래 칩은 예시 주소 — 결과가 이상하면 폰 브라우저의 실제 검색 주소를 붙여넣어 주세요.)
+                  폰 브라우저에서 플랫폼 검색을 한 뒤 그 주소를 복사해 붙여넣고 ‘캡처’를 누르면, 폰이 직접 가져온 원본을 보여줘요. ‘원본 복사’로 복사해 채팅에 붙여넣으면 제목검색을 정확히 붙일 수 있어요. (아래 칩은 예시 주소 — 결과가 이상하면 폰 브라우저의 실제 검색 주소를 붙여넣어 주세요.) ※카카오 content 링크를 넣으면 GraphQL 응답까지 함께 캡처해요(불러오기 복구 진단용).
                 </Text>
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
                   {[
@@ -62256,6 +62287,7 @@ async function importJSON() {
                     { label: "문피아", url: "https://mm.munpia.com/?menu=detailSearchV2&action=search&searchKey=all&keyword=회귀" },
                     { label: "노벨피아", url: "https://novelpia.com/proc/novel?cmd=novel_search&search_type=all&search_val=회귀&page=1&rows=30" },
                     { label: "리디", url: "https://ridibooks.com/search?q=검" },
+                    { label: "카카오(GraphQL 진단)", url: "https://page.kakao.com/content/53705302" },
                   ].map(p => (
                     <TouchableOpacity key={p.label} onPress={() => setScrapeDiagUrl(p.url)} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line }}>
                       <Text style={{ color: C.text, fontSize: 12 }}>{p.label}</Text>
