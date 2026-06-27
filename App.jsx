@@ -2,11 +2,26 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.44.5 (카카오 SSR __NEXT_DATA__ 주경로 복원 — 오진단 롤백, 실측확증)   ║
+ * ║  버전: 7.44.6 (외전 분리 저장 버그 수정 — 단건 불러오기→작품추가 배선)         ║
  * ║  최종 수정: 2026-06-27                                                        ║
- * ║  총 라인 수: 약 69,600줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 69,620줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🌿 v7.44.6 외전 분리 저장 버그 수정 — 단건 불러오기→작품추가 (2026-06-27)     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 사용자 보고: 외전 분리가 카카오·문피아·시리즈·노벨피아 '전혀' 안 됨. 원인:      ║
+ * ║ 단건 불러오기 파이프라인이 완결일·외전 필드를 위해 배선된 적이 없음(일괄        ║
+ * ║ 갱신 경로만 됨). buildScrapeItems가 completed_at·gaiden_*를 항목으로 안 만들고, ║
+ * ║ scrapeCtxNew.apply·addNovel INSERT도 누락 → split이 계산돼도 통째 버려짐.       ║
+ * ║ 수정(신규 작품추가 경로): ①buildScrapeItems에 본편완결일·외전상태·외전회차·     ║
+ * ║ 외전시작/완결일 항목 추가(opts.gaiden 게이트). ②newCompletedAt/newGaidenStart  ║
+ * ║ At/newGaidenCompletedAt state + scrapeCtxNew getCurrent·apply 배선. ③addNovel   ║
+ * ║ INSERT에 completed_at·gaiden_start_at·gaiden_completed_at 3컬럼 추가(39=39=39   ║
+ * ║ 검증). ④폼 리셋. ※편집/예정 경로는 상태모델이 달라 항목 숨김(후속 작업).        ║
+ * ║ 카카오는 회차목록 봉쇄로 본편/외전 경계는 못 잡고 본편완결일만(SSR 한계).       ║
+ * ║ 회귀 314/314.                                                                  ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ ✅ v7.44.5 카카오 SSR __NEXT_DATA__ 주경로 복원 — 오진단 롤백 (2026-06-27)    ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -15814,7 +15829,7 @@ function mergePlatformFromLink(arr, link) {
   if (base.some(p => canonicalPlatform(p) === canon)) return base; // 이미 동일 연재처(동의어 매핑 포함)
   return [...base, canon];
 }
-function buildScrapeItems(meta, current = {}) {
+function buildScrapeItems(meta, current = {}, opts = {}) {
   if (!meta) return [];
   const items = [];
   const wsDisp = (w) => ({ ongoing: "연재중", completed: "완결", hiatus: "휴재", dropped: "연중", discontinued: "서비스종료" }[w] || ""); // 🆕 v7.28.61: 5상태
@@ -15837,6 +15852,19 @@ function buildScrapeItems(meta, current = {}) {
   const yDisp = (y) => (Number(y) > 0 ? String(Number(y)) : "");
   push("start_year", "연재 시작연도", meta.startYear, yDisp(meta.startYear), yDisp(current.start_year));
   push("end_year", "연재 종료연도", meta.endYear, yDisp(meta.endYear), yDisp(current.end_year));
+  // 🆕 v7.44.6: 본편 완결일 + 외전 분리(상태·회차·시작/완결일) — 단건 불러오기에서 누락돼 있던 핵심 필드(전 플랫폼 공통 버그).
+  //   현재는 작품추가(신규) 경로만 저장 배선됨(opts.gaiden) — 편집/예정 경로는 상태모델이 달라 별도 작업 필요(미지원 시 항목 숨김).
+  if (opts.gaiden) {
+    const dDisp = (ts) => { const n = Number(ts) || 0; if (n <= 0) return ""; const d = new Date(n); return `${d.getUTCFullYear()}.${String(d.getUTCMonth() + 1).padStart(2, "0")}.${String(d.getUTCDate()).padStart(2, "0")}`; };
+    const gsDisp = (g) => ({ ongoing: "외전 연재중", completed: "외전 완결" }[g] || "");
+    push("completed_at", "본편 완결일", Number(meta.completedAt) || 0, dDisp(meta.completedAt), dDisp(current.completed_at));
+    push("gaiden_status", "외전 상태", meta.gaidenStatus, gsDisp(meta.gaidenStatus), gsDisp(current.gaiden_status));
+    push("gaiden_total_episodes", "외전 회차", meta.gaidenCount,
+      Number(meta.gaidenCount) > 0 ? `${Number(meta.gaidenCount)}화` : "",
+      Number(current.gaiden_total_episodes) > 0 ? `${Number(current.gaiden_total_episodes)}화` : "");
+    push("gaiden_start_at", "외전 시작일", Number(meta.gaidenStartAt) || 0, dDisp(meta.gaidenStartAt), dDisp(current.gaiden_start_at));
+    push("gaiden_completed_at", "외전 완결일", Number(meta.gaidenCompletedAt) || 0, dDisp(meta.gaidenCompletedAt), dDisp(current.gaiden_completed_at));
+  }
   // 🔎 v7.28.30: 장르 — 앱 어휘로 매핑 후 현재값과 합쳐(중복 제거) 후보 제시. value는 적용할 최종 배열.
   const gnorm = (s) => String(s == null ? "" : s).replace(/\s+/g, "").toLowerCase();
   const mergeGen = (cur, add) => { const out = [...cur]; for (const v of add) if (!out.some(x => gnorm(x) === gnorm(v))) out.push(v); return out; };
@@ -36625,6 +36653,10 @@ function AppContent() {
   const [newGaidenStatus, setNewGaidenStatus] = useState("none");
   const [newGaidenReadCount, setNewGaidenReadCount] = useState("");
   const [newGaidenTotalEpisodes, setNewGaidenTotalEpisodes] = useState("");
+  // 🆕 v7.44.6: 단건 불러오기에서 본편 완결일·외전 시작/완결일(ms ts)을 받아 작품추가에 반영(드러나는 입력칸은 없고 불러오기로만 채움 — 편집모달에서 확인/수정).
+  const [newCompletedAt, setNewCompletedAt] = useState(0);
+  const [newGaidenStartAt, setNewGaidenStartAt] = useState(0);
+  const [newGaidenCompletedAt, setNewGaidenCompletedAt] = useState(0);
 
 // 편집
   const [editOpen, setEditOpen] = useState(false);
@@ -42828,7 +42860,7 @@ function AppContent() {
         return false;
       }
     }
-    let items = buildScrapeItems(meta, ctx?.getCurrent ? ctx.getCurrent() : {});
+    let items = buildScrapeItems(meta, ctx?.getCurrent ? ctx.getCurrent() : {}, { gaiden: !!ctx?.supportsGaiden });
     if (Array.isArray(ctx?.fields)) items = items.filter(it => ctx.fields.includes(it.key)); // 화면별 허용 필드(예: 보충=title 제외)
     if (items.length === 0) { Alert.alert("불러오기", `‘${meta.title || "작품"}’ — 새로 채울 정보가 없어요.`); return false; }
     setScrapeModal({ meta, items, apply: ctx?.apply, label: ctx?.label || "" });
@@ -42883,7 +42915,8 @@ function AppContent() {
   const scrapeCtxNew = () => ({
     label: "신규 등록",
     kind: "new", // 🆕 v7.28.52: 제목검색 중복 판정용(이미 등록된 작품이면 기존작 편집 제안)
-    getCurrent: () => ({ title, author, note, tags, total_episodes: totalEpisodes, work_status: newWorkStatus, cover: newCoverImage, major_genre: newMajorGenre, sub_genre: newSubGenre, start_year: newStartYear, end_year: newEndYear, platforms, link: newLink }),
+    supportsGaiden: true, // 🆕 v7.44.6: 신규 등록은 외전/완결일 저장 배선 완료(addNovel INSERT)
+    getCurrent: () => ({ title, author, note, tags, total_episodes: totalEpisodes, work_status: newWorkStatus, cover: newCoverImage, major_genre: newMajorGenre, sub_genre: newSubGenre, start_year: newStartYear, end_year: newEndYear, platforms, link: newLink, completed_at: newCompletedAt, gaiden_status: newGaidenStatus, gaiden_total_episodes: newGaidenTotalEpisodes, gaiden_start_at: newGaidenStartAt, gaiden_completed_at: newGaidenCompletedAt }),
     apply: (f) => {
       if (f.title != null) setTitle(f.title);
       if (f.author != null) setAuthor(f.author);
@@ -42898,6 +42931,12 @@ function AppContent() {
       if (f.end_year != null) setNewEndYear(Number(f.end_year) || 0);
       if (f.platforms != null) setPlatforms(f.platforms);
       if (f.link != null) setNewLink(f.link);
+      // 🆕 v7.44.6: 본편 완결일·외전 분리 반영
+      if (f.completed_at != null) setNewCompletedAt(Number(f.completed_at) || 0);
+      if (f.gaiden_status != null) setNewGaidenStatus(f.gaiden_status);
+      if (f.gaiden_total_episodes != null) setNewGaidenTotalEpisodes(String(f.gaiden_total_episodes));
+      if (f.gaiden_start_at != null) setNewGaidenStartAt(Number(f.gaiden_start_at) || 0);
+      if (f.gaiden_completed_at != null) setNewGaidenCompletedAt(Number(f.gaiden_completed_at) || 0);
     },
   });
   const scrapeCtxPlanned = () => ({
@@ -46699,6 +46738,7 @@ function AppContent() {
     setNewGaidenStatus("none");
     setNewGaidenReadCount("");
     setNewGaidenTotalEpisodes("");
+    setNewCompletedAt(0); setNewGaidenStartAt(0); setNewGaidenCompletedAt(0); // 🆕 v7.44.6
     setNewManualTier(""); // 🆕 v6.0: 등록 시 티어 선택 초기화
     setNewStartYear(0); // 🔧 v7.6.0 (포트 v3.12.0)
     setNewEndYear(0);
@@ -46792,8 +46832,8 @@ function AppContent() {
       const _initialReadCount = Number(readCount) || 0;
       await execBatch([
         {
-          sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order,read_count_baseline,start_year,end_year)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+          sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order,read_count_baseline,start_year,end_year,completed_at,gaiden_start_at,gaiden_completed_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
           params: [
             id,
             t,
@@ -46831,6 +46871,9 @@ function AppContent() {
             _initialReadCount, // 🆕 v7.0.15: read_count_baseline = 초기 read_count
             Number(newStartYear) || 0, // 🔧 v7.6.0 (포트 v3.12.0): 연재 시작 연도
             Number(newEndYear) || 0,   // 🔧 v7.6.0 (포트 v3.12.0): 연재 종료 연도
+            Number(newCompletedAt) || 0,      // 🆕 v7.44.6: 본편 완결일
+            Number(newGaidenStartAt) || 0,    // 🆕 v7.44.6: 외전 시작일
+            Number(newGaidenCompletedAt) || 0,// 🆕 v7.44.6: 외전 완결일
           ],
         },
       ]);
