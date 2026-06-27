@@ -2,11 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.44.4 (카카오 캡처 WebView 가시화 + 로딩 생명주기 진단)                ║
+ * ║  버전: 7.44.5 (카카오 SSR __NEXT_DATA__ 주경로 복원 — 오진단 롤백, 실측확증)   ║
  * ║  최종 수정: 2026-06-27                                                        ║
- * ║  총 라인 수: 약 69,610줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 69,600줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ ✅ v7.44.5 카카오 SSR __NEXT_DATA__ 주경로 복원 — 오진단 롤백 (2026-06-27)    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 메타분석+외부 레퍼런스(크롤러 5+종·번들 디컴파일·나무위키 교차검증)로 확증:     ║
+ * ║ 카카오 /content/{id} GET은 __NEXT_DATA__에 contentHomeOverview.content(제목·   ║
+ * ║ 작가·장르·onIssue·startSaleDt·lastSlideAddedDate)를 SSR로 내려줌(인증 불필요,   ║
+ * ║ 15금도 가능). 막힌 건 /graphql POST뿐. v7.43~44.4의 'CSR 난독화→WebView 필요'  ║
+ * ║ 진단은 죽은 테스트 id(53705302) 하나로 인한 오판이었고, v7.44.2 조기분기가      ║
+ * ║ 멀쩡한 HTML 경로를 가로채 되레 불러오기를 깨뜨림. 수정: ①카카오 조기분기 제거   ║
+ * ║ →일반 HTML 경로(scraperRefineKakao)로 복귀(실측: 연재중·완결작 모두 정상).      ║
+ * ║ ②공유링크(series_id=)·비정규 host는 정규 content URL로 보정. ③빈-껍데기(죽은/   ║
+ * ║ 연령벽 id, og:title="카카오페이지")는 무효 처리 후에만 WebView/토큰 폴백 시도.  ║
+ * ║ WebView 캡처(v7.44.x)는 폴백으로 잔존. 회귀 314/314.                          ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 👁 v7.44.4 카카오 캡처 WebView 가시화 + 로딩 생명주기 진단 (2026-06-27)       ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -15239,9 +15253,17 @@ function backfillMetaFromCandidate(meta, cand) {
 async function fetchNovelMeta(url, opts = {}) {
   if (!url || !/^https?:\/\//i.test(String(url).trim())) throw new Error("올바른 링크가 아니에요 (http/https URL 필요)");
   url = String(url).trim();
-  const platform = detectPlatformFromUrl(url);
+  let platform = detectPlatformFromUrl(url);
   // 🆕 v7.39.0: 조아라는 작품 페이지가 앱 전용 API(키 잠금)·CSR이라 링크만으론 메타 추출이 안 됨 → 명확 안내(직접 입력).
   if (/(?:^|\/\/|\.)joara\.com/i.test(url)) throw new Error("조아라는 작품 페이지가 로그인·앱 전용으로 표시돼, 링크만으로는 정보를 가져오기 어려워요. 제목·작가·줄거리는 직접 입력하시고, 연재처에서 ‘조아라’를 선택해 주세요.");
+  // 🆕 v7.44.5: 카카오 — 공유링크(series_id=)·비정규 host도 정규 content URL로 보정 → 일반 HTML 경로가 SSR(__NEXT_DATA__)을 받음.
+  //   카카오 작품 페이지는 plain GET으로 contentHomeOverview.content(제목·작가·장르·연재상태·시작/완결일)를 SSR로 내려줌(실측·나무위키 교차검증).
+  //   ※막힌 건 /graphql POST뿐. content GET은 열려 있음 — v7.43~44.4의 'CSR 난독화' 진단은 죽은 id(53705302)로 인한 오판이었음.
+  const kkSid = kakaoSeriesIdFromUrl(url);
+  if (kkSid && (platform === "카카오페이지" || /(?:^|\.)page\.kakao\.com/i.test(url) || /kakao/i.test(url))) {
+    url = "https://page.kakao.com/content/" + kkSid; // 정규화(쿼리 제거·host 통일)
+    platform = "카카오페이지";
+  }
   // 🆕 v7.38.0: 노벨피아는 단건 API(get_novel)가 SPA HTML보다 정확하고 성인물(19금)도 비로그인으로 취득 →
   //   /novel/{id}면 API 우선, 성공 시 그대로 반환(무거운 HTML 안 받음). 실패하면 아래 공통 HTML 폴백.
   if (platform === "노벨피아") {
@@ -15251,20 +15273,6 @@ async function fetchNovelMeta(url, opts = {}) {
       if (m.workStatus === "completed") { try { const sp = await fetchNovelpiaEpisodeSplit(url, opts); if (sp) applyEpisodeSplitToMeta(m, sp); } catch {} }
       return m;
     } } catch { /* API 실패 → HTML 폴백 */ } }
-  }
-  // 🆕 v7.44.2: 카카오 — /content/{id} + 공유링크(series_id=/seriesId=, host가 page.kakao가 아닐 수도) 모두 인식.
-  //   카카오는 풀-CSR+서명난독화라 HTML 경로가 무의미 → seriesId 잡히면 여기서 캡처(주)·토큰(폴백)으로 끝냄.
-  const kkSid = kakaoSeriesIdFromUrl(url);
-  if (kkSid && (platform === "카카오페이지" || /kakao/i.test(url) || !platform)) {
-    const canonical = "https://page.kakao.com/content/" + kkSid;
-    let cap = null;
-    if (globalKakaoCapture) { try { cap = await globalKakaoCapture(canonical, opts); } catch (e) { cap = { ok: false, diag: "캡처 예외: " + (e?.message || e) }; } }
-    if (cap && cap.ok && cap.meta && cap.meta.title) return cap.meta;
-    let km = null; try { km = await fetchKakaoMetaGql(canonical, opts); } catch {}
-    if (km && km.ok && km.title) return km;
-    // 🔧 v7.44.3: 캡처 진단을 단일 알림 본문에 실어 보여줌(별도 알림이 덮지 않게)+클립보드 복사됨.
-    const diag = (cap && cap.diag) ? ("\n\n[진단(복사됨)] sid=" + kkSid + "\n" + cap.diag) : (globalKakaoCapture ? "" : "\n(캡처 모듈 미초기화)");
-    throw new Error("카카오 정보를 가져오지 못했어요." + diag + "\n\n위 내용을 캡처/붙여넣기로 보내 주세요.");
   }
   const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
   let res, html = "";
@@ -15282,7 +15290,15 @@ async function fetchNovelMeta(url, opts = {}) {
 
   let meta = scraperNormalizeFromHtml(html, url);
   meta = scraperRefineByPlatform(meta, html, platform);
-  // ※카카오는 위 조기 분기(seriesId 기반 WebView 캡처)에서 처리·종료됨 — 여기 HTML 경로엔 도달 안 함.
+  // 🆕 v7.44.5: 카카오 빈-껍데기(죽은/비공개/연령벽 id)는 og:title이 사이트명 "카카오페이지"로 잡혀 가짜 성공이 됨 → 무효 처리.
+  if (platform === "카카오페이지" && meta && (meta.title === "카카오페이지" || meta.title === "")) { meta.ok = false; meta.title = ""; }
+  // 🆕 v7.44.5: 카카오 폴백 — SSR HTML에서 제목을 못 얻은 경우(client-only 렌더/연령벽)만 WebView 캡처→토큰 GraphQL 시도. 보통은 위 HTML에서 성공.
+  if (platform === "카카오페이지" && (!meta || !meta.ok || !meta.title)) {
+    let km = null;
+    if (globalKakaoCapture) { try { const cap = await globalKakaoCapture(url, opts); if (cap && cap.ok && cap.meta && cap.meta.title) km = cap.meta; } catch {} }
+    if (!km || !km.title) { try { const gm = await fetchKakaoMetaGql(url, opts); if (gm && gm.ok && gm.title) km = gm; } catch {} }
+    if (km && km.title) meta = km;
+  }
   if (!meta || !meta.ok || !meta.title) {
     // 🆕 v7.37.0: 카카오페이지도 작품 페이지가 SSR(__NEXT_DATA__)이라 링크로 불러와짐 — v7.31.3의 '미지원' 안내 철회.
     //   드물게 실패(일시 차단/구조 변경)할 땐 다른 플랫폼과 동일한 일반 안내로 처리한다.
