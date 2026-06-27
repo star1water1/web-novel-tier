@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, applyEpisodeSplitToMeta, parseKakaoProductList, parseKakaoViewerDate, parseKakaoOverview, kakaoSeriesIdFromUrl, parseMunpiaEntries, SCRAPER_HEADERS, SCRAPER_UA };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, applyEpisodeSplitToMeta, parseKakaoProductList, parseKakaoViewerDate, parseKakaoOverview, kakaoSeriesIdFromUrl, parseMunpiaEntries, parseMunpiaNovelInfo, munpiaIdFromUrl, SCRAPER_HEADERS, SCRAPER_UA };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -618,6 +618,33 @@ eq("pickRidiGaidenSeries: 빈 목록 → []", S.pickRidiGaidenSeries({ title: "x
   eq("문피아: entries 폴백", pp.episodes.length, 1);
   eq("문피아: sliceEntryId(paid cursor)", pp.sliceEntryId, 555);
   eq("문피아: 비JSON/구조이상 → null", S.parseMunpiaEntries("<html>"), null);
+}
+
+// 🆕 v7.44.7: 문피아 detail API(novelInfo) → 메타 + 링크 id 추출
+{
+  const j = JSON.stringify({ result: { novelInfo: {
+    id: 346981, title: "회귀수선전", authorName: "엄청난", coverUrl: "https://cdn1.munpia.com/x", genres: ["무협", "퓨전"],
+    finish: true, pause: false, adult: false, chapterCount: 863, createdAt: "2023-01-18T16:39:54",
+  }, introductionInfo: { introduction: "줄거리\r\n둘째 줄", tags: [{ id: 45, title: "선협" }, { id: 93, title: "회귀" }] } } });
+  const m = S.parseMunpiaNovelInfo(j, "https://m.munpia.com/novel/346981");
+  eq("문피아 메타: 제목", m.title, "회귀수선전");
+  eq("문피아 메타: 작가", m.author, "엄청난");
+  eq("문피아 메타: 완결(finish)", m.workStatus, "completed");
+  eq("문피아 메타: 시작연도=createdAt", m.startYear, 2023);
+  eq("문피아 메타: 장르+소재태그 병합", m.genres, ["무협", "퓨전", "선협", "회귀"]);
+  eq("문피아 메타: 줄거리 개행 정규화", m.synopsis, "줄거리\n둘째 줄");
+  eq("문피아 메타: 총회차", m.totalEpisodes, 863);
+  eq("문피아 메타: 표지", m.coverUrl, "https://cdn1.munpia.com/x");
+  eq("문피아 메타: 19금 아님", m.ageTag, null);
+  const ing = S.parseMunpiaNovelInfo(JSON.stringify({ result: { novelInfo: { title: "T", finish: false, pause: true, adult: true } } }), "u");
+  eq("문피아 메타: 휴재(pause)", ing.workStatus, "hiatus");
+  eq("문피아 메타: 성인", ing.ageTag, "19금");
+  eq("문피아 메타: novelInfo 없음 → null", S.parseMunpiaNovelInfo('{"result":{}}', "u"), null);
+  eq("문피아 메타: 비JSON → null", S.parseMunpiaNovelInfo("x", "u"), null);
+  eq("문피아 id: ?id=", S.munpiaIdFromUrl("https://m.munpia.com/novel?id=346981"), "346981");
+  eq("문피아 id: link /n/", S.munpiaIdFromUrl("https://link.munpia.com/n/346981"), "346981");
+  eq("문피아 id: /novel/", S.munpiaIdFromUrl("https://m.munpia.com/novel/346981"), "346981");
+  eq("문피아 id: 없음 → null", S.munpiaIdFromUrl("https://m.munpia.com/"), null);
 }
 
 console.log(`\n${fail === 0 ? "🎉 ALL PASS" : "⚠️  FAILED"}  pass=${pass} fail=${fail}`);

@@ -2,11 +2,27 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.44.6 (외전 분리 저장 버그 수정 — 단건 불러오기→작품추가 배선)         ║
+ * ║  버전: 7.44.7 (문피아 detail API 메타 + 표지 헤더 + 완결작 체크 기본 ON)       ║
  * ║  최종 수정: 2026-06-27                                                        ║
- * ║  총 라인 수: 약 69,620줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 69,680줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.44.7 문피아 메타 보강 + 표지 다운로드 + 완결작 체크 기본 (2026-06-27)   ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 사용자 보고 3건 수정(다각도 점검·실측):                                        ║
+ * ║ ① 문피아 링크 불러오기 부실(제목·줄거리·표지만) → detail API                   ║
+ * ║   (/api/v1/mobile/novel-detail/{id}, 익명 동작)로 작가·장르(+소재태그)·연재     ║
+ * ║   상태(finish/pause)·시작일(createdAt)·줄거리·표지까지 취득(노벨피아 패턴).      ║
+ * ║   fetchMunpiaByNo+parseMunpiaNovelInfo+munpiaIdFromUrl. 완결작은 기존           ║
+ * ║   회차분리로 본편/외전 보강. 실데이터 검증(회귀수선전 863화).                   ║
+ * ║ ② 표지 다운로드 실패 → saveCoverToLibrary의 downloadAsync에 UA+Referer(원본     ║
+ * ║   호스트) 헤더 첨부(헤더 없는 요청 차단 CDN 대응).                              ║
+ * ║ ③ 확인 모달: 신규/예정(빈 폼)은 긁어온 값 기본 체크 ON(완결작 등 폼 기본값과     ║
+ * ║   달라도 자동 체크 — 매번 수동 체크 불편 해소). 기존작 보충/편집은 종전대로      ║
+ * ║   빈 칸만(큐레이션 보존). 회귀 +17 → 331/331.                                  ║
+ * ║ ※편집/보충/예정 경로 외전·완결일 파리티는 편집모달 상태모델 통합 후속 작업.     ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🌿 v7.44.6 외전 분리 저장 버그 수정 — 단건 불러오기→작품추가 (2026-06-27)     ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -15127,6 +15143,48 @@ async function fetchMunpiaEpisodeSplit(url, opts = {}) {
   if (!collected.length) return null;
   return splitEpisodesByGaiden(collected);
 }
+// 🆕 v7.44.7: 문피아 링크의 작품 id 추출(여러 URL 형태 대응). m.munpia.com/novel?id=, link.munpia.com/n/{id}, /novel/{id}.
+function munpiaIdFromUrl(url) {
+  const s = String(url || "");
+  const m = s.match(/[?&]id=(\d+)/) || s.match(/\/(?:n|novel)\/(\d+)/) || s.match(/novel(?:_no)?=(\d+)/i) || s.match(/munpia\.com\/(\d+)/);
+  return m ? m[1] : null;
+}
+// 🆕 v7.44.7: 문피아 단건 메타 — detail API(/api/v1/mobile/novel-detail/{id})는 익명 동작이며 작가·장르·줄거리·완결여부·시작일·표지를
+//   모두 제공(SPA HTML은 og 제목·줄거리·표지만 → 작가·장르·상태·날짜 누락). result.novelInfo + introductionInfo. 순수 파서(테스트용).
+function parseMunpiaNovelInfo(jsonText, url) {
+  let j; try { j = JSON.parse(jsonText); } catch { return null; }
+  const r = j && j.result;
+  const ni = r && r.novelInfo;
+  if (!ni || !ni.title) return null;
+  const intro = (r.introductionInfo && r.introductionInfo.introduction) || "";
+  const tagTitles = (r.introductionInfo && Array.isArray(r.introductionInfo.tags)) ? r.introductionInfo.tags.map(t => t && t.title).filter(Boolean) : [];
+  const baseGen = Array.isArray(ni.genres) ? ni.genres.filter(Boolean) : [];
+  const genres = []; for (const g of [...baseGen, ...tagTitles]) if (g && !genres.includes(g)) genres.push(g); // 장르+소재태그 병합(중복 제거) → mapScrapedGenres가 분류
+  const workStatus = ni.finish ? "completed" : (ni.pause ? "hiatus" : "ongoing");
+  let startYear = null;
+  const cm = String(ni.createdAt == null ? "" : ni.createdAt).match(/(20\d\d|19[89]\d)/);
+  if (cm) { const y = Number(cm[1]); if (y >= 1980 && y <= 2099) startYear = y; }
+  return {
+    ok: true, platform: "문피아", url: url || "",
+    title: String(ni.title).trim(),
+    author: String(ni.authorName == null ? "" : ni.authorName).trim(),
+    coverUrl: String(ni.coverUrl == null ? "" : ni.coverUrl).trim(),
+    synopsis: String(intro).replace(/\r\n/g, "\n").trim(),
+    genres, workStatus,
+    totalEpisodes: Number(ni.chapterCount) || null,
+    startYear, endYear: null, completedAt: 0,
+    ageTag: ni.adult ? "19금" : null,
+  };
+}
+async function fetchMunpiaByNo(id, opts = {}) {
+  if (!id) return null;
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
+  try {
+    const res = await fetch("https://m.munpia.com/api/v1/mobile/novel-detail/" + id, { headers: { ...SCRAPER_HEADERS, "Accept": "application/json", "Referer": "https://m.munpia.com/" }, redirect: "follow", signal });
+    if (!res.ok) return null;
+    return parseMunpiaNovelInfo(await res.text(), "https://m.munpia.com/novel/" + id);
+  } catch { return null; } finally { cleanup(); }
+}
 // 🆕 v7.41.1: 분리 결과(split)를 meta에 적용(네이버·노벨피아 공통). 본편 완결일·연도, 외전 회차수·시작/완결일·상태, total=본편(전체-외전).
 function applyEpisodeSplitToMeta(meta, split, opts) {
   if (!meta || !split) return meta;
@@ -15286,6 +15344,14 @@ async function fetchNovelMeta(url, opts = {}) {
     if (npNo) { try { const m = await fetchNovelpiaByNo(npNo, opts); if (m && m.ok && m.title) {
       // 🆕 v7.41.1: 완결작이면 회차목록(proc/episode_list)으로 본편/외전 분리 보강(공통 적용).
       if (m.workStatus === "completed") { try { const sp = await fetchNovelpiaEpisodeSplit(url, opts); if (sp) applyEpisodeSplitToMeta(m, sp); } catch {} }
+      return m;
+    } } catch { /* API 실패 → HTML 폴백 */ } }
+  }
+  // 🆕 v7.44.7: 문피아는 SPA HTML이 og 제목·줄거리·표지만 줌 → detail API(익명)로 작가·장르·상태·시작일·표지까지 취득(노벨피아 패턴).
+  if (platform === "문피아") {
+    const mid = munpiaIdFromUrl(url);
+    if (mid) { try { const m = await fetchMunpiaByNo(mid, opts); if (m && m.ok && m.title) {
+      if (globalGaidenExp && m.workStatus === "completed") { try { const sp = await fetchMunpiaEpisodeSplit(url, opts); if (sp && (sp.mainCompletedAt || sp.hasGaiden)) applyEpisodeSplitToMeta(m, sp); } catch {} }
       return m;
     } } catch { /* API 실패 → HTML 폴백 */ } }
   }
@@ -15833,12 +15899,15 @@ function buildScrapeItems(meta, current = {}, opts = {}) {
   if (!meta) return [];
   const items = [];
   const wsDisp = (w) => ({ ongoing: "연재중", completed: "완결", hiatus: "휴재", dropped: "연중", discontinued: "서비스종료" }[w] || ""); // 🆕 v7.28.61: 5상태
+  // 🆕 v7.44.7: 신규/예정(fresh) 등록은 폼 기본값(연재중 등)을 '기존 데이터'로 보지 않고 긁어온 값을 기본 체크 ON.
+  //   기존작 보충/편집은 종전대로 빈 칸만 체크(사용자 큐레이션 보존). opts.fresh로 분기.
+  const chk = (cur) => (opts.fresh ? true : !cur);
   const push = (key, label, value, display, curDisplay) => {
     const disp = (display == null ? "" : String(display)).trim();
     if (!disp) return;
     const cur = (curDisplay == null ? "" : String(curDisplay)).trim();
     if (disp === cur) return; // 동일하면 표시 안 함
-    items.push({ key, label, value, display: disp, current: cur, checked: !cur });
+    items.push({ key, label, value, display: disp, current: cur, checked: chk(cur) });
   };
   push("title", "제목", meta.title, meta.title, current.title);
   push("author", "작가", meta.author, meta.author, current.author);
@@ -15877,7 +15946,7 @@ function buildScrapeItems(meta, current = {}, opts = {}) {
     const cur = parseGenreArray(current[key]);
     const merged = mergeGen(cur, add);
     if (sameSet(merged, cur)) continue; // 새로 추가될 게 없으면 표시 안 함
-    items.push({ key, label, value: merged, display: add.join(", "), current: cur.join(", "), checked: cur.length === 0 });
+    items.push({ key, label, value: merged, display: add.join(", "), current: cur.join(", "), checked: chk(cur.length ? "x" : "") });
   }
   // 🔧 v7.28.45/47/49: 일반 태그 — 장르 어휘 밖 키워드 + 연령(19금) + 줄거리 #해시태그. 기존 태그에 '병합'.
   const addTags = [...(gmap.tags || [])];
@@ -15900,7 +15969,7 @@ function buildScrapeItems(meta, current = {}, opts = {}) {
       items.push({ key: "platforms", label: "연재처", value: mergedPlat, display: scrapedPlat, current: curPlat.join(", "), checked: true });
     }
   }
-  if (meta.coverUrl) items.push({ key: "cover", label: "표지", value: meta.coverUrl, display: "가져오기", current: current.cover ? "있음" : "없음", checked: !current.cover });
+  if (meta.coverUrl) items.push({ key: "cover", label: "표지", value: meta.coverUrl, display: "가져오기", current: current.cover ? "있음" : "없음", checked: chk(current.cover) });
   return items;
 }
 
@@ -17074,10 +17143,14 @@ async function saveCoverToLibrary(sourceUri, compressionLevel = "light", ext = "
       errors.push("copy: " + e1.message);
     }
     
-    // 방법 2: downloadAsync
+    // 방법 2: downloadAsync — 🔧 v7.44.7: UA + Referer(원본 호스트) 헤더 첨부(일부 CDN이 헤더 없는 요청 차단).
     if (!success) {
       try {
-        const r = await FileSystem.downloadAsync(sourceUri, destUri);
+        const origin = (String(sourceUri).match(/^(https?:\/\/[^/]+)/) || [])[1];
+        const dlHeaders = /^https?:\/\//i.test(String(sourceUri))
+          ? { "User-Agent": SCRAPER_UA, ...(origin ? { "Referer": origin + "/" } : {}) }
+          : undefined;
+        const r = await FileSystem.downloadAsync(sourceUri, destUri, dlHeaders ? { headers: dlHeaders } : undefined);
         if (r.status === 200) success = true;
         else errors.push("download: status=" + r.status);
       } catch (e2) {
@@ -42860,7 +42933,7 @@ function AppContent() {
         return false;
       }
     }
-    let items = buildScrapeItems(meta, ctx?.getCurrent ? ctx.getCurrent() : {}, { gaiden: !!ctx?.supportsGaiden });
+    let items = buildScrapeItems(meta, ctx?.getCurrent ? ctx.getCurrent() : {}, { gaiden: !!ctx?.supportsGaiden, fresh: !!ctx?.freshTarget });
     if (Array.isArray(ctx?.fields)) items = items.filter(it => ctx.fields.includes(it.key)); // 화면별 허용 필드(예: 보충=title 제외)
     if (items.length === 0) { Alert.alert("불러오기", `‘${meta.title || "작품"}’ — 새로 채울 정보가 없어요.`); return false; }
     setScrapeModal({ meta, items, apply: ctx?.apply, label: ctx?.label || "" });
@@ -42916,6 +42989,7 @@ function AppContent() {
     label: "신규 등록",
     kind: "new", // 🆕 v7.28.52: 제목검색 중복 판정용(이미 등록된 작품이면 기존작 편집 제안)
     supportsGaiden: true, // 🆕 v7.44.6: 신규 등록은 외전/완결일 저장 배선 완료(addNovel INSERT)
+    freshTarget: true, // 🆕 v7.44.7: 빈 폼이므로 긁어온 값 기본 체크 ON(완결작 등 기본값과 달라도 자동 체크)
     getCurrent: () => ({ title, author, note, tags, total_episodes: totalEpisodes, work_status: newWorkStatus, cover: newCoverImage, major_genre: newMajorGenre, sub_genre: newSubGenre, start_year: newStartYear, end_year: newEndYear, platforms, link: newLink, completed_at: newCompletedAt, gaiden_status: newGaidenStatus, gaiden_total_episodes: newGaidenTotalEpisodes, gaiden_start_at: newGaidenStartAt, gaiden_completed_at: newGaidenCompletedAt }),
     apply: (f) => {
       if (f.title != null) setTitle(f.title);
@@ -42942,6 +43016,7 @@ function AppContent() {
   const scrapeCtxPlanned = () => ({
     label: "예정 등록",
     kind: "planned", // 🆕 v7.28.52: 제목검색 중복 판정용
+    freshTarget: true, // 🆕 v7.44.7: 예정도 빈 폼 → 긁어온 값 기본 체크 ON
     getCurrent: () => ({ title: plannedTitle, author: plannedAuthor, note: plannedNote, tags: plannedTags, total_episodes: plannedTotalEpisodes, work_status: plannedWorkStatus, cover: plannedCoverImage, major_genre: plannedMajorGenre, sub_genre: plannedSubGenre, start_year: plannedStartYear, end_year: plannedEndYear, platforms: plannedPlatforms, link: plannedLink }),
     apply: (f) => {
       if (f.title != null) setPlannedTitle(f.title);
