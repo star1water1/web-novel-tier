@@ -2,11 +2,24 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.41.3 (코드 리뷰 수정 — 외전 분리 엣지케이스 4건)                      ║
+ * ║  버전: 7.41.4 (본편/외전 분리 — 카카오페이지 확장, 폰 검증 대기)               ║
  * ║  최종 수정: 2026-06-27                                                        ║
  * ║  총 라인 수: 약 69,360줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🟡 v7.41.4 본편/외전 분리 — 카카오페이지 (폰 검증 대기) (2026-06-27)          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 카카오 회차 데이터는 page.kakao.com/graphql(익명 _kpwtkn 쿠키)에 있으나 우리    ║
+ * ║ DC IP는 302→403 차단(api-page는 네이티브 앱 인증 필요) → 환경상 실호출 검증     ║
+ * ║ 불가. Hitomi-Downloader의 *실작동* 쿼리(contentHomeProductList: 제목+productId  ║
+ * ║ / viewerInfo: item.lastReleasedDate)로 구현. desc(최신순)로 외전 앞에서 잡고     ║
+ * ║ 경계 회차만 viewerInfo로 날짜 조회. 직전 content GET으로 _kpwtkn 쿠키 확보       ║
+ * ║ (노벨피아와 동일 네이티브 쿠키스토어 방식). 전부 방어적 — 실패 시 기존          ║
+ * ║ lastSlideAddedDate 완결일 유지(무회귀). 순수 파서 회귀 +9 → 283/283.           ║
+ * ║ ※카카오는 폰(주거망 IP)에서만 동작 — 폰 1회 확인 후 sortType/마커 조정 가능.    ║
+ * ║ ※문피아는 기본 회차API가 익명엔 첫 100화 캡(페이징 게이트)이라 보류(로그인 필요).║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔍 v7.41.3 코드 리뷰 수정 — 외전 분리 엣지케이스 4건 (2026-06-27)             ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -14769,6 +14782,64 @@ async function fetchNovelpiaEpisodeSplit(url, opts = {}) {
   if (eps.every(e => isGaidenTitle(e.title))) { const more = await post(1); if (more.length) eps = eps.concat(more); }
   return splitEpisodesByGaiden(eps);
 }
+// 🆕 v7.41.4: 카카오페이지 본편/외전 분리 — page.kakao.com/graphql(익명, _kpwtkn 쿠키). 회차목록은 contentHomeProductList(제목+productId),
+//   날짜는 회차별 viewerInfo.item.lastReleasedDate(목록엔 날짜 없음). 쿼리는 Hitomi-Downloader 검증분. ※우리 DC IP는 차단 — 폰(주거망) 검증 필요.
+function parseKakaoProductList(jsonText) {
+  let j; try { j = JSON.parse(jsonText); } catch { return null; }
+  const pl = j && j.data && j.data.contentHomeProductList;
+  if (!pl || !Array.isArray(pl.edges)) return null;
+  const episodes = pl.edges.map(e => {
+    const s = e && e.node && e.node.single;
+    return s ? { productId: String(s.productId == null ? "" : s.productId), title: String(s.title == null ? "" : s.title) } : null;
+  }).filter(x => x && x.productId);
+  return { episodes, hasNext: !!(pl.pageInfo && pl.pageInfo.hasNextPage), total: Number(pl.totalCount) || 0 };
+}
+function parseKakaoViewerDate(jsonText) {
+  let j; try { j = JSON.parse(jsonText); } catch { return 0; }
+  const it = j && j.data && j.data.viewerInfo && j.data.viewerInfo.item;
+  const d = it && it.lastReleasedDate; // ISO 'YYYY-MM-DD…'
+  return d ? scraperDateToTs(String(d)) : 0;
+}
+async function fetchKakaoEpisodeSplit(url, opts = {}) {
+  const sid = (String(url).match(/\/content\/(\d+)/) || [])[1];
+  if (!sid) return null;
+  const gql = async (query, variables, op) => {
+    const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
+    try {
+      const res = await fetch("https://page.kakao.com/graphql", {
+        method: "POST",
+        headers: { ...SCRAPER_HEADERS, "Content-Type": "application/json", "Referer": url, "Origin": "https://page.kakao.com" },
+        body: JSON.stringify({ query, operationName: op, variables }), redirect: "follow", signal,
+      });
+      if (!res.ok) return null;
+      return await res.text();
+    } catch { return null; } finally { cleanup(); }
+  };
+  // 1) 회차 목록(desc=최신순 → 외전이 앞). 본편이 처음 등장하면(경계 도달) 중단 — 보통 1~2페이지.
+  const LIST_Q = "query contentHomeProductList($seriesId: Long!, $after: String, $sortType: String) { contentHomeProductList(seriesId: $seriesId, after: $after, sortType: $sortType) { totalCount pageInfo { hasNextPage } edges { node { ... on SingleListViewItem { single { productId title } } } } } }";
+  let collected = [], after = "0", pages = 0;
+  while (pages < 12) {
+    const txt = await gql(LIST_Q, { seriesId: Number(sid), after, sortType: "desc" }, "contentHomeProductList");
+    const pl = txt ? parseKakaoProductList(txt) : null;
+    if (!pl || !pl.episodes.length) break;
+    collected = collected.concat(pl.episodes);
+    pages++; after = String(collected.length);
+    if (collected.some(e => !isGaidenTitle(e.title)) || !pl.hasNext) break; // 본편 등장=경계 도달
+  }
+  if (!collected.length) return null;
+  // desc: [외전…외전, 본편(경계)…]. 외전 완결=첫 외전, 외전 시작=마지막 외전, 본편 완결=경계 첫 본편.
+  const gaiden = collected.filter(e => isGaidenTitle(e.title));
+  const mainNewest = collected.find(e => !isGaidenTitle(e.title));
+  const VIEW_Q = "query viewerInfo($seriesId: Long!, $productId: Long!) { viewerInfo(seriesId: $seriesId, productId: $productId) { item { productId lastReleasedDate } } }";
+  const dateOf = async (pid) => { if (!pid) return 0; const t = await gql(VIEW_Q, { seriesId: Number(sid), productId: Number(pid) }, "viewerInfo"); return t ? parseKakaoViewerDate(t) : 0; };
+  const mainCompletedAt = mainNewest ? await dateOf(mainNewest.productId) : 0;
+  let gaidenStartAt = 0, gaidenCompletedAt = 0;
+  if (gaiden.length) {
+    gaidenCompletedAt = await dateOf(gaiden[0].productId);
+    gaidenStartAt = gaiden.length > 1 ? await dateOf(gaiden[gaiden.length - 1].productId) : gaidenCompletedAt;
+  }
+  return { mainCompletedAt, hasGaiden: gaiden.length > 0, gaidenCount: gaiden.length, gaidenStartAt, gaidenCompletedAt };
+}
 // 🆕 v7.41.1: 분리 결과(split)를 meta에 적용(네이버·노벨피아 공통). 본편 완결일·연도, 외전 회차수·시작/완결일·상태, total=본편(전체-외전).
 function applyEpisodeSplitToMeta(meta, split, opts) {
   if (!meta || !split) return meta;
@@ -14961,6 +15032,11 @@ async function fetchNovelMeta(url, opts = {}) {
   //   외전은 별도 series라 total 보정 생략(noTotalAdjust). 상세 JSON-LD는 1권(시작) 날짜뿐이라 본편 완결일은 여기서 채움.
   if (platform === "리디" && meta.workStatus === "completed") {
     try { const sp = await fetchRidiSplit(url, opts); if (sp) applyEpisodeSplitToMeta(meta, sp, { noTotalAdjust: true }); } catch {}
+  }
+  // 🆕 v7.41.4: 카카오 완결작 — GraphQL(contentHomeProductList+viewerInfo)로 본편/외전 분리. 실패 시 기존 lastSlideAddedDate 완결일 유지(무회귀).
+  //   ※total 신뢰도 불확실 → noTotalAdjust. 직전 content 페이지 GET으로 _kpwtkn 쿠키가 잡혀 GraphQL 인증됨(네이티브 쿠키스토어).
+  if (platform === "카카오페이지" && meta.workStatus === "completed") {
+    try { const sp = await fetchKakaoEpisodeSplit(url, opts); if (sp && (sp.mainCompletedAt || sp.hasGaiden)) applyEpisodeSplitToMeta(meta, sp, { noTotalAdjust: true }); } catch {}
   }
   return meta;
 }
@@ -16994,7 +17070,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.41.3";
+const APP_VERSION = "7.41.4";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -17020,6 +17096,16 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.41.4", date: "2026-06-27",
+    title: "🌿 본편/외전 분리 — 카카오도 (시험)",
+    highlights: [
+      { type: "new", text: "🌿 카카오페이지 완결작도 본편/외전 완결일을 분리해서 가져오도록 추가했어요. (회차 정보를 카카오에서 직접 받아와요 — 일부 작품에서 안 될 수 있고, 그땐 기존처럼 마지막 회차 날짜를 완결일로 써요.)" },
+    ],
+    details: [
+      "카카오는 회차 데이터 접근 방식이 까다로워, 잘 동작하는지 실제 기기에서 확인이 더 필요한 단계예요. 안 되면 자동으로 기존 방식으로 돌아가니 정보가 비뚤어지진 않아요.",
+    ],
+  },
   {
     version: "7.41.3", date: "2026-06-27",
     title: "🔍 외전 분리 정확도 보강",
