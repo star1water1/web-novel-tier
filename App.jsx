@@ -2,11 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.42.1 (카카오 GraphQL 폰 실측 진단 — 긁기 진단에 GQL 프로브 추가)      ║
+ * ║  버전: 7.42.2 (카카오 GraphQL 전용 UA(KakaoPageWeb/graphql) 시도)              ║
  * ║  최종 수정: 2026-06-27                                                        ║
- * ║  총 라인 수: 약 69,430줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 69,440줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔑 v7.42.2 카카오 GraphQL 전용 UA(KakaoPageWeb/graphql) 시도 (2026-06-27)     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ v7.42.1 폰 캡처 결과: page.kakao.com/graphql=200이지만 JSON 아닌 '안티봇 HTML  ║
+ * ║ 벽', bff-page=404, api-page=권한인증실패(토큰 필요). 즉 일반 UA POST는 막힘.    ║
+ * ║ 번들 실측 단서: 웹클라는 GraphQL 요청에만 UA에 ' KakaoPageWeb/graphql' 마커를   ║
+ * ║ 붙임 → 안티봇 벽이 이 UA 게이트일 가능성. fetchKakaoMetaGql·진단 프로브를       ║
+ * ║ 전용 UA로 교체(+Accept json). 진단은 page(일반UA)/page(전용UA)/api-page(전용)   ║
+ * ║ 3종 비교 캡처. 전용UA로 page가 JSON 주면 복구 완료, 아니면 카카오 로그인 필요   ║
+ * ║ (api-page 토큰)로 방향 전환 — 폰 캡처 1회로 판정. 무회귀(파서/경로 동일).       ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔬 v7.42.1 카카오 GraphQL 폰 실측 진단 추가 (2026-06-27)                      ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -14887,6 +14898,10 @@ function parseKakaoOverview(jsonText, url) {
 //   Referer 미설정 시 403(korea-webtoon-api 주석) → 작품 URL을 Referer로. 직전 content GET으로 _kpwtkn 확보(네이티브 쿠키스토어).
 //   ※우리 DC IP는 page.kakao 302 차단 → 폰(주거망)에서만 동작. 실패는 조용히 null(상위에서 기존 안내).
 const KAKAO_OVERVIEW_Q = "query contentHomeOverview($seriesId: Long!) { contentHomeOverview(seriesId: $seriesId) { content { seriesId title thumbnail category categoryType subcategory onIssue authors description pubPeriod ageGrade lastSlideAddedDate startSaleDt } } }";
+// 🆕 v7.42.2: 카카오 웹클라가 GraphQL 요청에만 붙이는 전용 UA 마커(번들 실측: base UA + " KakaoPageWeb/graphql").
+//   일반 브라우저 UA로 POST하면 안티봇 HTML 벽(200이지만 JSON 아님)이 떠 — 이 마커로 통과 시도.
+const KAKAO_GQL_UA = SCRAPER_UA + " KakaoPageWeb/graphql";
+const KAKAO_GQL_HEADERS = { ...SCRAPER_HEADERS, "User-Agent": KAKAO_GQL_UA, "Accept": "application/json, text/plain, */*", "Content-Type": "application/json", "Origin": "https://page.kakao.com" };
 async function fetchKakaoMetaGql(url, opts = {}) {
   const sid = (String(url).match(/\/content\/(\d+)/) || [])[1];
   if (!sid) return null;
@@ -14894,7 +14909,7 @@ async function fetchKakaoMetaGql(url, opts = {}) {
   try {
     const res = await fetch("https://page.kakao.com/graphql", {
       method: "POST",
-      headers: { ...SCRAPER_HEADERS, "Content-Type": "application/json", "Referer": url, "Origin": "https://page.kakao.com" },
+      headers: { ...KAKAO_GQL_HEADERS, "Referer": url },
       body: JSON.stringify({ query: KAKAO_OVERVIEW_Q, operationName: "contentHomeOverview", variables: { seriesId: Number(sid) } }),
       redirect: "follow", signal,
     });
@@ -42624,14 +42639,20 @@ function AppContent() {
       let kakaoProbe = "";
       const ksid = (url.match(/\/content\/(\d+)/) || [])[1];
       if (ksid && /kakao/i.test(url)) {
-        const eps = ["https://page.kakao.com/graphql", "https://bff-page.kakao.com/graphql", "https://api-page.kakao.com/graphql"];
-        for (const ep of eps) {
+        const body = JSON.stringify({ query: KAKAO_OVERVIEW_Q, operationName: "contentHomeOverview", variables: { seriesId: Number(ksid) } });
+        // 🆕 v7.42.2: 후보별로 '일반 UA' vs '전용 GraphQL UA(KakaoPageWeb/graphql)'를 비교 — 안티봇 벽이 UA 때문인지 확정.
+        const trials = [
+          { ep: "https://page.kakao.com/graphql", hdr: { ...SCRAPER_HEADERS, "Content-Type": "application/json", "Origin": "https://page.kakao.com" }, tag: "page+일반UA" },
+          { ep: "https://page.kakao.com/graphql", hdr: { ...KAKAO_GQL_HEADERS }, tag: "page+전용UA" },
+          { ep: "https://api-page.kakao.com/graphql", hdr: { ...KAKAO_GQL_HEADERS }, tag: "api-page+전용UA" },
+        ];
+        for (const t of trials) {
           const { signal: s2, cleanup: c2 } = resolveAbortSignal({ timeoutMs: 15000 });
           try {
-            const pr = await fetch(ep, { method: "POST", headers: { ...SCRAPER_HEADERS, "Content-Type": "application/json", "Referer": url, "Origin": "https://page.kakao.com" }, body: JSON.stringify({ query: KAKAO_OVERVIEW_Q, operationName: "contentHomeOverview", variables: { seriesId: Number(ksid) } }), redirect: "follow", signal: s2 });
-            const body = await pr.text();
-            kakaoProbe += `\n[GQL ${ep}]\n  status=${pr.status} len=${body.length}\n  ${body.slice(0, 1000).replace(/\n/g, "\n  ")}\n`;
-          } catch (e2) { kakaoProbe += `\n[GQL ${ep}] ERR ${e2?.name === "AbortError" ? "timeout" : (e2?.message || e2)}\n`; }
+            const pr = await fetch(t.ep, { method: "POST", headers: { ...t.hdr, "Referer": url }, body, redirect: "follow", signal: s2 });
+            const txt = await pr.text();
+            kakaoProbe += `\n[${t.tag}] ${t.ep}\n  status=${pr.status} len=${txt.length}\n  ${txt.slice(0, 800).replace(/\n/g, "\n  ")}\n`;
+          } catch (e2) { kakaoProbe += `\n[${t.tag}] ERR ${e2?.name === "AbortError" ? "timeout" : (e2?.message || e2)}\n`; }
           finally { c2(); }
         }
       }
