@@ -2,11 +2,19 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.39.0 (검색 사이트 온오프 · 조아라 추가)                              ║
- * ║  최종 수정: 2026-06-26                                                        ║
+ * ║  버전: 7.39.1 (검색 사이트 토글 setState 부수효과 분리)                       ║
+ * ║  최종 수정: 2026-06-27                                                        ║
  * ║  총 라인 수: 약 69,360줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.39.1 검색 사이트 토글 부수효과 분리 (2026-06-27)                        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ toggleSearchPlatform이 전역 변이·DB 저장을 setState 업데이터 함수 안에서      ║
+ * ║ 수행해, React가 업데이터를 중복 호출하는 경로(StrictMode 등)에서 중복 저장     ║
+ * ║ 위험이 있었다. next를 클로저 state로 먼저 계산 → setState엔 값만 전달하고      ║
+ * ║ 전역 동기화·saveGlobalAiConfig는 업데이터 밖에서 1회 수행(동작 동일·순수화).   ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔎 v7.39.0 제목검색 사이트 온오프 · 조아라 추가 (2026-06-26)                  ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -16590,7 +16598,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.39.0";
+const APP_VERSION = "7.39.1";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -16616,6 +16624,13 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.39.1", date: "2026-06-27",
+    title: "🔧 검색 사이트 토글 안정화",
+    highlights: [
+      { type: "fix", text: "‘제목 검색 사이트’ 켜고 끄기의 내부 저장 처리를 다듬었어요. 동작은 같고, 드물게 설정이 두 번 저장될 수 있던 부분을 정리했어요." },
+    ],
+  },
   {
     version: "7.39.0", date: "2026-06-26",
     title: "🔎 검색 사이트 온오프 · 조아라 추가",
@@ -42796,12 +42811,12 @@ function AppContent() {
 
   // 🆕 v7.39.0: 제목검색 대상 사이트 토글 — 전역(globalSearchPlatforms) 동기화 + ai_config 영속.
   function toggleSearchPlatform(name) {
-    setSearchPlatforms(prev => {
-      const next = { ...prev, [name]: prev[name] === false };
-      globalSearchPlatforms = { ...next };
-      try { saveGlobalAiConfig({ search_platforms: next }); } catch (e) { console.warn("[search] 검색 사이트 설정 저장 실패:", e?.message); }
-      return next;
-    });
+    // 🔧 v7.39.1: 부수효과(전역 변이·DB 저장)를 setState 업데이터 밖으로 분리.
+    //   업데이터는 순수해야 안전(React가 중복 호출해도 사이드이펙트 중복 X). 토글은 사용자 탭 단발이라 클로저 state로 충분.
+    const next = { ...searchPlatforms, [name]: searchPlatforms[name] === false };
+    setSearchPlatforms(next);
+    globalSearchPlatforms = { ...next };
+    try { saveGlobalAiConfig({ search_platforms: next }); } catch (e) { console.warn("[search] 검색 사이트 설정 저장 실패:", e?.message); }
   }
 
   // 🆕 v7.33.0: 유형그룹 로드 — 없으면 기본 GENERAL_TAGS + 커스텀 카테고리에서 1회 시드(흡수, 비파괴)
