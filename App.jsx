@@ -2,11 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.44.10 (신규·예정 폼에 외전/완결일 표시 — 불러온 값 가시화)            ║
+ * ║  버전: 7.44.11 (보충 경로 외전/완결일·연도 저장 복구 — editItem 단일 모델化)  ║
  * ║  최종 수정: 2026-06-27                                                        ║
- * ║  총 라인 수: 약 69,760줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 71,090줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠 v7.44.11 보충 경로 외전/완결일·연도 저장 복구 — editItem 단일 모델 (2026-06-27)║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 검수 발견(가장 시급): v7.44.8이 '보충 파리티 완료'라 선언했으나 실제로는 보충   ║
+ * ║ 화면이 saveEdit이 아닌 자체 UPDATE를 쓰고 그 SQL에 완결일·외전 시작/완결일·     ║
+ * ║ 연재연도 컬럼이 아예 없었음. 게다가 보충 화면·저장은 전부 editItem 바인딩인데    ║
+ * ║ 보충 로드는 edit state를 초기화하지 않아(스테일), 공유 applyEditFields(편집     ║
+ * ║ 모달용=edit state 타깃)로 적용된 work_status·link·외전·완결일이 editItem에      ║
+ * ║ 안 실려 저장 시 조용히 소실 + diff '현재값'도 직전 편집 세션 값으로 오표시됨.    ║
+ * ║ 근본 수정(editItem 단일 모델 일관화): ①보충 전용 applySupplementFields 신설    ║
+ * ║ (모든 필드 editItem 직접 반영). ②scrapeCtxSupplement.getCurrent를 editItem     ║
+ * ║ 기준으로(정확한 diff). ③보충 저장 UPDATE에 start_year·end_year·completed_at·   ║
+ * ║ gaiden_start_at·gaiden_completed_at 5칸 추가. 편집 모달은 무영향(종전 그대로).  ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 👁 v7.44.10 신규·예정 폼에 외전/완결일 표시 — 불러온 값 가시화 (2026-06-27)   ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -43065,6 +43079,35 @@ function AppContent() {
     if (f.gaiden_start_at != null) setEditGaidenStartAt(Number(f.gaiden_start_at) || 0);
     if (f.gaiden_completed_at != null) setEditGaidenCompletedAt(Number(f.gaiden_completed_at) || 0);
   };
+  // 🆕 v7.44.11: 보충(supplement) 전용 스크랩 적용 — editItem 단일 모델.
+  //   보충 화면·저장은 editItem만 읽고(연재상태·링크·표지·외전·완결일 전부 editItem 바인딩 — 58082/58185/
+  //   58226/58015 등), 보충 로드(53062/53088)는 edit state(editWorkStatus/editLink/editCompletedAt…)를
+  //   초기화하지 않아 스테일이다. 종전 보충이 공유 applyEditFields(편집 모달용=edit state 타깃)를 쓰던 탓에
+  //   state-backed 필드(본편완결일·외전 시작/완결일·외전상태·연재상태·연도·링크)가 editItem에 안 실려
+  //   보충 저장에서 조용히 소실됐다(v7.44.8 '파리티 완료' 주장과 코드 불일치). 모든 필드를 editItem에
+  //   직접 반영해 일관화 — 편집 모달(scrapeCtxEdit→applyEditFields)은 종전 그대로(무영향).
+  const applySupplementFields = (f) => {
+    updateEditItem(prev => prev ? {
+      ...prev,
+      ...(f.author != null ? { author: f.author } : {}),
+      ...(f.note != null ? { note: f.note } : {}),
+      ...(f.tags != null ? { tags: f.tags } : {}),
+      ...(f.total_episodes != null ? { total_episodes: Number(f.total_episodes) || 0 } : {}),
+      ...(f.major_genre != null ? { major_genre: genJson(f.major_genre) } : {}),
+      ...(f.sub_genre != null ? { sub_genre: genJson(f.sub_genre) } : {}),
+      ...(f.platforms != null ? { platforms: genJson(f.platforms) } : {}),
+      ...(f.work_status != null ? { work_status: f.work_status } : {}),
+      ...(f.cover != null ? { cover_image: f.cover } : {}),
+      ...(f.start_year != null ? { start_year: Number(f.start_year) || 0 } : {}),
+      ...(f.end_year != null ? { end_year: Number(f.end_year) || 0 } : {}),
+      ...(f.link != null ? { link: f.link } : {}),
+      ...(f.completed_at != null ? { completed_at: Number(f.completed_at) || 0 } : {}),
+      ...(f.gaiden_status != null ? { gaiden_status: f.gaiden_status } : {}),
+      ...(f.gaiden_total_episodes != null ? { gaiden_total_episodes: Number(f.gaiden_total_episodes) || 0 } : {}),
+      ...(f.gaiden_start_at != null ? { gaiden_start_at: Number(f.gaiden_start_at) || 0 } : {}),
+      ...(f.gaiden_completed_at != null ? { gaiden_completed_at: Number(f.gaiden_completed_at) || 0 } : {}),
+    } : prev);
+  };
   const scrapeCtxNew = () => ({
     label: "신규 등록",
     kind: "new", // 🆕 v7.28.52: 제목검색 중복 판정용(이미 등록된 작품이면 기존작 편집 제안)
@@ -43123,10 +43166,13 @@ function AppContent() {
   });
   const scrapeCtxSupplement = () => ({
     label: "보충",
-    supportsGaiden: true, // 🆕 v7.44.8: 기존작 보충도 외전/완결일 반영(saveEdit 배선 완료)
+    supportsGaiden: true, // 🆕 v7.44.8: 기존작 보충도 외전/완결일 반영
     fields: ["author", "note", "tags", "total_episodes", "work_status", "cover", "major_genre", "sub_genre", "start_year", "end_year", "platforms", "link", "completed_at", "gaiden_status", "gaiden_total_episodes", "gaiden_start_at", "gaiden_completed_at"],
-    getCurrent: () => ({ author: editItem?.author, note: editItem?.note, tags: editItem?.tags, total_episodes: editItem?.total_episodes, work_status: editWorkStatus, cover: editCoverImage, major_genre: editItem?.major_genre, sub_genre: editItem?.sub_genre, start_year: editStartYear, end_year: editEndYear, platforms: editItem?.platforms, link: editLink, completed_at: editCompletedAt, gaiden_status: editGaidenStatus, gaiden_total_episodes: editGaidenTotalEpisodes, gaiden_start_at: editGaidenStartAt, gaiden_completed_at: editGaidenCompletedAt }),
-    apply: applyEditFields, // 🆕 v7.44.8: 편집과 동일 단일 적용(보충이 state-backed 필드를 누락하던 버그 동시 수정)
+    // 🆕 v7.44.11: 보충은 editItem 단일 모델 — getCurrent/apply 모두 editItem 기준.
+    //   종전 edit state 참조는 보충 로드가 edit state를 초기화하지 않아(스테일) diff '현재값'이
+    //   직전 편집 세션 값으로 오표시되고, 적용값도 editItem에 안 실려 저장에서 누락됐다.
+    getCurrent: () => ({ author: editItem?.author, note: editItem?.note, tags: editItem?.tags, total_episodes: editItem?.total_episodes, work_status: editItem?.work_status, cover: editItem?.cover_image, major_genre: editItem?.major_genre, sub_genre: editItem?.sub_genre, start_year: editItem?.start_year, end_year: editItem?.end_year, platforms: editItem?.platforms, link: editItem?.link, completed_at: editItem?.completed_at, gaiden_status: editItem?.gaiden_status, gaiden_total_episodes: editItem?.gaiden_total_episodes, gaiden_start_at: editItem?.gaiden_start_at, gaiden_completed_at: editItem?.gaiden_completed_at }),
+    apply: applySupplementFields, // 🆕 v7.44.11: editItem 타깃 적용(보충 저장이 editItem만 읽으므로 파리티 성립)
   });
   const scrapeCtxEdit = () => ({
     label: "편집",
@@ -58299,7 +58345,7 @@ async function importJSON() {
                           try { plats = JSON.parse(current.platforms || "[]"); } catch { plats = []; }
                           
                           await exec(
-                            `UPDATE novels SET author=?, total_episodes=?, read_count=?, read_count_updated_at=?, platforms=?, tags=?, major_genre=?, sub_genre=?, note=?, tag_data=?, cover_image=?, link=?, status=?, work_status=?, gaiden_status=?, gaiden_read_count=?, gaiden_total_episodes=?, reread_count=?, memorable_quote=? WHERE id=?`,
+                            `UPDATE novels SET author=?, total_episodes=?, read_count=?, read_count_updated_at=?, platforms=?, tags=?, major_genre=?, sub_genre=?, note=?, tag_data=?, cover_image=?, link=?, status=?, work_status=?, gaiden_status=?, gaiden_read_count=?, gaiden_total_episodes=?, reread_count=?, memorable_quote=?, start_year=?, end_year=?, completed_at=?, gaiden_start_at=?, gaiden_completed_at=? WHERE id=?`,
                             [
                               current.author?.trim() || "",
                               Number(current.total_episodes) || 0,
@@ -58320,6 +58366,13 @@ async function importJSON() {
                               Number(current.gaiden_total_episodes) || 0,
                               Math.max(1, Number(current.reread_count) || 1),
                               current.memorable_quote?.trim() || "",
+                              // 🆕 v7.44.11: 보충 외전/완결일·연재연도 파리티 — editItem 기준(스크랩 미적용 시
+                              //   editItem={...novel}이라 기존값 그대로 보존, 무회귀). 종전 SQL에 부재해 소실됐던 5칸.
+                              Number(current.start_year) || 0,
+                              Number(current.end_year) || 0,
+                              Number(current.completed_at) || 0,
+                              Number(current.gaiden_start_at) || 0,
+                              Number(current.gaiden_completed_at) || 0,
                               current.id,
                             ]
                           );
