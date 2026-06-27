@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, SCRAPER_HEADERS, SCRAPER_UA };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, SCRAPER_HEADERS, SCRAPER_UA };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -401,6 +401,13 @@ eq("ridiPublishDate: 날짜 없음 → {null,0}", S.ridiPublishDate({}), { year:
   eq("카카오: 연재중은 완결일 미설정", im.completedAt, 0);
   eq("카카오: 연재중은 endYear null", im.endYear, null);
 }
+
+// ── 🆕 v7.40.2: 검색 후보 → 상세 메타 작가/표지 폴백 보강(네이버 작가 누락 해결) ──
+eq("backfill: 상세 작가 비면 후보 작가로 채움", S.backfillMetaFromCandidate({ title: "T", author: "", coverUrl: "" }, { author: "남희성", coverUrl: "c.jpg" }), { title: "T", author: "남희성", coverUrl: "c.jpg" });
+eq("backfill: 상세 작가 있으면 후보로 덮지 않음", S.backfillMetaFromCandidate({ title: "T", author: "상세작가" }, { author: "후보작가" }).author, "상세작가");
+eq("backfill: 후보 없으면 원본 그대로", S.backfillMetaFromCandidate({ title: "T", author: "" }, null), { title: "T", author: "" });
+eq("backfill: 후보 작가 공백 트림", S.backfillMetaFromCandidate({ author: "" }, { author: "  김작가  " }).author, "김작가");
+truthy("backfill: meta null 방어", S.backfillMetaFromCandidate(null, { author: "X" }) === null);
 
 console.log(`\n${fail === 0 ? "🎉 ALL PASS" : "⚠️  FAILED"}  pass=${pass} fail=${fail}`);
 process.exit(fail === 0 ? 0 : 1);

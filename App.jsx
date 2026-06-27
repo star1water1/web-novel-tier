@@ -2,11 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.40.1 (연재 시작/완결일 보강 — 네이버 시작·리디 완결·카카오 완결)      ║
+ * ║  버전: 7.40.2 (네이버 작가 누락 수정 — 검색 후보 작가/표지 폴백 보강)          ║
  * ║  최종 수정: 2026-06-27                                                        ║
  * ║  총 라인 수: 약 69,360줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🩹 v7.40.2 네이버 작가 누락 수정 — 검색 후보 폴백 보강 (2026-06-27)           ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 네이버시리즈 검색 카드엔 작가(<span class="author">)가 있는데, 후보 선택 시     ║
+ * ║ 상세를 재긁기하면 네이버 상세 SSR엔 작가가 없어 사라졌다. 단건·일괄·일괄매핑     ║
+ * ║ 모두 동일 패턴(상세 재긁기로 후보값 폐기). backfillMetaFromCandidate 헬퍼로      ║
+ * ║ 상세가 비운 작가·표지만 후보값으로 보강(상세 우선·빈 칸만). 3경로 + runScrape    ║
+ * ║ FromUrl(cand) 일괄 적용. 회귀 +5 → 221/221. ※링크-단독 불러오기는 후보가       ║
+ * ║ 없어 네이버 작가 보강 불가(검색/일괄로 등록하면 채워짐).                        ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 📅 v7.40.1 연재 시작/완결일 보강 — 못 잡던 플랫폼 3종 (2026-06-27)            ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -14632,6 +14642,16 @@ async function fetchRidiCompletion(url, opts = {}) {
     return ridiPublishDate(book); // 마지막 권 id 없거나 자기 자신 → 이 책 출간일로 폴백
   } catch { return { year: null, ts: 0 }; } finally { cleanup(); }
 }
+// 🆕 v7.40.2: 검색 후보가 가진 기본값(작가·표지)을 상세 긁기 결과에 폴백 보강.
+//   네이버시리즈는 검색 결과 카드엔 작가(<span class="author">)가 있지만 상세 SSR엔 없어,
+//   후보 선택 시 상세를 재긁기하면 작가가 사라졌다. 상세가 채운 값은 우선(보존)하고 빈 값만 후보로 채운다. 순수.
+function backfillMetaFromCandidate(meta, cand) {
+  if (!meta || !cand) return meta;
+  const out = { ...meta };
+  if (!out.author && cand.author) out.author = String(cand.author).trim();
+  if (!out.coverUrl && cand.coverUrl) out.coverUrl = cand.coverUrl;
+  return out;
+}
 async function fetchNovelMeta(url, opts = {}) {
   if (!url || !/^https?:\/\//i.test(String(url).trim())) throw new Error("올바른 링크가 아니에요 (http/https URL 필요)");
   url = String(url).trim();
@@ -16709,7 +16729,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.40.1";
+const APP_VERSION = "7.40.2";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -16735,6 +16755,13 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.40.2", date: "2026-06-27",
+    title: "🩹 네이버 작가 누락 수정",
+    highlights: [
+      { type: "fix", text: "🩹 네이버 시리즈 작품을 제목 검색·일괄로 가져올 때 작가가 비던 문제를 고쳤어요. 검색 결과에 있던 작가를 그대로 채워줘요." },
+    ],
+  },
   {
     version: "7.40.1", date: "2026-06-27",
     title: "📅 연재 시작·완결일 더 채워요",
@@ -42057,13 +42084,14 @@ function AppContent() {
     setScrapeModal({ meta, items, apply: ctx?.apply, label: ctx?.label || "" });
     return true;
   }
-  async function runScrapeFromUrl(url, ctx) {
+  async function runScrapeFromUrl(url, ctx, cand) {
     const u = (url || "").trim();
     if (!u) { Alert.alert("불러오기", "작품 링크를 먼저 입력해 주세요."); return; }
     if (scrapeLoading) return;
     setScrapeLoading(true);
     try {
-      const meta = await fetchNovelMeta(u);
+      // 🆕 v7.40.2: 검색 후보(cand)가 있으면 상세가 비운 작가·표지를 보강(네이버 작가 누락 해결).
+      const meta = backfillMetaFromCandidate(await fetchNovelMeta(u), cand);
       openScrapeFromMeta(meta, ctx);
     } catch (e) {
       Alert.alert("불러오기 실패", e?.message || String(e));
@@ -42277,7 +42305,7 @@ function AppContent() {
     // 🔎 v7.28.43: 검색 API가 충분한 메타를 준 경우(노벨피아) 상세 재긁기 없이 그대로 사용(SPA og 부실 회피).
     //   🆕 v7.28.53: 이미 등록된 작품 판정/기존작 편집 분기는 openScrapeFromMeta로 일원화(제목검색·링크 공용).
     if (cand?.meta && cand.meta.title) openScrapeFromMeta(cand.meta, ctx);
-    else if (cand?.url) await runScrapeFromUrl(cand.url, ctx); // 그 외(리디·네이버·문피아)는 상세 페이지 긁기
+    else if (cand?.url) await runScrapeFromUrl(cand.url, ctx, cand); // 그 외(리디·네이버·문피아)는 상세 긁기 + 후보 작가/표지 보강
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -42375,7 +42403,7 @@ function AppContent() {
     if (batchAddBusy) return;
     setBatchAddBusy(true);
     try {
-      let meta = (cand?.meta && cand.meta.title) ? cand.meta : (cand?.url ? await fetchNovelMeta(cand.url) : null);
+      let meta = (cand?.meta && cand.meta.title) ? cand.meta : (cand?.url ? backfillMetaFromCandidate(await fetchNovelMeta(cand.url), cand) : null); // 🆕 v7.40.2: 후보 작가/표지 보강
       if (meta && meta.title) setBatchAddDrafts(prev => [...prev, { ...metaToDraft(meta), _meta: meta }]); // 🆕 v7.28.62: 원본 meta 보존(중복 시 비교용)
       else Alert.alert("일괄 추가", "정보를 가져오지 못해 이 작품은 건너뜁니다.");
     } catch (e) {
@@ -42651,7 +42679,7 @@ function AppContent() {
     const work = bulkMapQueue[bulkMapIdx];
     setBulkUpdateBusy(true);
     try {
-      let meta = (cand?.meta && cand.meta.title) ? cand.meta : (cand?.url ? await fetchNovelMeta(cand.url) : null);
+      let meta = (cand?.meta && cand.meta.title) ? cand.meta : (cand?.url ? backfillMetaFromCandidate(await fetchNovelMeta(cand.url), cand) : null); // 🆕 v7.40.2: 후보 작가/표지 보강
       const link = (meta && meta.url) || cand?.url || "";
       if (work && link) {
         const table = work._planned ? "planned_novels" : "novels";
