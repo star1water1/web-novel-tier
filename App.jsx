@@ -14646,26 +14646,33 @@ async function fetchNaverStartYear(url, opts = {}) {
 //   "완결"은 본편 마지막화 제목에 흔히 붙어 오탐이라 마커에서 의도적으로 제외(선행 크롤러 교훈).
 const GAIDEN_TITLE_RE = /(?:^|\s|\[|\(|【|<)(외전|번외|외전편|번외편|番外|外传|外傳|side[\s-]*story|spin[\s-]*?off|스핀오프)/i;
 function isGaidenTitle(s) { return GAIDEN_TITLE_RE.test(String(s == null ? "" : s)); }
-// 🆕 v7.41.0: 네이버 회차목록(volumeMoreList) → 본편/외전 분리. volumnNameText가 본편 "517화"/외전 "외전 483화"로
-//   구조적 구분(실측 전독시). DESC(최신순)로 받으면 외전이 앞 → 본편 완결일·외전 시작/완결일·외전 회차수 산출. 순수.
-//   { hasGaiden, gaidenCount, mainCompletedAt, gaidenStartAt, gaidenCompletedAt } 반환. 회차 없으면 null.
+// 🆕 v7.41.1: 플랫폼 공통 본편/외전 분리 — episodes: [{title, ts}](정렬 무관). 외전 마커 회차 vs 본편 회차의 날짜로 분리.
+//   본편 완결일=본편 회차 최신 / 외전 시작·완결일=외전 회차 min·max / 외전 회차수. 각 플랫폼 페처는 [{title,ts}]만 만들면 됨.
+//   { hasGaiden, gaidenCount, mainCompletedAt, gaidenStartAt, gaidenCompletedAt } 반환. 빈 입력 null.
+function splitEpisodesByGaiden(episodes) {
+  const arr = Array.isArray(episodes) ? episodes : null;
+  if (!arr || !arr.length) return null;
+  let gaidenCount = 0, gMin = 0, gMax = 0, mMax = 0;
+  for (const e of arr) {
+    const ts = Number(e && e.ts) || 0;
+    if (e && isGaidenTitle(e.title)) {
+      gaidenCount++;
+      if (ts) { if (!gMin || ts < gMin) gMin = ts; if (ts > gMax) gMax = ts; }
+    } else if (ts && ts > mMax) {
+      mMax = ts; // 본편 중 최신 회차 날짜 = 본편 완결일
+    }
+  }
+  return { hasGaiden: gaidenCount > 0, gaidenCount, mainCompletedAt: mMax, gaidenStartAt: gMin, gaidenCompletedAt: gMax };
+}
+// 🆕 v7.41.0: 네이버 회차목록(volumeMoreList) → [{title, ts}] 정규화 후 공통 분리기. volumnNameText가 본편 "517화"/외전 "외전 483화".
 function parseNaverEpisodeSplit(jsonText) {
   let data; try { data = JSON.parse(jsonText); } catch { return null; }
   const arr = data && Array.isArray(data.resultData) ? data.resultData : null;
   if (!arr || !arr.length) return null;
-  const tsOf = (it) => scraperDateToTs(String((it && it.lastVolumeUpdateDate) || "")); // scraperDateToTs는 'YYYY-MM-DD …'도 매칭
-  let gaidenCount = 0, gMin = 0, gMax = 0, mMax = 0;
-  for (const it of arr) {
-    const label = (it && (it.volumnNameText || it.subProductName)) || "";
-    const ts = tsOf(it);
-    if (isGaidenTitle(label)) {
-      gaidenCount++;
-      if (ts) { if (!gMin || ts < gMin) gMin = ts; if (ts > gMax) gMax = ts; }
-    } else if (ts && ts > mMax) {
-      mMax = ts; // 본편 중 최신 회차 날짜 = 본편 완결일(DESC 윈도에 경계 본편 포함됨)
-    }
-  }
-  return { hasGaiden: gaidenCount > 0, gaidenCount, mainCompletedAt: mMax, gaidenStartAt: gMin, gaidenCompletedAt: gMax };
+  return splitEpisodesByGaiden(arr.map(it => ({
+    title: (it && (it.volumnNameText || it.subProductName)) || "",
+    ts: scraperDateToTs(String((it && it.lastVolumeUpdateDate) || "")), // scraperDateToTs는 'YYYY-MM-DD …'도 매칭
+  })));
 }
 async function fetchNaverEpisodeSplit(url, opts = {}) {
   const pn = (String(url).match(/productNo=(\d+)/) || [])[1];

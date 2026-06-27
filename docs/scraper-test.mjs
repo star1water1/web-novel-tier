@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, SCRAPER_HEADERS, SCRAPER_UA };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, SCRAPER_HEADERS, SCRAPER_UA };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -444,6 +444,22 @@ eq("isGaidenTitle: '番外' → true", S.isGaidenTitle("番外 1"), true);
 }
 eq("split: 빈 목록 → null", S.parseNaverEpisodeSplit('{"resultData":[]}'), null);
 eq("split: 비JSON → null", S.parseNaverEpisodeSplit("<html>error</html>"), null);
+// 🆕 v7.41.1: 플랫폼 공통 분리기(타 플랫폼 페처는 [{title,ts}]만 만들면 됨) — 노벨피아 "외전)" 마커 등
+{
+  const eps = [
+    { title: "외전) 후일담 2", ts: S.scraperDateToTs("2023-08-09") },
+    { title: "외전) 후일담 1", ts: S.scraperDateToTs("2022-06-03") },
+    { title: "320화", ts: S.scraperDateToTs("2021-10-04") },
+    { title: "319화", ts: S.scraperDateToTs("2021-10-03") },
+  ];
+  const r = S.splitEpisodesByGaiden(eps);
+  eq("splitEpisodes: 외전 2화", r.gaidenCount, 2);
+  eq("splitEpisodes: 본편 완결일=2021-10-04", r.mainCompletedAt, S.scraperDateToTs("2021-10-04"));
+  eq("splitEpisodes: 외전 시작=2022-06-03", r.gaidenStartAt, S.scraperDateToTs("2022-06-03"));
+  eq("splitEpisodes: 외전 완결=2023-08-09", r.gaidenCompletedAt, S.scraperDateToTs("2023-08-09"));
+}
+eq("splitEpisodes: 빈 입력 → null", S.splitEpisodesByGaiden([]), null);
+eq("splitEpisodes: 외전 없음", S.splitEpisodesByGaiden([{ title: "1화", ts: S.scraperDateToTs("2020-01-01") }]).hasGaiden, false);
 
 console.log(`\n${fail === 0 ? "🎉 ALL PASS" : "⚠️  FAILED"}  pass=${pass} fail=${fail}`);
 process.exit(fail === 0 ? 0 : 1);
