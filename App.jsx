@@ -2,11 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.45.1 (티어 색상 선택 UX 개선 — 순환 탭 → 팔레트 그리드 2탭)          ║
+ * ║  버전: 7.45.2 (설정 '🔌 연결' 탭 분리 — LLM·로그인·진단 이동)                 ║
  * ║  최종 수정: 2026-06-27                                                        ║
- * ║  총 라인 수: 약 71,200줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 71,210줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔌 v7.45.2 설정 '연결' 탭 분리 — LLM·플랫폼 로그인·진단 이동 (2026-06-27)     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 설정 서브탭에 '🔌 연결' 신설. 종전 '🏷️ 태그' 탭에 섞여 있던 외부연결 블록을    ║
+ * ║ 통째 이동: AI 제공자·API 키 카드(+발급안내 모달), 미태깅 일괄태그 버튼, 제목    ║
+ * ║ 검색 사이트 토글, 노벨피아·문피아 로그인·카카오 세션 카드(+WebView 모달), 카카오 ║
+ * ║ ·문피아 외전분리 토글, 긁기 진단 카드. (태그 헬스점검·유형그룹·통계 등 태그     ║
+ * ║ 관리 기능은 태그 탭 유지.) 이동에 따라 'API 키 입력 위치' 안내 Alert·버튼·가이드 ║
+ * ║ 문구를 '🔌 연결'로 갱신. 블록 이동은 검증된 라인범위 스크립트로 수행(괄호 균형  ║
+ * ║ before/after 동일 확인 — 무손상). state/함수는 동일 App 스코프라 참조 불변.    ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🎨 v7.45.1 티어 색상 선택 UX — 순환 탭 → 팔레트 그리드 (2026-06-27)           ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -19997,10 +20008,10 @@ const GUIDE_CONTENT = [
         tips: [
           "🔀 중복 표기 — \"현판\"·\"현대판타지\"처럼 같은 뜻 다른 표기를 대표 표기로 한 번에 통일해요. (v7.22.2)",
           "🧩 유의어 후보 — 어근이 같아 보이는 태그(예: 회귀 ↔ 회귀물, 판타지 ↔ 환타지)를 자동으로 찾아 '묶기'를 제안해요. 묶으면 유사 그룹이 돼 취향 분석에서 같은 요인으로 취급되고, 표기 자체는 그대로 유지돼요. (v7.26.0)",
-          "🤖 AI로 더 찾기 — 글자는 달라도 뜻이 같은 유의어(먼치킨 ↔ 사기캐)와, 뜻이 정반대인 상반 쌍(먼치킨 ↔ 약자)까지 AI가 한 번에 찾아줘요. 유의어는 '🧩 유의어 후보', 상반은 '⚡ 상반 후보'에서 등록하면 돼요. 무료로 쓰려면 설정 > 태그에서 제공자를 'Gemini(무료)'로 두고 무료 키만 넣으면 돼요(기본이 무료예요). 같은 화면의 'API 키 발급 방법 자세히 보기'에 단계가 안내돼 있어요. '넓게 점검'을 켜면 1회만 쓴 태그까지 더 꼼꼼히 봐요. 선택 기능이고, 키는 이 기기에만 저장·점검할 때만 태그 목록이 전송돼요. (v7.28.12)",
+          "🤖 AI로 더 찾기 — 글자는 달라도 뜻이 같은 유의어(먼치킨 ↔ 사기캐)와, 뜻이 정반대인 상반 쌍(먼치킨 ↔ 약자)까지 AI가 한 번에 찾아줘요. 유의어는 '🧩 유의어 후보', 상반은 '⚡ 상반 후보'에서 등록하면 돼요. 무료로 쓰려면 설정 > 🔌 연결에서 제공자를 'Gemini(무료)'로 두고 무료 키만 넣으면 돼요(기본이 무료예요). 같은 화면의 'API 키 발급 방법 자세히 보기'에 단계가 안내돼 있어요. '넓게 점검'을 켜면 1회만 쓴 태그까지 더 꼼꼼히 봐요. 선택 기능이고, 키는 이 기기에만 저장·점검할 때만 태그 목록이 전송돼요. (v7.28.12)",
           "🧠 한 번 '무시'했거나 '상반'으로 지정한 쌍은 다시 추천하지 않아요 — AI 점검에도 똑같이 적용돼 쓸수록 내 기준에 맞게 다듬어져요. (v7.28.0)",
           "📐 태그 좌표계를 쓰면, 좌표상 가깝게 둔 태그(직접 의미가 가깝다고 둔 것)도 유의어 후보로 잡아줘요. (v7.28.2)",
-          "📦 미태깅 작품 일괄 태그 — 설정 > 🏷️ 태그에서 태그가 없거나 적은 작품을 골라(최대 20개) 한 번에 AI 추천을 받아요. 작품별 카드에서 고른 태그만 '전체 적용'으로 반영돼요(기존 태그 보존). '모두 펼치기'·'신규 모두 선택'으로 빠르게 검토할 수 있어요. (v7.28.16~)",
+          "📦 미태깅 작품 일괄 태그 — 설정 > 🔌 연결에서 태그가 없거나 적은 작품을 골라(최대 20개) 한 번에 AI 추천을 받아요. 작품별 카드에서 고른 태그만 '전체 적용'으로 반영돼요(기존 태그 보존). '모두 펼치기'·'신규 모두 선택'으로 빠르게 검토할 수 있어요. (v7.28.16~)",
           "📐 좌표계 편집의 '🤖 AI 배치 제안'으로 축 라벨(예: 약함 ↔ 강함)에 맞춰 태그 위치를 1~5로 제안받을 수 있어요. (v7.28.13)",
           "🌐 AI 키·제공자는 한 번만 넣으면 모든 슬롯에서 그대로 동작해요. 응답이 없을 땐 30초 후 자동으로 빠져나와 '점검 중'에 무한정 갇히지 않아요. (v7.28.19~20)",
         ],
@@ -42677,7 +42688,7 @@ function AppContent() {
   async function runAiCoordPlacement() {
     const provider = aiProvider === "gemini" ? "gemini" : "claude";
     const key = ((provider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim();
-    if (!key) { Alert.alert("AI 배치", `먼저 설정 > 🏷️ 태그의 ‘AI 제공자·API 키’에서 ${provider === "gemini" ? "Gemini" : "Claude"} 키를 넣거나, 제공자를 바꿔 주세요.`); return; }
+    if (!key) { Alert.alert("AI 배치", `먼저 설정 > 🔌 연결의 ‘AI 제공자·API 키’에서 ${provider === "gemini" ? "Gemini" : "Claude"} 키를 넣거나, 제공자를 바꿔 주세요.`); return; }
     const sys = editingCoordSystem;
     if (!sys) return;
     const xn = (sys.xAxis?.negative || "").trim(), xp = (sys.xAxis?.positive || "").trim();
@@ -42754,7 +42765,7 @@ function AppContent() {
   async function runAiTagSuggest() {
     const provider = aiProvider === "gemini" ? "gemini" : "claude";
     const key = ((provider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim();
-    if (!key) { Alert.alert("AI 태그", `먼저 설정 > 🏷️ 태그의 ‘AI 제공자·API 키’에서 ${provider === "gemini" ? "Gemini" : "Claude"} 키를 넣거나, 제공자를 바꿔 주세요.`); return; }
+    if (!key) { Alert.alert("AI 태그", `먼저 설정 > 🔌 연결의 ‘AI 제공자·API 키’에서 ${provider === "gemini" ? "Gemini" : "Claude"} 키를 넣거나, 제공자를 바꿔 주세요.`); return; }
     const draft = readTagDraft(aiTagTarget);
     if (!draft.title) { Alert.alert("AI 태그", "제목을 먼저 입력해 주세요. 제목을 보고 추천해요."); return; }
     setAiTagBusy(true);
@@ -42861,7 +42872,7 @@ function AppContent() {
     if (!isImageQuote(q) || !q.uri) return;
     const provider = aiProvider === "gemini" ? "gemini" : "claude";
     const key = ((provider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim();
-    if (!key) { Alert.alert("명대사 텍스트 추출", `먼저 설정 > 🏷️ 태그의 ‘AI 제공자·API 키’에서 ${provider === "gemini" ? "Gemini" : "Claude"} 키를 넣거나, 제공자를 바꿔 주세요.`); return; }
+    if (!key) { Alert.alert("명대사 텍스트 추출", `먼저 설정 > 🔌 연결의 ‘AI 제공자·API 키’에서 ${provider === "gemini" ? "Gemini" : "Claude"} 키를 넣거나, 제공자를 바꿔 주세요.`); return; }
     setOcrBusyIdx(qi);
     try {
       const { base64, mimeType } = await readImageForOcr(q.uri);
@@ -42884,7 +42895,7 @@ function AppContent() {
     if (ocrBusyIdx !== -1) return;
     const provider = aiProvider === "gemini" ? "gemini" : "claude";
     const key = ((provider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim();
-    if (!key) { Alert.alert("명대사 텍스트 추출", `먼저 설정 > 🏷️ 태그의 ‘AI 제공자·API 키’에서 ${provider === "gemini" ? "Gemini" : "Claude"} 키를 넣거나, 제공자를 바꿔 주세요.`); return; }
+    if (!key) { Alert.alert("명대사 텍스트 추출", `먼저 설정 > 🔌 연결의 ‘AI 제공자·API 키’에서 ${provider === "gemini" ? "Gemini" : "Claude"} 키를 넣거나, 제공자를 바꿔 주세요.`); return; }
     const targets = editQuotes
       .map((q, i) => ({ uri: q && q.uri, i, has: !!(q && q.ocrText && String(q.ocrText).trim()), img: isImageQuote(q) }))
       .filter(t => t.img && t.uri && !t.has);
@@ -42919,7 +42930,7 @@ function AppContent() {
     if (quoteTabOcrId != null) return;
     const provider = aiProvider === "gemini" ? "gemini" : "claude";
     const key = ((provider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim();
-    if (!key) { Alert.alert("명대사 텍스트 추출", `먼저 설정 > 🏷️ 태그의 ‘AI 제공자·API 키’에서 ${provider === "gemini" ? "Gemini" : "Claude"} 키를 넣거나, 제공자를 바꿔 주세요.`); return; }
+    if (!key) { Alert.alert("명대사 텍스트 추출", `먼저 설정 > 🔌 연결의 ‘AI 제공자·API 키’에서 ${provider === "gemini" ? "Gemini" : "Claude"} 키를 넣거나, 제공자를 바꿔 주세요.`); return; }
     setQuoteTabOcrId(card.id);
     try {
       const { base64, mimeType } = await readImageForOcr(card.imageUri);
@@ -43872,7 +43883,7 @@ function AppContent() {
   async function runBatchTagSuggest(works) {
     const provider = aiProvider === "gemini" ? "gemini" : "claude";
     const key = ((provider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim();
-    if (!key) { Alert.alert("AI 태그", `먼저 설정 > 🏷️ 태그의 ‘AI 제공자·API 키’에서 ${provider === "gemini" ? "Gemini" : "Claude"} 키를 넣거나, 제공자를 바꿔 주세요.`); return; }
+    if (!key) { Alert.alert("AI 태그", `먼저 설정 > 🔌 연결의 ‘AI 제공자·API 키’에서 ${provider === "gemini" ? "Gemini" : "Claude"} 키를 넣거나, 제공자를 바꿔 주세요.`); return; }
     if (!works || !works.length) { Alert.alert("AI 태그", "작품을 선택해 주세요."); return; }
     const freq = new Map(); const disp = new Map(); let totalTagCount = 0, worksWithTags = 0;
     for (const n of (list || [])) {
@@ -44285,7 +44296,7 @@ function AppContent() {
   async function runAiTypeGroupScan() {
     const provider = aiProvider === "gemini" ? "gemini" : "claude";
     const key = ((provider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim();
-    if (!key) { Alert.alert("AI 자동 분류", `먼저 설정 › Claude API에서 ${provider === "gemini" ? "Gemini" : "Claude"} API 키를 입력해 주세요.`); return; }
+    if (!key) { Alert.alert("AI 자동 분류", `먼저 설정 › 🔌 연결에서 ${provider === "gemini" ? "Gemini" : "Claude"} API 키를 입력해 주세요.`); return; }
     const nodes = typeGroups?.nodes || {};
     if (!Object.keys(nodes).length) { Alert.alert("AI 자동 분류", "먼저 유형그룹(유형/세부유형)을 만들어 주세요."); return; }
     // 분류 라벨(유형 ▸ 세부유형) + 라벨→nodeId 맵
@@ -44414,8 +44425,8 @@ function AppContent() {
     const key = ((provider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim();
     if (!key) {
       Alert.alert("AI 점검", provider === "gemini"
-        ? "먼저 설정 > 🏷️ 태그에서 Gemini API 키를 입력해 주세요."
-        : "먼저 설정 > 🏷️ 태그에서 Claude API 키를 입력해 주세요.");
+        ? "먼저 설정 > 🔌 연결에서 Gemini API 키를 입력해 주세요."
+        : "먼저 설정 > 🔌 연결에서 Claude API 키를 입력해 주세요.");
       return;
     }
     const _scanGen = _slotGeneration; // 🆕 v7.28.21: 슬롯 전환 레이스 가드(결과를 새 슬롯에 적용 방지)
@@ -61773,6 +61784,7 @@ async function importJSON() {
                 { key: "ranking", label: "🏆 랭킹" },
                 { key: "display", label: "🎨 표시" },
                 { key: "tags", label: "🏷️ 태그" },
+                { key: "connect", label: "🔌 연결" },
                 { key: "data", label: "🗂️ 데이터" },
                 { key: "backup", label: "💾 백업" },
                 { key: "diag", label: "🔬 진단" },
@@ -62656,545 +62668,6 @@ async function importJSON() {
                 </Text>
               </TouchableOpacity>
 
-              {/* 🆕 v7.28.16: 미태깅 작품 일괄 AI 태그 */}
-              <TouchableOpacity
-                onPress={openBatchTagModal}
-                style={{ backgroundColor: isDark ? "#312e81" : "#eef2ff", padding: 14, borderRadius: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", marginBottom: 16, borderWidth: 1, borderColor: isDark ? "#4f46e5" : "#c7d2fe" }}
-              >
-                <Text style={{ color: isDark ? "#c7d2fe" : "#4338ca", fontSize: 15, fontWeight: "700" }}>🤖 미태깅 작품 일괄 태그</Text>
-              </TouchableOpacity>
-
-              {/* 🤖 v7.27.0 / 🆕 v7.28.9 / 🔧 v7.28.32: AI 제공자·키 — 모든 AI 기능 공용(유의어 점검 전용 아님) */}
-              <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
-                <Text style={{ color: C.text, fontWeight: "700", fontSize: 14, marginBottom: 4 }}>🤖 AI 제공자 · API 키 (모든 AI 기능 공용)</Text>
-                <Text style={{ color: C.sub, fontSize: 11, lineHeight: 16, marginBottom: 10 }}>
-                  명대사 OCR · 태그 추천 · 정보 불러오기 · 유의어 점검 — 모든 AI 기능이 아래 설정을 함께 써요. 제공자를 고르고 그 키만 넣으면 돼요. 기본은 무료 Gemini예요. (지금 ‘{aiProvider === "gemini" ? "Gemini" : "Claude"}’ 선택됨)
-                </Text>
-                {/* 제공자 토글 */}
-                <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
-                  {[{ id: "gemini", label: "Gemini (무료)" }, { id: "claude", label: "Claude (유료)" }].map((opt) => {
-                    const on = aiProvider === opt.id;
-                    return (
-                      <TouchableOpacity
-                        key={opt.id}
-                        onPress={() => saveAiProvider(opt.id)}
-                        style={{ flex: 1, paddingVertical: 9, borderRadius: 10, alignItems: "center", backgroundColor: on ? C.primary : C.bg, borderWidth: 1, borderColor: on ? C.primary : C.line }}
-                      >
-                        <Text style={{ color: on ? "#fff" : C.sub, fontWeight: "700", fontSize: 13 }}>{opt.label}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-                {aiProvider === "gemini" ? (
-                  <>
-                    <Text style={{ color: C.sub, fontSize: 11, lineHeight: 16, marginBottom: 10 }}>
-                      Google Gemini API 키 하나로 모든 AI 기능(태그 추천·명대사 OCR·정보 불러오기·유의어 점검)이 켜져요. 무료 한도로 쓸 수 있어요(카드 등록·과금 없음). 키는 이 기기에만 저장되고 백업엔 포함되지 않아요. 기능마다 필요한 것만 전송돼요(OCR=이미지, 태그추천=제목·감상, 유의어=태그 목록).
-                    </Text>
-                    <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-                      <TextInput
-                        value={geminiApiKey}
-                        onChangeText={setGeminiApiKey}
-                        placeholder="AIza..."
-                        placeholderTextColor={C.sub}
-                        secureTextEntry
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        style={{ flex: 1, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, color: C.text, fontSize: 13 }}
-                      />
-                      <TouchableOpacity
-                        onPress={() => { saveGeminiApiKey(geminiApiKey); Alert.alert("저장됨", (geminiApiKey || "").trim() ? "Gemini API 키를 저장했어요." : "API 키를 비웠어요."); }}
-                        style={{ backgroundColor: C.primary, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 }}
-                      >
-                        <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>저장</Text>
-                      </TouchableOpacity>
-                    </View>
-                    <Text style={{ color: (geminiApiKey || "").trim() ? (isDark ? "#4ade80" : "#16a34a") : C.sub, fontSize: 11, marginTop: 6 }}>
-                      {(geminiApiKey || "").trim() ? "✓ 키 입력됨 · 모델 Gemini Flash (무료 한도)" : "키 미설정 — AI 점검 비활성"}
-                    </Text>
-                    <Text style={{ color: C.sub, fontSize: 10, marginTop: 4 }}>
-                      키 발급: aistudio.google.com → Get API key (무료·카드 등록 불필요)
-                    </Text>
-                  </>
-                ) : (
-                  <>
-                    <Text style={{ color: C.sub, fontSize: 11, lineHeight: 16, marginBottom: 10 }}>
-                      Claude API 키 하나로 모든 AI 기능(태그 추천·명대사 OCR·정보 불러오기·유의어 점검)이 켜져요. (Claude는 Max 구독과 별개로 과금돼요.) 키는 이 기기에만 저장되고 백업엔 포함되지 않아요. 기능마다 필요한 것만 전송돼요(OCR=이미지, 태그추천=제목·감상, 유의어=태그 목록).
-                    </Text>
-                    <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-                      <TextInput
-                        value={claudeApiKey}
-                        onChangeText={setClaudeApiKey}
-                        placeholder="sk-ant-..."
-                        placeholderTextColor={C.sub}
-                        secureTextEntry
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        style={{ flex: 1, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, color: C.text, fontSize: 13 }}
-                      />
-                      <TouchableOpacity
-                        onPress={() => { saveClaudeApiKey(claudeApiKey); Alert.alert("저장됨", (claudeApiKey || "").trim() ? "API 키를 저장했어요." : "API 키를 비웠어요."); }}
-                        style={{ backgroundColor: C.primary, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 }}
-                      >
-                        <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>저장</Text>
-                      </TouchableOpacity>
-                    </View>
-                    <Text style={{ color: (claudeApiKey || "").trim() ? (isDark ? "#4ade80" : "#16a34a") : C.sub, fontSize: 11, marginTop: 6 }}>
-                      {(claudeApiKey || "").trim() ? `✓ 키 입력됨 · 모델 ${(CLAUDE_MODEL_OPTIONS.find(o => o.id === claudeModel) || {}).label || claudeModel}` : "키 미설정 — AI 점검 비활성"}
-                    </Text>
-                    <Text style={{ color: C.sub, fontSize: 10, marginTop: 4 }}>
-                      키 발급: console.anthropic.com → API Keys
-                    </Text>
-                    {/* 🆕 v7.31.1: Claude 모델 선택 — 태그추천·OCR·정보불러오기·유의어 공통 적용 */}
-                    <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", marginTop: 14, marginBottom: 6 }}>🤖 Claude 모델</Text>
-                    <View style={{ flexDirection: "row", gap: 6 }}>
-                      {CLAUDE_MODEL_OPTIONS.map(o => {
-                        const on = claudeModel === o.id;
-                        return (
-                          <TouchableOpacity key={o.id} onPress={() => saveClaudeModel(o.id)} activeOpacity={0.7}
-                            style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 6, borderRadius: 10, alignItems: "center", backgroundColor: on ? C.primary : C.bg, borderWidth: 1, borderColor: on ? C.primary : C.line }}>
-                            <Text style={{ color: on ? "#fff" : C.text, fontWeight: "800", fontSize: 12 }}>{o.label}</Text>
-                            <Text style={{ color: on ? "#e0e7ff" : C.sub, fontSize: 9, marginTop: 2, textAlign: "center" }}>{o.desc}</Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                    <Text style={{ color: C.sub, fontSize: 10, marginTop: 6, lineHeight: 14 }}>
-                      모든 AI 기능이 이 모델을 사용해요. 품질이 필요하면 Sonnet/Opus, 비용·속도 우선이면 Haiku.
-                    </Text>
-                  </>
-                )}
-                {/* 🆕 v7.28.10: 발급 방법 상세 안내 모달 열기 */}
-                <TouchableOpacity onPress={() => setApiKeyHelpModalOpen(true)} style={{ alignSelf: "flex-start", marginTop: 12 }}>
-                  <Text style={{ color: C.primary, fontSize: 12.5, fontWeight: "800", textDecorationLine: "underline" }}>📖 API 키 발급 방법 자세히 보기</Text>
-                </TouchableOpacity>
-                {/* 🔢 v7.28.33: AI 사용량(로컬 추정) — 무료 한도 감 잡기용 */}
-                {(() => { const u = aiUsageSummary(); return (
-                  <View style={{ marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.line }}>
-                    <Text style={{ color: C.text, fontSize: 12.5, fontWeight: "800" }}>📊 이번 실행 중 보낸 AI 요청</Text>
-                    <Text style={{ color: u.lastMin >= 10 ? (isDark ? "#fbbf24" : "#d97706") : C.text, fontSize: 13, fontWeight: "700", marginTop: 5 }}>
-                      최근 1분 {u.lastMin}회 · 최근 1시간 {u.lastHour}회
-                    </Text>
-                    <Text style={{ color: C.sub, fontSize: 10.5, marginTop: 5, lineHeight: 15 }}>
-                      무료 한도는 ‘분당 요청 수’에 가장 잘 걸려요(특히 일괄 기능이 한 번에 여러 번 호출). 앱이 보낸 호출만 센 추정치예요 — 한도는 프로젝트 단위라 다른 기기·앱과 공유하면 실제와 다를 수 있어요. 막히면 1분쯤 뒤 다시 시도하거나, 위에서 Claude로 바꿔 보세요.
-                    </Text>
-                    {/* 🆕 v7.31.1: Claude 누적 토큰 사용량 (응답 usage 합산, 전 슬롯 공통) */}
-                    {aiUsage.calls > 0 ? (
-                      <View style={{ marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: C.line }}>
-                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "800" }}>🧮 Claude 누적 토큰 (이 기기)</Text>
-                        <Text style={{ color: C.text, fontSize: 12.5, fontWeight: "700", marginTop: 4 }}>
-                          호출 {aiUsage.calls.toLocaleString()}회 · 입력 {aiUsage.input.toLocaleString()} · 출력 {aiUsage.output.toLocaleString()} 토큰
-                        </Text>
-                        {Object.entries(aiUsage.byModel || {}).map(([m, v]) => (
-                          <Text key={m} style={{ color: C.sub, fontSize: 10.5, marginTop: 2 }}>
-                            · {(CLAUDE_MODEL_OPTIONS.find(o => o.id === m) || {}).label || m}: {Number(v.calls).toLocaleString()}회 · 입력 {Number(v.input).toLocaleString()} · 출력 {Number(v.output).toLocaleString()}
-                          </Text>
-                        ))}
-                        <TouchableOpacity onPress={resetAiUsage} style={{ alignSelf: "flex-start", marginTop: 8, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: C.line }}>
-                          <Text style={{ color: C.warn, fontSize: 11, fontWeight: "700" }}>누적 초기화</Text>
-                        </TouchableOpacity>
-                        <Text style={{ color: C.sub, fontSize: 10, marginTop: 6, lineHeight: 14 }}>
-                          앱이 보낸 Claude 호출의 응답 토큰만 합산했어요. 실제 청구·잔여 한도는 console.anthropic.com에서 확인하세요(조직 사용량 API는 admin 키 필요).
-                        </Text>
-                      </View>
-                    ) : null}
-                  </View>
-                ); })()}
-              </View>
-
-              {/* 🆕 v7.39.0: 제목 검색 대상 사이트 온오프 — 다중 플랫폼 병렬이라 안 쓰는 곳은 꺼서 빠르게 */}
-              <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
-                <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>🔎 제목 검색 사이트</Text>
-                <Text style={{ color: C.sub, fontSize: 11.5, marginTop: 5, lineHeight: 16 }}>
-                  ‘제목으로 검색’이 동시에 조회할 사이트예요. 여러 곳을 한꺼번에 찾느라 느릴 수 있어, 안 쓰는 곳은 꺼 두면 빨라져요. (카카오페이지·조아라는 제목 검색이 막혀 있어 작품 링크 ‘🔗 불러오기’만 돼요.)
-                </Text>
-                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
-                  {SEARCH_PLATFORMS.map(name => {
-                    const on = searchPlatforms[name] !== false;
-                    return (
-                      <TouchableOpacity key={name} onPress={() => toggleSearchPlatform(name)} activeOpacity={0.7}
-                        style={{ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 999, backgroundColor: on ? C.primary : C.bg, borderWidth: 1, borderColor: on ? C.primary : C.line }}>
-                        <Text style={{ color: on ? "#fff" : C.sub, fontWeight: "800", fontSize: 12.5 }}>{on ? "✓ " : ""}{name === "네이버시리즈" ? "네이버 시리즈" : name}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-                {SEARCH_PLATFORMS.every(n => searchPlatforms[n] === false) && (
-                  <Text style={{ color: C.warn, fontSize: 11, marginTop: 8, fontWeight: "700" }}>⚠️ 모두 꺼져 있어요 — 한 곳 이상 켜야 제목 검색이 돼요.</Text>
-                )}
-              </View>
-
-              {/* 🔐 v7.40.0: 노벨피아 로그인 — 성인물(19금) 제목검색 노출 + 표지/메타 게이트 해제 */}
-              <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                  <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>🔐 노벨피아 로그인</Text>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: npLoggedIn ? "#22c55e" : C.line }} />
-                    <Text style={{ color: npLoggedIn ? "#22c55e" : C.sub, fontSize: 12, fontWeight: "800" }}>{npLoggedIn ? "로그인됨" : "로그인 안 됨"}</Text>
-                  </View>
-                </View>
-                <Text style={{ color: C.sub, fontSize: 11.5, marginTop: 5, lineHeight: 16 }}>
-                  노벨피아에 로그인하면 성인물(19금)도 ‘제목으로 검색’에 뜨고, 작품 정보를 더 정확히 불러와요. 본인인증된 계정으로 한 번 로그인하면 돼요. 로그인 정보는 휴대폰의 쿠키 저장소에만 보관되고 앱이 따로 저장하지 않아요(브라우저와 동일).
-                </Text>
-                <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
-                  <TouchableOpacity onPress={() => setNpLoginModalOpen(true)} disabled={npBusy} activeOpacity={0.7}
-                    style={{ paddingVertical: 9, paddingHorizontal: 16, borderRadius: 999, backgroundColor: C.primary, opacity: npBusy ? 0.5 : 1 }}>
-                    <Text style={{ color: "#fff", fontWeight: "800", fontSize: 12.5 }}>{npLoggedIn ? "다시 로그인" : "노벨피아 로그인"}</Text>
-                  </TouchableOpacity>
-                  {npLoggedIn && (
-                    <TouchableOpacity onPress={logoutNp} disabled={npBusy} activeOpacity={0.7}
-                      style={{ paddingVertical: 9, paddingHorizontal: 16, borderRadius: 999, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, opacity: npBusy ? 0.5 : 1 }}>
-                      <Text style={{ color: C.sub, fontWeight: "800", fontSize: 12.5 }}>로그아웃</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-                <Text style={{ color: C.sub, fontSize: 10, marginTop: 8, lineHeight: 14 }}>
-                  ※ 성인 표지 이미지는 노벨피아 정책에 따라 로그인 후에도 안 보일 수 있어요. 그땐 표지만 직접 추가하면 돼요.
-                </Text>
-              </View>
-
-              {/* 🔐 v7.41.5: 문피아 로그인 — 회차 많은 완결작의 전체 회차목록(외전 포함)을 받아 본편/외전 분리 */}
-              <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                  <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>🔐 문피아 로그인</Text>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: mpLoggedIn ? "#22c55e" : C.line }} />
-                    <Text style={{ color: mpLoggedIn ? "#22c55e" : C.sub, fontSize: 12, fontWeight: "800" }}>{mpLoggedIn ? "로그인됨" : "로그인 안 됨"}</Text>
-                  </View>
-                </View>
-                <Text style={{ color: C.sub, fontSize: 11.5, marginTop: 5, lineHeight: 16 }}>
-                  문피아는 회차가 많은 작품의 ‘전체 회차목록’을 로그인해야 받을 수 있어요. 로그인하면 완결작의 본편/외전 완결일을 분리해 가져와요(100화 이하 작품은 로그인 없이도 돼요). 로그인 정보는 휴대폰 쿠키 저장소에만 보관돼요.
-                </Text>
-                <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
-                  <TouchableOpacity onPress={() => setMpLoginModalOpen(true)} disabled={mpBusy} activeOpacity={0.7}
-                    style={{ paddingVertical: 9, paddingHorizontal: 16, borderRadius: 999, backgroundColor: C.primary, opacity: mpBusy ? 0.5 : 1 }}>
-                    <Text style={{ color: "#fff", fontWeight: "800", fontSize: 12.5 }}>{mpLoggedIn ? "다시 로그인" : "문피아 로그인"}</Text>
-                  </TouchableOpacity>
-                  {mpLoggedIn && (
-                    <TouchableOpacity onPress={logoutMp} disabled={mpBusy} activeOpacity={0.7}
-                      style={{ paddingVertical: 9, paddingHorizontal: 16, borderRadius: 999, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, opacity: mpBusy ? 0.5 : 1 }}>
-                      <Text style={{ color: C.sub, fontWeight: "800", fontSize: 12.5 }}>로그아웃 표시</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-                <Text style={{ color: C.sub, fontSize: 10, marginTop: 8, lineHeight: 14 }}>
-                  ※ 시험 기능 — 문피아 회차 API 접근 방식이 까다로워 일부 작품에서 안 될 수 있어요. 안 되면 기존 방식으로 자동 대체돼요.
-                </Text>
-              </View>
-
-              {/* 🆕 v7.43.0: 카카오 세션 — 카카오 GraphQL은 JS가 발급하는 익명 토큰(_kawlt)이 있어야 응답함. WebView로 1회 부트스트랩 */}
-              <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                  <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>🔑 카카오 세션 (불러오기용)</Text>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: kkReady ? "#22c55e" : C.line }} />
-                    <Text style={{ color: kkReady ? "#22c55e" : C.sub, fontSize: 12, fontWeight: "800" }}>{kkReady ? "준비됨" : "준비 안 됨"}</Text>
-                  </View>
-                </View>
-                <Text style={{ color: C.sub, fontSize: 11.5, marginTop: 5, lineHeight: 16 }}>
-                  카카오페이지는 보안상 작품 정보를 일반 요청으로는 안 줘요. ‘세션 준비’를 누르면 카카오 페이지를 잠깐 열어 익명 토큰만 받아와요(로그인 불필요). 한 번 받으면 카카오 링크 ‘🔗 불러오기’가 동작해요. 안 되면 다시 눌러 갱신하세요.
-                </Text>
-                <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
-                  <TouchableOpacity onPress={() => setKkSessionModalOpen(true)} disabled={kkBusy} activeOpacity={0.7}
-                    style={{ paddingVertical: 9, paddingHorizontal: 16, borderRadius: 999, backgroundColor: C.primary, opacity: kkBusy ? 0.5 : 1 }}>
-                    <Text style={{ color: "#fff", fontWeight: "800", fontSize: 12.5 }}>{kkReady ? "세션 갱신" : "세션 준비"}</Text>
-                  </TouchableOpacity>
-                  {kkReady && (
-                    <TouchableOpacity onPress={clearKkSession} disabled={kkBusy} activeOpacity={0.7}
-                      style={{ paddingVertical: 9, paddingHorizontal: 16, borderRadius: 999, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, opacity: kkBusy ? 0.5 : 1 }}>
-                      <Text style={{ color: C.sub, fontWeight: "800", fontSize: 12.5 }}>초기화</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-                <Text style={{ color: C.sub, fontSize: 10, marginTop: 8, lineHeight: 14 }}>
-                  ※ 시험 기능(폰 검증 중) — 카카오가 막아둔 구조라 안 될 수도 있어요. 안 되면 ‘긁기 진단 › 카카오’로 응답을 캡처해 보내 주세요.
-                </Text>
-              </View>
-
-              {/* 🔧 v7.42.0: 카카오·문피아 외전 분리 토글 — 기본 ON(끌 수 있는 안전밸브). 끄면 완결일만 가져옴(외전 분리 생략). */}
-              <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                <View style={{ flex: 1, paddingRight: 10 }}>
-                  <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>🌿 카카오·문피아 외전 분리</Text>
-                  <Text style={{ color: C.sub, fontSize: 11.5, marginTop: 4, lineHeight: 16 }}>
-                    카카오·문피아 완결작의 본편/외전 완결일을 따로 가져와요. 기본으로 켜져 있어요. 불러오기 때 회차 정보를 추가로 받으니, 느리거나 일부 작품에서 불러오기가 막히면 꺼 주세요. (네이버·노벨피아·리디 분리는 항상 켜져 있어요.)
-                  </Text>
-                </View>
-                <Switch value={gaidenExp} onValueChange={toggleGaidenExp} />
-              </View>
-
-              {/* 🔧 v7.28.38: 긁기 진단 — 폰에서 검색 원본 캡처(타 플랫폼 제목검색 파서 개발용) */}
-              <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
-                <Text style={{ color: C.text, fontWeight: "700", fontSize: 14, marginBottom: 4 }}>🔧 긁기 진단 (검색 원본 캡처)</Text>
-                <Text style={{ color: C.sub, fontSize: 11, lineHeight: 16, marginBottom: 8 }}>
-                  폰 브라우저에서 플랫폼 검색을 한 뒤 그 주소를 복사해 붙여넣고 ‘캡처’를 누르면, 폰이 직접 가져온 원본을 보여줘요. ‘원본 복사’로 복사해 채팅에 붙여넣으면 제목검색을 정확히 붙일 수 있어요. (아래 칩은 예시 주소 — 결과가 이상하면 폰 브라우저의 실제 검색 주소를 붙여넣어 주세요.) ※카카오 content 링크를 넣으면 GraphQL 응답까지 함께 캡처해요(불러오기 복구 진단용).
-                </Text>
-                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
-                  {[
-                    { label: "네이버시리즈", url: "https://series.naver.com/search/search.series?t=novel&q=검" },
-                    { label: "문피아", url: "https://mm.munpia.com/?menu=detailSearchV2&action=search&searchKey=all&keyword=회귀" },
-                    { label: "노벨피아", url: "https://novelpia.com/proc/novel?cmd=novel_search&search_type=all&search_val=회귀&page=1&rows=30" },
-                    { label: "리디", url: "https://ridibooks.com/search?q=검" },
-                    { label: "카카오(GraphQL 진단)", url: "https://page.kakao.com/content/53705302" },
-                  ].map(p => (
-                    <TouchableOpacity key={p.label} onPress={() => setScrapeDiagUrl(p.url)} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line }}>
-                      <Text style={{ color: C.text, fontSize: 12 }}>{p.label}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <TextInput
-                  value={scrapeDiagUrl}
-                  onChangeText={setScrapeDiagUrl}
-                  placeholder="검색 결과 URL 붙여넣기"
-                  placeholderTextColor={C.sub}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  multiline
-                  style={{ backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, color: C.text, fontSize: 12, minHeight: 44 }}
-                />
-                <TouchableOpacity onPress={captureScrapeSource} disabled={scrapeDiagBusy}
-                  style={{ marginTop: 8, backgroundColor: C.primary, paddingVertical: 11, borderRadius: 10, alignItems: "center", opacity: scrapeDiagBusy ? 0.6 : 1 }}>
-                  <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>{scrapeDiagBusy ? "가져오는 중…" : "캡처"}</Text>
-                </TouchableOpacity>
-                {scrapeDiagOut ? (
-                  <View style={{ marginTop: 10, backgroundColor: C.bg, borderRadius: 10, padding: 10, borderWidth: 1, borderColor: C.line }}>
-                    <Text selectable style={{ color: C.text, fontSize: 11, lineHeight: 16 }}>{scrapeDiagOut.summary}</Text>
-                    <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
-                      <TouchableOpacity onPress={() => copyScrapeSource("full")} style={{ flex: 1, backgroundColor: C.primary, paddingVertical: 9, borderRadius: 8, alignItems: "center" }}>
-                        <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>📋 원본 복사</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity onPress={() => copyScrapeSource("summary")} style={{ flex: 1, backgroundColor: C.chip, paddingVertical: 9, borderRadius: 8, alignItems: "center", borderWidth: 1, borderColor: C.line }}>
-                        <Text style={{ color: C.text, fontWeight: "700", fontSize: 13 }}>📋 요약만</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                ) : null}
-              </View>
-
-              {/* 🆕 v7.28.10: API 키 발급 안내 모달 (제공자별 단계·주의·바로가기) */}
-              {/* 🔐 v7.40.0: 노벨피아 WebView 로그인 모달 — 사용자가 직접 로그인 → ‘로그인 완료’로 세션 캡처 */}
-              <Modal visible={npLoginModalOpen} animationType="slide" statusBarTranslucent onRequestClose={() => setNpLoginModalOpen(false)}>
-                <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
-                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line }}>
-                    <TouchableOpacity onPress={() => setNpLoginModalOpen(false)} activeOpacity={0.7} style={{ padding: 6 }}>
-                      <Text style={{ color: C.sub, fontSize: 15, fontWeight: "800" }}>✕ 닫기</Text>
-                    </TouchableOpacity>
-                    <Text style={{ color: C.text, fontSize: 15, fontWeight: "800" }}>노벨피아 로그인</Text>
-                    <TouchableOpacity onPress={confirmNpLogin} disabled={npBusy} activeOpacity={0.7}
-                      style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, backgroundColor: C.primary, opacity: npBusy ? 0.5 : 1 }}>
-                      <Text style={{ color: "#fff", fontSize: 13, fontWeight: "800" }}>{npBusy ? "확인 중…" : "로그인 완료"}</Text>
-                    </TouchableOpacity>
-                  </View>
-                  <View style={{ paddingHorizontal: 14, paddingVertical: 8, backgroundColor: C.chip }}>
-                    <Text style={{ color: C.sub, fontSize: 11.5, lineHeight: 16 }}>
-                      노벨피아에 로그인(필요 시 본인인증)한 뒤, 위 오른쪽 ‘로그인 완료’를 눌러 주세요. 로그인 정보는 휴대폰 쿠키 저장소에만 보관돼요.
-                    </Text>
-                  </View>
-                  {npLoginModalOpen && (
-                    <WebView
-                      source={{ uri: "https://novelpia.com/login/" }}
-                      userAgent={SCRAPER_UA}
-                      sharedCookiesEnabled
-                      thirdPartyCookiesEnabled
-                      domStorageEnabled
-                      javaScriptEnabled
-                      startInLoadingState
-                      renderLoading={() => (
-                        <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "center", alignItems: "center", backgroundColor: C.bg }}>
-                          <ActivityIndicator size="large" color={C.primary} />
-                        </View>
-                      )}
-                      style={{ flex: 1, backgroundColor: C.bg }}
-                    />
-                  )}
-                </SafeAreaView>
-              </Modal>
-
-              {/* 🔐 v7.41.5: 문피아 WebView 로그인 모달 */}
-              <Modal visible={mpLoginModalOpen} animationType="slide" statusBarTranslucent onRequestClose={() => setMpLoginModalOpen(false)}>
-                <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
-                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line }}>
-                    <TouchableOpacity onPress={() => setMpLoginModalOpen(false)} activeOpacity={0.7} style={{ padding: 6 }}>
-                      <Text style={{ color: C.sub, fontSize: 15, fontWeight: "800" }}>✕ 닫기</Text>
-                    </TouchableOpacity>
-                    <Text style={{ color: C.text, fontSize: 15, fontWeight: "800" }}>문피아 로그인</Text>
-                    <TouchableOpacity onPress={confirmMpLogin} disabled={mpBusy} activeOpacity={0.7}
-                      style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, backgroundColor: C.primary, opacity: mpBusy ? 0.5 : 1 }}>
-                      <Text style={{ color: "#fff", fontSize: 13, fontWeight: "800" }}>{mpBusy ? "확인 중…" : "로그인 완료"}</Text>
-                    </TouchableOpacity>
-                  </View>
-                  <View style={{ paddingHorizontal: 14, paddingVertical: 8, backgroundColor: C.chip }}>
-                    <Text style={{ color: C.sub, fontSize: 11.5, lineHeight: 16 }}>
-                      문피아에 로그인한 뒤, 위 오른쪽 ‘로그인 완료’를 눌러 주세요. 로그인 정보는 휴대폰 쿠키 저장소에만 보관돼요.
-                    </Text>
-                  </View>
-                  {mpLoginModalOpen && (
-                    <WebView
-                      source={{ uri: "https://m.munpia.com/" }}
-                      userAgent={SCRAPER_UA}
-                      sharedCookiesEnabled
-                      thirdPartyCookiesEnabled
-                      domStorageEnabled
-                      javaScriptEnabled
-                      startInLoadingState
-                      renderLoading={() => (
-                        <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "center", alignItems: "center", backgroundColor: C.bg }}>
-                          <ActivityIndicator size="large" color={C.primary} />
-                        </View>
-                      )}
-                      style={{ flex: 1, backgroundColor: C.bg }}
-                    />
-                  )}
-                </SafeAreaView>
-              </Modal>
-
-              {/* 🆕 v7.43.0: 카카오 세션 부트스트랩 WebView — 카카오 페이지를 열어 JS가 _kawlt 익명 토큰을 쿠키에 심게 함(로그인 불필요) */}
-              <Modal visible={kkSessionModalOpen} animationType="slide" statusBarTranslucent onRequestClose={() => setKkSessionModalOpen(false)}>
-                <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
-                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line }}>
-                    <TouchableOpacity onPress={() => setKkSessionModalOpen(false)} activeOpacity={0.7} style={{ padding: 6 }}>
-                      <Text style={{ color: C.sub, fontSize: 15, fontWeight: "800" }}>✕ 닫기</Text>
-                    </TouchableOpacity>
-                    <Text style={{ color: C.text, fontSize: 15, fontWeight: "800" }}>카카오 세션 준비</Text>
-                    <TouchableOpacity onPress={confirmKkSession} disabled={kkBusy} activeOpacity={0.7}
-                      style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, backgroundColor: C.primary, opacity: kkBusy ? 0.5 : 1 }}>
-                      <Text style={{ color: "#fff", fontSize: 13, fontWeight: "800" }}>{kkBusy ? "확인 중…" : "완료"}</Text>
-                    </TouchableOpacity>
-                  </View>
-                  <View style={{ paddingHorizontal: 14, paddingVertical: 8, backgroundColor: C.chip }}>
-                    <Text style={{ color: C.sub, fontSize: 11.5, lineHeight: 16 }}>
-                      카카오페이지가 다 뜰 때까지(로딩 원이 사라질 때까지) 잠깐 기다린 뒤, 오른쪽 위 ‘완료’를 눌러 주세요. 로그인은 필요 없어요 — 익명 토큰만 받아와요.
-                    </Text>
-                  </View>
-                  {kkSessionModalOpen && (
-                    <WebView
-                      source={{ uri: "https://page.kakao.com/content/53705302" }}
-                      userAgent={SCRAPER_UA}
-                      sharedCookiesEnabled
-                      thirdPartyCookiesEnabled
-                      domStorageEnabled
-                      javaScriptEnabled
-                      startInLoadingState
-                      renderLoading={() => (
-                        <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "center", alignItems: "center", backgroundColor: C.bg }}>
-                          <ActivityIndicator size="large" color={C.primary} />
-                        </View>
-                      )}
-                      style={{ flex: 1, backgroundColor: C.bg }}
-                    />
-                  )}
-                </SafeAreaView>
-              </Modal>
-
-              {/* 🆕 v7.44.0/v7.44.4: 카카오 응답 가로채기 WebView — 실제로 보이게(불투명) 띄워 JS 실행 보장. 상단 배너로 안내, 페이지는 그대로 노출 */}
-              <Modal visible={!!kkCaptureUrl} animationType="slide" statusBarTranslucent onRequestClose={() => { const r = kkCaptureResolver.current; if (r) r.finish(null); }}>
-                <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line }}>
-                    <ActivityIndicator size="small" color={C.primary} />
-                    <Text style={{ color: C.text, fontSize: 13.5, fontWeight: "800", flex: 1 }}>카카오에서 작품 정보를 가져오는 중…</Text>
-                    <TouchableOpacity onPress={() => { const r = kkCaptureResolver.current; if (r) r.finish(null); }} activeOpacity={0.7} style={{ paddingVertical: 6, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1, borderColor: C.line }}>
-                      <Text style={{ color: C.sub, fontSize: 12.5, fontWeight: "800" }}>취소</Text>
-                    </TouchableOpacity>
-                  </View>
-                  <Text style={{ color: C.sub, fontSize: 11, paddingHorizontal: 14, paddingVertical: 6, backgroundColor: C.chip }}>페이지가 다 뜨면 자동으로 정보를 받아 닫혀요. (보안상 페이지를 직접 열어야 정보를 줘요)</Text>
-                  {kkCaptureUrl && (
-                    <WebView
-                      source={{ uri: kkCaptureUrl }}
-                      userAgent={SCRAPER_UA}
-                      injectedJavaScriptBeforeContentLoaded={KAKAO_CAPTURE_JS}
-                      injectedJavaScript={KAKAO_CAPTURE_JS}
-                      onMessage={onKkCaptureMessage}
-                      onLoadStart={() => onKkCaptureNote("__loadstart__")}
-                      onLoadEnd={(ev) => onKkCaptureNote("__loadend__:" + (ev?.nativeEvent?.url || "").slice(0, 50))}
-                      onNavigationStateChange={(s) => onKkCaptureNote("__nav__:" + (s?.url || "").slice(0, 50))}
-                      onError={(ev) => onKkCaptureError(ev?.nativeEvent?.description || "load error")}
-                      onHttpError={(ev) => onKkCaptureError("http " + (ev?.nativeEvent?.statusCode || "?"))}
-                      sharedCookiesEnabled
-                      thirdPartyCookiesEnabled
-                      domStorageEnabled
-                      javaScriptEnabled
-                      originWhitelist={["*"]}
-                      style={{ flex: 1, backgroundColor: C.bg }}
-                    />
-                  )}
-                </SafeAreaView>
-              </Modal>
-
-              <Modal visible={apiKeyHelpModalOpen} animationType="fade" transparent statusBarTranslucent onRequestClose={() => setApiKeyHelpModalOpen(false)}>
-                <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center" }}>
-                  <TouchableOpacity style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} activeOpacity={1} onPress={() => setApiKeyHelpModalOpen(false)} />
-                  <View style={{ backgroundColor: C.card, borderRadius: 20, padding: 20, width: "90%", maxWidth: 440, maxHeight: "85%" }}>
-                    <ScrollView showsVerticalScrollIndicator={false}>
-                      {(() => {
-                        const isGem = aiProvider === "gemini";
-                        const steps = isGem ? [
-                          "아래 '구글 AI 스튜디오 열기'를 누르거나, 브라우저에서 aistudio.google.com 접속",
-                          "구글 계정으로 로그인 (평소 쓰는 계정이면 돼요)",
-                          "'Get API key (API 키 가져오기)' 클릭",
-                          "'Create API key (API 키 만들기)' 클릭 → 새 프로젝트가 자동으로 만들어져요",
-                          "생성된 키(AIza…로 시작)를 복사",
-                          "이 화면의 키 입력칸에 붙여넣고 '저장' 누르기",
-                        ] : [
-                          "아래 'Anthropic 콘솔 열기'를 누르거나, 브라우저에서 console.anthropic.com 접속",
-                          "로그인 또는 회원가입",
-                          "왼쪽/위쪽 메뉴에서 'API Keys' 선택",
-                          "'Create Key' 클릭 → 이름을 정하고 생성",
-                          "표시된 키(sk-ant-…로 시작)를 복사 — ⚠️ 이때만 보여요! 창을 닫으면 다시 못 봐요",
-                          "이 화면의 키 입력칸에 붙여넣고 '저장' 누르기",
-                          "'Billing(결제)'에서 결제수단 등록 또는 크레딧 충전 (과금 필요)",
-                        ];
-                        const notes = isGem ? [
-                          "카드 등록·결제 없이 무료로 시작할 수 있어요.",
-                          "무료 한도(분당·하루 요청 수 제한)가 있지만, 유의어 점검은 가끔 누르는 기능이라 넉넉해요.",
-                          "키는 비밀번호처럼 다뤄 주세요. 남에게 공유하면 안 돼요.",
-                          "이 앱은 키를 '이 기기'에만 저장하고, 백업·내보내기 파일엔 절대 넣지 않아요.",
-                          "점검할 때 전송되는 건 '태그 목록'뿐 — 작품 제목·감상·점수는 전송되지 않아요.",
-                        ] : [
-                          "⚠️ Claude Max 구독과는 '별개'의 종량제 과금이에요. API용 크레딧을 따로 충전해야 동작해요.",
-                          "비용: 기본 Haiku 모델 기준 1회 점검 약 20원 수준 (태그 수에 따라 달라져요).",
-                          "크레딧이 없으면 401·요청 실패가 떠요.",
-                          "키 보안·전송 범위는 Gemini와 똑같아요 (기기에만 저장, 태그 목록만 전송).",
-                          "돈 안 내고 쓰고 싶으면 위 토글에서 'Gemini (무료)'를 고르세요.",
-                        ];
-                        const url = isGem ? "https://aistudio.google.com/app/apikey" : "https://console.anthropic.com/settings/keys";
-                        const linkLabel = isGem ? "🔗 구글 AI 스튜디오 열기" : "🔗 Anthropic 콘솔 열기";
-                        return (
-                          <>
-                            <Text style={{ fontSize: 19, fontWeight: "800", color: C.text, marginBottom: 6 }}>
-                              {isGem ? "🟢 Gemini API 키 발급 (무료)" : "🟣 Claude API 키 발급 (유료)"}
-                            </Text>
-                            <Text style={{ fontSize: 12.5, color: C.sub, lineHeight: 18, marginBottom: 14 }}>
-                              {isGem
-                                ? "구글 계정만 있으면 카드 등록 없이 무료로 발급돼요. 1~2분이면 끝나요."
-                                : "⚠️ Claude Max 구독과 별개의 API 과금이에요. 결제수단·크레딧을 따로 등록해야 동작해요."}
-                            </Text>
-                            <TouchableOpacity onPress={() => safeOpenURL(url)} style={{ backgroundColor: C.primary, borderRadius: 12, paddingVertical: 12, alignItems: "center", marginBottom: 18 }}>
-                              <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>{linkLabel}</Text>
-                            </TouchableOpacity>
-                            <Text style={{ fontSize: 14, fontWeight: "800", color: C.text, marginBottom: 10 }}>📋 단계별 안내</Text>
-                            {steps.map((s, i) => (
-                              <View key={i} style={{ flexDirection: "row", marginBottom: 10, alignItems: "flex-start" }}>
-                                <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: C.primary, alignItems: "center", justifyContent: "center", marginRight: 10, marginTop: 1 }}>
-                                  <Text style={{ color: "#fff", fontWeight: "800", fontSize: 12 }}>{i + 1}</Text>
-                                </View>
-                                <Text style={{ flex: 1, fontSize: 13.5, color: C.text, lineHeight: 19 }}>{s}</Text>
-                              </View>
-                            ))}
-                            <Text style={{ fontSize: 14, fontWeight: "800", color: C.text, marginTop: 10, marginBottom: 10 }}>💡 참고 · 주의</Text>
-                            {notes.map((n, i) => (
-                              <View key={i} style={{ flexDirection: "row", marginBottom: 8, alignItems: "flex-start" }}>
-                                <Text style={{ color: C.sub, fontSize: 13, marginRight: 6, lineHeight: 18 }}>•</Text>
-                                <Text style={{ flex: 1, fontSize: 12.5, color: C.sub, lineHeight: 18 }}>{n}</Text>
-                              </View>
-                            ))}
-                            <TouchableOpacity onPress={() => setApiKeyHelpModalOpen(false)} style={{ backgroundColor: C.chip, borderRadius: 12, paddingVertical: 12, alignItems: "center", marginTop: 10 }}>
-                              <Text style={{ color: C.text, fontWeight: "800", fontSize: 14 }}>닫기</Text>
-                            </TouchableOpacity>
-                          </>
-                        );
-                      })()}
-                    </ScrollView>
-                  </View>
-                </View>
-              </Modal>
 
               {/* 빠른 유틸리티 */}
               <View style={{ flexDirection: "row", gap: 8, marginBottom: 16 }}>
@@ -63987,6 +63460,553 @@ async function importJSON() {
               )}
             </Section>
               </>
+            )}
+
+            {/* ═══════════════════════════════════════════════════════════════ */}
+            {/* 🔌 연결 서브탭 (v7.45.2: LLM API · 플랫폼 로그인 · 긁기 진단 — 태그 탭에서 분리 이동) */}
+            {/* ═══════════════════════════════════════════════════════════════ */}
+            {settingsSubTab === "connect" && (
+              <Section title="🔌 연결 (AI API · 플랫폼 로그인 · 진단)">
+              {/* 🆕 v7.28.16: 미태깅 작품 일괄 AI 태그 */}
+              <TouchableOpacity
+                onPress={openBatchTagModal}
+                style={{ backgroundColor: isDark ? "#312e81" : "#eef2ff", padding: 14, borderRadius: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", marginBottom: 16, borderWidth: 1, borderColor: isDark ? "#4f46e5" : "#c7d2fe" }}
+              >
+                <Text style={{ color: isDark ? "#c7d2fe" : "#4338ca", fontSize: 15, fontWeight: "700" }}>🤖 미태깅 작품 일괄 태그</Text>
+              </TouchableOpacity>
+
+              {/* 🤖 v7.27.0 / 🆕 v7.28.9 / 🔧 v7.28.32: AI 제공자·키 — 모든 AI 기능 공용(유의어 점검 전용 아님) */}
+              <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+                <Text style={{ color: C.text, fontWeight: "700", fontSize: 14, marginBottom: 4 }}>🤖 AI 제공자 · API 키 (모든 AI 기능 공용)</Text>
+                <Text style={{ color: C.sub, fontSize: 11, lineHeight: 16, marginBottom: 10 }}>
+                  명대사 OCR · 태그 추천 · 정보 불러오기 · 유의어 점검 — 모든 AI 기능이 아래 설정을 함께 써요. 제공자를 고르고 그 키만 넣으면 돼요. 기본은 무료 Gemini예요. (지금 ‘{aiProvider === "gemini" ? "Gemini" : "Claude"}’ 선택됨)
+                </Text>
+                {/* 제공자 토글 */}
+                <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
+                  {[{ id: "gemini", label: "Gemini (무료)" }, { id: "claude", label: "Claude (유료)" }].map((opt) => {
+                    const on = aiProvider === opt.id;
+                    return (
+                      <TouchableOpacity
+                        key={opt.id}
+                        onPress={() => saveAiProvider(opt.id)}
+                        style={{ flex: 1, paddingVertical: 9, borderRadius: 10, alignItems: "center", backgroundColor: on ? C.primary : C.bg, borderWidth: 1, borderColor: on ? C.primary : C.line }}
+                      >
+                        <Text style={{ color: on ? "#fff" : C.sub, fontWeight: "700", fontSize: 13 }}>{opt.label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                {aiProvider === "gemini" ? (
+                  <>
+                    <Text style={{ color: C.sub, fontSize: 11, lineHeight: 16, marginBottom: 10 }}>
+                      Google Gemini API 키 하나로 모든 AI 기능(태그 추천·명대사 OCR·정보 불러오기·유의어 점검)이 켜져요. 무료 한도로 쓸 수 있어요(카드 등록·과금 없음). 키는 이 기기에만 저장되고 백업엔 포함되지 않아요. 기능마다 필요한 것만 전송돼요(OCR=이미지, 태그추천=제목·감상, 유의어=태그 목록).
+                    </Text>
+                    <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+                      <TextInput
+                        value={geminiApiKey}
+                        onChangeText={setGeminiApiKey}
+                        placeholder="AIza..."
+                        placeholderTextColor={C.sub}
+                        secureTextEntry
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        style={{ flex: 1, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, color: C.text, fontSize: 13 }}
+                      />
+                      <TouchableOpacity
+                        onPress={() => { saveGeminiApiKey(geminiApiKey); Alert.alert("저장됨", (geminiApiKey || "").trim() ? "Gemini API 키를 저장했어요." : "API 키를 비웠어요."); }}
+                        style={{ backgroundColor: C.primary, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 }}
+                      >
+                        <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>저장</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <Text style={{ color: (geminiApiKey || "").trim() ? (isDark ? "#4ade80" : "#16a34a") : C.sub, fontSize: 11, marginTop: 6 }}>
+                      {(geminiApiKey || "").trim() ? "✓ 키 입력됨 · 모델 Gemini Flash (무료 한도)" : "키 미설정 — AI 점검 비활성"}
+                    </Text>
+                    <Text style={{ color: C.sub, fontSize: 10, marginTop: 4 }}>
+                      키 발급: aistudio.google.com → Get API key (무료·카드 등록 불필요)
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <Text style={{ color: C.sub, fontSize: 11, lineHeight: 16, marginBottom: 10 }}>
+                      Claude API 키 하나로 모든 AI 기능(태그 추천·명대사 OCR·정보 불러오기·유의어 점검)이 켜져요. (Claude는 Max 구독과 별개로 과금돼요.) 키는 이 기기에만 저장되고 백업엔 포함되지 않아요. 기능마다 필요한 것만 전송돼요(OCR=이미지, 태그추천=제목·감상, 유의어=태그 목록).
+                    </Text>
+                    <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+                      <TextInput
+                        value={claudeApiKey}
+                        onChangeText={setClaudeApiKey}
+                        placeholder="sk-ant-..."
+                        placeholderTextColor={C.sub}
+                        secureTextEntry
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        style={{ flex: 1, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, color: C.text, fontSize: 13 }}
+                      />
+                      <TouchableOpacity
+                        onPress={() => { saveClaudeApiKey(claudeApiKey); Alert.alert("저장됨", (claudeApiKey || "").trim() ? "API 키를 저장했어요." : "API 키를 비웠어요."); }}
+                        style={{ backgroundColor: C.primary, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 }}
+                      >
+                        <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>저장</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <Text style={{ color: (claudeApiKey || "").trim() ? (isDark ? "#4ade80" : "#16a34a") : C.sub, fontSize: 11, marginTop: 6 }}>
+                      {(claudeApiKey || "").trim() ? `✓ 키 입력됨 · 모델 ${(CLAUDE_MODEL_OPTIONS.find(o => o.id === claudeModel) || {}).label || claudeModel}` : "키 미설정 — AI 점검 비활성"}
+                    </Text>
+                    <Text style={{ color: C.sub, fontSize: 10, marginTop: 4 }}>
+                      키 발급: console.anthropic.com → API Keys
+                    </Text>
+                    {/* 🆕 v7.31.1: Claude 모델 선택 — 태그추천·OCR·정보불러오기·유의어 공통 적용 */}
+                    <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", marginTop: 14, marginBottom: 6 }}>🤖 Claude 모델</Text>
+                    <View style={{ flexDirection: "row", gap: 6 }}>
+                      {CLAUDE_MODEL_OPTIONS.map(o => {
+                        const on = claudeModel === o.id;
+                        return (
+                          <TouchableOpacity key={o.id} onPress={() => saveClaudeModel(o.id)} activeOpacity={0.7}
+                            style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 6, borderRadius: 10, alignItems: "center", backgroundColor: on ? C.primary : C.bg, borderWidth: 1, borderColor: on ? C.primary : C.line }}>
+                            <Text style={{ color: on ? "#fff" : C.text, fontWeight: "800", fontSize: 12 }}>{o.label}</Text>
+                            <Text style={{ color: on ? "#e0e7ff" : C.sub, fontSize: 9, marginTop: 2, textAlign: "center" }}>{o.desc}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                    <Text style={{ color: C.sub, fontSize: 10, marginTop: 6, lineHeight: 14 }}>
+                      모든 AI 기능이 이 모델을 사용해요. 품질이 필요하면 Sonnet/Opus, 비용·속도 우선이면 Haiku.
+                    </Text>
+                  </>
+                )}
+                {/* 🆕 v7.28.10: 발급 방법 상세 안내 모달 열기 */}
+                <TouchableOpacity onPress={() => setApiKeyHelpModalOpen(true)} style={{ alignSelf: "flex-start", marginTop: 12 }}>
+                  <Text style={{ color: C.primary, fontSize: 12.5, fontWeight: "800", textDecorationLine: "underline" }}>📖 API 키 발급 방법 자세히 보기</Text>
+                </TouchableOpacity>
+                {/* 🔢 v7.28.33: AI 사용량(로컬 추정) — 무료 한도 감 잡기용 */}
+                {(() => { const u = aiUsageSummary(); return (
+                  <View style={{ marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.line }}>
+                    <Text style={{ color: C.text, fontSize: 12.5, fontWeight: "800" }}>📊 이번 실행 중 보낸 AI 요청</Text>
+                    <Text style={{ color: u.lastMin >= 10 ? (isDark ? "#fbbf24" : "#d97706") : C.text, fontSize: 13, fontWeight: "700", marginTop: 5 }}>
+                      최근 1분 {u.lastMin}회 · 최근 1시간 {u.lastHour}회
+                    </Text>
+                    <Text style={{ color: C.sub, fontSize: 10.5, marginTop: 5, lineHeight: 15 }}>
+                      무료 한도는 ‘분당 요청 수’에 가장 잘 걸려요(특히 일괄 기능이 한 번에 여러 번 호출). 앱이 보낸 호출만 센 추정치예요 — 한도는 프로젝트 단위라 다른 기기·앱과 공유하면 실제와 다를 수 있어요. 막히면 1분쯤 뒤 다시 시도하거나, 위에서 Claude로 바꿔 보세요.
+                    </Text>
+                    {/* 🆕 v7.31.1: Claude 누적 토큰 사용량 (응답 usage 합산, 전 슬롯 공통) */}
+                    {aiUsage.calls > 0 ? (
+                      <View style={{ marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: C.line }}>
+                        <Text style={{ color: C.text, fontSize: 12, fontWeight: "800" }}>🧮 Claude 누적 토큰 (이 기기)</Text>
+                        <Text style={{ color: C.text, fontSize: 12.5, fontWeight: "700", marginTop: 4 }}>
+                          호출 {aiUsage.calls.toLocaleString()}회 · 입력 {aiUsage.input.toLocaleString()} · 출력 {aiUsage.output.toLocaleString()} 토큰
+                        </Text>
+                        {Object.entries(aiUsage.byModel || {}).map(([m, v]) => (
+                          <Text key={m} style={{ color: C.sub, fontSize: 10.5, marginTop: 2 }}>
+                            · {(CLAUDE_MODEL_OPTIONS.find(o => o.id === m) || {}).label || m}: {Number(v.calls).toLocaleString()}회 · 입력 {Number(v.input).toLocaleString()} · 출력 {Number(v.output).toLocaleString()}
+                          </Text>
+                        ))}
+                        <TouchableOpacity onPress={resetAiUsage} style={{ alignSelf: "flex-start", marginTop: 8, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: C.line }}>
+                          <Text style={{ color: C.warn, fontSize: 11, fontWeight: "700" }}>누적 초기화</Text>
+                        </TouchableOpacity>
+                        <Text style={{ color: C.sub, fontSize: 10, marginTop: 6, lineHeight: 14 }}>
+                          앱이 보낸 Claude 호출의 응답 토큰만 합산했어요. 실제 청구·잔여 한도는 console.anthropic.com에서 확인하세요(조직 사용량 API는 admin 키 필요).
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                ); })()}
+              </View>
+
+              {/* 🆕 v7.39.0: 제목 검색 대상 사이트 온오프 — 다중 플랫폼 병렬이라 안 쓰는 곳은 꺼서 빠르게 */}
+              <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+                <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>🔎 제목 검색 사이트</Text>
+                <Text style={{ color: C.sub, fontSize: 11.5, marginTop: 5, lineHeight: 16 }}>
+                  ‘제목으로 검색’이 동시에 조회할 사이트예요. 여러 곳을 한꺼번에 찾느라 느릴 수 있어, 안 쓰는 곳은 꺼 두면 빨라져요. (카카오페이지·조아라는 제목 검색이 막혀 있어 작품 링크 ‘🔗 불러오기’만 돼요.)
+                </Text>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+                  {SEARCH_PLATFORMS.map(name => {
+                    const on = searchPlatforms[name] !== false;
+                    return (
+                      <TouchableOpacity key={name} onPress={() => toggleSearchPlatform(name)} activeOpacity={0.7}
+                        style={{ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 999, backgroundColor: on ? C.primary : C.bg, borderWidth: 1, borderColor: on ? C.primary : C.line }}>
+                        <Text style={{ color: on ? "#fff" : C.sub, fontWeight: "800", fontSize: 12.5 }}>{on ? "✓ " : ""}{name === "네이버시리즈" ? "네이버 시리즈" : name}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                {SEARCH_PLATFORMS.every(n => searchPlatforms[n] === false) && (
+                  <Text style={{ color: C.warn, fontSize: 11, marginTop: 8, fontWeight: "700" }}>⚠️ 모두 꺼져 있어요 — 한 곳 이상 켜야 제목 검색이 돼요.</Text>
+                )}
+              </View>
+
+              {/* 🔐 v7.40.0: 노벨피아 로그인 — 성인물(19금) 제목검색 노출 + 표지/메타 게이트 해제 */}
+              <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                  <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>🔐 노벨피아 로그인</Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: npLoggedIn ? "#22c55e" : C.line }} />
+                    <Text style={{ color: npLoggedIn ? "#22c55e" : C.sub, fontSize: 12, fontWeight: "800" }}>{npLoggedIn ? "로그인됨" : "로그인 안 됨"}</Text>
+                  </View>
+                </View>
+                <Text style={{ color: C.sub, fontSize: 11.5, marginTop: 5, lineHeight: 16 }}>
+                  노벨피아에 로그인하면 성인물(19금)도 ‘제목으로 검색’에 뜨고, 작품 정보를 더 정확히 불러와요. 본인인증된 계정으로 한 번 로그인하면 돼요. 로그인 정보는 휴대폰의 쿠키 저장소에만 보관되고 앱이 따로 저장하지 않아요(브라우저와 동일).
+                </Text>
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                  <TouchableOpacity onPress={() => setNpLoginModalOpen(true)} disabled={npBusy} activeOpacity={0.7}
+                    style={{ paddingVertical: 9, paddingHorizontal: 16, borderRadius: 999, backgroundColor: C.primary, opacity: npBusy ? 0.5 : 1 }}>
+                    <Text style={{ color: "#fff", fontWeight: "800", fontSize: 12.5 }}>{npLoggedIn ? "다시 로그인" : "노벨피아 로그인"}</Text>
+                  </TouchableOpacity>
+                  {npLoggedIn && (
+                    <TouchableOpacity onPress={logoutNp} disabled={npBusy} activeOpacity={0.7}
+                      style={{ paddingVertical: 9, paddingHorizontal: 16, borderRadius: 999, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, opacity: npBusy ? 0.5 : 1 }}>
+                      <Text style={{ color: C.sub, fontWeight: "800", fontSize: 12.5 }}>로그아웃</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+                <Text style={{ color: C.sub, fontSize: 10, marginTop: 8, lineHeight: 14 }}>
+                  ※ 성인 표지 이미지는 노벨피아 정책에 따라 로그인 후에도 안 보일 수 있어요. 그땐 표지만 직접 추가하면 돼요.
+                </Text>
+              </View>
+
+              {/* 🔐 v7.41.5: 문피아 로그인 — 회차 많은 완결작의 전체 회차목록(외전 포함)을 받아 본편/외전 분리 */}
+              <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                  <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>🔐 문피아 로그인</Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: mpLoggedIn ? "#22c55e" : C.line }} />
+                    <Text style={{ color: mpLoggedIn ? "#22c55e" : C.sub, fontSize: 12, fontWeight: "800" }}>{mpLoggedIn ? "로그인됨" : "로그인 안 됨"}</Text>
+                  </View>
+                </View>
+                <Text style={{ color: C.sub, fontSize: 11.5, marginTop: 5, lineHeight: 16 }}>
+                  문피아는 회차가 많은 작품의 ‘전체 회차목록’을 로그인해야 받을 수 있어요. 로그인하면 완결작의 본편/외전 완결일을 분리해 가져와요(100화 이하 작품은 로그인 없이도 돼요). 로그인 정보는 휴대폰 쿠키 저장소에만 보관돼요.
+                </Text>
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                  <TouchableOpacity onPress={() => setMpLoginModalOpen(true)} disabled={mpBusy} activeOpacity={0.7}
+                    style={{ paddingVertical: 9, paddingHorizontal: 16, borderRadius: 999, backgroundColor: C.primary, opacity: mpBusy ? 0.5 : 1 }}>
+                    <Text style={{ color: "#fff", fontWeight: "800", fontSize: 12.5 }}>{mpLoggedIn ? "다시 로그인" : "문피아 로그인"}</Text>
+                  </TouchableOpacity>
+                  {mpLoggedIn && (
+                    <TouchableOpacity onPress={logoutMp} disabled={mpBusy} activeOpacity={0.7}
+                      style={{ paddingVertical: 9, paddingHorizontal: 16, borderRadius: 999, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, opacity: mpBusy ? 0.5 : 1 }}>
+                      <Text style={{ color: C.sub, fontWeight: "800", fontSize: 12.5 }}>로그아웃 표시</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+                <Text style={{ color: C.sub, fontSize: 10, marginTop: 8, lineHeight: 14 }}>
+                  ※ 시험 기능 — 문피아 회차 API 접근 방식이 까다로워 일부 작품에서 안 될 수 있어요. 안 되면 기존 방식으로 자동 대체돼요.
+                </Text>
+              </View>
+
+              {/* 🆕 v7.43.0: 카카오 세션 — 카카오 GraphQL은 JS가 발급하는 익명 토큰(_kawlt)이 있어야 응답함. WebView로 1회 부트스트랩 */}
+              <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                  <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>🔑 카카오 세션 (불러오기용)</Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: kkReady ? "#22c55e" : C.line }} />
+                    <Text style={{ color: kkReady ? "#22c55e" : C.sub, fontSize: 12, fontWeight: "800" }}>{kkReady ? "준비됨" : "준비 안 됨"}</Text>
+                  </View>
+                </View>
+                <Text style={{ color: C.sub, fontSize: 11.5, marginTop: 5, lineHeight: 16 }}>
+                  카카오페이지는 보안상 작품 정보를 일반 요청으로는 안 줘요. ‘세션 준비’를 누르면 카카오 페이지를 잠깐 열어 익명 토큰만 받아와요(로그인 불필요). 한 번 받으면 카카오 링크 ‘🔗 불러오기’가 동작해요. 안 되면 다시 눌러 갱신하세요.
+                </Text>
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                  <TouchableOpacity onPress={() => setKkSessionModalOpen(true)} disabled={kkBusy} activeOpacity={0.7}
+                    style={{ paddingVertical: 9, paddingHorizontal: 16, borderRadius: 999, backgroundColor: C.primary, opacity: kkBusy ? 0.5 : 1 }}>
+                    <Text style={{ color: "#fff", fontWeight: "800", fontSize: 12.5 }}>{kkReady ? "세션 갱신" : "세션 준비"}</Text>
+                  </TouchableOpacity>
+                  {kkReady && (
+                    <TouchableOpacity onPress={clearKkSession} disabled={kkBusy} activeOpacity={0.7}
+                      style={{ paddingVertical: 9, paddingHorizontal: 16, borderRadius: 999, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, opacity: kkBusy ? 0.5 : 1 }}>
+                      <Text style={{ color: C.sub, fontWeight: "800", fontSize: 12.5 }}>초기화</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+                <Text style={{ color: C.sub, fontSize: 10, marginTop: 8, lineHeight: 14 }}>
+                  ※ 시험 기능(폰 검증 중) — 카카오가 막아둔 구조라 안 될 수도 있어요. 안 되면 ‘긁기 진단 › 카카오’로 응답을 캡처해 보내 주세요.
+                </Text>
+              </View>
+
+              {/* 🔧 v7.42.0: 카카오·문피아 외전 분리 토글 — 기본 ON(끌 수 있는 안전밸브). 끄면 완결일만 가져옴(외전 분리 생략). */}
+              <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                <View style={{ flex: 1, paddingRight: 10 }}>
+                  <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>🌿 카카오·문피아 외전 분리</Text>
+                  <Text style={{ color: C.sub, fontSize: 11.5, marginTop: 4, lineHeight: 16 }}>
+                    카카오·문피아 완결작의 본편/외전 완결일을 따로 가져와요. 기본으로 켜져 있어요. 불러오기 때 회차 정보를 추가로 받으니, 느리거나 일부 작품에서 불러오기가 막히면 꺼 주세요. (네이버·노벨피아·리디 분리는 항상 켜져 있어요.)
+                  </Text>
+                </View>
+                <Switch value={gaidenExp} onValueChange={toggleGaidenExp} />
+              </View>
+
+              {/* 🔧 v7.28.38: 긁기 진단 — 폰에서 검색 원본 캡처(타 플랫폼 제목검색 파서 개발용) */}
+              <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+                <Text style={{ color: C.text, fontWeight: "700", fontSize: 14, marginBottom: 4 }}>🔧 긁기 진단 (검색 원본 캡처)</Text>
+                <Text style={{ color: C.sub, fontSize: 11, lineHeight: 16, marginBottom: 8 }}>
+                  폰 브라우저에서 플랫폼 검색을 한 뒤 그 주소를 복사해 붙여넣고 ‘캡처’를 누르면, 폰이 직접 가져온 원본을 보여줘요. ‘원본 복사’로 복사해 채팅에 붙여넣으면 제목검색을 정확히 붙일 수 있어요. (아래 칩은 예시 주소 — 결과가 이상하면 폰 브라우저의 실제 검색 주소를 붙여넣어 주세요.) ※카카오 content 링크를 넣으면 GraphQL 응답까지 함께 캡처해요(불러오기 복구 진단용).
+                </Text>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                  {[
+                    { label: "네이버시리즈", url: "https://series.naver.com/search/search.series?t=novel&q=검" },
+                    { label: "문피아", url: "https://mm.munpia.com/?menu=detailSearchV2&action=search&searchKey=all&keyword=회귀" },
+                    { label: "노벨피아", url: "https://novelpia.com/proc/novel?cmd=novel_search&search_type=all&search_val=회귀&page=1&rows=30" },
+                    { label: "리디", url: "https://ridibooks.com/search?q=검" },
+                    { label: "카카오(GraphQL 진단)", url: "https://page.kakao.com/content/53705302" },
+                  ].map(p => (
+                    <TouchableOpacity key={p.label} onPress={() => setScrapeDiagUrl(p.url)} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line }}>
+                      <Text style={{ color: C.text, fontSize: 12 }}>{p.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <TextInput
+                  value={scrapeDiagUrl}
+                  onChangeText={setScrapeDiagUrl}
+                  placeholder="검색 결과 URL 붙여넣기"
+                  placeholderTextColor={C.sub}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  multiline
+                  style={{ backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, color: C.text, fontSize: 12, minHeight: 44 }}
+                />
+                <TouchableOpacity onPress={captureScrapeSource} disabled={scrapeDiagBusy}
+                  style={{ marginTop: 8, backgroundColor: C.primary, paddingVertical: 11, borderRadius: 10, alignItems: "center", opacity: scrapeDiagBusy ? 0.6 : 1 }}>
+                  <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>{scrapeDiagBusy ? "가져오는 중…" : "캡처"}</Text>
+                </TouchableOpacity>
+                {scrapeDiagOut ? (
+                  <View style={{ marginTop: 10, backgroundColor: C.bg, borderRadius: 10, padding: 10, borderWidth: 1, borderColor: C.line }}>
+                    <Text selectable style={{ color: C.text, fontSize: 11, lineHeight: 16 }}>{scrapeDiagOut.summary}</Text>
+                    <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                      <TouchableOpacity onPress={() => copyScrapeSource("full")} style={{ flex: 1, backgroundColor: C.primary, paddingVertical: 9, borderRadius: 8, alignItems: "center" }}>
+                        <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>📋 원본 복사</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => copyScrapeSource("summary")} style={{ flex: 1, backgroundColor: C.chip, paddingVertical: 9, borderRadius: 8, alignItems: "center", borderWidth: 1, borderColor: C.line }}>
+                        <Text style={{ color: C.text, fontWeight: "700", fontSize: 13 }}>📋 요약만</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ) : null}
+              </View>
+
+              {/* 🆕 v7.28.10: API 키 발급 안내 모달 (제공자별 단계·주의·바로가기) */}
+              {/* 🔐 v7.40.0: 노벨피아 WebView 로그인 모달 — 사용자가 직접 로그인 → ‘로그인 완료’로 세션 캡처 */}
+              <Modal visible={npLoginModalOpen} animationType="slide" statusBarTranslucent onRequestClose={() => setNpLoginModalOpen(false)}>
+                <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line }}>
+                    <TouchableOpacity onPress={() => setNpLoginModalOpen(false)} activeOpacity={0.7} style={{ padding: 6 }}>
+                      <Text style={{ color: C.sub, fontSize: 15, fontWeight: "800" }}>✕ 닫기</Text>
+                    </TouchableOpacity>
+                    <Text style={{ color: C.text, fontSize: 15, fontWeight: "800" }}>노벨피아 로그인</Text>
+                    <TouchableOpacity onPress={confirmNpLogin} disabled={npBusy} activeOpacity={0.7}
+                      style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, backgroundColor: C.primary, opacity: npBusy ? 0.5 : 1 }}>
+                      <Text style={{ color: "#fff", fontSize: 13, fontWeight: "800" }}>{npBusy ? "확인 중…" : "로그인 완료"}</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={{ paddingHorizontal: 14, paddingVertical: 8, backgroundColor: C.chip }}>
+                    <Text style={{ color: C.sub, fontSize: 11.5, lineHeight: 16 }}>
+                      노벨피아에 로그인(필요 시 본인인증)한 뒤, 위 오른쪽 ‘로그인 완료’를 눌러 주세요. 로그인 정보는 휴대폰 쿠키 저장소에만 보관돼요.
+                    </Text>
+                  </View>
+                  {npLoginModalOpen && (
+                    <WebView
+                      source={{ uri: "https://novelpia.com/login/" }}
+                      userAgent={SCRAPER_UA}
+                      sharedCookiesEnabled
+                      thirdPartyCookiesEnabled
+                      domStorageEnabled
+                      javaScriptEnabled
+                      startInLoadingState
+                      renderLoading={() => (
+                        <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "center", alignItems: "center", backgroundColor: C.bg }}>
+                          <ActivityIndicator size="large" color={C.primary} />
+                        </View>
+                      )}
+                      style={{ flex: 1, backgroundColor: C.bg }}
+                    />
+                  )}
+                </SafeAreaView>
+              </Modal>
+
+              {/* 🔐 v7.41.5: 문피아 WebView 로그인 모달 */}
+              <Modal visible={mpLoginModalOpen} animationType="slide" statusBarTranslucent onRequestClose={() => setMpLoginModalOpen(false)}>
+                <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line }}>
+                    <TouchableOpacity onPress={() => setMpLoginModalOpen(false)} activeOpacity={0.7} style={{ padding: 6 }}>
+                      <Text style={{ color: C.sub, fontSize: 15, fontWeight: "800" }}>✕ 닫기</Text>
+                    </TouchableOpacity>
+                    <Text style={{ color: C.text, fontSize: 15, fontWeight: "800" }}>문피아 로그인</Text>
+                    <TouchableOpacity onPress={confirmMpLogin} disabled={mpBusy} activeOpacity={0.7}
+                      style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, backgroundColor: C.primary, opacity: mpBusy ? 0.5 : 1 }}>
+                      <Text style={{ color: "#fff", fontSize: 13, fontWeight: "800" }}>{mpBusy ? "확인 중…" : "로그인 완료"}</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={{ paddingHorizontal: 14, paddingVertical: 8, backgroundColor: C.chip }}>
+                    <Text style={{ color: C.sub, fontSize: 11.5, lineHeight: 16 }}>
+                      문피아에 로그인한 뒤, 위 오른쪽 ‘로그인 완료’를 눌러 주세요. 로그인 정보는 휴대폰 쿠키 저장소에만 보관돼요.
+                    </Text>
+                  </View>
+                  {mpLoginModalOpen && (
+                    <WebView
+                      source={{ uri: "https://m.munpia.com/" }}
+                      userAgent={SCRAPER_UA}
+                      sharedCookiesEnabled
+                      thirdPartyCookiesEnabled
+                      domStorageEnabled
+                      javaScriptEnabled
+                      startInLoadingState
+                      renderLoading={() => (
+                        <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "center", alignItems: "center", backgroundColor: C.bg }}>
+                          <ActivityIndicator size="large" color={C.primary} />
+                        </View>
+                      )}
+                      style={{ flex: 1, backgroundColor: C.bg }}
+                    />
+                  )}
+                </SafeAreaView>
+              </Modal>
+
+              {/* 🆕 v7.43.0: 카카오 세션 부트스트랩 WebView — 카카오 페이지를 열어 JS가 _kawlt 익명 토큰을 쿠키에 심게 함(로그인 불필요) */}
+              <Modal visible={kkSessionModalOpen} animationType="slide" statusBarTranslucent onRequestClose={() => setKkSessionModalOpen(false)}>
+                <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line }}>
+                    <TouchableOpacity onPress={() => setKkSessionModalOpen(false)} activeOpacity={0.7} style={{ padding: 6 }}>
+                      <Text style={{ color: C.sub, fontSize: 15, fontWeight: "800" }}>✕ 닫기</Text>
+                    </TouchableOpacity>
+                    <Text style={{ color: C.text, fontSize: 15, fontWeight: "800" }}>카카오 세션 준비</Text>
+                    <TouchableOpacity onPress={confirmKkSession} disabled={kkBusy} activeOpacity={0.7}
+                      style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, backgroundColor: C.primary, opacity: kkBusy ? 0.5 : 1 }}>
+                      <Text style={{ color: "#fff", fontSize: 13, fontWeight: "800" }}>{kkBusy ? "확인 중…" : "완료"}</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={{ paddingHorizontal: 14, paddingVertical: 8, backgroundColor: C.chip }}>
+                    <Text style={{ color: C.sub, fontSize: 11.5, lineHeight: 16 }}>
+                      카카오페이지가 다 뜰 때까지(로딩 원이 사라질 때까지) 잠깐 기다린 뒤, 오른쪽 위 ‘완료’를 눌러 주세요. 로그인은 필요 없어요 — 익명 토큰만 받아와요.
+                    </Text>
+                  </View>
+                  {kkSessionModalOpen && (
+                    <WebView
+                      source={{ uri: "https://page.kakao.com/content/53705302" }}
+                      userAgent={SCRAPER_UA}
+                      sharedCookiesEnabled
+                      thirdPartyCookiesEnabled
+                      domStorageEnabled
+                      javaScriptEnabled
+                      startInLoadingState
+                      renderLoading={() => (
+                        <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "center", alignItems: "center", backgroundColor: C.bg }}>
+                          <ActivityIndicator size="large" color={C.primary} />
+                        </View>
+                      )}
+                      style={{ flex: 1, backgroundColor: C.bg }}
+                    />
+                  )}
+                </SafeAreaView>
+              </Modal>
+
+              {/* 🆕 v7.44.0/v7.44.4: 카카오 응답 가로채기 WebView — 실제로 보이게(불투명) 띄워 JS 실행 보장. 상단 배너로 안내, 페이지는 그대로 노출 */}
+              <Modal visible={!!kkCaptureUrl} animationType="slide" statusBarTranslucent onRequestClose={() => { const r = kkCaptureResolver.current; if (r) r.finish(null); }}>
+                <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line }}>
+                    <ActivityIndicator size="small" color={C.primary} />
+                    <Text style={{ color: C.text, fontSize: 13.5, fontWeight: "800", flex: 1 }}>카카오에서 작품 정보를 가져오는 중…</Text>
+                    <TouchableOpacity onPress={() => { const r = kkCaptureResolver.current; if (r) r.finish(null); }} activeOpacity={0.7} style={{ paddingVertical: 6, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1, borderColor: C.line }}>
+                      <Text style={{ color: C.sub, fontSize: 12.5, fontWeight: "800" }}>취소</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={{ color: C.sub, fontSize: 11, paddingHorizontal: 14, paddingVertical: 6, backgroundColor: C.chip }}>페이지가 다 뜨면 자동으로 정보를 받아 닫혀요. (보안상 페이지를 직접 열어야 정보를 줘요)</Text>
+                  {kkCaptureUrl && (
+                    <WebView
+                      source={{ uri: kkCaptureUrl }}
+                      userAgent={SCRAPER_UA}
+                      injectedJavaScriptBeforeContentLoaded={KAKAO_CAPTURE_JS}
+                      injectedJavaScript={KAKAO_CAPTURE_JS}
+                      onMessage={onKkCaptureMessage}
+                      onLoadStart={() => onKkCaptureNote("__loadstart__")}
+                      onLoadEnd={(ev) => onKkCaptureNote("__loadend__:" + (ev?.nativeEvent?.url || "").slice(0, 50))}
+                      onNavigationStateChange={(s) => onKkCaptureNote("__nav__:" + (s?.url || "").slice(0, 50))}
+                      onError={(ev) => onKkCaptureError(ev?.nativeEvent?.description || "load error")}
+                      onHttpError={(ev) => onKkCaptureError("http " + (ev?.nativeEvent?.statusCode || "?"))}
+                      sharedCookiesEnabled
+                      thirdPartyCookiesEnabled
+                      domStorageEnabled
+                      javaScriptEnabled
+                      originWhitelist={["*"]}
+                      style={{ flex: 1, backgroundColor: C.bg }}
+                    />
+                  )}
+                </SafeAreaView>
+              </Modal>
+
+              <Modal visible={apiKeyHelpModalOpen} animationType="fade" transparent statusBarTranslucent onRequestClose={() => setApiKeyHelpModalOpen(false)}>
+                <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center" }}>
+                  <TouchableOpacity style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} activeOpacity={1} onPress={() => setApiKeyHelpModalOpen(false)} />
+                  <View style={{ backgroundColor: C.card, borderRadius: 20, padding: 20, width: "90%", maxWidth: 440, maxHeight: "85%" }}>
+                    <ScrollView showsVerticalScrollIndicator={false}>
+                      {(() => {
+                        const isGem = aiProvider === "gemini";
+                        const steps = isGem ? [
+                          "아래 '구글 AI 스튜디오 열기'를 누르거나, 브라우저에서 aistudio.google.com 접속",
+                          "구글 계정으로 로그인 (평소 쓰는 계정이면 돼요)",
+                          "'Get API key (API 키 가져오기)' 클릭",
+                          "'Create API key (API 키 만들기)' 클릭 → 새 프로젝트가 자동으로 만들어져요",
+                          "생성된 키(AIza…로 시작)를 복사",
+                          "이 화면의 키 입력칸에 붙여넣고 '저장' 누르기",
+                        ] : [
+                          "아래 'Anthropic 콘솔 열기'를 누르거나, 브라우저에서 console.anthropic.com 접속",
+                          "로그인 또는 회원가입",
+                          "왼쪽/위쪽 메뉴에서 'API Keys' 선택",
+                          "'Create Key' 클릭 → 이름을 정하고 생성",
+                          "표시된 키(sk-ant-…로 시작)를 복사 — ⚠️ 이때만 보여요! 창을 닫으면 다시 못 봐요",
+                          "이 화면의 키 입력칸에 붙여넣고 '저장' 누르기",
+                          "'Billing(결제)'에서 결제수단 등록 또는 크레딧 충전 (과금 필요)",
+                        ];
+                        const notes = isGem ? [
+                          "카드 등록·결제 없이 무료로 시작할 수 있어요.",
+                          "무료 한도(분당·하루 요청 수 제한)가 있지만, 유의어 점검은 가끔 누르는 기능이라 넉넉해요.",
+                          "키는 비밀번호처럼 다뤄 주세요. 남에게 공유하면 안 돼요.",
+                          "이 앱은 키를 '이 기기'에만 저장하고, 백업·내보내기 파일엔 절대 넣지 않아요.",
+                          "점검할 때 전송되는 건 '태그 목록'뿐 — 작품 제목·감상·점수는 전송되지 않아요.",
+                        ] : [
+                          "⚠️ Claude Max 구독과는 '별개'의 종량제 과금이에요. API용 크레딧을 따로 충전해야 동작해요.",
+                          "비용: 기본 Haiku 모델 기준 1회 점검 약 20원 수준 (태그 수에 따라 달라져요).",
+                          "크레딧이 없으면 401·요청 실패가 떠요.",
+                          "키 보안·전송 범위는 Gemini와 똑같아요 (기기에만 저장, 태그 목록만 전송).",
+                          "돈 안 내고 쓰고 싶으면 위 토글에서 'Gemini (무료)'를 고르세요.",
+                        ];
+                        const url = isGem ? "https://aistudio.google.com/app/apikey" : "https://console.anthropic.com/settings/keys";
+                        const linkLabel = isGem ? "🔗 구글 AI 스튜디오 열기" : "🔗 Anthropic 콘솔 열기";
+                        return (
+                          <>
+                            <Text style={{ fontSize: 19, fontWeight: "800", color: C.text, marginBottom: 6 }}>
+                              {isGem ? "🟢 Gemini API 키 발급 (무료)" : "🟣 Claude API 키 발급 (유료)"}
+                            </Text>
+                            <Text style={{ fontSize: 12.5, color: C.sub, lineHeight: 18, marginBottom: 14 }}>
+                              {isGem
+                                ? "구글 계정만 있으면 카드 등록 없이 무료로 발급돼요. 1~2분이면 끝나요."
+                                : "⚠️ Claude Max 구독과 별개의 API 과금이에요. 결제수단·크레딧을 따로 등록해야 동작해요."}
+                            </Text>
+                            <TouchableOpacity onPress={() => safeOpenURL(url)} style={{ backgroundColor: C.primary, borderRadius: 12, paddingVertical: 12, alignItems: "center", marginBottom: 18 }}>
+                              <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>{linkLabel}</Text>
+                            </TouchableOpacity>
+                            <Text style={{ fontSize: 14, fontWeight: "800", color: C.text, marginBottom: 10 }}>📋 단계별 안내</Text>
+                            {steps.map((s, i) => (
+                              <View key={i} style={{ flexDirection: "row", marginBottom: 10, alignItems: "flex-start" }}>
+                                <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: C.primary, alignItems: "center", justifyContent: "center", marginRight: 10, marginTop: 1 }}>
+                                  <Text style={{ color: "#fff", fontWeight: "800", fontSize: 12 }}>{i + 1}</Text>
+                                </View>
+                                <Text style={{ flex: 1, fontSize: 13.5, color: C.text, lineHeight: 19 }}>{s}</Text>
+                              </View>
+                            ))}
+                            <Text style={{ fontSize: 14, fontWeight: "800", color: C.text, marginTop: 10, marginBottom: 10 }}>💡 참고 · 주의</Text>
+                            {notes.map((n, i) => (
+                              <View key={i} style={{ flexDirection: "row", marginBottom: 8, alignItems: "flex-start" }}>
+                                <Text style={{ color: C.sub, fontSize: 13, marginRight: 6, lineHeight: 18 }}>•</Text>
+                                <Text style={{ flex: 1, fontSize: 12.5, color: C.sub, lineHeight: 18 }}>{n}</Text>
+                              </View>
+                            ))}
+                            <TouchableOpacity onPress={() => setApiKeyHelpModalOpen(false)} style={{ backgroundColor: C.chip, borderRadius: 12, paddingVertical: 12, alignItems: "center", marginTop: 10 }}>
+                              <Text style={{ color: C.text, fontWeight: "800", fontSize: 14 }}>닫기</Text>
+                            </TouchableOpacity>
+                          </>
+                        );
+                      })()}
+                    </ScrollView>
+                  </View>
+                </View>
+              </Modal>
+              </Section>
             )}
             
             {/* ═══════════════════════════════════════════════════════════════ */}
@@ -70001,7 +70021,7 @@ async function importJSON() {
                     style={{ flexDirection: "row", alignItems: "center", alignSelf: "flex-start", gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, backgroundColor: activeKey ? (isDark ? "#3730a3" : "#eef2ff") : C.chip, borderWidth: 1, borderColor: activeKey ? (isDark ? "#4f46e5" : "#c7d2fe") : C.line, marginBottom: 8, opacity: tagHealthBusy ? 0.5 : 1 }}
                   >
                     <Text style={{ color: activeKey ? (isDark ? "#c7d2fe" : "#4338ca") : C.sub, fontWeight: "700", fontSize: 13 }}>
-                      🤖 AI로 더 찾기 {activeKey ? `(${provLabel})` : "(설정 > 태그에서 키 입력)"}
+                      🤖 AI로 더 찾기 {activeKey ? `(${provLabel})` : "(설정 > 연결에서 키 입력)"}
                     </Text>
                   </TouchableOpacity>
                 );
@@ -70585,7 +70605,7 @@ async function importJSON() {
                       {!batchHasKey ? (
                         <View style={{ backgroundColor: isDark ? "#3f2d0f" : "#fef3c7", borderRadius: 10, padding: 10, marginBottom: 10, borderWidth: 1, borderColor: isDark ? "#b45309" : "#fcd34d" }}>
                           <Text style={{ color: isDark ? "#fde68a" : "#92400e", fontSize: 12, fontWeight: "700" }}>⚠ {batchProvider === "gemini" ? "Gemini" : "Claude"} API 키가 없어요</Text>
-                          <Text style={{ color: isDark ? "#fde68a" : "#92400e", fontSize: 11, marginTop: 2 }}>설정 &gt; 🏷️ 태그에서 키를 먼저 입력해 주세요. (Gemini는 무료)</Text>
+                          <Text style={{ color: isDark ? "#fde68a" : "#92400e", fontSize: 11, marginTop: 2 }}>설정 &gt; 🔌 연결에서 키를 먼저 입력해 주세요. (Gemini는 무료)</Text>
                         </View>
                       ) : null}
                       <Text style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>대상: 태그가 적은 작품</Text>
