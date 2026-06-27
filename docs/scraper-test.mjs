@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, SCRAPER_HEADERS, SCRAPER_UA };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, applyEpisodeSplitToMeta, SCRAPER_HEADERS, SCRAPER_UA };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -513,6 +513,35 @@ eq("ridiPublishDate: 중첩 우선, 최상위 폴백 유지", S.ridiPublishDate(
   eq("리디 외전선별: 코믹 제외", gaiden.some(g => g.isComic), false);
 }
 eq("pickRidiGaidenSeries: 빈 목록 → []", S.pickRidiGaidenSeries({ title: "x", seriesId: "1" }, []).length, 0);
+// 🔧 v7.41.3: 짧은/접두 제목 오탐 방지 — 본편 제목 직후 구분자/마커 없이 다른 단어로 이어지면 제외
+{
+  const base = { title: "검", author: "갑", seriesId: "1" };
+  const list = [
+    { seriesId: "2", title: "검술명가 막내아들", author: "갑", isComic: false, bookCount: 10 }, // 구분자 없이 '술'로 이어짐 → 제외
+    { seriesId: "3", title: "검 외전", author: "갑", isComic: false, bookCount: 2 },           // 공백+마커 → 포함
+  ];
+  const g = S.pickRidiGaidenSeries(base, list).map(x => x.seriesId);
+  eq("리디 외전선별: 접두 오탐('검'→'검술명가') 제외", g.includes("2"), false);
+  eq("리디 외전선별: 구분자/마커 있으면 포함('검 외전')", g.includes("3"), true);
+}
+// 🔧 v7.41.3: applyEpisodeSplitToMeta — 외전-only 윈도(본편 완결일 0)에서도 외전 데이터 보존
+{
+  const m1 = { totalEpisodes: 50 };
+  S.applyEpisodeSplitToMeta(m1, { mainCompletedAt: 0, hasGaiden: true, gaidenCount: 3, gaidenStartAt: 111, gaidenCompletedAt: 222 });
+  eq("split적용: 본편완결일 0이어도 외전 보존(count)", m1.gaidenCount, 3);
+  eq("split적용: 외전 시작/완결 보존", [m1.gaidenStartAt, m1.gaidenCompletedAt], [111, 222]);
+  eq("split적용: 본편완결일 0이면 completedAt 미설정", m1.completedAt, undefined);
+  // 리디(noTotalAdjust): total 보정 안 함
+  const m2 = { totalEpisodes: 26 };
+  S.applyEpisodeSplitToMeta(m2, { mainCompletedAt: 1000, hasGaiden: true, gaidenCount: 3, gaidenStartAt: 5, gaidenCompletedAt: 9, gaidenStatus: "ongoing" }, { noTotalAdjust: true });
+  eq("split적용(리디): total 미보정", m2.totalEpisodes, 26);
+  eq("split적용(리디): gaidenStatus 전파(ongoing)", m2.gaidenStatus, "ongoing");
+  // 회차모델(노벨피아/네이버): total=본편(전체-외전)
+  const m3 = { totalEpisodes: 100 };
+  S.applyEpisodeSplitToMeta(m3, { mainCompletedAt: 1000, hasGaiden: true, gaidenCount: 10, gaidenStartAt: 5, gaidenCompletedAt: 9 });
+  eq("split적용(회차모델): total=본편(100-10)", m3.totalEpisodes, 90);
+  eq("split적용(회차모델): gaidenStatus 기본 completed", m3.gaidenStatus, "completed");
+}
 
 console.log(`\n${fail === 0 ? "🎉 ALL PASS" : "⚠️  FAILED"}  pass=${pass} fail=${fail}`);
 process.exit(fail === 0 ? 0 : 1);

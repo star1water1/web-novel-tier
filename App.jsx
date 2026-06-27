@@ -2,11 +2,26 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.41.2 (본편/외전 분리 — 리디 확장 + 리디 출간일 버그 수정)             ║
+ * ║  버전: 7.41.3 (코드 리뷰 수정 — 외전 분리 엣지케이스 4건)                      ║
  * ║  최종 수정: 2026-06-27                                                        ║
  * ║  총 라인 수: 약 69,360줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔍 v7.41.3 코드 리뷰 수정 — 외전 분리 엣지케이스 4건 (2026-06-27)             ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 멀티에이전트 리뷰(8앵글)로 잡은 데이터-품질 버그 수정:                         ║
+ * ║ ① applyEpisodeSplitToMeta: 본편 완결일·외전을 독립 적용 — 윈도에 본편 경계가    ║
+ * ║   없어 mainCompletedAt=0이어도 외전 데이터 보존(종전 통째 폐기). 호출부 가드     ║
+ * ║   `sp.mainCompletedAt`→`sp`로 완화 + 네이버 moreDetail 폴백 항상 도달.          ║
+ * ║ ② fetchRidiSplit: hasGaiden을 book_count 합 대신 '외전 발견+날짜 취득'으로 판정  ║
+ * ║   (book_count 누락 시 외전 통째 버려지던 문제) + total_book_count·1 폴백.        ║
+ * ║ ③ pickRidiGaidenSeries: 본편 제목 직후 구분자/마커 필수 — 짧은 제목('검'→        ║
+ * ║   '검술명가') 접두 오탐 방지.                                                  ║
+ * ║ ④ 미사용 isNpLoggedIn 제거(데드코드). 회귀 +9 → 274/274.                       ║
+ * ║ ※리뷰 보류: 노벨피아 로그인 오탐(익명도 USERKEY/LOGINKEY 발급 → 인증쿠키 구분    ║
+ * ║   불가, 성공메시지 헤지로 완화). 컨벤션 위반 0(DB는 exec/execBatch=safeDbOp).   ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🌿 v7.41.2 본편/외전 분리 — 리디 확장 + 출간일 버그 수정 (2026-06-27)         ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -14388,7 +14403,6 @@ const SCRAPER_HEADERS = {
 //   API fetch에 Cookie 헤더를 "명시 주입"(네이티브 쿠키 자동전달 의존 X — 안드로이드 외 동작·Fresco 이미지까지 일관).
 //   globalNpCookie는 컴포넌트(App)가 부팅/로그인 시 CookieManager.get으로 채운다 — 이 슬라이스엔 네이티브 import 없음(오프라인 회귀 테스트 보존).
 let globalNpCookie = null; // "name=val; name2=val2" 형태 or null(비로그인)
-function isNpLoggedIn() { return !!globalNpCookie; }
 function npHeaders(extra) {
   const h = { ...SCRAPER_HEADERS, ...(extra || {}) };
   if (globalNpCookie) h.Cookie = globalNpCookie; // 로그인 시에만 첨부 → 비로그인 동작은 종전과 100% 동일(무회귀)
@@ -14757,10 +14771,13 @@ async function fetchNovelpiaEpisodeSplit(url, opts = {}) {
 }
 // 🆕 v7.41.1: 분리 결과(split)를 meta에 적용(네이버·노벨피아 공통). 본편 완결일·연도, 외전 회차수·시작/완결일·상태, total=본편(전체-외전).
 function applyEpisodeSplitToMeta(meta, split, opts) {
-  if (!meta || !split || !split.mainCompletedAt) return meta;
-  const y = new Date(split.mainCompletedAt).getUTCFullYear();
-  meta.completedAt = split.mainCompletedAt;
-  if (y >= 1990 && y <= 2099) meta.endYear = y;
+  if (!meta || !split) return meta;
+  // 🔧 v7.41.3: 본편 완결일과 외전을 독립 적용 — 윈도에 본편 경계가 없어 mainCompletedAt=0이어도 외전 데이터는 보존.
+  if (split.mainCompletedAt) {
+    const y = new Date(split.mainCompletedAt).getUTCFullYear();
+    meta.completedAt = split.mainCompletedAt;
+    if (y >= 1990 && y <= 2099) meta.endYear = y;
+  }
   if (split.hasGaiden) {
     meta.gaidenCount = split.gaidenCount;
     meta.gaidenStartAt = split.gaidenStartAt;
@@ -14825,13 +14842,16 @@ function pickRidiGaidenSeries(base, list) {
   const norm = (t) => String(t || "").replace(/\[[^\]]*\]/g, "").replace(/\s+/g, " ").trim(); // [e북]/[코믹] 접두 제거
   const baseT = norm(base && base.title);
   if (!baseT) return [];
-  return (Array.isArray(list) ? list : []).filter(s =>
-    s && s.seriesId && String(s.seriesId) !== String(base && base.seriesId) &&
-    !s.isComic &&
-    norm(s.title) !== baseT &&
-    norm(s.title).indexOf(baseT) === 0 && // 본편 제목으로 시작(예: "무직전생 ~사족 편~")
-    (!(base && base.author) || !s.author || s.author === base.author)
-  );
+  // 🔧 v7.41.3: 본편 제목 뒤가 '구분자(공백·~·괄호 등) 또는 외전 마커'여야 함 — 짧은/흔한 제목('검'→'검술명가') 오탐 방지.
+  const sepRe = /^[\s~\-:_/|·,.()[\]<>{}【】「」『』〈〉─]/;
+  return (Array.isArray(list) ? list : []).filter(s => {
+    if (!s || !s.seriesId || String(s.seriesId) === String(base && base.seriesId) || s.isComic) return false;
+    const t = norm(s.title);
+    if (t === baseT || t.indexOf(baseT) !== 0) return false; // 본편 제목으로 시작
+    const rest = t.slice(baseT.length);
+    if (!sepRe.test(rest) && !isGaidenTitle(rest)) return false; // 본편 제목 직후 다른 단어로 이어지면(구분자·마커 없음) 제외
+    return !(base && base.author) || !s.author || s.author === base.author;
+  });
 }
 async function fetchRidiSeriesSearch(keyword, opts = {}) {
   const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 15000 });
@@ -14858,20 +14878,24 @@ async function fetchRidiSplit(url, opts = {}) {
   if (lastId && String(lastId) !== bid) { const lb = await fetchRidiBook(lastId, opts); mainTs = ridiPublishDate(lb).ts || ridiPublishDate(book).ts; }
   else mainTs = ridiPublishDate(book).ts;
   // 외전 시리즈 발견(검색) → 각 외전 시리즈의 1권(시작)·마지막 권(완결) 출간일 + 외전 연재상태
-  let gaidenStart = 0, gaidenEnd = 0, gaidenCount = 0, gaidenOngoing = false;
+  let gaidenStart = 0, gaidenEnd = 0, gaidenCount = 0, gaidenOngoing = false, gaidenFound = 0;
   try {
     const list = await fetchRidiSeriesSearch(baseTitle, opts);
     const baseEntry = list.find(s => s.seriesId === sid);
     const gaiden = pickRidiGaidenSeries({ title: baseTitle, author: baseEntry ? baseEntry.author : "", seriesId: sid }, list);
     for (const g of gaiden) {
-      gaidenCount += g.bookCount;
       const v1 = await fetchRidiBook(g.seriesId, opts); const st = ridiPublishDate(v1).ts; if (st && (!gaidenStart || st < gaidenStart)) gaidenStart = st;
       const gp = v1 && v1.series && v1.series.property; // 외전 시리즈 완결 여부(아직 연재 중일 수 있음 — 무직전생 사족편)
       if (gp && !(gp.is_completed === true || gp.is_serial_complete === true || gp.is_serial_completed === true)) gaidenOngoing = true;
       const lv = (g.lastVolumeId && g.lastVolumeId !== g.seriesId) ? await fetchRidiBook(g.lastVolumeId, opts) : v1; const en = ridiPublishDate(lv).ts; if (en > gaidenEnd) gaidenEnd = en;
+      // 🔧 v7.41.3: 외전 권수는 book_count 없으면 series.property.total_book_count로 폴백, 그래도 없으면 1. 날짜를 얻었으면 발견으로 집계.
+      gaidenCount += Number(g.bookCount) || Number(gp && gp.total_book_count) || (st || en ? 1 : 0);
+      if (st || en) gaidenFound++;
     }
   } catch {}
-  return { mainCompletedAt: mainTs, hasGaiden: gaidenCount > 0, gaidenCount, gaidenStartAt: gaidenStart, gaidenCompletedAt: gaidenEnd, gaidenStatus: gaidenCount > 0 ? (gaidenOngoing ? "ongoing" : "completed") : undefined };
+  // 🔧 v7.41.3: hasGaiden은 'book_count 합'이 아니라 '외전 시리즈를 찾고 날짜를 얻음'으로 판정(누락 book_count로 외전이 통째 버려지던 문제).
+  const hasGaiden = gaidenFound > 0 && !!(gaidenStart || gaidenEnd);
+  return { mainCompletedAt: mainTs, hasGaiden, gaidenCount, gaidenStartAt: gaidenStart, gaidenCompletedAt: gaidenEnd, gaidenStatus: hasGaiden ? (gaidenOngoing ? "ongoing" : "completed") : undefined };
 }
 // 🆕 v7.40.2: 검색 후보가 가진 기본값(작가·표지)을 상세 긁기 결과에 폴백 보강.
 //   네이버시리즈는 검색 결과 카드엔 작가(<span class="author">)가 있지만 상세 SSR엔 없어,
@@ -14895,7 +14919,7 @@ async function fetchNovelMeta(url, opts = {}) {
     const npNo = (url.match(/\/novel\/(\d+)/) || [])[1];
     if (npNo) { try { const m = await fetchNovelpiaByNo(npNo, opts); if (m && m.ok && m.title) {
       // 🆕 v7.41.1: 완결작이면 회차목록(proc/episode_list)으로 본편/외전 분리 보강(공통 적용).
-      if (m.workStatus === "completed") { try { const sp = await fetchNovelpiaEpisodeSplit(url, opts); if (sp && sp.mainCompletedAt) applyEpisodeSplitToMeta(m, sp); } catch {} }
+      if (m.workStatus === "completed") { try { const sp = await fetchNovelpiaEpisodeSplit(url, opts); if (sp) applyEpisodeSplitToMeta(m, sp); } catch {} }
       return m;
     } } catch { /* API 실패 → HTML 폴백 */ } }
   }
@@ -14928,15 +14952,15 @@ async function fetchNovelMeta(url, opts = {}) {
   if (platform === "네이버시리즈" && meta.workStatus === "completed") {
     let split = null;
     try { split = await fetchNaverEpisodeSplit(url, opts); } catch {}
-    if (split && split.mainCompletedAt) applyEpisodeSplitToMeta(meta, split);
-    else if (!meta.endYear) {
+    if (split) applyEpisodeSplitToMeta(meta, split); // 🔧 v7.41.3: 외전-only 윈도(본편 완결일 0)에서도 외전 보존
+    if (!meta.endYear) { // 본편 완결일/연도를 못 채웠으면(분리 실패·윈도에 본편 없음) moreDetail 폴백
       try { const c = await fetchNaverCompletion(url, opts); if (c.year) meta = { ...meta, endYear: c.year, completedAt: c.ts || meta.completedAt || 0 }; } catch {}
     }
   }
   // 🆕 v7.41.2: 리디 완결작 — book-api 마지막 권 출간일=본편 완결일 + 검색으로 외전(별도 시리즈) 시작/완결일·권수 보강.
   //   외전은 별도 series라 total 보정 생략(noTotalAdjust). 상세 JSON-LD는 1권(시작) 날짜뿐이라 본편 완결일은 여기서 채움.
   if (platform === "리디" && meta.workStatus === "completed") {
-    try { const sp = await fetchRidiSplit(url, opts); if (sp && sp.mainCompletedAt) applyEpisodeSplitToMeta(meta, sp, { noTotalAdjust: true }); } catch {}
+    try { const sp = await fetchRidiSplit(url, opts); if (sp) applyEpisodeSplitToMeta(meta, sp, { noTotalAdjust: true }); } catch {}
   }
   return meta;
 }
@@ -16970,7 +16994,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.41.2";
+const APP_VERSION = "7.41.3";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -16996,6 +17020,13 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.41.3", date: "2026-06-27",
+    title: "🔍 외전 분리 정확도 보강",
+    highlights: [
+      { type: "fix", text: "🔍 본편/외전 가져오기의 드문 오류들을 다듬었어요 — 외전 정보가 일부 누락되거나, 비슷한 제목의 다른 작품을 외전으로 잘못 묶던 경우를 고쳤어요. (네이버·노벨피아·리디)" },
+    ],
+  },
   {
     version: "7.41.2", date: "2026-06-27",
     title: "🌿 본편/외전 분리 — 리디도",
@@ -42913,7 +42944,7 @@ function AppContent() {
           const hit = (await searchNovelpia(title || "", opts)).find(c => c.url && c.url.includes("/novel/" + id) && c.meta);
           if (hit) {
             // 🆕 v7.41.1: 완결작이면 회차목록으로 본편/외전 분리 보강(검색 meta엔 회차 분리 정보 없음)
-            if (hit.meta && hit.meta.workStatus === "completed") { try { const sp = await fetchNovelpiaEpisodeSplit(link, opts); if (sp && sp.mainCompletedAt) applyEpisodeSplitToMeta(hit.meta, sp); } catch {} }
+            if (hit.meta && hit.meta.workStatus === "completed") { try { const sp = await fetchNovelpiaEpisodeSplit(link, opts); if (sp) applyEpisodeSplitToMeta(hit.meta, sp); } catch {} }
             return hit.meta;
           }
         } catch {}
