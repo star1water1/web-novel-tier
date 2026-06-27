@@ -2,11 +2,28 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.40.3 (일괄 등록 완결일 보존 — 신규 등록 completed_at 누락 수정)        ║
+ * ║  버전: 7.41.0 (본편/외전 분리 — 네이버 본편 완결일·외전 시작/완결일 자동)      ║
  * ║  최종 수정: 2026-06-27                                                        ║
  * ║  총 라인 수: 약 69,360줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🌿 v7.41.0 본편/외전 분리 — 본편 완결일·외전 시작/완결일 자동 (2026-06-27)    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 한국 웹소설은 본편 완결 후 한참 뒤 외전을 별도 연재 → '마지막 회차 날짜'를      ║
+ * ║ 완결일로 쓰면 외전이 섞인다. 공개 크롤러 교차조사로 네이버 회차목록             ║
+ * ║ (volumeMoreList)의 volumnNameText가 본편 "517화"/외전 "외전 483화"로 구조적     ║
+ * ║ 구분됨을 확인(실측 전독시). DESC 1회 호출로 본편 완결일·외전 시작/완결일·       ║
+ * ║ 외전 회차수 분리 산출. 선행 사례 거의 없음 → 차별 기능.                        ║
+ * ║ • 엔진: GAIDEN_TITLE_RE/isGaidenTitle(외전 전용 마커, "완결"·"에필로그" 제외 —  ║
+ * ║   선행 크롤러 오탐 교훈), parseNaverEpisodeSplit, fetchNaverEpisodeSplit.       ║
+ * ║ • DB: gaiden_start_at·gaiden_completed_at 컬럼 신설(novels·planned). total_     ║
+ * ║   episodes=본편(전체-외전), gaiden_total_episodes=외전. completed_at=본편 완결일.║
+ * ║ • fetchNovelMeta 네이버 완결작 통합 + metaToDraft/일괄 INSERT/편집표시 전파.    ║
+ * ║ • 일괄 갱신에 '재취득·덮어쓰기' 모드 추가(플랫폼별·링크 작품·opt-in) — 기준이    ║
+ * ║   바뀐 작품을 새로 갈아끼움. applyScrapedUpdateToWork(overwrite) 분기.          ║
+ * ║ 회귀 +16 → 237/237. ※네이버 회차목록 실호출은 폰 실측 권장(파서는 검증).       ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🧩 v7.40.3 일괄 등록 완결일 보존 — 신규 등록 completed_at 누락 (2026-06-27)   ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -8802,6 +8819,8 @@ async function initDb(progressCb) {
     ["gaiden_status", "TEXT", "'none'"],
     ["gaiden_read_count", "INTEGER", "0"],
     ["gaiden_total_episodes", "INTEGER", "0"],
+    ["gaiden_start_at", "INTEGER", "0"],     // 🆕 v7.41.0: 외전 연재 시작일(ms, 0=미설정)
+    ["gaiden_completed_at", "INTEGER", "0"], // 🆕 v7.41.0: 외전 완결일(ms, 0=미설정)
     ["manual_tier", "TEXT", "NULL"],
     ["manual_order", "INTEGER", "0"], // 🆕 v7.0: 같은 manual_tier 내 사용자 지정 순서 (gap 100)
     ["reread_count", "INTEGER", "1"], // 📚 v3.0.4: 다회독 카운트 (기본 1회)
@@ -8924,6 +8943,8 @@ async function initDb(progressCb) {
   await ensureColumn("planned_novels", "gaiden_status", "TEXT", "'none'");
   await ensureColumn("planned_novels", "gaiden_read_count", "INTEGER", "0");
   await ensureColumn("planned_novels", "gaiden_total_episodes", "INTEGER", "0");
+  await ensureColumn("planned_novels", "gaiden_start_at", "INTEGER", "0");     // 🆕 v7.41.0: 외전 시작일
+  await ensureColumn("planned_novels", "gaiden_completed_at", "INTEGER", "0"); // 🆕 v7.41.0: 외전 완결일
   await ensureColumn("planned_novels", "manual_tier", "TEXT", "NULL");
   await ensureColumn("planned_novels", "manual_order", "INTEGER", "0");
   await ensureColumn("planned_novels", "reread_count", "INTEGER", "1");
@@ -14731,13 +14752,32 @@ async function fetchNovelMeta(url, opts = {}) {
     //   드물게 실패(일시 차단/구조 변경)할 땐 다른 플랫폼과 동일한 일반 안내로 처리한다.
     throw new Error("이 페이지에서 작품 정보를 찾지 못했어요. (지원 안 되는 페이지이거나 구조가 바뀌었을 수 있어요)");
   }
-  // 🆕 v7.28.56: 네이버시리즈 완결작 — moreDetail.series(SSR)에서 완결연도 보강(상세엔 날짜가 없음). 실패는 무시.
-  if (platform === "네이버시리즈" && meta.workStatus === "completed" && !meta.endYear) {
-    try { const c = await fetchNaverCompletion(url, opts); if (c.year) meta = { ...meta, endYear: c.year, completedAt: c.ts || meta.completedAt || 0 }; } catch {}
-  }
   // 🆕 v7.40.1: 네이버시리즈 연재 시작연도 보강 — 상세 SSR엔 시작일이 없어 회차목록 API로 1화 등록일을 가져옴. 시작연도 비었을 때만.
   if (platform === "네이버시리즈" && meta.startYear == null) {
     try { const sy = await fetchNaverStartYear(url, opts); if (sy) meta = { ...meta, startYear: sy }; } catch {}
+  }
+  // 🆕 v7.41.0: 네이버시리즈 완결작 — 회차목록(DESC)으로 본편/외전 분리. 본편 완결일·외전 시작/완결일·외전 회차수 산출.
+  //   total_episodes는 본편 기준(전체-외전)으로 보정. 회차목록 실패 시 moreDetail 업데이트일로 폴백(종전 동작).
+  if (platform === "네이버시리즈" && meta.workStatus === "completed") {
+    let split = null;
+    try { split = await fetchNaverEpisodeSplit(url, opts); } catch {}
+    if (split && split.mainCompletedAt) {
+      const y = new Date(split.mainCompletedAt).getUTCFullYear();
+      meta = { ...meta, completedAt: split.mainCompletedAt, endYear: (y >= 1990 && y <= 2099) ? y : meta.endYear };
+      if (split.hasGaiden) {
+        const total = Number(meta.totalEpisodes) || 0;
+        meta = {
+          ...meta,
+          gaidenCount: split.gaidenCount,
+          gaidenStartAt: split.gaidenStartAt,
+          gaidenCompletedAt: split.gaidenCompletedAt,
+          gaidenStatus: "completed", // 본편 완결작의 과거 외전 → 완결로 기본(사용자 편집 가능)
+          totalEpisodes: total > split.gaidenCount ? total - split.gaidenCount : total, // 본편 회차수
+        };
+      }
+    } else if (!meta.endYear) {
+      try { const c = await fetchNaverCompletion(url, opts); if (c.year) meta = { ...meta, endYear: c.year, completedAt: c.ts || meta.completedAt || 0 }; } catch {}
+    }
   }
   // 🆕 v7.40.1: 리디 완결일 보강 — 상세 JSON-LD는 1권(시작) 날짜뿐 → book-api 마지막 권 출간일을 완결일로. 완결작 & endYear 비었을 때만.
   if (platform === "리디" && meta.workStatus === "completed" && !meta.endYear) {
@@ -16775,7 +16815,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.40.3";
+const APP_VERSION = "7.41.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -16801,6 +16841,18 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.41.0", date: "2026-06-27",
+    title: "🌿 본편/외전 완결일 분리 (네이버)",
+    highlights: [
+      { type: "new", text: "🌿 네이버 시리즈 완결작은 ‘본편 완결일’과 ‘외전 시작·완결일’을 따로 가져와요. 본편 완결 후 한참 뒤에 나온 외전이 완결일에 섞이지 않아요. 외전 회차 수도 본편과 분리돼요." },
+      { type: "new", text: "🧩 대량 갱신에 ‘재취득·덮어쓰기’ 모드를 추가했어요. 플랫폼을 골라 링크 있는 작품의 회차·연재 시작/완결일·외전 정보를 새 기준으로 다시 받아 덮어써요. (원할 때만 — 기존 값을 덮어써요)" },
+    ],
+    details: [
+      "본편/외전 분리는 회차 제목에 ‘외전/번외’ 표기가 있는 네이버 시리즈에서 지원돼요(다른 플랫폼은 회차별 날짜를 안 줘서 아직 불가). ‘마지막 회차 = 완결’로 잡던 기존 작품은 ‘재취득·덮어쓰기’를 한 번 돌리면 본편 기준으로 정리돼요.",
+      "‘총 편수’는 본편 회차 수, ‘외전’은 외전 회차 수로 나뉘어요. 자동 분리가 애매하면 편집에서 직접 고칠 수 있어요.",
+    ],
+  },
   {
     version: "7.40.3", date: "2026-06-27",
     title: "🧩 일괄 등록에도 완결일 저장",
@@ -35881,6 +35933,7 @@ function AppContent() {
   const [bulkUpdateResults, setBulkUpdateResults] = useState([]); // [{title, planned, changes:[...]}]
   const [bulkUpdateStats, setBulkUpdateStats] = useState({ linked: 0, unlinked: 0, total: 0 });
   const [bulkUpdateFailed, setBulkUpdateFailed] = useState(0);
+  const [bulkUpdatePlatforms, setBulkUpdatePlatforms] = useState([]); // 🆕 v7.41.0: 재취득·덮어쓰기 대상 플랫폼(canonical)
   const bulkUpdateCancelRef = useRef(false);
   const [bulkMapQueue, setBulkMapQueue] = useState([]); // 링크 없는 작품들(순차 매핑)
   const [bulkMapIdx, setBulkMapIdx] = useState(0);
@@ -42386,6 +42439,11 @@ function AppContent() {
       start_year: Number(meta.startYear) || 0,
       end_year: Number(meta.endYear) || 0,
       completed_at: Number(meta.completedAt) || 0, // 🆕 v7.40.3: 완결일(ms) — 일괄 등록에서도 보존
+      // 🆕 v7.41.0: 본편/외전 분리(네이버) — 외전 회차수·시작/완결일·상태
+      gaiden_total_episodes: Number(meta.gaidenCount) || 0,
+      gaiden_start_at: Number(meta.gaidenStartAt) || 0,
+      gaiden_completed_at: Number(meta.gaidenCompletedAt) || 0,
+      gaiden_status: meta.gaidenStatus || "none",
       link: meta.url || "",
       platform: canonicalPlatform(meta.platform || ""), // 🆕 v7.28.55: 표시·정규화
       coverUrl: meta.coverUrl || "",
@@ -42530,13 +42588,14 @@ function AppContent() {
         if (isPlannedTarget) {
           // 예정 등록: 핵심 컬럼만 INSERT (나머지는 스키마 기본값). 레이팅/티어 필드 없음.
           await exec(
-            `INSERT INTO planned_novels (id,title,author,tags,platforms,note,total_episodes,cover_image,link,work_status,major_genre,sub_genre,priority,created_at,tag_data,start_year,end_year,completed_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+            `INSERT INTO planned_novels (id,title,author,tags,platforms,note,total_episodes,cover_image,link,work_status,major_genre,sub_genre,priority,created_at,tag_data,start_year,end_year,completed_at,gaiden_status,gaiden_total_episodes,gaiden_start_at,gaiden_completed_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
             [
               id, t, (d.author || "").trim(), deduplicateTagString(d.tags || "") || "",
               JSON.stringify(d.platforms || []), (d.note || "").trim(), Number(d.total_episodes) || 0,
               coverPath, (d.link || "").trim(), d.work_status || "ongoing", finalMajor, finalSub,
               0, now, "", Number(d.start_year) || 0, Number(d.end_year) || 0, Number(d.completed_at) || 0, // 🆕 v7.40.3: 완결일
+              d.gaiden_status || "none", Number(d.gaiden_total_episodes) || 0, Number(d.gaiden_start_at) || 0, Number(d.gaiden_completed_at) || 0, // 🆕 v7.41.0: 외전
             ]
           );
           if (coverPath) { coverTouched = true; try { await updateCoverStatus(coverPath, id, "used"); } catch {} }
@@ -42547,15 +42606,16 @@ function AppContent() {
             manualOrder = (Number(mr?.m) || 0) + 100;
           } catch {}
           await execBatch([{
-            sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order,read_count_baseline,start_year,end_year,completed_at)
-              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+            sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order,read_count_baseline,start_year,end_year,completed_at,gaiden_start_at,gaiden_completed_at)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
             params: [
               id, t, (d.author || "").trim(), deduplicateTagString(d.tags || "") || "",
               JSON.stringify(d.platforms || []), (d.note || "").trim(),
               0, globalTierConfig.defaultRating || 1500, 350, 0, 0, 0, globalTierConfig.defaultTier || "C",
               now, "", Number(d.total_episodes) || 0, "reading", 0, coverPath, (d.link || "").trim(),
-              d.work_status || "ongoing", now, finalMajor, finalSub, "none", 0, 0, 1, "", "", "",
+              d.work_status || "ongoing", now, finalMajor, finalSub, d.gaiden_status || "none", 0, Number(d.gaiden_total_episodes) || 0, 1, "", "", "",
               null, manualOrder, 0, Number(d.start_year) || 0, Number(d.end_year) || 0, Number(d.completed_at) || 0, // 🆕 v7.40.3: 완결일
+              Number(d.gaiden_start_at) || 0, Number(d.gaiden_completed_at) || 0, // 🆕 v7.41.0: 외전 날짜
             ],
           }]);
           if (coverPath) { coverTouched = true; try { await applyNovelCover(id, coverPath, null); } catch {} }
@@ -42606,27 +42666,43 @@ function AppContent() {
       ...(plannedList || []).map(p => ({ ...p, _planned: true })),
     ];
   }
-  async function applyScrapedUpdateToWork(work, meta) {
+  // 🔧 v7.41.0: overwrite=false(기본)=빈 값만 채움(기존 동작 보존). overwrite=true=스크랩값으로 덮어씀(재취득 모드).
+  //   본편/외전 분리로 회차·완결일 '기준'이 바뀐 작품을 새로 갈아끼우는 용도(사용자 opt-in).
+  async function applyScrapedUpdateToWork(work, meta, overwrite = false) {
     const table = work._planned ? "planned_novels" : "novels";
     const sets = [], params = [], changes = [];
+    const setCol = (col, val, label) => { sets.push(col + "=?"); params.push(val); if (label) changes.push(label); };
     const curEp = Number(work.total_episodes) || 0, newEp = Number(meta.totalEpisodes) || 0;
-    if (newEp > curEp) { sets.push("total_episodes=?"); params.push(newEp); changes.push(`회차 ${curEp}→${newEp}`); }
-    // 🆕 v7.28.61: 완결/연중 전환 — 완결은 연재중→완결만, 연중(dropped)은 연재중→연중만 (역전 금지)
+    // 기본: 증가 시만(성장). 덮어쓰기: 값이 있고 다르면 교체(본편 기준이라 더 작아질 수도).
+    if (newEp > 0 && (overwrite ? newEp !== curEp : newEp > curEp)) setCol("total_episodes", newEp, `회차 ${curEp}→${newEp}`);
+    // 🆕 v7.28.61: 완결/연중 전환 — 완결은 연재중→완결만, 연중(dropped)은 연재중→연중만 (역전 금지, 덮어쓰기에서도 동일)
     const curWs = work.work_status || "ongoing";
-    if (meta.workStatus === "completed" && curWs !== "completed") { sets.push("work_status=?"); params.push("completed"); changes.push("✅완결 전환"); }
-    else if (meta.workStatus === "dropped" && curWs === "ongoing") { sets.push("work_status=?"); params.push("dropped"); changes.push("⏸연중 전환"); }
+    if (meta.workStatus === "completed" && curWs !== "completed") setCol("work_status", "completed", "✅완결 전환");
+    else if (meta.workStatus === "dropped" && curWs === "ongoing") setCol("work_status", "dropped", "⏸연중 전환");
     const curSy = Number(work.start_year) || 0, newSy = Number(meta.startYear) || 0;
-    if (curSy === 0 && newSy > 0) { sets.push("start_year=?"); params.push(newSy); changes.push(`시작 ${newSy}`); }
+    if (newSy > 0 && (overwrite ? newSy !== curSy : curSy === 0)) setCol("start_year", newSy, `시작 ${newSy}`);
     const curEy = Number(work.end_year) || 0, newEy = Number(meta.endYear) || 0;
-    if (curEy === 0 && newEy > 0) { sets.push("end_year=?"); params.push(newEy); changes.push(`완결연도 ${newEy}`); }
-    // 🆕 v7.28.61: 완결일 채우기 — 완결작인데 비어있고 스크랩 완결일 있으면 (기존값 보존)
+    if (newEy > 0 && (overwrite ? newEy !== curEy : curEy === 0)) setCol("end_year", newEy, `완결연도 ${newEy}`);
+    // 🆕 v7.28.61: 완결일 — 완결작 한정. 기본은 빈 칸만, 덮어쓰기는 본편 완결일로 교체.
     const curCa = Number(work.completed_at) || 0, newCa = Number(meta.completedAt) || 0;
     const willComplete = meta.workStatus === "completed" || curWs === "completed";
-    if (willComplete && curCa === 0 && newCa > 0) { sets.push("completed_at=?"); params.push(newCa); changes.push("완결일"); }
+    if (willComplete && newCa > 0 && (overwrite ? newCa !== curCa : curCa === 0)) setCol("completed_at", newCa, "완결일");
+    // 🆕 v7.41.0: 외전(네이버 분리 결과 meta.gaiden* 있을 때만) — 회차수·시작/완결일·상태
+    const newGc = Number(meta.gaidenCount) || 0;
+    if (newGc > 0) {
+      const curGc = Number(work.gaiden_total_episodes) || 0;
+      if (overwrite ? newGc !== curGc : curGc === 0) setCol("gaiden_total_episodes", newGc, `외전 ${newGc}화`);
+      const newGs = Number(meta.gaidenStartAt) || 0, curGs = Number(work.gaiden_start_at) || 0;
+      if (newGs > 0 && (overwrite ? newGs !== curGs : curGs === 0)) setCol("gaiden_start_at", newGs);
+      const newGe = Number(meta.gaidenCompletedAt) || 0, curGe = Number(work.gaiden_completed_at) || 0;
+      if (newGe > 0 && (overwrite ? newGe !== curGe : curGe === 0)) setCol("gaiden_completed_at", newGe);
+      const curGst = work.gaiden_status || "none";
+      if (meta.gaidenStatus && (overwrite ? meta.gaidenStatus !== curGst : curGst === "none")) setCol("gaiden_status", meta.gaidenStatus, "외전 상태");
+    }
     // 🆕 v7.28.64: 저장된 링크의 플랫폼이 연재처에 없으면 자동 추가(자동갱신·매핑 일관성)
     const curPlats = parsePlatforms(work.platforms);
     const mergedPlats = mergePlatformFromLink(curPlats, work.link);
-    if (mergedPlats.length !== curPlats.length) { sets.push("platforms=?"); params.push(JSON.stringify(mergedPlats)); changes.push("연재처 +" + mergedPlats[mergedPlats.length - 1]); }
+    if (mergedPlats.length !== curPlats.length) setCol("platforms", JSON.stringify(mergedPlats), "연재처 +" + mergedPlats[mergedPlats.length - 1]);
     if (!sets.length) return null;
     params.push(work.id);
     await exec(`UPDATE ${table} SET ${sets.join(", ")} WHERE id=?`, params);
@@ -42673,10 +42749,14 @@ function AppContent() {
     // 리디·네이버·카카오, 또는 위에서 ID 매칭 실패 → 상세 페이지 직접
     return await fetchNovelMeta(link, opts);
   }
-  async function runBulkAutoUpdate() {
+  // 🔧 v7.41.0: options = { overwrite, platforms } — overwrite는 덮어쓰기(재취득) 모드, platforms는 대상 플랫폼 필터(빈 배열=전체).
+  async function runBulkAutoUpdate(options = {}) {
     if (bulkUpdateBusy) return;
-    const works = bulkAllWorks().filter(w => (w.link || "").trim());
-    if (!works.length) { Alert.alert("일괄 갱신", "작품 링크가 있는 작품이 없어요.\n‘링크 연결’로 먼저 매핑해 주세요."); return; }
+    const overwrite = !!options.overwrite;
+    const platSet = Array.isArray(options.platforms) && options.platforms.length ? new Set(options.platforms) : null;
+    let works = bulkAllWorks().filter(w => (w.link || "").trim());
+    if (platSet) works = works.filter(w => platSet.has(canonicalPlatform(detectPlatformFromUrl(w.link) || "")));
+    if (!works.length) { Alert.alert("일괄 갱신", platSet ? "선택한 플랫폼에 링크 있는 작품이 없어요." : "작품 링크가 있는 작품이 없어요.\n‘링크 연결’로 먼저 매핑해 주세요."); return; }
     setBulkUpdateBusy(true);
     bulkUpdateCancelRef.current = false;
     setBulkUpdateStage("running");
@@ -42690,7 +42770,7 @@ function AppContent() {
       const w = works[i];
       try {
         const meta = await fetchMetaForUpdate(w.link, w.title);
-        const changes = await applyScrapedUpdateToWork(w, meta);
+        const changes = await applyScrapedUpdateToWork(w, meta, overwrite);
         if (changes && changes.length) { results.push({ title: w.title, planned: w._planned, changes }); setBulkUpdateResults([...results]); }
       } catch (e) { failed++; setBulkUpdateFailed(failed); }
     }
@@ -65480,11 +65560,26 @@ async function importJSON() {
                   ))}
                 </View>
                 {/* 🆕 v7.28.61: 완결일(스크랩으로 채워짐) 표시 */}
-                {Number(editItem?.completed_at) > 0 ? (
-                  <Text style={{ color: C.sub, fontSize: 12, marginTop: 6 }}>
-                    📅 완결일: {(() => { const d = new Date(Number(editItem.completed_at)); return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`; })()}
-                  </Text>
-                ) : null}
+                {(() => {
+                  // 🆕 v7.41.0: 본편/외전 완결일 분리 표시 (외전 데이터 있으면 '본편 완결일'로 명시 + 외전 줄 추가)
+                  const fmtD = (ms) => { const d = new Date(Number(ms)); return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`; };
+                  const ca = Number(editItem?.completed_at) || 0;
+                  const gEp = Number(editItem?.gaiden_total_episodes) || 0, gSt = Number(editItem?.gaiden_start_at) || 0, gCa = Number(editItem?.gaiden_completed_at) || 0;
+                  const hasG = gEp > 0 || gSt > 0 || gCa > 0;
+                  if (!ca && !hasG) return null;
+                  return (
+                    <>
+                      {ca > 0 ? (
+                        <Text style={{ color: C.sub, fontSize: 12, marginTop: 6 }}>📅 {hasG ? "본편 완결일" : "완결일"}: {fmtD(ca)}</Text>
+                      ) : null}
+                      {hasG ? (
+                        <Text style={{ color: C.sub, fontSize: 12, marginTop: 3 }}>
+                          🌿 외전{gEp > 0 ? ` ${gEp}화` : ""}{gSt > 0 ? ` · 시작 ${fmtD(gSt)}` : ""}{gCa > 0 ? ` · 완결 ${fmtD(gCa)}` : ""}
+                        </Text>
+                      ) : null}
+                    </>
+                  );
+                })()}
 
                 {/* 🔧 v7.6.0 (포트 v3.12.0): 연재 연도 */}
                 <View style={{ marginTop: 10, flexDirection: "row", gap: 8 }}>
@@ -68704,11 +68799,38 @@ async function importJSON() {
                   총 {bulkUpdateStats.total}개 · 링크 있음 {bulkUpdateStats.linked}개 / 링크 없음 {bulkUpdateStats.unlinked}개{"\n"}
                   회차는 늘어난 경우만, 완결은 연재중→완결 전환만, 연재연도는 비어 있을 때만 채워요(기존 값 보존).
                 </Text>
-                <PrimaryButton title={`🔄 링크 있는 ${bulkUpdateStats.linked}개 자동 갱신`} onPress={runBulkAutoUpdate} disabled={bulkUpdateStats.linked === 0} style={{ marginBottom: 8 }} />
+                <PrimaryButton title={`🔄 링크 있는 ${bulkUpdateStats.linked}개 자동 갱신`} onPress={() => runBulkAutoUpdate()} disabled={bulkUpdateStats.linked === 0} style={{ marginBottom: 8 }} />
                 <OutlineButton title={`🔗 링크 없는 ${bulkUpdateStats.unlinked}개 연결하기`} onPress={startBulkMapping} color={C.primary} />
                 <Text style={{ color: C.sub, fontSize: 11, marginTop: 10, lineHeight: 16 }}>
                   ※ 작품이 많으면 한 작품씩 순서대로 처리해 시간이 걸려요. 노벨피아 19금·일부 플랫폼은 가져오기가 제한될 수 있어요.
                 </Text>
+
+                {/* 🆕 v7.41.0: 재취득·덮어쓰기 — 본편/외전 분리로 회차·완결일 기준이 바뀐 작품을 새 기준으로 갈아끼움(opt-in, 플랫폼별) */}
+                <View style={{ borderTopWidth: 1, borderTopColor: C.line, marginTop: 14, paddingTop: 12 }}>
+                  <Text style={{ color: C.text, fontSize: 13, fontWeight: "800", marginBottom: 4 }}>🧩 재취득·덮어쓰기 (고급)</Text>
+                  <Text style={{ color: C.sub, fontSize: 11.5, lineHeight: 16, marginBottom: 9 }}>
+                    선택한 플랫폼의 링크 있는 작품을 다시 가져와 회차·연재 시작/완결일·외전 정보를 새 기준으로 덮어써요. 본편/외전 분리(본편 완결일·외전 시작/완결일)는 네이버 시리즈에서 지원돼요. 기존 값을 덮어쓰니 원할 때만 쓰세요.
+                  </Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 7, marginBottom: 10 }}>
+                    {[["시리즈", "네이버 시리즈"], ["노벨피아", "노벨피아"], ["문피아", "문피아"], ["리디", "리디"], ["카카페", "카카오페이지"]].map(([key, label]) => {
+                      const on = bulkUpdatePlatforms.includes(key);
+                      return (
+                        <TouchableOpacity key={key} onPress={() => setBulkUpdatePlatforms(prev => prev.includes(key) ? prev.filter(x => x !== key) : [...prev, key])} activeOpacity={0.7}
+                          style={{ paddingVertical: 7, paddingHorizontal: 12, borderRadius: 999, backgroundColor: on ? C.primary : C.bg, borderWidth: 1, borderColor: on ? C.primary : C.line }}>
+                          <Text style={{ color: on ? "#fff" : C.sub, fontWeight: "800", fontSize: 12 }}>{on ? "✓ " : ""}{label}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  <OutlineButton title="🧩 선택 플랫폼 재취득·덮어쓰기" color={C.warn} onPress={() => {
+                    if (!bulkUpdatePlatforms.length) { Alert.alert("재취득·덮어쓰기", "덮어쓸 플랫폼을 한 곳 이상 선택해 주세요."); return; }
+                    const names = bulkUpdatePlatforms.map(k => k === "시리즈" ? "네이버 시리즈" : k === "카카페" ? "카카오페이지" : k).join(", ");
+                    Alert.alert("재취득·덮어쓰기", `${names}의 링크 있는 작품을 다시 가져와 회차·연재 시작/완결일·외전 정보를 덮어써요. 기존 값이 바뀔 수 있어요. 진행할까요?`, [
+                      { text: "취소", style: "cancel" },
+                      { text: "덮어쓰기", style: "destructive", onPress: () => runBulkAutoUpdate({ overwrite: true, platforms: bulkUpdatePlatforms }) },
+                    ]);
+                  }} />
+                </View>
               </View>
             )}
 
