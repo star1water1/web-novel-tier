@@ -14620,6 +14620,43 @@ async function fetchNaverStartYear(url, opts = {}) {
     return parseNaverStartYear(await res.text());
   } catch { return null; } finally { cleanup(); }
 }
+// 🆕 v7.41.0: 본편/외전 분리 — 회차 제목에서 외전 마커 탐지. 한국 웹소설은 본편 완결 후 한참 뒤 외전을 별도 연재 →
+//   '마지막 회차 날짜'를 완결일로 쓰면 외전 완결일이 섞인다. 외전 전용 마커만(에필로그/후일담은 본편 종결의 일부라 제외).
+//   "완결"은 본편 마지막화 제목에 흔히 붙어 오탐이라 마커에서 의도적으로 제외(선행 크롤러 교훈).
+const GAIDEN_TITLE_RE = /(?:^|\s|\[|\(|【|<)(외전|번외|외전편|번외편|番外|外传|外傳|side[\s-]*story|spin[\s-]*?off|스핀오프)/i;
+function isGaidenTitle(s) { return GAIDEN_TITLE_RE.test(String(s == null ? "" : s)); }
+// 🆕 v7.41.0: 네이버 회차목록(volumeMoreList) → 본편/외전 분리. volumnNameText가 본편 "517화"/외전 "외전 483화"로
+//   구조적 구분(실측 전독시). DESC(최신순)로 받으면 외전이 앞 → 본편 완결일·외전 시작/완결일·외전 회차수 산출. 순수.
+//   { hasGaiden, gaidenCount, mainCompletedAt, gaidenStartAt, gaidenCompletedAt } 반환. 회차 없으면 null.
+function parseNaverEpisodeSplit(jsonText) {
+  let data; try { data = JSON.parse(jsonText); } catch { return null; }
+  const arr = data && Array.isArray(data.resultData) ? data.resultData : null;
+  if (!arr || !arr.length) return null;
+  const tsOf = (it) => scraperDateToTs(String((it && it.lastVolumeUpdateDate) || "")); // scraperDateToTs는 'YYYY-MM-DD …'도 매칭
+  let gaidenCount = 0, gMin = 0, gMax = 0, mMax = 0;
+  for (const it of arr) {
+    const label = (it && (it.volumnNameText || it.subProductName)) || "";
+    const ts = tsOf(it);
+    if (isGaidenTitle(label)) {
+      gaidenCount++;
+      if (ts) { if (!gMin || ts < gMin) gMin = ts; if (ts > gMax) gMax = ts; }
+    } else if (ts && ts > mMax) {
+      mMax = ts; // 본편 중 최신 회차 날짜 = 본편 완결일(DESC 윈도에 경계 본편 포함됨)
+    }
+  }
+  return { hasGaiden: gaidenCount > 0, gaidenCount, mainCompletedAt: mMax, gaidenStartAt: gMin, gaidenCompletedAt: gMax };
+}
+async function fetchNaverEpisodeSplit(url, opts = {}) {
+  const pn = (String(url).match(/productNo=(\d+)/) || [])[1];
+  if (!pn) return null;
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
+  try {
+    // DESC(최신순)=외전 구간이 앞. display 넉넉히(외전+경계 본편 포함) → 1회 호출로 분리 산출.
+    const res = await fetch("https://m.series.naver.com/novel/volumeMoreList.series?productNo=" + pn + "&sortOrder=DESC&display=300", { headers: SCRAPER_HEADERS, redirect: "follow", signal });
+    if (!res.ok) return null;
+    return parseNaverEpisodeSplit(await res.text());
+  } catch { return null; } finally { cleanup(); }
+}
 // 🆕 v7.40.1: 리디 완결일 — 리디는 권 단위 출판이라 상세 JSON-LD datePublished는 '1권(연재 시작)'이고 완결일이 없다.
 //   book-api 단건(비로그인 JSON)에서 완결 플래그(is_completed)+마지막 권 id(last_volume_id)를 얻고, 그 권을
 //   한 번 더 조회해 출간일(ridibooks_publish/ebook_publish)을 완결일로 쓴다(실측: 무직전생 2024-06-12 일치).

@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, SCRAPER_HEADERS, SCRAPER_UA };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, SCRAPER_HEADERS, SCRAPER_UA };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -408,6 +408,42 @@ eq("backfill: 상세 작가 있으면 후보로 덮지 않음", S.backfillMetaFr
 eq("backfill: 후보 없으면 원본 그대로", S.backfillMetaFromCandidate({ title: "T", author: "" }, null), { title: "T", author: "" });
 eq("backfill: 후보 작가 공백 트림", S.backfillMetaFromCandidate({ author: "" }, { author: "  김작가  " }).author, "김작가");
 truthy("backfill: meta null 방어", S.backfillMetaFromCandidate(null, { author: "X" }) === null);
+
+// ── 🆕 v7.41.0: 본편/외전 분리 (네이버 회차목록) ─────────────────────────────
+eq("isGaidenTitle: '외전 483화' → true", S.isGaidenTitle("외전 483화"), true);
+eq("isGaidenTitle: '번외편' → true", S.isGaidenTitle("번외편 5화"), true);
+eq("isGaidenTitle: 본편 '517화' → false", S.isGaidenTitle("517화"), false);
+eq("isGaidenTitle: '완결'은 외전 아님(오탐 방지)", S.isGaidenTitle("550화 (완결)"), false);
+eq("isGaidenTitle: '에필로그'는 본편 종결(외전 제외)", S.isGaidenTitle("에필로그"), false);
+eq("isGaidenTitle: '番外' → true", S.isGaidenTitle("番外 1"), true);
+{
+  // DESC(최신순): 외전 2건이 앞, 본편 경계 뒤. 본편 완결일=본편 최신, 외전 시작/완결=외전 min/max
+  const desc = JSON.stringify({ resultData: [
+    { volumnNameText: "외전 2화", lastVolumeUpdateDate: "2023-03-01 10:00:00" },
+    { volumnNameText: "외전 1화", lastVolumeUpdateDate: "2023-02-15 10:00:00" },
+    { volumnNameText: "517화", lastVolumeUpdateDate: "2020-02-02 10:00:00" },
+    { volumnNameText: "516화", lastVolumeUpdateDate: "2020-02-01 10:00:00" },
+  ]});
+  const sp = S.parseNaverEpisodeSplit(desc);
+  eq("split: 외전 있음", sp.hasGaiden, true);
+  eq("split: 외전 회차수 2", sp.gaidenCount, 2);
+  eq("split: 본편 완결일 = 본편 최신(2020-02-02)", sp.mainCompletedAt, S.scraperDateToTs("2020-02-02"));
+  eq("split: 외전 시작일 = 2023-02-15", sp.gaidenStartAt, S.scraperDateToTs("2023-02-15"));
+  eq("split: 외전 완결일 = 2023-03-01", sp.gaidenCompletedAt, S.scraperDateToTs("2023-03-01"));
+}
+{
+  // 외전 없는 작품: 본편 완결일만, 외전 0
+  const noG = JSON.stringify({ resultData: [
+    { volumnNameText: "320화 (완결)", lastVolumeUpdateDate: "2019-07-03 09:00:00" },
+    { volumnNameText: "319화", lastVolumeUpdateDate: "2019-07-02 09:00:00" },
+  ]});
+  const sp2 = S.parseNaverEpisodeSplit(noG);
+  eq("split: 외전 없음", sp2.hasGaiden, false);
+  eq("split: 외전 0화", sp2.gaidenCount, 0);
+  eq("split: 본편 완결일(2019-07-03)", sp2.mainCompletedAt, S.scraperDateToTs("2019-07-03"));
+}
+eq("split: 빈 목록 → null", S.parseNaverEpisodeSplit('{"resultData":[]}'), null);
+eq("split: 비JSON → null", S.parseNaverEpisodeSplit("<html>error</html>"), null);
 
 console.log(`\n${fail === 0 ? "🎉 ALL PASS" : "⚠️  FAILED"}  pass=${pass} fail=${fail}`);
 process.exit(fail === 0 ? 0 : 1);
