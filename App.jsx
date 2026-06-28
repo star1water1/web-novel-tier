@@ -2,11 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.49.3 (전 플랫폼 외전 산정 점검 + 카카오 본편 완결일 경계 수정)         ║
+ * ║  버전: 7.49.4 (카카오 외전 진단 도구 — 폰에서 커서·외전 수 캡처)               ║
  * ║  최종 수정: 2026-06-28                                                        ║
- * ║  총 라인 수: 약 72,350줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 72,490줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📊 v7.49.4 카카오 외전 진단 도구 (2026-06-28)                                 ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 카카오 GraphQL은 DC IP 차단이라 라이브 검증 불가 → 폰(주거망)에서 직접 캡처하는 ║
+ * ║ 진단 도구 추가. 설정 › 🔌 연결 › '📊 카카오 외전 진단'에 작품 링크 입력 후 실행:  ║
+ * ║ diagnoseKakaoEpisodes(url)가 contentHomeProductList를 pageInfo.endCursor +     ║
+ * ║ edges.cursor 포함해 호출 → ① 커서 전진 테스트(offset=collected.length vs 진짜   ║
+ * ║ Relay endCursor 중 어느 쪽이 다음 페이지를 주는지), ② 전체 외전 수(page0만 vs   ║
+ * ║ 전체 수집)를 텍스트로 캡처해 클립보드 복사. 이 출력으로 카카오 페이지네이션      ║
+ * ║ 커서·카운트를 정확히 수정할 근거 확보(7.49.3에서 미검증으로 남긴 부분).          ║
+ * ║ 순수 진단(쓰기 없음). 전체 @babel/parser 통과.                                 ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔍 v7.49.3 전 플랫폼 외전 산정 점검 + 카카오 경계 수정 (2026-06-28)            ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -15271,6 +15283,69 @@ async function fetchNovelpiaEpisodeSplit(url, opts = {}) {
   if (!eps.length) return null;
   return splitEpisodesByGaiden(eps);
 }
+// 🆕 v7.49.4: 카카오 외전 진단 — 폰(주거망)에서 회차목록 GraphQL을 직접 찔러 ① 페이지네이션 커서가 전진하는지
+//   (offset=collected.length vs 진짜 Relay endCursor), ② 전체 외전 수를 확인. DC IP는 막혀도 폰은 통과.
+//   결과 텍스트 반환(클립보드 복사 → 채팅에 붙여넣으면 카카오 커서/카운트까지 정확히 수정 가능).
+async function diagnoseKakaoEpisodes(url, opts = {}) {
+  const sid = (String(url).match(/\/content\/(\d+)/) || [])[1];
+  if (!sid) return "카카오 작품 링크가 아니에요. page.kakao.com/content/숫자 형태의 링크를 넣어 주세요.";
+  const Q = "query contentHomeProductList($seriesId: Long!, $after: String, $sortType: String) { contentHomeProductList(seriesId: $seriesId, after: $after, sortType: $sortType) { totalCount pageInfo { hasNextPage endCursor } edges { cursor node { ... on SingleListViewItem { single { productId title } } } } } }";
+  const ck = globalKkCookie ? { Cookie: globalKkCookie } : {};
+  const gql = async (after) => {
+    for (const ep of KAKAO_GQL_ENDPOINTS) {
+      const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 15000 });
+      try {
+        const res = await fetch(ep, { method: "POST", headers: { ...KAKAO_GQL_HEADERS, ...ck, "Referer": url }, body: JSON.stringify({ query: Q, operationName: "contentHomeProductList", variables: { seriesId: Number(sid), after, sortType: "desc" } }), redirect: "follow", signal });
+        const txt = await res.text();
+        if (res.status === 200 && /contentHomeProductList/.test(txt)) return { ep, status: res.status, txt };
+        if (ep === KAKAO_GQL_ENDPOINTS[KAKAO_GQL_ENDPOINTS.length - 1]) return { ep, status: res.status, txt };
+      } catch (e) { if (ep === KAKAO_GQL_ENDPOINTS[KAKAO_GQL_ENDPOINTS.length - 1]) return { ep, status: 0, txt: "ERR " + (e?.name === "AbortError" ? "timeout" : (e?.message || e)) }; }
+      finally { cleanup(); }
+    }
+    return null;
+  };
+  const parse = (txt) => {
+    let j; try { j = JSON.parse(txt); } catch { return { err: "JSON 파싱 실패: " + String(txt).slice(0, 200) }; }
+    const pl = j && j.data && j.data.contentHomeProductList;
+    if (!pl) return { err: j && j.errors ? "errors: " + JSON.stringify(j.errors).slice(0, 300) : "data.contentHomeProductList 없음" };
+    const eps = (Array.isArray(pl.edges) ? pl.edges : []).map(e => { const s = e && e.node && e.node.single; return s ? { productId: String(s.productId == null ? "" : s.productId), title: String(s.title == null ? "" : s.title), cursor: String((e && e.cursor) == null ? "" : e.cursor) } : null; }).filter(x => x && x.productId);
+    return { totalCount: Number(pl.totalCount) || 0, hasNext: !!(pl.pageInfo && pl.pageInfo.hasNextPage), endCursor: String((pl.pageInfo && pl.pageInfo.endCursor) || ""), eps };
+  };
+  const gn = (eps) => eps.filter(e => isGaidenTitle(e.title)).length;
+  let R = `[카카오 외전 진단] seriesId=${sid}\nURL: ${url}\n토큰(_kawlt 등): ${globalKkCookie ? "있음" : "없음 — 설정>연결>카카오 세션 새로고침 후 다시 권장"}\n`;
+  const r0 = await gql("0");
+  if (!r0) return R + "\n요청 자체 실패(네트워크). 와이파이↔LTE 전환 후 재시도해 주세요.";
+  R += `\n[엔드포인트] ${r0.ep} status=${r0.status}\n`;
+  const p0 = parse(r0.txt);
+  if (p0.err) return R + "\nGraphQL 응답 이상: " + p0.err + "\n(이 텍스트째 복사해 보내 주세요.)";
+  R += `totalCount=${p0.totalCount} hasNext=${p0.hasNext}\nendCursor=${JSON.stringify(p0.endCursor)}\n`;
+  R += `\n=== page0 회차 ${p0.eps.length}개 (외전 ${gn(p0.eps)}) — 최신순 ===\n` + p0.eps.map((e, i) => `${String(i).padStart(2)}. ${isGaidenTitle(e.title) ? "[외전]" : "[본편]"} ${e.title}`).join("\n") + "\n";
+  if (!p0.hasNext) { R += `\n→ hasNext=false: page0이 전부. 외전 ${gn(p0.eps)}개로 확정.\n`; return R + "\n(이 텍스트를 복사해 채팅에 붙여넣어 주세요.)"; }
+  // 커서 테스트: offset(현재 코드 방식) vs endCursor(진짜 Relay 커서)
+  const firstId = p0.eps[0] && p0.eps[0].productId;
+  const same = (p) => p && p.eps && p.eps[0] && p.eps[0].productId === firstId;
+  const rOff = await gql(String(p0.eps.length)); const pOff = rOff ? parse(rOff.txt) : null;
+  const rCur = p0.endCursor ? await gql(p0.endCursor) : null; const pCur = rCur ? parse(rCur.txt) : null;
+  R += `\n=== 커서 전진 테스트 ===\n`;
+  R += `offset(after="${p0.eps.length}") → ${pOff && pOff.eps ? `${pOff.eps.length}개, page0과 ${same(pOff) ? "동일(=커서 무시)" : "다름(전진!)"}` : "실패/" + (pOff && pOff.err || "")}\n`;
+  R += `endCursor(after=endCursor) → ${pCur && pCur.eps ? `${pCur.eps.length}개, page0과 ${same(pCur) ? "동일" : "다름(전진!)"}, 외전 ${gn(pCur.eps)}` : "실패/" + (pCur && pCur.err || "endCursor 없음")}\n`;
+  const adv = (pCur && pCur.eps && !same(pCur)) ? "endCursor" : ((pOff && pOff.eps && !same(pOff)) ? "offset" : null);
+  R += `→ 전진하는 커서: ${adv || "없음 (page0만 신뢰 가능 — 외전이 1쪽 넘으면 과소)"}\n`;
+  if (adv) {
+    let all = [...p0.eps]; const seen = new Set(all.map(e => e.productId)); let cur = adv === "endCursor" ? p0.endCursor : String(all.length); let pages = 1; let lastEnd = p0.endCursor;
+    while (pages < 15) {
+      const rr = await gql(cur); const pp = rr ? parse(rr.txt) : null;
+      if (!pp || !pp.eps || !pp.eps.length) break;
+      const fresh = pp.eps.filter(e => !seen.has(e.productId));
+      if (!fresh.length) break;
+      fresh.forEach(e => seen.add(e.productId)); all = all.concat(fresh); pages++;
+      lastEnd = pp.endCursor; cur = adv === "endCursor" ? pp.endCursor : String(all.length);
+      if (all.some(e => !isGaidenTitle(e.title)) || !pp.hasNext) break;
+    }
+    R += `\n=== 전체 수집(${adv}, ${pages}쪽) ===\n총 ${all.length}개, 외전 ${gn(all)}개 (page0만 보면 ${gn(p0.eps)}개)\n경계 부근: ` + all.slice(Math.max(0, gn(all) - 2), gn(all) + 3).map(e => (isGaidenTitle(e.title) ? "[외전]" : "[본편]") + e.title).join(" / ") + "\n";
+  }
+  return R + "\n(이 텍스트를 복사해 채팅에 붙여넣어 주세요.)";
+}
 // 🆕 v7.41.4: 카카오페이지 본편/외전 분리 — page.kakao.com/graphql(익명, _kpwtkn 쿠키). 회차목록은 contentHomeProductList(제목+productId),
 //   날짜는 회차별 viewerInfo.item.lastReleasedDate(목록엔 날짜 없음). 쿼리는 Hitomi-Downloader 검증분. ※우리 DC IP는 차단 — 폰(주거망) 검증 필요.
 function parseKakaoProductList(jsonText) {
@@ -17928,7 +18003,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.49.3";
+const APP_VERSION = "7.49.4";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -17954,6 +18029,17 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.49.4", date: "2026-06-28",
+    title: "📊 카카오 외전 진단 도구",
+    highlights: [
+      { type: "new", text: "📊 설정 › 🔌 연결에 ‘카카오 외전 진단’을 추가했어요. 카카오 외전 회차가 적게 잡히는 작품 링크를 넣고 누르면, 폰이 직접 회차 목록을 받아 다음 페이지로 넘어가는지·전체 외전이 몇 편인지 캡처해 클립보드에 복사해 줘요. 그 결과를 보내 주시면 카카오 외전 집계를 정확히 맞출 수 있어요." },
+    ],
+    details: [
+      "카카오는 데이터센터에서 막혀 있어 폰(집/모바일 데이터)에서만 확인돼요. 잘 안 되면 ‘카카오 세션 새로고침’을 먼저 한 번 해 주세요.",
+      "이 도구는 정보를 읽기만 해요(작품 데이터는 바꾸지 않아요).",
+    ],
+  },
   {
     version: "7.49.3", date: "2026-06-28",
     title: "🔍 외전 회차 점검 — 카카오 본편 완결일 보정",
@@ -37350,6 +37436,10 @@ function AppContent() {
   const [scrapeDiagUrl, setScrapeDiagUrl] = useState("");
   const [scrapeDiagOut, setScrapeDiagOut] = useState(null);
   const [scrapeDiagBusy, setScrapeDiagBusy] = useState(false);
+  // 🆕 v7.49.4: 카카오 외전 진단 — 폰에서 회차목록 GraphQL 직접 캡처(커서 전진 여부·전체 외전 수)
+  const [kkGaidenDiagUrl, setKkGaidenDiagUrl] = useState("");
+  const [kkGaidenDiagOut, setKkGaidenDiagOut] = useState("");
+  const [kkGaidenDiagBusy, setKkGaidenDiagBusy] = useState(false);
   const [aiTagTarget, setAiTagTarget] = useState("new"); // "new"(등록 폼) | "edit"(편집 모달)
   const [aiTagBusy, setAiTagBusy] = useState(false);
   const [ocrBusyIdx, setOcrBusyIdx] = useState(-1); // 🔤 v7.28.24 명대사 OCR 진행 인덱스 (-1=없음, qi=해당 항목, -2=전체)
@@ -43629,6 +43719,20 @@ function AppContent() {
     const text = which === "summary" ? out.summary : out.html;
     try { await Clipboard.setStringAsync(text); Alert.alert("복사됨", `${which === "summary" ? "요약" : `원본 ${out.size.toLocaleString()}자`}을 클립보드에 복사했어요. 채팅에 붙여넣어 주세요.`); }
     catch { Alert.alert("복사", "복사하지 못했어요."); }
+  }
+  // 🆕 v7.49.4: 카카오 외전 진단 실행 — 폰에서 회차목록 GraphQL을 직접 받아 커서/외전 수를 캡처해 클립보드 복사.
+  async function runKakaoGaidenDiag() {
+    const url = (kkGaidenDiagUrl || "").trim();
+    if (!/page\.kakao\.com\/content\/\d+/.test(url)) { Alert.alert("카카오 외전 진단", "카카오 작품 링크를 넣어 주세요. (page.kakao.com/content/숫자)"); return; }
+    if (kkGaidenDiagBusy) return;
+    setKkGaidenDiagBusy(true); setKkGaidenDiagOut("");
+    try {
+      const report = await diagnoseKakaoEpisodes(url, { timeoutMs: 15000 });
+      setKkGaidenDiagOut(report || "(빈 응답)");
+      try { await Clipboard.setStringAsync(report || ""); } catch {}
+    } catch (e) {
+      setKkGaidenDiagOut("진단 실패: " + (e?.message || String(e)));
+    } finally { setKkGaidenDiagBusy(false); }
   }
 
   // 🔗 v7.28.26 스크래퍼: URL에서 메타 fetch → 확인 모달 오픈. ctx = { label, getCurrent(), apply(fields) }
@@ -64717,6 +64821,36 @@ async function importJSON() {
                         <Text style={{ color: C.text, fontWeight: "700", fontSize: 13 }}>📋 요약만</Text>
                       </TouchableOpacity>
                     </View>
+                  </View>
+                ) : null}
+              </View>
+
+              {/* 🆕 v7.49.4: 카카오 외전 진단 — 폰에서 회차목록 GraphQL을 직접 캡처(커서 전진 여부·전체 외전 수) */}
+              <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+                <Text style={{ color: C.text, fontWeight: "700", fontSize: 14, marginBottom: 4 }}>📊 카카오 외전 진단</Text>
+                <Text style={{ color: C.sub, fontSize: 11, lineHeight: 16, marginBottom: 8 }}>
+                  카카오 외전 회차가 적게 잡히는 작품의 링크(page.kakao.com/content/숫자)를 넣고 ‘진단’을 누르면, 폰이 직접 회차 목록을 받아 ① 다음 페이지 커서가 전진하는지, ② 전체 외전 수를 캡처해요(결과는 자동으로 클립보드에 복사돼요). 카카오는 데이터센터에서 막혀 폰에서만 확인할 수 있어요. 잘 안 되면 설정의 ‘카카오 세션 새로고침’을 먼저 한 번 해 주세요.
+                </Text>
+                <TextInput
+                  value={kkGaidenDiagUrl}
+                  onChangeText={setKkGaidenDiagUrl}
+                  placeholder="https://page.kakao.com/content/00000000"
+                  placeholderTextColor={C.sub}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={{ backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, color: C.text, fontSize: 12 }}
+                />
+                <TouchableOpacity onPress={runKakaoGaidenDiag} disabled={kkGaidenDiagBusy}
+                  style={{ marginTop: 8, backgroundColor: C.primary, paddingVertical: 11, borderRadius: 10, alignItems: "center", opacity: kkGaidenDiagBusy ? 0.6 : 1 }}>
+                  <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>{kkGaidenDiagBusy ? "진단 중…" : "진단 (폰에서 캡처)"}</Text>
+                </TouchableOpacity>
+                {kkGaidenDiagOut ? (
+                  <View style={{ marginTop: 10, backgroundColor: C.bg, borderRadius: 10, padding: 10, borderWidth: 1, borderColor: C.line }}>
+                    <Text selectable style={{ color: C.text, fontSize: 11, lineHeight: 16 }}>{kkGaidenDiagOut}</Text>
+                    <TouchableOpacity onPress={async () => { try { await Clipboard.setStringAsync(kkGaidenDiagOut); Alert.alert("복사됨", "진단 결과를 클립보드에 복사했어요. 채팅에 붙여넣어 주세요."); } catch { Alert.alert("복사", "복사하지 못했어요."); } }}
+                      style={{ marginTop: 10, backgroundColor: C.primary, paddingVertical: 9, borderRadius: 8, alignItems: "center" }}>
+                      <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>📋 결과 복사</Text>
+                    </TouchableOpacity>
                   </View>
                 ) : null}
               </View>
