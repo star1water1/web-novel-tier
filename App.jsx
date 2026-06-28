@@ -2,11 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.49.9 (문피아 외전 — 알 수 없는 제목 키 구제 스캔; >100화 paid 대응)    ║
+ * ║  버전: 7.49.10 (문피아 외전 — '본편 완결 마커(完/완결)'로 분리; 아크명 외전 대응) ║
  * ║  최종 수정: 2026-06-28                                                        ║
  * ║  총 라인 수: 약 72,710줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔎 v7.49.10 문피아 외전 — '본편 완결 마커' 기반 분리 (2026-06-28)             ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 진단 실측(회귀수선전 id=346981): 로그인·paid·제목필드(title) 전부 정상인데 외전 ║
+ * ║ 0. 원인 = 문피아 외전이 '외전' 글자 없이 '섬에서 살아남기(5)·끝맺음.' 등 아크명  ║
+ * ║ 으로만 적혀 키워드 미매치(네이버는 '외전 N화'로 자동라벨→검출됨). 문피아엔 외전  ║
+ * ║ 플래그·권/부 그룹핑 API도 없음(실측). 사용자 제안 채택: '본편 완결 마커(完/완결) ║
+ * ║ 로 경계 — 마커 여럿이면 가장 이른 것=본편 완결, 그 뒤(날짜 초과) 전부 외전'.     ║
+ * ║ 구현: isMainCompletionTitle(완결/完結/(완)/(完)/[완]; 완전·완성·완벽·미완·1부완결 ║
+ * ║ ·시즌N 제외) + splitEpisodesByGaiden 완결마커 폴백(키워드 0·완결작·ts 있을 때만, ║
+ * ║ 경계 후반부≥50%·외전블록≤50% 안전장치 → 본편 중간 부분완결 오인 차단). 문피아     ║
+ * ║ 페처 completionFallback 활성 + 진단도구에 [完]표시·분리결과 출력. 마커 없으면     ║
+ * ║ 무동작(본편 손상 0). 합성검증(회귀수선전형 외전5·무외전·중간1부완결·키워드) 통과. ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔎 v7.49.9 문피아 외전 — 알 수 없는 제목 키 '구제 스캔' (2026-06-28)          ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -15253,10 +15267,23 @@ async function fetchNaverStartYear(url, opts = {}) {
 //   "완결"은 본편 마지막화 제목에 흔히 붙어 오탐이라 마커에서 의도적으로 제외(선행 크롤러 교훈).
 const GAIDEN_TITLE_RE = /(?:^|\s|\[|\(|【|<)(외전|번외|외전편|번외편|番外|外传|外傳|side[\s-]*story|spin[\s-]*?off|스핀오프)/i;
 function isGaidenTitle(s) { return GAIDEN_TITLE_RE.test(String(s == null ? "" : s)); }
+// 🆕 v7.49.10: '본편 완결' 마커 — 제목에 '외전' 글자가 없는 플랫폼(문피아: 외전이 아크명으로만 표기)에서
+//   본편 끝을 표시하는 完/完結/완결/(완)/[완] 등을 식별. '여러 개면 가장 이른 마커=본편 완결, 그 뒤=전부 외전'(사용자 제안) 판정용.
+//   오탐 방지: '완전·완성·완벽·미완'(부분문자 우연일치)·'1부 완결/시즌N/N권 완'(부분/시즌 완결)은 본편 완결로 보지 않음.
+const PART_COMPLETION_RE = /[1-9]\s*부\s*(?:완결|完)|시즌\s*\d|season\s*\d|\d\s*권\s*완/i;
+function isMainCompletionTitle(s) {
+  const t = String(s == null ? "" : s).trim();
+  if (!t) return false;
+  if (PART_COMPLETION_RE.test(t)) return false;                 // 부분/시즌 완결은 본편 전체 완결 아님
+  if (/완결|完結|完结/.test(t)) return true;                     // '완결'·'完結'(한/중) — 다른 단어에 섞이지 않음
+  if (/[\[\(（【]\s*(?:완|完)\s*[\]\)）】]/.test(t)) return true;    // (완)·[완]·（완）·(完)·[完]
+  if (/(?:^|[\s.,!~·、，])完(?:$|[\s.,!~·、，])/.test(t)) return true; // 단독 한자 '完'(完了·完璧·完成 등 합성어 제외)
+  return false;
+}
 // 🆕 v7.41.1: 플랫폼 공통 본편/외전 분리 — episodes: [{title, ts}](정렬 무관). 외전 마커 회차 vs 본편 회차의 날짜로 분리.
 //   본편 완결일=본편 회차 최신 / 외전 시작·완결일=외전 회차 min·max / 외전 회차수. 각 플랫폼 페처는 [{title,ts}]만 만들면 됨.
 //   { hasGaiden, gaidenCount, mainCompletedAt, gaidenStartAt, gaidenCompletedAt } 반환. 빈 입력 null.
-function splitEpisodesByGaiden(episodes) {
+function splitEpisodesByGaiden(episodes, opts) {
   let arr = Array.isArray(episodes) ? episodes.filter(e => e && (e.title || e.ts)) : null;
   if (!arr || !arr.length) return null;
   // 🔧 v7.47.1: 중복 회차 제거(같은 제목+날짜) — 미리보기/선공개 중복 등으로 외전 수가 부풀려지는 것 방지.
@@ -15282,6 +15309,29 @@ function splitEpisodesByGaiden(episodes) {
       gaidenCount++; if (ts) { if (!gMin || ts < gMin) gMin = ts; if (ts > gMax) gMax = ts; } // 트레일링 외전 블록
     } else if (!isG[i] && (b < 0 || i < b)) {
       if (ts && ts > mMax) mMax = ts; // 본편(외전 블록 앞) 최신 회차 = 본편 완결일. 외전 뒤 트레일링 공지/후기는 제외.
+    }
+  }
+  // 🆕 v7.49.10: 완결마커 폴백 — 키워드 외전이 0이고(제목에 '외전' 글자 없음, 예: 문피아 아크명 외전) ts가 있을 때,
+  //   '본편 완결' 마커(完/완결)로 경계 추정(사용자 제안). 마커가 여럿이면 '가장 이른' 마커 = 본편 완결, 그 뒤(날짜 초과)는 전부 외전.
+  //   안전장치: 마커 위치가 후반부(≥50%)이고 외전 블록이 소수(≤50%)일 때만 채택 → 본편 중간 부분완결 오인으로 본편이 깎이는 것 방지.
+  //   마커가 없으면 아무 일도 안 함(키워드 결과 그대로) → 오검출로 인한 본편 손상 0. opts.completionFallback일 때만 동작(문피아 전용).
+  if (gaidenCount === 0 && opts && opts.completionFallback && hasTs && n >= 8) {
+    let mi = -1, mts = 0;
+    for (let i = 0; i < n; i++) {
+      if (!isMainCompletionTitle(ordered[i].title)) continue;
+      const ts = Number(ordered[i].ts) || 0;
+      if (ts && (mi < 0 || ts < mts)) { mi = i; mts = ts; } // 가장 이른(작은 ts) 완결마커 = 본편 완결
+    }
+    if (mi >= 0 && mi >= Math.floor(n * 0.5)) {
+      let gc = 0, gmin2 = 0, gmax2 = 0, mmax2 = 0;
+      for (let i = 0; i < n; i++) {
+        const ts = Number(ordered[i].ts) || 0;
+        if (ts > mts) { gc++; if (!gmin2 || ts < gmin2) gmin2 = ts; if (ts > gmax2) gmax2 = ts; } // 본편 완결일 이후 = 외전
+        else if (ts && ts > mmax2) mmax2 = ts; // 본편(완결마커 포함·이전) 최신 = 본편 완결일
+      }
+      if (gc > 0 && gc <= Math.floor(n * 0.5)) {
+        return { hasGaiden: true, gaidenCount: gc, mainCompletedAt: mmax2 || mts, gaidenStartAt: gmin2, gaidenCompletedAt: gmax2, viaCompletion: true };
+      }
     }
   }
   return { hasGaiden: gaidenCount > 0, gaidenCount, mainCompletedAt: mMax, gaidenStartAt: gMin, gaidenCompletedAt: gMax };
@@ -15621,9 +15671,10 @@ async function fetchMunpiaEpisodeSplit(url, opts = {}) {
     } catch { return null; } finally { cleanup(); }
   };
   // 1) 기본 회차목록 — 전체가 한 번에 오면(≤100, next=false) 로그인 없이 분리.
+  //    🆕 v7.49.10: completionFallback — 문피아 외전은 '외전' 글자 없이 아크명으로만 적혀(키워드 검출 0) 본편 완결 마커(完/완결)로 분리.
   const basic = parseMunpiaEntries(await apiGet("/api/v1/mobile/novel-detail/" + id + "/chapters"));
-  if (basic && basic.episodes.length && !basic.next) return splitEpisodesByGaiden(basic.episodes);
-  // 2) 큰 작품(next=true) — 로그인 세션 + paid/selective(order=LATEST=최신순 → 외전 앞). 경계(본편 등장)까지 수집.
+  if (basic && basic.episodes.length && !basic.next) return splitEpisodesByGaiden(basic.episodes, { completionFallback: true });
+  // 2) 큰 작품(next=true) — 로그인 세션 + paid/selective(order=LATEST=최신순). 본편 등장/완결마커 도달까지 수집.
   let collected = [], slice = "", pages = 0;
   while (pages < 20) {
     const txt = await apiGet("/api/v1/paid/order/selective/novels/" + id + "/entries?order=LATEST&size=100&sliceEntryId=" + encodeURIComponent(slice) + "&now=" + MUNPIA_NOW_MAX);
@@ -15631,11 +15682,12 @@ async function fetchMunpiaEpisodeSplit(url, opts = {}) {
     if (!p || !p.episodes.length) break;
     collected = collected.concat(p.episodes);
     pages++;
-    if (collected.some(e => !isGaidenTitle(e.title)) || !p.next || p.sliceEntryId == null) break;
+    // 🔧 v7.49.10: 본편 완결 마커(完/완결)에 도달하면 경계 확보 — 아크명 외전(키워드 비검출)도 멈춰 더 안 받음.
+    if (collected.some(e => isMainCompletionTitle(e.title)) || collected.some(e => !isGaidenTitle(e.title)) || !p.next || p.sliceEntryId == null) break;
     slice = String(p.sliceEntryId);
   }
   if (!collected.length) return null;
-  return splitEpisodesByGaiden(collected);
+  return splitEpisodesByGaiden(collected, { completionFallback: true });
 }
 // 🆕 v7.49.8: 문피아 외전 진단 — paid 엔드포인트(>100화 최신 회차목록) 응답을 그대로 캡처(로그인 쿠키 첨부 여부, 항목 키, 외전 제목 형식).
 //   '완결일은 되는데 외전만 안 됨' = 보통 제목 키가 다르거나(빈 제목) 외전 명명이 정규식 밖. 결과 텍스트로 정확히 진단.
@@ -15663,9 +15715,20 @@ async function diagnoseMunpiaEpisodes(url, opts = {}) {
   R += `  total=${pj.result.total} next=${pj.result.next} 받은수=${pl.length}\n`;
   if (pl[0]) { R += `  첫 항목 키: ${Object.keys(pl[0]).join(", ")}\n  첫 항목 원본: ${JSON.stringify(pl[0]).slice(0, 600)}\n`; }
   const eps = (parseMunpiaEntries(p.txt) || { episodes: [] }).episodes;
-  R += `\n=== 현재 파서가 뽑은 최신 ${Math.min(eps.length, 25)}개 (외전표시 | 제목 | 날짜) ===\n` +
-    eps.slice(0, 25).map((e, i) => `${String(i).padStart(2)}. ${isGaidenTitle(e.title) ? "[외전]" : "[본편]"} ${e.title || "(빈 제목!)"} | ${e.ts ? new Date(e.ts).toISOString().slice(0, 10) : "-"}`).join("\n") + "\n";
-  R += `\n외전 매치: ${eps.filter(e => isGaidenTitle(e.title)).length} / ${eps.length}${eps.length && !eps.some(e => e.title) ? "  ← 제목이 전부 비었음(=제목 키가 다름)" : ""}\n`;
+  // 🆕 v7.49.10: 완결마커(完/완결) 탐지 + 완결마커 폴백 분리 결과를 함께 표기 — 문피아 외전이 아크명이라 키워드는 0이어도
+  //   본편 완결 마커로 외전이 분리되는지 한눈에 확인(마커가 안 보이면 그 본편 완결 회차 제목을 알려주시면 정확히 맞춤).
+  const N = Math.min(eps.length, 50);
+  R += `\n=== 현재 파서가 뽑은 최신 ${N}개 (마커 | 제목 | 날짜) ===\n` +
+    eps.slice(0, N).map((e, i) => {
+      const tag = isMainCompletionTitle(e.title) ? "[完]" : (isGaidenTitle(e.title) ? "[외전]" : "[본편]");
+      return `${String(i).padStart(2)}. ${tag} ${e.title || "(빈 제목!)"} | ${e.ts ? new Date(e.ts).toISOString().slice(0, 10) : "-"}`;
+    }).join("\n") + "\n";
+  const kwMatch = eps.filter(e => isGaidenTitle(e.title)).length;
+  const cmMatch = eps.filter(e => isMainCompletionTitle(e.title)).length;
+  const sp = splitEpisodesByGaiden(eps, { completionFallback: true });
+  R += `\n키워드('외전') 매치: ${kwMatch} / ${eps.length}${eps.length && !eps.some(e => e.title) ? "  ← 제목 전부 비었음(제목 키 다름)" : ""}\n`;
+  R += `완결마커(完/완결) 매치: ${cmMatch}${cmMatch === 0 ? "  ← 본편 완결 회차가 이 묶음에 없거나 마커 글자가 달라요(아래 본편 끝 회차 제목 알려주세요)" : ""}\n`;
+  if (sp) R += `분리 결과: 외전 ${sp.gaidenCount}편${sp.viaCompletion ? "(완결마커 기준)" : (sp.hasGaiden ? "(키워드 기준)" : "")}${sp.mainCompletedAt ? " · 본편완결 " + new Date(sp.mainCompletedAt).toISOString().slice(0, 10) : ""}\n`;
   return R + "\n(이 텍스트를 복사해 채팅에 붙여넣어 주세요.)";
 }
 // 🆕 v7.44.7: 문피아 링크의 작품 id 추출(여러 URL 형태 대응). m.munpia.com/novel?id=, link.munpia.com/n/{id}, /novel/{id}.
@@ -18155,7 +18218,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.49.9";
+const APP_VERSION = "7.49.10";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -18181,6 +18244,19 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.49.10", date: "2026-06-28",
+    title: "🔎 문피아 외전 — ‘본편 완결(完/완결) 표시’로 외전 분리",
+    highlights: [
+      { type: "fix", text: "🔎 문피아 외전이 0으로만 잡히던 진짜 원인을 찾았어요. 문피아는 외전을 ‘외전’이라는 글자 없이 ‘섬에서 살아남기(5)’, ‘끝맺음.’처럼 ‘아크(소제목) 이름’으로만 적어서, ‘외전’ 글자를 찾는 방식으로는 못 잡았던 거예요(네이버는 같은 화를 ‘외전 N화’로 자동 표기해 줘서 됐던 것). 이제 ‘본편 완결(完·완결) 표시’를 찾아 그 뒤에 올라온 화들을 외전으로 분리해요." },
+      { type: "new", text: "🛡️ 안전장치: 완결 표시가 없으면 아무것도 바꾸지 않아요(본편이 잘못 깎이는 일 없음). ‘1부 완결/시즌2’ 같은 부분 완결, ‘완전·완성·완벽·미완’ 같은 비슷한 단어는 본편 완결로 보지 않아요. 완결 표시가 여러 개면 ‘가장 이른(먼저 나온)’ 것을 본편 완결로 봐요." },
+    ],
+    details: [
+      "문피아엔 외전을 구분하는 표시(플래그)나 권/부 묶음 정보가 회차 데이터에 전혀 없어요(직접 확인). 그래서 사용자분 제안대로 ‘본편 완결 표시’를 기준으로 잡았어요 — 본편이 끝난 날 이후에 올라온 화 = 외전.",
+      "100화가 넘는 문피아 완결작은 설정 › 🔌 연결에서 ‘문피아 로그인’ 후 불러와야 외전 구간 회차 제목을 받아올 수 있어요(비로그인은 가장 오래된 100화까지만 받아짐 — 직접 확인).",
+      "그래도 외전이 0이면 ‘📊 문피아 외전 진단’ 결과를 보내 주세요. 본편 마지막 회차 제목에 完/완결 표시가 어떻게 적혀 있는지 보고 정확히 맞추겠습니다.",
+    ],
+  },
   {
     version: "7.49.9", date: "2026-06-28",
     title: "🔎 문피아 외전 — 제목 칸 이름이 달라도 읽도록 ‘구제 인식’",
