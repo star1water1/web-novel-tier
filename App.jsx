@@ -2,11 +2,24 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.48.0 (멀티링크 관리 — 다이렉트/자동업뎃 분리 + 빠진 플랫폼 일괄 매칭) ║
+ * ║  버전: 7.49.0 (회차수 과대계상 보정 — 일괄 갱신에 본편·외전 정정 검토 추가)    ║
  * ║  최종 수정: 2026-06-28                                                        ║
- * ║  총 라인 수: 약 71,700줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 72,250줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📉 v7.49.0 회차수 과대계상 보정 (2026-06-28)                                  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 사용자 요청: 외전·중복이 섞여 부풀려진 본편/외전 회차수를 바로잡는 기믹.        ║
+ * ║ '회차·완결 일괄 갱신' 모달에 '📉 회차수 과대계상 보정' 추가. 동작: 링크 있는    ║
+ * ║ 전 작품(+예정)을 재스크랩(fetchMetaForUpdate) → 외전·막간·중복이 제거된 본편/   ║
+ * ║ 외전 회차(applyEpisodeSplitToMeta 적용분)가 저장값보다 '작을 때만' 하향 정정    ║
+ * ║ 후보로 수집(detectEpisodeOvercount). 늘어난 회차는 기존 자동갱신이 담당이라     ║
+ * ║ 중복 제외. 외전→0 정정은 스크랩 윈도 누락 위험이라 제외(재스크랩이 외전 양수    ║
+ * ║ 일 때만). 새 'correctReview' 단계에서 후보를 현재→보정값으로 보여주고 탭으로     ║
+ * ║ 포함/제외 검토 후 일괄 적용(total_episodes·gaiden_total_episodes만 UPDATE,      ║
+ * ║ 다른 큐레이션 필드 불변). 적용 전엔 DB 미변경(검토 우선). 전체 파서 통과.        ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔗 v7.48.0 멀티링크 관리 (2026-06-28)                                         ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -17830,7 +17843,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.48.0";
+const APP_VERSION = "7.49.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -17856,6 +17869,19 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.49.0", date: "2026-06-28",
+    title: "📉 회차수 과대계상 보정 — 부풀린 본편·외전 회차 바로잡기",
+    highlights: [
+      { type: "new", text: "📉 ‘회차·완결 일괄 갱신’에 ‘회차수 과대계상 보정’이 생겼어요. 외전·중복이 섞여 실제보다 부풀려진 본편/외전 회차수를, 웹에서 다시 가져온 정확한 수와 비교해 ‘작게(정확하게)’ 잡힌 것만 골라 바로잡아요. 적용 전에 어떤 작품을 얼마로 줄일지 검토하고 고를 수 있어요." },
+    ],
+    details: [
+      "‘🔄 회차·완결 일괄 갱신’ 모달 아래쪽 ‘📉 회차수 과대계상 보정’을 누르면, 링크 있는 전 작품(예정 포함)을 다시 가져와 본편/외전 회차를 점검해요.",
+      "재취득값이 저장값보다 작을 때만(부풀려진 경우만) 후보로 모아요. 회차가 늘어난 경우는 위쪽 ‘자동 갱신’이 처리해요.",
+      "검토 화면에서 각 후보를 탭해 포함/제외를 정하고 ‘정정’을 누르면 본편·외전 회차수만 바꿔요(연재 상태·완결일·연도 등 다른 값은 그대로).",
+      "외전이 0개로 잡히는 경우는 가져오기 범위에서 빠졌을 수 있어 자동 정정하지 않아요(실제로 외전이 더 적게 잡힐 때만 줄여요).",
+    ],
+  },
   {
     version: "7.48.0", date: "2026-06-28",
     title: "🔗 멀티링크 관리 — 한 작품에 여러 플랫폼 링크",
@@ -37149,13 +37175,16 @@ function AppContent() {
   const batchAddCancelRef = useRef(false);
   // 🆕 v7.28.59 (일괄갱신 Phase②): 전작품(+예정) 회차·완결여부·연도 웹 재스크랩 갱신 (링크 자동 / 미링크 1회 매핑 후 자동)
   const [bulkUpdateOpen, setBulkUpdateOpen] = useState(false);
-  const [bulkUpdateStage, setBulkUpdateStage] = useState("menu"); // menu | running | mapping | done
+  const [bulkUpdateStage, setBulkUpdateStage] = useState("menu"); // menu | running | mapping | correctReview | done
   const [bulkUpdateBusy, setBulkUpdateBusy] = useState(false);
   const [bulkUpdateProgress, setBulkUpdateProgress] = useState(null); // {current,total} (DB 갱신 중 = 닫기/취소 가드)
   const [bulkUpdateResults, setBulkUpdateResults] = useState([]); // [{title, planned, changes:[...]}]
   const [bulkUpdateStats, setBulkUpdateStats] = useState({ linked: 0, unlinked: 0, total: 0 });
   const [bulkUpdateFailed, setBulkUpdateFailed] = useState(0);
   const [bulkUpdatePlatforms, setBulkUpdatePlatforms] = useState([]); // 🆕 v7.41.0: 재취득·덮어쓰기 대상 플랫폼(canonical)
+  // 🆕 v7.49.0: 회차수 과대계상 보정 — 재스크랩값(외전·중복 제거된 본편/외전 회차)이 저장값보다 작을 때만 하향 정정. 적용 전 검토.
+  const [bulkCorrectionCandidates, setBulkCorrectionCandidates] = useState([]); // [{id,planned,table,title,main:{from,to}|null,gaiden:{from,to}|null}]
+  const [bulkCorrectionExcluded, setBulkCorrectionExcluded] = useState(() => new Set()); // 검토에서 제외한 작품 id
   const bulkUpdateCancelRef = useRef(false);
   const [bulkMapQueue, setBulkMapQueue] = useState([]); // 링크 없는 작품들(순차 매핑)
   const [bulkMapIdx, setBulkMapIdx] = useState(0);
@@ -44157,6 +44186,73 @@ function AppContent() {
     if (nComplete || nDropped) {
       Alert.alert("📢 상태 변경 알림", [nComplete ? `🎉 완결 전환 ${nComplete}개` : "", nDropped ? `⏸ 연중 전환 ${nDropped}개` : ""].filter(Boolean).join("\n") + "\n\n새로 완결/연중된 작품이 있어요. 완료 목록에서 확인하세요.");
     }
+  }
+  // 🆕 v7.49.0: 회차수 과대계상 보정 — 재스크랩으로 얻은 '외전·중복 제외' 본편/외전 회차가 저장값보다 작을 때만
+  //   후보로 잡는다(하향 정정 전용). 늘어난 회차는 위 자동갱신이 처리. 외전→0 정정은 스크랩 윈도 누락 위험이라 제외.
+  function detectEpisodeOvercount(work, meta) {
+    if (!meta) return null;
+    let main = null, gaiden = null;
+    const curEp = Number(work.total_episodes) || 0, newEp = Number(meta.totalEpisodes) || 0;
+    if (curEp > 0 && newEp > 0 && newEp < curEp) main = { from: curEp, to: newEp };
+    const curGc = Number(work.gaiden_total_episodes) || 0, newGc = Number(meta.gaidenCount) || 0;
+    if (curGc > 0 && newGc > 0 && newGc < curGc) gaiden = { from: curGc, to: newGc };
+    return (main || gaiden) ? { main, gaiden } : null;
+  }
+  // 재스크랩으로 과대계상 후보만 수집(쓰기 X) → correctReview 단계에서 검토 후 적용.
+  async function runBulkOvercountScan() {
+    if (bulkUpdateBusy) return;
+    const works = bulkAllWorks().filter(w => linksOf(w).length > 0);
+    if (!works.length) { Alert.alert("회차수 보정", "링크 있는 작품이 없어요.\n‘링크 연결’로 먼저 매핑해 주세요."); return; }
+    setBulkUpdateBusy(true);
+    bulkUpdateCancelRef.current = false;
+    setBulkUpdateStage("running");
+    setBulkUpdateResults([]);
+    setBulkUpdateFailed(0);
+    setBulkUpdateProgress({ current: 0, total: works.length });
+    const cands = []; let failed = 0;
+    for (let i = 0; i < works.length; i++) {
+      if (bulkUpdateCancelRef.current) break;
+      setBulkUpdateProgress({ current: i, total: works.length });
+      const w = works[i];
+      try {
+        const meta = await fetchMetaForUpdate(chooseUpdateLink(w), w.title);
+        const oc = detectEpisodeOvercount(w, meta);
+        if (oc) {
+          cands.push({ id: w.id, planned: w._planned, table: w._planned ? "planned_novels" : "novels", title: w.title, main: oc.main, gaiden: oc.gaiden });
+          setBulkUpdateResults(prev => [...prev, { title: w.title, planned: w._planned, changes: [oc.main ? `본편 ${oc.main.from}→${oc.main.to}화` : "", oc.gaiden ? `외전 ${oc.gaiden.from}→${oc.gaiden.to}화` : ""].filter(Boolean) }]);
+        }
+      } catch (e) { failed++; setBulkUpdateFailed(failed); }
+    }
+    setBulkUpdateProgress(null);
+    setBulkUpdateBusy(false);
+    setBulkCorrectionCandidates(cands);
+    setBulkCorrectionExcluded(new Set());
+    setBulkUpdateStage("correctReview");
+  }
+  // 검토에서 포함(체크)된 후보만 본편/외전 회차를 하향 정정(다른 필드 미변경).
+  async function applyBulkCorrections() {
+    if (bulkUpdateBusy) return;
+    const picked = bulkCorrectionCandidates.filter(c => !bulkCorrectionExcluded.has(c.id));
+    if (!picked.length) { setBulkUpdateOpen(false); return; }
+    setBulkUpdateBusy(true);
+    setBulkUpdateProgress({ current: 0, total: picked.length });
+    const results = [];
+    for (let i = 0; i < picked.length; i++) {
+      setBulkUpdateProgress({ current: i, total: picked.length });
+      const c = picked[i];
+      try {
+        const sets = [], params = [], changes = [];
+        if (c.main) { sets.push("total_episodes=?"); params.push(c.main.to); changes.push(`회차 ${c.main.from}→${c.main.to}`); }
+        if (c.gaiden) { sets.push("gaiden_total_episodes=?"); params.push(c.gaiden.to); changes.push(`외전 ${c.gaiden.from}→${c.gaiden.to}`); }
+        if (sets.length) { params.push(c.id); await exec(`UPDATE ${c.table} SET ${sets.join(", ")} WHERE id=?`, params); results.push({ title: c.title, planned: c.planned, changes }); }
+      } catch (e) { /* 개별 실패는 건너뜀 */ }
+    }
+    setBulkUpdateProgress(null);
+    setBulkUpdateBusy(false);
+    setBulkUpdateResults(results);
+    try { await loadList(undefined, undefined, "bulkCorrect"); } catch {}
+    try { await loadPlannedList(); } catch {}
+    setBulkUpdateStage("done");
   }
   function startBulkMapping() {
     const unlinked = bulkAllWorks().filter(w => linksOf(w).length === 0); // 🔗 v7.48.0: 멀티링크 합성 포함
@@ -71028,6 +71124,18 @@ async function importJSON() {
                     ]);
                   }} />
                 </View>
+
+                {/* 🆕 v7.49.0: 회차수 과대계상 점검·보정 — 재스크랩값이 저장값보다 작을 때만 하향 정정(본편/외전), 적용 전 검토 */}
+                <View style={{ borderTopWidth: 1, borderTopColor: C.line, marginTop: 14, paddingTop: 12 }}>
+                  <Text style={{ color: C.text, fontSize: 13, fontWeight: "800", marginBottom: 4 }}>📉 회차수 과대계상 보정</Text>
+                  <Text style={{ color: C.sub, fontSize: 11.5, lineHeight: 16, marginBottom: 9 }}>
+                    링크 있는 작품을 다시 가져와, 외전·중복이 섞여 부풀려진 본편/외전 회차수를 찾아요. 재취득값이 저장값보다 작게(정확하게) 잡힐 때만 후보로 모아 검토 후 정정합니다. 늘어난 회차는 위 ‘자동 갱신’이 처리해요.
+                  </Text>
+                  <OutlineButton title={`📉 링크 있는 ${bulkUpdateStats.linked}개 점검·보정`} color={C.primary} onPress={() => {
+                    if (bulkUpdateStats.linked === 0) { Alert.alert("회차수 보정", "링크 있는 작품이 없어요."); return; }
+                    runBulkOvercountScan();
+                  }} />
+                </View>
               </View>
             )}
 
@@ -71084,6 +71192,45 @@ async function importJSON() {
                   <OutlineButton title="건너뛰기 ▶" onPress={skipBulkMap} color={C.sub} style={{ flex: 1 }} />
                   <OutlineButton title="⏹ 중단(저장)" onPress={stopBulkMapping} color={C.warn} style={{ flex: 1 }} />
                 </View>
+              </View>
+            )}
+
+            {/* 🆕 v7.49.0: 회차수 과대계상 보정 — 검토(적용 전) 단계. 후보를 탭해 포함/제외 후 일괄 정정. */}
+            {bulkUpdateStage === "correctReview" && (
+              <View>
+                {bulkCorrectionCandidates.length === 0 ? (
+                  <>
+                    <Text style={{ color: C.sub, fontSize: 13, textAlign: "center", paddingVertical: 22, lineHeight: 19 }}>과대계상으로 의심되는 작품이 없어요.{"\n"}본편·외전 회차수가 이미 정확합니다.</Text>
+                    <PrimaryButton title="닫기" onPress={() => setBulkUpdateOpen(false)} />
+                  </>
+                ) : (
+                  <>
+                    <Text style={{ color: C.text, fontSize: 15, fontWeight: "800", textAlign: "center", marginBottom: 3 }}>📉 보정 후보 {bulkCorrectionCandidates.length}건</Text>
+                    <Text style={{ color: C.sub, fontSize: 12, textAlign: "center", marginBottom: 10 }}>현재 → 보정값(작게 잡힌 회차만). 탭하면 제외/포함이 바뀌어요.</Text>
+                    <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator={false}>
+                      {bulkCorrectionCandidates.map((c) => {
+                        const excluded = bulkCorrectionExcluded.has(c.id);
+                        return (
+                          <TouchableOpacity key={c.id} activeOpacity={0.7}
+                            onPress={() => setBulkCorrectionExcluded(prev => { const n = new Set(prev); if (n.has(c.id)) n.delete(c.id); else n.add(c.id); return n; })}
+                            style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: C.line, opacity: excluded ? 0.4 : 1 }}>
+                            <Text style={{ fontSize: 16 }}>{excluded ? "⬜" : "✅"}</Text>
+                            <View style={{ flex: 1 }}>
+                              <Text style={{ color: C.text, fontSize: 13, fontWeight: "700" }} numberOfLines={1}>{c.planned ? "📋 " : ""}{c.title}</Text>
+                              <Text style={{ color: C.sub, fontSize: 12, marginTop: 1 }}>
+                                {[c.main ? `본편 ${c.main.from}→${c.main.to}화` : "", c.gaiden ? `외전 ${c.gaiden.from}→${c.gaiden.to}화` : ""].filter(Boolean).join(" · ")}
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                    <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+                      <OutlineButton title="취소" onPress={() => setBulkUpdateOpen(false)} color={C.sub} style={{ flex: 1 }} />
+                      <PrimaryButton title={`✅ ${bulkCorrectionCandidates.length - bulkCorrectionExcluded.size}건 정정`} onPress={applyBulkCorrections} disabled={bulkCorrectionCandidates.length - bulkCorrectionExcluded.size === 0} style={{ flex: 1 }} />
+                    </View>
+                  </>
+                )}
               </View>
             )}
 
