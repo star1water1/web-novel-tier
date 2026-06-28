@@ -2,11 +2,26 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.49.2 (노벨피아 외전 과소계상 수정 + 회차수 보정 양방향화)             ║
+ * ║  버전: 7.49.3 (전 플랫폼 외전 산정 점검 + 카카오 본편 완결일 경계 수정)         ║
  * ║  최종 수정: 2026-06-28                                                        ║
- * ║  총 라인 수: 약 72,310줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 72,350줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔍 v7.49.3 전 플랫폼 외전 산정 점검 + 카카오 경계 수정 (2026-06-28)            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ v7.49.2 노벨피아 수정 후 전 플랫폼 실측 점검. 결과:                            ║
+ * ║ • 네이버/문피아: 공용 splitEpisodesByGaiden(7.49.2 수정분) 사용 — 네이버는      ║
+ * ║   display=300, 문피아는 ts(createdAt) 보유 + 100/쪽 → 정상(실측·합성 검증).      ║
+ * ║ • 리디: 외전=별도 시리즈(book_count 합) 모델이라 본 버그군 무관 — 변경 없음.    ║
+ * ║ • 카카오: 자체 로직(filter(외전)). 본편 완결 회차를 'find(첫 비외전)'으로 잡아   ║
+ * ║   외전 블록 앞 최신 공지/후기를 본편으로 오인 → 본편 완결일이 외전 시기로 오염.  ║
+ * ║   → '외전 블록 뒤(더 오래된) 첫 본편'을 경계로 사용(없으면 0=기존 완결일 폴백).  ║
+ * ║   ※카카오 GraphQL은 DC IP 차단(302)이라 라이브 검증 불가 — 경계 로직만 합성     ║
+ * ║   검증(4케이스). 페이지네이션 커서(=collected.length)가 Relay 커서를 무시해      ║
+ * ║   page1만 신뢰 가능 → 외전 1쪽 초과 시 과소 가능(폰 주거망 검증 필요, 미변경).   ║
+ * ║ 전 항목 @babel/parser 통과.                                                    ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔧 v7.49.2 노벨피아 외전 과소계상 수정 + 회차수 보정 양방향 (2026-06-28)       ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -15366,7 +15381,14 @@ async function fetchKakaoEpisodeSplit(url, opts = {}) {
   { const seenPid = new Set(); collected = collected.filter(e => { const p = String((e && e.productId) || ""); if (!p) return true; if (seenPid.has(p)) return false; seenPid.add(p); return true; }); }
   // desc: [외전…외전, 본편(경계)…]. 외전 완결=첫 외전, 외전 시작=마지막 외전, 본편 완결=경계 첫 본편.
   const gaiden = collected.filter(e => isGaidenTitle(e.title));
-  const mainNewest = collected.find(e => !isGaidenTitle(e.title));
+  // 🔧 v7.49.3: 본편 완결 회차 = '외전 블록 뒤(=더 오래된)의 첫 본편'. 기존 find(!isGaidenTitle)는 외전 블록 앞에 붙는
+  //   '작가 후기/공지'(비외전·최신)를 본편으로 오인해 본편 완결일이 외전 시기로 오염됐음(노벨피아·실측 패턴과 동일).
+  //   외전이 없으면 종전대로 최신 비외전. 경계 본편이 윈도에 없으면 undefined → mainCompletedAt 0(기존 완결일 폴백).
+  let lastGaidenIdx = -1;
+  for (let i = 0; i < collected.length; i++) { if (isGaidenTitle(collected[i].title)) lastGaidenIdx = i; }
+  const mainNewest = lastGaidenIdx < 0
+    ? collected.find(e => !isGaidenTitle(e.title))
+    : collected.find((e, i) => i > lastGaidenIdx && !isGaidenTitle(e.title));
   const VIEW_Q = "query viewerInfo($seriesId: Long!, $productId: Long!) { viewerInfo(seriesId: $seriesId, productId: $productId) { item { productId lastReleasedDate } } }";
   const dateOf = async (pid) => { if (!pid) return 0; const t = await gql(VIEW_Q, { seriesId: Number(sid), productId: Number(pid) }, "viewerInfo"); return t ? parseKakaoViewerDate(t) : 0; };
   const mainCompletedAt = mainNewest ? await dateOf(mainNewest.productId) : 0;
@@ -17906,7 +17928,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.49.2";
+const APP_VERSION = "7.49.3";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -17932,6 +17954,18 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.49.3", date: "2026-06-28",
+    title: "🔍 외전 회차 점검 — 카카오 본편 완결일 보정",
+    highlights: [
+      { type: "fix", text: "🔍 노벨피아 수정에 이어 전 연재처의 외전 회차 산정을 점검했어요. 카카오페이지에서 외전 묶음 앞에 붙은 ‘작가 후기·공지’를 본편 마지막 회차로 잘못 잡아 본편 완결일이 외전 시기로 어긋나던 것을 고쳤어요." },
+    ],
+    details: [
+      "네이버·문피아는 노벨피아와 같은(개선된) 분리 로직을 쓰고 있어 정상 동작을 확인했어요.",
+      "리디는 외전이 별도 시리즈로 분리돼 있어 이 문제와 무관해요.",
+      "카카오페이지는 회차 목록을 한 페이지까지만 안정적으로 받을 수 있어, 외전이 매우 많은 작품은 일부만 잡힐 수 있어요(연재처 제약). 본편 완결일 경계만 우선 바로잡았어요.",
+    ],
+  },
   {
     version: "7.49.2", date: "2026-06-28",
     title: "🔧 노벨피아 외전 회차 수 바로잡기 + 회차수 보정 양방향",
