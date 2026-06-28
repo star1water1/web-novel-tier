@@ -2,11 +2,26 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.49.4 (카카오 외전 진단 도구 — 폰에서 커서·외전 수 캡처)               ║
+ * ║  버전: 7.49.5 (회귀 핫픽스 — 회차수 보정이 본편 깎던 문제, 외전만 정정으로)     ║
  * ║  최종 수정: 2026-06-28                                                        ║
- * ║  총 라인 수: 약 72,490줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 72,530줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🚑 v7.49.5 회귀 핫픽스 — 회차수 보정이 본편을 깎던 문제 (2026-06-28)           ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 사용자 보고: '회차수 보정' 실행 시 본편(total_episodes)이 뭉탱이로 깎임(네이버   ║
+ * ║ 다수). 진단(실측 13작): splitEpisodesByGaiden은 네이버에서 OLD==NEW로 외전 과대  ║
+ * ║ 아님 — 원인은 보정 기능의 '본편 양방향 정정'. 보정은 본편을 재스크랩값            ║
+ * ║ (total−gaidenCount)으로 맞추는데, 이 값이 ① 회차목록 윈도 캡(네이버 display=300) ║
+ * ║ → gaidenCount 미완전, ② numberOfEpisodes의 외전 포함 여부로 신뢰 불가. 하향      ║
+ * ║ 정정 시 본편이 잘못 깎임. 실측: numberOfEpisodes는 외전 포함(==전체행)이라 스크랩 ║
+ * ║ 시 본편은 과대(윈도 캡)일 뿐 '실제보다 깎이진' 않음 → 깎임은 오직 보정 기능 탓.   ║
+ * ║ 수정: detectEpisodeOvercount를 '외전(gaiden)만 정정(과대·과소)'로 축소 —          ║
+ * ║ 본편(total_episodes)은 절대 건드리지 않음(보존). 본편 변경은 자동 갱신/재취득     ║
+ * ║ 에서만. UI 문구도 '외전 회차수 보정'으로 정정. + 카카오 외전 진단 raw 덤프 강화   ║
+ * ║ (두 엔드포인트 응답을 그대로 보여줘 null 원인 파악). 전체 @babel/parser 통과.     ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 📊 v7.49.4 카카오 외전 진단 도구 (2026-06-28)                                 ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -15313,9 +15328,21 @@ async function diagnoseKakaoEpisodes(url, opts = {}) {
   };
   const gn = (eps) => eps.filter(e => isGaidenTitle(e.title)).length;
   let R = `[카카오 외전 진단] seriesId=${sid}\nURL: ${url}\n토큰(_kawlt 등): ${globalKkCookie ? "있음" : "없음 — 설정>연결>카카오 세션 새로고침 후 다시 권장"}\n`;
-  const r0 = await gql("0");
-  if (!r0) return R + "\n요청 자체 실패(네트워크). 와이파이↔LTE 전환 후 재시도해 주세요.";
-  R += `\n[엔드포인트] ${r0.ep} status=${r0.status}\n`;
+  // 🔧 v7.49.5: 두 엔드포인트 모두 raw 응답을 덤프(어디가 막히는지/왜 null인지 보이게). 회차목록 GraphQL POST는 막혀 있을 수 있음.
+  let r0 = null;
+  for (const ep of KAKAO_GQL_ENDPOINTS) {
+    const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 15000 });
+    try {
+      const res = await fetch(ep, { method: "POST", headers: { ...KAKAO_GQL_HEADERS, ...ck, "Referer": url }, body: JSON.stringify({ query: Q, operationName: "contentHomeProductList", variables: { seriesId: Number(sid), after: "0", sortType: "desc" } }), redirect: "follow", signal });
+      const txt = await res.text();
+      R += `\n[${ep}] status=${res.status} len=${txt.length}\n  ${String(txt).slice(0, 500).replace(/\n/g, "\n  ")}\n`;
+      const pp = parse(txt);
+      if (!pp.err && !r0) r0 = { ep, status: res.status, txt };
+    } catch (e) { R += `\n[${ep}] ERR ${e?.name === "AbortError" ? "timeout" : (e?.message || e)}\n`; }
+    finally { cleanup(); }
+  }
+  if (!r0) return R + "\n→ 두 엔드포인트 모두 회차목록을 못 받았어요(POST 차단/인증 필요로 추정). 위 raw를 복사해 보내 주세요.\n(이 텍스트째 복사해 채팅에 붙여넣어 주세요.)";
+  R += `\n[사용 엔드포인트] ${r0.ep} status=${r0.status}\n`;
   const p0 = parse(r0.txt);
   if (p0.err) return R + "\nGraphQL 응답 이상: " + p0.err + "\n(이 텍스트째 복사해 보내 주세요.)";
   R += `totalCount=${p0.totalCount} hasNext=${p0.hasNext}\nendCursor=${JSON.stringify(p0.endCursor)}\n`;
@@ -18003,7 +18030,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.49.4";
+const APP_VERSION = "7.49.5";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -18029,6 +18056,18 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.49.5", date: "2026-06-28",
+    title: "🚑 회차수 보정이 본편을 깎던 문제 수정",
+    highlights: [
+      { type: "fix", text: "🚑 ‘회차수 보정’을 돌리면 본편 회차가 실제보다 크게 깎이던 문제를 고쳤어요. 이제 이 기능은 외전 회차 수만 바로잡고, 본편 회차는 절대 건드리지 않아요(웹에서 받은 본편 수가 부정확할 수 있어 보존). 본편 회차는 종전처럼 ‘자동 갱신/재취득’에서만 바뀌어요." },
+    ],
+    details: [
+      "원인: 보정이 본편을 ‘웹 재취득값(전체−외전)’으로 맞추려 했는데, 회차 목록을 일부만 받아오는 한계(예: 네이버 300개) 때문에 이 값이 정확하지 않아 본편이 잘못 줄었어요.",
+      "외전 보정(과대·과소)은 그대로 동작해요. 본편이 이미 깎인 작품은 편집에서 직접 고치거나, 자동 갱신으로 다시 채울 수 있어요.",
+      "메뉴 이름을 ‘외전 회차수 보정’으로 바꿨어요.",
+    ],
+  },
   {
     version: "7.49.4", date: "2026-06-28",
     title: "📊 카카오 외전 진단 도구",
@@ -44442,16 +44481,17 @@ function AppContent() {
       Alert.alert("📢 상태 변경 알림", [nComplete ? `🎉 완결 전환 ${nComplete}개` : "", nDropped ? `⏸ 연중 전환 ${nDropped}개` : ""].filter(Boolean).join("\n") + "\n\n새로 완결/연중된 작품이 있어요. 완료 목록에서 확인하세요.");
     }
   }
-  // 🔧 v7.49.2: 회차수 보정 — 재스크랩으로 얻은 '외전·중복 제외' 본편/외전 회차가 저장값과 다르면(과대·과소 양방향) 후보로.
-  //   외전→0(재스크랩이 외전을 못 찾음)은 스크랩 윈도 누락 위험이라 제외(newGc>0일 때만 정정). v7.49.0의 하향 전용 → 양방향 확장.
+  // 🔧 v7.49.5: 회차수 보정은 '외전(gaiden)'만 정정한다(과대·과소 양방향). 본편(total_episodes)은 절대 건드리지 않음.
+  //   이유: 재스크랩 본편값(meta.totalEpisodes = total − gaidenCount)은 회차목록 윈도(예: 네이버 display=300) 캡과
+  //   total의 외전 포함 여부 불확실로 신뢰할 수 없어, 하향 정정 시 본편이 뭉탱이로 깎이는 회귀가 있었음(사용자 보고).
+  //   외전 수만 윈도에서 신뢰 가능하므로 외전만 맞추고 본편은 보존(자동 갱신/재취득에서만 본편 변경).
+  //   외전→0(재스크랩이 외전을 못 찾음)은 윈도 누락 위험이라 제외(newGc>0일 때만 정정).
   function detectEpisodeOvercount(work, meta) {
     if (!meta) return null;
-    let main = null, gaiden = null;
-    const curEp = Number(work.total_episodes) || 0, newEp = Number(meta.totalEpisodes) || 0;
-    if (newEp > 0 && newEp !== curEp) main = { from: curEp, to: newEp };
+    let gaiden = null;
     const curGc = Number(work.gaiden_total_episodes) || 0, newGc = Number(meta.gaidenCount) || 0;
     if (newGc > 0 && newGc !== curGc) gaiden = { from: curGc, to: newGc };
-    return (main || gaiden) ? { main, gaiden } : null;
+    return gaiden ? { main: null, gaiden } : null;
   }
   // 재스크랩으로 과대계상 후보만 수집(쓰기 X) → correctReview 단계에서 검토 후 적용.
   async function runBulkOvercountScan() {
@@ -71424,14 +71464,14 @@ async function importJSON() {
                   }} />
                 </View>
 
-                {/* 🆕 v7.49.0: 회차수 과대계상 점검·보정 — 재스크랩값이 저장값보다 작을 때만 하향 정정(본편/외전), 적용 전 검토 */}
+                {/* 🔧 v7.49.5: 외전 회차수 보정 — 외전(gaiden)만 정정(과대·과소). 본편은 보존(재스크랩 본편값 신뢰 불가로 깎임 방지) */}
                 <View style={{ borderTopWidth: 1, borderTopColor: C.line, marginTop: 14, paddingTop: 12 }}>
-                  <Text style={{ color: C.text, fontSize: 13, fontWeight: "800", marginBottom: 4 }}>📊 회차수 보정 (과대·과소)</Text>
+                  <Text style={{ color: C.text, fontSize: 13, fontWeight: "800", marginBottom: 4 }}>📊 외전 회차수 보정 (과대·과소)</Text>
                   <Text style={{ color: C.sub, fontSize: 11.5, lineHeight: 16, marginBottom: 9 }}>
-                    링크 있는 작품을 다시 가져와, 본편/외전 회차수가 실제와 다른 작품을 찾아요. 부풀려진 것(과대)뿐 아니라 외전이 적게 잡힌 것(과소)도 함께 잡아 정확한 수로 맞춰요. 후보를 검토해 적용합니다.
+                    링크 있는 작품을 다시 가져와, 외전 회차수가 실제와 다른 작품을 찾아 맞춰요. 부풀려진 것(과대)뿐 아니라 적게 잡힌 것(과소)도 함께 잡아요. 본편 회차는 건드리지 않아요(웹 본편값이 부정확해 잘못 깎일 수 있어 보존). 후보를 검토해 적용합니다.
                   </Text>
-                  <OutlineButton title={`📉 링크 있는 ${bulkUpdateStats.linked}개 점검·보정`} color={C.primary} onPress={() => {
-                    if (bulkUpdateStats.linked === 0) { Alert.alert("회차수 보정", "링크 있는 작품이 없어요."); return; }
+                  <OutlineButton title={`📊 링크 있는 ${bulkUpdateStats.linked}개 외전 점검`} color={C.primary} onPress={() => {
+                    if (bulkUpdateStats.linked === 0) { Alert.alert("외전 회차수 보정", "링크 있는 작품이 없어요."); return; }
                     runBulkOvercountScan();
                   }} />
                 </View>
@@ -71499,13 +71539,13 @@ async function importJSON() {
               <View>
                 {bulkCorrectionCandidates.length === 0 ? (
                   <>
-                    <Text style={{ color: C.sub, fontSize: 13, textAlign: "center", paddingVertical: 22, lineHeight: 19 }}>회차수가 어긋난 작품이 없어요.{"\n"}본편·외전 회차수가 이미 정확합니다.</Text>
+                    <Text style={{ color: C.sub, fontSize: 13, textAlign: "center", paddingVertical: 22, lineHeight: 19 }}>외전 회차수가 어긋난 작품이 없어요.{"\n"}이미 정확합니다.</Text>
                     <PrimaryButton title="닫기" onPress={() => setBulkUpdateOpen(false)} />
                   </>
                 ) : (
                   <>
                     <Text style={{ color: C.text, fontSize: 15, fontWeight: "800", textAlign: "center", marginBottom: 3 }}>📉 보정 후보 {bulkCorrectionCandidates.length}건</Text>
-                    <Text style={{ color: C.sub, fontSize: 12, textAlign: "center", marginBottom: 10 }}>현재 → 보정값(실제 회차로 맞춤). 탭하면 제외/포함이 바뀌어요.</Text>
+                    <Text style={{ color: C.sub, fontSize: 12, textAlign: "center", marginBottom: 10 }}>외전 현재 → 보정값(본편은 보존). 탭하면 제외/포함이 바뀌어요.</Text>
                     <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator={false}>
                       {bulkCorrectionCandidates.map((c) => {
                         const excluded = bulkCorrectionExcluded.has(c.id);
