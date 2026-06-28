@@ -2,11 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.46.0 (카카오페이지 제목검색 — 공식 다음 검색 API 우회)               ║
+ * ║  버전: 7.46.1 (카카오 제목검색 키리스 기본 — DuckDuckGo, 다음키는 옵션)       ║
  * ║  최종 수정: 2026-06-28                                                        ║
- * ║  총 라인 수: 약 71,430줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 71,460줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🟢 v7.46.1 카카오 제목검색 키리스 기본화 — DuckDuckGo HTML (2026-06-28)       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 사용자 피드백: 카카오 개발자 키 발급은 일반 사용자에게 문턱이 높음. → 기본을   ║
+ * ║ 키 불필요로 전환. searchKakao가 키 유무로 분기: 키 없으면 DuckDuckGo HTML      ║
+ * ║ 엔드포인트(html.duckduckgo.com/html, SSR·JS불필요)에서 site:page.kakao.com    ║
+ * ║ 검색→링크 파싱(parseKakaoDdgHtml, uddg 리다이렉트 디코드), 키 있으면 공식 다음 ║
+ * ║ API(searchKakaoDaum). 후보 수집/정제/중복제거는 collectKakaoCandidate로 공용화.║
+ * ║ 연결 탭 '카카오 검색 키' → (선택)으로 표기 변경 + 안내 갱신. 실측: DDG html이   ║
+ * ║ 전지적독자시점 등 page.kakao.com/content 링크를 SSR로 반환 확인.              ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🟡 v7.46.0 카카오페이지 제목검색 — 공식 다음(Daum) 검색 API 우회 (2026-06-28) ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -15547,14 +15558,83 @@ function isSearchPlatformOn(name) {
   if (!globalSearchPlatforms || typeof globalSearchPlatforms !== "object") return true;
   return globalSearchPlatforms[name] !== false; // 명시적 false만 비활성(미지정은 켜짐)
 }
-// 🆕 v7.46.0: 카카오페이지 제목검색 — 공식 다음(Daum) 웹문서 검색 API로 우회.
-//   카카오 자체 검색은 GraphQL POST+서명 난독화로 막혀 있어, 다음 검색에서 page.kakao.com 작품 링크를
-//   찾고 선택 시 기존 카카오 링크 불러오기(SSR __NEXT_DATA__)가 메타를 채운다(.meta 미부착 → runScrapeFromUrl).
+// 🆕 v7.46.0: 카카오페이지 제목검색 — 카카오 자체 검색은 GraphQL+안티봇이라 막힘. 검색엔진에서 page.kakao.com
+//   작품 링크를 찾고, 선택 시 기존 카카오 링크 불러오기(SSR __NEXT_DATA__)가 메타를 채운다(.meta 미부착→runScrapeFromUrl).
+//   🆕 v7.46.1: 기본은 키 불필요(DuckDuckGo HTML 검색). 다음(Daum) REST 키를 넣으면 공식 API로 전환(옵션·더 안정).
+function cleanKakaoTitle(t) {
+  return String(t == null ? "" : t)
+    .replace(/<[^>]+>/g, "")                      // <b> 하이라이트 제거
+    .replace(/&[a-z#0-9]+;/gi, " ")               // 엔티티
+    .replace(/\s*[|｜]\s*카카오페이지.*$/u, "")    // " | 카카오페이지…" 이후 절단
+    .replace(/\s*-\s*(웹소설|웹툰)\s*$/u, "")      // 말미 "- 웹소설/웹툰"
+    .replace(/\s*\[[^\]]{1,12}\]\s*$/u, "")        // 말미 [연재]/[단행본]/[할리퀸]
+    .replace(/^\s*\d+\s*화\.?\s*/u, "")            // 머리 "323화. "(뷰어 결과)
+    .replace(/\s+/g, " ").trim();
+}
+// page.kakao.com 작품 URL+제목 → 후보 맵에 수집(content id 중복제거, 뷰어보다 작품홈 문서 우선). 두 엔진 공용.
+function collectKakaoCandidate(byId, rawUrl, rawTitle) {
+  const u = String(rawUrl || "");
+  if (!/\/\/page\.kakao\.com\//i.test(u)) return;            // 카카오페이지 링크만
+  const m = u.match(/\/content\/(\d+)/) || u.match(/[?&]seriesId=(\d+)/) || u.match(/\/home\/[^/]+\/(\d+)/);
+  if (!m) return;
+  const id = m[1];
+  const isViewer = /\/viewer\//.test(u);
+  const cat = (/웹툰/.test(rawTitle) && !/웹소설/.test(rawTitle)) ? "웹툰" : (/웹소설/.test(rawTitle) ? "웹소설" : "");
+  const title = cleanKakaoTitle(rawTitle);
+  if (!title) return;
+  const prev = byId.get(id);
+  if (!prev || (prev.isViewer && !isViewer)) {
+    byId.set(id, { title, author: "", url: "https://page.kakao.com/content/" + id, platform: "카카오페이지", category: cat, isViewer });
+  }
+}
+function kakaoCandidatesFromMap(byId) {
+  return [...byId.values()].slice(0, 20).map(({ isViewer, ...c }) => c);
+}
+// (옵션) 다음 웹문서 검색 API(JSON) → 후보
+function parseKakaoWebSearch(data) {
+  const docs = (data && Array.isArray(data.documents)) ? data.documents : [];
+  const byId = new Map();
+  for (const d of docs) collectKakaoCandidate(byId, (d && d.url), String((d && d.title) || ""));
+  return kakaoCandidatesFromMap(byId);
+}
+// (기본·키리스) DuckDuckGo HTML 검색 결과 → 후보. result__a 앵커의 href(uddg 리다이렉트 디코드)+제목 파싱.
+function parseKakaoDdgHtml(html) {
+  const s = String(html || "");
+  const byId = new Map();
+  const re = /<a\b[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+  let m;
+  while ((m = re.exec(s))) {
+    let href = m[1];
+    const ud = href.match(/[?&]uddg=([^&]+)/); // DDG 리다이렉트 → 실제 URL 디코드
+    if (ud) { try { href = decodeURIComponent(ud[1]); } catch { /* 원본 유지 */ } }
+    if (href.startsWith("//")) href = "https:" + href;
+    collectKakaoCandidate(byId, href, m[2]);
+  }
+  return kakaoCandidatesFromMap(byId);
+}
 async function searchKakao(query, opts = {}) {
   const q = (query || "").trim();
   if (!q) return [];
   const key = (globalKakaoRestKey || "").trim();
-  if (!key) throw new Error("카카오페이지 검색은 ‘카카오 검색 키’가 필요해요. 설정 › 🔌 연결에서 무료 키를 넣어 주세요.");
+  return key ? searchKakaoDaum(q, key, opts) : searchKakaoDdg(q, opts); // 키 있으면 공식 API, 없으면 키리스 DDG
+}
+// 기본 경로(키 불필요): DuckDuckGo HTML 엔드포인트(JS 불필요·SSR)에서 site:page.kakao.com 검색
+async function searchKakaoDdg(q, opts = {}) {
+  const url = "https://html.duckduckgo.com/html/?q=" + encodeURIComponent("site:page.kakao.com " + q);
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
+  let html = "";
+  try {
+    const res = await fetch(url, { headers: SCRAPER_HEADERS, redirect: "follow", signal });
+    if (!res.ok) throw new Error("카카오 검색 실패 (" + res.status + ")");
+    html = await res.text();
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error("검색 응답이 없어 중단했어요 (시간 초과)");
+    throw e;
+  } finally { cleanup(); }
+  return parseKakaoDdgHtml(html);
+}
+// 옵션 경로: 다음(Daum) REST 키가 있으면 공식 웹문서 검색 API 사용(더 안정·출처 명확)
+async function searchKakaoDaum(q, key, opts = {}) {
   const url = "https://dapi.kakao.com/v2/search/web?size=30&query=" + encodeURIComponent(q + " page.kakao.com 웹소설");
   const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
   let data;
@@ -15570,37 +15650,6 @@ async function searchKakao(query, opts = {}) {
     throw e;
   } finally { cleanup(); }
   return parseKakaoWebSearch(data);
-}
-// 다음 웹문서 검색 결과 → page.kakao.com 작품 후보({title, author, url, platform, category}). content id로 중복 제거.
-function parseKakaoWebSearch(data) {
-  const docs = (data && Array.isArray(data.documents)) ? data.documents : [];
-  const cleanK = (t) => String(t == null ? "" : t)
-    .replace(/<[^>]+>/g, "")                      // <b> 하이라이트 제거
-    .replace(/&[a-z#0-9]+;/gi, " ")               // 엔티티
-    .replace(/\s*[|｜]\s*카카오페이지.*$/u, "")    // " | 카카오페이지…" 이후 절단
-    .replace(/\s*-\s*(웹소설|웹툰)\s*$/u, "")      // 말미 "- 웹소설/웹툰"
-    .replace(/\s*\[[^\]]{1,12}\]\s*$/u, "")        // 말미 [연재]/[단행본]/[할리퀸]
-    .replace(/^\s*\d+\s*화\.?\s*/u, "")            // 머리 "323화. "(뷰어 결과)
-    .replace(/\s+/g, " ").trim();
-  const byId = new Map();
-  for (const d of docs) {
-    const u = String((d && d.url) || "");
-    if (!/\/\/page\.kakao\.com\//i.test(u)) continue; // 카카오페이지 작품 링크만
-    const m = u.match(/\/content\/(\d+)/) || u.match(/[?&]seriesId=(\d+)/) || u.match(/\/home\/[^/]+\/(\d+)/);
-    if (!m) continue;
-    const id = m[1];
-    const isViewer = /\/viewer\//.test(u);
-    const rawTitle = String(d.title || "");
-    const cat = (/웹툰/.test(rawTitle) && !/웹소설/.test(rawTitle)) ? "웹툰" : (/웹소설/.test(rawTitle) ? "웹소설" : "");
-    const title = cleanK(rawTitle);
-    if (!title) continue;
-    const prev = byId.get(id);
-    // 같은 작품이 여러 문서로 잡히면 뷰어 아닌(작품 홈) 문서를 우선해 제목 채택
-    if (!prev || (prev.isViewer && !isViewer)) {
-      byId.set(id, { title, author: "", url: "https://page.kakao.com/content/" + id, platform: "카카오페이지", category: cat, isViewer });
-    }
-  }
-  return [...byId.values()].slice(0, 20).map(({ isViewer, ...c }) => c);
 }
 async function searchNovels(query, opts = {}) {
   const q = (query || "").trim();
@@ -17639,7 +17688,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.46.0";
+const APP_VERSION = "7.46.1";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -17667,12 +17716,12 @@ function compareVersions(a, b) {
 const CHANGELOG_DATA = [
   {
     version: "7.46.0", date: "2026-06-28",
-    title: "🟡 카카오페이지도 제목 검색돼요 (다음 검색 우회)",
+    title: "🟡 카카오페이지도 제목 검색돼요 (키 없이)",
     highlights: [
-      { type: "new", text: "🟡 카카오페이지가 ‘제목으로 검색’에 추가됐어요. 카카오는 자체 검색이 막혀 있어, 카카오 공식 ‘다음 검색’으로 작품을 찾아 고르면 링크로 정보를 불러와요. 설정 › 🔌 연결의 ‘카카오 검색 키’(무료 다음 REST 키)를 한 번 넣으면 켜져요." },
+      { type: "new", text: "🟡 카카오페이지가 ‘제목으로 검색’에 추가됐어요. 별도 설정 없이 바로 떠요. 카카오는 자체 검색이 막혀 있어, 검색엔진으로 작품을 찾아 고르면 링크로 정보를 불러와요(신규·예정·보충·편집·일괄 모든 등록에서 동작)." },
     ],
     details: [
-      "키 발급: developers.kakao.com에서 앱을 만들고 ‘REST API 키’를 복사해 설정 › 🔌 연결 › ‘카카오 검색 키’에 붙여넣으면 돼요. 무료 한도로 충분하고, 키는 이 기기에만 저장돼요(백업 미포함).",
+      "기본은 키가 필요 없어요. 더 정확·안정적으로 쓰고 싶으면 설정 › 🔌 연결의 ‘카카오 검색 키’(무료 다음 REST 키)를 넣어 카카오 공식 검색 API로 바꿀 수 있어요(선택).",
       "검색엔진 색인에 기대다 보니 인기작은 잘 뜨고 신작·마이너작은 안 뜰 수 있어요. 그땐 종전처럼 작품 링크로 ‘🔗 불러오기’를 쓰면 돼요.",
     ],
   },
@@ -19941,7 +19990,7 @@ const GUIDE_CONTENT = [
         description: "제목, 작가, 장르 태그, 플랫폼, 표지 이미지, 인상깊은 문장 등을 입력해 작품을 등록합니다. 제목 검색이나 링크로 정보를 자동으로 불러올 수도 있어요.",
         tips: [
           "🔎 제목만 입력하고 ‘제목으로 검색’을 누르면 리디·네이버시리즈·문피아·노벨피아에서 작품을 찾아 제목·작가·줄거리·장르·태그·연재상태·연재연도·표지·연재처를 자동으로 채워줘요. 동시에 여러 곳을 찾아 느릴 땐, 설정 › 🔌 연결 › ‘제목 검색 사이트’에서 안 쓰는 곳을 꺼 두면 빨라져요. (v7.39.0)",
-          "🟡 카카오페이지도 제목 검색이 돼요 — 설정 › 🔌 연결의 ‘카카오 검색 키’(무료 다음 REST 키)를 한 번 넣으면 ‘제목으로 검색’에 카카오페이지가 함께 떠요. 카카오는 자체 검색이 막혀 있어, 카카오 공식 ‘다음 검색’으로 작품을 찾아 고르면 링크로 정보를 불러와요. (v7.46.0)",
+          "🟡 카카오페이지도 제목 검색이 돼요 — 별도 키 없이 ‘제목으로 검색’에 카카오페이지가 함께 떠요. 카카오는 자체 검색이 막혀 있어, 검색엔진으로 작품을 찾아 고르면 링크로 정보를 불러와요. 더 정확·안정적으로 쓰고 싶으면 설정 › 🔌 연결에서 ‘카카오 검색 키’(무료 다음 REST 키)를 넣어 공식 API로 바꿀 수 있어요(선택). (v7.46.0 · v7.46.1)",
           "🔗 작품 페이지 주소가 있으면 ‘링크에서 불러오기’로 같은 정보를 가져올 수 있어요(리디·네이버시리즈·문피아·노벨피아·카카오페이지). 카카오페이지는 작품 페이지 주소(page.kakao.com/content/…)에서 제목·작가·줄거리·장르·연재상태·연재연도를 가져와요. (v7.37.0)",
           "🔞 노벨피아 성인물(19금)은 비로그인 상태에선 제목 ‘검색’에 안 떠요(노벨피아가 숨김) — 설정 › 🔌 연결 › ‘노벨피아 로그인’으로 로그인하면 검색에 떠요. 로그인 전이라도 작품 페이지 링크로 ‘불러오기’하면 제목·작가·줄거리·장르·19금·완결·연재연도가 들어와요. 표지는 성인 게이트라 비어 있을 수 있어 직접 추가하면 돼요. (v7.40.0)",
           "📋 불러온 값은 확인 모달에서 항목별로 체크해 적용해요 — 기존에 채워둔 칸은 건드리지 않고 빈 칸만 기본 선택돼요.",
@@ -63808,7 +63857,7 @@ async function importJSON() {
               <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
                 <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>🔎 제목 검색 사이트</Text>
                 <Text style={{ color: C.sub, fontSize: 11.5, marginTop: 5, lineHeight: 16 }}>
-                  ‘제목으로 검색’이 동시에 조회할 사이트예요. 여러 곳을 한꺼번에 찾느라 느릴 수 있어, 안 쓰는 곳은 꺼 두면 빨라져요. (카카오페이지는 아래 ‘카카오 검색 키’를 넣어야 검색돼요. 조아라는 아직 작품 링크 ‘🔗 불러오기’만 돼요.)
+                  ‘제목으로 검색’이 동시에 조회할 사이트예요. 여러 곳을 한꺼번에 찾느라 느릴 수 있어, 안 쓰는 곳은 꺼 두면 빨라져요. (카카오페이지는 키 없이 바로 검색돼요 — 더 정확히 하려면 아래 ‘카카오 검색 키’는 선택. 조아라는 아직 작품 링크 ‘🔗 불러오기’만 돼요.)
                 </Text>
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
                   {SEARCH_PLATFORMS.map(name => {
@@ -63829,14 +63878,14 @@ async function importJSON() {
               {/* 🆕 v7.46.0: 카카오 검색 키 — 카카오페이지 제목검색은 공식 다음(Daum) 웹문서 검색 API로 우회 */}
               <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
                 <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                  <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>🟡 카카오 검색 키</Text>
+                  <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>🟡 카카오 검색 키 (선택)</Text>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                     <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: (kakaoRestApiKey || "").trim() ? "#22c55e" : C.line }} />
                     <Text style={{ color: (kakaoRestApiKey || "").trim() ? "#22c55e" : C.sub, fontSize: 12, fontWeight: "800" }}>{(kakaoRestApiKey || "").trim() ? "사용 중" : "키 없음"}</Text>
                   </View>
                 </View>
                 <Text style={{ color: C.sub, fontSize: 11.5, marginTop: 5, lineHeight: 16 }}>
-                  카카오페이지는 자체 검색이 막혀 있어, 카카오 공식 ‘다음 검색’으로 작품을 찾아요. developers.kakao.com에서 앱을 만들고 ‘REST API 키’를 복사해 넣으면 ‘제목으로 검색’에 카카오페이지가 함께 떠요(고르면 링크로 정보를 불러와요). 무료 한도로 쓸 수 있고, 키는 이 기기에만 저장돼요(백업 미포함).
+                  카카오페이지 제목검색은 키 없이 바로 돼요(기본은 무료 검색엔진을 거쳐 작품을 찾아요). 더 정확·안정적으로 쓰려면 카카오 공식 ‘다음 검색’ 키를 넣으면 돼요(선택). developers.kakao.com에서 앱을 만들고 ‘REST API 키’를 복사해 넣으면 그 키로 전환돼요. 무료 한도로 쓸 수 있고, 키는 이 기기에만 저장돼요(백업 미포함).
                 </Text>
                 <TextInput
                   value={kakaoRestApiKey}
