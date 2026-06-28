@@ -2,11 +2,24 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.49.7 (문피아 로그인 쿠키 명시 첨부 — '로그인해도 외전 안 잡힘' 수정)   ║
+ * ║  버전: 7.49.8 (문피아 외전 — 제목 필드 폴백 + 진단 도구; 완결일 OK·외전만 X)    ║
  * ║  최종 수정: 2026-06-28                                                        ║
- * ║  총 라인 수: 약 72,610줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 72,710줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔎 v7.49.8 문피아 외전 — 제목 필드 폴백 + 진단 도구 (2026-06-28)              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 사용자 보고(7.49.7 이후): 문피아 완결일은 들어오는데 외전만 안 잡힘. 핵심 단서 — ║
+ * ║ 문피아 완결일은 detail API가 0이고 오직 회차분리(mainCompletedAt)에서 나옴 →     ║
+ * ║ 완결일이 된다는 건 '회차 데이터는 받아짐(로그인 쿠키 OK)'인데 외전 제목만 매치     ║
+ * ║ 실패라는 뜻. 가설: paid/selective 엔드포인트 entries의 '제목 키'가 기본 /chapters ║
+ * ║ (title)와 달라 제목이 빈칸 → isGaidenTitle 미매치(날짜 createdAt만 살아 완결일O). ║
+ * ║ 대응: ① parseMunpiaEntries 제목/날짜 필드 다중 폴백(title/subject/subTitle/...   ║
+ * ║ createdAt/regDate/...) ② 설정>연결에 '📊 문피아 외전 진단' 추가 — 로그인 상태로  ║
+ * ║ paid 응답의 항목 키·원본·제목형식·외전매치를 캡처해 클립보드 복사(정확 진단용).   ║
+ * ║ 전체 @babel/parser 통과.                                                        ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔐 v7.49.7 문피아 로그인 쿠키 명시 첨부 (2026-06-28)                          ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -15549,7 +15562,11 @@ function parseMunpiaEntries(jsonText) {
   if (!r || typeof r !== "object") return null;
   const arr = Array.isArray(r.list) ? r.list : (Array.isArray(r.entries) ? r.entries : null);
   if (!arr) return null;
-  const episodes = arr.map(e => e ? { title: String(e.title == null ? "" : e.title), ts: scraperDateToTs(String(e.createdAt == null ? "" : e.createdAt)) } : null).filter(Boolean);
+  // 🔧 v7.49.8: 제목/날짜 필드명을 엔드포인트별로 다양하게 시도 — 기본 /chapters는 title/createdAt이지만 paid/selective entries는
+  //   제목 키가 다를 수 있어(외전이 안 잡히는데 완결일=createdAt만 들어오던 증상) subject/subTitle/name 등도 폴백.
+  const titleOf = (e) => String(e.title ?? e.subject ?? e.subTitle ?? e.chapterTitle ?? e.episodeTitle ?? e.entryTitle ?? e.name ?? e.chapterName ?? "");
+  const dateOf = (e) => String(e.createdAt ?? e.created ?? e.createDate ?? e.regDate ?? e.openDate ?? e.publishDate ?? e.date ?? "");
+  const episodes = arr.map(e => e ? { title: titleOf(e), ts: scraperDateToTs(dateOf(e)) } : null).filter(Boolean);
   return { episodes, next: !!r.next, sliceEntryId: r.sliceEntryId, total: Number(r.total) || 0 };
 }
 async function fetchMunpiaEpisodeSplit(url, opts = {}) {
@@ -15580,6 +15597,37 @@ async function fetchMunpiaEpisodeSplit(url, opts = {}) {
   }
   if (!collected.length) return null;
   return splitEpisodesByGaiden(collected);
+}
+// 🆕 v7.49.8: 문피아 외전 진단 — paid 엔드포인트(>100화 최신 회차목록) 응답을 그대로 캡처(로그인 쿠키 첨부 여부, 항목 키, 외전 제목 형식).
+//   '완결일은 되는데 외전만 안 됨' = 보통 제목 키가 다르거나(빈 제목) 외전 명명이 정규식 밖. 결과 텍스트로 정확히 진단.
+async function diagnoseMunpiaEpisodes(url, opts = {}) {
+  const id = (String(url).match(/[?&]id=(\d+)/) || String(url).match(/\/(?:n|novel)\/(\d+)/) || String(url).match(/munpia\.com\/(\d+)/) || [])[1];
+  if (!id) return "문피아 작품 링크가 아니에요. (mm.munpia.com/?menu=novel&id=숫자 또는 novel.munpia.com/숫자)";
+  const apiGet = async (path) => {
+    const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
+    try {
+      const res = await fetch("https://m.munpia.com" + path, { headers: { ...SCRAPER_HEADERS, "Accept": "application/json", "Referer": "https://m.munpia.com/", ...(globalMpCookie ? { Cookie: globalMpCookie } : {}) }, redirect: "follow", signal });
+      return { status: res.status, txt: await res.text() };
+    } catch (e) { return { status: 0, txt: "ERR " + (e?.name === "AbortError" ? "timeout" : (e?.message || e)) }; } finally { cleanup(); }
+  };
+  let R = `[문피아 외전 진단] id=${id}\n로그인 쿠키: ${globalMpCookie ? "있음(" + globalMpCookie.split(";").filter(Boolean).length + "개)" : "없음 — 설정>연결>문피아 로그인(다시 로그인) 먼저"}\n`;
+  const b = await apiGet("/api/v1/mobile/novel-detail/" + id + "/chapters");
+  let bj = null; try { bj = JSON.parse(b.txt); } catch {}
+  const bl = (bj && bj.result && (bj.result.list || bj.result.entries)) || [];
+  R += `\n[기본 /chapters] status=${b.status} total=${bj && bj.result && bj.result.total} next=${bj && bj.result && bj.result.next} 받은수=${bl.length}\n`;
+  if (bl[0]) R += `  첫 항목 키: ${Object.keys(bl[0]).join(", ").slice(0, 260)}\n`;
+  const p = await apiGet("/api/v1/paid/order/selective/novels/" + id + "/entries?order=LATEST&size=100&sliceEntryId=&now=" + MUNPIA_NOW_MAX);
+  let pj = null; try { pj = JSON.parse(p.txt); } catch {}
+  R += `\n[paid 최신순] status=${p.status}\n`;
+  if (!pj || !pj.result) { R += `  응답: ${String(p.txt).slice(0, 280)}\n  → 로그인이 안 실렸거나 막힘(쿠키 재로그인 필요할 수 있음).\n`; return R + "\n(이 텍스트째 복사해 채팅에 붙여넣어 주세요.)"; }
+  const pl = pj.result.entries || pj.result.list || [];
+  R += `  total=${pj.result.total} next=${pj.result.next} 받은수=${pl.length}\n`;
+  if (pl[0]) { R += `  첫 항목 키: ${Object.keys(pl[0]).join(", ")}\n  첫 항목 원본: ${JSON.stringify(pl[0]).slice(0, 600)}\n`; }
+  const eps = (parseMunpiaEntries(p.txt) || { episodes: [] }).episodes;
+  R += `\n=== 현재 파서가 뽑은 최신 ${Math.min(eps.length, 25)}개 (외전표시 | 제목 | 날짜) ===\n` +
+    eps.slice(0, 25).map((e, i) => `${String(i).padStart(2)}. ${isGaidenTitle(e.title) ? "[외전]" : "[본편]"} ${e.title || "(빈 제목!)"} | ${e.ts ? new Date(e.ts).toISOString().slice(0, 10) : "-"}`).join("\n") + "\n";
+  R += `\n외전 매치: ${eps.filter(e => isGaidenTitle(e.title)).length} / ${eps.length}${eps.length && !eps.some(e => e.title) ? "  ← 제목이 전부 비었음(=제목 키가 다름)" : ""}\n`;
+  return R + "\n(이 텍스트를 복사해 채팅에 붙여넣어 주세요.)";
 }
 // 🆕 v7.44.7: 문피아 링크의 작품 id 추출(여러 URL 형태 대응). m.munpia.com/novel?id=, link.munpia.com/n/{id}, /novel/{id}.
 function munpiaIdFromUrl(url) {
@@ -18068,7 +18116,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.49.7";
+const APP_VERSION = "7.49.8";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -18094,6 +18142,18 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.49.8", date: "2026-06-28",
+    title: "🔎 문피아 외전 — 제목 인식 보강 + 진단 도구",
+    highlights: [
+      { type: "fix", text: "🔎 문피아에서 완결일은 들어오는데 외전만 안 잡히던 경우를 보강했어요. 회차 목록의 ‘제목 칸’ 이름이 화면(로그인 회차목록)마다 달라 제목이 비어 외전 표기를 못 읽던 문제로 보고, 여러 이름의 제목 칸을 함께 읽도록 했어요." },
+      { type: "new", text: "📊 설정 › 🔌 연결에 ‘문피아 외전 진단’을 추가했어요. 완결일은 되는데 외전이 안 잡히는 작품 링크를 넣으면(문피아 로그인 후), 회차목록 응답 구조를 캡처해 클립보드에 복사해 줘요. 그 결과를 보내 주시면 정확히 맞출 수 있어요." },
+    ],
+    details: [
+      "문피아 완결일은 회차 목록에서 계산돼요. 그래서 완결일이 들어온다는 건 로그인·회차 받기는 되는데 외전 ‘제목’만 못 읽었다는 뜻이라, 제목 칸 인식을 넓혔어요.",
+      "그래도 안 잡히면 ‘문피아 외전 진단’ 결과를 보내 주세요 — 외전 제목이 실제로 어떻게 적혀 있는지 보고 맞추겠습니다.",
+    ],
+  },
   {
     version: "7.49.7", date: "2026-06-28",
     title: "🔐 문피아 로그인해도 외전 안 잡히던 문제 수정",
@@ -37541,6 +37601,10 @@ function AppContent() {
   const [kkGaidenDiagUrl, setKkGaidenDiagUrl] = useState("");
   const [kkGaidenDiagOut, setKkGaidenDiagOut] = useState("");
   const [kkGaidenDiagBusy, setKkGaidenDiagBusy] = useState(false);
+  // 🆕 v7.49.8: 문피아 외전 진단 — 로그인 후 paid 엔드포인트 응답/제목 형식 캡처
+  const [mpGaidenDiagUrl, setMpGaidenDiagUrl] = useState("");
+  const [mpGaidenDiagOut, setMpGaidenDiagOut] = useState("");
+  const [mpGaidenDiagBusy, setMpGaidenDiagBusy] = useState(false);
   const [aiTagTarget, setAiTagTarget] = useState("new"); // "new"(등록 폼) | "edit"(편집 모달)
   const [aiTagBusy, setAiTagBusy] = useState(false);
   const [ocrBusyIdx, setOcrBusyIdx] = useState(-1); // 🔤 v7.28.24 명대사 OCR 진행 인덱스 (-1=없음, qi=해당 항목, -2=전체)
@@ -43834,6 +43898,21 @@ function AppContent() {
     } catch (e) {
       setKkGaidenDiagOut("진단 실패: " + (e?.message || String(e)));
     } finally { setKkGaidenDiagBusy(false); }
+  }
+  // 🆕 v7.49.8: 문피아 외전 진단 실행 — 로그인(쿠키) 상태에서 paid 회차목록 응답을 캡처해 클립보드 복사.
+  async function runMunpiaGaidenDiag() {
+    const url = (mpGaidenDiagUrl || "").trim();
+    if (!/munpia\.com.*(?:[?&]id=\d+|\/\d+)/.test(url)) { Alert.alert("문피아 외전 진단", "문피아 작품 링크를 넣어 주세요. (mm.munpia.com/?menu=novel&id=숫자 또는 novel.munpia.com/숫자)"); return; }
+    if (mpGaidenDiagBusy) return;
+    setMpGaidenDiagBusy(true); setMpGaidenDiagOut("");
+    try {
+      try { await refreshMpSession(); } catch {} // 쿠키 최신화
+      const report = await diagnoseMunpiaEpisodes(url, { timeoutMs: 20000 });
+      setMpGaidenDiagOut(report || "(빈 응답)");
+      try { await Clipboard.setStringAsync(report || ""); } catch {}
+    } catch (e) {
+      setMpGaidenDiagOut("진단 실패: " + (e?.message || String(e)));
+    } finally { setMpGaidenDiagBusy(false); }
   }
 
   // 🔗 v7.28.26 스크래퍼: URL에서 메타 fetch → 확인 모달 오픈. ctx = { label, getCurrent(), apply(fields) }
@@ -64965,6 +65044,36 @@ async function importJSON() {
                   <View style={{ marginTop: 10, backgroundColor: C.bg, borderRadius: 10, padding: 10, borderWidth: 1, borderColor: C.line }}>
                     <Text selectable style={{ color: C.text, fontSize: 11, lineHeight: 16 }}>{kkGaidenDiagOut}</Text>
                     <TouchableOpacity onPress={async () => { try { await Clipboard.setStringAsync(kkGaidenDiagOut); Alert.alert("복사됨", "진단 결과를 클립보드에 복사했어요. 채팅에 붙여넣어 주세요."); } catch { Alert.alert("복사", "복사하지 못했어요."); } }}
+                      style={{ marginTop: 10, backgroundColor: C.primary, paddingVertical: 9, borderRadius: 8, alignItems: "center" }}>
+                      <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>📋 결과 복사</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+              </View>
+
+              {/* 🆕 v7.49.8: 문피아 외전 진단 — 로그인 후 paid 회차목록 응답/제목 형식 캡처(완결일은 되는데 외전만 안 될 때) */}
+              <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+                <Text style={{ color: C.text, fontWeight: "700", fontSize: 14, marginBottom: 4 }}>📊 문피아 외전 진단</Text>
+                <Text style={{ color: C.sub, fontSize: 11, lineHeight: 16, marginBottom: 8 }}>
+                  문피아 완결일은 들어오는데 외전만 안 잡히는 작품의 링크를 넣고 ‘진단’을 누르면, 로그인 상태로 회차목록을 받아 항목 구조·제목 형식을 캡처해요(자동 클립보드 복사). 먼저 ‘🔐 문피아 로그인(다시 로그인)’을 해 두세요.
+                </Text>
+                <TextInput
+                  value={mpGaidenDiagUrl}
+                  onChangeText={setMpGaidenDiagUrl}
+                  placeholder="https://novel.munpia.com/000000 또는 mm.munpia.com/?menu=novel&id=000000"
+                  placeholderTextColor={C.sub}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={{ backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, color: C.text, fontSize: 12 }}
+                />
+                <TouchableOpacity onPress={runMunpiaGaidenDiag} disabled={mpGaidenDiagBusy}
+                  style={{ marginTop: 8, backgroundColor: C.primary, paddingVertical: 11, borderRadius: 10, alignItems: "center", opacity: mpGaidenDiagBusy ? 0.6 : 1 }}>
+                  <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>{mpGaidenDiagBusy ? "진단 중…" : "진단 (로그인 상태로 캡처)"}</Text>
+                </TouchableOpacity>
+                {mpGaidenDiagOut ? (
+                  <View style={{ marginTop: 10, backgroundColor: C.bg, borderRadius: 10, padding: 10, borderWidth: 1, borderColor: C.line }}>
+                    <Text selectable style={{ color: C.text, fontSize: 11, lineHeight: 16 }}>{mpGaidenDiagOut}</Text>
+                    <TouchableOpacity onPress={async () => { try { await Clipboard.setStringAsync(mpGaidenDiagOut); Alert.alert("복사됨", "진단 결과를 클립보드에 복사했어요. 채팅에 붙여넣어 주세요."); } catch { Alert.alert("복사", "복사하지 못했어요."); } }}
                       style={{ marginTop: 10, backgroundColor: C.primary, paddingVertical: 9, borderRadius: 8, alignItems: "center" }}>
                       <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>📋 결과 복사</Text>
                     </TouchableOpacity>
