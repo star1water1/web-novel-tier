@@ -2,11 +2,30 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.49.0 (회차수 과대계상 보정 — 일괄 갱신에 본편·외전 정정 검토 추가)    ║
+ * ║  버전: 7.49.1 (코드 전반 버그 점검 — 확정 31건 수정)                           ║
  * ║  최종 수정: 2026-06-28                                                        ║
- * ║  총 라인 수: 약 72,250줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 72,260줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🐛 v7.49.1 코드 전반 버그 점검 — 확정 31건 수정 (2026-06-28)                  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 파일 전체 다중 에이전트 점검(후보 65→적대검증→확정 31). 주요:                  ║
+ * ║ • [크래시] isLatestNovel/recentRankMovedIds를 이를 참조하는 homeFiltered 등    ║
+ * ║   useMemo 위로 이동(매 렌더 TDZ/var-undefined → filterLatest 켜짐 시 크래시).   ║
+ * ║ • [유실] 매칭 인사이트 재생성이 camelCase 키로 저장→재시작 유실: snake_case로.  ║
+ * ║   tagRelations.oppositePairs 마운트/슬롯전환/복원/마이그레이션 보존.            ║
+ * ║   matchCache 슬롯전환 하드무효화(playedSet/novels)로 이전 슬롯 누수 차단.       ║
+ * ║ • [정렬/표시] reorderFolder 인덱스→재정규화, 상태파이 '기타' reliable 모집단,   ║
+ * ║   homeFiltered 외 filtered/순위/배정/보충 useMemo deps(티어설정·수상) 보강.     ║
+ * ║ • [분석] tag_power NaN 가드, createComparisonData config 전달, 유사그룹 일관성  ║
+ * ║   getPrefScore, 완결vs연재·저평가장르 임계 mode-aware, 신뢰도 가중 이중스케일.  ║
+ * ║ • [UI] '비슷한 작품' Alert 11버튼(안드 3개 제한)→선택 모달, 그리드 터치 null    ║
+ * ║   가드, detectGenres 2자 라틴(SF/BL/GL) 부분매칭 제외, 점수 자릿수/표시 정합.    ║
+ * ║ • [기타] 가중추출 폴백을 마지막 후보로, 리디 날짜 ts 범위 일치, collapseAll     ║
+ * ║   영속화, openDb 슬롯기록 정확화, crash export message 경로, pair effect ref.   ║
+ * ║ 전 항목 @babel/parser 통과. 의도된 동작/오탐 34건은 적대검증으로 제외.          ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 📉 v7.49.0 회차수 과대계상 보정 (2026-06-28)                                  ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -8366,7 +8385,7 @@ async function switchSlotDb(newSlotId) {
   await saveSlotMeta(meta);
   
   // 6. 캐시 전부 무효화
-  invalidateMatchCache();
+  invalidateMatchCache(true); // 🔧 v7.49.1: 슬롯 경계 — playedSet/novels까지 비워 이전 슬롯 잔여 누수 차단
   invalidatePatternCache();
   invalidateWeightsCache();
   if (typeof genreMatchupCacheRef !== "undefined") {
@@ -8438,7 +8457,10 @@ async function openDb() {
 
   // 새 연결 생성
   // 🔧 v3.5.15d: 슬롯 시스템 — activeSlotId에 따른 DB 파일명
-  const dbFilename = getSlotDbFilename(activeSlotId);
+  // 🔧 v7.49.1: 여는 슬롯을 지역변수로 고정 — await 중 activeSlotId가 바뀌어도 _dbOpenedForSlot이 '실제 연결된 파일의 슬롯'을
+  //   가리켜 상단 불일치 가드(8395)가 정확히 동작(기존엔 resolve 시점 activeSlotId를 기록해 파일=구슬롯/기록=신슬롯 불일치 가능).
+  const openingSlot = activeSlotId;
+  const dbFilename = getSlotDbFilename(openingSlot);
   // 🛠️ v7.6.6 (포트 v3.11.3): useNewConnection — expo-sqlite 연결 풀 공유 우회 (진짜 근본 수정).
   //   옵션 없이 openDatabaseAsync를 호출하면 풀링된 네이티브 핸들을 공유하는데(expo/expo#28176,
   //   #33677), 병렬 prepareAsync로 핸들이 poisoned되면 같은 풀의 모든 JS 래퍼가 NPE를 던지고
@@ -8448,7 +8470,7 @@ async function openDb() {
   
   try {
     db = await dbOpenPromise;
-    _dbOpenedForSlot = activeSlotId; // 🔧 연결된 슬롯 기록
+    _dbOpenedForSlot = openingSlot; // 🔧 연결된 슬롯 기록 (v7.49.1: await 전 캡처한 openingSlot — 실제 연 파일과 일치)
     // 🔧 v3.5.3: WAL 모드 + busy_timeout + synchronous 최적화
     // WAL: 쓰기 중에도 읽기 가능 (동시 접근 안정성 대폭 향상)
     // busy_timeout: DB 잠금 시 5초 대기 후 에러 (즉시 실패 방지)
@@ -8461,7 +8483,7 @@ async function openDb() {
       console.warn("PRAGMA 설정 실패 (무시 가능):", pragmaErr.message);
     }
     dbLastSuccessTime = Date.now();
-    console.log(`DB 연결 성공 (슬롯 ${activeSlotId}, ${dbFilename}, WAL mode)`);
+    console.log(`DB 연결 성공 (슬롯 ${openingSlot}, ${dbFilename}, WAL mode)`);
     return db;
   } catch (e) {
     console.error("DB 열기 실패:", e.message);
@@ -9078,8 +9100,11 @@ const matchCache = {
   TTL: 15000,           // 15초 유효기간
 };
 
-function invalidateMatchCache() {
+function invalidateMatchCache(hard = false) {
   matchCache.dirty = true;
+  // 🔧 v7.49.1: 슬롯 전환 등 하드 무효화 — 이전 슬롯의 playedSet/novels 잔여가 getMatchCacheData의 보존 머지(9128)에서
+  //   새 슬롯으로 누수되는 것 차단(백업복원·슬롯복제로 id 겹칠 때 미대전 페어가 'played'로 오인됨). 동일 슬롯 무효화는 인자 없이.
+  if (hard) { matchCache.playedSet = null; matchCache.novels = null; }
 }
 
 // 캐시에서 played set에 새 매치 추가 (DB 재조회 불필요)
@@ -11048,8 +11073,8 @@ function createComparisonData(winnerSnap, loserSnap) {
   return {
     ratingGap: ratingGap,
     ratingWinnerHigher: ratingWinnerHigher,
-    tierDiff: getTierDiff(winnerSnap.tier, loserSnap.tier),
-    tierWinnerHigher: isTierHigher(winnerSnap.tier, loserSnap.tier),
+    tierDiff: getTierDiff(winnerSnap.tier, loserSnap.tier, globalTierConfig), // 🔧 v7.49.1: config 전달 — 커스텀 티어에서 폴백 TIER_ORDER로 항상 0/false 저장되던 것 수정
+    tierWinnerHigher: isTierHigher(winnerSnap.tier, loserSnap.tier, globalTierConfig),
     genreMatchup: createGenreMatchupKey(winnerSnap.major_genre, loserSnap.major_genre),
     winnerGenre: winnerSnap.major_genre,
     loserGenre: loserSnap.major_genre,
@@ -12022,9 +12047,11 @@ async function generateEnhancedPrediction(A, B, tagAttributes = {}) {
       
       for (const variant of allVariants) {
         const p = patterns.find(pt => pt.category === "tag_power" && pt.pattern_key === `tag:${variant}`);
-        if (p) {
+        if (p && p.sample_size > 0) {
+          // 🔧 v7.49.1: win_rate가 NULL/NaN이면 0.5로 대체 — 미가드 시 weightedWr가 NaN으로 전파돼 예측 전체 오염(throw 없어 ELO 폴백도 미작동)
+          const wr = (p.win_rate == null || !isFinite(p.win_rate)) ? 0.5 : p.win_rate;
           totalSamples += p.sample_size;
-          weightedWr += p.win_rate * p.sample_size;
+          weightedWr += wr * p.sample_size;
         }
       }
       
@@ -13057,7 +13084,7 @@ function detectGenres(tagsStr) {
   if (!majorGenre) {
     const sorted = [...MAJOR_GENRES].sort((a, b) => b.length - a.length);
     for (const tag of tags) {
-      const found = sorted.find(g => tag.includes(g.toLowerCase()));
+      const found = sorted.find(g => { const gl = g.toLowerCase(); if (gl.length <= 2 && /^[a-z]+$/.test(gl)) return false; return tag.includes(gl); }); // 🔧 v7.49.1: 2글자 라틴 장르(SF/BL/GL)는 부분매칭 제외(오탐 방지) — 정확매칭만
       if (found) { majorGenre = found; break; }
     }
   }
@@ -13070,7 +13097,7 @@ function detectGenres(tagsStr) {
   if (!subGenre) {
     const sorted = [...SUB_GENRES].sort((a, b) => b.length - a.length);
     for (const tag of tags) {
-      const found = sorted.find(g => tag.includes(g.toLowerCase()));
+      const found = sorted.find(g => { const gl = g.toLowerCase(); if (gl.length <= 2 && /^[a-z]+$/.test(gl)) return false; return tag.includes(gl); }); // 🔧 v7.49.1: 2글자 라틴 장르(SF/BL/GL)는 부분매칭 제외(오탐 방지) — 정확매칭만
       if (found) { subGenre = found; break; }
     }
   }
@@ -13304,6 +13331,7 @@ function migrateAliasesToRelations(currentRelations, dismissedGroupIds = []) {
   const relations = {
     groups: { ...(currentRelations?.groups || {}) },
     tagToGroup: { ...(currentRelations?.tagToGroup || {}) },
+    oppositePairs: [...(currentRelations?.oppositePairs || [])], // 🔧 v7.49.1: 마이그레이션 시 상반 쌍 보존(누락 시 영속화에서 손실)
   };
   // 🛡️ FIX: 사용자가 삭제한 약어 그룹(alias_*) id 집합 — 재생성 방지(삭제가 재시작에도 유지)
   const dismissed = dismissedGroupIds instanceof Set ? dismissedGroupIds : new Set(dismissedGroupIds || []);
@@ -15049,7 +15077,7 @@ function scraperDetectBlock(status, html) {
 //   완결작에선 '마지막 업데이트'가 사실상 완결 시점(실측: 달빛조각사 2019.07.03 = 완결연도 2019).
 // 🆕 v7.28.61: 날짜 문자열("YYYY-MM-DD ...", "YYYY.MM.DD") → ms 타임스탬프(UTC 자정 — KST 표시에서 같은 날짜). 0=실패.
 function scraperDateToTs(s) {
-  const m = String(s == null ? "" : s).match(/(20\d\d)[.\-](\d{1,2})[.\-](\d{1,2})/);
+  const m = String(s == null ? "" : s).match(/(20\d\d|19[89]\d)[.\-](\d{1,2})[.\-](\d{1,2})/); // 🔧 v7.49.1: 1980·90년대 포함 — ridiPublishDate(year 추출)와 범위 일치(year 채우고 ts=0 되던 불일치 수정)
   if (!m) return 0;
   const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
   if (mo < 1 || mo > 12 || d < 1 || d > 31) return 0;
@@ -16598,7 +16626,7 @@ async function rebuildMatchInsightsFromHistory(novels, savedTagAttrs = {}) {
   const matches = await all("SELECT * FROM matches ORDER BY created_at ASC;");
   
   if (!matches || matches.length === 0) {
-    return { insights: [], upsetFactors: [], stats: { total: 0, rebuilt: 0, skipped: 0, upsets: 0 } };
+    return { insights: [], upsetFactors: [], stats: { total: 0, rebuilt: 0, skipped: 0, upsets: 0, upsetRate: 0 } }; // 🔧 v7.49.1: upsetRate 추가 — 매치 0건 시 완료 Alert에 undefined% 표시되던 것 방지
   }
   
   // 소설 맵 생성
@@ -17843,7 +17871,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.49.0";
+const APP_VERSION = "7.49.1";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -17869,6 +17897,19 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.49.1", date: "2026-06-28",
+    title: "🐛 코드 전반 점검 — 숨은 버그 31건 수정",
+    highlights: [
+      { type: "fix", text: "🐛 앱 전체를 훑어 확인된 버그 31건을 고쳤어요. 특정 상황에서 앱이 멈출 수 있던 문제, ‘과거 매칭 인사이트 재생성’이 재시작하면 사라지던 문제, 상반 태그 쌍이 슬롯 전환에서 없어지던 문제, 폴더 순서가 어긋나던 문제 등 눈에 잘 안 띄던 것들을 정리했어요." },
+    ],
+    details: [
+      "‘최신’ 필터를 켠 상태 등에서 홈 화면이 멈출 수 있던 위험을 없앴어요(내부 선언 순서 정리).",
+      "‘과거 매칭 인사이트 재생성’ 결과가 저장되지 않고 재시작 시 사라지던 문제, 매칭 캐시가 슬롯을 바꿔도 남아 영향을 주던 문제를 고쳤어요.",
+      "폴더 순서 바꾸기, 상태 분포 ‘기타’ 비중, 순위·배정·보충·검색 목록이 티어/수상 설정 변경 뒤에도 갱신되도록 정리했어요.",
+      "취향 분석 정확도(태그 점수 NaN 방지, 티어 모드 임계값, 유사 그룹 일관성)와 표시 일관성을 손봤고, 예정작 ‘비슷한 작품 선택’을 안드로이드에서도 제대로 고를 수 있게 목록 모달로 바꿨어요.",
+    ],
+  },
   {
     version: "7.49.0", date: "2026-06-28",
     title: "📉 회차수 과대계상 보정 — 부풀린 본편·외전 회차 바로잡기",
@@ -24657,6 +24698,7 @@ const CoordinateGridView = memo(({
     let foundTag = null;
     
     for (const [tagName, pos] of tagEntries) {
+      if (!pos) continue; // 🔧 v7.49.1: 렌더 루프(getDisplayPosition)는 null 위치를 거르는데 이 터치 핸들러는 안 걸러 pos.x 역참조로 크래시 가능했음
       const { px, py } = coordToPixel(pos.x, pos.y);
       const dist = Math.sqrt(Math.pow(locationX - px, 2) + Math.pow(locationY - py, 2));
       if (dist < touchRadius) {
@@ -26437,16 +26479,17 @@ const TagManagerModal = memo(({
         filtered = currentTags.filter(t => t.sentiment === TAG_SENTIMENT.NEUTRAL);
         break;
       case "custom":
-        filtered = currentTags.filter(t => t.isCustom || t.type === "custom");
+        // 🔧 v7.49.1: 필터 꺼짐 시 currentTags가 enriched(isMajor/isSub/isCustom) 안 돼 항상 0개였음 → hasTagKey로 판정
+        filtered = currentTags.filter(t => hasTagKey("custom", t.tag) || t.type === "custom");
         break;
       case "default":
         filtered = currentTags.filter(t => t.type === "defaultMajor" || t.type === "defaultSub" || t.type === "defaultGeneral");
         break;
       case "major":
-        filtered = currentTags.filter(t => t.isMajor);
+        filtered = currentTags.filter(t => hasTagKey("major", t.tag)); // 🔧 v7.49.1: t.isMajor(필터 꺼짐 시 undefined) 대신 hasTagKey
         break;
       case "sub":
-        filtered = currentTags.filter(t => t.isSub);
+        filtered = currentTags.filter(t => hasTagKey("sub", t.tag)); // 🔧 v7.49.1: t.isSub(필터 꺼짐 시 undefined) 대신 hasTagKey
         break;
       default:
         filtered = currentTags;
@@ -29050,7 +29093,9 @@ const AwardsScreen = memo(({
                     {novelAwards.length > 0 && (
                       <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 8 }}>
                         {novelAwards.map((award, i) => {
-                          const meta = currentYearAwards.find(a => a.id === award.type) || AWARD_META[award.type];
+                          // 🔧 v7.49.1: 라이브 정의/레거시 외 스냅샷(n/c/i) 폴백 추가 — 정의 삭제·미백필 상도 결과 탭처럼 배지 표시(고아 상 누락 방지)
+                          const meta = currentYearAwards.find(a => a.id === award.type) || AWARD_META[award.type]
+                            || ((award.n || award.c || award.i) ? { name: award.n, label: award.n || award.type, color: award.c || "#6b7280", icon: award.i || "🏆" } : null);
                           if (!meta) return null;
                           return (
                             <TouchableOpacity
@@ -29301,7 +29346,7 @@ const AwardsScreen = memo(({
                                 <Text style={{ fontSize: 13 }}>📊</Text>
                                 <Text style={{ color: C.text, fontSize: 13, fontWeight: "700", marginLeft: 4 }}>
                                   {/* 🆕 v7.0.6 (M2/m5): hybrid/manual 모드는 ELO rating 비활성 — manual_tier #order 표시 */}
-                                  {isManualOrHybrid ? `${getTierLabel(novel.manual_tier || "")} #${novel.manual_order || 0}` : `${(novel.rating || 0).toFixed(1)}점`}
+                                  {isManualOrHybrid ? `${getTierLabel(novel.manual_tier || "")} #${novel.manual_order || 0}` : `${(novel.rating || 0).toFixed(0)}점`}
                                 </Text>
                               </View>
                               {/* 🔧 v7.10.0: hybrid/manual은 ELO 승패가 0으로 박제됨 → 검증 전적으로 대체 */}
@@ -29730,7 +29775,7 @@ const AwardsScreen = memo(({
               const totalAwards = Object.values(awardWinners).flat().length;
               const uniqueWinners = new Set(Object.values(awardWinners).flat().map(n => n.id)).size;
               const avgRating = candidates.length > 0 
-                ? (candidates.reduce((s, n) => s + n.rating, 0) / candidates.length).toFixed(1)
+                ? (candidates.reduce((s, n) => s + (Number(n.rating) || 0), 0) / candidates.length).toFixed(1)
                 : 0;
               
               return (
@@ -30445,7 +30490,9 @@ const TasteAnalysisScreen = memo(({
     (async () => {
       try {
         const saved = await getAppMeta(META_KEY_GROUPS);
-        if (!cancelled && Array.isArray(saved) && saved.length > 0) {
+        // 🔧 v7.49.1: 빈 배열([])도 적용 — '전체 접기'가 []로 저장되는데 length>0 가드 탓에 재마운트 시 기본값으로 되돌아갔음.
+        //   메타 부재 시엔 getAppMeta가 null → Array.isArray(null)=false로 기본값 유지.
+        if (!cancelled && Array.isArray(saved)) {
           // 유효 키만 필터 (그룹 키 변경 대비)
           const valid = saved.filter(k => ALL_GROUP_KEYS.includes(k));
           setExpandedGroups(new Set(valid));
@@ -31174,7 +31221,7 @@ const TasteAnalysisScreen = memo(({
         });
         
         if (novelsWithTag.length > 0) {
-          const avgRating = novelsWithTag.reduce((sum, n) => sum + (Number(n.rating) || 1500), 0) / novelsWithTag.length;
+          const avgRating = novelsWithTag.reduce((sum, n) => sum + getPrefScore(n, globalTierConfig), 0) / novelsWithTag.length; // 🔧 v7.49.1: raw rating 대신 getPrefScore — hybrid/manual에서 1500 고정으로 일관성 분석이 항상 '일관적'이던 것 수정
           tagRatings[tag] = { count: novelsWithTag.length, avgRating };
         }
       }
@@ -31445,7 +31492,7 @@ const TasteAnalysisScreen = memo(({
     { label: "읽는중", value: basicStats.readingCount },
     { label: "완독", value: basicStats.completedCount },
     { label: "드롭", value: basicStats.droppedCount },
-    { label: "기타", value: basicStats.total - basicStats.readingCount - basicStats.completedCount - basicStats.droppedCount },
+    { label: "기타", value: (basicStats.reliableTotal ?? basicStats.total) - basicStats.readingCount - basicStats.completedCount - basicStats.droppedCount }, // 🔧 v7.49.1: reliable 모집단 기준으로 통일(reading/completed/dropped와 동일) — '기타' 과대계상 방지
   ].filter(d => d.value > 0);
 
   const lengthPieData = [
@@ -35605,6 +35652,7 @@ async function analyzePreferences(novels, matches) {
   // UI는 formatPrefScore로 모드별 표시 (match='1720점', hybrid='평균 B+ 티어').
   const basicStats = {
     total: totalCount,
+    reliableTotal: reliable.length, // 🔧 v7.49.1: 상태 파이의 '기타' 계산용 — reading/completed/dropped와 같은 reliable 모집단(총계와 섞이면 '기타' 과대계상)
     highReliability: highReliability.length,
     mediumReliability: mediumReliability.length,
     lowReliability: lowReliability.length,
@@ -36876,13 +36924,21 @@ function generateInsights(data) {
   }
   
   // 완결작 vs 연재중 선호
-  const completedAvg = avg(readingPattern.completedVsOngoing.completed.map(n => n.prefScore));
-  const ongoingAvg = avg(readingPattern.completedVsOngoing.ongoing.map(n => n.prefScore));
-  if (Math.abs(completedAvg - ongoingAvg) > 30) {
+  // 🔧 v7.49.1: tier/hybrid 모드는 ELO 30점 하드코딩 대신 분포(stdDev) 기반 임계 + 질적 표현(combo 분기와 동일). 양쪽 표본 있을 때만.
+  const cvoCompleted = readingPattern.completedVsOngoing.completed;
+  const cvoOngoing = readingPattern.completedVsOngoing.ongoing;
+  const completedAvg = avg(cvoCompleted.map(n => n.prefScore));
+  const ongoingAvg = avg(cvoOngoing.map(n => n.prefScore));
+  const cvoThreshold = globalTierConfig.mode !== "match" ? Math.max(1, (basicStats.stdDevRating || 0) * 0.5) : 30;
+  if (cvoCompleted.length > 0 && cvoOngoing.length > 0 && Math.abs(completedAvg - ongoingAvg) > cvoThreshold) {
     if (completedAvg > ongoingAvg) {
-      hiddenPatterns.push(`완결작을 연재중 작품보다 평균 +${(completedAvg - ongoingAvg).toFixed(0)}점 높게 평가`);
+      hiddenPatterns.push(globalTierConfig.mode !== "match"
+        ? `완결작을 연재중 작품보다 평균적으로 더 높게 평가`
+        : `완결작을 연재중 작품보다 평균 +${(completedAvg - ongoingAvg).toFixed(0)}점 높게 평가`);
     } else {
-      hiddenPatterns.push(`연재중 작품을 완결작보다 평균 +${(ongoingAvg - completedAvg).toFixed(0)}점 높게 평가`);
+      hiddenPatterns.push(globalTierConfig.mode !== "match"
+        ? `연재중 작품을 완결작보다 평균적으로 더 높게 평가`
+        : `연재중 작품을 완결작보다 평균 +${(ongoingAvg - completedAvg).toFixed(0)}점 높게 평가`);
     }
   }
 
@@ -36912,9 +36968,15 @@ function generateInsights(data) {
   }
 
   // 저평가 장르
-  const lowRatedGenres = majorGenreAnalysis.filter(g => g.avgRating < basicStats.avgRating - 80);
+  // 🔧 v7.49.1: tier/hybrid 모드는 ELO 80점 하드코딩 대신 분포(stdDev) 기반 임계 + 질적 표현
+  const lowRatedCut = globalTierConfig.mode !== "match"
+    ? basicStats.avgRating - Math.max(1, (basicStats.stdDevRating || 0) * 0.8)
+    : basicStats.avgRating - 80;
+  const lowRatedGenres = majorGenreAnalysis.filter(g => g.avgRating < lowRatedCut);
   for (const g of lowRatedGenres.slice(0, 2)) {
-    avoidFactors.push(`${g.genre} (평균 대비 -${(basicStats.avgRating - g.avgRating).toFixed(0)}점)`);
+    avoidFactors.push(globalTierConfig.mode !== "match"
+      ? `${g.genre} (평균보다 낮게 평가)`
+      : `${g.genre} (평균 대비 -${(basicStats.avgRating - g.avgRating).toFixed(0)}점)`);
   }
   
   // 추천 조건
@@ -37366,6 +37428,8 @@ function AppContent() {
   // 매칭
   const [pair, setPair] = useState(null);
   const [autoEnabled, setAutoEnabled] = useState(false);
+  const autoEnabledRef = useRef(false); // 🔧 v7.49.1: pair 분석 effect(deps=[pair])가 최신 autoEnabled를 deps 추가(무거운 재분석) 없이 읽도록 미러
+  useEffect(() => { autoEnabledRef.current = autoEnabled; }, [autoEnabled]);
   const [autoGap, setAutoGap] = useState("250"); // 레거시 (하위호환)
   const [lastMatchId, setLastMatchId] = useState(null); // 언두용
   const [isAutoMatching, setIsAutoMatching] = useState(false); // 🔧 v3.4.6: 자동 승패 처리 중 플래그
@@ -37532,6 +37596,7 @@ function AppContent() {
   const [plannedEditOpen, setPlannedEditOpen] = useState(false);
   const [plannedEditItem, setPlannedEditItem] = useState(null);
   const [plannedEditGalleryCount, setPlannedEditGalleryCount] = useState(0); // 🖼️ v7.6.2: 예정작 갤러리 이미지 수 (편집 모달)
+  const [similarPickerOpen, setSimilarPickerOpen] = useState(false); // 🔧 v7.49.1: '비슷한 작품' 선택 모달 — Alert 다중버튼(안드 3개 제한) 대체
   // 🔧 v3.5.8: editItemRef 패턴 적용 (stale closure 방지)
   const plannedEditItemRef = useRef(null);
   const updatePlannedEditItem = useCallback((updater) => {
@@ -38629,10 +38694,12 @@ function AppContent() {
     const targetIdx = direction === "up" ? idx - 1 : idx + 1;
     if (targetIdx < 0 || targetIdx >= folders.length) return;
     try {
-      const queries = [
-        { sql: "UPDATE folders SET sort_order=? WHERE id=?;", params: [targetIdx, folders[idx].id] },
-        { sql: "UPDATE folders SET sort_order=? WHERE id=?;", params: [idx, folders[targetIdx].id] },
-      ];
+      // 🔧 v7.49.1: 배열 인덱스를 sort_order로 직접 쓰던 것 → 재배열 후 0..n-1로 전체 재정규화.
+      //   sort_order가 삭제/생성으로 불연속(0,5,12…)이면 인덱스 대입이 다른 폴더와 충돌해 정렬이 깨졌음.
+      const reordered = [...folders];
+      const [moved] = reordered.splice(idx, 1);
+      reordered.splice(targetIdx, 0, moved);
+      const queries = reordered.map((f, i) => ({ sql: "UPDATE folders SET sort_order=? WHERE id=?;", params: [i, f.id] }));
       await execBatch(queries);
       await loadFolders();
     } catch (e) { console.warn("reorderFolder 실패:", e); }
@@ -39108,6 +39175,7 @@ function AppContent() {
             let loaded = {
               groups: savedTagRelations.groups || {},
               tagToGroup: savedTagRelations.tagToGroup || {},
+              oppositePairs: Array.isArray(savedTagRelations.oppositePairs) ? savedTagRelations.oppositePairs : [], // 🔧 v7.49.1: 다중 상반 쌍 복원 누락 수정
             };
 
             // 🔗 v3.5.5: TAG_ALIASES → similar 그룹 자동 마이그레이션
@@ -39347,7 +39415,7 @@ function AppContent() {
       setUndoStack([]);
       setMatchInsights([]);
       setUpsetFactors({ factors: [], lastUpdated: 0 });
-      setTagRelations({ groups: {}, tagToGroup: {} });
+      setTagRelations({ groups: {}, tagToGroup: {}, oppositePairs: [] }); // 🔧 v7.49.1: 리셋 시 oppositePairs 키 유지(구조 일관성)
       setTagCoOccurrences({});
       // v7.0.1 (M2 fix): hybrid 검증 state도 슬롯 격리 (이전 슬롯 sessionId/응답 누수 방지)
       // 🆕 v7.0.2: setVerificationLoading(false) 추가 — 이전 슬롯에서 in-flight 시 새 슬롯에서 자동 시작 차단되던 문제
@@ -39457,7 +39525,7 @@ function AppContent() {
       if (matchStatsTimerRef.current) { clearTimeout(matchStatsTimerRef.current); matchStatsTimerRef.current = null; }
       if (pairAnalysisTimerRef.current) { clearTimeout(pairAnalysisTimerRef.current); pairAnalysisTimerRef.current = null; }
       // 캐시 무효화
-      invalidateMatchCache();
+      invalidateMatchCache(true); // 🔧 v7.49.1: 슬롯 경계 — playedSet/novels까지 비워 이전 슬롯 잔여 누수 차단
       invalidatePatternCache();
       invalidateWeightsCache();
       genreMatchupCacheRef.current = { data: {}, ts: 0, TTL: 30000 };
@@ -39599,7 +39667,7 @@ function AppContent() {
       if (Array.isArray(savedRecentChanges)) setRecentChanges(savedRecentChanges);
       if (Array.isArray(savedMatchInsights)) setMatchInsights(savedMatchInsights);
       if (savedTagRelations && typeof savedTagRelations === "object") {
-        setTagRelations({ groups: savedTagRelations.groups || {}, tagToGroup: savedTagRelations.tagToGroup || {} });
+        setTagRelations({ groups: savedTagRelations.groups || {}, tagToGroup: savedTagRelations.tagToGroup || {}, oppositePairs: Array.isArray(savedTagRelations.oppositePairs) ? savedTagRelations.oppositePairs : [] }); // 🔧 v7.49.1: 슬롯 전환 시 상반 쌍 복원 누락 수정
       }
       if (savedUpsetFactors && typeof savedUpsetFactors === "object") {
         setUpsetFactors({ factors: Array.isArray(savedUpsetFactors.factors) ? savedUpsetFactors.factors : [], lastUpdated: savedUpsetFactors.lastUpdated || 0 });
@@ -41364,8 +41432,8 @@ function AppContent() {
       // 가중치 기반 확률적 선택
       const totalWeight = candidates.reduce((sum, c) => sum + c.weight, 0);
       let rand = Math.random() * totalWeight;
-      let pick = candidates[0];
-      
+      let pick = candidates[candidates.length - 1]; // 🔧 v7.49.1: 부동소수 잔차로 break 미발생 시 '첫 후보'가 아닌 '마지막 후보'로 폴백(가중선택 표준)
+
       for (const c of candidates) {
         rand -= c.weight;
         if (rand <= 0) {
@@ -42098,7 +42166,8 @@ function AppContent() {
     predictedWinRateA += (totalWinRateA / ((totalWinRateA + totalWinRateB) || 1)) * 0.15;
     
     // 신뢰도 반영 (신뢰도 높은 쪽 약간 유리)
-    const reliabilityFactor = (reliabilityA - reliabilityB) * 0.1 + 0.5;
+    // 🔧 v7.49.1: *0.1 이중 스케일 제거 — reliabilityFactor를 [0,1]로(다른 항과 동일) 만들어 의도된 10% 가중이 실제로 반영되게(기존엔 ±0.01만 기여).
+    const reliabilityFactor = (reliabilityA - reliabilityB) * 0.5 + 0.5;
     predictedWinRateA += reliabilityFactor * 0.1;
     
     // 장르 상성 반영
@@ -48240,7 +48309,7 @@ function AppContent() {
                 await setAppMeta("tag_sentiments", {});
               }
               if (sel.tag_relations) {
-                setTagRelations({ groups: {}, tagToGroup: {} });
+                setTagRelations({ groups: {}, tagToGroup: {}, oppositePairs: [] }); // 🔧 v7.49.1: 리셋 시 oppositePairs 키 유지(구조 일관성)
                 await setAppMeta("tag_relations", { groups: {}, tagToGroup: {} });
               }
               if (sel.tag_coordinates) {
@@ -49756,7 +49825,7 @@ function AppContent() {
           setMatchAnalysis(analysis);
           
           // 🔧 v3.5.15: 자동매칭 진행 중에는 generateEnhancedPrediction 스킵
-          if (!isAutoMatchingRef.current && !autoEnabled) {
+          if (!isAutoMatchingRef.current && !autoEnabledRef.current) { // 🔧 v7.49.1: deps=[pair]라 stale했던 autoEnabled → ref로 최신값 참조
             if (aborted) return;
             await generateMatchPrediction(pair.A, pair.B);
           } else {
@@ -50580,6 +50649,28 @@ function AppContent() {
     return m;
   }, [list]);
 
+  // 🆕 v7.28.65: '최신' 필터 — 최근 랭크 이동(티어/순위) 작품 ID 집합.
+  //   retention window(최신 기록 유지기간, 기본 30일) 내 tier_change/order_change/auto_tier/tier_review 엔트리의 novelId.
+  // 🔧 v7.49.1: homeFiltered/filtered/rankedEntries보다 위로 이동 — 이들 useMemo deps/팩토리(advancedFilter)가
+  //   isLatestNovel을 참조하는데 선언이 아래에 있어 매 렌더 TDZ(또는 var-호이스트 시 undefined→filterLatest 켜짐 시 크래시)였음.
+  const recentRankMovedIds = useMemo(() => {
+    const now = Date.now();
+    const days = appSettings.recentChanges?.retentionDays;
+    const windowMs = (Number.isFinite(days) && days > 0 ? days : 30) * 86400000;
+    const RANK_TYPES = new Set(["tier_change", "order_change", "auto_tier", "tier_review"]);
+    const s = new Set();
+    for (const c of recentChanges) {
+      if (RANK_TYPES.has(c.type) && (now - (c.timestamp || 0)) <= windowMs) s.add(c.novelId);
+    }
+    return s;
+  }, [recentChanges, appSettings.recentChanges]);
+
+  // 🆕 v7.28.65: '최신' 판정 — NEW 뱃지(등록 30일 이내) 또는 최근 랭크 이동.
+  const isLatestNovel = useCallback((n) => {
+    if (!n) return false;
+    return isNewNovel(n.created_at) || recentRankMovedIds.has(n.id);
+  }, [recentRankMovedIds]);
+
   const homeFiltered = useMemo(() => {
     const q = homeQuery.toLowerCase().trim();
     let result = list;
@@ -50696,7 +50787,7 @@ function AppContent() {
       // 확장된 검색어 중 하나라도 매칭되면 통과
       return searchVariants.some(variant => bank.includes(variant));
     });
-  }, [query, list]);
+  }, [query, list, awardMetaMap, awardSystemSettings]); // 🔧 v7.49.1: 수상 검색 인덱스(awardsToSearchText) deps 누락 보강 — 상 설정 변경 후 stale 매칭 방지
 
   const bulkFiltered = useMemo(() => {
     let result = [...filtered];
@@ -50817,7 +50908,7 @@ function AppContent() {
     }
 
     return result;
-  }, [list, rankQuery, rankTier, screen, filterLatest, isLatestNovel]);
+  }, [list, rankQuery, rankTier, screen, filterLatest, isLatestNovel, appSettings.tierSystemConfig, awardMetaMap, awardSystemSettings]); // 🔧 v7.49.1: 티어설정/수상 deps 보강 — 설정 변경 후 순위 정렬·검색 stale 방지
 
   // 🆕 v7.4.0 stale closure 회피 — 비동기 export 함수에서 최신 rankedEntries 참조용
   const rankedEntriesRef = useRef(rankedEntries);
@@ -50867,7 +50958,7 @@ function AppContent() {
     }
 
     return result;
-  }, [list, tierManageQuery, tierManageFilter, screen]);
+  }, [list, tierManageQuery, tierManageFilter, screen, appSettings.tierSystemConfig]); // 🔧 v7.49.1: 티어설정 deps 보강 — 임계/티어 편집 후 배정탭 분류·정렬 stale 방지
 
   // 🆕 v7.4.9: 배정탭 편집 모드용 — 작품 사이사이 드롭 슬롯이 인터리브된 표시 데이터.
   // - kind: 'card'  → 기존 entry({ item, rank, tier })
@@ -53822,7 +53913,7 @@ async function importJSON() {
       return 0;
     });
     return filtered;
-  }, [supplementListAll, supplementFilter, supplementSort, supplementShuffleSeed]);
+  }, [supplementListAll, supplementFilter, supplementSort, supplementShuffleSeed, appSettings.tierSystemConfig]); // 🔧 v7.49.1: 티어설정 deps 보강 — 티어순 정렬이 설정 변경 후 stale 방지
 
   // 📝 보충 대상 건수
   const supplementCount = supplementList.length;
@@ -53926,26 +54017,6 @@ async function importJSON() {
       setPlannedSupplementFilter("all");
     }
   }, [plannedSupplementFilter, plannedSupplementCount, plannedSupplementTotalCount]);
-
-  // 🆕 v7.28.65: '최신' 필터 — 최근 랭크 이동(티어/순위) 작품 ID 집합.
-  //   retention window(최신 기록 유지기간, 기본 30일) 내 tier_change/order_change/auto_tier/tier_review 엔트리의 novelId.
-  const recentRankMovedIds = useMemo(() => {
-    const now = Date.now();
-    const days = appSettings.recentChanges?.retentionDays;
-    const windowMs = (Number.isFinite(days) && days > 0 ? days : 30) * 86400000;
-    const RANK_TYPES = new Set(["tier_change", "order_change", "auto_tier", "tier_review"]);
-    const s = new Set();
-    for (const c of recentChanges) {
-      if (RANK_TYPES.has(c.type) && (now - (c.timestamp || 0)) <= windowMs) s.add(c.novelId);
-    }
-    return s;
-  }, [recentChanges, appSettings.recentChanges]);
-
-  // 🆕 v7.28.65: '최신' 판정 — NEW 뱃지(등록 30일 이내) 또는 최근 랭크 이동.
-  const isLatestNovel = useCallback((n) => {
-    if (!n) return false;
-    return isNewNovel(n.created_at) || recentRankMovedIds.has(n.id);
-  }, [recentRankMovedIds]);
 
   // 🔧 v3.0.2: 저장 후 다음 작품으로 자동 이동 (supplementList 변경 시 트리거)
   useEffect(() => {
@@ -65692,8 +65763,8 @@ async function importJSON() {
                             }
                             
                             // app_meta에 저장
-                            await setAppMeta("matchInsights", result.insights.slice(-200));
-                            await setAppMeta("upsetFactors", { factors: result.upsetFactors, lastUpdated: Date.now() });
+                            await setAppMeta("match_insights", result.insights.slice(-200)); // 🔧 v7.49.1: canonical snake_case 키(로드/타 경로와 일치). camelCase는 어디서도 안 읽혀 재시작 시 유실됐음.
+                            await setAppMeta("upset_factors", { factors: result.upsetFactors, lastUpdated: Date.now() });
                             
                             Alert.alert(
                               "재생성 완료",
@@ -65870,7 +65941,7 @@ async function importJSON() {
               const anomalies = [];
               // 크래시
               if (lastCrashLog) {
-                anomalies.push({ severity: "critical", label: "마지막 크래시 기록", anchor: "crash", desc: lastCrashLog.message?.substring(0, 50) || "(상세는 크래시 섹션)" });
+                anomalies.push({ severity: "critical", label: "마지막 크래시 기록", anchor: "crash", desc: lastCrashLog.error?.message?.substring(0, 50) || "(상세는 크래시 섹션)" }); // 🔧 v7.49.1: message는 error 하위에 중첩 — 최상위 message는 항상 undefined였음
               }
               // DB 연속 에러
               if (summary?.db?.consecutiveErrors >= 3) {
@@ -66973,7 +67044,7 @@ async function importJSON() {
                           dbEvents: (s.dbEvents || []).slice(0, 20),
                         },
                         crash: lastCrashLog ? {
-                          message: lastCrashLog.message,
+                          message: lastCrashLog.error?.message, // 🔧 v7.49.1: message는 error 하위 — 최상위는 항상 undefined였음
                           timestamp: lastCrashLog.timestamp,
                           breadcrumbs: lastCrashLog.breadcrumbs?.slice(-20),
                         } : null,
@@ -70295,41 +70366,7 @@ async function importJSON() {
                       })()}
                     </Text>
                     <TouchableOpacity
-                      onPress={() => {
-                        const topNovels = [...list]
-                          .sort((a, b) => (b.rating || 1500) - (a.rating || 1500))
-                          .slice(0, 10);
-                        
-                        Alert.alert(
-                          "비슷한 작품 선택",
-                          "상위 10작품 중 선택하세요. (취소로 초기화)",
-                          [
-                            { 
-                              text: "취소 (초기화)", 
-                              onPress: () => updatePlannedEditItem(prev => prev ? { ...prev, similar_novels: "[]" } : null)
-                            },
-                            ...topNovels.map(n => ({
-                              text: n.title?.substring(0, 20) || "?",
-                              onPress: () => {
-                                // 🔧 v3.5.8: 함수형 업데이트
-                                updatePlannedEditItem(prev => {
-                                  if (!prev) return null;
-                                  try {
-                                    const current = JSON.parse(prev.similar_novels || "[]");
-                                    if (!current.includes(n.id)) {
-                                      const updated = [...current, n.id].slice(0, 3);
-                                      return { ...prev, similar_novels: JSON.stringify(updated) };
-                                    }
-                                    return prev;
-                                  } catch {
-                                    return { ...prev, similar_novels: JSON.stringify([n.id]) };
-                                  }
-                                });
-                              }
-                            })),
-                          ]
-                        );
-                      }}
+                      onPress={() => setSimilarPickerOpen(true)} // 🔧 v7.49.1: Alert 11버튼(안드 3개만 표시) → 선택 모달
                       style={{
                         padding: 10,
                         borderRadius: 8,
@@ -71073,6 +71110,52 @@ async function importJSON() {
               style={{ marginTop: 12, backgroundColor: C.primary, paddingVertical: 12, borderRadius: 10, alignItems: "center", opacity: scrapeLoading ? 0.6 : 1 }}>
               <Text style={{ color: "#fff", fontWeight: "800", fontSize: 15 }}>{scrapeLoading ? "적용 중…" : "선택 적용"}</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 🔧 v7.49.1: '비슷한 작품' 선택 모달 — 기존 Alert 다중버튼(안드로이드 3개 제한으로 대부분 잘림) 대체. 최대 3작품 토글 선택. */}
+      <Modal visible={similarPickerOpen} animationType="fade" transparent statusBarTranslucent onRequestClose={() => setSimilarPickerOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center" }}>
+          <View style={{ backgroundColor: C.card, borderRadius: 20, padding: 18, width: "92%", maxWidth: 480, maxHeight: "80%" }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <Text style={{ fontSize: 17, fontWeight: "800", color: C.text }}>📚 비슷한 작품 선택</Text>
+              <TouchableOpacity onPress={() => setSimilarPickerOpen(false)}><Text style={{ fontSize: 22, color: C.sub }}>×</Text></TouchableOpacity>
+            </View>
+            {(() => {
+              let sel = [];
+              try { const a = JSON.parse(plannedEditItem?.similar_novels || "[]"); if (Array.isArray(a)) sel = a; } catch {}
+              return (
+                <>
+                  <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>최대 3작품까지 선택 (현재 {sel.length}/3). 탭하면 추가/해제돼요.</Text>
+                  <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={false}>
+                    {[...list].sort((a, b) => (b.rating || 1500) - (a.rating || 1500)).slice(0, 50).map(n => {
+                      const on = sel.includes(n.id);
+                      return (
+                        <TouchableOpacity key={n.id} activeOpacity={0.7}
+                          onPress={() => updatePlannedEditItem(prev => {
+                            if (!prev) return null;
+                            let cur = []; try { const a = JSON.parse(prev.similar_novels || "[]"); if (Array.isArray(a)) cur = a; } catch {}
+                            let next;
+                            if (cur.includes(n.id)) next = cur.filter(x => x !== n.id);
+                            else { if (cur.length >= 3) return prev; next = [...cur, n.id]; }
+                            return { ...prev, similar_novels: JSON.stringify(next) };
+                          })}
+                          style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: C.line }}>
+                          <Text style={{ fontSize: 16 }}>{on ? "✅" : "⬜"}</Text>
+                          <Text style={{ flex: 1, color: C.text, fontSize: 14, fontWeight: on ? "800" : "600" }} numberOfLines={1}>{n.title}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                    {list.length === 0 ? <Text style={{ color: C.sub, fontSize: 13, textAlign: "center", paddingVertical: 20 }}>등록된 작품이 없어요.</Text> : null}
+                  </ScrollView>
+                  <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+                    <OutlineButton title="초기화" color={C.warn} style={{ flex: 1 }} onPress={() => updatePlannedEditItem(prev => prev ? { ...prev, similar_novels: "[]" } : null)} />
+                    <PrimaryButton title="완료" style={{ flex: 1 }} onPress={() => setSimilarPickerOpen(false)} />
+                  </View>
+                </>
+              );
+            })()}
           </View>
         </View>
       </Modal>
