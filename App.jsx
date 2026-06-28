@@ -2,11 +2,28 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.49.5 (회귀 핫픽스 — 회차수 보정이 본편 깎던 문제, 외전만 정정으로)     ║
+ * ║  버전: 7.49.6 (외전 산정 전수 점검 — 네이버 필드/정렬, 카카오 비활성, 보정 일관) ║
  * ║  최종 수정: 2026-06-28                                                        ║
- * ║  총 라인 수: 약 72,530줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 72,570줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔬 v7.49.6 외전 산정 전수 점검·수정 (2026-06-28)                              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 사용자 보고 4종을 실측 진단·수정:                                              ║
+ * ║ ① 네이버 — 작품마다 외전 검출이 달랐던 원인 2개. (a) 외전 마커가 volumnNameText ║
+ * ║   ("외전 49화")에 있기도, subProductName("외전 중년")에 있기도 한데 앞 필드만    ║
+ * ║   봐서 후자를 놓침 → 두 필드 결합. (b) 묶음 재출간 작품은 전 회차 날짜가 같아     ║
+ * ║   (ts 균일) DESC 입력이 안 뒤집혀 외전이 배열 앞에 옴 → ASC로 reverse 후 분리.    ║
+ * ║   (실측: 21세기 반로환동전 0→3, 회귀 수선전 49 유지)                            ║
+ * ║ ② 카카오 — 회차목록 GraphQL을 받을 방법이 없음 확정(서명+앱인증). 외전 분리      ║
+ * ║   제거, '총 회차수'로만 처리(편집에서 수동). fetchKakaoEpisodeSplit 호출 삭제.    ║
+ * ║ ③ 문피아 — 기본 /chapters는 익명으로 최신 100화만(외전은 그 너머), 최신순 paid   ║
+ * ║   엔드포인트는 '로그인 후 이용'. >100화 작품은 문피아 로그인 필요(코드 정상,제약).║
+ * ║ ④ 보정 초과 — 보정이 외전만 세고 본편을 안 줄여 '본편(전체)+외전' 이중계상.       ║
+ * ║   외전 변화량만큼 본편을 반대로 조정해 '본편+외전=전체' 유지(재스크랩 본편값      ║
+ * ║   미사용 → 깎임은 외전 변화량만큼만, 신뢰 가능). 전체 @babel/parser 통과.         ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🚑 v7.49.5 회귀 핫픽스 — 회차수 보정이 본편을 깎던 문제 (2026-06-28)           ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -15232,10 +15249,17 @@ function parseNaverEpisodeSplit(jsonText) {
   let data; try { data = JSON.parse(jsonText); } catch { return null; }
   const arr = data && Array.isArray(data.resultData) ? data.resultData : null;
   if (!arr || !arr.length) return null;
-  return splitEpisodesByGaiden(arr.map(it => ({
-    title: (it && (it.volumnNameText || it.subProductName)) || "",
+  const eps = arr.map(it => ({
+    // 🔧 v7.49.6: 두 필드 결합 — 작품에 따라 외전 마커가 volumnNameText("외전 49화")에 있기도, subProductName("외전 중년")에 있기도 함
+    //   (volumnNameText는 "103화" 같은 회차번호뿐일 때 subProductName에 진짜 부제가 들어감). 기존 'volumnNameText||subProductName'은
+    //   회차번호가 있으면 subProductName을 안 봐서 그쪽 외전을 통째로 놓쳤음(실측: '21세기 반로환동전' 외전 미검출).
+    title: [((it && it.volumnNameText) || ""), ((it && it.subProductName) || "")].filter(Boolean).join(" ").trim(),
     ts: scraperDateToTs(String((it && it.lastVolumeUpdateDate) || "")), // scraperDateToTs는 'YYYY-MM-DD …'도 매칭
-  })));
+  }));
+  // 🔧 v7.49.6: resultData는 DESC(최신순) → ASC(오래된순)로 뒤집어 전달. 묶음 재출간 작품은 모든 회차 날짜가 같아(ts 균일)
+  //   splitEpisodesByGaiden의 ts 정렬이 무효 → 입력순(DESC)대로면 외전이 배열 앞에 와 '말미 외전 블록' 판정에서 누락됐음(실측 수정).
+  eps.reverse();
+  return splitEpisodesByGaiden(eps);
 }
 async function fetchNaverEpisodeSplit(url, opts = {}) {
   const pn = (String(url).match(/productNo=(\d+)/) || [])[1];
@@ -15804,9 +15828,8 @@ async function fetchNovelMeta(url, opts = {}) {
   }
   // 🆕 v7.41.4: 카카오 완결작 — GraphQL(contentHomeProductList+viewerInfo)로 본편/외전 분리. 실패 시 기존 lastSlideAddedDate 완결일 유지(무회귀).
   //   ※total 신뢰도 불확실 → noTotalAdjust. 직전 content 페이지 GET으로 _kpwtkn 쿠키가 잡혀 GraphQL 인증됨(네이티브 쿠키스토어).
-  if (globalGaidenExp && platform === "카카오페이지" && meta.workStatus === "completed") { // 🔧 v7.42.0: 기본 ON(설정에서 끌 수 있음). 메타는 위 GraphQL 폴백으로 이미 취득됨.
-    try { const sp = await fetchKakaoEpisodeSplit(url, opts); if (sp && (sp.mainCompletedAt || sp.hasGaiden)) applyEpisodeSplitToMeta(meta, sp, { noTotalAdjust: true }); } catch {}
-  }
+  // 🔧 v7.49.6: 카카오 본편/외전 분리 제거 — 회차목록 GraphQL이 서명/앱인증으로 폰에서도 받을 수 없음(실측: page=HTML벽,
+  //   api-page=권한인증실패). 받을 방법이 없어 카카오는 외전 분리 없이 '총 회차수'로만 처리(외전은 편집에서 수동 입력). fetchKakaoEpisodeSplit 미사용.
   // 🆕 v7.41.5: 문피아 완결작 — 신 SPA 회차API. ≤100화는 익명, 큰 작품은 로그인 paid 엔드포인트로 본편/외전 분리.
   if (globalGaidenExp && platform === "문피아" && meta.workStatus === "completed") { // 🔧 v7.42.0: 기본 ON(설정에서 끌 수 있음)
     try { const sp = await fetchMunpiaEpisodeSplit(url, opts); if (sp && (sp.mainCompletedAt || sp.hasGaiden)) applyEpisodeSplitToMeta(meta, sp); } catch {}
@@ -18030,7 +18053,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.49.5";
+const APP_VERSION = "7.49.6";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -18056,6 +18079,19 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.49.6", date: "2026-06-28",
+    title: "🔬 외전 회차 인식 전수 점검 — 네이버 보강·보정 일관",
+    highlights: [
+      { type: "fix", text: "🔬 외전 회차 인식을 연재처별로 실측 점검해 고쳤어요. 네이버 시리즈에서 작품마다 외전이 잡히기도/안 잡히기도 하던 문제(외전 제목이 부제 칸에 있거나, 묶음 재출간으로 날짜가 같던 경우)를 해결했어요. 카카오는 회차목록을 받을 방법이 없어 외전 분리를 끄고 ‘총 회차수’로만 처리해요." },
+      { type: "fix", text: "📊 ‘외전 회차수 보정’이 외전만 늘리고 본편은 그대로 둬서 전체가 부풀던(이중계상) 문제를 고쳤어요. 외전이 바뀐 만큼 본편을 반대로 조정해 ‘본편+외전=전체’가 유지돼요." },
+    ],
+    details: [
+      "네이버: 외전 표기가 회차 제목/부제 어디에 있든 인식하고, 회차 순서가 날짜로 안 잡히는 묶음 작품도 바르게 분리해요.",
+      "문피아: 100화 이하 완결작은 외전이 자동으로 잡혀요. 100화가 넘는 작품은 최신 회차 목록이 로그인 뒤에만 열려, 설정 › 🔌 연결에서 문피아에 로그인하면 외전이 잡혀요.",
+      "카카오: 회차 목록이 막혀 있어 외전 수를 자동으로 셀 수 없어요. 카카오 작품의 외전은 편집에서 직접 입력해 주세요(총 회차수는 그대로 들어와요).",
+    ],
+  },
   {
     version: "7.49.5", date: "2026-06-28",
     title: "🚑 회차수 보정이 본편을 깎던 문제 수정",
@@ -44488,10 +44524,19 @@ function AppContent() {
   //   외전→0(재스크랩이 외전을 못 찾음)은 윈도 누락 위험이라 제외(newGc>0일 때만 정정).
   function detectEpisodeOvercount(work, meta) {
     if (!meta) return null;
-    let gaiden = null;
     const curGc = Number(work.gaiden_total_episodes) || 0, newGc = Number(meta.gaidenCount) || 0;
-    if (newGc > 0 && newGc !== curGc) gaiden = { from: curGc, to: newGc };
-    return gaiden ? { main: null, gaiden } : null;
+    if (!(newGc > 0 && newGc !== curGc)) return null; // 외전→0(재스크랩 미발견)은 윈도 누락 위험이라 제외
+    const gaiden = { from: curGc, to: newGc };
+    // 🔧 v7.49.6: 외전 변화량(delta)만큼 본편(total_episodes)을 반대로 조정해 '본편+외전=전체' 일관성 유지(초과/이중계상 방지).
+    //   본편을 재스크랩값(윈도 캡으로 신뢰 불가)으로 맞추지 않고 '현재 본편 − 외전증가분'으로 계산 → 깎임이 작고(=외전 변화량) 정확.
+    //   외전이 늘면 본편 그만큼 감소, 줄면 본편 그만큼 증가. 본편값이 없으면(0) 본편은 건드리지 않음.
+    const curEp = Number(work.total_episodes) || 0;
+    let main = null;
+    if (curEp > 0) {
+      const newEp = Math.max(0, curEp - (newGc - curGc));
+      if (newEp !== curEp) main = { from: curEp, to: newEp };
+    }
+    return { main, gaiden };
   }
   // 재스크랩으로 과대계상 후보만 수집(쓰기 X) → correctReview 단계에서 검토 후 적용.
   async function runBulkOvercountScan() {
@@ -71468,7 +71513,7 @@ async function importJSON() {
                 <View style={{ borderTopWidth: 1, borderTopColor: C.line, marginTop: 14, paddingTop: 12 }}>
                   <Text style={{ color: C.text, fontSize: 13, fontWeight: "800", marginBottom: 4 }}>📊 외전 회차수 보정 (과대·과소)</Text>
                   <Text style={{ color: C.sub, fontSize: 11.5, lineHeight: 16, marginBottom: 9 }}>
-                    링크 있는 작품을 다시 가져와, 외전 회차수가 실제와 다른 작품을 찾아 맞춰요. 부풀려진 것(과대)뿐 아니라 적게 잡힌 것(과소)도 함께 잡아요. 본편 회차는 건드리지 않아요(웹 본편값이 부정확해 잘못 깎일 수 있어 보존). 후보를 검토해 적용합니다.
+                    링크 있는 작품을 다시 가져와, 외전 회차수가 실제와 다른 작품을 찾아 맞춰요(과대·과소 양방향). 외전이 바뀐 만큼 본편을 반대로 조정해 ‘본편+외전=전체’가 유지돼요(전체 회차는 그대로, 깎임은 외전 변화량만큼만). 후보를 검토해 적용합니다.
                   </Text>
                   <OutlineButton title={`📊 링크 있는 ${bulkUpdateStats.linked}개 외전 점검`} color={C.primary} onPress={() => {
                     if (bulkUpdateStats.linked === 0) { Alert.alert("외전 회차수 보정", "링크 있는 작품이 없어요."); return; }
@@ -71545,7 +71590,7 @@ async function importJSON() {
                 ) : (
                   <>
                     <Text style={{ color: C.text, fontSize: 15, fontWeight: "800", textAlign: "center", marginBottom: 3 }}>📉 보정 후보 {bulkCorrectionCandidates.length}건</Text>
-                    <Text style={{ color: C.sub, fontSize: 12, textAlign: "center", marginBottom: 10 }}>외전 현재 → 보정값(본편은 보존). 탭하면 제외/포함이 바뀌어요.</Text>
+                    <Text style={{ color: C.sub, fontSize: 12, textAlign: "center", marginBottom: 10 }}>외전·본편 현재 → 보정값(전체 회차는 유지). 탭하면 제외/포함이 바뀌어요.</Text>
                     <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator={false}>
                       {bulkCorrectionCandidates.map((c) => {
                         const excluded = bulkCorrectionExcluded.has(c.id);
