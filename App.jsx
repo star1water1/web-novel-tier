@@ -2,11 +2,24 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.47.1 (외전 회차 수 과대계상 수정 — 중복·막간외전 제외)               ║
+ * ║  버전: 7.48.0 (멀티링크 관리 — 다이렉트/자동업뎃 분리 + 빠진 플랫폼 일괄 매칭) ║
  * ║  최종 수정: 2026-06-28                                                        ║
- * ║  총 라인 수: 약 71,490줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 71,700줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔗 v7.48.0 멀티링크 관리 (2026-06-28)                                         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 한 작품 다중 플랫폼 링크 등록 + 바로가기(다이렉트)·자동업뎃 링크 분리 지정.     ║
+ * ║ 설계: link 컬럼=다이렉트 유지, 신규 links(JSON)·update_link 컬럼 추가(마이그   ║
+ * ║ 레이션 X). linksOf(work)가 links 비면 link로 합성 — 단일 진실원천, 전 쓰기경로 ║
+ * ║ 백필 회피. chooseUpdateLink: ①수동지정 ②연재시작연도有 ③빠른연도 ④먼저등록.    ║
+ * ║ 자동업뎃(runBulkAutoUpdate)이 chooseUpdateLink로 링크 선정, 플랫폼병합도 전    ║
+ * ║ 링크 누적. 편집모달 🔗멀티링크 UI(다이렉트/자동업뎃 라디오·삭제·클립보드추가).  ║
+ * ║ 연결>🔗링크 서브탭: 빠진 플랫폼 일괄 매칭(platforms有·링크無)·우선순위 안내·    ║
+ * ║ 연재시작연도 일괄 갱신. 백업(opt.ll/ul)·복원·삭제undo에 컬럼 정합. 단일링크·    ║
+ * ║ 예정작은 합성 폴백으로 회귀 없음. 순수함수 19케이스 node 검증 + esbuild 통과.   ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🐛 v7.47.1 외전 회차 수 과대계상 수정 (2026-06-28)                            ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -9253,6 +9266,11 @@ async function initDb(progressCb) {
     //   (이전: convertPlannedToNovel이 메모 텍스트로만 합쳐 구조적 분석 불가)
     ["expected_tier", "TEXT", "''"],       // 읽기 전 예상 티어 (전환 시점 스냅샷)
     ["discovery_source", "TEXT", "''"],    // 발견 경로 (예정작에서 이관)
+    // 🔗 v7.48.0: 멀티링크 관리 — links=JSON [{url,platform,startYear,addedAt}],
+    //   update_link=자동업뎃 수동지정 URL(""=자동선정). link 컬럼은 다이렉트(바로가기)로 유지.
+    //   백필/마이그레이션 없음 — linksOf(work)가 비어있으면 link로부터 합성(단일 진실원천).
+    ["links", "TEXT", "''"],
+    ["update_link", "TEXT", "''"],
   ];
   
   // 필요한 마이그레이션만 실행
@@ -16189,6 +16207,60 @@ function mergePlatformFromLink(arr, link) {
   if (base.some(p => canonicalPlatform(p) === canon)) return base; // 이미 동일 연재처(동의어 매핑 포함)
   return [...base, canon];
 }
+// ═══════════════════════════════════════════════════════════════════════════
+// 🔗 v7.48.0: 멀티링크 관리 — 순수 함수 (단위테스트 용이)
+//   link=다이렉트(바로가기) 유지 + links(JSON)는 읽기 시 합성 → 마이그레이션/전 경로 배선 회피.
+// ═══════════════════════════════════════════════════════════════════════════
+// links JSON 파싱 → 정규화된 배열 [{url, platform, startYear, addedAt}].
+//   유효 url(문자열·비어있지 않음)만, url 기준 dedup(먼저 등록 우선).
+function parseLinks(raw) {
+  let arr = safeParseJSON(raw, null);
+  if (!Array.isArray(arr)) return [];
+  const out = [], seen = new Set();
+  for (const e of arr) {
+    if (!e) continue;
+    const url = String(e.url == null ? "" : e.url).trim();
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    out.push({
+      url,
+      platform: canonicalPlatform(e.platform || detectPlatformFromUrl(url) || ""),
+      startYear: Number(e.startYear) || 0,
+      addedAt: Number(e.addedAt) || 0,
+    });
+  }
+  return out;
+}
+// 작품의 링크 목록 — links가 비어있으면 단일 link로부터 합성(단일 진실원천).
+function linksOf(work) {
+  if (!work) return [];
+  const parsed = parseLinks(work.links);
+  if (parsed.length) return parsed;
+  const link = String(work.link == null ? "" : work.link).trim();
+  if (!link) return [];
+  return [{
+    url: link,
+    platform: canonicalPlatform(detectPlatformFromUrl(link) || ""),
+    startYear: Number(work.start_year) || 0,
+    addedAt: Number(work.created_at) || 0,
+  }];
+}
+// 자동업뎃에 사용할 링크 선정:
+//   ① update_link 수동지정(linksOf에 존재 시) → ② 연재시작연도 있는 쪽(오름차순, 동률 addedAt)
+//   → ③ 먼저 등록(addedAt 오름차순) → ④ 폴백 work.link
+function chooseUpdateLink(work) {
+  const links = linksOf(work);
+  if (!links.length) return String(work && work.link != null ? work.link : "").trim();
+  const manual = String(work && work.update_link != null ? work.update_link : "").trim();
+  if (manual && links.some(l => l.url === manual)) return manual;
+  const withYear = links.filter(l => l.startYear > 0);
+  if (withYear.length) {
+    withYear.sort((a, b) => (a.startYear - b.startYear) || (a.addedAt - b.addedAt));
+    return withYear[0].url;
+  }
+  const byAdded = links.slice().sort((a, b) => (a.addedAt - b.addedAt));
+  return byAdded[0].url;
+}
 function buildScrapeItems(meta, current = {}, opts = {}) {
   if (!meta) return [];
   const items = [];
@@ -17758,7 +17830,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.47.1";
+const APP_VERSION = "7.48.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -17784,6 +17856,19 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.48.0", date: "2026-06-28",
+    title: "🔗 멀티링크 관리 — 한 작품에 여러 플랫폼 링크",
+    highlights: [
+      { type: "new", text: "🔗 한 작품이 여러 플랫폼(네이버·카카오·문피아 등)에 연재될 때 링크를 여러 개 등록하고, ‘바로가기(다이렉트)’로 열 링크와 ‘자동 업데이트(재취득)’에 쓸 링크를 따로 정할 수 있어요. 읽기는 카카오, 업뎃은 네이버 원본처럼 나눠 쓸 수 있어요." },
+    ],
+    details: [
+      "작품 편집 화면에 ‘🔗 멀티링크’ 칸이 생겼어요. 링크마다 [🔗 다이렉트] / [🔄 자동업뎃]을 지정하고, 클립보드로 링크를 바로 추가할 수 있어요.",
+      "자동업뎃 링크를 따로 지정하지 않으면 ① 연재시작연도가 있는 링크 → ② 시작연도가 더 빠른(원본) 링크 → ③ 먼저 등록한 링크 순으로 알아서 골라요.",
+      "설정 › 🔌 연결 › ‘🔗 링크 관리’ 탭에서 ‘빠진 플랫폼 링크 일괄 매칭’(연재처로 표시했지만 링크 없는 플랫폼을 찾아 등록)과 ‘연재시작연도 일괄 갱신’을 쓸 수 있어요.",
+      "기존 단일 링크 작품은 그대로 동작해요(자동으로 다이렉트 겸 자동업뎃 링크로 인식). 데이터 이전이나 재설정은 필요 없어요.",
+    ],
+  },
   {
     version: "7.47.1", date: "2026-06-28",
     title: "🐛 외전 회차 수 정확도 개선",
@@ -20335,6 +20420,17 @@ const GUIDE_CONTENT = [
           "🔐 노벨피아·문피아 로그인, 카카오 세션도 여기 있어요 — 성인물 검색이나 회차 많은 완결작의 본편/외전 분리에 쓰여요.",
           "🔧 ‘긁기 진단’은 잘 안 긁히는 플랫폼의 검색 원본을 폰에서 직접 캡처해 개선에 쓰는 도구예요.",
           "🏷️ 태그 관리(헬스 점검·유형그룹·통계·속성)는 그대로 ‘태그’ 탭에 있어요. (v7.45.2)",
+        ],
+      },
+      {
+        title: "🔗 멀티링크 — 여러 플랫폼 링크 관리", icon: "🔗", tabs: ["설정"],
+        description: "한 작품이 여러 플랫폼에 연재될 때 링크를 여러 개 등록하고, ‘바로가기(다이렉트)’로 열 링크와 ‘자동 업데이트(재취득)’에 쓸 링크를 따로 지정해요. 작품 편집의 ‘🔗 멀티링크’ 칸과 설정 ‘🔌 연결 › 🔗 링크 관리’ 탭에서 다뤄요. (v7.48.0)",
+        tips: [
+          "🔗 작품 편집 화면에서 링크마다 [🔗 다이렉트]/[🔄 자동업뎃]을 정할 수 있어요. 읽기는 카카오, 업뎃은 네이버 원본처럼 나눠 쓰기 좋아요. 클립보드로 링크를 바로 추가할 수도 있어요.",
+          "🔄 자동업뎃 링크를 직접 정하지 않으면 ① 연재시작연도 있는 링크 → ② 시작연도가 빠른(원본) 링크 → ③ 먼저 등록한 링크 순으로 알아서 골라요.",
+          "🔍 ‘🔗 링크 관리’ 탭의 ‘빠진 플랫폼 링크 일괄 매칭’은 연재처로 표시(칩)했지만 링크가 없는 플랫폼을 작품마다 찾아 등록해 줘요(후보를 직접 확인).",
+          "📅 ‘연재시작연도 일괄 갱신’으로 비어 있는 시작연도를 채우면 자동업뎃 링크 선정이 더 정확해져요.",
+          "기존 단일 링크 작품은 그대로 동작해요 — 별도 이전이나 재설정은 필요 없어요.",
         ],
       },
       {
@@ -36880,6 +36976,7 @@ function AppContent() {
   const editNewQuoteImagesRef = useRef([]); // 📷 v6.0.1: 편집 모달에서 새로 추가된 이미지 URI 추적 (취소 시 정리)
   const regQuoteImagesRef = useRef([]); // 📷 v3.6.2: 등록 폼에서 추가된 이미지 URI 추적 (실패/취소 시 정리)
   const [settingsSubTab, setSettingsSubTab] = useState("ranking"); // 🆕 Phase 2: 설정 서브탭 (v7.21: "ranking" | "display" | "tags" | "data" | "backup" | "diag" | "info")
+  const [connectSubTab, setConnectSubTab] = useState("main"); // 🔗 v7.48.0: 연결 탭 내부 분기 ("main" = AI·로그인·진단 | "links" = 링크 관리)
   const [tierColorPickerIdx, setTierColorPickerIdx] = useState(-1); // 🆕 v7.45.1: 티어 색상 팔레트 펼친 행 인덱스(-1=없음). 탭→팔레트 펼침→1탭 선택
   // 🎨 v3.8.0: 갤러리 시스템
   const [gallerySubTab, setGallerySubTab] = useState("view");
@@ -37064,6 +37161,18 @@ function AppContent() {
   const [bulkMapIdx, setBulkMapIdx] = useState(0);
   const [bulkMapQuery, setBulkMapQuery] = useState("");
   const [bulkMapCandidates, setBulkMapCandidates] = useState([]);
+  // 🔗 v7.48.0: 빠진 플랫폼 링크 일괄 매칭(연결>링크 서브탭) — (작품×빠진플랫폼) 순차 검토
+  const [linkFillStage, setLinkFillStage] = useState("idle"); // idle | review | done
+  const [linkFillQueue, setLinkFillQueue] = useState([]); // [{workId, title, platform, work}]
+  const [linkFillIdx, setLinkFillIdx] = useState(0);
+  const [linkFillCandidates, setLinkFillCandidates] = useState([]);
+  const [linkFillBusy, setLinkFillBusy] = useState(false);
+  const [linkFillResults, setLinkFillResults] = useState([]); // [{title, platform, added:bool}]
+  const linkFillCancelRef = useRef(false);
+  // 🔗 v7.48.0: 연재시작일 일괄 갱신
+  const [startYearFillBusy, setStartYearFillBusy] = useState(false);
+  const [startYearFillProgress, setStartYearFillProgress] = useState(null); // {current,total,filled}
+  const startYearFillCancelRef = useRef(false);
   // 🔧 v7.28.38 긁기 진단: 폰에서 검색 원본 캡처(타 플랫폼 제목검색 파서 개발용)
   const [scrapeDiagUrl, setScrapeDiagUrl] = useState("");
   const [scrapeDiagOut, setScrapeDiagOut] = useState(null);
@@ -37186,7 +37295,11 @@ function AppContent() {
     setEditCoverImage(uri);
     updateEditItem(prev => prev ? { ...prev, cover_image: uri } : null);
   }, []);
-  const [editLink, setEditLink] = useState(""); // 🔗 편집용 링크
+  const [editLink, setEditLink] = useState(""); // 🔗 편집용 링크 (= 다이렉트/바로가기)
+  // 🔗 v7.48.0: 멀티링크 편집 — editLinks=[{url,platform,startYear,addedAt}], editUpdateUrl=자동업뎃 수동지정("" =자동선정)
+  const [editLinks, setEditLinks] = useState([]);
+  const [editUpdateUrl, setEditUpdateUrl] = useState("");
+  const [editLinkBusy, setEditLinkBusy] = useState(false); // +링크 추가 메타 조회 중
   // 📅 v3.0.3: 날짜 편집
   const [editCreatedAt, setEditCreatedAt] = useState(""); // 등록일 (YYYY-MM-DD)
   const [editReadCountUpdatedAt, setEditReadCountUpdatedAt] = useState(""); // 최신화일 (YYYY-MM-DD)
@@ -43936,10 +44049,12 @@ function AppContent() {
       const curGst = work.gaiden_status || "none";
       if (meta.gaidenStatus && (overwrite ? meta.gaidenStatus !== curGst : curGst === "none")) setCol("gaiden_status", meta.gaidenStatus, "외전 상태");
     }
-    // 🆕 v7.28.64: 저장된 링크의 플랫폼이 연재처에 없으면 자동 추가(자동갱신·매핑 일관성)
+    // 🆕 v7.28.64 / 🔗 v7.48.0: 저장된 링크들의 플랫폼이 연재처에 없으면 자동 추가(자동갱신·매핑 일관성).
+    //   멀티링크 — linksOf(work) 전체 플랫폼을 누적 병합(단일 link만 보던 것 → 등록된 모든 플랫폼).
     const curPlats = parsePlatforms(work.platforms);
-    const mergedPlats = mergePlatformFromLink(curPlats, work.link);
-    if (mergedPlats.length !== curPlats.length) setCol("platforms", JSON.stringify(mergedPlats), "연재처 +" + mergedPlats[mergedPlats.length - 1]);
+    let mergedPlats = curPlats;
+    for (const l of linksOf(work)) mergedPlats = mergePlatformFromLink(mergedPlats, l.url);
+    if (mergedPlats.length !== curPlats.length) setCol("platforms", JSON.stringify(mergedPlats), "연재처 +" + mergedPlats.slice(curPlats.length).join(","));
     if (!sets.length) return null;
     params.push(work.id);
     await exec(`UPDATE ${table} SET ${sets.join(", ")} WHERE id=?`, params);
@@ -43947,7 +44062,7 @@ function AppContent() {
   }
   function openBulkUpdate() {
     const works = bulkAllWorks();
-    const linked = works.filter(w => (w.link || "").trim()).length;
+    const linked = works.filter(w => linksOf(w).length > 0).length; // 🔗 v7.48.0: 멀티링크 합성 포함
     setBulkUpdateStats({ linked, unlinked: works.length - linked, total: works.length });
     setBulkUpdateStage("menu");
     setBulkUpdateResults([]);
@@ -43999,8 +44114,9 @@ function AppContent() {
     if (bulkUpdateBusy) return;
     const overwrite = !!options.overwrite;
     const platSet = Array.isArray(options.platforms) && options.platforms.length ? new Set(options.platforms) : null;
-    let works = bulkAllWorks().filter(w => (w.link || "").trim());
-    if (platSet) works = works.filter(w => platSet.has(canonicalPlatform(detectPlatformFromUrl(w.link) || "")));
+    // 🔗 v7.48.0: 멀티링크 — linksOf 합성 기준으로 필터. 플랫폼 필터는 등록된 링크 플랫폼들 중 하나라도 매치 시 포함.
+    let works = bulkAllWorks().filter(w => linksOf(w).length > 0);
+    if (platSet) works = works.filter(w => linksOf(w).some(l => platSet.has(canonicalPlatform(l.platform || detectPlatformFromUrl(l.url) || ""))));
     if (!works.length) { Alert.alert("일괄 갱신", platSet ? "선택한 플랫폼에 링크 있는 작품이 없어요." : "작품 링크가 있는 작품이 없어요.\n‘링크 연결’로 먼저 매핑해 주세요."); return; }
     setBulkUpdateBusy(true);
     bulkUpdateCancelRef.current = false;
@@ -44014,7 +44130,18 @@ function AppContent() {
       setBulkUpdateProgress({ current: i, total: works.length });
       const w = works[i];
       try {
-        const meta = await fetchMetaForUpdate(w.link, w.title);
+        // 🔗 v7.48.0: 자동업뎃 링크 선정 — 플랫폼 필터(재취득) 시 그 플랫폼 링크 우선, 그 외엔 우선순위 규칙.
+        let updLink;
+        if (platSet) {
+          const wl = linksOf(w);
+          const chosen = chooseUpdateLink(w);
+          const matchChosen = wl.find(l => l.url === chosen && platSet.has(canonicalPlatform(l.platform || detectPlatformFromUrl(l.url) || "")));
+          const m = matchChosen || wl.find(l => platSet.has(canonicalPlatform(l.platform || detectPlatformFromUrl(l.url) || "")));
+          updLink = (m && m.url) || chosen;
+        } else {
+          updLink = chooseUpdateLink(w);
+        }
+        const meta = await fetchMetaForUpdate(updLink, w.title);
         const changes = await applyScrapedUpdateToWork(w, meta, overwrite);
         if (changes && changes.length) { results.push({ title: w.title, planned: w._planned, changes }); setBulkUpdateResults([...results]); }
       } catch (e) { failed++; setBulkUpdateFailed(failed); }
@@ -44032,7 +44159,7 @@ function AppContent() {
     }
   }
   function startBulkMapping() {
-    const unlinked = bulkAllWorks().filter(w => !(w.link || "").trim());
+    const unlinked = bulkAllWorks().filter(w => linksOf(w).length === 0); // 🔗 v7.48.0: 멀티링크 합성 포함
     if (!unlinked.length) { Alert.alert("링크 연결", "링크가 없는 작품이 없어요. 모두 연결돼 있어요."); return; }
     setBulkMapQueue(unlinked);
     setBulkMapIdx(0);
@@ -44090,6 +44217,126 @@ function AppContent() {
     // 매핑 후 목록 새로고침
     try { await loadList(undefined, undefined, "bulkMap"); } catch {}
     try { await loadPlannedList(); } catch {}
+  }
+
+  // ═══ 🔗 v7.48.0: 빠진 플랫폼 링크 일괄 검색·매칭 (연결>링크 서브탭) ═══
+  //   연재처(platforms)엔 있으나 linksOf에 그 플랫폼 링크가 없는 (작품×플랫폼)을 순차 검토·추가. novels만.
+  function buildLinkFillQueue() {
+    const q = [];
+    for (const n of (list || [])) {
+      const have = new Set(linksOf(n).map(l => canonicalPlatform(l.platform || detectPlatformFromUrl(l.url) || "")).filter(Boolean));
+      for (const p of parsePlatforms(n.platforms)) {
+        const cp = canonicalPlatform(p);
+        // 제목검색 지원 플랫폼만(SEARCH_PLATFORMS canonical) + 아직 링크 없는 플랫폼
+        const searchable = SEARCH_PLATFORMS.some(sp => canonicalPlatform(sp) === cp);
+        if (searchable && !have.has(cp)) q.push({ workId: n.id, title: n.title, platform: cp, work: n });
+      }
+    }
+    return q;
+  }
+  async function startLinkFill() {
+    if (linkFillBusy) return;
+    const q = buildLinkFillQueue();
+    if (!q.length) { Alert.alert("빠진 플랫폼 링크", "연재처로 표시했지만 링크가 없는 플랫폼이 없어요.\n(작품 연재처를 칩으로 표시한 작품만 대상)"); return; }
+    linkFillCancelRef.current = false;
+    setLinkFillQueue(q);
+    setLinkFillIdx(0);
+    setLinkFillResults([]);
+    setLinkFillStage("review");
+    await linkFillSearch(q[0]);
+  }
+  async function linkFillSearch(entry) {
+    if (!entry) return;
+    setLinkFillCandidates([]);
+    setLinkFillBusy(true);
+    try {
+      const all = await searchNovels(entry.title);
+      const filtered = (all || []).filter(c => canonicalPlatform(c.platform || detectPlatformFromUrl(c.url) || "") === entry.platform);
+      setLinkFillCandidates(filtered);
+    } catch (e) { setLinkFillCandidates([]); }
+    finally { setLinkFillBusy(false); }
+  }
+  function advanceLinkFill() {
+    const next = linkFillIdx + 1;
+    if (linkFillCancelRef.current || next >= linkFillQueue.length) {
+      setLinkFillCandidates([]);
+      setLinkFillStage("done");
+      loadList(undefined, undefined, "linkFill").catch(() => {});
+    } else {
+      setLinkFillIdx(next);
+      linkFillSearch(linkFillQueue[next]);
+    }
+  }
+  // 후보 → 해당 작품 links에 추가(startYear 동봉). 기존 다이렉트/links 보존.
+  async function pickLinkFillCandidate(cand) {
+    if (linkFillBusy) return;
+    const entry = linkFillQueue[linkFillIdx];
+    if (!entry) return;
+    setLinkFillBusy(true);
+    try {
+      const url = (cand && cand.url) || "";
+      if (!url) { Alert.alert("링크 추가", "후보 URL이 없어요. 건너뜁니다."); return; }
+      // startYear 확보: 후보 meta 우선, 없으면 fetchNovelMeta(메타 미적용 — startYear만)
+      let startYear = Number(cand && cand.meta && cand.meta.startYear) || 0;
+      if (!startYear) { try { const m = await fetchNovelMeta(url, { timeoutMs: 20000 }); startYear = Number(m && m.startYear) || 0; } catch {} }
+      // 🔧 DB에서 최신 links 재조회 — 같은 작품이 여러 빠진 플랫폼으로 큐에 중복될 때
+      //   list 캐시는 done 시점에만 갱신되므로, 직전 추가분을 잃지 않도록 매 추가마다 DB 기준으로 병합.
+      const w = (await first("SELECT id, links, link, start_year, created_at, platforms FROM novels WHERE id=?", [entry.workId])) || entry.work;
+      const cur = linksOf(w);
+      if (cur.some(l => l.url.trim() === url.trim())) {
+        setLinkFillResults(prev => [...prev, { title: entry.title, platform: entry.platform, added: false, note: "이미 등록됨" }]);
+      } else {
+        const next = [...cur, { url: url.trim(), platform: entry.platform, startYear, addedAt: Date.now() }];
+        const linksJson = JSON.stringify(next.map(l => ({ url: l.url, platform: canonicalPlatform(l.platform || ""), startYear: Number(l.startYear) || 0, addedAt: Number(l.addedAt) || 0 })));
+        const mergedPlats = mergePlatformFromLink(parsePlatforms(w.platforms), url);
+        await exec("UPDATE novels SET links=?, platforms=? WHERE id=?", [linksJson, JSON.stringify(mergedPlats), entry.workId]);
+        setLinkFillResults(prev => [...prev, { title: entry.title, platform: entry.platform, added: true, startYear }]);
+      }
+    } catch (e) {
+      setLinkFillResults(prev => [...prev, { title: entry.title, platform: entry.platform, added: false, note: e?.message || "실패" }]);
+    } finally {
+      setLinkFillBusy(false);
+      advanceLinkFill();
+    }
+  }
+  function skipLinkFill() { if (linkFillBusy) return; advanceLinkFill(); }
+  function stopLinkFill() { if (linkFillBusy) return; linkFillCancelRef.current = true; setLinkFillCandidates([]); setLinkFillStage("done"); loadList(undefined, undefined, "linkFill").catch(() => {}); }
+
+  // ═══ 🔗 v7.48.0: 연재시작연도 일괄 갱신 — startYear 0인 링크들을 fetchNovelMeta로 보강 ═══
+  async function runFillStartYears() {
+    if (startYearFillBusy) return;
+    // startYear 0인 링크가 하나라도 있는 novels 대상(합성 단일링크 포함)
+    const targets = [];
+    for (const n of (list || [])) {
+      const links = linksOf(n);
+      if (links.some(l => !l.startYear && (l.url || "").trim())) targets.push(n);
+    }
+    if (!targets.length) { Alert.alert("연재시작연도", "시작연도가 비어 있는 링크가 없어요."); return; }
+    startYearFillCancelRef.current = false;
+    setStartYearFillBusy(true);
+    setStartYearFillProgress({ current: 0, total: targets.length, filled: 0 });
+    let filled = 0;
+    for (let i = 0; i < targets.length; i++) {
+      if (startYearFillCancelRef.current) break;
+      setStartYearFillProgress({ current: i, total: targets.length, filled });
+      const n = (list || []).find(x => x.id === targets[i].id) || targets[i];
+      const links = linksOf(n);
+      let changed = false;
+      for (const l of links) {
+        if (startYearFillCancelRef.current) break;
+        if (l.startYear || !(l.url || "").trim()) continue;
+        try { const m = await fetchNovelMeta(l.url, { timeoutMs: 20000 }); const sy = Number(m && m.startYear) || 0; if (sy) { l.startYear = sy; changed = true; filled++; } } catch {}
+      }
+      if (changed) {
+        const linksJson = JSON.stringify(links.map(l => ({ url: l.url, platform: canonicalPlatform(l.platform || ""), startYear: Number(l.startYear) || 0, addedAt: Number(l.addedAt) || 0 })));
+        try { await exec("UPDATE novels SET links=? WHERE id=?", [linksJson, n.id]); } catch {}
+      }
+    }
+    setStartYearFillProgress({ current: targets.length, total: targets.length, filled });
+    setStartYearFillBusy(false);
+    try { await loadList(undefined, undefined, "startYearFill"); } catch {}
+    Alert.alert("연재시작연도 갱신", `${filled}개 링크의 시작연도를 채웠어요.`);
+    setStartYearFillProgress(null);
   }
 
   // 추천 항목 체크 토글
@@ -46730,9 +46977,9 @@ function AppContent() {
           const n = item.payload.novel;
           await exec(
             // 🔧 v7.6.0: start_year/end_year/match_ban 복원 추가 (n은 SELECT * 캡처 → 필드 존재, 미존재 시 0 폴백)
-            `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,start_year,end_year,match_ban)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-            [n.id, n.title, n.author, n.tags, n.platforms, n.note, n.read_count, n.rating, n.rd, n.wins, n.losses, n.match_count, n.tier, n.created_at, n.awards, n.total_episodes, n.status, n.pinned, n.cover_image, n.link, n.work_status, n.read_count_updated_at, n.major_genre, n.sub_genre, n.gaiden_status, n.gaiden_read_count, n.gaiden_total_episodes, n.manual_tier, Number(n.manual_order) || 0, n.reread_count || 1, n.tag_data || "", n.aliases || "", n.memorable_quote || "", Number(n.start_year) || 0, Number(n.end_year) || 0, Number(n.match_ban) || 0]
+            `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,start_year,end_year,match_ban,links,update_link)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+            [n.id, n.title, n.author, n.tags, n.platforms, n.note, n.read_count, n.rating, n.rd, n.wins, n.losses, n.match_count, n.tier, n.created_at, n.awards, n.total_episodes, n.status, n.pinned, n.cover_image, n.link, n.work_status, n.read_count_updated_at, n.major_genre, n.sub_genre, n.gaiden_status, n.gaiden_read_count, n.gaiden_total_episodes, n.manual_tier, Number(n.manual_order) || 0, n.reread_count || 1, n.tag_data || "", n.aliases || "", n.memorable_quote || "", Number(n.start_year) || 0, Number(n.end_year) || 0, Number(n.match_ban) || 0, n.links || "", n.update_link || ""]
           );
           // 🆕 v7.21.0: 삭제 시 함께 지워진 매치 복원 → rebuildAllFromMatches로 ELO 정합 회복
           //   (매치 미복원 시 복원작은 stored rating만 갖고 다음 rebuild에서 1500으로 초기화됨)
@@ -48241,8 +48488,10 @@ function AppContent() {
     setEditEndYear(Number(n.end_year) || 0);
     setEditCoverImage(n.cover_image || "");
     setEditOriginalCoverImage(n.cover_image || ""); // 🖼️ v3.4.5: 원본 표지 저장
-    setEditLink(n.link || ""); // 🔗 링크
-    
+    setEditLink(n.link || ""); // 🔗 링크 (다이렉트)
+    setEditLinks(linksOf(n));   // 🔗 v7.48.0: 멀티링크 (links 없으면 link로 합성)
+    setEditUpdateUrl((n.update_link || "").trim()); // 자동업뎃 수동지정("" =자동선정)
+
     // 📅 v3.0.3: 날짜 필드 로드 (timestamp → YYYY-MM-DD)
     const formatDate = (ts) => {
       if (!ts) return "";
@@ -48527,11 +48776,32 @@ function AppContent() {
       
       const newCreatedAt = parseDate(editCreatedAt) || n.created_at || Date.now();
       const newReadCountUpdatedAt = parseDate(editReadCountUpdatedAt) || (readCountChanged ? Date.now() : (n.read_count_updated_at || Date.now()));
-      // 🆕 v7.28.64: 작품 링크의 플랫폼이 연재처에 없으면 자동 추가(다른 플랫폼 링크 연결 시)
-      const editPlatformsMerged = mergePlatformFromLink(editPlatforms, editLink);
+      // 🆕 v7.28.64 / 🔗 v7.48.0: 작품 링크들의 플랫폼이 연재처에 없으면 자동 추가(멀티링크 누적 병합)
+      const dirUrl = editLink.trim();
+      let editPlatformsMerged = editPlatforms;
+      for (const l of editLinks) if (l && (l.url || "").trim()) editPlatformsMerged = mergePlatformFromLink(editPlatformsMerged, l.url);
+      editPlatformsMerged = mergePlatformFromLink(editPlatformsMerged, dirUrl);
+      // 🔗 v7.48.0: links/update_link 직렬화 — 단일 링크(==다이렉트)는 link 컬럼 합성에 위임(빈 문자열).
+      //   다이렉트(editLink)가 목록에 없으면 합류시켜 정합 유지(입력칸/스크랩으로 바뀐 경우 대비).
+      let cleanLinks = (Array.isArray(editLinks) ? editLinks : []).filter(l => l && (l.url || "").trim());
+      if (dirUrl && !cleanLinks.some(l => l.url.trim() === dirUrl)) {
+        cleanLinks = [...cleanLinks, { url: dirUrl, platform: canonicalPlatform(detectPlatformFromUrl(dirUrl) || ""), startYear: Number(editStartYear) || 0, addedAt: Date.now() }];
+      }
+      let linksJson = "";
+      const isTrivial = cleanLinks.length === 0 || (cleanLinks.length === 1 && cleanLinks[0].url.trim() === dirUrl);
+      if (!isTrivial) {
+        linksJson = JSON.stringify(cleanLinks.map(l => ({
+          url: l.url.trim(),
+          platform: canonicalPlatform(l.platform || detectPlatformFromUrl(l.url) || ""),
+          startYear: Number(l.startYear) || 0,
+          addedAt: Number(l.addedAt) || 0,
+        })));
+      }
+      // update_link 수동지정 — 멀티링크 + 후보에 존재할 때만 보존, 그 외 ""(자동선정)
+      const updJson = (!isTrivial && editUpdateUrl && cleanLinks.some(l => l.url.trim() === editUpdateUrl.trim())) ? editUpdateUrl.trim() : "";
 
       await exec(
-        "UPDATE novels SET title=?, author=?, tags=?, note=?, platforms=?, read_count=?, awards=?, total_episodes=?, status=?, cover_image=?, link=?, work_status=?, read_count_updated_at=?, major_genre=?, sub_genre=?, gaiden_status=?, gaiden_read_count=?, gaiden_total_episodes=?, created_at=?, reread_count=?, tag_data=?, memorable_quote=?, aliases=?, start_year=?, end_year=?, completed_at=?, gaiden_start_at=?, gaiden_completed_at=? WHERE id=?;",
+        "UPDATE novels SET title=?, author=?, tags=?, note=?, platforms=?, read_count=?, awards=?, total_episodes=?, status=?, cover_image=?, link=?, work_status=?, read_count_updated_at=?, major_genre=?, sub_genre=?, gaiden_status=?, gaiden_read_count=?, gaiden_total_episodes=?, created_at=?, reread_count=?, tag_data=?, memorable_quote=?, aliases=?, start_year=?, end_year=?, completed_at=?, gaiden_start_at=?, gaiden_completed_at=?, links=?, update_link=? WHERE id=?;",
         [
           newTitle,
           n.author?.trim() || "",
@@ -48561,6 +48831,8 @@ function AppContent() {
           Number(editCompletedAt) || 0,       // 🆕 v7.44.8: 본편 완결일
           Number(editGaidenStartAt) || 0,     // 🆕 v7.44.8: 외전 시작일
           Number(editGaidenCompletedAt) || 0, // 🆕 v7.44.8: 외전 완결일
+          linksJson,                          // 🔗 v7.48.0: 멀티링크 JSON("" =단일링크 합성)
+          updJson,                            // 🔗 v7.48.0: 자동업뎃 수동지정("" =자동선정)
           n.id,
         ]
       );
@@ -48743,6 +49015,57 @@ function AppContent() {
       }
     }
     setIsLoading(false);
+  }
+
+  // ═══ 🔗 v7.48.0: 편집 모달 멀티링크 핸들러 ═══
+  // 다이렉트(바로가기) 링크 지정 — editLink 동기화(저장 시 link 컬럼).
+  function editLinkSetDirect(url) { setEditLink((url || "").trim()); }
+  // 자동업뎃 수동지정 토글 — 같은 링크 재선택 시 해제("" =자동선정 규칙 적용).
+  function editLinkSetUpdate(url) {
+    const u = (url || "").trim();
+    setEditUpdateUrl(prev => (prev === u ? "" : u));
+  }
+  // 링크 삭제 — 정합: 지운 게 다이렉트면 우선순위 링크로 재지정, 자동업뎃 수동지정이 사라지면 ""(자동).
+  function editLinkRemove(url) {
+    const u = (url || "").trim();
+    setEditLinks(prev => {
+      const next = (prev || []).filter(l => l && l.url.trim() !== u);
+      // 다이렉트 재지정
+      setEditLink(curDirect => {
+        if ((curDirect || "").trim() !== u) return curDirect;
+        if (!next.length) return "";
+        return chooseUpdateLink({ links: JSON.stringify(next) }) || next[0].url;
+      });
+      setEditUpdateUrl(curUpd => ((curUpd || "").trim() === u ? "" : curUpd));
+      return next;
+    });
+  }
+  // + 링크 추가 — 클립보드/검색 URL → fetchNovelMeta로 startYear만 추출해 등록(메타 미적용). 중복 url 무시.
+  async function addEditLinkFromUrl(rawUrl) {
+    const url = (rawUrl || "").trim();
+    if (!url || !/^https?:\/\//i.test(url)) { Alert.alert("링크 추가", "올바른 링크가 아니에요 (http/https)."); return; }
+    if (!detectPlatformFromUrl(url)) { Alert.alert("링크 추가", "지원하는 플랫폼 링크가 아니에요.\n(노벨피아·문피아·네이버시리즈·리디·카카오페이지)"); return; }
+    if ((editLinks || []).some(l => l.url.trim() === url)) { Alert.alert("링크 추가", "이미 등록된 링크예요."); return; }
+    setEditLinkBusy(true);
+    let startYear = 0;
+    try { const meta = await fetchNovelMeta(url, { timeoutMs: 20000 }); startYear = Number(meta && meta.startYear) || 0; }
+    catch (e) { /* 메타 실패해도 링크는 등록(startYear=0) */ }
+    setEditLinkBusy(false);
+    const entry = { url, platform: canonicalPlatform(detectPlatformFromUrl(url) || ""), startYear, addedAt: Date.now() };
+    setEditLinks(prev => {
+      const next = [...(prev || []), entry];
+      // 다이렉트가 비어 있으면 첫 링크를 다이렉트로
+      setEditLink(cur => ((cur || "").trim() ? cur : url));
+      return next;
+    });
+  }
+  // 클립보드에서 링크 추가
+  async function addEditLinkFromClipboard() {
+    let txt = "";
+    try { txt = await Clipboard.getStringAsync(); } catch { Alert.alert("클립보드", "클립보드를 읽지 못했어요."); return; }
+    const url = extractSupportedUrl(txt);
+    if (!url) { Alert.alert("클립보드", "클립보드에서 지원하는 작품 링크를 찾지 못했어요."); return; }
+    await addEditLinkFromUrl(url);
   }
 
   /* ---------- Logs modal ---------- */
@@ -51574,6 +51897,11 @@ async function buildUltraCompactBackup(novels, matches, coverImages = null) {
     if (awards && awards !== "[]") opt.a = awards;
     if (note) opt.n = note;
     if (link) opt.l = link;
+    // 🔗 v7.48.0: 멀티링크 — links/update_link는 비어있지 않을 때만(단일링크는 link로 복원 시 합성).
+    const linksStr = (n.links || "").trim();
+    if (linksStr && linksStr !== "[]") opt.ll = linksStr;
+    const updateLinkStr = (n.update_link || "").trim();
+    if (updateLinkStr) opt.ul = updateLinkStr;
     // 🛡️ FIX: 이전 `if (… > 0)` 게이트는 BASE_TIMESTAMP(2024-01-01) 이전 created_at의
     //   음수 오프셋을 누락시켜, 임포트 시 Date.now()로 리셋되는 날짜 손실을 유발했다.
     //   예정작(ca)처럼 무조건 저장하고, 임포트는 `!= null`로 복원한다.
@@ -52424,6 +52752,8 @@ async function importJSON() {
                 const awards = opt.a || "";
                 const note = opt.n || "";
                 const link = opt.l || "";
+                const links = opt.ll || "";        // 🔗 v7.48.0: 멀티링크(없으면 link로 합성)
+                const updateLink = opt.ul || "";   // 🔗 v7.48.0: 자동업뎃 수동지정
                 const coverImage = opt.i || "";
                 // 🛡️ FIX: opt.c가 0(정확히 BASE_TIMESTAMP)·음수(2024 이전)일 때 truthy 검사로
                 //   누락되던 문제 → `!= null`로 복원 (음수 오프셋도 정상 복원)
@@ -52503,9 +52833,9 @@ async function importJSON() {
                   // 🔧 v7.6.0: start_year/end_year/match_ban (v11 이하 백업은 기본값 0)
                   // 🔧 v7.10.0: user_flagged_suspect 컬럼 추가 (41→42)
                   // 🆕 v7.21.3: suspicion_score 컬럼 추가 (42→43)
-                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,read_count_baseline,start_year,end_year,match_ban,verification_wins,verification_losses,verification_count,conflict_hits,user_flagged_suspect,suspicion_score)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, manualOrder, rereadCount, tagData, aliases, memorableQuote, readCount, startYearVal, endYearVal, matchBanVal, verWins, verLosses, verCount, conflictHits, userFlaggedVal, suspicionScoreVal],
+                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,read_count_baseline,start_year,end_year,match_ban,verification_wins,verification_losses,verification_count,conflict_hits,user_flagged_suspect,suspicion_score,links,update_link)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, manualOrder, rereadCount, tagData, aliases, memorableQuote, readCount, startYearVal, endYearVal, matchBanVal, verWins, verLosses, verCount, conflictHits, userFlaggedVal, suspicionScoreVal, links, updateLink],
                 });
               }
 
@@ -63785,6 +64115,16 @@ async function importJSON() {
             {/* ═══════════════════════════════════════════════════════════════ */}
             {settingsSubTab === "connect" && (
               <Section title="🔌 연결 (AI API · 플랫폼 로그인 · 진단)">
+              {/* 🔗 v7.48.0: 연결 탭 내부 분기 (연결 ↔ 링크 관리) */}
+              <View style={{ flexDirection: "row", gap: 8, marginBottom: 14 }}>
+                {[{ key: "main", label: "🔌 연결" }, { key: "links", label: "🔗 링크 관리" }].map(t => (
+                  <TouchableOpacity key={t.key} onPress={() => setConnectSubTab(t.key)}
+                    style={{ flex: 1, paddingVertical: 9, borderRadius: 10, alignItems: "center", backgroundColor: connectSubTab === t.key ? C.primary : C.chip }}>
+                    <Text style={{ color: connectSubTab === t.key ? "#fff" : C.sub, fontWeight: "700", fontSize: 13 }}>{t.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              {connectSubTab === "main" && (<>
               {/* 🆕 v7.28.16: 미태깅 작품 일괄 AI 태그 */}
               <TouchableOpacity
                 onPress={openBatchTagModal}
@@ -64358,9 +64698,103 @@ async function importJSON() {
                   </View>
                 </View>
               </Modal>
+              </>)}
+
+              {/* 🔗 v7.48.0: 링크 관리 서브탭 — 빠진 플랫폼 일괄 매칭 · 우선순위 규칙 · 시작연도 갱신 */}
+              {connectSubTab === "links" && (<>
+                <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+                  <Text style={{ color: C.text, fontWeight: "700", fontSize: 14, marginBottom: 6 }}>🔍 빠진 플랫폼 링크 일괄 매칭</Text>
+                  <Text style={{ color: C.sub, fontSize: 12, lineHeight: 18, marginBottom: 10 }}>
+                    연재처로 표시(칩)했지만 아직 링크가 없는 플랫폼을 작품마다 찾아 등록해요. 제목 검색 후 후보를 직접 확인하고 추가합니다. (네이버시리즈·문피아·노벨피아·리디·카카오페이지)
+                  </Text>
+                  {linkFillStage === "idle" && (
+                    <TouchableOpacity onPress={startLinkFill} style={{ backgroundColor: C.primary, paddingVertical: 11, borderRadius: 10, alignItems: "center" }}>
+                      <Text style={{ color: "#fff", fontWeight: "700", fontSize: 14 }}>빠진 플랫폼 링크 찾기</Text>
+                    </TouchableOpacity>
+                  )}
+                  {linkFillStage === "review" && (() => {
+                    const entry = linkFillQueue[linkFillIdx];
+                    return (
+                      <View>
+                        <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>{linkFillIdx + 1} / {linkFillQueue.length}</Text>
+                        <Text style={{ color: C.text, fontWeight: "700", fontSize: 14 }} numberOfLines={2}>{entry?.title}</Text>
+                        <Text style={{ color: C.primary, fontSize: 12, marginTop: 2, marginBottom: 8 }}>찾는 플랫폼: {entry?.platform}</Text>
+                        {linkFillBusy && <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>검색 중…</Text>}
+                        {!linkFillBusy && linkFillCandidates.length === 0 && (
+                          <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>후보를 찾지 못했어요. 건너뛰세요.</Text>
+                        )}
+                        {linkFillCandidates.slice(0, 6).map((c, ci) => (
+                          <TouchableOpacity key={c.url || ci} disabled={linkFillBusy} onPress={() => pickLinkFillCandidate(c)}
+                            style={{ flexDirection: "row", alignItems: "center", paddingVertical: 8, borderTopWidth: ci === 0 ? 0 : 1, borderTopColor: C.line, opacity: linkFillBusy ? 0.5 : 1 }}>
+                            {c.coverUrl ? <ExpoImage source={{ uri: c.coverUrl }} style={{ width: 34, height: 46, borderRadius: 4, marginRight: 8 }} contentFit="cover" cachePolicy="memory-disk" /> : null}
+                            <View style={{ flex: 1 }}>
+                              <Text style={{ color: C.text, fontSize: 13, fontWeight: "600" }} numberOfLines={1}>{c.title}</Text>
+                              <Text style={{ color: C.sub, fontSize: 11 }} numberOfLines={1}>{c.author || ""}{c.author ? " · " : ""}{c.platform || ""}</Text>
+                            </View>
+                          </TouchableOpacity>
+                        ))}
+                        <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                          <TouchableOpacity onPress={skipLinkFill} disabled={linkFillBusy} style={{ flex: 1, paddingVertical: 9, borderRadius: 9, alignItems: "center", backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, opacity: linkFillBusy ? 0.5 : 1 }}>
+                            <Text style={{ color: C.sub, fontWeight: "700", fontSize: 13 }}>건너뛰기</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity onPress={stopLinkFill} disabled={linkFillBusy} style={{ flex: 1, paddingVertical: 9, borderRadius: 9, alignItems: "center", backgroundColor: C.bg, borderWidth: 1, borderColor: C.warn, opacity: linkFillBusy ? 0.5 : 1 }}>
+                            <Text style={{ color: C.warn, fontWeight: "700", fontSize: 13 }}>중단</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    );
+                  })()}
+                  {linkFillStage === "done" && (
+                    <View>
+                      <Text style={{ color: C.text, fontWeight: "700", fontSize: 13, marginBottom: 6 }}>
+                        ✅ 완료 — {linkFillResults.filter(r => r.added).length}개 링크 추가
+                      </Text>
+                      {linkFillResults.filter(r => r.added).slice(0, 30).map((r, ri) => (
+                        <Text key={ri} style={{ color: C.sub, fontSize: 12, marginBottom: 2 }} numberOfLines={1}>• {r.title} → {r.platform}{r.startYear ? ` (${r.startYear}~)` : ""}</Text>
+                      ))}
+                      <TouchableOpacity onPress={() => { setLinkFillStage("idle"); setLinkFillResults([]); }} style={{ backgroundColor: C.chip, borderWidth: 1, borderColor: C.line, paddingVertical: 10, borderRadius: 10, alignItems: "center", marginTop: 8 }}>
+                        <Text style={{ color: C.text, fontWeight: "700", fontSize: 13 }}>닫기</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+
+                {/* 우선순위 규칙 안내 */}
+                <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+                  <Text style={{ color: C.text, fontWeight: "700", fontSize: 14, marginBottom: 6 }}>📌 자동업뎃 링크 선정 규칙</Text>
+                  <Text style={{ color: C.sub, fontSize: 12, lineHeight: 19 }}>
+                    여러 링크가 있을 때 자동 업데이트(회차·완결 재취득)에 쓰는 링크는 다음 순서로 정해져요:{"\n"}
+                    ① 작품 편집에서 직접 지정한 자동업뎃 링크{"\n"}
+                    ② 연재시작연도가 있는 링크 (없는 링크보다 우선){"\n"}
+                    ③ 연재시작연도가 더 빠른(원본일 가능성 높은) 링크{"\n"}
+                    ④ 먼저 등록한 링크{"\n\n"}
+                    바로가기(다이렉트) 링크는 따로 지정할 수 있어요. (읽기는 카카오, 업뎃은 네이버 원본 등)
+                  </Text>
+                </View>
+
+                {/* 연재시작연도 일괄 갱신 */}
+                <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+                  <Text style={{ color: C.text, fontWeight: "700", fontSize: 14, marginBottom: 6 }}>📅 연재시작연도 일괄 갱신</Text>
+                  <Text style={{ color: C.sub, fontSize: 12, lineHeight: 18, marginBottom: 10 }}>
+                    시작연도가 비어 있는 링크들을 각 플랫폼에서 가져와 채워요. 자동업뎃 링크 선정(②③)의 정확도가 올라가요. (카카오페이지는 차단으로 실패할 수 있어요)
+                  </Text>
+                  {startYearFillProgress ? (
+                    <View>
+                      <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>{startYearFillProgress.current} / {startYearFillProgress.total} · {startYearFillProgress.filled}개 채움</Text>
+                      <TouchableOpacity onPress={() => { startYearFillCancelRef.current = true; }} style={{ backgroundColor: C.bg, borderWidth: 1, borderColor: C.warn, paddingVertical: 9, borderRadius: 9, alignItems: "center" }}>
+                        <Text style={{ color: C.warn, fontWeight: "700", fontSize: 13 }}>중단</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <TouchableOpacity onPress={runFillStartYears} disabled={startYearFillBusy} style={{ backgroundColor: C.primary, paddingVertical: 11, borderRadius: 10, alignItems: "center", opacity: startYearFillBusy ? 0.5 : 1 }}>
+                      <Text style={{ color: "#fff", fontWeight: "700", fontSize: 14 }}>시작연도 채우기</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </>)}
               </Section>
             )}
-            
+
             {/* ═══════════════════════════════════════════════════════════════ */}
             {/* 🗂️ 데이터 서브탭 (폴더·예정필드·분석데이터·플랫폼·슬롯) */}
             {/* ═══════════════════════════════════════════════════════════════ */}
@@ -67361,6 +67795,63 @@ async function importJSON() {
     <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>📋</Text>
   </TouchableOpacity>
 </View>
+
+{/* 🔗 v7.48.0: 멀티링크 관리 — 다이렉트(바로가기)·자동업뎃 링크 분리 지정 */}
+{(() => {
+  // 저장과 동일 규칙으로 현재 편집 상태의 링크 목록·자동선정 결과 미리보기 산출
+  const dir = (editLink || "").trim();
+  let list = (Array.isArray(editLinks) ? editLinks : []).filter(l => l && (l.url || "").trim());
+  if (dir && !list.some(l => l.url.trim() === dir)) list = [...list, { url: dir, platform: canonicalPlatform(detectPlatformFromUrl(dir) || ""), startYear: Number(editStartYear) || 0, addedAt: 0 }];
+  if (!list.length) return null;
+  const autoUrl = chooseUpdateLink({ links: JSON.stringify(list), link: dir, update_link: editUpdateUrl });
+  const manualSet = !!(editUpdateUrl || "").trim();
+  return (
+    <View style={{ marginTop: 8, padding: 10, borderRadius: 10, backgroundColor: C.chip, borderWidth: 1, borderColor: C.line }}>
+      <Text style={{ color: C.text, fontWeight: "700", fontSize: 13, marginBottom: 2 }}>🔗 멀티링크 ({list.length})</Text>
+      <Text style={{ color: C.sub, fontSize: 11, marginBottom: 8 }}>
+        🔗다이렉트=바로가기 / 🔄자동업뎃=재취득 대상. 자동업뎃 미지정 시 연재시작연도 빠른 쪽 → 먼저 등록 순으로 자동 선정.
+      </Text>
+      {list.map((l, i) => {
+        const isDirect = l.url.trim() === dir;
+        const isUpd = manualSet ? (l.url.trim() === (editUpdateUrl || "").trim()) : (l.url.trim() === (autoUrl || "").trim());
+        return (
+          <View key={l.url || i} style={{ marginBottom: 8, paddingBottom: 8, borderBottomWidth: i < list.length - 1 ? 1 : 0, borderBottomColor: C.line }}>
+            <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
+              <View style={{ backgroundColor: C.primary, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2, marginRight: 6 }}>
+                <Text style={{ color: "#fff", fontSize: 11, fontWeight: "700" }}>{l.platform || "기타"}</Text>
+              </View>
+              {l.startYear > 0 && <Text style={{ color: C.sub, fontSize: 11, marginRight: 6 }}>{l.startYear}~</Text>}
+              <Text numberOfLines={1} style={{ color: C.sub, fontSize: 11, flex: 1 }}>{l.url}</Text>
+              <TouchableOpacity onPress={() => editLinkRemove(l.url)} style={{ paddingHorizontal: 6, paddingVertical: 2 }}>
+                <Text style={{ color: C.warn, fontSize: 14, fontWeight: "700" }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={{ flexDirection: "row", gap: 6 }}>
+              <TouchableOpacity onPress={() => editLinkSetDirect(l.url)} style={{ flex: 1, paddingVertical: 6, borderRadius: 7, alignItems: "center", backgroundColor: isDirect ? C.primary : "transparent", borderWidth: 1, borderColor: isDirect ? C.primary : C.line }}>
+                <Text style={{ color: isDirect ? "#fff" : C.sub, fontSize: 12, fontWeight: isDirect ? "700" : "400" }}>🔗 다이렉트{isDirect ? " ✓" : ""}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => editLinkSetUpdate(l.url)} style={{ flex: 1, paddingVertical: 6, borderRadius: 7, alignItems: "center", backgroundColor: (isUpd && manualSet) ? "#0e7490" : "transparent", borderWidth: 1, borderColor: isUpd ? "#0e7490" : C.line }}>
+                <Text style={{ color: (isUpd && manualSet) ? "#fff" : (isUpd ? "#0e7490" : C.sub), fontSize: 12, fontWeight: isUpd ? "700" : "400" }}>
+                  🔄 자동업뎃{isUpd ? (manualSet ? " ✓" : " (자동)") : ""}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        );
+      })}
+      <View style={{ flexDirection: "row", gap: 6, marginTop: 2 }}>
+        <TouchableOpacity onPress={addEditLinkFromClipboard} disabled={editLinkBusy} style={{ flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: "center", backgroundColor: isDark ? "#374151" : "#e5e7eb", opacity: editLinkBusy ? 0.5 : 1 }}>
+          <Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>{editLinkBusy ? "추가 중…" : "📋 클립보드 링크 추가"}</Text>
+        </TouchableOpacity>
+        {dir && (
+          <TouchableOpacity onPress={() => addEditLinkFromUrl(dir)} disabled={editLinkBusy} style={{ flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: "center", backgroundColor: isDark ? "#374151" : "#e5e7eb", opacity: editLinkBusy ? 0.5 : 1 }}>
+            <Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>＋ 위 링크 등록</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
+  );
+})()}
 
 {/* 📚 v3.0.4: 다회독 카운트 */}
 <Label style={{ marginTop: 10 }}>다회독 횟수</Label>
