@@ -2,11 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.46.3 (카카오 검색 세부 검수 반영 — lite·202처리·제목·웹툰정렬)       ║
+ * ║  버전: 7.47.0 (카카오 키리스 검색 다엔진 폴백 — DDG+Brave, 차단 적중률↑)       ║
  * ║  최종 수정: 2026-06-28                                                        ║
- * ║  총 라인 수: 약 71,470줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 71,480줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🟢 v7.47.0 카카오 키리스 검색 다엔진 폴백 (2026-06-28)                        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 폰 실사용 보고: 키리스 DDG가 작품 대부분 안 뜸. 진단(실측): 데이터·파서는 정상, ║
+ * ║ DDG가 폰 IP를 레이트리밋/차단해 몇 건 후 빈손. 근본은 단일 SERP 의존. 해법:    ║
+ * ║ 독립 색인·독립 차단정책인 엔진을 폴백 체인으로. searchKakaoKeyless가 DDG(lite) ║
+ * ║ →Brave 순차 시도, 한쪽 차단(비200)이어도 다른 쪽이 응답. 파서를 엔진 무관      ║
+ * ║ parseKakaoSerpHtml로 일반화(DDG uddg 리다이렉트·Brave 직접링크 모두 처리).      ║
+ * ║ 모든 엔진 차단 시에만 '막혔어요+키 안내' throw(한 곳이라도 200이면 진짜 무결과).║
+ * ║ 실측: Brave가 도굴왕 등 카카오 결과 봇차단 없이 반환(Mojeek=403 제외).         ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔧 v7.46.3 카카오 검색 세부 검수 반영 (2026-06-28)                            ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -15618,13 +15629,11 @@ function parseKakaoWebSearch(data) {
   for (const d of docs) collectKakaoCandidate(byId, (d && d.url), String((d && d.title) || ""));
   return kakaoCandidatesFromMap(byId);
 }
-// (기본·키리스) DuckDuckGo HTML 검색 결과 → 후보. result__a 앵커의 href(uddg 리다이렉트 디코드)+제목 파싱.
-function parseKakaoDdgHtml(html) {
+// (키리스) 검색엔진 SERP HTML → 후보. 엔진(class/마크업) 무관: 모든 <a href>를 훑어 page.kakao.com만 수집.
+//   결과가 //duckduckgo.com/l/?uddg=… 리다이렉트면 디코드, 직접 링크(Brave 등)면 그대로 처리.
+function parseKakaoSerpHtml(html) {
   const s = String(html || "");
   const byId = new Map();
-  // 🔧 v7.46.2: DDG의 결과 앵커 class명(result__a 등)에 의존하지 않고 모든 <a href>를 훑어
-  //   page.kakao.com 링크만 수집(collectKakaoCandidate가 호스트 필터). DDG가 마크업/클래스를 바꿔도 견고.
-  //   결과는 보통 //duckduckgo.com/l/?uddg=<인코딩된 실제 URL>&rut=... 리다이렉트 → uddg 디코드.
   const re = /<a\b[^>]*\shref="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
   let m;
   while ((m = re.exec(s))) {
@@ -15640,25 +15649,37 @@ async function searchKakao(query, opts = {}) {
   const q = (query || "").trim();
   if (!q) return [];
   const key = (globalKakaoRestKey || "").trim();
-  return key ? searchKakaoDaum(q, key, opts) : searchKakaoDdg(q, opts); // 키 있으면 공식 API, 없으면 키리스 DDG
+  return key ? searchKakaoDaum(q, key, opts) : searchKakaoKeyless(q, opts); // 키 있으면 공식 API, 없으면 키리스 다엔진
 }
-// 기본 경로(키 불필요): DuckDuckGo HTML 엔드포인트(JS 불필요·SSR)에서 site:page.kakao.com 검색
-async function searchKakaoDdg(q, opts = {}) {
-  // 🔧 v7.46.3: lite 엔드포인트 사용 — html 엔드포인트보다 봇 차단이 관대(데이터센터 IP에서도 200 확인).
-  //   결과 링크 형식(//duckduckgo.com/l/?uddg=…)은 동일해 class 비의존 파서가 그대로 처리.
-  const url = "https://lite.duckduckgo.com/lite/?q=" + encodeURIComponent("site:page.kakao.com " + q);
-  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
-  let html = "";
+// 🆕 v7.47.0: 키리스 기본 — 독립 검색엔진 SERP를 순차 시도. 한 엔진이 봇차단(레이트리밋)돼도 다른 엔진이
+//   응답할 확률↑. DDG(lite)·Brave는 색인·차단 정책이 서로 독립이라 폴백으로 적중률이 크게 오른다(둘 다 카카오 색인 양호).
+async function searchKakaoKeyless(q, opts = {}) {
+  const engines = [
+    "https://lite.duckduckgo.com/lite/?q=" + encodeURIComponent("site:page.kakao.com " + q),
+    "https://search.brave.com/search?q=" + encodeURIComponent("site:page.kakao.com " + q),
+  ];
+  let anyOk = false, lastErr = null;
+  for (const url of engines) {
+    try {
+      const out = await fetchKakaoSerp(url, opts);
+      anyOk = true;                 // 200 응답(차단 아님)
+      if (out.length) return out;   // 결과 있으면 즉시 사용
+    } catch (e) { lastErr = e; }    // 차단/타임아웃 → 다음 엔진
+  }
+  if (!anyOk && lastErr) throw new Error("카카오 검색이 일시적으로 막혔어요. 잠시 후 다시 시도하거나, 설정 › 🔌 연결에서 ‘카카오 검색 키’를 넣으면 안정적으로 검색돼요.");
+  return []; // 한 곳이라도 200을 줬는데 결과 0 → 진짜 결과 없음(차단 아님)
+}
+// 단일 SERP fetch+파싱. 비200(202 봇챌린지 등)은 차단으로 보고 throw → 상위에서 다음 엔진/안내로 폴백.
+async function fetchKakaoSerp(url, opts = {}) {
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 12000 });
   try {
     const res = await fetch(url, { headers: SCRAPER_HEADERS, redirect: "follow", signal });
-    // 🔧 v7.46.3: 202(봇 챌린지)·기타 비200을 성공으로 오인하면 '결과 없음'으로 조용히 묻힘 → 명시 throw로 가시화.
-    if (res.status !== 200) throw new Error("카카오 검색이 일시적으로 막혔어요 (" + res.status + "). 잠시 후 다시 시도하거나, 설정 › 🔌 연결에서 ‘카카오 검색 키’를 넣어 주세요.");
-    html = await res.text();
+    if (res.status !== 200) throw new Error("blocked:" + res.status);
+    return parseKakaoSerpHtml(await res.text());
   } catch (e) {
-    if (e?.name === "AbortError") throw new Error("검색 응답이 없어 중단했어요 (시간 초과)");
+    if (e?.name === "AbortError") throw new Error("timeout");
     throw e;
   } finally { cleanup(); }
-  return parseKakaoDdgHtml(html);
 }
 // 옵션 경로: 다음(Daum) REST 키가 있으면 공식 웹문서 검색 API 사용(더 안정·출처 명확)
 async function searchKakaoDaum(q, key, opts = {}) {
@@ -17715,7 +17736,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.46.1";
+const APP_VERSION = "7.47.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
