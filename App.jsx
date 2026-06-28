@@ -2,11 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.47.0 (카카오 키리스 검색 다엔진 폴백 — DDG+Brave, 차단 적중률↑)       ║
+ * ║  버전: 7.47.1 (외전 회차 수 과대계상 수정 — 중복·막간외전 제외)               ║
  * ║  최종 수정: 2026-06-28                                                        ║
- * ║  총 라인 수: 약 71,480줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 71,490줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🐛 v7.47.1 외전 회차 수 과대계상 수정 (2026-06-28)                            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 사용자 보고: 외전 크기 오검출(패스파인더 외전 5편이 24편으로). 원인 2종:        ║
+ * ║ ① 카카오 분리 루프 after 커서가 오프셋이 아니어서(카카오가 무시) 후반이 전부    ║
+ * ║ 외전인 작품은 boundary 미도달 → 동일 페이지 반복 누적 → 외전 수 부풀림.         ║
+ * ║ → collected를 productId로 중복 제거. ② 공통 분리기가 본편 중간 막간 외전/번외   ║
+ * ║ (interlude)까지 전부 카운트 → 외전 = '본편 마지막 회차 이후 외전 블록'만 세도록 ║
+ * ║ 변경(ts 정렬 후 마지막 본편 인덱스 기준) + 같은 제목+날짜 중복 제거. 본편       ║
+ * ║ 완결일도 막간 외전에 오염되지 않게 정정. 5경로 회차분리 공통 적용.             ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🟢 v7.47.0 카카오 키리스 검색 다엔진 폴백 (2026-06-28)                        ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -15068,14 +15079,22 @@ function isGaidenTitle(s) { return GAIDEN_TITLE_RE.test(String(s == null ? "" : 
 //   본편 완결일=본편 회차 최신 / 외전 시작·완결일=외전 회차 min·max / 외전 회차수. 각 플랫폼 페처는 [{title,ts}]만 만들면 됨.
 //   { hasGaiden, gaidenCount, mainCompletedAt, gaidenStartAt, gaidenCompletedAt } 반환. 빈 입력 null.
 function splitEpisodesByGaiden(episodes) {
-  const arr = Array.isArray(episodes) ? episodes : null;
+  let arr = Array.isArray(episodes) ? episodes.filter(e => e && (e.title || e.ts)) : null;
   if (!arr || !arr.length) return null;
+  // 🔧 v7.47.1: 중복 회차 제거(같은 제목+날짜) — 미리보기/선공개 중복 등으로 외전 수가 부풀려지는 것 방지.
+  { const seen = new Set(); arr = arr.filter(e => { const k = String(e.title || "").replace(/\s+/g, "").toLowerCase() + "|" + (Number(e.ts) || 0); if (seen.has(k)) return false; seen.add(k); return true; }); }
+  // 🔧 v7.47.1: 외전 = '본편 마지막 회차 이후'의 외전 블록만 카운트. 본편 중간에 끼인 막간 외전/번외
+  //   (interlude)은 본편의 일부로 보고 제외 → 외전 회차 수 과대계상 방지. ts로 시간순 정렬(없으면 입력순).
+  const hasTs = arr.some(e => Number(e.ts) > 0);
+  const ordered = hasTs ? [...arr].sort((a, b) => (Number(a.ts) || 0) - (Number(b.ts) || 0)) : arr;
+  let lastMainIdx = -1;
+  for (let i = 0; i < ordered.length; i++) { if (!isGaidenTitle(ordered[i].title)) lastMainIdx = i; }
   let gaidenCount = 0, gMin = 0, gMax = 0, mMax = 0;
-  for (const e of arr) {
-    const ts = Number(e && e.ts) || 0;
-    if (e && isGaidenTitle(e.title)) {
-      gaidenCount++;
-      if (ts) { if (!gMin || ts < gMin) gMin = ts; if (ts > gMax) gMax = ts; }
+  for (let i = 0; i < ordered.length; i++) {
+    const e = ordered[i]; const ts = Number(e.ts) || 0;
+    if (isGaidenTitle(e.title)) {
+      if (i > lastMainIdx) { gaidenCount++; if (ts) { if (!gMin || ts < gMin) gMin = ts; if (ts > gMax) gMax = ts; } } // 본편 종료 후 외전만
+      // i <= lastMainIdx 인 외전(막간/번외)은 무시(본편 흐름의 일부)
     } else if (ts && ts > mMax) {
       mMax = ts; // 본편 중 최신 회차 날짜 = 본편 완결일
     }
@@ -15248,6 +15267,9 @@ async function fetchKakaoEpisodeSplit(url, opts = {}) {
     if (collected.some(e => !isGaidenTitle(e.title)) || !pl.hasNext) break; // 본편 등장=경계 도달
   }
   if (!collected.length) return null;
+  // 🔧 v7.47.1: productId 기준 중복 제거 — after 커서가 오프셋이 아닐 때(카카오가 무시) 같은 페이지가
+  //   반복 반환돼 외전 수가 부풀려지는 것 방지(후반이 전부 외전이면 boundary 미도달 → 동일 페이지 누적).
+  { const seenPid = new Set(); collected = collected.filter(e => { const p = String((e && e.productId) || ""); if (!p) return true; if (seenPid.has(p)) return false; seenPid.add(p); return true; }); }
   // desc: [외전…외전, 본편(경계)…]. 외전 완결=첫 외전, 외전 시작=마지막 외전, 본편 완결=경계 첫 본편.
   const gaiden = collected.filter(e => isGaidenTitle(e.title));
   const mainNewest = collected.find(e => !isGaidenTitle(e.title));
@@ -17736,7 +17758,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.47.0";
+const APP_VERSION = "7.47.1";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -17762,6 +17784,13 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.47.1", date: "2026-06-28",
+    title: "🐛 외전 회차 수 정확도 개선",
+    highlights: [
+      { type: "fix", text: "🐛 작품을 불러올 때 외전 회차 수가 실제보다 부풀려 잡히던 문제를 고쳤어요. 본편 중간에 끼인 ‘번외/막간’ 회차는 외전에서 빼고, 본편이 끝난 뒤의 외전만 세요. 카카오는 회차 목록이 중복으로 쌓여 부풀던 것도 막았어요." },
+    ],
+  },
   {
     version: "7.46.0", date: "2026-06-28",
     title: "🟡 카카오페이지도 제목 검색돼요 (키 없이)",
