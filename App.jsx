@@ -2,11 +2,29 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.49.1 (코드 전반 버그 점검 — 확정 31건 수정)                           ║
+ * ║  버전: 7.49.2 (노벨피아 외전 과소계상 수정 + 회차수 보정 양방향화)             ║
  * ║  최종 수정: 2026-06-28                                                        ║
- * ║  총 라인 수: 약 72,260줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 72,310줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.49.2 노벨피아 외전 과소계상 수정 + 회차수 보정 양방향 (2026-06-28)       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 사용자 보고: '회귀자와 맹인 성녀' 외전 17편이 앱에선 3편. 실측 진단(novel_no    ║
+ * ║ 49917, 278화)으로 원인 2종 확정:                                               ║
+ * ║ ① splitEpisodesByGaiden의 'lastMainIdx 이후 외전만' 규칙이, 외전 블록 뒤에 붙는 ║
+ * ║   비외전 1개('작가 후기 및 신작 공지')를 lastMainIdx로 삼아 그 앞 외전 대부분을  ║
+ * ║   본편으로 오인·누락(17→3). → '트레일링 외전 블록' 방식으로 교체: 뒤따르는 비    ║
+ * ║   외전이 허용오차(TOL=2) 이하인 첫 외전부터 끝까지를 외전으로(공지/후기 흡수),   ║
+ * ║   본편 중간 막간 외전은 그대로 제외. 본편 완결일도 외전 뒤 공지에 오염 안 됨.    ║
+ * ║   (Naver·Munpia 공용 — 회귀 없음. 실측 17편/synthetic 6케이스 node 검증)        ║
+ * ║ ② fetchNovelpiaEpisodeSplit 페이지네이션: page0이 '전부' 외전일 때만 1쪽 더 받아 ║
+ * ║   외전 뒤 공지 1개에도 멈춰 외전을 놓침 → 외전 본 뒤 본편 페이지(외전 0) 도달까지 ║
+ * ║   누적(최대 12쪽, 완결작만).                                                    ║
+ * ║ ③ v7.49.0 '회차수 보정'을 하향 전용 → 과대·과소 양방향으로 확장(외전이 적게 잡힌 ║
+ * ║   것도 정정). 외전→0(스크랩 미발견)은 윈도 누락 위험이라 제외. UI 문구 정리.     ║
+ * ║ 전 항목 @babel/parser 통과.                                                    ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🐛 v7.49.1 코드 전반 버그 점검 — 확정 31건 수정 (2026-06-28)                  ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -15142,20 +15160,27 @@ function splitEpisodesByGaiden(episodes) {
   if (!arr || !arr.length) return null;
   // 🔧 v7.47.1: 중복 회차 제거(같은 제목+날짜) — 미리보기/선공개 중복 등으로 외전 수가 부풀려지는 것 방지.
   { const seen = new Set(); arr = arr.filter(e => { const k = String(e.title || "").replace(/\s+/g, "").toLowerCase() + "|" + (Number(e.ts) || 0); if (seen.has(k)) return false; seen.add(k); return true; }); }
-  // 🔧 v7.47.1: 외전 = '본편 마지막 회차 이후'의 외전 블록만 카운트. 본편 중간에 끼인 막간 외전/번외
-  //   (interlude)은 본편의 일부로 보고 제외 → 외전 회차 수 과대계상 방지. ts로 시간순 정렬(없으면 입력순).
+  // 🔧 v7.49.2: 외전 = '본편 종료 후 트레일링 외전 블록'. 본편 중간 막간 외전(뒤에 본편 다수)은 제외(과대계상 방지),
+  //   외전 블록 뒤에 붙는 비외전 공지/후기(예: '작가 후기 및 신작 공지')는 허용오차(TOL)로 흡수해 외전이 잘리지 않게(과소계상 방지).
+  //   기존 'lastMainIdx 이후만' 방식은 외전 뒤 비외전 1개만 있어도 그게 lastMainIdx가 돼 대부분 외전을 본편으로 오인·누락했음
+  //   (실측: '회귀자와 맹인 성녀' 외전 17편이 3편으로 과소계상). ts로 시간순 정렬(없으면 입력순).
   const hasTs = arr.some(e => Number(e.ts) > 0);
   const ordered = hasTs ? [...arr].sort((a, b) => (Number(a.ts) || 0) - (Number(b.ts) || 0)) : arr;
-  let lastMainIdx = -1;
-  for (let i = 0; i < ordered.length; i++) { if (!isGaidenTitle(ordered[i].title)) lastMainIdx = i; }
+  const n = ordered.length;
+  const isG = ordered.map(e => isGaidenTitle(e.title));
+  const GAIDEN_TRAILING_TOL = 2; // 외전 블록 뒤 비외전(공지/후기) 허용 개수
+  const mainAfter = new Array(n + 1).fill(0); // mainAfter[i] = ordered[i..n) 중 비외전 개수
+  for (let i = n - 1; i >= 0; i--) mainAfter[i] = mainAfter[i + 1] + (isG[i] ? 0 : 1);
+  // 트레일링 외전 블록 시작 b = '뒤따르는 비외전이 TOL 이하'인 첫 외전 회차(없으면 -1=외전 없음).
+  let b = -1;
+  for (let i = 0; i < n; i++) { if (isG[i] && mainAfter[i] <= GAIDEN_TRAILING_TOL) { b = i; break; } }
   let gaidenCount = 0, gMin = 0, gMax = 0, mMax = 0;
-  for (let i = 0; i < ordered.length; i++) {
-    const e = ordered[i]; const ts = Number(e.ts) || 0;
-    if (isGaidenTitle(e.title)) {
-      if (i > lastMainIdx) { gaidenCount++; if (ts) { if (!gMin || ts < gMin) gMin = ts; if (ts > gMax) gMax = ts; } } // 본편 종료 후 외전만
-      // i <= lastMainIdx 인 외전(막간/번외)은 무시(본편 흐름의 일부)
-    } else if (ts && ts > mMax) {
-      mMax = ts; // 본편 중 최신 회차 날짜 = 본편 완결일
+  for (let i = 0; i < n; i++) {
+    const ts = Number(ordered[i].ts) || 0;
+    if (b >= 0 && i >= b && isG[i]) {
+      gaidenCount++; if (ts) { if (!gMin || ts < gMin) gMin = ts; if (ts > gMax) gMax = ts; } // 트레일링 외전 블록
+    } else if (!isG[i] && (b < 0 || i < b)) {
+      if (ts && ts > mMax) mMax = ts; // 본편(외전 블록 앞) 최신 회차 = 본편 완결일. 외전 뒤 트레일링 공지/후기는 제외.
     }
   }
   return { hasGaiden: gaidenCount > 0, gaidenCount, mainCompletedAt: mMax, gaidenStartAt: gMin, gaidenCompletedAt: gMax };
@@ -15215,10 +15240,20 @@ async function fetchNovelpiaEpisodeSplit(url, opts = {}) {
       return parseNovelpiaEpisodeList(await res.text());
     } catch { return []; } finally { cleanup(); }
   };
-  let eps = await post(0);
+  // 🔧 v7.49.2: 외전 블록 전체를 받도록 페이지네이션 — 외전을 본 뒤 본편 페이지(외전 0개)에 도달하면 중단(경계 확보).
+  //   기존엔 page0이 '전부' 외전일 때만 1페이지 더 받아, 외전 뒤 비외전 1개(예: '작가 후기')만 있어도 page0에서 멈춰
+  //   대부분의 외전을 놓쳤음(실측: 회귀자와 맹인 성녀). 완결작 스크랩 시에만 호출되므로 추가 요청 비용 허용.
+  let eps = [], sawGaiden = false;
+  for (let pg = 0; pg < 12; pg++) {
+    const chunk = await post(pg);
+    if (!chunk.length) break;
+    eps = eps.concat(chunk);
+    const g = chunk.filter(e => isGaidenTitle(e.title)).length;
+    if (g > 0) sawGaiden = true;
+    if (sawGaiden && g === 0) break;     // 외전 블록 통과 → 본편 진입(경계 확보)
+    if (!sawGaiden && pg >= 1) break;    // 최신 40화에 외전 없음 → 외전 없는 작품
+  }
   if (!eps.length) return null;
-  // 최신 20이 전부 외전이면(본편 경계 못 찾음) 한 페이지 더 — 외전 20개 초과인 드문 경우 대비
-  if (eps.every(e => isGaidenTitle(e.title))) { const more = await post(1); if (more.length) eps = eps.concat(more); }
   return splitEpisodesByGaiden(eps);
 }
 // 🆕 v7.41.4: 카카오페이지 본편/외전 분리 — page.kakao.com/graphql(익명, _kpwtkn 쿠키). 회차목록은 contentHomeProductList(제목+productId),
@@ -17871,7 +17906,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.49.1";
+const APP_VERSION = "7.49.2";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -17897,6 +17932,19 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.49.2", date: "2026-06-28",
+    title: "🔧 노벨피아 외전 회차 수 바로잡기 + 회차수 보정 양방향",
+    highlights: [
+      { type: "fix", text: "🔧 노벨피아 완결작에서 외전 회차 수가 실제보다 적게 잡히던 문제를 고쳤어요(예: ‘회귀자와 맹인 성녀’ 외전 17편이 3편으로). 외전 묶음 뒤에 ‘작가 후기·공지’ 같은 글이 한두 개 붙어 있어도 외전을 제대로 세요." },
+      { type: "improve", text: "📊 ‘회차수 보정’이 과대(부풀림)뿐 아니라 과소(외전이 적게 잡힘)까지 양방향으로 잡아요. 재취득한 정확한 수와 다르면 후보로 올려 검토 후 맞출 수 있어요." },
+    ],
+    details: [
+      "외전 판정 방식을 ‘본편 마지막 회차 이후’가 아니라 ‘맨 뒤 외전 묶음(공지·후기 1~2개는 묶음 안으로 흡수)’으로 바꿨어요. 본편 중간에 낀 막간/번외는 종전처럼 외전에서 제외해요.",
+      "노벨피아 회차 목록을 외전 묶음이 끝나고 본편 구간에 닿을 때까지 더 받아오도록 했어요(완결작 갱신 시).",
+      "‘회차·완결 일괄 갱신 › 회차수 보정’이 줄이는 정정뿐 아니라 늘리는 정정(과소)도 후보로 보여줘요.",
+    ],
+  },
   {
     version: "7.49.1", date: "2026-06-28",
     title: "🐛 코드 전반 점검 — 숨은 버그 31건 수정",
@@ -44256,15 +44304,15 @@ function AppContent() {
       Alert.alert("📢 상태 변경 알림", [nComplete ? `🎉 완결 전환 ${nComplete}개` : "", nDropped ? `⏸ 연중 전환 ${nDropped}개` : ""].filter(Boolean).join("\n") + "\n\n새로 완결/연중된 작품이 있어요. 완료 목록에서 확인하세요.");
     }
   }
-  // 🆕 v7.49.0: 회차수 과대계상 보정 — 재스크랩으로 얻은 '외전·중복 제외' 본편/외전 회차가 저장값보다 작을 때만
-  //   후보로 잡는다(하향 정정 전용). 늘어난 회차는 위 자동갱신이 처리. 외전→0 정정은 스크랩 윈도 누락 위험이라 제외.
+  // 🔧 v7.49.2: 회차수 보정 — 재스크랩으로 얻은 '외전·중복 제외' 본편/외전 회차가 저장값과 다르면(과대·과소 양방향) 후보로.
+  //   외전→0(재스크랩이 외전을 못 찾음)은 스크랩 윈도 누락 위험이라 제외(newGc>0일 때만 정정). v7.49.0의 하향 전용 → 양방향 확장.
   function detectEpisodeOvercount(work, meta) {
     if (!meta) return null;
     let main = null, gaiden = null;
     const curEp = Number(work.total_episodes) || 0, newEp = Number(meta.totalEpisodes) || 0;
-    if (curEp > 0 && newEp > 0 && newEp < curEp) main = { from: curEp, to: newEp };
+    if (newEp > 0 && newEp !== curEp) main = { from: curEp, to: newEp };
     const curGc = Number(work.gaiden_total_episodes) || 0, newGc = Number(meta.gaidenCount) || 0;
-    if (curGc > 0 && newGc > 0 && newGc < curGc) gaiden = { from: curGc, to: newGc };
+    if (newGc > 0 && newGc !== curGc) gaiden = { from: curGc, to: newGc };
     return (main || gaiden) ? { main, gaiden } : null;
   }
   // 재스크랩으로 과대계상 후보만 수집(쓰기 X) → correctReview 단계에서 검토 후 적용.
@@ -71210,9 +71258,9 @@ async function importJSON() {
 
                 {/* 🆕 v7.49.0: 회차수 과대계상 점검·보정 — 재스크랩값이 저장값보다 작을 때만 하향 정정(본편/외전), 적용 전 검토 */}
                 <View style={{ borderTopWidth: 1, borderTopColor: C.line, marginTop: 14, paddingTop: 12 }}>
-                  <Text style={{ color: C.text, fontSize: 13, fontWeight: "800", marginBottom: 4 }}>📉 회차수 과대계상 보정</Text>
+                  <Text style={{ color: C.text, fontSize: 13, fontWeight: "800", marginBottom: 4 }}>📊 회차수 보정 (과대·과소)</Text>
                   <Text style={{ color: C.sub, fontSize: 11.5, lineHeight: 16, marginBottom: 9 }}>
-                    링크 있는 작품을 다시 가져와, 외전·중복이 섞여 부풀려진 본편/외전 회차수를 찾아요. 재취득값이 저장값보다 작게(정확하게) 잡힐 때만 후보로 모아 검토 후 정정합니다. 늘어난 회차는 위 ‘자동 갱신’이 처리해요.
+                    링크 있는 작품을 다시 가져와, 본편/외전 회차수가 실제와 다른 작품을 찾아요. 부풀려진 것(과대)뿐 아니라 외전이 적게 잡힌 것(과소)도 함께 잡아 정확한 수로 맞춰요. 후보를 검토해 적용합니다.
                   </Text>
                   <OutlineButton title={`📉 링크 있는 ${bulkUpdateStats.linked}개 점검·보정`} color={C.primary} onPress={() => {
                     if (bulkUpdateStats.linked === 0) { Alert.alert("회차수 보정", "링크 있는 작품이 없어요."); return; }
@@ -71283,13 +71331,13 @@ async function importJSON() {
               <View>
                 {bulkCorrectionCandidates.length === 0 ? (
                   <>
-                    <Text style={{ color: C.sub, fontSize: 13, textAlign: "center", paddingVertical: 22, lineHeight: 19 }}>과대계상으로 의심되는 작품이 없어요.{"\n"}본편·외전 회차수가 이미 정확합니다.</Text>
+                    <Text style={{ color: C.sub, fontSize: 13, textAlign: "center", paddingVertical: 22, lineHeight: 19 }}>회차수가 어긋난 작품이 없어요.{"\n"}본편·외전 회차수가 이미 정확합니다.</Text>
                     <PrimaryButton title="닫기" onPress={() => setBulkUpdateOpen(false)} />
                   </>
                 ) : (
                   <>
                     <Text style={{ color: C.text, fontSize: 15, fontWeight: "800", textAlign: "center", marginBottom: 3 }}>📉 보정 후보 {bulkCorrectionCandidates.length}건</Text>
-                    <Text style={{ color: C.sub, fontSize: 12, textAlign: "center", marginBottom: 10 }}>현재 → 보정값(작게 잡힌 회차만). 탭하면 제외/포함이 바뀌어요.</Text>
+                    <Text style={{ color: C.sub, fontSize: 12, textAlign: "center", marginBottom: 10 }}>현재 → 보정값(실제 회차로 맞춤). 탭하면 제외/포함이 바뀌어요.</Text>
                     <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator={false}>
                       {bulkCorrectionCandidates.map((c) => {
                         const excluded = bulkCorrectionExcluded.has(c.id);
