@@ -2,11 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.49.6 (외전 산정 전수 점검 — 네이버 필드/정렬, 카카오 비활성, 보정 일관) ║
+ * ║  버전: 7.49.7 (문피아 로그인 쿠키 명시 첨부 — '로그인해도 외전 안 잡힘' 수정)   ║
  * ║  최종 수정: 2026-06-28                                                        ║
- * ║  총 라인 수: 약 72,570줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 72,610줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔐 v7.49.7 문피아 로그인 쿠키 명시 첨부 (2026-06-28)                          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 사용자 보고: 문피아 로그인해도 외전 안 잡힘. 원인 — 노벨피아/카카오는 로그인     ║
+ * ║ 쿠키(globalNpCookie/globalKkCookie)를 fetch에 '명시 첨부'하는데, 문피아만        ║
+ * ║ refreshMpSession이 쿠키 존재 여부(boolean)만 보고 쿠키 문자열을 안 만들고 fetch  ║
+ * ║ 도 'RN 자동첨부'에만 의존 → paid 엔드포인트(>100화 최신 회차목록)가 'A001_11004 ║
+ * ║ 로그인 후 이용'을 반환(실측 확인). 노벨피아 패턴으로 통일: refreshMpSession이     ║
+ * ║ CookieManager.get으로 globalMpCookie 문자열을 채우고, fetchMunpiaEpisodeSplit의  ║
+ * ║ apiGet이 Cookie 헤더로 명시 첨부. 부팅 복원·로그아웃도 globalMpCookie 동기화.     ║
+ * ║ (≤100화는 종전대로 익명 동작. 비로그인 무회귀.) 전체 @babel/parser 통과.         ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔬 v7.49.6 외전 산정 전수 점검·수정 (2026-06-28)                              ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -14899,6 +14911,9 @@ const SCRAPER_HEADERS = {
 //   API fetch에 Cookie 헤더를 "명시 주입"(네이티브 쿠키 자동전달 의존 X — 안드로이드 외 동작·Fresco 이미지까지 일관).
 //   globalNpCookie는 컴포넌트(App)가 부팅/로그인 시 CookieManager.get으로 채운다 — 이 슬라이스엔 네이티브 import 없음(오프라인 회귀 테스트 보존).
 let globalNpCookie = null; // "name=val; name2=val2" 형태 or null(비로그인)
+// 🔐 v7.49.7: 문피아 로그인 쿠키 — >100화 작품 전체 회차목록(paid 엔드포인트)에 '명시 첨부'. 노벨피아처럼 명시하지 않고
+//   RN 자동첨부에만 의존하던 게 '로그인해도 외전 안 잡힘'의 원인(자동첨부 불안정). 컴포넌트가 refreshMpSession에서 채운다.
+let globalMpCookie = null; // "name=val; ..." 형태 or null(비로그인)
 // 🆕 v7.43.0: 카카오 익명 토큰(_kawlt) 쿠키 — 카카오 GraphQL은 JS가 발급하는 _kawlt 쿠키가 없으면 HTML 벽(폰 실측).
 //   숨은 WebView로 page.kakao.com을 한 번 열면 JS가 _kawlt를 OS 쿠키스토어에 심음 → 여기에 캡처해 GraphQL fetch에 명시 첨부.
 //   로그인 불필요(익명 토큰). 컴포넌트(App)가 세션 새로고침/부팅 시 CookieManager.get으로 채운다.
@@ -15543,8 +15558,8 @@ async function fetchMunpiaEpisodeSplit(url, opts = {}) {
   const apiGet = async (path) => {
     const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
     try {
-      // m.munpia.com/api — 로그인 세션 쿠키는 네이티브 쿠키스토어가 자동 첨부(동일 출처).
-      const res = await fetch("https://m.munpia.com" + path, { headers: { ...SCRAPER_HEADERS, "Accept": "application/json", "Referer": "https://m.munpia.com/" }, redirect: "follow", signal });
+      // 🔐 v7.49.7: 로그인 쿠키 명시 첨부(globalMpCookie) — RN 자동첨부 불안정으로 paid 엔드포인트가 '로그인 후 이용'을 반환하던 것 수정.
+      const res = await fetch("https://m.munpia.com" + path, { headers: { ...SCRAPER_HEADERS, "Accept": "application/json", "Referer": "https://m.munpia.com/", ...(globalMpCookie ? { Cookie: globalMpCookie } : {}) }, redirect: "follow", signal });
       if (!res.ok) return null;
       return await res.text();
     } catch { return null; } finally { cleanup(); }
@@ -18053,7 +18068,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.49.6";
+const APP_VERSION = "7.49.7";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -18079,6 +18094,17 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.49.7", date: "2026-06-28",
+    title: "🔐 문피아 로그인해도 외전 안 잡히던 문제 수정",
+    highlights: [
+      { type: "fix", text: "🔐 문피아에 로그인해도 회차 많은(100화 초과) 완결작의 외전이 안 잡히던 문제를 고쳤어요. 로그인 정보를 회차목록 요청에 제대로 실어 보내도록 했어요(노벨피아와 같은 방식). 100화가 넘는 문피아 완결작은 설정 › 🔌 연결에서 문피아 로그인 후 불러오면 외전이 분리돼요." },
+    ],
+    details: [
+      "기존엔 로그인 여부만 표시하고 실제 요청에 로그인 정보를 안 실어, 문피아 서버가 ‘로그인 후 이용’으로 막아 외전을 못 받았어요.",
+      "로그인이 잘 안 되면 ‘다시 로그인’을 눌러 주세요. 100화 이하 작품은 로그인 없이도 그대로 잡혀요.",
+    ],
+  },
   {
     version: "7.49.6", date: "2026-06-28",
     title: "🔬 외전 회차 인식 전수 점검 — 네이버 보강·보정 일관",
@@ -45178,10 +45204,15 @@ function AppContent() {
   function onKkCaptureNote(tag) { if (kkCaptureResolver.current && kkCaptureDbg.current.length < 60) kkCaptureDbg.current.push({ u: String(tag).slice(0, 70), l: 0, ov: false }); } // 🔧 v7.44.4: 로딩 생명주기 기록
 
   // 🔐 v7.41.5: 문피아 로그인 — 회차 많은 작품의 '전체 회차목록'(외전 포함)은 로그인 세션이 있어야 받을 수 있음.
-  //   쿠키는 OS 스토어에 두고 API fetch에 자동 첨부(동일 출처 m.munpia.com). 여기선 로그인 여부만 추적/표시.
+  //   🔐 v7.49.7: 쿠키 문자열을 globalMpCookie에 채워 API fetch에 '명시 첨부'(자동첨부만 믿던 게 외전 미검출 원인). 노벨피아와 동일 패턴.
   async function refreshMpSession() {
-    try { const jar = await CookieManager.get("https://m.munpia.com"); return !!(jar && typeof jar === "object" && Object.keys(jar).length > 0); }
-    catch (e) { console.warn("[mp] 쿠키 조회 실패:", e?.message); return false; }
+    try {
+      const jar = await CookieManager.get("https://m.munpia.com"); // get(url): httpOnly 포함 현재 쿠키 맵
+      const entries = jar && typeof jar === "object" ? Object.values(jar).filter(c => c && c.name && c.value) : [];
+      const cookieStr = entries.map(c => `${c.name}=${c.value}`).join("; ");
+      globalMpCookie = cookieStr || null;
+      return !!cookieStr;
+    } catch (e) { console.warn("[mp] 쿠키 조회 실패:", e?.message); globalMpCookie = null; return false; }
   }
   async function confirmMpLogin() {
     setMpBusy(true);
@@ -45197,6 +45228,7 @@ function AppContent() {
     } finally { setMpBusy(false); }
   }
   async function logoutMp() {
+    globalMpCookie = null; // 🔐 v7.49.7
     setMpLoggedIn(false);
     try { await saveGlobalAiConfig({ mp_logged_in: false }); } catch {}
     Alert.alert("로그아웃 표시", "문피아 로그인 표시를 해제했어요. (완전 로그아웃은 문피아 사이트에서 하세요.)");
