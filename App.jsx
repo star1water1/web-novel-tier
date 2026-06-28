@@ -2,11 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.46.2 (카카오 검색 DDG 파서 견고화 — 클래스 비의존)                   ║
+ * ║  버전: 7.46.3 (카카오 검색 세부 검수 반영 — lite·202처리·제목·웹툰정렬)       ║
  * ║  최종 수정: 2026-06-28                                                        ║
- * ║  총 라인 수: 약 71,460줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 71,470줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.46.3 카카오 검색 세부 검수 반영 (2026-06-28)                            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 세부 적대 검수에서 실측 발견 4건 수정: ①DDG html이 데이터센터 IP에서 202(봇    ║
+ * ║ 챌린지)→엔드포인트를 lite.duckduckgo.com/lite로 변경(차단 관대, 동일 형식).     ║
+ * ║ ②비200을 성공 오인해 '결과없음'으로 묻히던 것 → 명시 throw로 가시화(+키 안내).  ║
+ * ║ ③cleanKakaoTitle: 엔티티 인코딩된 하이라이트(&lt;b&gt;)가 'b/​/b' 찌꺼기로      ║
+ * ║ 남던 것 → 엔티티 디코드를 태그 제거보다 먼저. ④카카오 후보에 isComic 부여 →    ║
+ * ║ mergeSearchResults에서 웹툰이 소설보다 후순위로 정렬(웹소설 앱 우선순위).       ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔧 v7.46.2 카카오 검색 DDG 파서 견고화 — 클래스 비의존 (2026-06-28)           ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -15573,8 +15583,9 @@ function isSearchPlatformOn(name) {
 //   🆕 v7.46.1: 기본은 키 불필요(DuckDuckGo HTML 검색). 다음(Daum) REST 키를 넣으면 공식 API로 전환(옵션·더 안정).
 function cleanKakaoTitle(t) {
   return String(t == null ? "" : t)
-    .replace(/<[^>]+>/g, "")                      // <b> 하이라이트 제거
-    .replace(/&[a-z#0-9]+;/gi, " ")               // 엔티티
+    .replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&amp;/gi, "&") // 🔧 v7.46.3: 엔티티로 인코딩된 태그 먼저 디코드(<b> 찌꺼기 방지)
+    .replace(/<[^>]+>/g, "")                      // 태그 제거(실태그·디코드된 하이라이트 모두)
+    .replace(/&[a-z#0-9]+;/gi, " ")               // 나머지 엔티티 → 공백
     .replace(/\s*[|｜]\s*카카오페이지.*$/u, "")    // " | 카카오페이지…" 이후 절단
     .replace(/\s*-\s*(웹소설|웹툰)\s*$/u, "")      // 말미 "- 웹소설/웹툰"
     .replace(/\s*\[[^\]]{1,12}\]\s*$/u, "")        // 말미 [연재]/[단행본]/[할리퀸]
@@ -15594,7 +15605,7 @@ function collectKakaoCandidate(byId, rawUrl, rawTitle) {
   if (!title) return;
   const prev = byId.get(id);
   if (!prev || (prev.isViewer && !isViewer)) {
-    byId.set(id, { title, author: "", url: "https://page.kakao.com/content/" + id, platform: "카카오페이지", category: cat, isViewer });
+    byId.set(id, { title, author: "", url: "https://page.kakao.com/content/" + id, platform: "카카오페이지", category: cat, isComic: cat === "웹툰", isViewer }); // 🔧 v7.46.3: isComic으로 웹툰 후순위 정렬(mergeSearchResults)
   }
 }
 function kakaoCandidatesFromMap(byId) {
@@ -15633,12 +15644,15 @@ async function searchKakao(query, opts = {}) {
 }
 // 기본 경로(키 불필요): DuckDuckGo HTML 엔드포인트(JS 불필요·SSR)에서 site:page.kakao.com 검색
 async function searchKakaoDdg(q, opts = {}) {
-  const url = "https://html.duckduckgo.com/html/?q=" + encodeURIComponent("site:page.kakao.com " + q);
+  // 🔧 v7.46.3: lite 엔드포인트 사용 — html 엔드포인트보다 봇 차단이 관대(데이터센터 IP에서도 200 확인).
+  //   결과 링크 형식(//duckduckgo.com/l/?uddg=…)은 동일해 class 비의존 파서가 그대로 처리.
+  const url = "https://lite.duckduckgo.com/lite/?q=" + encodeURIComponent("site:page.kakao.com " + q);
   const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
   let html = "";
   try {
     const res = await fetch(url, { headers: SCRAPER_HEADERS, redirect: "follow", signal });
-    if (!res.ok) throw new Error("카카오 검색 실패 (" + res.status + ")");
+    // 🔧 v7.46.3: 202(봇 챌린지)·기타 비200을 성공으로 오인하면 '결과 없음'으로 조용히 묻힘 → 명시 throw로 가시화.
+    if (res.status !== 200) throw new Error("카카오 검색이 일시적으로 막혔어요 (" + res.status + "). 잠시 후 다시 시도하거나, 설정 › 🔌 연결에서 ‘카카오 검색 키’를 넣어 주세요.");
     html = await res.text();
   } catch (e) {
     if (e?.name === "AbortError") throw new Error("검색 응답이 없어 중단했어요 (시간 초과)");
