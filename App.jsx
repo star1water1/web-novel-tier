@@ -2,11 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.49.8 (문피아 외전 — 제목 필드 폴백 + 진단 도구; 완결일 OK·외전만 X)    ║
+ * ║  버전: 7.49.9 (문피아 외전 — 알 수 없는 제목 키 구제 스캔; >100화 paid 대응)    ║
  * ║  최종 수정: 2026-06-28                                                        ║
  * ║  총 라인 수: 약 72,710줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔎 v7.49.9 문피아 외전 — 알 수 없는 제목 키 '구제 스캔' (2026-06-28)          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 다각도 실측 결론: 문피아 >100화 작품의 '말미 외전'은 익명 경로로 못 받음.        ║
+ * ║ (기본 /chapters는 가장 오래된 100화 하드캡 — page/size/cursor/order 전부 무시·   ║
+ * ║ 거부, novel/www.munpia=Cloudflare 챌린지, api.munpia=KEY 필요.) 즉 외전은 로그인  ║
+ * ║ paid/selective 엔드포인트가 유일 경로이고 완결일이 되는 것 = 그 응답은 받아짐.    ║
+ * ║ 남은 원인은 'paid entries의 제목 키가 알 수 없는 이름'이라 제목이 전부 빈칸 →     ║
+ * ║ 외전 0(날짜 createdAt만 살아 완결일만 들어옴). 대응: parseMunpiaEntries에 구제    ║
+ * ║ 스캔 추가 — 제목이 '전부' 비었을 때만, 각 항목의 문자열 값을 직접 훑어 제목 추출   ║
+ * ║ (외전마커>‘N화/회’>한글 길이 점수; prev/next/url/author 키 제외로 오탐 0). 회차    ║
+ * ║ 배열 키도 list/entries/items/chapters 폴백. 정상 제목 키엔 영향 없음(트리거 X).   ║
+ * ║ 합성 케이스(미지 키·중첩 chapter.label·인접외전 디코이) 검증 통과 + @babel OK.     ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔎 v7.49.8 문피아 외전 — 제목 필드 폴백 + 진단 도구 (2026-06-28)              ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -15560,13 +15574,38 @@ function parseMunpiaEntries(jsonText) {
   let j; try { j = JSON.parse(jsonText); } catch { return null; }
   const r = j && j.result;
   if (!r || typeof r !== "object") return null;
-  const arr = Array.isArray(r.list) ? r.list : (Array.isArray(r.entries) ? r.entries : null);
+  // 🔧 v7.49.9: 회차 배열 키도 엔드포인트별로 폴백(list/entries/items/chapters) — paid/selective가 다른 키를 써도 회수.
+  const arr = Array.isArray(r.list) ? r.list : (Array.isArray(r.entries) ? r.entries : (Array.isArray(r.items) ? r.items : (Array.isArray(r.chapters) ? r.chapters : null)));
   if (!arr) return null;
   // 🔧 v7.49.8: 제목/날짜 필드명을 엔드포인트별로 다양하게 시도 — 기본 /chapters는 title/createdAt이지만 paid/selective entries는
   //   제목 키가 다를 수 있어(외전이 안 잡히는데 완결일=createdAt만 들어오던 증상) subject/subTitle/name 등도 폴백.
   const titleOf = (e) => String(e.title ?? e.subject ?? e.subTitle ?? e.chapterTitle ?? e.episodeTitle ?? e.entryTitle ?? e.name ?? e.chapterName ?? "");
   const dateOf = (e) => String(e.createdAt ?? e.created ?? e.createDate ?? e.regDate ?? e.openDate ?? e.publishDate ?? e.date ?? "");
-  const episodes = arr.map(e => e ? { title: titleOf(e), ts: scraperDateToTs(dateOf(e)) } : null).filter(Boolean);
+  let episodes = arr.map(e => e ? { title: titleOf(e), ts: scraperDateToTs(dateOf(e)) } : null).filter(Boolean);
+  // 🔧 v7.49.9: 구제 스캔 — 제목이 '전부' 비면(=paid 엔드포인트가 알 수 없는 키로 제목을 줘 외전 검출 0, 완결일만 들어오던 증상)
+  //   각 항목의 문자열 값을 직접 훑어 '제목스러운 값'을 추출. 정상 제목 키가 잡히면 동작 안 함 → 오탐 0(기존 경로 영향 없음).
+  //   점수: 외전마커(+1000) > "N화/회"(+500) > 한글 길이. prev/next/추천류 키는 인접 외전 오인 방지로 제외.
+  if (episodes.length && episodes.every(e => !e.title)) {
+    const SKIP_VAL = /^(https?:|\/\/|\d{4}[-./]\d|\d+(\.\d+)?$|true$|false$|null$)/i;
+    const SKIP_KEY = /prev|next|related|recommend|series|first|last|author|writer|nick|url|img|cover|thumb|path|link/i;
+    const scoreStr = (s) => (isGaidenTitle(s) ? 1000 : 0) + (/\d+\s*[화회話]/.test(s) ? 500 : 0) + (/[가-힣]/.test(s) ? Math.min(s.length, 120) : 0);
+    const pick = (o, depth) => {
+      let best = "", bestScore = 0;
+      for (const k in o) {
+        if (SKIP_KEY.test(k)) continue;
+        const v = o[k];
+        if (typeof v === "string") {
+          const s = v.trim();
+          if (!s || s.length > 140 || SKIP_VAL.test(s)) continue;
+          const sc = scoreStr(s); if (sc > bestScore) { bestScore = sc; best = s; }
+        } else if (v && typeof v === "object" && !Array.isArray(v) && depth > 0) {
+          const s = pick(v, depth - 1); if (s) { const sc = scoreStr(s); if (sc > bestScore) { bestScore = sc; best = s; } }
+        }
+      }
+      return best;
+    };
+    episodes = arr.map(e => e ? { title: pick(e, 1), ts: scraperDateToTs(dateOf(e)) } : null).filter(Boolean);
+  }
   return { episodes, next: !!r.next, sliceEntryId: r.sliceEntryId, total: Number(r.total) || 0 };
 }
 async function fetchMunpiaEpisodeSplit(url, opts = {}) {
@@ -18116,7 +18155,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.49.8";
+const APP_VERSION = "7.49.9";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -18142,6 +18181,18 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.49.9", date: "2026-06-28",
+    title: "🔎 문피아 외전 — 제목 칸 이름이 달라도 읽도록 ‘구제 인식’",
+    highlights: [
+      { type: "fix", text: "🔎 문피아 100화 초과 완결작에서 완결일은 들어오는데 외전만 0으로 잡히던 경우를 한 번 더 보강했어요. 로그인 회차목록의 ‘제목 칸’ 이름을 앱이 모르는 경우, 회차 항목의 글자값을 직접 훑어 제목처럼 보이는 값(외전/번외/‘N화’ 표시 우선)을 자동으로 찾아내요. 제목을 정상적으로 읽고 있을 땐 전혀 동작하지 않아 오작동 위험은 없어요." },
+    ],
+    details: [
+      "여러 각도로 실측한 결과, 문피아 100화 초과 작품의 ‘말미 외전’은 로그인 상태가 아니면 받을 방법이 없어요(비로그인 회차목록은 가장 오래된 100화까지만 줌). 그래서 외전을 보려면 설정 › 🔌 연결에서 문피아 로그인이 꼭 필요해요.",
+      "완결일이 들어온다는 건 로그인·회차 받기는 되고 ‘제목’만 못 읽었다는 뜻이라, 제목 칸을 못 찾을 때 글자값을 직접 훑어 외전 표기를 살리도록 했어요.",
+      "그래도 안 잡히면 ‘문피아 외전 진단’(설정 › 🔌 연결) 결과를 보내 주세요 — 외전 제목이 실제로 어떻게 적혀 있는지 보고 정확히 맞추겠습니다.",
+    ],
+  },
   {
     version: "7.49.8", date: "2026-06-28",
     title: "🔎 문피아 외전 — 제목 인식 보강 + 진단 도구",
