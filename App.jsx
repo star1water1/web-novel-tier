@@ -2,9 +2,35 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.49.20 (기능영역 7시나리오 — 명대사/통계/좌표/폴더/인사이트 결함)         ║
+ * ║  버전: 7.49.21 (제품 전면검수 — 9기능 구현: 자동수상·다회독승급·되돌리기 등)      ║
  * ║  최종 수정: 2026-06-29                                                        ║
- * ║  총 라인 수: 약 72,910줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 73,190줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.49.21 제품 전면검수 — 도태/반쪽기능 보강 9건 (사용자 승인·2026-06-29)    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ "수집은 세계급, 활용·설명층은 반쪽배선" 진단 → 라스트마일 배선 9건:             ║
+ * ║ 🆕 자동 수상 후보 추천(반자동, 설정 기본 ON) — 정원·조건 준수 상위 후보 pre-select ║
+ * ║   체크박스 가감 후 '선택 수여'. calculateWinProbability/getCandidatesForAward 재사용.║
+ * ║ 🆕 다회독→하이브리드 '승급 후보(underrated)' 검증 제안 — reread≥3·하위티어·증가시  ║
+ * ║   enqueueVerification(제안만, 티어 직접변경 X, patrick-truth 유지).              ║
+ * ║ 🆕 하이브리드 자동 이동 '한 번에 되돌리기' + '왜 이 자리?' 설명 카드 — prev_tier/   ║
+ * ║   prev_order 신규 컬럼, tier_validation_log 기반 승/패 설명. system path(재검증 X).║
+ * ║ 🆕 예정작 정렬키 관심도·예정일 추가 + 카드 D-day 배지 + '곧 시작 예정' 요약.        ║
+ * ║ 🆕 단일 명대사 카드 이미지 공유/저장(expo-sharing captureRef, 갤러리 저장 폴백).    ║
+ * ║ 🔧 인사이트 루프 닫기 — 응답 시 source 패턴 is_shown=1 + dedup terminal 포함(재큐잉  ║
+ * ║   누수 차단). 일일추천 통계 엄격도 게이트(significance/Wilson 하한, 콜드스타트 보호).║
+ * ║ 🔧 스크랩 장르 alias 정규화(로판→로맨스판타지) — mapScrapedGenres normalizeTag 1회. ║
+ * ║ 🗑️ 死코드 제거(-700줄): insight조회API 3종·calculateTagSimilarity·도달불가         ║
+ * ║   TagEditModal 클러스터(컴포넌트+state+핸들러 3종)·VERIFICATION_READ_COUNT_THRESHOLD.║
+ * ║ ⚠️ 적대검증(구현 전): spec의 buildWhyExplanation 승/패 판정이 user_choice를 novel  ║
+ * ║   id로 오해(실제 'a'/'b' 저장) → 전 매치 오분류 버그를 구현 전 교정.                 ║
+ * ║ ⚠️ 적대검증(구현 후·4에이전트): 🔴 autoSuggestions useMemo의 deps 배열이 뒤에 선언된 ║
+ * ║   getCandidatesForAward를 참조 → TDZ ReferenceError로 수상 탭 무조건 크래시(파서는   ║
+ * ║   못 잡음) → 선언 순서 교정. 🟠 명대사 공유 캡처가 상단 컨트롤(카운터/버튼)까지       ║
+ * ║   이미지에 굽던 문제 → quoteCapturing 상태로 캡처 중 숨김(장르/티어 칩은 유지).       ║
+ * ║   @babel/parser·5단위테스트(_confGate·정렬·D-day·승패분류·추천예산)·괄호균형 통과.   ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -7922,6 +7948,7 @@ import * as NavigationBar from "expo-navigation-bar";
 import * as FileSystem from "expo-file-system/legacy"; // 🔧 v3.5.3: SDK 54 신규 API 불안정 → 레거시 API 사용
 import * as ImageManipulator from "expo-image-manipulator"; // 📷 명대사 이미지 압축
 import * as MediaLibrary from "expo-media-library"; // 📷 v7.4.0 티어표 갤러리 저장
+import * as Sharing from "expo-sharing"; // 🖼️ 단일 명대사 이미지 공유(네이티브 공유 시트) — package.json에 이미 설치됨
 import * as Clipboard from "expo-clipboard"; // 📋 v7.28.37 클립보드 링크 감지(스크래퍼 Stage 5)
 import { captureRef } from "react-native-view-shot"; // 📷 v7.4.0 티어표 캡처
 import { WebView } from "react-native-webview"; // 🔐 v7.40.0 노벨피아 로그인(성인물 게이트 해제) — WebView 로그인
@@ -10019,6 +10046,10 @@ async function initDb(progressCb) {
   await ensureColumn("tier_repositioning_session", "total_responses", "INTEGER", "0");
   await ensureColumn("tier_repositioning_session", "blocker_id", "TEXT", null);
   await ensureColumn("tier_repositioning_session", "completed_at", "INTEGER", null);
+  // 🆕 Q4: 이동 직전 자리 저장 — '한 번에 되돌리기'가 prev로 manual_tier/order 복원할 수 있도록.
+  //   기존 row(prev 미기록)는 NULL → 되돌리기 버튼 비활성(아래 렌더에서 가드).
+  await ensureColumn("tier_repositioning_session", "prev_tier", "TEXT", null);
+  await ensureColumn("tier_repositioning_session", "prev_order", "INTEGER", null);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_trs_blocker ON tier_repositioning_session(blocker_id, state);`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_trs_novel ON tier_repositioning_session(novel_id);`);
 
@@ -12196,8 +12227,8 @@ async function queueInsight(insight) {
   try {
     // 중복 체크
     const existing = await first(`
-      SELECT id FROM insight_queue 
-      WHERE pattern_id = ? AND status IN ('pending', 'shown')
+      SELECT id FROM insight_queue
+      WHERE pattern_id = ? AND status IN ('pending', 'shown', 'confirmed', 'rejected', 'dismissed')
     `, [insight.patternId]);
     
     if (existing) return;
@@ -12506,75 +12537,8 @@ async function getH2HRecord(aId, bId) {
 // 📋 조회 API
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/**
- * 대기 중인 인사이트 조회
- */
-async function getPendingInsights(limit = 5) {
-  try {
-    return await all(`
-      SELECT * FROM insight_queue 
-      WHERE status = 'pending'
-      ORDER BY priority DESC, created_at DESC
-      LIMIT ?
-    `, [limit]);
-  } catch (e) {
-    console.error("[getPendingInsights] 오류:", e);
-    return [];
-  }
-}
-
-/**
- * 인사이트 응답 기록
- */
-async function respondToInsight(insightId, response) {
-  try {
-    await exec(`
-      UPDATE insight_queue 
-      SET status = 'shown', shown_at = ?, user_response = ?
-      WHERE id = ?
-    `, [Date.now(), response, insightId]);
-    
-    // 패턴에도 반영
-    const insight = await first(`SELECT pattern_id FROM insight_queue WHERE id = ?`, [insightId]);
-    if (insight && insight.pattern_id) {
-      await exec(`
-        UPDATE preference_patterns 
-        SET is_shown = 1, shown_at = ?, user_reaction = ?
-        WHERE id = ?
-      `, [Date.now(), response, insight.pattern_id]);
-    }
-    
-  } catch (e) {
-    console.error("[respondToInsight] 오류:", e);
-  }
-}
-
-/**
- * 주요 패턴 조회 (취향 분석용)
- */
-async function getTopPatterns(category = null, limit = 10) {
-  try {
-    let sql = `
-      SELECT * FROM preference_patterns 
-      WHERE sample_size >= 10 AND significance >= 0.5
-    `;
-    const params = [];
-    
-    if (category) {
-      sql += ` AND category = ?`;
-      params.push(category);
-    }
-    
-    sql += ` ORDER BY is_notable DESC, significance DESC, sample_size DESC LIMIT ?`;
-    params.push(limit);
-    
-    return await all(sql, params);
-    
-  } catch (e) {
-    console.error("[getTopPatterns] 오류:", e);
-    return [];
-  }
-}
+/* 死코드 제거(v7.49.21): getPendingInsights/respondToInsight/getTopPatterns — 호출부 0.
+   insight 응답은 handleInsightResponse(inline SQL)가 처리하고, is_shown 마킹도 그쪽으로 이식됨. */
 
 /**
  * 기존 매칭 데이터에서 초기 패턴 추출 (마이그레이션)
@@ -16782,9 +16746,11 @@ function mapScrapedGenres(rawGenres, majorVocab = (typeof MAJOR_GENRES !== "unde
   const findIn = (vocab, g) => (Array.isArray(vocab) ? vocab.find(v => norm(v) === norm(g)) : null) || null;
   const major = [], sub = [], tags = [];
   const pushUniq = (arr, v) => { if (v && !arr.some(x => norm(x) === norm(v))) arr.push(v); };
+  const aliasFix = (s) => (typeof normalizeTag === "function" ? normalizeTag(s) : s); // 🆕 스크랩 alias(로판→로맨스판타지) 해소 후 어휘 매칭
   for (const raw of (Array.isArray(rawGenres) ? rawGenres : [])) {
-    const g = String(raw == null ? "" : raw).trim();
-    if (!g) continue;
+    const g0 = String(raw == null ? "" : raw).trim();
+    if (!g0) continue;
+    const g = aliasFix(g0); // canonical 표기로 치환(어휘 밖이면 원문 유지)
     const mj = findIn(majorVocab, g);
     if (mj) { pushUniq(major, mj); continue; }
     const sb = findIn(subVocab, g);
@@ -17196,33 +17162,7 @@ function parseNovelAliases(aliasesStr) {
   }
 }
 
-/**
- * 태그 농도 가중 유사도 계산
- */
-function calculateTagSimilarity(tagDataA, tagDataB) {
-  if (!tagDataA.length || !tagDataB.length) return 0;
-  
-  const mapA = new Map(tagDataA.map(t => [normalizeTag(t.tag), t.intensity]));
-  const mapB = new Map(tagDataB.map(t => [normalizeTag(t.tag), t.intensity]));
-  
-  let intersection = 0;
-  let sumA = 0, sumB = 0;
-  
-  for (const [tag, intensityA] of mapA) {
-    sumA += intensityA;
-    if (mapB.has(tag)) {
-      const intensityB = mapB.get(tag);
-      intersection += Math.min(intensityA, intensityB);
-    }
-  }
-  
-  for (const [, intensityB] of mapB) {
-    sumB += intensityB;
-  }
-  
-  const union = sumA + sumB - intersection;
-  return union > 0 ? intersection / union : 0;
-}
+/* 死코드 제거(v7.49.21): calculateTagSimilarity — 호출부 0. */
 
 /* =========================================================
    Elo
@@ -24556,519 +24496,7 @@ const TagChipEditModal = memo(({
   );
 });
 
-const TagEditModal = memo(({
-  visible,
-  onClose,
-  tag,
-  tagType, // "custom" | "combo" | "major" | "sub" | "defaultMajor" | "defaultSub" | "defaultTag" | "userMajor" | "userSub"
-  isPinned,
-  isHidden, // 🆕 v3.2.0
-  isTitle,  // 🆕 v3.5.8: 작품명 태그 여부
-  sentiment, // 🆕 v3.2.0: "positive" | "neutral" | "negative" | null
-  coordinateSystems, // 🆕 v3.2.0: 좌표계 목록
-  tagUsageStats, // 🆕 v3.2.0: { count, avgIntensity, avgRating }
-  // 콜백들
-  onSave, // 🆕 v3.2.0: (tag, changes) => {} - 모든 변경사항 일괄 저장
-  onPin,
-  onHide, // 🆕 v3.2.0
-  onSetSentiment, // 🆕 v3.2.0
-  onPromoteToMajor,
-  onPromoteToSub,
-  onDemoteToCustom,
-  // 🔧 v3.5.12: onComboToCustom 제거 (조합분류 폐지)
-  onDeleteGlobally,
-  onEditRelations,
-  onEditCoordinate, // 🆕 v3.2.0: (tag, systemId) => {} - 좌표계 편집 모달 열기
-  relationInfo,
-  theme,
-}) => {
-  const C = theme;
-  const isDark = C.bg !== "#F5F7FB"; // 🔧 v3.5.7: 다크모드 감지
-  const [localPinned, setLocalPinned] = useState(isPinned);
-  const [localHidden, setLocalHidden] = useState(isHidden);
-  const [localSentiment, setLocalSentiment] = useState(sentiment);
-  const [localIsTitle, setLocalIsTitle] = useState(isTitle);
-  const [hasChanges, setHasChanges] = useState(false);
-  
-  // 모달 열릴 때 상태 초기화
-  useEffect(() => {
-    if (visible) {
-      setLocalPinned(isPinned);
-      setLocalHidden(isHidden);
-      setLocalSentiment(sentiment);
-      setLocalIsTitle(isTitle);
-      setHasChanges(false);
-    }
-  }, [visible, isPinned, isHidden, sentiment, isTitle]);
-  
-  if (!visible || !tag) return null;
-  
-  // 분류 라벨
-  const typeLabels = {
-    custom: "커스텀 태그",
-    combo: "조합식 태그",
-    major: "사용자 대장르",
-    sub: "사용자 부장르",
-    userMajor: "사용자 대장르",
-    userSub: "사용자 부장르",
-    defaultMajor: "기본 대장르",
-    defaultSub: "기본 부장르",
-    defaultTag: "기본 태그",
-  };
-  
-  // 속성 색상
-  const sentimentColors = {
-    positive: { bg: "#d1fae5", border: "#6ee7b7", text: "#065f46", label: "😊 긍정" },
-    neutral: { bg: "#e5e7eb", border: "#9ca3af", text: "#374151", label: "😐 중립" },
-    negative: { bg: "#fee2e2", border: "#fca5a5", text: "#991b1b", label: "😟 부정" },
-  };
-  
-  // 사용자 정의 태그인지 확인
-  // 🔧 v3.5.12: "combo" 제거 (customTags로 통합)
-  const isUserDefined = ["custom", "major", "sub", "userMajor", "userSub"].includes(tagType);
-  const canPromote = ["custom"].includes(tagType);
-  const canDemote = ["major", "sub", "userMajor", "userSub"].includes(tagType);
-  
-  // 좌표계에 배치된 정보 찾기
-  const getCoordinatePlacements = () => {
-    if (!coordinateSystems) return [];
-    const placements = [];
-    for (const [sysId, sys] of Object.entries(coordinateSystems)) {
-      const pos = sys.tags?.[tag];
-      if (pos) {
-        placements.push({
-          systemId: sysId,
-          systemName: sys.name,
-          x: pos.x,
-          y: pos.y,
-          xLabel: sys.xAxis ? (pos.x < 0.5 ? sys.xAxis.negative : sys.xAxis.positive) : "",
-          yLabel: sys.yAxis ? (pos.y < 0.5 ? sys.yAxis.negative : sys.yAxis.positive) : "",
-        });
-      }
-    }
-    return placements;
-  };
-  
-  const coordPlacements = getCoordinatePlacements();
-  
-  // 변경사항 감지
-  const handleLocalChange = (setter, value) => {
-    setter(value);
-    setHasChanges(true);
-  };
-  
-  // 저장 (일괄)
-  const handleSave = () => {
-    if (hasChanges && onSave) {
-      onSave(tag, {
-        pinned: localPinned,
-        hidden: localHidden,
-        sentiment: localSentiment,
-        isTitle: localIsTitle, // 🆕 v3.5.8
-      });
-    }
-    onClose();
-  };
-  
-  return (
-    <Modal visible={visible} animationType="fade" onRequestClose={onClose} transparent>
-      <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center" }}>
-        <TouchableOpacity 
-          style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} 
-          activeOpacity={1} 
-          onPress={onClose}
-        />
-        <View style={{ backgroundColor: C.card, borderRadius: 20, padding: 20, width: "90%", maxWidth: 420, maxHeight: "85%" }}>
-          <ScrollView showsVerticalScrollIndicator={false}>
-            {/* 헤더 */}
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 20, fontWeight: "800", color: C.text }}>{tag}</Text>
-                <Text style={{ fontSize: 12, color: C.sub, marginTop: 2 }}>
-                  {typeLabels[tagType] || tagType}
-                </Text>
-              </View>
-              {hasChanges && (
-                <View style={{ backgroundColor: isDark ? "rgba(245,158,11,0.15)" : "#fef3c7", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }}>
-                  <Text style={{ fontSize: 10, color: isDark ? "#fcd34d" : "#92400e", fontWeight: "600" }}>변경됨</Text>
-                </View>
-              )}
-            </View>
-            
-            {/* ═══════════════════════════════════════════════════════════════ */}
-            {/* 🎭 속성 (긍정/중립/부정) */}
-            {/* ═══════════════════════════════════════════════════════════════ */}
-            <View style={{ marginBottom: 16 }}>
-              <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>🎭 속성</Text>
-              <View style={{ flexDirection: "row", gap: 8 }}>
-                {Object.entries(sentimentColors).map(([key, style]) => {
-                  const isSelected = localSentiment === key;
-                  return (
-                    <TouchableOpacity
-                      key={key}
-                      onPress={() => handleLocalChange(setLocalSentiment, isSelected ? null : key)}
-                      style={{
-                        flex: 1,
-                        backgroundColor: isSelected ? style.bg : C.bg,
-                        borderWidth: 2,
-                        borderColor: isSelected ? style.border : C.line,
-                        borderRadius: 10,
-                        paddingVertical: 10,
-                        alignItems: "center",
-                      }}
-                    >
-                      <Text style={{ fontSize: 13, fontWeight: "700", color: isSelected ? style.text : C.sub }}>
-                        {style.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-            
-            {/* ═══════════════════════════════════════════════════════════════ */}
-            {/* ⚙️ 옵션 (고정/숨김) */}
-            {/* ═══════════════════════════════════════════════════════════════ */}
-            <View style={{ marginBottom: 16 }}>
-              <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>⚙️ 옵션</Text>
-              <View style={{ flexDirection: "row", gap: 8 }}>
-                {/* 고정 */}
-                <TouchableOpacity
-                  onPress={() => handleLocalChange(setLocalPinned, !localPinned)}
-                  style={{
-                    flex: 1,
-                    backgroundColor: localPinned ? (isDark ? "rgba(245,158,11,0.15)" : "#fef3c7") : C.bg,
-                    borderWidth: 2,
-                    borderColor: localPinned ? "#fcd34d" : C.line,
-                    borderRadius: 10,
-                    paddingVertical: 12,
-                    alignItems: "center",
-                    flexDirection: "row",
-                    justifyContent: "center",
-                    gap: 6,
-                  }}
-                >
-                  <Text style={{ fontSize: 16 }}>📌</Text>
-                  <Text style={{ fontWeight: "700", color: localPinned ? (isDark ? "#fcd34d" : "#92400e") : C.sub }}>
-                    {localPinned ? "고정됨" : "고정"}
-                  </Text>
-                </TouchableOpacity>
-                
-                {/* 숨김 */}
-                <TouchableOpacity
-                  onPress={() => handleLocalChange(setLocalHidden, !localHidden)}
-                  style={{
-                    flex: 1,
-                    backgroundColor: localHidden ? "#e5e7eb" : C.bg,
-                    borderWidth: 2,
-                    borderColor: localHidden ? "#9ca3af" : C.line,
-                    borderRadius: 10,
-                    paddingVertical: 12,
-                    alignItems: "center",
-                    flexDirection: "row",
-                    justifyContent: "center",
-                    gap: 6,
-                  }}
-                >
-                  <Text style={{ fontSize: 16 }}>{localHidden ? "🙈" : "👁️"}</Text>
-                  <Text style={{ fontWeight: "700", color: localHidden ? "#374151" : C.sub }}>
-                    {localHidden ? "숨겨짐" : "표시"}
-                  </Text>
-                </TouchableOpacity>
-                
-                {/* 🆕 v3.5.8: 작품명 태그 */}
-                <TouchableOpacity
-                  onPress={() => handleLocalChange(setLocalIsTitle, !localIsTitle)}
-                  style={{
-                    flex: 1,
-                    backgroundColor: localIsTitle ? (isDark ? "rgba(245,158,11,0.15)" : "#fef9c3") : C.bg,
-                    borderWidth: 2,
-                    borderColor: localIsTitle ? "#f59e0b" : C.line,
-                    borderRadius: 10,
-                    paddingVertical: 12,
-                    alignItems: "center",
-                    flexDirection: "row",
-                    justifyContent: "center",
-                    gap: 6,
-                  }}
-                >
-                  <Text style={{ fontSize: 16 }}>📖</Text>
-                  <Text style={{ fontWeight: "700", color: localIsTitle ? (isDark ? "#fcd34d" : "#92400e") : C.sub }}>
-                    {localIsTitle ? "작품명" : "일반"}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-              {localIsTitle && (
-                <View style={{ marginTop: 8, padding: 10, backgroundColor: isDark ? "rgba(245,158,11,0.08)" : "#fffbeb", borderRadius: 8, borderWidth: 1, borderColor: isDark ? "rgba(245,158,11,0.2)" : "#fde68a" }}>
-                  <Text style={{ fontSize: 11, color: isDark ? "#fcd34d" : "#92400e", lineHeight: 16 }}>
-                    📖 작품명 태그는 검색에만 사용되며, 취향 분석·매칭 인사이트·추천 점수에서 제외됩니다.
-                  </Text>
-                </View>
-              )}
-            </View>
-            
-            {/* ═══════════════════════════════════════════════════════════════ */}
-            {/* 📐 좌표계 배치 */}
-            {/* ═══════════════════════════════════════════════════════════════ */}
-            <View style={{ marginBottom: 16 }}>
-              <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>📐 좌표계 배치</Text>
-              {coordPlacements.length > 0 ? (
-                <View style={{ gap: 6 }}>
-                  {coordPlacements.map((p) => (
-                    <TouchableOpacity
-                      key={p.systemId}
-                      onPress={() => onEditCoordinate?.(tag, p.systemId)}
-                      style={{
-                        backgroundColor: C.bg,
-                        padding: 12,
-                        borderRadius: 10,
-                        flexDirection: "row",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                      }}
-                    >
-                      <View>
-                        <Text style={{ fontWeight: "600", color: C.text }}>{p.systemName}</Text>
-                        <Text style={{ fontSize: 11, color: C.sub, marginTop: 2 }}>
-                          X: {(Number(p.x) || 0).toFixed(2)} ({p.xLabel}) • Y: {(Number(p.y) || 0).toFixed(2)} ({p.yLabel})
-                        </Text>
-                      </View>
-                      <Text style={{ color: C.primary, fontWeight: "600" }}>편집 →</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              ) : (
-                <View style={{ backgroundColor: C.bg, padding: 12, borderRadius: 10, alignItems: "center" }}>
-                  <Text style={{ color: C.sub, fontSize: 13 }}>좌표계에 배치되지 않음</Text>
-                </View>
-              )}
-              {/* 좌표계 추가 버튼 */}
-              <TouchableOpacity
-                onPress={() => onEditCoordinate?.(tag, null)}
-                style={{
-                  marginTop: 8,
-                  backgroundColor: isDark ? "rgba(59,130,246,0.15)" : "#dbeafe",
-                  padding: 10,
-                  borderRadius: 10,
-                  alignItems: "center",
-                }}
-              >
-                <Text style={{ color: isDark ? "#93c5fd" : "#1d4ed8", fontWeight: "600" }}>+ 좌표계에 추가</Text>
-              </TouchableOpacity>
-            </View>
-            
-            {/* ═══════════════════════════════════════════════════════════════ */}
-            {/* 🔗 관계 정보 */}
-            {/* ═══════════════════════════════════════════════════════════════ */}
-            {relationInfo && (
-              <View style={{ marginBottom: 16 }}>
-                <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>🔗 태그 관계</Text>
-                <TouchableOpacity
-                  onPress={() => { onEditRelations?.(tag); onClose(); }}
-                  style={{ 
-                    backgroundColor: relationInfo.type === "similar" ? (isDark ? "rgba(59,130,246,0.15)" : "#dbeafe") : (isDark ? "rgba(245,158,11,0.15)" : "#fef3c7"),
-                    padding: 12, 
-                    borderRadius: 10,
-                  }}
-                >
-                  <Text style={{ fontSize: 13, color: C.text, fontWeight: "600" }}>
-                    {relationInfo.type === "similar" ? "🔗 유사 태그 그룹" : "⚡ 상반 관계"}
-                  </Text>
-                  <Text style={{ fontSize: 11, color: C.sub, marginTop: 4 }}>
-                    {relationInfo.groupName || "이름 없음"}: {relationInfo.tags?.slice(0, 5).join(", ")}{relationInfo.tags?.length > 5 ? "..." : ""}
-                  </Text>
-                  <Text style={{ fontSize: 11, color: C.primary, marginTop: 4 }}>터치하여 편집 →</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-            
-            {/* ═══════════════════════════════════════════════════════════════ */}
-            {/* 📊 사용 현황 */}
-            {/* ═══════════════════════════════════════════════════════════════ */}
-            {tagUsageStats && (
-              <View style={{ marginBottom: 16 }}>
-                <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>📊 사용 현황</Text>
-                <View style={{ flexDirection: "row", gap: 8 }}>
-                  <View style={{ flex: 1, backgroundColor: C.bg, padding: 10, borderRadius: 10, alignItems: "center" }}>
-                    <Text style={{ fontSize: 18, fontWeight: "800", color: C.primary }}>{tagUsageStats.count}</Text>
-                    <Text style={{ fontSize: 10, color: C.sub }}>작품</Text>
-                  </View>
-                  <View style={{ flex: 1, backgroundColor: C.bg, padding: 10, borderRadius: 10, alignItems: "center" }}>
-                    <Text style={{ fontSize: 18, fontWeight: "800", color: "#22c55e" }}>
-                      {tagUsageStats.avgIntensity?.toFixed(1) || "-"}
-                    </Text>
-                    <Text style={{ fontSize: 10, color: C.sub }}>평균 농도</Text>
-                  </View>
-                  {/* 🔧 v7.20.6: 평균 레이팅(ELO)은 match/ratio 전용 — hybrid/manual은 미사용이라 셀 숨김 */}
-                  {(globalTierConfig.mode !== "hybrid" && globalTierConfig.mode !== "manual") && (
-                  <View style={{ flex: 1, backgroundColor: C.bg, padding: 10, borderRadius: 10, alignItems: "center" }}>
-                    <Text style={{ fontSize: 18, fontWeight: "800", color: "#f59e0b" }}>
-                      {tagUsageStats.avgRating ? Math.round(tagUsageStats.avgRating).toLocaleString() : "-"}
-                    </Text>
-                    <Text style={{ fontSize: 10, color: C.sub }}>평균 레이팅</Text>
-                  </View>
-                  )}
-                </View>
-              </View>
-            )}
-            
-            {/* ═══════════════════════════════════════════════════════════════ */}
-            {/* 📂 분류 변경 액션 */}
-            {/* ═══════════════════════════════════════════════════════════════ */}
-            <View style={{ marginBottom: 16 }}>
-              <Text style={{ fontWeight: "700", color: C.text, marginBottom: 8 }}>📂 분류 변경</Text>
-              <View style={{ gap: 6 }}>
-                {/* 관계 편집 */}
-                {!relationInfo && (
-                  <TouchableOpacity
-                    onPress={() => { onEditRelations?.(tag); onClose(); }}
-                    style={{
-                      backgroundColor: isDark ? "rgba(99,102,241,0.15)" : "#e0e7ff",
-                      padding: 12,
-                      borderRadius: 10,
-                      flexDirection: "row",
-                      alignItems: "center",
-                    }}
-                  >
-                    <Text style={{ fontSize: 16, marginRight: 10 }}>🔗</Text>
-                    <Text style={{ fontWeight: "600", color: isDark ? "#a5b4fc" : "#3730a3" }}>유사/상반 태그 설정</Text>
-                  </TouchableOpacity>
-                )}
-                
-                {/* 대장르 속성 추가 */}
-                {canPromote && (
-                  <TouchableOpacity
-                    onPress={() => { onPromoteToMajor?.(tag); onClose(); }}
-                    style={{
-                      backgroundColor: isDark ? "rgba(245,158,11,0.15)" : "#fef3c7",
-                      padding: 12,
-                      borderRadius: 10,
-                      flexDirection: "row",
-                      alignItems: "center",
-                    }}
-                  >
-                    <Text style={{ fontSize: 16, marginRight: 10 }}>🏷️</Text>
-                    <Text style={{ fontWeight: "600", color: isDark ? "#fcd34d" : "#92400e" }}>대장르 속성 추가</Text>
-                  </TouchableOpacity>
-                )}
-                
-                {/* 부장르 속성 추가 */}
-                {canPromote && (
-                  <TouchableOpacity
-                    onPress={() => { onPromoteToSub?.(tag); onClose(); }}
-                    style={{
-                      backgroundColor: isDark ? "rgba(99,102,241,0.15)" : "#e0e7ff",
-                      padding: 12,
-                      borderRadius: 10,
-                      flexDirection: "row",
-                      alignItems: "center",
-                    }}
-                  >
-                    <Text style={{ fontSize: 16, marginRight: 10 }}>🔖</Text>
-                    <Text style={{ fontWeight: "600", color: isDark ? "#a5b4fc" : "#3730a3" }}>부장르 속성 추가</Text>
-                  </TouchableOpacity>
-                )}
-                
-                
-                {/* 장르 속성 제거 */}
-                {canDemote && (
-                  <TouchableOpacity
-                    onPress={() => { onDemoteToCustom?.(tag, tagType); onClose(); }}
-                    style={{
-                      backgroundColor: C.bg,
-                      padding: 12,
-                      borderRadius: 10,
-                      flexDirection: "row",
-                      alignItems: "center",
-                    }}
-                  >
-                    <Text style={{ fontSize: 16, marginRight: 10 }}>✖️</Text>
-                    <Text style={{ fontWeight: "600", color: C.text }}>장르 속성 제거</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
-            
-            {/* ═══════════════════════════════════════════════════════════════ */}
-            {/* 🗑️ 삭제/숨기기 (모든 태그 타입) */}
-            {/* ═══════════════════════════════════════════════════════════════ */}
-            <TouchableOpacity
-              onPress={() => { onDeleteGlobally?.(tag); onClose(); }}
-              style={{
-                backgroundColor: "#fee2e2",
-                padding: 14,
-                borderRadius: 12,
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "center",
-                marginBottom: isUserDefined ? 16 : 4,
-              }}
-            >
-              <Text style={{ fontSize: 16, marginRight: 8 }}>{isUserDefined ? "🗑️" : "💥"}</Text>
-              <Text style={{ fontWeight: "700", color: "#dc2626" }}>전체에서 삭제</Text>
-            </TouchableOpacity>
-            {!isUserDefined && (
-              <Text style={{ fontSize: 10, color: "#9ca3af", textAlign: "center", marginBottom: 16 }}>
-                기본 태그는 모든 작품에서 제거 + 숨김 처리됩니다
-              </Text>
-            )}
-          </ScrollView>
-          
-          {/* ═══════════════════════════════════════════════════════════════ */}
-          {/* 하단 버튼 */}
-          {/* ═══════════════════════════════════════════════════════════════ */}
-          <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
-            {hasChanges ? (
-              <>
-                <TouchableOpacity
-                  onPress={handleSave}
-                  style={{
-                    flex: 2,
-                    backgroundColor: C.primary,
-                    paddingVertical: 14,
-                    borderRadius: 12,
-                    alignItems: "center",
-                  }}
-                >
-                  <Text style={{ color: "#fff", fontWeight: "700", fontSize: 16 }}>저장</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={onClose}
-                  style={{
-                    flex: 1,
-                    backgroundColor: C.bg,
-                    paddingVertical: 14,
-                    borderRadius: 12,
-                    alignItems: "center",
-                    borderWidth: 1,
-                    borderColor: C.line,
-                  }}
-                >
-                  <Text style={{ color: C.sub, fontWeight: "700" }}>취소</Text>
-                </TouchableOpacity>
-              </>
-            ) : (
-              <TouchableOpacity
-                onPress={onClose}
-                style={{
-                  flex: 1,
-                  backgroundColor: C.bg,
-                  paddingVertical: 14,
-                  borderRadius: 12,
-                  alignItems: "center",
-                  borderWidth: 1,
-                  borderColor: C.line,
-                }}
-              >
-                <Text style={{ color: C.sub, fontWeight: "700" }}>닫기</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-});
+/* 死코드 제거(v7.49.21): TagEditModal 컴포넌트(약 513줄) — 도달불가 렌더 전용이라 참조 0. */
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════════
@@ -28911,6 +28339,7 @@ const AwardsScreen = memo(({
   theme,
   tierMode, // 🆕 v7.0.1 (N3 fix): hybrid mode 변경 시 memo invalidation
   quoteDefaultStyle, // 🆕 v7.9.0: 명언 기본 서식 프리셋 (개별 커스텀 없을 때 적용)
+  autoAwardSuggest, // 🆕 자동 수상 후보 추천(반자동) 토글 — 기본 ON
   onGiveAward,
   onRemoveAward,
   onSaveSettings,
@@ -28927,6 +28356,11 @@ const AwardsScreen = memo(({
 
   // 🆕 v3.2.1: 후보작 목록 접힘 상태 (수상별)
   const [expandedCandidates, setExpandedCandidates] = useState({});
+
+  // 🆕 자동 수상 후보 추천: 사용자가 체크박스로 가감한 선택 상태. key=`${awardId}::${novelId}`, value=boolean(선택됨).
+  //   기본은 autoSuggestions의 pre-select(suggested=true)를 따르되, 사용자가 토글한 건만 override 저장.
+  const [suggestOverrides, setSuggestOverrides] = useState({});
+  const [suggestGiving, setSuggestGiving] = useState(false); // '선택 수여' 진행 중 중복 클릭 방지
 
   // 🆕 v7.0.14: 수상작 카드의 표지/명대사 확대 모달 — 작은 썸네일/짧게 잘린 텍스트를 풀스크린으로
   // expandedView: { type: "image", uri, title, author } | { type: "quote", text, title } | null
@@ -29330,7 +28764,68 @@ const AwardsScreen = memo(({
 
     return result.sort(compareNovels);
   }, [candidates, awardWinners, compareNovels]);
-  
+
+  // 🆕 자동 수상 후보 추천(반자동): 현재 연도 각 상에 대해 적격 후보를 calculateWinProbability로 점수화하고
+  //   잔여 정원(count - 현재 수상작 수)만큼 상위를 pre-select. getCandidatesForAward가 이미 matchTags/tierMin
+  //   필터 + '이미 수상작 제외'를 수행하므로 정원·조건·중복이 모두 준수됨.
+  //   ⚠️ getCandidatesForAward 선언 '뒤'에 배치해야 함 — useMemo deps 배열은 호출 시점에 즉시 평가되므로
+  //   getCandidatesForAward const가 TDZ면 ReferenceError(수상 탭 크래시). v7.49.21 적대검증으로 순서 교정.
+  //   반환: [{ award, suggested: [{ novel, prob }], remaining }]  (remaining<=0 또는 후보 없으면 제외)
+  const autoSuggestions = useMemo(() => {
+    if (!autoAwardSuggest) return [];
+    const out = [];
+    for (const award of currentYearAwards) {
+      const cap = Number(award.count) || 0;
+      const already = (awardWinners[award.id] || []).length;
+      const remaining = cap > 0 ? cap - already : Number.POSITIVE_INFINITY; // count<=0(무제한)은 상위 5개로 캡
+      if (remaining <= 0) continue; // 정원 충족 → 추천 없음
+      const pool = getCandidatesForAward(award); // matchTags+tierMin+미수상 필터 완료
+      if (pool.length === 0) continue;
+      const ranked = pool
+        .map(n => ({ novel: n, prob: calculateWinProbability(n, award, pool) }))
+        .sort((a, b) => b.prob - a.prob);
+      const take = Number.isFinite(remaining) ? remaining : 5;
+      const suggested = ranked.slice(0, take);
+      if (suggested.length === 0) continue;
+      out.push({ award, suggested, remaining: Number.isFinite(remaining) ? remaining : suggested.length });
+    }
+    return out;
+  }, [autoAwardSuggest, currentYearAwards, awardWinners, getCandidatesForAward, calculateWinProbability]);
+
+  // 선택 여부 판정: override 우선, 없으면 pre-select(suggested 전부 기본 선택)
+  const isSuggestSelected = useCallback((awardId, novelId) => {
+    const k = `${awardId}::${novelId}`;
+    if (k in suggestOverrides) return suggestOverrides[k];
+    return true; // pre-select 기본 ON
+  }, [suggestOverrides]);
+  const toggleSuggest = useCallback((awardId, novelId) => {
+    const k = `${awardId}::${novelId}`;
+    setSuggestOverrides(prev => ({ ...prev, [k]: !(k in prev ? prev[k] : true) }));
+  }, []);
+
+  // '선택 수여': 선택된 (award, novel) 쌍을 잔여 정원 한도 내에서 onGiveAward로 순차 확정.
+  //   onGiveAward가 중복/정원/자격을 재검사하므로 여기선 잔여 정원 클램프만 추가 방어.
+  const giveSelectedSuggestions = useCallback(async () => {
+    if (suggestGiving) return;
+    setSuggestGiving(true);
+    try {
+      for (const grp of autoSuggestions) {
+        let budget = grp.remaining; // 이번 세션 잔여 정원 (현재 수상작 반영됨)
+        for (const { novel } of grp.suggested) {
+          if (budget <= 0) break; // 정원 초과 방지
+          if (!isSuggestSelected(grp.award.id, novel.id)) continue;
+          // onGiveAward는 async — 중복/정원/자격 재검사 + loadList. 사용자 path라 Alert 허용.
+          await onGiveAward(novel.id, grp.award.id, awardSelectedYear);
+          budget--;
+        }
+      }
+    } catch (e) {
+      Alert.alert("오류", "수여 실패: " + (e?.message || e));
+    } finally {
+      setSuggestGiving(false);
+    }
+  }, [suggestGiving, autoSuggestions, isSuggestSelected, onGiveAward, awardSelectedYear]);
+
   // 상 추가
   // 🆕 v7.4.4 수상 결과 이미지 export — 상별 1장씩 (수상 없는 상은 skip).
   // 단일 award captureRef → 한도(7000px) 안이면 그대로 저장, 초과 시 페이지 높이로 균등 분할.
@@ -29843,6 +29338,63 @@ const AwardsScreen = memo(({
             </View>
           </Section>
           
+          {/* 🆕 자동 수상 후보 추천(반자동): 정원/조건 준수 상위 후보 pre-select. 체크박스로 가감 후 '선택 수여' */}
+          {autoAwardSuggest && autoSuggestions.length > 0 && (
+            <Section title="🏆 자동 후보">
+              <Text style={{ color: C.sub, marginBottom: 10, fontSize: 12 }}>
+                각 상의 정원·조건에 맞는 상위 후보를 자동 선택했습니다. 체크를 가감한 뒤 수여하세요.
+              </Text>
+              {autoSuggestions.map(grp => (
+                <View key={grp.award.id} style={{ marginBottom: 14 }}>
+                  <Text style={{ color: C.text, fontWeight: "800", marginBottom: 6 }}>
+                    {grp.award.icon || "🏆"} {grp.award.name} · 잔여 정원 {grp.remaining}
+                  </Text>
+                  {grp.suggested.map(({ novel, prob }) => {
+                    const sel = isSuggestSelected(grp.award.id, novel.id);
+                    return (
+                      <TouchableOpacity
+                        key={novel.id}
+                        onPress={() => toggleSuggest(grp.award.id, novel.id)}
+                        style={{
+                          flexDirection: "row", alignItems: "center",
+                          backgroundColor: C.card, borderRadius: 12, padding: 12, marginBottom: 8,
+                          borderWidth: sel ? 2 : 1, borderColor: sel ? grp.award.color || "#f97316" : C.line,
+                        }}
+                      >
+                        <View style={{
+                          width: 22, height: 22, borderRadius: 5, borderWidth: 2,
+                          borderColor: sel ? (grp.award.color || "#f97316") : C.line,
+                          backgroundColor: sel ? (grp.award.color || "#f97316") : "transparent",
+                          alignItems: "center", justifyContent: "center", marginRight: 10,
+                        }}>
+                          {sel && <Text style={{ color: "#fff", fontSize: 13, fontWeight: "800" }}>✓</Text>}
+                        </View>
+                        <Text style={{ color: C.text, fontWeight: "700", flex: 1 }} numberOfLines={1}>
+                          {novel.title}
+                        </Text>
+                        <Text style={{ color: C.sub, fontSize: 12, marginLeft: 8 }}>
+                          {getDisplayTier(novel, globalTierConfig)} · {Math.round(prob)}%
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              ))}
+              <TouchableOpacity
+                onPress={giveSelectedSuggestions}
+                disabled={suggestGiving}
+                style={{
+                  marginTop: 4, paddingVertical: 14, borderRadius: 12,
+                  backgroundColor: suggestGiving ? C.chip : C.primary, alignItems: "center",
+                }}
+              >
+                <Text style={{ color: suggestGiving ? C.sub : "#fff", fontWeight: "800" }}>
+                  {suggestGiving ? "수여 중…" : "✅ 선택 수여"}
+                </Text>
+              </TouchableOpacity>
+            </Section>
+          )}
+
           {/* 후보작 목록 (🆕 v3.2.1: 표지, 확률 추가) */}
           <Section title={`📋 후보작 (${filteredCandidates.length})`}>
             {filteredCandidates.length === 0 ? (
@@ -35074,6 +34626,7 @@ const DEFAULT_SETTINGS = {
   fullscreenMode: false,            // 🆕 v3.4.4: 전체 화면 모드 (상태바 숨김)
   exportCardsPerImage: 20,          // 🆕 v7.4.11: 순위탭 export 이미지당 카드 수 (1~30)
   quoteDefaultStyle: null,          // 🆕 v7.9.0: 명언 기본 서식 프리셋 (개별 커스텀 없는 명언에 적용)
+  autoAwardSuggest: true,           // 🆕 자동 수상 후보 추천(반자동) — 수상 탭에 정원/조건 준수 상위 후보 pre-select 섹션 표시. 기본 ON
   // 📝 보충 탭 기준 (v2.8)
   supplement: {
     enabled: true,                   // 보충 탭 활성화
@@ -35445,6 +34998,10 @@ const VERIFICATION_GALLOP_MAX = 7;   // 갤로핑(경계 발견) 단계 probe �
 const VERIFICATION_BINARY_MAX = 4;   // 경계 발견 후 이진 정제 추가 probe 상한 (구간 2^4=16배 축소)
 const VERIFICATION_MAX_RESPONSES = VERIFICATION_GALLOP_MAX + VERIFICATION_BINARY_MAX; // 총 안전 상한(=11)
 const VERIFICATION_K_AFTER_INFLECTION = 2; // (v7.20.11~ 이진 수렴이 경계를 직접 확정 — 코어 루프 미사용, 진단/하위호환 잔존)
+// 🆕 Q3: 다회독 승급 후보 — saveEdit에서 reread_count가 이 값 이상으로 '증가'했고 현재 티어가 하위 절반이면
+//   underrated 검증을 큐에 제안만(티어 직접변경 X, patrick-truth 유지). v7.4.13 폐지(읽은수 자동검증 noise) 재발 방지를
+//   위해 보수적 임계 + '증가 이벤트'에서만 발화 + 하위 티어 한정 + enqueue 자체 중복방지에 의존.
+const VERIFICATION_REREAD_PROMOTE_MIN = 3; // 승급 후보 제안 최소 다회독 수(보수적: 3회 이상 재독)
 // 🔧 v7.21.0: 수문장 제안 임계 5→3. [이전] 같은 작품이 5개 세션에서 경계(blocker)여야 제안 →
 //   일반 라이브러리에선 사실상 도달 불가(거의 vestigial). 3으로 낮춰 실제 발화하게 함.
 const GATEKEEPER_BLOCK_THRESHOLD = 3;
@@ -35452,13 +35009,9 @@ const GATEKEEPER_BLOCK_THRESHOLD = 3;
 //   (선형 시절엔 10이면 충분했으나, 점프로 멀리 어긋난 작품을 적은 매칭으로 옮기려면 풀을 넓혀야 함.)
 const VERIFICATION_CANDIDATE_POOL = 64;
 
-// ⚠️ v7.4.13에서 read_progress(읽은 회차 누적) 트리거는 noise로 판단되어 제거됨 → 이 상수와
-//    read_count_baseline 컬럼은 현재 어떤 검증도 발화시키지 않는 잔존(vestigial) 인프라다.
-//    (컬럼은 백업 round-trip/마이그레이션 호환을 위해 유지. 회차를 올려도 의심작은 선정되지 않음 — 의도된 침묵.)
-//    v7.13.0: 살아있는 기능처럼 읽히던 주석을 정정(코드 동작 변경 아님).
-// 🗄️ (구) v7.0.15 설계: (현재 read_count − read_count_baseline) >= 이 값이면 read_progress fire (underrated).
-//    누적 트래킹: read_count_baseline은 last-fire 시점 read_count. 청크 분할 저장(5화×10번=50)도 동일하게 잡힘.
-const VERIFICATION_READ_COUNT_THRESHOLD = 30;
+// ⚠️ v7.4.13에서 read_progress(읽은 회차 누적) 트리거는 noise로 판단되어 제거됨.
+//    read_count_baseline 컬럼은 백업 round-trip/마이그레이션 호환을 위해 유지하나,
+//    임계 상수(VERIFICATION_READ_COUNT_THRESHOLD)는 코드 참조 0이라 제거됨(v7.49.21).
 
 // 🆕 v7.0: 검증 큐에서 다음 처리 대상 작품 fetch (priority DESC, 디바운스 1초 적용)
 async function getNextVerificationTarget() {
@@ -35649,8 +35202,8 @@ async function finalizeVerificationSession(queueRow, suspicionNovel, candidates,
     // (이전: 4개 별도 exec → 중간 크래시/SQLITE_BUSY 시 큐 pending인데 자리 이미 이동 → 재 finalize 시 자리 중복 이동)
     const txBatch = [];
     txBatch.push({
-      sql: `INSERT INTO tier_repositioning_session (id, novel_id, suspicion_type, trigger_type, state, result_tier, result_order, result_action, total_responses, blocker_id, created_at, completed_at)
-            VALUES (?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?)`,
+      sql: `INSERT INTO tier_repositioning_session (id, novel_id, suspicion_type, trigger_type, state, result_tier, result_order, result_action, total_responses, blocker_id, prev_tier, prev_order, created_at, completed_at)
+            VALUES (?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       params: [
         sessionId,
         suspicionNovel.id,
@@ -35661,6 +35214,9 @@ async function finalizeVerificationSession(queueRow, suspicionNovel, candidates,
         newPos.action,
         responses.length,
         newPos.blockerId || null,
+        // 🆕 Q4: 이동 직전 자리 — suspicionNovel(이동 대상)의 finalize 시점 값. computeNewPosition은 이 값을 바꾸지 않음.
+        suspicionNovel.manual_tier || null,
+        Number(suspicionNovel.manual_order) || 0,
         now,
         now,
       ],
@@ -37958,6 +37514,9 @@ function AppContent() {
   const [quotesListExpanded, setQuotesListExpanded] = useState(false); // 📋 전체 목록 접기/펼치기
   const [batchImporting, setBatchImporting] = useState(false); // 📷 일괄 가져오기 로딩
   const quotesSwipeRef = useRef({ startX: 0, startY: 0 }); // 🔀 v3.5.5: 스와이프 감지
+  const quoteCardRef = useRef(null); // 🖼️ 단일 명대사 카드 캡처 대상(현재 쇼츠 카드 View)
+  const isQuoteSharingRef = useRef(false); // 🖼️ 명대사 공유 중복 실행 가드(award export isAwardExportingRef 패턴)
+  const [quoteCapturing, setQuoteCapturing] = useState(false); // 🖼️ 캡처 중 카드 상단 UI(카운터/꾸미기/추출/공유 버튼) 숨김 → 깨끗한 공유 이미지
   const removedQuoteImagesRef = useRef([]); // 📷 v3.6.1: 편집 중 삭제된 이미지 URI 추적 (저장 시 실제 삭제)
   const editNewQuoteImagesRef = useRef([]); // 📷 v6.0.1: 편집 모달에서 새로 추가된 이미지 URI 추적 (취소 시 정리)
   const regQuoteImagesRef = useRef([]); // 📷 v3.6.2: 등록 폼에서 추가된 이미지 URI 추적 (실패/취소 시 정리)
@@ -38048,8 +37607,7 @@ function AppContent() {
   // 🏷️ 태그 관리 고급 (v2.3)
   const [pinnedTags, setPinnedTags] = useState([]); // 상단 고정 태그
   const [hiddenTags, setHiddenTags] = useState([]); // 숨김 태그 (기본 태그 숨기기용)
-  const [tagEditModalOpen, setTagEditModalOpen] = useState(false); // 태그 편집 모달
-  const [editingTag, setEditingTag] = useState(null); // { tag, type: "custom"|"combo"|"major"|"sub"|"general" }
+  /* 死코드 제거(v7.49.21): tagEditModalOpen/editingTag state — 도달불가 <TagEditModal/> 전용이었음. */
 
   // 🔧 v7.6.0 (포트 v3.12.4): 작품 내 태그 칩 통합 편집 모달
   // - 농도(intensity) + 속성(major/sub) + 감정 + 고정/숨김 한 화면
@@ -38532,6 +38090,9 @@ function AppContent() {
   const [verificationStats, setVerificationStats] = useState({ pending: 0, resolved: 0 });
   const [repositioningHistory, setRepositioningHistory] = useState([]); // 🆕 v7.16.0: 최근 자동 조정 이력 (write-only이던 세션 기록을 사용자에게 노출)
   const [repoHistoryExpanded, setRepoHistoryExpanded] = useState(false); // 🆕 v7.16.0: 이력 접기/펼치기(기본 접힘 — 점검 흐름 방해 최소화)
+  const [repoWhyOpen, setRepoWhyOpen] = useState({}); // 🆕 Q4: 이력 항목 index → '왜?' 펼침 여부
+  const [repoWhyText, setRepoWhyText] = useState({}); // 🆕 Q4: 이력 항목 index → 설명 문자열(undefined=미로드, ""=설명없음)
+  const repoUndoingRef = useRef(false); // 🆕 Q4: 되돌리기 더블탭 가드(수문장 모달 gatekeeperRespondingRef 패턴)
   // 🆕 v7.4.13: 검증 대기 섹션의 "다음 점검" 미리보기 — title + trigger_type
   const [nextVerificationPreview, setNextVerificationPreview] = useState(null);
   // 🆕 v7.0.8: 하이브리드 진단 패널 데이터 (settingsSubTab === "diag" + hybrid 모드 시 로드)
@@ -40874,6 +40435,11 @@ function AppContent() {
         orderBy = `title COLLATE NOCASE ${safeDir}`;
       } else if (plannedSortKey === "priority") {
         orderBy = `priority ${safeDir}, created_at DESC`;
+      } else if (plannedSortKey === "interest") {
+        orderBy = `interest_level ${safeDir}, created_at DESC`;
+      } else if (plannedSortKey === "scheduled") {
+        // 미설정(0)은 NULLS LAST 대용으로 (scheduled_start_date<=0) 그룹을 뒤로
+        orderBy = `(scheduled_start_date IS NULL OR scheduled_start_date<=0) ASC, scheduled_start_date ${safeDir}, created_at DESC`;
       }
       const rows = await all(`SELECT * FROM planned_novels ORDER BY ${orderBy};`);
       // 🆕 v7.3.0: 가등록 카드 갤러리 카운트 배지용 — 별도 쿼리로 Map 빌드 (가독성 우선)
@@ -41989,11 +41555,11 @@ function AppContent() {
             const key = p.pattern_key;
             const confirmed = (p.user_confirmed || 0) > 0; // 🧠 v3.5.5: 사용자 확인 여부
             if (p.category === "genre_affinity" && key.startsWith("genre:")) {
-              genreScores[key.slice(6)] = { winRate: p.win_rate, sampleSize: p.sample_size, significance: p.significance || 0, confirmed };
+              genreScores[key.slice(6)] = { winRate: p.win_rate, sampleSize: p.sample_size, significance: p.significance || 0, confidenceLower: p.confidence_lower || 0, confirmed };
             } else if (p.category === "tag_power" && key.startsWith("tag:")) {
-              tagScores[key.slice(4)] = { winRate: p.win_rate, sampleSize: p.sample_size, confirmed };
+              tagScores[key.slice(4)] = { winRate: p.win_rate, sampleSize: p.sample_size, significance: p.significance || 0, confidenceLower: p.confidence_lower || 0, confirmed };
             } else if (p.category === "author_loyalty" && key.startsWith("author:")) {
-              authorScores[key.slice(7)] = { winRate: p.win_rate, sampleSize: p.sample_size, confirmed };
+              authorScores[key.slice(7)] = { winRate: p.win_rate, sampleSize: p.sample_size, significance: p.significance || 0, confidenceLower: p.confidence_lower || 0, confirmed };
             }
           }
         }
@@ -42019,9 +41585,12 @@ function AppContent() {
             const totalSamples = groupData.reduce((s, d) => s + d.sampleSize, 0);
             const weightedWr = groupData.reduce((s, d) => s + d.winRate * d.sampleSize, 0) / totalSamples;
             const anyConfirmed = groupData.some(d => d.confirmed);
-            
+            // 게이트 메타도 sample 가중 평균으로 합산(합산 표본이 커지므로 신뢰 상승 반영)
+            const weightedSig = groupData.reduce((s, d) => s + (d.significance || 0) * d.sampleSize, 0) / totalSamples;
+            const weightedCl = groupData.reduce((s, d) => s + (d.confidenceLower || 0) * d.sampleSize, 0) / totalSamples;
+
             // 대표 태그에 합산 데이터 저장
-            tagScores[rep] = { winRate: weightedWr, sampleSize: totalSamples, confirmed: anyConfirmed };
+            tagScores[rep] = { winRate: weightedWr, sampleSize: totalSamples, significance: weightedSig, confidenceLower: weightedCl, confirmed: anyConfirmed };
             processed.add(rep);
           }
         }
@@ -42053,6 +41622,19 @@ function AppContent() {
       // 🆕 tagAttributes 기반 대장르 통합 (루프 밖에서 1회 계산)
       const allMajorForScore = getAllMajorTags(tagAttributes, userMajorGenres);
 
+      // 📊 통계 엄격도 게이트: significance(CI 폭 좁음)·confidence_lower(Wilson 하한)로
+      //   패턴 기여를 보수화 가중. 소표본/저신뢰는 영향 축소하되 완전 차단 금지(콜드스타트 보호).
+      //   refreshPatternStats는 sample_size>=5만 significance 갱신 → sample 3~4는 sig=0/NULL이
+      //   들어와 floor(0.5)로 반감만 됨(공격적 다양성 유지). 반환 ∈ [0.5, 1.0].
+      function _confGate(significance, confidenceLower) {
+        const sig = Math.max(0, Math.min(1, Number(significance) || 0));
+        let w = 0.5 + 0.5 * sig; // sig=0 → 0.5(반감), sig=1 → 1.0(원본)
+        const cl = Number(confidenceLower) || 0;
+        // CI 하한이 50% 초과(=부호 안정)면 신뢰 가산하여 1.0 쪽으로 끌어올림
+        if (cl > 0.5) w = Math.max(w, Math.min(1, 0.6 + (cl - 0.5) * 0.8));
+        return Math.max(0.5, Math.min(1, w));
+      }
+
       function computeTasteScore(novel) {
         let genreScore = 0, tagScore = 0, authorScore = 0;
         const factors = []; // 추천 이유 텍스트
@@ -42083,7 +41665,9 @@ function AppContent() {
             if (gs && gs.sampleSize >= 3) {
               // 승률 50% 초과분을 점수화 (70% → +20, 80% → +30)
               let bonus = Math.max(0, (gs.winRate - 0.5) * 100);
-              // 🧠 v3.5.5: 사용자 확인 패턴은 +8 보너스
+              // 📊 통계 엄격도 게이트: 소표본/저신뢰 장르는 기여 축소(콜드스타트 floor 0.5)
+              bonus *= _confGate(gs.significance, gs.confidenceLower);
+              // 🧠 v3.5.5: 사용자 확인 패턴은 +8 보너스(게이트 후 가산 — 사용자 확인은 통계와 독립 신뢰)
               if (gs.confirmed) bonus = Math.min(40, bonus + 8);
               genreScore = Math.max(genreScore, Math.min(40, bonus));
               if (gs.winRate >= 0.55) {
@@ -42114,8 +41698,11 @@ function AppContent() {
             const resolved = resolveTagToGroup(tag, tagRelations);
             const ts = tagScores[resolved] || tagScores[tag];
             if (ts && ts.sampleSize >= 3 && ts.winRate >= 0.55) {
-              // 🧠 v3.5.5: confirmed 태그 승률 보정
-              const effectiveWr = ts.confirmed ? Math.min(1, ts.winRate + 0.05) : ts.winRate;
+              // 📊 통계 엄격도 게이트: 승률 초과분(>0.5)만 축소하여 0.5 쪽으로 보수화
+              const gate = _confGate(ts.significance, ts.confidenceLower);
+              const gatedWr = 0.5 + (ts.winRate - 0.5) * gate;
+              // 🧠 v3.5.5: confirmed 태그 승률 보정(게이트 후 가산)
+              const effectiveWr = ts.confirmed ? Math.min(1, gatedWr + 0.05) : gatedWr;
               tagHits.push({ tag, winRate: effectiveWr, confirmed: !!ts.confirmed });
             }
           }
@@ -42149,7 +41736,7 @@ function AppContent() {
         if (author && hasPatterns) {
           const as = authorScores[author];
           if (as && as.sampleSize >= 3) {
-            let aBonus = Math.max(0, (as.winRate - 0.5) * 80) + (as.sampleSize >= 10 ? 10 : 0);
+            let aBonus = Math.max(0, (as.winRate - 0.5) * 80) * _confGate(as.significance, as.confidenceLower) + (as.sampleSize >= 10 ? 10 : 0);
             // 🧠 v3.5.5: confirmed 작가 보너스
             if (as.confirmed) aBonus = Math.min(25, aBonus + 6);
             authorScore = Math.min(25, aBonus);
@@ -44395,6 +43982,63 @@ function AppContent() {
       Alert.alert("명대사 텍스트 추출 실패", e?.message || String(e));
     } finally {
       setQuoteTabOcrId(null);
+    }
+  }
+
+  // 🖼️ 단일 명대사 카드 이미지 공유/저장 — 현재 쇼츠 카드(quoteCardRef)를 captureRef로 PNG 캡처 후
+  //   ① expo-sharing 가능 시 네이티브 공유 시트, ② 불가 시 갤러리 저장으로 폴백. 이미지 quote/서식
+  //   텍스트 quote 모두 동일 카드 View(배경·서식·따옴표 포함)를 한 번에 캡처하므로 분기 불필요.
+  //   award export(exportAwardResults) 캡처 패턴 재사용. 자동매칭과 무관한 사용자 명시 액션이라
+  //   isAutoMatchingRef 경로 아님 → 불변조건 #1(Alert 금지)은 자동매칭 컨텍스트가 아니므로 안전.
+  //   DB write/flush 없음 → waitForMatchQueueDrain 불필요. 전 async 경로 try/catch/finally 강제.
+  async function shareCurrentQuote(card) {
+    if (!card) return;
+    if (isQuoteSharingRef.current) return; // 중복 탭 가드
+    const node = quoteCardRef.current;
+    if (!node) { Alert.alert("명대사 공유", "카드를 찾지 못했어요. 잠시 후 다시 시도해 주세요."); return; }
+    isQuoteSharingRef.current = true;
+    setImageBusy(true); // 🖼️ 기존 이미지 처리 오버레이 재사용(시각 피드백)
+    setQuoteCapturing(true); // 🖼️ 상단 컨트롤(카운터/버튼) 숨김 — 깨끗한 공유 이미지(award export가 후보목록 접는 패턴과 동일)
+    Breadcrumbs.add("quote_share", "start", { cardId: card.id, isImage: !!card.isImage });
+    let uri = null;
+    try {
+      // setImageBusy/setQuoteCapturing 반영(컨트롤 숨김) + 레이아웃 안정화 (award export와 동일하게 1~2프레임 대기)
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      uri = await captureRef(node, {
+        format: "png", // 서식 텍스트/배경 그라데이션 품질 우선(명언 이미지 화질 정책 일치)
+        quality: 1,
+        result: "tmpfile",
+      });
+      Breadcrumbs.add("quote_share", "captured", { cardId: card.id });
+      // 공유 가능 여부 확인 → 공유, 불가 시 갤러리 저장 폴백
+      let canShare = false;
+      try { canShare = await Sharing.isAvailableAsync(); } catch { canShare = false; }
+      if (canShare) {
+        await Sharing.shareAsync(uri, {
+          mimeType: "image/png",
+          dialogTitle: "명대사 이미지 공유",
+          UTI: "public.png",
+        });
+        Breadcrumbs.add("quote_share", "shared", { cardId: card.id });
+      } else {
+        const perm = await MediaLibrary.requestPermissionsAsync(true);
+        if (perm.status !== "granted") {
+          Alert.alert("권한 필요", "공유를 사용할 수 없고 갤러리 저장 권한도 거부되어 진행할 수 없습니다.");
+          return;
+        }
+        await MediaLibrary.saveToLibraryAsync(uri);
+        Breadcrumbs.add("quote_share", "saved", { cardId: card.id });
+        Alert.alert("저장 완료", "명대사 이미지를 갤러리에 저장했어요.");
+      }
+    } catch (e) {
+      Breadcrumbs.add("quote_share", "error", { msg: (e?.message || "").substring(0, 100) });
+      Alert.alert("명대사 공유 실패", e?.message || "이미지를 만들지 못했어요. (카드가 너무 크거나 일시적 오류)");
+    } finally {
+      // tmp 파일 정리(award export finally 패턴) — 공유 시트가 비동기로 읽을 수 있어 약간 지연 후 삭제
+      if (uri) setTimeout(() => { FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {}); }, 8000);
+      setQuoteCapturing(false); // 🖼️ 상단 컨트롤 복원
+      setImageBusy(false);
+      isQuoteSharingRef.current = false;
     }
   }
 
@@ -47046,171 +46690,9 @@ function AppContent() {
   // 🆕 Phase 1: TagEditModal 통합 지원 함수들 (v3.2.1)
   // ═══════════════════════════════════════════════════════════════════════════
   
-  /**
-   * 태그 사용 현황 통계 계산
-   * @param {string} tag - 태그명
-   * @returns {{ count: number, avgIntensity: number, avgRating: number }}
-   */
-  function getTagUsageStats(tag) {
-    if (!tag || !list || list.length === 0) {
-      return { count: 0, avgIntensity: null, avgRating: null };
-    }
-    
-    const normalizedTag = normalizeTag(tag);
-    let count = 0;
-    let totalIntensity = 0;
-    let intensityCount = 0;
-    let totalRating = 0;
-    
-    for (const novel of list) {
-      // tag_data에서 찾기
-      if (novel.tag_data) {
-        try {
-          const tagData = JSON.parse(novel.tag_data);
-          const found = tagData.find(td => normalizeTag(td.tag) === normalizedTag);
-          if (found) {
-            count++;
-            if (found.intensity) {
-              totalIntensity += found.intensity;
-              intensityCount++;
-            }
-            totalRating += novel.rating || 1500;
-            continue;
-          }
-        } catch (e) {}
-      }
-      
-      // 기존 tags 필드에서 찾기
-      // 🔧 v3.5.15b: isSameTag로 공백/alias 변형 일관 비교
-      if (novel.tags) {
-        const tags = novel.tags.split(",").map(t => t.trim()).filter(Boolean);
-        if (tags.some(t => isSameTag(t, tag))) {
-          count++;
-          totalRating += novel.rating || 1500;
-        }
-      }
-    }
-    
-    return {
-      count,
-      avgIntensity: intensityCount > 0 ? totalIntensity / intensityCount : null,
-      avgRating: count > 0 ? totalRating / count : null,
-    };
-  }
-  
-  /**
-   * TagEditModal 일괄 저장 핸들러
-   * @param {string} tag - 태그명
-   * @param {{ pinned?: boolean, hidden?: boolean, sentiment?: string }} changes - 변경사항
-   */
-  async function handleTagEditModalSave(tag, changes) {
-    try {
-      // 고정 상태 변경
-      // 🔧 v3.5.11: 함수형 업데이트로 stale closure 방지
-      // 🔧 v3.5.15b: isSameTag로 공백/alias 변형 일관 비교
-      if (changes.pinned !== undefined) {
-        setPinnedTags(prev => {
-          const isPinned = prev.some(t => isSameTag(t, tag));
-          if (changes.pinned && !isPinned) {
-            const next = [...prev, tag];
-            safeDefer(() => setAppMeta("pinned_tags", next));
-            return next;
-          } else if (!changes.pinned && isPinned) {
-            const next = prev.filter(t => !isSameTag(t, tag));
-            safeDefer(() => setAppMeta("pinned_tags", next));
-            return next;
-          }
-          return prev;
-        });
-      }
-      
-      // 숨김 상태 변경
-      // 🔧 v3.5.11: 함수형 업데이트로 stale closure 방지
-      // 🔧 v3.5.15b: isSameTag로 공백/alias 변형 일관 비교
-      if (changes.hidden !== undefined) {
-        setHiddenTags(prev => {
-          const isHidden = prev.some(t => isSameTag(t, tag));
-          if (changes.hidden && !isHidden) {
-            const next = [...prev, tag];
-            safeDefer(() => setAppMeta("hidden_tags", next));
-            return next;
-          } else if (!changes.hidden && isHidden) {
-            const next = prev.filter(t => !isSameTag(t, tag));
-            safeDefer(() => setAppMeta("hidden_tags", next));
-            return next;
-          }
-          return prev;
-        });
-      }
-      
-      // 🔧 v6.0.1: 속성(감정) 변경 — 함수형 업데이트로 stale closure 방지
-      // 부수효과(setAppMeta)는 updater 외부에서 실행 (React 순수성 보장)
-      if (changes.sentiment !== undefined) {
-        const newSentiment = changes.sentiment || null;
-        setTagSentiments(prev => {
-          const currentSentiment = getTagSentiment(tag, prev);
-          if (newSentiment === currentSentiment) return prev;
-          const updated = { ...prev };
-          if (newSentiment === null) {
-            delete updated[tag];
-          } else {
-            updated[tag] = newSentiment;
-          }
-          // 🔧 React 18+ 배칭 대응: setTimeout으로 렌더 이후 저장
-          safeDefer(() => setAppMeta("tag_sentiments", updated));
-          return updated;
-        });
-      }
-
-      // 🔧 v6.0.1: 작품명 태그 속성 변경 — 함수형 업데이트로 stale closure 방지
-      if (changes.isTitle !== undefined) {
-        setTagAttributes(prev => {
-          const currentIsTitle = !!(prev[tag]?.isTitle);
-          if (changes.isTitle === currentIsTitle) return prev; // 변경 없으면 early return
-          const attrs = { ...prev };
-          if (changes.isTitle) {
-            attrs[tag] = { ...(attrs[tag] || {}), isTitle: true };
-          } else {
-            if (attrs[tag]) {
-              delete attrs[tag].isTitle;
-              if (Object.keys(attrs[tag]).length === 0) delete attrs[tag];
-            }
-          }
-          // 🔧 React 18+ 배칭 대응: setTimeout으로 렌더 이후 저장
-          safeDefer(() => setAppMeta("tag_attributes", attrs));
-          return attrs;
-        });
-      }
-    } catch (e) {
-      console.warn("handleTagEditModalSave error:", e);
-    }
-  }
-  
-  /**
-   * 좌표계 편집 모달 열기 (TagEditModal에서 호출)
-   * @param {string} tag - 태그명
-   * @param {string|null} systemId - 특정 좌표계 ID (null이면 선택 화면)
-   */
-  function handleEditCoordinate(tag, systemId) {
-    // 태그 편집 모달 닫기
-    setTagEditModalOpen(false);
-    setEditingTag(null);
-    
-    if (systemId && coordinateSystems[systemId]) {
-      // 특정 좌표계 편집
-      setEditingCoordSystem({ id: systemId, ...coordinateSystems[systemId] });
-      setEditingCoordTag(tag);
-    } else {
-      // 좌표계 선택 화면 (전체 목록)
-      // 첫 번째 좌표계를 열거나 기본값
-      const firstSystemId = Object.keys(coordinateSystems)[0];
-      if (firstSystemId) {
-        setEditingCoordSystem({ id: firstSystemId, ...coordinateSystems[firstSystemId] });
-        setEditingCoordTag(tag);
-      }
-    }
-    deferOpen(setCoordManageOpen); // 🔧 v3.5.8
-  }
+  /* 死코드 제거(v7.49.21): getTagUsageStats / handleTagEditModalSave / handleEditCoordinate —
+     모두 도달불가 <TagEditModal/> 렌더 전용 핸들러였음(호출부 0). 좌표계 편집 진입은
+     좌표계 모달 라이브 UI가 별도 처리(setEditingCoordSystem/setEditingCoordTag/setCoordManageOpen). */
 
   // 태그에 대장르 속성 추가 (기존 위치에서 제거하지 않음)
   // 🔧 stale closure 방지: updateTagRegistryFn(함수형 업데이트) 사용
@@ -48331,7 +47813,20 @@ function AppContent() {
         SET status = ?, user_response = ?, responded_at = ?
         WHERE id = ?
       `, [response === 'skipped' ? 'dismissed' : response, response, timestamp, insightId]);
-      
+
+      // 🔁 루프 닫기: 응답된 인사이트의 source 패턴을 shown 처리(死코드 respondToInsight 로직 대체)
+      // → discoverInsights(is_shown=0) 후보에서 영구 제외, 재큐잉 누수 차단
+      const respondedInsight = await first(
+        `SELECT pattern_id FROM insight_queue WHERE id = ?`, [insightId]
+      );
+      if (respondedInsight && respondedInsight.pattern_id) {
+        await exec(`
+          UPDATE preference_patterns
+          SET is_shown = 1, shown_at = ?, user_reaction = ?
+          WHERE id = ?
+        `, [timestamp, response, respondedInsight.pattern_id]);
+      }
+
       // 확인/거부된 인사이트는 가중치 학습에 반영
       if (response === 'confirmed' || response === 'rejected') {
         await recordInsightFeedback(insightId, response);
@@ -50104,6 +49599,23 @@ function AppContent() {
           }
           // (v7.4.13 제거) read_progress 트리거 — manual_tier 의심 신호로 약함
           // (m6 제거) meta_edit 트리거 — 메타 편집(제목/태그/note 등)은 검증 큐에 영향 X
+          // 🆕 Q3: 다회독 승급 후보 — reread_count가 임계 이상으로 '증가'했고 현재 티어가 하위 절반이면
+          //   underrated 검증 제안. 티어/순위 변경(_v7TierChanged/_v7TierCleared)이 이미 더 강한 트리거를
+          //   건 경우엔 중복 발화하지 않음(그쪽 enqueue가 같은 pending row를 점유). 제안만 — 티어 직접변경 X.
+          if (!_v7TierChanged && !_v7TierCleared) {
+            const _newReread = Math.max(1, Number(editRereadCount) || 1);
+            const _prevReread = Math.max(1, Number(_v7SnapshotForUndo?.reread_count) || 1);
+            // 현재 유효 티어(이 저장 후 값): 티어 클리어가 아니므로 editManualTier 우선, 없으면 기존 manual_tier
+            const _effTier = editManualTier || n.manual_tier || "";
+            if (_effTier && _newReread >= VERIFICATION_REREAD_PROMOTE_MIN && _newReread > _prevReread) {
+              const _order = getActiveTierOrder(globalTierConfig);
+              const _idx = tierRank(_effTier, globalTierConfig);
+              // 하위 절반(=상위 티어가 아님)일 때만 — 이미 상위 티어면 승급 제안 무의미
+              if (_order.length > 0 && _idx >= Math.floor(_order.length / 2)) {
+                await enqueueVerification(n.id, "new", "underrated", "saveEdit_reread_promote");
+              }
+            }
+          }
         } catch (e) {
           console.warn("[v7.0] saveEdit 검증 큐 INSERT 실패:", e?.message);
         }
@@ -50590,13 +50102,45 @@ function AppContent() {
     }
   }, []);
 
+  // 🆕 Q4: '왜 이 자리?' 설명 — 세션의 tier_validation_log(이동 중 전 매치)를 조회해
+  //   'X·Y 이기고 Z에 막혀 {tier} #{order}'식 문자열 생성. system path 부산물(읽기 전용 SELECT)이라
+  //   불변규칙 무관(매칭 큐/자동매칭 루프 밖). 실패 시 빈 문자열(렌더에서 미표시).
+  const buildWhyExplanation = useCallback(async (h) => {
+    if (!h || !h.session_id) return "";
+    try {
+      const logs = await all(
+        `SELECT l.user_choice, l.novel_b_id, b.title AS cand_title
+         FROM tier_validation_log l
+         LEFT JOIN novels b ON b.id = l.novel_b_id
+         WHERE l.session_id=? ORDER BY l.created_at ASC`,
+        [h.session_id]
+      );
+      if (!logs || logs.length === 0) return "";
+      // logVerificationMatch는 user_choice에 'a'(의심작 승)/'b'(후보 승)를 저장(35905). novel id가 아님.
+      //   → 'a'면 의심작이 이긴 상대(won), 'b'면 의심작이 막힌 상대(lost).
+      const won = [], lost = [];
+      for (const l of logs) {
+        const t = (l.cand_title || "(삭제됨)").trim();
+        if (l.user_choice === "a") { if (t && !won.includes(t)) won.push(t); }
+        else if (l.user_choice === "b" && t && !lost.includes(t)) lost.push(t);
+      }
+      const wonStr = won.length ? `${won.slice(0, 3).join(", ")}${won.length > 3 ? " 외" : ""} 이기고 ` : "";
+      const blockStr = h.blocker_title ? `${h.blocker_title}에 막혀 ` : (lost.length ? `${lost[0]}에 막혀 ` : "");
+      const dest = h.result_action === "moved" && h.result_tier
+        ? `${getTierLabel(h.result_tier)} #${h.result_order ?? "?"}로 이동`
+        : "자리 유지";
+      return `${wonStr}${blockStr}${dest}`;
+    } catch (e) { console.warn("[Q4] buildWhyExplanation 오류:", e?.message); return ""; }
+  }, []);
+
   // 🆕 v7.16.0: 최근 자동 조정 이력 로드 — tier_repositioning_session(여태 진단 탭에서만 보이던 쓰기 전용
   //   기록)을 사용자 화면에 노출. "무엇이 어디로 옮겨졌고 왜인지"를 보여 검증 결과의 투명성 확보.
   const loadRepositioningHistory = useCallback(async () => {
     try {
       const rows = await all(
-        `SELECT s.novel_id, s.suspicion_type, s.trigger_type, s.result_tier, s.result_order, s.result_action,
-                s.total_responses, s.blocker_id, s.completed_at, n.title AS title, b.title AS blocker_title
+        `SELECT s.id AS session_id, s.novel_id, s.suspicion_type, s.trigger_type, s.result_tier, s.result_order, s.result_action,
+                s.total_responses, s.blocker_id, s.prev_tier, s.prev_order, s.completed_at,
+                n.title AS title, n.manual_tier AS cur_tier, n.manual_order AS cur_order, b.title AS blocker_title
          FROM tier_repositioning_session s
          LEFT JOIN novels n ON n.id = s.novel_id
          LEFT JOIN novels b ON b.id = s.blocker_id
@@ -50604,10 +50148,71 @@ function AppContent() {
          ORDER BY s.completed_at DESC LIMIT 20`
       );
       setRepositioningHistory(rows || []);
+      setRepoWhyOpen({}); setRepoWhyText({}); // 🆕 Q4: 목록 갱신 시 '왜?' 캐시 무효화(index 매핑 어긋남 방지)
     } catch (e) {
       console.warn("[v7.16.0] loadRepositioningHistory 오류:", e?.message);
     }
   }, []);
+
+  // 🆕 Q4: '왜?' 토글 — 펼칠 때 lazy 로드(미로드면 buildWhyExplanation 실행 후 캐시)
+  const toggleRepoWhy = useCallback(async (h, idx) => {
+    setRepoWhyOpen(prev => ({ ...prev, [idx]: !prev[idx] }));
+    if (repoWhyText[idx] === undefined) {
+      const txt = await buildWhyExplanation(h);
+      setRepoWhyText(prev => ({ ...prev, [idx]: txt }));
+    }
+  }, [buildWhyExplanation, repoWhyText]);
+
+  // 🆕 Q4: 자동 조정 '한 번에 되돌리기' — prev_tier/prev_order로 manual_tier/order 복원 + rebalance.
+  //   ⚠️ system path: enqueueVerification/검증 트리거 호출 금지(CLAUDE.md hybrid 트리거 hook 목록에 없음 = 무한루프 방지).
+  //   patrick-truth 정합: 사용자가 명시적으로 '되돌리기'를 눌렀으므로 manual_tier/order는 사용자 진실로 환원.
+  //   불변규칙: 매칭 큐/자동매칭 루프 밖의 사용자 탭 핸들러라 ①②④ 비해당. DELETE 없음(③ 비해당). 전 경로 try/catch(⑤).
+  const undoRepositioning = useCallback(async (h) => {
+    if (!h || !h.session_id || !h.prev_tier) return;
+    if (repoUndoingRef.current) return; // 더블탭 가드
+    Alert.alert(
+      "되돌리기",
+      `"${h.title || "(작품)"}"을(를) 자동 이동 전 자리(${getTierLabel(h.prev_tier)} #${h.prev_order ?? "?"})로 되돌릴까요?`,
+      [
+        { text: "취소" },
+        { text: "되돌리기", style: "destructive", onPress: async () => {
+          if (repoUndoingRef.current) return;
+          repoUndoingRef.current = true;
+          try {
+            const fresh = await first("SELECT id, title, manual_tier, manual_order FROM novels WHERE id=?", [h.novel_id]);
+            if (!fresh) { Alert.alert("알림", "작품을 찾을 수 없습니다(삭제됨)."); return; }
+            const prevTier = h.prev_tier;
+            const prevOrder = Number(h.prev_order) || 0;
+            const curTier = fresh.manual_tier;
+            // 1) manual_tier/order 복원 (system이 옮긴 자리를 되돌림)
+            await exec("UPDATE novels SET manual_tier=?, manual_order=? WHERE id=?", [prevTier, prevOrder, h.novel_id]);
+            // 2) gap=100 invariant 회복 — 떠난 자리(curTier)와 돌아간 자리(prevTier) 양쪽 rebalance
+            if (prevTier) await rebalanceTierOrder(prevTier);
+            if (curTier && curTier !== prevTier) await rebalanceTierOrder(curTier);
+            // 3) tierHistory 기록(현재→prev 방향)
+            addTierHistoryEntry(h.novel_id, fresh.title, curTier, prevTier);
+            // 4) 큐/세션 정합: 이 작품의 pending 큐 취소 + in-flight 세션 abort(undo 후 finalize가 재이동시키지 않게).
+            //    'tier_change' undo와 동일 정책. enqueueVerification 재호출은 하지 않음(재검증 트리거 X).
+            await exec("UPDATE tier_verification_queue SET state='cancelled', processed_at=? WHERE novel_id=? AND state='pending'", [Date.now(), h.novel_id]);
+            if (verificationSession && verificationSession.queueRow?.novel_id === h.novel_id) {
+              setVerificationSession(null);
+              verificationSessionIdRef.current = null;
+            }
+            // 5) 이 세션은 되돌려졌으므로 result_action='reverted'로 마킹 → 이력에서 재되돌리기 차단 + 수문장 통계 소비(blocker NULL).
+            await exec("UPDATE tier_repositioning_session SET result_action='reverted', blocker_id=NULL WHERE id=?", [h.session_id]);
+            // 6) UI 갱신
+            await loadList(undefined, undefined, "q4-undo-reposition");
+            await loadRepositioningHistory();
+            await loadVerificationStats();
+            Alert.alert("완료", "자동 이동을 되돌렸습니다.");
+          } catch (e) {
+            console.warn("[Q4] undoRepositioning 오류:", e?.message);
+            Alert.alert("오류", "되돌리기 중 오류가 발생했습니다.");
+          } finally { repoUndoingRef.current = false; }
+        } },
+      ]
+    );
+  }, [verificationSession, loadList, loadRepositioningHistory, loadVerificationStats]);
 
   // 🆕 v7.0.8: 하이브리드 진단 패널 통합 데이터 로드 — 진단 탭 진입 시 + 새로고침 버튼
   const loadHybridDiag = useCallback(async () => {
@@ -53366,6 +52971,8 @@ async function buildExtendedBackup(novels, matches, settings, tierHist, coverIma
   // 🆕 v7.14.0 (P0): 명언 전역 기본 서식 프리셋(quoteDefaultStyle) 백업 — 이전엔 미백업이라
   //   복원 시 restored={...DEFAULT_SETTINGS}로 null 초기화되어 사용자 설정이 소실되던 데이터 손실.
   if (settings.quoteDefaultStyle) settingsDiff.qd = settings.quoteDefaultStyle;
+  // 🆕 자동 수상 후보 추천 토글 — 기본 true라 false(끔)일 때만 약어 as=0 저장 (aa/rb 패턴 일관)
+  if (settings.autoAwardSuggest === false) settingsDiff.as = 0;
 
   // 🆕 v3.4: 예정탭 확장 필드 설정
   if (settings.plannedFields) {
@@ -53622,7 +53229,7 @@ async function exportJSON() {
     // 수문장 식별 누적 통계(blocker_id COUNT≥5) 보존을 위해 결과 row 자체 보존
     try {
       const rsRows = await all(
-        `SELECT novel_id, suspicion_type, trigger_type, state, result_tier, result_order, result_action, total_responses, blocker_id, created_at, completed_at
+        `SELECT novel_id, suspicion_type, trigger_type, state, result_tier, result_order, result_action, total_responses, blocker_id, prev_tier, prev_order, created_at, completed_at
          FROM tier_repositioning_session
          WHERE state='completed' AND blocker_id IS NOT NULL
          ORDER BY created_at DESC LIMIT 500`
@@ -53633,6 +53240,7 @@ async function exportJSON() {
           n: r.novel_id, st: r.suspicion_type, tt: r.trigger_type || "",
           s: r.state, rt: r.result_tier || "", ro: r.result_order != null ? r.result_order : null,
           ra: r.result_action || "", tr: r.total_responses || 0, b: r.blocker_id || "",
+          pt: r.prev_tier || "", po: r.prev_order != null ? r.prev_order : null, // 🆕 Q4: 되돌리기용 prev 자리
           c: r.created_at, cp: r.completed_at || r.created_at,
         }));
         if (!payload.NID) payload.NID = novels.map(n => n.id);
@@ -54265,6 +53873,8 @@ async function importJSON() {
                 if (s.ec !== undefined) restored.exportCardsPerImage = s.ec;
                 // 🆕 v7.14.0 (P0): 명언 전역 기본 서식 프리셋 복원 (백업 누락 회귀 해결 — 소실/초기화 방지)
                 if (s.qd) restored.quoteDefaultStyle = s.qd;
+                // 🆕 자동 수상 후보 추천 복원 — as=0이면 끔. 키 없으면 DEFAULT_SETTINGS의 true 유지(round-trip 정합)
+                if (s.as === 0) restored.autoAwardSuggest = false;
 
                 // 🆕 v3.4: 예정탭 확장 필드 설정 복원
                 if (s.pf && typeof s.pf === "object") {
@@ -54595,12 +54205,14 @@ async function importJSON() {
                     const blockerId = remapNovelId(r.b);
                     rsQueries.push({
                       sql: `INSERT OR IGNORE INTO tier_repositioning_session
-                            (id, novel_id, suspicion_type, trigger_type, state, result_tier, result_order, result_action, total_responses, blocker_id, created_at, completed_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                            (id, novel_id, suspicion_type, trigger_type, state, result_tier, result_order, result_action, total_responses, blocker_id, prev_tier, prev_order, created_at, completed_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                       params: [
                         uuid(), novelId, r.st, r.tt || null, r.s,
                         r.rt || null, r.ro != null ? r.ro : null, r.ra || null,
-                        r.tr || 0, blockerId || null, r.c || Date.now(), r.cp || r.c || Date.now(),
+                        r.tr || 0, blockerId || null,
+                        r.pt || null, r.po != null ? r.po : null, // 🆕 Q4: prev 자리 복원
+                        r.c || Date.now(), r.cp || r.c || Date.now(),
                       ],
                     });
                   }
@@ -57408,6 +57020,8 @@ async function importJSON() {
                   ["등록순", "created"],
                   ["제목", "title"],
                   ["우선순위", "priority"],
+                  ["관심도", "interest"],
+                  ["예정일", "scheduled"],
                 ].map(([label, key]) => (
                   <Chip
                     key={key}
@@ -57449,6 +57063,36 @@ async function importJSON() {
               }
               return filtered.length;
             })()}작)`}>
+              {/* 🆕 '곧 시작 예정' 요약 (오늘~7일 내 scheduled_start_date) */}
+              {(() => {
+                const startOfDay = (ms) => { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime(); };
+                const today0 = startOfDay(Date.now());
+                const soon = (plannedList || []).filter(n => {
+                  const ts = Number(n.scheduled_start_date) || 0;
+                  if (ts <= 0) return false;
+                  const dd = Math.round((startOfDay(ts) - today0) / 86400000);
+                  return dd >= 0 && dd <= 7;
+                }).sort((a, b) => (Number(a.scheduled_start_date) || 0) - (Number(b.scheduled_start_date) || 0));
+                if (soon.length === 0) return null;
+                const head = soon.slice(0, 3);
+                return (
+                  <View style={{ backgroundColor: isDark ? "rgba(245,158,11,0.12)" : "#fffbeb", borderLeftWidth: 4, borderLeftColor: "#f59e0b", padding: 12, borderRadius: 12, marginBottom: 12 }}>
+                    <Text style={{ color: isDark ? "#fcd34d" : "#92400e", fontSize: 13, fontWeight: "800", marginBottom: 6 }}>⏰ 곧 시작 예정 ({soon.length})</Text>
+                    {head.map((n) => {
+                      const dd = Math.round((startOfDay(Number(n.scheduled_start_date)) - today0) / 86400000);
+                      const tag = dd === 0 ? "D-DAY" : `D-${dd}`;
+                      return (
+                        <Text key={n.id} style={{ color: isDark ? "#fde68a" : "#78350f", fontSize: 12, marginTop: 2 }} numberOfLines={1}>
+                          · {tag}  {n.title}
+                        </Text>
+                      );
+                    })}
+                    {soon.length > head.length && (
+                      <Text style={{ color: isDark ? "#fcd34d" : "#92400e", fontSize: 11, marginTop: 4 }}>외 {soon.length - head.length}작</Text>
+                    )}
+                  </View>
+                );
+              })()}
               {(() => {
                 const q = (plannedQuery || "").toLowerCase().trim();
                 let filtered = plannedList;
@@ -57475,6 +57119,19 @@ async function importJSON() {
                     const pa = Number(a.priority) || 3;
                     const pb = Number(b.priority) || 3;
                     if (pa !== pb) return dir * (pb - pa);
+                    return (b.created_at || 0) - (a.created_at || 0);
+                  } else if (plannedSortKey === "interest") {
+                    // 🆕 관심도(interest_level ★1~5) 정렬, 동률은 최신 등록순
+                    const ia = Number(a.interest_level) || 3;
+                    const ib = Number(b.interest_level) || 3;
+                    if (ia !== ib) return dir * (ib - ia);
+                    return (b.created_at || 0) - (a.created_at || 0);
+                  } else if (plannedSortKey === "scheduled") {
+                    // 🆕 예정일(scheduled_start_date) 정렬: 미설정(0)은 항상 맨 뒤로
+                    const sa = Number(a.scheduled_start_date) || 0;
+                    const sb = Number(b.scheduled_start_date) || 0;
+                    if ((sa > 0) !== (sb > 0)) return sa > 0 ? -1 : 1;
+                    if (sa !== sb) return dir * (sa - sb);
                     return (b.created_at || 0) - (a.created_at || 0);
                   }
                   return dir * ((b.created_at || 0) - (a.created_at || 0));
@@ -57561,6 +57218,26 @@ async function importJSON() {
                                 </View>
                               </View>
                               
+                              {/* 🆕 예정일 D-day 배지 (scheduled_start_date 기준) */}
+                              {(() => {
+                                const ts = Number(item.scheduled_start_date) || 0;
+                                if (ts <= 0) return null;
+                                const startOfDay = (ms) => { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime(); };
+                                const diffDays = Math.round((startOfDay(ts) - startOfDay(Date.now())) / 86400000);
+                                let label, bg, fg;
+                                if (diffDays < 0) { label = `지남 (${-diffDays}일 전)`; bg = isDark ? "rgba(148,163,184,0.18)" : "#e2e8f0"; fg = isDark ? "#cbd5e1" : "#475569"; }
+                                else if (diffDays === 0) { label = "D-DAY"; bg = isDark ? "rgba(239,68,68,0.22)" : "#fee2e2"; fg = isDark ? "#fca5a5" : "#b91c1c"; }
+                                else if (diffDays <= 7) { label = `D-${diffDays}`; bg = isDark ? "rgba(245,158,11,0.20)" : "#fef3c7"; fg = isDark ? "#fcd34d" : "#92400e"; }
+                                else { label = `D-${diffDays}`; bg = isDark ? "rgba(59,130,246,0.16)" : "#dbeafe"; fg = isDark ? "#93c5fd" : "#1d4ed8"; }
+                                return (
+                                  <View style={{ flexDirection: "row", marginTop: 4 }}>
+                                    <View style={{ backgroundColor: bg, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 }}>
+                                      <Text style={{ color: fg, fontSize: 10, fontWeight: "800" }}>📅 {label}</Text>
+                                    </View>
+                                  </View>
+                                );
+                              })()}
+
                               {/* 작가 · 플랫폼 · 회차 */}
                               <Text style={{ color: C.sub, marginTop: 4, fontSize: 13 }} numberOfLines={1}>
                                 {item.author || "작가 미상"} · {plats.length ? plats.join(", ") : "-"}
@@ -58351,6 +58028,7 @@ async function importJSON() {
             theme={C}
             tierMode={globalTierConfig.mode}
             quoteDefaultStyle={appSettings.quoteDefaultStyle}
+            autoAwardSuggest={appSettings.autoAwardSuggest !== false}
             onGiveAward={async (novelId, awardId, year) => {
               // 수상 부여
               const novel = listMap.get(novelId);
@@ -58514,7 +58192,7 @@ async function importJSON() {
                   <View style={{ marginTop: 8 }}>
                     {repositioningHistory.map((h, i) => {
                       const moved = h.result_action === "moved";
-                      const actionLabel = moved ? "이동" : h.result_action === "no_change" ? "유지" : h.result_action === "no_candidates" ? "후보없음" : (h.result_action || "");
+                      const actionLabel = moved ? "이동" : h.result_action === "no_change" ? "유지" : h.result_action === "no_candidates" ? "후보없음" : h.result_action === "reverted" ? "되돌림" : (h.result_action || "");
                       const dirLabel = h.suspicion_type === "underrated" ? "↑ 상향 의심" : h.suspicion_type === "overrated" ? "↓ 하향 의심" : "";
                       let when = "";
                       try { when = new Date(h.completed_at).toLocaleDateString(); } catch { /* noop */ }
@@ -58529,6 +58207,28 @@ async function importJSON() {
                           <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }} numberOfLines={1}>
                             {dirLabel}{moved && h.result_tier ? ` → ${getTierLabel(h.result_tier)} #${h.result_order ?? "?"}` : ""}{h.blocker_title ? ` · 경계 ${h.blocker_title}` : ""} · 비교 {h.total_responses || 0}회 · {when}
                           </Text>
+                          {/* 🆕 Q4: '왜?' 설명 + '되돌리기'. moved이고 prev_tier/order가 기록된 세션만 되돌리기 가능. */}
+                          <View style={{ flexDirection: "row", alignItems: "center", marginTop: 6, gap: 8 }}>
+                            <TouchableOpacity
+                              onPress={() => toggleRepoWhy(h, i)}
+                              style={{ paddingVertical: 2, paddingHorizontal: 6, borderRadius: 6, backgroundColor: isDark ? "#1f2937" : "#eef2ff" }}
+                            >
+                              <Text style={{ color: C.sub, fontSize: 11, fontWeight: "700" }}>{repoWhyOpen[i] ? "왜? ▲" : "왜? ▼"}</Text>
+                            </TouchableOpacity>
+                            {moved && h.prev_tier && h.session_id && (
+                              <TouchableOpacity
+                                onPress={() => undoRepositioning(h)}
+                                style={{ paddingVertical: 2, paddingHorizontal: 6, borderRadius: 6, borderWidth: 1, borderColor: isDark ? "#7f1d1d" : "#fecaca", backgroundColor: isDark ? "#3f1d1d" : "#fef2f2" }}
+                              >
+                                <Text style={{ color: isDark ? "#fca5a5" : "#b91c1c", fontSize: 11, fontWeight: "700" }}>↩️ 되돌리기</Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                          {repoWhyOpen[i] && (
+                            <Text style={{ color: C.sub, fontSize: 11, marginTop: 4, fontStyle: "italic" }}>
+                              {repoWhyText[i] != null ? (repoWhyText[i] || "비교 기록이 없어 설명할 수 없습니다.") : "설명 불러오는 중..."}
+                            </Text>
+                          )}
                         </View>
                       );
                     })}
@@ -63418,8 +63118,10 @@ async function importJSON() {
                         borderColor: card.tierColor + "40",
                         marginBottom: 14,
                       }}
+                      ref={quoteCardRef}
+                      collapsable={false}
                       onTouchStart={(e) => {
-                        quotesSwipeRef.current = { 
+                        quotesSwipeRef.current = {
                           startX: e.nativeEvent.pageX, 
                           startY: e.nativeEvent.pageY 
                         };
@@ -63467,10 +63169,13 @@ async function importJSON() {
                         padding: 18,
                         paddingBottom: 8,
                       }}>
-                        <Text style={{ color: onBg || C.sub, fontSize: 13, fontWeight: "600" }}>
-                          {safeIdx + 1} / {total}
-                        </Text>
+                        {quoteCapturing ? <View /> : (
+                          <Text style={{ color: onBg || C.sub, fontSize: 13, fontWeight: "600" }}>
+                            {safeIdx + 1} / {total}
+                          </Text>
+                        )}
                         <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
+                          {!quoteCapturing && (<>
                           {!card.isImage ? (
                             <TouchableOpacity
                               activeOpacity={0.7}
@@ -63492,6 +63197,15 @@ async function importJSON() {
                               </Text>
                             </TouchableOpacity>
                           )}
+                          {/* 🖼️ 단일 명대사 이미지 공유/저장 — 현재 카드를 캡처(이미지/서식 텍스트 공통) */}
+                          <TouchableOpacity
+                            activeOpacity={0.7}
+                            onPress={() => shareCurrentQuote(card)}
+                            style={{ backgroundColor: hasCustomBg ? (lightOnBg ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.12)") : C.chip, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 }}
+                          >
+                            <Text style={{ color: onBg || C.text, fontSize: 12, fontWeight: "700" }}>🖼️ 공유</Text>
+                          </TouchableOpacity>
+                          </>)}
                           {card.majorGenre ? (
                             <View style={{
                               backgroundColor: C.chip,
@@ -70684,42 +70398,8 @@ async function importJSON() {
         theme={C}
       />
 
-      {/* 🏷️ 태그 편집 모달 (v3.2.1 확장) */}
-      <TagEditModal
-        visible={tagEditModalOpen}
-        onClose={() => {
-          setTagEditModalOpen(false);
-          setEditingTag(null);
-        }}
-        tag={editingTag?.tag}
-        tagType={editingTag?.type}
-        // 기존 props
-        isPinned={editingTag ? listHasTag(pinnedTags, editingTag.tag) : false}
-        onPin={togglePinTag}
-        onPromoteToMajor={promoteToMajorGenre}
-        onPromoteToSub={promoteToSubGenre}
-        onDemoteToCustom={(tag, type) => {
-          // type이 전달되면 사용, 아니면 editingTag?.type 사용 (fallback)
-          const actualType = type || editingTag?.type;
-          if (actualType === "major" || actualType === "userMajor") demoteMajorToCustom(tag);
-          else if (actualType === "sub" || actualType === "userSub") demoteSubToCustom(tag);
-        }}
-        // 🔧 v3.5.12: onComboToCustom 제거
-        onDeleteGlobally={deleteTagGlobally}
-        onEditRelations={openTagRelationModal}
-        relationInfo={editingTag ? getTagGroupInfo(editingTag.tag) : null}
-        // 🆕 v3.2.1 확장 props
-        isHidden={editingTag ? listHasTag(hiddenTags, editingTag.tag) : false}
-        isTitle={editingTag ? isTagTitle(editingTag.tag, tagAttributes) : false}
-        sentiment={editingTag ? getTagSentiment(editingTag.tag, tagSentiments) : null}
-        coordinateSystems={coordinateSystems}
-        tagUsageStats={editingTag ? getTagUsageStats(editingTag.tag) : null}
-        onSave={handleTagEditModalSave}
-        onHide={toggleHideTag}
-        onSetSentiment={setTagSentiment}
-        onEditCoordinate={handleEditCoordinate}
-        theme={C}
-      />
+      {/* 🗑️ 死코드 제거(v7.49.21): <TagEditModal/> 렌더 — visible={tagEditModalOpen}가 영구 false라 도달불가.
+          좌표계 편집은 아래 좌표계 모달(coordManageOpen)이 별도 라이브 처리. */}
 
       {/* 📐 v3.2.0: 좌표계 편집 모달 */}
       <Modal
