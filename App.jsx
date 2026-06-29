@@ -66921,15 +66921,20 @@ async function importJSON() {
                   </View>
                   {(() => {
                     const setDirectFor = async (work, url) => {
-                      try { await exec("UPDATE novels SET link=? WHERE id=?", [String(url || "").trim(), work.id]); await loadList(undefined, undefined, "op"); }
-                      catch (e) { Alert.alert("오류", e?.message || String(e)); }
+                      const u = String(url || "").trim();
+                      try {
+                        await exec("UPDATE novels SET link=? WHERE id=?", [u, work.id]);
+                        setList(prev => prev.map(x => x.id === work.id ? { ...x, link: u } : x)); // 낙관적 갱신(loadList 동시실행 스킵 대비 즉시 반영)
+                        loadList(undefined, undefined, "op");
+                      } catch (e) { Alert.alert("오류", e?.message || String(e)); }
                     };
                     const setUpdateFor = async (work, url) => {
+                      const u = String(url || "").trim();
+                      const next = String(work.update_link || "").trim() === u ? "" : u; // 같은 링크 다시 누르면 자동선정으로 되돌림
                       try {
-                        const cur = String(work.update_link || "").trim();
-                        const next = cur === String(url || "").trim() ? "" : String(url || "").trim(); // 같은 링크 다시 누르면 자동선정으로 되돌림
                         await exec("UPDATE novels SET update_link=? WHERE id=?", [next, work.id]);
-                        await loadList(undefined, undefined, "op");
+                        setList(prev => prev.map(x => x.id === work.id ? { ...x, update_link: next } : x));
+                        loadList(undefined, undefined, "op");
                       } catch (e) { Alert.alert("오류", e?.message || String(e)); }
                     };
                     const q = (linkMgmtQuery || "").toLowerCase().trim();
