@@ -2,9 +2,24 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.49.21 (제품 전면검수 — 9기능 구현: 자동수상·다회독승급·되돌리기 등)      ║
+ * ║  버전: 7.49.22 (전면 버그감사 — 백업 expected_tier/discovery_source 소실 수정)    ║
  * ║  최종 수정: 2026-06-29                                                        ║
- * ║  총 라인 수: 약 73,190줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 73,230줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔬 v7.49.22 전면 버그감사 — 12도메인 finder + 적대검증 (2026-06-29)             ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 코드 전반 12도메인(DB/동시성/취향/티어검증/ELO/백업/스크랩/태그/UI/수상/CRUD/      ║
+ * ║ 전역패턴) 병렬 버그 헌트 + 발견건당 적대검증(반증 우선·의도성 교차확인). 10도메인  ║
+ * ║ 클린, 2 finder가 동일 1건 수렴·양측 isReal 확정:                                ║
+ * ║ 🟠 백업 round-trip이 novels.expected_tier/discovery_source를 소실 — planned→novel ║
+ * ║   전환 시 1회 스냅된 값(matches로 재계산 불가, '예정→실제' 분석 전용)을           ║
+ * ║   buildUltraCompactBackup이 opt.et/ds로 직렬화하지 않고 import INSERT도 누락 →    ║
+ * ║   내보내기/복원 시 영구 '' 초기화. planned_novels는 이미 보존 중이라 명백한        ║
+ * ║   오버사이트. 수정: opt.et/ds 직렬화 + import 디코드 + INSERT 컬럼(48→50). 기존    ║
+ * ║   opt.vw/ss 추가와 동일한 additive 패턴 → 버전 게이트 불변(구버전 백업은 ''복원).  ║
+ * ║ @babel/parser·INSERT 50/50/50 정합·et/ds round-trip 단위테스트 통과.            ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -52876,6 +52891,13 @@ async function buildUltraCompactBackup(novels, matches, coverImages = null) {
     if (Number(n.conflict_hits) > 0) opt.ch = Number(n.conflict_hits);
     // 🆕 v7.21.3: 누적 의심도(v7.17) — 복원 시 0 콜드스타트 방지. matches로 재계산 불가한 관계형 누적값.
     if (Number(n.suspicion_score) > 0) opt.ss = Number(n.suspicion_score);
+    // 🆕 v7.49.22: 예정→실제 분석용 expected_tier/discovery_source — planned→novel 전환 시 1회 스냅샷,
+    //   matches로 재계산 불가. 백업 누락(opt.et/ds 미직렬화)으로 round-trip 시 소실되던 것 수정
+    //   (planned_novels는 이미 보존 중 → novels 쪽 누락은 명백한 오버사이트). 적대검증 2에이전트 확인.
+    const etStr = (n.expected_tier || "").trim();
+    if (etStr) opt.et = etStr;
+    const dsStr = (n.discovery_source || "").trim();
+    if (dsStr) opt.ds = dsStr;
 
     // 💬 v3.2.2: 인상깊은 문장 / 📷 v3.6.1: 이미지 인용구 base64 포함
     const memorableQuote = (n.memorable_quote || "").trim();
@@ -53750,6 +53772,9 @@ async function importJSON() {
                 const conflictHits = Number(opt.ch) || 0;
                 // 🆕 v7.21.3: 누적 의심도 복원 (구버전 백업은 opt.ss 없음 → 0)
                 const suspicionScoreVal = Number(opt.ss) || 0;
+                // 🆕 v7.49.22: 예정→실제 분석 스냅샷 복원 (구버전 백업은 opt.et/ds 없음 → '')
+                const expectedTierVal = opt.et || "";
+                const discoverySourceVal = opt.ds || "";
                 // 💬 v3.2.2: 인상깊은 문장 / 📷 v3.6.1: 이미지 base64 복원
                 let memorableQuote = opt.mq || "";
                 if (opt.mqImg && typeof opt.mqImg === "object" && memorableQuote.startsWith("[")) {
@@ -53792,9 +53817,10 @@ async function importJSON() {
                   // 🔧 v7.6.0: start_year/end_year/match_ban (v11 이하 백업은 기본값 0)
                   // 🔧 v7.10.0: user_flagged_suspect 컬럼 추가 (41→42)
                   // 🆕 v7.21.3: suspicion_score 컬럼 추가 (42→43)
-                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,read_count_baseline,start_year,end_year,match_ban,verification_wins,verification_losses,verification_count,conflict_hits,user_flagged_suspect,suspicion_score,links,update_link,completed_at,gaiden_start_at,gaiden_completed_at)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, manualOrder, rereadCount, tagData, aliases, memorableQuote, readCount, startYearVal, endYearVal, matchBanVal, verWins, verLosses, verCount, conflictHits, userFlaggedVal, suspicionScoreVal, links, updateLink, completedAtVal, gaidenStartAtVal, gaidenCompletedAtVal],
+                  // 🆕 v7.49.22: expected_tier/discovery_source 컬럼 추가 (48→50) — suspicion_score 뒤 정렬 유지
+                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,read_count_baseline,start_year,end_year,match_ban,verification_wins,verification_losses,verification_count,conflict_hits,user_flagged_suspect,suspicion_score,expected_tier,discovery_source,links,update_link,completed_at,gaiden_start_at,gaiden_completed_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, manualOrder, rereadCount, tagData, aliases, memorableQuote, readCount, startYearVal, endYearVal, matchBanVal, verWins, verLosses, verCount, conflictHits, userFlaggedVal, suspicionScoreVal, expectedTierVal, discoverySourceVal, links, updateLink, completedAtVal, gaidenStartAtVal, gaidenCompletedAtVal],
                 });
               }
 
