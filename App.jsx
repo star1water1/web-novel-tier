@@ -2,9 +2,28 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.51.5 (넷상 추천 카드 프리미엄 리디자인)                                 ║
+ * ║  버전: 7.52.0 (불러오기·일괄갱신·링크관리 UX + 영속/무결성 버그수정)             ║
  * ║  최종 수정: 2026-06-30                                                        ║
- * ║  총 라인 수: 약 74,090줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 74,400줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.52.0 불러오기·일괄갱신·링크관리 UX + 영속/무결성 버그수정 (2026-06-30)    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [불러오기] ① 장르·태그·연재처가 '현재의 부분집합'이면 항목이 아예 안 뜨고 병합만  ║
+ * ║   되던 문제 → 현재와 다르면 항상 노출 + 항목별 '병합/치환' 토글(치환=긁은 값으로  ║
+ * ║   교체). ② 상단 '전체 선택/해제'로 기존 값 있는 항목도 한 번에 적용. ③ 모달        ║
+ * ║   ScrollView를 flexShrink로 가둬 '선택 적용' 버튼이 항상 보이고 처음부터 스크롤    ║
+ * ║   (토글 누르기 전엔 스크롤 안 되던 버그 수정).                                   ║
+ * ║ [일괄갱신] 회차·완결 모달을 '작업별 카드 메뉴'로 재구성 — 자동 갱신/링크 연결을    ║
+ * ║   앞 카드로, 덮어쓰기·외전 보정은 '고급'으로 접음. 전체 ScrollView로 잘림 방지.    ║
+ * ║ [링크관리] 연결 탭에 '작품별 링크 역할' 목록 추가 — 링크 있는 작품 전부를 검색·    ║
+ * ║   정렬(영속)하고 멀티링크별 🔗다이렉트/🔄자동업뎃 역할을 인라인 토글(DB 직반영).   ║
+ * ║ [버그] 예정 정렬 등 tab_sort_settings 미저장 — 저장 effect가 의존 state 선언 '전' ║
+ * ║   에 있어 deps가 매 렌더 undefined(home_sort_settings와 달리 어긋남) → 변경       ║
+ * ║   미감지 → 선언 이후로 effect 이동(예정/일괄/보충/수상/최신 정렬 전부 복구).      ║
+ * ║ [무결성] 결과를 Alert 10건 절단 대신 분류 스크롤 모달로 — 무엇을 무엇으로 고쳤는지 ║
+ * ║   전체 표시(장르 [old]→[new], 지운 고아 태그 명시 등). esbuild 통과.             ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -10883,10 +10902,11 @@ async function verifyDataIntegrity(options = {}) {
           if (Array.isArray(parsed)) {
             const filtered = parsed.filter(td => currentTagsLc.has((td.tag || "").toLowerCase()));
             if (filtered.length !== parsed.length) {
-              const removed = parsed.length - filtered.length;
+              // 🔧 v7.52.0: 어떤 고아 태그를 지웠는지 구체적으로 기록
+              const removedTags = parsed.filter(td => !currentTagsLc.has((td.tag || "").toLowerCase())).map(td => td.tag).filter(Boolean);
               fixes.tag_data = filtered.length > 0 ? JSON.stringify(filtered) : "";
               needsUpdate = true;
-              addLog("태그동기", `${novel.title}: tag_data에서 고아 항목 ${removed}개 제거`);
+              addLog("태그동기", `${novel.title}: tags에 없는 tag_data ${removedTags.length}개 제거 (${removedTags.join(", ") || "?"})`);
             }
           }
         } catch {} // JSON 파싱 실패는 1a에서 이미 처리
@@ -10927,9 +10947,11 @@ async function verifyDataIntegrity(options = {}) {
         try {
           const curParsed = currentMajor ? JSON.stringify(JSON.parse(currentMajor)) : "";
           if (curParsed !== expectedMajor) {
+            // 🔧 v7.52.0: 대장르를 무엇에서 무엇으로 바꿨는지 기록 (태그 기준 재계산)
+            const oldG = currentMajor ? JSON.parse(currentMajor) : [];
             fixes.major_genre = expectedMajor;
             needsUpdate = true;
-            addLog("장르동기", `${novel.title}: major_genre 불일치 → 재계산`);
+            addLog("장르동기", `${novel.title}: 대장르 [${(Array.isArray(oldG) ? oldG : []).join(", ") || "없음"}] → [${detectedMajor.join(", ") || "없음"}]`);
           }
         } catch {
           fixes.major_genre = expectedMajor;
@@ -10941,9 +10963,11 @@ async function verifyDataIntegrity(options = {}) {
         try {
           const curParsed = currentSub ? JSON.stringify(JSON.parse(currentSub)) : "";
           if (curParsed !== expectedSub) {
+            // 🔧 v7.52.0: 부장르를 무엇에서 무엇으로 바꿨는지 기록
+            const oldG = currentSub ? JSON.parse(currentSub) : [];
             fixes.sub_genre = expectedSub;
             needsUpdate = true;
-            addLog("장르동기", `${novel.title}: sub_genre 불일치 → 재계산`);
+            addLog("장르동기", `${novel.title}: 부장르 [${(Array.isArray(oldG) ? oldG : []).join(", ") || "없음"}] → [${detectedSub.join(", ") || "없음"}]`);
           }
         } catch {
           fixes.sub_genre = expectedSub;
@@ -17213,8 +17237,10 @@ function buildScrapeItems(meta, current = {}, opts = {}) {
     if (!add.length) continue;
     const cur = parseGenreArray(current[key]);
     const merged = mergeGen(cur, add);
-    if (sameSet(merged, cur)) continue; // 새로 추가될 게 없으면 표시 안 함
-    items.push({ key, label, value: merged, display: add.join(", "), current: cur.join(", "), checked: chk(cur.length ? "x" : "") });
+    // 🔧 v7.52.0: 긁은 값이 현재와 '완전히 같을 때만' 생략. 부분집합이어도 노출 → 병합/치환(좁히기) 선택 가능.
+    //   (이전엔 sameSet(merged,cur)면 숨겨, 긁은 장르가 현재의 부분집합이면 아예 안 보이고 치환도 불가했음.)
+    if (sameSet(add, cur)) continue;
+    items.push({ key, label, isArray: true, mergeValue: merged, replaceValue: add, mode: "merge", value: merged, display: add.join(", "), current: cur.join(", "), checked: chk(cur.length ? "x" : "") });
   }
   // 🔧 v7.28.45/47/49: 일반 태그 — 장르 어휘 밖 키워드 + 연령(19금) + 줄거리 #해시태그. 기존 태그에 '병합'.
   const addTags = [...(gmap.tags || [])];
@@ -17222,8 +17248,9 @@ function buildScrapeItems(meta, current = {}, opts = {}) {
   if (addTags.length) {
     const curTagsArr = String(current.tags || "").split(",").map(s => s.trim()).filter(Boolean);
     const mergedTags = mergeGen(curTagsArr, addTags);
-    if (!sameSet(mergedTags, curTagsArr)) {
-      items.push({ key: "tags", label: "태그", value: mergedTags.join(", "), display: addTags.join(", "), current: curTagsArr.join(", "), checked: true });
+    // 🔧 v7.52.0: 긁은 태그가 현재와 완전히 같지 않으면 노출(부분집합도) → 병합/치환 선택
+    if (!sameSet(addTags, curTagsArr)) {
+      items.push({ key: "tags", label: "태그", isArray: true, mergeValue: mergedTags.join(", "), replaceValue: addTags.join(", "), mode: "merge", value: mergedTags.join(", "), display: addTags.join(", "), current: curTagsArr.join(", "), checked: true });
     }
   }
   // 🔧 v7.28.46: 작품 링크·연재처 — 스크래퍼가 url·platform을 알지만 그동안 등록에 미반영이었음.
@@ -17233,8 +17260,9 @@ function buildScrapeItems(meta, current = {}, opts = {}) {
     const scrapedPlat = canonicalPlatform(meta.platform);
     const curPlat = (Array.isArray(current.platforms) ? current.platforms : parsePlatforms(current.platforms)).map(canonicalPlatform);
     const mergedPlat = mergeGen(curPlat, [scrapedPlat]);
-    if (!sameSet(mergedPlat, curPlat)) {
-      items.push({ key: "platforms", label: "연재처", value: mergedPlat, display: scrapedPlat, current: curPlat.join(", "), checked: true });
+    // 🔧 v7.52.0: 긁은 연재처가 현재와 완전히 같지 않으면 노출 → 병합(추가)/치환(이 플랫폼만) 선택
+    if (!sameSet([scrapedPlat], curPlat)) {
+      items.push({ key: "platforms", label: "연재처", isArray: true, mergeValue: mergedPlat, replaceValue: [scrapedPlat], mode: "merge", value: mergedPlat, display: scrapedPlat, current: curPlat.join(", "), checked: true });
     }
   }
   if (meta.coverUrl) items.push({ key: "cover", label: "표지", value: meta.coverUrl, display: "가져오기", current: current.cover ? "있음" : "없음", checked: chk(current.cover) });
@@ -37781,16 +37809,12 @@ function AppContent() {
 
   // 🆕 v7.21.11: 나머지 탭 정렬/필터 영속화 (예정·일괄·보충·수상·최신변화) — home_sort_settings와 동일 패턴.
   //   단일 메타키로 묶어 저장. init-ref 게이트로 마운트 복원 전 기본값이 덮어쓰는 것 방지.
+  // 🔧 v7.52.0(버그수정): 저장 useEffect 본체는 의존 state(plannedSortKey 등)가 한참 아래(38xxx)에서
+  //   선언돼 이 위치에선 호이스팅으로 deps가 매 렌더 undefined → 변경 감지 불가 → '예정 정렬' 등이
+  //   앱 재시작 시 저장 안 되던 원인. home_sort_settings(선언 직후 배치)와 달리 어긋나 있었음.
+  //   useRef만 여기 두고(로드/슬롯 전환 경로가 .current 사용), 실제 저장 effect는 의존 state 선언
+  //   이후로 이동(검색: "v7.52.0: tab_sort_settings 저장 effect").
   const tabSortInitRef = useRef(false);
-  useEffect(() => {
-    if (!tabSortInitRef.current) return;
-    deferSetAppMeta("tab_sort_settings", {
-      plannedSortKey, plannedSortDir, plannedFilterPlatform,
-      bulkSortKey, supplementSort, supplementFilter,
-      plannedSupplementSort, plannedSupplementFilter, // 🆕 v7.31.3: 예정 보충 하위탭 정렬/필터 영속
-      awardFilter, recentFilter,
-    });
-  }, [plannedSortKey, plannedSortDir, plannedFilterPlatform, bulkSortKey, supplementSort, supplementFilter, plannedSupplementSort, plannedSupplementFilter, awardFilter, recentFilter]);
 
   // 📂 v3.7.0: 폴더 시스템
   const [folders, setFolders] = useState([]);
@@ -37903,6 +37927,7 @@ function AppContent() {
   const [bulkUpdateStats, setBulkUpdateStats] = useState({ linked: 0, unlinked: 0, total: 0 });
   const [bulkUpdateFailed, setBulkUpdateFailed] = useState(0);
   const [bulkUpdatePlatforms, setBulkUpdatePlatforms] = useState([]); // 🆕 v7.41.0: 재취득·덮어쓰기 대상 플랫폼(canonical)
+  const [bulkAdvancedOpen, setBulkAdvancedOpen] = useState(false); // 🔧 v7.52.0: 일괄갱신 '고급' 섹션 접기(기본 접힘)
   // 🆕 v7.49.0: 회차수 과대계상 보정 — 재스크랩값(외전·중복 제거된 본편/외전 회차)이 저장값보다 작을 때만 하향 정정. 적용 전 검토.
   const [bulkCorrectionCandidates, setBulkCorrectionCandidates] = useState([]); // [{id,planned,table,title,main:{from,to}|null,gaiden:{from,to}|null}]
   const [bulkCorrectionExcluded, setBulkCorrectionExcluded] = useState(() => new Set()); // 검토에서 제외한 작품 id
@@ -38428,7 +38453,28 @@ function AppContent() {
   const [recentChanges, setRecentChanges] = useState([]); // [{id, novelId, novelTitle, type, details, timestamp}]
   const [recentFilter, setRecentFilter] = useState("all"); // 🎨 v3.5.7: 최신변화 타입 필터
   const [recentSettingsOpen, setRecentSettingsOpen] = useState(false); // 🎨 v3.5.7: 설정 접기
-  
+
+  // 🔗 v7.52.0: 연결 탭 '링크 관리' 작품 목록 — 검색/정렬 (tab_sort_settings에 함께 영속)
+  const [linkMgmtQuery, setLinkMgmtQuery] = useState("");
+  const [linkMgmtSort, setLinkMgmtSort] = useState("links"); // links(링크수) | title | tier | created
+  const [linkMgmtSortDir, setLinkMgmtSortDir] = useState("DESC");
+
+  // 🔍 v7.52.0: 무결성 검증 결과 모달 (기존 Alert 10건 절단 → 전체·분류 표시)
+  const [integrityResult, setIntegrityResult] = useState(null); // null | { novelsFixed, queriesExecuted, orphanMatchesRemoved, details:[] }
+
+  // 🔧 v7.52.0: tab_sort_settings 저장 effect — 반드시 의존 state 선언 '이후'에 위치(위 useRef 주석 참고).
+  //   이전엔 선언 전(37xxx)에 있어 deps가 항상 undefined → 변경 미감지 → 예정 정렬 등 미저장 버그.
+  useEffect(() => {
+    if (!tabSortInitRef.current) return;
+    deferSetAppMeta("tab_sort_settings", {
+      plannedSortKey, plannedSortDir, plannedFilterPlatform,
+      bulkSortKey, supplementSort, supplementFilter,
+      plannedSupplementSort, plannedSupplementFilter, // 🆕 v7.31.3: 예정 보충 하위탭 정렬/필터 영속
+      awardFilter, recentFilter,
+      linkMgmtQuery, linkMgmtSort, linkMgmtSortDir, // 🔗 v7.52.0: 링크 관리 목록 검색/정렬
+    });
+  }, [plannedSortKey, plannedSortDir, plannedFilterPlatform, bulkSortKey, supplementSort, supplementFilter, plannedSupplementSort, plannedSupplementFilter, awardFilter, recentFilter, linkMgmtQuery, linkMgmtSort, linkMgmtSortDir]);
+
   // 🏷️ 태그 관리 모달
   const [tagManageOpen, setTagManageOpen] = useState(false);
   // 🔧 v3.6.1: tagRegistry에서 자동 파생
@@ -39801,6 +39847,10 @@ function AppContent() {
             if (s.plannedSupplementFilter) setPlannedSupplementFilter(s.plannedSupplementFilter); // 🆕 v7.31.3
             if (s.awardFilter && typeof s.awardFilter === "object") setAwardFilter(prev => ({ ...prev, ...s.awardFilter })); // 객체: spread-merge(불리언 false 보존)
             if (s.recentFilter) setRecentFilter(s.recentFilter);
+            // 🔗 v7.52.0: 링크 관리 목록 검색/정렬 복원
+            if (typeof s.linkMgmtQuery === "string") setLinkMgmtQuery(s.linkMgmtQuery);
+            if (s.linkMgmtSort) setLinkMgmtSort(s.linkMgmtSort);
+            if (s.linkMgmtSortDir) setLinkMgmtSortDir(s.linkMgmtSortDir);
           }
           tabSortInitRef.current = true;
 
@@ -40417,6 +40467,10 @@ function AppContent() {
         setPlannedSupplementFilter(s.plannedSupplementFilter || "all"); // 🆕 v7.31.3
         setAwardFilter((s.awardFilter && typeof s.awardFilter === "object") ? { awardId: "all", tierMin: null, excludeDropped: false, excludeDiscontinued: false, ...s.awardFilter } : { awardId: "all", tierMin: null, excludeDropped: false, excludeDiscontinued: false });
         setRecentFilter(s.recentFilter || "all");
+        // 🔗 v7.52.0: 링크 관리 목록 검색/정렬 슬롯 전환 복원
+        setLinkMgmtQuery(typeof s.linkMgmtQuery === "string" ? s.linkMgmtQuery : "");
+        setLinkMgmtSort(s.linkMgmtSort || "links");
+        setLinkMgmtSortDir(s.linkMgmtSortDir || "DESC");
       }
       setTimeout(() => { tabSortInitRef.current = true; }, 0);
 
@@ -66845,6 +66899,106 @@ async function importJSON() {
                     </TouchableOpacity>
                   )}
                 </View>
+
+                {/* 🔗 v7.52.0: 작품별 멀티링크 역할 관리 — 링크 있는 작품 전부를 검색·정렬해 직접/자동업뎃 역할을 인라인 토글 */}
+                <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+                  <Text style={{ color: C.text, fontWeight: "700", fontSize: 14, marginBottom: 6 }}>🔧 작품별 링크 역할</Text>
+                  <Text style={{ color: C.sub, fontSize: 12, lineHeight: 18, marginBottom: 10 }}>
+                    링크 있는 작품의 멀티링크 역할을 바로 지정해요. 🔗다이렉트=바로가기(읽기) / 🔄자동업뎃=회차·완결 재취득 대상. 자동업뎃 미지정 시 연재시작연도 빠른 링크가 자동 선정돼요. (검색·정렬은 저장됩니다)
+                  </Text>
+                  <TextInput value={linkMgmtQuery} onChangeText={setLinkMgmtQuery} placeholder="제목·작가 검색" placeholderTextColor={C.sub} autoCorrect={false}
+                    style={{ backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, color: C.text, fontSize: 14, marginBottom: 8 }} />
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 4, alignItems: "center" }}>
+                    {[["links", "링크수"], ["title", "제목"], ["tier", "티어"], ["created", "등록순"]].map(([key, label]) => (
+                      <TouchableOpacity key={key} onPress={() => setLinkMgmtSort(key)} activeOpacity={0.7}
+                        style={{ paddingVertical: 6, paddingHorizontal: 11, borderRadius: 999, backgroundColor: linkMgmtSort === key ? C.primary : "transparent", borderWidth: 1, borderColor: linkMgmtSort === key ? C.primary : C.line }}>
+                        <Text style={{ color: linkMgmtSort === key ? "#fff" : C.sub, fontSize: 12, fontWeight: "700" }}>{label}</Text>
+                      </TouchableOpacity>
+                    ))}
+                    <TouchableOpacity onPress={() => setLinkMgmtSortDir(p => p === "DESC" ? "ASC" : "DESC")} style={{ paddingVertical: 6, paddingHorizontal: 11, borderRadius: 999, borderWidth: 1, borderColor: C.line }}>
+                      <Text style={{ color: C.sub, fontSize: 12, fontWeight: "700" }}>{linkMgmtSortDir === "DESC" ? "↓ 내림" : "↑ 오름"}</Text>
+                    </TouchableOpacity>
+                  </View>
+                  {(() => {
+                    const setDirectFor = async (work, url) => {
+                      try { await exec("UPDATE novels SET link=? WHERE id=?", [String(url || "").trim(), work.id]); await loadList(undefined, undefined, "op"); }
+                      catch (e) { Alert.alert("오류", e?.message || String(e)); }
+                    };
+                    const setUpdateFor = async (work, url) => {
+                      try {
+                        const cur = String(work.update_link || "").trim();
+                        const next = cur === String(url || "").trim() ? "" : String(url || "").trim(); // 같은 링크 다시 누르면 자동선정으로 되돌림
+                        await exec("UPDATE novels SET update_link=? WHERE id=?", [next, work.id]);
+                        await loadList(undefined, undefined, "op");
+                      } catch (e) { Alert.alert("오류", e?.message || String(e)); }
+                    };
+                    const q = (linkMgmtQuery || "").toLowerCase().trim();
+                    let rows = (list || []).filter(n => linksOf(n).length > 0);
+                    if (q) rows = rows.filter(n => [n.title, n.author].join(" ").toLowerCase().includes(q));
+                    const dir = linkMgmtSortDir === "DESC" ? -1 : 1;
+                    const tierOrder = getActiveTierOrder(globalTierConfig);
+                    rows = [...rows].sort((a, b) => {
+                      if (linkMgmtSort === "title") return dir * (a.title || "").localeCompare(b.title || "");
+                      if (linkMgmtSort === "tier") {
+                        const ia = tierOrder.indexOf(getDisplayTier(a, globalTierConfig));
+                        const ib = tierOrder.indexOf(getDisplayTier(b, globalTierConfig));
+                        const na = ia === -1 ? tierOrder.length : ia;
+                        const nb = ib === -1 ? tierOrder.length : ib;
+                        if (na !== nb) return dir * (na - nb);
+                        return (Number(b.rating) || 0) - (Number(a.rating) || 0);
+                      }
+                      if (linkMgmtSort === "links") {
+                        const la = linksOf(a).length, lb = linksOf(b).length;
+                        if (la !== lb) return dir * (lb - la);
+                        return (Number(b.created_at) || 0) - (Number(a.created_at) || 0);
+                      }
+                      return dir * ((Number(b.created_at) || 0) - (Number(a.created_at) || 0));
+                    });
+                    if (rows.length === 0) {
+                      return <Text style={{ color: C.sub, fontSize: 13, textAlign: "center", paddingVertical: 18 }}>{q ? "검색 결과가 없어요." : "링크가 있는 작품이 없어요."}</Text>;
+                    }
+                    const LIMIT = 150;
+                    const shown = rows.slice(0, LIMIT);
+                    return (<>
+                      {shown.map((n) => {
+                        const links = linksOf(n);
+                        const directUrl = String(n.link || "").trim();
+                        const manualUpd = String(n.update_link || "").trim();
+                        const autoUrl = String(chooseUpdateLink(n) || "").trim();
+                        return (
+                          <View key={n.id} style={{ borderTopWidth: 1, borderTopColor: C.line, paddingTop: 10, marginTop: 10 }}>
+                            <Text style={{ color: C.text, fontSize: 13.5, fontWeight: "700", marginBottom: 6 }} numberOfLines={1}>{n.title}{n.author ? ` · ${n.author}` : ""}</Text>
+                            {links.map((l, li) => {
+                              const lu = (l.url || "").trim();
+                              const isDirect = lu === directUrl;
+                              const isUpd = manualUpd ? (lu === manualUpd) : (lu === autoUrl);
+                              return (
+                                <View key={lu || li} style={{ marginBottom: 7 }}>
+                                  <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
+                                    <View style={{ backgroundColor: C.primary, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2, marginRight: 6 }}>
+                                      <Text style={{ color: "#fff", fontSize: 11, fontWeight: "700" }}>{l.platform || "기타"}</Text>
+                                    </View>
+                                    {l.startYear > 0 && <Text style={{ color: C.sub, fontSize: 11, marginRight: 6 }}>{l.startYear}~</Text>}
+                                    <Text numberOfLines={1} style={{ color: C.sub, fontSize: 11, flex: 1 }}>{lu}</Text>
+                                  </View>
+                                  <View style={{ flexDirection: "row", gap: 6 }}>
+                                    <TouchableOpacity onPress={() => setDirectFor(n, lu)} style={{ flex: 1, paddingVertical: 6, borderRadius: 7, alignItems: "center", backgroundColor: isDirect ? C.primary : "transparent", borderWidth: 1, borderColor: isDirect ? C.primary : C.line }}>
+                                      <Text style={{ color: isDirect ? "#fff" : C.sub, fontSize: 12, fontWeight: isDirect ? "700" : "400" }}>🔗 다이렉트{isDirect ? " ✓" : ""}</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity onPress={() => setUpdateFor(n, lu)} style={{ flex: 1, paddingVertical: 6, borderRadius: 7, alignItems: "center", backgroundColor: (isUpd && manualUpd) ? "#0e7490" : "transparent", borderWidth: 1, borderColor: isUpd ? "#0e7490" : C.line }}>
+                                      <Text style={{ color: (isUpd && manualUpd) ? "#fff" : (isUpd ? "#0e7490" : C.sub), fontSize: 12, fontWeight: isUpd ? "700" : "400" }}>🔄 자동업뎃{isUpd ? (manualUpd ? " ✓" : " (자동)") : ""}</Text>
+                                    </TouchableOpacity>
+                                  </View>
+                                </View>
+                              );
+                            })}
+                          </View>
+                        );
+                      })}
+                      {rows.length > LIMIT ? <Text style={{ color: C.sub, fontSize: 12, textAlign: "center", paddingVertical: 12 }}>외 {rows.length - LIMIT}개 — 검색으로 좁혀보세요.</Text> : null}
+                    </>);
+                  })()}
+                </View>
               </>)}
               </Section>
             )}
@@ -67704,24 +67858,8 @@ async function importJSON() {
                             } else {
                               await loadList(undefined, undefined, "op");
                               await loadCoverLibrary();
-                              const lines = [
-                                `✅ 검증 완료`,
-                                ``,
-                                `• 수정된 작품: ${result.novelsFixed || 0}개`,
-                                `• 실행 쿼리: ${result.queriesExecuted || 0}건`,
-                                `• 고아 매치 제거: ${result.orphanMatchesRemoved || 0}건`,
-                              ];
-                              if (result.details && result.details.length > 0) {
-                                lines.push(``);
-                                lines.push(`📋 상세:`);
-                                for (const d of result.details.slice(-10)) {
-                                  lines.push(d);
-                                }
-                                if (result.details.length > 10) {
-                                  lines.push(`... 외 ${result.details.length - 10}건`);
-                                }
-                              }
-                              Alert.alert("무결성 검증 결과", lines.join("\n"));
+                              // 🔍 v7.52.0: Alert(10건 절단) 대신 전체 상세를 분류해 보여주는 모달
+                              setIntegrityResult(result);
                             }
                           } catch (e) {
                             Alert.alert("오류", "검증 중 오류: " + (e.message || e));
@@ -72955,9 +73093,21 @@ async function importJSON() {
               <TouchableOpacity onPress={() => setScrapeModal(null)}><Text style={{ fontSize: 22, color: C.sub }}>×</Text></TouchableOpacity>
             </View>
             <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
-              {(scrapeModal?.meta?.platform || "원본")}에서 가져옴 · 체크한 항목만 적용돼요.
+              {(scrapeModal?.meta?.platform || "원본")}에서 가져옴 · 체크한 항목만 적용돼요. 이미 값이 있어도 체크하면 덮어써요.
             </Text>
-            <ScrollView showsVerticalScrollIndicator={false}>
+            {/* 🔧 v7.52.0: 전체 선택/해제 — 기존 값이 있어 기본 해제된 항목까지 한 번에 불러올 수 있게 */}
+            <View style={{ flexDirection: "row", gap: 8, marginBottom: 8 }}>
+              <TouchableOpacity onPress={() => setScrapeModal(prev => prev ? { ...prev, items: prev.items.map(x => ({ ...x, checked: true })) } : prev)}
+                style={{ flex: 1, paddingVertical: 7, borderRadius: 8, alignItems: "center", backgroundColor: C.chip, borderWidth: 1, borderColor: C.line }}>
+                <Text style={{ color: C.text, fontWeight: "700", fontSize: 12 }}>✓ 전체 선택</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setScrapeModal(prev => prev ? { ...prev, items: prev.items.map(x => ({ ...x, checked: false })) } : prev)}
+                style={{ flex: 1, paddingVertical: 7, borderRadius: 8, alignItems: "center", backgroundColor: C.chip, borderWidth: 1, borderColor: C.line }}>
+                <Text style={{ color: C.sub, fontWeight: "700", fontSize: 12 }}>전체 해제</Text>
+              </TouchableOpacity>
+            </View>
+            {/* 🔧 v7.52.0: flexShrink로 스크롤 영역을 카드 안에 가두어 '선택 적용' 버튼이 항상 보이도록(토글 전 스크롤 불가 버그 수정) */}
+            <ScrollView style={{ flexShrink: 1 }} showsVerticalScrollIndicator={true} contentContainerStyle={{ paddingBottom: 4 }}>
               {(scrapeModal?.items || []).map((it, idx) => (
                 <TouchableOpacity key={it.key} activeOpacity={0.7}
                   onPress={() => setScrapeModal(prev => prev ? { ...prev, items: prev.items.map((x, i) => i === idx ? { ...x, checked: !x.checked } : x) } : prev)}
@@ -72970,6 +73120,20 @@ async function importJSON() {
                     <Text style={{ color: C.sub, fontSize: 11, marginBottom: 2 }}>{it.label}</Text>
                     <Text style={{ color: C.text, fontSize: 14, fontWeight: "600" }} numberOfLines={4}>{it.display}</Text>
                     {it.current ? <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>현재: {it.current}</Text> : null}
+                    {/* 🔧 v7.52.0: 장르·태그·연재처는 병합(현재에 추가)/치환(긁은 값으로 교체) 선택 */}
+                    {it.isArray && it.current ? (
+                      <View style={{ flexDirection: "row", gap: 6, marginTop: 6 }}>
+                        {[["merge", "＋ 병합"], ["replace", "↻ 치환"]].map(([mk, ml]) => {
+                          const on = (it.mode || "merge") === mk;
+                          return (
+                            <TouchableOpacity key={mk} onPress={() => setScrapeModal(prev => prev ? { ...prev, items: prev.items.map((x, i) => i === idx ? { ...x, mode: mk, value: mk === "replace" ? x.replaceValue : x.mergeValue, checked: true } : x) } : prev)}
+                              style={{ paddingVertical: 4, paddingHorizontal: 11, borderRadius: 999, backgroundColor: on ? C.primary : "transparent", borderWidth: 1, borderColor: on ? C.primary : C.line }}>
+                              <Text style={{ color: on ? "#fff" : C.sub, fontSize: 11, fontWeight: "700" }}>{ml}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    ) : null}
                   </View>
                 </TouchableOpacity>
               ))}
@@ -73028,6 +73192,69 @@ async function importJSON() {
         </View>
       </Modal>
 
+      {/* 🔍 v7.52.0: 무결성 검증 결과 모달 — 무엇이 문제였고 무엇을 무엇으로 고쳤는지 전체를 분류해 표시 */}
+      <Modal visible={!!integrityResult} animationType="fade" transparent statusBarTranslucent onRequestClose={() => setIntegrityResult(null)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center" }}>
+          <TouchableOpacity style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} activeOpacity={1} onPress={() => setIntegrityResult(null)} />
+          <View style={{ backgroundColor: C.card, borderRadius: 20, padding: 18, width: "92%", maxWidth: 480, maxHeight: "88%" }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>🔍 무결성 검증 결과</Text>
+              <TouchableOpacity onPress={() => setIntegrityResult(null)}><Text style={{ fontSize: 22, color: C.sub }}>×</Text></TouchableOpacity>
+            </View>
+            {(() => {
+              const r = integrityResult || {};
+              const details = Array.isArray(r.details) ? r.details : [];
+              const summary = (
+                <View style={{ backgroundColor: C.chip, borderRadius: 12, padding: 12, marginBottom: 10 }}>
+                  <Text style={{ color: C.text, fontSize: 13, fontWeight: "800", marginBottom: 3 }}>
+                    {details.length === 0 ? "✅ 문제 없음 — 데이터 정합성 양호" : `✅ 검증 완료 · 처리 ${details.length}건`}
+                  </Text>
+                  <Text style={{ color: C.sub, fontSize: 12, lineHeight: 18 }}>
+                    수정된 작품 {r.novelsFixed || 0}개 · 실행 쿼리 {r.queriesExecuted || 0}건 · 고아 매치 제거 {r.orphanMatchesRemoved || 0}건
+                  </Text>
+                </View>
+              );
+              if (details.length === 0) {
+                return (<>{summary}<PrimaryButton title="닫기" onPress={() => setIntegrityResult(null)} /></>);
+              }
+              const LABELS = {
+                "JSON수정": "📦 JSON 형식 복구", "숫자수정": "🔢 숫자 필드 정규화", "태그동기": "🏷️ 태그 동기화",
+                "장르동기": "🎭 장르 재계산", "고아매치": "⚔️ 고아 매치 정리", "표지동기": "🖼️ 표지 상태 동기화",
+                "고아로그": "🗑️ 고아 선택로그 정리", "고아갤러리": "🖼️ 고아 갤러리 정리", "고아폴더매핑": "📂 고아 폴더매핑 정리",
+                "고아검증큐": "🧪 고아 검증큐 정리", "고아검증로그": "🧪 고아 검증로그 정리", "고아세션": "🧪 고아 세션 정리",
+                "수문장정리": "🛡️ 수문장 참조 정리", "고아트리거": "⚡ 고아 트리거로그 정리", "의심도범위": "📊 의심도 범위 보정",
+                "매치무결성": "⚔️ 손상 매치 삭제", "비활성티어": "🏆 비활성 티어 정리", "순서정규화": "🔢 순서 불변식 복구", "완료": "✅ 요약",
+              };
+              const groups = {};
+              const order = [];
+              for (const d of details) {
+                const m = /^\[([^\]]+)\]\s*([\s\S]*)$/.exec(String(d));
+                const cat = m ? m[1] : "기타";
+                const msg = m ? m[2] : String(d);
+                if (!groups[cat]) { groups[cat] = []; order.push(cat); }
+                groups[cat].push(msg);
+              }
+              return (
+                <>
+                  {summary}
+                  <ScrollView style={{ flexShrink: 1 }} showsVerticalScrollIndicator={true} contentContainerStyle={{ paddingBottom: 4 }}>
+                    {order.map((cat) => (
+                      <View key={cat} style={{ marginBottom: 12 }}>
+                        <Text style={{ color: C.primary, fontSize: 13, fontWeight: "800", marginBottom: 4 }}>{LABELS[cat] || cat} · {groups[cat].length}건</Text>
+                        {groups[cat].map((msg, i) => (
+                          <Text key={i} style={{ color: C.text, fontSize: 12, lineHeight: 17, marginBottom: 3, paddingLeft: 4 }}>• {msg}</Text>
+                        ))}
+                      </View>
+                    ))}
+                  </ScrollView>
+                  <PrimaryButton title="닫기" onPress={() => setIntegrityResult(null)} style={{ marginTop: 10 }} />
+                </>
+              );
+            })()}
+          </View>
+        </View>
+      </Modal>
+
       {/* 🆕 v7.28.59: 회차·완결 일괄 갱신 모달 (메뉴/자동갱신/매핑/완료) */}
       <Modal visible={bulkUpdateOpen} animationType="fade" transparent statusBarTranslucent onRequestClose={closeBulkUpdate}>
         <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center" }}>
@@ -73037,57 +73264,86 @@ async function importJSON() {
               <TouchableOpacity onPress={closeBulkUpdate} disabled={!!bulkUpdateProgress}><Text style={{ fontSize: 22, color: bulkUpdateProgress ? C.line : C.sub }}>×</Text></TouchableOpacity>
             </View>
 
+            {/* 🔧 v7.52.0: 작업별 카드 메뉴 — 흔한 작업(자동 갱신/링크 연결)은 앞에, 덮어쓰기·외전 보정은 '고급'으로 접음 */}
             {bulkUpdateStage === "menu" && (
-              <View>
-                <Text style={{ color: C.sub, fontSize: 13, marginBottom: 12, lineHeight: 19 }}>
-                  총 {bulkUpdateStats.total}개 · 링크 있음 {bulkUpdateStats.linked}개 / 링크 없음 {bulkUpdateStats.unlinked}개{"\n"}
-                  회차는 늘어난 경우만, 완결은 연재중→완결 전환만, 연재연도는 비어 있을 때만 채워요(기존 값 보존).
-                </Text>
-                <PrimaryButton title={`🔄 링크 있는 ${bulkUpdateStats.linked}개 자동 갱신`} onPress={() => runBulkAutoUpdate()} disabled={bulkUpdateStats.linked === 0} style={{ marginBottom: 8 }} />
-                <OutlineButton title={`🔗 링크 없는 ${bulkUpdateStats.unlinked}개 연결하기`} onPress={startBulkMapping} color={C.primary} />
-                <Text style={{ color: C.sub, fontSize: 11, marginTop: 10, lineHeight: 16 }}>
-                  ※ 작품이 많으면 한 작품씩 순서대로 처리해 시간이 걸려요. 노벨피아 19금·일부 플랫폼은 가져오기가 제한될 수 있어요.
+              <ScrollView style={{ flexShrink: 1 }} showsVerticalScrollIndicator={true} contentContainerStyle={{ paddingBottom: 6 }}>
+                <Text style={{ color: C.sub, fontSize: 12.5, marginBottom: 12, lineHeight: 18 }}>
+                  총 {bulkUpdateStats.total}개 · 🔗 링크 있음 {bulkUpdateStats.linked}개 / 링크 없음 {bulkUpdateStats.unlinked}개
                 </Text>
 
-                {/* 🆕 v7.41.0: 재취득·덮어쓰기 — 본편/외전 분리로 회차·완결일 기준이 바뀐 작품을 새 기준으로 갈아끼움(opt-in, 플랫폼별) */}
-                <View style={{ borderTopWidth: 1, borderTopColor: C.line, marginTop: 14, paddingTop: 12 }}>
-                  <Text style={{ color: C.text, fontSize: 13, fontWeight: "800", marginBottom: 4 }}>🧩 재취득·덮어쓰기 (고급)</Text>
-                  <Text style={{ color: C.sub, fontSize: 11.5, lineHeight: 16, marginBottom: 9 }}>
-                    선택한 플랫폼의 링크 있는 작품을 다시 가져와 회차·연재 시작/완결일·외전 정보를 새 기준으로 덮어써요. 본편/외전 분리(본편 완결일·외전 시작/완결일)는 네이버 시리즈에서 지원돼요. 기존 값을 덮어쓰니 원할 때만 쓰세요.
+                {/* 카드 1: 자동 갱신 (가장 흔한 작업) */}
+                <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 10 }}>
+                  <Text style={{ color: C.text, fontSize: 14.5, fontWeight: "800", marginBottom: 4 }}>🔄 자동 갱신</Text>
+                  <Text style={{ color: C.sub, fontSize: 12, lineHeight: 17, marginBottom: 10 }}>
+                    링크 있는 작품을 다시 가져와 회차·완결·연재 시작연도를 안전하게 채워요. 회차는 늘어난 경우만, 완결은 연재중→완결만, 빈 칸만 채워 기존 값은 보존돼요.
                   </Text>
-                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 7, marginBottom: 10 }}>
-                    {[["시리즈", "네이버 시리즈"], ["노벨피아", "노벨피아"], ["문피아", "문피아"], ["리디", "리디"], ["카카페", "카카오페이지"]].map(([key, label]) => {
-                      const on = bulkUpdatePlatforms.includes(key);
-                      return (
-                        <TouchableOpacity key={key} onPress={() => setBulkUpdatePlatforms(prev => prev.includes(key) ? prev.filter(x => x !== key) : [...prev, key])} activeOpacity={0.7}
-                          style={{ paddingVertical: 7, paddingHorizontal: 12, borderRadius: 999, backgroundColor: on ? C.primary : C.bg, borderWidth: 1, borderColor: on ? C.primary : C.line }}>
-                          <Text style={{ color: on ? "#fff" : C.sub, fontWeight: "800", fontSize: 12 }}>{on ? "✓ " : ""}{label}</Text>
-                        </TouchableOpacity>
-                      );
-                    })}
+                  <PrimaryButton title={`링크 있는 ${bulkUpdateStats.linked}개 갱신`} onPress={() => runBulkAutoUpdate()} disabled={bulkUpdateStats.linked === 0} />
+                </View>
+
+                {/* 카드 2: 링크 연결 */}
+                <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 10 }}>
+                  <Text style={{ color: C.text, fontSize: 14.5, fontWeight: "800", marginBottom: 4 }}>🔗 링크 연결</Text>
+                  <Text style={{ color: C.sub, fontSize: 12, lineHeight: 17, marginBottom: 10 }}>
+                    링크가 없어 자동 갱신이 안 되는 작품에 플랫폼 링크를 한 작품씩 검색해 연결해요. 연결하면 그 자리에서 회차·완결도 함께 채워져요.
+                  </Text>
+                  <OutlineButton title={`링크 없는 ${bulkUpdateStats.unlinked}개 연결`} color={C.primary} onPress={() => {
+                    if (bulkUpdateStats.unlinked === 0) { Alert.alert("링크 연결", "링크 없는 작품이 없어요."); return; }
+                    startBulkMapping();
+                  }} />
+                </View>
+
+                {/* 고급 (접기) — 덮어쓰기·외전 보정 */}
+                <TouchableOpacity onPress={() => setBulkAdvancedOpen(v => !v)} activeOpacity={0.7}
+                  style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 10, paddingHorizontal: 4 }}>
+                  <Text style={{ color: C.text, fontSize: 13, fontWeight: "800" }}>⚙️ 고급 — 덮어쓰기 · 외전 회차 보정</Text>
+                  <Text style={{ color: C.sub, fontSize: 13, fontWeight: "700" }}>{bulkAdvancedOpen ? "접기 ▲" : "펼치기 ▼"}</Text>
+                </TouchableOpacity>
+
+                {bulkAdvancedOpen && (<>
+                  {/* 카드 3: 재취득·덮어쓰기 (opt-in, 플랫폼별) */}
+                  <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 10 }}>
+                    <Text style={{ color: C.text, fontSize: 13.5, fontWeight: "800", marginBottom: 4 }}>🧩 재취득·덮어쓰기</Text>
+                    <Text style={{ color: C.sub, fontSize: 11.5, lineHeight: 16, marginBottom: 9 }}>
+                      선택한 플랫폼의 링크 있는 작품을 다시 가져와 회차·연재 시작/완결일·외전 정보를 새 기준으로 덮어써요. 본편/외전 분리(본편 완결일·외전 시작/완결일)는 네이버 시리즈에서 지원돼요. 기존 값을 덮어쓰니 필요할 때만 쓰세요.
+                    </Text>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 7, marginBottom: 10 }}>
+                      {[["시리즈", "네이버 시리즈"], ["노벨피아", "노벨피아"], ["문피아", "문피아"], ["리디", "리디"], ["카카페", "카카오페이지"]].map(([key, label]) => {
+                        const on = bulkUpdatePlatforms.includes(key);
+                        return (
+                          <TouchableOpacity key={key} onPress={() => setBulkUpdatePlatforms(prev => prev.includes(key) ? prev.filter(x => x !== key) : [...prev, key])} activeOpacity={0.7}
+                            style={{ paddingVertical: 7, paddingHorizontal: 12, borderRadius: 999, backgroundColor: on ? C.primary : C.bg, borderWidth: 1, borderColor: on ? C.primary : C.line }}>
+                            <Text style={{ color: on ? "#fff" : C.sub, fontWeight: "800", fontSize: 12 }}>{on ? "✓ " : ""}{label}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                    <OutlineButton title="선택 플랫폼 재취득·덮어쓰기" color={C.warn} onPress={() => {
+                      if (!bulkUpdatePlatforms.length) { Alert.alert("재취득·덮어쓰기", "덮어쓸 플랫폼을 한 곳 이상 선택해 주세요."); return; }
+                      const names = bulkUpdatePlatforms.map(k => k === "시리즈" ? "네이버 시리즈" : k === "카카페" ? "카카오페이지" : k).join(", ");
+                      Alert.alert("재취득·덮어쓰기", `${names}의 링크 있는 작품을 다시 가져와 회차·연재 시작/완결일·외전 정보를 덮어써요. 기존 값이 바뀔 수 있어요. 진행할까요?`, [
+                        { text: "취소", style: "cancel" },
+                        { text: "덮어쓰기", style: "destructive", onPress: () => runBulkAutoUpdate({ overwrite: true, platforms: bulkUpdatePlatforms }) },
+                      ]);
+                    }} />
                   </View>
-                  <OutlineButton title="🧩 선택 플랫폼 재취득·덮어쓰기" color={C.warn} onPress={() => {
-                    if (!bulkUpdatePlatforms.length) { Alert.alert("재취득·덮어쓰기", "덮어쓸 플랫폼을 한 곳 이상 선택해 주세요."); return; }
-                    const names = bulkUpdatePlatforms.map(k => k === "시리즈" ? "네이버 시리즈" : k === "카카페" ? "카카오페이지" : k).join(", ");
-                    Alert.alert("재취득·덮어쓰기", `${names}의 링크 있는 작품을 다시 가져와 회차·연재 시작/완결일·외전 정보를 덮어써요. 기존 값이 바뀔 수 있어요. 진행할까요?`, [
-                      { text: "취소", style: "cancel" },
-                      { text: "덮어쓰기", style: "destructive", onPress: () => runBulkAutoUpdate({ overwrite: true, platforms: bulkUpdatePlatforms }) },
-                    ]);
-                  }} />
-                </View>
 
-                {/* 🔧 v7.49.5: 외전 회차수 보정 — 외전(gaiden)만 정정(과대·과소). 본편은 보존(재스크랩 본편값 신뢰 불가로 깎임 방지) */}
-                <View style={{ borderTopWidth: 1, borderTopColor: C.line, marginTop: 14, paddingTop: 12 }}>
-                  <Text style={{ color: C.text, fontSize: 13, fontWeight: "800", marginBottom: 4 }}>📊 외전 회차수 보정 (과대·과소)</Text>
-                  <Text style={{ color: C.sub, fontSize: 11.5, lineHeight: 16, marginBottom: 9 }}>
-                    링크 있는 작품을 다시 가져와, 외전 회차수가 실제와 다른 작품을 찾아 맞춰요(과대·과소 양방향). 외전이 바뀐 만큼 본편을 반대로 조정해 ‘본편+외전=전체’가 유지돼요(전체 회차는 그대로, 깎임은 외전 변화량만큼만). 후보를 검토해 적용합니다.
-                  </Text>
-                  <OutlineButton title={`📊 링크 있는 ${bulkUpdateStats.linked}개 외전 점검`} color={C.primary} onPress={() => {
-                    if (bulkUpdateStats.linked === 0) { Alert.alert("외전 회차수 보정", "링크 있는 작품이 없어요."); return; }
-                    runBulkOvercountScan();
-                  }} />
-                </View>
-              </View>
+                  {/* 카드 4: 외전 회차수 보정 (과대·과소) */}
+                  <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 4 }}>
+                    <Text style={{ color: C.text, fontSize: 13.5, fontWeight: "800", marginBottom: 4 }}>📊 외전 회차수 보정</Text>
+                    <Text style={{ color: C.sub, fontSize: 11.5, lineHeight: 16, marginBottom: 9 }}>
+                      링크 있는 작품을 다시 가져와, 외전 회차수가 실제와 다른 작품(과대·과소)을 찾아 맞춰요. 외전이 바뀐 만큼 본편을 반대로 조정해 ‘본편+외전=전체’가 유지돼요(전체 회차는 그대로, 깎임은 외전 변화량만큼만). 후보를 검토한 뒤 적용합니다.
+                    </Text>
+                    <OutlineButton title={`링크 있는 ${bulkUpdateStats.linked}개 외전 점검`} color={C.primary} onPress={() => {
+                      if (bulkUpdateStats.linked === 0) { Alert.alert("외전 회차수 보정", "링크 있는 작품이 없어요."); return; }
+                      runBulkOvercountScan();
+                    }} />
+                  </View>
+                </>)}
+
+                <Text style={{ color: C.sub, fontSize: 11, marginTop: 10, lineHeight: 16 }}>
+                  ※ 작품이 많으면 한 작품씩 처리해 시간이 걸려요. 노벨피아 19금·일부 플랫폼은 가져오기가 제한될 수 있어요.
+                </Text>
+              </ScrollView>
             )}
 
             {bulkUpdateStage === "running" && (
