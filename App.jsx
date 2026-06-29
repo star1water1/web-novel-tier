@@ -2,9 +2,30 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.49.19 (세션 변경 자기검토 — 롤백·슬롯가드 갭·자가복구·하드킬복구)        ║
+ * ║  버전: 7.49.20 (기능영역 7시나리오 — 명대사/통계/좌표/폴더/인사이트 결함)         ║
  * ║  최종 수정: 2026-06-29                                                        ║
- * ║  총 라인 수: 약 72,890줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 72,910줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔬 v7.49.20 기능영역 7실사용 시나리오 — 4에이전트 적대검증·수정 (2026-06-29)   ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 매칭/정본화/동시성 밖 기능영역(수상·취향통계·명대사·좌표·폴더·인사이트) 7시나리오 ║
+ * ║ 4에이전트 검증. 대부분 방어 견고(오탐 다수). 확정 결함 수정:                    ║
+ * ║ 🟠 명대사 평문에 ' @ '/CJK@ 포함 시 serialize→parse round-trip 분열(한 문장이    ║
+ * ║   여러 개로) 데이터 손상 → @ 포함 시 JSON 경로로 직렬화(무손실, 6케이스 통과).    ║
+ * ║ 🟠 이미지 명대사 base64는 작품당 3개만 백업 → 타기기 복원 시 초과분 깨진 참조였는데║
+ * ║   무고지 → 내보내기 요약에 누락 작품·장수 고지 추가.                            ║
+ * ║ 🟠 coordinatePreferenceAnalysis가 좌표값 null(손상 백업)에서 null.x 크래시(분석   ║
+ * ║   화면 죽음) → != null 가드(CoordinateGridView는 이미 가드됨).                   ║
+ * ║ 🟠 예정작 삭제(removePlannedNovel/batchDeletePlanned)가 novel_folders 미정리 →   ║
+ * ║   고아·폴더 카운트 부풀림 → DELETE 추가(removeNovel 동일).                       ║
+ * ║ 🟡 wilsonConfidenceInterval 손상입력(successes>total·NaN)이 NaN을 통계 DB로 전파  ║
+ * ║   → 입력 clamp. refreshPatternStats가 정적행(win_count 0)을 오염 → 카테고리 제외. ║
+ * ║ 🟡 인사이트 '건너뜀' 카운터 항상 0(loadInsights가 dismissed 미로드) → 쿼리 보강.  ║
+ * ║ 🟡 일일추천 작품 예정변환 후 stale 라벨 → convert에서 UI 상태 정리.             ║
+ * ║ @babel/parser·명대사 round-trip·wilson 단위테스트·괄호균형 통과. 오탐(고아정리·   ║
+ * ║ rename추적·sort_order·baseline·insight고아 등) 다수 반증.                        ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11293,12 +11314,14 @@ function getGapBucket(gap) {
  * 윌슨 신뢰구간 계산 (통계적 유의성)
  */
 function wilsonConfidenceInterval(successes, total, confidence = 0.95) {
-  if (total === 0) return { lower: 0, upper: 1 };
-  
+  const n = Number(total) || 0;
+  if (n <= 0) return { lower: 0, upper: 1 };
+  // 🔧 v7.49.20: 입력 clamp — 손상/구버전 import로 successes>total·음수·NaN이 들어오면 sqrt(음수)=NaN가
+  //   confidence_lower/upper·significance로 DB에 영속·전파되던 것 차단(정상 경로는 0<=s<=n 불변이라 무영향).
+  const successesC = Math.max(0, Math.min(Number(successes) || 0, n));
   const z = confidence === 0.95 ? 1.96 : 1.645;
-  const p = successes / total;
-  const n = total;
-  
+  const p = successesC / n;
+
   const denominator = 1 + z * z / n;
   const center = p + z * z / (2 * n);
   const spread = z * Math.sqrt((p * (1 - p) + z * z / (4 * n)) / n);
@@ -11892,7 +11915,9 @@ function schedulePatternStatsRefresh() {
 async function refreshPatternStats() {
   try {
     // 🔧 DB 최적화: 필요 컬럼만 + WHERE로 sample_size < 5 사전 필터링
-    const patterns = await all(`SELECT id, sample_size, win_count FROM preference_patterns WHERE sample_size >= 5`);
+    // 🔧 v7.49.20: 정적 메트릭 카테고리(win_count 무의미·항상 0) 제외 — 이전엔 이들의 win_rate/significance/is_notable을
+    //   '강한 0% notable'로 오기록해 DB 오염(현재 소비자는 없으나, is_notable/significance 읽는 소비자 추가 시 회귀 방지).
+    const patterns = await all(`SELECT id, sample_size, win_count FROM preference_patterns WHERE sample_size >= 5 AND category NOT IN ('tier_concentration','tier_inversion','award_tier')`);
 
     const queries = [];
 
@@ -17866,6 +17891,9 @@ function serializeQuotes(arr) {
   // 텍스트 평문 전용: 기존 @ 구분자 로직
   const cleaned = norm.filter(q => typeof q === "string" && q.trim()).map(q => q.trim());
   if (cleaned.length === 0) return "";
+  // 🔧 v7.49.20: quote 텍스트에 '@'가 있으면 ' @ ' 구분자/레거시 @ 분할(parseQuotes)로 round-trip 시 한 문장이 여러 개로
+  //   분열되는 데이터 손상 → JSON 경로로 직렬화(parseQuotes가 '['로 시작하면 JSON 우선 파싱하므로 무손실).
+  if (cleaned.some(q => q.includes("@"))) return JSON.stringify(cleaned);
   if (cleaned.length === 1) return cleaned[0]; // 하위 호환: 1개면 단일 문자열
   return cleaned.join(" @ ");
 }
@@ -31875,7 +31903,8 @@ const TasteAnalysisScreen = memo(({
         for (const tag of allTags) {
           const tagData = sys.tags[tag];
           // tagData는 {x, y} 객체 또는 숫자일 수 있음
-          if (tagData !== undefined) {
+          // 🔧 v7.49.20: null도 제외(!= null) — 손상/수기편집 백업의 tags:{태그:null}이 typeof null==="object"로 null.x 역참조 크래시(분석 화면 죽음)를 일으키던 것 차단(CoordinateGridView는 이미 가드됨).
+          if (tagData != null) {
             const xVal = typeof tagData === "object" ? (tagData.x ?? 0.5) : Number(tagData);
             if (!isNaN(xVal)) {
               sumPosX += xVal;
@@ -41019,6 +41048,9 @@ function AppContent() {
               for (const g of (gImgs || [])) { await deleteCoverFromLibrary(g.file_path).catch(() => {}); }
             } catch (gErr) { console.warn("[removePlannedNovel] gallery file cleanup:", gErr?.message); }
             try { await exec("DELETE FROM gallery_images WHERE novel_id=?", [id]); } catch {}
+            // 🔧 v7.49.20: novel_folders 고아 정리 — id 보존 변환(convertNovelToPlanned)으로 폴더 매핑을 유지한 예정작을 삭제할 때
+            //   이전엔 novel_folders를 안 지워 고아 잔존 + 폴더 '작품 수' 배지 부풀림(removeNovel/batchDelete는 정리함). 다음 정합성 sweep 전까지 누수.
+            try { await exec("DELETE FROM novel_folders WHERE novel_id=?", [id]); } catch {}
 
             // 인용구 이미지 파일 정리 (이미지 인용구 + 텍스트 서식 배경이미지)
             try {
@@ -41471,6 +41503,8 @@ function AppContent() {
               try {
                 await exec(`DELETE FROM gallery_images WHERE novel_id IN (${placeholders})`, ids);
               } catch (e) { console.warn("[v7.3.0] gallery_images 정리 실패:", e?.message); }
+              // 🔧 v7.49.20: novel_folders 고아 정리 — id 보존 변환된 예정작 삭제 시 폴더 매핑 잔존(고아·카운트 부풀림) 방지(removeNovel/batchDelete 동일).
+              try { await exec(`DELETE FROM novel_folders WHERE novel_id IN (${placeholders})`, ids); } catch (e) { console.warn("[v7.49.20] novel_folders 정리 실패:", e?.message); }
 
               // 🛠️ v7.3.4: memorable_quote 이미지 파일 cleanup 추가 (removeNovel/batchDelete와 동일 패턴)
               try {
@@ -41787,6 +41821,11 @@ function AppContent() {
         setVerificationSession(null);
         if (verificationSessionIdRef) verificationSessionIdRef.current = null;
       }
+
+      // 🔧 v7.49.20: 변환된 작품을 가리키던 UI 상태 정리(stale 라벨/참조 방지) — removeNovel과 동일 패턴.
+      if (dailyReco?.novel?.id === novel.id) setDailyReco(null);
+      if (focusMatchNovel?.id === novel.id) setFocusMatchNovel(null);
+      if (pair && (pair.A?.id === novel.id || pair.B?.id === novel.id)) setPair(null);
 
       // 5. recent_changes 로그
       try {
@@ -48253,7 +48292,7 @@ function AppContent() {
       const [pending, shown, rest] = await Promise.all([
         all(`SELECT * FROM insight_queue WHERE status = 'pending' ORDER BY priority DESC, created_at DESC LIMIT 20`),
         all(`SELECT * FROM insight_queue WHERE status = 'shown' ORDER BY priority DESC, created_at DESC LIMIT 20`),
-        all(`SELECT * FROM insight_queue WHERE status IN ('confirmed', 'rejected') ORDER BY priority DESC, created_at DESC LIMIT 20`),
+        all(`SELECT * FROM insight_queue WHERE status IN ('confirmed', 'rejected', 'dismissed') ORDER BY priority DESC, created_at DESC LIMIT 20`),
       ]);
       const rows = [...(pending || []), ...(shown || []), ...(rest || [])].slice(0, 20);
       setInsightList(rows);
@@ -53710,7 +53749,11 @@ async function exportJSON() {
     const plannedInfo = payload.PL ? `, 예정 ${payload.PL.length}개` : "";
     const patternInfo = payload.PP ? `, 학습 패턴 ${payload.PP.length}개` : "";
     const galleryInfo = payload.GI ? `, 갤러리 ${payload.GI.length}장` : "";
-    const summary = `${novels.length}작품, ${matches.length}매치${plannedInfo}${coverInfo}${galleryInfo}${analysisInfo}${tagMetaInfo}${tagRegistryInfo}${patternInfo}\n크기: ${sizeText}`;
+    // 🆕 v7.49.20: 이미지 명대사 base64는 작품당 3개까지만 백업 → 타기기 복원 시 4번째+ 이미지는 깨진 참조가 되므로 누락 작품 수 고지(이전엔 무고지).
+    let _qCapWorks = 0, _qCapExcess = 0;
+    try { for (const n of novels) { if (!n.memorable_quote) continue; const imgs = parseQuotes(n.memorable_quote).filter(q => isImageQuote(q)).length; if (imgs > 3) { _qCapWorks++; _qCapExcess += (imgs - 3); } } } catch {}
+    const quoteCapInfo = _qCapWorks > 0 ? `\n⚠️ 이미지 명대사 ${_qCapWorks}개 작품의 일부(${_qCapExcess}장, 작품당 3장 초과분)는 타기기 복원 시 빠져요.` : "";
+    const summary = `${novels.length}작품, ${matches.length}매치${plannedInfo}${coverInfo}${galleryInfo}${analysisInfo}${tagMetaInfo}${tagRegistryInfo}${patternInfo}\n크기: ${sizeText}${quoteCapInfo}`;
     
     if (_pt) PerfMonitor.trackFunc("exportJSON", Date.now() - _pt); // 🔬
     setIsLoading(false);
