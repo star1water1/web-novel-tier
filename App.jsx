@@ -2,9 +2,20 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.51.2 (넷상 추천 품질 — 카카오 SERP·논픽션 필터 + 쿨다운 완화)           ║
+ * ║  버전: 7.51.3 (넷상 추천 — 빈 목록 시 탭 진입 자동 채움)                          ║
  * ║  최종 수정: 2026-06-30                                                        ║
- * ║  총 라인 수: 약 74,030줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 74,040줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🆕 v7.51.3 넷상 추천 자동 채움 (2026-06-30)                                     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [피드백] 추천 탭 첫 진입 시 넷상이 빈 채로 떠 수동 '가져오기' 필요 → 첫인상 빈약.  ║
+ * ║ [변경] 탭 진입 effect가 목록이 비어 있으면(첫 진입·TTL 정리 후) 하루 1회 자동      ║
+ * ║   가져오기. '매일 자동' ON이면 비어있지 않아도 매일 갱신. 자동 경로는 쿨다운 우회   ║
+ * ║   (web_reco_auto_day 하루 1회 게이트로 중복/실패 재시도 방지, 수동은 가능).        ║
+ * ║   loadWebReco가 행 반환 → effect가 즉시 빈 여부 판단. 수동 버튼은 ()=>fetch(...)로 ║
+ * ║   정리(이벤트 객체 opts 오전달 방지). esbuild 통과.                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -42256,7 +42267,8 @@ function AppContent() {
     try {
       const rows = await all("SELECT * FROM web_reco WHERE status='pending' ORDER BY pinned DESC, fetched_at DESC, taste_score DESC;");
       setWebRecoList(rows || []);
-    } catch (e) { console.warn("loadWebReco 오류:", e); }
+      return rows || [];
+    } catch (e) { console.warn("loadWebReco 오류:", e); return []; }
   }
 
   async function cleanupExpiredWebReco() {
@@ -42422,9 +42434,10 @@ function AppContent() {
   }
 
   // 넷상 추천 가져오기: 키워드 선정 → 검색(부분성공) → dedup·필터·정렬 → 저장 → 수확. 쿨다운/검색상한 적용.
-  async function fetchWebRecommendations() {
+  async function fetchWebRecommendations(opts = {}) {
+    const isAuto = !!(opts && opts.auto);
     const nowMs = Date.now();
-    if (nowMs - (webRecoLastFetchRef.current || 0) < WEB_RECO_REROLL_COOLDOWN_MS) {
+    if (!isAuto && nowMs - (webRecoLastFetchRef.current || 0) < WEB_RECO_REROLL_COOLDOWN_MS) {
       setWebRecoError("잠시 후 다시 시도해 주세요 (과도한 요청 방지).");
       return;
     }
@@ -42574,7 +42587,9 @@ function AppContent() {
     } catch (e) { console.warn("pinWebReco 오류:", e); }
   }
 
-  // 🌐 v7.50.x: 추천 탭 진입 시 만료 정리 + 임시 추천작 로드 (+ 자동 1일1회 옵트인)
+  // 🌐 v7.50.x: 추천 탭 진입 시 만료 정리 + 임시 추천작 로드
+  //   🆕 v7.51.3: 자동 채움 — 목록이 비어 있으면(첫 진입·TTL 정리 후) 하루 1회 자동 가져오기.
+  //   '매일 자동' ON이면 비어있지 않아도 매일 새로 갱신. 자동 경로는 쿨다운 우회(하루 1회 게이트).
   useEffect(() => {
     if (screen !== "reco") return;
     let cancelled = false;
@@ -42582,16 +42597,15 @@ function AppContent() {
       try {
         await cleanupExpiredWebReco();
         if (cancelled) return;
-        await loadWebReco();
+        const rows = await loadWebReco();
+        if (cancelled) return;
         const web = (appSettings && appSettings.reco && appSettings.reco.web) || DEFAULT_SETTINGS.reco.web;
-        if (web.autoDaily && !cancelled) {
-          const d = new Date();
-          const dayKey = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-          const last = await getAppMeta("web_reco_auto_day");
-          if (last !== dayKey) {
-            await setAppMeta("web_reco_auto_day", dayKey);
-            if (!cancelled) await fetchWebRecommendations();
-          }
+        const d = new Date();
+        const dayKey = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+        const last = await getAppMeta("web_reco_auto_day");
+        if (last !== dayKey && (web.autoDaily || !(rows && rows.length))) {
+          await setAppMeta("web_reco_auto_day", dayKey); // 실패해도 같은 날 재시도 안 함(수동 버튼은 가능)
+          if (!cancelled) await fetchWebRecommendations({ auto: true });
         }
       } catch {}
     })();
@@ -57152,7 +57166,7 @@ async function importJSON() {
     <Section title={`🌐 넷상 추천작${webRecoList.length ? ` (${webRecoList.length})` : ""}`}>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
         <Text style={{ color: C.sub, fontSize: 12, flex: 1, paddingRight: 8 }}>플랫폼에서 새 작품을 발견해요. 안 담으면 다음날 정리돼요(⭐ 보관 제외).</Text>
-        <TouchableOpacity activeOpacity={0.8} disabled={webRecoLoading} onPress={fetchWebRecommendations} style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, backgroundColor: webRecoLoading ? C.line : "#10b981" }}>
+        <TouchableOpacity activeOpacity={0.8} disabled={webRecoLoading} onPress={() => fetchWebRecommendations()} style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, backgroundColor: webRecoLoading ? C.line : "#10b981" }}>
           <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>{webRecoLoading ? "가져오는 중…" : "🎲 가져오기"}</Text>
         </TouchableOpacity>
       </View>
