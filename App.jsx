@@ -2,9 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.49.22 (전면 버그감사 — 백업 expected_tier/discovery_source 소실 수정)    ║
+ * ║  버전: 7.50.0 (추천 탭 M1 — 내 서재 여러작 추천 + 맞춤설정)                       ║
  * ║  최종 수정: 2026-06-29                                                        ║
- * ║  총 라인 수: 약 73,230줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 73,430줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🎯 v7.50.0 추천 탭 개편 M1 — 내 서재 여러작 추천 + 맞춤설정 (2026-06-29)        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ '오늘의 추천' 하루 1작 → N작(기본 4, 1~10). refreshDailyRecommendation을 단일   ║
+ * ║ 가중휠 → N작 무복원 추첨으로 재작성: 카테고리 가중 후 ①최근추천 윈도우 회피     ║
+ * ║ ②취향↔탐험 슬라이더로 카테고리축 편향(취향형/탐험형 ×0.5~1.5) ③배치 내 다양성    ║
+ * ║ (이미 뽑힌 카테고리·장르 감점). daily_reco 객체→배열(items[]), 레거시 단일형 복원.║
+ * ║ 재추천 방지 윈도우 커스텀(기본 auto=min(작품수×0.3,100), 최소 5). 설정은          ║
+ * ║ appSettings.reco(슬롯별 app_meta — 로드/백업/리셋 자동 상속). 추천 탭 상단        ║
+ * ║ '⚙️ 맞춤 설정' 접이식 패널(작수 스테퍼·CoordSlider 비중·윈도우). 카드 균일 N장 map.║
+ * ║ 삭제 핸들러 3곳 배열 대응(해당 item만 제거). M2(넷상 추천)용 reco.web 스키마 선점.║
+ * ║ 설계: docs/reco-plan.md. 검증: esbuild 통과·스크래퍼 회귀 불변·선택 알고리즘 4종. ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -34688,6 +34702,25 @@ const DEFAULT_SETTINGS = {
     // medium: 중간 압축 - 60% quality, 최대 800px
     // heavy: 강한 압축 - 40% quality, 최대 600px
   },
+  // 🎯 추천 탭 설정 (v7.50.0) — 내 서재 여러작 추천 (+ M2 넷상 추천 스키마 선점)
+  reco: {
+    library: {
+      count: 4,                      // 내 서재 추천 작 수 (1~10)
+      tasteExploreRatio: 70,         // 취향(100) ↔ 탐험(0) 비중
+      rerollWindow: null,            // 재추천 방지 윈도우. null=auto(min(작품수×0.3, 100), 최소 5)
+    },
+    web: {                           // 🌐 M2(넷상 추천)에서 사용 — 현재 미배선, 스키마 선점
+      count: 5,
+      tasteExploreRatio: 70,
+      platforms: ["노벨피아", "리디", "네이버시리즈", "문피아", "카카오페이지"],
+      sort: "random",                // random | taste | popular | hidden
+      workStatus: "all",             // all | completed | ongoing
+      includeAdult: true,
+      minEpisodes: 50,
+      useAiKeywords: false,
+      autoDaily: false,
+    },
+  },
 };
 
 // 🆕 v6.0: config-aware 티어 함수들
@@ -38014,7 +38047,8 @@ function AppContent() {
   const tierManageSelectedIdRef = useRef(null);
 
   // 이주의 추천 → 오늘의 추천 (v3.3.0)
-  const [dailyReco, setDailyReco] = useState(null); // { novel, pickedAt, reason, category, isPlanned }
+  const [dailyReco, setDailyReco] = useState(null); // 🎯 v7.50.0 배열: { pickedAt, items: [{ novel, reason, category, isPlanned, tasteScore }] }
+  const [recoSettingsOpen, setRecoSettingsOpen] = useState(false); // 추천 맞춤설정 패널 접이식
   const [recoHistory, setRecoHistory] = useState([]); // 최근 5회 추천 기록 [{novelId, pickedAt}]
   
   // 🆕 v3.4.1: 최근 편집 작품 (빠른 접근용)
@@ -39459,6 +39493,12 @@ function AppContent() {
             if (savedSettings.coverLibrary) {
               merged.coverLibrary = { ...DEFAULT_SETTINGS.coverLibrary, ...savedSettings.coverLibrary };
             }
+            // 🎯 v7.50.0: 추천 설정 deep merge (nested library/web)
+            if (savedSettings.reco) {
+              merged.reco = { ...DEFAULT_SETTINGS.reco, ...savedSettings.reco };
+              merged.reco.library = { ...DEFAULT_SETTINGS.reco.library, ...(savedSettings.reco.library || {}) };
+              merged.reco.web = { ...DEFAULT_SETTINGS.reco.web, ...(savedSettings.reco.web || {}) };
+            }
             // 🆕 v6.0: tierSystemConfig 마이그레이션 (레거시 → 새 구조)
             if (!savedSettings.tierSystemConfig && merged.tierThresholds) {
               // 레거시 tierThresholds에서 tierSystemConfig 자동 생성
@@ -40087,6 +40127,12 @@ function AppContent() {
         if (savedSettings.recentChanges) merged.recentChanges = { ...DEFAULT_SETTINGS.recentChanges, ...savedSettings.recentChanges };
         if (savedSettings.plannedFields) merged.plannedFields = { ...DEFAULT_SETTINGS.plannedFields, ...savedSettings.plannedFields };
         if (savedSettings.coverLibrary) merged.coverLibrary = { ...DEFAULT_SETTINGS.coverLibrary, ...savedSettings.coverLibrary };
+        // 🎯 v7.50.0: 추천 설정 deep merge (슬롯 전환 시에도 적용)
+        if (savedSettings.reco) {
+          merged.reco = { ...DEFAULT_SETTINGS.reco, ...savedSettings.reco };
+          merged.reco.library = { ...DEFAULT_SETTINGS.reco.library, ...(savedSettings.reco.library || {}) };
+          merged.reco.web = { ...DEFAULT_SETTINGS.reco.web, ...(savedSettings.reco.web || {}) };
+        }
         // 🆕 v6.0: tierSystemConfig 마이그레이션 (슬롯 전환 시에도 적용)
         if (!savedSettings.tierSystemConfig && merged.tierThresholds) {
           const legacyTh = merged.tierThresholds;
@@ -41404,7 +41450,11 @@ function AppContent() {
       }
 
       // 🔧 v7.49.20: 변환된 작품을 가리키던 UI 상태 정리(stale 라벨/참조 방지) — removeNovel과 동일 패턴.
-      if (dailyReco?.novel?.id === novel.id) setDailyReco(null);
+      setDailyReco(prev => { // 🎯 v7.50.0: 배열 형태 — 해당 item만 제거(비면 null)
+        if (!prev?.items) return prev;
+        const f = prev.items.filter(it => it.novel?.id !== novel.id);
+        return f.length === prev.items.length ? prev : (f.length ? { ...prev, items: f } : null);
+      });
       if (focusMatchNovel?.id === novel.id) setFocusMatchNovel(null);
       if (pair && (pair.A?.id === novel.id || pair.B?.id === novel.id)) setPair(null);
 
@@ -41505,38 +41555,40 @@ function AppContent() {
       let history = await getAppMeta("reco_history") || [];
       setRecoHistory(history);
       
-      // 5회 이내 추천된 작품 ID 집합
-      const recentIds = new Set(history.slice(0, 5).map(h => h.novelId));
+      // 🎯 v7.50.0: 추천 설정 (내 서재)
+      const _recoLib = (appSettings && appSettings.reco && appSettings.reco.library) || DEFAULT_SETTINGS.reco.library;
+      const wantCount = Math.max(1, Math.min(10, Number(_recoLib.count) || 4));
+      const tasteRatio = Math.max(0, Math.min(100, Number(_recoLib.tasteExploreRatio ?? 70))) / 100; // 0..1 (1=취향 우선)
+      // 재추천 방지 윈도우: 사용자값 우선, 없으면 작품수 비례 auto (최소 5, 최대 100)
+      const rerollWindow = (_recoLib.rerollWindow != null && Number(_recoLib.rerollWindow) > 0)
+        ? Math.round(Number(_recoLib.rerollWindow))
+        : Math.max(5, Math.min(100, Math.round((novels?.length || 0) * 0.3)));
+      // 윈도우 이내 추천된 작품 ID 집합 (여러작이므로 윈도우만큼 회피)
+      const recentIds = new Set(history.slice(0, rerollWindow).map(h => h.novelId));
 
       if (!forceNew) {
         const saved = await getAppMeta("daily_reco");
-        if (saved && saved.novel_id && saved.picked_at && now - saved.picked_at < dayMs) {
-          // 예정작인지 본목록인지 확인
-          const existingNovel = novels?.find((n) => n.id === saved.novel_id);
-          const existingPlanned = planned?.find((p) => p.id === saved.novel_id);
-          
-          // 🔧 v7.13.0: 캐시 추천 복원 시 하차 상태 재검증 — 추천 후 dropped된 작품이 24h간 잔존하던 문제
-          if (existingNovel && existingNovel.status !== "dropped") {
-            setDailyReco({
-              novel: existingNovel,
-              pickedAt: saved.picked_at,
-              reason: saved.reason || "이전 추천",
-              category: saved.category || "other",
-              isPlanned: false,
-              tasteScore: saved.tasteScore || null,
-            });
-            return;
-          } else if (existingPlanned) {
-            setDailyReco({
-              novel: existingPlanned,
-              pickedAt: saved.picked_at,
-              reason: saved.reason || "읽고 싶었던 예정작",
-              category: saved.category || "planned_unread",
-              isPlanned: true,
-              tasteScore: saved.tasteScore || null,
-            });
+        if (saved && saved.picked_at && now - saved.picked_at < dayMs) {
+          // 🎯 v7.50.0: v2 배열 형태 + 레거시 단일 형태(novel_id) 호환
+          const rawItems = Array.isArray(saved.items)
+            ? saved.items
+            : (saved.novel_id ? [{ novel_id: saved.novel_id, reason: saved.reason, category: saved.category, isPlanned: saved.isPlanned, tasteScore: saved.tasteScore }] : []);
+          // 🔧 v7.13.0: 캐시 추천 복원 시 하차/삭제 재검증 (추천 후 dropped/삭제된 작품 잔존 방지)
+          const restored = [];
+          for (const it of rawItems) {
+            const en = novels?.find((n) => n.id === it.novel_id);
+            const ep = planned?.find((p) => p.id === it.novel_id);
+            if (en && en.status !== "dropped") {
+              restored.push({ novel: en, reason: it.reason || "이전 추천", category: it.category || "other", isPlanned: false, tasteScore: it.tasteScore || null });
+            } else if (ep) {
+              restored.push({ novel: ep, reason: it.reason || "읽고 싶었던 예정작", category: it.category || "planned_unread", isPlanned: true, tasteScore: it.tasteScore || null });
+            }
+          }
+          if (restored.length > 0) {
+            setDailyReco({ pickedAt: saved.picked_at, items: restored });
             return;
           }
+          // 복원 결과 0개(전부 하차/삭제)면 아래 새 추천 생성으로 진행
         }
       }
 
@@ -41951,51 +42003,82 @@ function AppContent() {
         }
       }
 
-      // 가중치 기반 확률적 선택
-      const totalWeight = candidates.reduce((sum, c) => sum + c.weight, 0);
-      let rand = Math.random() * totalWeight;
-      let pick = candidates[candidates.length - 1]; // 🔧 v7.49.1: 부동소수 잔차로 break 미발생 시 '첫 후보'가 아닌 '마지막 후보'로 폴백(가중선택 표준)
-
+      // 🎯 v7.50.0: 취향↔탐험 슬라이더로 카테고리 가중 편향. ratio=0.5면 중립(기존 동작),
+      //   1.0이면 취향형 카테고리 ×1.5·탐험형 ×0.5, 0.0이면 반대. (내 서재 슬라이더, 넷상과 분리)
+      const CAT_AXIS = {
+        taste_high_tier: "t", taste_match_paused: "t", reread_recommend: "t", almost_done: "t", planned_unread: "t",
+        low_data: "e", other: "e", high_tier_less_read: "e",
+      };
       for (const c of candidates) {
-        rand -= c.weight;
-        if (rand <= 0) {
-          pick = c;
-          break;
-        }
+        const axis = CAT_AXIS[c.category] || "e";
+        c.weight *= axis === "t" ? (0.5 + tasteRatio) : (0.5 + (1 - tasteRatio));
+        if (c.weight < 1) c.weight = 1;
       }
 
-      // 추천 히스토리 업데이트
+      // 🎯 v7.50.0: N작 무복원 가중 추첨 + 배치 내 다양성(이미 뽑힌 카테고리/장르 감점)
+      const picks = [];
+      const pool = candidates.slice();
+      const pickedCats = new Set();
+      const pickedGenres = new Set();
+      while (picks.length < wantCount && pool.length > 0) {
+        let tw = 0;
+        const eff = pool.map((c) => {
+          let w = c.weight;
+          if (pickedCats.has(c.category)) w *= 0.4;
+          const g = getFirstGenre(c.novel.major_genre) || deriveMajorGenre(c.novel.tags);
+          if (g && pickedGenres.has(g)) w *= 0.5;
+          if (w < 0.5) w = 0.5;
+          tw += w;
+          return w;
+        });
+        let r = Math.random() * tw;
+        let idx = pool.length - 1; // 부동소수 잔차 폴백(마지막 후보)
+        for (let i = 0; i < pool.length; i++) { r -= eff[i]; if (r <= 0) { idx = i; break; } }
+        const chosen = pool.splice(idx, 1)[0];
+        pickedCats.add(chosen.category);
+        const cg = getFirstGenre(chosen.novel.major_genre) || deriveMajorGenre(chosen.novel.tags);
+        if (cg) pickedGenres.add(cg);
+        picks.push(chosen);
+      }
+      if (picks.length === 0) { setDailyReco(null); return; }
+
+      // 추천 히스토리 업데이트 (N작 모두 기록 → 재추천 윈도우 회피). 윈도우 수용 위해 상한 확장.
+      const histCap = Math.max(100, rerollWindow + wantCount);
       const newHistory = [
-        { 
-          novelId: pick.novel.id, 
-          pickedAt: now, 
-          category: pick.category,                                    // 🧠 v3.5.5
-          tasteScore: pick.tasteScore ? pick.tasteScore.score : 0,    // 🧠 v3.5.5
-          source: pick.tasteScore ? pick.tasteScore.source : "fallback", // 🧠 v3.5.5
-        },
-        ...history.slice(0, 9), // 최대 10개 유지
-      ];
+        ...picks.map((p) => ({
+          novelId: p.novel.id,
+          pickedAt: now,
+          category: p.category,                                       // 🧠 v3.5.5
+          tasteScore: p.tasteScore ? p.tasteScore.score : 0,          // 🧠 v3.5.5
+          source: p.tasteScore ? p.tasteScore.source : "fallback",    // 🧠 v3.5.5
+        })),
+        ...history,
+      ].slice(0, histCap);
       await setAppMeta("reco_history", newHistory);
       setRecoHistory(newHistory);
 
-      // 추천 저장
-      const meta = {
-        novel_id: pick.novel.id,
+      // 추천 저장 (v2 배열 형태)
+      await setAppMeta("daily_reco", {
         picked_at: now,
-        reason: pick.reason,
-        category: pick.category,
-        isPlanned: pick.isPlanned,
-        tasteScore: pick.tasteScore || null, // 🧠 v3.5.4: 취향 점수 breakdown
-      };
-      await setAppMeta("daily_reco", meta);
+        v: 2,
+        items: picks.map((p) => ({
+          novel_id: p.novel.id,
+          reason: p.reason,
+          category: p.category,
+          isPlanned: p.isPlanned,
+          tasteScore: p.tasteScore || null,                           // 🧠 v3.5.4: 취향 점수 breakdown
+        })),
+      });
 
       setDailyReco({
-        novel: pick.novel,
         pickedAt: now,
-        reason: pick.reason,
-        category: pick.category,
-        isPlanned: pick.isPlanned,
-        tasteScore: pick.tasteScore || null,
+        items: picks.map((p) => ({
+          novel: p.novel,
+          reason: p.reason,
+          category: p.category,
+          isPlanned: p.isPlanned,
+          tasteScore: p.tasteScore || null,
+        })),
       });
       if (_pt) PerfMonitor.trackFunc("refreshDailyRecommendation", Date.now() - _pt); // 🔬
     } catch (e) {
@@ -42004,6 +42087,15 @@ function AppContent() {
       setDailyReco(null);
     }
   }
+
+  // 🎯 v7.50.0: 추천 설정(appSettings.reco.{section}.{key}) 갱신 — 슬롯별 app_meta 영속.
+  //   appSettings에 얹어 두므로 백업/복원/리셋/슬롯전환이 기존 머신러리로 자동 처리됨.
+  const updateRecoSetting = (section, key, value) => {
+    const base = (appSettings && appSettings.reco) || DEFAULT_SETTINGS.reco;
+    const next = { ...appSettings, reco: { ...base, [section]: { ...base[section], [key]: value } } };
+    setAppSettings(next);
+    setAppMeta("app_settings", next);
+  };
 
   // ═══════════════════════════════════════════════════════════════════
   // 🖼️ 표지 라이브러리 시스템 (v3.4.5)
@@ -48590,9 +48682,11 @@ function AppContent() {
               updateEditItem(null);
               setEditOpen(false);
             }
-            if (dailyReco?.novel?.id === id) {
-              setDailyReco(null);
-            }
+            setDailyReco(prev => { // 🎯 v7.50.0: 배열 형태 — 해당 item만 제거
+              if (!prev?.items) return prev;
+              const f = prev.items.filter(it => it.novel?.id !== id);
+              return f.length === prev.items.length ? prev : (f.length ? { ...prev, items: f } : null);
+            });
             if (focusMatchNovel?.id === id) {
               setFocusMatchNovel(null);
             }
@@ -52565,9 +52659,11 @@ function AppContent() {
               updateEditItem(null);
               setEditOpen(false);
             }
-            if (dailyReco?.novel && ids.includes(dailyReco.novel.id)) {
-              setDailyReco(null);
-            }
+            setDailyReco(prev => { // 🎯 v7.50.0: 배열 형태 — 삭제 대상 item 제거
+              if (!prev?.items) return prev;
+              const f = prev.items.filter(it => !ids.includes(it.novel?.id));
+              return f.length === prev.items.length ? prev : (f.length ? { ...prev, items: f } : null);
+            });
             if (focusMatchNovel && ids.includes(focusMatchNovel.id)) {
               setFocusMatchNovel(null);
             }
@@ -56009,19 +56105,72 @@ async function importJSON() {
   <>
     <H>🎯 오늘의 추천</H>
 
-    {/* --- 추천 카드 (작품 정보) --- */}
-    <Section title="추천 작품">
-      {!dailyReco || !dailyReco.novel ? (
+    {/* ⚙️ v7.50.0: 추천 맞춤설정 (접이식) — 내 서재 여러작 */}
+    <Section title="⚙️ 맞춤 설정">
+      <TouchableOpacity activeOpacity={0.7} onPress={() => setRecoSettingsOpen(o => !o)} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 4 }}>
+        <Text style={{ color: C.text, fontWeight: "700", fontSize: 14 }}>🎯 내 서재 추천 설정</Text>
+        <Text style={{ color: C.sub, fontSize: 16 }}>{recoSettingsOpen ? "▲" : "▼"}</Text>
+      </TouchableOpacity>
+      {recoSettingsOpen && (() => {
+        const lib = (appSettings?.reco?.library) || DEFAULT_SETTINGS.reco.library;
+        const count = Math.max(1, Math.min(10, Number(lib.count) || 4));
+        const ratio = Math.max(0, Math.min(100, Number(lib.tasteExploreRatio ?? 70)));
+        const winAuto = lib.rerollWindow == null;
+        const stepBtn = (label, onPress) => (
+          <TouchableOpacity activeOpacity={0.7} onPress={onPress} style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: C.line, backgroundColor: C.chip }}>
+            <Text style={{ color: C.text, fontSize: 16, fontWeight: "800" }}>{label}</Text>
+          </TouchableOpacity>
+        );
+        return (
+          <View style={{ marginTop: 12, gap: 16 }}>
+            {/* 추천 작 수 */}
+            <View>
+              <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>추천 작 수</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                {stepBtn("−", () => updateRecoSetting("library", "count", Math.max(1, count - 1)))}
+                <Text style={{ color: C.text, fontSize: 18, fontWeight: "800", minWidth: 48, textAlign: "center" }}>{count}작</Text>
+                {stepBtn("+", () => updateRecoSetting("library", "count", Math.min(10, count + 1)))}
+              </View>
+            </View>
+            {/* 취향 ↔ 탐험 */}
+            <View>
+              <Text style={{ color: C.sub, fontSize: 12, marginBottom: 2 }}>취향 ↔ 탐험 비중 — <Text style={{ color: C.text, fontWeight: "700" }}>취향 {ratio} / 탐험 {100 - ratio}</Text></Text>
+              <CoordSlider value={ratio / 100} onValueChange={(v) => updateRecoSetting("library", "tasteExploreRatio", Math.round(v * 100))} color="#3b82f6" negLabel="탐험" posLabel="취향" theme={C} />
+              <Text style={{ color: C.sub, fontSize: 11 }}>취향↑: 내 취향에 맞는 작품 위주 · 탐험↑: 안 읽은·데이터 적은 작품 위주</Text>
+            </View>
+            {/* 재추천 방지 윈도우 */}
+            <View>
+              <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>재추천 방지 — <Text style={{ color: C.text, fontWeight: "700" }}>{winAuto ? "자동 (작품 수 기반)" : `최근 ${lib.rerollWindow}작 회피`}</Text></Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <TouchableOpacity activeOpacity={0.7} onPress={() => updateRecoSetting("library", "rerollWindow", winAuto ? 20 : null)} style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: winAuto ? "#3b82f6" : C.line, backgroundColor: winAuto ? "#3b82f6" : C.chip }}>
+                  <Text style={{ color: winAuto ? "#fff" : C.text, fontSize: 13, fontWeight: "700" }}>{winAuto ? "자동" : "직접 설정"}</Text>
+                </TouchableOpacity>
+                {!winAuto && (<>
+                  {stepBtn("−", () => updateRecoSetting("library", "rerollWindow", Math.max(1, Number(lib.rerollWindow) - 5)))}
+                  <Text style={{ color: C.text, fontSize: 16, fontWeight: "800", minWidth: 44, textAlign: "center" }}>{lib.rerollWindow}</Text>
+                  {stepBtn("+", () => updateRecoSetting("library", "rerollWindow", Math.min(500, Number(lib.rerollWindow) + 5)))}
+                </>)}
+              </View>
+            </View>
+            <Text style={{ color: C.sub, fontSize: 11 }}>설정을 바꾼 뒤 아래 <Text style={{ fontWeight: "700", color: C.text }}>🎲 다시 뽑기</Text>를 누르면 반영돼요.</Text>
+          </View>
+        );
+      })()}
+    </Section>
+
+    {/* --- 추천 카드 (작품 정보) — v7.50.0 여러작 --- */}
+    <Section title={`추천 작품${dailyReco?.items?.length ? ` (${dailyReco.items.length})` : ""}`}>
+      {!dailyReco || !dailyReco.items?.length ? (
         <Text style={{ color: C.sub }}>
           아직 추천할 작품이 없습니다.  
           작품을 등록하거나 예정 목록에 추가해 보세요.
         </Text>
       ) : (
-        (() => {
-          const n = dailyReco.novel;
-          const isPlanned = dailyReco.isPlanned;
-          const reason = dailyReco.reason || "추천 작품입니다.";
-          const category = dailyReco.category || "other";
+        dailyReco.items.map((item, idx) => {
+          const n = item.novel;
+          const isPlanned = item.isPlanned;
+          const reason = item.reason || "추천 작품입니다.";
+          const category = item.category || "other";
           
           // 예정작 vs 본목록 작품 처리
           const plats = parsePlatforms(n.platforms);
@@ -56056,12 +56205,14 @@ async function importJSON() {
 
           return (
             <View
+              key={n.id || idx}
               style={{
                 padding: 16,
                 borderRadius: 16,
                 borderWidth: 3,
                 borderColor: c,
                 backgroundColor: C.card,
+                marginBottom: 12,
               }}
             >
               {/* 예정작 표시 배지 */}
@@ -56098,8 +56249,8 @@ async function importJSON() {
               </View>
 
               {/* 🧠 v3.5.4: 취향 적합도 게이지 */}
-              {dailyReco.tasteScore && dailyReco.tasteScore.score > 0 && (() => {
-                const ts = dailyReco.tasteScore;
+              {item.tasteScore && item.tasteScore.score > 0 && (() => {
+                const ts = item.tasteScore;
                 const scoreColor = ts.score >= 60 ? "#22c55e" : ts.score >= 35 ? "#f59e0b" : "#94a3b8";
                 const bd = ts.breakdown || {};
                 return (
@@ -56373,7 +56524,7 @@ async function importJSON() {
               )}
             </View>
           );
-        })()
+        })
       )}
     </Section>
 
@@ -56433,7 +56584,7 @@ async function importJSON() {
     {recoHistory && recoHistory.length > 0 && (
       <Section title={`최근 추천 기록 (${recoHistory.length}개)`}>
         <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
-          최근 5회 내 추천된 작품은 다시 추천되지 않습니다.
+          최근 추천된 작품은 재추천 방지 윈도우 동안 다시 추천되지 않아요. (맞춤 설정에서 조절)
         </Text>
         <View style={{ gap: 6 }}>
           {recoHistory.slice(0, 5).map((h, idx) => {
