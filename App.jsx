@@ -2,9 +2,20 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.51.0 (추천 탭 M2 — 넷상 추천작 외부 발견)                               ║
+ * ║  버전: 7.51.1 (넷상 추천 후속 — 설정 백업 직렬화 + AI 키워드 Claude)             ║
  * ║  최종 수정: 2026-06-29                                                        ║
- * ║  총 라인 수: 약 73,970줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 74,010줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.51.1 넷상 추천 후속 2건 (2026-06-29)                                      ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ ① 추천 설정 백업 직렬화 — buildExtendedBackup settingsDiff.rc = settings.reco    ║
+ * ║   (additive, 버전게이트 불변) + 복원 s.rc deep-merge(library/web). export→import ║
+ * ║   에서 내 서재/넷상 노브·밴·커스텀 키워드 보존(이전엔 기본값 리셋).             ║
+ * ║ ② AI 키워드 Claude 지원 — generateAiKeywords가 aiProvider 분기(claude=messages   ║
+ * ║   API/claudeModel, gemini=generateContent). 양쪽 전부 try/catch→[] 폴백. 토글    ║
+ * ║   안내도 제공자별 표기. 회귀: esbuild·스크래퍼 회귀 불변.                        ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -42298,19 +42309,37 @@ function AppContent() {
     return Array.from(out.entries()).map(([kw, weight]) => ({ kw, weight }));
   }
 
-  // AI 키워드(선택) — v1은 Gemini 키에서만 동작. 전부 try/catch → 실패/미설정 시 []로 폴백.
+  // AI 키워드(선택) — Claude/Gemini 양쪽 지원. 전부 try/catch → 실패/미설정 시 []로 폴백.
   async function generateAiKeywords(count) {
     try {
-      if (aiProvider !== "gemini" || !geminiApiKey) return [];
       const prompt = `한국 웹소설 검색에 쓸 인기·트렌디한 키워드(장르·소재·클리셰) ${count}개를 한국어 단어로만, 쉼표로 구분해서 답해줘. 설명/번호 없이 단어만.`;
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_AI_MODEL}:generateContent?key=${encodeURIComponent(geminiApiKey)}`;
-      const { signal, cleanup } = resolveAbortSignal({ timeoutMs: 15000 });
-      let res;
-      try { res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }] }), signal }); }
-      finally { cleanup(); }
-      if (!res.ok) return [];
-      const data = await res.json();
-      const text = ((((data.candidates || [])[0] || {}).content || {}).parts || []).map((p) => p.text || "").join(" ");
+      let text = "";
+      if (aiProvider === "claude") {
+        if (!claudeApiKey) return [];
+        const { signal, cleanup } = resolveAbortSignal({ timeoutMs: 15000 });
+        let res;
+        try {
+          res = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-api-key": claudeApiKey, "anthropic-version": "2023-06-01" },
+            body: JSON.stringify({ model: claudeModel || SYNONYM_AI_MODEL, max_tokens: 256, messages: [{ role: "user", content: prompt }] }),
+            signal,
+          });
+        } finally { cleanup(); }
+        if (!res.ok) return [];
+        const data = await res.json();
+        text = ((data.content || []).filter((b) => b.type === "text").map((b) => b.text).join(" ")) || "";
+      } else {
+        if (!geminiApiKey) return [];
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_AI_MODEL}:generateContent?key=${encodeURIComponent(geminiApiKey)}`;
+        const { signal, cleanup } = resolveAbortSignal({ timeoutMs: 15000 });
+        let res;
+        try { res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }] }), signal }); }
+        finally { cleanup(); }
+        if (!res.ok) return [];
+        const data = await res.json();
+        text = ((((data.candidates || [])[0] || {}).content || {}).parts || []).map((p) => p.text || "").join(" ");
+      }
       const kws = text.split(/[,\n·]/).map((s) => s.replace(/^[0-9.\-\s)]+/, "").trim()).filter((k) => k && k.length >= 2 && k.length <= 12).slice(0, count);
       const now = Date.now();
       for (const k of kws) { try { await exec(`INSERT INTO web_reco_keywords (keyword, source, hit_count, last_seen, first_seen) VALUES (?, 'ai', 1, ?, ?) ON CONFLICT(keyword) DO UPDATE SET last_seen=?;`, [k, now, now, now]); } catch {} }
@@ -53555,6 +53584,8 @@ async function buildExtendedBackup(novels, matches, settings, tierHist, coverIma
   }
   // 🆕 v7.18.0: 의심도 민감도 설정 백업
   if (settings.suspicionConfig) settingsDiff.sc = settings.suspicionConfig;
+  // 🌐 v7.51.x: 추천 설정(내 서재/넷상 노브 + 밴/커스텀 키워드) 백업 (additive — 버전 게이트 불변)
+  if (settings.reco) settingsDiff.rc = settings.reco;
 
   if (Object.keys(settingsDiff).length > 0) {
     base.S = settingsDiff;
@@ -54455,6 +54486,12 @@ async function importJSON() {
                 if (s.sc && typeof s.sc === "object") {
                   restored.suspicionConfig = s.sc;
                   globalSuspicionConfig = { ...DEFAULT_SUSPICION_CONFIG, ...s.sc };
+                }
+                // 🌐 v7.51.x: 추천 설정 복원 (deep-merge — 부재 시 기본값)
+                if (s.rc && typeof s.rc === "object") {
+                  restored.reco = { ...DEFAULT_SETTINGS.reco, ...s.rc };
+                  restored.reco.library = { ...DEFAULT_SETTINGS.reco.library, ...(s.rc.library || {}) };
+                  restored.reco.web = { ...DEFAULT_SETTINGS.reco.web, ...(s.rc.web || {}) };
                 }
 
                 // 🆕 v6.0: globalTierConfig를 소설 복원 전에 갱신 (tierFromRating 정합성)
@@ -56671,7 +56708,7 @@ async function importJSON() {
                     </View>
                   </View>
                   {toggleRow("19금(성인) 포함", !!web.includeAdult, () => updateRecoSetting("web", "includeAdult", !web.includeAdult))}
-                  {toggleRow("AI 키워드 생성", !!web.useAiKeywords, () => updateRecoSetting("web", "useAiKeywords", !web.useAiKeywords), (aiProvider === "gemini" && geminiApiKey) ? "Gemini 키로 트렌디 키워드 추가" : "Gemini 키가 있어야 동작해요")}
+                  {toggleRow("AI 키워드 생성", !!web.useAiKeywords, () => updateRecoSetting("web", "useAiKeywords", !web.useAiKeywords), ((aiProvider === "claude" && claudeApiKey) || (aiProvider === "gemini" && geminiApiKey)) ? `${aiProvider === "claude" ? "Claude" : "Gemini"} 키로 트렌디 키워드 추가` : "AI 키(설정 › 연결)가 있어야 동작해요")}
                   {toggleRow("매일 자동 가져오기", !!web.autoDaily, () => updateRecoSetting("web", "autoDaily", !web.autoDaily), "추천 탭 열 때 하루 한 번 자동")}
                   <View>
                     <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>키워드 관리</Text>

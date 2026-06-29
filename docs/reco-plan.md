@@ -4,12 +4,12 @@
 > **새 세션은 이 문서를 읽고 그대로 이어서 진행하면 된다.**
 >
 > 관련 선행 문서: `docs/scraper-plan.md` (플랫폼 스크래퍼/제목검색 엔진 — 이 기능의 토대).
-> 상태: **M1 완료(v7.50.0) · M2 완료(v7.51.0).** 남은 후속: ① reco 설정 백업 직렬화(rc) ② AI 키워드 Claude 제공자 지원(현 Gemini만) ③ 폰 실사용 시각 검증.
+> 상태: **M1 완료(v7.50.0) · M2 완료(v7.51.0) · 후속 완료(v7.51.1: 설정 백업 직렬화 + AI 키워드 Claude).** 남은 것: 폰 실사용 시각 검증.
 >
 > **구현 메모(2026-06-29)**
 > - M1(v7.50.0): 내 서재 N작 + 맞춤설정. `refreshDailyRecommendation` 배열화, `appSettings.reco`.
 > - M2(v7.51.0): 넷상 추천. 테이블 3종(web_reco/web_reco_keywords/reco_hidden_works), 키워드 엔진(취향+탐험+수확+커스텀, 에코챔버 역가중), 페치(쿨다운·부분성공·dedup·필터·정렬·수확·TTL), 카드 액션(예정/본목록 모드별/보관/관심없음), UI(설정 web 서브섹션·🌐 섹션·키워드 에디터·티어 모달), 자동1일1회.
-> - **미완(후속)**: reco 설정/밴/커스텀의 **백업 직렬화 미적용** — app_meta엔 영속되나 export→import 시 기본값으로 리셋(백업 압축부는 데이터손실 이력 때문에 라운드트립 테스트 동반 별도 작업). AI 키워드는 **Gemini 키에서만** 동작(Claude 후속).
+> - 후속(v7.51.1 완료): reco 설정/밴/커스텀 **백업 직렬화**(`buildExtendedBackup` settingsDiff.rc + 복원 deep-merge, additive). **AI 키워드 Claude+Gemini** 양쪽 지원.
 
 ---
 
