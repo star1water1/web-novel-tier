@@ -2,11 +2,26 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.49.13 (멀티플랫폼 정본화 P3 — 원본 vs 일괄퍼블리싱(재출간) 감지)        ║
+ * ║  버전: 7.49.14 (정본화 7시나리오 점검 — 관측치 적립 경로 보강·엔진 실효화)       ║
  * ║  최종 수정: 2026-06-29                                                        ║
  * ║  총 라인 수: 약 72,710줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔬 v7.49.14 정본화 7실사용 시나리오 점검 — 치명 갭 수정 (2026-06-29)          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 7시나리오 다각 점검 중 '엔진 무효화' 갭 발견(에이전트 추적): 관측치는            ║
+ * ║ applyScrapedUpdateToWork(bulk)에서만, 그것도 chooseUpdateLink가 고른 단일 링크   ║
+ * ║ 만 기록 → reconcileWork가 사실상 링크 1개만 보고 교차보완 무효. 인터랙티브 재취득 ║
+ * ║ ·링크추가는 startYear만 받고 관측치 미기록. 수정:                                ║
+ * ║ ① addEditLinkFromUrl·pickLinkFillCandidate: fetchNovelMeta 관측치 전체 적립      ║
+ * ║   (recordLinkObservation) → 링크 추가만으로 각 플랫폼 관측치 축적                ║
+ * ║ ② openScrapeFromMeta: 스크랩 URL이 편집중 작품 등록링크면 editLinks 관측치 갱신   ║
+ * ║   (시→문→시 인터랙티브 재취득도 reconcile 반영)                                 ║
+ * ║ ③ saveEdit: start_year 빠른연도 우선(폼↔링크 더 이른값) 적용                    ║
+ * ║ ④ 단일 직접링크 작품을 links JSON으로 전환 안 함(saveEdit isTrivial이 관측치를   ║
+ * ║   지우는 상호작용 차단). 7시나리오 검토표는 채팅 참조. @babel/parser 통과.       ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔗 v7.49.13 멀티플랫폼 정본화 Phase 3 — 원본 vs 일괄퍼블리싱 감지 (2026-06-29) ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -18392,7 +18407,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.49.13";
+const APP_VERSION = "7.49.14";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -18418,6 +18433,18 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.49.14", date: "2026-06-29",
+    title: "🔬 멀티플랫폼 정본화 점검 — 링크별 정보가 실제로 쌓이도록 보강",
+    highlights: [
+      { type: "fix", text: "🔧 멀티플랫폼 ‘서로 보완’이 실제로 동작하도록 고쳤어요. 지금까지는 링크를 추가하거나 다시 불러와도 ‘연재 시작연도’만 저장하고 회차·완결일·외전 같은 정보는 그 링크에 안 쌓여서, 여러 플랫폼을 종합하는 기능이 사실상 한 링크만 보고 있었어요. 이제 링크를 추가/재취득할 때 그 플랫폼의 정보 전체가 해당 링크에 기록돼요." },
+      { type: "fix", text: "🔧 작품 편집에서 더 이른(원본) 연재처 링크를 추가하고 저장하면, 작품의 연재 시작연도가 곧바로 그 이른 연도로 내려가요. 또 단일 링크 작품을 다시 불러와도 저장 시 정보가 지워지던 상호작용을 막았어요." },
+    ],
+    details: [
+      "7가지 실사용 시나리오를 점검하다 발견한 핵심 문제예요 — 정본화 엔진은 ‘각 링크의 관측치’를 모아 종합하는데, 그 관측치가 실제로는 거의 안 쌓이고 있었어요(자동 일괄갱신이 작품당 한 링크만 보고, 수동 추가/재취득은 시작연도만 기록).",
+      "이제 ‘+ 링크 추가’, ‘빠진 플랫폼 자동 매칭’, 편집화면에서 ‘다시 불러오기’ 모두 그 링크의 회차·완결·외전·연재상태·등록패턴을 함께 기록해요. 그래서 여러 플랫폼이 모이면 가장 이른 연도·원본 완결일·가장 완전한 회차가 자동으로 종합돼요.",
+    ],
+  },
   {
     version: "7.49.13", date: "2026-06-29",
     title: "🔗 멀티플랫폼 정본화 3단계 — 원본 연재처와 ‘일괄 퍼블리싱’ 구분",
@@ -44259,6 +44286,9 @@ function AppContent() {
   // 메타(정규화 완료) → 확인 모달 오픈. URL 긁기/검색 메타 직접 사용 공용 경로.
   function openScrapeFromMeta(meta, ctx, skipDupCheck = false) {
     if (!meta || !meta.title) { Alert.alert("불러오기", "이 작품의 정보를 찾지 못했어요."); return false; }
+    // 🔧 v7.49.14: 스크랩한 URL이 '편집 중 작품의 등록 링크'면 그 링크 관측치 갱신(저장 시 serializeLinks로 반영) →
+    //   인터랙티브 재취득(시→문→시)도 reconcile 교차보완에 반영. 매칭 링크 없으면 무동작(신규/예정 스크랩 안전).
+    if (meta.url) setEditLinks(prev => (Array.isArray(prev) && prev.some(l => (l.url || "").trim() === String(meta.url).trim())) ? recordLinkObservation(prev, meta.url, meta, true) : prev);
     // 🆕 v7.28.53: 신규/예정 등록(제목검색·링크 불러오기 공용)에서 이미 등록된 작품이면, 새로 추가 대신 기존작 편집(필드별 비교·선택 적용) 제안
     if (!skipDupCheck && (ctx?.kind === "new" || ctx?.kind === "planned")) {
       const existing = findExistingNovelByTitle(meta.title, meta.author);
@@ -44835,7 +44865,9 @@ function AppContent() {
     const obsLinks = recordLinkObservation(baseLinks, url, meta, overwrite);
     const recorded = obsLinks !== baseLinks;
     const hadLinksJson = parseLinks(work.links).length > 0;
-    if (!work._planned && (recorded || hadLinksJson)) setCol("links", serializeLinks(obsLinks));
+    // 🔧 v7.49.14: 단일 직접링크 작품은 links JSON으로 '전환하지 않음' — saveEdit의 isTrivial(단일==다이렉트)이 links=""로
+    //   되돌려 관측치를 지우는 상호작용 방지. 단일링크는 정본=그 링크라 영속 불필요(reconcile은 in-memory 관측치로 정상 동작).
+    if (!work._planned && recorded && (hadLinksJson || baseLinks.length > 1)) setCol("links", serializeLinks(obsLinks));
     const rec = reconcileWork(obsLinks, { updateUrl: String(work.update_link == null ? "" : work.update_link).trim() });
     const curWs = work.work_status || "ongoing";
     // 2) 연재 시작연도 — 양 모드 공통, 가장 이른 값으로 정본화(원본 연재 우선·move-earlier-only).
@@ -45189,9 +45221,12 @@ function AppContent() {
     try {
       const url = (cand && cand.url) || "";
       if (!url) { Alert.alert("링크 추가", "후보 URL이 없어요. 건너뜁니다."); return; }
-      // startYear 확보: 후보 meta 우선, 없으면 fetchNovelMeta(메타 미적용 — startYear만)
-      let startYear = Number(cand && cand.meta && cand.meta.startYear) || 0;
-      if (!startYear) { try { const m = await fetchNovelMeta(url, { timeoutMs: 20000 }); startYear = Number(m && m.startYear) || 0; } catch {} }
+      // 🔧 v7.49.14: 관측치 전체 확보 — fetchNovelMeta(회차·완결·외전·상태·uniformTs)로 링크에 적립(reconcile 교차보완 활성).
+      //   실패 시 검색 후보 메타(cand.meta) 폴백. 이전엔 startYear만 받아 reconcile이 사실상 무효였음.
+      let meta = null;
+      try { meta = await fetchNovelMeta(url, { timeoutMs: 20000 }); } catch {}
+      if (!meta && cand && cand.meta) meta = cand.meta;
+      const startYear = Number(meta && meta.startYear) || 0;
       // 🔧 DB에서 최신 links 재조회 — 같은 작품이 여러 빠진 플랫폼으로 큐에 중복될 때
       //   list 캐시는 done 시점에만 갱신되므로, 직전 추가분을 잃지 않도록 매 추가마다 DB 기준으로 병합.
       const w = (await first("SELECT id, links, link, start_year, created_at, platforms FROM novels WHERE id=?", [entry.workId])) || entry.work;
@@ -45199,7 +45234,9 @@ function AppContent() {
       if (cur.some(l => l.url.trim() === url.trim())) {
         setLinkFillResults(prev => [...prev, { title: entry.title, platform: entry.platform, added: false, note: "이미 등록됨" }]);
       } else {
-        const next = [...cur, { url: url.trim(), platform: entry.platform, startYear, addedAt: Date.now() }];
+        let newEntry = { url: url.trim(), platform: entry.platform, startYear, addedAt: Date.now() };
+        if (meta) newEntry = recordLinkObservation([newEntry], url.trim(), meta, true)[0]; // 관측치 적립
+        const next = [...cur, newEntry];
         const linksJson = serializeLinks(next); // 🔧 v7.49.12: 관측치 보존 직렬화
         const mergedPlats = mergePlatformFromLink(parsePlatforms(w.platforms), url);
         // 🔧 v7.49.11: 새 링크가 더 이른 연재연도를 가지면 정본 start_year도 그쪽으로 내려 정본화(원본 연재 우선·move-earlier-only).
@@ -49724,6 +49761,11 @@ function AppContent() {
       }
       // update_link 수동지정 — 멀티링크 + 후보에 존재할 때만 보존, 그 외 ""(자동선정)
       const updJson = (!isTrivial && editUpdateUrl && cleanLinks.some(l => l.url.trim() === editUpdateUrl.trim())) ? editUpdateUrl.trim() : "";
+      // 🔧 v7.49.14: 빠른 연재연도 우선 — 저장 시 정본 start_year를 폼값과 등록 링크들 중 '더 이른' 값으로(원본 연재 우선·move-earlier-only).
+      //   (더 이른 원본 링크를 추가/재취득해 두면 저장만으로 정본 연도가 그쪽으로 내려감. 더 늦은 값으론 올리지 않음.)
+      const _formSy = Number(editStartYear) || 0;
+      const _linkSy = earliestLinkYear({ links: linksJson, link: dirUrl, start_year: _formSy }, 0);
+      const finalStartYear = (_linkSy > 0 && (_formSy === 0 || _linkSy < _formSy)) ? _linkSy : _formSy;
 
       await exec(
         "UPDATE novels SET title=?, author=?, tags=?, note=?, platforms=?, read_count=?, awards=?, total_episodes=?, status=?, cover_image=?, link=?, work_status=?, read_count_updated_at=?, major_genre=?, sub_genre=?, gaiden_status=?, gaiden_read_count=?, gaiden_total_episodes=?, created_at=?, reread_count=?, tag_data=?, memorable_quote=?, aliases=?, start_year=?, end_year=?, completed_at=?, gaiden_start_at=?, gaiden_completed_at=?, links=?, update_link=? WHERE id=?;",
@@ -49751,7 +49793,7 @@ function AppContent() {
           n.tag_data || "", // 🏷️ v5.0
           serializeQuotes(editQuotes), // 💬 v3.5.4: 인상깊은 문장 (다중 지원)
           n.aliases || "", // 🏷️ 작품 별명 유지
-          Number(editStartYear) || 0, // 🔧 v7.6.0 (포트 v3.12.0)
+          finalStartYear, // 🔧 v7.49.14: 빠른 연재연도 우선(폼값↔링크 중 더 이른)
           Number(editEndYear) || 0,
           Number(editCompletedAt) || 0,       // 🆕 v7.44.8: 본편 완결일
           Number(editGaidenStartAt) || 0,     // 🆕 v7.44.8: 외전 시작일
@@ -49965,18 +50007,21 @@ function AppContent() {
       return next;
     });
   }
-  // + 링크 추가 — 클립보드/검색 URL → fetchNovelMeta로 startYear만 추출해 등록(메타 미적용). 중복 url 무시.
+  // + 링크 추가 — 클립보드/검색 URL → fetchNovelMeta로 '관측치 전체'(회차·완결·외전·상태·균일성) 추출해 링크에 기록. 중복 url 무시.
+  //   🔧 v7.49.14: startYear만 받던 것 → recordLinkObservation으로 전체 관측치 적립. 멀티링크 작품이 각 링크 추가 시 관측치를 쌓아
+  //   reconcileWork 교차보완(가장 이른 연도·완결일·권위 회차)이 실제로 동작하게(이전엔 bulk가 1개 링크만 관측해 사실상 무효).
   async function addEditLinkFromUrl(rawUrl) {
     const url = (rawUrl || "").trim();
     if (!url || !/^https?:\/\//i.test(url)) { Alert.alert("링크 추가", "올바른 링크가 아니에요 (http/https)."); return; }
     if (!detectPlatformFromUrl(url)) { Alert.alert("링크 추가", "지원하는 플랫폼 링크가 아니에요.\n(노벨피아·문피아·네이버시리즈·리디·카카오페이지)"); return; }
     if ((editLinks || []).some(l => l.url.trim() === url)) { Alert.alert("링크 추가", "이미 등록된 링크예요."); return; }
     setEditLinkBusy(true);
-    let startYear = 0;
-    try { const meta = await fetchNovelMeta(url, { timeoutMs: 20000 }); startYear = Number(meta && meta.startYear) || 0; }
-    catch (e) { /* 메타 실패해도 링크는 등록(startYear=0) */ }
+    let meta = null;
+    try { meta = await fetchNovelMeta(url, { timeoutMs: 20000 }); }
+    catch (e) { /* 메타 실패해도 링크는 등록(관측치 없음) */ }
     setEditLinkBusy(false);
-    const entry = { url, platform: canonicalPlatform(detectPlatformFromUrl(url) || ""), startYear, addedAt: Date.now() };
+    let entry = { url, platform: canonicalPlatform(detectPlatformFromUrl(url) || ""), startYear: Number(meta && meta.startYear) || 0, addedAt: Date.now() };
+    if (meta) entry = recordLinkObservation([entry], url, meta, true)[0]; // 관측치(회차/완결/외전/상태/uniformTs) 적립
     setEditLinks(prev => {
       const next = [...(prev || []), entry];
       // 다이렉트가 비어 있으면 첫 링크를 다이렉트로
