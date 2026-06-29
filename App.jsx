@@ -2,11 +2,34 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.49.15 ('이 작품 모든 링크 새로고침' — 작품 단위 완전 정본화 버튼)       ║
+ * ║  버전: 7.49.16 (실사용 7시나리오 재점검 — 백업 유실+정본화 권위 수정)            ║
  * ║  최종 수정: 2026-06-29                                                        ║
- * ║  총 라인 수: 약 72,710줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 72,770줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔬 v7.49.16 실사용 7시나리오 재점검 — 4에이전트 적대검증·확정 수정 (2026-06-29) ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 7실사용 시나리오를 4개 에이전트로 다각 적대검증. 확정 버그 수정:                ║
+ * ║ 🔴[CRITICAL] 백업 라운드트립 데이터 유실 — buildUltraCompactBackup/복원이        ║
+ * ║   completed_at(본편 완결일)·gaiden_start_at·gaiden_completed_at을 직렬화·복원    ║
+ * ║   안 함(novels+예정작) → 백업→복원 시 정본화 핵심 산출물 전부 0 소실. 백업 v13:  ║
+ * ║   cma/gsa/gca 키 추가(초offset), validateImportData [..13]. 구버전(≤12) 0폴백.  ║
+ * ║ 🟠 reconcileWork 회차·외전 권위 = '외전분리한 비재출간 링크 우선'(rank)으로 변경  ║
+ * ║   → ①카카오 등 외전 미분리 링크가 권위면 본편에 외전 섞여 이중계상, ②재출간(균일  ║
+ * ║   업로드일) 권위면 외전 날짜 오염(완결일 정책과 자기모순) 해소. 외전 날짜는 권위   ║
+ * ║   가 재출간이면 비재출간 외전관측 링크에서 채택(없으면 0).                       ║
+ * ║ 🟠 isRepub: '알려진 시작연도>알려진 최이른값'일 때만 재출간 — startYear=0/연도미상 ║
+ * ║   링크를 원본임에도 재출간 오분류해 완결일 기준서 제외하던 버그(reconcile+UI).    ║
+ * ║ 🟠 보수 일괄갱신(기본) reconcile 통합 — 단일 fetch meta 직접 대신 정본(rec) 권위  ║
+ * ║   기준 grow-only/빈칸채움 → 멀티링크 교차보완을 기본 갱신에도 반영. 외전도 grow.  ║
+ * ║ 🟠 자기교정(모든링크 새로고침) 완결→비완결 강등 시 사용자 수동 완결일/연도 보존    ║
+ * ║   (이전 0 삭제 → 단일 비완결 관측·오파싱으로 수동 데이터 유실).                  ║
+ * ║ 🟡 '모든 링크 새로고침'이 미저장 추가 링크를 먼저 DB 영속(유실 방지) + linksOf    ║
+ * ║   합성 시 작품 정본 회차/완결을 링크 관측치로 시드(원본 링크 권위 후보 유지).     ║
+ * ║ 🟡 detectEpisodeOvercount 주석 정정(본편은 외전 delta만큼 조정 — '안 건드림' 오류)║
+ * ║ 사용자 위임 3건 모두 추천안 채택. @babel/parser 통과. 7시나리오 검토표는 채팅.    ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔄 v7.49.15 '이 작품 모든 링크 새로고침' — 작품 단위 완전 정본화 (2026-06-29)  ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -16763,7 +16786,9 @@ function reconcileWork(links, opts) {
   for (const l of ls) { const y = Number(l.startYear) || 0; if (y >= 1980 && y <= 2099 && (res.startYear == null || y < res.startYear)) res.startYear = y; }
   // 🆕 v7.49.13: 재출간(일괄퍼블리싱) 링크 = 회차 날짜가 균일(uniformTs) + 가장 이른 시작연도보다 늦게 시작(원본 자신은 제외).
   //   재출간은 '완결일=업로드일'로 왜곡되므로 완결일/연도 기준에서 제외(원본 완결일 보존). 회차수는 영향 X(권위는 회차 최다 유지).
-  const isRepub = (l) => l.uniformTs === true && (res.startYear == null || !(Number(l.startYear) || 0) || (Number(l.startYear) || 0) > res.startYear);
+  //   🔧 v7.49.16: '알려진 시작연도가 알려진 최이른값보다 늦을 때'만 재출간으로 판정 — 이전 `!startYear`/`startYear==null`
+  //   조건은 시작연도 미관측(0) 링크나 전 링크 연도 미상일 때 원본을 재출간으로 오분류해 완결일 기준에서 잘못 제외시켰음.
+  const isRepub = (l) => l.uniformTs === true && res.startYear != null && (Number(l.startYear) || 0) > res.startYear;
   res.republishUrls = ls.filter(isRepub).map(l => l.url);
   const dateLinks = ls.filter(l => !isRepub(l));
   const dateLinksEff = dateLinks.length ? dateLinks : ls; // 전부 재출간이면 폴백(전체)
@@ -16783,12 +16808,18 @@ function reconcileWork(links, opts) {
     else if (obs.some(l => l.workStatus === "hiatus") && !obs.some(l => l.workStatus === "ongoing")) res.workStatus = "hiatus";
     else res.workStatus = "ongoing";
   }
-  // 회차·외전 권위 링크: 수동지정(opts.updateUrl) 우선, 그 외 totalEpisodes 최다(동률 이른 startYear → 이른 addedAt)
+  // 회차·외전 권위 링크: 수동지정(opts.updateUrl) 우선, 그 외 '외전분리한 비(非)재출간 링크' 우선 → totalEpisodes 최다.
+  //   🔧 v7.49.16: 이전엔 단순 '회차 최다'라 ① 카카오처럼 외전 미분리(총회차=본편+외전) 링크가 권위가 되면 본편 회차에
+  //   외전이 섞여 이중계상, ② 재출간(균일 업로드일) 링크가 권위면 외전 날짜가 왜곡 업로드일로 오염되는 문제가 있었음.
+  //   rank: 외전분리(gaidenCount!=null) 우선(×2) + 비재출간 우선(×1) → 0=분리·원본이 최우선.
   const epLinks = ls.filter(l => (Number(l.totalEpisodes) || 0) > 0);
   if (epLinks.length) {
+    const repubSet = new Set(res.republishUrls);
+    const rank = (l) => (l.gaidenCount != null ? 0 : 2) + (repubSet.has(l.url) ? 1 : 0); // 0~3, 낮을수록 신뢰
     const manual = String((opts && opts.updateUrl) || "").trim();
     let auth = manual ? epLinks.find(l => l.url.trim() === manual) : null;
     if (!auth) auth = epLinks.slice().sort((a, b) =>
+      (rank(a) - rank(b)) ||
       ((Number(b.totalEpisodes) || 0) - (Number(a.totalEpisodes) || 0)) ||
       ((Number(a.startYear) || 9999) - (Number(b.startYear) || 9999)) ||
       ((Number(a.addedAt) || 0) - (Number(b.addedAt) || 0)))[0];
@@ -16798,9 +16829,14 @@ function reconcileWork(links, opts) {
       // 외전: 권위 링크가 '관측'했을 때만 채택(분리기 미실행=undefined → null로 둬서 정본 유지·오클리어 방지).
       if (auth.gaidenCount != null) {
         res.gaidenCount = Number(auth.gaidenCount) || 0;
-        res.gaidenStartAt = Number(auth.gaidenStartAt) || 0;
-        res.gaidenCompletedAt = Number(auth.gaidenCompletedAt) || 0;
         res.gaidenStatus = auth.gaidenStatus || (res.gaidenCount > 0 ? "completed" : "none");
+        // 외전 날짜: 권위가 재출간이면 왜곡 업로드일이라 채택 금지 — 비재출간·외전관측 링크에서 가져오고(없으면 0=미상),
+        //   그 외엔 권위에서 그대로(완결일 재출간 제외 정책과 일관).
+        const dateSrc = repubSet.has(auth.url)
+          ? (ls.find(l => !repubSet.has(l.url) && l.gaidenCount != null && ((Number(l.gaidenStartAt) || 0) || (Number(l.gaidenCompletedAt) || 0))) || null)
+          : auth;
+        res.gaidenStartAt = dateSrc ? (Number(dateSrc.gaidenStartAt) || 0) : 0;
+        res.gaidenCompletedAt = dateSrc ? (Number(dateSrc.gaidenCompletedAt) || 0) : 0;
       }
     }
   }
@@ -16813,12 +16849,20 @@ function linksOf(work) {
   if (parsed.length) return parsed;
   const link = String(work.link == null ? "" : work.link).trim();
   if (!link) return [];
-  return [{
+  const o = {
     url: link,
     platform: canonicalPlatform(detectPlatformFromUrl(link) || ""),
     startYear: Number(work.start_year) || 0,
     addedAt: Number(work.created_at) || 0,
-  }];
+  };
+  // 🆕 v7.49.16: 단일 직접링크 합성 시 작품 정본 회차/완결을 그 링크의 '관측치'로 시드.
+  //   이전엔 관측치 0이라, 링크 추가로 멀티링크 JSON 전환 시 원본 링크가 reconcile 회차/완결 권위 후보에서 영영 누락됐음.
+  //   (외전 분리수는 '이 링크가 관측했다' 보장이 없어 시드 안 함 — 오귀속·이중계상 방지. 회차/완결/연도만.)
+  const te = Number(work.total_episodes) || 0; if (te > 0) o.totalEpisodes = te;
+  if (work.work_status) o.workStatus = String(work.work_status);
+  const ca = Number(work.completed_at) || 0; if (ca > 0) o.completedAt = ca;
+  const ey = Number(work.end_year) || 0; if (ey >= 1980 && ey <= 2099) o.endYear = ey;
+  return [o];
 }
 // 자동업뎃에 사용할 링크 선정:
 //   ① update_link 수동지정(linksOf에 존재 시) → ② 연재시작연도 있는 쪽(오름차순, 동률 addedAt)
@@ -44905,10 +44949,9 @@ function AppContent() {
       if (nowCompleted) {
         if (rec.completedAt != null && rec.completedAt !== (Number(work.completed_at) || 0)) setCol("completed_at", rec.completedAt, "완결일");
         if (rec.endYear != null && rec.endYear !== (Number(work.end_year) || 0)) setCol("end_year", rec.endYear, `완결연도 ${rec.endYear}`);
-      } else { // 완결 해제(잘못된 완결 자기교정) — 완결일/연도 정리
-        if (Number(work.completed_at) || 0) setCol("completed_at", 0, "완결일 해제");
-        if (Number(work.end_year) || 0) setCol("end_year", 0, "완결연도 해제");
       }
+      // 🔧 v7.49.16: 완결→비완결 강등 시에도 완결일/연도는 '보존'(사용자 수동 입력 보호) — work_status만 갱신(위 44916).
+      //   이전엔 0으로 삭제 → 단일 링크의 비완결 관측(플랫폼 표기차·오파싱)으로 사용자가 입력한 완결일이 날아가던 문제. 자기교정보다 보존 우선.
       // 회차·외전 — 단일 권위 링크에서 원자적(혼합 금지 → 본편+외전 정합·교차오염 차단)
       if (rec.totalEpisodes != null && rec.totalEpisodes > 0 && rec.totalEpisodes !== (Number(work.total_episodes) || 0)) setCol("total_episodes", rec.totalEpisodes, `회차 ${Number(work.total_episodes) || 0}→${rec.totalEpisodes}`);
       if (rec.gaidenCount != null) { // null=권위 링크 외전 미관측 → 정본 유지(오클리어 방지)
@@ -44920,26 +44963,34 @@ function AppContent() {
         if (gst !== (work.gaiden_status || "none")) setCol("gaiden_status", gst, "외전 상태");
       }
     } else {
-      // ===== 기본: 보수적 채움(빈칸/성장만) — 기존 동작 보존(회차 안 깎임) =====
-      const curEp = Number(work.total_episodes) || 0, newEp = Number(meta.totalEpisodes) || 0;
-      if (newEp > 0 && newEp > curEp) setCol("total_episodes", newEp, `회차 ${curEp}→${newEp}`);
-      if (meta.workStatus === "completed" && curWs !== "completed") setCol("work_status", "completed", "✅완결 전환");
-      else if (meta.workStatus === "dropped" && curWs === "ongoing") setCol("work_status", "dropped", "⏸연중 전환");
-      const curEy = Number(work.end_year) || 0, newEy = Number(meta.endYear) || 0;
-      if (newEy > 0 && curEy === 0) setCol("end_year", newEy, `완결연도 ${newEy}`);
-      const curCa = Number(work.completed_at) || 0, newCa = Number(meta.completedAt) || 0;
-      const willComplete = meta.workStatus === "completed" || curWs === "completed";
-      if (willComplete && newCa > 0 && curCa === 0) setCol("completed_at", newCa, "완결일");
-      const newGc = Number(meta.gaidenCount) || 0;
-      if (newGc > 0) {
+      // ===== 기본: 보수적 채움 — reconcile 권위 기준 grow-only/빈칸채움 =====
+      //   🔧 v7.49.16: 이전엔 단일 fetch 링크의 meta를 직접 써서 멀티링크에서 '회차 최다 권위 링크'의 회차·완결·외전 증거가
+      //   기본 갱신에 반영 안 됐음(start_year만 정본화). 이제 정본(rec) 우선·없으면 meta 폴백 → 멀티링크 교차보완을 기본 갱신에도 반영.
+      //   회차/외전은 grow-only(안 깎임), 완결·연도·날짜는 빈칸채움(사용자 큐레이션 보존). 단일링크는 rec=그 링크라 종전과 동일.
+      const curEp = Number(work.total_episodes) || 0;
+      const recEp = rec.totalEpisodes != null ? rec.totalEpisodes : (Number(meta.totalEpisodes) || 0);
+      if (recEp > 0 && recEp > curEp) setCol("total_episodes", recEp, `회차 ${curEp}→${recEp}`);
+      const recWs = rec.workStatus || meta.workStatus;
+      if (recWs === "completed" && curWs !== "completed") setCol("work_status", "completed", "✅완결 전환");
+      else if (recWs === "dropped" && curWs === "ongoing") setCol("work_status", "dropped", "⏸연중 전환");
+      const curEy = Number(work.end_year) || 0;
+      const recEy = rec.endYear != null ? rec.endYear : (Number(meta.endYear) || 0);
+      if (recEy > 0 && curEy === 0) setCol("end_year", recEy, `완결연도 ${recEy}`);
+      const curCa = Number(work.completed_at) || 0;
+      const recCa = rec.completedAt != null ? rec.completedAt : (Number(meta.completedAt) || 0);
+      const willComplete = recWs === "completed" || curWs === "completed";
+      if (willComplete && recCa > 0 && curCa === 0) setCol("completed_at", recCa, "완결일");
+      // 외전 — 본편과 동일 grow-only(이전엔 빈칸채움만이라 외전 증가 2→5를 놓침). rec(권위) 우선·없으면 meta.
+      const recGc = rec.gaidenCount != null ? rec.gaidenCount : (Number(meta.gaidenCount) || 0);
+      if (recGc > 0) {
         const curGc = Number(work.gaiden_total_episodes) || 0;
-        if (curGc === 0) setCol("gaiden_total_episodes", newGc, `외전 ${newGc}화`);
-        const newGs = Number(meta.gaidenStartAt) || 0, curGs = Number(work.gaiden_start_at) || 0;
-        if (newGs > 0 && curGs === 0) setCol("gaiden_start_at", newGs);
-        const newGe = Number(meta.gaidenCompletedAt) || 0, curGe = Number(work.gaiden_completed_at) || 0;
-        if (newGe > 0 && curGe === 0) setCol("gaiden_completed_at", newGe);
-        const curGst = work.gaiden_status || "none";
-        if (meta.gaidenStatus && curGst === "none") setCol("gaiden_status", meta.gaidenStatus, "외전 상태");
+        if (recGc > curGc) setCol("gaiden_total_episodes", recGc, `외전 ${recGc}화`);
+        const recGs2 = rec.gaidenStartAt != null ? rec.gaidenStartAt : (Number(meta.gaidenStartAt) || 0);
+        if (recGs2 > 0 && (Number(work.gaiden_start_at) || 0) === 0) setCol("gaiden_start_at", recGs2);
+        const recGe = rec.gaidenCompletedAt != null ? rec.gaidenCompletedAt : (Number(meta.gaidenCompletedAt) || 0);
+        if (recGe > 0 && (Number(work.gaiden_completed_at) || 0) === 0) setCol("gaiden_completed_at", recGe);
+        const recGst = rec.gaidenStatus || meta.gaidenStatus;
+        if (recGst && (work.gaiden_status || "none") === "none") setCol("gaiden_status", recGst, "외전 상태");
       }
     }
     // 🆕 v7.28.64 / 🔗 v7.48.0: 저장된 링크들의 플랫폼이 연재처에 없으면 자동 추가(자동갱신·매핑 일관성).
@@ -45051,10 +45102,10 @@ function AppContent() {
       Alert.alert("📢 상태 변경 알림", [nComplete ? `🎉 완결 전환 ${nComplete}개` : "", nDropped ? `⏸ 연중 전환 ${nDropped}개` : ""].filter(Boolean).join("\n") + "\n\n새로 완결/연중된 작품이 있어요. 완료 목록에서 확인하세요.");
     }
   }
-  // 🔧 v7.49.5: 회차수 보정은 '외전(gaiden)'만 정정한다(과대·과소 양방향). 본편(total_episodes)은 절대 건드리지 않음.
-  //   이유: 재스크랩 본편값(meta.totalEpisodes = total − gaidenCount)은 회차목록 윈도(예: 네이버 display=300) 캡과
-  //   total의 외전 포함 여부 불확실로 신뢰할 수 없어, 하향 정정 시 본편이 뭉탱이로 깎이는 회귀가 있었음(사용자 보고).
-  //   외전 수만 윈도에서 신뢰 가능하므로 외전만 맞추고 본편은 보존(자동 갱신/재취득에서만 본편 변경).
+  // 🔧 v7.49.5/6: 회차수 보정은 '외전(gaiden)' 변화를 기준으로 정정한다(과대·과소 양방향). 본편(total_episodes)은
+  //   재스크랩 본편값(meta.totalEpisodes = total − gaidenCount)으로 '직접 덮지 않는다' — 회차목록 윈도(예: 네이버 display=300)
+  //   캡과 total의 외전 포함 여부 불확실로 하향 정정 시 본편이 뭉탱이로 깎이는 회귀가 있었음(사용자 보고).
+  //   대신 v7.49.6: 본편은 '현재 본편 − 외전 증가분(delta)'으로만 조정해 '본편+외전=전체' 정합 유지(깎임=외전 변화량으로 한정, 신뢰 가능).
   //   외전→0(재스크랩이 외전을 못 찾음)은 윈도 누락 위험이라 제외(newGc>0일 때만 정정).
   function detectEpisodeOvercount(work, meta) {
     if (!meta) return null;
@@ -50072,6 +50123,17 @@ function AppContent() {
     if (!id) { Alert.alert("새로고침", "편집 중인 작품이 없어요."); return; }
     const table = item._planned ? "planned_novels" : "novels";
     let work = (await first(`SELECT * FROM ${table} WHERE id=?`, [id])) || item;
+    // 🆕 v7.49.16: 편집 모달에서 추가했지만 아직 저장 안 한 in-memory 링크(editLinks)를 먼저 DB에 영속한다.
+    //   이전엔 refresh가 DB의 work.links만 순회 → 방금 추가한 링크는 재조회 누락 + openEdit 재로드로 조용히 사라짐(유실).
+    //   saveEdit와 동일 규칙(다이렉트 병합·관측치 보존 직렬화)으로 novels에만 영속(planned는 links 컬럼 없음).
+    if (!item._planned) {
+      let merged = (Array.isArray(editLinks) ? editLinks : []).filter(l => l && (l.url || "").trim());
+      const dirUrl = (editLink || "").trim();
+      if (dirUrl && !merged.some(l => l.url.trim() === dirUrl)) merged = [...merged, { url: dirUrl, platform: canonicalPlatform(detectPlatformFromUrl(dirUrl) || ""), startYear: Number(editStartYear) || 0, addedAt: Date.now() }];
+      if (merged.length > 1) { // isTrivial(단일==다이렉트)이 아닐 때만 JSON 영속(단일링크는 link 컬럼 위임)
+        try { await exec("UPDATE novels SET links=? WHERE id=?", [serializeLinks(merged), id]); work = (await first(`SELECT * FROM ${table} WHERE id=?`, [id])) || work; } catch {}
+      }
+    }
     const links = linksOf(work);
     if (!links.length) { Alert.alert("새로고침", "등록된 링크가 없어요. 먼저 링크를 추가해 주세요."); return; }
     const go = await new Promise(res => Alert.alert(
@@ -52978,6 +53040,14 @@ async function buildUltraCompactBackup(novels, matches, coverImages = null) {
     if (gaidenStatus !== "none") opt.gs = gaidenStatus === "ongoing" ? 1 : 2; // 1=ongoing, 2=completed
     if (gaidenReadCount) opt.gr = gaidenReadCount;
     if (gaidenTotalEp) opt.ge = gaidenTotalEp;
+    // 🆕 v7.49.16: 본편 완결일·외전 시작/완결일(ms) — 이전 백업에 누락되어 복원 시 0으로 소실되던 데이터 유실 수정.
+    //   created_at처럼 초offset 저장(2024 이전 음수 오프셋도 복원 시 != null로 보존). 0(미설정)만 omit.
+    const completedAtMs = Number(n.completed_at) || 0;
+    if (completedAtMs > 0) opt.cma = Math.floor(completedAtMs / 1000) - BASE_TIMESTAMP;
+    const gaidenStartMs = Number(n.gaiden_start_at) || 0;
+    if (gaidenStartMs > 0) opt.gsa = Math.floor(gaidenStartMs / 1000) - BASE_TIMESTAMP;
+    const gaidenCompletedMs = Number(n.gaiden_completed_at) || 0;
+    if (gaidenCompletedMs > 0) opt.gca = Math.floor(gaidenCompletedMs / 1000) - BASE_TIMESTAMP;
     // 🏆 수동 티어 지정 (v6.0: 동적 — 문자열 key 저장)
     if (n.manual_tier) opt.mt = n.manual_tier;
     // 🆕 v7.0: 같은 manual_tier 내 사용자 지정 순서 (gap 100, 0 외만 저장)
@@ -53080,7 +53150,7 @@ async function buildUltraCompactBackup(novels, matches, coverImages = null) {
   }
 
   return {
-    v: 12, // 🔧 v7.6.0: start_year(sy)/end_year(ey)/match_ban(mb) 포함
+    v: 13, // 🔧 v7.49.16: 완결일(cma)/외전 시작일(gsa)/외전 완결일(gca) 포함 (v12: sy/ey/mb)
     b: BASE_TIMESTAMP,
     T: tagDict,
     P: platDict,
@@ -53467,6 +53537,10 @@ async function exportJSON() {
         if (p.gaiden_status && p.gaiden_status !== "none") row.gs = p.gaiden_status;
         if (Number(p.gaiden_read_count)) row.gr = Number(p.gaiden_read_count);
         if (Number(p.gaiden_total_episodes)) row.ge = Number(p.gaiden_total_episodes);
+        // 🆕 v7.49.16: 본편 완결일·외전 시작/완결일(ms) — 백업 라운드트립 보존(이전 누락). 0 외만, 초offset.
+        if (Number(p.completed_at) > 0) row.cma = Math.floor(Number(p.completed_at) / 1000) - BASE_TIMESTAMP;
+        if (Number(p.gaiden_start_at) > 0) row.gsa = Math.floor(Number(p.gaiden_start_at) / 1000) - BASE_TIMESTAMP;
+        if (Number(p.gaiden_completed_at) > 0) row.gca = Math.floor(Number(p.gaiden_completed_at) / 1000) - BASE_TIMESTAMP;
         if (p.manual_tier) row.mt = p.manual_tier;
         if (Number(p.manual_order)) row.mo = Number(p.manual_order);
         if (Number(p.reread_count) && Number(p.reread_count) !== 1) row.rr = Number(p.reread_count);
@@ -53580,11 +53654,12 @@ function validateImportData(text) {
     return result;
   }
 
-  // v9/v10/v11/v12 극한 압축 포맷 (v12: 연재 연도 + 매칭 밴 포함)
-  if (data && [9, 10, 11, 12].includes(data.v) && Array.isArray(data.N) && typeof data.M === "string") {
+  // v9/v10/v11/v12/v13 극한 압축 포맷 (v13: 완결일/외전 날짜 포함, v12: 연재 연도 + 매칭 밴 포함)
+  if (data && [9, 10, 11, 12, 13].includes(data.v) && Array.isArray(data.N) && typeof data.M === "string") {
     result.valid = true;
     result.version = data.v;
-    result.format = data.v === 12 ? "v12 극한 압축 (연도/매칭 밴 포함)"
+    result.format = data.v === 13 ? "v13 극한 압축 (완결일/외전 날짜 포함)"
+                  : data.v === 12 ? "v12 극한 압축 (연도/매칭 밴 포함)"
                   : data.v === 11 ? "v11 극한 압축 (좌표계 포함)"
                   : data.v === 10 ? "v10 극한 압축 (태그 v5.0)"
                   : "v9 극한 압축";
@@ -53825,6 +53900,10 @@ async function importJSON() {
                 const gaidenStatus = opt.gs === 1 ? "ongoing" : (opt.gs === 2 ? "completed" : "none");
                 const gaidenReadCount = opt.gr || 0;
                 const gaidenTotalEpisodes = opt.ge || 0;
+                // 🆕 v7.49.16: 본편 완결일·외전 시작/완결일 복원(구버전 백업 ≤v12는 키 없음 → 0). 초offset → ms.
+                const completedAtVal = (opt.cma != null) ? (baseTs + opt.cma) * 1000 : 0;
+                const gaidenStartAtVal = (opt.gsa != null) ? (baseTs + opt.gsa) * 1000 : 0;
+                const gaidenCompletedAtVal = (opt.gca != null) ? (baseTs + opt.gca) * 1000 : 0;
                 // 🏆 수동 티어 지정 (v6.0: 레거시 숫자 + 새 문자열 호환)
                 let manualTier = typeof opt.mt === 'string' ? opt.mt : (opt.mt === 1 ? 'S' : (opt.mt === 2 ? 'A' : null));
                 // 🆕 v6.2: 현재 globalTierConfig에 없는 키 차단 (구버전/손상 백업 호환)
@@ -53892,9 +53971,9 @@ async function importJSON() {
                   // 🔧 v7.6.0: start_year/end_year/match_ban (v11 이하 백업은 기본값 0)
                   // 🔧 v7.10.0: user_flagged_suspect 컬럼 추가 (41→42)
                   // 🆕 v7.21.3: suspicion_score 컬럼 추가 (42→43)
-                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,read_count_baseline,start_year,end_year,match_ban,verification_wins,verification_losses,verification_count,conflict_hits,user_flagged_suspect,suspicion_score,links,update_link)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, manualOrder, rereadCount, tagData, aliases, memorableQuote, readCount, startYearVal, endYearVal, matchBanVal, verWins, verLosses, verCount, conflictHits, userFlaggedVal, suspicionScoreVal, links, updateLink],
+                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,read_count_baseline,start_year,end_year,match_ban,verification_wins,verification_losses,verification_count,conflict_hits,user_flagged_suspect,suspicion_score,links,update_link,completed_at,gaiden_start_at,gaiden_completed_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, manualOrder, rereadCount, tagData, aliases, memorableQuote, readCount, startYearVal, endYearVal, matchBanVal, verWins, verLosses, verCount, conflictHits, userFlaggedVal, suspicionScoreVal, links, updateLink, completedAtVal, gaidenStartAtVal, gaidenCompletedAtVal],
                 });
               }
 
@@ -54179,8 +54258,8 @@ async function importJSON() {
                 // 🆕 v7.2.0: round-trip 보존 19개 신규 필드 + id 보존 (있으면 사용, 없으면 신규 uuid)
                 const plannedQueries = data.PL.map(p => ({
                   sql: `INSERT INTO planned_novels
-                    (id, title, author, tags, platforms, note, total_episodes, cover_image, link, work_status, major_genre, sub_genre, priority, created_at, expected_rating, expected_tier, interest_level, discovery_source, first_chapter_read, scheduled_start_date, similar_novels, why_interested, tag_data, status, pinned, read_count, rating, rd, wins, losses, match_count, gaiden_status, gaiden_read_count, gaiden_total_episodes, manual_tier, manual_order, reread_count, aliases, memorable_quote, awards, read_count_updated_at, read_count_baseline, start_year, end_year)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                    (id, title, author, tags, platforms, note, total_episodes, cover_image, link, work_status, major_genre, sub_genre, priority, created_at, expected_rating, expected_tier, interest_level, discovery_source, first_chapter_read, scheduled_start_date, similar_novels, why_interested, tag_data, status, pinned, read_count, rating, rd, wins, losses, match_count, gaiden_status, gaiden_read_count, gaiden_total_episodes, manual_tier, manual_order, reread_count, aliases, memorable_quote, awards, read_count_updated_at, read_count_baseline, start_year, end_year, completed_at, gaiden_start_at, gaiden_completed_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
                   params: [
                     p.id || uuid(),                                      // 🆕 v7.2.0: id 보존
                     p.t || "",
@@ -54229,6 +54308,10 @@ async function importJSON() {
                     // 🔧 v7.6.1: 예정작 연재 연도 복원 (구버전 백업은 sy/ey 없음 → 0)
                     Number(p.sy) || 0,
                     Number(p.ey) || 0,
+                    // 🆕 v7.49.16: 본편 완결일·외전 시작/완결일 복원 (구버전 백업 ≤v12는 키 없음 → 0)
+                    (p.cma != null) ? (baseTs + p.cma) * 1000 : 0,
+                    (p.gsa != null) ? (baseTs + p.gsa) * 1000 : 0,
+                    (p.gca != null) ? (baseTs + p.gca) * 1000 : 0,
                   ],
                 }));
                 
@@ -68907,7 +68990,7 @@ async function importJSON() {
   // 🆕 v7.49.13: '일괄등록(재출간)' 표시 — 회차 날짜 균일(uniformTs) + 가장 이른 시작연도보다 늦게 시작(원본 자신은 제외).
   const _syVals = list.map(l => Number(l.startYear) || 0).filter(y => y >= 1980 && y <= 2099);
   const earliestSy = _syVals.length ? Math.min(..._syVals) : 0;
-  const isRepubLink = (l) => l.uniformTs === true && (!earliestSy || !(Number(l.startYear) || 0) || (Number(l.startYear) || 0) > earliestSy);
+  const isRepubLink = (l) => l.uniformTs === true && earliestSy > 0 && (Number(l.startYear) || 0) > earliestSy; // 🔧 v7.49.16: reconcileWork.isRepub와 동일 — 알려진 시작연도가 최이른값보다 늦을 때만
   return (
     <View style={{ marginTop: 8, padding: 10, borderRadius: 10, backgroundColor: C.chip, borderWidth: 1, borderColor: C.line }}>
       <Text style={{ color: C.text, fontWeight: "700", fontSize: 13, marginBottom: 2 }}>🔗 멀티링크 ({list.length})</Text>
