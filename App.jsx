@@ -2,9 +2,29 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.49.16 (실사용 7시나리오 재점검 — 백업 유실+정본화 권위 수정)            ║
+ * ║  버전: 7.49.17 (추가 10시나리오 — 동시성·데드코드·시간대 근본 수정)              ║
  * ║  최종 수정: 2026-06-29                                                        ║
- * ║  총 라인 수: 약 72,770줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 72,790줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔬 v7.49.17 추가 10실사용 시나리오 — 5에이전트 적대검증·근본 수정 (2026-06-29) ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 정본화 밖(동시성·생명주기·티어재구성·수치/시간) 10시나리오를 5에이전트 검증. 수정:║
+ * ║ 🔴[회귀 핫픽스] v13 백업 import 불가 — v7.49.16이 export는 v13으로 올렸으나       ║
+ * ║   importJSON 처리 게이트가 [9..12]라 검증 통과 후 '미지원' 거부. → [9..13] + 문구. ║
+ * ║ 🟠[데드코드] checkAutoApprove 정의만 있고 호출부 0건 → '자동 승인' 기능 영구 no-op.║
+ * ║   decide() 매치 완료부에 배선(match 모드·설정 OFF면 즉시 반환·#1/#5 안전).        ║
+ * ║ 🟠[동시성] 작품 삭제/예정변환/일괄삭제/백업복원 DELETE 전 waitForMatchQueueDrain  ║
+ * ║   누락 → in-flight 매칭 task와 경합해 고아 match/유실. 4경로에 큐 drain 이식(#3).  ║
+ * ║ 🟠[시간대] 문피아 검색 완결일이 원시 KST epoch(시각 포함)로 저장 → reconcile/표시  ║
+ * ║   의 getUTCFullYear(offset 무)와 연말 경계 ±1일·±1년 불일치. KST 달력일→UTC 자정   ║
+ * ║   (scraperDateToTs와 동일 불변식)으로 정규화.                                    ║
+ * ║ 🟡[태그] tag↔tag_data 동기화가 toLowerCase 정확매칭이라 표기 변형(별칭·공백) 시   ║
+ * ║   농도 소실+중복 엔트리→유사도 오류. 필터·농도 읽기/쓰기를 isSameTag로 통일.       ║
+ * ║ 검증: @babel/parser 통과. 5에이전트 오탐(별칭순환·NaN전파·lost-update 등) 다수 반증.║
+ * ║ 잔여(구조적·스키마·성능): import 원자성, 검증 슬롯세대 가드, 큐 UNIQUE, 프리셋     ║
+ * ║ 재정렬, O(N²) 페어링·RD 진동 — 사용자 검토 후 별도 처리(채팅 참조).               ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -16462,7 +16482,10 @@ function parseMunpiaSearchJson(jsonText) {
       const u = Number(it.nvTimeUpdate);
       const realUpd = (u > 0 && u < TM) ? (TM - u) : Number(it.nvTimeReg);
       endYear = yearOf(realUpd);
-      completedAt = realUpd > 0 ? realUpd * 1000 : 0; // 🆕 v7.28.61: 완결일(ms)
+      // 🔧 v7.49.17: 완결일을 다른 모든 경로(scraperDateToTs)와 동일하게 'UTC 자정 date-only'로 정규화.
+      //   이전: realUpd*1000(원시 KST epoch, 시각 포함)을 그대로 저장 → completedAt→연도/표시가 getUTCFullYear(offset 없음)를
+      //   쓰는 reconcileWork(16799)·dDisp(16926)에서 연말 경계 ±1일·±1년 어긋남(yearOf는 +9h KST). KST 달력일을 뽑아 Date.UTC로 재구성.
+      if (realUpd > 0) { const kd = new Date((realUpd + 32400) * 1000); completedAt = Date.UTC(kd.getUTCFullYear(), kd.getUTCMonth(), kd.getUTCDate()); } // 🆕 v7.28.61: 완결일(ms)
     }
     const workStatus = completed ? "completed" : (discontinued ? "dropped" : "ongoing"); // dropped=연중
     const ageTag = String(it.nvOptAdult || "") === "Y" ? "19금" : null;
@@ -41576,6 +41599,9 @@ function AppContent() {
       console.warn("[v7.3.0] convertNovelToPlanned: 자동매칭 중 — silent abort", novel.id);
       return false;
     }
+    // 🔧 v7.49.17: DELETE 전 매칭 큐 drain (불변규칙 #3) — in-flight 수동 매칭 task가 이 작품을 참조 중이면
+    //   변환(DELETE novels) 후 그 task의 UPDATE/INSERT가 고아 match를 남기던 문제 방지. 큐 외부 파괴 write이므로 필수.
+    if (!isMatchQueueIdle()) { try { await waitForMatchQueueDrain(3000); } catch {} }
 
     // 1. title 충돌 체크 (자기 자신 제외 — id 동일하면 OK)
     try {
@@ -48912,6 +48938,9 @@ function AppContent() {
           Breadcrumbs.action("novel_delete", id);
           setIsLoading(true);
           try {
+            // 🔧 v7.49.17: DELETE 전 매칭 큐 drain (불변규칙 #3) — in-flight 수동 매칭 task가 이 작품을 참조 중이면
+            //   삭제 후 그 task의 UPDATE/INSERT OR IGNORE matches가 고아 행을 되살리던 경합 방지(+이후 task는 !rawA 가드로 안전).
+            if (!isMatchQueueIdle()) { try { await waitForMatchQueueDrain(3000); } catch {} }
             // 🖼️ v3.4.5: 삭제 전에 해당 작품의 표지 + 📷 v6.0.1: 명대사 이미지 가져오기
             // 🆕 v7.21.0: 되돌리기용 전체 행 + 매치 스냅샷 (SELECT * → undo 'novel_delete'가 작품+ELO 복원)
             const novel = await first("SELECT * FROM novels WHERE id=?", [id]);
@@ -50939,7 +50968,12 @@ function AppContent() {
           });
         }
       }
-      
+
+      // 🆕 v7.49.17: 자동 승인 검사 — 매치 후 W/L/매치수 임계 충족 + 권장 티어가 gated면 자동 승급.
+      //   이전: checkAutoApprove 정의(48089)만 있고 호출부가 0건 → 설정 UI·백업은 살아있는데 기능이 영구 no-op(데드코드)였음.
+      //   match 모드 전용·설정 OFF면 즉시 반환(기본 OFF라 켠 사용자에게만 작동). Alert 미사용 → 불변규칙 #1 안전. try/catch로 매치 task 보호(#5).
+      try { await checkAutoApprove(newA.id); await checkAutoApprove(newB.id); } catch (e) { console.warn("[decide] checkAutoApprove 오류:", e?.message); }
+
       // 🔮 v3.0.3: 매치 결과 분석 및 인사이트 저장
       // 🔧 v3.5.15f: 분석/로그 저장을 큐 본체에서 분리
       // - 매칭 핵심 경로(DB 반영 + 다음 pair UI) 지연 최소화
@@ -52758,6 +52792,8 @@ function AppContent() {
           setIsLoading(true);
           setLoadingProgress({ current: 0, total: 0, label: "작품 삭제 중..." });
           try {
+            // 🔧 v7.49.17: DELETE 전 매칭 큐 drain (불변규칙 #3) — in-flight 매칭 task가 삭제 대상을 참조 중이면 고아 match 방지.
+            if (!isMatchQueueIdle()) { try { await waitForMatchQueueDrain(3000); } catch {} }
             // 🔄 v3.5.0: 상태 동기화 - 삭제 대상과 관련된 모든 상태 초기화
             if (pair && (ids.includes(pair.A?.id) || ids.includes(pair.B?.id))) {
               setPair(null);
@@ -53751,7 +53787,7 @@ function validateImportData(text) {
     return result;
   }
 
-  result.errors.push("지원하지 않는 백업 형식입니다.\nv9~v12 형식만 지원됩니다.");
+  result.errors.push("지원하지 않는 백업 형식입니다.\nv9~v13 형식만 지원됩니다.");
   return result;
 }
 
@@ -53805,7 +53841,7 @@ async function importJSON() {
     // -------------------------------
     // ➊ v9/v10/v11 극한 압축 포맷 (v10: tag_data, aliases / v11: 좌표계 포함)
     // -------------------------------
-    if (data && [9, 10, 11, 12].includes(data.v) && Array.isArray(data.N) && typeof data.M === "string") {
+    if (data && [9, 10, 11, 12, 13].includes(data.v) && Array.isArray(data.N) && typeof data.M === "string") {
       const tagDict = Array.isArray(data.T) ? data.T : [];
       const platDict = Array.isArray(data.P) ? data.P : [];
       const authorDict = Array.isArray(data.A) ? data.A : [];
@@ -53840,6 +53876,9 @@ async function importJSON() {
               choiceLogQueue.pending = [];
               patternUpdateBatch.length = 0;
               patternUpdateScheduled = false;
+              // 🔧 v7.49.17: 전체 DELETE 전 매칭 큐 drain (불변규칙 #3) — in-flight 매칭 task가 doClearAll의 DELETE와 경합하거나
+              //   방금 지운 작품에 UPDATE/INSERT 하던 것을 차단(타이머 정리만으론 matchQueue가 안 멈춤).
+              if (!isMatchQueueIdle()) { try { await waitForMatchQueueDrain(3000); } catch {} }
               // 🔧 v3.5.8: 전체 복원 플로우를 try-catch로 보호
               // DELETE 후 INSERT 실패 시 데이터 소실 방지를 위한 안전장치
               let deleteCompleted = false;
@@ -54627,7 +54666,7 @@ async function importJSON() {
     }
 
     // v9~v11 외의 포맷은 지원하지 않음
-    Alert.alert("오류", "지원하지 않는 백업 형식입니다.\nv9~v12 형식만 지원됩니다.");
+    Alert.alert("오류", "지원하지 않는 백업 형식입니다.\nv9~v13 형식만 지원됩니다.");
 
   } catch (e) {
     console.warn(e);
@@ -55341,7 +55380,7 @@ async function importJSON() {
                   onLongPressTag={(tag) => {
                     // 🔧 v7.6.0 (포트 v3.12.4): 농도 Alert → 통합 모달 (농도 + 속성/감정/고정/숨김)
                     const td = newTagDataRef.current || [];
-                    const current = td.find(t => t.tag === tag)?.intensity || 3;
+                    const current = td.find(t => isSameTag(t.tag, tag))?.intensity || 3;
                     setTagChipEditTag(tag);
                     setTagChipEditSource("new");
                     setTagChipEditIntensity(current);
@@ -55386,8 +55425,8 @@ async function importJSON() {
                     setNewMajorGenre(detectedMajor);
                     setNewSubGenre(detectedSub);
                     // 🔧 v3.5.8: tag_data에서 제거된 태그 동기 삭제
-                    const inputTagsLc = new Set(inputTags.map(x => x.toLowerCase()));
-                    setNewTagData(prev => (prev || []).filter(td => inputTagsLc.has((td.tag || "").toLowerCase())));
+                    const _tnk = (s) => normalizeTag(s || "").replace(/\s+/g, "").toLowerCase(); const inputTagsLc = new Set(inputTags.map(_tnk)); // 🔧 v7.49.17: isSameTag 동치 정규화 키(별칭·공백 변형도 동일 태그로)
+                    setNewTagData(prev => (prev || []).filter(td => inputTagsLc.has(_tnk(td.tag))));
                   }}
                   placeholder="태그가 없습니다. 🏷️ 추가를 눌러 태그를 선택하세요."
                   textPlaceholder="예: 무협, 현판, 헌터"
@@ -59858,7 +59897,7 @@ async function importJSON() {
                       onLongPressTag={(tag) => {
                         // 🔧 v7.6.0 (포트 v3.12.4): 보충탭 농도 Alert → 통합 모달
                         const td = editItem?.tag_data ? parseTagData(editItem.tag_data) : [];
-                        const current = td.find(t => t.tag === tag)?.intensity || 3;
+                        const current = td.find(t => isSameTag(t.tag, tag))?.intensity || 3;
                         setTagChipEditTag(tag);
                         setTagChipEditSource("supplement");
                         setTagChipEditIntensity(current);
@@ -59901,14 +59940,14 @@ async function importJSON() {
                           .map(tag => findSameTag(allMajor, tag) || tag);
                         const normalizedSub = inputTags.filter(tag => allSub.some(m => isSameTag(m, tag)))
                           .map(tag => findSameTag(allSub, tag) || tag);
-                        const inputTagsLc = new Set(inputTags.map(x => x.toLowerCase()));
+                        const _tnk = (s) => normalizeTag(s || "").replace(/\s+/g, "").toLowerCase(); const inputTagsLc = new Set(inputTags.map(_tnk)); // 🔧 v7.49.17: isSameTag 동치 정규화 키(별칭·공백 변형도 동일 태그로)
                         updateEditItem(prev => {
                           if (!prev) return null;
                           let syncedTagData = prev.tag_data || "";
                           try {
                             const parsed = JSON.parse(syncedTagData || "[]");
                             if (Array.isArray(parsed)) {
-                              const filtered = parsed.filter(td => inputTagsLc.has((td.tag || "").toLowerCase()));
+                              const filtered = parsed.filter(td => inputTagsLc.has(_tnk(td.tag)));
                               syncedTagData = filtered.length > 0 ? JSON.stringify(filtered) : "";
                             }
                           } catch {}
@@ -68775,7 +68814,7 @@ async function importJSON() {
                     onLongPressTag={(tag) => {
                       // 🔧 v7.6.0 (포트 v3.12.4): 편집 모달 농도 Alert → 통합 모달
                       const td = editItem?.tag_data ? parseTagData(editItem.tag_data) : [];
-                      const current = td.find(t => t.tag === tag)?.intensity || 3;
+                      const current = td.find(t => isSameTag(t.tag, tag))?.intensity || 3;
                       setTagChipEditTag(tag);
                       setTagChipEditSource("edit");
                       setTagChipEditIntensity(current);
@@ -68818,14 +68857,14 @@ async function importJSON() {
                       const normalizedSub = inputTags.filter(tag => allSub.some(m => isSameTag(m, tag)))
                         .map(tag => findSameTag(allSub, tag) || tag);
                       // 🔧 v3.5.8: tag_data에서 제거된 태그 동기 삭제
-                      const inputTagsLc = new Set(inputTags.map(x => x.toLowerCase()));
+                      const _tnk = (s) => normalizeTag(s || "").replace(/\s+/g, "").toLowerCase(); const inputTagsLc = new Set(inputTags.map(_tnk)); // 🔧 v7.49.17: isSameTag 동치 정규화 키(별칭·공백 변형도 동일 태그로)
                       updateEditItem(prev => {
                         if (!prev) return null;
                         let syncedTagData = prev.tag_data || "";
                         try {
                           const parsed = JSON.parse(syncedTagData || "[]");
                           if (Array.isArray(parsed)) {
-                            const filtered = parsed.filter(td => inputTagsLc.has((td.tag || "").toLowerCase()));
+                            const filtered = parsed.filter(td => inputTagsLc.has(_tnk(td.tag)));
                             syncedTagData = filtered.length > 0 ? JSON.stringify(filtered) : "";
                           }
                         } catch {}
@@ -70435,15 +70474,15 @@ async function importJSON() {
           if (tagChipEditSource === "new") {
             setNewTagData(prev => {
               const a = prev || [];
-              return a.some(t => t.tag === tag) ? a.map(t => t.tag === tag ? { ...t, intensity: val } : t) : [...a, { tag, intensity: val }];
+              return a.some(t => isSameTag(t.tag, tag)) ? a.map(t => isSameTag(t.tag, tag) ? { ...t, intensity: val } : t) : [...a, { tag, intensity: val }]; // 🔧 v7.49.17: isSameTag — 표기 변형 시 중복 엔트리 방지
             });
           } else {
             // edit / supplement 공통
             updateEditItem(prev => {
               if (!prev) return null;
               const parsed = parseTagData(prev.tag_data);
-              const next = parsed.some(t => t.tag === tag)
-                ? parsed.map(t => t.tag === tag ? { ...t, intensity: val } : t)
+              const next = parsed.some(t => isSameTag(t.tag, tag)) // 🔧 v7.49.17: isSameTag — 표기 변형 시 중복 엔트리 방지
+                ? parsed.map(t => isSameTag(t.tag, tag) ? { ...t, intensity: val } : t)
                 : [...parsed, { tag, intensity: val }];
               return { ...prev, tag_data: JSON.stringify(next) };
             });
@@ -71193,14 +71232,14 @@ async function importJSON() {
                         .map(tag => findSameTag(allMajor, tag) || tag);
                       const normalizedSub = inputTags.filter(tag => allSub.some(m => isSameTag(m, tag)))
                         .map(tag => findSameTag(allSub, tag) || tag);
-                      const inputTagsLc = new Set(inputTags.map(x => x.toLowerCase()));
+                      const _tnk = (s) => normalizeTag(s || "").replace(/\s+/g, "").toLowerCase(); const inputTagsLc = new Set(inputTags.map(_tnk)); // 🔧 v7.49.17: isSameTag 동치 정규화 키(별칭·공백 변형도 동일 태그로)
                       updatePlannedEditItem(prev => {
                         if (!prev) return null;
                         let syncedTagData = prev.tag_data || "";
                         try {
                           const parsed = JSON.parse(syncedTagData || "[]");
                           if (Array.isArray(parsed)) {
-                            const filtered = parsed.filter(td => inputTagsLc.has((td.tag || "").toLowerCase()));
+                            const filtered = parsed.filter(td => inputTagsLc.has(_tnk(td.tag)));
                             syncedTagData = filtered.length > 0 ? JSON.stringify(filtered) : "";
                           }
                         } catch {}
