@@ -17,8 +17,8 @@
  * ║   (토글 누르기 전엔 스크롤 안 되던 버그 수정).                                   ║
  * ║ [일괄갱신] 회차·완결 모달을 '작업별 카드 메뉴'로 재구성 — 자동 갱신/링크 연결을    ║
  * ║   앞 카드로, 덮어쓰기·외전 보정은 '고급'으로 접음. 전체 ScrollView로 잘림 방지.    ║
- * ║ [링크관리] 연결 탭에 '작품별 링크 역할' 목록 추가 — 링크 있는 작품 전부를 검색·    ║
- * ║   정렬(영속)하고 멀티링크별 🔗다이렉트/🔄자동업뎃 역할을 인라인 토글(DB 직반영).   ║
+ * ║ [링크관리] 연결 탭에 '작품별 링크 역할' 추가 — 링크 있는 작품 전부를 FlatList     ║
+ * ║   가상화 모달에서 검색·정렬(영속)하고 멀티링크별 🔗다이렉트/🔄자동업뎃 토글(DB).   ║
  * ║ [버그] 예정 정렬 등 tab_sort_settings 미저장 — 저장 effect가 의존 state 선언 '전' ║
  * ║   에 있어 deps가 매 렌더 undefined(home_sort_settings와 달리 어긋남) → 변경       ║
  * ║   미감지 → 선언 이후로 effect 이동(예정/일괄/보충/수상/최신 정렬 전부 복구).      ║
@@ -38458,6 +38458,34 @@ function AppContent() {
   const [linkMgmtQuery, setLinkMgmtQuery] = useState("");
   const [linkMgmtSort, setLinkMgmtSort] = useState("links"); // links(링크수) | title | tier | created
   const [linkMgmtSortDir, setLinkMgmtSortDir] = useState("DESC");
+  const [linkRoleModalOpen, setLinkRoleModalOpen] = useState(false); // 🔗 v7.52.0: 작품별 링크 역할 가상화 모달
+
+  // 🔗 v7.52.0: 링크 역할 모달 데이터 — 링크 있는 작품을 검색/정렬(영속 키). FlatList 가상화로 전부 표시.
+  //   모달 닫혀 있으면 계산 생략(닫힌 상태에서 list 변경 시 헛 계산 방지).
+  const linkRoleRows = useMemo(() => {
+    if (!linkRoleModalOpen) return [];
+    const q = (linkMgmtQuery || "").toLowerCase().trim();
+    let rows = (list || []).filter(n => linksOf(n).length > 0);
+    if (q) rows = rows.filter(n => [n.title, n.author].join(" ").toLowerCase().includes(q));
+    const dir = linkMgmtSortDir === "DESC" ? -1 : 1;
+    const tierOrder = getActiveTierOrder(globalTierConfig);
+    return [...rows].sort((a, b) => {
+      if (linkMgmtSort === "title") return dir * (a.title || "").localeCompare(b.title || "");
+      if (linkMgmtSort === "tier") {
+        const ia = tierOrder.indexOf(getDisplayTier(a, globalTierConfig));
+        const ib = tierOrder.indexOf(getDisplayTier(b, globalTierConfig));
+        const na = ia === -1 ? tierOrder.length : ia, nb = ib === -1 ? tierOrder.length : ib;
+        if (na !== nb) return dir * (na - nb);
+        return (Number(b.rating) || 0) - (Number(a.rating) || 0);
+      }
+      if (linkMgmtSort === "links") {
+        const la = linksOf(a).length, lb = linksOf(b).length;
+        if (la !== lb) return dir * (lb - la);
+        return (Number(b.created_at) || 0) - (Number(a.created_at) || 0);
+      }
+      return dir * ((Number(b.created_at) || 0) - (Number(a.created_at) || 0));
+    });
+  }, [linkRoleModalOpen, list, linkMgmtQuery, linkMgmtSort, linkMgmtSortDir]);
 
   // 🔍 v7.52.0: 무결성 검증 결과 모달 (기존 Alert 10건 절단 → 전체·분류 표시)
   const [integrityResult, setIntegrityResult] = useState(null); // null | { novelsFixed, queriesExecuted, orphanMatchesRemoved, details:[] }
@@ -50420,6 +50448,26 @@ function AppContent() {
       }
     }
     setIsLoading(false);
+  }
+
+  // 🔗 v7.52.0: 링크 역할 모달 — 작품 카드에서 직접 DB 반영(편집 모달 밖). editLinkSetDirect/Update와 동일하게
+  //   link(다이렉트)·update_link(자동업뎃) 컬럼만 건드림(links JSON 본체와 직교). list 낙관적 갱신 + loadList 동기화.
+  async function setLinkDirectFor(work, url) {
+    const u = String(url || "").trim();
+    try {
+      await exec("UPDATE novels SET link=? WHERE id=?", [u, work.id]);
+      setList(prev => prev.map(x => x.id === work.id ? { ...x, link: u } : x));
+      loadList(undefined, undefined, "op");
+    } catch (e) { Alert.alert("오류", e?.message || String(e)); }
+  }
+  async function setLinkUpdateFor(work, url) {
+    const u = String(url || "").trim();
+    const next = String(work.update_link || "").trim() === u ? "" : u; // 같은 링크 재선택 시 자동선정으로 복귀
+    try {
+      await exec("UPDATE novels SET update_link=? WHERE id=?", [next, work.id]);
+      setList(prev => prev.map(x => x.id === work.id ? { ...x, update_link: next } : x));
+      loadList(undefined, undefined, "op");
+    } catch (e) { Alert.alert("오류", e?.message || String(e)); }
   }
 
   // ═══ 🔗 v7.48.0: 편집 모달 멀티링크 핸들러 ═══
@@ -66900,109 +66948,15 @@ async function importJSON() {
                   )}
                 </View>
 
-                {/* 🔗 v7.52.0: 작품별 멀티링크 역할 관리 — 링크 있는 작품 전부를 검색·정렬해 직접/자동업뎃 역할을 인라인 토글 */}
+                {/* 🔗 v7.52.0: 작품별 멀티링크 역할 관리 — 가상화(FlatList) 모달에서 링크 있는 작품 전부를 검색·정렬·역할 토글 */}
                 <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
                   <Text style={{ color: C.text, fontWeight: "700", fontSize: 14, marginBottom: 6 }}>🔧 작품별 링크 역할</Text>
                   <Text style={{ color: C.sub, fontSize: 12, lineHeight: 18, marginBottom: 10 }}>
-                    링크 있는 작품의 멀티링크 역할을 바로 지정해요. 🔗다이렉트=바로가기(읽기) / 🔄자동업뎃=회차·완결 재취득 대상. 자동업뎃 미지정 시 연재시작연도 빠른 링크가 자동 선정돼요. (검색·정렬은 저장됩니다)
+                    링크 있는 작품의 멀티링크 역할을 한곳에서 지정해요. 🔗다이렉트=바로가기(읽기) / 🔄자동업뎃=회차·완결 재취득 대상. 자동업뎃 미지정 시 연재시작연도 빠른 링크가 자동 선정돼요. (검색·정렬은 저장됩니다)
                   </Text>
-                  <TextInput value={linkMgmtQuery} onChangeText={setLinkMgmtQuery} placeholder="제목·작가 검색" placeholderTextColor={C.sub} autoCorrect={false}
-                    style={{ backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, color: C.text, fontSize: 14, marginBottom: 8 }} />
-                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 4, alignItems: "center" }}>
-                    {[["links", "링크수"], ["title", "제목"], ["tier", "티어"], ["created", "등록순"]].map(([key, label]) => (
-                      <TouchableOpacity key={key} onPress={() => setLinkMgmtSort(key)} activeOpacity={0.7}
-                        style={{ paddingVertical: 6, paddingHorizontal: 11, borderRadius: 999, backgroundColor: linkMgmtSort === key ? C.primary : "transparent", borderWidth: 1, borderColor: linkMgmtSort === key ? C.primary : C.line }}>
-                        <Text style={{ color: linkMgmtSort === key ? "#fff" : C.sub, fontSize: 12, fontWeight: "700" }}>{label}</Text>
-                      </TouchableOpacity>
-                    ))}
-                    <TouchableOpacity onPress={() => setLinkMgmtSortDir(p => p === "DESC" ? "ASC" : "DESC")} style={{ paddingVertical: 6, paddingHorizontal: 11, borderRadius: 999, borderWidth: 1, borderColor: C.line }}>
-                      <Text style={{ color: C.sub, fontSize: 12, fontWeight: "700" }}>{linkMgmtSortDir === "DESC" ? "↓ 내림" : "↑ 오름"}</Text>
-                    </TouchableOpacity>
-                  </View>
-                  {(() => {
-                    const setDirectFor = async (work, url) => {
-                      const u = String(url || "").trim();
-                      try {
-                        await exec("UPDATE novels SET link=? WHERE id=?", [u, work.id]);
-                        setList(prev => prev.map(x => x.id === work.id ? { ...x, link: u } : x)); // 낙관적 갱신(loadList 동시실행 스킵 대비 즉시 반영)
-                        loadList(undefined, undefined, "op");
-                      } catch (e) { Alert.alert("오류", e?.message || String(e)); }
-                    };
-                    const setUpdateFor = async (work, url) => {
-                      const u = String(url || "").trim();
-                      const next = String(work.update_link || "").trim() === u ? "" : u; // 같은 링크 다시 누르면 자동선정으로 되돌림
-                      try {
-                        await exec("UPDATE novels SET update_link=? WHERE id=?", [next, work.id]);
-                        setList(prev => prev.map(x => x.id === work.id ? { ...x, update_link: next } : x));
-                        loadList(undefined, undefined, "op");
-                      } catch (e) { Alert.alert("오류", e?.message || String(e)); }
-                    };
-                    const q = (linkMgmtQuery || "").toLowerCase().trim();
-                    let rows = (list || []).filter(n => linksOf(n).length > 0);
-                    if (q) rows = rows.filter(n => [n.title, n.author].join(" ").toLowerCase().includes(q));
-                    const dir = linkMgmtSortDir === "DESC" ? -1 : 1;
-                    const tierOrder = getActiveTierOrder(globalTierConfig);
-                    rows = [...rows].sort((a, b) => {
-                      if (linkMgmtSort === "title") return dir * (a.title || "").localeCompare(b.title || "");
-                      if (linkMgmtSort === "tier") {
-                        const ia = tierOrder.indexOf(getDisplayTier(a, globalTierConfig));
-                        const ib = tierOrder.indexOf(getDisplayTier(b, globalTierConfig));
-                        const na = ia === -1 ? tierOrder.length : ia;
-                        const nb = ib === -1 ? tierOrder.length : ib;
-                        if (na !== nb) return dir * (na - nb);
-                        return (Number(b.rating) || 0) - (Number(a.rating) || 0);
-                      }
-                      if (linkMgmtSort === "links") {
-                        const la = linksOf(a).length, lb = linksOf(b).length;
-                        if (la !== lb) return dir * (lb - la);
-                        return (Number(b.created_at) || 0) - (Number(a.created_at) || 0);
-                      }
-                      return dir * ((Number(b.created_at) || 0) - (Number(a.created_at) || 0));
-                    });
-                    if (rows.length === 0) {
-                      return <Text style={{ color: C.sub, fontSize: 13, textAlign: "center", paddingVertical: 18 }}>{q ? "검색 결과가 없어요." : "링크가 있는 작품이 없어요."}</Text>;
-                    }
-                    const LIMIT = 150;
-                    const shown = rows.slice(0, LIMIT);
-                    return (<>
-                      {shown.map((n) => {
-                        const links = linksOf(n);
-                        const directUrl = String(n.link || "").trim();
-                        const manualUpd = String(n.update_link || "").trim();
-                        const autoUrl = String(chooseUpdateLink(n) || "").trim();
-                        return (
-                          <View key={n.id} style={{ borderTopWidth: 1, borderTopColor: C.line, paddingTop: 10, marginTop: 10 }}>
-                            <Text style={{ color: C.text, fontSize: 13.5, fontWeight: "700", marginBottom: 6 }} numberOfLines={1}>{n.title}{n.author ? ` · ${n.author}` : ""}</Text>
-                            {links.map((l, li) => {
-                              const lu = (l.url || "").trim();
-                              const isDirect = lu === directUrl;
-                              const isUpd = manualUpd ? (lu === manualUpd) : (lu === autoUrl);
-                              return (
-                                <View key={lu || li} style={{ marginBottom: 7 }}>
-                                  <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
-                                    <View style={{ backgroundColor: C.primary, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2, marginRight: 6 }}>
-                                      <Text style={{ color: "#fff", fontSize: 11, fontWeight: "700" }}>{l.platform || "기타"}</Text>
-                                    </View>
-                                    {l.startYear > 0 && <Text style={{ color: C.sub, fontSize: 11, marginRight: 6 }}>{l.startYear}~</Text>}
-                                    <Text numberOfLines={1} style={{ color: C.sub, fontSize: 11, flex: 1 }}>{lu}</Text>
-                                  </View>
-                                  <View style={{ flexDirection: "row", gap: 6 }}>
-                                    <TouchableOpacity onPress={() => setDirectFor(n, lu)} style={{ flex: 1, paddingVertical: 6, borderRadius: 7, alignItems: "center", backgroundColor: isDirect ? C.primary : "transparent", borderWidth: 1, borderColor: isDirect ? C.primary : C.line }}>
-                                      <Text style={{ color: isDirect ? "#fff" : C.sub, fontSize: 12, fontWeight: isDirect ? "700" : "400" }}>🔗 다이렉트{isDirect ? " ✓" : ""}</Text>
-                                    </TouchableOpacity>
-                                    <TouchableOpacity onPress={() => setUpdateFor(n, lu)} style={{ flex: 1, paddingVertical: 6, borderRadius: 7, alignItems: "center", backgroundColor: (isUpd && manualUpd) ? "#0e7490" : "transparent", borderWidth: 1, borderColor: isUpd ? "#0e7490" : C.line }}>
-                                      <Text style={{ color: (isUpd && manualUpd) ? "#fff" : (isUpd ? "#0e7490" : C.sub), fontSize: 12, fontWeight: isUpd ? "700" : "400" }}>🔄 자동업뎃{isUpd ? (manualUpd ? " ✓" : " (자동)") : ""}</Text>
-                                    </TouchableOpacity>
-                                  </View>
-                                </View>
-                              );
-                            })}
-                          </View>
-                        );
-                      })}
-                      {rows.length > LIMIT ? <Text style={{ color: C.sub, fontSize: 12, textAlign: "center", paddingVertical: 12 }}>외 {rows.length - LIMIT}개 — 검색으로 좁혀보세요.</Text> : null}
-                    </>);
-                  })()}
+                  <TouchableOpacity onPress={() => setLinkRoleModalOpen(true)} style={{ backgroundColor: C.primary, paddingVertical: 11, borderRadius: 10, alignItems: "center" }}>
+                    <Text style={{ color: "#fff", fontWeight: "700", fontSize: 14 }}>📋 작품별 링크 역할 관리 ({(list || []).filter(n => linksOf(n).length > 0).length}개)</Text>
+                  </TouchableOpacity>
                 </View>
               </>)}
               </Section>
@@ -73193,6 +73147,83 @@ async function importJSON() {
                 </>
               );
             })()}
+          </View>
+        </View>
+      </Modal>
+
+      {/* 🔗 v7.52.0: 작품별 링크 역할 모달 — FlatList 가상화로 링크 있는 작품 전부 표시(상한 없음, 검색·정렬 영속) */}
+      <Modal visible={linkRoleModalOpen} animationType="slide" transparent statusBarTranslucent onRequestClose={() => setLinkRoleModalOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.45)", justifyContent: "flex-end" }}>
+          <View style={{ backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingHorizontal: 16, paddingTop: 14, paddingBottom: 8, height: "90%" }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <Text style={{ fontSize: 17, fontWeight: "800", color: C.text }}>🔧 작품별 링크 역할</Text>
+              <TouchableOpacity onPress={() => setLinkRoleModalOpen(false)}><Text style={{ fontSize: 22, color: C.sub }}>×</Text></TouchableOpacity>
+            </View>
+            <Text style={{ color: C.sub, fontSize: 11.5, lineHeight: 16, marginBottom: 8 }}>
+              🔗다이렉트=바로가기 / 🔄자동업뎃=회차·완결 재취득 대상. 자동업뎃 미지정 시 연재시작연도 빠른 링크가 자동 선정돼요.
+            </Text>
+            <TextInput value={linkMgmtQuery} onChangeText={setLinkMgmtQuery} placeholder="제목·작가 검색" placeholderTextColor={C.sub} autoCorrect={false}
+              style={{ backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, color: C.text, fontSize: 14, marginBottom: 8 }} />
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 8, alignItems: "center" }}>
+              {[["links", "링크수"], ["title", "제목"], ["tier", "티어"], ["created", "등록순"]].map(([key, label]) => (
+                <TouchableOpacity key={key} onPress={() => setLinkMgmtSort(key)} activeOpacity={0.7}
+                  style={{ paddingVertical: 6, paddingHorizontal: 11, borderRadius: 999, backgroundColor: linkMgmtSort === key ? C.primary : "transparent", borderWidth: 1, borderColor: linkMgmtSort === key ? C.primary : C.line }}>
+                  <Text style={{ color: linkMgmtSort === key ? "#fff" : C.sub, fontSize: 12, fontWeight: "700" }}>{label}</Text>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity onPress={() => setLinkMgmtSortDir(p => p === "DESC" ? "ASC" : "DESC")} style={{ paddingVertical: 6, paddingHorizontal: 11, borderRadius: 999, borderWidth: 1, borderColor: C.line }}>
+                <Text style={{ color: C.sub, fontSize: 12, fontWeight: "700" }}>{linkMgmtSortDir === "DESC" ? "↓ 내림" : "↑ 오름"}</Text>
+              </TouchableOpacity>
+              <Text style={{ color: C.sub, fontSize: 11, marginLeft: "auto" }}>{linkRoleRows.length}개</Text>
+            </View>
+            <FlatList
+              data={linkRoleRows}
+              keyExtractor={(n) => n.id}
+              style={{ flex: 1 }}
+              contentContainerStyle={{ paddingBottom: 24 }}
+              initialNumToRender={10}
+              maxToRenderPerBatch={10}
+              windowSize={9}
+              removeClippedSubviews={false}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={true}
+              ListEmptyComponent={<Text style={{ color: C.sub, fontSize: 13, textAlign: "center", paddingVertical: 24 }}>{(linkMgmtQuery || "").trim() ? "검색 결과가 없어요." : "링크가 있는 작품이 없어요."}</Text>}
+              renderItem={({ item: n }) => {
+                const links = linksOf(n);
+                const directUrl = String(n.link || "").trim();
+                const manualUpd = String(n.update_link || "").trim();
+                const autoUrl = String(chooseUpdateLink(n) || "").trim();
+                return (
+                  <View style={{ borderBottomWidth: 1, borderBottomColor: C.line, paddingVertical: 10 }}>
+                    <Text style={{ color: C.text, fontSize: 13.5, fontWeight: "700", marginBottom: 6 }} numberOfLines={1}>{n.title}{n.author ? ` · ${n.author}` : ""}</Text>
+                    {links.map((l, li) => {
+                      const lu = (l.url || "").trim();
+                      const isDirect = lu === directUrl;
+                      const isUpd = manualUpd ? (lu === manualUpd) : (lu === autoUrl);
+                      return (
+                        <View key={lu || li} style={{ marginBottom: 7 }}>
+                          <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
+                            <View style={{ backgroundColor: C.primary, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2, marginRight: 6 }}>
+                              <Text style={{ color: "#fff", fontSize: 11, fontWeight: "700" }}>{l.platform || "기타"}</Text>
+                            </View>
+                            {l.startYear > 0 && <Text style={{ color: C.sub, fontSize: 11, marginRight: 6 }}>{l.startYear}~</Text>}
+                            <Text numberOfLines={1} style={{ color: C.sub, fontSize: 11, flex: 1 }}>{lu}</Text>
+                          </View>
+                          <View style={{ flexDirection: "row", gap: 6 }}>
+                            <TouchableOpacity onPress={() => setLinkDirectFor(n, lu)} style={{ flex: 1, paddingVertical: 6, borderRadius: 7, alignItems: "center", backgroundColor: isDirect ? C.primary : "transparent", borderWidth: 1, borderColor: isDirect ? C.primary : C.line }}>
+                              <Text style={{ color: isDirect ? "#fff" : C.sub, fontSize: 12, fontWeight: isDirect ? "700" : "400" }}>🔗 다이렉트{isDirect ? " ✓" : ""}</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity onPress={() => setLinkUpdateFor(n, lu)} style={{ flex: 1, paddingVertical: 6, borderRadius: 7, alignItems: "center", backgroundColor: (isUpd && manualUpd) ? "#0e7490" : "transparent", borderWidth: 1, borderColor: isUpd ? "#0e7490" : C.line }}>
+                              <Text style={{ color: (isUpd && manualUpd) ? "#fff" : (isUpd ? "#0e7490" : C.sub), fontSize: 12, fontWeight: isUpd ? "700" : "400" }}>🔄 자동업뎃{isUpd ? (manualUpd ? " ✓" : " (자동)") : ""}</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
+                );
+              }}
+            />
           </View>
         </View>
       </Modal>
