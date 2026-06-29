@@ -2,11 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.49.14 (정본화 7시나리오 점검 — 관측치 적립 경로 보강·엔진 실효화)       ║
+ * ║  버전: 7.49.15 ('이 작품 모든 링크 새로고침' — 작품 단위 완전 정본화 버튼)       ║
  * ║  최종 수정: 2026-06-29                                                        ║
  * ║  총 라인 수: 약 72,710줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔄 v7.49.15 '이 작품 모든 링크 새로고침' — 작품 단위 완전 정본화 (2026-06-29)  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ A vs B 결정(사용자 위임→추천 채택): 라이브러리 전체 일괄갱신은 B(1링크, 빠름)    ║
+ * ║ 유지 — v7.49.14로 관측치가 추가 시점에 쌓여 reconcile이 이미 교차보완. 대신 진짜 ║
+ * ║ '전부 새로고침'이 필요한 순간(이 작품 하나가 이상)을 위해 편집모달 멀티링크에     ║
+ * ║ '🔄 이 작품 모든 링크 새로고침(정본화)' 버튼 추가(링크 2개+일 때). 동작:         ║
+ * ║ refreshAllEditLinks — 각 링크 fetchMetaForUpdate→applyScrapedUpdateToWork(덮어  ║
+ * ║ 쓰기) 순차 적용, 링크 사이마다 DB 재읽기로 직전 관측치 보존 → 완전 정본화(가장    ║
+ * ║ 이른 연도·원본 완결일·권위 회차·재출간 배지). 완료 후 openEdit 재로드+요약 알림.  ║
+ * ║ 확인 다이얼로그(저장 안 한 편집 대체 경고). 작품 단위라 비용 작음. 파서 통과.     ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔬 v7.49.14 정본화 7실사용 시나리오 점검 — 치명 갭 수정 (2026-06-29)          ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -18407,7 +18419,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.49.14";
+const APP_VERSION = "7.49.15";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -18433,6 +18445,18 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.49.15", date: "2026-06-29",
+    title: "🔄 ‘이 작품 모든 링크 새로고침’ — 한 작품을 완전 정본화",
+    highlights: [
+      { type: "new", text: "🔄 작품 편집의 ‘🔗 멀티링크’ 칸에 ‘이 작품 모든 링크 새로고침(정본화)’ 버튼을 추가했어요(링크가 2개 이상일 때). 누르면 그 작품의 모든 플랫폼 링크를 각각 다시 불러와, 가장 이른 연재연도·원본 완결일·가장 완전한 회차·외전을 한 번에 종합해 맞춰요. ‘재출간(일괄등록)’ 링크도 그 자리에서 표시돼요." },
+    ],
+    details: [
+      "전체 라이브러리 ‘일괄 갱신’은 빠르게(작품당 한 링크) 유지했어요 — 이제 링크를 추가/재취득할 때 각 플랫폼 정보가 쌓여서, 일반 갱신만으로도 종합이 잘 동작하기 때문이에요.",
+      "대신 ‘이 작품 하나가 이상하다’ 싶을 때 이 버튼으로 그 작품만 모든 플랫폼을 다시 읽어 완전히 맞출 수 있어요. 작품 하나라 빠르고, 끝나면 화면이 갱신된 값으로 다시 열려요.",
+      "주의: 저장하지 않은 편집 내용이 있으면 새로 불러온 값으로 대체될 수 있어요(실행 전 확인 창이 떠요).",
+    ],
+  },
   {
     version: "7.49.14", date: "2026-06-29",
     title: "🔬 멀티플랫폼 정본화 점검 — 링크별 정보가 실제로 쌓이도록 보강",
@@ -38095,6 +38119,7 @@ function AppContent() {
   const [editLinks, setEditLinks] = useState([]);
   const [editUpdateUrl, setEditUpdateUrl] = useState("");
   const [editLinkBusy, setEditLinkBusy] = useState(false); // +링크 추가 메타 조회 중
+  const [refreshAllBusy, setRefreshAllBusy] = useState(false); // 🆕 v7.49.15: '이 작품 모든 링크 새로고침' 진행 중
   // 📅 v3.0.3: 날짜 편집
   const [editCreatedAt, setEditCreatedAt] = useState(""); // 등록일 (YYYY-MM-DD)
   const [editReadCountUpdatedAt, setEditReadCountUpdatedAt] = useState(""); // 최신화일 (YYYY-MM-DD)
@@ -50036,6 +50061,48 @@ function AppContent() {
     const url = extractSupportedUrl(txt);
     if (!url) { Alert.alert("클립보드", "클립보드에서 지원하는 작품 링크를 찾지 못했어요."); return; }
     await addEditLinkFromUrl(url);
+  }
+  // 🆕 v7.49.15: '이 작품 모든 링크 새로고침' — 편집 중 작품의 모든 플랫폼 링크를 각각 재조회해 관측치를 갱신하고
+  //   reconcileWork로 완전 정본화(가장 이른 연재연도·원본 완결일·권위 회차·재출간 감지). 덮어쓰기(자기교정) 모드.
+  //   링크 사이마다 DB 재읽기로 직전 링크 관측치를 보존(누락 방지). 완료 후 openEdit로 모달 재로드. 작품 단위라 비용 작음.
+  async function refreshAllEditLinks() {
+    if (refreshAllBusy) return;
+    const item = editItem;
+    const id = item && item.id;
+    if (!id) { Alert.alert("새로고침", "편집 중인 작품이 없어요."); return; }
+    const table = item._planned ? "planned_novels" : "novels";
+    let work = (await first(`SELECT * FROM ${table} WHERE id=?`, [id])) || item;
+    const links = linksOf(work);
+    if (!links.length) { Alert.alert("새로고침", "등록된 링크가 없어요. 먼저 링크를 추가해 주세요."); return; }
+    const go = await new Promise(res => Alert.alert(
+      "모든 링크 새로고침",
+      `이 작품의 링크 ${links.length}개를 각각 다시 불러와 회차·완결일·외전·연재상태를 갱신하고 종합(정본화)해요.\n저장하지 않은 편집 내용은 새로 불러온 값으로 대체될 수 있어요. 계속할까요?`,
+      [{ text: "취소", style: "cancel", onPress: () => res(false) }, { text: "새로고침", onPress: () => res(true) }]
+    ));
+    if (!go) return;
+    setRefreshAllBusy(true);
+    let fetched = 0, failed = 0, allChanges = [];
+    try {
+      for (const l of links) {
+        if (!l || !(l.url || "").trim()) continue;
+        try {
+          const meta = await fetchMetaForUpdate(l.url, work.title);
+          if (meta && meta.title) {
+            const c = await applyScrapedUpdateToWork(work, meta, true, l.url); // 덮어쓰기(정본화) + 관측치 기록
+            fetched++;
+            if (Array.isArray(c) && c.length) allChanges = allChanges.concat(c);
+            work = (await first(`SELECT * FROM ${table} WHERE id=?`, [id])) || work; // 다음 링크 reconcile이 직전 관측치 보게 재읽기
+          } else failed++;
+        } catch { failed++; }
+      }
+    } finally {
+      setRefreshAllBusy(false);
+    }
+    const fresh = (await first(`SELECT * FROM ${table} WHERE id=?`, [id])) || work;
+    try { openEdit(fresh); } catch {} // 모달을 정본화된 값으로 재로드
+    try { await loadList(undefined, undefined, "refreshAllLinks"); } catch {}
+    const uniq = Array.from(new Set(allChanges));
+    Alert.alert("새로고침 완료", `링크 ${fetched}개 재조회${failed ? ` · ${failed}개 실패` : ""}\n${uniq.length ? "변경: " + uniq.join(", ") : "변경 사항 없음(이미 최신)"}`);
   }
 
   /* ---------- Logs modal ---------- */
@@ -68890,6 +68957,12 @@ async function importJSON() {
           </TouchableOpacity>
         )}
       </View>
+      {/* 🆕 v7.49.15: 이 작품 모든 링크 새로고침 — 전 플랫폼 재조회 후 완전 정본화(가장 이른 연도·원본 완결일·권위 회차) */}
+      {list.length > 1 && (
+        <TouchableOpacity onPress={refreshAllEditLinks} disabled={refreshAllBusy || editLinkBusy} style={{ marginTop: 6, paddingVertical: 8, borderRadius: 8, alignItems: "center", backgroundColor: isDark ? "#0e7490" : "#cffafe", borderWidth: 1, borderColor: "#0e7490", opacity: (refreshAllBusy || editLinkBusy) ? 0.5 : 1 }}>
+          <Text style={{ color: isDark ? "#fff" : "#0e7490", fontSize: 12, fontWeight: "700" }}>{refreshAllBusy ? "새로고침 중…" : "🔄 이 작품 모든 링크 새로고침 (정본화)"}</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 })()}
