@@ -2,11 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.49.12 (멀티플랫폼 정본화 P2 — 링크별 관측치 + reconcileWork 정본화엔진) ║
+ * ║  버전: 7.49.13 (멀티플랫폼 정본화 P3 — 원본 vs 일괄퍼블리싱(재출간) 감지)        ║
  * ║  최종 수정: 2026-06-29                                                        ║
  * ║  총 라인 수: 약 72,710줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔗 v7.49.13 멀티플랫폼 정본화 Phase 3 — 원본 vs 일괄퍼블리싱 감지 (2026-06-29) ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 신호: 회차 날짜가 균일(uniformTs=묶음 재출간은 모든 회차를 같은 날 일괄 업로드 → ║
+ * ║ 완결일이 '업로드일'로 왜곡). splitEpisodesByGaiden이 회차 ts 분포로 감지(서로     ║
+ * ║ 다른 날짜 ≤2 또는 한 날짜 과반, n≥8) → applyEpisodeSplitToMeta→meta.uniformTs→   ║
+ * ║ recordLinkObservation→링크 관측치. parseLinks/serializeLinks 보존.              ║
+ * ║ reconcileWork: 재출간 링크(uniformTs + 가장 이른 시작연도보다 늦게 시작; 원본 자신 ║
+ * ║ 제외)를 '완결일/연도' 기준에서 제외(원본 완결일 보존, 전부 재출간이면 폴백). 회차 ║
+ * ║ 수는 영향 X(권위=회차 최다 유지 — 카운트는 신뢰). republishUrls 출력 + 편집모달   ║
+ * ║ 멀티링크에 '📦 일괄등록' 배지. uniformTs 4 + 재출간 정본화 5 단위테스트 통과.      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔗 v7.49.12 멀티플랫폼 정본화 Phase 2 — reconcileWork 정본화 엔진 (2026-06-29) ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -15323,6 +15335,18 @@ function splitEpisodesByGaiden(episodes, opts) {
   const hasTs = arr.some(e => Number(e.ts) > 0);
   const ordered = hasTs ? [...arr].sort((a, b) => (Number(a.ts) || 0) - (Number(b.ts) || 0)) : arr;
   const n = ordered.length;
+  // 🆕 v7.49.13: '일괄 등록(묶음 재출간)' 감지 — 회차 날짜가 거의 단일(서로 다른 날짜 ≤2 또는 한 날짜가 과반).
+  //   원본 연재는 회차가 날짜별로 퍼져 있고, 후속 일괄퍼블리싱은 모든 회차를 같은 날 한꺼번에 올림 → 완결일이 '업로드일'로 왜곡.
+  //   reconcileWork에서 이런 링크를 '완결일/연도' 기준에서 제외(원본 완결일 보존). 회차수는 영향 없음.
+  let uniformTs = false;
+  if (hasTs) {
+    const tsVals = ordered.map(e => Number(e.ts) || 0).filter(t => t > 0);
+    if (tsVals.length >= 8) {
+      const counts = {}; let maxc = 0; for (const t of tsVals) { counts[t] = (counts[t] || 0) + 1; if (counts[t] > maxc) maxc = counts[t]; }
+      const distinct = Object.keys(counts).length;
+      if (distinct <= 2 || maxc >= tsVals.length * 0.6) uniformTs = true;
+    }
+  }
   const isG = ordered.map(e => isGaidenTitle(e.title));
   const GAIDEN_TRAILING_TOL = 2; // 외전 블록 뒤 비외전(공지/후기) 허용 개수
   const mainAfter = new Array(n + 1).fill(0); // mainAfter[i] = ordered[i..n) 중 비외전 개수
@@ -15358,11 +15382,11 @@ function splitEpisodesByGaiden(episodes, opts) {
         else if (ts && ts > mmax2) mmax2 = ts; // 본편(완결마커 포함·이전) 최신 = 본편 완결일
       }
       if (gc > 0 && gc <= Math.floor(n * 0.5)) {
-        return { hasGaiden: true, gaidenCount: gc, mainCompletedAt: mmax2 || mts, gaidenStartAt: gmin2, gaidenCompletedAt: gmax2, viaCompletion: true };
+        return { hasGaiden: true, gaidenCount: gc, mainCompletedAt: mmax2 || mts, gaidenStartAt: gmin2, gaidenCompletedAt: gmax2, viaCompletion: true, uniformTs };
       }
     }
   }
-  return { hasGaiden: gaidenCount > 0, gaidenCount, mainCompletedAt: mMax, gaidenStartAt: gMin, gaidenCompletedAt: gMax };
+  return { hasGaiden: gaidenCount > 0, gaidenCount, mainCompletedAt: mMax, gaidenStartAt: gMin, gaidenCompletedAt: gMax, uniformTs };
 }
 // 🆕 v7.41.0: 네이버 회차목록(volumeMoreList) → [{title, ts}] 정규화 후 공통 분리기. volumnNameText가 본편 "517화"/외전 "외전 483화".
 function parseNaverEpisodeSplit(jsonText) {
@@ -15804,6 +15828,8 @@ async function fetchMunpiaByNo(id, opts = {}) {
 // 🆕 v7.41.1: 분리 결과(split)를 meta에 적용(네이버·노벨피아 공통). 본편 완결일·연도, 외전 회차수·시작/완결일·상태, total=본편(전체-외전).
 function applyEpisodeSplitToMeta(meta, split, opts) {
   if (!meta || !split) return meta;
+  // 🆕 v7.49.13: 일괄등록(묶음 재출간) 신호 전파 — reconcileWork가 이 링크를 완결일/연도 기준에서 제외하는 데 사용.
+  if (split.uniformTs) meta.uniformTs = true;
   // 🔧 v7.41.3: 본편 완결일과 외전을 독립 적용 — 윈도에 본편 경계가 없어 mainCompletedAt=0이어도 외전 데이터는 보존.
   if (split.mainCompletedAt) {
     const y = new Date(split.mainCompletedAt).getUTCFullYear();
@@ -16654,6 +16680,7 @@ function parseLinks(raw) {
     if (e.gaidenStatus != null) o.gaidenStatus = String(e.gaidenStatus || "");
     if (e.workStatus != null) o.workStatus = String(e.workStatus || "");
     if (e.fetchedAt != null) o.fetchedAt = Number(e.fetchedAt) || 0;
+    if (e.uniformTs != null) o.uniformTs = !!e.uniformTs; // 🆕 v7.49.13: 일괄등록(재출간) 신호
     out.push(o);
   }
   return out;
@@ -16666,6 +16693,7 @@ function serializeLinks(links) {
     for (const k of LINK_OBS_KEYS) if (l[k] != null) o[k] = Number(l[k]) || 0;
     if (l.gaidenStatus != null) o.gaidenStatus = String(l.gaidenStatus || "");
     if (l.workStatus != null) o.workStatus = String(l.workStatus || "");
+    if (l.uniformTs != null) o.uniformTs = !!l.uniformTs; // 🆕 v7.49.13
     return o;
   }));
 }
@@ -16692,6 +16720,7 @@ function recordLinkObservation(links, url, meta, overwrite) {
       o.gaidenCompletedAt = Number(meta.gaidenCompletedAt) || 0;
       if (meta.gaidenStatus) o.gaidenStatus = String(meta.gaidenStatus);
     }
+    if (meta.uniformTs != null) o.uniformTs = !!meta.uniformTs; // 🆕 v7.49.13: 일괄등록(재출간) 신호 기록
     return o;
   });
   return found ? next : (Array.isArray(links) ? links : []);
@@ -16701,18 +16730,24 @@ function recordLinkObservation(links, url, meta, overwrite) {
 //   / 상태=어느 링크든 완결 관측 시 완결 / 회차·외전=단일 '권위 링크'(회차 최다, 동률 수동지정·이른연도)에서 원자적으로.
 function reconcileWork(links, opts) {
   const ls = (Array.isArray(links) ? links : []).filter(l => l && (l.url || "").trim());
-  const res = { startYear: null, endYear: null, completedAt: null, workStatus: null, totalEpisodes: null, gaidenCount: null, gaidenStartAt: null, gaidenCompletedAt: null, gaidenStatus: null, episodeSource: null };
+  const res = { startYear: null, endYear: null, completedAt: null, workStatus: null, totalEpisodes: null, gaidenCount: null, gaidenStartAt: null, gaidenCompletedAt: null, gaidenStatus: null, episodeSource: null, republishUrls: [] };
   if (!ls.length) return res;
-  // 연재 시작연도 = 가장 이른
+  // 연재 시작연도 = 가장 이른(원본 연재). 이 값이 '재출간(일괄퍼블)' 판정 기준이 됨.
   for (const l of ls) { const y = Number(l.startYear) || 0; if (y >= 1980 && y <= 2099 && (res.startYear == null || y < res.startYear)) res.startYear = y; }
-  // 완결일/연도 = 완결 관측 링크 중 가장 이른 completedAt
-  for (const l of ls) {
+  // 🆕 v7.49.13: 재출간(일괄퍼블리싱) 링크 = 회차 날짜가 균일(uniformTs) + 가장 이른 시작연도보다 늦게 시작(원본 자신은 제외).
+  //   재출간은 '완결일=업로드일'로 왜곡되므로 완결일/연도 기준에서 제외(원본 완결일 보존). 회차수는 영향 X(권위는 회차 최다 유지).
+  const isRepub = (l) => l.uniformTs === true && (res.startYear == null || !(Number(l.startYear) || 0) || (Number(l.startYear) || 0) > res.startYear);
+  res.republishUrls = ls.filter(isRepub).map(l => l.url);
+  const dateLinks = ls.filter(l => !isRepub(l));
+  const dateLinksEff = dateLinks.length ? dateLinks : ls; // 전부 재출간이면 폴백(전체)
+  // 완결일/연도 = (재출간 제외) 완결 관측 링크 중 가장 이른 completedAt
+  for (const l of dateLinksEff) {
     if (l.workStatus === "completed") {
       const ca = Number(l.completedAt) || 0;
       if (ca > 0 && (res.completedAt == null || ca < res.completedAt)) { res.completedAt = ca; const y = new Date(ca).getUTCFullYear(); if (y >= 1990 && y <= 2099) res.endYear = y; }
     }
   }
-  if (res.endYear == null) for (const l of ls) { if (l.workStatus === "completed") { const ey = Number(l.endYear) || 0; if (ey >= 1990 && ey <= 2099 && (res.endYear == null || ey < res.endYear)) res.endYear = ey; } }
+  if (res.endYear == null) for (const l of dateLinksEff) { if (l.workStatus === "completed") { const ey = Number(l.endYear) || 0; if (ey >= 1990 && ey <= 2099 && (res.endYear == null || ey < res.endYear)) res.endYear = ey; } }
   // 상태 = 어느 링크든 완결 관측 → 완결 / 아니면 중단 관측 & 연재중 없음 → 중단 / 그 외 연재중(관측 있을 때만)
   const obs = ls.filter(l => l.workStatus);
   if (obs.length) {
@@ -18357,7 +18392,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.49.12";
+const APP_VERSION = "7.49.13";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -18383,6 +18418,19 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.49.13", date: "2026-06-29",
+    title: "🔗 멀티플랫폼 정본화 3단계 — 원본 연재처와 ‘일괄 퍼블리싱’ 구분",
+    highlights: [
+      { type: "improve", text: "📦 나중에 한꺼번에 퍼블리싱된 플랫폼(재출간)을 자동으로 감지해요. 회차들이 ‘같은 날 한꺼번에’ 올라온 링크는 그 플랫폼의 완결일이 ‘업로드한 날’이라 실제 완결일과 다른데, 이런 링크는 완결일·완결연도 기준에서 빼요. 그래서 작품의 완결일이 ‘원래 연재처’ 기준으로 잡혀요." },
+      { type: "new", text: "📦 작품 편집의 ‘🔗 멀티링크’ 칸에서 일괄 퍼블리싱으로 보이는 링크에 ‘📦 일괄등록’ 배지가 붙어요. 회차수는 그대로(가장 정보가 많은 플랫폼 기준) 쓰되, 완결일만 원본 기준으로 잡는다는 표시예요." },
+    ],
+    details: [
+      "감지 방식: 회차들의 등록 날짜가 거의 한 날짜에 몰려 있으면(서로 다른 날짜가 2개 이하이거나 한 날짜가 과반) ‘일괄 등록’으로 판단해요. 단, 가장 먼저 연재를 시작한 ‘원본’ 링크 자신은 제외해요.",
+      "회차수는 영향받지 않아요 — 회차 카운트는 가장 회차가 많은(완전한) 플랫폼에서 그대로 가져와요. 왜곡되는 건 ‘완결일’뿐이라 그 부분만 바로잡아요.",
+      "이 신호는 회차 목록을 불러올 때(재취득) 각 링크에 기록돼요. 그래서 멀티링크 작품을 ‘재취득’으로 한 번 갱신하면 배지/정본화가 반영돼요.",
+    ],
+  },
   {
     version: "7.49.12", date: "2026-06-29",
     title: "🔗 멀티플랫폼 정본화 2단계 — 플랫폼끼리 서로 보완하는 ‘정본화 엔진’",
@@ -68744,6 +68792,10 @@ async function importJSON() {
   if (!list.length) return null;
   const autoUrl = chooseUpdateLink({ links: JSON.stringify(list), link: dir, update_link: editUpdateUrl });
   const manualSet = !!(editUpdateUrl || "").trim();
+  // 🆕 v7.49.13: '일괄등록(재출간)' 표시 — 회차 날짜 균일(uniformTs) + 가장 이른 시작연도보다 늦게 시작(원본 자신은 제외).
+  const _syVals = list.map(l => Number(l.startYear) || 0).filter(y => y >= 1980 && y <= 2099);
+  const earliestSy = _syVals.length ? Math.min(..._syVals) : 0;
+  const isRepubLink = (l) => l.uniformTs === true && (!earliestSy || !(Number(l.startYear) || 0) || (Number(l.startYear) || 0) > earliestSy);
   return (
     <View style={{ marginTop: 8, padding: 10, borderRadius: 10, backgroundColor: C.chip, borderWidth: 1, borderColor: C.line }}>
       <Text style={{ color: C.text, fontWeight: "700", fontSize: 13, marginBottom: 2 }}>🔗 멀티링크 ({list.length})</Text>
@@ -68760,6 +68812,11 @@ async function importJSON() {
                 <Text style={{ color: "#fff", fontSize: 11, fontWeight: "700" }}>{l.platform || "기타"}</Text>
               </View>
               {l.startYear > 0 && <Text style={{ color: C.sub, fontSize: 11, marginRight: 6 }}>{l.startYear}~</Text>}
+              {isRepubLink(l) && (
+                <View style={{ backgroundColor: isDark ? "#7c2d12" : "#fed7aa", borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2, marginRight: 6 }}>
+                  <Text style={{ color: isDark ? "#fdba74" : "#9a3412", fontSize: 10, fontWeight: "700" }}>📦 일괄등록</Text>
+                </View>
+              )}
               <Text numberOfLines={1} style={{ color: C.sub, fontSize: 11, flex: 1 }}>{l.url}</Text>
               <TouchableOpacity onPress={() => editLinkRemove(l.url)} style={{ paddingHorizontal: 6, paddingVertical: 2 }}>
                 <Text style={{ color: C.warn, fontSize: 14, fontWeight: "700" }}>✕</Text>
