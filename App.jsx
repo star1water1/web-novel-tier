@@ -2,9 +2,29 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.50.0 (추천 탭 M1 — 내 서재 여러작 추천 + 맞춤설정)                       ║
+ * ║  버전: 7.51.0 (추천 탭 M2 — 넷상 추천작 외부 발견)                               ║
  * ║  최종 수정: 2026-06-29                                                        ║
- * ║  총 라인 수: 약 73,430줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 73,970줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🌐 v7.51.0 추천 탭 M2 — 넷상 추천작(외부 발견) (2026-06-29)                     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 랜덤/취향 키워드로 플랫폼 검색 → 새 작품 발견 → 임시 저장 → 예정/본목록 추가      ║
+ * ║ 또는 다음날 정리. searchNovels(기존 5플랫폼) 재사용. 신규 테이블 3종: web_reco    ║
+ * ║ (임시작·표지 원격URL·TTL 달력일·pinned 면제), web_reco_keywords(수확풀·에코챔버   ║
+ * ║ 역가중), reco_hidden_works(관심없음 링크키·상한 500). 키워드 엔진: 취향 풀        ║
+ * ║ (preference_patterns 고승률) + 탐험 풀(인앱 SUB/MAJOR_GENRES·서재태그·수확·커스텀) ║
+ * ║ — hit_count 낮을수록 가중↑로 에코챔버 방지. 밴은 탐험만 제외(취향 불간섭).        ║
+ * ║ 비율 슬라이더로 취향/탐험 키워드 배분. 필터(19금·최소회차·연재상태, 데이터 있을때) ║
+ * ║ ·정렬(무작위/취향/인기/숨은작). dedup(링크키+제목정규화: 서재·예정·숨김·배치).     ║
+ * ║ 카드 액션: 바로가기·예정추가(표지 다운로드·discovery_source=넷탐색)·본목록추가      ║
+ * ║ (모드별: match/ratio 미평가 · hybrid 잠정+enqueueVerification · manual 티어 선택   ║
+ * ║ 모달)·⭐보관(TTL면제)·관심없음. 쿨다운 60s+검색 최대 3회(ToS on-demand). 부분성공  ║
+ * ║ 허용·전부실패 시 이전 배치 보존. 자동 1일1회 옵트인. AI 키워드(Gemini 키, 선택·    ║
+ * ║ 전부 try/catch→[] 폴백). 설정·밴·커스텀은 appSettings.reco(슬롯별, 단 백업 직렬화  ║
+ * ║ 는 후속 — export→import 시 기본값). 상태 슬롯별(테이블=슬롯DB). 설계 docs/reco-    ║
+ * ║ plan.md. 검증: esbuild·스크래퍼 회귀 불변·노벨피아 검색 API 라이브 동작 확인.      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -9880,7 +9900,47 @@ async function initDb(progressCb) {
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_pp_notable ON preference_patterns(is_notable DESC, significance DESC);`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_pp_key ON preference_patterns(pattern_key);`);
   await database.runAsync(`CREATE UNIQUE INDEX IF NOT EXISTS idx_pp_unique ON preference_patterns(category, pattern_key);`);
-  
+
+  // 🌐 v7.50.x: 넷상 추천(외부 발견) — M2
+  //   web_reco: 임시 추천작(표지 미다운로드·원격 URL 보관, TTL 달력일 경과 시 정리, pinned면 면제)
+  await database.runAsync(`CREATE TABLE IF NOT EXISTS web_reco (
+    id TEXT PRIMARY KEY NOT NULL,
+    title TEXT NOT NULL,
+    author TEXT,
+    platform TEXT,
+    link TEXT,
+    cover_url TEXT,
+    genres TEXT,
+    tags TEXT,
+    synopsis TEXT,
+    total_episodes INTEGER,
+    is_completed INTEGER DEFAULT 0,
+    age INTEGER DEFAULT 0,
+    popularity INTEGER DEFAULT 0,
+    taste_score REAL DEFAULT 0,
+    source_keyword TEXT,
+    keyword_source TEXT,
+    fetched_at INTEGER,
+    batch_id TEXT,
+    pinned INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'pending'
+  );`);
+  await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_webreco_status ON web_reco(status, fetched_at DESC);`);
+  // web_reco_keywords: 수확 키워드 풀(검색 결과의 실제 플랫폼 태그 누적 → 에코챔버 역가중)
+  await database.runAsync(`CREATE TABLE IF NOT EXISTS web_reco_keywords (
+    keyword TEXT PRIMARY KEY NOT NULL,
+    source TEXT,
+    hit_count INTEGER DEFAULT 1,
+    last_seen INTEGER,
+    first_seen INTEGER
+  );`);
+  // reco_hidden_works: "관심없음" 영구 숨김(링크키 기준, 상한 WEB_RECO_HIDDEN_CAP)
+  await database.runAsync(`CREATE TABLE IF NOT EXISTS reco_hidden_works (
+    link_key TEXT PRIMARY KEY NOT NULL,
+    title TEXT,
+    created_at INTEGER
+  );`);
+
   // 3️⃣ insight_queue: 인사이트 대기열 + 사용자 응답
   await database.runAsync(`CREATE TABLE IF NOT EXISTS insight_queue (
     id TEXT PRIMARY KEY NOT NULL,
@@ -16232,6 +16292,27 @@ function isSearchPlatformOn(name) {
   if (!globalSearchPlatforms || typeof globalSearchPlatforms !== "object") return true;
   return globalSearchPlatforms[name] !== false; // 명시적 false만 비활성(미지정은 켜짐)
 }
+
+// 🌐 v7.50.x: 넷상 추천 상수
+const WEB_RECO_TTL_DAYS = 1;                       // 임시 추천작 보존(달력일) — 다음날 정리
+const WEB_RECO_HIDDEN_CAP = 500;                   // "관심없음" 숨김 목록 상한
+const WEB_RECO_REROLL_COOLDOWN_MS = 60 * 1000;     // 재뽑기 쿨다운(과도 요청 방지)
+const WEB_RECO_MAX_KEYWORDS = 3;                   // 한 번 가져올 때 검색 횟수 상한(ToS — on-demand)
+// 수확 시 제외할 잡음 키워드(연령/독점/공모전/형식 등 — 작품 검색어로 부적합)
+const WEB_RECO_JUNK_KEYWORDS = ["19","19금","독점","무료","연재","완결","연재중","단행본","성인","공모전","웹툰","웹소설","외전","단편","장편","무료연재","유료"];
+// 제목 정규화(dedup용) — 공백·기호·시즌/외전 토큰 제거
+function normalizeWorkTitle(t) {
+  return String(t == null ? "" : t)
+    .toLowerCase()
+    .replace(/시즌\s*\d+|season\s*\d+|\b\d+부\b|외전|번외|단행본|개정판|完|완결/g, "")
+    .replace(/[\s()\[\]<>!?,.·:;'"~+\-_/|@#$%^&*=]/g, "")
+    .trim();
+}
+// 작품 dedup용 링크키(플랫폼+정규화제목) — 같은 작품의 플랫폼별 URL 차이 흡수는 제목으로
+function webRecoLinkKey(item) {
+  const t = normalizeWorkTitle(item && (item.title || ""));
+  return t || String((item && item.link) || "");
+}
 // 🆕 v7.46.0: 카카오페이지 제목검색 — 카카오 자체 검색은 GraphQL+안티봇이라 막힘. 검색엔진에서 page.kakao.com
 //   작품 링크를 찾고, 선택 시 기존 카카오 링크 불러오기(SSR __NEXT_DATA__)가 메타를 채운다(.meta 미부착→runScrapeFromUrl).
 //   🆕 v7.46.1: 기본은 키 불필요(DuckDuckGo HTML 검색). 다음(Daum) REST 키를 넣으면 공식 API로 전환(옵션·더 안정).
@@ -16715,6 +16796,7 @@ function novelpiaItemToMeta(it) {
     endYear: complete ? yearFrom(it.complete_date) : null,               // 완결작만 종료연도
     completedAt: complete ? scraperDateToTs(it.complete_date) : 0,       // 🆕 v7.28.61: 완결일(풀데이터)
     ageTag: Number(it.novel_age) === 19 ? "19금" : null,                 // 🔧 v7.28.47: 연령등급은 태그로 보존
+    popularity: Math.max(Number(it.count_view) || 0, Number(it.count_book) || 0), // 🌐 v7.50.x: 넷상 추천 인기/숨은작 정렬용(additive)
   };
 }
 
@@ -34702,24 +34784,26 @@ const DEFAULT_SETTINGS = {
     // medium: 중간 압축 - 60% quality, 최대 800px
     // heavy: 강한 압축 - 40% quality, 최대 600px
   },
-  // 🎯 추천 탭 설정 (v7.50.0) — 내 서재 여러작 추천 (+ M2 넷상 추천 스키마 선점)
+  // 🎯 추천 탭 설정 (v7.50.0) — 내 서재 여러작 추천 + 🌐 넷상 추천(M2)
   reco: {
     library: {
       count: 4,                      // 내 서재 추천 작 수 (1~10)
       tasteExploreRatio: 70,         // 취향(100) ↔ 탐험(0) 비중
       rerollWindow: null,            // 재추천 방지 윈도우. null=auto(min(작품수×0.3, 100), 최소 5)
     },
-    web: {                           // 🌐 M2(넷상 추천)에서 사용 — 현재 미배선, 스키마 선점
+    web: {                           // 🌐 넷상 추천(외부 발견)
       count: 5,
       tasteExploreRatio: 70,
       platforms: ["노벨피아", "리디", "네이버시리즈", "문피아", "카카오페이지"],
-      sort: "random",                // random | taste | popular | hidden
+      sort: "random",                // random | taste | popular | hidden(숨은작)
       workStatus: "all",             // all | completed | ongoing
       includeAdult: true,
-      minEpisodes: 50,
-      useAiKeywords: false,
-      autoDaily: false,
+      minEpisodes: 50,               // 회차 게이트(0=끔, 데이터 있는 작품에만)
+      useAiKeywords: false,          // AI 키워드 생성(키 있을 때만)
+      autoDaily: false,              // 1일1회 자동 가져오기(옵트인)
     },
+    bannedKeywords: [],              // 탐험에서 제외할 키워드(직접 편집)
+    customKeywords: [],              // 내가 추가한 탐색 키워드
   },
 };
 
@@ -38049,6 +38133,14 @@ function AppContent() {
   // 이주의 추천 → 오늘의 추천 (v3.3.0)
   const [dailyReco, setDailyReco] = useState(null); // 🎯 v7.50.0 배열: { pickedAt, items: [{ novel, reason, category, isPlanned, tasteScore }] }
   const [recoSettingsOpen, setRecoSettingsOpen] = useState(false); // 추천 맞춤설정 패널 접이식
+  // 🌐 v7.50.x: 넷상 추천(M2)
+  const [webRecoList, setWebRecoList] = useState([]);          // 임시 추천작 [{...web_reco row}]
+  const [webRecoLoading, setWebRecoLoading] = useState(false);
+  const [webRecoError, setWebRecoError] = useState(null);
+  const [webRecoTierPick, setWebRecoTierPick] = useState(null); // manual 모드 본목록 추가 시 티어 선택 대상 item
+  const [recoKeywordEditor, setRecoKeywordEditor] = useState(null); // "bannedKeywords" | "customKeywords" | null
+  const [recoKeywordInput, setRecoKeywordInput] = useState("");
+  const webRecoLastFetchRef = useRef(0);                       // 재뽑기 쿨다운
   const [recoHistory, setRecoHistory] = useState([]); // 최근 5회 추천 기록 [{novelId, pickedAt}]
   
   // 🆕 v3.4.1: 최근 편집 작품 (빠른 접근용)
@@ -42096,6 +42188,356 @@ function AppContent() {
     setAppSettings(next);
     setAppMeta("app_settings", next);
   };
+  // 🌐 v7.50.x: reco 최상위 배열(밴/커스텀 키워드) 갱신
+  const updateRecoList = (key, arr) => {
+    const base = (appSettings && appSettings.reco) || DEFAULT_SETTINGS.reco;
+    const next = { ...appSettings, reco: { ...base, [key]: arr } };
+    setAppSettings(next);
+    setAppMeta("app_settings", next);
+  };
+  const addRecoKeyword = (kind, kw) => {
+    kw = String(kw || "").trim();
+    if (!kw) return;
+    const base = (appSettings && appSettings.reco) || DEFAULT_SETTINGS.reco;
+    const arr = Array.isArray(base[kind]) ? base[kind] : [];
+    if (arr.includes(kw)) return;
+    updateRecoList(kind, [...arr, kw]);
+  };
+  const removeRecoKeyword = (kind, kw) => {
+    const base = (appSettings && appSettings.reco) || DEFAULT_SETTINGS.reco;
+    const arr = Array.isArray(base[kind]) ? base[kind] : [];
+    updateRecoList(kind, arr.filter((x) => x !== kw));
+  };
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 🌐 v7.50.x: 넷상 추천(외부 발견) 엔진 — M2
+  // ═══════════════════════════════════════════════════════════════════
+
+  async function loadWebReco() {
+    try {
+      const rows = await all("SELECT * FROM web_reco WHERE status='pending' ORDER BY pinned DESC, fetched_at DESC, taste_score DESC;");
+      setWebRecoList(rows || []);
+    } catch (e) { console.warn("loadWebReco 오류:", e); }
+  }
+
+  async function cleanupExpiredWebReco() {
+    try {
+      const d = new Date(); d.setHours(0, 0, 0, 0);
+      const todayStart = d.getTime(); // 달력일 기준: 오늘 0시 이전 배치는 만료(보관 제외)
+      await exec("DELETE FROM web_reco WHERE pinned=0 AND status='pending' AND fetched_at < ?;", [todayStart]);
+      await exec("DELETE FROM web_reco WHERE status!='pending' AND fetched_at < ?;", [todayStart]);
+    } catch (e) { console.warn("cleanupExpiredWebReco 오류:", e); }
+  }
+
+  // 검색 결과의 실제 플랫폼 태그 → 수확 풀 누적(잡음 제외). 에코챔버 역가중의 원천 데이터.
+  async function harvestKeywordsFromResults(results) {
+    try {
+      const now = Date.now();
+      const counts = new Map();
+      for (const r of (results || [])) {
+        const gs = (r.meta && Array.isArray(r.meta.genres)) ? r.meta.genres
+          : (r.category ? String(r.category).split(/[,/|·]/) : []);
+        for (let g of gs) {
+          g = String(g || "").trim();
+          if (!g || g.length < 2 || g.length > 12) continue;
+          if (WEB_RECO_JUNK_KEYWORDS.includes(g)) continue;
+          counts.set(g, (counts.get(g) || 0) + 1);
+        }
+      }
+      for (const [kw, c] of counts) {
+        await exec(
+          `INSERT INTO web_reco_keywords (keyword, source, hit_count, last_seen, first_seen) VALUES (?, 'harvest', ?, ?, ?)
+           ON CONFLICT(keyword) DO UPDATE SET hit_count = hit_count + ?, last_seen = ?;`,
+          [kw, c, now, now, c, now]
+        );
+      }
+    } catch (e) { console.warn("harvest 오류:", e); }
+  }
+
+  // 탐험 키워드 풀: 인앱 어휘(콜드스타트) + 내 서재 태그 + 커스텀 + 수확(에코챔버 역가중). 밴 제외.
+  async function buildExploreKeywordPool() {
+    const reco = (appSettings && appSettings.reco) || DEFAULT_SETTINGS.reco;
+    const banned = new Set((reco.bannedKeywords || []).map((s) => String(s).trim()).filter(Boolean));
+    const pool = new Map();
+    const add = (kw, w) => {
+      kw = String(kw || "").trim();
+      if (!kw || kw.length < 2 || kw.length > 14 || banned.has(kw)) return;
+      pool.set(kw, Math.max(pool.get(kw) || 0, w));
+    };
+    for (const g of (typeof SUB_GENRES !== "undefined" ? SUB_GENRES : [])) add(g, 1.0);
+    for (const g of (typeof MAJOR_GENRES !== "undefined" ? MAJOR_GENRES : [])) add(g, 0.8);
+    try { for (const n of (list || [])) for (const t of String(n.tags || "").split(",").map((s) => s.trim()).filter(Boolean)) add(t, 1.1); } catch {}
+    for (const k of (reco.customKeywords || [])) add(k, 1.6);
+    // 수확 풀 — hit_count 낮을수록 가중↑(자주 나온 키워드는 탐험에서 비중↓ = 에코챔버 방지)
+    try {
+      const hv = await all("SELECT keyword, hit_count FROM web_reco_keywords ORDER BY hit_count ASC LIMIT 400;");
+      for (const row of (hv || [])) { if (!banned.has(row.keyword)) add(row.keyword, 1.2 / (1 + Math.log(1 + (Number(row.hit_count) || 1)))); }
+    } catch {}
+    return Array.from(pool.entries()).map(([kw, weight]) => ({ kw, weight }));
+  }
+
+  // 취향 키워드 풀: preference_patterns 고승률 + (폴백)고티어 작품 태그/장르. 밴 불간섭(취향 데이터 존중).
+  async function buildTasteKeywordPool() {
+    const out = new Map();
+    const add = (kw, w) => { kw = String(kw || "").trim(); if (kw && kw.length >= 2 && kw.length <= 14) out.set(kw, Math.max(out.get(kw) || 0, w)); };
+    try {
+      const pats = await all("SELECT pattern_key, win_rate FROM preference_patterns WHERE sample_size >= 3 AND win_rate >= 0.55;");
+      for (const p of (pats || [])) { const k = p.pattern_key || ""; const v = k.includes(":") ? k.slice(k.indexOf(":") + 1) : k; add(v, 1 + (Number(p.win_rate) || 0.5)); }
+    } catch {}
+    if (out.size === 0) {
+      try {
+        const hi = (typeof prefHighThreshold === "function") ? prefHighThreshold(list, globalTierConfig) : 0;
+        for (const n of (list || [])) {
+          if (getPrefScore(n, globalTierConfig) >= hi) {
+            for (const t of String(n.tags || "").split(",").map((s) => s.trim()).filter(Boolean)) add(t, 1.2);
+            const g = getFirstGenre(n.major_genre); if (g) add(g, 1.2);
+          }
+        }
+      } catch {}
+    }
+    return Array.from(out.entries()).map(([kw, weight]) => ({ kw, weight }));
+  }
+
+  // AI 키워드(선택) — v1은 Gemini 키에서만 동작. 전부 try/catch → 실패/미설정 시 []로 폴백.
+  async function generateAiKeywords(count) {
+    try {
+      if (aiProvider !== "gemini" || !geminiApiKey) return [];
+      const prompt = `한국 웹소설 검색에 쓸 인기·트렌디한 키워드(장르·소재·클리셰) ${count}개를 한국어 단어로만, 쉼표로 구분해서 답해줘. 설명/번호 없이 단어만.`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_AI_MODEL}:generateContent?key=${encodeURIComponent(geminiApiKey)}`;
+      const { signal, cleanup } = resolveAbortSignal({ timeoutMs: 15000 });
+      let res;
+      try { res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }] }), signal }); }
+      finally { cleanup(); }
+      if (!res.ok) return [];
+      const data = await res.json();
+      const text = ((((data.candidates || [])[0] || {}).content || {}).parts || []).map((p) => p.text || "").join(" ");
+      const kws = text.split(/[,\n·]/).map((s) => s.replace(/^[0-9.\-\s)]+/, "").trim()).filter((k) => k && k.length >= 2 && k.length <= 12).slice(0, count);
+      const now = Date.now();
+      for (const k of kws) { try { await exec(`INSERT INTO web_reco_keywords (keyword, source, hit_count, last_seen, first_seen) VALUES (?, 'ai', 1, ?, ?) ON CONFLICT(keyword) DO UPDATE SET last_seen=?;`, [k, now, now, now]); } catch {} }
+      return kws;
+    } catch { return []; }
+  }
+
+  // 취향↔탐험 비율에 따라 검색 키워드 numKw개 선정(가중 무복원 추첨). 콜드스타트면 탐험 폴백.
+  async function pickRecoKeywords(numKw) {
+    const reco = (appSettings && appSettings.reco) || DEFAULT_SETTINGS.reco;
+    const web = reco.web || DEFAULT_SETTINGS.reco.web;
+    const ratio = Math.max(0, Math.min(100, Number(web.tasteExploreRatio ?? 70))) / 100;
+    const [taste, exploreBase] = await Promise.all([buildTasteKeywordPool(), buildExploreKeywordPool()]);
+    let explore = exploreBase;
+    if (web.useAiKeywords) { const ai = await generateAiKeywords(2); for (const k of ai) explore = [...explore, { kw: k, weight: 1.5 }]; }
+    const usableTaste = taste.length ? taste : explore; // 취향 비어있으면 탐험으로 폴백
+    const picks = [];
+    const used = new Set();
+    const draw = (arr, cnt, src) => {
+      let avail = arr.filter((x) => x.kw && !used.has(x.kw));
+      for (let i = 0; i < cnt && avail.length; i++) {
+        const tw = avail.reduce((s, x) => s + x.weight, 0);
+        let r = Math.random() * tw, idx = avail.length - 1;
+        for (let j = 0; j < avail.length; j++) { r -= avail[j].weight; if (r <= 0) { idx = j; break; } }
+        const ch = avail[idx]; used.add(ch.kw); picks.push({ kw: ch.kw, source: src }); avail.splice(idx, 1);
+      }
+    };
+    const nTaste = Math.round(numKw * ratio);
+    draw(usableTaste, nTaste, "taste");
+    draw(explore, numKw - picks.length, "explore");
+    if (picks.length < numKw) draw(usableTaste, numKw - picks.length, "taste");
+    return picks.slice(0, numKw);
+  }
+
+  // 서재/예정/숨김/배치 중복 제거(링크키 + 제목정규화).
+  async function dedupAgainstLibrary(cands) {
+    const owned = new Set();
+    try { for (const n of (list || [])) owned.add(normalizeWorkTitle(n.title)); } catch {}
+    try { for (const p of (plannedList || [])) owned.add(normalizeWorkTitle(p.title)); } catch {}
+    const hidden = new Set();
+    try { const hw = await all("SELECT link_key FROM reco_hidden_works;"); for (const h of (hw || [])) hidden.add(h.link_key); } catch {}
+    const seen = new Set();
+    const out = [];
+    for (const c of (cands || [])) {
+      const nt = normalizeWorkTitle(c.title);
+      if (!nt) continue;
+      if (owned.has(nt) || seen.has(nt)) continue;
+      if (hidden.has(webRecoLinkKey(c))) continue;
+      seen.add(nt); out.push(c);
+    }
+    return out;
+  }
+
+  // 넷상 추천 가져오기: 키워드 선정 → 검색(부분성공) → dedup·필터·정렬 → 저장 → 수확. 쿨다운/검색상한 적용.
+  async function fetchWebRecommendations() {
+    const nowMs = Date.now();
+    if (nowMs - (webRecoLastFetchRef.current || 0) < WEB_RECO_REROLL_COOLDOWN_MS) {
+      setWebRecoError("잠시 후 다시 시도해 주세요 (과도한 요청 방지).");
+      return;
+    }
+    webRecoLastFetchRef.current = nowMs;
+    setWebRecoLoading(true); setWebRecoError(null);
+    try {
+      const reco = (appSettings && appSettings.reco) || DEFAULT_SETTINGS.reco;
+      const web = reco.web || DEFAULT_SETTINGS.reco.web;
+      const wantN = Math.max(1, Math.min(10, Number(web.count) || 5));
+      const numKw = Math.min(WEB_RECO_MAX_KEYWORDS, Math.max(2, Math.ceil(wantN / 2)));
+      const kws = await pickRecoKeywords(numKw);
+      if (!kws.length) { setWebRecoError("키워드를 만들 수 없어요. 작품을 더 등록하거나 ‘내 키워드’를 추가해 주세요."); return; }
+      const settled = await Promise.allSettled(kws.map((k) => searchNovels(k.kw).then((r) => ({ k, r }))));
+      let raw = [], anyOk = false; const errs = [];
+      for (const s of settled) {
+        if (s.status === "fulfilled" && s.value) { anyOk = true; for (const it of (s.value.r || [])) raw.push({ ...it, _kw: s.value.k.kw, _src: s.value.k.source }); }
+        else if (s.reason) errs.push(s.reason);
+      }
+      if (!anyOk) { setWebRecoError((errs[0] && errs[0].message) || "지금은 추천을 가져오지 못했어요. 잠시 후 다시 시도해 주세요."); return; }
+      const platSet = new Set(web.platforms || []);
+      raw = raw.filter((c) => !c.isComic && (!platSet.size || platSet.has(c.platform)));
+      await harvestKeywordsFromResults(raw);
+      let cands = await dedupAgainstLibrary(raw);
+      cands = cands.filter((c) => {
+        const m = c.meta || null;
+        if (!web.includeAdult && m && m.ageTag === "19금") return false;
+        if (web.minEpisodes > 0 && m && m.totalEpisodes != null && m.totalEpisodes < web.minEpisodes) return false;
+        if (web.workStatus === "completed" && m && m.workStatus && m.workStatus !== "completed") return false;
+        if (web.workStatus === "ongoing" && m && m.workStatus && m.workStatus !== "ongoing") return false;
+        return true;
+      });
+      if (!cands.length) { setWebRecoError("조건에 맞는 새 작품을 못 찾았어요. 필터를 완화하거나 다시 시도해 주세요."); return; }
+      // 취향 점수(간이): preference_patterns 승률로 후보 장르/태그 매칭
+      const tasteMap = {};
+      try { const pats = await all("SELECT pattern_key, win_rate FROM preference_patterns WHERE sample_size>=3;"); for (const p of (pats || [])) { const k = p.pattern_key || ""; const v = k.includes(":") ? k.slice(k.indexOf(":") + 1) : k; tasteMap[v] = Math.max(tasteMap[v] || 0, Number(p.win_rate) || 0); } } catch {}
+      const scoreWeb = (c) => {
+        const m = c.meta || {};
+        const toks = new Set([...(m.genres || []), ...String(c.category || "").split(/[,/|·]/).map((s) => s.trim()).filter(Boolean)]);
+        let s = 0; for (const t of toks) { const wr = tasteMap[t]; if (wr) s += Math.max(0, (wr - 0.5) * 100); }
+        return Math.min(100, Math.round(s));
+      };
+      for (const c of cands) c._taste = scoreWeb(c);
+      const sortMode = web.sort || "random";
+      if (sortMode === "taste") cands.sort((a, b) => (b._taste || 0) - (a._taste || 0));
+      else if (sortMode === "popular") cands.sort((a, b) => ((b.meta && b.meta.popularity) || 0) - ((a.meta && a.meta.popularity) || 0));
+      else if (sortMode === "hidden") cands.sort((a, b) => (((a.meta && a.meta.popularity) != null ? a.meta.popularity : 1e9)) - (((b.meta && b.meta.popularity) != null ? b.meta.popularity : 1e9)));
+      else { for (let i = cands.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const tmp = cands[i]; cands[i] = cands[j]; cands[j] = tmp; } }
+      const chosen = cands.slice(0, wantN);
+      await cleanupExpiredWebReco();
+      await exec("DELETE FROM web_reco WHERE pinned=0 AND status='pending';"); // 이전 미보관 배치 교체
+      const batchId = uuid();
+      for (const c of chosen) {
+        const m = c.meta || {};
+        const genres = Array.isArray(m.genres) ? m.genres : (c.category ? String(c.category).split(/[,/|·]/).map((s) => s.trim()).filter(Boolean) : []);
+        await exec(
+          `INSERT INTO web_reco (id,title,author,platform,link,cover_url,genres,tags,synopsis,total_episodes,is_completed,age,popularity,taste_score,source_keyword,keyword_source,fetched_at,batch_id,pinned,status)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,'pending');`,
+          [uuid(), c.title || "", c.author || "", c.platform || "", c.url || c.link || "", c.coverUrl || "",
+           JSON.stringify(genres), "", (m.synopsis || ""), (m.totalEpisodes != null ? m.totalEpisodes : null),
+           (m.workStatus === "completed" ? 1 : 0), (m.ageTag === "19금" ? 1 : 0), (m.popularity || 0),
+           (c._taste || 0), c._kw || "", c._src || "explore", nowMs, batchId]
+        );
+      }
+      await loadWebReco();
+    } catch (e) {
+      console.warn("fetchWebRecommendations 오류:", e);
+      setWebRecoError(e?.message || "추천을 가져오는 중 문제가 발생했어요.");
+    } finally {
+      setWebRecoLoading(false);
+    }
+  }
+
+  // 넷상 추천작 → 예정 목록 추가(표지 다운로드, discovery_source="넷탐색").
+  async function saveWebRecoToPlanned(item) {
+    try {
+      const dup = (await first("SELECT id FROM planned_novels WHERE title=? LIMIT 1;", [item.title])) || (await first("SELECT id FROM novels WHERE title=? LIMIT 1;", [item.title]));
+      if (dup) { Alert.alert("이미 있어요", "같은 제목이 이미 목록에 있어요."); return; }
+      const genres = safeParseJSON(item.genres, []) || [];
+      const mapped = mapScrapedGenres(genres);
+      let cover = item.cover_url || "";
+      if (cover && /^https?:/i.test(cover)) { try { const r = await saveCoverToLibrary(cover); if (r && r.file_path) cover = r.file_path; } catch {} }
+      const id = uuid(); const now = Date.now();
+      const tags = [...(mapped.tags || []), ...(item.age ? ["19금"] : [])].join(", ");
+      await exec(
+        `INSERT INTO planned_novels (id,title,author,tags,platforms,note,total_episodes,cover_image,link,work_status,major_genre,sub_genre,priority,created_at,discovery_source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+        [id, item.title, item.author || "", tags, JSON.stringify(item.platform ? [item.platform] : []), item.synopsis || "", (item.total_episodes || null), cover, item.link || "", (item.is_completed ? "completed" : "ongoing"), JSON.stringify(mapped.major || []), JSON.stringify(mapped.sub || []), 3, now, "넷탐색"]
+      );
+      await exec("UPDATE web_reco SET status='saved' WHERE id=?;", [item.id]);
+      setWebRecoList((prev) => prev.filter((x) => x.id !== item.id));
+      try { if (typeof loadPlannedList === "function") await loadPlannedList(); } catch {}
+      Alert.alert("예정에 추가됨", `‘${item.title}’을(를) 예정 목록에 담았어요.`);
+    } catch (e) { console.warn("saveWebRecoToPlanned 오류:", e); Alert.alert("오류", "예정 추가 중 문제가 발생했어요."); }
+  }
+
+  // 넷상 추천작 → 본 목록 추가(모드별: match/ratio 미평가 · hybrid 잠정+검증 · manual 티어 선택).
+  async function saveWebRecoToLibrary(item, manualTierChoice) {
+    try {
+      const mode = globalTierConfig.mode;
+      if (mode === "manual" && !manualTierChoice) { setWebRecoTierPick(item); return; }
+      const dup = await first("SELECT id FROM novels WHERE title=? LIMIT 1;", [item.title]);
+      if (dup) { Alert.alert("이미 있어요", "같은 제목이 본 목록에 있어요."); return; }
+      const genres = safeParseJSON(item.genres, []) || [];
+      const mapped = mapScrapedGenres(genres);
+      let cover = item.cover_url || "";
+      if (cover && /^https?:/i.test(cover)) { try { const r = await saveCoverToLibrary(cover); if (r && r.file_path) cover = r.file_path; } catch {} }
+      const id = uuid(); const now = Date.now();
+      const tags = [...(mapped.tags || []), ...(item.age ? ["19금"] : [])].join(", ");
+      const order = getActiveTierOrder(globalTierConfig);
+      let manual_tier = null, manual_order = 0, tier = globalTierConfig.defaultTier || (order[order.length - 1] || "C");
+      if (mode === "manual") { manual_tier = manualTierChoice; tier = manualTierChoice; }
+      else if (mode === "hybrid") { manual_tier = order[order.length - 1]; tier = manual_tier; } // 잠정 최하위 → 검증이 이동
+      if (manual_tier) { const mo = await first("SELECT COALESCE(MAX(manual_order),0)+100 AS mo FROM novels WHERE manual_tier=?;", [manual_tier]); manual_order = (mo && mo.mo) || 100; }
+      await exec(
+        `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,total_episodes,status,cover_image,link,work_status,major_genre,sub_genre,reread_count,manual_tier,manual_order,start_year,end_year,completed_at,discovery_source)
+         VALUES (?,?,?,?,?,?,0,?,350,0,0,0,?,?,?,'reading',?,?,?,?,?,1,?,?,?,?,?,?);`,
+        [id, item.title, item.author || "", tags, JSON.stringify(item.platform ? [item.platform] : []), item.synopsis || "",
+         (globalTierConfig.defaultRating || 1500), tier, now, (item.total_episodes || null), cover, item.link || "",
+         (item.is_completed ? "completed" : "ongoing"), JSON.stringify(mapped.major || []), JSON.stringify(mapped.sub || []),
+         manual_tier, manual_order, null, null, 0, "넷탐색"]
+      );
+      if (mode === "hybrid") { try { await enqueueVerification(id, "new", "underrated", "webreco"); } catch {} }
+      await exec("UPDATE web_reco SET status='saved' WHERE id=?;", [item.id]);
+      setWebRecoTierPick(null);
+      setWebRecoList((prev) => prev.filter((x) => x.id !== item.id));
+      try { await loadList(undefined, undefined, "register"); } catch {}
+      Alert.alert("본 목록에 추가됨", mode === "hybrid" ? `‘${item.title}’ 추가 — 검증으로 자리를 찾아갈게요.` : `‘${item.title}’을(를) 본 목록에 담았어요.`);
+    } catch (e) { console.warn("saveWebRecoToLibrary 오류:", e); Alert.alert("오류", "본 목록 추가 중 문제가 발생했어요."); }
+  }
+
+  async function dismissWebReco(item) {
+    try {
+      await exec("UPDATE web_reco SET status='dismissed' WHERE id=?;", [item.id]);
+      const now = Date.now();
+      await exec("INSERT OR IGNORE INTO reco_hidden_works (link_key, title, created_at) VALUES (?,?,?);", [webRecoLinkKey({ title: item.title, link: item.link }), item.title, now]);
+      await exec(`DELETE FROM reco_hidden_works WHERE link_key IN (SELECT link_key FROM reco_hidden_works ORDER BY created_at DESC LIMIT -1 OFFSET ${WEB_RECO_HIDDEN_CAP});`);
+      setWebRecoList((prev) => prev.filter((x) => x.id !== item.id));
+    } catch (e) { console.warn("dismissWebReco 오류:", e); }
+  }
+
+  async function pinWebReco(item) {
+    try {
+      const np = item.pinned ? 0 : 1;
+      await exec("UPDATE web_reco SET pinned=? WHERE id=?;", [np, item.id]);
+      setWebRecoList((prev) => prev.map((x) => (x.id === item.id ? { ...x, pinned: np } : x)));
+    } catch (e) { console.warn("pinWebReco 오류:", e); }
+  }
+
+  // 🌐 v7.50.x: 추천 탭 진입 시 만료 정리 + 임시 추천작 로드 (+ 자동 1일1회 옵트인)
+  useEffect(() => {
+    if (screen !== "reco") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await cleanupExpiredWebReco();
+        if (cancelled) return;
+        await loadWebReco();
+        const web = (appSettings && appSettings.reco && appSettings.reco.web) || DEFAULT_SETTINGS.reco.web;
+        if (web.autoDaily && !cancelled) {
+          const d = new Date();
+          const dayKey = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+          const last = await getAppMeta("web_reco_auto_day");
+          if (last !== dayKey) {
+            await setAppMeta("web_reco_auto_day", dayKey);
+            if (!cancelled) await fetchWebRecommendations();
+          }
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [screen]);
 
   // ═══════════════════════════════════════════════════════════════════
   // 🖼️ 표지 라이브러리 시스템 (v3.4.5)
@@ -56153,6 +56595,117 @@ async function importJSON() {
               </View>
             </View>
             <Text style={{ color: C.sub, fontSize: 11 }}>설정을 바꾼 뒤 아래 <Text style={{ fontWeight: "700", color: C.text }}>🎲 다시 뽑기</Text>를 누르면 반영돼요.</Text>
+
+            {/* 🌐 v7.50.x: 넷상 추천 설정 */}
+            {(() => {
+              const reco = (appSettings && appSettings.reco) || DEFAULT_SETTINGS.reco;
+              const web = reco.web || DEFAULT_SETTINGS.reco.web;
+              const wcount = Math.max(1, Math.min(10, Number(web.count) || 5));
+              const wratio = Math.max(0, Math.min(100, Number(web.tasteExploreRatio ?? 70)));
+              const minEp = Math.max(0, Number(web.minEpisodes) || 0);
+              const banned = Array.isArray(reco.bannedKeywords) ? reco.bannedKeywords : [];
+              const custom = Array.isArray(reco.customKeywords) ? reco.customKeywords : [];
+              const sBtn = (label, onPress) => (
+                <TouchableOpacity activeOpacity={0.7} onPress={onPress} style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: C.line, backgroundColor: C.chip }}>
+                  <Text style={{ color: C.text, fontSize: 16, fontWeight: "800" }}>{label}</Text>
+                </TouchableOpacity>
+              );
+              const chip = (label, active, onPress) => (
+                <TouchableOpacity key={label} activeOpacity={0.7} onPress={onPress} style={{ paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8, borderWidth: 1, borderColor: active ? "#10b981" : C.line, backgroundColor: active ? "#10b981" : C.chip }}>
+                  <Text style={{ color: active ? "#fff" : C.text, fontSize: 12, fontWeight: "700" }}>{label}</Text>
+                </TouchableOpacity>
+              );
+              const toggleRow = (label, val, onPress, hint) => (
+                <TouchableOpacity activeOpacity={0.7} onPress={onPress} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 6 }}>
+                  <View style={{ flex: 1, paddingRight: 10 }}>
+                    <Text style={{ color: C.text, fontSize: 13 }}>{label}</Text>
+                    {hint ? <Text style={{ color: C.sub, fontSize: 10 }}>{hint}</Text> : null}
+                  </View>
+                  <View style={{ width: 46, height: 26, borderRadius: 13, backgroundColor: val ? "#10b981" : C.line, justifyContent: "center", paddingHorizontal: 3 }}>
+                    <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: "#fff", alignSelf: val ? "flex-end" : "flex-start" }} />
+                  </View>
+                </TouchableOpacity>
+              );
+              return (
+                <View style={{ marginTop: 8, paddingTop: 14, borderTopWidth: 1, borderTopColor: C.line, gap: 14 }}>
+                  <Text style={{ color: C.text, fontWeight: "700", fontSize: 14 }}>🌐 넷상 추천 설정</Text>
+                  <View>
+                    <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>가져올 작 수</Text>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                      {sBtn("−", () => updateRecoSetting("web", "count", Math.max(1, wcount - 1)))}
+                      <Text style={{ color: C.text, fontSize: 18, fontWeight: "800", minWidth: 48, textAlign: "center" }}>{wcount}작</Text>
+                      {sBtn("+", () => updateRecoSetting("web", "count", Math.min(10, wcount + 1)))}
+                    </View>
+                  </View>
+                  <View>
+                    <Text style={{ color: C.sub, fontSize: 12, marginBottom: 2 }}>취향 ↔ 탐험 — <Text style={{ color: C.text, fontWeight: "700" }}>취향 {wratio} / 탐험 {100 - wratio}</Text></Text>
+                    <CoordSlider value={wratio / 100} onValueChange={(v) => updateRecoSetting("web", "tasteExploreRatio", Math.round(v * 100))} color="#10b981" negLabel="탐험" posLabel="취향" theme={C} />
+                  </View>
+                  <View>
+                    <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>정렬</Text>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                      {[["무작위", "random"], ["취향순", "taste"], ["인기순", "popular"], ["숨은작", "hidden"]].map(([l, v]) => chip(l, web.sort === v, () => updateRecoSetting("web", "sort", v)))}
+                    </View>
+                  </View>
+                  <View>
+                    <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>연재 상태</Text>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                      {[["전체", "all"], ["완결만", "completed"], ["연재중", "ongoing"]].map(([l, v]) => chip(l, web.workStatus === v, () => updateRecoSetting("web", "workStatus", v)))}
+                    </View>
+                  </View>
+                  <View>
+                    <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>최소 회차 — <Text style={{ color: C.text, fontWeight: "700" }}>{minEp === 0 ? "끔" : `${minEp}화 이상`}</Text> <Text style={{ color: C.sub, fontSize: 10 }}>(회차 정보 있는 작품에만)</Text></Text>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                      {sBtn("−", () => updateRecoSetting("web", "minEpisodes", Math.max(0, minEp - 10)))}
+                      <Text style={{ color: C.text, fontSize: 16, fontWeight: "800", minWidth: 56, textAlign: "center" }}>{minEp === 0 ? "끔" : minEp}</Text>
+                      {sBtn("+", () => updateRecoSetting("web", "minEpisodes", Math.min(500, minEp + 10)))}
+                    </View>
+                  </View>
+                  <View>
+                    <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>대상 플랫폼</Text>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                      {["노벨피아", "리디", "네이버시리즈", "문피아", "카카오페이지"].map((p) => {
+                        const on = (web.platforms || []).includes(p);
+                        return chip(p, on, () => { const cur = web.platforms || []; updateRecoSetting("web", "platforms", on ? cur.filter((x) => x !== p) : [...cur, p]); });
+                      })}
+                    </View>
+                  </View>
+                  {toggleRow("19금(성인) 포함", !!web.includeAdult, () => updateRecoSetting("web", "includeAdult", !web.includeAdult))}
+                  {toggleRow("AI 키워드 생성", !!web.useAiKeywords, () => updateRecoSetting("web", "useAiKeywords", !web.useAiKeywords), (aiProvider === "gemini" && geminiApiKey) ? "Gemini 키로 트렌디 키워드 추가" : "Gemini 키가 있어야 동작해요")}
+                  {toggleRow("매일 자동 가져오기", !!web.autoDaily, () => updateRecoSetting("web", "autoDaily", !web.autoDaily), "추천 탭 열 때 하루 한 번 자동")}
+                  <View>
+                    <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>키워드 관리</Text>
+                    <View style={{ flexDirection: "row", gap: 8 }}>
+                      {chip(`🚫 밴 (${banned.length})`, recoKeywordEditor === "bannedKeywords", () => setRecoKeywordEditor(recoKeywordEditor === "bannedKeywords" ? null : "bannedKeywords"))}
+                      {chip(`➕ 내 키워드 (${custom.length})`, recoKeywordEditor === "customKeywords", () => setRecoKeywordEditor(recoKeywordEditor === "customKeywords" ? null : "customKeywords"))}
+                    </View>
+                    {recoKeywordEditor && (() => {
+                      const arr = recoKeywordEditor === "bannedKeywords" ? banned : custom;
+                      return (
+                        <View style={{ marginTop: 8, gap: 8 }}>
+                          <View style={{ flexDirection: "row", gap: 8 }}>
+                            <Input value={recoKeywordInput} onChangeText={setRecoKeywordInput} placeholder={recoKeywordEditor === "bannedKeywords" ? "제외할 키워드" : "탐색할 키워드"} style={{ flex: 1 }} />
+                            <TouchableOpacity activeOpacity={0.7} onPress={() => { addRecoKeyword(recoKeywordEditor, recoKeywordInput); setRecoKeywordInput(""); }} style={{ paddingHorizontal: 16, justifyContent: "center", borderRadius: 8, backgroundColor: "#10b981" }}>
+                              <Text style={{ color: "#fff", fontWeight: "800" }}>추가</Text>
+                            </TouchableOpacity>
+                          </View>
+                          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                            {arr.length === 0 ? <Text style={{ color: C.sub, fontSize: 12 }}>아직 없어요.</Text> :
+                              arr.map((k) => (
+                                <TouchableOpacity key={k} activeOpacity={0.7} onPress={() => removeRecoKeyword(recoKeywordEditor, k)} style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, backgroundColor: C.chip, borderWidth: 1, borderColor: C.line }}>
+                                  <Text style={{ color: C.text, fontSize: 12 }}>{k}</Text>
+                                  <Text style={{ color: C.sub, fontSize: 12 }}>✕</Text>
+                                </TouchableOpacity>
+                              ))}
+                          </View>
+                          <Text style={{ color: C.sub, fontSize: 10 }}>{recoKeywordEditor === "bannedKeywords" ? "밴은 탐험 키워드 선정에서만 제외돼요(취향 데이터는 불간섭)." : "탐험 풀에 추가돼 검색에 쓰여요."}</Text>
+                        </View>
+                      );
+                    })()}
+                  </View>
+                </View>
+              );
+            })()}
           </View>
         );
       })()}
@@ -56528,6 +57081,56 @@ async function importJSON() {
       )}
     </Section>
 
+    {/* 🌐 v7.50.x: 넷상 추천작 (외부 발견) */}
+    <Section title={`🌐 넷상 추천작${webRecoList.length ? ` (${webRecoList.length})` : ""}`}>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+        <Text style={{ color: C.sub, fontSize: 12, flex: 1, paddingRight: 8 }}>플랫폼에서 새 작품을 발견해요. 안 담으면 다음날 정리돼요(⭐ 보관 제외).</Text>
+        <TouchableOpacity activeOpacity={0.8} disabled={webRecoLoading} onPress={fetchWebRecommendations} style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, backgroundColor: webRecoLoading ? C.line : "#10b981" }}>
+          <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>{webRecoLoading ? "가져오는 중…" : "🎲 가져오기"}</Text>
+        </TouchableOpacity>
+      </View>
+      {webRecoError ? <Text style={{ color: "#ef4444", fontSize: 12, marginBottom: 8 }}>{webRecoError}</Text> : null}
+      {webRecoList.length === 0 ? (
+        <Text style={{ color: C.sub, fontSize: 13 }}>{webRecoLoading ? "플랫폼에서 작품을 찾는 중이에요…" : "‘🎲 가져오기’를 눌러 넷상에서 새 작품을 발견해 보세요."}</Text>
+      ) : (
+        <View style={{ gap: 10 }}>
+          {webRecoList.map((w) => {
+            const genres = safeParseJSON(w.genres, []) || [];
+            return (
+              <View key={w.id} style={{ borderWidth: 1, borderColor: w.pinned ? "#f59e0b" : C.line, borderRadius: 12, padding: 10, backgroundColor: C.card }}>
+                <View style={{ flexDirection: "row", gap: 10 }}>
+                  <CoverImage uri={w.cover_url} size={64} theme={C} onPress={setCoverViewerUri} />
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
+                      <Text style={{ color: C.text, fontSize: 15, fontWeight: "800", flex: 1, paddingRight: 6 }} numberOfLines={2}>{w.title}</Text>
+                      <View style={{ backgroundColor: "#10b981", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 }}>
+                        <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>{w.platform || "넷"}</Text>
+                      </View>
+                    </View>
+                    <Text style={{ color: C.sub, fontSize: 12, marginTop: 2 }} numberOfLines={1}>✍️ {w.author || "작가 미상"}{w.total_episodes ? ` · ${w.total_episodes}화` : ""}{w.is_completed ? " · 완결" : ""}</Text>
+                    {genres.length ? <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }} numberOfLines={1}>🏷️ {genres.slice(0, 4).join(", ")}</Text> : null}
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 3, flexWrap: "wrap" }}>
+                      {w.taste_score > 0 ? <Text style={{ color: "#3b82f6", fontSize: 11, fontWeight: "700" }}>취향 {w.taste_score}</Text> : null}
+                      {w.age ? <Text style={{ color: "#ef4444", fontSize: 11, fontWeight: "700" }}>19</Text> : null}
+                      {w.source_keyword ? <Text style={{ color: C.sub, fontSize: 10 }}>🔎 {w.source_keyword}</Text> : null}
+                    </View>
+                  </View>
+                </View>
+                {w.synopsis ? <Text style={{ color: C.sub, fontSize: 12, marginTop: 8, lineHeight: 17 }} numberOfLines={3}>{w.synopsis}</Text> : null}
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
+                  {w.link ? <TouchableOpacity activeOpacity={0.7} onPress={() => safeOpenURL(w.link)} style={{ paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: C.line }}><Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>🔗 바로가기</Text></TouchableOpacity> : null}
+                  <TouchableOpacity activeOpacity={0.7} onPress={() => saveWebRecoToPlanned(w)} style={{ paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, backgroundColor: "#8b5cf6" }}><Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>📋 예정</Text></TouchableOpacity>
+                  <TouchableOpacity activeOpacity={0.7} onPress={() => saveWebRecoToLibrary(w)} style={{ paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, backgroundColor: "#3b82f6" }}><Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>📥 본목록</Text></TouchableOpacity>
+                  <TouchableOpacity activeOpacity={0.7} onPress={() => pinWebReco(w)} style={{ paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: w.pinned ? "#f59e0b" : C.line }}><Text style={{ color: w.pinned ? "#f59e0b" : C.text, fontSize: 12, fontWeight: "700" }}>{w.pinned ? "⭐ 보관됨" : "⭐ 보관"}</Text></TouchableOpacity>
+                  <TouchableOpacity activeOpacity={0.7} onPress={() => dismissWebReco(w)} style={{ paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: C.line }}><Text style={{ color: C.sub, fontSize: 12, fontWeight: "700" }}>🙅 관심없음</Text></TouchableOpacity>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      )}
+    </Section>
+
     {/* ════ 🔄 재평가 추천작 (매칭·비율 모드) — v7.30.0 / 확장 v7.30.1 ════
        티어가 불확실(미정착·미평가)한 작품을 종합 점수로 랭킹. 탭 → 그 작품 집중 매칭.
        ratio는 백분위 티어라 경계 가중 OFF(불확실도만). hybrid는 의심작이 담당. */}
@@ -56630,6 +57233,26 @@ async function importJSON() {
         추천은 하루에 한 번 자동으로 갱신됩니다.
       </Text>
     </Section>
+
+    {/* 🌐 v7.50.x: manual 모드 — 넷상 추천작 본목록 추가 시 티어 선택 */}
+    <Modal visible={!!webRecoTierPick} transparent animationType="fade" onRequestClose={() => setWebRecoTierPick(null)}>
+      <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", padding: 24 }}>
+        <View style={{ backgroundColor: C.card, borderRadius: 16, padding: 18 }}>
+          <Text style={{ color: C.text, fontSize: 16, fontWeight: "800", marginBottom: 4 }}>티어 지정</Text>
+          <Text style={{ color: C.sub, fontSize: 12, marginBottom: 14 }} numberOfLines={2}>‘{webRecoTierPick?.title}’을(를) 어느 티어로 추가할까요?</Text>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+            {getActiveTierOrder(globalTierConfig).map((tk) => (
+              <TouchableOpacity key={tk} activeOpacity={0.8} onPress={() => saveWebRecoToLibrary(webRecoTierPick, tk)} style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, backgroundColor: getTierColor(tk, globalTierConfig) }}>
+                <Text style={{ color: "#fff", fontWeight: "800" }}>{getTierLabel(tk, globalTierConfig)}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <TouchableOpacity activeOpacity={0.7} onPress={() => setWebRecoTierPick(null)} style={{ marginTop: 16, alignSelf: "flex-end", paddingHorizontal: 16, paddingVertical: 8 }}>
+            <Text style={{ color: C.sub, fontWeight: "700" }}>취소</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
   </>
 )}
     
