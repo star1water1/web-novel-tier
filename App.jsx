@@ -2,9 +2,19 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.51.3 (넷상 추천 — 빈 목록 시 탭 진입 자동 채움)                          ║
+ * ║  버전: 7.51.4 (추천 탭 UX — 섹션별 갱신 버튼 + 넷상 소개글 펼치기)               ║
  * ║  최종 수정: 2026-06-30                                                        ║
- * ║  총 라인 수: 약 74,040줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 74,050줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 💄 v7.51.4 추천 탭 UX 2건 — 실사용 피드백 (2026-06-30)                          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ ① 하단 '오늘의 추천 다시 뽑기'(옵션 섹션)가 넷상까지 갱신하는 듯 오해 소지 →      ║
+ * ║   각 섹션 헤더에 전용 버튼 배치: '추천 작품'에 🎲 다시 뽑기(내 서재만), '넷상      ║
+ * ║   추천작'엔 기존 🎲 가져오기. 하단 공용 옵션 섹션 제거(중복 해소).                 ║
+ * ║ ② 넷상 카드 소개글 3줄 잘림 → 80자 초과 시 '▼ 더보기/▲ 접기' 토글(webRecoExpanded ║
+ * ║   per-id). esbuild 통과.                                                        ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -38190,6 +38200,7 @@ function AppContent() {
   const [webRecoTierPick, setWebRecoTierPick] = useState(null); // manual 모드 본목록 추가 시 티어 선택 대상 item
   const [recoKeywordEditor, setRecoKeywordEditor] = useState(null); // "bannedKeywords" | "customKeywords" | null
   const [recoKeywordInput, setRecoKeywordInput] = useState("");
+  const [webRecoExpanded, setWebRecoExpanded] = useState({});  // 넷상 카드 소개글 펼침 {id:true}
   const webRecoLastFetchRef = useRef(0);                       // 재뽑기 쿨다운
   const [recoHistory, setRecoHistory] = useState([]); // 최근 5회 추천 기록 [{novelId, pickedAt}]
   
@@ -56794,6 +56805,12 @@ async function importJSON() {
 
     {/* --- 추천 카드 (작품 정보) — v7.50.0 여러작 --- */}
     <Section title={`추천 작품${dailyReco?.items?.length ? ` (${dailyReco.items.length})` : ""}`}>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+        <Text style={{ color: C.sub, fontSize: 12, flex: 1, paddingRight: 8 }}>내 서재 기반 · 하루 1회 자동 갱신</Text>
+        <TouchableOpacity activeOpacity={0.8} onPress={() => refreshDailyRecommendation(true)} style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, backgroundColor: "#3b82f6" }}>
+          <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>🎲 다시 뽑기</Text>
+        </TouchableOpacity>
+      </View>
       {!dailyReco || !dailyReco.items?.length ? (
         <Text style={{ color: C.sub }}>
           아직 추천할 작품이 없습니다.  
@@ -57197,7 +57214,16 @@ async function importJSON() {
                     </View>
                   </View>
                 </View>
-                {w.synopsis ? <Text style={{ color: C.sub, fontSize: 12, marginTop: 8, lineHeight: 17 }} numberOfLines={3}>{w.synopsis}</Text> : null}
+                {w.synopsis ? (() => {
+                  const exp = !!webRecoExpanded[w.id];
+                  const long = String(w.synopsis).length > 80;
+                  return (
+                    <TouchableOpacity activeOpacity={long ? 0.7 : 1} onPress={() => { if (long) setWebRecoExpanded((p) => ({ ...p, [w.id]: !p[w.id] })); }} style={{ marginTop: 8 }}>
+                      <Text style={{ color: C.sub, fontSize: 12, lineHeight: 17 }} numberOfLines={exp ? undefined : 3}>{w.synopsis}</Text>
+                      {long ? <Text style={{ color: "#10b981", fontSize: 11, marginTop: 3, fontWeight: "700" }}>{exp ? "▲ 접기" : "▼ 더보기"}</Text> : null}
+                    </TouchableOpacity>
+                  );
+                })() : null}
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
                   {w.link ? <TouchableOpacity activeOpacity={0.7} onPress={() => safeOpenURL(w.link)} style={{ paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: C.line }}><Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>🔗 바로가기</Text></TouchableOpacity> : null}
                   <TouchableOpacity activeOpacity={0.7} onPress={() => saveWebRecoToPlanned(w)} style={{ paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, backgroundColor: "#8b5cf6" }}><Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>📋 예정</Text></TouchableOpacity>
@@ -57303,17 +57329,6 @@ async function importJSON() {
         </View>
       </Section>
     )}
-
-    {/* --- 추천 다시 뽑기 버튼 --- */}
-    <Section title="옵션">
-      <PrimaryButton
-        title="🎲 오늘의 추천 다시 뽑기"
-        onPress={() => refreshDailyRecommendation(true)}
-      />
-      <Text style={{ color: C.sub, fontSize: 11, marginTop: 8, textAlign: "center" }}>
-        추천은 하루에 한 번 자동으로 갱신됩니다.
-      </Text>
-    </Section>
 
     {/* 🌐 v7.50.x: manual 모드 — 넷상 추천작 본목록 추가 시 티어 선택 */}
     <Modal visible={!!webRecoTierPick} transparent animationType="fade" onRequestClose={() => setWebRecoTierPick(null)}>
