@@ -2,9 +2,20 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.51.1 (넷상 추천 후속 — 설정 백업 직렬화 + AI 키워드 Claude)             ║
- * ║  최종 수정: 2026-06-29                                                        ║
- * ║  총 라인 수: 약 74,010줄 (단일 컴포넌트)                                      ║
+ * ║  버전: 7.51.2 (넷상 추천 품질 — 카카오 SERP·논픽션 필터 + 쿨다운 완화)           ║
+ * ║  최종 수정: 2026-06-30                                                        ║
+ * ║  총 라인 수: 약 74,030줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🐞 v7.51.2 넷상 추천 품질 — 실사용 영상 피드백 (2026-06-30)                     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 폰 실사용 녹화 분석: 넷상 결과에 ① 카카오 SERP 부산물 카드("Kakao page.kakao.com  ║
+ * ║ › c…" 제목·작가 미상·표지 없음·바로가기 빈페이지) ② 리디 일반 교양서(인문/사회/   ║
+ * ║ 역사) 누수. 둘 다 검색 경로 한계. → isBadWebTitle(도메인/경로/URL/› 제목 차단) +  ║
+ * ║ isNonFictionCategory(논픽션 토큰 보수 매칭, '역사' 단독은 대체역사 오탐 방지 제외) ║
+ * ║ 를 fetchWebRecommendations 필터에 추가. ③ 재뽑기 쿨다운 60s→20s(탐색 UX 완화).   ║
+ * ║ 단위테스트 11종(영상 실제 케이스 포함) 통과. 정상 카드(노벨피아 등)는 영향 없음.  ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -16307,7 +16318,7 @@ function isSearchPlatformOn(name) {
 // 🌐 v7.50.x: 넷상 추천 상수
 const WEB_RECO_TTL_DAYS = 1;                       // 임시 추천작 보존(달력일) — 다음날 정리
 const WEB_RECO_HIDDEN_CAP = 500;                   // "관심없음" 숨김 목록 상한
-const WEB_RECO_REROLL_COOLDOWN_MS = 60 * 1000;     // 재뽑기 쿨다운(과도 요청 방지)
+const WEB_RECO_REROLL_COOLDOWN_MS = 20 * 1000;     // 재뽑기 쿨다운(과도 요청 방지 — 탐색 UX 위해 완화)
 const WEB_RECO_MAX_KEYWORDS = 3;                   // 한 번 가져올 때 검색 횟수 상한(ToS — on-demand)
 // 수확 시 제외할 잡음 키워드(연령/독점/공모전/형식 등 — 작품 검색어로 부적합)
 const WEB_RECO_JUNK_KEYWORDS = ["19","19금","독점","무료","연재","완결","연재중","단행본","성인","공모전","웹툰","웹소설","외전","단편","장편","무료연재","유료"];
@@ -16323,6 +16334,23 @@ function normalizeWorkTitle(t) {
 function webRecoLinkKey(item) {
   const t = normalizeWorkTitle(item && (item.title || ""));
   return t || String((item && item.link) || "");
+}
+// 🌐 v7.51.2: 넷상 추천 품질 게이트
+//   제목이 SERP 부산물(도메인/경로/URL)인 카드 제거 — 카카오 SERP 검색이 작품명 대신
+//   "Kakao page.kakao.com › content/…"를 넣는 케이스 차단.
+function isBadWebTitle(t) {
+  const s = String(t == null ? "" : t).trim();
+  if (!s || s.length < 2) return true;
+  if (/page\.kakao|kakao\.com|ridibooks|novelpia|munpia|series\.naver|joara|https?:\/\/|www\.|·\s*›|›|\.com(\/|\s|$)/i.test(s)) return true;
+  return false;
+}
+// 일반 교양서적(논픽션) 누수 차단 — 리디 등은 웹소설 외 ebook도 검색됨. 웹소설 장르와
+//   거의 겹치지 않는 토큰만 보수적으로 매칭(대체역사 등 오탐 방지 위해 '역사' 단독 제외).
+const WEB_RECO_NONFICTION_RE = /인문|사회과학|^사회$|경제|경영|자기\s*계발|외국어|어학|컴퓨터|프로그래밍|종교|정치|수험|교재|논픽션|참고서|학습|사전/;
+function isNonFictionCategory(category) {
+  const s = String(category == null ? "" : category);
+  if (!s) return false;
+  return s.split(/[,/|·]/).map((x) => x.trim()).some((tok) => tok && WEB_RECO_NONFICTION_RE.test(tok));
 }
 // 🆕 v7.46.0: 카카오페이지 제목검색 — 카카오 자체 검색은 GraphQL+안티봇이라 막힘. 검색엔진에서 page.kakao.com
 //   작품 링크를 찾고, 선택 시 기존 카카오 링크 불러오기(SSR __NEXT_DATA__)가 메타를 채운다(.meta 미부착→runScrapeFromUrl).
@@ -42422,6 +42450,8 @@ function AppContent() {
       let cands = await dedupAgainstLibrary(raw);
       cands = cands.filter((c) => {
         const m = c.meta || null;
+        if (isBadWebTitle(c.title)) return false;            // 🌐 v7.51.2: SERP 부산물 제목 차단(카카오)
+        if (isNonFictionCategory(c.category)) return false;  // 🌐 v7.51.2: 일반 교양서적 누수 차단(리디 등)
         if (!web.includeAdult && m && m.ageTag === "19금") return false;
         if (web.minEpisodes > 0 && m && m.totalEpisodes != null && m.totalEpisodes < web.minEpisodes) return false;
         if (web.workStatus === "completed" && m && m.workStatus && m.workStatus !== "completed") return false;
