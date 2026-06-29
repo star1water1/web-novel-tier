@@ -2,9 +2,28 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.49.17 (추가 10시나리오 — 동시성·데드코드·시간대 근본 수정)              ║
+ * ║  버전: 7.49.18 (잔여 구조적 4건 — 복원 롤백·검증 동시성·프리셋·페어링)           ║
  * ║  최종 수정: 2026-06-29                                                        ║
- * ║  총 라인 수: 약 72,790줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 72,850줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔬 v7.49.18 잔여 구조적·동시성·성능 4건 — 사용자 승인 후 근본 수정 (2026-06-29)║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ v7.49.17 점검의 잔여(구조적·스키마·성능) 4건을 사용자 위임 답변대로 수정:        ║
+ * ║ 🟠[복원 원자성] import가 'DELETE 전체→INSERT' 비원자라 중단 시 부분 손실 영속.    ║
+ * ║   → doClearAll 전 13테이블+예정작을 임시테이블로 스냅샷, 실패 시 자동 롤백(원본    ║
+ * ║   복구)+globalTierConfig 되돌림. 성공 시 스냅샷 정리. (갤러리 파일은 복구 불가.)  ║
+ * ║ 🟠[검증 동시성] ① respond/finalize에 _slotGeneration 가드 — 슬롯 전환 중 검증     ║
+ * ║   쓰기가 새 슬롯 오염하던 것 차단. ② tier_verification_queue 작품당 pending 1건   ║
+ * ║   partial UNIQUE 인덱스(+기존 중복 dedup 마이그레이션)+INSERT OR IGNORE → 중복     ║
+ * ║   세션(같은 작품 검증 헛수고) 제거. 구 SQLite는 catch로 무회귀.                  ║
+ * ║ 🟠[프리셋] 티어 프리셋 변경 match/ratio 분기가 병합 티어 manual_order 재정렬 누락  ║
+ * ║   (manual/hybrid 복귀 시 정렬 비결정). manual/hybrid와 동일 rebalanceTierOrder.   ║
+ * ║ 🟠[대규모 성능] 1000+ 페어링이 매 pick마다 O(N²)(50만 쌍) 동기 스캔→UI 블로킹.    ║
+ * ║   미대전 풍부 시 무작위 표본(O(K)) 가중 선택, 표본 비면 전수 폴백(coverage 보존). ║
+ * ║   (RD 진동은 설계 의도 가능성 — 사용자 선택대로 미변경.)                         ║
+ * ║ @babel/parser 통과. 괄호 균형·DDL exec 선례 일치 확인.                           ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -9901,6 +9920,15 @@ async function initDb(progressCb) {
   await ensureColumn("tier_verification_queue", "processed_at", "INTEGER", null);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tvq_state ON tier_verification_queue(state, priority DESC, created_at);`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tvq_novel ON tier_verification_queue(novel_id);`);
+  // 🆕 v7.49.18: 작품당 pending 검증 큐 1건 보장 — enqueueVerification의 SELECT-then-INSERT 레이스로 생기던 중복 pending을
+  //   DB에서 차단(중복 세션 = 같은 작품 검증이 한 번 더 도는 헛수고 제거). UNIQUE 인덱스는 기존 중복이 있으면 생성 실패하므로
+  //   먼저 작품당 1건(최근 rowid)만 남기고 나머지 제거 → 부분 UNIQUE 인덱스. 구 SQLite(부분 인덱스 미지원)면 catch로 무회귀.
+  try {
+    await database.runAsync(`DELETE FROM tier_verification_queue WHERE state='pending' AND rowid NOT IN (SELECT MAX(rowid) FROM tier_verification_queue WHERE state='pending' GROUP BY novel_id);`);
+  } catch (e) { console.warn("[v7.49.18] tvq pending dedup 실패:", e?.message); }
+  try {
+    await database.runAsync(`CREATE UNIQUE INDEX IF NOT EXISTS idx_tvq_pending_novel ON tier_verification_queue(novel_id) WHERE state='pending';`);
+  } catch (e) { console.warn("[v7.49.18] tvq partial unique index 생성 실패(구 SQLite?):", e?.message); }
 
   await database.runAsync(`CREATE TABLE IF NOT EXISTS tier_validation_log (
     id TEXT PRIMARY KEY NOT NULL,
@@ -35212,8 +35240,11 @@ async function enqueueVerification(novelId, triggerType, suspicionType, source) 
         [triggerType, suspicionType, finalPriority, now, existing.id]
       );
     } else {
+      // 🔧 v7.49.18: OR IGNORE — 동시 enqueue 레이스(둘 다 위 SELECT에서 pending 못 봄)에서 partial UNIQUE(novel_id WHERE pending)
+      //   충돌 시 두 번째 INSERT를 조용히 무시(중복 pending 방지). 인덱스 없으면 기존대로 INSERT(무회귀). 누락된 trigger/priority 갱신은
+      //   다음 enqueue나 finalize에서 자연 보정되는 사소 손실.
       await exec(
-        `INSERT INTO tier_verification_queue (id, novel_id, trigger_type, suspicion_type, priority, state, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+        `INSERT OR IGNORE INTO tier_verification_queue (id, novel_id, trigger_type, suspicion_type, priority, state, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
         [uuid(), novelId, triggerType, suspicionType, priority, now]
       );
     }
@@ -50362,19 +50393,34 @@ function AppContent() {
         }
       } else {
         // 🔧 reservoir sampling: O(n^2) 메모리 방지 (작품 수 많을 때 OOM 크래시 방지)
-        // 🆕 v7.21.4: 정보량 가중 reservoir — 가까운 레이팅+높은 RD 쌍 우선(균등→가중).
-        //   가중 reservoir: 각 쌍을 w/Σw 확률로 선택(Chao). +EPS로 전 쌍 coverage 유지.
-        let cumW = 0;
-        let picked = null;
-        for (let i = 0; i < allNovels.length; i++) {
-          for (let j = i + 1; j < allNovels.length; j++) {
+        // 🆕 v7.21.4: 정보량 가중 reservoir — 가까운 레이팅+높은 RD 쌍 우선(균등→가중). +EPS로 전 쌍 coverage 유지.
+        // 🆕 v7.49.18: 대규모(1000+) 성능 — 매 pick마다 전 쌍 O(N²)(약 50만 쌍) 동기 스캔이 모바일에서 수십~수백ms UI 블로킹.
+        //   미대전 쌍이 풍부한 동안은 무작위 표본(O(K))에서 가중 선택, 표본이 비면(후반·미대전 희소) 전수 스캔으로 폴백 → coverage 보존.
+        const N = allNovels.length;
+        const fullScanPick = () => { // 전수 가중 reservoir(정확) — 폴백·소규모용
+          let cumW = 0, p = null;
+          for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
             if (played.has(pairKey(allNovels[i].id, allNovels[j].id))) continue;
             const w = informativePairWeight(allNovels[i], allNovels[j]);
             cumW += w;
-            if (cumW > 0 && Math.random() < w / cumW) {
-              picked = { A: allNovels[i], B: allNovels[j] };
-            }
+            if (cumW > 0 && Math.random() < w / cumW) p = { A: allNovels[i], B: allNovels[j] };
           }
+          return p;
+        };
+        let picked = null;
+        if (N >= 60) {
+          const sampleCands = [], seenKeys = new Set();
+          const TARGET = 64, MAX_TRIES = 768; // 무작위 시도 상한(played 충돌 흡수) — O(N²) 대신 O(MAX_TRIES)
+          for (let t = 0; t < MAX_TRIES && sampleCands.length < TARGET; t++) {
+            const i = Math.floor(Math.random() * N), j = Math.floor(Math.random() * N);
+            if (i === j) continue;
+            const A = allNovels[i], B = allNovels[j], key = pairKey(A.id, B.id);
+            if (seenKeys.has(key) || played.has(key)) continue;
+            seenKeys.add(key); sampleCands.push({ A, B });
+          }
+          picked = sampleCands.length ? pickWeightedPair(sampleCands) : fullScanPick(); // 표본 비면 전수 폴백(coverage 보장)
+        } else {
+          picked = fullScanPick(); // 소규모: 기존 전수 가중(정확)
         }
         if (picked) candidates.push(picked);
       }
@@ -50649,6 +50695,8 @@ function AppContent() {
     respondingRef.current = true;
     try {
     const { queueRow, suspicionNovel, candidates, responses, currentIdx, suspicionType } = verificationSession;
+    const _gen = _slotGeneration; // 🆕 v7.49.18: 슬롯 전환 레이스 가드 — 응답 처리 도중(여러 await) 슬롯이 바뀌면 이전 슬롯 세션의
+    //   검증 쓰기(tier_validation_log·suspicion·finalize의 manual_order)가 새 슬롯 DB에 기록되는 것을 방지(AI 스캔 _scanGen과 동일 패턴).
     const candidate = candidates[currentIdx];
     if (!candidate) {
       // 🛠️ v7.24.5: 방어 — currentIdx가 범위를 벗어난 손상/외부복원 세션이면 무한 정지(후보 없음 카드에
@@ -50666,6 +50714,7 @@ function AppContent() {
     const violation = detectViolation(suspicionNovel, candidate, choice, globalTierConfig);
 
     // 매칭 로그 INSERT
+    if (_slotGeneration !== _gen) return; // 🆕 v7.49.18: 슬롯 전환됨 → 이전 슬롯에 검증 쓰기 금지(finally가 respondingRef 해제)
     await logVerificationMatch(verificationSessionIdRef.current, suspicionNovel.id, candidate.id, suspicionWon, violation);
 
     // 🆕 v7.17.0 증거②: 상대(후보) 의심도 — 현재 순위와의 모순(업셋) 정도로 상승.
@@ -50695,6 +50744,7 @@ function AppContent() {
 
     if (plan.stop) {
       // 시퀀스 종료 — finalize
+      if (_slotGeneration !== _gen) return; // 🆕 v7.49.18: 슬롯 전환됨 → finalize(자리 UPDATE)를 새 슬롯에 쓰지 않음
       try {
         await finalizeVerificationSession(queueRow, suspicionNovel, candidates, newResponses, suspicionType, plan.reason);
       } catch (e) {
@@ -50717,6 +50767,7 @@ function AppContent() {
       startVerificationSession();
     } else {
       // planVerificationProbe가 풀 소진/경계 미발견을 내부 처리하므로 nextIdx는 항상 유효 인덱스
+      if (_slotGeneration !== _gen) return; // 🆕 v7.49.18: 슬롯 전환됨 → 이전 슬롯 세션을 setState로 부활시키지 않음
       setVerificationSession({
         ...verificationSession,
         responses: newResponses,
@@ -53882,7 +53933,28 @@ async function importJSON() {
               // 🔧 v3.5.8: 전체 복원 플로우를 try-catch로 보호
               // DELETE 후 INSERT 실패 시 데이터 소실 방지를 위한 안전장치
               let deleteCompleted = false;
+              // 🆕 v7.49.18: 복원 전 자동 스냅샷 — DELETE 후 INSERT가 크래시/부분 실패해도 원본 데이터를 자동 복구(롤백).
+              //   doClearAll이 지우는 전 테이블 + planned_novels를 임시테이블로 복제(SQL 내부 복사 — 파일/DB연결 조작 없어 안전).
+              //   ※갤러리 이미지 '파일'은 doClearAll이 물리 삭제하므로 복구 불가(메타 행만 복구). 핵심(작품·매치)은 완전 복구.
+              const _SNAP_TABLES = ["novels","matches","choice_logs","preference_patterns","insight_queue","folders","novel_folders","gallery_images","tier_verification_queue","tier_validation_log","tier_repositioning_session","trigger_fire_log","planned_novels"];
+              const _snapName = (t) => `_imp_snap_${t}`;
+              let _snapCreated = false;
+              const _origTierConfig = JSON.parse(JSON.stringify(globalTierConfig)); // 🆕 v7.49.18: 롤백 시 복원(복원이 INSERT 전에 globalTierConfig를 백업값으로 바꿈)
+              const _dropSnapshot = async () => { for (const t of _SNAP_TABLES) { try { await exec(`DROP TABLE IF EXISTS ${_snapName(t)};`); } catch {} } };
+              const _restoreSnapshot = async () => {
+                for (const t of _SNAP_TABLES) {
+                  try {
+                    const ex = await first(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, [_snapName(t)]);
+                    if (!ex) continue;
+                    await exec(`DELETE FROM ${t};`);
+                    await exec(`INSERT INTO ${t} SELECT * FROM ${_snapName(t)};`);
+                  } catch (re) { console.warn("[import rollback] " + t + " 복구 실패:", re?.message); }
+                }
+              };
               try {
+              // 스냅샷 생성(실패 시 doClearAll 전이라 데이터 무손상 → catch에서 deleteCompleted=false 경로)
+              for (const _t of _SNAP_TABLES) { await exec(`DROP TABLE IF EXISTS ${_snapName(_t)};`); await exec(`CREATE TABLE ${_snapName(_t)} AS SELECT * FROM ${_t};`); }
+              _snapCreated = true;
               await doClearAll();
               deleteCompleted = true;
 
@@ -54619,40 +54691,31 @@ async function importJSON() {
               const verifyInfo = insertedCount < lenN ? `\n⚠️ 주의: ${lenN}개 중 ${insertedCount}개만 복원됨` : "";
               if (_pt) PerfMonitor.trackFunc("importJSON", Date.now() - _pt); // 🔬
               importBackupRef.current = ""; // 🔧 v3.5.9: 성공 시 메모리 해제
+              await _dropSnapshot(); // 🆕 v7.49.18: 복원 성공 → 롤백 스냅샷 임시테이블 정리
               Alert.alert("완료", `데이터를 성공적으로 가져왔습니다!\n(Elo 데이터 완전 복원)${verifyInfo}${extraInfo}${histInfo}${analysisInfo}${comboInfo}${tagMetaInfo}${plannedInfo}${patternInfo}${pcInfo}`);
               } catch (restoreErr) {
                 // 🔧 v3.5.9: 복원 실패 시 자동 재시도 옵션 제공
                 if (_pt) PerfMonitor.logError("importJSON", restoreErr); // 🔬
                 console.warn("복원 오류:", restoreErr);
                 if (deleteCompleted) {
-                  // DELETE 성공 후 INSERT 실패 = 가장 위험한 상태
-                  // importBackupRef에 저장된 원본으로 재시도 가능
-                  Alert.alert(
-                    "⚠️ 복원 중 오류",
-                    "기존 데이터 삭제 후 복원 도중 오류가 발생했습니다.\n\n" +
-                    "일부 데이터만 복원되었을 수 있습니다.\n\n" +
-                    "오류: " + (restoreErr.message || restoreErr),
-                    [
-                      { text: "확인" },
-                      { 
-                        text: "🔄 자동 재시도", 
-                        onPress: () => {
-                          // 원본 JSON이 보존되어 있으면 입력란에 복원 후 재시도 유도
-                          if (importBackupRef.current) {
-                            setImportText(importBackupRef.current);
-                            setImportValidation(null);
-                            Alert.alert(
-                              "재시도 준비",
-                              "백업 데이터가 입력란에 복원되었습니다.\n'데이터 검증' → '가져오기' 순서로 다시 시도해주세요."
-                            );
-                          } else {
-                            Alert.alert("오류", "백업 데이터를 찾을 수 없습니다.\n원본 백업 JSON을 다시 붙여넣어 주세요.");
-                          }
-                        }
-                      },
-                    ]
-                  );
+                  // DELETE 성공 후 INSERT 실패 = 가장 위험 → 🆕 v7.49.18: 스냅샷에서 원본 자동 롤백.
+                  let _rolledBack = false;
+                  if (_snapCreated) { try { await _restoreSnapshot(); _rolledBack = true; } catch (rbErr) { console.warn("[import] 자동 롤백 실패:", rbErr?.message); } }
+                  await _dropSnapshot();
+                  if (_rolledBack) {
+                    try { globalTierConfig = _origTierConfig; } catch {} // 복원이 바꾼 config 되돌림(롤백 데이터와 정합)
+                    try { invalidatePatternCache(); invalidateWeightsCache(); } catch {}
+                    try { await loadList(undefined, undefined, "import-rollback"); } catch {}
+                    try { await loadPlannedList(); } catch {}
+                    try { await loadCoverLibrary(); } catch {}
+                    Alert.alert("⚠️ 복원 실패 — 원본 복구됨", "복원 도중 오류가 발생해 기존 데이터를 자동 복구했습니다.\n(갤러리 이미지 '파일'은 복구되지 않을 수 있어요.)\n\n오류: " + (restoreErr.message || restoreErr));
+                  } else {
+                    // 롤백도 실패(스냅샷 손상 등) — 원본 JSON 재시도 유도(기존 폴백)
+                    Alert.alert("⚠️ 복원 중 오류 — 자동 복구 실패", "복원 도중 오류가 발생했고 자동 복구도 실패했습니다.\n원본 백업으로 재시도해 주세요.\n\n오류: " + (restoreErr.message || restoreErr),
+                      [{ text: "확인" }, { text: "🔄 재시도 준비", onPress: () => { if (importBackupRef.current) { setImportText(importBackupRef.current); setImportValidation(null); } } }]);
+                  }
                 } else {
+                  await _dropSnapshot(); // doClearAll 전 실패 → 데이터 무손상, 스냅샷만 정리
                   Alert.alert("오류", "복원 준비 중 오류가 발생했습니다.\n기존 데이터는 유지됩니다.\n\n" + (restoreErr.message || restoreErr));
                 }
                 setLoadingProgress(null); // 🆕 v7.28.22: 진행바 정리
@@ -64014,14 +64077,21 @@ async function importJSON() {
                                 const novels = await all("SELECT id, manual_tier FROM novels");
                                 const newOrder = getActiveTierOrder(newConfig);
                                 const queries = [];
+                                const affectedTiers = new Set(); // 🆕 v7.49.18: 병합 영향 티어 reflow용
                                 for (const n of (novels || [])) {
                                   if (n.manual_tier && !newOrder.includes(n.manual_tier)) {
                                     const mapped = migrateTierKey(n.manual_tier, oldConfig, newConfig);
                                     queries.push({ sql: "UPDATE novels SET manual_tier=? WHERE id=?", params: [mapped, n.id] });
+                                    if (mapped) affectedTiers.add(mapped);
                                   }
                                   // 유효한 manual_tier는 보존
                                 }
                                 if (queries.length > 0) await execBatch(queries);
+                                // 🛡️ v7.49.18: match/ratio도 여러 옛 티어가 한 새 티어로 합쳐지면 manual_order 충돌 → reflow로 gap=100 회복.
+                                //   (manual/hybrid 분기와 동일. match/ratio는 order 미표시라 즉시 증상 없으나 manual/hybrid 복귀 시 정렬 비결정성 발현.)
+                                for (const tk of affectedTiers) {
+                                  await rebalanceTierOrder(tk);
+                                }
                               }
 
                               // 🆕 v7.3.0: planned_novels.manual_tier도 동일 마이그레이션 (round-trip 보존 정합성)
