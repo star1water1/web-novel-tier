@@ -2,9 +2,20 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.51.4 (추천 탭 UX — 섹션별 갱신 버튼 + 넷상 소개글 펼치기)               ║
+ * ║  버전: 7.51.5 (넷상 추천 카드 프리미엄 리디자인)                                 ║
  * ║  최종 수정: 2026-06-30                                                        ║
- * ║  총 라인 수: 약 74,050줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 74,090줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ ✨ v7.51.5 넷상 추천 카드 프리미엄 리디자인 (2026-06-30)                        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [피드백] 넷상 카드가 수수하고 싸 보임(평면 1px 테두리·작은 표지·5버튼 wrap).      ║
+ * ║ [개선] ① 입체 그림자(elevation 3 + shadow) + 둥근 16r 카드 표면. ② 상단 플랫폼   ║
+ * ║   브랜드 컬러 액센트 바(노벨피아/리디/카카오/시리즈/문피아 각 색) + 플랫폼 pill도  ║
+ * ║   브랜드색. ③ 표지 64→74 + 둥근 프레임. ④ 회차/완결/19/장르를 알약 칩으로. ⑤ 취향 ║
+ * ║   점수를 게이지 바+수치로. ⑥ 액션 위계화: 1차 담기(예정/본목록 큰 버튼 flex) +    ║
+ * ║   2차 보기/보관/제외(고스트 버튼). ⑦ '검색에서 발견' 출처 표기. esbuild 통과.     ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -57191,45 +57202,80 @@ async function importJSON() {
       {webRecoList.length === 0 ? (
         <Text style={{ color: C.sub, fontSize: 13 }}>{webRecoLoading ? "플랫폼에서 작품을 찾는 중이에요…" : "‘🎲 가져오기’를 눌러 넷상에서 새 작품을 발견해 보세요."}</Text>
       ) : (
-        <View style={{ gap: 10 }}>
+        <View style={{ gap: 14, paddingHorizontal: 2, paddingVertical: 2 }}>
           {webRecoList.map((w) => {
             const genres = safeParseJSON(w.genres, []) || [];
+            const PLAT_COLORS = { "노벨피아": "#4f7cff", "리디": "#1e8eff", "카카오페이지": "#ff5e5e", "네이버시리즈": "#03c75a", "문피아": "#2f6fed" };
+            const pc = PLAT_COLORS[w.platform] || "#10b981";
+            const exp = !!webRecoExpanded[w.id];
+            const long = w.synopsis && String(w.synopsis).length > 80;
+            const ts = Number(w.taste_score) || 0;
+            const tasteColor = ts >= 60 ? "#22c55e" : ts >= 35 ? "#f59e0b" : "#64748b";
+            const pillBg = isDark ? "#27314a" : "#eef2f8";
+            const pill = (label, key, color) => (
+              <View key={key} style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, backgroundColor: color ? color + "22" : pillBg, borderWidth: color ? 1 : 0, borderColor: color ? color + "66" : "transparent" }}>
+                <Text style={{ color: color || C.sub, fontSize: 10.5, fontWeight: "700" }}>{label}</Text>
+              </View>
+            );
+            const ghost = { flex: 1, paddingVertical: 9, borderRadius: 9, borderWidth: 1, borderColor: isDark ? "#2f3a55" : "#dce2ec", alignItems: "center", justifyContent: "center" };
+            const ghostT = { color: C.sub, fontSize: 12, fontWeight: "700" };
             return (
-              <View key={w.id} style={{ borderWidth: 1, borderColor: w.pinned ? "#f59e0b" : C.line, borderRadius: 12, padding: 10, backgroundColor: C.card }}>
-                <View style={{ flexDirection: "row", gap: 10 }}>
-                  <CoverImage uri={w.cover_url} size={64} theme={C} onPress={setCoverViewerUri} />
-                  <View style={{ flex: 1 }}>
-                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
-                      <Text style={{ color: C.text, fontSize: 15, fontWeight: "800", flex: 1, paddingRight: 6 }} numberOfLines={2}>{w.title}</Text>
-                      <View style={{ backgroundColor: "#10b981", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 }}>
-                        <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>{w.platform || "넷"}</Text>
-                      </View>
+              <View key={w.id} style={{
+                borderRadius: 16, overflow: "hidden",
+                backgroundColor: isDark ? "#161d2e" : "#ffffff",
+                borderWidth: 1, borderColor: w.pinned ? "#f59e0b" : (isDark ? "#26304a" : "#e7ebf2"),
+                elevation: 3, shadowColor: "#000", shadowOpacity: isDark ? 0.35 : 0.12, shadowRadius: 7, shadowOffset: { width: 0, height: 3 },
+              }}>
+                {/* 플랫폼 브랜드 액센트 바 */}
+                <View style={{ height: 4, backgroundColor: w.pinned ? "#f59e0b" : pc }} />
+                <View style={{ padding: 13 }}>
+                  <View style={{ flexDirection: "row", gap: 12 }}>
+                    <View style={{ borderRadius: 10, overflow: "hidden", borderWidth: 1, borderColor: isDark ? "#26304a" : "#e7ebf2" }}>
+                      <CoverImage uri={w.cover_url} size={74} theme={C} onPress={setCoverViewerUri} />
                     </View>
-                    <Text style={{ color: C.sub, fontSize: 12, marginTop: 2 }} numberOfLines={1}>✍️ {w.author || "작가 미상"}{w.total_episodes ? ` · ${w.total_episodes}화` : ""}{w.is_completed ? " · 완결" : ""}</Text>
-                    {genres.length ? <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }} numberOfLines={1}>🏷️ {genres.slice(0, 4).join(", ")}</Text> : null}
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 3, flexWrap: "wrap" }}>
-                      {w.taste_score > 0 ? <Text style={{ color: "#3b82f6", fontSize: 11, fontWeight: "700" }}>취향 {w.taste_score}</Text> : null}
-                      {w.age ? <Text style={{ color: "#ef4444", fontSize: 11, fontWeight: "700" }}>19</Text> : null}
-                      {w.source_keyword ? <Text style={{ color: C.sub, fontSize: 10 }}>🔎 {w.source_keyword}</Text> : null}
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 6 }}>
+                        <Text style={{ color: C.text, fontSize: 16, fontWeight: "800", flex: 1, lineHeight: 21 }} numberOfLines={2}>{w.title}</Text>
+                        <View style={{ backgroundColor: pc, paddingHorizontal: 9, paddingVertical: 4, borderRadius: 999 }}>
+                          <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>{w.platform || "넷"}</Text>
+                        </View>
+                      </View>
+                      <Text style={{ color: C.sub, fontSize: 12.5, marginTop: 4 }} numberOfLines={1}>✍️ {w.author || "작가 미상"}</Text>
+                      <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 5, marginTop: 7 }}>
+                        {w.total_episodes ? pill(`${w.total_episodes}화`, "ep") : null}
+                        {w.is_completed ? pill("완결", "cp", "#22c55e") : null}
+                        {w.age ? pill("19", "ag", "#ef4444") : null}
+                        {genres.slice(0, 3).map((g, gi) => pill(g, "g" + gi))}
+                      </View>
+                      {ts > 0 ? (
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 7, marginTop: 9 }}>
+                          <Text style={{ color: C.sub, fontSize: 11 }}>🧠</Text>
+                          <View style={{ flex: 1, height: 5, borderRadius: 3, backgroundColor: isDark ? "#27314a" : "#e7ebf2", overflow: "hidden" }}>
+                            <View style={{ width: `${Math.min(100, ts)}%`, height: "100%", backgroundColor: tasteColor }} />
+                          </View>
+                          <Text style={{ color: tasteColor, fontSize: 12, fontWeight: "800" }}>{ts}</Text>
+                        </View>
+                      ) : null}
                     </View>
                   </View>
-                </View>
-                {w.synopsis ? (() => {
-                  const exp = !!webRecoExpanded[w.id];
-                  const long = String(w.synopsis).length > 80;
-                  return (
-                    <TouchableOpacity activeOpacity={long ? 0.7 : 1} onPress={() => { if (long) setWebRecoExpanded((p) => ({ ...p, [w.id]: !p[w.id] })); }} style={{ marginTop: 8 }}>
-                      <Text style={{ color: C.sub, fontSize: 12, lineHeight: 17 }} numberOfLines={exp ? undefined : 3}>{w.synopsis}</Text>
-                      {long ? <Text style={{ color: "#10b981", fontSize: 11, marginTop: 3, fontWeight: "700" }}>{exp ? "▲ 접기" : "▼ 더보기"}</Text> : null}
+                  {w.synopsis ? (
+                    <TouchableOpacity activeOpacity={long ? 0.7 : 1} onPress={() => { if (long) setWebRecoExpanded((p) => ({ ...p, [w.id]: !p[w.id] })); }} style={{ marginTop: 11 }}>
+                      <Text style={{ color: C.sub, fontSize: 12.5, lineHeight: 18 }} numberOfLines={exp ? undefined : 3}>{w.synopsis}</Text>
+                      {long ? <Text style={{ color: pc, fontSize: 11, marginTop: 4, fontWeight: "700" }}>{exp ? "▲ 접기" : "▼ 더보기"}</Text> : null}
                     </TouchableOpacity>
-                  );
-                })() : null}
-                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
-                  {w.link ? <TouchableOpacity activeOpacity={0.7} onPress={() => safeOpenURL(w.link)} style={{ paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: C.line }}><Text style={{ color: C.text, fontSize: 12, fontWeight: "700" }}>🔗 바로가기</Text></TouchableOpacity> : null}
-                  <TouchableOpacity activeOpacity={0.7} onPress={() => saveWebRecoToPlanned(w)} style={{ paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, backgroundColor: "#8b5cf6" }}><Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>📋 예정</Text></TouchableOpacity>
-                  <TouchableOpacity activeOpacity={0.7} onPress={() => saveWebRecoToLibrary(w)} style={{ paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, backgroundColor: "#3b82f6" }}><Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>📥 본목록</Text></TouchableOpacity>
-                  <TouchableOpacity activeOpacity={0.7} onPress={() => pinWebReco(w)} style={{ paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: w.pinned ? "#f59e0b" : C.line }}><Text style={{ color: w.pinned ? "#f59e0b" : C.text, fontSize: 12, fontWeight: "700" }}>{w.pinned ? "⭐ 보관됨" : "⭐ 보관"}</Text></TouchableOpacity>
-                  <TouchableOpacity activeOpacity={0.7} onPress={() => dismissWebReco(w)} style={{ paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: C.line }}><Text style={{ color: C.sub, fontSize: 12, fontWeight: "700" }}>🙅 관심없음</Text></TouchableOpacity>
+                  ) : null}
+                  {/* 1차 액션 — 담기 */}
+                  <View style={{ flexDirection: "row", gap: 8, marginTop: 13 }}>
+                    <TouchableOpacity activeOpacity={0.85} onPress={() => saveWebRecoToPlanned(w)} style={{ flex: 1, paddingVertical: 11, borderRadius: 10, backgroundColor: "#8b5cf6", alignItems: "center" }}><Text style={{ color: "#fff", fontSize: 13, fontWeight: "800" }}>📋 예정에</Text></TouchableOpacity>
+                    <TouchableOpacity activeOpacity={0.85} onPress={() => saveWebRecoToLibrary(w)} style={{ flex: 1, paddingVertical: 11, borderRadius: 10, backgroundColor: "#3b82f6", alignItems: "center" }}><Text style={{ color: "#fff", fontSize: 13, fontWeight: "800" }}>📥 본목록에</Text></TouchableOpacity>
+                  </View>
+                  {/* 2차 액션 — 보기/보관/제외 */}
+                  <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                    {w.link ? <TouchableOpacity activeOpacity={0.7} onPress={() => safeOpenURL(w.link)} style={ghost}><Text style={ghostT}>🔗 바로가기</Text></TouchableOpacity> : null}
+                    <TouchableOpacity activeOpacity={0.7} onPress={() => pinWebReco(w)} style={[ghost, w.pinned ? { borderColor: "#f59e0b", backgroundColor: isDark ? "#3a2e12" : "#fef3c7" } : null]}><Text style={[ghostT, w.pinned ? { color: "#f59e0b" } : null]}>{w.pinned ? "⭐ 보관됨" : "⭐ 보관"}</Text></TouchableOpacity>
+                    <TouchableOpacity activeOpacity={0.7} onPress={() => dismissWebReco(w)} style={[ghost, { flex: 0, paddingHorizontal: 14 }]}><Text style={ghostT}>🙅</Text></TouchableOpacity>
+                  </View>
+                  {w.source_keyword ? <Text style={{ color: C.sub, fontSize: 10, marginTop: 9, opacity: 0.7 }}>🔎 ‘{w.source_keyword}’ 검색에서 발견</Text> : null}
                 </View>
               </View>
             );
