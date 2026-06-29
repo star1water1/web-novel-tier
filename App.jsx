@@ -2,9 +2,28 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.49.18 (잔여 구조적 4건 — 복원 롤백·검증 동시성·프리셋·페어링)           ║
+ * ║  버전: 7.49.19 (세션 변경 자기검토 — 롤백·슬롯가드 갭·자가복구·하드킬복구)        ║
  * ║  최종 수정: 2026-06-29                                                        ║
- * ║  총 라인 수: 약 72,850줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 72,890줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔬 v7.49.19 세션 변경 자기검토 — 3에이전트 적대검증·도입결함 수정 (2026-06-29) ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ v7.49.16~18에서 '직접 추가/수정한' 코드를 3에이전트로 적대 자기검토. 도입 결함:  ║
+ * ║ 🟠[롤백 불완전] import 자동 롤백이 DB 13테이블+globalTierConfig만 되돌리고 설정/  ║
+ * ║   의심도/티어임계/수상정의는 안 되돌려, 설정 블록 후 실패 시 백업값으로 드리프트.  ║
+ * ║   → 스냅샷 전 캡처·롤백 시 함께 원복(setAppSettings/setAwardSettings/global*).    ║
+ * ║ 🟠[슬롯가드 갭] respond의 _slotGeneration 가드가 await 이전 지점에만 있어, ①상대  ║
+ * ║   의심도 bump ②finalize 내부 execBatch가 무방비 → 슬롯 전환 시 새 슬롯 오염.     ║
+ * ║   → suspicion bump 직전 + finalize execBatch 직전(_fgen) 재검사 추가.            ║
+ * ║ 🟠[하드킬 복구] 비원자 복원이 OS 강제종료로 끊기면 try/catch 미발동·부분데이터.   ║
+ * ║   → 스냅샷 '완성' 마커(app_meta) + initDb 시작 시 마커+스냅샷 감지해 원본 자동복구.║
+ * ║ 🟡[자가복구 인덱스] enqueueVerification 자가복구(DROP/CREATE)가 partial UNIQUE    ║
+ * ║   인덱스 미재생성 → 그 세션 중복 pending 재발 가능. 인덱스 재생성+OR IGNORE 추가. ║
+ * ║ 에이전트 검증: 백업 round-trip·컬럼정합·페어링·reconcile·태그·munpia날짜 전부 정확║
+ * ║ (신규 크래시/오염 결함 0건 확인). 의도된 트레이드오프(회차 하향·완결일 보존) 유지.║
+ * ║ @babel/parser·괄호균형·reconcileWork/페어링 단위테스트 통과.                     ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -9465,6 +9484,8 @@ function seededShuffleValue(id, seed) {
 
 // 🆕 v7.3.0: progressCb 옵션 — initDb 진행 단계를 UI overlay에 표시.
 // progressCb({ label: "..." }) 형태로 호출. null/undefined 시 무시.
+// 🆕 v7.49.19: import 자동 롤백 스냅샷 대상 테이블(doClearAll이 지우는 전 테이블 + planned_novels). importJSON·initDb 공용.
+const IMPORT_SNAP_TABLES = ["novels", "matches", "choice_logs", "preference_patterns", "insight_queue", "folders", "novel_folders", "gallery_images", "tier_verification_queue", "tier_validation_log", "tier_repositioning_session", "trigger_fire_log", "planned_novels"];
 async function initDb(progressCb) {
   if (progressCb) progressCb({ label: "데이터베이스 연결 중..." });
   // DB 연결 확보
@@ -10029,6 +10050,30 @@ async function initDb(progressCb) {
 
   // manual_order 인덱스 (티어 그룹별 정렬 빠르게)
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_novels_manual_order ON novels(manual_tier, manual_order);`);
+
+  // 🆕 v7.49.19: 중단된 import 자동 복구 — 하드킬(프로세스 강제종료)로 doClearAll 후 INSERT 중에 끊기면 try/catch가 못 잡아
+  //   롤백 미발동·부분 데이터로 굳던 갭(JS 에러는 importJSON catch가 처리). 마커('_import_snap_active')는 스냅샷 '완성 후·doClearAll 전'에만
+  //   세팅되므로, 시작 시 마커+스냅샷이 둘 다 있으면 '복원이 미완료로 끊긴 것' → 스냅샷(원본)으로 복구. 마커 없으면 스냅샷이 불완전(데이터 무손상)이라 정리만.
+  try {
+    const _snapNov = await database.getFirstAsync("SELECT name FROM sqlite_master WHERE type='table' AND name='_imp_snap_novels'");
+    if (_snapNov) {
+      const _mk = await database.getFirstAsync("SELECT value FROM app_meta WHERE key='_import_snap_active'");
+      if (_mk && _mk.value) {
+        console.warn("[v7.49.19] 중단된 복원 감지 — 스냅샷에서 원본 자동 복구");
+        for (const t of IMPORT_SNAP_TABLES) {
+          try {
+            const ex = await database.getFirstAsync("SELECT name FROM sqlite_master WHERE type='table' AND name=?", [`_imp_snap_${t}`]);
+            if (!ex) continue;
+            await database.runAsync(`DELETE FROM ${t};`);
+            await database.runAsync(`INSERT INTO ${t} SELECT * FROM _imp_snap_${t};`);
+          } catch (re) { console.warn("[v7.49.19] startup 복구 " + t + " 실패:", re?.message); }
+        }
+      }
+      // 복구했든(완료) 불완전했든 스냅샷·마커 정리
+      for (const t of IMPORT_SNAP_TABLES) { try { await database.runAsync(`DROP TABLE IF EXISTS _imp_snap_${t};`); } catch {} }
+      try { await database.runAsync("DELETE FROM app_meta WHERE key='_import_snap_active';"); } catch {}
+    }
+  } catch (e) { console.warn("[v7.49.19] startup 스냅샷 복구 체크 실패:", e?.message); }
 
   // manual_order 백필 (1회만 — app_meta로 가드)
   await backfillManualOrder(database);
@@ -35260,8 +35305,11 @@ async function enqueueVerification(novelId, triggerType, suspicionType, source) 
         await exec(`CREATE TABLE tier_verification_queue (id TEXT PRIMARY KEY NOT NULL, novel_id TEXT NOT NULL, trigger_type TEXT NOT NULL, suspicion_type TEXT NOT NULL, priority INTEGER DEFAULT 0, state TEXT DEFAULT 'pending', created_at INTEGER NOT NULL, processed_at INTEGER);`);
         await exec(`CREATE INDEX IF NOT EXISTS idx_tvq_state ON tier_verification_queue(state, priority DESC, created_at);`);
         await exec(`CREATE INDEX IF NOT EXISTS idx_tvq_novel ON tier_verification_queue(novel_id);`);
+        // 🆕 v7.49.19: 자가복구로 테이블을 재생성해도 '작품당 pending 1건' partial UNIQUE 인덱스를 같이 복원
+        //   (이전: 누락 → 자가복구 후 다음 앱 시작 전까지 INSERT OR IGNORE가 무충돌 INSERT라 중복 pending 재발 가능).
+        try { await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_tvq_pending_novel ON tier_verification_queue(novel_id) WHERE state='pending';`); } catch {}
         await exec(
-          `INSERT INTO tier_verification_queue (id, novel_id, trigger_type, suspicion_type, priority, state, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+          `INSERT OR IGNORE INTO tier_verification_queue (id, novel_id, trigger_type, suspicion_type, priority, state, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
           [uuid(), novelId, triggerType, suspicionType, priority, now]
         );
         __lastEnqueueErr = null; // 자가복구 성공
@@ -35545,6 +35593,7 @@ function computeNewPosition(suspicionNovel, candidates, responses, suspicionType
 async function finalizeVerificationSession(queueRow, suspicionNovel, candidates, responses, suspicionType, stopReason) {
   const sessionId = uuid();
   const now = Date.now();
+  const _fgen = _slotGeneration; // 🆕 v7.49.19: 슬롯 전환 가드 — 내부 await(refresh fetch) 이후 슬롯이 바뀌면 자리 UPDATE/decay를 새 슬롯에 쓰지 않음
   // 🆕 v7.0.3: passed/blocker 후보를 DB에서 fresh fetch — 세션 동안 다른 경로가 manual_tier/order를
   // 변경했을 가능성 차단 (stale snapshot으로 finalize → 잘못된 자리 산출 방지)
   const refreshedCandidates = [...candidates];
@@ -35632,6 +35681,8 @@ async function finalizeVerificationSession(queueRow, suspicionNovel, candidates,
       params: [now, queueRow.id],
     });
 
+    // 🆕 v7.49.19: 슬롯 전환 가드 — refresh fetch/computeNewPosition await 사이 슬롯이 바뀌었으면 새 슬롯에 자리 UPDATE·전작품 decay를 쓰지 않고 중단(큐는 pending 유지 → 원 슬롯 복귀 시 재검증).
+    if (_slotGeneration !== _fgen) { console.warn("[v7.49.19] finalize: 슬롯 전환 감지 — execBatch 중단(새 슬롯 오염 방지)"); return { sessionId, action: "aborted", stopReason }; }
     await execBatch(txBatch);
 
     // v7.0.1 (C1 fix): 자리 재배치 후 manual_order gap=100 invariant 회복 (트랜잭션 밖 — gap 복원은 멱등)
@@ -45007,7 +45058,7 @@ function AppContent() {
         if (rec.completedAt != null && rec.completedAt !== (Number(work.completed_at) || 0)) setCol("completed_at", rec.completedAt, "완결일");
         if (rec.endYear != null && rec.endYear !== (Number(work.end_year) || 0)) setCol("end_year", rec.endYear, `완결연도 ${rec.endYear}`);
       }
-      // 🔧 v7.49.16: 완결→비완결 강등 시에도 완결일/연도는 '보존'(사용자 수동 입력 보호) — work_status만 갱신(위 44916).
+      // 🔧 v7.49.16: 완결→비완결 강등 시에도 완결일/연도는 '보존'(사용자 수동 입력 보호) — work_status만 위 분기에서 갱신.
       //   이전엔 0으로 삭제 → 단일 링크의 비완결 관측(플랫폼 표기차·오파싱)으로 사용자가 입력한 완결일이 날아가던 문제. 자기교정보다 보존 우선.
       // 회차·외전 — 단일 권위 링크에서 원자적(혼합 금지 → 본편+외전 정합·교차오염 차단)
       if (rec.totalEpisodes != null && rec.totalEpisodes > 0 && rec.totalEpisodes !== (Number(work.total_episodes) || 0)) setCol("total_episodes", rec.totalEpisodes, `회차 ${Number(work.total_episodes) || 0}→${rec.totalEpisodes}`);
@@ -50721,6 +50772,7 @@ function AppContent() {
     //   X(의심작) 승→상대 패: 과대평가 가설(기본 소폭↑), 상대가 X보다 상위였으면 업셋→대폭↑.
     //   X 패→상대 승: 저평가 가설(기본 소폭↑), 상대가 X보다 하위였으면 업셋→대폭↑.
     //   → "순위 높은 후보가 의심작한테 졌고, 낮은 후보는 이겼다"가 per-상대 업셋 누적으로 자동 반영.
+    if (_slotGeneration !== _gen) return; // 🆕 v7.49.19: logVerificationMatch await 이후 슬롯 전환됐으면 suspicion bump를 새 슬롯에 쓰지 않음(가드 갭 차단)
     try {
       const yAbove = isRankedAbove(candidate, suspicionNovel, globalTierConfig);
       const upset = suspicionWon ? yAbove : !yAbove; // X승&상대상위 또는 X패&상대하위 = 순위 모순
@@ -53936,11 +53988,16 @@ async function importJSON() {
               // 🆕 v7.49.18: 복원 전 자동 스냅샷 — DELETE 후 INSERT가 크래시/부분 실패해도 원본 데이터를 자동 복구(롤백).
               //   doClearAll이 지우는 전 테이블 + planned_novels를 임시테이블로 복제(SQL 내부 복사 — 파일/DB연결 조작 없어 안전).
               //   ※갤러리 이미지 '파일'은 doClearAll이 물리 삭제하므로 복구 불가(메타 행만 복구). 핵심(작품·매치)은 완전 복구.
-              const _SNAP_TABLES = ["novels","matches","choice_logs","preference_patterns","insight_queue","folders","novel_folders","gallery_images","tier_verification_queue","tier_validation_log","tier_repositioning_session","trigger_fire_log","planned_novels"];
+              const _SNAP_TABLES = IMPORT_SNAP_TABLES; // 🆕 v7.49.19: 모듈 공용 목록(initDb startup 복구와 단일 소스)
               const _snapName = (t) => `_imp_snap_${t}`;
               let _snapCreated = false;
               const _origTierConfig = JSON.parse(JSON.stringify(globalTierConfig)); // 🆕 v7.49.18: 롤백 시 복원(복원이 INSERT 전에 globalTierConfig를 백업값으로 바꿈)
-              const _dropSnapshot = async () => { for (const t of _SNAP_TABLES) { try { await exec(`DROP TABLE IF EXISTS ${_snapName(t)};`); } catch {} } };
+              // 🆕 v7.49.19: 설정류도 캡처 — 복원이 작품 INSERT 후 설정/의심도/티어임계/수상정의를 백업값으로 영속하므로, 그 이후 실패 시 롤백에서 함께 되돌려야 부분 비정합 방지.
+              const _origSuspicionConfig = JSON.parse(JSON.stringify(globalSuspicionConfig));
+              const _origTierThresholds = JSON.parse(JSON.stringify(globalTierThresholds));
+              const _origAppSettings = appSettings;
+              const _origAwards = awardSystemSettings;
+              const _dropSnapshot = async () => { for (const t of _SNAP_TABLES) { try { await exec(`DROP TABLE IF EXISTS ${_snapName(t)};`); } catch {} } try { await exec("DELETE FROM app_meta WHERE key='_import_snap_active';"); } catch {} }; // 🆕 v7.49.19: 마커도 정리
               const _restoreSnapshot = async () => {
                 for (const t of _SNAP_TABLES) {
                   try {
@@ -53955,6 +54012,8 @@ async function importJSON() {
               // 스냅샷 생성(실패 시 doClearAll 전이라 데이터 무손상 → catch에서 deleteCompleted=false 경로)
               for (const _t of _SNAP_TABLES) { await exec(`DROP TABLE IF EXISTS ${_snapName(_t)};`); await exec(`CREATE TABLE ${_snapName(_t)} AS SELECT * FROM ${_t};`); }
               _snapCreated = true;
+              // 🆕 v7.49.19: 스냅샷 '완성' 마커 — 이 시점 이후 하드킬되면 시작 시 initDb가 이 마커+스냅샷을 보고 원본 복구(doClearAll은 이 다음).
+              try { await exec("INSERT OR REPLACE INTO app_meta (key,value) VALUES ('_import_snap_active','1');"); } catch {}
               await doClearAll();
               deleteCompleted = true;
 
@@ -54703,7 +54762,12 @@ async function importJSON() {
                   if (_snapCreated) { try { await _restoreSnapshot(); _rolledBack = true; } catch (rbErr) { console.warn("[import] 자동 롤백 실패:", rbErr?.message); } }
                   await _dropSnapshot();
                   if (_rolledBack) {
-                    try { globalTierConfig = _origTierConfig; } catch {} // 복원이 바꾼 config 되돌림(롤백 데이터와 정합)
+                    try { globalTierConfig = _origTierConfig; rebuildTierLookup(globalTierConfig); } catch {} // 복원이 바꾼 config 되돌림(롤백 데이터와 정합)
+                    // 🆕 v7.49.19: 설정/의심도/티어임계/수상정의도 원복(복원이 백업값으로 영속했을 수 있음) — 부분 비정합 방지.
+                    try { globalSuspicionConfig = _origSuspicionConfig; } catch {}
+                    try { globalTierThresholds = _origTierThresholds; } catch {}
+                    try { setAppSettings(_origAppSettings); await setAppMeta("app_settings", _origAppSettings); } catch {}
+                    try { setAwardSystemSettings(_origAwards); await setAppMeta("award_system_settings", _origAwards); } catch {}
                     try { invalidatePatternCache(); invalidateWeightsCache(); } catch {}
                     try { await loadList(undefined, undefined, "import-rollback"); } catch {}
                     try { await loadPlannedList(); } catch {}
