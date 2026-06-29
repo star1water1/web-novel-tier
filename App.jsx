@@ -2,11 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.49.10 (문피아 외전 — '본편 완결 마커(完/완결)'로 분리; 아크명 외전 대응) ║
- * ║  최종 수정: 2026-06-28                                                        ║
+ * ║  버전: 7.49.11 (멀티플랫폼 정본화 P1 — 빠른 연재연도 우선 + 완결상태 자기교정)  ║
+ * ║  최종 수정: 2026-06-29                                                        ║
  * ║  총 라인 수: 약 72,710줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔗 v7.49.11 멀티플랫폼 정본화 Phase 1 — 빠른 연도 우선 + 자기교정 (2026-06-29) ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 전수조사(4영역) 결과: 앱이 각 fetch를 '고립 1회성 쓰기'로 처리 + 방어 가드 남발 ║
+ * ║ → 자기교정 불가. ①기본 일괄갱신은 연도/완결/외전을 cur===0일 때만 채움(틀린 값  ║
+ * ║ 영구면역) ②work_status 일방통행(완결 오검출 영구고정) ③링크별 startYear가 정본  ║
+ * ║ start_year로 전파 안 됨(빠른 연재연도 무시) ④외전 0 찾아도 stale 못 지움.       ║
+ * ║ Phase 1(저위험·결정독립): ⓐ earliestLinkYear — 정본 start_year=모든 링크 중 가장 ║
+ * ║ 이른 연도(원본 연재 우선·move-earlier-only). 링크추가/연도채움/재조회 전 경로 배선║
+ * ║ ⓑ 덮어쓰기 재조회 시 work_status 자기교정(잘못된 완결→연재중 복귀 + 완결일/연도  ║
+ * ║ 정리). 단위검증(earliestLinkYear 6케이스) 통과 + @babel/parser 통과.            ║
+ * ║ Phase 2(예정·사용자 검토): 링크별 관측치 저장 + reconcileWork 정본화 엔진(외전   ║
+ * ║ staleness·단일권위 회차원천), Phase 3: 원본 vs 일괄퍼블리싱 감지.                ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║ 🔎 v7.49.10 문피아 외전 — '본편 완결 마커' 기반 분리 (2026-06-28)             ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -16649,6 +16663,20 @@ function chooseUpdateLink(work) {
   const byAdded = links.slice().sort((a, b) => (a.addedAt - b.addedAt));
   return byAdded[0].url;
 }
+// 🆕 v7.49.11: 정본 연재시작연도 = 모든 링크 중 '가장 이른' 연도(원본 연재 우선). 멀티플랫폼 자기수렴 —
+//   더 이른 원본 링크를 추가/재조회하면 정본이 그쪽으로 내려감(절대 더 늦은 연도로 올리지 않음).
+//   links가 비면 linksOf가 단일 link+start_year로 합성하므로 레거시 단일링크도 안전. extraYear=이번 fetch가 새로 안 연도.
+//   0/범위밖은 무시. 후보 없으면 0.
+function earliestLinkYear(work, extraYear) {
+  let best = 0;
+  for (const l of linksOf(work)) {
+    const y = Number(l.startYear) || 0;
+    if (y >= 1980 && y <= 2099 && (best === 0 || y < best)) best = y;
+  }
+  const ey = Number(extraYear) || 0;
+  if (ey >= 1980 && ey <= 2099 && (best === 0 || ey < best)) best = ey;
+  return best;
+}
 function buildScrapeItems(meta, current = {}, opts = {}) {
   if (!meta) return [];
   const items = [];
@@ -18218,7 +18246,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.49.10";
+const APP_VERSION = "7.49.11";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -18244,6 +18272,19 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.49.11", date: "2026-06-29",
+    title: "🔗 멀티플랫폼 정본화 1단계 — 빠른 연재연도 우선 + 완결 자기교정",
+    highlights: [
+      { type: "improve", text: "🔗 같은 작품의 여러 플랫폼 링크 중 ‘가장 이른 연재 시작연도’를 자동으로 정본(대표값)으로 삼아요. 나중에 더 일찍 연재한 원본 플랫폼 링크를 추가하거나 연도를 채우면, 작품의 연재 시작연도가 그 이른 연도로 자동 수정돼요(더 늦은 값으론 올라가지 않음). 원본 연재처가 기준이 되도록요." },
+      { type: "fix", text: "🔧 ‘재취득·덮어쓰기’로 다시 불러오면 잘못 박힌 ‘완결’ 상태를 ‘연재중’으로 되돌릴 수 있어요(완결일·완결연도도 함께 정리). 예전엔 한 번 완결로 잘못 잡히면 정상 링크로 다시 불러와도 못 고쳤어요." },
+    ],
+    details: [
+      "전수조사로 확인한 구조적 문제: 앱이 각 플랫폼 조회를 따로따로 처리하고, 한 번 채워진 값은 비어 있을 때만 갱신하도록 막아둬서, 틀린 값이 박히면 다시 불러와도 안 고쳐졌어요.",
+      "이번(1단계)은 ‘연재 시작연도 정본화’와 ‘완결 상태 자기교정’만 안전하게 적용했어요. 회차수가 깎이는 위험이 없는 범위입니다.",
+      "다음 단계(검토 후)에서 링크별 관측치를 따로 저장해 모든 플랫폼이 서로를 보완하는 ‘정본화 엔진’(외전 stale 해소·단일 권위 플랫폼 회차)과 원본/일괄퍼블리싱 구분을 넣을 예정이에요.",
+    ],
+  },
   {
     version: "7.49.10", date: "2026-06-28",
     title: "🔎 문피아 외전 — ‘본편 완결(完/완결) 표시’로 외전 분리",
@@ -44616,17 +44657,31 @@ function AppContent() {
     const curEp = Number(work.total_episodes) || 0, newEp = Number(meta.totalEpisodes) || 0;
     // 기본: 증가 시만(성장). 덮어쓰기: 값이 있고 다르면 교체(본편 기준이라 더 작아질 수도).
     if (newEp > 0 && (overwrite ? newEp !== curEp : newEp > curEp)) setCol("total_episodes", newEp, `회차 ${curEp}→${newEp}`);
-    // 🆕 v7.28.61: 완결/연중 전환 — 완결은 연재중→완결만, 연중(dropped)은 연재중→연중만 (역전 금지, 덮어쓰기에서도 동일)
+    // 🆕 v7.28.61: 완결/연중 전환 — 기본은 연재중→완결만, 연중(dropped)은 연재중→연중만 (역전 금지).
+    // 🔧 v7.49.11: 자기교정 — 덮어쓰기(재취득) 모드에선 잘못 박힌 완결을 연재중으로 되돌리는 등 알려진 상태로 교체 허용.
+    //   (이전엔 일방통행이라 한 번 오검출로 완결 고정 → 정상 링크로 다시 불러와도 못 고침). 연재중 복귀 시 완결일/완결연도도 정리.
     const curWs = work.work_status || "ongoing";
-    if (meta.workStatus === "completed" && curWs !== "completed") setCol("work_status", "completed", "✅완결 전환");
+    const KNOWN_WS = ["completed", "ongoing", "dropped", "hiatus"];
+    let revertedToOngoing = false;
+    if (overwrite && meta.workStatus && meta.workStatus !== curWs && KNOWN_WS.includes(meta.workStatus)) {
+      setCol("work_status", meta.workStatus, `상태 ${curWs}→${meta.workStatus}`);
+      if (meta.workStatus === "ongoing" && curWs === "completed") {
+        revertedToOngoing = true;
+        if (Number(work.completed_at) || 0) setCol("completed_at", 0, "완결일 해제");
+        if (Number(work.end_year) || 0) setCol("end_year", 0, "완결연도 해제");
+      }
+    } else if (meta.workStatus === "completed" && curWs !== "completed") setCol("work_status", "completed", "✅완결 전환");
     else if (meta.workStatus === "dropped" && curWs === "ongoing") setCol("work_status", "dropped", "⏸연중 전환");
+    // 🔧 v7.49.11: 빠른 연재연도 우선 — 링크들 + 이번 fetch 중 '가장 이른' 연도로 정본화(원본 연재 우선).
+    //   더 이른 값이면 항상 채택(덮어쓰기 무관), 더 늦은 값으론 절대 올리지 않음 → 자기수렴.
     const curSy = Number(work.start_year) || 0, newSy = Number(meta.startYear) || 0;
-    if (newSy > 0 && (overwrite ? newSy !== curSy : curSy === 0)) setCol("start_year", newSy, `시작 ${newSy}`);
+    const bestSy = earliestLinkYear(work, newSy);
+    if (bestSy > 0 && bestSy !== curSy && (curSy === 0 || bestSy < curSy)) setCol("start_year", bestSy, `시작 ${bestSy}`);
     const curEy = Number(work.end_year) || 0, newEy = Number(meta.endYear) || 0;
-    if (newEy > 0 && (overwrite ? newEy !== curEy : curEy === 0)) setCol("end_year", newEy, `완결연도 ${newEy}`);
+    if (!revertedToOngoing && newEy > 0 && (overwrite ? newEy !== curEy : curEy === 0)) setCol("end_year", newEy, `완결연도 ${newEy}`);
     // 🆕 v7.28.61: 완결일 — 완결작 한정. 기본은 빈 칸만, 덮어쓰기는 본편 완결일로 교체.
     const curCa = Number(work.completed_at) || 0, newCa = Number(meta.completedAt) || 0;
-    const willComplete = meta.workStatus === "completed" || curWs === "completed";
+    const willComplete = !revertedToOngoing && (meta.workStatus === "completed" || curWs === "completed");
     if (willComplete && newCa > 0 && (overwrite ? newCa !== curCa : curCa === 0)) setCol("completed_at", newCa, "완결일");
     // 🆕 v7.41.0: 외전(네이버 분리 결과 meta.gaiden* 있을 때만) — 회차수·시작/완결일·상태
     const newGc = Number(meta.gaidenCount) || 0;
@@ -44957,7 +45012,13 @@ function AppContent() {
         const next = [...cur, { url: url.trim(), platform: entry.platform, startYear, addedAt: Date.now() }];
         const linksJson = JSON.stringify(next.map(l => ({ url: l.url, platform: canonicalPlatform(l.platform || ""), startYear: Number(l.startYear) || 0, addedAt: Number(l.addedAt) || 0 })));
         const mergedPlats = mergePlatformFromLink(parsePlatforms(w.platforms), url);
-        await exec("UPDATE novels SET links=?, platforms=? WHERE id=?", [linksJson, JSON.stringify(mergedPlats), entry.workId]);
+        // 🔧 v7.49.11: 새 링크가 더 이른 연재연도를 가지면 정본 start_year도 그쪽으로 내려 정본화(원본 연재 우선·move-earlier-only).
+        const curSy = Number(w.start_year) || 0, bestSy = earliestLinkYear({ links: linksJson }, 0);
+        if (bestSy > 0 && (curSy === 0 || bestSy < curSy)) {
+          await exec("UPDATE novels SET links=?, platforms=?, start_year=? WHERE id=?", [linksJson, JSON.stringify(mergedPlats), bestSy, entry.workId]);
+        } else {
+          await exec("UPDATE novels SET links=?, platforms=? WHERE id=?", [linksJson, JSON.stringify(mergedPlats), entry.workId]);
+        }
         setLinkFillResults(prev => [...prev, { title: entry.title, platform: entry.platform, added: true, startYear }]);
       }
     } catch (e) {
@@ -44997,7 +45058,12 @@ function AppContent() {
       }
       if (changed) {
         const linksJson = JSON.stringify(links.map(l => ({ url: l.url, platform: canonicalPlatform(l.platform || ""), startYear: Number(l.startYear) || 0, addedAt: Number(l.addedAt) || 0 })));
-        try { await exec("UPDATE novels SET links=? WHERE id=?", [linksJson, n.id]); } catch {}
+        // 🔧 v7.49.11: 채워진 링크 연도 중 가장 이른 값으로 정본 start_year 정본화(원본 연재 우선·move-earlier-only).
+        const curSy = Number(n.start_year) || 0, bestSy = earliestLinkYear({ links: linksJson }, 0);
+        try {
+          if (bestSy > 0 && (curSy === 0 || bestSy < curSy)) await exec("UPDATE novels SET links=?, start_year=? WHERE id=?", [linksJson, bestSy, n.id]);
+          else await exec("UPDATE novels SET links=? WHERE id=?", [linksJson, n.id]);
+        } catch {}
       }
     }
     setStartYearFillProgress({ current: targets.length, total: targets.length, filled });
