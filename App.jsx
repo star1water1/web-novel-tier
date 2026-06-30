@@ -2,9 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.53.2 (실사용 시나리오 검토 — 밴 구두점경계·백업복원 일관성)            ║
+ * ║  버전: 7.53.3 (실사용 시나리오 2차 — 동시fetch 가드·미리보기 절단표시·중복확인)  ║
  * ║  최종 수정: 2026-06-30                                                        ║
  * ║  총 라인 수: 약 74,560줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.53.3 실사용 시나리오 2차 검토 후속 (2026-06-30)                           ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 새 7개 시나리오(담기·플랫폼·필터·다시뽑기·보관/숨김·키워드충돌·AI/미리보기) ×    ║
+ * ║ 3 에이전트 추적 → 진짜 문제 3건 수정:                                            ║
+ * ║ • [동시 fetch] 자동 가져오기는 쿨다운을 우회하고 ref도 안 찍어서, 탭 진입 직후     ║
+ * ║   수동 '🎲 가져오기'를 누르면 두 실행이 겹쳐 web_reco DELETE/INSERT가 교차되던     ║
+ * ║   레이스 → 동기 webRecoFetchingRef 가드 추가(자동·수동 공통, finally 해제).      ║
+ * ║ • [미리보기 절단] 풀이 120개↑면 칩은 잘리는데 헤더는 전체수 표시 → '+N개 더       ║
+ * ║   (표시만 생략·검색엔 전부 사용)' 칩으로 오해 제거.                              ║
+ * ║ • [중복 확인] saveWebRecoToLibrary가 예정 목록 중복을 안 보던 비대칭 → 예정       ║
+ * ║   중복 시 '등록전환' 안내(saveWebRecoToPlanned와 대칭).                          ║
+ * ║ 질문으로 넘긴 것(기존 구조·제품판단): 검색결과 meta 없는 플랫폼(리디/네이버)에     ║
+ * ║ 완결/회차/19금 필터 미적용, '대상 플랫폼'↔'검색 사이트' 설정 이중성.             ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -38348,6 +38364,7 @@ function AppContent() {
   const [harvestRows, setHarvestRows] = useState([]);
   const [webRecoExpanded, setWebRecoExpanded] = useState({});  // 넷상 카드 소개글 펼침 {id:true}
   const webRecoLastFetchRef = useRef(0);                       // 재뽑기 쿨다운
+  const webRecoFetchingRef = useRef(false);                    // 🌐 v7.53.3: 동시 실행 가드(자동+수동 겹침 방지)
   const [recoHistory, setRecoHistory] = useState([]); // 최근 5회 추천 기록 [{novelId, pickedAt}]
   
   // 🆕 v3.4.1: 최근 편집 작품 (빠른 접근용)
@@ -42741,12 +42758,14 @@ function AppContent() {
 
   // 넷상 추천 가져오기: 키워드 선정 → 검색(부분성공) → dedup·필터·정렬 → 저장 → 수확. 쿨다운/검색상한 적용.
   async function fetchWebRecommendations(opts = {}) {
+    if (webRecoFetchingRef.current) return;                    // 🌐 v7.53.3: 이미 실행 중(자동·수동 겹침) → 무시(이중 DELETE/INSERT 방지)
     const isAuto = !!(opts && opts.auto);
     const nowMs = Date.now();
     if (!isAuto && nowMs - (webRecoLastFetchRef.current || 0) < WEB_RECO_REROLL_COOLDOWN_MS) {
       setWebRecoError("잠시 후 다시 시도해 주세요 (과도한 요청 방지).");
       return;
     }
+    webRecoFetchingRef.current = true;                         // 쿨다운 통과 후 잠금(동기 ref — state보다 먼저 닫힘)
     webRecoLastFetchRef.current = nowMs;
     setWebRecoLoading(true); setWebRecoError(null);
     try {
@@ -42845,6 +42864,7 @@ function AppContent() {
       setWebRecoError(e?.message || "추천을 가져오는 중 문제가 발생했어요.");
     } finally {
       setWebRecoLoading(false);
+      webRecoFetchingRef.current = false;                      // 🌐 v7.53.3: 잠금 해제
     }
   }
 
@@ -42877,6 +42897,9 @@ function AppContent() {
       if (mode === "manual" && !manualTierChoice) { setWebRecoTierPick(item); return; }
       const dup = await first("SELECT id FROM novels WHERE title=? LIMIT 1;", [item.title]);
       if (dup) { Alert.alert("이미 있어요", "같은 제목이 본 목록에 있어요."); return; }
+      // 🌐 v7.53.3: 예정 목록 중복도 확인(saveWebRecoToPlanned와 대칭) — 예정작은 '등록전환'으로 옮기도록 안내.
+      const dupPlanned = await first("SELECT id FROM planned_novels WHERE title=? LIMIT 1;", [item.title]);
+      if (dupPlanned) { Alert.alert("이미 있어요", "같은 제목이 예정 목록에 있어요. 예정에서 ‘본 목록으로 등록전환’을 써 주세요."); return; }
       const genres = safeParseJSON(item.genres, []) || [];
       const mapped = mapScrapedGenres(genres);
       let cover = item.cover_url || "";
@@ -57802,12 +57825,20 @@ async function importJSON() {
             const ex = kwPreview.explore || []; const ta = kwPreview.taste || [];
             const chipList = (a, color) => (
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-                {a.length === 0 ? <Text style={{ color: C.sub, fontSize: 12 }}>비어 있어요.</Text> :
-                  a.slice(0, 120).map((x, i) => (
-                    <View key={x.kw + i} style={{ paddingHorizontal: 9, paddingVertical: 5, borderRadius: 13, backgroundColor: color + "22", borderWidth: 1, borderColor: color + "55" }}>
-                      <Text style={{ color: C.text, fontSize: 11.5 }}>{x.kw}</Text>
-                    </View>
-                  ))}
+                {a.length === 0 ? <Text style={{ color: C.sub, fontSize: 12 }}>비어 있어요.</Text> : (
+                  <>
+                    {a.slice(0, 120).map((x, i) => (
+                      <View key={x.kw + i} style={{ paddingHorizontal: 9, paddingVertical: 5, borderRadius: 13, backgroundColor: color + "22", borderWidth: 1, borderColor: color + "55" }}>
+                        <Text style={{ color: C.text, fontSize: 11.5 }}>{x.kw}</Text>
+                      </View>
+                    ))}
+                    {a.length > 120 ? (
+                      <View style={{ paddingHorizontal: 9, paddingVertical: 5, borderRadius: 13, backgroundColor: C.chip }}>
+                        <Text style={{ color: C.sub, fontSize: 11.5 }}>+{a.length - 120}개 더 (표시만 생략·검색엔 전부 사용)</Text>
+                      </View>
+                    ) : null}
+                  </>
+                )}
               </View>
             );
             return (
