@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, applyEpisodeSplitToMeta, parseKakaoProductList, parseKakaoViewerDate, parseKakaoOverview, kakaoSeriesIdFromUrl, parseMunpiaEntries, parseMunpiaNovelInfo, munpiaIdFromUrl, SCRAPER_HEADERS, SCRAPER_UA, parseNaverWebtoonSearch, extractNaverWebtoonItems, WEBTOON_SEARCH_PLATFORMS };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, applyEpisodeSplitToMeta, parseKakaoProductList, parseKakaoViewerDate, parseKakaoOverview, kakaoSeriesIdFromUrl, parseMunpiaEntries, parseMunpiaNovelInfo, munpiaIdFromUrl, SCRAPER_HEADERS, SCRAPER_UA, parseNaverWebtoonSearch, extractNaverWebtoonItems, naverWebtoonItemToMeta, WEBTOON_SEARCH_PLATFORMS };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -70,27 +70,28 @@ eq("C.author(문자열)", c.author, "김작가");
 eq("C.coverUrl(image 객체)", c.coverUrl, "https://x/c.png");
 eq("C.totalEpisodes(numberOfPages)", c.totalEpisodes, 150);
 
-// ── 🎨 네이버웹툰 검색 파서(합성 — 실제 응답 shape는 ‘긁기 진단’ 캡처로 확정 예정) ──
-//   v1 파서는 titleId를 가진 배열을 관용적으로 탐색하므로, 가능한 키 이름 조합을 합성으로 검증한다.
-const nwJson = JSON.stringify({
-  searchWebtoonResult: { searchViewList: [
-    { titleId: 796152, titleName: "화산귀환", displayAuthor: "비가 / LICO", thumbnailUrl: "//x/hwa.jpg", genreList: ["액션", "무협"] },
-    { titleId: 654774, titleName: "신의 탑", displayAuthor: "SIU", thumbnailUrl: "https://x/tog.jpg" },
-  ] },
-});
-const nw = S.parseNaverWebtoonSearch(nwJson);
-eq("웹툰 검색 후보 2건", nw.length, 2);
-eq("웹툰 후보1 제목", nw[0].title, "화산귀환");
-eq("웹툰 후보1 작가", nw[0].author, "비가 / LICO");
-eq("웹툰 후보1 isComic=true", nw[0].isComic, true);
-eq("웹툰 후보1 platform", nw[0].platform, "네이버웹툰");
-eq("웹툰 후보1 url(titleId)", nw[0].url, "https://comic.naver.com/webtoon/list?titleId=796152");
-eq("웹툰 후보1 표지 //→https 보정", nw[0].coverUrl, "https://x/hwa.jpg");
-eq("웹툰 후보1 category(genreList join)", nw[0].category, "액션, 무협");
-eq("웹툰 검색 플랫폼 목록", S.WEBTOON_SEARCH_PLATFORMS, ["네이버웹툰"]);
-
 // ── ② 실측 차단 픽스처 판별(scraper-fixtures, 이 세션 egress로 직접 받음) ──────
 const fx = (f) => fs.readFileSync(path.join(__dirname, "scraper-fixtures", f), "utf8");
+
+// ── 🎨 네이버웹툰 검색 파서(실캡처 — comic.naver.com/api/search/all?keyword=화산귀환) ──
+const nwReal = S.parseNaverWebtoonSearch(fx("naver-webtoon-search-hwasan.json"));
+eq("웹툰 검색 후보 1건(웹툰 버킷만, nbooks 소설/단행본 제외)", nwReal.length, 1);
+eq("웹툰 후보 제목", nwReal[0].title, "화산귀환");
+eq("웹툰 후보 isComic=true", nwReal[0].isComic, true);
+eq("웹툰 후보 platform", nwReal[0].platform, "네이버웹툰");
+eq("웹툰 후보 url(titleId=769209)", nwReal[0].url, "https://comic.naver.com/webtoon/list?titleId=769209");
+eq("웹툰 후보 meta 첨부(재fetch 불필요)", !!(nwReal[0].meta && nwReal[0].meta.ok), true);
+eq("웹툰 글작가(ARTIST_WRITER)", nwReal[0].meta.author, "ARCHE, LICO");
+eq("웹툰 그림작가(글=그림 동일 → 생략)", nwReal[0].meta.artist, "");
+eq("웹툰 회차(articleTotalCount=175)", nwReal[0].meta.totalEpisodes, 175);
+eq("웹툰 연재상태(finished=false→연재중)", nwReal[0].meta.workStatus, "ongoing");
+truthy("웹툰 표지 https", String(nwReal[0].meta.coverUrl).startsWith("https://"));
+truthy("웹툰 장르에 무협/사극", nwReal[0].meta.genres.includes("무협/사극"));
+truthy("웹툰 태그에 회귀", nwReal[0].meta.genres.includes("회귀"));
+truthy("웹툰 태그에 먼치킨", nwReal[0].meta.genres.includes("먼치킨"));
+truthy("웹툰 태그에 소설원작", nwReal[0].meta.genres.includes("소설원작"));
+eq("웹툰 연령(nineteen=false→null)", nwReal[0].meta.ageTag, null);
+eq("웹툰 검색 플랫폼 목록", S.WEBTOON_SEARCH_PLATFORMS, ["네이버웹툰"]);
 const np = S.scraperDetectBlock(403, fx("novelpia-403-awselb.html"));
 eq("노벨피아 403(nginx) → forbidden", { blocked: np.blocked, kind: np.kind }, { blocked: true, kind: "forbidden" });
 const mp = S.scraperDetectBlock(403, fx("munpia-cf-challenge.html"));

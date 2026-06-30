@@ -2,9 +2,24 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.56.0 (웹툰모드 Phase 2 — 네이버웹툰 자동검색 v1, 베타)                   ║
+ * ║  버전: 7.56.1 (웹툰 Phase 2.1 — 네이버웹툰 파서 실캡처 정밀화, 베타)              ║
  * ║  최종 수정: 2026-06-30                                                        ║
- * ║  총 라인 수: 약 76,600줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 76,650줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🎨 v7.56.1 웹툰 Phase 2.1 — 네이버웹툰 검색 파서 실캡처 정밀화 (2026-06-30)      ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 실기기 '긁기 진단'으로 comic.naver.com/api/search/all 실응답 확보(엔드포인트 적중). ║
+ * ║ • `naverWebtoonItemToMeta` 신규: 웹툰 버킷(searchWebtoonResult) 항목→정규화 meta.  ║
+ * ║   communityArtists artistTypeList로 글작가(WRITER)/그림작가(PAINTER) 분리(글=그림  ║
+ * ║   동일 스튜디오면 그림 생략). genreList+tagList→genres(buildScrapeItems 매핑),     ║
+ * ║   articleTotalCount→회차, finished/rest→상태, thumbnailUrl→표지, nineteen→19금.    ║
+ * ║ • `parseNaverWebtoonSearch` 재작성: 웹툰 버킷(정식→베스트도전→도전)만, nbooks       ║
+ * ║   (소설/단행본 contentId) 제외. 풍부한 검색응답을 후보에 meta 직접 첨부(재fetch X). ║
+ * ║   미인식 shape는 generic/SSR 폴백 유지.                                          ║
+ * ║ • 실캡처 픽스처(naver-webtoon-search-hwasan.json) + scraper-test 16 assert(345 pass).║
+ * ║ esbuild 통과. ⚠️ URL-paste 메타(fetchNaverWebtoonMeta)는 별도 캡처로 후속 정밀화.   ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -17725,10 +17740,76 @@ async function searchNaverWebtoon(query, opts = {}) {
   return parseNaverWebtoonSearch(text);
 }
 
-// 검색 응답(JSON 또는 SSR HTML) → 후보[]. meta는 비워 두고 pick 시 URL로 fetchNaverWebtoonMeta 보강.
+// 🎨 v7.56.1: 네이버웹툰 검색 항목(searchViewList) → 정규화 meta(노벨피아 패턴). 실캡처 기반.
+//   글작가(ARTIST_WRITER)/그림작가(ARTIST_PAINTER) 분리. 글=그림 동일(스튜디오)면 그림작가 생략.
+//   원작자(ARTIST_NOVEL_ORIGIN)는 'soriginal' 태그(소설원작→원작있음)로 반영. 장르/태그는 buildScrapeItems가 앱 어휘로 매핑.
+function naverWebtoonItemToMeta(it) {
+  if (!it || typeof it !== "object") return null;
+  const titleId = it.titleId || it.titleid;
+  const title = String(it.titleName || it.title || "").trim();
+  if (!titleId || !title) return null;
+  const arts = Array.isArray(it.communityArtists) ? it.communityArtists : [];
+  const namesByType = (type) => arts.filter(a => Array.isArray(a.artistTypeList) && a.artistTypeList.includes(type)).map(a => String(a.name || "").trim()).filter(Boolean);
+  const writers = namesByType("ARTIST_WRITER");
+  const painters = namesByType("ARTIST_PAINTER");
+  let author = writers.join(", ") || String(it.displayAuthor || "").trim();
+  let artist = painters.join(", ");
+  if (artist && artist === author) artist = ""; // 글=그림 동일(스튜디오)면 중복 생략
+  const genreLabels = Array.isArray(it.genreList) ? it.genreList.map(g => (g && (g.description || g.name)) || g).filter(Boolean) : [];
+  const tagLabels = Array.isArray(it.tagList) ? it.tagList.map(t => (t && t.tagName) || "").filter(Boolean) : [];
+  const genres = [];
+  for (const g of [...genreLabels, ...tagLabels]) { const s = String(g).trim(); if (s && !genres.includes(s)) genres.push(s); }
+  let coverUrl = String(it.thumbnailUrl || "");
+  if (coverUrl.startsWith("//")) coverUrl = "https:" + coverUrl;
+  const ep = Number(it.articleTotalCount);
+  const workStatus = it.finished ? "completed" : (it.rest ? "hiatus" : "ongoing");
+  return {
+    ok: true, platform: "네이버웹툰", url: "https://comic.naver.com/webtoon/list?titleId=" + titleId,
+    title, author, artist, coverUrl,
+    synopsis: String(it.synopsis || "").trim(),
+    genres,
+    workStatus,
+    totalEpisodes: ep > 0 ? ep : null,
+    startYear: null, endYear: null, completedAt: 0,
+    ageTag: it.nineteen ? "19금" : null,
+  };
+}
+
+// 검색 응답(JSON) → 후보[]. 웹툰 버킷(정식→베스트도전→도전만화)만, nbooks(소설/단행본) 제외.
+//   검색 응답이 풍부해 meta 직접 첨부(노벨피아처럼) → pick 시 URL 재fetch 불필요. 미인식 shape는 generic/SSR 폴백.
 function parseNaverWebtoonSearch(payload) {
-  const items = extractNaverWebtoonItems(payload);
+  let data = null;
+  if (payload && typeof payload === "object") data = payload;
+  else { try { data = JSON.parse(payload); } catch { data = null; } }
   const out = [], seen = new Set();
+  const pushMeta = (meta, genreLabel) => {
+    if (!meta || !meta.title) return false;
+    const tid = (String(meta.url).match(/titleId=(\d+)/) || [])[1];
+    if (tid && seen.has(tid)) return false;
+    if (tid) seen.add(tid);
+    out.push({ title: meta.title, author: meta.author, url: meta.url, coverUrl: meta.coverUrl, platform: "네이버웹툰", category: String(genreLabel || (meta.genres || [])[0] || "").trim(), isComic: true, meta });
+    return true;
+  };
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    // 웹툰 버킷만 — nbooks(소설/단행본)는 contentId 기반이라 제외.
+    const buckets = ["searchWebtoonResult", "searchBestChallengeResult", "searchChallengeResult"];
+    let recognized = false;
+    for (const bk of buckets) {
+      const list = data[bk] && Array.isArray(data[bk].searchViewList) ? data[bk].searchViewList : null;
+      if (!list) continue;
+      recognized = true;
+      for (const it of list) {
+        const meta = naverWebtoonItemToMeta(it);
+        const genreLabel = Array.isArray(it.genreList) ? ((it.genreList[0] && (it.genreList[0].description || it.genreList[0].name)) || "") : "";
+        pushMeta(meta, genreLabel);
+        if (out.length >= 30) break;
+      }
+      if (out.length >= 30) break;
+    }
+    if (recognized) return out;
+  }
+  // 미인식 shape(버킷 없음/SSR HTML) → generic 폴백(meta 없음 → pick 시 URL로 보강)
+  const items = extractNaverWebtoonItems(payload);
   for (const it of items) {
     const titleId = it.titleId;
     const title = (it.title || "").trim();
@@ -17736,15 +17817,7 @@ function parseNaverWebtoonSearch(payload) {
     seen.add(String(titleId));
     let coverUrl = String(it.thumbnail || "");
     if (coverUrl.startsWith("//")) coverUrl = "https:" + coverUrl;
-    out.push({
-      title,
-      author: (it.author || "").trim(),
-      url: "https://comic.naver.com/webtoon/list?titleId=" + titleId,
-      coverUrl,
-      platform: "네이버웹툰",
-      category: (it.genre || "").trim(),
-      isComic: true, // 🎨 웹툰
-    });
+    out.push({ title, author: (it.author || "").trim(), url: "https://comic.naver.com/webtoon/list?titleId=" + titleId, coverUrl, platform: "네이버웹툰", category: (it.genre || "").trim(), isComic: true });
     if (out.length >= 30) break;
   }
   return out;
