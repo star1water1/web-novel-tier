@@ -2,9 +2,27 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.52.0 (불러오기·일괄갱신·링크관리 UX + 영속/무결성 버그수정)             ║
+ * ║  버전: 7.53.0 (추천 키워드 관리 화면 + 카카오 제목·밴 결과필터)                  ║
  * ║  최종 수정: 2026-06-30                                                        ║
- * ║  총 라인 수: 약 74,400줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 74,560줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🌐 v7.53.0 추천 키워드 관리 화면 + 카카오 제목·밴 결과필터 (2026-06-30)          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 실사용 피드백 4건 — 추천 탭(넷상 추천) 품질·UX.                                  ║
+ * ║ [#1 키워드 품질·전용 화면] 탐험 검색어가 서재 태그를 분류 무시하고 통째로 써      ║
+ * ║   '후반부붕괴'(퀄리티/평가)·'묵직한주인공'(캐릭터)·'사도'(미분류) 같은 부적합     ║
+ * ║   검색어가 새던 문제 → 전용 '🛠️ 키워드 관리' 화면 신설(카테고리 on/off · 밴/내   ║
+ * ║   키워드 · 실제 검색어 미리보기 · 수확풀 정리). getTagCategory 분류를 풀 빌더에   ║
+ * ║   게이트 — 검색 부적합 카테고리·미분류 태그 기본 OFF(기존 사용자도 즉시 개선).    ║
+ * ║ [#2 카카오 제목] '콘텐츠홈 - 카카오페이지'가 제목으로 들어오던 버그 — ① 상세      ║
+ * ║   scraperRefineKakao가 __NEXT_DATA__ 진짜 제목으로 og:title을 항상 덮어쓰게      ║
+ * ║   수정(기존 if(!title) 제거) ② isBadWebTitle/cleanKakaoTitle이 '콘텐츠홈' 일반   ║
+ * ║   제목 차단 ③ 추천 경로는 일반제목 카카오 후보를 content 메타로 진짜 제목 복구.   ║
+ * ║ [#3 밴 결과필터] 밴이 검색어 선정에서만 빠지던 걸 → 제목·작가·장르·카테고리가     ║
+ * ║   일치하는 '결과'도 제외(이미 가져온 목록도 즉시 반영 · ⭐ 보관 제외).            ║
+ * ║ [#4 정체불명 버튼] 보관 옆 손톱만 한 🙅 버튼 → '🚫 관심없음' 라벨+정상 크기.       ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -13495,6 +13513,16 @@ function getTagCategory(tag, customTagCategories = {}) {
   return null;
 }
 
+// 🌐 v7.53: 넷상 추천 검색 키워드로 부적합한 태그 카테고리(퀄리티/평가·캐릭터·문체·시점/인칭·분위기/톤·
+//   전개/구성·특수태그·연도/시기)는 기본 OFF. 카테고리명에 이모지가 붙거나 사용자가 이름을 바꿔도 핵심 한글로 매칭.
+function defaultKeywordCategoryOn(catKey) {
+  return !/(퀄리티|평가|캐릭터|문체|서술|시점|인칭|분위기|톤|전개|구성|특수|연도|시기)/.test(String(catKey || ""));
+}
+function isKeywordCategoryOn(catKey, prefs) {
+  if (prefs && Object.prototype.hasOwnProperty.call(prefs, catKey)) return !!prefs[catKey];
+  return defaultKeywordCategoryOn(catKey);
+}
+
 // 🆕 v7.33.0: 유형그룹(계층 태그 분류) — flat 카테고리(기본 GENERAL_TAGS + 커스텀)를 흡수해 시드.
 //   노드 shape: { id, name, parentId|null, order, tags:[원문] }. 같은 이름 최상위는 병합(원문 dedup).
 //   2단계 UI지만 parentId 체인이라 임의 깊이 확장 가능. 조회 인덱스는 buildTagToNodes로 파생(정규화).
@@ -15492,11 +15520,14 @@ function scraperRefineKakao(meta, html) {
     scraperDeepFind(nd, (o) => hasOverview(o) && /novel/i.test(String(o.categoryType))) ||
     scraperDeepFind(nd, hasOverview);
   if (metaInfo) {
-    if (!meta.title) meta.title = String(metaInfo.ogTitle || metaInfo.title || "").replace(/\s*-\s*(웹소설|웹툰)\s*$/, "").trim();
+    // 🌐 v7.53: __NEXT_DATA__의 ogTitle이 카카오의 진짜 작품 제목 — og:title은 '콘텐츠홈 - 카카오페이지'
+    //   같은 사이트/홈 일반 제목이 색인돼 신뢰 불가하므로, 진짜 제목이 있으면 항상 덮어쓴다(기존 if(!meta.title) 버그 수정).
+    const ndTitle = String(metaInfo.ogTitle || metaInfo.title || "").replace(/\s*-\s*(웹소설|웹툰)\s*$/, "").trim();
+    if (ndTitle) meta.title = ndTitle;
     if (!meta.author && metaInfo.author) meta.author = String(metaInfo.author).trim();
   }
   if (content) {
-    if (!meta.title && content.title) meta.title = String(content.title).trim();
+    if (content.title && !meta.title) meta.title = String(content.title).trim();
     if (!meta.author && content.authors) meta.author = String(content.authors).trim();
     // 🆕 v7.37.0: 줄거리는 content.description이 정답(전체 본문 + 줄바꿈 \n 보존). og:description은
     //   같은 글이라도 줄바꿈이 사라지고 길면 잘릴 수 있어, 구조화 본문이 있으면 그걸 우선한다.
@@ -16313,7 +16344,7 @@ async function fetchNovelMeta(url, opts = {}) {
   let meta = scraperNormalizeFromHtml(html, url);
   meta = scraperRefineByPlatform(meta, html, platform);
   // 🆕 v7.44.5: 카카오 빈-껍데기(죽은/비공개/연령벽 id)는 og:title이 사이트명 "카카오페이지"로 잡혀 가짜 성공이 됨 → 무효 처리.
-  if (platform === "카카오페이지" && meta && (meta.title === "카카오페이지" || meta.title === "")) { meta.ok = false; meta.title = ""; }
+  if (platform === "카카오페이지" && meta && (!meta.title || isBadWebTitle(meta.title))) { meta.ok = false; meta.title = ""; } // 🌐 v7.53: '콘텐츠홈 - 카카오페이지' 등 일반/SERP 제목도 무효 처리 → 아래 폴백 유도
   // 🆕 v7.44.5: 카카오 폴백 — SSR HTML에서 제목을 못 얻은 경우(client-only 렌더/연령벽)만 WebView 캡처→토큰 GraphQL 시도. 보통은 위 HTML에서 성공.
   if (platform === "카카오페이지" && (!meta || !meta.ok || !meta.title)) {
     let km = null;
@@ -16398,6 +16429,9 @@ function isBadWebTitle(t) {
   const s = String(t == null ? "" : t).trim();
   if (!s || s.length < 2) return true;
   if (/page\.kakao|kakao\.com|ridibooks|novelpia|munpia|series\.naver|joara|https?:\/\/|www\.|·\s*›|›|\.com(\/|\s|$)/i.test(s)) return true;
+  // 🌐 v7.53: 작품명이 아니라 사이트/홈 일반 제목이 색인된 케이스(카카오 '콘텐츠홈 - 카카오페이지' 등) 차단
+  if (/콘텐츠\s*홈/.test(s)) return true;
+  if (/^(카카오페이지|카카오웹툰|네이버\s*시리즈|리디북스|리디|문피아|노벨피아|조아라)$/.test(s)) return true;
   return false;
 }
 // 일반 교양서적(논픽션) 누수 차단 — 리디 등은 웹소설 외 ebook도 검색됨. 웹소설 장르와
@@ -16408,6 +16442,25 @@ function isNonFictionCategory(category) {
   if (!s) return false;
   return s.split(/[,/|·]/).map((x) => x.trim()).some((tok) => tok && WEB_RECO_NONFICTION_RE.test(tok));
 }
+// 🌐 v7.53: 밴 키워드를 '결과'에도 적용 — 장르/카테고리는 토큰 정확 일치(논픽션 게이트와 동일 방식),
+//   제목/작가는 부분 일치(예: 'BL', 'BL 소설 e북'을 밴하면 해당 작품 카드도 제외). 검색 선정뿐 아니라 결과까지 차단.
+function matchesBannedKeyword(c, bannedList) {
+  if (!c || !Array.isArray(bannedList) || !bannedList.length) return false;
+  const bans = bannedList.map((b) => String(b == null ? "" : b).trim().toLowerCase()).filter(Boolean);
+  if (!bans.length) return false;
+  const banSet = new Set(bans);
+  // 토큰(장르/카테고리): 정확 일치 — 짧은 밴어가 무관한 단어에 끼어드는 오탐 방지
+  const tokens = [];
+  const pushToks = (v) => { if (!v) return; String(v).split(/[,/|·]/).forEach((t) => { t = t.trim().toLowerCase(); if (t) tokens.push(t); }); };
+  pushToks(c.category);
+  const m = c.meta || null;
+  if (m && Array.isArray(m.genres)) for (const g of m.genres) { const t = String(g == null ? "" : g).trim().toLowerCase(); if (t) tokens.push(t); }
+  if (tokens.some((t) => banSet.has(t))) return true;
+  // 제목/작가: 부분 일치(2자 이상 밴어만)
+  const hay = [c.title, c.author].map((x) => String(x == null ? "" : x).toLowerCase()).join("  ");
+  if (bans.some((b) => b.length >= 2 && hay.includes(b))) return true;
+  return false;
+}
 // 🆕 v7.46.0: 카카오페이지 제목검색 — 카카오 자체 검색은 GraphQL+안티봇이라 막힘. 검색엔진에서 page.kakao.com
 //   작품 링크를 찾고, 선택 시 기존 카카오 링크 불러오기(SSR __NEXT_DATA__)가 메타를 채운다(.meta 미부착→runScrapeFromUrl).
 //   🆕 v7.46.1: 기본은 키 불필요(DuckDuckGo HTML 검색). 다음(Daum) REST 키를 넣으면 공식 API로 전환(옵션·더 안정).
@@ -16416,7 +16469,7 @@ function cleanKakaoTitle(t) {
     .replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&amp;/gi, "&") // 🔧 v7.46.3: 엔티티로 인코딩된 태그 먼저 디코드(<b> 찌꺼기 방지)
     .replace(/<[^>]+>/g, "")                      // 태그 제거(실태그·디코드된 하이라이트 모두)
     .replace(/&[a-z#0-9]+;/gi, " ")               // 나머지 엔티티 → 공백
-    .replace(/\s*[|｜]\s*카카오페이지.*$/u, "")    // " | 카카오페이지…" 이후 절단
+    .replace(/\s*[-–|｜]\s*카카오(페이지|웹툰).*$/u, "") // 🌐 v7.53: " - 카카오페이지" / " | 카카오웹툰…" 이후 절단(대시 포함)
     .replace(/\s*-\s*(웹소설|웹툰)\s*$/u, "")      // 말미 "- 웹소설/웹툰"
     .replace(/\s*\[[^\]]{1,12}\]\s*$/u, "")        // 말미 [연재]/[단행본]/[할리퀸]
     .replace(/^\s*\d+\s*화\.?\s*/u, "")            // 머리 "323화. "(뷰어 결과)
@@ -34901,8 +34954,16 @@ const DEFAULT_SETTINGS = {
       useAiKeywords: false,          // AI 키워드 생성(키 있을 때만)
       autoDaily: false,              // 1일1회 자동 가져오기(옵트인)
     },
-    bannedKeywords: [],              // 탐험에서 제외할 키워드(직접 편집)
-    customKeywords: [],              // 내가 추가한 탐색 키워드
+    bannedKeywords: [],              // 탐험에서 제외할 키워드(직접 편집) — v7.53~ 검색 선정 + 결과 모두 제외
+    customKeywords: [],              // 내가 추가한 탐색 키워드(카테고리 설정과 무관하게 항상 사용)
+    // 🌐 v7.53: 검색 키워드 출처 제어(전용 '키워드 관리' 화면). 서재 태그를 카테고리별로 검색에 쓸지 on/off.
+    keywordSources: {
+      categoryPrefs: {},   // { [카테고리키]: boolean } — 미설정 시 휴리스틱 기본(검색 부적합 카테고리는 OFF)
+      uncategorized: false,// 미분류 태그(예: '사도')도 검색에 사용
+      majorGenres: true,   // 대장르 시드(판타지·무협·로맨스…)
+      subGenres: true,     // 부장르·소재 시드(회귀·헌터·던전…)
+      harvest: true,       // 검색 결과에서 수확한 키워드 풀
+    },
   },
 };
 
@@ -38236,6 +38297,11 @@ function AppContent() {
   const [webRecoTierPick, setWebRecoTierPick] = useState(null); // manual 모드 본목록 추가 시 티어 선택 대상 item
   const [recoKeywordEditor, setRecoKeywordEditor] = useState(null); // "bannedKeywords" | "customKeywords" | null
   const [recoKeywordInput, setRecoKeywordInput] = useState("");
+  // 🌐 v7.53: 전용 키워드 관리 화면
+  const [keywordManagerOpen, setKeywordManagerOpen] = useState(false);
+  const [kwManagerTab, setKwManagerTab] = useState("categories"); // categories | keywords | preview | pool
+  const [kwPreview, setKwPreview] = useState({ explore: [], taste: [], catCounts: {}, uncat: 0, loading: false });
+  const [harvestRows, setHarvestRows] = useState([]);
   const [webRecoExpanded, setWebRecoExpanded] = useState({});  // 넷상 카드 소개글 펼침 {id:true}
   const webRecoLastFetchRef = useRef(0);                       // 재뽑기 쿨다운
   const [recoHistory, setRecoHistory] = useState([]); // 최근 5회 추천 기록 [{novelId, pickedAt}]
@@ -42363,6 +42429,70 @@ function AppContent() {
     updateRecoList(kind, arr.filter((x) => x !== kw));
   };
 
+  // 🌐 v7.53: 검색 키워드 출처 제어(전용 '키워드 관리' 화면) — 풀 빌더와 공유.
+  const recoKeywordSources = () => {
+    const reco = (appSettings && appSettings.reco) || DEFAULT_SETTINGS.reco;
+    return reco.keywordSources || DEFAULT_SETTINGS.reco.keywordSources || {};
+  };
+  // 서재 태그 t를 탐험 검색어로 쓸지 여부(카테고리 on/off + 미분류 정책).
+  const recoTagAllowed = (t, ks) => {
+    ks = ks || recoKeywordSources();
+    const cat = getTagCategory(t, customTagCategories);
+    if (!cat) return !!ks.uncategorized;                       // 미분류('사도' 등) 기본 제외
+    return isKeywordCategoryOn(cat.category, ks.categoryPrefs || {});
+  };
+  const updateRecoKeywordSources = (next) => {
+    const base = (appSettings && appSettings.reco) || DEFAULT_SETTINGS.reco;
+    const nextSettings = { ...appSettings, reco: { ...base, keywordSources: next } };
+    setAppSettings(nextSettings); setAppMeta("app_settings", nextSettings);
+  };
+  const toggleKeywordCategory = (catKey) => {
+    const ks = recoKeywordSources();
+    const prefs = { ...(ks.categoryPrefs || {}) };
+    prefs[catKey] = !isKeywordCategoryOn(catKey, prefs);
+    updateRecoKeywordSources({ ...ks, categoryPrefs: prefs });
+  };
+  const toggleKeywordSourceFlag = (key) => {
+    const ks = recoKeywordSources();
+    const def = (DEFAULT_SETTINGS.reco.keywordSources || {})[key];
+    const cur = (ks[key] !== undefined) ? ks[key] : def;
+    updateRecoKeywordSources({ ...ks, [key]: !cur });
+  };
+  // 현재 설정으로 실제 검색에 쓰일 키워드 풀 미리보기(가중치순) + 카테고리별 서재 태그 수.
+  const refreshKeywordPreview = async () => {
+    setKwPreview((p) => ({ ...p, loading: true }));
+    try {
+      const [explore, taste] = await Promise.all([buildExploreKeywordPool(), buildTasteKeywordPool()]);
+      explore.sort((a, b) => b.weight - a.weight);
+      taste.sort((a, b) => b.weight - a.weight);
+      const catCounts = {}; let uncat = 0;
+      try {
+        for (const n of (list || [])) for (const t of String(n.tags || "").split(",").map((s) => s.trim()).filter(Boolean)) {
+          const c = getTagCategory(t, customTagCategories);
+          if (!c) uncat++; else catCounts[c.category] = (catCounts[c.category] || 0) + 1;
+        }
+      } catch {}
+      setKwPreview({ explore, taste, catCounts, uncat, loading: false });
+    } catch (e) { console.warn("키워드 미리보기 오류:", e); setKwPreview((p) => ({ ...p, loading: false })); }
+  };
+  const loadHarvestRows = async () => {
+    try { const rows = await all("SELECT keyword, source, hit_count FROM web_reco_keywords ORDER BY hit_count DESC, last_seen DESC LIMIT 300;"); setHarvestRows(rows || []); } catch { setHarvestRows([]); }
+  };
+  const deleteHarvestKeyword = async (kw) => { try { await exec("DELETE FROM web_reco_keywords WHERE keyword=?;", [kw]); setHarvestRows((p) => p.filter((r) => r.keyword !== kw)); } catch {} };
+  const clearHarvestPool = () => {
+    Alert.alert("수확 키워드 비우기", "검색 결과에서 모은 키워드 풀을 모두 지울까요? (밴/내 키워드는 영향 없음)", [
+      { text: "취소", style: "cancel" },
+      { text: "비우기", style: "destructive", onPress: async () => { try { await exec("DELETE FROM web_reco_keywords;"); setHarvestRows([]); } catch {} } },
+    ]);
+  };
+  const openKeywordManager = () => {
+    setKwManagerTab("categories");
+    if (recoKeywordEditor !== "bannedKeywords" && recoKeywordEditor !== "customKeywords") setRecoKeywordEditor("bannedKeywords");
+    setKeywordManagerOpen(true);
+    refreshKeywordPreview();
+    loadHarvestRows();
+  };
+
   // ═══════════════════════════════════════════════════════════════════
   // 🌐 v7.50.x: 넷상 추천(외부 발견) 엔진 — M2
   // ═══════════════════════════════════════════════════════════════════
@@ -42412,6 +42542,7 @@ function AppContent() {
   // 탐험 키워드 풀: 인앱 어휘(콜드스타트) + 내 서재 태그 + 커스텀 + 수확(에코챔버 역가중). 밴 제외.
   async function buildExploreKeywordPool() {
     const reco = (appSettings && appSettings.reco) || DEFAULT_SETTINGS.reco;
+    const ks = reco.keywordSources || DEFAULT_SETTINGS.reco.keywordSources || {};
     const banned = new Set((reco.bannedKeywords || []).map((s) => String(s).trim()).filter(Boolean));
     const pool = new Map();
     const add = (kw, w) => {
@@ -42419,12 +42550,13 @@ function AppContent() {
       if (!kw || kw.length < 2 || kw.length > 14 || banned.has(kw)) return;
       pool.set(kw, Math.max(pool.get(kw) || 0, w));
     };
-    for (const g of (typeof SUB_GENRES !== "undefined" ? SUB_GENRES : [])) add(g, 1.0);
-    for (const g of (typeof MAJOR_GENRES !== "undefined" ? MAJOR_GENRES : [])) add(g, 0.8);
-    try { for (const n of (list || [])) for (const t of String(n.tags || "").split(",").map((s) => s.trim()).filter(Boolean)) add(t, 1.1); } catch {}
+    if (ks.subGenres !== false) for (const g of (typeof SUB_GENRES !== "undefined" ? SUB_GENRES : [])) add(g, 1.0);
+    if (ks.majorGenres !== false) for (const g of (typeof MAJOR_GENRES !== "undefined" ? MAJOR_GENRES : [])) add(g, 0.8);
+    // 🌐 v7.53: 서재 태그는 카테고리 on/off 통과분만(검색 부적합 카테고리·미분류 기본 제외 → '후반부붕괴'·'사도' 차단).
+    try { for (const n of (list || [])) for (const t of String(n.tags || "").split(",").map((s) => s.trim()).filter(Boolean)) { if (recoTagAllowed(t, ks)) add(t, 1.1); } } catch {}
     for (const k of (reco.customKeywords || [])) add(k, 1.6);
     // 수확 풀 — hit_count 낮을수록 가중↑(자주 나온 키워드는 탐험에서 비중↓ = 에코챔버 방지)
-    try {
+    if (ks.harvest !== false) try {
       const hv = await all("SELECT keyword, hit_count FROM web_reco_keywords ORDER BY hit_count ASC LIMIT 400;");
       for (const row of (hv || [])) { if (!banned.has(row.keyword)) add(row.keyword, 1.2 / (1 + Math.log(1 + (Number(row.hit_count) || 1)))); }
     } catch {}
@@ -42444,7 +42576,8 @@ function AppContent() {
         const hi = (typeof prefHighThreshold === "function") ? prefHighThreshold(list, globalTierConfig) : 0;
         for (const n of (list || [])) {
           if (getPrefScore(n, globalTierConfig) >= hi) {
-            for (const t of String(n.tags || "").split(",").map((s) => s.trim()).filter(Boolean)) add(t, 1.2);
+            // 🌐 v7.53: 폴백 태그도 카테고리 on/off 적용(탐험 풀과 동일 기준).
+            for (const t of String(n.tags || "").split(",").map((s) => s.trim()).filter(Boolean)) { if (recoTagAllowed(t)) add(t, 1.2); }
             const g = getFirstGenre(n.major_genre); if (g) add(g, 1.2);
           }
         }
@@ -42563,12 +42696,40 @@ function AppContent() {
       if (!anyOk) { setWebRecoError((errs[0] && errs[0].message) || "지금은 추천을 가져오지 못했어요. 잠시 후 다시 시도해 주세요."); return; }
       const platSet = new Set(web.platforms || []);
       raw = raw.filter((c) => !c.isComic && (!platSet.size || platSet.has(c.platform)));
+      // 🌐 v7.53: 카카오 SERP 일반제목('콘텐츠홈 - 카카오페이지') 복구 — content 페이지 메타로 진짜 제목·장르 보강.
+      //   같은 링크는 1회만(dedup 전이라 모든 사본에 반영), 최대 8건. 복구 실패분은 아래 isBadWebTitle 필터에서 제외.
+      try {
+        const kkFix = new Map();
+        for (const c of raw) {
+          if (c.platform === "카카오페이지" && isBadWebTitle(c.title)) {
+            const lk = c.url || c.link || "";
+            if (lk && !kkFix.has(lk)) kkFix.set(lk, lk);
+          }
+        }
+        if (kkFix.size) {
+          const links = [...kkFix.keys()].slice(0, 8);
+          const fixed = new Map();
+          await Promise.allSettled(links.map(async (lk) => {
+            try { const m = await fetchNovelMeta(lk, { timeoutMs: 12000 }); if (m && m.ok && m.title && !isBadWebTitle(m.title)) fixed.set(lk, m); } catch {}
+          }));
+          if (fixed.size) for (const c of raw) {
+            if (c.platform !== "카카오페이지") continue;
+            const m = fixed.get(c.url || c.link || "");
+            if (!m) continue;
+            c.title = m.title;
+            if (!c.author && m.author) c.author = m.author;
+            c.meta = { ...(c.meta || {}), genres: m.genres, synopsis: m.synopsis, totalEpisodes: m.totalEpisodes, workStatus: m.workStatus, ageTag: m.ageTag, startYear: m.startYear };
+          }
+        }
+      } catch (e) { console.warn("카카오 제목 복구 오류:", e); }
       await harvestKeywordsFromResults(raw);
       let cands = await dedupAgainstLibrary(raw);
+      const bannedList = (reco.bannedKeywords || []);
       cands = cands.filter((c) => {
         const m = c.meta || null;
         if (isBadWebTitle(c.title)) return false;            // 🌐 v7.51.2: SERP 부산물 제목 차단(카카오)
         if (isNonFictionCategory(c.category)) return false;  // 🌐 v7.51.2: 일반 교양서적 누수 차단(리디 등)
+        if (matchesBannedKeyword(c, bannedList)) return false; // 🌐 v7.53: 밴 키워드 결과 필터(제목/작가/장르/카테고리)
         if (!web.includeAdult && m && m.ageTag === "19금") return false;
         if (web.minEpisodes > 0 && m && m.totalEpisodes != null && m.totalEpisodes < web.minEpisodes) return false;
         if (web.workStatus === "completed" && m && m.workStatus && m.workStatus !== "completed") return false;
@@ -56880,33 +57041,10 @@ async function importJSON() {
                   {toggleRow("매일 자동 가져오기", !!web.autoDaily, () => updateRecoSetting("web", "autoDaily", !web.autoDaily), "추천 탭 열 때 하루 한 번 자동")}
                   <View>
                     <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>키워드 관리</Text>
-                    <View style={{ flexDirection: "row", gap: 8 }}>
-                      {chip(`🚫 밴 (${banned.length})`, recoKeywordEditor === "bannedKeywords", () => setRecoKeywordEditor(recoKeywordEditor === "bannedKeywords" ? null : "bannedKeywords"))}
-                      {chip(`➕ 내 키워드 (${custom.length})`, recoKeywordEditor === "customKeywords", () => setRecoKeywordEditor(recoKeywordEditor === "customKeywords" ? null : "customKeywords"))}
-                    </View>
-                    {recoKeywordEditor && (() => {
-                      const arr = recoKeywordEditor === "bannedKeywords" ? banned : custom;
-                      return (
-                        <View style={{ marginTop: 8, gap: 8 }}>
-                          <View style={{ flexDirection: "row", gap: 8 }}>
-                            <Input value={recoKeywordInput} onChangeText={setRecoKeywordInput} placeholder={recoKeywordEditor === "bannedKeywords" ? "제외할 키워드" : "탐색할 키워드"} style={{ flex: 1 }} />
-                            <TouchableOpacity activeOpacity={0.7} onPress={() => { addRecoKeyword(recoKeywordEditor, recoKeywordInput); setRecoKeywordInput(""); }} style={{ paddingHorizontal: 16, justifyContent: "center", borderRadius: 8, backgroundColor: "#10b981" }}>
-                              <Text style={{ color: "#fff", fontWeight: "800" }}>추가</Text>
-                            </TouchableOpacity>
-                          </View>
-                          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-                            {arr.length === 0 ? <Text style={{ color: C.sub, fontSize: 12 }}>아직 없어요.</Text> :
-                              arr.map((k) => (
-                                <TouchableOpacity key={k} activeOpacity={0.7} onPress={() => removeRecoKeyword(recoKeywordEditor, k)} style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, backgroundColor: C.chip, borderWidth: 1, borderColor: C.line }}>
-                                  <Text style={{ color: C.text, fontSize: 12 }}>{k}</Text>
-                                  <Text style={{ color: C.sub, fontSize: 12 }}>✕</Text>
-                                </TouchableOpacity>
-                              ))}
-                          </View>
-                          <Text style={{ color: C.sub, fontSize: 10 }}>{recoKeywordEditor === "bannedKeywords" ? "밴은 탐험 키워드 선정에서만 제외돼요(취향 데이터는 불간섭)." : "탐험 풀에 추가돼 검색에 쓰여요."}</Text>
-                        </View>
-                      );
-                    })()}
+                    <TouchableOpacity activeOpacity={0.85} onPress={openKeywordManager} style={{ paddingVertical: 12, borderRadius: 10, backgroundColor: "#10b981", alignItems: "center" }}>
+                      <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>🛠️ 키워드 관리 열기</Text>
+                    </TouchableOpacity>
+                    <Text style={{ color: C.sub, fontSize: 10, marginTop: 6, lineHeight: 15 }}>검색에 쓸 태그 카테고리 on/off · 밴({banned.length}) · 내 키워드({custom.length}) · 실제 검색어 미리보기를 한곳에서 관리해요. 밴은 검색 선정과 결과 모두에서 제외돼요.</Text>
                   </View>
                 </View>
               );
@@ -57293,7 +57431,13 @@ async function importJSON() {
     </Section>
 
     {/* 🌐 v7.50.x: 넷상 추천작 (외부 발견) */}
-    <Section title={`🌐 넷상 추천작${webRecoList.length ? ` (${webRecoList.length})` : ""}`}>
+    {(() => {
+    // 🌐 v7.53: 밴 키워드가 이미 가져온 배치에도 즉시 반영(보관작 ⭐은 사용자가 일부러 둔 것이라 예외).
+    const _banList = ((appSettings && appSettings.reco && appSettings.reco.bannedKeywords) || []);
+    const visibleReco = (_banList.length === 0) ? webRecoList
+      : webRecoList.filter((w) => w.pinned || !matchesBannedKeyword({ title: w.title, author: w.author, meta: { genres: safeParseJSON(w.genres, []) } }, _banList));
+    return (
+    <Section title={`🌐 넷상 추천작${visibleReco.length ? ` (${visibleReco.length})` : ""}`}>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
         <Text style={{ color: C.sub, fontSize: 12, flex: 1, paddingRight: 8 }}>플랫폼에서 새 작품을 발견해요. 안 담으면 다음날 정리돼요(⭐ 보관 제외).</Text>
         <TouchableOpacity activeOpacity={0.8} disabled={webRecoLoading} onPress={() => fetchWebRecommendations()} style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, backgroundColor: webRecoLoading ? C.line : "#10b981" }}>
@@ -57301,11 +57445,11 @@ async function importJSON() {
         </TouchableOpacity>
       </View>
       {webRecoError ? <Text style={{ color: "#ef4444", fontSize: 12, marginBottom: 8 }}>{webRecoError}</Text> : null}
-      {webRecoList.length === 0 ? (
-        <Text style={{ color: C.sub, fontSize: 13 }}>{webRecoLoading ? "플랫폼에서 작품을 찾는 중이에요…" : "‘🎲 가져오기’를 눌러 넷상에서 새 작품을 발견해 보세요."}</Text>
+      {visibleReco.length === 0 ? (
+        <Text style={{ color: C.sub, fontSize: 13 }}>{webRecoLoading ? "플랫폼에서 작품을 찾는 중이에요…" : (webRecoList.length ? "표시할 작품이 모두 밴 키워드로 가려졌어요. 밴을 조정해 보세요." : "‘🎲 가져오기’를 눌러 넷상에서 새 작품을 발견해 보세요.")}</Text>
       ) : (
         <View style={{ gap: 14, paddingHorizontal: 2, paddingVertical: 2 }}>
-          {webRecoList.map((w) => {
+          {visibleReco.map((w) => {
             const genres = safeParseJSON(w.genres, []) || [];
             const PLAT_COLORS = { "노벨피아": "#4f7cff", "리디": "#1e8eff", "카카오페이지": "#ff5e5e", "네이버시리즈": "#03c75a", "문피아": "#2f6fed" };
             const pc = PLAT_COLORS[w.platform] || "#10b981";
@@ -57375,7 +57519,7 @@ async function importJSON() {
                   <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
                     {w.link ? <TouchableOpacity activeOpacity={0.7} onPress={() => safeOpenURL(w.link)} style={ghost}><Text style={ghostT}>🔗 바로가기</Text></TouchableOpacity> : null}
                     <TouchableOpacity activeOpacity={0.7} onPress={() => pinWebReco(w)} style={[ghost, w.pinned ? { borderColor: "#f59e0b", backgroundColor: isDark ? "#3a2e12" : "#fef3c7" } : null]}><Text style={[ghostT, w.pinned ? { color: "#f59e0b" } : null]}>{w.pinned ? "⭐ 보관됨" : "⭐ 보관"}</Text></TouchableOpacity>
-                    <TouchableOpacity activeOpacity={0.7} onPress={() => dismissWebReco(w)} style={[ghost, { flex: 0, paddingHorizontal: 14 }]}><Text style={ghostT}>🙅</Text></TouchableOpacity>
+                    <TouchableOpacity accessibilityLabel="관심 없음 — 이 작품 숨기기" activeOpacity={0.7} onPress={() => dismissWebReco(w)} style={ghost}><Text style={ghostT}>🚫 관심없음</Text></TouchableOpacity>
                   </View>
                   {w.source_keyword ? <Text style={{ color: C.sub, fontSize: 10, marginTop: 9, opacity: 0.7 }}>🔎 ‘{w.source_keyword}’ 검색에서 발견</Text> : null}
                 </View>
@@ -57385,6 +57529,8 @@ async function importJSON() {
         </View>
       )}
     </Section>
+    );
+    })()}
 
     {/* ════ 🔄 재평가 추천작 (매칭·비율 모드) — v7.30.0 / 확장 v7.30.1 ════
        티어가 불확실(미정착·미평가)한 작품을 종합 점수로 랭킹. 탭 → 그 작품 집중 매칭.
@@ -57497,9 +57643,142 @@ async function importJSON() {
         </View>
       </View>
     </Modal>
+
+    {/* 🌐 v7.53: 전용 키워드 관리 화면 — 카테고리 on/off · 밴·내 키워드 · 검색어 미리보기 · 수확 풀 정리 */}
+    <Modal visible={keywordManagerOpen} animationType="slide" onRequestClose={() => setKeywordManagerOpen(false)} statusBarTranslucent>
+      <View style={{ flex: 1, backgroundColor: C.bg }}>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 52, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: C.line }}>
+          <Text style={{ color: C.text, fontSize: 18, fontWeight: "800" }}>🛠️ 키워드 관리</Text>
+          <TouchableOpacity onPress={() => setKeywordManagerOpen(false)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}><Text style={{ color: C.sub, fontSize: 22 }}>✕</Text></TouchableOpacity>
+        </View>
+        <View style={{ flexDirection: "row", borderBottomWidth: 1, borderBottomColor: C.line }}>
+          {[["categories", "카테고리"], ["keywords", "밴·내키워드"], ["preview", "미리보기"], ["pool", "수확 풀"]].map(([k, l]) => (
+            <TouchableOpacity key={k} activeOpacity={0.7} onPress={() => { setKwManagerTab(k); if (k === "preview") refreshKeywordPreview(); if (k === "pool") loadHarvestRows(); }} style={{ flex: 1, paddingVertical: 12, alignItems: "center", borderBottomWidth: 2, borderBottomColor: kwManagerTab === k ? "#10b981" : "transparent" }}>
+              <Text style={{ color: kwManagerTab === k ? "#10b981" : C.sub, fontWeight: "700", fontSize: 12.5 }}>{l}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 60, gap: 10 }} keyboardShouldPersistTaps="handled">
+          {kwManagerTab === "categories" && (() => {
+            const ks = recoKeywordSources();
+            const prefs = ks.categoryPrefs || {};
+            const counts = kwPreview.catCounts || {};
+            const catKeys = [...Object.keys(GENERAL_TAGS || {}), ...Object.keys(customTagCategories || {})];
+            const row = (label, on, onToggle, sub) => (
+              <TouchableOpacity key={label} activeOpacity={0.7} onPress={onToggle} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: C.line, backgroundColor: C.card }}>
+                <View style={{ flex: 1, paddingRight: 10 }}>
+                  <Text style={{ color: C.text, fontSize: 13.5, fontWeight: "600" }}>{label}</Text>
+                  {sub ? <Text style={{ color: C.sub, fontSize: 10.5, marginTop: 2, lineHeight: 14 }}>{sub}</Text> : null}
+                </View>
+                <View style={{ width: 46, height: 26, borderRadius: 13, backgroundColor: on ? "#10b981" : C.line, justifyContent: "center", paddingHorizontal: 3 }}>
+                  <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: "#fff", alignSelf: on ? "flex-end" : "flex-start" }} />
+                </View>
+              </TouchableOpacity>
+            );
+            return (
+              <>
+                <Text style={{ color: C.sub, fontSize: 12, lineHeight: 18 }}>내 서재 작품의 태그를 분류별로 검색에 쓸지 정해요. 끄면 그 분류의 태그는 탐험 검색어에서 빠져요(취향 분석엔 영향 없음).</Text>
+                <Text style={{ color: C.text, fontWeight: "800", fontSize: 13, marginTop: 6 }}>시드 어휘</Text>
+                {row("대장르 (판타지·무협·로맨스…)", ks.majorGenres !== false, () => toggleKeywordSourceFlag("majorGenres"))}
+                {row("부장르·소재 (회귀·헌터·던전…)", ks.subGenres !== false, () => toggleKeywordSourceFlag("subGenres"))}
+                {row("수확 키워드 (검색 결과에서 모은 풀)", ks.harvest !== false, () => toggleKeywordSourceFlag("harvest"))}
+                <Text style={{ color: C.text, fontWeight: "800", fontSize: 13, marginTop: 10 }}>내 서재 태그 카테고리</Text>
+                {catKeys.map((ck) => row(`${ck}${counts[ck] ? `  (${counts[ck]})` : ""}`, isKeywordCategoryOn(ck, prefs), () => toggleKeywordCategory(ck)))}
+                {row(`미분류 태그${kwPreview.uncat ? `  (${kwPreview.uncat})` : ""}`, !!ks.uncategorized, () => toggleKeywordSourceFlag("uncategorized"), "어느 카테고리에도 없는 태그(예: '사도'). 보통 검색어로 부적합해요.")}
+              </>
+            );
+          })()}
+
+          {kwManagerTab === "keywords" && (() => {
+            const reco = (appSettings && appSettings.reco) || DEFAULT_SETTINGS.reco;
+            const banned = Array.isArray(reco.bannedKeywords) ? reco.bannedKeywords : [];
+            const custom = Array.isArray(reco.customKeywords) ? reco.customKeywords : [];
+            const editor = recoKeywordEditor === "customKeywords" ? "customKeywords" : "bannedKeywords";
+            const arr = editor === "bannedKeywords" ? banned : custom;
+            const tab = (label, key) => (
+              <TouchableOpacity key={key} activeOpacity={0.7} onPress={() => setRecoKeywordEditor(key)} style={{ flex: 1, paddingVertical: 9, borderRadius: 9, alignItems: "center", backgroundColor: editor === key ? "#10b981" : C.chip, borderWidth: 1, borderColor: editor === key ? "#10b981" : C.line }}>
+                <Text style={{ color: editor === key ? "#fff" : C.text, fontWeight: "700", fontSize: 12.5 }}>{label}</Text>
+              </TouchableOpacity>
+            );
+            return (
+              <>
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  {tab(`🚫 밴 (${banned.length})`, "bannedKeywords")}
+                  {tab(`➕ 내 키워드 (${custom.length})`, "customKeywords")}
+                </View>
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
+                  <Input value={recoKeywordInput} onChangeText={setRecoKeywordInput} placeholder={editor === "bannedKeywords" ? "제외할 키워드(장르/태그/제목 일부)" : "탐색할 키워드"} style={{ flex: 1 }} />
+                  <TouchableOpacity activeOpacity={0.7} onPress={() => { addRecoKeyword(editor, recoKeywordInput); setRecoKeywordInput(""); }} style={{ paddingHorizontal: 16, justifyContent: "center", borderRadius: 8, backgroundColor: "#10b981" }}>
+                    <Text style={{ color: "#fff", fontWeight: "800" }}>추가</Text>
+                  </TouchableOpacity>
+                </View>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 2 }}>
+                  {arr.length === 0 ? <Text style={{ color: C.sub, fontSize: 12 }}>아직 없어요.</Text> :
+                    arr.map((k) => (
+                      <TouchableOpacity key={k} activeOpacity={0.7} onPress={() => removeRecoKeyword(editor, k)} style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, backgroundColor: C.chip, borderWidth: 1, borderColor: C.line }}>
+                        <Text style={{ color: C.text, fontSize: 12 }}>{k}</Text>
+                        <Text style={{ color: C.sub, fontSize: 12 }}>✕</Text>
+                      </TouchableOpacity>
+                    ))}
+                </View>
+                <Text style={{ color: C.sub, fontSize: 11, lineHeight: 16, marginTop: 4 }}>{editor === "bannedKeywords" ? "🚫 밴: 검색 키워드 선정에서 빠지고, 제목·작가·장르가 일치하는 결과도 가려져요(이미 가져온 목록에도 즉시 반영 · ⭐ 보관 제외)." : "➕ 내 키워드: 탐험 풀에 추가돼 검색에 쓰여요(카테고리 설정과 무관하게 항상 사용)."}</Text>
+              </>
+            );
+          })()}
+
+          {kwManagerTab === "preview" && (() => {
+            const ex = kwPreview.explore || []; const ta = kwPreview.taste || [];
+            const chipList = (a, color) => (
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                {a.length === 0 ? <Text style={{ color: C.sub, fontSize: 12 }}>비어 있어요.</Text> :
+                  a.slice(0, 120).map((x, i) => (
+                    <View key={x.kw + i} style={{ paddingHorizontal: 9, paddingVertical: 5, borderRadius: 13, backgroundColor: color + "22", borderWidth: 1, borderColor: color + "55" }}>
+                      <Text style={{ color: C.text, fontSize: 11.5 }}>{x.kw}</Text>
+                    </View>
+                  ))}
+              </View>
+            );
+            return (
+              <>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                  <Text style={{ color: C.sub, fontSize: 12, flex: 1, paddingRight: 8, lineHeight: 17 }}>지금 설정으로 실제 검색에 쓰일 키워드 풀이에요(가중치순). 카테고리·밴을 바꾼 뒤 새로고침하세요.</Text>
+                  <TouchableOpacity activeOpacity={0.8} onPress={refreshKeywordPreview} style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 9, backgroundColor: "#10b981" }}><Text style={{ color: "#fff", fontWeight: "800", fontSize: 12 }}>{kwPreview.loading ? "…" : "↻ 새로고침"}</Text></TouchableOpacity>
+                </View>
+                <Text style={{ color: C.text, fontWeight: "800", fontSize: 13, marginTop: 8 }}>🧭 탐험 풀 ({ex.length})</Text>
+                {chipList(ex, "#10b981")}
+                <Text style={{ color: C.text, fontWeight: "800", fontSize: 13, marginTop: 12 }}>💚 취향 풀 ({ta.length})</Text>
+                {chipList(ta, "#3b82f6")}
+              </>
+            );
+          })()}
+
+          {kwManagerTab === "pool" && (() => {
+            const rows = harvestRows || [];
+            return (
+              <>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                  <Text style={{ color: C.sub, fontSize: 12, flex: 1, paddingRight: 8, lineHeight: 17 }}>검색 결과에서 자동으로 모은 키워드예요(자주 나올수록 탐험 비중↓). 부적절한 건 탭해서 지우세요.</Text>
+                  <TouchableOpacity activeOpacity={0.8} onPress={clearHarvestPool} style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 9, backgroundColor: "#ef4444" }}><Text style={{ color: "#fff", fontWeight: "800", fontSize: 12 }}>전체 비우기</Text></TouchableOpacity>
+                </View>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+                  {rows.length === 0 ? <Text style={{ color: C.sub, fontSize: 12 }}>아직 수확된 키워드가 없어요.</Text> :
+                    rows.map((r) => (
+                      <TouchableOpacity key={r.keyword} activeOpacity={0.7} onPress={() => deleteHarvestKeyword(r.keyword)} style={{ flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, backgroundColor: C.chip, borderWidth: 1, borderColor: C.line }}>
+                        <Text style={{ color: C.text, fontSize: 12 }}>{r.keyword}</Text>
+                        <Text style={{ color: C.sub, fontSize: 9.5 }}>{r.source === "ai" ? "AI" : r.source === "harvest" ? `×${r.hit_count}` : (r.source || "")}</Text>
+                        <Text style={{ color: C.sub, fontSize: 12 }}>✕</Text>
+                      </TouchableOpacity>
+                    ))}
+                </View>
+              </>
+            );
+          })()}
+        </ScrollView>
+      </View>
+    </Modal>
   </>
 )}
-    
+
 {/* RANK */}
         {screen === "rank" && (
           <>
