@@ -2,9 +2,32 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.53.7 (메타 보강 옵트인 — 기본 회차게이트 끔)                            ║
+ * ║  버전: 7.53.8 (인앱 변경이력·가이드 동기화 + 복원 reco 초기화)                   ║
  * ║  최종 수정: 2026-06-30                                                        ║
- * ║  총 라인 수: 약 74,560줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 75,260줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📋 v7.53.8 인앱 변경이력·가이드 동기화 + 복원 reco 초기화 (2026-06-30)          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 전면검수(인앱 동기화/마이그레이션/가이드/진단/설정) 후 확정 수정 — 21에이전트     ║
+ * ║ 병렬 점검 + 적대검증 15건 확정에서 사용자 승인 항목 반영:                        ║
+ * ║ • [인앱 동기화] APP_VERSION 7.49.15→7.53.8 — 헤더만 7.53.7로 앞서가 '새 소식'     ║
+ * ║   모달이 7.50~7.53 사용자에게 영구 미발생하던 회귀 해소(과거 v7.28.48 동일 회귀). ║
+ * ║   CHANGELOG_DATA에 7.49.16~7.53.8 사용자대상 24건 추가 → 업데이트 내역·새 소식·   ║
+ * ║   진단 JSON meta.version 동시 정정.                                              ║
+ * ║ • [변경이력 렌더] 최근 엔트리 details가 문자열 배열인데 렌더러는 d.text/d.type을  ║
+ * ║   읽어 '상세 보기'가 빈 '•' 줄만 보이던 버그 → 문자열/객체 양형 정규화.           ║
+ * ║ • [복원] import doClearAll에 web_reco/web_reco_keywords/reco_hidden_works DELETE  ║
+ * ║   추가 — 수확 키워드 풀·관심없음 목록이 새 데이터셋에 누출돼 추천을 편향시키던     ║
+ * ║   것 차단(학습/하이브리드 테이블과 동일 클래스, 사용자 승인).                     ║
+ * ║ • [가이드] GUIDE_CONTENT '오늘의 추천(내 서재)' 갱신 + '넷상 추천작'·'키워드 관리' ║
+ * ║   항목 신설(7.50~7.53 reco 전체). 모드전환 힌트 '앱'→'🏆랭킹' 경로 정정.          ║
+ * ║ • [진단] 텍스트 리포트에 버전 라인 추가, 진단 '테이블 규모'에 reco 3테이블 추가.   ║
+ * ║ • [설정] settingsSubTab 주석에 'connect' 보강. minEpisodes 50→0 소급은 현행 유지   ║
+ * ║   (헤더 문서대로 신규/수동 — 사용자 결정).                                       ║
+ * ║ • [스키마] tier_repositioning_session prev_tier/prev_order를 CREATE TABLE·레거시  ║
+ * ║   재생성 템플릿에도 명시(ensureColumn과 doc 정합, 동작 변경 없음).                ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -9777,7 +9800,7 @@ function seededShuffleValue(id, seed) {
 // 🆕 v7.3.0: progressCb 옵션 — initDb 진행 단계를 UI overlay에 표시.
 // progressCb({ label: "..." }) 형태로 호출. null/undefined 시 무시.
 // 🆕 v7.49.19: import 자동 롤백 스냅샷 대상 테이블(doClearAll이 지우는 전 테이블 + planned_novels). importJSON·initDb 공용.
-const IMPORT_SNAP_TABLES = ["novels", "matches", "choice_logs", "preference_patterns", "insight_queue", "folders", "novel_folders", "gallery_images", "tier_verification_queue", "tier_validation_log", "tier_repositioning_session", "trigger_fire_log", "planned_novels"];
+const IMPORT_SNAP_TABLES = ["novels", "matches", "choice_logs", "preference_patterns", "insight_queue", "folders", "novel_folders", "gallery_images", "tier_verification_queue", "tier_validation_log", "tier_repositioning_session", "trigger_fire_log", "planned_novels", "web_reco", "web_reco_keywords", "reco_hidden_works"]; // 🆕 v7.53.8: reco 학습 테이블도 스냅샷 — doClearAll이 이들을 비우므로, import 실패 시 롤백에서 함께 원복(성공 시엔 비운 채 유지 = 의도).
 async function initDb(progressCb) {
   if (progressCb) progressCb({ label: "데이터베이스 연결 중..." });
   // DB 연결 확보
@@ -10315,7 +10338,9 @@ async function initDb(progressCb) {
     total_responses INTEGER DEFAULT 0,
     blocker_id TEXT,
     created_at INTEGER NOT NULL,
-    completed_at INTEGER
+    completed_at INTEGER,
+    prev_tier TEXT,
+    prev_order INTEGER
   );`);
   // 🔧 v7.0.5/v7.0.13: 기존 DB 스키마 보강 — 위와 같은 이유로 idx_trs_blocker가 참조하는
   // state, blocker_id 등을 ensureColumn으로 보강. trigger_type 등 nullable 컬럼도 함께.
@@ -10347,7 +10372,7 @@ async function initDb(progressCb) {
       create: `CREATE TABLE tier_verification_queue (id TEXT PRIMARY KEY NOT NULL, novel_id TEXT NOT NULL, trigger_type TEXT NOT NULL, suspicion_type TEXT NOT NULL, priority INTEGER DEFAULT 0, state TEXT DEFAULT 'pending', created_at INTEGER NOT NULL, processed_at INTEGER);`,
       idx: [`CREATE INDEX IF NOT EXISTS idx_tvq_state ON tier_verification_queue(state, priority DESC, created_at);`, `CREATE INDEX IF NOT EXISTS idx_tvq_novel ON tier_verification_queue(novel_id);`] },
     { t: "tier_repositioning_session",
-      create: `CREATE TABLE tier_repositioning_session (id TEXT PRIMARY KEY NOT NULL, novel_id TEXT NOT NULL, suspicion_type TEXT NOT NULL, trigger_type TEXT, state TEXT NOT NULL, result_tier TEXT, result_order INTEGER, result_action TEXT, total_responses INTEGER DEFAULT 0, blocker_id TEXT, created_at INTEGER NOT NULL, completed_at INTEGER);`,
+      create: `CREATE TABLE tier_repositioning_session (id TEXT PRIMARY KEY NOT NULL, novel_id TEXT NOT NULL, suspicion_type TEXT NOT NULL, trigger_type TEXT, state TEXT NOT NULL, result_tier TEXT, result_order INTEGER, result_action TEXT, total_responses INTEGER DEFAULT 0, blocker_id TEXT, created_at INTEGER NOT NULL, completed_at INTEGER, prev_tier TEXT, prev_order INTEGER);`,
       idx: [`CREATE INDEX IF NOT EXISTS idx_trs_blocker ON tier_repositioning_session(blocker_id, state);`, `CREATE INDEX IF NOT EXISTS idx_trs_novel ON tier_repositioning_session(novel_id);`] },
     { t: "tier_validation_log",
       create: `CREATE TABLE tier_validation_log (id TEXT PRIMARY KEY NOT NULL, session_id TEXT, novel_a_id TEXT NOT NULL, novel_b_id TEXT NOT NULL, user_choice TEXT NOT NULL, violation_type TEXT NOT NULL, created_at INTEGER NOT NULL);`,
@@ -18949,7 +18974,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.49.15";
+const APP_VERSION = "7.53.8";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -18975,6 +19000,204 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.53.8", date: "2026-06-30",
+    title: "🔄 그동안의 업데이트를 앱에 반영 + 복원 안전장치 보강",
+    highlights: [
+      { type: "new", text: "📋 그동안 쌓인 업데이트(7.49.16~7.53.7)를 ‘새로운 소식’과 ‘업데이트 내역’에 모두 반영했어요. 넷상 추천작·키워드 관리·여러 작품 추천 등 그간의 큰 변화를 한눈에 볼 수 있어요." },
+      { type: "fix", text: "🧹 다른 데이터셋을 ‘불러오기(복원)’하면 이전에 쌓인 추천 키워드 풀과 ‘관심없음’ 목록도 함께 초기화돼요. 가져온 라이브러리에 이전 취향이 섞이지 않아요." },
+      { type: "improve", text: "📖 기능 가이드에 넷상 추천작·키워드 관리·여러 작품 추천 안내를 추가하고, 진단 리포트에 정확한 버전이 찍히도록 정리했어요." },
+    ],
+    details: [
+      { type: "fix", text: "‘업데이트 내역’의 ‘상세 보기’가 빈 줄로만 보이던 표시 문제도 함께 고쳤어요." },
+      { type: "improve", text: "진단 화면 ‘테이블 규모’에 넷상 추천 관련 항목을 추가해 적체 여부를 확인할 수 있어요." },
+    ],
+  },
+  {
+    version: "7.53.7", date: "2026-06-30",
+    title: "⚡ 넷상 추천 기본 가져오기 속도 개선",
+    highlights: [
+      { type: "improve", text: "⚡ 넷상 추천의 기본 ‘최소 회차’ 조건을 꺼서 가져오기가 더 빨라졌어요. 회차 수로 거르고 싶으면 추천 설정에서 ‘최소 회차’를 켜면 돼요(켜면 작품 정보를 더 받아오느라 조금 느려져요)." },
+    ],
+    details: [
+      { type: "improve", text: "기존에 ‘최소 회차’를 이미 설정해 둔 분은 그 값이 유지돼요 — 빠르게 쓰려면 추천 설정에서 한 번 꺼 주세요." },
+    ],
+  },
+  {
+    version: "7.53.6", date: "2026-06-30",
+    title: "🔧 넷상 추천 품질 다듬기",
+    highlights: [
+      { type: "fix", text: "🔧 제목에서 키워드를 뽑을 때 ‘빙의·회귀’ 같은 짧은 소재어가 통째로 사라지던 문제와, 수확된 키워드가 계속 쌓이기만 하던 문제를 정리했어요. 키워드 미리보기 안내 문구도 더 정확하게 바꿨어요." },
+    ],
+  },
+  {
+    version: "7.53.5", date: "2026-06-30",
+    title: "🔎 추천 검색어 품질 — 제목 단어 활용",
+    highlights: [
+      { type: "improve", text: "🔎 검색 결과 작품들의 ‘제목’에 자주 나오는 소재어를 자동으로 모아 다음 추천 검색에 활용해요. 장르 분류만으로 놓치던 ‘진짜 소재어’를 더 잘 찾아내요." },
+      { type: "improve", text: "🏷️ ‘황녀/황자’처럼 묶인 분류나 ‘착각물’ 같은 어휘도 검색에 더 잘 걸리도록 다듬었어요(분류 자체는 그대로 유지)." },
+    ],
+  },
+  {
+    version: "7.53.4", date: "2026-06-30",
+    title: "🎯 추천 필터 실동작 보강 + 플랫폼 설정 경고",
+    highlights: [
+      { type: "fix", text: "🎯 19금·완결·최소 회차 같은 콘텐츠 필터가 리디·네이버·카카오 검색 결과에도 실제로 적용되도록 고쳤어요(정보가 없던 결과도 보강한 뒤 거름)." },
+      { type: "new", text: "⚠️ ‘대상 플랫폼’은 켰는데 ‘제목 검색 사이트’가 꺼진 플랫폼은 결과가 조용히 0건이던 혼선을, 설정에서 경고와 켜는 위치 안내로 알려줘요." },
+    ],
+  },
+  {
+    version: "7.53.3", date: "2026-06-30",
+    title: "🔧 넷상 추천 실사용 점검 후속",
+    highlights: [
+      { type: "fix", text: "🔧 탭에 들어가자마자 자동 가져오기와 수동 ‘🎲 가져오기’가 겹쳐 결과가 꼬일 수 있던 문제, 키워드 미리보기가 잘릴 때 생기던 오해, 예정 목록 중복 안내 누락을 정리했어요." },
+    ],
+  },
+  {
+    version: "7.53.2", date: "2026-06-30",
+    title: "🔧 넷상 추천 시나리오 점검 후속",
+    highlights: [
+      { type: "fix", text: "🔧 ‘c++’·‘c#’·‘[BL]’처럼 기호가 섞인 밴 키워드가 조용히 무시되던 문제와, 백업 복원 시 키워드 분류 설정이 어긋나던 문제를 고쳤어요." },
+    ],
+  },
+  {
+    version: "7.53.1", date: "2026-06-30",
+    title: "🔧 키워드 관리 안정화",
+    highlights: [
+      { type: "fix", text: "🔧 카카오 제목 복구로 ‘🎲 가져오기’가 길게 멈출 수 있던 문제, 짧은 영문 밴(‘BL’)이 엉뚱한 제목에 걸리던 문제, 모달 헤더가 노치에 가리던 문제 등을 정리했어요." },
+    ],
+  },
+  {
+    version: "7.53.0", date: "2026-06-30",
+    title: "🛠️ 추천 키워드 관리 화면 + 밴 결과 필터",
+    highlights: [
+      { type: "new", text: "🛠️ ‘키워드 관리’ 화면이 새로 생겼어요 — 어떤 분류의 태그를 검색에 쓸지 켜고/끄고, 밴·내 키워드를 정리하고, ‘실제로 어떤 검색어가 쓰이는지’ 미리 볼 수 있어요." },
+      { type: "improve", text: "🚫 밴 키워드가 검색어뿐 아니라 ‘결과’에서도 빠져요 — 제목·작가·장르가 밴에 걸리는 작품은 이미 가져온 목록에서도 즉시 사라져요(⭐ 보관은 예외)." },
+      { type: "fix", text: "🟡 카카오 작품 제목이 ‘콘텐츠홈 - 카카오페이지’로 들어오던 문제를 고쳐 진짜 제목이 들어와요. 정체불명이던 작은 버튼은 ‘🚫 관심없음’ 라벨로 분명해졌어요." },
+    ],
+  },
+  {
+    version: "7.52.0", date: "2026-06-30",
+    title: "📥 불러오기·일괄갱신·링크 관리 UX 개선 + 버그 수정",
+    highlights: [
+      { type: "improve", text: "📥 ‘불러오기’에서 장르·태그·연재처를 항목별로 ‘병합/치환’으로 선택하고, 상단 ‘전체 선택/해제’로 한 번에 적용할 수 있어요. 모달이 처음부터 스크롤되고 ‘선택 적용’ 버튼이 항상 보여요." },
+      { type: "new", text: "🔗 설정 ‘🔌 연결’에 ‘작품별 링크 역할’이 생겼어요 — 링크 있는 작품 전부를 빠른 목록에서 검색·정렬하고, 멀티링크마다 🔗다이렉트/🔄자동업뎃을 토글할 수 있어요." },
+      { type: "fix", text: "🐛 예정·일괄·보충·수상·최신 탭의 정렬 설정이 저장되지 않던 버그를 고쳤어요. 무결성 점검 결과도 잘림 없이 스크롤 모달로 전부 보여줘요." },
+    ],
+    details: [
+      { type: "improve", text: "‘일괄 갱신’도 작업별 카드 메뉴로 재구성해, 자주 쓰는 자동 갱신/링크 연결을 앞에 두고 덮어쓰기·외전 보정은 ‘고급’으로 접었어요." },
+    ],
+  },
+  {
+    version: "7.51.5", date: "2026-06-30",
+    title: "✨ 넷상 추천 카드 새 디자인",
+    highlights: [
+      { type: "improve", text: "✨ 넷상 추천 카드를 새로 디자인했어요 — 플랫폼 브랜드 색 액센트, 큰 표지, 회차/완결/19/장르 알약 칩, 취향 점수 게이지, 담기 버튼 위계로 한눈에 보기 좋아졌어요." },
+    ],
+  },
+  {
+    version: "7.51.4", date: "2026-06-30",
+    title: "💄 추천 탭 UX 2건",
+    highlights: [
+      { type: "improve", text: "💄 ‘추천 작품’과 ‘넷상 추천작’ 각 섹션에 전용 🎲 버튼을 둬서 무엇이 갱신되는지 분명해졌어요. 넷상 카드 소개글은 길면 ‘▼ 더보기’로 펼칠 수 있어요." },
+    ],
+  },
+  {
+    version: "7.51.3", date: "2026-06-30",
+    title: "🆕 넷상 추천 자동 채움",
+    highlights: [
+      { type: "improve", text: "🆕 추천 탭에 처음 들어가면 넷상 추천작이 비어 있지 않도록 하루 한 번 자동으로 채워줘요(‘매일 자동’을 켜면 매일 갱신)." },
+    ],
+  },
+  {
+    version: "7.51.2", date: "2026-06-30",
+    title: "🐞 넷상 추천 품질 — 잡음 제거",
+    highlights: [
+      { type: "fix", text: "🐞 넷상 결과에 섞이던 검색 부산물 카드(제목·표지 없는 빈 항목)와 일반 교양서를 걸러냈어요. 다시 뽑기 대기 시간도 짧아졌어요(60초→20초)." },
+    ],
+  },
+  {
+    version: "7.51.1", date: "2026-06-29",
+    title: "🔧 추천 설정 백업 + AI 키워드 Claude 지원",
+    highlights: [
+      { type: "fix", text: "💾 추천 설정·밴·커스텀 키워드가 백업/복원에 포함돼요(이전엔 복원 후 기본값으로 돌아갔어요)." },
+      { type: "new", text: "🤖 AI 키워드 생성에 Claude를 쓸 수 있어요(선택). 제미나이와 함께 제공자를 고를 수 있어요." },
+    ],
+  },
+  {
+    version: "7.51.0", date: "2026-06-29",
+    title: "🌐 넷상 추천작 — 앱 밖에서 새 작품 발견",
+    highlights: [
+      { type: "new", text: "🌐 ‘넷상 추천작’이 생겼어요 — 취향·탐험 키워드로 플랫폼을 검색해 ‘아직 내 서재에 없는’ 새 작품을 찾아 보여줘요. 마음에 들면 예정/본목록에 담거나 ⭐ 보관, 관심 없으면 숨길 수 있어요." },
+      { type: "new", text: "🎚️ 취향↔탐험 비율, 19금·최소 회차·연재상태 필터, 정렬(무작위/취향/인기/숨은작)을 고를 수 있어요. 에코챔버에 갇히지 않도록 덜 본 키워드에 가중치를 줘요." },
+    ],
+    details: [
+      { type: "new", text: "넷상 추천은 임시 목록이라 하루가 지나면 정리돼요(⭐ 보관한 작품은 유지). 자동 1일 1회 가져오기도 켤 수 있어요." },
+      { type: "new", text: "기존 5개 플랫폼(리디·네이버시리즈·문피아·노벨피아·카카오) 검색을 그대로 활용해요." },
+    ],
+  },
+  {
+    version: "7.50.0", date: "2026-06-29",
+    title: "🎯 오늘의 추천 개편 — 여러 작품 + 맞춤 설정",
+    highlights: [
+      { type: "new", text: "🎯 ‘오늘의 추천’이 하루 1작에서 여러 작품(기본 4, 1~10)으로 늘었어요. 취향↔탐험 슬라이더로 ‘비슷한 작품 위주 vs 새로운 결 탐험’ 비중을 조절할 수 있어요." },
+      { type: "improve", text: "⚙️ 추천 탭 상단 ‘맞춤 설정’에서 추천 작품 수·취향 비중·재추천 방지 기간을 직접 정할 수 있어요. 같은 작품이 자주 반복되지 않도록 최근 추천을 피해요." },
+    ],
+  },
+  {
+    version: "7.49.22", date: "2026-06-29",
+    title: "💾 백업 보존 보강 — 예상 티어·발견 경로",
+    highlights: [
+      { type: "fix", text: "💾 작품의 ‘예상 티어·발견 경로’(예정작에서 전환할 때 기록되는 값)가 백업/복원에서 사라지던 문제를 고쳤어요. 이제 내보내기/복원해도 그대로 보존돼요." },
+    ],
+  },
+  {
+    version: "7.49.21", date: "2026-06-29",
+    title: "🛠️ 라스트마일 보강 9건 — 수상 추천·승급 제안·되돌리기",
+    highlights: [
+      { type: "new", text: "🏆 수상 후보를 자동으로 추천해줘요 — 정원·조건에 맞는 상위 후보를 미리 골라주면 체크만 가감해 수여할 수 있어요(설정에서 끌 수 있어요)." },
+      { type: "new", text: "↩️ (하이브리드) 자동으로 자리가 바뀐 작품에 ‘한 번에 되돌리기’와 ‘왜 이 자리?’ 설명 카드가 생겼어요. 다회독한 저평가 작품은 승급 점검 후보로 제안돼요." },
+      { type: "new", text: "📅 예정작에 D-day 배지와 ‘곧 시작 예정’ 요약이 생기고, 명대사 카드 한 장을 이미지로 공유·저장할 수 있어요." },
+    ],
+    details: [
+      { type: "fix", text: "수상 탭이 특정 상황에서 열리지 않던 문제와, 명대사 이미지에 상단 버튼이 함께 찍히던 문제도 고쳤어요." },
+    ],
+  },
+  {
+    version: "7.49.20", date: "2026-06-29",
+    title: "🔬 기능 영역 점검 — 명대사·좌표·예정작 결함 수정",
+    highlights: [
+      { type: "fix", text: "🔬 명대사에 특정 기호(@)가 들어가면 저장 후 문장이 쪼개지던 데이터 손상, 손상된 백업에서 취향 좌표 분석 화면이 꺼지던 문제, 예정작 삭제 후 폴더 수가 부풀던 문제 등을 고쳤어요." },
+    ],
+  },
+  {
+    version: "7.49.19", date: "2026-06-29",
+    title: "🔬 변경 자기검토 — 복원 안전장치 보강",
+    highlights: [
+      { type: "fix", text: "🔬 ‘불러오기(복원)’가 중간에 강제 종료돼도 원본 데이터가 자동 복구되도록 안전장치를 보강했어요. 복원 중 슬롯을 바꿔도 데이터가 섞이지 않아요." },
+    ],
+  },
+  {
+    version: "7.49.18", date: "2026-06-29",
+    title: "🔬 복원 원자성·검증 동시성·대규모 성능",
+    highlights: [
+      { type: "fix", text: "🔬 ‘불러오기(복원)’가 중단되면 원래 데이터로 자동 되돌아가요. 작품이 1,000개가 넘어도 매칭 상대 고르기가 버벅이지 않도록 빨라졌어요." },
+    ],
+  },
+  {
+    version: "7.49.17", date: "2026-06-29",
+    title: "🚑 백업 호환 핫픽스 + 자동 승인 연결",
+    highlights: [
+      { type: "fix", text: "🚑 최신 백업 파일(v13)을 ‘지원하지 않음’으로 잘못 거부하던 문제를 급히 고쳤어요. 매칭 ‘자동 승인’이 실제로 동작하도록 연결하고, 작품 삭제와 매칭이 겹쳐 생기던 데이터 꼬임도 막았어요." },
+    ],
+  },
+  {
+    version: "7.49.16", date: "2026-06-29",
+    title: "🔴 백업 데이터 유실 수정 — 완결일·외전일 보존",
+    highlights: [
+      { type: "fix", text: "🔴 백업→복원 시 ‘본편 완결일·외전 시작/완결일’이 0으로 사라지던 중대한 문제를 고쳤어요. 정본화로 계산한 핵심 날짜들이 이제 백업에 함께 저장돼요(예전 백업 파일은 해당 값만 비어 있어요)." },
+    ],
+  },
   {
     version: "7.49.15", date: "2026-06-29",
     title: "🔄 ‘이 작품 모든 링크 새로고침’ — 한 작품을 완전 정본화",
@@ -21656,13 +21879,35 @@ const GUIDE_CONTENT = [
         ],
       },
       {
-        title: "AI 추천 시스템", icon: "💡", tabs: ["추천"], tabKey: "reco",
-        description: "매칭 학습 데이터를 기반으로 취향에 맞는 작품을 매일 추천합니다. 여러 카테고리(미독 예정작, 재독 추천 등)로 다양하게 제안해요.",
+        title: "오늘의 추천 (내 서재)", icon: "💡", tabs: ["추천"], tabKey: "reco",
+        description: "매칭 학습 데이터를 기반으로 취향에 맞는 작품을 매일 추천해요. 하루에 여러 작품(기본 4개, 1~10개)을 미독 예정작·재독 등 다양한 결로 제안해요.",
         tips: [
+          "🎯 추천 탭 상단 ‘⚙️ 맞춤 설정’에서 추천 작품 수, 취향↔탐험 비중, 재추천 방지 기간을 직접 정할 수 있어요. (v7.50.0)",
+          "🎚️ ‘취향↔탐험’ 슬라이더를 취향 쪽에 두면 비슷한 작품 위주로, 탐험 쪽에 두면 새로운 결의 작품을 더 섞어 추천해요. (v7.50.0)",
+          "🎲 ‘추천 작품’ 섹션의 다시 뽑기 버튼으로 내 서재 추천만 새로 받을 수 있어요. 최근 추천과 같은 부류·장르는 덜 나오도록 조정돼요.",
           "매칭 데이터가 충분하면 취향 적합도 점수가 함께 표시돼요.",
-          "추천이 마음에 들지 않으면 새로고침으로 다른 작품을 받아보세요.",
-          "⚡ 추천작 선정 속도를 대폭 개선했어요 — 라이브러리가 커도 빠르게 떠요. (v7.21.10)",
-          "🎲 최근 추천과 같은 부류·장르는 덜 나오도록 조정해 더 다양하게 제안해요. (v7.21.10)",
+        ],
+      },
+      {
+        title: "넷상 추천작 (새 작품 발견)", icon: "🌐", tabs: ["추천"], tabKey: "reco",
+        description: "취향·탐험 키워드로 플랫폼을 검색해 ‘아직 내 서재에 없는’ 새 작품을 찾아 보여줘요. 마음에 들면 예정/본목록에 담거나 ⭐ 보관하고, 관심 없으면 ‘🚫 관심없음’으로 숨겨요. (v7.51.0)",
+        tips: [
+          "🎲 ‘넷상 추천작’ 섹션의 가져오기 버튼으로 새 작품을 검색해 와요. 탭에 처음 들어가면 하루 한 번 자동으로 채워지고, ‘매일 자동’을 켜면 매일 갱신돼요. (v7.51.3)",
+          "🎚️ 취향↔탐험 비율, 19금·최소 회차·연재상태 필터, 정렬(무작위/취향/인기/숨은작)을 추천 설정에서 고를 수 있어요. (v7.51.0)",
+          "⏳ 넷상 추천은 임시 목록이라 하루가 지나면 정리돼요 — 마음에 드는 작품은 ⭐ 보관하거나 예정/본목록에 담아 두세요. (v7.51.0)",
+          "⚡ ‘최소 회차’를 켜면 작품 정보를 더 받아오느라 가져오기가 느려져요. 빠르게 쓰려면 꺼 두세요(기본 꺼짐). (v7.53.7)",
+          "⚠️ ‘대상 플랫폼’과 ‘제목 검색 사이트’(설정 › 🔌 연결)가 둘 다 켜져 있어야 그 플랫폼에서 결과가 나와요. (v7.53.4)",
+        ],
+      },
+      {
+        title: "추천 키워드 관리", icon: "🛠️", tabs: ["추천"], tabKey: "reco",
+        description: "추천 검색에 쓰이는 키워드를 직접 관리하는 화면이에요. 어떤 분류의 태그를 검색에 쓸지 켜고/끄고, 밴·내 키워드를 정리하고, ‘실제로 어떤 검색어가 쓰이는지’ 미리 볼 수 있어요. (v7.53.0)",
+        tips: [
+          "🛠️ 추천 탭(또는 추천 맞춤 설정)에서 ‘키워드 관리 열기’로 들어가요.",
+          "🏷️ 검색에 부적합한 분류(퀄리티·캐릭터 묘사 등)나 미분류 태그는 기본으로 꺼져 있어요 — 필요하면 켜서 검색어에 포함할 수 있어요. (v7.53.0)",
+          "🚫 밴 키워드는 검색어에서 빠질 뿐 아니라, 제목·작가·장르가 걸리는 작품을 ‘결과’에서도 제외해요(⭐ 보관은 예외). (v7.53.0)",
+          "🔎 검색 결과 제목에서 자주 나오는 소재어를 모아 두는 ‘수확 풀’도 여기서 정리할 수 있어요. (v7.53.5)",
+          "🤖 AI 키워드 생성을 켜면(제미나이/Claude 키 필요) 취향 기반 검색어를 더 풍부하게 만들어요. (v7.51.1)",
         ],
       },
     ],
@@ -35243,7 +35488,7 @@ async function ensureVerificationAuxSchema() {
   __verifAuxFixed = true;
   const fixes = [
     { t: "tier_repositioning_session",
-      create: `CREATE TABLE tier_repositioning_session (id TEXT PRIMARY KEY NOT NULL, novel_id TEXT NOT NULL, suspicion_type TEXT NOT NULL, trigger_type TEXT, state TEXT NOT NULL, result_tier TEXT, result_order INTEGER, result_action TEXT, total_responses INTEGER DEFAULT 0, blocker_id TEXT, created_at INTEGER NOT NULL, completed_at INTEGER);`,
+      create: `CREATE TABLE tier_repositioning_session (id TEXT PRIMARY KEY NOT NULL, novel_id TEXT NOT NULL, suspicion_type TEXT NOT NULL, trigger_type TEXT, state TEXT NOT NULL, result_tier TEXT, result_order INTEGER, result_action TEXT, total_responses INTEGER DEFAULT 0, blocker_id TEXT, created_at INTEGER NOT NULL, completed_at INTEGER, prev_tier TEXT, prev_order INTEGER);`,
       idx: [`CREATE INDEX IF NOT EXISTS idx_trs_blocker ON tier_repositioning_session(blocker_id, state);`, `CREATE INDEX IF NOT EXISTS idx_trs_novel ON tier_repositioning_session(novel_id);`] },
     { t: "tier_validation_log",
       create: `CREATE TABLE tier_validation_log (id TEXT PRIMARY KEY NOT NULL, session_id TEXT, novel_a_id TEXT NOT NULL, novel_b_id TEXT NOT NULL, user_choice TEXT NOT NULL, violation_type TEXT NOT NULL, created_at INTEGER NOT NULL);`,
@@ -37971,7 +38216,7 @@ function AppContent() {
   const removedQuoteImagesRef = useRef([]); // 📷 v3.6.1: 편집 중 삭제된 이미지 URI 추적 (저장 시 실제 삭제)
   const editNewQuoteImagesRef = useRef([]); // 📷 v6.0.1: 편집 모달에서 새로 추가된 이미지 URI 추적 (취소 시 정리)
   const regQuoteImagesRef = useRef([]); // 📷 v3.6.2: 등록 폼에서 추가된 이미지 URI 추적 (실패/취소 시 정리)
-  const [settingsSubTab, setSettingsSubTab] = useState("ranking"); // 🆕 Phase 2: 설정 서브탭 (v7.21: "ranking" | "display" | "tags" | "data" | "backup" | "diag" | "info")
+  const [settingsSubTab, setSettingsSubTab] = useState("ranking"); // 🆕 Phase 2: 설정 서브탭 (v7.45.2~: "ranking" | "display" | "tags" | "connect" | "data" | "backup" | "diag" | "info")
   const [connectSubTab, setConnectSubTab] = useState("main"); // 🔗 v7.48.0: 연결 탭 내부 분기 ("main" = AI·로그인·진단 | "links" = 링크 관리)
   const [tierColorPickerIdx, setTierColorPickerIdx] = useState(-1); // 🆕 v7.45.1: 티어 색상 팔레트 펼친 행 인덱스(-1=없음). 탭→팔레트 펼침→1탭 선택
   // 🎨 v3.8.0: 갤러리 시스템
@@ -39539,7 +39784,7 @@ function AppContent() {
       try {
         // DB 테이블 규모
         // 🛠️ v7.0.12: 진단 탭 테이블 카운트에 v7.0 하이브리드 테이블 추가 (이전: 누락되어 orphan 누적이 진단에 안 보임)
-        const tables = ["novels", "matches", "choice_logs", "cover_library", "novel_folders", "folders", "gallery_images", "planned_novels", "preference_patterns", "insight_queue", "tier_verification_queue", "tier_validation_log", "tier_repositioning_session", "trigger_fire_log"];
+        const tables = ["novels", "matches", "choice_logs", "cover_library", "novel_folders", "folders", "gallery_images", "planned_novels", "preference_patterns", "insight_queue", "tier_verification_queue", "tier_validation_log", "tier_repositioning_session", "trigger_fire_log", "web_reco", "web_reco_keywords", "reco_hidden_works"];
         const counts = {};
         for (const t of tables) {
           try { const r = await first(`SELECT COUNT(*) as cnt FROM ${t}`); counts[t] = r?.cnt ?? "?"; } catch { counts[t] = "N/A"; }
@@ -54729,6 +54974,12 @@ async function importJSON() {
         { sql: "DELETE FROM tier_repositioning_session;", params: [] },
         // 🆕 v7.0.8: trigger_fire_log도 import 시 초기화 (진단용 로그, fresh 시작)
         { sql: "DELETE FROM trigger_fire_log;", params: [] },
+        // 🆕 v7.53.8: 넷상 추천 학습 상태도 import 시 초기화 — 이전 데이터셋의 수확 키워드 풀/
+        //   '관심없음' 목록이 새로 불러온 라이브러리에 누출돼 추천을 편향시키던 문제(학습/하이브리드
+        //   테이블과 동일 클래스). web_reco(임시작)·web_reco_keywords(수확풀)·reco_hidden_works(숨김작).
+        { sql: "DELETE FROM web_reco;", params: [] },
+        { sql: "DELETE FROM web_reco_keywords;", params: [] },
+        { sql: "DELETE FROM reco_hidden_works;", params: [] },
       ]);
       invalidatePatternCache(); // 🔧 v3.5.14
       invalidateWeightsCache(); // 🔧 v3.5.14
@@ -69417,6 +69668,7 @@ async function importJSON() {
                   const s = PerfMonitor.getSummary();
                   const lines = [
                     `=== 성능 진단 리포트 ===`,
+                    `버전: v${APP_VERSION}`,
                     `가동시간: ${fmtUptime(s.uptime)}`,
                     `SQL: ${s.sql.totalCount}회, 평균 ${fmt(s.sql.avgTime)}, 느린쿼리 ${s.sql.slowCount}, 에러 ${s.sql.errorCount}`,
                     ``,
@@ -69463,7 +69715,7 @@ async function importJSON() {
                   ];
                   // 🔧 v3.6.0: DB 테이블 규모 + 인사이트 상태 추가
                   try {
-                    const tables = ["novels","matches","choice_logs","cover_library","planned_novels","preference_patterns","insight_queue"];
+                    const tables = ["novels","matches","choice_logs","cover_library","planned_novels","preference_patterns","insight_queue","web_reco","web_reco_keywords","reco_hidden_works"];
                     const tcLines = [];
                     for (const t of tables) { try { const r = await first(`SELECT COUNT(*) as cnt FROM ${t}`); tcLines.push(`${t}=${r?.cnt??'?'}`); } catch { tcLines.push(`${t}=N/A`); } }
                     lines.push(``, `[테이블 규모] ${tcLines.join(", ")}`);
@@ -69765,7 +70017,7 @@ async function importJSON() {
                                 <View style={{ paddingHorizontal: 12, paddingBottom: 12 }}>
                                   <Text style={{ color: C.text, fontSize: 13, lineHeight: 20, marginTop: 8 }}>{entry.description}</Text>
                                   {entry.requiresMatchMode && isManual && (
-                                    <Text style={{ color: C.warn, fontSize: 11, marginTop: 6 }}>⚠️ 매칭 모드 전환 후 사용 가능 (설정 → 앱 → 티어 시스템)</Text>
+                                    <Text style={{ color: C.warn, fontSize: 11, marginTop: 6 }}>⚠️ 매칭 모드 전환 후 사용 가능 (설정 → 🏆랭킹 → 티어 시스템)</Text>
                                   )}
                                   {entry.tips && entry.tips.length > 0 && (
                                     <View style={{ marginTop: 10, backgroundColor: C.bg, borderRadius: 10, padding: 12 }}>
@@ -69810,7 +70062,11 @@ async function importJSON() {
                       </View>
                       {entry.details && (() => {
                         const hlSet = new Set(entry.highlights.map(h => h.text));
-                        const extra = entry.details.filter(d => !hlSet.has(d.text));
+                        // 🔧 v7.53.8: details 항목이 문자열/객체 둘 다 가능 — 정규화 후 렌더(이전엔 문자열 details가
+                        //   d.text=undefined로 빈 '•' 줄만 보였음). {type,text} 또는 "문자열" 모두 지원.
+                        const extra = entry.details
+                          .map(d => (typeof d === "string" ? { type: undefined, text: d } : d))
+                          .filter(d => !hlSet.has(d.text));
                         if (extra.length === 0) return null;
                         return (
                           <>
