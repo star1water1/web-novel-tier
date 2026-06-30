@@ -2,9 +2,24 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.53.5 (검색어 품질 — 제목 단어 마이닝 + 시드 포괄화)                     ║
+ * ║  버전: 7.53.6 (적대적 리뷰 후속 — 제목마이닝 루트보존·풀 상한·미리보기 문구)     ║
  * ║  최종 수정: 2026-06-30                                                        ║
  * ║  총 라인 수: 약 74,560줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.53.6 v7.53.2~5 적대적 리뷰 후속 (2026-06-30)                              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 12 에이전트 교차검증: correctness·integration 0건(신규 코드 로직버그·회귀 없음). ║
+ * ║ 확정 품질 이슈 3건 수정:                                                         ║
+ * ║ • [제목 마이닝] 조사 꼬리 제거가 '빙의→빙·사도/마도/검도→1글자'처럼 마지막 글자가 ║
+ * ║   조사와 겹치는 진짜 소재어(루트)를 통째로 버리던 문제 → 깎은 결과가 2글자 미만   ║
+ * ║   이면 원형 유지(굴절형 회귀의→회귀·공작들→공작은 그대로 정리).                  ║
+ * ║ • [수확 풀 상한] web_reco_keywords가 자동 트림 없이 단조 증가(제목 마이닝이 가속) ║
+ * ║   → 일일 정리에 최근순 WEB_RECO_KEYWORD_CAP(2000)개만 유지.                      ║
+ * ║ • [미리보기 문구] '+N개 더 (검색엔 전부 사용)'은 오해 — 매 회 2~3개만 추첨 →      ║
+ * ║   '검색 후보엔 전부 포함, 매 회 일부만 추첨'으로 정정.                           ║
+ * ║ false positive로 확인(무변경): 스택 데드라인·플랫폼 경고·시드 접미사(의도된 설계).║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -16485,6 +16500,7 @@ const WEB_RECO_HIDDEN_CAP = 500;                   // "관심없음" 숨김 목�
 const WEB_RECO_REROLL_COOLDOWN_MS = 20 * 1000;     // 재뽑기 쿨다운(과도 요청 방지 — 탐색 UX 위해 완화)
 const WEB_RECO_MAX_KEYWORDS = 3;                   // 한 번 가져올 때 검색 횟수 상한(ToS — on-demand)
 const WEB_RECO_ENRICH_CAP = 10;                    // 🌐 v7.53.4: 콘텐츠 필터용 메타 보강 후보 상한(지연 제한)
+const WEB_RECO_KEYWORD_CAP = 2000;                 // 🌐 v7.53.6: 수확/제목 키워드 풀 상한(최근순 유지, DB 무한증가 방지)
 // 수확 시 제외할 잡음 키워드(연령/독점/공모전/형식 등 — 작품 검색어로 부적합)
 const WEB_RECO_JUNK_KEYWORDS = ["19","19금","독점","무료","연재","완결","연재중","단행본","성인","공모전","웹툰","웹소설","외전","단편","장편","무료연재","유료"];
 // 🌐 v7.53.5(B): 시드 어휘를 '검색용'으로 쓸 때만 포괄화 — 원본 어휘(분류/표시용)는 그대로 두고 여기서만 변형.
@@ -16513,8 +16529,10 @@ function mineTitleKeywords(titles) {
     for (let tok of t.split(/\s+/)) {
       tok = tok.trim();
       if (!tok || !/[가-힣]/.test(tok)) continue;            // 한글 포함 토큰만(숫자/영문 단독 제외)
-      tok = tok.replace(/(이라는|으로|에서|에게|한테|이라|에는)$/, ""); // 흔한 다글자 조사 꼬리
-      tok = tok.replace(/(의|는|은|이|가|을|를|에|도|로|와|과|만|랑|들)$/, ""); // 흔한 단글자 조사/복수 꼬리
+      // 🌐 v7.53.6: 조사 꼬리 제거는 '남는 게 2글자 이상'일 때만 — '빙의→빙','사도/마도/검도→1글자'처럼
+      //   마지막 글자가 조사와 겹치는 진짜 소재어(루트)가 통째로 버려지던 문제 방지.
+      { const s = tok.replace(/(이라는|으로|에서|에게|한테|이라|에는)$/, ""); if (s.length >= 2) tok = s; } // 흔한 다글자 조사 꼬리
+      { const s = tok.replace(/(의|는|은|이|가|을|를|에|도|로|와|과|만|랑|들)$/, ""); if (s.length >= 2) tok = s; } // 흔한 단글자 조사/복수 꼬리
       if (tok.length < 2 || tok.length > 7) continue;
       if (TITLE_MINE_STOP.has(tok) || WEB_RECO_JUNK_KEYWORDS.includes(tok)) continue;
       counts.set(tok, (counts.get(tok) || 0) + 1);
@@ -42652,6 +42670,8 @@ function AppContent() {
       const todayStart = d.getTime(); // 달력일 기준: 오늘 0시 이전 배치는 만료(보관 제외)
       await exec("DELETE FROM web_reco WHERE pinned=0 AND status='pending' AND fetched_at < ?;", [todayStart]);
       await exec("DELETE FROM web_reco WHERE status!='pending' AND fetched_at < ?;", [todayStart]);
+      // 🌐 v7.53.6: 수확/제목 키워드 풀 상한 — 최근 본 순으로 WEB_RECO_KEYWORD_CAP개만 유지(무한 증가 방지). 읽기는 어차피 LIMIT 400/300.
+      await exec(`DELETE FROM web_reco_keywords WHERE keyword IN (SELECT keyword FROM web_reco_keywords ORDER BY last_seen DESC LIMIT -1 OFFSET ${WEB_RECO_KEYWORD_CAP});`);
     } catch (e) { console.warn("cleanupExpiredWebReco 오류:", e); }
   }
 
@@ -57943,7 +57963,7 @@ async function importJSON() {
                     ))}
                     {a.length > 120 ? (
                       <View style={{ paddingHorizontal: 9, paddingVertical: 5, borderRadius: 13, backgroundColor: C.chip }}>
-                        <Text style={{ color: C.sub, fontSize: 11.5 }}>+{a.length - 120}개 더 (표시만 생략·검색엔 전부 사용)</Text>
+                        <Text style={{ color: C.sub, fontSize: 11.5 }}>+{a.length - 120}개 더 (표시만 생략 · 검색 후보엔 전부 포함, 매 회 일부만 추첨)</Text>
                       </View>
                     ) : null}
                   </>
