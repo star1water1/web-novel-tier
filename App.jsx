@@ -2,9 +2,27 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.56.2 (웹툰 Phase 2.2 — 네이버웹툰 연재연도 채우기, 베타)                ║
+ * ║  버전: 7.56.3 (웹툰 그림작가 필드 전 경로 배선 — 등록/표시/백업, 베타)          ║
  * ║  최종 수정: 2026-06-30                                                        ║
- * ║  총 라인 수: 약 76,700줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 76,750줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🎨 v7.56.3 웹툰 그림작가(artist) 전 경로 완성 — 등록·표시·백업 (2026-06-30)     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ Phase 1에서 artist 컬럼+편집모달+saveEdit+백업(novels)만 배선돼, 신규 등록·예정· ║
+ * ║ 보충·전환·표시에서 그림작가가 통째로 누락되던 문제를 전수 수정.                  ║
+ * ║ • 스키마: planned_novels에 artist 컬럼 추가(novels와 정합).                      ║
+ * ║ • INSERT 배선: novels 5경로(addNovel·예정→본작·일괄·삭제복원·백업복원) + planned  ║
+ * ║   4경로(addPlannedNovel·본작→예정·일괄·백업복원) 전부 artist 컬럼+파라미터 추가.  ║
+ * ║   (열/플레이스홀더/파라미터 수 자동검증 통과 — 11개 INSERT 정합.)               ║
+ * ║ • 폼: 신규 추가·예정·보충 폼에 웹툰 모드 한정 '그림작가' 입력 + 글/그림 라벨 분기. ║
+ * ║   scrapeCtx(new/planned/supplement/batchDup/dbApply) getCurrent·apply에 artist.  ║
+ * ║   metaToDraft·clearNovelForm/clearPlannedForm·상태(artist/plannedArtist) 추가.    ║
+ * ║ • 표시: authorLine 헬퍼(웹툰+그림작가면 "글작가 / 그림작가") — 라이브러리 카드·   ║
+ * ║   상세 확대뷰·예정 카드에 적용. 웹소설 모드·미입력은 글작가만(무영향).           ║
+ * ║ • 백업: planned 직렬화(row.art)/복원(p.art) 추가 — novels(opt.art)와 대칭. v13 유지.║
+ * ║ esbuild 통과·스크래퍼 회귀 무변. APP_VERSION 7.53.8 유지(베타).                  ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -10521,6 +10539,7 @@ async function initDb(progressCb) {
   await ensureColumn("planned_novels", "start_year", "INTEGER", "0");
   await ensureColumn("planned_novels", "end_year", "INTEGER", "0");
   await ensureColumn("planned_novels", "completed_at", "INTEGER", "0"); // 🆕 v7.28.61: 완결일
+  await ensureColumn("planned_novels", "artist", "TEXT", "''"); // 🎨 v7.56.3: 그림작가(웹툰) — novels와 정합(예정작에서도 글/그림 분리 보존)
 
   // 🖼️ v3.4.5: 표지 라이브러리 테이블
   await database.runAsync(`CREATE TABLE IF NOT EXISTS cover_library (
@@ -18942,6 +18961,16 @@ function getFirstGenre(value) {
   return arr.length > 0 ? arr[0] : "";
 }
 
+// 🎨 v7.56.3: 작가 표시 — 웹툰 모드 + 그림작가(artist)가 있으면 "글작가 / 그림작가"로 병기.
+//   그 외(웹소설 모드, 또는 그림작가 미입력/글=그림 동일)는 글작가만. globalSlotMode는 슬롯전환 시
+//   setSlotMode와 함께 갱신되어 렌더와 정합(전역 재할당 패턴). 빈 값은 호출부에서 "작가 미상" 폴백 처리.
+function authorLine(n) {
+  const a = (n && n.author != null ? String(n.author) : "").trim();
+  const ar = (n && n.artist != null ? String(n.artist) : "").trim();
+  if (globalSlotMode === "webtoon" && ar && ar !== a) return a ? `${a} / ${ar}` : ar;
+  return a;
+}
+
 /* =========================================================
    💬 v3.5.4~v3.5.6: 인상깊은 문장 다중 지원 유틸리티
    - 하위 호환: 기존 단일 문자열 → ["문자열"] 변환
@@ -23845,7 +23874,7 @@ const NovelCard = memo(({
           {/* 2줄: 작가 · 장르 + 우측 상태 아이콘 */}
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
             <Text style={{ color: theme.text, fontSize: 13, flex: 1 }} numberOfLines={1}>
-              {item.author || "작가 미상"}
+              {authorLine(item) || "작가 미상"}
               {getFirstGenre(item.major_genre) && <Text style={{ color: theme.sub }}> · {getFirstGenre(item.major_genre)}</Text>}
               {getFirstGenre(item.sub_genre) && <Text style={{ color: theme.sub }}> · {getFirstGenre(item.sub_genre)}</Text>}
             </Text>
@@ -32288,7 +32317,7 @@ const AwardsScreen = memo(({
               marginTop: 16,
               textAlign: "center",
             }}>
-              {expandedView.title}{expandedView.author ? ` · ${expandedView.author}` : ""}
+              {expandedView.title}{authorLine(expandedView) ? ` · ${authorLine(expandedView)}` : ""}
             </Text>
           ) : null}
           <View style={{
@@ -39395,6 +39424,7 @@ function AppContent() {
   // 등록 입력
   const [title, setTitle] = useState("");
   const [author, setAuthor] = useState("");
+  const [artist, setArtist] = useState(""); // 🎨 v7.56.3: 그림작가(웹툰모드 신규 작품 추가 폼)
   const [tags, setTagsRaw] = useState("");
   // 🔧 v3.5.9: ref 동기화로 stale closure 방지 (연속 태그 삭제 시)
   const tagsRef = useRef("");
@@ -39660,6 +39690,7 @@ function AppContent() {
   // 예정 작품 등록 폼
   const [plannedTitle, setPlannedTitle] = useState("");
   const [plannedAuthor, setPlannedAuthor] = useState("");
+  const [plannedArtist, setPlannedArtist] = useState(""); // 🎨 v7.56.3: 그림작가(웹툰 예정작 폼)
   const [plannedTags, setPlannedTagsRaw] = useState("");
   // 🔧 v3.5.9: ref 동기화로 stale closure 방지
   const plannedTagsRef = useRef("");
@@ -42331,6 +42362,7 @@ function AppContent() {
   function clearPlannedForm() {
     setPlannedTitle("");
     setPlannedAuthor("");
+    setPlannedArtist(""); // 🎨 v7.56.3: 그림작가(웹툰) 초기화
     setPlannedTags("");
     setPlannedNote("");
     setPlannedTotalEpisodes("");
@@ -42393,8 +42425,8 @@ function AppContent() {
       const now = Date.now();
       
       await exec(
-        `INSERT INTO planned_novels (id,title,author,tags,platforms,note,total_episodes,cover_image,link,work_status,major_genre,sub_genre,priority,created_at,expected_rating,expected_tier,interest_level,discovery_source,first_chapter_read,scheduled_start_date,similar_novels,why_interested,tag_data,start_year,end_year,completed_at,gaiden_status,gaiden_total_episodes,gaiden_start_at,gaiden_completed_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+        `INSERT INTO planned_novels (id,title,author,tags,platforms,note,total_episodes,cover_image,link,work_status,major_genre,sub_genre,priority,created_at,expected_rating,expected_tier,interest_level,discovery_source,first_chapter_read,scheduled_start_date,similar_novels,why_interested,tag_data,start_year,end_year,completed_at,gaiden_status,gaiden_total_episodes,gaiden_start_at,gaiden_completed_at,artist)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
         [
           id,
           t,
@@ -42433,6 +42465,7 @@ function AppContent() {
           Number(plannedGaidenTotalEpisodes) || 0,
           Number(plannedGaidenStartAt) || 0,
           Number(plannedGaidenCompletedAt) || 0,
+          plannedArtist.trim(), // 🎨 v7.56.3: 그림작가(웹툰)
         ]
       );
 
@@ -42705,8 +42738,8 @@ function AppContent() {
       const _baselineToRestore = Number(planned.read_count_baseline) || (Number(planned.read_count) || initialReadCount);
       await execBatch([
         {
-          sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order,start_year,end_year,completed_at,gaiden_start_at,gaiden_completed_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+          sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order,start_year,end_year,completed_at,gaiden_start_at,gaiden_completed_at,artist)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
           params: [
             id,
             planned.title,
@@ -42747,6 +42780,7 @@ function AppContent() {
             Number(planned.completed_at) || 0,       // 🆕 v7.44.9: 본편 완결일 round-trip
             Number(planned.gaiden_start_at) || 0,    // 🆕 v7.44.9
             Number(planned.gaiden_completed_at) || 0,
+            planned.artist || "", // 🎨 v7.56.3: 그림작가(웹툰) 예정→본작 전환 보존
           ],
         },
         {
@@ -43202,8 +43236,8 @@ function AppContent() {
             manual_tier, manual_order, reread_count,
             aliases, memorable_quote, awards,
             read_count_updated_at, read_count_baseline,
-            start_year, end_year
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            start_year, end_year, artist
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           params: [
             novel.id, novel.title, novel.author || "",
             novel.tags || "", novel.platforms || "[]", novel.note || "",
@@ -43232,6 +43266,7 @@ function AppContent() {
             // 🔧 v7.6.1: novel→planned 강등 시 연재 연도 보존 (누락 → round-trip 손실 수정)
             Number(novel.start_year) || 0,
             Number(novel.end_year) || 0,
+            novel.artist || "", // 🎨 v7.56.3: 그림작가(웹툰) 강등 보존
           ],
         },
         // pending verification 큐 cancel — 가등록 작품은 verification 의미 없음
@@ -46704,6 +46739,7 @@ function AppContent() {
     updateEditItem(prev => prev ? {
       ...prev,
       ...(f.author != null ? { author: f.author } : {}),
+      ...(f.artist != null ? { artist: f.artist } : {}), // 🎨 v7.56.3: 그림작가(웹툰)
       ...(f.note != null ? { note: f.note } : {}),
       ...(f.tags != null ? { tags: f.tags } : {}),
       ...(f.total_episodes != null ? { total_episodes: Number(f.total_episodes) || 0 } : {}),
@@ -46727,10 +46763,11 @@ function AppContent() {
     kind: "new", // 🆕 v7.28.52: 제목검색 중복 판정용(이미 등록된 작품이면 기존작 편집 제안)
     supportsGaiden: true, // 🆕 v7.44.6: 신규 등록은 외전/완결일 저장 배선 완료(addNovel INSERT)
     freshTarget: true, // 🆕 v7.44.7: 빈 폼이므로 긁어온 값 기본 체크 ON(완결작 등 기본값과 달라도 자동 체크)
-    getCurrent: () => ({ title, author, note, tags, total_episodes: totalEpisodes, work_status: newWorkStatus, cover: newCoverImage, major_genre: newMajorGenre, sub_genre: newSubGenre, start_year: newStartYear, end_year: newEndYear, platforms, link: newLink, completed_at: newCompletedAt, gaiden_status: newGaidenStatus, gaiden_total_episodes: newGaidenTotalEpisodes, gaiden_start_at: newGaidenStartAt, gaiden_completed_at: newGaidenCompletedAt }),
+    getCurrent: () => ({ title, author, artist, note, tags, total_episodes: totalEpisodes, work_status: newWorkStatus, cover: newCoverImage, major_genre: newMajorGenre, sub_genre: newSubGenre, start_year: newStartYear, end_year: newEndYear, platforms, link: newLink, completed_at: newCompletedAt, gaiden_status: newGaidenStatus, gaiden_total_episodes: newGaidenTotalEpisodes, gaiden_start_at: newGaidenStartAt, gaiden_completed_at: newGaidenCompletedAt }),
     apply: (f) => {
       if (f.title != null) setTitle(f.title);
       if (f.author != null) setAuthor(f.author);
+      if (f.artist != null) setArtist(f.artist); // 🎨 v7.56.3: 그림작가(웹툰)
       if (f.note != null) setNote(f.note);
       if (f.tags != null) setTags(f.tags);
       if (f.total_episodes != null) setTotalEpisodes(String(f.total_episodes));
@@ -46755,10 +46792,11 @@ function AppContent() {
     kind: "planned", // 🆕 v7.28.52: 제목검색 중복 판정용
     freshTarget: true, // 🆕 v7.44.7: 예정도 빈 폼 → 긁어온 값 기본 체크 ON
     supportsGaiden: true, // 🆕 v7.44.9: 예정도 외전/완결일 저장 배선 완료(addPlannedNovel INSERT + convert round-trip)
-    getCurrent: () => ({ title: plannedTitle, author: plannedAuthor, note: plannedNote, tags: plannedTags, total_episodes: plannedTotalEpisodes, work_status: plannedWorkStatus, cover: plannedCoverImage, major_genre: plannedMajorGenre, sub_genre: plannedSubGenre, start_year: plannedStartYear, end_year: plannedEndYear, platforms: plannedPlatforms, link: plannedLink, completed_at: plannedCompletedAt, gaiden_status: plannedGaidenStatus, gaiden_total_episodes: plannedGaidenTotalEpisodes, gaiden_start_at: plannedGaidenStartAt, gaiden_completed_at: plannedGaidenCompletedAt }),
+    getCurrent: () => ({ title: plannedTitle, author: plannedAuthor, artist: plannedArtist, note: plannedNote, tags: plannedTags, total_episodes: plannedTotalEpisodes, work_status: plannedWorkStatus, cover: plannedCoverImage, major_genre: plannedMajorGenre, sub_genre: plannedSubGenre, start_year: plannedStartYear, end_year: plannedEndYear, platforms: plannedPlatforms, link: plannedLink, completed_at: plannedCompletedAt, gaiden_status: plannedGaidenStatus, gaiden_total_episodes: plannedGaidenTotalEpisodes, gaiden_start_at: plannedGaidenStartAt, gaiden_completed_at: plannedGaidenCompletedAt }),
     apply: (f) => {
       if (f.title != null) setPlannedTitle(f.title);
       if (f.author != null) setPlannedAuthor(f.author);
+      if (f.artist != null) setPlannedArtist(f.artist); // 🎨 v7.56.3: 그림작가(웹툰)
       if (f.note != null) setPlannedNote(f.note);
       if (f.tags != null) setPlannedTags(f.tags);
       if (f.total_episodes != null) setPlannedTotalEpisodes(String(f.total_episodes));
@@ -46781,11 +46819,11 @@ function AppContent() {
   const scrapeCtxSupplement = () => ({
     label: "보충",
     supportsGaiden: true, // 🆕 v7.44.8: 기존작 보충도 외전/완결일 반영
-    fields: ["author", "note", "tags", "total_episodes", "work_status", "cover", "major_genre", "sub_genre", "start_year", "end_year", "platforms", "link", "completed_at", "gaiden_status", "gaiden_total_episodes", "gaiden_start_at", "gaiden_completed_at"],
+    fields: ["author", "artist", "note", "tags", "total_episodes", "work_status", "cover", "major_genre", "sub_genre", "start_year", "end_year", "platforms", "link", "completed_at", "gaiden_status", "gaiden_total_episodes", "gaiden_start_at", "gaiden_completed_at"], // 🎨 v7.56.3: 그림작가(웹툰)
     // 🆕 v7.44.11: 보충은 editItem 단일 모델 — getCurrent/apply 모두 editItem 기준.
     //   종전 edit state 참조는 보충 로드가 edit state를 초기화하지 않아(스테일) diff '현재값'이
     //   직전 편집 세션 값으로 오표시되고, 적용값도 editItem에 안 실려 저장에서 누락됐다.
-    getCurrent: () => ({ author: editItem?.author, note: editItem?.note, tags: editItem?.tags, total_episodes: editItem?.total_episodes, work_status: editItem?.work_status, cover: editItem?.cover_image, major_genre: editItem?.major_genre, sub_genre: editItem?.sub_genre, start_year: editItem?.start_year, end_year: editItem?.end_year, platforms: editItem?.platforms, link: editItem?.link, completed_at: editItem?.completed_at, gaiden_status: editItem?.gaiden_status, gaiden_total_episodes: editItem?.gaiden_total_episodes, gaiden_start_at: editItem?.gaiden_start_at, gaiden_completed_at: editItem?.gaiden_completed_at }),
+    getCurrent: () => ({ author: editItem?.author, artist: editItem?.artist, note: editItem?.note, tags: editItem?.tags, total_episodes: editItem?.total_episodes, work_status: editItem?.work_status, cover: editItem?.cover_image, major_genre: editItem?.major_genre, sub_genre: editItem?.sub_genre, start_year: editItem?.start_year, end_year: editItem?.end_year, platforms: editItem?.platforms, link: editItem?.link, completed_at: editItem?.completed_at, gaiden_status: editItem?.gaiden_status, gaiden_total_episodes: editItem?.gaiden_total_episodes, gaiden_start_at: editItem?.gaiden_start_at, gaiden_completed_at: editItem?.gaiden_completed_at }),
     apply: applySupplementFields, // 🆕 v7.44.11: editItem 타깃 적용(보충 저장이 editItem만 읽으므로 파리티 성립)
   });
   const scrapeCtxEdit = () => ({
@@ -46843,7 +46881,7 @@ function AppContent() {
     supportsGaiden: true,
     apply: scrapeCtxEdit().apply,
     getCurrent: () => ({
-      title: work.title, author: work.author, note: work.note, tags: work.tags,
+      title: work.title, author: work.author, artist: work.artist, note: work.note, tags: work.tags,
       total_episodes: work.total_episodes, work_status: work.work_status,
       cover: work.cover_image, major_genre: work.major_genre, sub_genre: work.sub_genre,
       start_year: work.start_year, end_year: work.end_year,
@@ -46859,7 +46897,7 @@ function AppContent() {
     label: "기존작 비교·반영",
     supportsGaiden: true, // 🆕 v7.44.12: 일괄 dup 비교·반영도 외전/완결일 항목 노출 + 직접 UPDATE 배선(아래 apply)
     getCurrent: () => ({
-      title: work.title, author: work.author, note: work.note, tags: work.tags,
+      title: work.title, author: work.author, artist: work.artist, note: work.note, tags: work.tags,
       total_episodes: work.total_episodes, work_status: work.work_status,
       cover: work.cover_image, major_genre: work.major_genre, sub_genre: work.sub_genre,
       start_year: work.start_year, end_year: work.end_year,
@@ -46873,6 +46911,7 @@ function AppContent() {
       const pushSet = (col, val) => { sets.push(col + "=?"); params.push(val); };
       if (f.title != null) pushSet("title", f.title);
       if (f.author != null) pushSet("author", f.author);
+      if (f.artist != null) pushSet("artist", f.artist); // 🎨 v7.56.3: 그림작가(웹툰)
       if (f.note != null) pushSet("note", f.note);
       if (f.tags != null) pushSet("tags", deduplicateTagString(String(f.tags)) || String(f.tags));
       if (f.total_episodes != null) pushSet("total_episodes", Number(f.total_episodes) || 0);
@@ -46931,6 +46970,7 @@ function AppContent() {
     return {
       title: (meta.title || "").trim(),
       author: (meta.author || "").trim(),
+      artist: (meta.artist || "").trim(), // 🎨 v7.56.3: 그림작가(웹툰) — 일괄등록에서도 보존
       note: scraperCleanSynopsis(meta.synopsis), // 🆕 v7.31.2: 엔티티 디코드 + 메타 접두 제거
       tags: tagsArr.join(", "),
       platforms: meta.platform ? [canonicalPlatform(meta.platform)] : [], // 🆕 v7.28.55: 동의어 정규화
@@ -47090,14 +47130,15 @@ function AppContent() {
         if (isPlannedTarget) {
           // 예정 등록: 핵심 컬럼만 INSERT (나머지는 스키마 기본값). 레이팅/티어 필드 없음.
           await exec(
-            `INSERT INTO planned_novels (id,title,author,tags,platforms,note,total_episodes,cover_image,link,work_status,major_genre,sub_genre,priority,created_at,tag_data,start_year,end_year,completed_at,gaiden_status,gaiden_total_episodes,gaiden_start_at,gaiden_completed_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+            `INSERT INTO planned_novels (id,title,author,tags,platforms,note,total_episodes,cover_image,link,work_status,major_genre,sub_genre,priority,created_at,tag_data,start_year,end_year,completed_at,gaiden_status,gaiden_total_episodes,gaiden_start_at,gaiden_completed_at,artist)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
             [
               id, t, (d.author || "").trim(), deduplicateTagString(d.tags || "") || "",
               JSON.stringify(d.platforms || []), (d.note || "").trim(), Number(d.total_episodes) || 0,
               coverPath, (d.link || "").trim(), d.work_status || "ongoing", finalMajor, finalSub,
               0, now, "", Number(d.start_year) || 0, Number(d.end_year) || 0, Number(d.completed_at) || 0, // 🆕 v7.40.3: 완결일
               d.gaiden_status || "none", Number(d.gaiden_total_episodes) || 0, Number(d.gaiden_start_at) || 0, Number(d.gaiden_completed_at) || 0, // 🆕 v7.41.0: 외전
+              (d.artist || "").trim(), // 🎨 v7.56.3: 그림작가(웹툰)
             ]
           );
           if (coverPath) { coverTouched = true; try { await updateCoverStatus(coverPath, id, "used"); } catch {} }
@@ -47108,8 +47149,8 @@ function AppContent() {
             manualOrder = (Number(mr?.m) || 0) + 100;
           } catch {}
           await execBatch([{
-            sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order,read_count_baseline,start_year,end_year,completed_at,gaiden_start_at,gaiden_completed_at)
-              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+            sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order,read_count_baseline,start_year,end_year,completed_at,gaiden_start_at,gaiden_completed_at,artist)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
             params: [
               id, t, (d.author || "").trim(), deduplicateTagString(d.tags || "") || "",
               JSON.stringify(d.platforms || []), (d.note || "").trim(),
@@ -47118,6 +47159,7 @@ function AppContent() {
               d.work_status || "ongoing", now, finalMajor, finalSub, d.gaiden_status || "none", 0, Number(d.gaiden_total_episodes) || 0, 1, "", "", "",
               null, manualOrder, 0, Number(d.start_year) || 0, Number(d.end_year) || 0, Number(d.completed_at) || 0, // 🆕 v7.40.3: 완결일
               Number(d.gaiden_start_at) || 0, Number(d.gaiden_completed_at) || 0, // 🆕 v7.41.0: 외전 날짜
+              (d.artist || "").trim(), // 🎨 v7.56.3: 그림작가(웹툰)
             ],
           }]);
           if (coverPath) { coverTouched = true; try { await applyNovelCover(id, coverPath, null); } catch {} }
@@ -50112,9 +50154,9 @@ function AppContent() {
           const n = item.payload.novel;
           await exec(
             // 🔧 v7.6.0: start_year/end_year/match_ban 복원 추가 (n은 SELECT * 캡처 → 필드 존재, 미존재 시 0 폴백)
-            `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,start_year,end_year,match_ban,links,update_link)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-            [n.id, n.title, n.author, n.tags, n.platforms, n.note, n.read_count, n.rating, n.rd, n.wins, n.losses, n.match_count, n.tier, n.created_at, n.awards, n.total_episodes, n.status, n.pinned, n.cover_image, n.link, n.work_status, n.read_count_updated_at, n.major_genre, n.sub_genre, n.gaiden_status, n.gaiden_read_count, n.gaiden_total_episodes, n.manual_tier, Number(n.manual_order) || 0, n.reread_count || 1, n.tag_data || "", n.aliases || "", n.memorable_quote || "", Number(n.start_year) || 0, Number(n.end_year) || 0, Number(n.match_ban) || 0, n.links || "", n.update_link || ""]
+            `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,start_year,end_year,match_ban,links,update_link,artist)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+            [n.id, n.title, n.author, n.tags, n.platforms, n.note, n.read_count, n.rating, n.rd, n.wins, n.losses, n.match_count, n.tier, n.created_at, n.awards, n.total_episodes, n.status, n.pinned, n.cover_image, n.link, n.work_status, n.read_count_updated_at, n.major_genre, n.sub_genre, n.gaiden_status, n.gaiden_read_count, n.gaiden_total_episodes, n.manual_tier, Number(n.manual_order) || 0, n.reread_count || 1, n.tag_data || "", n.aliases || "", n.memorable_quote || "", Number(n.start_year) || 0, Number(n.end_year) || 0, Number(n.match_ban) || 0, n.links || "", n.update_link || "", n.artist || ""]
           );
           // 🆕 v7.21.0: 삭제 시 함께 지워진 매치 복원 → rebuildAllFromMatches로 ELO 정합 회복
           //   (매치 미복원 시 복원작은 stored rating만 갖고 다음 rebuild에서 1500으로 초기화됨)
@@ -50715,6 +50757,7 @@ function AppContent() {
   function clearNovelForm({ deleteQuoteImages = false } = {}) {
     setTitle("");
     setAuthor("");
+    setArtist(""); // 🎨 v7.56.3: 그림작가(웹툰) 초기화
     setTags("");
     setPlatforms([]);
     setNote("");
@@ -50834,8 +50877,8 @@ function AppContent() {
       const _initialReadCount = Number(readCount) || 0;
       await execBatch([
         {
-          sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order,read_count_baseline,start_year,end_year,completed_at,gaiden_start_at,gaiden_completed_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+          sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order,read_count_baseline,start_year,end_year,completed_at,gaiden_start_at,gaiden_completed_at,artist)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
           params: [
             id,
             t,
@@ -50876,6 +50919,7 @@ function AppContent() {
             Number(newCompletedAt) || 0,      // 🆕 v7.44.6: 본편 완결일
             Number(newGaidenStartAt) || 0,    // 🆕 v7.44.6: 외전 시작일
             Number(newGaidenCompletedAt) || 0,// 🆕 v7.44.6: 외전 완결일
+            artist.trim(), // 🎨 v7.56.3: 그림작가(웹툰)
           ],
         },
       ]);
@@ -56105,6 +56149,8 @@ async function exportJSON(opts) {
         // 🔧 v7.6.1: 예정작 연재 연도 백업 직렬화 (포트 v3.12.3에서 누락 → backup round-trip 손실 수정)
         if (Number(p.start_year) > 0) row.sy = Number(p.start_year);
         if (Number(p.end_year) > 0) row.ey = Number(p.end_year);
+        // 🎨 v7.56.3: 그림작가(웹툰) — novels 백업(opt.art)과 대칭. 있을 때만.
+        if ((p.artist || "").trim()) row.art = (p.artist || "").trim();
         return row;
       });
     }
@@ -56924,8 +56970,8 @@ async function importJSON(directText, onSuccess, onSettled) {
                 // 🆕 v7.2.0: round-trip 보존 19개 신규 필드 + id 보존 (있으면 사용, 없으면 신규 uuid)
                 const plannedQueries = data.PL.map(p => ({
                   sql: `INSERT INTO planned_novels
-                    (id, title, author, tags, platforms, note, total_episodes, cover_image, link, work_status, major_genre, sub_genre, priority, created_at, expected_rating, expected_tier, interest_level, discovery_source, first_chapter_read, scheduled_start_date, similar_novels, why_interested, tag_data, status, pinned, read_count, rating, rd, wins, losses, match_count, gaiden_status, gaiden_read_count, gaiden_total_episodes, manual_tier, manual_order, reread_count, aliases, memorable_quote, awards, read_count_updated_at, read_count_baseline, start_year, end_year, completed_at, gaiden_start_at, gaiden_completed_at)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                    (id, title, author, tags, platforms, note, total_episodes, cover_image, link, work_status, major_genre, sub_genre, priority, created_at, expected_rating, expected_tier, interest_level, discovery_source, first_chapter_read, scheduled_start_date, similar_novels, why_interested, tag_data, status, pinned, read_count, rating, rd, wins, losses, match_count, gaiden_status, gaiden_read_count, gaiden_total_episodes, manual_tier, manual_order, reread_count, aliases, memorable_quote, awards, read_count_updated_at, read_count_baseline, start_year, end_year, completed_at, gaiden_start_at, gaiden_completed_at, artist)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
                   params: [
                     p.id || uuid(),                                      // 🆕 v7.2.0: id 보존
                     p.t || "",
@@ -56978,6 +57024,7 @@ async function importJSON(directText, onSuccess, onSettled) {
                     (p.cma != null) ? (baseTs + p.cma) * 1000 : 0,
                     (p.gsa != null) ? (baseTs + p.gsa) * 1000 : 0,
                     (p.gca != null) ? (baseTs + p.gca) * 1000 : 0,
+                    p.art || "", // 🎨 v7.56.3: 그림작가(웹툰) 복원 (구버전 백업은 키 없음 → "")
                   ],
                 }));
                 
@@ -58000,12 +58047,23 @@ async function importJSON(directText, onSuccess, onSettled) {
                   )}
                 </View>
               )}
-              <Label style={{ marginTop: 10 }}>작가(선택)</Label>
+              <Label style={{ marginTop: 10 }}>{slotMode === "webtoon" ? "글작가(선택)" : "작가(선택)"}</Label>
               <Input
                 value={author}
                 onChangeText={setAuthor}
-                placeholder="작가"
+                placeholder={slotMode === "webtoon" ? "글작가" : "작가"}
               />
+              {/* 🎨 v7.56.3: 그림작가(웹툰 모드만) */}
+              {slotMode === "webtoon" && (
+                <>
+                  <Label style={{ marginTop: 10 }}>그림작가(선택)</Label>
+                  <Input
+                    value={artist}
+                    onChangeText={setArtist}
+                    placeholder="그림작가"
+                  />
+                </>
+              )}
               {/* 🆕 v3.5.8: 태그 칩 뷰 (신규 등록) */}
               <View style={{ marginTop: 10, marginBottom: 8 }}>
                 <TagChipView
@@ -60039,13 +60097,24 @@ async function importJSON(directText, onSuccess, onSettled) {
                 </View>
               )}
               
-              <Label style={{ marginTop: 10 }}>작가</Label>
-              <Input 
-                value={plannedAuthor} 
-                onChangeText={setPlannedAuthor} 
-                placeholder="작가명" 
+              <Label style={{ marginTop: 10 }}>{slotMode === "webtoon" ? "글작가" : "작가"}</Label>
+              <Input
+                value={plannedAuthor}
+                onChangeText={setPlannedAuthor}
+                placeholder={slotMode === "webtoon" ? "글작가명" : "작가명"}
               />
-              
+              {/* 🎨 v7.56.3: 그림작가(웹툰 모드만) */}
+              {slotMode === "webtoon" && (
+                <>
+                  <Label style={{ marginTop: 10 }}>그림작가</Label>
+                  <Input
+                    value={plannedArtist}
+                    onChangeText={setPlannedArtist}
+                    placeholder="그림작가명 (선택)"
+                  />
+                </>
+              )}
+
               <Label style={{ marginTop: 10 }}>연재처</Label>
               <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
                 {PLATFORM_OPTIONS.map((p) => (
@@ -60505,7 +60574,7 @@ async function importJSON(directText, onSuccess, onSettled) {
 
                               {/* 작가 · 플랫폼 · 회차 */}
                               <Text style={{ color: C.sub, marginTop: 4, fontSize: 13 }} numberOfLines={1}>
-                                {item.author || "작가 미상"} · {plats.length ? plats.join(", ") : "-"}
+                                {authorLine(item) || "작가 미상"} · {plats.length ? plats.join(", ") : "-"}
                                 {item.total_episodes > 0 && ` · ${item.total_episodes}화`}
                               </Text>
 
@@ -62928,13 +62997,25 @@ async function importJSON(directText, onSuccess, onSettled) {
                     {supplementCurrentNovel.issues.includes("author") && (
                       <Text style={{ color: isDark ? "#fbbf24" : "#d97706", fontSize: 11, fontWeight: "700", marginBottom: 4 }}>⚠️ 필수 입력</Text>
                     )}
-                    <Label>작가</Label>
+                    <Label>{slotMode === "webtoon" ? "글작가" : "작가"}</Label>
                     <Input
                       value={editItem?.author || ""}
                       onChangeText={(t) => updateEditItem(prev => prev ? { ...prev, author: t } : null)}
-                      placeholder="작가명 입력"
+                      placeholder={slotMode === "webtoon" ? "글작가명 입력" : "작가명 입력"}
                     />
                   </View>
+
+                  {/* 🎨 v7.56.3: 그림작가(웹툰 모드만) */}
+                  {slotMode === "webtoon" && (
+                    <View style={{ marginBottom: 8 }}>
+                      <Label>그림작가</Label>
+                      <Input
+                        value={editItem?.artist || ""}
+                        onChangeText={(t) => updateEditItem(prev => prev ? { ...prev, artist: t } : null)}
+                        placeholder="그림작가명 입력 (선택)"
+                      />
+                    </View>
+                  )}
 
                   {/* 전체 회차 / 읽은 회차 */}
                   <View style={{ flexDirection: "row", gap: 12, marginBottom: 8 }}>
