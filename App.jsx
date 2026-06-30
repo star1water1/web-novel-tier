@@ -2,9 +2,33 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.54.4 (예정탭 등 정렬/필터 영속 유실 버그수정 — 백그라운드 메타 flush, 베타) ║
+ * ║  버전: 7.55.0 (웹툰모드 Phase 1 — 슬롯별 웹소설/웹툰 모드, 베타)                  ║
  * ║  최종 수정: 2026-06-30                                                        ║
- * ║  총 라인 수: 약 76,100줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 76,400줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🎨 v7.55.0 웹툰모드 Phase 1 — 슬롯별 웹소설/웹툰 모드 (2026-06-30)              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 슬롯마다 웹소설/웹툰 모드를 두어 도메인 레이어(장르·플랫폼·용어·검색)를 분기.       ║
+ * ║ 핵심 엔진(티어/ELO/매칭/취향분석/좌표계)은 모드 무관 공유.                         ║
+ * ║ • MODE_PROFILES(데이터 주도) + 웹툰 팩토리 세트(장르/서브/일반태그/별칭/플랫폼).    ║
+ * ║   좌표/스펙트럼 참조 태그는 spread로 상위집합 유지, 캐릭터/스펙트럼은 모드 공유.    ║
+ * ║ • slotMode 반응형 state + globalSlotMode 모듈 미러 + applySlotMode() 전역 스왑     ║
+ * ║   (기존 applyTagRegistry '전역 재할당' 패턴과 동일 — 145+ 참조부 무수정).          ║
+ * ║ • slot_meta.mode + createSlot(name,mode); 전환·부팅 시 시드 전 applySlotMode로     ║
+ * ║   모드 팩토리 시드 보장(P2). seedTagRegistry/loadPlatformRegistry·deriveUser* 모드 ║
+ * ║   인식. 장르 파생 useMemo deps에 slotMode(P1 — 비반응형 모듈변수 의존 제거).       ║
+ * ║ • UI: 생성 시 모드 선택, 슬롯 목록 모드 배지, 설정 '현재 슬롯 모드' 토글           ║
+ * ║   (작품 있으면 경고 후 허용 — 팔레트만 교체, 데이터 보존 P4).                     ║
+ * ║ • 모드 게이팅: searchNovels/openTitleSearch/fetchWebRecommendations 차단(로컬     ║
+ * ║   추천 유지 P7), 연결탭 웹소설 전용 카드(검색사이트·로그인·세션·외전·진단)+넷상     ║
+ * ║   추천 섹션/설정 웹툰모드 숨김(각 모드는 상대 모드 UI 비노출).                     ║
+ * ║ • 그림작가(artist) 컬럼 + 편집폼(웹툰: 글/그림 분리) + saveEdit·백업 왕복(opt.art). ║
+ * ║   modeLabel로 내보내기/백업 제목 모드화. 백업에 mode 동봉(v13 유지·additive).      ║
+ * ║ • 교차모드 안전(P5): 수동 가져오기 모드 불일치 경고, 클라우드 자동 동기화 차단.    ║
+ * ║ 미구현(Phase 2): 웹툰 사이트 자동검색(네이버→카카오→레진/탑툰). 현재는 수동·링크.  ║
+ * ║ APP_VERSION 7.53.8 유지(베타). esbuild 통과·스크래퍼 회귀 무변. ⚠️ 온디바이스 미검증.║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -10302,6 +10326,7 @@ async function initDb(progressCb) {
     ["read_count_updated_at", "INTEGER", "1737072000000"],
     ["major_genre", "TEXT", "''"],
     ["sub_genre", "TEXT", "''"],
+    ["artist", "TEXT", "''"], // 🎨 v7.55.0: 그림작가(웹툰모드) — 글작가는 author, 그림작가는 artist. 웹소설모드 미사용.
     ["gaiden_status", "TEXT", "'none'"],
     ["gaiden_read_count", "INTEGER", "0"],
     ["gaiden_total_episodes", "INTEGER", "0"],
@@ -39849,7 +39874,7 @@ function AppContent() {
   async function shareTierText() {
     try {
       const sorted = [...list].sort((a, b) => b.rating - a.rating);
-      const lines = ["🏆 내 웹소설 티어표 🏆", ""];
+      const lines = [`🏆 내 ${getModeProfile(globalSlotMode).label} 티어표 🏆`, ""];
       
       const tierOrder = getActiveTierOrder(globalTierConfig);
       const tiers = Object.fromEntries(tierOrder.map(t => [t, []]));
@@ -39868,7 +39893,7 @@ function AppContent() {
       
       await Share.share({
         message: lines.join("\n"),
-        title: "웹소설 티어표",
+        title: `${getModeProfile(globalSlotMode).label} 티어표`,
       });
     } catch (e) {
       Alert.alert("오류", "공유 실패: " + e.message);
@@ -51571,10 +51596,12 @@ function AppContent() {
       const finalStartYear = (_linkSy > 0 && (_formSy === 0 || _linkSy < _formSy)) ? _linkSy : _formSy;
 
       await exec(
-        "UPDATE novels SET title=?, author=?, tags=?, note=?, platforms=?, read_count=?, awards=?, total_episodes=?, status=?, cover_image=?, link=?, work_status=?, read_count_updated_at=?, major_genre=?, sub_genre=?, gaiden_status=?, gaiden_read_count=?, gaiden_total_episodes=?, created_at=?, reread_count=?, tag_data=?, memorable_quote=?, aliases=?, start_year=?, end_year=?, completed_at=?, gaiden_start_at=?, gaiden_completed_at=?, links=?, update_link=? WHERE id=?;",
+        "UPDATE novels SET title=?, author=?, artist=?, tags=?, note=?, platforms=?, read_count=?, awards=?, total_episodes=?, status=?, cover_image=?, link=?, work_status=?, read_count_updated_at=?, major_genre=?, sub_genre=?, gaiden_status=?, gaiden_read_count=?, gaiden_total_episodes=?, created_at=?, reread_count=?, tag_data=?, memorable_quote=?, aliases=?, start_year=?, end_year=?, completed_at=?, gaiden_start_at=?, gaiden_completed_at=?, links=?, update_link=? WHERE id=?;",
         [
           newTitle,
           n.author?.trim() || "",
+          n.artist?.trim() || "", // 🎨 v7.55.0: 그림작가(웹툰)
+
           deduplicateTagString(n.tags) || "", // 🔧 v3.5.14: 작품 내 태그 중복 제거
           n.note?.trim() || "",
           JSON.stringify(editPlatformsMerged),
@@ -54920,6 +54947,9 @@ async function buildUltraCompactBackup(novels, matches, coverImages = null) {
     const subGenre = (n.sub_genre || "").trim();
     if (majorGenre) opt.mg = majorGenre;
     if (subGenre) opt.sg = subGenre;
+    // 🎨 v7.55.0: 그림작가(웹툰) — 있을 때만
+    const artistVal = (n.artist || "").trim();
+    if (artistVal) opt.art = artistVal;
     // 📖 외전 관련
     const gaidenStatus = n.gaiden_status || "none";
     const gaidenReadCount = Number(n.gaiden_read_count) || 0;
@@ -55045,6 +55075,7 @@ async function buildUltraCompactBackup(novels, matches, coverImages = null) {
 
   return {
     v: 13, // 🔧 v7.49.16: 완결일(cma)/외전 시작일(gsa)/외전 완결일(gca) 포함 (v12: sy/ey/mb)
+    mode: globalSlotMode, // 🎨 v7.55.0: 슬롯 모드(웹소설/웹툰) — 교차모드 가져오기 경고용(구버전·구앱은 무시, 없으면 novel). opt.art=그림작가도 추가.
     b: BASE_TIMESTAMP,
     T: tagDict,
     P: platDict,
@@ -55785,7 +55816,7 @@ async function exportJSON(opts) {
       // 500KB 미만: 공유 시도
       try {
         await Share.share({
-          title: "웹소설 티어 백업(v11)",
+          title: `${getModeProfile(globalSlotMode).label} 티어 백업(v11)`,
           message: json,
         });
       } catch (shareErr) {
@@ -55985,6 +56016,14 @@ async function importJSON(directText, onSuccess, onSettled) {
 
     const data = JSON.parse(text);
 
+    // 🎨 v7.55.0: 교차모드 안전 — 백업 모드 vs 현재 슬롯 모드.
+    //   자동(클라우드) 경로는 차단(throw), 수동 경로는 아래 '최종 확인'에 경고 후 사용자 선택.
+    const _bkMode = (data && data.mode === "webtoon") ? "webtoon" : "novel";
+    const _modeMismatch = _bkMode !== globalSlotMode;
+    if (_modeMismatch && _isDirect) {
+      throw new Error(`모드 불일치: 이 백업은 '${_bkMode === "webtoon" ? "웹툰" : "웹소설"}' 슬롯용이라 현재 '${getModeProfile(globalSlotMode).label}' 슬롯과 자동 동기화할 수 없어요.`);
+    }
+
     const doClearAll = async () => {
       await execBatch([
         { sql: "DELETE FROM novels;", params: [] },
@@ -56039,7 +56078,7 @@ async function importJSON(directText, onSuccess, onSettled) {
 
       Alert.alert(
         "최종 확인",
-        `${lenN}개 작품과 ${lenM}개 대진 기록을 가져옵니다.\n\n⚠️ 기존 데이터는 모두 삭제됩니다!`,
+        `${lenN}개 작품과 ${lenM}개 대진 기록을 가져옵니다.\n\n⚠️ 기존 데이터는 모두 삭제됩니다!${_modeMismatch ? `\n\n🎨 모드 다름: 이 백업은 '${_bkMode === "webtoon" ? "웹툰" : "웹소설"}' 데이터예요. 현재 '${getModeProfile(globalSlotMode).label}' 슬롯에 넣으면 장르/연재처 목록이 섞일 수 있어요.` : ""}`,
         [
           { text: "취소", onPress: () => { if (typeof onSettled === "function") { try { onSettled(); } catch {} } } }, // ☁️ v7.54.2(H0): 취소도 종료 신호
           {
@@ -56151,6 +56190,7 @@ async function importJSON(directText, onSuccess, onSettled) {
                 // 대장르/부장르
                 const majorGenre = opt.mg || "";
                 const subGenre = opt.sg || "";
+                const artist = opt.art || ""; // 🎨 v7.55.0: 그림작가(웹툰)
                 // 📖 외전 관련
                 const gaidenStatus = opt.gs === 1 ? "ongoing" : (opt.gs === 2 ? "completed" : "none");
                 const gaidenReadCount = opt.gr || 0;
@@ -56230,9 +56270,9 @@ async function importJSON(directText, onSuccess, onSettled) {
                   // 🔧 v7.10.0: user_flagged_suspect 컬럼 추가 (41→42)
                   // 🆕 v7.21.3: suspicion_score 컬럼 추가 (42→43)
                   // 🆕 v7.49.22: expected_tier/discovery_source 컬럼 추가 (48→50) — suspicion_score 뒤 정렬 유지
-                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,read_count_baseline,start_year,end_year,match_ban,verification_wins,verification_losses,verification_count,conflict_hits,user_flagged_suspect,suspicion_score,expected_tier,discovery_source,links,update_link,completed_at,gaiden_start_at,gaiden_completed_at)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, manualOrder, rereadCount, tagData, aliases, memorableQuote, readCount, startYearVal, endYearVal, matchBanVal, verWins, verLosses, verCount, conflictHits, userFlaggedVal, suspicionScoreVal, expectedTierVal, discoverySourceVal, links, updateLink, completedAtVal, gaidenStartAtVal, gaidenCompletedAtVal],
+                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,artist,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,read_count_baseline,start_year,end_year,match_ban,verification_wins,verification_losses,verification_count,conflict_hits,user_flagged_suspect,suspicion_score,expected_tier,discovery_source,links,update_link,completed_at,gaiden_start_at,gaiden_completed_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, artist, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, manualOrder, rereadCount, tagData, aliases, memorableQuote, readCount, startYearVal, endYearVal, matchBanVal, verWins, verLosses, verCount, conflictHits, userFlaggedVal, suspicionScoreVal, expectedTierVal, discoverySourceVal, links, updateLink, completedAtVal, gaidenStartAtVal, gaidenCompletedAtVal],
                 });
               }
 
@@ -71675,13 +71715,22 @@ async function importJSON(directText, onSuccess, onSettled) {
                   <Text style={{ color: isDark ? "#a5f3fc" : "#0e7490", fontWeight: "700", fontSize: 13 }}>🔎 제목으로 검색해 채우기</Text>
                 </TouchableOpacity>
 
-                <Label style={{ marginTop: 10 }}>작가</Label>
+                <Label style={{ marginTop: 10 }}>{slotMode === "webtoon" ? "글작가" : "작가"}</Label>
                 <Input
                   value={editItem.author || ""}
                   onChangeText={(t) =>
                     updateEditItem(prev => prev ? { ...prev, author: t } : null)
                   }
                 />
+                {/* 🎨 v7.55.0: 그림작가(웹툰 모드만) */}
+                {slotMode === "webtoon" && (<>
+                  <Label style={{ marginTop: 10 }}>그림작가</Label>
+                  <Input
+                    value={editItem.artist || ""}
+                    onChangeText={(t) => updateEditItem(prev => prev ? { ...prev, artist: t } : null)}
+                    placeholder="그림작가 (선택)"
+                  />
+                </>)}
 
                 {/* 🆕 v3.5.8: 태그 칩 뷰 (편집 모달) */}
                 <View style={{ marginTop: 10, marginBottom: 8 }}>
@@ -73095,7 +73144,7 @@ async function importJSON(directText, onSuccess, onSettled) {
                 onPress={async () => {
                   try {
                     await Share.share({
-                      title: "웹소설 티어 백업(v9)",
+                      title: `${getModeProfile(globalSlotMode).label} 티어 백업(v9)`,
                       message: exportFullJsonRef.current,
                     });
                   } catch (e) {
