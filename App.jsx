@@ -2,9 +2,26 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.55.0 (웹툰모드 Phase 1 — 슬롯별 웹소설/웹툰 모드, 베타)                  ║
+ * ║  버전: 7.56.0 (웹툰모드 Phase 2 — 네이버웹툰 자동검색 v1, 베타)                   ║
  * ║  최종 수정: 2026-06-30                                                        ║
- * ║  총 라인 수: 약 76,400줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 76,600줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🎨 v7.56.0 웹툰모드 Phase 2 — 네이버웹툰 자동검색 v1 (2026-06-30)               ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 웹툰 슬롯에서 작품 자동검색/불러오기 가능(네이버웹툰). 기존 스크래퍼 인프라 재사용.  ║
+ * ║ • `WEBTOON_SEARCH_PLATFORMS` + `searchNaverWebtoon`/`parseNaverWebtoonSearch`     ║
+ * ║   (관용적 추출 — JSON 여러 shape + SSR __NEXT_DATA__ 폴백) + `fetchNaverWebtoonMeta`║
+ * ║   (글작가→author / 그림작가→artist). `SCRAPER_PLATFORMS`에 comic.naver.com 등록.  ║
+ * ║ • `searchNovels` 모드 라우팅(웹툰=웹툰러너/그외=소설러너), `mergeSearchResults`     ║
+ * ║   웹툰모드 comic 우선 반전. `fetchNovelMeta` 네이버웹툰 분기. `openTitleSearch`     ║
+ * ║   웹툰 차단 해제. `MODE_PROFILES.webtoon.searchEnabled=true`. 스크랩 적용에 artist.║
+ * ║ • 연결탭 웹툰 전용 카드(검색사이트 토글 + 긁기 진단). 로컬 추천 유지·웹추천 OFF.   ║
+ * ║ • scraper-test에 웹툰 파서 합성 검증 추가(9 assert). esbuild 통과·회귀 무변.       ║
+ * ║ ⚠️ 1차 best-effort — comic.naver.com은 공식 검색API 불명확 + 개발IP 차단이라        ║
+ * ║   실기기 '긁기 진단' 캡처로 응답 shape 확정 후 정밀화 예정(기존 스크래퍼 워크플로). ║
+ * ║ Phase 2b: 레진/탑툰→카카오웹툰. APP_VERSION 7.53.8 유지(베타). ⚠️ 온디바이스 미검증.║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -15997,6 +16014,7 @@ const SCRAPER_PLATFORMS = [
   { key: "리디", host: "ridibooks.com" },
   { key: "카카오페이지", host: "page.kakao.com" },
   { key: "카카오페이지", host: "pagew.kakao.com" }, // 🆕 v7.31.3: 웹 변형 호스트도 카카오페이지로 인식
+  { key: "네이버웹툰", host: "comic.naver.com" }, // 🎨 v7.56.0: 웹툰모드 — m.comic.naver.com도 includes로 포함
 ];
 
 function detectPlatformFromUrl(url) {
@@ -16965,6 +16983,13 @@ async function fetchNovelMeta(url, opts = {}) {
       return m;
     } } catch { /* API 실패 → HTML 폴백 */ } }
   }
+  // 🎨 v7.56.0: 네이버웹툰 — 상세 페이지(__NEXT_DATA__/OG)로 메타 취득(글작가→author / 그림작가→artist).
+  //   자체적으로 HTML 처리하므로 소설용 공통 폴백으로 내려보내지 않음(차단 시 throw로 명확 안내).
+  if (platform === "네이버웹툰") {
+    const m = await fetchNaverWebtoonMeta(url, opts);
+    if (m && m.ok && m.title) return m;
+    throw new Error("네이버웹툰 정보를 가져오지 못했어요. 제목·작가는 직접 입력하거나 설정 › 연결 › ‘긁기 진단’으로 캡처해 주세요.");
+  }
   const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
   let res, html = "";
   try {
@@ -17265,18 +17290,21 @@ async function searchKakaoDaum(q, key, opts = {}) {
   return parseKakaoWebSearch(data);
 }
 async function searchNovels(query, opts = {}) {
-  // 🎨 v7.55.0: 웹툰 모드에서는 웹소설 사이트 제목검색 비활성(수동·링크 불러오기만). UI도 숨기지만 방어적 차단.
-  if (globalSlotMode === "webtoon") throw new Error("웹툰 모드에서는 제목 검색이 아직 지원되지 않아요. 수동 입력이나 링크 붙여넣기를 이용해 주세요.");
   const q = (query || "").trim();
   if (!q) throw new Error("검색할 제목을 입력해 주세요.");
+  // 🎨 v7.56.0: 모드별 검색 사이트/러너 라우팅 — 웹툰 모드는 웹툰 러너로(Phase 2).
+  const isWebtoon = globalSlotMode === "webtoon";
   // 🔎 v7.28.43: 플랫폼 병렬(allSettled) → 관련도·플랫폼 균형 병합. 🆕 v7.39.0: 사용자가 켠 플랫폼만 조회.
-  const runners = { "리디": searchRidi, "네이버시리즈": searchNaverSeries, "문피아": searchMunpia, "노벨피아": searchNovelpia, "카카오페이지": searchKakao };
-  const active = SEARCH_PLATFORMS.filter(isSearchPlatformOn);
+  const runners = isWebtoon
+    ? { "네이버웹툰": searchNaverWebtoon }
+    : { "리디": searchRidi, "네이버시리즈": searchNaverSeries, "문피아": searchMunpia, "노벨피아": searchNovelpia, "카카오페이지": searchKakao };
+  const platformList = isWebtoon ? WEBTOON_SEARCH_PLATFORMS : SEARCH_PLATFORMS;
+  const active = platformList.filter(isSearchPlatformOn);
   if (!active.length) throw new Error("검색할 사이트가 모두 꺼져 있어요. 설정 › ‘검색 사이트’에서 한 곳 이상 켜 주세요.");
   const settled = await Promise.allSettled(active.map(name => runners[name](q, opts)));
   const errs = [];
   const lists = settled.map(s => { if (s.status === "fulfilled") return s.value || []; if (s.reason) errs.push(s.reason); return []; });
-  const merged = mergeSearchResults(lists, q);
+  const merged = mergeSearchResults(lists, q, { webtoon: isWebtoon });
   if (!merged.length) {
     if (errs.length >= settled.length && errs[0]) throw errs[0]; // 전부 실패 → 첫 실패 사유
     throw new Error(`‘${q}’ 검색 결과가 없어요. 다른 제목으로 시도하거나, 작품 링크로 ‘🔗 불러오기’를 써 주세요.`);
@@ -17308,8 +17336,10 @@ function mergeSearchResults(lists, query, opts = {}) {
       .slice(0, perPlatform)
       .forEach((x, rank) => tagged.push({ it: x.it, sc: x.sc, rank }));
   }
-  // 관련도 desc → 같은 점수면 플랫폼 내 순위 asc(각 플랫폼 1등이 먼저 = 골고루) → 소설 우선
-  tagged.sort((a, b) => (b.sc - a.sc) || (a.rank - b.rank) || ((a.it.isComic ? 1 : 0) - (b.it.isComic ? 1 : 0)));
+  // 관련도 desc → 같은 점수면 플랫폼 내 순위 asc(각 플랫폼 1등이 먼저 = 골고루) → 모드별 선호(소설/웹툰 우선)
+  // 🎨 v7.56.0: 웹툰 모드면 comic 우선(반전), 그 외 소설 우선.
+  const cw = opts.webtoon ? (it) => (it.isComic ? 0 : 1) : (it) => (it.isComic ? 1 : 0);
+  tagged.sort((a, b) => (b.sc - a.sc) || (a.rank - b.rank) || (cw(a.it) - cw(b.it)));
   return tagged.map(x => x.it).slice(0, limit);
 }
 
@@ -17668,6 +17698,175 @@ function parseNovelpiaSearch(jsonText) {
   return out;
 }
 
+// ═══════════════════════════════════════════════════════════════
+// 🎨 v7.56.0 네이버웹툰 (웹툰모드 검색/메타) — Phase 2 v1
+//   ⚠️ comic.naver.com은 공식 검색 JSON API가 불명확 + 개발환경 IP 차단 → 1차 best-effort.
+//   실기기 '긁기 진단' 캡처로 응답 shape 확정 후 정밀화 예정(기존 소설 스크래퍼와 동일 워크플로).
+//   응답 키 이름에 관용적으로 대응(여러 후보 키 탐색).
+// ═══════════════════════════════════════════════════════════════
+const WEBTOON_SEARCH_PLATFORMS = ["네이버웹툰"];
+
+async function searchNaverWebtoon(query, opts = {}) {
+  const q = (query || "").trim();
+  if (!q) return [];
+  // JSON 검색 우선 시도(실패/HTML이면 파서가 SSR __NEXT_DATA__ 폴백)
+  const url = "https://comic.naver.com/api/search/all?keyword=" + encodeURIComponent(q);
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
+  let res, text = "";
+  try {
+    res = await fetch(url, { headers: SCRAPER_HEADERS, redirect: "follow", signal });
+    text = await res.text();
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error("검색 응답이 없어 중단했어요 (시간 초과)");
+    throw new Error("검색을 불러오지 못했어요: " + (e?.message || e));
+  } finally { cleanup(); }
+  const block = scraperDetectBlock(res.status, text);
+  if (block.blocked) throw new Error(`네이버웹툰 검색을 바로 못 했어요. ${block.hint || "폰 브라우저에서 시도하거나 설정 › 연결 › ‘긁기 진단’으로 검색 원본을 캡처해 주세요."}`);
+  return parseNaverWebtoonSearch(text);
+}
+
+// 검색 응답(JSON 또는 SSR HTML) → 후보[]. meta는 비워 두고 pick 시 URL로 fetchNaverWebtoonMeta 보강.
+function parseNaverWebtoonSearch(payload) {
+  const items = extractNaverWebtoonItems(payload);
+  const out = [], seen = new Set();
+  for (const it of items) {
+    const titleId = it.titleId;
+    const title = (it.title || "").trim();
+    if (!titleId || !title || seen.has(String(titleId))) continue;
+    seen.add(String(titleId));
+    let coverUrl = String(it.thumbnail || "");
+    if (coverUrl.startsWith("//")) coverUrl = "https:" + coverUrl;
+    out.push({
+      title,
+      author: (it.author || "").trim(),
+      url: "https://comic.naver.com/webtoon/list?titleId=" + titleId,
+      coverUrl,
+      platform: "네이버웹툰",
+      category: (it.genre || "").trim(),
+      isComic: true, // 🎨 웹툰
+    });
+    if (out.length >= 30) break;
+  }
+  return out;
+}
+
+// 응답에서 웹툰 항목 추출 — JSON(여러 shape) 우선, 실패 시 SSR __NEXT_DATA__ 폴백. 캡처로 정밀화.
+function extractNaverWebtoonItems(payload) {
+  let data = null;
+  if (payload && typeof payload === "object") data = payload;
+  else { try { data = JSON.parse(payload); } catch { data = null; } }
+  const pickItem = (x) => {
+    const titleId = x.titleId || x.titleid || x.id;
+    if (!titleId) return null;
+    return {
+      titleId,
+      title: x.titleName || x.title || x.name || "",
+      author: x.displayAuthor || x.author || x.writers || x.artists || "",
+      thumbnail: x.thumbnailUrl || x.thumbnail || x.img || x.imageUrl || "",
+      genre: Array.isArray(x.genreList) ? x.genreList.map(g => (g && (g.description || g.name)) || g).filter(Boolean).join(", ") : (x.genre || ""),
+    };
+  };
+  // 1) JSON 트리에서 titleId 가진 배열 탐색
+  if (data) {
+    const buckets = [];
+    const dig = (o, depth) => {
+      if (!o || depth > 6) return;
+      if (Array.isArray(o)) { if (o.some(x => x && (x.titleId || x.titleid))) buckets.push(o); o.forEach(x => dig(x, depth + 1)); return; }
+      if (typeof o === "object") for (const k of Object.keys(o)) dig(o[k], depth + 1);
+    };
+    dig(data, 0);
+    const items = [];
+    for (const arr of buckets) for (const x of arr) { const it = pickItem(x); if (it) items.push(it); }
+    if (items.length) return items;
+  }
+  // 2) SSR HTML __NEXT_DATA__ 폴백
+  if (typeof payload === "string") {
+    try {
+      const nd = scraperExtractNextData(payload);
+      if (nd) {
+        const items = [];
+        const dig = (o, depth) => {
+          if (!o || depth > 8) return;
+          if (Array.isArray(o)) { o.forEach(x => dig(x, depth + 1)); return; }
+          if (typeof o === "object") {
+            if ((o.titleId || o.titleid) && (o.titleName || o.title)) { const it = pickItem(o); if (it) items.push(it); }
+            for (const k of Object.keys(o)) dig(o[k], depth + 1);
+          }
+        };
+        dig(nd, 0);
+        if (items.length) return items;
+      }
+    } catch { /* OG/JSON 실패 — 빈 결과 */ }
+  }
+  return [];
+}
+
+// 네이버웹툰 단건 메타 — URL→titleId→상세 페이지 상태 파싱. 글작가→author / 그림작가→artist.
+async function fetchNaverWebtoonMeta(url, opts = {}) {
+  const tid = (String(url).match(/[?&]titleId=(\d+)/) || [])[1];
+  if (!tid) return { ok: false, platform: "네이버웹툰", url };
+  const pageUrl = "https://comic.naver.com/webtoon/list?titleId=" + tid;
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
+  let res, html = "";
+  try {
+    res = await fetch(pageUrl, { headers: SCRAPER_HEADERS, redirect: "follow", signal });
+    html = await res.text();
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error("정보 응답이 없어 중단했어요 (시간 초과)");
+    throw new Error("정보를 불러오지 못했어요: " + (e?.message || e));
+  } finally { cleanup(); }
+  const block = scraperDetectBlock(res.status, html);
+  if (block.blocked) throw new Error(`네이버웹툰 정보를 바로 못 가져왔어요. ${block.hint || "폰 브라우저나 설정 › 연결 › ‘긁기 진단’을 이용해 주세요."}`);
+  const og = scraperExtractMetaTags(html);
+  let title = String(og["og:title"] || "").replace(/\s*[:|]\s*네이버\s*웹툰.*$/u, "").trim();
+  let author = "", artist = "", genres = [], totalEpisodes = null, workStatus = null;
+  let coverUrl = String(og["og:image"] || "");
+  try {
+    const info = findNaverWebtoonInfo(scraperExtractNextData(html), tid);
+    if (info) {
+      title = String(info.titleName || info.title || title).trim();
+      author = naverAuthorNames(info.writers || info.communityArtists) || String(info.displayAuthor || info.author || "").trim();
+      artist = naverAuthorNames(info.painters || info.pictureAuthors);
+      genres = Array.isArray(info.genreList) ? info.genreList.map(g => (g && (g.description || g.name)) || g).filter(Boolean)
+             : (Array.isArray(info.gfpAdCustomParam?.genreTypes) ? info.gfpAdCustomParam.genreTypes : (info.genre ? [info.genre] : []));
+      totalEpisodes = Number(info.totalCount || info.articleTotalCount || info.totalCrcCount) || null;
+      const status = String(info.restTerminationStatus || info.status || info.serializationStatus || "").toUpperCase();
+      workStatus = /END|COMPLETE|FINISH|완결|휴재/i.test(status) ? (/휴재|REST/i.test(status) ? "hiatus" : "completed") : "ongoing";
+      if (info.thumbnailUrl) coverUrl = info.thumbnailUrl;
+    }
+  } catch { /* OG만으로 진행 */ }
+  if (!title) return { ok: false, platform: "네이버웹툰", url: pageUrl };
+  if (coverUrl.startsWith("//")) coverUrl = "https:" + coverUrl;
+  return {
+    ok: true, platform: "네이버웹툰", url: pageUrl,
+    title, author, artist, coverUrl,
+    synopsis: String(og["og:description"] || "").trim(),
+    genres: (genres || []).filter(Boolean),
+    workStatus, totalEpisodes,
+    startYear: null, endYear: null, completedAt: 0, ageTag: null,
+  };
+}
+
+function naverAuthorNames(arr) {
+  if (!Array.isArray(arr)) return "";
+  return arr.map(a => (typeof a === "string" ? a : (a && (a.name || a.artistName || a.authorName)) || "")).filter(Boolean).join(", ");
+}
+function findNaverWebtoonInfo(nd, tid) {
+  if (!nd) return null;
+  let found = null;
+  const want = String(tid);
+  const dig = (o, depth) => {
+    if (found || !o || depth > 8) return;
+    if (Array.isArray(o)) { o.forEach(x => dig(x, depth + 1)); return; }
+    if (typeof o === "object") {
+      if ((String(o.titleId) === want || String(o.titleid) === want) && (o.titleName || o.title)) { found = o; return; }
+      for (const k of Object.keys(o)) dig(o[k], depth + 1);
+    }
+  };
+  dig(nd, 0);
+  return found;
+}
+
 // 🆕 v7.38.0: 노벨피아 단건 상세 API(get_novel) — 로그인 없이 19금 포함 전체 메타(검색과 동일 스키마).
 //   링크 불러오기에서 SPA HTML(og 부실 + 성인 표지/작가 게이트) 대신 이 JSON으로 정확히 가져온다.
 function parseNovelpiaGetNovel(jsonText, url) {
@@ -17951,6 +18150,7 @@ function buildScrapeItems(meta, current = {}, opts = {}) {
   };
   push("title", "제목", meta.title, meta.title, current.title);
   push("author", "작가", meta.author, meta.author, current.author);
+  push("artist", "그림작가", meta.artist, meta.artist, current.artist); // 🎨 v7.56.0: 웹툰 그림작가(meta.artist 있을 때만 표시)
   const cleanSyn = scraperCleanSynopsis(meta.synopsis); // 🆕 v7.31.2: 엔티티 디코드 + 메타 접두 제거
   push("note", "줄거리 → 메모", cleanSyn, cleanSyn, current.note);
   push("total_episodes", "총 회차", meta.totalEpisodes,
@@ -18435,7 +18635,7 @@ const MODE_PROFILES = {
     aliases: FACTORY_TAG_ALIASES_WEBTOON,
     platforms: FACTORY_PLATFORM_OPTIONS_WEBTOON,
     urls: FACTORY_PLATFORM_URLS_WEBTOON,
-    searchEnabled: false, // Phase 1: 웹툰 사이트 자동검색 미구현(수동·URL만)
+    searchEnabled: true, // 🎨 v7.56.0(Phase 2): 네이버웹툰 자동검색 활성
   },
 };
 function getModeProfile(mode) { return MODE_PROFILES[mode] || MODE_PROFILES.novel; }
@@ -46321,6 +46521,7 @@ function AppContent() {
       ...prev,
       ...(f.title != null ? { title: f.title } : {}),
       ...(f.author != null ? { author: f.author } : {}),
+      ...(f.artist != null ? { artist: f.artist } : {}), // 🎨 v7.56.0: 그림작가
       ...(f.note != null ? { note: f.note } : {}),
       ...(f.tags != null ? { tags: f.tags } : {}),
       ...(f.total_episodes != null ? { total_episodes: Number(f.total_episodes) || 0 } : {}),
@@ -46444,11 +46645,7 @@ function AppContent() {
   // 🔎 v7.28.29 제목 검색(Stage 4): 입력 → searchNovels(현재 리디) → 후보 picker → 선택 시 fetchNovelMeta로 합류.
   function openTitleSearch(ctx) {
     if (scrapeLoading || searchBusy) return;
-    // 🎨 v7.55.0: 웹툰 모드는 웹소설 사이트 제목검색 미지원 — 수동 입력/링크 불러오기 안내(사용자 탭이라 Alert 허용).
-    if (globalSlotMode === "webtoon") {
-      Alert.alert("웹툰 모드", "웹툰 모드에서는 제목 검색이 아직 지원되지 않아요.\n작품 정보는 직접 입력하거나, 작품 페이지 링크를 붙여넣어 ‘불러오기’ 해보세요. (웹툰 사이트 자동검색은 추후 지원)");
-      return;
-    }
+    // 🎨 v7.56.0(Phase 2): 웹툰 모드는 웹툰 러너로 라우팅(searchNovels에서 분기) — 차단 해제.
     // 🆕 v7.28.51: 제목 입력란에 이미 입력한 제목이 있으면, 모달을 열며 그 값으로 즉시 검색(다시 입력 불필요)
     const preset = (ctx?.getCurrent?.()?.title || "").trim();
     setSearchResults([]);
@@ -68583,6 +68780,71 @@ async function importJSON(directText, onSuccess, onSettled) {
               </View>
               </>)}
               {/* 🎨 v7.55.0: ↑ 웹소설 전용 연결 카드 묶음 끝 */}
+
+              {/* 🎨 v7.56.0: 웹툰 전용 연결 카드 (검색 사이트 + 긁기 진단) — 웹툰 모드에서만 */}
+              {slotMode === "webtoon" && (<>
+                <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+                  <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>🔎 검색 사이트 (웹툰)</Text>
+                  <Text style={{ color: C.sub, fontSize: 11.5, marginTop: 5, lineHeight: 16 }}>
+                    ‘제목으로 검색’이 조회할 웹툰 사이트예요. (현재 네이버웹툰 — 베타. 잘 안 되면 아래 ‘긁기 진단’으로 검색 원본을 캡처해 주세요.)
+                  </Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+                    {WEBTOON_SEARCH_PLATFORMS.map(name => {
+                      const on = searchPlatforms[name] !== false;
+                      return (
+                        <TouchableOpacity key={name} onPress={() => toggleSearchPlatform(name)} activeOpacity={0.7}
+                          style={{ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 999, backgroundColor: on ? C.primary : C.bg, borderWidth: 1, borderColor: on ? C.primary : C.line }}>
+                          <Text style={{ color: on ? "#fff" : C.sub, fontWeight: "800", fontSize: 12.5 }}>{on ? "✓ " : ""}{name}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+
+                <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+                  <Text style={{ color: C.text, fontWeight: "700", fontSize: 14, marginBottom: 4 }}>🔧 긁기 진단 (웹툰 검색 원본 캡처)</Text>
+                  <Text style={{ color: C.sub, fontSize: 11, lineHeight: 16, marginBottom: 8 }}>
+                    네이버웹툰 검색/작품 주소를 붙여넣고 ‘캡처’를 누르면 폰이 직접 가져온 원본을 보여줘요. ‘원본 복사’로 복사해 채팅에 붙여넣으면 웹툰 검색을 정확히 맞출 수 있어요. (개발 환경에선 네이버가 막혀 폰 캡처가 필요해요.)
+                  </Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                    {[
+                      { label: "네이버웹툰 검색", url: "https://comic.naver.com/api/search/all?keyword=화산귀환" },
+                      { label: "네이버웹툰 작품", url: "https://comic.naver.com/webtoon/list?titleId=796152" },
+                    ].map(p => (
+                      <TouchableOpacity key={p.label} onPress={() => setScrapeDiagUrl(p.url)} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line }}>
+                        <Text style={{ color: C.text, fontSize: 12 }}>{p.label}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  <TextInput
+                    value={scrapeDiagUrl}
+                    onChangeText={setScrapeDiagUrl}
+                    placeholder="검색/작품 URL 붙여넣기"
+                    placeholderTextColor={C.sub}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    multiline
+                    style={{ backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, color: C.text, fontSize: 12, minHeight: 44 }}
+                  />
+                  <TouchableOpacity onPress={captureScrapeSource} disabled={scrapeDiagBusy}
+                    style={{ marginTop: 8, backgroundColor: C.primary, paddingVertical: 11, borderRadius: 10, alignItems: "center", opacity: scrapeDiagBusy ? 0.6 : 1 }}>
+                    <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>{scrapeDiagBusy ? "가져오는 중…" : "캡처"}</Text>
+                  </TouchableOpacity>
+                  {scrapeDiagOut ? (
+                    <View style={{ marginTop: 10, backgroundColor: C.bg, borderRadius: 10, padding: 10, borderWidth: 1, borderColor: C.line }}>
+                      <Text selectable style={{ color: C.text, fontSize: 11, lineHeight: 16 }}>{scrapeDiagOut.summary}</Text>
+                      <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                        <TouchableOpacity onPress={() => copyScrapeSource("full")} style={{ flex: 1, backgroundColor: C.primary, paddingVertical: 9, borderRadius: 8, alignItems: "center" }}>
+                          <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>📋 원본 복사</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => copyScrapeSource("summary")} style={{ flex: 1, backgroundColor: C.chip, paddingVertical: 9, borderRadius: 8, alignItems: "center", borderWidth: 1, borderColor: C.line }}>
+                          <Text style={{ color: C.text, fontWeight: "700", fontSize: 13 }}>📋 요약만</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ) : null}
+                </View>
+              </>)}
 
               {/* 🆕 v7.28.10: API 키 발급 안내 모달 (제공자별 단계·주의·바로가기) */}
               {/* 🔐 v7.40.0: 노벨피아 WebView 로그인 모달 — 사용자가 직접 로그인 → ‘로그인 완료’로 세션 캡처 */}
