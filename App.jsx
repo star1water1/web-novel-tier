@@ -8984,7 +8984,7 @@ let _cloudLastCoverDropped = 0;
 /* ── /클라우드 토대 끝 ── */
 
 // 슬롯 생성 (이름 지정, 다음 빈 ID 자동 할당)
-async function createSlot(name) {
+async function createSlot(name, mode) {
   const meta = await loadSlotMeta();
   if (meta.slots.length >= MAX_SLOTS) {
     return { success: false, error: `최대 ${MAX_SLOTS}개 슬롯까지 생성 가능합니다.` };
@@ -8998,7 +8998,7 @@ async function createSlot(name) {
   if (newId === -1) {
     return { success: false, error: "사용 가능한 슬롯 ID가 없습니다." };
   }
-  
+
   const newSlot = {
     id: newId,
     name: name || `슬롯 ${newId + 1}`,
@@ -9006,6 +9006,7 @@ async function createSlot(name) {
     createdAt: Date.now(),
     novelCount: 0,
     lastAccessed: 0,
+    mode: (mode === "webtoon") ? "webtoon" : "novel", // 🎨 v7.55.0: 슬롯별 모드(웹소설/웹툰), 기본 웹소설
   };
   meta.slots.push(newSlot);
   // ID 순 정렬
@@ -14479,6 +14480,49 @@ const FACTORY_TAG_SPECTRUM_GROUPS = {
 };
 
 // ═══════════════════════════════════════════════════════════════
+// 🎨 웹툰모드 공장 기본값 (FACTORY_*_WEBTOON) — 슬롯 mode==="webtoon" 시드/리셋용
+//   • 대/부장르는 웹툰 전용으로 분리(웹소설 트로프 회귀·헌터·아카데미 등 숨김).
+//   • 일반 태그(분위기·캐릭터·로맨스·전개·퀄리티 등 매체 보편 서술어)는 웹소설과 공유하되
+//     작화/연재 항목만 가감 → 좌표/스펙트럼 참조 태그(먼치킨·피폐·순애·느린템포 등)가
+//     항상 포함되도록 spread로 상위집합 유지(빌트인 누락 시 좌표/스펙트럼 깨짐 방지).
+//   • TAG_SPECTRUM_GROUPS·CHARACTER_CATEGORIES는 보편적이라 모드 무관 공유(스왑 안 함).
+// ═══════════════════════════════════════════════════════════════
+const FACTORY_MAJOR_GENRES_WEBTOON = [
+  "로맨스", "로맨스판타지", "판타지", "액션", "무협/사극", "드라마",
+  "일상", "개그/코미디", "스릴러", "공포", "미스터리/추리", "스포츠",
+  "학원", "BL", "GL", "성인", "감성", "SF"
+];
+const FACTORY_SUB_GENRES_WEBTOON = [
+  "회귀", "빙의", "환생", "악역영애", "계약연애", "사내연애", "재벌",
+  "후회", "집착", "힐링", "먼치킨", "헌터", "이세계", "복수극",
+  "성장물", "수인", "요리/먹방", "게임", "좀비", "일진/학폭",
+  "캠퍼스", "오피스", "피폐", "사이다"
+];
+const FACTORY_GENERAL_TAGS_WEBTOON = {
+  ...FACTORY_GENERAL_TAGS, // 보편 서술어 공유(분위기·캐릭터·로맨스·전개·세계관·퀄리티 등 — 스펙트럼 참조 태그 보존)
+  // 🎨 작화/연출 — 웹툰 특화 (웹소설엔 없음)
+  "🎨 작화/연출": [
+    "작화좋음", "작화아쉬움", "풀컬러", "흑백", "채색예쁨", "선화깔끔",
+    "연출좋음", "컷연출", "배경좋음", "캐릭터매력", "표정연기", "액션작화"
+  ],
+  // 📦 연재/이용 — 웹툰 플랫폼 특화 (전개/구성의 완결·연재중 등과 중복 없는 항목만)
+  "📦 연재/이용": [
+    "기다리면무료", "무료", "유료", "단행본화", "오리지널",
+    "원작있음(웹소설)", "원작있음(웹툰)", "19세", "도전만화", "베스트도전"
+  ],
+};
+const FACTORY_TAG_ALIASES_WEBTOON = {
+  // 장르 정규화 (웹툰 — normalizeTag 전역 영향, 충돌 없는 항목만)
+  "로판": "로맨스판타지",
+  "개그": "개그/코미디",
+  "코미디": "개그/코미디",
+  "추리": "미스터리/추리",
+  "미스터리": "미스터리/추리",
+  "19금": "성인",
+  "악역영애물": "악역영애",
+};
+
+// ═══════════════════════════════════════════════════════════════
 // 🔄 런타임 태그 변수 (let) — Tag Registry에서 교체됨
 // 초기값은 공장 기본값과 동일. applyTagRegistry() 호출 시 사용자 레지스트리로 덮어쓰기.
 // 모듈 스코프 let 변수는 함수 호출 시점의 최신 값을 읽으므로,
@@ -14540,16 +14584,18 @@ function applyTagRegistry(registry) {
 /** registry.majorGenres에서 FACTORY 태그를 빼면 사용자 추가 대장르 */
 function deriveUserMajorGenres(registry) {
   if (!registry) return [];
+  const _base = getModeProfile(globalSlotMode).majorGenres; // 🎨 v7.55.0: 활성 모드 팩토리 기준
   return (registry.majorGenres || []).filter(
-    t => !FACTORY_MAJOR_GENRES.some(f => isSameTag(f, t))
+    t => !_base.some(f => isSameTag(f, t))
   );
 }
 
 /** registry.subGenres에서 FACTORY 태그를 빼면 사용자 추가 부장르 */
 function deriveUserSubGenres(registry) {
   if (!registry) return [];
+  const _base = getModeProfile(globalSlotMode).subGenres; // 🎨 v7.55.0: 활성 모드 팩토리 기준
   return (registry.subGenres || []).filter(
-    t => !FACTORY_SUB_GENRES.some(f => isSameTag(f, t))
+    t => !_base.some(f => isSameTag(f, t))
   );
 }
 
@@ -17194,6 +17240,8 @@ async function searchKakaoDaum(q, key, opts = {}) {
   return parseKakaoWebSearch(data);
 }
 async function searchNovels(query, opts = {}) {
+  // 🎨 v7.55.0: 웹툰 모드에서는 웹소설 사이트 제목검색 비활성(수동·링크 불러오기만). UI도 숨기지만 방어적 차단.
+  if (globalSlotMode === "webtoon") throw new Error("웹툰 모드에서는 제목 검색이 아직 지원되지 않아요. 수동 입력이나 링크 붙여넣기를 이용해 주세요.");
   const q = (query || "").trim();
   if (!q) throw new Error("검색할 제목을 입력해 주세요.");
   // 🔎 v7.28.43: 플랫폼 병렬(allSettled) → 관련도·플랫폼 균형 병합. 🆕 v7.39.0: 사용자가 켠 플랫폼만 조회.
@@ -18325,8 +18373,72 @@ let PLATFORM_URLS = { ...FACTORY_PLATFORM_URLS };
 function applyPlatformRegistry(registry) {
   if (!registry) return;
   PLATFORM_OPTIONS = Array.isArray(registry.platforms)
-    ? registry.platforms : [...FACTORY_PLATFORM_OPTIONS];
-  PLATFORM_URLS = { ...FACTORY_PLATFORM_URLS, ...(registry.urls || {}) };
+    ? registry.platforms : [...PLATFORM_OPTIONS];
+  PLATFORM_URLS = { ...PLATFORM_URLS, ...(registry.urls || {}) };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 🎭 웹툰모드 — 모드 프로필 + 전역 모드 상태 + 팩토리 스왑
+//   슬롯 mode별 도메인 레이어(라벨·장르/태그·플랫폼·검색가능)를 데이터로 관리.
+//   기존 "FACTORY_* + 런타임 let 전역 재할당" 패턴(applyTagRegistry/applyPlatformRegistry)과 동일 결.
+// ═══════════════════════════════════════════════════════════════
+const FACTORY_PLATFORM_OPTIONS_WEBTOON = ["네이버웹툰", "카카오웹툰", "카카오페이지", "레진코믹스", "탑툰"];
+const FACTORY_PLATFORM_URLS_WEBTOON = {
+  "네이버웹툰": "https://comic.naver.com",
+  "카카오웹툰": "https://webtoon.kakao.com",
+  "카카오페이지": "https://page.kakao.com",
+  "레진코믹스": "https://www.lezhin.com",
+  "탑툰": "https://toptoon.com",
+};
+
+const MODE_PROFILES = {
+  novel: {
+    label: "웹소설",
+    majorGenres: FACTORY_MAJOR_GENRES,
+    subGenres: FACTORY_SUB_GENRES,
+    generalTags: FACTORY_GENERAL_TAGS,
+    aliases: FACTORY_TAG_ALIASES,
+    platforms: FACTORY_PLATFORM_OPTIONS,
+    urls: FACTORY_PLATFORM_URLS,
+    searchEnabled: true,
+  },
+  webtoon: {
+    label: "웹툰",
+    majorGenres: FACTORY_MAJOR_GENRES_WEBTOON,
+    subGenres: FACTORY_SUB_GENRES_WEBTOON,
+    generalTags: FACTORY_GENERAL_TAGS_WEBTOON,
+    aliases: FACTORY_TAG_ALIASES_WEBTOON,
+    platforms: FACTORY_PLATFORM_OPTIONS_WEBTOON,
+    urls: FACTORY_PLATFORM_URLS_WEBTOON,
+    searchEnabled: false, // Phase 1: 웹툰 사이트 자동검색 미구현(수동·URL만)
+  },
+};
+function getModeProfile(mode) { return MODE_PROFILES[mode] || MODE_PROFILES.novel; }
+
+// 비컴포넌트 경로(스크래퍼·헬퍼·시드·검색 게이트)용 전역 미러. 컴포넌트는 setSlotMode와 함께 갱신.
+let globalSlotMode = "novel";
+
+/**
+ * 🎭 슬롯 모드 적용 — 모듈 전역(globalSlotMode + 장르/태그/플랫폼 팩토리)을 모드값으로 재할당.
+ *   performSlotSwitch 리셋 + 부팅 + 설정 토글에서 호출(컴포넌트는 추가로 setSlotMode(mode)).
+ *   이후 loadTagRegistry()→applyTagRegistry()가 슬롯 레지스트리(모드 시드)로 최종 확정.
+ */
+function applySlotMode(mode) {
+  const m = (mode === "webtoon") ? "webtoon" : "novel";
+  globalSlotMode = m;
+  const P = MODE_PROFILES[m];
+  MAJOR_GENRES = [...P.majorGenres];
+  SUB_GENRES = [...P.subGenres];
+  GENERAL_TAGS = JSON.parse(JSON.stringify(P.generalTags));
+  TAG_ALIASES = { ...P.aliases };
+  PLATFORM_OPTIONS = [...P.platforms];
+  PLATFORM_URLS = { ...P.urls };
+  // 파생 값 재계산(applyTagRegistry와 동일)
+  ALL_GENERAL_TAGS = Object.values(GENERAL_TAGS).flat();
+  ALL_DEFAULT_TAGS = [...MAJOR_GENRES, ...SUB_GENRES, ...ALL_GENERAL_TAGS];
+  TAG_REVERSE_ALIASES = buildReverseAliases(TAG_ALIASES);
+  TAG_ALIAS_COLLAPSED = buildAliasCollapsedIndex(TAG_ALIASES);
+  TAG_PICKER_CATEGORIES = Object.entries(GENERAL_TAGS).map(([cat, tags]) => ({ label: cat, tags }));
 }
 
 const STATUS_OPTIONS = [
@@ -39634,6 +39746,8 @@ function AppContent() {
   // 📁 v3.5.15d: 슬롯 시스템 상태
   const [slotMeta, setSlotMeta] = useState(null); // { activeSlotId, slots: [...] }
   const [slotSwitching, setSlotSwitching] = useState(false); // 전환 중 로딩
+  // 🎨 v7.55.0: 활성 슬롯 모드(웹소설/웹툰) — UI 렌더의 반응형 단일 출처. 비컴포넌트 경로는 globalSlotMode 미러.
+  const [slotMode, setSlotMode] = useState("novel");
   // 🔧 v7.54.2(M1): 슬롯 전환 완료 시 클라우드 per-slot 상태(enabled/rev/lastSync) 재로드 — 이전엔 settingsSubTab
   //   변경에만 갱신돼 다른 슬롯의 stale 값이 남아 잘못된 자동 push/오표시를 유발했음. (signedIn은 전역이라 제외.)
   useEffect(() => {
@@ -40546,6 +40660,10 @@ function AppContent() {
         const meta = await loadSlotMeta();
         activeSlotId = meta.activeSlotId || 0;
         if (mounted) setSlotMeta(meta);
+        // 🎨 v7.55.0: 활성 슬롯 모드 적용 — 레지스트리 로드/시드 '전'에 전역 모드/팩토리 스왑(부팅 P6)
+        const _bootMode = (meta.slots?.find(s => s.id === activeSlotId)?.mode === "webtoon") ? "webtoon" : "novel";
+        applySlotMode(_bootMode);
+        if (mounted) setSlotMode(_bootMode);
       } catch (e) {
         console.warn("슬롯 메타 로드 실패, 기본 슬롯 사용:", e);
         activeSlotId = 0;
@@ -41106,6 +41224,70 @@ function AppContent() {
   }));
 
   // 📁 v3.5.15d: 슬롯 전환 함수 (전체 state 리셋 + 새 DB 초기화 + 재로드)
+  // 🎨 v7.55.0: 활성 슬롯 모드 변경(설정) — 작품 데이터는 변환하지 않고 장르/플랫폼 '팔레트'만 새 모드로 교체.
+  //   사용자가 추가한 커스텀 장르/태그/카테고리는 보존(옛 모드 팩토리 차감으로 추출). 빈 슬롯은 경고 없이 적용.
+  const changeActiveSlotMode = async (newMode) => {
+    const target = (newMode === "webtoon") ? "webtoon" : "novel";
+    if (target === slotMode) return;
+    if (slotSwitching || slotDuplicating || slotRecovering) { Alert.alert("변경 불가", "작업이 끝난 뒤 다시 시도해 주세요."); return; }
+    if (isAutoMatchingRef.current) { Alert.alert("변경 불가", "자동 매칭을 먼저 중지해주세요."); return; }
+    if (cloudSyncingRef.current || cloudRestoreInProgressRef.current) { Alert.alert("변경 불가", "클라우드 동기화가 끝난 뒤 시도해 주세요."); return; }
+    const apply = async () => {
+      try {
+        const oldP = getModeProfile(slotMode), newP = getModeProfile(target);
+        const curReg = tagRegistry || (await loadTagRegistry());
+        const isF = (arr, t) => (arr || []).some(f => isSameTag(f, t));
+        const userMajor = (curReg?.majorGenres || []).filter(t => !isF(oldP.majorGenres, t));
+        const userSub = (curReg?.subGenres || []).filter(t => !isF(oldP.subGenres, t));
+        const userCats = {}; // 사용자 커스텀 카테고리(📂)·미분류(📁)만 보존
+        for (const [cat, tags] of Object.entries(curReg?.generalTags || {})) {
+          if (cat.startsWith("📂") || cat.startsWith("📁")) userCats[cat] = tags;
+        }
+        // 1. slot_meta 모드 기록
+        const meta = await loadSlotMeta();
+        const s = meta.slots.find(x => x.id === activeSlotId);
+        if (s) s.mode = target;
+        await saveSlotMeta(meta);
+        setSlotMeta(meta);
+        // 2. 전역 + 반응형 state 스왑
+        applySlotMode(target);
+        setSlotMode(target);
+        // 3. 태그 레지스트리 재구성(새 팩토리 + 사용자분 보존)
+        updateTagRegistry({
+          version: 1,
+          majorGenres: deduplicateTags([...newP.majorGenres, ...userMajor]),
+          subGenres: deduplicateTags([...newP.subGenres, ...userSub]),
+          generalTags: { ...newP.generalTags, ...userCats },
+          characterCategories: curReg?.characterCategories || { ...FACTORY_CHARACTER_CATEGORIES },
+          aliases: { ...newP.aliases },
+          spectrumGroups: curReg?.spectrumGroups || { ...FACTORY_TAG_SPECTRUM_GROUPS },
+          hiddenCategories: curReg?.hiddenCategories || [],
+          categoryAliases: curReg?.categoryAliases || {},
+          userCategories: curReg?.userCategories || [],
+        });
+        // 4. 플랫폼 레지스트리도 새 모드로 교체(커스텀 플랫폼은 모드 전환 시 초기화)
+        const newPlatReg = { version: 1, platforms: [...newP.platforms], urls: { ...newP.urls } };
+        await setAppMeta("platform_registry", newPlatReg);
+        applyPlatformRegistry(newPlatReg);
+        setPlatformRegistry(newPlatReg);
+        Alert.alert("완료", `이 슬롯이 ${target === "webtoon" ? "🎨 웹툰" : "📖 웹소설"} 모드로 바뀌었어요.`);
+      } catch (e) {
+        console.warn("모드 변경 실패:", e?.message);
+        Alert.alert("오류", "모드 변경 중 문제가 발생했습니다.");
+      }
+    };
+    const count = Array.isArray(list) ? list.length : 0;
+    if (count > 0) {
+      Alert.alert(
+        "모드 변경",
+        `현재 슬롯에 작품 ${count}개가 있어요.\n기존 작품의 장르·연재처 데이터는 그대로 유지되고, 장르/플랫폼 '목록'만 ${target === "webtoon" ? "웹툰" : "웹소설"}용으로 바뀝니다. (기존 값이 새 목록과 섞여 보일 수 있어요.)\n\n계속할까요?`,
+        [{ text: "취소", style: "cancel" }, { text: "변경", onPress: apply }]
+      );
+    } else {
+      apply();
+    }
+  };
+
   const performSlotSwitch = async (newSlotId) => {
     if (newSlotId === activeSlotId || slotSwitching) return;
     // 🔧 v7.6.0 (포트 v3.12.2): 자동매칭 중 슬롯 전환 차단 — in-flight 매칭 DB 오염 방지
@@ -41132,6 +41314,12 @@ function AppContent() {
       await initDb((p) => setLoadingProgress(p));
       setLoadingProgress({ label: "태그 시스템 마이그레이션 중..." });
       await migrateTagSystem();
+      // 🎨 v7.55.0: 새 슬롯 모드 적용 — 레지스트리 로드/시드 '전'에 전역 모드/팩토리 스왑.
+      //   seedTagRegistry/loadPlatformRegistry가 올바른 모드 팩토리로 시드하도록 순서 보장(P2).
+      const _targetSlot = (await loadSlotMeta())?.slots?.find(s => s.id === newSlotId);
+      const _targetMode = (_targetSlot?.mode === "webtoon") ? "webtoon" : "novel";
+      applySlotMode(_targetMode);
+      setSlotMode(_targetMode);
       const slotRegistry = await loadTagRegistry(); // 🔧 v3.6.1: 반환값 보존
       await loadPlatformRegistry(); // 🆕 플랫폼 레지스트리 로드
 
@@ -41165,13 +41353,14 @@ function AppContent() {
       if (slotRegistry) {
         updateTagRegistry(slotRegistry);
       } else {
+        const _mp = getModeProfile(globalSlotMode); // 🎨 v7.55.0: 모드 팩토리 기준
         updateTagRegistry({
           version: 1,
-          majorGenres: [...FACTORY_MAJOR_GENRES],
-          subGenres: [...FACTORY_SUB_GENRES],
-          generalTags: { ...FACTORY_GENERAL_TAGS },
+          majorGenres: [..._mp.majorGenres],
+          subGenres: [..._mp.subGenres],
+          generalTags: { ..._mp.generalTags },
           characterCategories: { ...FACTORY_CHARACTER_CATEGORIES },
-          aliases: { ...FACTORY_TAG_ALIASES },
+          aliases: { ..._mp.aliases },
           spectrumGroups: { ...FACTORY_TAG_SPECTRUM_GROUPS },
         });
       }
@@ -41202,9 +41391,9 @@ function AppContent() {
       //   아래 has-settings 블록(globalSuspicionConfig 동기화)을 건너뛰어 이전 슬롯의
       //   의심도 계수가 잔류하던 누수 차단. globalTierConfig와 동일하게 선(先)리셋.
       globalSuspicionConfig = { ...DEFAULT_SUSPICION_CONFIG };
-      // 🆕 플랫폼 레지스트리 리셋 (이전 슬롯 커스텀 플랫폼 잔류 방지)
-      PLATFORM_OPTIONS = [...FACTORY_PLATFORM_OPTIONS];
-      PLATFORM_URLS = { ...FACTORY_PLATFORM_URLS };
+      // 🆕 플랫폼 레지스트리 리셋 (이전 슬롯 커스텀 플랫폼 잔류 방지) — 🎨 v7.55.0: 모드 팩토리 기준
+      PLATFORM_OPTIONS = [...getModeProfile(globalSlotMode).platforms];
+      PLATFORM_URLS = { ...getModeProfile(globalSlotMode).urls };
       setPlatformRegistry(null);
       // 📂 v3.7.0: 폴더 상태 리셋
       setFolders([]);
@@ -43636,6 +43825,7 @@ function AppContent() {
 
   // 넷상 추천 가져오기: 키워드 선정 → 검색(부분성공) → dedup·필터·정렬 → 저장 → 수확. 쿨다운/검색상한 적용.
   async function fetchWebRecommendations(opts = {}) {
+    if (globalSlotMode === "webtoon") return;                  // 🎨 v7.55.0: 웹툰 모드는 웹소설 웹추천 비활성(자동/수동 모두 조용히 스킵 — 불변 #1)
     if (webRecoFetchingRef.current) return;                    // 🌐 v7.53.3: 이미 실행 중(자동·수동 겹침) → 무시(이중 DELETE/INSERT 방지)
     const isAuto = !!(opts && opts.auto);
     const nowMs = Date.now();
@@ -46229,6 +46419,11 @@ function AppContent() {
   // 🔎 v7.28.29 제목 검색(Stage 4): 입력 → searchNovels(현재 리디) → 후보 picker → 선택 시 fetchNovelMeta로 합류.
   function openTitleSearch(ctx) {
     if (scrapeLoading || searchBusy) return;
+    // 🎨 v7.55.0: 웹툰 모드는 웹소설 사이트 제목검색 미지원 — 수동 입력/링크 불러오기 안내(사용자 탭이라 Alert 허용).
+    if (globalSlotMode === "webtoon") {
+      Alert.alert("웹툰 모드", "웹툰 모드에서는 제목 검색이 아직 지원되지 않아요.\n작품 정보는 직접 입력하거나, 작품 페이지 링크를 붙여넣어 ‘불러오기’ 해보세요. (웹툰 사이트 자동검색은 추후 지원)");
+      return;
+    }
     // 🆕 v7.28.51: 제목 입력란에 이미 입력한 제목이 있으면, 모달을 열며 그 값으로 즉시 검색(다시 입력 불필요)
     const preset = (ctx?.getCurrent?.()?.title || "").trim();
     setSearchResults([]);
@@ -48062,11 +48257,12 @@ function AppContent() {
   async function loadPlatformRegistry() {
     let registry = await getAppMeta("platform_registry");
     if (!registry) {
-      // 첫 실행: factory 기본값으로 시드
+      // 첫 실행: 활성 슬롯 모드 팩토리로 시드 (🎨 v7.55.0: 웹툰 슬롯은 웹툰 플랫폼)
+      const _mp = getModeProfile(globalSlotMode);
       registry = {
         version: 1,
-        platforms: [...FACTORY_PLATFORM_OPTIONS],
-        urls: { ...FACTORY_PLATFORM_URLS },
+        platforms: [..._mp.platforms],
+        urls: { ..._mp.urls },
       };
       await setAppMeta("platform_registry", registry);
     }
@@ -48142,6 +48338,9 @@ function AppContent() {
 
   /** 첫 실행 시드: FACTORY + 기존 사용자 데이터 병합 */
   async function seedTagRegistry() {
+    // 🎨 v7.55.0: 활성 슬롯 모드 팩토리로 시드 — 웹툰 슬롯은 웹툰 장르/태그/별칭으로 초기화.
+    //   (기존 novel 슬롯은 getModeProfile("novel")=novel 팩토리라 종전과 동일 — 무회귀.)
+    const _mp = getModeProfile(globalSlotMode);
     // React state가 아닌 app_meta에서 직접 로드 (로딩 순서 의존성 제거)
     const existingMajor = (await getAppMeta("user_major_genres")) || [];
     const existingSub = (await getAppMeta("user_sub_genres")) || [];
@@ -48149,7 +48348,7 @@ function AppContent() {
     const existingCustom = (await getAppMeta("custom_tags")) || [];
 
     // 기존 커스텀 카테고리 + 미분류 커스텀 태그를 generalTags에 통합
-    const mergedGeneral = { ...FACTORY_GENERAL_TAGS };
+    const mergedGeneral = { ..._mp.generalTags };
     // 기존 커스텀 카테고리 병합
     if (existingCats && typeof existingCats === "object") {
       for (const [catName, catTags] of Object.entries(existingCats)) {
@@ -48165,12 +48364,13 @@ function AppContent() {
 
     return {
       version: 1,
-      majorGenres: deduplicateTags([...FACTORY_MAJOR_GENRES, ...existingMajor]),
-      subGenres: deduplicateTags([...FACTORY_SUB_GENRES, ...existingSub]),
+      majorGenres: deduplicateTags([..._mp.majorGenres, ...existingMajor]),
+      subGenres: deduplicateTags([..._mp.subGenres, ...existingSub]),
       generalTags: mergedGeneral,
-      characterCategories: { ...FACTORY_CHARACTER_CATEGORIES },
-      aliases: { ...FACTORY_TAG_ALIASES },
-      spectrumGroups: { ...FACTORY_TAG_SPECTRUM_GROUPS },
+      characterCategories: { ...FACTORY_CHARACTER_CATEGORIES }, // 모드 무관 공유
+      aliases: { ..._mp.aliases },
+      spectrumGroups: { ...FACTORY_TAG_SPECTRUM_GROUPS }, // 모드 무관 공유
+      mode: globalSlotMode, // 🎨 v7.55.0: 시드된 모드 기록(진단/하위호환)
       // 🆕 카테고리 관리 필드 초기화
       hiddenCategories: [],
       categoryAliases: {},
@@ -49234,29 +49434,29 @@ function AppContent() {
   // 🔧 v3.5.11: getAllMajorTags 사용하여 tagAttributes 기반 대장르도 포함
   const allMajorGenres = useMemo(() => {
     return getAllMajorTags(tagAttributes, userMajorGenres);
-  }, [userMajorGenres, tagAttributes, tagRegistry]);
+  }, [userMajorGenres, tagAttributes, tagRegistry, slotMode]);
 
   // 🏷️ 전체 부장르 목록 (기본 + 사용자 + tagAttributes)
   const allSubGenres = useMemo(() => {
     return getAllSubTags(tagAttributes, userSubGenres);
-  }, [userSubGenres, tagAttributes, tagRegistry]);
+  }, [userSubGenres, tagAttributes, tagRegistry, slotMode]);
 
   // 🏷️ 전체 태그 목록 (기본 + 커스텀, 사용빈도순 정렬)
   const allTagsSorted = useMemo(() => {
     const allTags = [...ALL_GENERAL_TAGS, ...customTags];
     return sortTagsByUsage(allTags, tagUsageCounts);
-  }, [customTags, tagUsageCounts, tagRegistry]);
+  }, [customTags, tagUsageCounts, tagRegistry, slotMode]);
 
   // 🏷️ 정렬된 대장르 목록 (사용빈도순)
   // 🔧 v3.5.11: tagAttributes 반영
   const sortedMajorGenres = useMemo(() => {
     return sortTagsByUsage(getAllMajorTags(tagAttributes, userMajorGenres), tagUsageCounts);
-  }, [userMajorGenres, tagUsageCounts, tagAttributes]);
+  }, [userMajorGenres, tagUsageCounts, tagAttributes, slotMode]);
 
   // 🏷️ 정렬된 부장르 목록 (사용빈도순)
   const sortedSubGenres = useMemo(() => {
     return sortTagsByUsage(getAllSubTags(tagAttributes, userSubGenres), tagUsageCounts);
-  }, [userSubGenres, tagUsageCounts, tagAttributes]);
+  }, [userSubGenres, tagUsageCounts, tagAttributes, slotMode]);
 
   // 🏷️ 일반 태그 카테고리별 정렬 목록
   const sortedGeneralTags = useMemo(() => {
@@ -49272,7 +49472,7 @@ function AppContent() {
       }
     }
     return result;
-  }, [tagUsageCounts, customTagCategories, tagRegistry]);
+  }, [tagUsageCounts, customTagCategories, tagRegistry, slotMode]);
 
   // 🆕 v3.5.9: 전체 태그 목록 (검색/자동완성용)
   // 🔧 v3.5.12: comboTags 제거 (customTags로 통합)
@@ -58291,6 +58491,7 @@ async function importJSON(directText, onSuccess, onSettled) {
 
             {/* 🌐 v7.50.x: 넷상 추천 설정 */}
             {(() => {
+              if (globalSlotMode === "webtoon") return null; // 🎨 v7.55.0: 웹툰 모드는 웹소설 넷상 추천 설정 숨김(로컬 추천 설정은 위에 유지)
               const reco = (appSettings && appSettings.reco) || DEFAULT_SETTINGS.reco;
               const web = reco.web || DEFAULT_SETTINGS.reco.web;
               const wcount = Math.max(1, Math.min(10, Number(web.count) || 5));
@@ -58766,6 +58967,7 @@ async function importJSON(directText, onSuccess, onSettled) {
 
     {/* 🌐 v7.50.x: 넷상 추천작 (외부 발견) */}
     {(() => {
+    if (globalSlotMode === "webtoon") return null; // 🎨 v7.55.0: 웹툰 모드는 웹소설 넷상 추천 섹션 숨김
     // 🌐 v7.53: 밴 키워드가 이미 가져온 배치에도 즉시 반영(보관작 ⭐은 사용자가 일부러 둔 것이라 예외).
     const _banList = ((appSettings && appSettings.reco && appSettings.reco.bannedKeywords) || []);
     const visibleReco = (_banList.length === 0) ? webRecoList
@@ -68075,6 +68277,9 @@ async function importJSON(directText, onSuccess, onSettled) {
                 ); })()}
               </View>
 
+              {/* 🎨 v7.55.0: 웹소설 전용 연결 카드 묶음 — 웹툰 모드에선 전부 숨김
+                  (제목 검색 사이트·카카오 검색 키·노벨피아/문피아 로그인·카카오 세션·외전 분리·긁기/외전 진단). */}
+              {slotMode === "novel" && (<>
               {/* 🆕 v7.39.0: 제목 검색 대상 사이트 온오프 — 다중 플랫폼 병렬이라 안 쓰는 곳은 꺼서 빠르게 */}
               <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
                 <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>🔎 제목 검색 사이트</Text>
@@ -68336,6 +68541,8 @@ async function importJSON(directText, onSuccess, onSettled) {
                   </View>
                 ) : null}
               </View>
+              </>)}
+              {/* 🎨 v7.55.0: ↑ 웹소설 전용 연결 카드 묶음 끝 */}
 
               {/* 🆕 v7.28.10: API 키 발급 안내 모달 (제공자별 단계·주의·바로가기) */}
               {/* 🔐 v7.40.0: 노벨피아 WebView 로그인 모달 — 사용자가 직접 로그인 → ‘로그인 완료’로 세션 캡처 */}
@@ -69141,7 +69348,25 @@ async function importJSON(directText, onSuccess, onSettled) {
                 독립적인 데이터셋을 최대 10개까지 관리할 수 있습니다.{"\n"}
                 각 슬롯은 별도의 작품 목록, 매칭 기록, 설정을 가집니다.
               </Text>
-              
+
+              {/* 🎨 v7.55.0: 현재(활성) 슬롯 모드 전환 */}
+              <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
+                <Text style={{ color: C.sub, fontSize: 12, fontWeight: "700" }}>현재 슬롯 모드</Text>
+                {[["novel", "📖 웹소설"], ["webtoon", "🎨 웹툰"]].map(([m, label]) => (
+                  <TouchableOpacity
+                    key={m}
+                    onPress={() => changeActiveSlotMode(m)}
+                    style={{
+                      paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1,
+                      backgroundColor: slotMode === m ? C.primary : C.chip,
+                      borderColor: slotMode === m ? C.primary : C.line,
+                    }}
+                  >
+                    <Text style={{ color: slotMode === m ? "#fff" : C.text, fontSize: 12, fontWeight: "700" }}>{label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
               {/* 슬롯 목록 */}
               {slotMeta && slotMeta.slots.map((slot) => {
                 const isActive = slot.id === activeSlotId;
@@ -69167,7 +69392,7 @@ async function importJSON(directText, onSuccess, onSettled) {
                           )}
                         </View>
                         <Text style={{ color: C.sub, fontSize: 11, marginTop: 4 }}>
-                          {slot.novelCount || 0}작품 · 생성: {new Date(slot.createdAt).toLocaleDateString("ko-KR")}
+                          {(slot.mode === "webtoon" ? "🎨 웹툰" : "📖 웹소설")} · {slot.novelCount || 0}작품 · 생성: {new Date(slot.createdAt).toLocaleDateString("ko-KR")}
                           {slot.lastAccessed > 0 ? ` · 최근: ${new Date(slot.lastAccessed).toLocaleDateString("ko-KR")}` : ""}
                         </Text>
                       </View>
@@ -69334,21 +69559,24 @@ async function importJSON(directText, onSuccess, onSettled) {
               {(!slotMeta || slotMeta.slots.length < MAX_SLOTS) && (
                 <TouchableOpacity
                   onPress={async () => {
+                    // 🎨 v7.55.0: 생성 시 모드 선택(웹소설/웹툰). 슬롯별 독립 모드.
+                    const doCreate = async (mode) => {
+                      const result = await createSlot(null, mode);
+                      if (result.success) {
+                        const meta = await loadSlotMeta();
+                        setSlotMeta(meta);
+                        Alert.alert("완료", `"${result.slot.name}" 슬롯(${mode === "webtoon" ? "🎨 웹툰" : "📖 웹소설"})이 생성되었습니다.`);
+                      } else {
+                        Alert.alert("오류", result.error);
+                      }
+                    };
                     Alert.alert(
                       "새 슬롯 생성",
-                      "새 데이터 슬롯을 만드시겠습니까?\n\n빈 데이터셋이 생성됩니다.",
+                      "어떤 모드로 만들까요?\n\n• 웹소설: 웹소설 장르·플랫폼·작품 검색\n• 웹툰: 웹툰 장르·플랫폼 (자동검색은 추후 지원, 지금은 수동·링크)",
                       [
-                        { text: "취소" },
-                        { text: "생성", onPress: async () => {
-                          const result = await createSlot(null);
-                          if (result.success) {
-                            const meta = await loadSlotMeta();
-                            setSlotMeta(meta);
-                            Alert.alert("완료", `"${result.slot.name}" 슬롯이 생성되었습니다.`);
-                          } else {
-                            Alert.alert("오류", result.error);
-                          }
-                        }},
+                        { text: "취소", style: "cancel" },
+                        { text: "📖 웹소설", onPress: () => doCreate("novel") },
+                        { text: "🎨 웹툰", onPress: () => doCreate("webtoon") },
                       ]
                     );
                   }}
