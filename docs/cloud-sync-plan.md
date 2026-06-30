@@ -208,6 +208,22 @@
    AppState `active` 복귀 시 `cloudCheckOnForeground`.
 8. **설정 UI:** 🔌 연결 탭에 신규 섹션(또는 ☁️ 서브탭): 로그인/로그아웃·상태(계정·마지막 동기화·rev)·"지금 백업"·"클라우드에서 복원"·자동 동기화 토글·충돌 선택·리비전 복구. `GOOGLE_OAUTH_CLIENT_ID` 미설정 시 "설정 필요" 안내.
 
+### ✅ v7.54.2 — 7시나리오 적대검토(3에이전트) 후속 수정 (코드/esbuild, **온디바이스 미검증**)
+- **C1**(치명, S1): 슬롯 uuid가 기기마다 달라 새 기기 복원 불가 → `cloudListRemoteSlots`/`cloudAdoptRemoteSlotToCurrent`
+  + ‘🔁 다른 기기의 백업 불러오기’ 모달(원격 슬롯 선택→현재 슬롯에 uuid 채택→복원).
+- **C2**(치명, S4): push/pull `_slotGeneration` 가드 + `performSlotSwitch`가 동기화 중 전환 차단.
+- **H0**: pull 뮤텍스가 복원 완료까지 유지(`cloudRestoreInProgressRef` + `importJSON(directText, onSuccess, onSettled)` —
+  취소/성공/실패 모두 onSettled). 복원 중 자동 push 차단.
+- **H1**: 로컬 표지를 스냅샷에 base64 동봉(`exportJSON({embedLocalCovers})` → `payload.LCV`), 복원 시 파일 기록 + cover_image 재연결.
+- **H2**: 갤러리 복원 경로를 현재 기기 documentDirectory 기준으로 정규화(iOS 경로 변경 유실 해소).
+- **H3**: content-addressed `snapshot-<rev>.json`(+옛 스냅샷 정리)로 비원자 덮어쓰기 skew 제거.
+- **H4**: 토큰 refresh 종단 실패 시 토큰 제거(재로그인), 일시 실패는 null(401 루프 차단).
+- **M2** 다운로드 status≠200 시 파일 삭제·throw / **M3** 매니페스트 읽기 실패 시 push 중단(rev 0 리셋 방지) /
+  **M4** 매니페스트 직전 rev 재확인(충돌 중단)·죽은 leaseUntil 제거 / **M1** 슬롯 전환 시 클라우드 상태 재로드.
+- **L**: 자산 증분 다운로드(size 스킵)·폴더 ensure 중복/읽기 부작용 제거.
+- 비이슈 확인: export/import 리팩터 기존 동작 보존, refresh_token 보존, Drive 쿼리 이스케이프, multipart/UTF-8, 명대사 첫 3장 base64.
+- 남은 설정 게이트: OAuth 리디렉션 `noveltier://`는 **Android/iOS 클라이언트 유형** 필요(Web 클라이언트는 커스텀 스킴 거부).
+
 ### 🧪 온디바이스 테스트 체크리스트(Increment 2 후)
 - [ ] 로그인/로그아웃, refresh(1시간 후 자동 재발급) 동작.
 - [ ] 신규 작품/매칭 후 자동 push → Drive appDataFolder에 `slot-<uuid>/snapshot.json` 생성 확인.
