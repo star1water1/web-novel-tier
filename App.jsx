@@ -2,9 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.56.1 (웹툰 Phase 2.1 — 네이버웹툰 파서 실캡처 정밀화, 베타)              ║
+ * ║  버전: 7.56.2 (웹툰 Phase 2.2 — 네이버웹툰 연재연도 채우기, 베타)                ║
  * ║  최종 수정: 2026-06-30                                                        ║
- * ║  총 라인 수: 약 76,650줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 76,700줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🎨 v7.56.2 웹툰 Phase 2.2 — 네이버웹툰 연재연도(시작/종료) 채우기 (2026-06-30)   ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 웹툰 검색은 되는데 연재연도가 안 뜨던 문제 해결. 검색응답(api/search/all)엔        ║
+ * ║ lastArticleServiceDate(마지막화)만 있고 시작일이 없어 start/end_year가 null이었음. ║
+ * ║ • 종료연도(완결작): naverWebtoonItemToMeta에서 finished면 lastArticleServiceDate   ║
+ * ║   →endYear+completedAt 즉시 채움(추가 fetch X). 연재중/휴재는 null.               ║
+ * ║ • 시작연도: fetchNaverWebtoonStartYear(titleId) — 회차목록 API(article/list,       ║
+ * ║   sort=ASC)의 첫 항목(1화) 날짜 → 연도. 네이버시리즈 fetchNaverStartYear 미러.     ║
+ * ║   parseNaverWebtoonStartYear: 필드후보+날짜패턴 스캔(관용적). 선택/URL불러오기 시 1회.║
+ * ║ • 날짜 헬퍼 naverNormalizeDate(2자리연 "26.06.30"→"2026.06.30")·naverDate2ToYear.  ║
+ * ║   pickSearchCandidate(웹툰 meta startYear null)·fetchNaverWebtoonMeta에서 보강.    ║
+ * ║ • scraper-test에 시작연도 파서(JSON+날짜스캔)·완결 endYear 합성 assert 추가.        ║
+ * ║ esbuild 통과·회귀 무변. APP_VERSION 7.53.8 유지(베타). ⚠️ 온디바이스 미검증.        ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -17721,6 +17737,58 @@ function parseNovelpiaSearch(jsonText) {
 // ═══════════════════════════════════════════════════════════════
 const WEBTOON_SEARCH_PLATFORMS = ["네이버웹툰"];
 
+// 🎨 v7.56.2: 네이버웹툰 날짜 정규화 — 검색/회차 응답의 날짜가 2자리 연("26.06.30")이라
+//   scraperDateToTs(4자리 연 요구)에 그대로 못 넣음 → "YYYY.MM.DD"로 확장. 이미 4자리면 그대로.
+function naverNormalizeDate(s) {
+  const str = String(s == null ? "" : s).trim();
+  let m = str.match(/(19[89]\d|20\d\d)[.\-](\d{1,2})[.\-](\d{1,2})/); // 4자리 연 우선
+  if (m) return `${m[1]}.${m[2]}.${m[3]}`;
+  m = str.match(/(\d{2})[.\-](\d{1,2})[.\-](\d{1,2})/); // 2자리 연(YY.MM.DD) → 20YY
+  if (m) return `20${m[1]}.${m[2]}.${m[3]}`;
+  return "";
+}
+// 날짜 문자열 → 연도(1990~2099). 2자리/4자리 연 모두 수용. 없으면 null.
+function naverDate2ToYear(s) {
+  const m = naverNormalizeDate(s).match(/^(\d{4})/);
+  const y = m ? Number(m[1]) : 0;
+  return (y >= 1990 && y <= 2099) ? y : null;
+}
+
+// 🎨 v7.56.2: 네이버웹툰 연재 시작연도 — 검색/상세 응답엔 시작일이 없음(검색응답=마지막화 날짜).
+//   회차목록 API(article/list, sort=ASC=오래된 순)의 첫 항목(=1화) 날짜가 곧 연재 시작일.
+//   네이버시리즈 fetchNaverStartYear(volumeMoreList ASC display=1) 패턴 미러. 날짜 필드명이 비공식 →
+//   필드 후보 + 날짜패턴 스캔으로 관용적 best-effort. 빗나가면 긁기진단 캡처로 필드 확정.
+function parseNaverWebtoonStartYear(text) {
+  let data; try { data = JSON.parse(text); } catch { data = null; }
+  if (data && typeof data === "object") {
+    const list = Array.isArray(data.articleList) ? data.articleList
+               : (Array.isArray(data.list) ? data.list : null);
+    const first = list && list.length ? list[0] : null;
+    if (first && typeof first === "object") {
+      for (const k of ["serviceDateDescription", "serviceDate", "firstWriteDate", "registerDate", "modifyDate", "date"]) {
+        const y = naverDate2ToYear(first[k]);
+        if (y) return y;
+      }
+    }
+  }
+  // 폴백: 응답 전체에서 첫 날짜 패턴(ASC라 가장 오래된 화가 앞) → 연도. (4자리 연 우선, 없으면 2자리)
+  const m = String(text == null ? "" : text).match(/(19[89]\d|20\d\d)[.\-]\d{1,2}[.\-]\d{1,2}/)
+         || String(text == null ? "" : text).match(/(\d{2})[.\-]\d{1,2}[.\-]\d{1,2}/);
+  if (m) { const y = naverDate2ToYear(m[0]); if (y) return y; }
+  return null;
+}
+async function fetchNaverWebtoonStartYear(titleId, opts = {}) {
+  const tid = (String(titleId || "").match(/\d+/) || [])[0];
+  if (!tid) return null;
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 15000 });
+  try {
+    // ASC(오래된 순) page=1 → 첫 항목이 1화. 비로그인 공개 엔드포인트(gallery-dl 사용).
+    const res = await fetch("https://comic.naver.com/api/article/list?titleId=" + tid + "&page=1&sort=ASC", { headers: SCRAPER_HEADERS, redirect: "follow", signal });
+    if (!res.ok) return null;
+    return parseNaverWebtoonStartYear(await res.text());
+  } catch { return null; } finally { cleanup(); }
+}
+
 async function searchNaverWebtoon(query, opts = {}) {
   const q = (query || "").trim();
   if (!q) return [];
@@ -17763,6 +17831,15 @@ function naverWebtoonItemToMeta(it) {
   if (coverUrl.startsWith("//")) coverUrl = "https:" + coverUrl;
   const ep = Number(it.articleTotalCount);
   const workStatus = it.finished ? "completed" : (it.rest ? "hiatus" : "ongoing");
+  // 🎨 v7.56.2: 종료연도/완결일 — 완결작은 검색응답 lastArticleServiceDate(마지막화 날짜)가 곧 완결일(추가 fetch 불필요).
+  //   연재중/휴재는 마지막화가 '최근 연재'라 종료연도 아님 → null(노벨피아 endYear: complete?…:null 패턴 동일).
+  //   시작연도(startYear)는 검색응답에 없어 여기선 null — 선택 시 회차목록 API(fetchNaverWebtoonStartYear)로 보강.
+  let endYear = null, completedAt = 0;
+  if (it.finished) {
+    const ds = String(it.lastArticleServiceDate || "");
+    endYear = naverDate2ToYear(ds);
+    completedAt = scraperDateToTs(naverNormalizeDate(ds)) || 0;
+  }
   return {
     ok: true, platform: "네이버웹툰", url: "https://comic.naver.com/webtoon/list?titleId=" + titleId,
     title, author, artist, coverUrl,
@@ -17770,7 +17847,7 @@ function naverWebtoonItemToMeta(it) {
     genres,
     workStatus,
     totalEpisodes: ep > 0 ? ep : null,
-    startYear: null, endYear: null, completedAt: 0,
+    startYear: null, endYear, completedAt,
     ageTag: it.nineteen ? "19금" : null,
   };
 }
@@ -17910,13 +17987,16 @@ async function fetchNaverWebtoonMeta(url, opts = {}) {
   } catch { /* OG만으로 진행 */ }
   if (!title) return { ok: false, platform: "네이버웹툰", url: pageUrl };
   if (coverUrl.startsWith("//")) coverUrl = "https:" + coverUrl;
+  // 🎨 v7.56.2: 시작연도 보강 — 상세 SSR엔 시작일이 없어 회차목록 API(ASC)로 1화 등록일을 가져옴.
+  let startYear = null;
+  try { startYear = await fetchNaverWebtoonStartYear(tid, opts); } catch {}
   return {
     ok: true, platform: "네이버웹툰", url: pageUrl,
     title, author, artist, coverUrl,
     synopsis: String(og["og:description"] || "").trim(),
     genres: (genres || []).filter(Boolean),
     workStatus, totalEpisodes,
-    startYear: null, endYear: null, completedAt: 0, ageTag: null,
+    startYear, endYear: null, completedAt: 0, ageTag: null,
   };
 }
 
@@ -46824,7 +46904,15 @@ function AppContent() {
     if (!ctx) return;
     // 🔎 v7.28.43: 검색 API가 충분한 메타를 준 경우(노벨피아) 상세 재긁기 없이 그대로 사용(SPA og 부실 회피).
     //   🆕 v7.28.53: 이미 등록된 작품 판정/기존작 편집 분기는 openScrapeFromMeta로 일원화(제목검색·링크 공용).
-    if (cand?.meta && cand.meta.title) openScrapeFromMeta(cand.meta, ctx);
+    if (cand?.meta && cand.meta.title) {
+      let m = cand.meta;
+      // 🎨 v7.56.2: 네이버웹툰 검색 meta엔 시작연도가 없음(검색응답=마지막화). 선택 시 1회 회차목록 API로 보강.
+      if (m.platform === "네이버웹툰" && m.startYear == null) {
+        const tid = (String(m.url).match(/titleId=(\d+)/) || [])[1];
+        if (tid) { try { const sy = await fetchNaverWebtoonStartYear(tid); if (sy) m = { ...m, startYear: sy }; } catch {} }
+      }
+      openScrapeFromMeta(m, ctx);
+    }
     else if (cand?.url) await runScrapeFromUrl(cand.url, ctx, cand); // 그 외(리디·네이버·문피아)는 상세 긁기 + 후보 작가/표지 보강
   }
 

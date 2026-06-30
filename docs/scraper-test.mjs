@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, applyEpisodeSplitToMeta, parseKakaoProductList, parseKakaoViewerDate, parseKakaoOverview, kakaoSeriesIdFromUrl, parseMunpiaEntries, parseMunpiaNovelInfo, munpiaIdFromUrl, SCRAPER_HEADERS, SCRAPER_UA, parseNaverWebtoonSearch, extractNaverWebtoonItems, naverWebtoonItemToMeta, WEBTOON_SEARCH_PLATFORMS };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, applyEpisodeSplitToMeta, parseKakaoProductList, parseKakaoViewerDate, parseKakaoOverview, kakaoSeriesIdFromUrl, parseMunpiaEntries, parseMunpiaNovelInfo, munpiaIdFromUrl, SCRAPER_HEADERS, SCRAPER_UA, parseNaverWebtoonSearch, extractNaverWebtoonItems, naverWebtoonItemToMeta, WEBTOON_SEARCH_PLATFORMS, naverNormalizeDate, naverDate2ToYear, parseNaverWebtoonStartYear };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -92,6 +92,33 @@ truthy("웹툰 태그에 먼치킨", nwReal[0].meta.genres.includes("먼치킨")
 truthy("웹툰 태그에 소설원작", nwReal[0].meta.genres.includes("소설원작"));
 eq("웹툰 연령(nineteen=false→null)", nwReal[0].meta.ageTag, null);
 eq("웹툰 검색 플랫폼 목록", S.WEBTOON_SEARCH_PLATFORMS, ["네이버웹툰"]);
+
+// ── 🎨 v7.56.2 네이버웹툰 연재연도(시작/종료) ──
+// 날짜 정규화/연도 추출: 2자리 연("26.06.30")·4자리 연 모두 수용
+eq("naverNormalizeDate 2자리연 → 4자리", S.naverNormalizeDate("26.06.30"), "2026.06.30");
+eq("naverNormalizeDate 4자리연 그대로", S.naverNormalizeDate("2021.5.3"), "2021.5.3");
+eq("naverNormalizeDate 비날짜 → 빈문자열", S.naverNormalizeDate("연재중"), "");
+eq("naverDate2ToYear 2자리연", S.naverDate2ToYear("26.06.30"), 2026);
+eq("naverDate2ToYear 4자리연", S.naverDate2ToYear("2021.05.30"), 2021);
+eq("naverDate2ToYear 비날짜 → null", S.naverDate2ToYear("미정"), null);
+// 검색응답=마지막화라 startYear는 항상 null(선택 시 회차목록으로 보강); 진행중 작품은 endYear도 null
+eq("진행중 웹툰 startYear=null(검색단계)", nwReal[0].meta.startYear, null);
+eq("진행중 웹툰 endYear=null(완결 아님)", nwReal[0].meta.endYear, null);
+eq("진행중 웹툰 completedAt=0", nwReal[0].meta.completedAt, 0);
+// 완결작 합성: finished=true → lastArticleServiceDate가 종료연도/완결일
+const nwDone = S.naverWebtoonItemToMeta({ titleId: 111, titleName: "완결웹툰", finished: true, lastArticleServiceDate: "23.11.02", articleTotalCount: 80 });
+eq("완결 웹툰 endYear(lastArticleServiceDate→2023)", nwDone.endYear, 2023);
+eq("완결 웹툰 workStatus=completed", nwDone.workStatus, "completed");
+truthy("완결 웹툰 completedAt(ms>0)", nwDone.completedAt > 0);
+eq("완결 웹툰 completedAt=UTC 2023-11-02", nwDone.completedAt, Date.UTC(2023, 10, 2));
+// 시작연도 파서: ① article/list JSON(articleList[0] 날짜 필드) ② 날짜패턴 스캔 폴백
+const alJson = JSON.stringify({ titleId: 769209, articleList: [{ no: 1, serviceDateDescription: "20.07.27" }, { no: 2, serviceDateDescription: "20.08.03" }] });
+eq("startYear 파서 JSON(articleList[0].serviceDateDescription→2020)", S.parseNaverWebtoonStartYear(alJson), 2020);
+const alJson2 = JSON.stringify({ articleList: [{ no: 1, serviceDate: "2018.01.05" }] });
+eq("startYear 파서 JSON(serviceDate 4자리연→2018)", S.parseNaverWebtoonStartYear(alJson2), 2018);
+const alScan = `<ul><li><span class="date">19.03.14</span></li><li><span class="date">19.03.21</span></li></ul>`;
+eq("startYear 파서 날짜스캔 폴백(첫 날짜→2019)", S.parseNaverWebtoonStartYear(alScan), 2019);
+eq("startYear 파서 날짜 없음 → null", S.parseNaverWebtoonStartYear("{\"articleList\":[]}"), null);
 const np = S.scraperDetectBlock(403, fx("novelpia-403-awselb.html"));
 eq("노벨피아 403(nginx) → forbidden", { blocked: np.blocked, kind: np.kind }, { blocked: true, kind: "forbidden" });
 const mp = S.scraperDetectBlock(403, fx("munpia-cf-challenge.html"));
