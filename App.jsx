@@ -2,9 +2,28 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.53.8 (인앱 변경이력·가이드 동기화 + 복원 reco 초기화)                   ║
+ * ║  버전: 7.54.0 (클라우드 백업·동기화 토대 — Phase 1 Increment 1)                 ║
  * ║  최종 수정: 2026-06-30                                                        ║
- * ║  총 라인 수: 약 75,260줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 75,470줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ ☁️ v7.54.0 클라우드 백업·동기화 토대 (Phase 1 Increment 1, 2026-06-30)          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 멀티 기기 동기화(여러 기기 번갈아 사용) Phase 1의 '토대'만 선반영. 자기완결 모듈   ║
+ * ║ 이라 호출부가 없어 기존 동작 무영향(완전 추가형). 설계: docs/cloud-sync-plan.md.  ║
+ * ║ • deps: expo-auth-session/expo-web-browser/expo-crypto (작업 브랜치 한정 —        ║
+ * ║   빌드 전 'npx expo install'로 SDK54 버전 핀 필요). app.json scheme 기존재.       ║
+ * ║ • 슬롯 UUID: loadSlotMeta/createSlot에 uuid 백필·부여(기기 간 동일 슬롯 식별 키).  ║
+ * ║ • 클라우드 모듈(모듈 레벨): cloud_auth.json 전역 토큰 저장·deviceId, Google OAuth  ║
+ * ║   (PKCE) cloudSignIn/Out·cloudGetAccessToken(자동 refresh), Drive REST(appData-   ║
+ * ║   Folder) find/ensureFolder/upload(text·localFile·multipart base64)/getText/      ║
+ * ║   download/list/delete, cloudReadRemoteManifest·buildAssetManifestFromPaths.      ║
+ * ║ • 미구현(Increment 2): exportJSON→buildFullBackupPayload 추출, importJSON(direct  ║
+ * ║   Text) 인자, push/pull 오케스트레이터, 충돌/리스, 설정 UI, AppState 배선.        ║
+ * ║   → 백업/복원 데이터 경로를 건드리므로 온디바이스 스모크 테스트와 함께 진행.       ║
+ * ║ • 사용 전: Google Cloud OAuth 클라이언트 ID 발급 → GOOGLE_OAUTH_CLIENT_ID 입력.   ║
+ * ║ • APP_VERSION은 7.53.8 유지(사용자 노출 변화 없음 — 내부 토대). esbuild 통과.     ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -8217,6 +8236,9 @@ import * as ImageManipulator from "expo-image-manipulator"; // 📷 명대사 �
 import * as MediaLibrary from "expo-media-library"; // 📷 v7.4.0 티어표 갤러리 저장
 import * as Sharing from "expo-sharing"; // 🖼️ 단일 명대사 이미지 공유(네이티브 공유 시트) — package.json에 이미 설치됨
 import * as Clipboard from "expo-clipboard"; // 📋 v7.28.37 클립보드 링크 감지(스크래퍼 Stage 5)
+import * as AuthSession from "expo-auth-session"; // ☁️ v7.54.0 클라우드 동기화 — Google OAuth(PKCE)
+import * as WebBrowser from "expo-web-browser"; // ☁️ v7.54.0 OAuth 리디렉션 완료 처리
+import * as Crypto from "expo-crypto"; // ☁️ v7.54.0 expo-auth-session PKCE 의존성(+해시 유틸)
 import { captureRef } from "react-native-view-shot"; // 📷 v7.4.0 티어표 캡처
 import { WebView } from "react-native-webview"; // 🔐 v7.40.0 노벨피아 로그인(성인물 게이트 해제) — WebView 로그인
 import CookieManager from "@react-native-cookies/cookies"; // 🔐 v7.40.0 OS 쿠키스토어 읽기(세션 쿠키 → fetch 주입)
@@ -8496,7 +8518,7 @@ async function loadSlotMeta() {
       // 최초 실행: 기본 슬롯 1개 생성
       const defaultMeta = {
         activeSlotId: 0,
-        slots: [{ id: 0, name: "기본 데이터", createdAt: Date.now(), novelCount: 0, lastAccessed: Date.now() }],
+        slots: [{ id: 0, name: "기본 데이터", uuid: "slot_" + uuid(), createdAt: Date.now(), novelCount: 0, lastAccessed: Date.now() }],
       };
       await FileSystem.writeAsStringAsync(SLOT_META_PATH, JSON.stringify(defaultMeta));
       return defaultMeta;
@@ -8507,13 +8529,21 @@ async function loadSlotMeta() {
     if (!meta || !Array.isArray(meta.slots)) {
       throw new Error("Invalid slot meta");
     }
+    // ☁️ v7.54.0: 슬롯 UUID 백필 — 기기 간 '같은 슬롯'을 식별하는 안정 키(클라우드 동기화용).
+    //   로컬 슬롯 ID(0~9 순번)는 기기마다 다를 수 있어 동기화 키로 부적합 → 슬롯별 UUID 부여.
+    let _uuidAdded = false;
+    for (const s of meta.slots) { if (s && !s.uuid) { s.uuid = "slot_" + uuid(); _uuidAdded = true; } }
+    if (_uuidAdded) {
+      try { await FileSystem.writeAsStringAsync(SLOT_META_PATH, JSON.stringify(meta)); }
+      catch (we) { console.warn("슬롯 UUID 백필 저장 실패:", we?.message); }
+    }
     return meta;
   } catch (e) {
     console.warn("슬롯 메타 로드 실패:", e);
     // 복구: 기본 슬롯 반환
     return {
       activeSlotId: 0,
-      slots: [{ id: 0, name: "기본 데이터", createdAt: Date.now(), novelCount: 0, lastAccessed: Date.now() }],
+      slots: [{ id: 0, name: "기본 데이터", uuid: "slot_" + uuid(), createdAt: Date.now(), novelCount: 0, lastAccessed: Date.now() }],
     };
   }
 }
@@ -8547,6 +8577,268 @@ async function saveGlobalAiConfig(patch) {
   } catch (e) { console.warn("AI 설정 저장 실패:", e?.message); return null; }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+   ☁️ v7.54.0 클라우드 백업·동기화 토대 (Phase 1 / Increment 1)
+   — Google Drive appDataFolder. 자기완결적 모듈(컴포넌트 상태 비참조).
+   설계·로드맵: docs/cloud-sync-plan.md.
+   ⚠️ 사용 전: Google Cloud Console에서 OAuth 2.0 클라이언트 ID 발급 후 아래 GOOGLE_OAUTH_CLIENT_ID에 입력.
+      (설치형 앱 클라이언트 ID는 비밀이 아님 — 소스에 둬도 무방.)
+   ⚠️ 다음 increment(미구현): push/pull 오케스트레이터 + 설정 UI + AppState 배선
+      (exportJSON/importJSON 재사용 — docs의 'Increment 2 배선' 참조). 현재는 호출부가 없어 기존 동작에 영향 없음.
+   ═══════════════════════════════════════════════════════════════════════ */
+WebBrowser.maybeCompleteAuthSession();
+
+const GOOGLE_OAUTH_CLIENT_ID = ""; // ← 여기에 OAuth 2.0 클라이언트 ID 입력 (예: "123-abc.apps.googleusercontent.com")
+const GOOGLE_DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
+const GOOGLE_AUTH_DISCOVERY = {
+  authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
+  tokenEndpoint: "https://oauth2.googleapis.com/token",
+  revocationEndpoint: "https://oauth2.googleapis.com/revoke",
+};
+const CLOUD_AUTH_PATH = FileSystem.documentDirectory + "cloud_auth.json"; // 전역·슬롯 무관·백업 미포함(ai_config와 동일 정책)
+const DRIVE_API = "https://www.googleapis.com/drive/v3";
+const DRIVE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
+
+function cloudIsConfigured() { return !!GOOGLE_OAUTH_CLIENT_ID; }
+
+async function loadCloudAuth() {
+  try {
+    const info = await FileSystem.getInfoAsync(CLOUD_AUTH_PATH);
+    if (!info.exists) return null;
+    const raw = await FileSystem.readAsStringAsync(CLOUD_AUTH_PATH);
+    const cfg = JSON.parse(raw);
+    return (cfg && typeof cfg === "object") ? cfg : null;
+  } catch (e) { console.warn("[cloud] auth 로드 실패:", e?.message); return null; }
+}
+async function saveCloudAuth(patch) {
+  try {
+    const cur = (await loadCloudAuth()) || {};
+    const next = { ...cur, ...patch };
+    await FileSystem.writeAsStringAsync(CLOUD_AUTH_PATH, JSON.stringify(next));
+    return next;
+  } catch (e) { console.warn("[cloud] auth 저장 실패:", e?.message); return null; }
+}
+async function clearCloudAuthTokens() {
+  // 토큰만 제거(deviceId는 유지 — 기기 식별 안정성)
+  const cur = (await loadCloudAuth()) || {};
+  const { accessToken, refreshToken, expiresAt, email, ...rest } = cur;
+  try { await FileSystem.writeAsStringAsync(CLOUD_AUTH_PATH, JSON.stringify(rest)); } catch {}
+}
+
+let _cloudDeviceId = null;
+async function getCloudDeviceId() {
+  if (_cloudDeviceId) return _cloudDeviceId;
+  const cfg = await loadCloudAuth();
+  if (cfg?.deviceId) { _cloudDeviceId = cfg.deviceId; return _cloudDeviceId; }
+  const id = "dev_" + uuid();
+  await saveCloudAuth({ deviceId: id });
+  _cloudDeviceId = id;
+  return id;
+}
+
+// app.json scheme "noveltier" 기반 리디렉션 URI. ★ Google Cloud Console '승인된 리디렉션 URI'에 이 값 등록 필요.
+function cloudRedirectUri() {
+  return AuthSession.makeRedirectUri({ scheme: "noveltier", path: "oauthredirect" });
+}
+
+// 로그인(PKCE Authorization Code). 성공 시 토큰을 cloud_auth.json에 저장.
+async function cloudSignIn() {
+  if (!cloudIsConfigured()) return { ok: false, error: "GOOGLE_OAUTH_CLIENT_ID 미설정" };
+  try {
+    const redirectUri = cloudRedirectUri();
+    const request = new AuthSession.AuthRequest({
+      clientId: GOOGLE_OAUTH_CLIENT_ID,
+      scopes: [GOOGLE_DRIVE_SCOPE, "openid", "email"],
+      redirectUri,
+      responseType: AuthSession.ResponseType.Code,
+      usePKCE: true,
+      extraParams: { access_type: "offline", prompt: "consent" }, // refresh_token 확보
+    });
+    await request.makeAuthUrlAsync(GOOGLE_AUTH_DISCOVERY);
+    const result = await request.promptAsync(GOOGLE_AUTH_DISCOVERY);
+    if (result.type !== "success" || !result.params?.code) {
+      return { ok: false, error: result.type === "error" ? (result.params?.error || "auth_error") : result.type };
+    }
+    const tokenRes = await AuthSession.exchangeCodeAsync({
+      clientId: GOOGLE_OAUTH_CLIENT_ID,
+      code: result.params.code,
+      redirectUri,
+      extraParams: request.codeVerifier ? { code_verifier: request.codeVerifier } : {},
+    }, GOOGLE_AUTH_DISCOVERY);
+    const prior = await loadCloudAuth();
+    const expiresAt = Date.now() + ((tokenRes.expiresIn || 3600) * 1000);
+    await saveCloudAuth({
+      accessToken: tokenRes.accessToken,
+      refreshToken: tokenRes.refreshToken || prior?.refreshToken || null, // Google은 재동의 시에만 refresh 재발급
+      expiresAt,
+    });
+    return { ok: true };
+  } catch (e) {
+    console.warn("[cloud] signIn 실패:", e?.message);
+    return { ok: false, error: e?.message || "signIn_error" };
+  }
+}
+
+async function cloudSignOut() {
+  try {
+    const cfg = await loadCloudAuth();
+    const tok = cfg?.refreshToken || cfg?.accessToken;
+    if (tok) { try { await AuthSession.revokeAsync({ token: tok }, GOOGLE_AUTH_DISCOVERY); } catch {} }
+  } finally { await clearCloudAuthTokens(); }
+}
+
+async function cloudIsSignedIn() {
+  const cfg = await loadCloudAuth();
+  return !!(cfg && (cfg.refreshToken || cfg.accessToken));
+}
+
+// 유효 access token (만료 60s 전이면 refresh). 없으면 null.
+async function cloudGetAccessToken() {
+  const cfg = await loadCloudAuth();
+  if (!cfg) return null;
+  if (cfg.accessToken && cfg.expiresAt && Date.now() < cfg.expiresAt - 60000) return cfg.accessToken;
+  if (cfg.refreshToken) {
+    try {
+      const tr = await AuthSession.refreshAsync({ clientId: GOOGLE_OAUTH_CLIENT_ID, refreshToken: cfg.refreshToken }, GOOGLE_AUTH_DISCOVERY);
+      const expiresAt = Date.now() + ((tr.expiresIn || 3600) * 1000);
+      await saveCloudAuth({ accessToken: tr.accessToken, expiresAt, refreshToken: tr.refreshToken || cfg.refreshToken });
+      return tr.accessToken;
+    } catch (e) { console.warn("[cloud] token refresh 실패:", e?.message); return cfg.accessToken || null; }
+  }
+  return cfg.accessToken || null;
+}
+
+// ── Google Drive REST (spaces=appDataFolder 전용) ──────────────────────
+async function driveAuthHeaders() {
+  const token = await cloudGetAccessToken();
+  if (!token) throw new Error("로그인이 필요합니다");
+  return { Authorization: `Bearer ${token}` };
+}
+
+// 이름+부모로 단일 파일/폴더 검색(없으면 null).
+async function driveFind(name, parentId) {
+  const headers = await driveAuthHeaders();
+  const q = `name = '${String(name).replace(/'/g, "\\'")}' and '${parentId}' in parents and trashed = false`;
+  const url = `${DRIVE_API}/files?spaces=appDataFolder&q=${encodeURIComponent(q)}&fields=${encodeURIComponent("files(id,name,modifiedTime,size)")}`;
+  const res = await fetch(url, { headers });
+  if (!res.ok) throw new Error(`drive find ${res.status}`);
+  const json = await res.json();
+  return (json.files && json.files[0]) || null;
+}
+
+async function driveEnsureFolder(name, parentId = "appDataFolder") {
+  const existing = await driveFind(name, parentId);
+  if (existing) return existing.id;
+  const headers = await driveAuthHeaders();
+  const res = await fetch(`${DRIVE_API}/files?fields=id`, {
+    method: "POST",
+    headers: { ...headers, "Content-Type": "application/json" },
+    body: JSON.stringify({ name, mimeType: "application/vnd.google-apps.folder", parents: [parentId] }),
+  });
+  if (!res.ok) throw new Error(`drive mkdir ${res.status}`);
+  return (await res.json()).id;
+}
+
+// base64 미디어 multipart/related 업로드. existingId 있으면 갱신(PATCH), 없으면 생성(POST).
+async function driveUploadContent(name, parentId, base64Content, mimeType, existingId) {
+  const headers = await driveAuthHeaders();
+  const boundary = "ntb_" + uuid();
+  const metadata = existingId ? { name } : { name, parents: [parentId] };
+  const body =
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+    `--${boundary}\r\nContent-Type: ${mimeType}\r\nContent-Transfer-Encoding: base64\r\n\r\n${base64Content}\r\n` +
+    `--${boundary}--`;
+  const url = existingId
+    ? `${DRIVE_UPLOAD_API}/files/${existingId}?uploadType=multipart&fields=id,modifiedTime`
+    : `${DRIVE_UPLOAD_API}/files?uploadType=multipart&fields=id,modifiedTime`;
+  const res = await fetch(url, {
+    method: existingId ? "PATCH" : "POST",
+    headers: { ...headers, "Content-Type": `multipart/related; boundary=${boundary}` },
+    body,
+  });
+  if (!res.ok) throw new Error(`drive upload ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  return await res.json();
+}
+
+// 텍스트 업로드(UTF-8 안전: 임시 파일 경유 base64 — btoa의 비-Latin1 문제 회피).
+async function driveUploadText(name, parentId, text, existingId) {
+  const tmp = (FileSystem.cacheDirectory || FileSystem.documentDirectory) + "cloud_tmp_" + uuid() + ".json";
+  await FileSystem.writeAsStringAsync(tmp, text);
+  try {
+    const b64 = await FileSystem.readAsStringAsync(tmp, { encoding: FileSystem.EncodingType.Base64 });
+    return await driveUploadContent(name, parentId, b64, "application/json", existingId);
+  } finally { try { await FileSystem.deleteAsync(tmp, { idempotent: true }); } catch {} }
+}
+
+// 로컬 파일(표지/갤러리 등) 업로드. ⚠️ base64 메모리 사용 — 대용량 파일은 후속 increment에서 resumable로 개선 예정.
+async function driveUploadLocalFile(name, parentId, localUri, mimeType, existingId) {
+  const b64 = await FileSystem.readAsStringAsync(localUri, { encoding: FileSystem.EncodingType.Base64 });
+  return driveUploadContent(name, parentId, b64, mimeType || "application/octet-stream", existingId);
+}
+
+async function driveGetText(fileId) {
+  const headers = await driveAuthHeaders();
+  const res = await fetch(`${DRIVE_API}/files/${fileId}?alt=media`, { headers });
+  if (!res.ok) throw new Error(`drive get ${res.status}`);
+  return await res.text();
+}
+
+async function driveDownloadToFile(fileId, destUri) {
+  const token = await cloudGetAccessToken();
+  if (!token) throw new Error("로그인이 필요합니다");
+  return await FileSystem.downloadAsync(`${DRIVE_API}/files/${fileId}?alt=media`, destUri, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+async function driveList(parentId) {
+  const headers = await driveAuthHeaders();
+  const q = `'${parentId}' in parents and trashed = false`;
+  const url = `${DRIVE_API}/files?spaces=appDataFolder&q=${encodeURIComponent(q)}&fields=${encodeURIComponent("files(id,name,modifiedTime,size)")}&pageSize=1000`;
+  const res = await fetch(url, { headers });
+  if (!res.ok) throw new Error(`drive list ${res.status}`);
+  return (await res.json()).files || [];
+}
+
+async function driveDelete(fileId) {
+  const headers = await driveAuthHeaders();
+  const res = await fetch(`${DRIVE_API}/files/${fileId}`, { method: "DELETE", headers });
+  return res.ok || res.status === 404;
+}
+
+// 자산 매니페스트: (Increment 2의) 컴포넌트가 슬롯 DB(cover_library/gallery_images/명대사)에서 모은
+//   로컬 파일 URI 목록을 받아 size/mtime을 부착(변경 감지 키). 원격 URL은 제외(재다운로드 가능).
+async function buildAssetManifestFromPaths(localUris) {
+  const out = [];
+  for (const uri of (localUris || [])) {
+    try {
+      if (!uri || !/^file:/.test(uri)) continue;
+      const fi = await FileSystem.getInfoAsync(uri, { size: true });
+      if (fi.exists && !fi.isDirectory) {
+        out.push({ name: String(uri).split("/").pop(), uri, size: fi.size || 0, mtime: fi.modificationTime || 0 });
+      }
+    } catch {}
+  }
+  return out;
+}
+
+// 슬롯의 클라우드 폴더 ID 확보(appDataFolder/slot-<uuid>). slotUuid는 slot_meta의 uuid.
+async function cloudEnsureSlotFolder(slotUuid) {
+  return await driveEnsureFolder(`slot-${slotUuid}`, "appDataFolder");
+}
+
+// 원격 매니페스트 읽기(없으면 null). 충돌/리비전 비교의 기준.
+async function cloudReadRemoteManifest(slotUuid) {
+  try {
+    const folderId = await cloudEnsureSlotFolder(slotUuid);
+    const f = await driveFind("manifest.json", folderId);
+    if (!f) return { folderId, manifest: null };
+    const text = await driveGetText(f.id);
+    return { folderId, manifest: JSON.parse(text), manifestFileId: f.id };
+  } catch (e) { console.warn("[cloud] 원격 매니페스트 읽기 실패:", e?.message); throw e; }
+}
+/* ── /클라우드 토대 끝 ── */
+
 // 슬롯 생성 (이름 지정, 다음 빈 ID 자동 할당)
 async function createSlot(name) {
   const meta = await loadSlotMeta();
@@ -8566,6 +8858,7 @@ async function createSlot(name) {
   const newSlot = {
     id: newId,
     name: name || `슬롯 ${newId + 1}`,
+    uuid: "slot_" + uuid(), // ☁️ v7.54.0: 기기 간 동일 슬롯 식별(클라우드 동기화 키)
     createdAt: Date.now(),
     novelCount: 0,
     lastAccessed: 0,
