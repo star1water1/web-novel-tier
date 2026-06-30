@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, applyEpisodeSplitToMeta, parseKakaoProductList, parseKakaoViewerDate, parseKakaoOverview, kakaoSeriesIdFromUrl, parseMunpiaEntries, parseMunpiaNovelInfo, munpiaIdFromUrl, SCRAPER_HEADERS, SCRAPER_UA, parseNaverWebtoonSearch, extractNaverWebtoonItems, naverWebtoonItemToMeta, WEBTOON_SEARCH_PLATFORMS, naverNormalizeDate, naverDate2ToYear, parseNaverWebtoonStartYear };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, applyEpisodeSplitToMeta, parseKakaoProductList, parseKakaoViewerDate, parseKakaoOverview, kakaoSeriesIdFromUrl, parseMunpiaEntries, parseMunpiaNovelInfo, munpiaIdFromUrl, SCRAPER_HEADERS, SCRAPER_UA, parseNaverWebtoonSearch, extractNaverWebtoonItems, naverWebtoonItemToMeta, WEBTOON_SEARCH_PLATFORMS, naverNormalizeDate, naverDate2ToYear, parseNaverWebtoonStartYear, coverUrlHighRes };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -119,6 +119,27 @@ eq("startYear 파서 JSON(serviceDate 4자리연→2018)", S.parseNaverWebtoonSt
 const alScan = `<ul><li><span class="date">19.03.14</span></li><li><span class="date">19.03.21</span></li></ul>`;
 eq("startYear 파서 날짜스캔 폴백(첫 날짜→2019)", S.parseNaverWebtoonStartYear(alScan), 2019);
 eq("startYear 파서 날짜 없음 → null", S.parseNaverWebtoonStartYear("{\"articleList\":[]}"), null);
+
+// ── 🎨 v7.56.4 표지 고화질 변형(coverUrlHighRes) — 실측 픽스처 URL 패턴 기반 ──
+const cov = S.coverUrlHighRes;
+// 리디: /small|/large → /xxlarge (프래그먼트 보존)
+eq("리디 small→xxlarge", cov("https://img.ridicdn.net/cover/3010023188/small"), "https://img.ridicdn.net/cover/3010023188/xxlarge");
+eq("리디 large→xxlarge(#1 보존)", cov("https://img.ridicdn.net/cover/3010023341/large#1"), "https://img.ridicdn.net/cover/3010023341/xxlarge#1");
+eq("리디 이미 xxlarge → 무변", cov("https://img.ridicdn.net/cover/425094972/xxlarge"), "https://img.ridicdn.net/cover/425094972/xxlarge");
+// 카카오: filename=th3(썸네일) → o1(원본)
+eq("카카오 th3→o1", cov("https://dn-img-page.kakao.com/download/resource?kid=bi9ttf/hyQ9UNBPyp/K0RMFa5KOkjh0BlXNfHkVK&filename=th3"), "https://dn-img-page.kakao.com/download/resource?kid=bi9ttf/hyQ9UNBPyp/K0RMFa5KOkjh0BlXNfHkVK&filename=o1");
+eq("카카오 이미 o1 → 무변", cov("https://dn-img-page.kakao.com/download/resource?kid=me8A4/x/y&filename=o1"), "https://dn-img-page.kakao.com/download/resource?kid=me8A4/x/y&filename=o1");
+// 네이버시리즈/스토어 표지: ?type=m128(소형) → m500
+eq("네이버 표지 m128→m500", cov("https://bookthumb-phinf.pstatic.net/cover/123/456.jpg?type=m128"), "https://bookthumb-phinf.pstatic.net/cover/123/456.jpg?type=m500");
+eq("네이버 표지 이미 큼(m640) → 무변", cov("https://shopping-phinf.pstatic.net/x.jpg?type=m640"), "https://shopping-phinf.pstatic.net/x.jpg?type=m640");
+// 네이버웹툰(image-comic)은 더 큰 변형 없음 → 손대지 않음(원본 유지)
+eq("네이버웹툰 썸네일 무변(폴백 안전)", cov("https://image-comic.pstatic.net/webtoon/769209/thumbnail/thumbnail_IMAG21_x.jpg"), "https://image-comic.pstatic.net/webtoon/769209/thumbnail/thumbnail_IMAG21_x.jpg");
+// 문피아: 끝 tb.jpg 제거(두 패턴) → 원본
+eq("문피아 v2 …tb.jpg→.jpg", cov("https://cdn1.munpia.com/v2/files/cover/2024/0115/18/EJptTuR8cAAtb.jpg"), "https://cdn1.munpia.com/v2/files/cover/2024/0115/18/EJptTuR8cAA.jpg");
+eq("문피아 구형 .jpgtb.jpg→.jpg", cov("https://cdn1.munpia.com/files/attach/2017/0327/001/sPJ7QhSF6AAvZN3r.jpgtb.jpg"), "https://cdn1.munpia.com/files/attach/2017/0327/001/sPJ7QhSF6AAvZN3r.jpg");
+// 비-URL/로컬은 그대로
+eq("로컬 file:// 무변", cov("file:///data/cover/x.jpg"), "file:///data/cover/x.jpg");
+eq("빈 값 무변", cov(""), "");
 const np = S.scraperDetectBlock(403, fx("novelpia-403-awselb.html"));
 eq("노벨피아 403(nginx) → forbidden", { blocked: np.blocked, kind: np.kind }, { blocked: true, kind: "forbidden" });
 const mp = S.scraperDetectBlock(403, fx("munpia-cf-challenge.html"));

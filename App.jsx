@@ -2,9 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.56.3 (웹툰 그림작가 필드 전 경로 배선 — 등록/표시/백업, 베타)          ║
+ * ║  버전: 7.56.4 (표지 고화질 — 썸네일 URL → 원본/대형 변형 + 폴백, 베타)           ║
  * ║  최종 수정: 2026-06-30                                                        ║
- * ║  총 라인 수: 약 76,750줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 76,800줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🖼️ v7.56.4 표지 고화질 — 썸네일 URL을 원본/대형으로 변형 (2026-06-30)           ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 표지가 저화질로 저장되던 원인 = 검색/메타가 주는 '썸네일' URL을 그대로 다운로드.   ║
+ * ║ 앱은 표지를 줄이지 않으므로(원본 다운로드) URL만 고화질로 바꾸면 됨.              ║
+ * ║ • coverUrlHighRes(url): 실측 픽스처 기반 호스트별 변형 —                          ║
+ * ║   리디 /cover/{id}/small|large → /xxlarge · 카카오 filename=th3 → o1 ·            ║
+ * ║   네이버시리즈/스토어 표지 ?type=m128 → m500(소형일 때만) · 문피아 …tb.jpg → 원본.║
+ * ║   네이버웹툰(image-comic)은 더 큰 변형이 없어 손대지 않음(원본 480px 유지).       ║
+ * ║ • saveCoverToLibrary: 고화질 변형 URL을 먼저 받고, 비200/실패 시 원본으로 자동     ║
+ * ║   폴백 → 표지 깨짐 0(추측 변형도 안전). 신규 등록·일괄·예정·웹추천 전 경로 적용.   ║
+ * ║ • 기존 저화질 표지는 재등록/보충 시 갱신(소급 일괄 변환은 별도).                  ║
+ * ║ • scraper-test에 coverUrlHighRes 변형 12 assert(픽스처 실 URL 기반) 추가.         ║
+ * ║ esbuild 통과·회귀 무변. APP_VERSION 7.53.8 유지(베타).                           ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -16073,6 +16089,41 @@ function detectPlatformFromUrl(url) {
   return null;
 }
 
+// 🎨 v7.56.4: 표지 고화질 변형 — 검색/메타가 주는 '썸네일' URL을 같은 호스트의 원본/대형 URL로 바꾼다.
+//   실측 픽스처 기반(리디 og=xxlarge / 카카오 og=filename=o1 vs 검색=th3 / 네이버시리즈 표지=?type=m128 / 문피아=…tb.jpg).
+//   변형이 404일 수 있는 플랫폼은 saveCoverToLibrary가 원본으로 자동 폴백하므로 표지 깨짐 0. 변형 불가면 입력 그대로 반환.
+function coverUrlHighRes(url) {
+  let u = String(url == null ? "" : url);
+  if (!/^https?:\/\//i.test(u)) return u; // 로컬/data URI 등은 변형 안 함
+  const low = u.toLowerCase();
+  // 리디: /cover/{id}/small|large → /xxlarge (원본). (#1 등 프래그먼트 보존)
+  if (low.includes("ridicdn.net")) {
+    u = u.replace(/(\/cover\/\d+\/)(?:small|large)\b/i, "$1xxlarge");
+  }
+  // 카카오페이지 이미지: filename=th3(썸네일) → filename=o1(원본).
+  else if (low.includes("dn-img-page.kakao") || low.includes("kakaocdn")) {
+    u = u.replace(/([?&]filename=)(?:th\d+|small)\b/i, "$1o1");
+  }
+  // 네이버 이미지(시리즈/스토어 표지): ?type=m128 등 소형 → 더 큰 사이즈(원본 근접). 현재값이 작을 때만 키움.
+  else if (low.includes("pstatic.net") || low.includes("phinf.naver")) {
+    // 네이버웹툰(image-comic)은 ?type 무시 + 더 큰 변형 없음 → 건드리지 않음.
+    if (!low.includes("image-comic.pstatic.net")) {
+      u = u.replace(/([?&]type=)m(\d+)\b/i, (m, p, n) => (Number(n) < 500 ? p + "m500" : m));
+      u = u.replace(/([?&]type=)w(\d+)\b/i, (m, p, n) => (Number(n) < 500 ? p + "w500" : m));
+    }
+  }
+  // 문피아: 경로 끝 'tb.jpg'(썸네일 접미) 제거 → 원본. 두 패턴 모두 처리.
+  //   ① …name.jpgtb.jpg → …name.jpg   ② …nametb.jpg → …name.jpg
+  else if (low.includes("munpia.com") && /tb\.jpg(\?|#|$)/i.test(u)) {
+    const tail = u.match(/(\?[^#]*)?(#.*)?$/); // 쿼리/프래그먼트 보존
+    const qs = (tail && tail[0]) || "";
+    let path = u.slice(0, u.length - qs.length).replace(/tb\.jpg$/i, "");
+    if (!/\.(jpe?g|png|webp)$/i.test(path)) path += ".jpg";
+    u = path + qs;
+  }
+  return u;
+}
+
 // 📋 v7.28.37 텍스트(클립보드/공유)에서 지원 플랫폼 작품 URL만 추출 — 첫 매칭 1건, 끝의 구두점 정리.
 function extractSupportedUrl(text) {
   if (!text) return null;
@@ -19612,16 +19663,21 @@ async function saveCoverToLibrary(sourceUri, compressionLevel = "light", ext = "
     
     // 방법 2: downloadAsync — 🔧 v7.44.7: UA + Referer(원본 호스트) 헤더 첨부(일부 CDN이 헤더 없는 요청 차단).
     if (!success) {
-      try {
-        const origin = (String(sourceUri).match(/^(https?:\/\/[^/]+)/) || [])[1];
-        const dlHeaders = /^https?:\/\//i.test(String(sourceUri))
-          ? { "User-Agent": SCRAPER_UA, ...(origin ? { "Referer": origin + "/" } : {}) }
-          : undefined;
-        const r = await FileSystem.downloadAsync(sourceUri, destUri, dlHeaders ? { headers: dlHeaders } : undefined);
-        if (r.status === 200) success = true;
-        else errors.push("download: status=" + r.status);
-      } catch (e2) {
-        errors.push("download: " + e2.message);
+      const origin = (String(sourceUri).match(/^(https?:\/\/[^/]+)/) || [])[1];
+      const dlHeaders = /^https?:\/\//i.test(String(sourceUri))
+        ? { "User-Agent": SCRAPER_UA, ...(origin ? { "Referer": origin + "/" } : {}) }
+        : undefined;
+      // 🎨 v7.56.4: 고화질 표지 — 알려진 썸네일 URL을 원본/대형으로 변형해 먼저 시도, 비200/실패 시 원본으로 폴백(표지 깨짐 0).
+      const hiUrl = /^https?:\/\//i.test(String(sourceUri)) ? coverUrlHighRes(sourceUri) : sourceUri;
+      const candidates = (hiUrl && hiUrl !== sourceUri) ? [hiUrl, sourceUri] : [sourceUri];
+      for (const cu of candidates) {
+        try {
+          const r = await FileSystem.downloadAsync(cu, destUri, dlHeaders ? { headers: dlHeaders } : undefined);
+          if (r.status === 200) { success = true; break; }
+          errors.push("download(" + (cu === hiUrl && hiUrl !== sourceUri ? "hi" : "orig") + "): status=" + r.status);
+        } catch (e2) {
+          errors.push("download: " + e2.message);
+        }
       }
     }
     
