@@ -2,9 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.56.4 (표지 고화질 — 썸네일 URL → 원본/대형 변형 + 폴백, 베타)           ║
+ * ║  버전: 7.56.5 (표지 고화질 일괄 재취득 + 네이버웹툰 표지 상한 확인, 베타)         ║
  * ║  최종 수정: 2026-06-30                                                        ║
- * ║  총 라인 수: 약 76,800줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 76,850줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🖼️ v7.56.5 표지 고화질 일괄 재취득(소급) (2026-06-30)                          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ v7.56.4 고화질 변형은 '신규 저장'에만 적용 → 기존 저화질 표지를 갱신하는 소급 경로.║
+ * ║ • 설정 › 🖼️ 표지 라이브러리에 '표지 고화질로 다시 받기' 버튼 추가.               ║
+ * ║   링크 있는 본목록 작품을 연재처에서 재취득(fetchMetaForUpdate) → coverUrl을        ║
+ * ║   saveCoverToLibrary(coverUrlHighRes 변형+폴백)로 재저장 → applyNovelCover 교체.   ║
+ * ║   표지 전용(회차·연도 등 다른 필드 무변경). 진행률/중단/요약. 일괄갱신 헬퍼 재사용.║
+ * ║ • 네이버웹툰 표지 상한 확인: info API(article/list/info)의 thumbnail/poster/shared ║
+ * ║   3필드 모두 동일 480×623로 귀결, resize 프록시·무프리픽스 원본 모두 미존재 →      ║
+ * ║   480px가 실질 상한(코드는 이미 그 최대 썸네일 사용). 추가 변형 없음(정직한 한계). ║
+ * ║ esbuild 통과·회귀 무변. APP_VERSION 7.53.8 유지(베타).                           ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -39411,6 +39425,9 @@ function AppContent() {
   const [bulkCorrectionCandidates, setBulkCorrectionCandidates] = useState([]); // [{id,planned,table,title,main:{from,to}|null,gaiden:{from,to}|null}]
   const [bulkCorrectionExcluded, setBulkCorrectionExcluded] = useState(() => new Set()); // 검토에서 제외한 작품 id
   const bulkUpdateCancelRef = useRef(false);
+  // 🖼️ v7.56.5: 기존 표지 고화질 일괄 재취득(소급) — coverUrlHighRes 변형은 신규 저장에만 적용되므로 기존 표지 갱신용.
+  const coverHiResCancelRef = useRef(false);
+  const [coverHiResProgress, setCoverHiResProgress] = useState(null); // {current,total,updated,skipped,failed} | null
   const [bulkMapQueue, setBulkMapQueue] = useState([]); // 링크 없는 작품들(순차 매핑)
   const [bulkMapIdx, setBulkMapIdx] = useState(0);
   const [bulkMapQuery, setBulkMapQuery] = useState("");
@@ -47447,6 +47464,50 @@ function AppContent() {
     const nDropped = results.filter(r => r.changes.some(c => c.includes("연중 전환"))).length;
     if (nComplete || nDropped) {
       Alert.alert("📢 상태 변경 알림", [nComplete ? `🎉 완결 전환 ${nComplete}개` : "", nDropped ? `⏸ 연중 전환 ${nDropped}개` : ""].filter(Boolean).join("\n") + "\n\n새로 완결/연중된 작품이 있어요. 완료 목록에서 확인하세요.");
+    }
+  }
+  // 🖼️ v7.56.5: 기존 표지 고화질로 다시 받기 — 링크 있는 본목록 작품을 연재처에서 재취득해 표지만 교체.
+  //   저장은 saveCoverToLibrary가 coverUrlHighRes(원본/대형 변형 + 폴백)를 적용하므로 자동 고화질.
+  //   다른 필드(회차·연도 등)는 건드리지 않음(표지 전용). 일괄갱신(runBulkAutoUpdate) 헬퍼 재사용.
+  async function redownloadCoversHighRes() {
+    if (coverHiResProgress) return; // 이미 진행 중
+    const works = bulkAllWorks().filter(w => !w._planned && linksOf(w).some(l => detectPlatformFromUrl(l.url)));
+    if (!works.length) { Alert.alert("표지 고화질", "연재처 링크가 있는 작품이 없어 다시 받을 대상이 없어요.\n‘일괄 갱신 › 링크 연결’로 먼저 매핑해 주세요."); return; }
+    Alert.alert(
+      "표지 고화질로 다시 받기",
+      `링크가 있는 ${works.length}개 작품의 표지를 연재처에서 다시 받아 고화질로 교체해요.\n\n• 한 작품씩 네트워크로 불러와 시간이 걸려요(중간에 멈출 수 있어요).\n• 직접 올린 표지도 연재처 표지로 덮어쓸 수 있어요.\n• 새 표지를 못 받으면 기존 표지는 그대로 둬요.`,
+      [
+        { text: "취소", style: "cancel" },
+        { text: "시작", onPress: () => _runCoverHiRes(works) },
+      ]
+    );
+  }
+  async function _runCoverHiRes(works) {
+    coverHiResCancelRef.current = false;
+    let updated = 0, skipped = 0, failed = 0;
+    setCoverHiResProgress({ current: 0, total: works.length, updated, skipped, failed });
+    try {
+      for (let i = 0; i < works.length; i++) {
+        if (coverHiResCancelRef.current) break;
+        setCoverHiResProgress({ current: i + 1, total: works.length, updated, skipped, failed });
+        const w = works[i];
+        try {
+          const meta = await fetchMetaForUpdate(chooseUpdateLink(w), w.title);
+          const cu = (meta && meta.ok && meta.coverUrl) ? String(meta.coverUrl) : "";
+          if (!cu || !/^https?:\/\//i.test(cu)) { skipped++; continue; }
+          const ext = cu.toLowerCase().includes(".png") ? "png" : "jpg";
+          const saved = await saveCoverToLibrary(cu, "original", ext); // saveCoverToLibrary가 coverUrlHighRes 변형 + 폴백 적용
+          if (saved && !saved.error && saved.file_path) { await applyNovelCover(w.id, saved.file_path, w.cover_image || null); updated++; }
+          else failed++;
+        } catch (e) { failed++; }
+        await new Promise(r => setTimeout(r, 120)); // 연속요청 완화
+      }
+      try { await loadCoverLibrary(); } catch {}
+      try { await loadList(undefined, undefined, "coverHiRes"); } catch {}
+    } finally {
+      const cancelled = coverHiResCancelRef.current;
+      setCoverHiResProgress(null);
+      Alert.alert("표지 고화질 완료", `${cancelled ? "중단됨 — " : ""}${updated}개 교체${skipped ? ` · ${skipped}개 표지 없음` : ""}${failed ? ` · ${failed}개 실패` : ""}`);
     }
   }
   // 🔧 v7.49.5/6: 회차수 보정은 '외전(gaiden)' 변화를 기준으로 정정한다(과대·과소 양방향). 본편(total_episodes)은
@@ -67035,6 +67096,25 @@ async function importJSON(directText, onSuccess, onSettled) {
                     </View>
                   </TouchableOpacity>
                 ))}
+              </View>
+
+              {/* 🖼️ v7.56.5: 기존 표지 고화질로 다시 받기(소급) */}
+              <View style={{ marginTop: 18, borderTopWidth: 1, borderTopColor: C.line, paddingTop: 16 }}>
+                <Text style={{ fontWeight: "700", color: C.text, marginBottom: 6 }}>표지 고화질로 다시 받기</Text>
+                <Text style={{ color: C.sub, fontSize: 12, marginBottom: 12, lineHeight: 17 }}>
+                  링크가 있는 작품의 표지를 연재처에서 다시 받아 고화질로 교체해요. 리디·카카오·문피아·네이버시리즈 등에서 효과가 커요. (네이버웹툰은 원래 작은 표지라 변화가 적어요. 새 표지를 못 받으면 기존 표지는 그대로 둬요.)
+                </Text>
+                {coverHiResProgress ? (
+                  <View>
+                    <Text style={{ color: C.text, fontSize: 13, marginBottom: 10 }}>
+                      받는 중… {coverHiResProgress.current}/{coverHiResProgress.total}
+                      {coverHiResProgress.updated ? `  ·  교체 ${coverHiResProgress.updated}` : ""}
+                    </Text>
+                    <OutlineButton title="중단" onPress={() => { coverHiResCancelRef.current = true; }} color={C.warn} />
+                  </View>
+                ) : (
+                  <PrimaryButton title="🖼️ 표지 고화질로 다시 받기" onPress={redownloadCoversHighRes} />
+                )}
               </View>
             </Section>
 
