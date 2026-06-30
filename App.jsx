@@ -2,9 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.53.1 (추천 키워드 관리 + 리뷰 하드닝: 프리징/성능/밴오탐/카테고리범위)  ║
+ * ║  버전: 7.53.2 (실사용 시나리오 검토 — 밴 구두점경계·백업복원 일관성)            ║
  * ║  최종 수정: 2026-06-30                                                        ║
  * ║  총 라인 수: 약 74,560줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.53.2 실사용 시나리오 7종 검토 후속 (2026-06-30)                           ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 7개 시나리오 × 다각도 추적(3 에이전트) → 크래시/데이터손실 없음 확인, 진짜 문제   ║
+ * ║ 2건만 수정:                                                                      ║
+ * ║ • [밴 매칭] 구두점으로 시작/끝나는 영문 밴('c++'·'c#'·'(test)')이 \b 정규식       ║
+ * ║   경계 실패로 조용히 무시되던 문제 → '양옆이 영숫자 아닐 때만' 수동 스캔으로 교체  ║
+ * ║   ('BL'이 'Blue'엔 안 걸리는 동작은 유지, '[BL]'·'BL소설'은 정상 매칭).          ║
+ * ║ • [백업 복원] restored.reco가 keywordSources를 deep-merge 안 해 로드/슬롯전환    ║
+ * ║   경로와 어긋나던 것 → 동일하게 기본값 backfill 병합 추가.                       ║
+ * ║ 검토만 하고 둔 것(의도/무해): 장르·작가 취향 키워드는 카테고리와 무관히 유지(설계),║
+ * ║ 카카오 복구 6링크 상한 시 결과수 미달(점진 열화), 자동 가져오기 지연(비차단).     ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -16474,14 +16488,20 @@ function matchesBannedKeyword(c, bannedList) {
   const m = c.meta || null;
   if (m && Array.isArray(m.genres)) for (const g of m.genres) { const t = String(g == null ? "" : g).trim().toLowerCase(); if (t) tokens.push(t); }
   if (tokens.some((t) => banSet.has(t))) return true;
-  // 제목/작가: 🌐 v7.53.1 영문/숫자 밴은 단어경계 매칭('BL'이 'Blue'에 끼는 오탐 방지),
+  // 제목/작가: 🌐 v7.53.2 영문/숫자 밴은 '양옆이 영숫자가 아닐 때만' 일치 — 'BL'이 'Blue'엔 안 걸리고
+  //   'c++'·'c#'·'[BL]'처럼 구두점으로 시작/끝나는 밴도 정상 매칭(\b 정규식의 구두점 경계 실패 회피).
   //   한글 밴은 단어경계가 의미없어 부분 일치(2자 이상) 유지.
   const hay = [c.title, c.author].map((x) => String(x == null ? "" : x).toLowerCase()).join("  ");
-  const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const isAlnum = (ch) => !!ch && ((ch >= "a" && ch <= "z") || (ch >= "0" && ch <= "9"));
   for (const b of bans) {
     if (!b || b.length < 2) continue;
-    if (/^[\x00-\x7f]+$/.test(b)) { if (new RegExp("\\b" + escRe(b) + "\\b").test(hay)) return true; }
-    else if (hay.includes(b)) return true;
+    if (/^[\x00-\x7f]+$/.test(b)) {
+      let idx = hay.indexOf(b);
+      while (idx !== -1) {
+        if (!isAlnum(hay[idx - 1]) && !isAlnum(hay[idx + b.length])) return true;
+        idx = hay.indexOf(b, idx + 1);
+      }
+    } else if (hay.includes(b)) return true;
   }
   return false;
 }
@@ -54872,6 +54892,7 @@ async function importJSON() {
                   restored.reco = { ...DEFAULT_SETTINGS.reco, ...s.rc };
                   restored.reco.library = { ...DEFAULT_SETTINGS.reco.library, ...(s.rc.library || {}) };
                   restored.reco.web = { ...DEFAULT_SETTINGS.reco.web, ...(s.rc.web || {}) };
+                  restored.reco.keywordSources = { ...DEFAULT_SETTINGS.reco.keywordSources, ...(s.rc.keywordSources || {}) }; // 🌐 v7.53.2: 로드/슬롯전환과 동일하게 deep-merge(부재 필드 backfill)
                 }
 
                 // 🆕 v6.0: globalTierConfig를 소설 복원 전에 갱신 (tierFromRating 정합성)
