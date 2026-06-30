@@ -19,6 +19,16 @@
  * ║   디스크 미도달(유실) 경로는 남아 있어 사용자에겐 여전히 '저장 안 됨'으로 보였다.    ║
  * ║   → 백그라운드 진입 시 _pendingMetaWrites를 동기적으로 batchSetAppMeta로 확정 기록  ║
  * ║   (실패 시 대기 큐 복원). 모든 deferSetAppMeta 대상(정렬/필터/태그 설정 등)에 적용. ║
+ * ║ 🔍 설정 영속 전수조사(3에이전트): setAppMeta/getAppMeta 키 write↔read 교차대조 +    ║
+ * ║   화면별 view-pref 매핑. 이미 영속 OK 확인(다크모드·티어설정·홈/탭 정렬필터·태그    ║
+ * ║   정렬모드/탭/프리뷰·고정/숨김태그·추천설정·AI키(전역)·취향분석 펼침/신뢰도정렬·     ║
+ * ║   자동매칭·매칭필터). 변수키(META_KEY_GROUPS 등)도 정상 영속 확인.                  ║
+ * ║ 🆕 미영속 갭 수정: ① rankTier(순위탭 티어필터) — 홈 filterTier는 영속인데 누락이던   ║
+ * ║   불일치 → tab_sort_settings 편입(저장/복원/슬롯전환). ② filterLatest('최신만'      ║
+ * ║   공용토글) → home_sort_settings 편입(사용자 선택). ③ plannedSubTab(예정/순위       ║
+ * ║   하위뷰 목록·보충·일괄) → tab_sort_settings 편입, 값 검증(사용자 선택).            ║
+ * ║ 의도적 비영속 유지: 검색어(home/rankQuery·검색필터)·모달열림·편집버퍼·연차결산연도   ║
+ * ║ (항상 최신). 미선택 보류: 좌표계 AI배치옵션·수상 연도/뷰·설정 태그관리탭.           ║
  * ║ APP_VERSION 7.53.8 유지(베타). esbuild 통과. ⚠️ 온디바이스 미검증.                 ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
@@ -38697,8 +38707,9 @@ function AppContent() {
       filterGenre,
       filterStatus,
       filterFolder,
+      filterLatest, // 🆕 v7.54.4: '최신만' 공용 토글(홈/순위/일괄) 영속 — 사용자 요청
     });
-  }, [homeSortKey, homeSortDir, filterTier, filterPlatform, filterGenre, filterStatus, filterFolder]);
+  }, [homeSortKey, homeSortDir, filterTier, filterPlatform, filterGenre, filterStatus, filterFolder, filterLatest]);
 
   // 🆕 v7.21.11: 나머지 탭 정렬/필터 영속화 (예정·일괄·보충·수상·최신변화) — home_sort_settings와 동일 패턴.
   //   단일 메타키로 묶어 저장. init-ref 게이트로 마운트 복원 전 기본값이 덮어쓰는 것 방지.
@@ -39431,8 +39442,10 @@ function AppContent() {
       plannedSupplementSort, plannedSupplementFilter, // 🆕 v7.31.3: 예정 보충 하위탭 정렬/필터 영속
       awardFilter, recentFilter,
       linkMgmtQuery, linkMgmtSort, linkMgmtSortDir, // 🔗 v7.52.0: 링크 관리 목록 검색/정렬
+      rankTier, // 🆕 v7.54.4: 순위탭 티어 필터 — 홈탭 filterTier(home_sort_settings 영속)와 동일 컨트롤인데 미영속이던 불일치 수정
+      plannedSubTab, // 🆕 v7.54.4: 예정/순위 탭 마지막 하위뷰(목록/보충/일괄) 기억 — 사용자 요청
     });
-  }, [plannedSortKey, plannedSortDir, plannedFilterPlatform, bulkSortKey, supplementSort, supplementFilter, plannedSupplementSort, plannedSupplementFilter, awardFilter, recentFilter, linkMgmtQuery, linkMgmtSort, linkMgmtSortDir]);
+  }, [plannedSortKey, plannedSortDir, plannedFilterPlatform, bulkSortKey, supplementSort, supplementFilter, plannedSupplementSort, plannedSupplementFilter, awardFilter, recentFilter, linkMgmtQuery, linkMgmtSort, linkMgmtSortDir, rankTier, plannedSubTab]);
 
   // 🏷️ 태그 관리 모달
   const [tagManageOpen, setTagManageOpen] = useState(false);
@@ -40807,6 +40820,7 @@ function AppContent() {
             if (savedHomeSortSettings.filterGenre) setFilterGenre(savedHomeSortSettings.filterGenre);
             if (savedHomeSortSettings.filterStatus) setFilterStatus(savedHomeSortSettings.filterStatus);
             if (savedHomeSortSettings.filterFolder) setFilterFolder(savedHomeSortSettings.filterFolder);
+            if (typeof savedHomeSortSettings.filterLatest === "boolean") setFilterLatest(savedHomeSortSettings.filterLatest); // 🆕 v7.54.4
           }
           homeSortInitRef.current = true; // 초기 복원 완료 → 이후 변경은 deferSetAppMeta로 저장됨
 
@@ -40827,6 +40841,8 @@ function AppContent() {
             if (typeof s.linkMgmtQuery === "string") setLinkMgmtQuery(s.linkMgmtQuery);
             if (s.linkMgmtSort) setLinkMgmtSort(s.linkMgmtSort);
             if (s.linkMgmtSortDir) setLinkMgmtSortDir(s.linkMgmtSortDir);
+            if (s.rankTier) setRankTier(s.rankTier); // 🆕 v7.54.4: 순위탭 티어 필터 복원
+            if (["list", "supplement", "bulk"].includes(s.plannedSubTab)) setPlannedSubTab(s.plannedSubTab); // 🆕 v7.54.4: 예정/순위 하위뷰 복원
           }
           tabSortInitRef.current = true;
 
@@ -41424,6 +41440,7 @@ function AppContent() {
         if (savedHomeSortSettings.filterGenre) setFilterGenre(savedHomeSortSettings.filterGenre); else setFilterGenre("ALL");
         if (savedHomeSortSettings.filterStatus) setFilterStatus(savedHomeSortSettings.filterStatus); else setFilterStatus("ALL");
         if (savedHomeSortSettings.filterFolder) setFilterFolder(savedHomeSortSettings.filterFolder); else setFilterFolder("ALL");
+        setFilterLatest(typeof savedHomeSortSettings.filterLatest === "boolean" ? savedHomeSortSettings.filterLatest : false); // 🆕 v7.54.4
       } else {
         // 새 슬롯에 저장값 없으면 기본값
         // 🛠️ v7.24.5: 기본 정렬 키를 useState 기본값 및 v7.10.0 의도(티어순)와 일치시킴.
@@ -41431,6 +41448,7 @@ function AppContent() {
         //   점수순으로 떠 티어 배지·순위 탭과 어긋났음(v7.10.0 rating→tier 전환의 누락 지점).
         setHomeSortKey("tier"); setHomeSortDir("DESC");
         setFilterTier("ALL"); setFilterPlatform("ALL"); setFilterGenre("ALL"); setFilterStatus("ALL"); setFilterFolder("ALL");
+        setFilterLatest(false); // 🆕 v7.54.4
       }
       // setTimeout으로 next tick에 Ref 활성화 (setState 반영 후)
       setTimeout(() => { homeSortInitRef.current = true; }, 0);
@@ -41453,6 +41471,8 @@ function AppContent() {
         setLinkMgmtQuery(typeof s.linkMgmtQuery === "string" ? s.linkMgmtQuery : "");
         setLinkMgmtSort(s.linkMgmtSort || "links");
         setLinkMgmtSortDir(s.linkMgmtSortDir || "DESC");
+        setRankTier(s.rankTier || "ALL"); // 🆕 v7.54.4: 순위탭 티어 필터 슬롯 전환 복원
+        setPlannedSubTab(["list", "supplement", "bulk"].includes(s.plannedSubTab) ? s.plannedSubTab : "list"); // 🆕 v7.54.4: 예정/순위 하위뷰 슬롯 전환 복원
       }
       setTimeout(() => { tabSortInitRef.current = true; }, 0);
 
