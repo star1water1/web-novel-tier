@@ -2,9 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.53.3 (실사용 시나리오 2차 — 동시fetch 가드·미리보기 절단표시·중복확인)  ║
+ * ║  버전: 7.53.4 (메타 보강으로 필터 실동작 + 플랫폼 설정 경고)                     ║
  * ║  최종 수정: 2026-06-30                                                        ║
  * ║  총 라인 수: 약 74,560줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.53.4 추천 필터 실동작 보강 + 플랫폼 설정 경고 (2026-06-30)                ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 실사용 2차 검토에서 남긴 제품판단 2건을 사용자 선택대로 반영:                     ║
+ * ║ • [필터 메타 보강] 리디·네이버·미복구 카카오는 검색결과에 메타가 없어 완결/회차/  ║
+ * ║   19금 필터가 사실상 무효였음 → 콘텐츠 필터가 켜져 있으면 메타 없는 후보를        ║
+ * ║   content 페이지로 보강 후 필터 적용(제목/논픽션/밴 먼저 거른 뒤 보강해 낭비↓).   ║
+ * ║   WEB_RECO_ENRICH_CAP=10 + 전체 12s 데드라인으로 지연 제한(부분 보강도 진행,     ║
+ * ║   끝내 메타 없으면 종전대로 통과 = best-effort).                                 ║
+ * ║ • [플랫폼 경고] '대상 플랫폼'은 켰지만 '제목 검색 사이트'가 꺼진 플랫폼은 결과가   ║
+ * ║   조용히 0건 → 설정에서 ⚠️ 경고와 켜는 위치 안내 표시(두 설정은 분리 유지).      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -16455,6 +16468,7 @@ const WEB_RECO_TTL_DAYS = 1;                       // 임시 추천작 보존(�
 const WEB_RECO_HIDDEN_CAP = 500;                   // "관심없음" 숨김 목록 상한
 const WEB_RECO_REROLL_COOLDOWN_MS = 20 * 1000;     // 재뽑기 쿨다운(과도 요청 방지 — 탐색 UX 위해 완화)
 const WEB_RECO_MAX_KEYWORDS = 3;                   // 한 번 가져올 때 검색 횟수 상한(ToS — on-demand)
+const WEB_RECO_ENRICH_CAP = 10;                    // 🌐 v7.53.4: 콘텐츠 필터용 메타 보강 후보 상한(지연 제한)
 // 수확 시 제외할 잡음 키워드(연령/독점/공모전/형식 등 — 작품 검색어로 부적합)
 const WEB_RECO_JUNK_KEYWORDS = ["19","19금","독점","무료","연재","완결","연재중","단행본","성인","공모전","웹툰","웹소설","외전","단편","장편","무료연재","유료"];
 // 제목 정규화(dedup용) — 공백·기호·시즌/외전 토큰 제거
@@ -42815,11 +42829,32 @@ function AppContent() {
       await harvestKeywordsFromResults(raw);
       let cands = await dedupAgainstLibrary(raw);
       const bannedList = (reco.bannedKeywords || []);
+      // 메타 불필요 필터(제목/논픽션/밴) 먼저 — 곧 버릴 후보까지 메타 보강하는 낭비 방지.
       cands = cands.filter((c) => {
-        const m = c.meta || null;
         if (isBadWebTitle(c.title)) return false;            // 🌐 v7.51.2: SERP 부산물 제목 차단(카카오)
         if (isNonFictionCategory(c.category)) return false;  // 🌐 v7.51.2: 일반 교양서적 누수 차단(리디 등)
         if (matchesBannedKeyword(c, bannedList)) return false; // 🌐 v7.53: 밴 키워드 결과 필터(제목/작가/장르/카테고리)
+        return true;
+      });
+      // 🌐 v7.53.4: 콘텐츠 필터(완결/회차/19금)가 켜져 있으면, 메타 없는 후보(리디·네이버·미복구 카카오)를
+      //   content 페이지 메타로 보강해 필터가 실제로 동작하게 한다. 상한(WEB_RECO_ENRICH_CAP) + 전체 데드라인으로
+      //   '🎲 가져오기' 지연을 제한(부분 보강만 돼도 진행, 보강 실패분은 종전대로 통과 = best-effort).
+      const wantContentFilter = (!web.includeAdult) || (Number(web.minEpisodes) > 0) || (web.workStatus === "completed") || (web.workStatus === "ongoing");
+      if (wantContentFilter) {
+        const targets = cands.filter((c) => !c.meta && (c.url || c.link)).slice(0, WEB_RECO_ENRICH_CAP);
+        if (targets.length) {
+          const enrich = Promise.allSettled(targets.map(async (c) => {
+            try {
+              const mm = await fetchNovelMeta(c.url || c.link, { timeoutMs: 6000, noKakaoFallback: true });
+              if (mm && mm.ok) c.meta = { ...(c.meta || {}), genres: mm.genres, synopsis: mm.synopsis, totalEpisodes: mm.totalEpisodes, workStatus: mm.workStatus, ageTag: mm.ageTag, startYear: mm.startYear, popularity: mm.popularity || 0 };
+            } catch {}
+          }));
+          await Promise.race([enrich, new Promise((r) => setTimeout(r, 12000))]);
+        }
+      }
+      // 메타 의존 필터(보강 후 적용) — 메타가 끝내 없으면 종전대로 통과(누수 최소화는 보강이 담당).
+      cands = cands.filter((c) => {
+        const m = c.meta || null;
         if (!web.includeAdult && m && m.ageTag === "19금") return false;
         if (web.minEpisodes > 0 && m && m.totalEpisodes != null && m.totalEpisodes < web.minEpisodes) return false;
         if (web.workStatus === "completed" && m && m.workStatus && m.workStatus !== "completed") return false;
@@ -57130,6 +57165,13 @@ async function importJSON() {
                         return chip(p, on, () => { const cur = web.platforms || []; updateRecoSetting("web", "platforms", on ? cur.filter((x) => x !== p) : [...cur, p]); });
                       })}
                     </View>
+                    {/* 🌐 v7.53.4: '대상 플랫폼'은 켰지만 '검색 사이트'가 꺼진 플랫폼 경고 — 결과가 조용히 0건 되는 footgun 방지 */}
+                    {(() => {
+                      const offSearch = (web.platforms || []).filter((p) => !isSearchPlatformOn(p));
+                      return offSearch.length ? (
+                        <Text style={{ color: "#f59e0b", fontSize: 10, marginTop: 6, lineHeight: 14 }}>⚠️ {offSearch.join(", ")}는 ‘검색 사이트’가 꺼져 있어 결과가 안 나와요. 설정 › 🔌 연결 › ‘제목 검색 사이트’에서 켜 주세요.</Text>
+                      ) : null;
+                    })()}
                   </View>
                   {toggleRow("19금(성인) 포함", !!web.includeAdult, () => updateRecoSetting("web", "includeAdult", !web.includeAdult))}
                   {toggleRow("AI 키워드 생성", !!web.useAiKeywords, () => updateRecoSetting("web", "useAiKeywords", !web.useAiKeywords), ((aiProvider === "claude" && claudeApiKey) || (aiProvider === "gemini" && geminiApiKey)) ? `${aiProvider === "claude" ? "Claude" : "Gemini"} 키로 트렌디 키워드 추가` : "AI 키(설정 › 연결)가 있어야 동작해요")}
