@@ -2,9 +2,24 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.54.3 (클라우드 동기화 2차 7시나리오 검토 후속 — 회귀·상호작용 수정, 베타) ║
+ * ║  버전: 7.54.4 (예정탭 등 정렬/필터 영속 유실 버그수정 — 백그라운드 메타 flush, 베타) ║
  * ║  최종 수정: 2026-06-30                                                        ║
  * ║  총 라인 수: 약 76,100줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.54.4 정렬/필터 영속 유실 버그수정 — 백그라운드 지연 메타 flush (2026-06-30)  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 🔴 예정탭(및 홈/일괄/보충/수상/링크관리) 정렬·필터 설정이 재실행 시 되돌아가던       ║
+ * ║   고질적 버그의 근본 원인 수정. 정렬 변경은 deferSetAppMeta(300ms 디바운스)로        ║
+ * ║   저장되는데, AppState 백그라운드 핸들러가 choiceLogQueue만 flush하고 대기 중인     ║
+ * ║   메타 쓰기는 flush하지 않았다 → 사용자가 정렬을 바꾼 직후 앱을 내리거나 OS가        ║
+ * ║   프로세스를 종료하면 300ms 타이머가 미발화 → 쓰기 유실 → 다음 실행 때 기본값 복귀.  ║
+ * ║   v7.52.0의 '저장 effect를 state 선언 뒤로 이동' 수정은 effect 미발화만 고쳤고,     ║
+ * ║   디스크 미도달(유실) 경로는 남아 있어 사용자에겐 여전히 '저장 안 됨'으로 보였다.    ║
+ * ║   → 백그라운드 진입 시 _pendingMetaWrites를 동기적으로 batchSetAppMeta로 확정 기록  ║
+ * ║   (실패 시 대기 큐 복원). 모든 deferSetAppMeta 대상(정렬/필터/태그 설정 등)에 적용. ║
+ * ║ APP_VERSION 7.53.8 유지(베타). esbuild 통과. ⚠️ 온디바이스 미검증.                 ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -41592,6 +41607,22 @@ function AppContent() {
       if (prevState === "active" && nextAppState.match(/inactive|background/)) {
         console.log("앱 백그라운드 전환 - 큐 플러시 + DB 정리");
         lastBackgroundTime = Date.now();
+        // 🔧 v7.54.4(버그수정): 백그라운드 진입 시 지연 메타 쓰기(deferSetAppMeta) 강제 flush.
+        //   기존엔 choiceLogQueue만 flush했고, deferSetAppMeta의 300ms 디바운스 타이머는
+        //   미발화 상태로 남았다 → 사용자가 정렬/필터(예: 예정탭 정렬)를 바꾼 직후 앱을
+        //   백그라운드로 보내거나 OS가 프로세스를 종료하면 타이머가 발화하지 못해 쓰기가 유실,
+        //   재실행 시 정렬이 기본값으로 되돌아갔다(예정탭 정렬 영속 반복 실패의 근본 원인).
+        //   → 여기서 대기 중인 메타를 동기적으로 비워 디스크에 확정 기록한다(home/tab 정렬, 태그 설정 등 전부).
+        if (_metaBatchTimer) { clearTimeout(_metaBatchTimer); _metaBatchTimer = null; }
+        const _bgMetaSnap = { ..._pendingMetaWrites };
+        for (const k of Object.keys(_pendingMetaWrites)) delete _pendingMetaWrites[k];
+        if (Object.keys(_bgMetaSnap).length > 0) {
+          try { await batchSetAppMeta(_bgMetaSnap); } catch (e) {
+            console.warn("백그라운드 전환 메타 flush 실패:", e);
+            // 유실 방지: 실패 시 대기 큐로 복원(다음 기회에 재flush)
+            for (const [k, v] of Object.entries(_bgMetaSnap)) if (!(k in _pendingMetaWrites)) _pendingMetaWrites[k] = v;
+          }
+        }
         try {
           await choiceLogQueue.flush();
         } catch (e) {
