@@ -224,6 +224,23 @@
 - 비이슈 확인: export/import 리팩터 기존 동작 보존, refresh_token 보존, Drive 쿼리 이스케이프, multipart/UTF-8, 명대사 첫 3장 base64.
 - 남은 설정 게이트: OAuth 리디렉션 `noveltier://`는 **Android/iOS 클라이언트 유형** 필요(Web 클라이언트는 커스텀 스킴 거부).
 
+### ✅ v7.54.3 — 2차 7시나리오 적대검토(3에이전트) 후속 (코드/esbuild, **온디바이스 미검증**)
+신규 시나리오 NS1~NS7(새 코드 회귀·기존 기능 상호작용·신원/엣지):
+- **R1**(회귀): M4 충돌 경로가 `cloudSyncStatus`를 'syncing'에 고정 → 버튼 영구 잠김 → 충돌 return 전 idle 해제.
+- **NS7**: 수동 import가 클라우드 가드 미설정 → 복원 중 자동 push가 반쯤 지워진 DB 업로드 → 가져오기 onPress에서
+  `cloudSyncing` 중이면 중단 + `cloudRestoreInProgressRef` 세움(수동·클라우드 공통, 성공/실패/취소 해제).
+- **NS1**: 슬롯 uuid를 확인 다이얼로그 전에 교체(취소 시 원격 백업 덮어쓰기 footgun) → 채택을 `pull onSuccess`(복원 성공)
+  이후로 이동(`targetUuid` 전달). 취소 시 슬롯 연결 불변.
+- **NS-VERIFY**: 복원이 진행 중 하이브리드 검증 세션 미정리 → 복원 시 `setVerificationSession(null)` + `respondingRef` 중 pull 거부.
+- **NS2**: 두 슬롯이 같은 원격 uuid 채택 가능 → picker/adopt 중복 검사. **NS-DUP**: 복제 슬롯에 새 uuid 명시.
+- **NS-DRAIN**: push/pull이 `waitForMatchQueueDrain` 타임아웃 시 중단(torn DB 스냅샷 방지, 불변 #3).
+- **R2/NS5**: 자동 push 변경 감지(콘텐츠 해시) — 무변경이면 스킵(rev 폭증·상대 기기 오탐 차단). 원격이 지워졌으면 재생성.
+- **Q1**(결정): 백그라운드 자동 push는 표지 제외(가벼움·killed 위험↓), 수동/포그라운드 push만 표지 base64 동봉.
+- **Q2**(결정): 슬롯 삭제 시 "클라우드 백업도 삭제?" 질문(기본 보존).
+- **NS3b** LCV 표지 키 author trim(복원 매칭) / **NS3e** 제외된 표지 수 고지 / **#4** LCV 상한 25MB→8MB(OOM 방지).
+- 비이슈: onSettled 정확히 1회·{ok} 콜러 무시·계정 전환(by design)·M4 고아 정리·gen 가드.
+- 알려진 한계: 동일 제목+작가 작품은 표지가 공유됨(백업에 안정적 작품 id가 없어 차선책).
+
 ### 🧪 온디바이스 테스트 체크리스트(Increment 2 후)
 - [ ] 로그인/로그아웃, refresh(1시간 후 자동 재발급) 동작.
 - [ ] 신규 작품/매칭 후 자동 push → Drive appDataFolder에 `slot-<uuid>/snapshot.json` 생성 확인.

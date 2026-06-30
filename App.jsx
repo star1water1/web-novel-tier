@@ -2,9 +2,32 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.54.2 (클라우드 동기화 7시나리오 적대검토 후속 — 치명 2건 외 수정, 베타)  ║
+ * ║  버전: 7.54.3 (클라우드 동기화 2차 7시나리오 검토 후속 — 회귀·상호작용 수정, 베타) ║
  * ║  최종 수정: 2026-06-30                                                        ║
- * ║  총 라인 수: 약 76,010줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 76,100줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.54.3 클라우드 동기화 2차 7시나리오(신규코드 회귀·기능 상호작용·엣지) (2026-06-30)║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 3에이전트 교차검증. v7.54.2가 넣은 회귀 + 기존 기능과의 상호작용 결함 수정:        ║
+ * ║ 🟠[R1] M4 충돌 경로가 cloudSyncStatus를 'syncing'에 고정 → 버튼 영구 잠김 →        ║
+ * ║   충돌 return 전 idle 해제.                                                      ║
+ * ║ 🔴[NS7] 수동 import가 클라우드 가드 미설정 → 복원 중 자동 push가 반쯤 지워진 DB    ║
+ * ║   업로드 → 가져오기 onPress에서 cloudSyncing이면 중단 + cloudRestoreInProgressRef  ║
+ * ║   세움(수동·클라우드 공통, 성공/실패/취소 해제).                                   ║
+ * ║ 🔴[NS1] 슬롯 uuid를 확인 전에 교체(취소 시 원격 백업 덮어쓰는 footgun) → 채택을    ║
+ * ║   복원 성공(pull onSuccess) 후로 이동(targetUuid 전달).                           ║
+ * ║ 🟠[NS-VERIFY] 복원이 진행 중 하이브리드 검증 세션 미정리 → 복원 시 세션 초기화 +   ║
+ * ║   respondingRef 중 pull 거부.                                                    ║
+ * ║ 🟠[NS2] 두 슬롯이 같은 원격 uuid 채택 → picker/adopt에 중복 검사. [NS-DUP] 복제    ║
+ * ║   슬롯에 새 uuid 명시. [NS-DRAIN] push/pull이 큐 drain 타임아웃 시 중단.          ║
+ * ║ 🟡[R2/NS5] 자동 push 변경감지(콘텐츠 해시) — 무변경이면 스킵(rev 폭증·오탐 차단).  ║
+ * ║   [Q1] 백그라운드 자동 push는 표지 제외(가벼움), 수동/포그라운드만 표지 동봉.       ║
+ * ║ 🟡[NS3b] LCV 표지 키 author trim(복원 매칭). [NS3e] 제외 표지 수 고지. [#4] LCV    ║
+ * ║   상한 25MB→8MB(OOM 방지). [Q2] 슬롯 삭제 시 원격 백업 삭제 여부 질문.            ║
+ * ║ 비이슈 확인: onSettled 1회·{ok}콜러 무시·계정전환·M4 고아정리·gen가드. APP_VERSION║
+ * ║ 7.53.8 유지(베타). esbuild 통과. ⚠️ 여전히 온디바이스 미검증.                     ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -8906,11 +8929,33 @@ async function cloudAdoptRemoteSlotToCurrent(remoteUuid) {
     const meta = await loadSlotMeta();
     const s = (meta.slots || []).find(x => x.id === activeSlotId);
     if (!s) return false;
+    // 🔧 v7.54.3(NS2): 다른 로컬 슬롯이 이미 이 원격 uuid면 거부(같은 폴더 상호 clobber 방지).
+    if ((meta.slots || []).some(x => x.id !== activeSlotId && x.uuid === remoteUuid)) return false;
     s.uuid = remoteUuid;
     await saveSlotMeta(meta);
     return true;
   } catch (e) { console.warn("[cloud] 슬롯 채택 실패:", e?.message); return false; }
 }
+
+// 🆕 v7.54.3(Q2): 슬롯의 원격(클라우드) 폴더 삭제 — 사용자 확인 후에만 호출. 폴더 삭제 시 하위 스냅샷/자산 포함 정리.
+async function cloudDeleteRemoteSlot(slotUuid) {
+  try {
+    if (!slotUuid) return false;
+    const folder = await driveFind(`slot-${slotUuid}`, "appDataFolder");
+    if (!folder) return false;
+    return await driveDelete(folder.id);
+  } catch (e) { console.warn("[cloud] 원격 슬롯 삭제 실패:", e?.message); return false; }
+}
+
+// 🆕 v7.54.3(R2/NS5): 스냅샷 변경 감지용 경량 해시(길이+롤링). 동일하면 push 스킵.
+function cloudHashStr(s) {
+  if (!s) return "0:0";
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return s.length + ":" + (h >>> 0).toString(36);
+}
+// 🆕 v7.54.3(NS3e): 직전 push에서 용량 상한으로 제외된 표지 수(사용자 고지용).
+let _cloudLastCoverDropped = 0;
 /* ── /클라우드 토대 끝 ── */
 
 // 슬롯 생성 (이름 지정, 다음 빈 ID 자동 할당)
@@ -9134,6 +9179,7 @@ async function duplicateSlot(srcSlotId, newName) {
     const newSlot = {
       id: newId,
       name: newName || `${srcSlot.name} 복사본`,
+      uuid: "slot_" + uuid(), // 🔧 v7.54.3(NS-DUP): 복제본은 새 uuid(원본과 같은 클라우드 폴더 clobber 방지·백필 의존 제거)
       createdAt: Date.now(),
       novelCount: realCount,
       lastAccessed: 0,
@@ -54944,7 +54990,7 @@ async function cloudCollectAssets() {
 
 // 현재 슬롯 → 클라우드 업로드. 스냅샷(content-addressed: snapshot-<rev>.json) + 갤러리 자산 증분 + 매니페스트(마지막).
 // 가드: 빌드설정(#0)·동시동기화·복원중(#H0)·자동매칭(#1)·로그인. 슬롯전환(#C2)은 _slotGeneration로 차단. 충돌(#M4)은 매니페스트 직전 rev 재확인.
-async function cloudPushCurrentSlot({ silent = true } = {}) {
+async function cloudPushCurrentSlot({ silent = true, embedCovers = true } = {}) {
   if (!cloudIsConfigured()) return { ok: false, error: "GOOGLE_OAUTH_CLIENT_ID 미설정" };
   if (cloudSyncingRef.current || cloudRestoreInProgressRef.current) return { ok: false, error: "동기화 진행 중" };
   if (isAutoMatchingRef.current) return { ok: false, error: "자동 매칭 중 — 잠시 후 다시" }; // 불변 #1
@@ -54955,17 +55001,25 @@ async function cloudPushCurrentSlot({ silent = true } = {}) {
   cloudSyncingRef.current = true;
   setCloudSyncStatus("syncing");
   try {
-    await waitForMatchQueueDrain(3000); // 불변 #3
+    // 🔧 NS-DRAIN: 매칭 큐가 3s 내 안 비면 torn DB 스냅샷 방지를 위해 중단(불변 #3).
+    if (!(await waitForMatchQueueDrain(3000))) throw new Error("매칭 처리 중 — 잠시 후 다시 시도");
     const deviceId = await getCloudDeviceId();
     // 🔧 M3/L6: 매니페스트 읽기(폴더 생성 안 함). 읽기 오류면 throw로 중단(rev를 0으로 잘못 리셋 방지).
     const rr = await cloudReadRemoteManifest(slotUuid);
     const remote = rr.manifest;
     let folderId = rr.folderId || await cloudEnsureSlotFolder(slotUuid); // L4: 읽기에서 얻은 폴더 재사용
     const baseRev = (remote && Number(remote.rev)) || 0;
-    // 스냅샷 생성(표지 base64 동봉). exportJSON은 현재 DB를 읽으므로, 직후 슬롯 전환 여부 확인.
-    const json = await exportJSON({ returnJson: true, silent: true, embedLocalCovers: true });
+    // 스냅샷 생성. 🔧 v7.54.3(Q1): 자동(백그라운드) push는 표지 제외(embedCovers=false)로 가볍게,
+    //   수동/포그라운드 push는 표지 base64 동봉. exportJSON은 현재 DB를 읽으므로 직후 슬롯 전환 확인.
+    _cloudLastCoverDropped = 0;
+    const json = await exportJSON({ returnJson: true, silent: true, embedLocalCovers: embedCovers });
     if (json == null) throw new Error("스냅샷 생성 실패");
     if (_slotGeneration !== gen) throw new Error("동기화 중 슬롯이 전환됨 — 중단"); // 🔧 C2
+    // 🔧 R2/NS5: 변경 감지 — 직전 push와 내용 동일하면 스킵(rev 폭증·오탐·불필요 업로드 방지).
+    const contentHash = cloudHashStr(json);
+    const lastHash = await getAppMeta("cloud_pushed_hash");
+    // 변경 없음 + 원격 백업이 실제로 존재할 때만 스킵(원격이 지워졌으면 재생성하도록 remote 확인).
+    if (lastHash && lastHash === contentHash && remote) { setCloudSyncStatus("idle"); return { ok: true, unchanged: true, rev: baseRev }; }
     const newRev = baseRev + 1;
     const snapName = `snapshot-${newRev}.json`; // 🔧 H3: content-addressed(덮어쓰기 skew 방지)
     const existSnap = await driveFind(snapName, folderId);
@@ -54993,6 +55047,7 @@ async function cloudPushCurrentSlot({ silent = true } = {}) {
     const rr2 = await cloudReadRemoteManifest(slotUuid);
     const confirmRev = (rr2.manifest && Number(rr2.manifest.rev)) || 0;
     if (confirmRev !== baseRev) {
+      setCloudSyncStatus("idle"); // 🔧 R1: 충돌 경로도 상태 해제(버튼 영구 잠김 방지)
       return { ok: false, conflict: true, error: `원격이 먼저 변경됨 (rev ${confirmRev}). 먼저 '클라우드에서 복원'으로 가져오세요.` };
     }
     // 슬롯명·작품수(목록 UI용)
@@ -55007,10 +55062,11 @@ async function cloudPushCurrentSlot({ silent = true } = {}) {
     if (_slotGeneration === gen) { // 🔧 C2: 전환됐으면 현재(다른) 슬롯에 rev를 쓰지 않음
       await setAppMeta("cloud_rev", String(newRev));
       await setAppMeta("cloud_last_sync", String(manifest.updatedAt));
+      await setAppMeta("cloud_pushed_hash", contentHash); // 🔧 R2/NS5: 변경 감지 기준
       setCloudRev(newRev); setCloudLastSync(manifest.updatedAt);
     }
     setCloudSyncStatus("idle");
-    return { ok: true, rev: newRev };
+    return { ok: true, rev: newRev, coverDropped: _cloudLastCoverDropped };
   } catch (e) {
     console.warn("[cloud] push 실패:", e?.message); setCloudSyncStatus("error");
     if (!silent) Alert.alert("클라우드 백업 실패", e?.message || "알 수 없는 오류");
@@ -55020,12 +55076,13 @@ async function cloudPushCurrentSlot({ silent = true } = {}) {
 
 // 클라우드 → 현재 슬롯 복원. 자산 다운로드(증분) 후 importJSON(확인 다이얼로그)로 복원.
 // 뮤텍스: 다운로드 구간은 cloudSyncingRef, 비동기 복원 구간은 cloudRestoreInProgressRef(#H0)로 보호.
-async function cloudPullCurrentSlot({ silent = true } = {}) {
+async function cloudPullCurrentSlot({ silent = true, targetUuid = null } = {}) {
   if (!cloudIsConfigured()) return { ok: false, error: "GOOGLE_OAUTH_CLIENT_ID 미설정" };
   if (cloudSyncingRef.current || cloudRestoreInProgressRef.current) return { ok: false, error: "동기화 진행 중" };
   if (isAutoMatchingRef.current) return { ok: false, error: "자동 매칭 중 — 잠시 후 다시" };
+  if (respondingRef.current) return { ok: false, error: "검증 응답 처리 중 — 잠시 후 다시" }; // 🔧 NS-VERIFY
   if (!(await cloudIsSignedIn())) return { ok: false, error: "로그인이 필요합니다" };
-  const slotUuid = await cloudCurrentSlotUuid();
+  const slotUuid = targetUuid || await cloudCurrentSlotUuid(); // 🔧 NS1: 새 기기는 채택 대상 uuid로 원격을 읽음
   if (!slotUuid) return { ok: false, error: "슬롯 식별 실패" };
   const gen = _slotGeneration;
   cloudSyncingRef.current = true;
@@ -55053,12 +55110,14 @@ async function cloudPullCurrentSlot({ silent = true } = {}) {
     }
     if (_slotGeneration !== gen) throw new Error("동기화 중 슬롯이 전환됨 — 중단"); // 🔧 C2
     const remoteRev = Number(manifest.rev) || 0;
-    await waitForMatchQueueDrain(3000); // 불변 #3
+    if (!(await waitForMatchQueueDrain(3000))) throw new Error("매칭 처리 중 — 잠시 후 다시 시도"); // 🔧 NS-DRAIN(불변 #3)
     cloudRestoreInProgressRef.current = true; // 🔧 H0: 비동기 복원 구간 보호 시작
     // importJSON: 확인 다이얼로그 → '가져오기' 시 비동기 복원. 기존 원자 스냅샷+롤백 보호.
     await importJSON(
       json,
       async () => { // onSuccess: 복원 성공 직후
+        // 🔧 NS1: 새 기기 채택 — 복원이 '성공'한 뒤에만 현재 슬롯을 원격 uuid에 연결(취소 시 연결 안 됨 → footgun 방지).
+        if (targetUuid) { try { await cloudAdoptRemoteSlotToCurrent(targetUuid); } catch {} }
         // 갤러리 이미지 경로 재작성은 importJSON 내부 GI 복원에서 이미 현재 기기 기준으로 처리됨(H2).
         // 표지(LCV) 복원: base64 → COVER_DIR 파일 기록 후 cover_image 재연결(제목+작가 매칭).
         if (lcv && typeof lcv === "object") {
@@ -55119,7 +55178,7 @@ async function cloudCheckAndPrompt() {
 }
 
 // AppState 콜백에서 호출(ref 경유로 항상 최신 클로저 — 불변 #2).
-function cloudOnAppBackground() { try { if (cloudAutoRef.current && !isAutoMatchingRef.current && !cloudRestoreInProgressRef.current && cloudPushRef.current) cloudPushRef.current({ silent: true }); } catch {} }
+function cloudOnAppBackground() { try { if (cloudAutoRef.current && !isAutoMatchingRef.current && !cloudRestoreInProgressRef.current && cloudPushRef.current) cloudPushRef.current({ silent: true, embedCovers: false }); } catch {} } // 🔧 Q1: 백그라운드 자동 push는 표지 제외(가벼움)
 function cloudOnAppForeground() { try { setTimeout(() => { if (cloudCheckRef.current) cloudCheckRef.current(); }, 2500); } catch {} }
 
 // 로그인/로그아웃/자동토글 UI 래퍼
@@ -55144,9 +55203,14 @@ async function cloudOpenSlotPicker() {
 }
 async function cloudPickRemoteSlot(remoteUuid) {
   setCloudSlotPickerOpen(false);
-  const ok = await cloudAdoptRemoteSlotToCurrent(remoteUuid);
-  if (!ok) { Alert.alert("연결 실패", "현재 슬롯에 연결하지 못했어요."); return; }
-  cloudPullCurrentSlot({ silent: false }); // 확인 다이얼로그 후 복원
+  // 🔧 NS2: 다른 로컬 슬롯이 이미 이 백업과 연결돼 있으면 거부(같은 폴더 상호 clobber 방지).
+  try {
+    const meta = await loadSlotMeta();
+    const dup = (meta.slots || []).find(x => x.id !== activeSlotId && x.uuid === remoteUuid);
+    if (dup) { Alert.alert("이미 연결됨", `이 백업은 이미 다른 슬롯(${dup.name || `슬롯 ${dup.id + 1}`})에 연결돼 있어요. 그 슬롯에서 동기화하세요.`); return; }
+  } catch {}
+  // 🔧 NS1: 슬롯 uuid 채택은 '복원 성공 후'(pull onSuccess)에만 — 취소 시 슬롯 연결이 바뀌지 않아 footgun 방지.
+  cloudPullCurrentSlot({ silent: false, targetUuid: remoteUuid });
 }
 
 async function exportJSON(opts) {
@@ -55410,23 +55474,24 @@ async function exportJSON(opts) {
     if (opts && opts.embedLocalCovers) {
       try {
         const lcv = {};
-        let _lcvBytes = 0;
-        const LCV_PER_CAP = 700 * 1024;        // 작품당 원본 ~700KB 상한
-        const LCV_TOTAL_CAP = 25 * 1024 * 1024; // 전체 원본 ~25MB 상한
+        let _lcvBytes = 0; let _lcvDropped = 0;
+        const LCV_PER_CAP = 500 * 1024;         // 🔧 v7.54.3(#4): 작품당 원본 ~500KB 상한
+        const LCV_TOTAL_CAP = 8 * 1024 * 1024;  // 🔧 v7.54.3(#4): 전체 원본 ~8MB 상한(base64+multipart 메모리 OOM 방지)
         for (const n of novels) {
           const ci = n.cover_image;
           if (!ci || !/^file:/.test(ci)) continue;
           try {
             const fi = await FileSystem.getInfoAsync(ci, { size: true });
-            if (!fi.exists || fi.isDirectory || (fi.size || 0) > LCV_PER_CAP) continue;
-            if (_lcvBytes + (fi.size || 0) > LCV_TOTAL_CAP) break;
+            if (!fi.exists || fi.isDirectory || (fi.size || 0) > LCV_PER_CAP) { _lcvDropped++; continue; }
+            if (_lcvBytes + (fi.size || 0) > LCV_TOTAL_CAP) { _lcvDropped++; continue; } // 🔧 NS3e: 상한 초과는 건너뛰되 집계(고지)
             const b64 = await FileSystem.readAsStringAsync(ci, { encoding: FileSystem.EncodingType.Base64 });
             const ext = ((ci.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 4)) || "jpg";
-            lcv[`${n.title}|||${n.author || ""}`] = { e: ext, d: b64 };
+            lcv[`${n.title}|||${(n.author || "").trim()}`] = { e: ext, d: b64 }; // 🔧 NS3b: author trim(복원 매칭 정합)
             _lcvBytes += (fi.size || 0);
-          } catch {}
+          } catch { _lcvDropped++; }
         }
         if (Object.keys(lcv).length > 0) payload.LCV = lcv;
+        _cloudLastCoverDropped = _lcvDropped; // 🔧 NS3e: 제외된 표지 수(사용자 고지용)
       } catch (lcvErr) { console.warn("[cloud] 로컬 표지 임베드 실패:", lcvErr?.message); }
     }
 
@@ -55729,7 +55794,13 @@ async function importJSON(directText, onSuccess, onSettled) {
           {
             text: "가져오기",
             onPress: async () => {
+              // 🔧 v7.54.3(NS7): 클라우드 push가 진행 중이면 파괴적 복원을 중단(반쯤 지워진 DB가 업로드되는 것 방지).
+              if (cloudSyncingRef.current) { Alert.alert("동기화 중", "클라우드 백업이 끝난 뒤 다시 시도해 주세요."); return; }
               setIsLoading(true);
+              // 🔧 v7.54.3(NS7): 수동·클라우드 복원 모두 — 복원 중 자동 push 차단(이 플래그는 onSettled/성공/실패에서 해제).
+              cloudRestoreInProgressRef.current = true;
+              // 🔧 v7.54.3(NS-VERIFY): 진행 중 하이브리드 검증 세션 정리 — 곧 삭제될 작품 id를 참조하는 고아 로그/무효 finalize 방지.
+              try { setVerificationSession(null); verificationSessionIdRef.current = null; } catch {}
               // 🔧 v3.5.9: DELETE 전 원본 JSON 백업 (실패 시 재시도용)
               importBackupRef.current = text;
               // 🔧 v3.5.15e: doClearAll 전에 모든 지연 쓰기 큐 정리
@@ -56535,6 +56606,7 @@ async function importJSON(directText, onSuccess, onSettled) {
               await _dropSnapshot(); // 🆕 v7.49.18: 복원 성공 → 롤백 스냅샷 임시테이블 정리
               // ☁️ v7.54.0: 클라우드 복원 후처리(이미지 경로 재작성·리비전 기록) — 성공 직후 1회. 실패해도 데이터 무위험.
               if (typeof onSuccess === "function") { try { await onSuccess(); } catch (cbErr) { console.warn("[import] onSuccess 콜백 오류:", cbErr?.message); } }
+              cloudRestoreInProgressRef.current = false; // 🔧 v7.54.3(NS7): 수동 import 경로도 해제(onSettled 없는 호출 대비)
               if (typeof onSettled === "function") { try { onSettled(); } catch {} } // ☁️ v7.54.2(H0): 복원 성공 종료 신호(클라우드 뮤텍스 해제)
               Alert.alert("완료", `데이터를 성공적으로 가져왔습니다!\n(Elo 데이터 완전 복원)${verifyInfo}${extraInfo}${histInfo}${analysisInfo}${comboInfo}${tagMetaInfo}${plannedInfo}${patternInfo}${pcInfo}`);
               } catch (restoreErr) {
@@ -56569,6 +56641,7 @@ async function importJSON(directText, onSuccess, onSettled) {
                 }
                 setLoadingProgress(null); // 🆕 v7.28.22: 진행바 정리
                 setIsLoading(false);
+                cloudRestoreInProgressRef.current = false; // 🔧 v7.54.3(NS7): 수동 import 경로도 해제
                 if (typeof onSettled === "function") { try { onSettled(); } catch {} } // ☁️ v7.54.2(H0): 복원 실패/롤백 종료 신호
               }
             },
@@ -67744,7 +67817,12 @@ async function importJSON(directText, onSuccess, onSettled) {
                       </TouchableOpacity>
                     </View>
                     <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
-                      <TouchableOpacity onPress={async () => { const r = await cloudPushCurrentSlot({ silent: false }); if (r.ok) Alert.alert("백업 완료", `클라우드에 저장했어요 (rev ${r.rev}).`); }}
+                      <TouchableOpacity onPress={async () => {
+                        const r = await cloudPushCurrentSlot({ silent: false });
+                        if (r.ok && r.unchanged) Alert.alert("최신 상태", "변경 사항이 없어 그대로예요.");
+                        else if (r.ok) Alert.alert("백업 완료", `클라우드에 저장했어요 (rev ${r.rev}).` + (r.coverDropped > 0 ? `\n⚠️ 표지 ${r.coverDropped}개는 용량 상한으로 제외됐어요.` : ""));
+                        else if (r.conflict) Alert.alert("동기화 충돌", r.error);
+                      }}
                         disabled={cloudSyncStatus === "syncing"}
                         style={{ flex: 1, backgroundColor: C.primary, padding: 11, borderRadius: 10, alignItems: "center", opacity: cloudSyncStatus === "syncing" ? 0.6 : 1 }}>
                         <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>⬆️ 지금 백업</Text>
@@ -69129,11 +69207,19 @@ async function importJSON(directText, onSuccess, onSettled) {
                                 [
                                   { text: "취소" },
                                   { text: "삭제", style: "destructive", onPress: async () => {
+                                    const _slotUuid = slot.uuid; // 🔧 v7.54.3(Q2): 삭제 전 uuid 캡처(원격 정리용)
                                     const result = await deleteSlot(slot.id);
                                     if (result.success) {
                                       const meta = await loadSlotMeta();
                                       setSlotMeta(meta);
-                                      Alert.alert("완료", "슬롯이 삭제되었습니다.");
+                                      // 🔧 v7.54.3(Q2): 원격(클라우드) 백업도 삭제할지 확인 — 기본은 보존(다른 기기/재설치 대비).
+                                      if (cloudIsConfigured() && _slotUuid && (await cloudIsSignedIn())) {
+                                        Alert.alert("클라우드 백업", "이 슬롯의 클라우드 백업도 삭제할까요?\n(다른 기기·재설치 대비로 남겨둘 수도 있어요.)",
+                                          [{ text: "남겨두기", style: "cancel", onPress: () => Alert.alert("완료", "슬롯이 삭제됐어요. (클라우드 백업은 보존)") },
+                                           { text: "함께 삭제", style: "destructive", onPress: async () => { const okR = await cloudDeleteRemoteSlot(_slotUuid); Alert.alert("완료", okR ? "슬롯과 클라우드 백업을 삭제했어요." : "슬롯은 삭제했지만 클라우드 백업 삭제엔 실패했어요."); } }]);
+                                      } else {
+                                        Alert.alert("완료", "슬롯이 삭제되었습니다.");
+                                      }
                                     } else {
                                       Alert.alert("오류", result.error);
                                     }
