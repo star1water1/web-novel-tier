@@ -2,9 +2,9 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.54.0 (클라우드 백업·동기화 토대 — Phase 1 Increment 1)                 ║
+ * ║  버전: 7.54.1 (클라우드 백업·동기화 — Phase 1 Increment 1+2, 베타)               ║
  * ║  최종 수정: 2026-06-30                                                        ║
- * ║  총 라인 수: 약 75,470줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 75,790줄 (단일 컴포넌트)                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -19,11 +19,15 @@
  * ║   (PKCE) cloudSignIn/Out·cloudGetAccessToken(자동 refresh), Drive REST(appData-   ║
  * ║   Folder) find/ensureFolder/upload(text·localFile·multipart base64)/getText/      ║
  * ║   download/list/delete, cloudReadRemoteManifest·buildAssetManifestFromPaths.      ║
- * ║ • 미구현(Increment 2): exportJSON→buildFullBackupPayload 추출, importJSON(direct  ║
- * ║   Text) 인자, push/pull 오케스트레이터, 충돌/리스, 설정 UI, AppState 배선.        ║
- * ║   → 백업/복원 데이터 경로를 건드리므로 온디바이스 스모크 테스트와 함께 진행.       ║
- * ║ • 사용 전: Google Cloud OAuth 클라이언트 ID 발급 → GOOGLE_OAUTH_CLIENT_ID 입력.   ║
- * ║ • APP_VERSION은 7.53.8 유지(사용자 노출 변화 없음 — 내부 토대). esbuild 통과.     ║
+ * ║ • Increment 2(구현됨): exportJSON(opts.returnJson/silent)·importJSON(directText,  ║
+ * ║   onSuccess) 동작보존 리팩터, push/pull 오케스트레이터(스냅샷+자산 증분), 포그라    ║
+ * ║   운드 리비전 비교/제안(cloudCheckAndPrompt), AppState 배선(백그라운드 push·복귀   ║
+ * ║   확인, 최신 클로저 ref), 설정 '🔌 연결'에 ☁️ 클라우드 섹션(로그인/백업/복원/자동). ║
+ * ║   복원은 importJSON 원자 스냅샷+롤백 그대로 재사용. 자산 다운로드 후 기기 간       ║
+ * ║   경로 재작성(gallery/cover) — best-effort, 데이터 무위험.                        ║
+ * ║ • 사용 전: Google Cloud OAuth 클라이언트 ID 발급 → GOOGLE_OAUTH_CLIENT_ID 입력 +   ║
+ * ║   'npx expo install'로 deps 핀 + EAS 빌드. ⚠️ 온디바이스 미검증 — 실기기 스모크    ║
+ * ║   테스트 필요(docs 체크리스트). APP_VERSION 7.53.8 유지(베타·노출 게이트). esbuild 통과.║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -39130,7 +39134,35 @@ function AppContent() {
   // JSON 가져오기 모달
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
-  
+
+  // ☁️ v7.54.0: 클라우드 동기화 상태(Phase 1)
+  const [cloudSignedIn, setCloudSignedIn] = useState(false);
+  const [cloudEnabled, setCloudEnabled] = useState(false);       // 자동 동기화 토글(슬롯 app_meta 영속)
+  const [cloudSyncStatus, setCloudSyncStatus] = useState("idle"); // idle | syncing | error
+  const [cloudRev, setCloudRev] = useState(0);
+  const [cloudLastSync, setCloudLastSync] = useState(0);
+  const [cloudBusy, setCloudBusy] = useState(false);             // 로그인/수동 작업 중
+  const cloudSyncingRef = useRef(false);                          // 동시 동기화 가드
+  const cloudAutoRef = useRef(false);                             // AppState 콜백용 최신 enabled
+  const cloudPushRef = useRef(null);                              // AppState 콜백이 최신 push 클로저 참조(불변 #2)
+  const cloudCheckRef = useRef(null);
+  useEffect(() => { cloudAutoRef.current = cloudEnabled && cloudSignedIn; }, [cloudEnabled, cloudSignedIn]);
+  useEffect(() => { cloudPushRef.current = cloudPushCurrentSlot; cloudCheckRef.current = cloudCheckAndPrompt; }); // 매 렌더 최신 클로저 유지(stale closure 방지)
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const si = await cloudIsSignedIn();
+        const en = (await getAppMeta("cloud_enabled")) === "1";
+        const rev = Number(await getAppMeta("cloud_rev")) || 0;
+        const ls = Number(await getAppMeta("cloud_last_sync")) || 0;
+        if (!alive) return;
+        setCloudSignedIn(si); setCloudEnabled(en); setCloudRev(rev); setCloudLastSync(ls);
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, [settingsSubTab]); // 설정 진입/슬롯 전환 시 상태 갱신
+
   // 🔧 v3.0.6: JSON 내보내기 모달 (Share 크기 제한 문제 해결)
   const [exportOpen, setExportOpen] = useState(false);
   const [exportText, setExportText] = useState(""); // 미리보기용 (일부)
@@ -41424,10 +41456,12 @@ function AppContent() {
         } catch (e) {
           console.warn("백그라운드 전환 큐 플러시 실패:", e);
         }
+        cloudOnAppBackground(); // ☁️ v7.54.0: 자동 동기화 ON이면 백그라운드 진입 시 클라우드 push(가드 내장)
       }
 
       // 백그라운드 → 포그라운드 전환 시
       if (prevState.match(/inactive|background/) && nextAppState === "active") {
+        cloudOnAppForeground(); // ☁️ v7.54.0: 복귀 시 원격 최신 여부 확인(내부 2.5s 지연·자가 가드 — DB 리로드와 비간섭)
         // 🔧 DB 최적화: 짧은 BG (< 5초)에서는 연결 검증만, 리셋 스킵
         // 빠른 앱 전환(멀티태스킹)에서 불필요한 resetDbConnection 9회 → 최소화
         // 🆕 v7.0.2: lastBackgroundTime 우선 사용 (PerfMonitor 의존 제거)
@@ -54777,11 +54811,196 @@ function collectCoverImageUrls(novels) {
   return coverImages;
 }
 
-async function exportJSON() {
+/* ═══════════════════════════════════════════════════════════════════════
+   ☁️ v7.54.0 클라우드 동기화 오케스트레이터 (Phase 1 / Increment 2) — 컴포넌트 스코프.
+   슬롯 단위 스냅샷(기존 v13 백업 재사용) + 자산 증분(Drive appDataFolder).
+   불변규칙 준수: 큐 외부 호출(#1)·복원/대량삭제 전 drain(#3)·BUSY 리셋 금지(#4)·전 경로 try/catch(#5).
+   ⚠️ 온디바이스 미검증. importJSON의 원자 스냅샷+롤백으로 복원 데이터는 보호됨.
+   ═══════════════════════════════════════════════════════════════════════ */
+function cloudGuessMime(rel) {
+  const r = (rel || "").toLowerCase();
+  if (r.endsWith(".png")) return "image/png";
+  if (r.endsWith(".webp")) return "image/webp";
+  if (r.endsWith(".gif")) return "image/gif";
+  return "image/jpeg";
+}
+function cloudRelForUri(uri) {
+  const name = String(uri).split("/").pop();
+  if (uri.includes("/gallery/")) return "gallery/" + name;
+  if (uri.includes("/covers/")) return "covers/" + name;
+  return "misc/" + name;
+}
+async function cloudCurrentSlotUuid() {
+  try { const meta = await loadSlotMeta(); const s = (meta.slots || []).find(x => x.id === activeSlotId); return s?.uuid || null; }
+  catch { return null; }
+}
+// 현재 슬롯의 로컬 이미지 파일(표지·갤러리) 수집 → [{uri, rel, size, mtime}]. (명대사 이미지는 스냅샷에 base64로 동봉됨.)
+async function cloudCollectAssets() {
+  const uris = new Set();
+  const add = (p) => { if (p && /^file:/.test(p)) uris.add(p); };
+  try { for (const r of (await all("SELECT file_path FROM cover_library WHERE file_path IS NOT NULL") || [])) add(r.file_path); } catch {}
+  try { for (const r of (await all("SELECT file_path FROM gallery_images WHERE file_path IS NOT NULL") || [])) add(r.file_path); } catch {}
+  try { for (const r of (await all("SELECT cover_image FROM novels WHERE cover_image LIKE 'file:%'") || [])) add(r.cover_image); } catch {}
+  try { for (const r of (await all("SELECT cover_image FROM planned_novels WHERE cover_image LIKE 'file:%'") || [])) add(r.cover_image); } catch {}
+  const out = [];
+  for (const uri of uris) {
+    try { const fi = await FileSystem.getInfoAsync(uri, { size: true }); if (fi.exists && !fi.isDirectory) out.push({ uri, rel: cloudRelForUri(uri), size: fi.size || 0, mtime: fi.modificationTime || 0 }); } catch {}
+  }
+  return out;
+}
+
+// 현재 슬롯 → 클라우드 업로드(스냅샷 + 자산 증분 + 매니페스트). silent=false면 실패 시 Alert.
+async function cloudPushCurrentSlot({ silent = true } = {}) {
+  if (!cloudIsConfigured()) return { ok: false, error: "GOOGLE_OAUTH_CLIENT_ID 미설정" };
+  if (cloudSyncingRef.current) return { ok: false, error: "동기화 진행 중" };
+  if (isAutoMatchingRef.current) return { ok: false, error: "자동 매칭 중 — 잠시 후 다시" }; // 불변 #1
+  if (!(await cloudIsSignedIn())) return { ok: false, error: "로그인이 필요합니다" };
+  const slotUuid = await cloudCurrentSlotUuid();
+  if (!slotUuid) return { ok: false, error: "슬롯 식별 실패" };
+  cloudSyncingRef.current = true;
+  setCloudSyncStatus("syncing");
+  try {
+    await waitForMatchQueueDrain(3000); // 불변 #3
+    const deviceId = await getCloudDeviceId();
+    const folderId = await cloudEnsureSlotFolder(slotUuid);
+    let remote = null; try { remote = (await cloudReadRemoteManifest(slotUuid)).manifest; } catch {}
+    const baseRev = (remote && Number(remote.rev)) || 0;
+    const json = await exportJSON({ returnJson: true, silent: true });
+    if (json == null) throw new Error("스냅샷 생성 실패");
+    const snapFile = await driveFind("snapshot.json", folderId);
+    await driveUploadText("snapshot.json", folderId, json, snapFile?.id);
+    // 자산 증분 업로드(size/mtime 동일하면 스킵)
+    const localAssets = await cloudCollectAssets();
+    const remoteByRel = {}; for (const a of (remote?.assets || [])) remoteByRel[a.rel] = a;
+    let assetsFolderId = null;
+    const manifestAssets = [];
+    for (const a of localAssets) {
+      const prev = remoteByRel[a.rel];
+      let driveId = prev?.driveId;
+      const changed = !prev || prev.size !== a.size || prev.mtime !== a.mtime || !driveId;
+      if (changed) {
+        if (!assetsFolderId) assetsFolderId = await driveEnsureFolder("assets", folderId);
+        const dn = a.rel.replace(/\//g, "__");
+        const existing = driveId ? { id: driveId } : await driveFind(dn, assetsFolderId);
+        const up = await driveUploadLocalFile(dn, assetsFolderId, a.uri, cloudGuessMime(a.rel), existing?.id);
+        driveId = up.id;
+      }
+      manifestAssets.push({ rel: a.rel, size: a.size, mtime: a.mtime, driveId });
+    }
+    const manifest = { rev: baseRev + 1, deviceId, updatedAt: Date.now(), appVersion: APP_VERSION, snapshotName: "snapshot.json", assets: manifestAssets, activeDevice: deviceId, leaseUntil: Date.now() + 5 * 60 * 1000 };
+    const manFile = await driveFind("manifest.json", folderId);
+    await driveUploadText("manifest.json", folderId, JSON.stringify(manifest), manFile?.id);
+    await setAppMeta("cloud_rev", String(manifest.rev));
+    await setAppMeta("cloud_last_sync", String(manifest.updatedAt));
+    setCloudRev(manifest.rev); setCloudLastSync(manifest.updatedAt); setCloudSyncStatus("idle");
+    return { ok: true, rev: manifest.rev };
+  } catch (e) {
+    console.warn("[cloud] push 실패:", e?.message); setCloudSyncStatus("error");
+    if (!silent) Alert.alert("클라우드 백업 실패", e?.message || "알 수 없는 오류");
+    return { ok: false, error: e?.message };
+  } finally { cloudSyncingRef.current = false; }
+}
+
+// 클라우드 → 현재 슬롯 복원. 자산 다운로드 후 importJSON(확인 다이얼로그 표시)로 복원, 성공 콜백에서 경로 재작성·리비전 기록.
+async function cloudPullCurrentSlot({ silent = true } = {}) {
+  if (!cloudIsConfigured()) return { ok: false, error: "GOOGLE_OAUTH_CLIENT_ID 미설정" };
+  if (cloudSyncingRef.current) return { ok: false, error: "동기화 진행 중" };
+  if (isAutoMatchingRef.current) return { ok: false, error: "자동 매칭 중 — 잠시 후 다시" };
+  if (!(await cloudIsSignedIn())) return { ok: false, error: "로그인이 필요합니다" };
+  const slotUuid = await cloudCurrentSlotUuid();
+  if (!slotUuid) return { ok: false, error: "슬롯 식별 실패" };
+  cloudSyncingRef.current = true;
+  setCloudSyncStatus("syncing");
+  try {
+    const { folderId, manifest } = await cloudReadRemoteManifest(slotUuid);
+    if (!manifest) { setCloudSyncStatus("idle"); if (!silent) Alert.alert("복원", "클라우드에 이 슬롯의 백업이 없어요."); return { ok: false, error: "백업 없음" }; }
+    const snapFile = await driveFind("snapshot.json", folderId);
+    if (!snapFile) throw new Error("클라우드 snapshot.json 없음");
+    const json = await driveGetText(snapFile.id);
+    // 자산 다운로드(복원 전 — 로컬 경로에 배치). 실패는 개별 무시(이미지만 영향).
+    if (Array.isArray(manifest.assets) && manifest.assets.length) {
+      for (const a of manifest.assets) {
+        try {
+          if (!a.rel || !a.driveId) continue;
+          const dest = FileSystem.documentDirectory + a.rel;
+          const dir = dest.substring(0, dest.lastIndexOf("/"));
+          try { const di = await FileSystem.getInfoAsync(dir); if (!di.exists) await FileSystem.makeDirectoryAsync(dir, { intermediates: true }); } catch {}
+          await driveDownloadToFile(a.driveId, dest);
+        } catch (ae) { console.warn("[cloud] asset 다운로드 실패:", a.rel, ae?.message); }
+      }
+    }
+    const remoteRev = Number(manifest.rev) || 0;
+    await waitForMatchQueueDrain(3000); // 불변 #3
+    // importJSON: 확인 다이얼로그 표시 → 사용자가 '가져오기' 시 비동기 복원. 기존 원자 스냅샷+롤백 보호.
+    await importJSON(json, async () => {
+      // 성공 직후: 기기 간 documentDirectory 차이 보정(이미지 경로 재작성) — best-effort, 데이터 무위험.
+      try {
+        const dd = FileSystem.documentDirectory;
+        await exec("UPDATE gallery_images SET file_path = ? || substr(file_path, instr(file_path, '/gallery/') + 1) WHERE file_path LIKE '%/gallery/%'", [dd]);
+        await exec("UPDATE novels SET cover_image = ? || substr(cover_image, instr(cover_image, '/covers/') + 1) WHERE cover_image LIKE '%/covers/%'", [dd]);
+        await exec("UPDATE planned_novels SET cover_image = ? || substr(cover_image, instr(cover_image, '/covers/') + 1) WHERE cover_image LIKE '%/covers/%'", [dd]);
+      } catch (re) { console.warn("[cloud] 경로 재작성 실패:", re?.message); }
+      try { await loadCoverLibrary(); } catch {}
+      try {
+        await setAppMeta("cloud_rev", String(remoteRev));
+        await setAppMeta("cloud_last_sync", String(Date.now()));
+      } catch {}
+      setCloudRev(remoteRev); setCloudLastSync(Date.now()); setCloudSyncStatus("idle");
+    });
+    return { ok: true, rev: remoteRev };
+  } catch (e) {
+    console.warn("[cloud] pull 실패:", e?.message); setCloudSyncStatus("error");
+    if (!silent) Alert.alert("클라우드 복원 실패", e?.message || "알 수 없는 오류");
+    return { ok: false, error: e?.message };
+  } finally { cloudSyncingRef.current = false; setCloudSyncStatus(s => (s === "syncing" ? "idle" : s)); }
+}
+
+// 포그라운드 복귀 등에서 원격 리비전과 비교 → 자동 복원/덮어쓰기 없이 사용자에게 제안(안전).
+async function cloudCheckAndPrompt() {
+  try {
+    if (!cloudIsConfigured() || !cloudAutoRef.current) return;
+    if (isAutoMatchingRef.current || cloudSyncingRef.current) return;
+    const slotUuid = await cloudCurrentSlotUuid();
+    if (!slotUuid) return;
+    let remote = null; try { remote = (await cloudReadRemoteManifest(slotUuid)).manifest; } catch { return; }
+    if (!remote) return;
+    const localRev = Number(await getAppMeta("cloud_rev")) || 0;
+    const remoteRev = Number(remote.rev) || 0;
+    const myDevice = await getCloudDeviceId();
+    if (remoteRev > localRev && remote.activeDevice !== myDevice) {
+      Alert.alert("클라우드 업데이트", `다른 기기에서 변경된 버전이 있어요 (rev ${remoteRev}). 이 기기로 가져올까요?\n\n주의: 이 기기의 미동기화 변경은 덮어써질 수 있어요.`,
+        [{ text: "나중에", style: "cancel" }, { text: "가져오기", onPress: () => { cloudPullCurrentSlot({ silent: false }); } }]);
+    } else if (localRev > remoteRev) {
+      cloudPushCurrentSlot({ silent: true }); // 로컬이 최신 → 조용히 업로드
+    }
+  } catch (e) { console.warn("[cloud] check 실패:", e?.message); }
+}
+
+// AppState 콜백에서 호출(ref 경유로 항상 최신 클로저 — 불변 #2).
+function cloudOnAppBackground() { try { if (cloudAutoRef.current && !isAutoMatchingRef.current && cloudPushRef.current) cloudPushRef.current({ silent: true }); } catch {} }
+function cloudOnAppForeground() { try { setTimeout(() => { if (cloudCheckRef.current) cloudCheckRef.current(); }, 2500); } catch {} }
+
+// 로그인/로그아웃/자동토글 UI 래퍼
+async function cloudUiSignIn() {
+  setCloudBusy(true);
+  try {
+    const r = await cloudSignIn();
+    if (r.ok) { setCloudSignedIn(true); Alert.alert("연결 완료", "구글 드라이브에 연결됐어요. '지금 백업'으로 시작하세요."); }
+    else Alert.alert("연결 실패", (r.error || "다시 시도해 주세요.") + "\n\n(설정: GOOGLE_OAUTH_CLIENT_ID + 구글 OAuth 동의화면)");
+  } finally { setCloudBusy(false); }
+}
+async function cloudUiSignOut() { setCloudBusy(true); try { await cloudSignOut(); setCloudSignedIn(false); } finally { setCloudBusy(false); } }
+async function cloudToggleAuto(val) { setCloudEnabled(val); try { await setAppMeta("cloud_enabled", val ? "1" : "0"); } catch {} }
+
+async function exportJSON(opts) {
+  // ☁️ v7.54.0: 클라우드 push 재사용 — returnJson이면 공유 UI 대신 payload JSON 문자열 반환, silent면 로딩/Alert 억제.
+  //   (인자 없는 기존 호출은 동작 100% 동일 — _returnJson/_silent=false.)
+  const _returnJson = !!(opts && opts.returnJson);
+  const _silent = !!(opts && opts.silent);
   const _pt = PerfMonitor.enabled ? Date.now() : 0; // 🔬
   Breadcrumbs.action("data_export");
   try {
-    setIsLoading(true);
+    if (!_silent) setIsLoading(true);
     
     // DB 연결 확인
     await openDb();
@@ -55030,7 +55249,14 @@ async function exportJSON() {
     }
     
     const json = JSON.stringify(payload);
-    
+
+    // ☁️ v7.54.0: 클라우드 push 경로 — 공유 UI 없이 payload만 반환
+    if (_returnJson) {
+      if (_pt) PerfMonitor.trackFunc("exportJSON", Date.now() - _pt);
+      if (!_silent) setIsLoading(false);
+      return json;
+    }
+
     // 대략적인 크기 계산
     const sizeKB = Math.round(json.length / 1024);
     const sizeText = sizeKB > 1024 
@@ -55079,9 +55305,10 @@ async function exportJSON() {
     }
     
   } catch (e) {
-    setIsLoading(false);
+    if (!_silent) setIsLoading(false);
     if (_pt) PerfMonitor.logError("exportJSON", e); // 🔬
     console.warn("exportJSON error:", e);
+    if (_silent) throw e; // ☁️ v7.54.0: 클라우드 경로는 호출부(오케스트레이터)가 처리
     Alert.alert("오류", "백업 중 오류가 발생했습니다.\n\n" + e.message);
   }
 }
@@ -55232,18 +55459,28 @@ function validateImportData(text) {
   return result;
 }
 
-async function importJSON() {
+async function importJSON(directText, onSuccess) {
   const _pt = PerfMonitor.enabled ? Date.now() : 0; // 🔬
   Breadcrumbs.action("data_import");
+  // ☁️ v7.54.0: directText(클라우드 다운로드 텍스트)가 오면 importText/importValidation 상태 게이트를 우회하고
+  //   인라인 검증 후 복원. directText 없으면 기존 UI 경로 100% 동일.
+  //   onSuccess: 복원 성공 직후(확인 다이얼로그 onPress 내부, 같은 트랜잭션 흐름) 1회 호출 — 클라우드
+  //   후처리(이미지 경로 재작성·리비전 기록)용. 복원은 사용자가 '가져오기'를 누른 뒤 비동기로 진행됨.
+  const _isDirect = (typeof directText === "string");
   try {
-    const text = importText.trim();
+    const text = (_isDirect ? directText : importText).trim();
     if (!text) {
-      Alert.alert("오류", "JSON 데이터를 입력해주세요.");
+      if (!_isDirect) Alert.alert("오류", "JSON 데이터를 입력해주세요.");
+      else throw new Error("빈 백업 데이터");
       return;
     }
 
-    // 검증 안 했으면 먼저 검증
-    if (!importValidation || !importValidation.valid) {
+    if (_isDirect) {
+      // 인라인 검증(상태 게이트 대체)
+      const v = validateImportData(text);
+      if (!v || !v.valid) throw new Error("백업 데이터 검증 실패: " + ((v?.errors || []).join(", ") || "형식 오류"));
+    } else if (!importValidation || !importValidation.valid) {
+      // 검증 안 했으면 먼저 검증
       Alert.alert("알림", "먼저 '데이터 검증' 버튼을 눌러 검증해주세요.");
       return;
     }
@@ -56110,6 +56347,8 @@ async function importJSON() {
               if (_pt) PerfMonitor.trackFunc("importJSON", Date.now() - _pt); // 🔬
               importBackupRef.current = ""; // 🔧 v3.5.9: 성공 시 메모리 해제
               await _dropSnapshot(); // 🆕 v7.49.18: 복원 성공 → 롤백 스냅샷 임시테이블 정리
+              // ☁️ v7.54.0: 클라우드 복원 후처리(이미지 경로 재작성·리비전 기록) — 성공 직후 1회. 실패해도 데이터 무위험.
+              if (typeof onSuccess === "function") { try { await onSuccess(); } catch (cbErr) { console.warn("[import] onSuccess 콜백 오류:", cbErr?.message); } }
               Alert.alert("완료", `데이터를 성공적으로 가져왔습니다!\n(Elo 데이터 완전 복원)${verifyInfo}${extraInfo}${histInfo}${analysisInfo}${comboInfo}${tagMetaInfo}${plannedInfo}${patternInfo}${pcInfo}`);
               } catch (restoreErr) {
                 // 🔧 v3.5.9: 복원 실패 시 자동 재시도 옵션 제공
@@ -67289,6 +67528,57 @@ async function importJSON() {
                 ))}
               </View>
               {connectSubTab === "main" && (<>
+              {/* ☁️ v7.54.0: 클라우드 백업 · 기기 간 동기화 (Phase 1, 베타) */}
+              <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+                <Text style={{ color: C.text, fontWeight: "700", fontSize: 14, marginBottom: 4 }}>☁️ 클라우드 백업 · 기기 간 동기화 (베타)</Text>
+                {!cloudIsConfigured() ? (
+                  <Text style={{ color: C.warn, fontSize: 11, lineHeight: 16 }}>
+                    ⚠️ 설정 필요 — 구글 OAuth 클라이언트 ID(GOOGLE_OAUTH_CLIENT_ID)와 동의 화면을 먼저 구성해야 사용할 수 있어요. (docs/cloud-sync-plan.md 참고)
+                  </Text>
+                ) : (<>
+                  <Text style={{ color: C.sub, fontSize: 11, lineHeight: 16, marginBottom: 10 }}>
+                    현재 슬롯을 구글 드라이브(앱 전용 폴더)에 백업하고 다른 기기에서 이어서 써요. 데이터는 본인 드라이브에만 저장돼요(개발자 서버 없음). 표지·갤러리 이미지도 함께 백업돼요.
+                  </Text>
+                  {!cloudSignedIn ? (
+                    <TouchableOpacity onPress={cloudUiSignIn} disabled={cloudBusy}
+                      style={{ backgroundColor: C.primary, padding: 12, borderRadius: 10, alignItems: "center", opacity: cloudBusy ? 0.6 : 1 }}>
+                      <Text style={{ color: "#fff", fontWeight: "700", fontSize: 14 }}>{cloudBusy ? "연결 중…" : "구글 드라이브 연결"}</Text>
+                    </TouchableOpacity>
+                  ) : (<>
+                    <View style={{ flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10 }}>
+                      <Text style={{ color: C.sub, fontSize: 12, flex: 1, lineHeight: 17 }}>
+                        상태: {cloudSyncStatus === "syncing" ? "동기화 중…" : cloudSyncStatus === "error" ? "⚠️ 오류" : "연결됨"}{cloudRev > 0 ? `  ·  rev ${cloudRev}` : ""}{cloudLastSync > 0 ? `\n마지막 동기화: ${new Date(cloudLastSync).toLocaleString()}` : ""}
+                      </Text>
+                      <TouchableOpacity onPress={cloudUiSignOut} disabled={cloudBusy} style={{ marginLeft: 8 }}>
+                        <Text style={{ color: "#ef4444", fontSize: 12, fontWeight: "600" }}>연결 해제</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
+                      <TouchableOpacity onPress={async () => { const r = await cloudPushCurrentSlot({ silent: false }); if (r.ok) Alert.alert("백업 완료", `클라우드에 저장했어요 (rev ${r.rev}).`); }}
+                        disabled={cloudSyncStatus === "syncing"}
+                        style={{ flex: 1, backgroundColor: C.primary, padding: 11, borderRadius: 10, alignItems: "center", opacity: cloudSyncStatus === "syncing" ? 0.6 : 1 }}>
+                        <Text style={{ color: "#fff", fontWeight: "700", fontSize: 13 }}>⬆️ 지금 백업</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => cloudPullCurrentSlot({ silent: false })}
+                        disabled={cloudSyncStatus === "syncing"}
+                        style={{ flex: 1, backgroundColor: C.bg, padding: 11, borderRadius: 10, alignItems: "center", borderWidth: 1, borderColor: C.line, opacity: cloudSyncStatus === "syncing" ? 0.6 : 1 }}>
+                        <Text style={{ color: C.text, fontWeight: "700", fontSize: 13 }}>⬇️ 클라우드에서 복원</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <TouchableOpacity onPress={() => cloudToggleAuto(!cloudEnabled)}
+                      style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 6 }}>
+                      <Text style={{ color: C.text, fontSize: 13, flex: 1 }}>자동 동기화 (백그라운드 백업 · 복귀 시 최신 확인)</Text>
+                      <View style={{ width: 44, height: 26, borderRadius: 13, backgroundColor: cloudEnabled ? C.primary : C.line, justifyContent: "center", paddingHorizontal: 3, alignItems: cloudEnabled ? "flex-end" : "flex-start" }}>
+                        <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: "#fff" }} />
+                      </View>
+                    </TouchableOpacity>
+                    <Text style={{ color: C.sub, fontSize: 10, lineHeight: 15, marginTop: 6 }}>
+                      ⚠️ 베타 — 같은 슬롯을 두 기기에서 동시에 편집하면 한쪽 변경이 덮어써질 수 있어요(번갈아 사용 권장). 복원은 실패 시 원본을 자동 복구해요.
+                    </Text>
+                  </>)}
+                </>)}
+              </View>
+
               {/* 🆕 v7.28.16: 미태깅 작품 일괄 AI 태그 */}
               <TouchableOpacity
                 onPress={openBatchTagModal}

@@ -174,8 +174,19 @@
 3. **App.jsx**의 `GOOGLE_OAUTH_CLIENT_ID`에 발급받은 클라이언트 ID 입력.
 4. 작업 브랜치에서 `npx expo install expo-auth-session expo-web-browser expo-crypto` 실행해 **SDK 54 정확 버전 핀**(package.json 임시 버전 교정) 후 EAS preview 빌드.
 
-### ⏳ Increment 2 (다음 — 오케스트레이터 + UI + AppState, 온디바이스 검증과 함께)
-> 데이터 손실 위험이 있는 백업/복원 경로를 건드리므로, **실기기 스모크 테스트**와 함께 진행 권장.
+### ✅ Increment 2 (완료, v7.54.1 — 코드/esbuild 검증, **온디바이스 미검증**)
+구현됨: `exportJSON(opts.returnJson/silent)`·`importJSON(directText, onSuccess)` 동작보존 리팩터(인자 없는 기존
+호출 100% 동일), push/pull 오케스트레이터(`cloudPushCurrentSlot`/`cloudPullCurrentSlot` — 스냅샷 + 자산 증분 +
+매니페스트 rev/lease), 포그라운드 리비전 비교·제안(`cloudCheckAndPrompt`), AppState 배선(백그라운드 push·복귀
+확인, 최신 클로저 ref로 stale 방지), 설정 🔌 연결에 ☁️ 클라우드 섹션(로그인/백업/복원/자동 토글/상태). 복원은
+기존 importJSON 확인 다이얼로그 + 원자 스냅샷·롤백 재사용. 자산은 복원 전 다운로드 후 기기 간 경로 재작성
+(`gallery/`·`covers/` prefix) — best-effort, 데이터 무위험. **실기기 스모크 테스트 필수**(아래 체크리스트).
+
+> ⚠️ 데이터 손실 위험이 있는 백업/복원 경로를 건드리므로, 신뢰 전 **실기기 스모크 테스트** 필수.
+> 알려진 v1 한계: ① 같은 슬롯 동시 편집 시 스냅샷 LWW(번갈아 사용 권장) ② 대용량 자산은 base64 업로드(메모리)
+> — resumable 업로드는 후속 ③ cover_library 테이블 자체는 백업 비포함(표지 표시는 novels.cover_image 경로 재작성으로 동작).
+
+### (참고) 원래 Increment 2 배선 스펙
 
 1. **`exportJSON` 리팩터(동작 보존):** payload 빌드부를 내부 함수 `buildFullBackupPayload()`로 추출 →
    `exportJSON`은 그대로 공유, 클라우드 push는 같은 함수로 payload 객체 획득(전 섹션 PP/PC/AW/TM/TR/PR/FD/NF/GI/RS/VL/VQ/PL/CE 포함 = 완전 백업).
