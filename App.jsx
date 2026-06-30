@@ -2,9 +2,25 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.53.4 (메타 보강으로 필터 실동작 + 플랫폼 설정 경고)                     ║
+ * ║  버전: 7.53.5 (검색어 품질 — 제목 단어 마이닝 + 시드 포괄화)                     ║
  * ║  최종 수정: 2026-06-30                                                        ║
  * ║  총 라인 수: 약 74,560줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔧 v7.53.5 검색 키워드 품질 — 제목 마이닝 + 시드 포괄화 (2026-06-30)            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 플랫폼 검색이 제목·작가 위주이고 파이프라인도 제목 관련도로 점수 매김 → 서술형    ║
+ * ║ 태그는 검색에 무의미(이미 카테고리 기본 OFF). 실제 '제목에 나오는 소재어'를       ║
+ * ║ 더 잘 잡도록 두 가지 보강:                                                       ║
+ * ║ • (A) 제목 단어 마이닝 — 검색 결과 작품 '제목'을 휴리스틱 토큰화(괄호/기호 제거·   ║
+ * ║   조사 꼬리 정리·불용어/잡음 제외)해 한 배치에서 2회↑ 재등장한 소재어를           ║
+ * ║   web_reco_keywords(source='title')로 수확 → 탐험 풀에 환류(에코챔버 역가중 공유).║
+ * ║   수확 풀 탭에 '제목×N'으로 표시·정리 가능. (형태소분석기 없는 휴리스틱이라        ║
+ * ║   굴절형 일부는 누락 = best-effort.)                                             ║
+ * ║ • (B) 시드 포괄화 — SUB/MAJOR_GENRES를 '검색용'으로 쓸 때만 슬래시 결합형 분해     ║
+ * ║   ('황녀/황자'→황녀·황자)와 '물/류' 핵심형 추가('착각물'→착각). 원본 분류 어휘는   ║
+ * ║   불변(괴물·보물 등 2글자 실단어는 base가 1글자→길이필터로 안전 제외).            ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -16471,6 +16487,44 @@ const WEB_RECO_MAX_KEYWORDS = 3;                   // 한 번 가져올 때 검�
 const WEB_RECO_ENRICH_CAP = 10;                    // 🌐 v7.53.4: 콘텐츠 필터용 메타 보강 후보 상한(지연 제한)
 // 수확 시 제외할 잡음 키워드(연령/독점/공모전/형식 등 — 작품 검색어로 부적합)
 const WEB_RECO_JUNK_KEYWORDS = ["19","19금","독점","무료","연재","완결","연재중","단행본","성인","공모전","웹툰","웹소설","외전","단편","장편","무료연재","유료"];
+// 🌐 v7.53.5(B): 시드 어휘를 '검색용'으로 쓸 때만 포괄화 — 원본 어휘(분류/표시용)는 그대로 두고 여기서만 변형.
+//   슬래시 결합형 분해("황녀/황자"→황녀·황자)와 '물/류' 접미사 핵심형 추가(착각물→착각). 1글자 base는 호출부 길이필터(≥2)가 거른다.
+function expandSearchSeeds(term) {
+  const t = String(term == null ? "" : term).trim();
+  if (!t) return [];
+  const out = new Set();
+  const parts = t.split(/[/·]/).map((s) => s.trim()).filter(Boolean);
+  for (const p of (parts.length ? parts : [t])) {
+    out.add(p);
+    const m = p.match(/^(.+?)(물|류)$/);
+    if (m && m[1].length >= 2) out.add(m[1]); // 착각물→착각 (괴물·보물 등 2글자 실단어는 base가 1글자라 길이필터로 제거됨)
+  }
+  return [...out];
+}
+// 🌐 v7.53.5(A): 검색 결과 '제목'에서 소재어 마이닝(형태소 분석기 없이 휴리스틱). 한 배치에서 2회↑ 등장한
+//   콘텐츠 단어만 수확(일회성 잡음 배제). 결과는 web_reco_keywords(source='title')로 누적 → 탐험 풀에 환류.
+const TITLE_MINE_STOP = new Set(["그리고","그런데","하지만","그래서","그러나","나는","내가","우리","당신","그녀","그는","너는","이것","저것","그것","여기","거기","저기","정말","너무","아주","매우","모든","어떤","무슨","그냥","다시","이제","오늘","내일","어제","모두","사실","결국","드디어","과연","역시","대체","이번","저번","지난","이런","저런","그런","어느","무엇","누가","언제","어디","그대","그날","그때","마지막","처음","시작","이야기","우리는","그들","그들의","당신은"]);
+function mineTitleKeywords(titles) {
+  const counts = new Map();
+  for (const raw of (titles || [])) {
+    let t = String(raw == null ? "" : raw);
+    if (!t) continue;
+    t = t.replace(/[\[\]()<>《》〈〉「」『』{}~!?.,:;"'’“”…·\-—_/\\|+*=@#$%^&]/g, " ");
+    for (let tok of t.split(/\s+/)) {
+      tok = tok.trim();
+      if (!tok || !/[가-힣]/.test(tok)) continue;            // 한글 포함 토큰만(숫자/영문 단독 제외)
+      tok = tok.replace(/(이라는|으로|에서|에게|한테|이라|에는)$/, ""); // 흔한 다글자 조사 꼬리
+      tok = tok.replace(/(의|는|은|이|가|을|를|에|도|로|와|과|만|랑|들)$/, ""); // 흔한 단글자 조사/복수 꼬리
+      if (tok.length < 2 || tok.length > 7) continue;
+      if (TITLE_MINE_STOP.has(tok) || WEB_RECO_JUNK_KEYWORDS.includes(tok)) continue;
+      counts.set(tok, (counts.get(tok) || 0) + 1);
+    }
+  }
+  // 한 배치에서 2회↑만 채택(일회성 잡음 배제)
+  const out = new Map();
+  for (const [kw, c] of counts) if (c >= 2) out.set(kw, c);
+  return out;
+}
 // 제목 정규화(dedup용) — 공백·기호·시즌/외전 토큰 제거
 function normalizeWorkTitle(t) {
   return String(t == null ? "" : t)
@@ -42623,6 +42677,18 @@ function AppContent() {
           [kw, c, now, now, c, now]
         );
       }
+      // 🌐 v7.53.5(A): 결과 '제목'에서 소재어 마이닝 → source='title'로 누적(탐험 풀에 환류, 에코챔버 역가중 공유).
+      try {
+        const tc = mineTitleKeywords((results || []).map((r) => r && r.title));
+        for (const [kw, c] of tc) {
+          if (WEB_RECO_JUNK_KEYWORDS.includes(kw)) continue;
+          await exec(
+            `INSERT INTO web_reco_keywords (keyword, source, hit_count, last_seen, first_seen) VALUES (?, 'title', ?, ?, ?)
+             ON CONFLICT(keyword) DO UPDATE SET hit_count = hit_count + ?, last_seen = ?;`,
+            [kw, c, now, now, c, now]
+          );
+        }
+      } catch (e) { console.warn("title harvest 오류:", e); }
     } catch (e) { console.warn("harvest 오류:", e); }
   }
 
@@ -42638,8 +42704,9 @@ function AppContent() {
       if (!kw || kw.length < 2 || kw.length > 14 || banned.has(kw)) return;
       pool.set(kw, Math.max(pool.get(kw) || 0, w));
     };
-    if (ks.subGenres !== false) for (const g of (typeof SUB_GENRES !== "undefined" ? SUB_GENRES : [])) add(g, 1.0);
-    if (ks.majorGenres !== false) for (const g of (typeof MAJOR_GENRES !== "undefined" ? MAJOR_GENRES : [])) add(g, 0.8);
+    // 🌐 v7.53.5(B): 시드는 검색용 포괄화(슬래시 분해·'물/류' 핵심형)를 거쳐 추가.
+    if (ks.subGenres !== false) for (const g of (typeof SUB_GENRES !== "undefined" ? SUB_GENRES : [])) for (const s of expandSearchSeeds(g)) add(s, 1.0);
+    if (ks.majorGenres !== false) for (const g of (typeof MAJOR_GENRES !== "undefined" ? MAJOR_GENRES : [])) for (const s of expandSearchSeeds(g)) add(s, 0.8);
     // 🌐 v7.53: 서재 태그는 카테고리 on/off 통과분만(검색 부적합 카테고리·미분류 기본 제외 → '후반부붕괴'·'사도' 차단).
     //   🌐 v7.53.1: 같은 태그 반복 분류 방지(중복 제거 + 분류 cache 공유).
     try { const seen = new Set(); for (const n of (list || [])) for (const t of String(n.tags || "").split(",").map((s) => s.trim()).filter(Boolean)) { if (seen.has(t)) continue; seen.add(t); if (recoTagAllowed(t, ks, catCache)) add(t, 1.1); } } catch {}
@@ -57910,7 +57977,7 @@ async function importJSON() {
                     rows.map((r) => (
                       <TouchableOpacity key={r.keyword} activeOpacity={0.7} onPress={() => deleteHarvestKeyword(r.keyword)} style={{ flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, backgroundColor: C.chip, borderWidth: 1, borderColor: C.line }}>
                         <Text style={{ color: C.text, fontSize: 12 }}>{r.keyword}</Text>
-                        <Text style={{ color: C.sub, fontSize: 9.5 }}>{r.source === "ai" ? "AI" : r.source === "harvest" ? `×${r.hit_count}` : (r.source || "")}</Text>
+                        <Text style={{ color: C.sub, fontSize: 9.5 }}>{r.source === "ai" ? "AI" : r.source === "title" ? `제목×${r.hit_count}` : r.source === "harvest" ? `×${r.hit_count}` : (r.source || "")}</Text>
                         <Text style={{ color: C.sub, fontSize: 12 }}>✕</Text>
                       </TouchableOpacity>
                     ))}
