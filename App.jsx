@@ -2,9 +2,20 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.56.7 (정보 불러오기 모달 '선택 적용' 버튼 내비바 가림 수정, 베타)        ║
+ * ║  버전: 7.56.8 (불러오기 모달 버튼 내비바 가림 + 버튼 눌러야 올라오던 점프 수정)   ║
  * ║  최종 수정: 2026-07-01                                                        ║
  * ║  총 라인 수: 약 76,900줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.56.8 '정보 불러오기' 모달 — 버튼 점프(리렌더 의존) 제거 (2026-07-01)      ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ v7.56.7(내비바 인셋)에 이어, '버튼을 눌러야 선택적용이 위로 올라오던' 점프의       ║
+ * ║ 진짜 원인 제거: ScrollView flexShrink는 첫 렌더에 내용 크기로 축소가 안 돼 카드가   ║
+ * ║ 최대높이로 남고, 아무 setState(체크박스 등)로 리렌더돼야 축소되며 버튼이 올라옴.    ║
+ * ║ → ScrollView를 픽셀 maxHeight(window.height*0.6)로 바꿔 첫 렌더부터 min(내용,상한)  ║
+ * ║ 으로 정확히 잡음. 리렌더 없이도 카드·버튼 위치 확정(점프 소멸). 스크롤 동작 유지.   ║
+ * ║ esbuild 통과. APP_VERSION 7.53.8 유지(베타).                                     ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -75778,8 +75789,11 @@ async function importJSON(directText, onSuccess, onSettled) {
                 <Text style={{ color: C.sub, fontWeight: "700", fontSize: 12 }}>전체 해제</Text>
               </TouchableOpacity>
             </View>
-            {/* 🔧 v7.52.0: flexShrink로 스크롤 영역을 카드 안에 가두어 '선택 적용' 버튼이 항상 보이도록(토글 전 스크롤 불가 버그 수정) */}
-            <ScrollView style={{ flexShrink: 1 }} showsVerticalScrollIndicator={true} contentContainerStyle={{ paddingBottom: 4 }}>
+            {/* 🔧 v7.52.0: 스크롤 영역을 카드 안에 가두어 '선택 적용' 버튼이 항상 보이도록(토글 전 스크롤 불가 버그 수정).
+                 🛠️ v7.56.8: flexShrink→ScrollView 픽셀 maxHeight로 교체 — flexShrink는 첫 렌더에 내용으로 축소가 안 돼
+                 카드가 최대높이로 남고 footer 버튼이 밑으로 내려갔다가, 아무 버튼이나 눌러 리렌더되면 그제서야 축소되며
+                 버튼이 튀어 올라오던 '점프' 현상 원인. maxHeight면 첫 렌더부터 min(내용, 상한)으로 정확히 잡혀 점프 제거. */}
+            <ScrollView style={{ maxHeight: Math.round(Dimensions.get("window").height * 0.6) }} showsVerticalScrollIndicator={true} contentContainerStyle={{ paddingBottom: 4 }}>
               {(scrapeModal?.items || []).map((it, idx) => (
                 <TouchableOpacity key={it.key} activeOpacity={0.7}
                   onPress={() => setScrapeModal(prev => prev ? { ...prev, items: prev.items.map((x, i) => i === idx ? { ...x, checked: !x.checked } : x) } : prev)}
