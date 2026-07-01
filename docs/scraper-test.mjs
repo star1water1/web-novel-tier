@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, applyEpisodeSplitToMeta, parseKakaoProductList, parseKakaoViewerDate, parseKakaoOverview, kakaoSeriesIdFromUrl, parseMunpiaEntries, parseMunpiaNovelInfo, munpiaIdFromUrl, SCRAPER_HEADERS, SCRAPER_UA, parseNaverWebtoonSearch, extractNaverWebtoonItems, naverWebtoonItemToMeta, WEBTOON_SEARCH_PLATFORMS, naverNormalizeDate, naverDate2ToYear, parseNaverWebtoonStartYear, coverUrlHighRes };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, applyEpisodeSplitToMeta, parseKakaoProductList, parseKakaoViewerDate, parseKakaoOverview, kakaoSeriesIdFromUrl, parseMunpiaEntries, parseMunpiaNovelInfo, munpiaIdFromUrl, SCRAPER_HEADERS, SCRAPER_UA, parseNaverWebtoonSearch, extractNaverWebtoonItems, naverWebtoonItemToMeta, WEBTOON_SEARCH_PLATFORMS, naverNormalizeDate, naverDate2ToYear, parseNaverWebtoonStartYear, coverUrlHighRes, isImplausibleEpisodeDrop };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -140,6 +140,38 @@ eq("문피아 구형 .jpgtb.jpg→.jpg", cov("https://cdn1.munpia.com/files/atta
 // 비-URL/로컬은 그대로
 eq("로컬 file:// 무변", cov("file:///data/cover/x.jpg"), "file:///data/cover/x.jpg");
 eq("빈 값 무변", cov(""), "");
+
+// ── 🛡️ v7.56.6 회차수 무결성 (applyEpisodeSplitToMeta 외전≤본편 가드 + isImplausibleEpisodeDrop) ──
+// (a) 외전이 본편보다 많음(880/900) → split 불신: 차감 스킵·total 유지·gaidenCount 미설정
+{
+  const m = S.applyEpisodeSplitToMeta({ totalEpisodes: 900 }, { hasGaiden: true, gaidenCount: 880 });
+  eq("외전>본편 → total 유지(900)", m.totalEpisodes, 900);
+  eq("외전>본편 → gaidenCount 미설정", m.gaidenCount, undefined);
+}
+// (b) 정상 외전(30/900) → 본편 차감 적용
+{
+  const m = S.applyEpisodeSplitToMeta({ totalEpisodes: 900 }, { hasGaiden: true, gaidenCount: 30 });
+  eq("정상 외전 → 본편 차감(870)", m.totalEpisodes, 870);
+  eq("정상 외전 → gaidenCount 기록(30)", m.gaidenCount, 30);
+}
+// (c) 경계(gaiden=total*0.5=450, 과반 아님) → 차감 적용
+{
+  const m = S.applyEpisodeSplitToMeta({ totalEpisodes: 900 }, { hasGaiden: true, gaidenCount: 450 });
+  eq("외전=본편 경계(450) → 차감(450)", m.totalEpisodes, 450);
+}
+// (d) 리디 noTotalAdjust(외전 별도시리즈) → 비율가드 비적용·차감 안 함·gaidenCount 기록
+{
+  const m = S.applyEpisodeSplitToMeta({ totalEpisodes: 10 }, { hasGaiden: true, gaidenCount: 50 }, { noTotalAdjust: true });
+  eq("리디 noTotalAdjust → total 유지(10)", m.totalEpisodes, 10);
+  eq("리디 noTotalAdjust → gaidenCount 기록(50)", m.gaidenCount, 50);
+}
+// isImplausibleEpisodeDrop — 쓰기 경계 하향 가드
+eq("급감 차단 900→7", S.isImplausibleEpisodeDrop(900, 7), true);
+eq("성장 허용 7→900", S.isImplausibleEpisodeDrop(7, 900), false);
+eq("소폭 정정 허용 900→880", S.isImplausibleEpisodeDrop(900, 880), false);
+eq("소량작품 무가드 10→3(cur<20)", S.isImplausibleEpisodeDrop(10, 3), false);
+eq("반토막 경계 900→450 허용", S.isImplausibleEpisodeDrop(900, 450), false);
+eq("반토막 직하 900→449 차단", S.isImplausibleEpisodeDrop(900, 449), true);
 const np = S.scraperDetectBlock(403, fx("novelpia-403-awselb.html"));
 eq("노벨피아 403(nginx) → forbidden", { blocked: np.blocked, kind: np.kind }, { blocked: true, kind: "forbidden" });
 const mp = S.scraperDetectBlock(403, fx("munpia-cf-challenge.html"));

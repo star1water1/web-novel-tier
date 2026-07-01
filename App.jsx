@@ -2,9 +2,28 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.56.5 (표지 고화질 일괄 재취득 + 네이버웹툰 표지 상한 확인, 베타)         ║
+ * ║  버전: 7.56.6 (회차수 손상 방지 + 감지·복구 — 재취득/덮어쓰기, 베타)             ║
  * ║  최종 수정: 2026-06-30                                                        ║
- * ║  총 라인 수: 약 76,850줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 76,900줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛡️ v7.56.6 회차수 손상(재취득/덮어쓰기) 방지 + 감지·복구 (2026-06-30)          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 재취득/덮어쓰기 시 수백 화가 한 자릿수로 깎이고, 감지·복구 수단이 없던 문제 해결.  ║
+ * ║ 원인: 쓰기 길목(applyScrapedUpdateToWork overwrite)에 하향 가드 부재 + 작은 값의  ║
+ * ║ 출처(reconcile 권위 오선정 M2 / 스크랩 소량 M3 / split 과다차감 M1).             ║
+ * ║ • Layer A(근본·catch-all): overwrite 쓰기 경계 가드 — isImplausibleEpisodeDrop   ║
+ * ║   (확립 회차 반토막 이하 급감 차단, 성장·소폭은 허용) + 외전 폭증(외전>본편) 차단. ║
+ * ║   차단 건수는 완료 알림으로 안내('회차수 점검·복구'로 유도, 조용한 무시 방지).    ║
+ * ║ • Layer B(원천 sanity): applyEpisodeSplitToMeta — gaidenCount>total*0.5(외전>본편)║
+ * ║   면 split 불신(차감·외전기록 스킵, raw total 유지). 한 자릿수 붕괴 원천 차단.     ║
+ * ║ • Layer C(감지·복구): 기존 '외전 회차수 보정'을 '회차수 점검·복구'로 확장 —       ║
+ * ║   재취득 신뢰값보다 본편이 비정상적으로 작으면(붕괴) 상향 복구 후보(🛟, 리뷰 게이트).║
+ * ║   Layer B로 재취득값이 신뢰 가능해져, 기본 자동갱신(grow-only)도 자연 상향 복구.  ║
+ * ║ • 기존 grow-only 철학·v7.49.5 '본편 비건드림'과 정합. reconcile 권위 재설계는      ║
+ * ║   회귀위험으로 의도적 제외(경계 가드가 피해 차단). scraper-test 12 assert 추가.    ║
+ * ║ esbuild 통과·회귀 무변. APP_VERSION 7.53.8 유지(베타).                           ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -16927,6 +16946,14 @@ async function fetchMunpiaByNo(id, opts = {}) {
   } catch { return null; } finally { cleanup(); }
 }
 // 🆕 v7.41.1: 분리 결과(split)를 meta에 적용(네이버·노벨피아 공통). 본편 완결일·연도, 외전 회차수·시작/완결일·상태, total=본편(전체-외전).
+// 🛡️ v7.56.6: 회차수 무결성 상수/헬퍼.
+//   GAIDEN_MAX_RATIO: '외전 ≤ 본편'은 도메인 진실 — 외전(곁가지)이 전체의 과반이면 윈도캡/제목오탐으로 과다검출된 것.
+//   isImplausibleEpisodeDrop: 확립된(≥20) 회차가 반토막 이하로 깎이는 자동 쓰기는 붕괴로 간주(재취득 사고 차단).
+const GAIDEN_MAX_RATIO = 0.5;
+function isImplausibleEpisodeDrop(cur, next) {
+  const c = Number(cur) || 0, n = Number(next) || 0;
+  return c >= 20 && n < c * 0.5;
+}
 function applyEpisodeSplitToMeta(meta, split, opts) {
   if (!meta || !split) return meta;
   // 🆕 v7.49.13: 일괄등록(묶음 재출간) 신호 전파 — reconcileWork가 이 링크를 완결일/연도 기준에서 제외하는 데 사용.
@@ -16938,15 +16965,20 @@ function applyEpisodeSplitToMeta(meta, split, opts) {
     if (y >= 1990 && y <= 2099) meta.endYear = y;
   }
   if (split.hasGaiden) {
-    meta.gaidenCount = split.gaidenCount;
-    meta.gaidenStartAt = split.gaidenStartAt;
-    meta.gaidenCompletedAt = split.gaidenCompletedAt;
-    meta.gaidenStatus = split.gaidenStatus || "completed"; // 분리기가 외전 연재상태 알면(리디) 반영, 아니면 완결 기본(사용자 편집 가능)
     // 🆕 v7.41.2: 회차모델(네이버·노벨피아)은 외전이 total에 포함되어 본편=전체-외전으로 보정.
     //   리디는 외전이 '별도 시리즈'라 본편 권수에 안 섞임 → noTotalAdjust로 보정 생략.
-    if (!(opts && opts.noTotalAdjust)) {
-      const total = Number(meta.totalEpisodes) || 0;
-      if (total > split.gaidenCount) meta.totalEpisodes = total - split.gaidenCount; // 본편 회차수
+    const adjusts = !(opts && opts.noTotalAdjust);
+    const total = Number(meta.totalEpisodes) || 0;
+    // 🛡️ v7.56.6: 외전 ≤ 본편 sanity — 차감형(회차모델)에서 gaidenCount가 total의 과반이면 윈도캡(네이버 display=300)
+    //   ·제목 오탐으로 외전 과다검출된 것 → split 불신: 차감·외전기록 모두 스킵(raw total 유지, gaidenCount 미설정으로 기존 정본 비클로버).
+    //   리디(noTotalAdjust=외전 별도시리즈)는 차감을 안 하므로 비율가드 비적용. (한 자릿수 붕괴를 원천 차단.)
+    const implausibleSplit = adjusts && total > 0 && split.gaidenCount > total * GAIDEN_MAX_RATIO;
+    if (!implausibleSplit) {
+      meta.gaidenCount = split.gaidenCount;
+      meta.gaidenStartAt = split.gaidenStartAt;
+      meta.gaidenCompletedAt = split.gaidenCompletedAt;
+      meta.gaidenStatus = split.gaidenStatus || "completed"; // 분리기가 외전 연재상태 알면(리디) 반영, 아니면 완결 기본(사용자 편집 가능)
+      if (adjusts && total > split.gaidenCount) meta.totalEpisodes = total - split.gaidenCount; // 본편 회차수
     }
   }
   return meta;
@@ -39425,6 +39457,8 @@ function AppContent() {
   const [bulkCorrectionCandidates, setBulkCorrectionCandidates] = useState([]); // [{id,planned,table,title,main:{from,to}|null,gaiden:{from,to}|null}]
   const [bulkCorrectionExcluded, setBulkCorrectionExcluded] = useState(() => new Set()); // 검토에서 제외한 작품 id
   const bulkUpdateCancelRef = useRef(false);
+  // 🛡️ v7.56.6: 자동갱신(덮어쓰기)에서 비합리적 회차 급감을 차단한 작품 수 — 완료 알림에 표시(조용한 무시 방지).
+  const episodeGuardRef = useRef(0);
   // 🖼️ v7.56.5: 기존 표지 고화질 일괄 재취득(소급) — coverUrlHighRes 변형은 신규 저장에만 적용되므로 기존 표지 갱신용.
   const coverHiResCancelRef = useRef(false);
   const [coverHiResProgress, setCoverHiResProgress] = useState(null); // {current,total,updated,skipped,failed} | null
@@ -47317,8 +47351,16 @@ function AppContent() {
       // 🔧 v7.49.16: 완결→비완결 강등 시에도 완결일/연도는 '보존'(사용자 수동 입력 보호) — work_status만 위 분기에서 갱신.
       //   이전엔 0으로 삭제 → 단일 링크의 비완결 관측(플랫폼 표기차·오파싱)으로 사용자가 입력한 완결일이 날아가던 문제. 자기교정보다 보존 우선.
       // 회차·외전 — 단일 권위 링크에서 원자적(혼합 금지 → 본편+외전 정합·교차오염 차단)
-      if (rec.totalEpisodes != null && rec.totalEpisodes > 0 && rec.totalEpisodes !== (Number(work.total_episodes) || 0)) setCol("total_episodes", rec.totalEpisodes, `회차 ${Number(work.total_episodes) || 0}→${rec.totalEpisodes}`);
-      if (rec.gaidenCount != null) { // null=권위 링크 외전 미관측 → 정본 유지(오클리어 방지)
+      // 🛡️ v7.56.6: 비합리적 회차 급감 차단 — 권위 링크 오선정(M2: 단행본 등 소량편집)·스크랩 소량(M3)으로
+      //   확립된 수백 화가 한 자릿수로 깎이는 사고 방지. 성장·소폭 정정은 허용, 비합리 급감은 스킵(보정 리뷰로 유도)+집계.
+      const _curEpOv = Number(work.total_episodes) || 0;
+      const _epChanged = rec.totalEpisodes != null && rec.totalEpisodes > 0 && rec.totalEpisodes !== _curEpOv;
+      const _epGuarded = _epChanged && isImplausibleEpisodeDrop(_curEpOv, rec.totalEpisodes); // 급감=권위 링크 의심
+      if (_epGuarded) episodeGuardRef.current++;
+      else if (_epChanged) setCol("total_episodes", rec.totalEpisodes, `회차 ${_curEpOv}→${rec.totalEpisodes}`);
+      // 외전: 본편 급감이 차단됐으면 권위 링크 자체가 의심 → 외전도 스킵. 그 외엔 외전>본편(현재/신규 중 큰 값) 폭증만 차단.
+      const _effTotal = Math.max(_curEpOv, Number(rec.totalEpisodes) || 0);
+      if (!_epGuarded && rec.gaidenCount != null && !(rec.gaidenCount > 0 && _effTotal > 0 && rec.gaidenCount > _effTotal)) { // null=권위 링크 외전 미관측 → 정본 유지(오클리어 방지)
         const curGc = Number(work.gaiden_total_episodes) || 0;
         if (rec.gaidenCount !== curGc) setCol("gaiden_total_episodes", rec.gaidenCount, `외전 ${rec.gaidenCount}화`);
         if ((Number(rec.gaidenStartAt) || 0) !== (Number(work.gaiden_start_at) || 0)) setCol("gaiden_start_at", Number(rec.gaidenStartAt) || 0);
@@ -47428,6 +47470,7 @@ function AppContent() {
     if (!works.length) { Alert.alert("일괄 갱신", platSet ? "선택한 플랫폼에 링크 있는 작품이 없어요." : "작품 링크가 있는 작품이 없어요.\n‘링크 연결’로 먼저 매핑해 주세요."); return; }
     setBulkUpdateBusy(true);
     bulkUpdateCancelRef.current = false;
+    episodeGuardRef.current = 0; // 🛡️ v7.56.6: 회차 급감 차단 카운터 리셋
     setBulkUpdateStage("running");
     setBulkUpdateResults([]);
     setBulkUpdateFailed(0);
@@ -47464,6 +47507,10 @@ function AppContent() {
     const nDropped = results.filter(r => r.changes.some(c => c.includes("연중 전환"))).length;
     if (nComplete || nDropped) {
       Alert.alert("📢 상태 변경 알림", [nComplete ? `🎉 완결 전환 ${nComplete}개` : "", nDropped ? `⏸ 연중 전환 ${nDropped}개` : ""].filter(Boolean).join("\n") + "\n\n새로 완결/연중된 작품이 있어요. 완료 목록에서 확인하세요.");
+    }
+    // 🛡️ v7.56.6: 비합리적 회차 급감을 차단한 작품이 있으면 안내(조용한 무시 방지) → '회차수 점검·복구'로 유도.
+    if (episodeGuardRef.current > 0) {
+      Alert.alert("🛡️ 회차 급감 차단", `${episodeGuardRef.current}개 작품에서 회차가 비정상적으로 크게 줄어드는 갱신을 막았어요(기존 값 유지).\n\n실제로 줄여야 한다면 ‘회차수 점검·복구’에서 확인해 주세요.`);
     }
   }
   // 🖼️ v7.56.5: 기존 표지 고화질로 다시 받기 — 링크 있는 본목록 작품을 연재처에서 재취득해 표지만 교체.
@@ -47517,13 +47564,23 @@ function AppContent() {
   //   외전→0(재스크랩이 외전을 못 찾음)은 윈도 누락 위험이라 제외(newGc>0일 때만 정정).
   function detectEpisodeOvercount(work, meta) {
     if (!meta) return null;
+    const curEp = Number(work.total_episodes) || 0;
     const curGc = Number(work.gaiden_total_episodes) || 0, newGc = Number(meta.gaidenCount) || 0;
+    // 🆕 v7.56.6: 과소(붕괴) 복구 — 덮어쓰기 사고로 본편이 한 자릿수로 깎인 경우. 재취득 신뢰값(target, Layer B로 붕괴 안 함)이
+    //   저장값보다 비합리적으로 크면 상향 복구 후보(리뷰 게이트). 파괴적 붕괴만 감지(target≥30 & 저장<절반 & 격차≥20).
+    //   부풀려진 외전도 동반 정정(외전이 본편 미만일 때만 신뢰, 아니면 0). v7.49.5 '본편 비건드림' 원칙과 분리된 '명시적 복구' 경로.
+    const target = Number(meta.totalEpisodes) || 0;
+    if (target >= 30 && curEp > 0 && curEp < target * 0.5 && (target - curEp) >= 20) {
+      const main = { from: curEp, to: target, restore: true };
+      const newGcSafe = (newGc > 0 && newGc < target * 0.5) ? newGc : 0;
+      const gaiden = (curGc !== newGcSafe) ? { from: curGc, to: newGcSafe } : null;
+      return { main, gaiden };
+    }
     if (!(newGc > 0 && newGc !== curGc)) return null; // 외전→0(재스크랩 미발견)은 윈도 누락 위험이라 제외
     const gaiden = { from: curGc, to: newGc };
     // 🔧 v7.49.6: 외전 변화량(delta)만큼 본편(total_episodes)을 반대로 조정해 '본편+외전=전체' 일관성 유지(초과/이중계상 방지).
     //   본편을 재스크랩값(윈도 캡으로 신뢰 불가)으로 맞추지 않고 '현재 본편 − 외전증가분'으로 계산 → 깎임이 작고(=외전 변화량) 정확.
     //   외전이 늘면 본편 그만큼 감소, 줄면 본편 그만큼 증가. 본편값이 없으면(0) 본편은 건드리지 않음.
-    const curEp = Number(work.total_episodes) || 0;
     let main = null;
     if (curEp > 0) {
       const newEp = Math.max(0, curEp - (newGc - curGc));
@@ -47551,8 +47608,8 @@ function AppContent() {
         const meta = await fetchMetaForUpdate(chooseUpdateLink(w), w.title);
         const oc = detectEpisodeOvercount(w, meta);
         if (oc) {
-          cands.push({ id: w.id, planned: w._planned, table: w._planned ? "planned_novels" : "novels", title: w.title, main: oc.main, gaiden: oc.gaiden });
-          setBulkUpdateResults(prev => [...prev, { title: w.title, planned: w._planned, changes: [oc.main ? `본편 ${oc.main.from}→${oc.main.to}화` : "", oc.gaiden ? `외전 ${oc.gaiden.from}→${oc.gaiden.to}화` : ""].filter(Boolean) }]);
+          cands.push({ id: w.id, planned: w._planned, table: w._planned ? "planned_novels" : "novels", title: w.title, main: oc.main, gaiden: oc.gaiden, restore: !!(oc.main && oc.main.restore) });
+          setBulkUpdateResults(prev => [...prev, { title: w.title, planned: w._planned, changes: [oc.main ? `${oc.main.restore ? "🛟 본편 복구 " : "본편 "}${oc.main.from}→${oc.main.to}화` : "", oc.gaiden ? `외전 ${oc.gaiden.from}→${oc.gaiden.to}화` : ""].filter(Boolean) }]);
         }
       } catch (e) { failed++; setBulkUpdateFailed(failed); }
     }
@@ -76002,14 +76059,14 @@ async function importJSON(directText, onSuccess, onSettled) {
                     }} />
                   </View>
 
-                  {/* 카드 4: 외전 회차수 보정 (과대·과소) */}
+                  {/* 카드 4: 회차수 점검·복구 (과대·과소·붕괴 복구) */}
                   <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 4 }}>
-                    <Text style={{ color: C.text, fontSize: 13.5, fontWeight: "800", marginBottom: 4 }}>📊 외전 회차수 보정</Text>
+                    <Text style={{ color: C.text, fontSize: 13.5, fontWeight: "800", marginBottom: 4 }}>📊 회차수 점검·복구</Text>
                     <Text style={{ color: C.sub, fontSize: 11.5, lineHeight: 16, marginBottom: 9 }}>
-                      링크 있는 작품을 다시 가져와, 외전 회차수가 실제와 다른 작품(과대·과소)을 찾아 맞춰요. 외전이 바뀐 만큼 본편을 반대로 조정해 ‘본편+외전=전체’가 유지돼요(전체 회차는 그대로, 깎임은 외전 변화량만큼만). 후보를 검토한 뒤 적용합니다.
+                      링크 있는 작품을 다시 가져와 회차수를 점검해요. ① 외전 과대/과소는 외전 변화량만큼 본편을 반대 조정해 ‘본편+외전=전체’ 유지, ② 재취득/덮어쓰기 사고로 본편이 비정상적으로 크게 깎인 작품은 ‘복구’ 후보로 올려요. 후보를 검토한 뒤 적용합니다.
                     </Text>
-                    <OutlineButton title={`링크 있는 ${bulkUpdateStats.linked}개 외전 점검`} color={C.primary} onPress={() => {
-                      if (bulkUpdateStats.linked === 0) { Alert.alert("외전 회차수 보정", "링크 있는 작품이 없어요."); return; }
+                    <OutlineButton title={`링크 있는 ${bulkUpdateStats.linked}개 점검·복구`} color={C.primary} onPress={() => {
+                      if (bulkUpdateStats.linked === 0) { Alert.alert("회차수 점검·복구", "링크 있는 작품이 없어요."); return; }
                       runBulkOvercountScan();
                     }} />
                   </View>
@@ -76082,13 +76139,13 @@ async function importJSON(directText, onSuccess, onSettled) {
               <View>
                 {bulkCorrectionCandidates.length === 0 ? (
                   <>
-                    <Text style={{ color: C.sub, fontSize: 13, textAlign: "center", paddingVertical: 22, lineHeight: 19 }}>외전 회차수가 어긋난 작품이 없어요.{"\n"}이미 정확합니다.</Text>
+                    <Text style={{ color: C.sub, fontSize: 13, textAlign: "center", paddingVertical: 22, lineHeight: 19 }}>회차수가 어긋난 작품이 없어요.{"\n"}이미 정확합니다.</Text>
                     <PrimaryButton title="닫기" onPress={() => setBulkUpdateOpen(false)} />
                   </>
                 ) : (
                   <>
-                    <Text style={{ color: C.text, fontSize: 15, fontWeight: "800", textAlign: "center", marginBottom: 3 }}>📉 보정 후보 {bulkCorrectionCandidates.length}건</Text>
-                    <Text style={{ color: C.sub, fontSize: 12, textAlign: "center", marginBottom: 10 }}>외전·본편 현재 → 보정값(전체 회차는 유지). 탭하면 제외/포함이 바뀌어요.</Text>
+                    <Text style={{ color: C.text, fontSize: 15, fontWeight: "800", textAlign: "center", marginBottom: 3 }}>📊 점검 후보 {bulkCorrectionCandidates.length}건</Text>
+                    <Text style={{ color: C.sub, fontSize: 12, textAlign: "center", marginBottom: 10 }}>현재 → 점검값. 🛟는 사고로 깎인 본편 복구. 탭하면 제외/포함이 바뀌어요.</Text>
                     <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator={false}>
                       {bulkCorrectionCandidates.map((c) => {
                         const excluded = bulkCorrectionExcluded.has(c.id);
@@ -76100,7 +76157,7 @@ async function importJSON(directText, onSuccess, onSettled) {
                             <View style={{ flex: 1 }}>
                               <Text style={{ color: C.text, fontSize: 13, fontWeight: "700" }} numberOfLines={1}>{c.planned ? "📋 " : ""}{c.title}</Text>
                               <Text style={{ color: C.sub, fontSize: 12, marginTop: 1 }}>
-                                {[c.main ? `본편 ${c.main.from}→${c.main.to}화` : "", c.gaiden ? `외전 ${c.gaiden.from}→${c.gaiden.to}화` : ""].filter(Boolean).join(" · ")}
+                                {[c.main ? `${c.main.restore ? "🛟 본편 복구 " : "본편 "}${c.main.from}→${c.main.to}화` : "", c.gaiden ? `외전 ${c.gaiden.from}→${c.gaiden.to}화` : ""].filter(Boolean).join(" · ")}
                               </Text>
                             </View>
                           </TouchableOpacity>
