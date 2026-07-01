@@ -2,9 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.56.6 (회차수 손상 방지 + 감지·복구 — 재취득/덮어쓰기, 베타)             ║
- * ║  최종 수정: 2026-06-30                                                        ║
+ * ║  버전: 7.56.7 (정보 불러오기 모달 '선택 적용' 버튼 내비바 가림 수정, 베타)        ║
+ * ║  최종 수정: 2026-07-01                                                        ║
  * ║  총 라인 수: 약 76,900줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.56.7 '정보 불러오기' 모달 '선택 적용' 버튼 내비바 가림 수정 (2026-07-01)  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 증상(사용자 영상): 제목검색→불러오기 모달의 '선택 적용' 버튼이 처음엔 안드로이드   ║
+ * ║ 시스템 내비게이션 바에 가려져(잘려) 안 보이다가, 체크박스를 건드려 리렌더되면      ║
+ * ║ 그제서야 제자리로 올라옴. 원인: statusBarTranslucent 모달이 전체화면(내비바 포함)   ║
+ * ║ 을 채우고 카드가 세로 중앙정렬 + maxHeight 88%라, 콘텐츠가 길면 카드 하단(=footer   ║
+ * ║ 버튼)이 내비바 영역에 겹침. flexShrink ScrollView가 첫 렌더에 축소 안 되는 RN 특성.║
+ * ║ 수정: 오버레이에 하단 시스템바 인셋(screen−window height)만큼 paddingBottom +상단   ║
+ * ║ 여백. maxHeight%가 padding 반영 부모 기준이 되어 카드가 내비바 위로 들어오고,       ║
+ * ║ 버튼이 '첫 렌더부터 항상' 보임(리렌더 의존 제거). 안드로이드 gesture/3버튼 모두 대응.║
+ * ║ esbuild 통과. APP_VERSION 7.53.8 유지(베타).                                     ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -75740,7 +75754,10 @@ async function importJSON(directText, onSuccess, onSettled) {
 
       {/* 🔗 v7.28.26: 스크래퍼 확인 모달 (링크 불러오기 — 4화면 공용, ctx.apply 분기) */}
       <Modal visible={!!scrapeModal} animationType="fade" transparent statusBarTranslucent onRequestClose={() => setScrapeModal(null)}>
-        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center" }}>
+        {/* 🛠️ v7.56.7: statusBarTranslucent 모달이 전체화면을 채워 '선택 적용' 버튼이 안드로이드 내비게이션 바에 가려지던
+             문제 수정 — 하단 시스템바 인셋(screen-window)만큼 padding 확보(+상단 여백). maxHeight%는 padding 반영된
+             부모 기준이라 카드가 내비바 위로 들어와 첫 렌더부터 버튼이 항상 보임(리렌더 의존 제거). */}
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center", paddingTop: 12, paddingBottom: (Platform.OS === "android" ? Math.max(16, Math.round(Dimensions.get("screen").height - Dimensions.get("window").height)) : 12) }}>
           <TouchableOpacity style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} activeOpacity={1} onPress={() => setScrapeModal(null)} />
           <View style={{ backgroundColor: C.card, borderRadius: 20, padding: 18, width: "92%", maxWidth: 460, maxHeight: "88%" }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
