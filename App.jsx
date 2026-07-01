@@ -2,9 +2,23 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.57.3 (카카오웹툰 회차수 카드 — 웹툰 모드 노출 수정, 베타)                ║
+ * ║  버전: 7.57.4 (카카오웹툰 로그인 — page.kakao→webtoon.kakao 교정, 베타)          ║
  * ║  최종 수정: 2026-07-01                                                        ║
  * ║  총 라인 수: 약 77,000줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.57.4 카카오웹툰 회차수 — 로그인 사이트 교정(page→webtoon) (2026-07-01)     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 버그: v7.57.3 회차수 카드의 ‘세션 준비’가 기존 page.kakao(카카오페이지) 세션 모달을 ║
+ * ║ 열어, 카카오웹툰인데 카카오페이지가 떴음. page.kakao의 _kawlt 익명 토큰은 webtoon   ║
+ * ║ 회차수(gateway-kw)와 무관(다른 호스트/토큰)이라 쓸모도 없었음.                     ║
+ * ║ → 회차수 카드의 로그인 버튼을 전용 ‘카카오웹툰 로그인/열기’ 모달로 교체 —          ║
+ * ║   webtoon.kakao.com을 열어 로그인(선택). 로그인 쿠키는 sharedCookies로 회차수      ║
+ * ║   캡처 WebView와 공유돼 더 안정적. 완료 시 CookieManager.flush로 영속.             ║
+ * ║ • 오해 소지 있던 kkReady(page.kakao) 상태칩·세션 버튼 제거. 캡처는 익명으로도 시도   ║
+ * ║   (webtoon 페이지가 스스로 토큰 발급) — 로그인은 성인/독점·안정성용 선택.          ║
+ * ║ esbuild 통과. APP_VERSION 7.53.8 유지(베타).                                     ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -39744,6 +39758,7 @@ function AppContent() {
   const [kkReady, setKkReady] = useState(false); // 🆕 v7.43.0: 카카오 익명 토큰(_kawlt) 부트스트랩 완료 여부(쿠키 캡처됨)
   const [kkSessionModalOpen, setKkSessionModalOpen] = useState(false); // 🆕 v7.43.0: 카카오 세션 부트스트랩 WebView 모달
   const [kkWebtoonEp, setKkWebtoonEp] = useState(false); // 🆕 v7.57.2: 카카오웹툰 회차수 세션캡처 사용(옵트인 — 불러오기 시 세션 WebView 팝업)
+  const [kkWebtoonLoginOpen, setKkWebtoonLoginOpen] = useState(false); // 🆕 v7.57.4: 카카오웹툰(webtoon.kakao.com) 로그인/세션 WebView(선택 — 캡처와 쿠키 공유)
   useEffect(() => { globalKkWebtoonEp = kkWebtoonEp; }, [kkWebtoonEp]); // 모듈 스크래퍼가 읽는 전역과 동기화
   const [kkBusy, setKkBusy] = useState(false);
   const [kkCaptureUrl, setKkCaptureUrl] = useState(null); // 🆕 v7.44.0: 응답 가로채기 진행 중인 카카오 content URL(설정 시 캡처 WebView 마운트)
@@ -69686,36 +69701,24 @@ async function importJSON(directText, onSuccess, onSettled) {
                   ) : null}
                 </View>
 
-                {/* 🆕 v7.57.2: 카카오웹툰 회차수 — 세션 준비(page.kakao 익명 토큰) + 회차수 세션캡처 토글. 웹툰 모드 전용 위치(연결 카드가 웹툰 모드에선 숨겨져 여기 노출). */}
+                {/* 🆕 v7.57.2/🛠️v7.57.4: 카카오웹툰 회차수 — 로그인은 webtoon.kakao.com(카카오페이지 아님) + 회차수 세션캡처 토글. */}
                 <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
-                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                    <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>📚 카카오웹툰 회차수</Text>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: kkReady ? "#22c55e" : C.line }} />
-                      <Text style={{ color: kkReady ? "#22c55e" : C.sub, fontSize: 12, fontWeight: "800" }}>{kkReady ? "세션 준비됨" : "세션 준비 안 됨"}</Text>
-                    </View>
-                  </View>
+                  <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>📚 카카오웹툰 회차수</Text>
                   <Text style={{ color: C.sub, fontSize: 11.5, marginTop: 5, lineHeight: 16 }}>
-                    카카오웹툰은 상세 정보에 회차수가 없어요. 아래 스위치를 켜면 불러오기·재취득 때 작품 페이지를 잠깐 열어 회차수를 받아와요. 먼저 ‘세션 준비’를 눌러 주세요(로그인하면 더 안정적). 팝업이 뜨고 느려질 수 있어요.
+                    카카오웹툰은 상세 정보에 회차수가 없어요. 아래 스위치를 켜면 불러오기·재취득 때 작품 페이지를 잠깐 열어 회차수를 받아와요(익명으로 시도). 잘 안 되거나 성인·독점 작품이면 ‘카카오웹툰 로그인’으로 로그인해 두면 쿠키를 함께 써서 더 안정적이에요(선택).
                   </Text>
                   <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
-                    <TouchableOpacity onPress={() => setKkSessionModalOpen(true)} disabled={kkBusy} activeOpacity={0.7}
-                      style={{ paddingVertical: 9, paddingHorizontal: 16, borderRadius: 999, backgroundColor: C.primary, opacity: kkBusy ? 0.5 : 1 }}>
-                      <Text style={{ color: "#fff", fontWeight: "800", fontSize: 12.5 }}>{kkReady ? "세션 갱신" : "세션 준비"}</Text>
+                    <TouchableOpacity onPress={() => setKkWebtoonLoginOpen(true)} activeOpacity={0.7}
+                      style={{ paddingVertical: 9, paddingHorizontal: 16, borderRadius: 999, backgroundColor: C.bg, borderWidth: 1, borderColor: C.primary }}>
+                      <Text style={{ color: C.primary, fontWeight: "800", fontSize: 12.5 }}>카카오웹툰 로그인/열기</Text>
                     </TouchableOpacity>
-                    {kkReady && (
-                      <TouchableOpacity onPress={clearKkSession} disabled={kkBusy} activeOpacity={0.7}
-                        style={{ paddingVertical: 9, paddingHorizontal: 16, borderRadius: 999, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, opacity: kkBusy ? 0.5 : 1 }}>
-                        <Text style={{ color: C.sub, fontWeight: "800", fontSize: 12.5 }}>초기화</Text>
-                      </TouchableOpacity>
-                    )}
                   </View>
                   <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.line }}>
                     <Text style={{ color: C.text, fontSize: 13, fontWeight: "700", flex: 1, paddingRight: 10 }}>회차수 가져오기 (팝업·지연 있음)</Text>
                     <Switch value={kkWebtoonEp} onValueChange={(v) => { setKkWebtoonEp(v); globalKkWebtoonEp = v; saveGlobalAiConfig({ kk_webtoon_ep: v }).catch(() => {}); }} />
                   </View>
                   <Text style={{ color: C.sub, fontSize: 10, marginTop: 8, lineHeight: 14 }}>
-                    ※ 폰(로그인)에서만 동작 — 카카오가 개발망을 막아둬 검증이 폰 한정이에요. 안 채워지면 실패 시 클립보드에 복사되는 진단을 보내 주세요(파서 보정).
+                    ※ 폰에서만 동작 — 카카오가 개발망을 막아둬 검증이 폰 한정이에요. 안 채워지면 실패 시 클립보드에 복사되는 진단을 보내 주세요(파서 보정).
                   </Text>
                 </View>
               </>)}
@@ -69742,6 +69745,44 @@ async function importJSON(directText, onSuccess, onSettled) {
                   {npLoginModalOpen && (
                     <WebView
                       source={{ uri: "https://novelpia.com/login/" }}
+                      userAgent={SCRAPER_UA}
+                      sharedCookiesEnabled
+                      thirdPartyCookiesEnabled
+                      domStorageEnabled
+                      javaScriptEnabled
+                      startInLoadingState
+                      renderLoading={() => (
+                        <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "center", alignItems: "center", backgroundColor: C.bg }}>
+                          <ActivityIndicator size="large" color={C.primary} />
+                        </View>
+                      )}
+                      style={{ flex: 1, backgroundColor: C.bg }}
+                    />
+                  )}
+                </SafeAreaView>
+              </Modal>
+
+              {/* 🛠️ v7.57.4: 카카오웹툰(webtoon.kakao.com) 로그인/열기 모달 — 로그인 쿠키는 회차수 캡처 WebView와 공유(sharedCookies). page.kakao(카카오페이지)와 무관. */}
+              <Modal visible={kkWebtoonLoginOpen} animationType="slide" statusBarTranslucent onRequestClose={() => setKkWebtoonLoginOpen(false)}>
+                <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line }}>
+                    <TouchableOpacity onPress={() => setKkWebtoonLoginOpen(false)} activeOpacity={0.7} style={{ padding: 6 }}>
+                      <Text style={{ color: C.sub, fontSize: 15, fontWeight: "800" }}>✕ 닫기</Text>
+                    </TouchableOpacity>
+                    <Text style={{ color: C.text, fontSize: 15, fontWeight: "800" }}>카카오웹툰</Text>
+                    <TouchableOpacity onPress={async () => { try { await CookieManager.flush(); } catch {} setKkWebtoonLoginOpen(false); }} activeOpacity={0.7}
+                      style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, backgroundColor: C.primary }}>
+                      <Text style={{ color: "#fff", fontSize: 13, fontWeight: "800" }}>완료</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={{ paddingHorizontal: 14, paddingVertical: 8, backgroundColor: C.chip }}>
+                    <Text style={{ color: C.sub, fontSize: 11.5, lineHeight: 16 }}>
+                      카카오웹툰(webtoon.kakao.com)에 로그인해 두면 회차수 캡처가 더 안정적이에요(선택). 로그인 후 오른쪽 ‘완료’를 눌러 주세요. 로그인 정보는 휴대폰 쿠키 저장소에만 보관돼요. 로그인 없이 회차수만 시도해도 돼요.
+                    </Text>
+                  </View>
+                  {kkWebtoonLoginOpen && (
+                    <WebView
+                      source={{ uri: "https://webtoon.kakao.com/" }}
                       userAgent={SCRAPER_UA}
                       sharedCookiesEnabled
                       thirdPartyCookiesEnabled
