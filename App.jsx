@@ -2,9 +2,24 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.56.8 (불러오기 모달 버튼 내비바 가림 + 버튼 눌러야 올라오던 점프 수정)   ║
+ * ║  버전: 7.56.9 (모달 버튼 가림·점프 전수조사 — 동일 메커니즘 2건 추가 수정)        ║
  * ║  최종 수정: 2026-07-01                                                        ║
  * ║  총 라인 수: 약 76,900줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.56.9 모달 버튼 가림·점프 전수조사 + 동일 메커니즘 2건 수정 (2026-07-01)   ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ v7.56.7~8(정보 불러오기)과 '같은 메커니즘'을 전 모달 전수조사(Explore 2종, 34개    ║
+ * ║ Modal). 두 원인 = ① statusBarTranslucent 중앙정렬 모달이 전체화면을 그려 footer가  ║
+ * ║ 내비바에 가림, ② flexShrink ScrollView가 첫 렌더에 축소 안 돼 카드 최대높이+점프.  ║
+ * ║ 추가 해당 2건 수정: '🔄 회차·완결 일괄 갱신'(bulkUpdate)·'🔍 무결성 검증 결과'      ║
+ * ║ (integrityResult) — 둘 다 statusBarTranslucent 중앙정렬 + flexShrink + footer.     ║
+ * ║ → 오버레이에 하단 내비바 인셋 padding + ScrollView flexShrink→픽셀 maxHeight.       ║
+ * ║ 공용 헬퍼 modalNavPadBottom() 신설(scrapeModal 포함 3곳 공유, DRY).                ║
+ * ║ 오탐 제외: 태그선택/고급검색/태그관계편집 등은 bottom-sheet + flex:1(정상 채움) +   ║
+ * ║ 비-translucent(OS 인셋) + onShow 재측정이라 무관 → 미변경(회귀 방지).              ║
+ * ║ esbuild 통과. APP_VERSION 7.53.8 유지(베타).                                     ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -19091,6 +19106,14 @@ function authorLine(n) {
   const ar = (n && n.artist != null ? String(n.artist) : "").trim();
   if (globalSlotMode === "webtoon" && ar && ar !== a) return a ? `${a} / ${ar}` : ar;
   return a;
+}
+
+// 🛠️ v7.56.9: statusBarTranslucent 중앙정렬 모달의 하단 여백 — 안드로이드 시스템 내비게이션 바만큼 padding을 확보해
+//   카드 하단(footer 버튼)이 내비바에 가리지 않게 한다(모달이 전체화면을 그려서 생기던 가림). screen-window 차이=내비바 높이.
+//   gesture/3버튼 모두 대응(하한 16). iOS/비안드로이드는 소폭 여백(12).
+function modalNavPadBottom() {
+  if (Platform.OS !== "android") return 12;
+  try { return Math.max(16, Math.round(Dimensions.get("screen").height - Dimensions.get("window").height)); } catch { return 24; }
 }
 
 /* =========================================================
@@ -75768,7 +75791,7 @@ async function importJSON(directText, onSuccess, onSettled) {
         {/* 🛠️ v7.56.7: statusBarTranslucent 모달이 전체화면을 채워 '선택 적용' 버튼이 안드로이드 내비게이션 바에 가려지던
              문제 수정 — 하단 시스템바 인셋(screen-window)만큼 padding 확보(+상단 여백). maxHeight%는 padding 반영된
              부모 기준이라 카드가 내비바 위로 들어와 첫 렌더부터 버튼이 항상 보임(리렌더 의존 제거). */}
-        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center", paddingTop: 12, paddingBottom: (Platform.OS === "android" ? Math.max(16, Math.round(Dimensions.get("screen").height - Dimensions.get("window").height)) : 12) }}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center", paddingTop: 12, paddingBottom: modalNavPadBottom() }}>
           <TouchableOpacity style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} activeOpacity={1} onPress={() => setScrapeModal(null)} />
           <View style={{ backgroundColor: C.card, borderRadius: 20, padding: 18, width: "92%", maxWidth: 460, maxHeight: "88%" }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -75957,7 +75980,8 @@ async function importJSON(directText, onSuccess, onSettled) {
 
       {/* 🔍 v7.52.0: 무결성 검증 결과 모달 — 무엇이 문제였고 무엇을 무엇으로 고쳤는지 전체를 분류해 표시 */}
       <Modal visible={!!integrityResult} animationType="fade" transparent statusBarTranslucent onRequestClose={() => setIntegrityResult(null)}>
-        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center" }}>
+        {/* 🛠️ v7.56.9: 하단 내비바 인셋 확보 — footer '닫기'가 내비바에 가리지 않게(scrapeModal과 동일 패턴) */}
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center", paddingTop: 12, paddingBottom: modalNavPadBottom() }}>
           <TouchableOpacity style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }} activeOpacity={1} onPress={() => setIntegrityResult(null)} />
           <View style={{ backgroundColor: C.card, borderRadius: 20, padding: 18, width: "92%", maxWidth: 480, maxHeight: "88%" }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -76000,7 +76024,7 @@ async function importJSON(directText, onSuccess, onSettled) {
               return (
                 <>
                   {summary}
-                  <ScrollView style={{ flexShrink: 1 }} showsVerticalScrollIndicator={true} contentContainerStyle={{ paddingBottom: 4 }}>
+                  <ScrollView style={{ maxHeight: Math.round(Dimensions.get("window").height * 0.6) }} showsVerticalScrollIndicator={true} contentContainerStyle={{ paddingBottom: 4 }}>{/* 🛠️ v7.56.9: flexShrink→maxHeight(첫 렌더 점프 제거) */}
                     {order.map((cat) => (
                       <View key={cat} style={{ marginBottom: 12 }}>
                         <Text style={{ color: C.primary, fontSize: 13, fontWeight: "800", marginBottom: 4 }}>{LABELS[cat] || cat} · {groups[cat].length}건</Text>
@@ -76020,7 +76044,8 @@ async function importJSON(directText, onSuccess, onSettled) {
 
       {/* 🆕 v7.28.59: 회차·완결 일괄 갱신 모달 (메뉴/자동갱신/매핑/완료) */}
       <Modal visible={bulkUpdateOpen} animationType="fade" transparent statusBarTranslucent onRequestClose={closeBulkUpdate}>
-        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center" }}>
+        {/* 🛠️ v7.56.9: 하단 내비바 인셋 확보 — footer 버튼이 내비바에 가리지 않게(scrapeModal과 동일 패턴) */}
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center", paddingTop: 12, paddingBottom: modalNavPadBottom() }}>
           <View style={{ backgroundColor: C.card, borderRadius: 20, padding: 18, width: "92%", maxWidth: 480, maxHeight: "90%" }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <Text style={{ fontSize: 18, fontWeight: "800", color: C.text }}>🔄 회차·완결 일괄 갱신</Text>
@@ -76029,7 +76054,7 @@ async function importJSON(directText, onSuccess, onSettled) {
 
             {/* 🔧 v7.52.0: 작업별 카드 메뉴 — 흔한 작업(자동 갱신/링크 연결)은 앞에, 덮어쓰기·외전 보정은 '고급'으로 접음 */}
             {bulkUpdateStage === "menu" && (
-              <ScrollView style={{ flexShrink: 1 }} showsVerticalScrollIndicator={true} contentContainerStyle={{ paddingBottom: 6 }}>
+              <ScrollView style={{ maxHeight: Math.round(Dimensions.get("window").height * 0.6) }} showsVerticalScrollIndicator={true} contentContainerStyle={{ paddingBottom: 6 }}>{/* 🛠️ v7.56.9: flexShrink→maxHeight(첫 렌더 점프 제거) */}
                 <Text style={{ color: C.sub, fontSize: 12.5, marginBottom: 12, lineHeight: 18 }}>
                   총 {bulkUpdateStats.total}개 · 🔗 링크 있음 {bulkUpdateStats.linked}개 / 링크 없음 {bulkUpdateStats.unlinked}개
                 </Text>
