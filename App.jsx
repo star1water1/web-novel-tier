@@ -2,9 +2,20 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.57.5 (카카오웹툰 로그인 — 계정 로그인 화면 직행 + 진단, 베타)            ║
+ * ║  버전: 7.57.6 (카카오 로그인 버튼 — WebView 팝업창 처리, 베타)                    ║
  * ║  최종 수정: 2026-07-01                                                        ║
  * ║  총 라인 수: 약 77,000줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.57.6 카카오 로그인 버튼 안 눌림 — WebView 팝업창 처리 (2026-07-01)         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ ‘카카오웹툰 창은 열리는데 로그인 버튼이 안 눌린다’ 근본 원인: 카카오 로그인 버튼은  ║
+ * ║ window.open 팝업창으로 열리는데 react-native-webview 기본값(Android)은 새 창을      ║
+ * ║ 안 띄워 탭이 무반응. → 로그인 WebView에 setSupportMultipleWindows={false} +        ║
+ * ║ javaScriptCanOpenWindowsAutomatically 추가 → 팝업 링크가 같은 창에서 열림.         ║
+ * ║ (회차수 캡처 WebView는 버튼 클릭이 없어 무관 — 로그인 모달만 수정.)                 ║
+ * ║ esbuild 통과. APP_VERSION 7.53.8 유지(베타).                                     ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -69804,6 +69815,8 @@ async function importJSON(directText, onSuccess, onSettled) {
                       domStorageEnabled
                       javaScriptEnabled
                       originWhitelist={["*"]}
+                      setSupportMultipleWindows={false}
+                      javaScriptCanOpenWindowsAutomatically
                       startInLoadingState
                       onLoadStart={() => setKkLoginStatus("불러오는 중…")}
                       onLoadEnd={(ev) => setKkLoginStatus("열림: " + String(ev?.nativeEvent?.url || "").slice(0, 60))}
