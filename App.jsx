@@ -2,9 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.57.6 (카카오 로그인 버튼 — WebView 팝업창 처리, 베타)                    ║
+ * ║  버전: 7.57.7 (카카오웹툰 회차수 — 탐지 확장 + 진단 강화, 베타)                   ║
  * ║  최종 수정: 2026-07-01                                                        ║
  * ║  총 라인 수: 약 77,000줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.57.7 카카오웹툰 회차수 안 채워짐 — 탐지 확장 + 진단 강화 (2026-07-01)      ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 폰 제보 ‘회차수 안 채워짐’ 원인 규명용 강화(카카오 DC IP 차단→샌드박스 검증 불가).  ║
+ * ║ • 탐지 확장: HE()가 body 특정 필드 대신 URL ‘…/episodes[?]’(뷰어/단건 제외)만으로   ║
+ * ║   회차목록 응답을 잡음 → 필드명이 예상과 달라도 캡처. 파싱은 RN 파서가 판정.        ║
+ * ║ • 오탐 방지: kwep 여러 응답 중 ‘최댓값’을 3.5s 디바운스로 채택(프리뷰/페이지네이션   ║
+ * ║   소량 응답에 먼저 확정되는 것 차단). 30s 타임아웃도 bestEp 있으면 그 값으로 종료.   ║
+ * ║ • 진단 강화: 실패 시 후킹설치·/episode 요청 여부·kwep 수신 여부 + 관찰된 요청 URL    ║
+ * ║   목록 + raw 응답을 클립보드에 복사 → 어디서 막혔는지 폰에서 바로 확인 가능.        ║
+ * ║ scraper-test 429 유지. esbuild 통과. APP_VERSION 7.53.8 유지(베타).              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -16251,7 +16264,7 @@ const KAKAO_CAPTURE_JS = "(function(){" +
   "P({t:'kkdbg',u:'__run__',l:0,ov:false});" + // 매 주입 호출마다(before/after 어느 게 떴는지)
   "if(window.__kkCap){return;}window.__kkCap=1;" +
   "function H(t){return typeof t==='string'&&t.indexOf('contentHomeOverview')>-1&&(t.indexOf('onIssue')>-1||t.indexOf('startSaleDt')>-1||t.indexOf('lastSlideAddedDate')>-1||t.indexOf('\"content\"')>-1);}" +
-  "function HE(u,t){try{return String(u||'').indexOf('/episode')>-1&&typeof t==='string'&&(t.indexOf('episodeId')>-1||t.indexOf('episodeNumber')>-1||t.indexOf('\"seq\"')>-1||t.indexOf('\"asset\"')>-1);}catch(e){return false;}}" + // 🆕 v7.57.2: 회차목록 응답 탐지
+  "function HE(u,t){try{var s=String(u||''),i=s.indexOf('/episodes');return i>-1&&(s.length===i+9||s.charAt(i+9)==='?')&&s.indexOf('viewer')<0&&typeof t==='string'&&t.length>30;}catch(e){return false;}}" + // 🆕 v7.57.2/🛠️v7.57.7: 회차목록(…/episodes[?]) 응답 탐지(단건/뷰어 제외), body는 RN 파서가 판정
   "function D(u,t){try{var s=String(u||'');if(s.indexOf('graphql')>-1||s.indexOf('kakao.com')>-1||(typeof t==='string'&&t.indexOf('contentHomeOverview')>-1))P({t:'kkdbg',u:s.slice(0,90),l:(t?t.length:0),ov:H(t)});}catch(e){}}" +
   "function G(u,t){D(u,t);if(H(t))P({t:'kk',ok:true,body:t});if(HE(u,t))P({t:'kwep',ok:true,body:t});}" +
   "try{var of=window.fetch;window.fetch=function(){var a=arguments,u=(a[0]&&a[0].url)?a[0].url:a[0];return of.apply(this,a).then(function(r){try{r.clone().text().then(function(t){G(u,t);}).catch(function(){});}catch(e){}return r;});};}catch(e){}" +
@@ -48628,12 +48641,16 @@ function AppContent() {
       kkCaptureDbg.current = [];
       const finish = (payload, reason) => {
         const r = kkCaptureResolver.current; if (!r) return;
-        clearTimeout(r.timer); kkCaptureResolver.current = null; setKkCaptureUrl(null);
+        clearTimeout(r.timer); clearTimeout(r.epTimer); kkCaptureResolver.current = null; setKkCaptureUrl(null);
         if (mode === "episodes") {
           if (Number(payload) > 0) { resolve({ ok: true, episodeCount: Number(payload) }); return; }
-          const reqs = kkCaptureDbg.current.filter(d => d.u !== "__hook_installed__");
-          const diag = `회차수 캡처 실패: ${reason || "실패"} · 요청 ${reqs.length}건`;
-          try { Clipboard.setStringAsync("[카카오 회차수 캡처 진단]\nURL:" + (r.url || "") + "\n" + diag + "\n(raw)\n" + String(r.rawEp || "").slice(0, 3000)); } catch {}
+          const log = kkCaptureDbg.current;
+          const installed = log.some(d => d.u === "__hook_installed__");
+          const reqs = log.filter(d => d.u !== "__hook_installed__");
+          const epSeen = reqs.some(d => String(d.u).indexOf("/episode") > -1);
+          const lines = reqs.slice(-24).map(d => `· ${d.u} (${d.l})`);
+          const diag = `회차수 캡처 실패: ${reason || "실패"}\n후킹설치: ${installed ? "O" : "X(주입실패)"} · /episode 요청: ${epSeen ? "O" : "X(못봄)"} · kwep수신: ${r.rawEp ? "O(파싱실패)" : "X"} · 요청 ${reqs.length}건\n` + (lines.length ? lines.join("\n") : "(요청 0건 — 페이지 미로딩/차단/로그인벽)");
+          try { Clipboard.setStringAsync("[카카오 회차수 캡처 진단]\nURL:" + (r.url || "") + "\n" + diag + "\n(raw episodes 응답, 있으면)\n" + String(r.rawEp || "(없음)").slice(0, 4000)); } catch {}
           resolve({ ok: false, diag });
           return;
         }
@@ -48647,7 +48664,7 @@ function AppContent() {
         try { Clipboard.setStringAsync("[카카오 캡처 진단]\nURL:" + (r.url || "") + "\n" + diag); } catch {}
         resolve({ ok: false, diag });
       };
-      const timer = setTimeout(() => finish(null, "timeout(30s)"), 30000);
+      const timer = setTimeout(() => { const rr = kkCaptureResolver.current; finish(rr && rr.bestEp > 0 ? rr.bestEp : null, "timeout(30s)"); }, 30000);
       kkCaptureResolver.current = { finish, timer, url, mode };
       setKkCaptureUrl(url);
     });
@@ -48660,8 +48677,13 @@ function AppContent() {
     let p = null; try { p = JSON.parse(e?.nativeEvent?.data); } catch { return; }
     if (!p) return;
     if (p.t === "kkdbg") { if (kkCaptureDbg.current.length < 60) kkCaptureDbg.current.push({ u: p.u, l: p.l, ov: p.ov }); return; }
-    if (r.mode === "episodes") { // 🆕 v7.57.2: 회차목록 응답 → 총 회차수
-      if (p.t === "kwep" && p.ok && p.body) { r.rawEp = String(p.body); const n = parseKakaoWebtoonEpisodeCount(p.body); if (Number(n) > 0) r.finish(n); } // 못 파싱하면 대기(타임아웃 종료 시 raw 진단 복사)
+    if (r.mode === "episodes") { // 🆕 v7.57.2/🛠️v7.57.7: 회차목록 응답 → 총 회차수(최댓값, 3.5s 디바운스 — 페이지네이션/프리뷰 소량 오탐 방지)
+      if (p.t === "kwep" && p.ok && p.body) {
+        const n = Number(parseKakaoWebtoonEpisodeCount(p.body)) || 0;
+        if (n > (r.bestEp || 0)) { r.bestEp = n; r.rawEp = String(p.body); }
+        else if (!r.rawEp) r.rawEp = String(p.body);
+        if (r.bestEp > 0) { clearTimeout(r.epTimer); r.epTimer = setTimeout(() => { const rr = kkCaptureResolver.current; if (rr && rr.bestEp > 0) rr.finish(rr.bestEp); }, 3500); }
+      }
       return;
     }
     if (p.t !== "kk" || !p.ok || !p.body) return;
