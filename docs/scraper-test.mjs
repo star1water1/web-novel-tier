@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, applyEpisodeSplitToMeta, parseKakaoProductList, parseKakaoViewerDate, parseKakaoOverview, kakaoSeriesIdFromUrl, parseMunpiaEntries, parseMunpiaNovelInfo, munpiaIdFromUrl, SCRAPER_HEADERS, SCRAPER_UA, parseNaverWebtoonSearch, extractNaverWebtoonItems, naverWebtoonItemToMeta, WEBTOON_SEARCH_PLATFORMS, naverNormalizeDate, naverDate2ToYear, parseNaverWebtoonStartYear, coverUrlHighRes, isImplausibleEpisodeDrop, parseKakaoWebtoonSearch, kakaoWebtoonDetailToMeta, kakaoAuthorsSplit };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, applyEpisodeSplitToMeta, parseKakaoProductList, parseKakaoViewerDate, parseKakaoOverview, kakaoSeriesIdFromUrl, parseMunpiaEntries, parseMunpiaNovelInfo, munpiaIdFromUrl, SCRAPER_HEADERS, SCRAPER_UA, parseNaverWebtoonSearch, extractNaverWebtoonItems, naverWebtoonItemToMeta, WEBTOON_SEARCH_PLATFORMS, naverNormalizeDate, naverDate2ToYear, parseNaverWebtoonStartYear, coverUrlHighRes, isImplausibleEpisodeDrop, parseKakaoWebtoonSearch, kakaoWebtoonDetailToMeta, kakaoAuthorsSplit, naverPublishDayLabel };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -120,6 +120,17 @@ const alScan = `<ul><li><span class="date">19.03.14</span></li><li><span class="
 eq("startYear 파서 날짜스캔 폴백(첫 날짜→2019)", S.parseNaverWebtoonStartYear(alScan), 2019);
 eq("startYear 파서 날짜 없음 → null", S.parseNaverWebtoonStartYear("{\"articleList\":[]}"), null);
 
+// ── 🎨 v7.57.1 웹툰 메타 보강: 연재요일(네이버 publishDescription) ──
+eq("연재요일 수요웹툰→수", S.naverPublishDayLabel("수요웹툰"), "수");
+eq("연재요일 월요웹툰→월", S.naverPublishDayLabel("월요웹툰"), "월");
+eq("연재요일 완결웹툰→''(요일 아님)", S.naverPublishDayLabel("완결웹툰"), "");
+eq("연재요일 매일+→매일", S.naverPublishDayLabel("매일+"), "매일");
+eq("연재요일 요일무관→자유", S.naverPublishDayLabel("요일무관"), "자유");
+eq("연재요일 빈값→''", S.naverPublishDayLabel(""), "");
+// 실 픽스처(화산귀환)=수요웹툰 → meta.publishDay="수"
+eq("네이버 웹툰 meta.publishDay(수요웹툰→수)", nwReal[0].meta.publishDay, "수");
+eq("완결 웹툰 meta.publishDay=''(publishDescription 없음)", nwDone.publishDay, "");
+
 // ── 🎨 v7.57.0 카카오웹툰 (실캡처 — gateway-kw.kakao.com) ──
 // 검색(search/v1/content): 후보 파싱(meta 미첨부 → pick 시 상세 재fetch)
 const kwSearch = S.parseKakaoWebtoonSearch(fx("kakao-webtoon-search-solo.json"));
@@ -147,6 +158,14 @@ truthy("카카오웹툰 상세 원작있음(ORIGINAL_STORY)", kwDetail.genres.in
 truthy("카카오웹툰 상세 표지 https", String(kwDetail.coverUrl).startsWith("https://"));
 eq("카카오웹툰 상세 연령(adult=false→null)", kwDetail.ageTag, null);
 eq("카카오웹툰 상세 platform", kwDetail.platform, "카카오웹툰");
+// 🎨 v7.57.1: 인기지표(statistics) 캡처
+eq("카카오웹툰 상세 조회수(viewCount)", kwDetail.viewCount, 206297989);
+eq("카카오웹툰 상세 좋아요(likeCount)", kwDetail.likeCount, 6774525);
+eq("카카오웹툰 상세 연재요일 없음(publishDay undefined)", kwDetail.publishDay, undefined);
+// statistics 누락 방어 → 0
+const kwNoStat = S.kakaoWebtoonDetailToMeta({ id: 9, title: "무통계", authors: [] });
+eq("카카오웹툰 statistics 없음→viewCount 0", kwNoStat.viewCount, 0);
+eq("카카오웹툰 statistics 없음→likeCount 0", kwNoStat.likeCount, 0);
 eq("detect 카카오웹툰 URL", S.detectPlatformFromUrl("https://webtoon.kakao.com/content/x/2320"), "카카오웹툰");
 eq("detect 카카오페이지 URL(구분)", S.detectPlatformFromUrl("https://page.kakao.com/content/123"), "카카오페이지");
 

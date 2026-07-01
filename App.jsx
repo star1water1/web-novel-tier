@@ -2,9 +2,29 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.57.0 (웹툰 Phase 2b — 카카오웹툰 자동검색/불러오기, 베타)               ║
+ * ║  버전: 7.57.1 (웹툰 메타 보강 — 인기지표·연재요일, 베타)                          ║
  * ║  최종 수정: 2026-07-01                                                        ║
  * ║  총 라인 수: 약 77,000줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🎨 v7.57.1 웹툰 메타 보강 — 인기지표(조회수·좋아요)·연재요일 (2026-07-01)         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 이미 스크랩 응답에 오지만 버리던 신호를 캡처·저장·표시. 티어(개인 취향) 대비        ║
+ * ║ 대중성(조회/좋아요)·연재정보(요일웹툰) 축 추가. 플랫폼별 단일 출처라 교차오염 없음.  ║
+ * ║ • 데이터: 카카오웹툰 상세 statistics.viewCount/likeCount → view_count/like_count,   ║
+ * ║   네이버웹툰 검색 publishDescription("수요웹툰") → publish_day("수"). 헬퍼         ║
+ * ║   naverPublishDayLabel(완결/매일/무관 정규화), formatKoreanCount("2.1억"·"677만").  ║
+ * ║ • 스키마: novels+planned_novels에 view_count/like_count(INT)·publish_day(TEXT).    ║
+ * ║ • 저장 경로: applyScrapedUpdateToWork(재취득/덮어쓰기, 단일 UPDATE 통합) +          ║
+ * ║   persistWebtoonMeta 헬퍼(일괄추가 post-INSERT) + pendingWebtoonMetaRef(신규/예정   ║
+ * ║   단건, 저장 시 제목일치 소비). INSERT 컬럼목록 비침습(플레이스홀더 오카운트 0).    ║
+ * ║ • 표시: webtoonMetaChips(웹툰 모드만) — 라이브러리 카드·표지 확대뷰 캡션.          ║
+ * ║ • 백업: novels(opt.pv/pl/pdy)·planned(row.pv/pl/pdy) 왕복 + import/undo/전환 보존.  ║
+ * ║ • 범위 밖(정직): 레진 상세·탑툰·카카오페이지는 로그인/성인/GraphQL 장벽으로 비채택.  ║
+ * ║   편집모달 단건 재스크랩은 stat 미저장(일괄 재취득이 정본 갱신 경로) — 손실 아님.   ║
+ * ║ scraper-test 실픽스처 +13 assert(422 pass, 무관 실패 3 유지). esbuild 통과.        ║
+ * ║ APP_VERSION 7.53.8 유지(베타).                                                   ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -10499,6 +10519,10 @@ async function initDb(progressCb) {
     ["major_genre", "TEXT", "''"],
     ["sub_genre", "TEXT", "''"],
     ["artist", "TEXT", "''"], // 🎨 v7.55.0: 그림작가(웹툰모드) — 글작가는 author, 그림작가는 artist. 웹소설모드 미사용.
+    // 🎨 v7.57.1: 웹툰 메타 보강 — 인기지표(조회수·좋아요)·연재요일. 스크랩 메타에서만 채움, 웹소설/미제공 시 기본값.
+    ["view_count", "INTEGER", "0"],   // 조회수(카카오웹툰 statistics.viewCount). 네이버·웹소설 미제공 → 0.
+    ["like_count", "INTEGER", "0"],   // 좋아요(카카오웹툰 statistics.likeCount).
+    ["publish_day", "TEXT", "''"],    // 연재요일(네이버웹툰 publishDescription→"수" 등). 완결/미상 → ''.
     ["gaiden_status", "TEXT", "'none'"],
     ["gaiden_read_count", "INTEGER", "0"],
     ["gaiden_total_episodes", "INTEGER", "0"],
@@ -10646,6 +10670,10 @@ async function initDb(progressCb) {
   await ensureColumn("planned_novels", "end_year", "INTEGER", "0");
   await ensureColumn("planned_novels", "completed_at", "INTEGER", "0"); // 🆕 v7.28.61: 완결일
   await ensureColumn("planned_novels", "artist", "TEXT", "''"); // 🎨 v7.56.3: 그림작가(웹툰) — novels와 정합(예정작에서도 글/그림 분리 보존)
+  // 🎨 v7.57.1: 웹툰 인기지표·연재요일 — novels와 정합(예정작 스크랩에서도 보존)
+  await ensureColumn("planned_novels", "view_count", "INTEGER", "0");
+  await ensureColumn("planned_novels", "like_count", "INTEGER", "0");
+  await ensureColumn("planned_novels", "publish_day", "TEXT", "''");
 
   // 🖼️ v3.4.5: 표지 라이브러리 테이블
   await database.runAsync(`CREATE TABLE IF NOT EXISTS cover_library (
@@ -17988,6 +18016,18 @@ async function searchNaverWebtoon(query, opts = {}) {
   return parseNaverWebtoonSearch(text);
 }
 
+// 🎨 v7.57.1: 네이버웹툰 publishDescription("수요웹툰")→연재요일 라벨("수"). 완결/미상/무관은 빈 문자열 or 특수 라벨.
+//   요일웹툰은 웹툰 고유 속성(웹소설엔 없음). 다요일·완결 표기는 요일 아님 → '' 또는 매일/자유로 정규화.
+function naverPublishDayLabel(desc) {
+  const s = String(desc == null ? "" : desc).trim();
+  if (!s || /완결/.test(s)) return "";           // 완결웹툰은 연재요일 아님
+  const m = s.match(/([월화수목금토일])요/);        // "수요웹툰" → "수"
+  if (m) return m[1];
+  if (/매일/.test(s)) return "매일";
+  if (/무관|자유/.test(s)) return "자유";
+  return "";
+}
+
 // 🎨 v7.56.1: 네이버웹툰 검색 항목(searchViewList) → 정규화 meta(노벨피아 패턴). 실캡처 기반.
 //   글작가(ARTIST_WRITER)/그림작가(ARTIST_PAINTER) 분리. 글=그림 동일(스튜디오)면 그림작가 생략.
 //   원작자(ARTIST_NOVEL_ORIGIN)는 'soriginal' 태그(소설원작→원작있음)로 반영. 장르/태그는 buildScrapeItems가 앱 어휘로 매핑.
@@ -18029,6 +18069,7 @@ function naverWebtoonItemToMeta(it) {
     totalEpisodes: ep > 0 ? ep : null,
     startYear: null, endYear, completedAt,
     ageTag: it.nineteen ? "19금" : null,
+    publishDay: naverPublishDayLabel(it.publishDescription), // 🎨 v7.57.1: 연재요일("수" 등). 완결/미상 시 ''.
   };
 }
 
@@ -18286,6 +18327,9 @@ function kakaoWebtoonDetailToMeta(d) {
     genres, workStatus,
     totalEpisodes: null, startYear: null, endYear: null, completedAt: 0,
     ageTag: d.adult ? "19금" : null,
+    // 🎨 v7.57.1: 인기지표 — 카카오웹툰 statistics(조회수·좋아요). 상세 응답에만 존재(검색 후보엔 없음).
+    viewCount: Number(d.statistics && d.statistics.viewCount) || 0,
+    likeCount: Number(d.statistics && d.statistics.likeCount) || 0,
   };
 }
 // 카카오웹툰 단건 메타 — URL→id→상세 API(decorator). 검색 pick(runScrapeFromUrl)·URL 붙여넣기 공용.
@@ -19238,6 +19282,27 @@ function authorLine(n) {
   const ar = (n && n.artist != null ? String(n.artist) : "").trim();
   if (globalSlotMode === "webtoon" && ar && ar !== a) return a ? `${a} / ${ar}` : ar;
   return a;
+}
+
+// 🎨 v7.57.1: 큰 수를 한국식 축약("2.1억"·"677만"·"8,432")으로. 0 이하는 빈 문자열. 조회수/좋아요 표시용.
+function formatKoreanCount(num) {
+  const v = Number(num) || 0;
+  if (v <= 0) return "";
+  if (v >= 100000000) { const e = v / 100000000; return (e >= 10 ? Math.round(e) : Math.round(e * 10) / 10) + "억"; }
+  if (v >= 10000) { const m = v / 10000; return (m >= 10 ? Math.round(m) : Math.round(m * 10) / 10) + "만"; }
+  return v.toLocaleString();
+}
+// 🎨 v7.57.1: 웹툰 부가메타 요약 조각 배열(카드/상세 공용). 웹툰 모드에서만 값 있는 항목을 반환. 빈 배열=표시 없음.
+function webtoonMetaChips(n) {
+  if (globalSlotMode !== "webtoon" || !n) return [];
+  const out = [];
+  const day = String(n.publish_day || "").trim();
+  if (day) out.push(day === "매일" || day === "자유" ? day : `${day}요웹툰`);
+  const vc = formatKoreanCount(n.view_count);
+  if (vc) out.push(`👁 ${vc}`);
+  const lc = formatKoreanCount(n.like_count);
+  if (lc) out.push(`❤ ${lc}`);
+  return out;
 }
 
 // 🛠️ v7.56.9: statusBarTranslucent 중앙정렬 모달의 하단 여백 — 안드로이드 시스템 내비게이션 바만큼 padding을 확보해
@@ -24198,7 +24263,12 @@ const NovelCard = memo(({
           <Text style={{ color: theme.sub, fontSize: 12 }} numberOfLines={1}>
             📖 {episodeText} · {plats.length > 0 ? plats.join(", ") : "플랫폼 미지정"}
           </Text>
-          
+
+          {/* 🎨 v7.57.1: 웹툰 인기지표·연재요일 (웹툰 모드 + 값 있을 때만) */}
+          {(() => { const wm = webtoonMetaChips(item); return wm.length > 0 ? (
+            <Text style={{ color: theme.sub, fontSize: 12, marginTop: 2 }} numberOfLines={1}>{wm.join("   ")}</Text>
+          ) : null; })()}
+
           {/* 수상 뱃지 */}
           {hasAwards && <AwardsRow awardsJson={item.awards} awardSystemSettings={awardSystemSettings} />}
         </View>
@@ -32600,6 +32670,7 @@ const AwardsScreen = memo(({
               textAlign: "center",
             }}>
               {expandedView.title}{authorLine(expandedView) ? ` · ${authorLine(expandedView)}` : ""}
+              {(() => { const wm = webtoonMetaChips(expandedView); return wm.length > 0 ? `\n${wm.join("   ")}` : ""; })()}
             </Text>
           ) : null}
           <View style={{
@@ -40129,6 +40200,10 @@ function AppContent() {
   // 🛡️ FIX: addNovel 동기 재진입 가드 — isLoading(비동기 state)은 같은 프레임 더블탭을 못 막아 중복
   //   INSERT 가능. ref는 함수 진입 즉시 동기 설정되어 같은 프레임 두 번째 탭을 차단(코드베이스 표준 패턴).
   const addNovelBusyRef = useRef(false);
+  // 🎨 v7.57.1: 신규/예정 단건 스크랩의 웹툰 부가메타(조회수·좋아요·연재요일) 임시보관 —
+  //   확인 모달은 폼 state만 채우고 실제 INSERT는 저장 버튼(addNovel/addPlannedNovel)에서 일어나므로,
+  //   openScrapeFromMeta에서 stat을 ref에 담아 저장 직후 title 일치 시 소비(persistWebtoonMeta). 제목 수정 시 미소비(안전).
+  const pendingWebtoonMetaRef = useRef(null);
 
   // 📝 보충 탭 (v2.8)
   const [supplementCurrentNovel, setSupplementCurrentNovel] = useState(null); // 현재 보충 중인 작품
@@ -42756,9 +42831,11 @@ function AppContent() {
         ]
       );
 
+      // 🎨 v7.57.1: 예정 등록 직후 웹툰 부가메타(조회수·좋아요·연재요일) 소비 — 스크랩 제목과 저장 제목 일치 시만.
+      try { const _wm = pendingWebtoonMetaRef.current; if (_wm && _wm.key === t) await persistWebtoonMeta("planned_novels", id, _wm); pendingWebtoonMetaRef.current = null; } catch {}
       // 🔧 v3.5.9: 텍스트 입력 태그 → customTags 동기화 (태그 관리 모달 연동)
       syncTagsToCustom(plannedTags.trim());
-      
+
       // 폼 초기화 (🆕 v7.28.50: clearPlannedForm 재사용 — 비우기 버튼과 동일)
       clearPlannedForm();
 
@@ -43025,8 +43102,8 @@ function AppContent() {
       const _baselineToRestore = Number(planned.read_count_baseline) || (Number(planned.read_count) || initialReadCount);
       await execBatch([
         {
-          sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order,start_year,end_year,completed_at,gaiden_start_at,gaiden_completed_at,artist)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+          sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,reread_count,tag_data,memorable_quote,aliases,manual_tier,manual_order,start_year,end_year,completed_at,gaiden_start_at,gaiden_completed_at,artist,view_count,like_count,publish_day)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
           params: [
             id,
             planned.title,
@@ -43068,6 +43145,9 @@ function AppContent() {
             Number(planned.gaiden_start_at) || 0,    // 🆕 v7.44.9
             Number(planned.gaiden_completed_at) || 0,
             planned.artist || "", // 🎨 v7.56.3: 그림작가(웹툰) 예정→본작 전환 보존
+            Number(planned.view_count) || 0, // 🎨 v7.57.1: 조회수(웹툰) 전환 보존
+            Number(planned.like_count) || 0, // 좋아요(웹툰) 전환 보존
+            planned.publish_day || "",       // 연재요일(웹툰) 전환 보존
           ],
         },
         {
@@ -46916,6 +46996,11 @@ function AppContent() {
   // 메타(정규화 완료) → 확인 모달 오픈. URL 긁기/검색 메타 직접 사용 공용 경로.
   function openScrapeFromMeta(meta, ctx, skipDupCheck = false) {
     if (!meta || !meta.title) { Alert.alert("불러오기", "이 작품의 정보를 찾지 못했어요."); return false; }
+    // 🎨 v7.57.1: 신규/예정 단건 등록 — 웹툰 부가메타를 ref에 보관(저장 시 addNovel/addPlannedNovel이 소비). 그 외 kind는 무관.
+    if (ctx && (ctx.kind === "new" || ctx.kind === "planned")) {
+      const _vc = Number(meta.viewCount) || 0, _lc = Number(meta.likeCount) || 0, _pd = String(meta.publishDay || "").trim();
+      pendingWebtoonMetaRef.current = (_vc > 0 || _lc > 0 || _pd) ? { key: String(meta.title || "").trim(), viewCount: _vc, likeCount: _lc, publishDay: _pd } : null;
+    }
     // 🔧 v7.49.14: 스크랩한 URL이 '편집 중 작품의 등록 링크'면 그 링크 관측치 갱신(저장 시 serializeLinks로 반영) →
     //   인터랙티브 재취득(시→문→시)도 reconcile 교차보완에 반영. 매칭 링크 없으면 무동작(신규/예정 스크랩 안전).
     if (meta.url) setEditLinks(prev => (Array.isArray(prev) && prev.some(l => (l.url || "").trim() === String(meta.url).trim())) ? recordLinkObservation(prev, meta.url, meta, true) : prev);
@@ -47429,6 +47514,7 @@ function AppContent() {
             ]
           );
           if (coverPath) { coverTouched = true; try { await updateCoverStatus(coverPath, id, "used"); } catch {} }
+          try { await persistWebtoonMeta("planned_novels", id, d._meta); } catch {} // 🎨 v7.57.1: 웹툰 인기지표·연재요일
         } else {
           let manualOrder = 0;
           try {
@@ -47450,6 +47536,7 @@ function AppContent() {
             ],
           }]);
           if (coverPath) { coverTouched = true; try { await applyNovelCover(id, coverPath, null); } catch {} }
+          try { await persistWebtoonMeta("novels", id, d._meta); } catch {} // 🎨 v7.57.1: 웹툰 인기지표·연재요일
           try {
             await addRecentChange(id, t, "new", {
               author: (d.author || "").trim() || "-",
@@ -47585,10 +47672,33 @@ function AppContent() {
     let mergedPlats = curPlats;
     for (const l of linksOf(work)) mergedPlats = mergePlatformFromLink(mergedPlats, l.url);
     if (mergedPlats.length !== curPlats.length) setCol("platforms", JSON.stringify(mergedPlats), "연재처 +" + mergedPlats.slice(curPlats.length).join(","));
+    // 🎨 v7.57.1: 웹툰 인기지표·연재요일 — 스크랩 메타에 값 있으면 갱신(grow: 있을 때만, 빈 값으로 기존 비클로버).
+    //   플랫폼별 단일 출처(조회/좋아요=카카오, 요일=네이버)라 교차오염 없음. 확인 모달 비경유(자동 부가메타).
+    {
+      const _vc = Number(meta && meta.viewCount) || 0, _lc = Number(meta && meta.likeCount) || 0, _pd = String((meta && meta.publishDay) || "").trim();
+      if (_vc > 0 && _vc !== (Number(work.view_count) || 0)) setCol("view_count", _vc);
+      if (_lc > 0 && _lc !== (Number(work.like_count) || 0)) setCol("like_count", _lc);
+      if (_pd && _pd !== String(work.publish_day || "")) setCol("publish_day", _pd);
+    }
     if (!sets.length) return null;
     params.push(work.id);
     await exec(`UPDATE ${table} SET ${sets.join(", ")} WHERE id=?`, params);
     return changes;
+  }
+  // 🎨 v7.57.1: 신규/일괄 등록 직후 웹툰 부가메타(조회수·좋아요·연재요일) 기록. INSERT 컬럼목록을 건드리지 않고
+  //   작품 생성 후 별도 UPDATE로 반영(플레이스홀더 오카운트 위험 0). table은 내부 리터럴("novels"/"planned_novels").
+  //   값 있는 항목만 SET → 웹소설/미제공은 무동작(기본값 유지).
+  async function persistWebtoonMeta(table, id, meta) {
+    if (!id || !meta) return;
+    const vc = Number(meta.viewCount) || 0, lc = Number(meta.likeCount) || 0, pd = String(meta.publishDay || "").trim();
+    const sets = [], params = [];
+    if (vc > 0) { sets.push("view_count=?"); params.push(vc); }
+    if (lc > 0) { sets.push("like_count=?"); params.push(lc); }
+    if (pd) { sets.push("publish_day=?"); params.push(pd); }
+    if (!sets.length) return;
+    params.push(id);
+    try { await exec(`UPDATE ${table} SET ${sets.join(", ")} WHERE id=?;`, params); }
+    catch (e) { console.warn("[v7.57.1] persistWebtoonMeta 실패:", e?.message); }
   }
   function openBulkUpdate() {
     const works = bulkAllWorks();
@@ -50508,9 +50618,9 @@ function AppContent() {
           const n = item.payload.novel;
           await exec(
             // 🔧 v7.6.0: start_year/end_year/match_ban 복원 추가 (n은 SELECT * 캡처 → 필드 존재, 미존재 시 0 폴백)
-            `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,start_year,end_year,match_ban,links,update_link,artist)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-            [n.id, n.title, n.author, n.tags, n.platforms, n.note, n.read_count, n.rating, n.rd, n.wins, n.losses, n.match_count, n.tier, n.created_at, n.awards, n.total_episodes, n.status, n.pinned, n.cover_image, n.link, n.work_status, n.read_count_updated_at, n.major_genre, n.sub_genre, n.gaiden_status, n.gaiden_read_count, n.gaiden_total_episodes, n.manual_tier, Number(n.manual_order) || 0, n.reread_count || 1, n.tag_data || "", n.aliases || "", n.memorable_quote || "", Number(n.start_year) || 0, Number(n.end_year) || 0, Number(n.match_ban) || 0, n.links || "", n.update_link || "", n.artist || ""]
+            `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,start_year,end_year,match_ban,links,update_link,artist,view_count,like_count,publish_day)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+            [n.id, n.title, n.author, n.tags, n.platforms, n.note, n.read_count, n.rating, n.rd, n.wins, n.losses, n.match_count, n.tier, n.created_at, n.awards, n.total_episodes, n.status, n.pinned, n.cover_image, n.link, n.work_status, n.read_count_updated_at, n.major_genre, n.sub_genre, n.gaiden_status, n.gaiden_read_count, n.gaiden_total_episodes, n.manual_tier, Number(n.manual_order) || 0, n.reread_count || 1, n.tag_data || "", n.aliases || "", n.memorable_quote || "", Number(n.start_year) || 0, Number(n.end_year) || 0, Number(n.match_ban) || 0, n.links || "", n.update_link || "", n.artist || "", Number(n.view_count) || 0, Number(n.like_count) || 0, n.publish_day || ""]
           );
           // 🆕 v7.21.0: 삭제 시 함께 지워진 매치 복원 → rebuildAllFromMatches로 ELO 정합 회복
           //   (매치 미복원 시 복원작은 stored rating만 갖고 다음 rebuild에서 1500으로 초기화됨)
@@ -51277,6 +51387,8 @@ function AppContent() {
           ],
         },
       ]);
+      // 🎨 v7.57.1: 신규 등록 직후 웹툰 부가메타(조회수·좋아요·연재요일) 소비 — 스크랩 제목과 저장 제목 일치 시만(제목 수정 시 미소비).
+      try { const _wm = pendingWebtoonMetaRef.current; if (_wm && _wm.key === t) await persistWebtoonMeta("novels", id, _wm); pendingWebtoonMetaRef.current = null; } catch {}
       // 🔧 v3.5.9: 텍스트 입력 태그 → customTags 동기화 (태그 관리 모달 연동)
       syncTagsToCustom(tags.trim());
       // 🆕 v7.28.50: clearNovelForm 재사용 — 등록 성공이므로 명대사 이미지 파일은 유지(추적만 해제)
@@ -55706,6 +55818,10 @@ async function buildUltraCompactBackup(novels, matches, coverImages = null) {
     // 🎨 v7.55.0: 그림작가(웹툰) — 있을 때만
     const artistVal = (n.artist || "").trim();
     if (artistVal) opt.art = artistVal;
+    // 🎨 v7.57.1: 웹툰 인기지표·연재요일 — 값 있을 때만(구앱/구백업은 키 없음 → 복원 시 0/'').
+    if ((Number(n.view_count) || 0) > 0) opt.pv = Number(n.view_count);
+    if ((Number(n.like_count) || 0) > 0) opt.pl = Number(n.like_count);
+    { const _pd = (n.publish_day || "").trim(); if (_pd) opt.pdy = _pd; }
     // 📖 외전 관련
     const gaidenStatus = n.gaiden_status || "none";
     const gaidenReadCount = Number(n.gaiden_read_count) || 0;
@@ -56505,6 +56621,10 @@ async function exportJSON(opts) {
         if (Number(p.end_year) > 0) row.ey = Number(p.end_year);
         // 🎨 v7.56.3: 그림작가(웹툰) — novels 백업(opt.art)과 대칭. 있을 때만.
         if ((p.artist || "").trim()) row.art = (p.artist || "").trim();
+        // 🎨 v7.57.1: 웹툰 인기지표·연재요일 — novels 백업(pv/pl/pdy)과 대칭. 있을 때만.
+        if ((Number(p.view_count) || 0) > 0) row.pv = Number(p.view_count);
+        if ((Number(p.like_count) || 0) > 0) row.pl = Number(p.like_count);
+        if ((p.publish_day || "").trim()) row.pdy = (p.publish_day || "").trim();
         return row;
       });
     }
@@ -56949,6 +57069,10 @@ async function importJSON(directText, onSuccess, onSettled) {
                 const majorGenre = opt.mg || "";
                 const subGenre = opt.sg || "";
                 const artist = opt.art || ""; // 🎨 v7.55.0: 그림작가(웹툰)
+                // 🎨 v7.57.1: 웹툰 인기지표·연재요일 (구백업은 키 없음 → 0/'')
+                const viewCountVal = Number(opt.pv) || 0;
+                const likeCountVal = Number(opt.pl) || 0;
+                const publishDayVal = opt.pdy || "";
                 // 📖 외전 관련
                 const gaidenStatus = opt.gs === 1 ? "ongoing" : (opt.gs === 2 ? "completed" : "none");
                 const gaidenReadCount = opt.gr || 0;
@@ -57028,9 +57152,9 @@ async function importJSON(directText, onSuccess, onSettled) {
                   // 🔧 v7.10.0: user_flagged_suspect 컬럼 추가 (41→42)
                   // 🆕 v7.21.3: suspicion_score 컬럼 추가 (42→43)
                   // 🆕 v7.49.22: expected_tier/discovery_source 컬럼 추가 (48→50) — suspicion_score 뒤 정렬 유지
-                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,artist,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,read_count_baseline,start_year,end_year,match_ban,verification_wins,verification_losses,verification_count,conflict_hits,user_flagged_suspect,suspicion_score,expected_tier,discovery_source,links,update_link,completed_at,gaiden_start_at,gaiden_completed_at)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, artist, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, manualOrder, rereadCount, tagData, aliases, memorableQuote, readCount, startYearVal, endYearVal, matchBanVal, verWins, verLosses, verCount, conflictHits, userFlaggedVal, suspicionScoreVal, expectedTierVal, discoverySourceVal, links, updateLink, completedAtVal, gaidenStartAtVal, gaidenCompletedAtVal],
+                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,artist,view_count,like_count,publish_day,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,read_count_baseline,start_year,end_year,match_ban,verification_wins,verification_losses,verification_count,conflict_hits,user_flagged_suspect,suspicion_score,expected_tier,discovery_source,links,update_link,completed_at,gaiden_start_at,gaiden_completed_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, artist, viewCountVal, likeCountVal, publishDayVal, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, manualOrder, rereadCount, tagData, aliases, memorableQuote, readCount, startYearVal, endYearVal, matchBanVal, verWins, verLosses, verCount, conflictHits, userFlaggedVal, suspicionScoreVal, expectedTierVal, discoverySourceVal, links, updateLink, completedAtVal, gaidenStartAtVal, gaidenCompletedAtVal],
                 });
               }
 
@@ -57324,8 +57448,8 @@ async function importJSON(directText, onSuccess, onSettled) {
                 // 🆕 v7.2.0: round-trip 보존 19개 신규 필드 + id 보존 (있으면 사용, 없으면 신규 uuid)
                 const plannedQueries = data.PL.map(p => ({
                   sql: `INSERT INTO planned_novels
-                    (id, title, author, tags, platforms, note, total_episodes, cover_image, link, work_status, major_genre, sub_genre, priority, created_at, expected_rating, expected_tier, interest_level, discovery_source, first_chapter_read, scheduled_start_date, similar_novels, why_interested, tag_data, status, pinned, read_count, rating, rd, wins, losses, match_count, gaiden_status, gaiden_read_count, gaiden_total_episodes, manual_tier, manual_order, reread_count, aliases, memorable_quote, awards, read_count_updated_at, read_count_baseline, start_year, end_year, completed_at, gaiden_start_at, gaiden_completed_at, artist)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                    (id, title, author, tags, platforms, note, total_episodes, cover_image, link, work_status, major_genre, sub_genre, priority, created_at, expected_rating, expected_tier, interest_level, discovery_source, first_chapter_read, scheduled_start_date, similar_novels, why_interested, tag_data, status, pinned, read_count, rating, rd, wins, losses, match_count, gaiden_status, gaiden_read_count, gaiden_total_episodes, manual_tier, manual_order, reread_count, aliases, memorable_quote, awards, read_count_updated_at, read_count_baseline, start_year, end_year, completed_at, gaiden_start_at, gaiden_completed_at, artist, view_count, like_count, publish_day)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
                   params: [
                     p.id || uuid(),                                      // 🆕 v7.2.0: id 보존
                     p.t || "",
@@ -57379,6 +57503,9 @@ async function importJSON(directText, onSuccess, onSettled) {
                     (p.gsa != null) ? (baseTs + p.gsa) * 1000 : 0,
                     (p.gca != null) ? (baseTs + p.gca) * 1000 : 0,
                     p.art || "", // 🎨 v7.56.3: 그림작가(웹툰) 복원 (구버전 백업은 키 없음 → "")
+                    Number(p.pv) || 0, // 🎨 v7.57.1: 조회수(웹툰) 복원
+                    Number(p.pl) || 0, // 좋아요(웹툰) 복원
+                    p.pdy || "",       // 연재요일(웹툰) 복원
                   ],
                 }));
                 
