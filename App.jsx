@@ -2,9 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.57.2 (카카오웹툰 회차수 — 세션 WebView 캡처, 베타)                       ║
+ * ║  버전: 7.57.3 (카카오웹툰 회차수 카드 — 웹툰 모드 노출 수정, 베타)                ║
  * ║  최종 수정: 2026-07-01                                                        ║
  * ║  총 라인 수: 약 77,000줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.57.3 카카오웹툰 회차수 카드 위치 수정 — 웹툰 모드 노출 (2026-07-01)        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ v7.57.2 회차수 토글을 '웹소설 전용 연결 카드 묶음'에 뒀는데, 그 묶음은 웹툰 모드   ║
+ * ║ 에선 통째로 숨겨져(v7.55 모드 게이팅) 정작 카카오웹툰을 쓰는 웹툰 슬롯에서 안 보였음.║
+ * ║ → 웹툰 전용 연결 블록(검색사이트·긁기진단 옆)에 '📚 카카오웹툰 회차수' 카드 신설:  ║
+ * ║   세션 준비/갱신·초기화 버튼(kkReady 상태칩) + 회차수 세션캡처 토글을 한 카드로.    ║
+ * ║   (세션 없이 토글만 켜도 캡처 WebView가 실제 작품 페이지를 열어 익명 토큰 자체 발급  ║
+ * ║   → 시도 가능. 로그인/세션 준비는 안정성 향상용.) 기능 로직 무변, 노출 위치만 교정. ║
+ * ║ esbuild 통과. APP_VERSION 7.53.8 유지(베타).                                     ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -69489,17 +69501,6 @@ async function importJSON(directText, onSuccess, onSettled) {
                 </Text>
               </View>
 
-              {/* 🆕 v7.57.2: 카카오웹툰 회차수 세션캡처 토글 — 상세 API엔 회차수가 없어(토큰 게이트) 작품 페이지를 잠깐 열어 회차목록 응답을 가로챈다. */}
-              <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                <View style={{ flex: 1, paddingRight: 10 }}>
-                  <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>📚 카카오웹툰 회차수 가져오기</Text>
-                  <Text style={{ color: C.sub, fontSize: 11.5, marginTop: 4, lineHeight: 16 }}>
-                    카카오웹툰은 상세 정보에 회차수가 없어요. 켜면 불러오기·재취득 때 작품 페이지를 잠깐 열어 회차수를 받아와요(‘카카오 세션’ 준비 권장, 로그인하면 더 안정적). 팝업이 뜨고 느려질 수 있어 기본은 꺼져 있어요. 웹툰 슬롯에서만 의미 있어요.
-                  </Text>
-                </View>
-                <Switch value={kkWebtoonEp} onValueChange={(v) => { setKkWebtoonEp(v); globalKkWebtoonEp = v; saveGlobalAiConfig({ kk_webtoon_ep: v }).catch(() => {}); }} />
-              </View>
-
               {/* 🔧 v7.42.0: 카카오·문피아 외전 분리 토글 — 기본 ON(끌 수 있는 안전밸브). 끄면 완결일만 가져옴(외전 분리 생략). */}
               <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
                 <View style={{ flex: 1, paddingRight: 10 }}>
@@ -69683,6 +69684,39 @@ async function importJSON(directText, onSuccess, onSettled) {
                       </View>
                     </View>
                   ) : null}
+                </View>
+
+                {/* 🆕 v7.57.2: 카카오웹툰 회차수 — 세션 준비(page.kakao 익명 토큰) + 회차수 세션캡처 토글. 웹툰 모드 전용 위치(연결 카드가 웹툰 모드에선 숨겨져 여기 노출). */}
+                <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                    <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>📚 카카오웹툰 회차수</Text>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: kkReady ? "#22c55e" : C.line }} />
+                      <Text style={{ color: kkReady ? "#22c55e" : C.sub, fontSize: 12, fontWeight: "800" }}>{kkReady ? "세션 준비됨" : "세션 준비 안 됨"}</Text>
+                    </View>
+                  </View>
+                  <Text style={{ color: C.sub, fontSize: 11.5, marginTop: 5, lineHeight: 16 }}>
+                    카카오웹툰은 상세 정보에 회차수가 없어요. 아래 스위치를 켜면 불러오기·재취득 때 작품 페이지를 잠깐 열어 회차수를 받아와요. 먼저 ‘세션 준비’를 눌러 주세요(로그인하면 더 안정적). 팝업이 뜨고 느려질 수 있어요.
+                  </Text>
+                  <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                    <TouchableOpacity onPress={() => setKkSessionModalOpen(true)} disabled={kkBusy} activeOpacity={0.7}
+                      style={{ paddingVertical: 9, paddingHorizontal: 16, borderRadius: 999, backgroundColor: C.primary, opacity: kkBusy ? 0.5 : 1 }}>
+                      <Text style={{ color: "#fff", fontWeight: "800", fontSize: 12.5 }}>{kkReady ? "세션 갱신" : "세션 준비"}</Text>
+                    </TouchableOpacity>
+                    {kkReady && (
+                      <TouchableOpacity onPress={clearKkSession} disabled={kkBusy} activeOpacity={0.7}
+                        style={{ paddingVertical: 9, paddingHorizontal: 16, borderRadius: 999, backgroundColor: C.bg, borderWidth: 1, borderColor: C.line, opacity: kkBusy ? 0.5 : 1 }}>
+                        <Text style={{ color: C.sub, fontWeight: "800", fontSize: 12.5 }}>초기화</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.line }}>
+                    <Text style={{ color: C.text, fontSize: 13, fontWeight: "700", flex: 1, paddingRight: 10 }}>회차수 가져오기 (팝업·지연 있음)</Text>
+                    <Switch value={kkWebtoonEp} onValueChange={(v) => { setKkWebtoonEp(v); globalKkWebtoonEp = v; saveGlobalAiConfig({ kk_webtoon_ep: v }).catch(() => {}); }} />
+                  </View>
+                  <Text style={{ color: C.sub, fontSize: 10, marginTop: 8, lineHeight: 14 }}>
+                    ※ 폰(로그인)에서만 동작 — 카카오가 개발망을 막아둬 검증이 폰 한정이에요. 안 채워지면 실패 시 클립보드에 복사되는 진단을 보내 주세요(파서 보정).
+                  </Text>
                 </View>
               </>)}
 
