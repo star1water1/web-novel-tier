@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, applyEpisodeSplitToMeta, parseKakaoProductList, parseKakaoViewerDate, parseKakaoOverview, kakaoSeriesIdFromUrl, parseMunpiaEntries, parseMunpiaNovelInfo, munpiaIdFromUrl, SCRAPER_HEADERS, SCRAPER_UA, parseNaverWebtoonSearch, extractNaverWebtoonItems, naverWebtoonItemToMeta, WEBTOON_SEARCH_PLATFORMS, naverNormalizeDate, naverDate2ToYear, parseNaverWebtoonStartYear, coverUrlHighRes, isImplausibleEpisodeDrop };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, applyEpisodeSplitToMeta, parseKakaoProductList, parseKakaoViewerDate, parseKakaoOverview, kakaoSeriesIdFromUrl, parseMunpiaEntries, parseMunpiaNovelInfo, munpiaIdFromUrl, SCRAPER_HEADERS, SCRAPER_UA, parseNaverWebtoonSearch, extractNaverWebtoonItems, naverWebtoonItemToMeta, WEBTOON_SEARCH_PLATFORMS, naverNormalizeDate, naverDate2ToYear, parseNaverWebtoonStartYear, coverUrlHighRes, isImplausibleEpisodeDrop, parseKakaoWebtoonSearch, kakaoWebtoonDetailToMeta, kakaoAuthorsSplit };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -91,7 +91,7 @@ truthy("웹툰 태그에 회귀", nwReal[0].meta.genres.includes("회귀"));
 truthy("웹툰 태그에 먼치킨", nwReal[0].meta.genres.includes("먼치킨"));
 truthy("웹툰 태그에 소설원작", nwReal[0].meta.genres.includes("소설원작"));
 eq("웹툰 연령(nineteen=false→null)", nwReal[0].meta.ageTag, null);
-eq("웹툰 검색 플랫폼 목록", S.WEBTOON_SEARCH_PLATFORMS, ["네이버웹툰"]);
+eq("웹툰 검색 플랫폼 목록", S.WEBTOON_SEARCH_PLATFORMS, ["네이버웹툰", "카카오웹툰"]);
 
 // ── 🎨 v7.56.2 네이버웹툰 연재연도(시작/종료) ──
 // 날짜 정규화/연도 추출: 2자리 연("26.06.30")·4자리 연 모두 수용
@@ -119,6 +119,36 @@ eq("startYear 파서 JSON(serviceDate 4자리연→2018)", S.parseNaverWebtoonSt
 const alScan = `<ul><li><span class="date">19.03.14</span></li><li><span class="date">19.03.21</span></li></ul>`;
 eq("startYear 파서 날짜스캔 폴백(첫 날짜→2019)", S.parseNaverWebtoonStartYear(alScan), 2019);
 eq("startYear 파서 날짜 없음 → null", S.parseNaverWebtoonStartYear("{\"articleList\":[]}"), null);
+
+// ── 🎨 v7.57.0 카카오웹툰 (실캡처 — gateway-kw.kakao.com) ──
+// 검색(search/v1/content): 후보 파싱(meta 미첨부 → pick 시 상세 재fetch)
+const kwSearch = S.parseKakaoWebtoonSearch(fx("kakao-webtoon-search-solo.json"));
+truthy("카카오웹툰 검색 후보 ≥1", kwSearch.length >= 1);
+eq("카카오웹툰 후보 제목", kwSearch[0].title, "나 혼자만 레벨업");
+eq("카카오웹툰 후보 platform", kwSearch[0].platform, "카카오웹툰");
+eq("카카오웹툰 후보 isComic", kwSearch[0].isComic, true);
+truthy("카카오웹툰 후보 url(/content/…/2320)", /\/content\/.+\/2320$/.test(kwSearch[0].url));
+eq("카카오웹툰 후보 글작가(AUTHOR)", kwSearch[0].author, "현군");
+eq("카카오웹툰 후보 meta 미첨부(상세 재fetch)", kwSearch[0].meta, undefined);
+// 작가 역할 분리
+const kwAu = S.kakaoAuthorsSplit([{name:"현군",type:"AUTHOR"},{name:"장성락(REDICE STUDIO)",type:"ILLUSTRATOR"},{name:"추공",type:"ORIGINAL_STORY"},{name:"디앤씨",type:"PUBLISHER"}]);
+eq("kakaoAuthorsSplit 글작가", kwAu.author, "현군");
+eq("kakaoAuthorsSplit 그림작가", kwAu.artist, "장성락(REDICE STUDIO)");
+eq("kakaoAuthorsSplit 원작", kwAu.original, "추공");
+// 상세(decorator/v2) → 정규화 meta
+const kwDetail = S.kakaoWebtoonDetailToMeta(JSON.parse(fx("kakao-webtoon-detail-2320.json")).data);
+eq("카카오웹툰 상세 제목", kwDetail.title, "나 혼자만 레벨업");
+eq("카카오웹툰 상세 글작가", kwDetail.author, "현군");
+eq("카카오웹툰 상세 그림작가", kwDetail.artist, "장성락(REDICE STUDIO)");
+eq("카카오웹툰 상세 완결(badges COMPLETED)", kwDetail.workStatus, "completed");
+truthy("카카오웹툰 상세 장르 학원", kwDetail.genres.includes("학원"));
+truthy("카카오웹툰 상세 장르 판타지", kwDetail.genres.includes("판타지"));
+truthy("카카오웹툰 상세 원작있음(ORIGINAL_STORY)", kwDetail.genres.includes("원작있음"));
+truthy("카카오웹툰 상세 표지 https", String(kwDetail.coverUrl).startsWith("https://"));
+eq("카카오웹툰 상세 연령(adult=false→null)", kwDetail.ageTag, null);
+eq("카카오웹툰 상세 platform", kwDetail.platform, "카카오웹툰");
+eq("detect 카카오웹툰 URL", S.detectPlatformFromUrl("https://webtoon.kakao.com/content/x/2320"), "카카오웹툰");
+eq("detect 카카오페이지 URL(구분)", S.detectPlatformFromUrl("https://page.kakao.com/content/123"), "카카오페이지");
 
 // ── 🎨 v7.56.4 표지 고화질 변형(coverUrlHighRes) — 실측 픽스처 URL 패턴 기반 ──
 const cov = S.coverUrlHighRes;

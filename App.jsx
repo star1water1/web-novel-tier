@@ -2,9 +2,26 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.56.9 (모달 버튼 가림·점프 전수조사 — 동일 메커니즘 2건 추가 수정)        ║
+ * ║  버전: 7.57.0 (웹툰 Phase 2b — 카카오웹툰 자동검색/불러오기, 베타)               ║
  * ║  최종 수정: 2026-07-01                                                        ║
- * ║  총 라인 수: 약 76,900줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 77,000줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🎨 v7.57.0 웹툰 Phase 2b — 카카오웹툰 자동검색/불러오기 (2026-07-01)             ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 웹툰모드 두 번째 플랫폼. gateway-kw.kakao.com REST(비로그인) — 개발 IP 접근 가능이라 ║
+ * ║ 실캡처 픽스처로 빌드+검증(네이버처럼 온디바이스 캡처 대기 불필요).                 ║
+ * ║ • 검색 /search/v1/content?word= → 후보(제목·글작가·표지·URL). 상세               ║
+ * ║   /decorator/v2/decorator/contents/{id} → 완결(badges COMPLETED)·글/그림/원작     ║
+ * ║   (AUTHOR/ILLUSTRATOR/ORIGINAL_STORY)·장르·줄거리·표지(thumbnailImage)·19금.       ║
+ * ║ • searchKakaoWebtoon·parseKakaoWebtoonSearch·kakaoWebtoonDetailToMeta·            ║
+ * ║   fetchKakaoWebtoonMeta·kakaoAuthorsSplit 신규. SCRAPER_PLATFORMS webtoon.kakao.com║
+ * ║   등록, searchNovels 웹툰 러너·WEBTOON_SEARCH_PLATFORMS·fetchNovelMeta 분기 추가.  ║
+ * ║ • 검색사이트 토글·연재처 URL·canonicalPlatform 기존 배선 자동 반영. 후보 meta 미첨부║
+ * ║   → pick 시 상세 재fetch(runScrapeFromUrl)로 완결·표지·줄거리까지 채움.            ║
+ * ║ • scraper-test 실픽스처 22 assert(409 pass). 회차수·연재연도는 후속(API 미노출).   ║
+ * ║ esbuild 통과·회귀 무변. APP_VERSION 7.53.8 유지(베타).                           ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -16154,6 +16171,7 @@ const SCRAPER_PLATFORMS = [
   { key: "카카오페이지", host: "page.kakao.com" },
   { key: "카카오페이지", host: "pagew.kakao.com" }, // 🆕 v7.31.3: 웹 변형 호스트도 카카오페이지로 인식
   { key: "네이버웹툰", host: "comic.naver.com" }, // 🎨 v7.56.0: 웹툰모드 — m.comic.naver.com도 includes로 포함
+  { key: "카카오웹툰", host: "webtoon.kakao.com" }, // 🎨 v7.57.0: 웹툰모드 — 카카오웹툰(page.kakao.com=카카오페이지와 별개 호스트)
 ];
 
 function detectPlatformFromUrl(url) {
@@ -17177,6 +17195,12 @@ async function fetchNovelMeta(url, opts = {}) {
     if (m && m.ok && m.title) return m;
     throw new Error("네이버웹툰 정보를 가져오지 못했어요. 제목·작가는 직접 입력하거나 설정 › 연결 › ‘긁기 진단’으로 캡처해 주세요.");
   }
+  // 🎨 v7.57.0: 카카오웹툰 — gateway-kw 상세 API로 메타 취득(완결·글/그림/원작·표지). 자체 처리(공통 폴백 미사용).
+  if (platform === "카카오웹툰") {
+    const m = await fetchKakaoWebtoonMeta(url, opts);
+    if (m && m.ok && m.title) return m;
+    throw new Error("카카오웹툰 정보를 가져오지 못했어요. 제목·작가는 직접 입력하거나 설정 › 연결 › ‘긁기 진단’으로 캡처해 주세요.");
+  }
   const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
   let res, html = "";
   try {
@@ -17483,7 +17507,7 @@ async function searchNovels(query, opts = {}) {
   const isWebtoon = globalSlotMode === "webtoon";
   // 🔎 v7.28.43: 플랫폼 병렬(allSettled) → 관련도·플랫폼 균형 병합. 🆕 v7.39.0: 사용자가 켠 플랫폼만 조회.
   const runners = isWebtoon
-    ? { "네이버웹툰": searchNaverWebtoon }
+    ? { "네이버웹툰": searchNaverWebtoon, "카카오웹툰": searchKakaoWebtoon }
     : { "리디": searchRidi, "네이버시리즈": searchNaverSeries, "문피아": searchMunpia, "노벨피아": searchNovelpia, "카카오페이지": searchKakao };
   const platformList = isWebtoon ? WEBTOON_SEARCH_PLATFORMS : SEARCH_PLATFORMS;
   const active = platformList.filter(isSearchPlatformOn);
@@ -17891,7 +17915,7 @@ function parseNovelpiaSearch(jsonText) {
 //   실기기 '긁기 진단' 캡처로 응답 shape 확정 후 정밀화 예정(기존 소설 스크래퍼와 동일 워크플로).
 //   응답 키 이름에 관용적으로 대응(여러 후보 키 탐색).
 // ═══════════════════════════════════════════════════════════════
-const WEBTOON_SEARCH_PLATFORMS = ["네이버웹툰"];
+const WEBTOON_SEARCH_PLATFORMS = ["네이버웹툰", "카카오웹툰"];
 
 // 🎨 v7.56.2: 네이버웹툰 날짜 정규화 — 검색/회차 응답의 날짜가 2자리 연("26.06.30")이라
 //   scraperDateToTs(4자리 연 요구)에 그대로 못 넣음 → "YYYY.MM.DD"로 확장. 이미 4자리면 그대로.
@@ -18174,6 +18198,114 @@ function findNaverWebtoonInfo(nd, tid) {
   };
   dig(nd, 0);
   return found;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 🎨 v7.57.0 카카오웹툰 (웹툰모드 검색/메타) — gateway-kw.kakao.com REST(비로그인 접근)
+//   검색: /search/v1/content?word=  ·  상세: /decorator/v2/decorator/contents/{id}
+//   작가 역할 명시: AUTHOR=글작가 / ILLUSTRATOR=그림작가 / ORIGINAL_STORY=원작. 완결은 badges의 COMPLETED.
+//   콘텐츠 URL: webtoon.kakao.com/content/{seoId}/{id}. 실캡처 픽스처로 파서 검증(개발 IP 접근 가능).
+// ═══════════════════════════════════════════════════════════════
+const KAKAO_WEBTOON_HEADERS = { ...SCRAPER_HEADERS, Referer: "https://webtoon.kakao.com/" };
+// authors[]({name,type,order}) → 역할별 분리. type: AUTHOR/ILLUSTRATOR/ORIGINAL_STORY/PUBLISHER.
+function kakaoAuthorsSplit(authors) {
+  const arr = Array.isArray(authors) ? authors : [];
+  const names = (t) => arr.filter(a => a && a.type === t).map(a => String(a.name || "").trim()).filter(Boolean);
+  let author = names("AUTHOR").join(", ");
+  const artist = names("ILLUSTRATOR").join(", ");
+  const original = names("ORIGINAL_STORY").join(", ");
+  // 역할 태깅이 없을 때(드묾) 전체 이름을 글작가로 폴백.
+  if (!author && !artist && arr.length) author = arr.map(a => String((a && a.name) || "").trim()).filter(Boolean).join(", ");
+  return { author, artist, original };
+}
+async function searchKakaoWebtoon(query, opts = {}) {
+  const q = (query || "").trim();
+  if (!q) return [];
+  const url = "https://gateway-kw.kakao.com/search/v1/content?word=" + encodeURIComponent(q) + "&limit=20&offset=0";
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
+  let res, text = "";
+  try {
+    res = await fetch(url, { headers: KAKAO_WEBTOON_HEADERS, redirect: "follow", signal });
+    text = await res.text();
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error("검색 응답이 없어 중단했어요 (시간 초과)");
+    throw new Error("검색을 불러오지 못했어요: " + (e?.message || e));
+  } finally { cleanup(); }
+  const block = scraperDetectBlock(res.status, text);
+  if (block.blocked) throw new Error(`카카오웹툰 검색을 바로 못 했어요. ${block.hint || "폰에서 시도하거나 설정 › 연결 › ‘긁기 진단’으로 검색 원본을 캡처해 주세요."}`);
+  return parseKakaoWebtoonSearch(text);
+}
+// 검색 응답(JSON: data.content[]) → 후보[]. meta 미첨부 → pick 시 상세(decorator) 재fetch로 완결/표지/줄거리까지 채움.
+//   후보 표지는 캐릭터 이미지(리스트 미리보기용), 등록 표지는 상세 thumbnailImage.
+function parseKakaoWebtoonSearch(payload) {
+  let data = null;
+  if (payload && typeof payload === "object") data = payload;
+  else { try { data = JSON.parse(payload); } catch { data = null; } }
+  const dd = data && data.data ? data.data : null;
+  const list = dd && (Array.isArray(dd.content) ? dd.content : (Array.isArray(dd.contents) ? dd.contents : null));
+  const out = [], seen = new Set();
+  if (list) for (const it of list) {
+    const id = it && it.id, title = String((it && it.title) || "").trim();
+    if (!id || !title || seen.has(String(id))) continue;
+    seen.add(String(id));
+    const seo = String((it && it.seoId) || "").trim();
+    const { author } = kakaoAuthorsSplit(it && it.authors);
+    let coverUrl = String((it && (it.featuredCharacterImageA || it.titleImageA)) || "");
+    if (coverUrl.startsWith("//")) coverUrl = "https:" + coverUrl;
+    out.push({
+      title, author: author || "",
+      url: "https://webtoon.kakao.com/content/" + encodeURIComponent(seo || title) + "/" + id,
+      coverUrl, platform: "카카오웹툰",
+      category: String((it && it.genre) || "").split(/[\/,·]/)[0].trim(),
+      isComic: true,
+    });
+    if (out.length >= 30) break;
+  }
+  return out;
+}
+// 상세(decorator/v2 data) → 정규화 meta. 완결=badges COMPLETED, 휴재=REST/HIATUS. 글/그림/원작 분리, 원작 있으면 '원작있음' 태그.
+function kakaoWebtoonDetailToMeta(d) {
+  if (!d || typeof d !== "object") return null;
+  const id = d.id, title = String(d.title || "").trim();
+  if (!id || !title) return null;
+  const seo = String(d.seoId || "").trim();
+  const { author, artist, original } = kakaoAuthorsSplit(d.authors);
+  let art = artist; if (art && art === author) art = ""; // 글=그림 동일이면 그림작가 생략(중복 방지)
+  const genres = [];
+  for (const g of String(d.genre || "").split(/[\/,·]/)) { const s = g.trim(); if (s && !genres.includes(s)) genres.push(s); }
+  if (original && !genres.includes("원작있음")) genres.push("원작있음");
+  const badges = Array.isArray(d.badges) ? d.badges.map(b => String((b && b.title) || "").toUpperCase()) : [];
+  const workStatus = badges.includes("COMPLETED") ? "completed" : ((badges.includes("REST") || badges.includes("HIATUS")) ? "hiatus" : "ongoing");
+  let coverUrl = String(d.thumbnailImage || d.sharingThumbnailImage || "");
+  if (coverUrl.startsWith("//")) coverUrl = "https:" + coverUrl;
+  return {
+    ok: true, platform: "카카오웹툰",
+    url: "https://webtoon.kakao.com/content/" + encodeURIComponent(seo || title) + "/" + id,
+    title, author: author || "", artist: art, coverUrl,
+    synopsis: String(d.synopsis || "").trim(),
+    genres, workStatus,
+    totalEpisodes: null, startYear: null, endYear: null, completedAt: 0,
+    ageTag: d.adult ? "19금" : null,
+  };
+}
+// 카카오웹툰 단건 메타 — URL→id→상세 API(decorator). 검색 pick(runScrapeFromUrl)·URL 붙여넣기 공용.
+async function fetchKakaoWebtoonMeta(url, opts = {}) {
+  const id = (String(url).match(/\/content\/[^/]+\/(\d+)/) || String(url).match(/\/(\d+)(?:[/?#]|$)/) || [])[1];
+  if (!id) return { ok: false, platform: "카카오웹툰", url };
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
+  let res, text = "";
+  try {
+    res = await fetch("https://gateway-kw.kakao.com/decorator/v2/decorator/contents/" + id, { headers: KAKAO_WEBTOON_HEADERS, redirect: "follow", signal });
+    text = await res.text();
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error("정보 응답이 없어 중단했어요 (시간 초과)");
+    throw new Error("정보를 불러오지 못했어요: " + (e?.message || e));
+  } finally { cleanup(); }
+  const block = scraperDetectBlock(res.status, text);
+  if (block.blocked) throw new Error(`카카오웹툰 정보를 바로 못 가져왔어요. ${block.hint || "폰 브라우저나 설정 › 연결 › ‘긁기 진단’을 이용해 주세요."}`);
+  let data; try { data = JSON.parse(text); } catch { data = null; }
+  const meta = kakaoWebtoonDetailToMeta(data && data.data ? data.data : null);
+  return meta || { ok: false, platform: "카카오웹툰", url };
 }
 
 // 🆕 v7.38.0: 노벨피아 단건 상세 API(get_novel) — 로그인 없이 19금 포함 전체 메타(검색과 동일 스키마).
