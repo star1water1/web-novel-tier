@@ -2,9 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.57.4 (카카오웹툰 로그인 — page.kakao→webtoon.kakao 교정, 베타)          ║
+ * ║  버전: 7.57.5 (카카오웹툰 로그인 — 계정 로그인 화면 직행 + 진단, 베타)            ║
  * ║  최종 수정: 2026-07-01                                                        ║
  * ║  총 라인 수: 약 77,000줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.57.5 카카오웹툰 로그인 — 계정 로그인 직행 + 로드 진단 (2026-07-01)         ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ ‘로그인이 막힌다’ 제보 대응. 원인 후보: webtoon.kakao 홈엔 로그인 버튼이 눈에 안    ║
+ * ║ 띄어 ‘눌러도 아무 일 없어 보임’. → 로그인 모달을 accounts.kakao.com 로그인 화면으로 ║
+ * ║ 직행(continue=webtoon)해 폼이 바로 뜨게 함. originWhitelist['*']로 리다이렉트 허용. ║
+ * ║ WebView onLoadStart/End/onError/onHttpError를 모달 상단 ‘상태:’ 줄에 노출 —        ║
+ * ║ 막히면 실제 원인(오류·HTTP·최종 URL)이 보이게. 카카오가 앱내 로그인 자체를 막으면   ║
+ * ║ (‘이 브라우저에서는 로그인 제한’) 로그인 없이 토글만으로 익명 시도하도록 안내.       ║
+ * ║ ※로그인은 어디까지나 선택 — 회차수 캡처는 익명 세션으로도 시도됨.                  ║
+ * ║ esbuild 통과. APP_VERSION 7.53.8 유지(베타).                                     ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -39759,6 +39772,7 @@ function AppContent() {
   const [kkSessionModalOpen, setKkSessionModalOpen] = useState(false); // 🆕 v7.43.0: 카카오 세션 부트스트랩 WebView 모달
   const [kkWebtoonEp, setKkWebtoonEp] = useState(false); // 🆕 v7.57.2: 카카오웹툰 회차수 세션캡처 사용(옵트인 — 불러오기 시 세션 WebView 팝업)
   const [kkWebtoonLoginOpen, setKkWebtoonLoginOpen] = useState(false); // 🆕 v7.57.4: 카카오웹툰(webtoon.kakao.com) 로그인/세션 WebView(선택 — 캡처와 쿠키 공유)
+  const [kkLoginStatus, setKkLoginStatus] = useState(""); // 🛠️ v7.57.5: 로그인 WebView 로드 상태/오류 표시(막힘 진단)
   useEffect(() => { globalKkWebtoonEp = kkWebtoonEp; }, [kkWebtoonEp]); // 모듈 스크래퍼가 읽는 전역과 동기화
   const [kkBusy, setKkBusy] = useState(false);
   const [kkCaptureUrl, setKkCaptureUrl] = useState(null); // 🆕 v7.44.0: 응답 가로채기 진행 중인 카카오 content URL(설정 시 캡처 WebView 마운트)
@@ -69708,7 +69722,7 @@ async function importJSON(directText, onSuccess, onSettled) {
                     카카오웹툰은 상세 정보에 회차수가 없어요. 아래 스위치를 켜면 불러오기·재취득 때 작품 페이지를 잠깐 열어 회차수를 받아와요(익명으로 시도). 잘 안 되거나 성인·독점 작품이면 ‘카카오웹툰 로그인’으로 로그인해 두면 쿠키를 함께 써서 더 안정적이에요(선택).
                   </Text>
                   <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
-                    <TouchableOpacity onPress={() => setKkWebtoonLoginOpen(true)} activeOpacity={0.7}
+                    <TouchableOpacity onPress={() => { setKkLoginStatus(""); setKkWebtoonLoginOpen(true); }} activeOpacity={0.7}
                       style={{ paddingVertical: 9, paddingHorizontal: 16, borderRadius: 999, backgroundColor: C.bg, borderWidth: 1, borderColor: C.primary }}>
                       <Text style={{ color: C.primary, fontWeight: "800", fontSize: 12.5 }}>카카오웹툰 로그인/열기</Text>
                     </TouchableOpacity>
@@ -69777,18 +69791,24 @@ async function importJSON(directText, onSuccess, onSettled) {
                   </View>
                   <View style={{ paddingHorizontal: 14, paddingVertical: 8, backgroundColor: C.chip }}>
                     <Text style={{ color: C.sub, fontSize: 11.5, lineHeight: 16 }}>
-                      카카오웹툰(webtoon.kakao.com)에 로그인해 두면 회차수 캡처가 더 안정적이에요(선택). 로그인 후 오른쪽 ‘완료’를 눌러 주세요. 로그인 정보는 휴대폰 쿠키 저장소에만 보관돼요. 로그인 없이 회차수만 시도해도 돼요.
+                      카카오웹툰에 로그인해 두면 회차수 캡처가 더 안정적이에요(선택). 카카오 계정으로 로그인 후 오른쪽 ‘완료’를 눌러 주세요. 로그인 정보는 휴대폰 쿠키 저장소에만 보관돼요. 로그인 없이 회차수만 시도해도 돼요. (‘이 브라우저에서는 로그인이 제한’ 같은 문구가 뜨면 카카오가 앱내 로그인을 막는 것 — 그땐 로그인 없이 토글만 켜서 시도해 주세요.)
                     </Text>
+                    {kkLoginStatus ? <Text style={{ color: C.sub, fontSize: 10.5, marginTop: 4 }}>상태: {kkLoginStatus}</Text> : null}
                   </View>
                   {kkWebtoonLoginOpen && (
                     <WebView
-                      source={{ uri: "https://webtoon.kakao.com/" }}
+                      source={{ uri: "https://accounts.kakao.com/login/?continue=" + encodeURIComponent("https://webtoon.kakao.com/") }}
                       userAgent={SCRAPER_UA}
                       sharedCookiesEnabled
                       thirdPartyCookiesEnabled
                       domStorageEnabled
                       javaScriptEnabled
+                      originWhitelist={["*"]}
                       startInLoadingState
+                      onLoadStart={() => setKkLoginStatus("불러오는 중…")}
+                      onLoadEnd={(ev) => setKkLoginStatus("열림: " + String(ev?.nativeEvent?.url || "").slice(0, 60))}
+                      onError={(ev) => setKkLoginStatus("오류: " + String(ev?.nativeEvent?.description || "load error").slice(0, 80))}
+                      onHttpError={(ev) => setKkLoginStatus("HTTP " + (ev?.nativeEvent?.statusCode || "?") + " " + String(ev?.nativeEvent?.url || "").slice(0, 50))}
                       renderLoading={() => (
                         <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "center", alignItems: "center", backgroundColor: C.bg }}>
                           <ActivityIndicator size="large" color={C.primary} />
