@@ -2,9 +2,29 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.57.1 (웹툰 메타 보강 — 인기지표·연재요일, 베타)                          ║
+ * ║  버전: 7.57.2 (카카오웹툰 회차수 — 세션 WebView 캡처, 베타)                       ║
  * ║  최종 수정: 2026-07-01                                                        ║
  * ║  총 라인 수: 약 77,000줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📚 v7.57.2 카카오웹툰 회차수 — 세션 WebView 응답 캡처 (2026-07-01)               ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 상세 API(decorator)엔 회차수가 없고 회차목록(gateway-kw /episode/v2)은 토큰 게이트 ║
+ * ║ (GATEWAY_TOKEN_CHECK_FAILURE). 토큰은 앱 JS가 발급(익명 device or 로그인) → fetch  ║
+ * ║ 흉내 불가. 해법: 기존 카카오 세션 캡처 WebView를 webtoon.kakao.com까지 확장,       ║
+ * ║ 앱 JS가 보낸 /episode 응답을 그대로 가로채 총 회차수만 파싱(v7.44 page.kakao 패턴). ║
+ * ║ • KAKAO_CAPTURE_JS에 episodes 응답 탐지(HE) + {t:'kwep'} 추가(overview 무영향).    ║
+ * ║ • globalKakaoCapture를 mode('overview'|'episodes')로 일반화 + globalKakaoWebtoon-  ║
+ * ║   Episodes 브리지 주입. parseKakaoWebtoonEpisodeCount(실응답 미확인 → total필드·   ║
+ * ║   배열최대no·길이 다중 shape 방어, 실패 시 raw 응답 클립보드 복사로 진단).         ║
+ * ║ • fetchKakaoWebtoonMeta: 옵트인(globalKkWebtoonEp)일 때만 회차수 보강(기본 OFF).   ║
+ * ║   실패·미준비·타임아웃은 조용히 스킵 → 기본 메타 그대로(무회귀).                   ║
+ * ║ • 설정 ‘🔑 카카오 세션’ 아래 ‘📚 카카오웹툰 회차수 가져오기’ 토글 + 부팅 복원      ║
+ * ║   (kk_webtoon_ep). 팝업·지연 있어 기본 꺼짐, 로그인하면 더 안정적.                 ║
+ * ║ ※카카오는 DC IP 차단(302)이라 폰(로그인)에서만 검증 가능 — 온디바이스 확인 필요.   ║
+ * ║   회차목록 응답 shape가 다르면 토글 시 복사되는 raw 진단을 보내 주면 파서 보정.     ║
+ * ║ scraper-test +7 assert(429 pass, 무관 실패 3). esbuild 통과. APP_VERSION 7.53.8.  ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -16169,6 +16189,11 @@ let globalKkCookie = null; // "name=val; ..." 형태 or null(미부트스트랩)
 //   유일 해법 — 숨은 WebView에서 카카오 앱 JS가 직접 요청을 보내게 하고 그 응답을 가로채(injected fetch/XHR 후킹) RN으로 넘김.
 //   globalKakaoCapture는 App 컴포넌트가 WebView 캡처 구현을 주입한다(슬라이스 밖 React 의존이라 여기선 후크만).
 let globalKakaoCapture = null; // (url, opts) => Promise<meta|null>
+// 🆕 v7.57.2: 카카오웹툰 회차수 — 세션 WebView로 webtoon.kakao.com/content/{id}를 열어 앱 JS가 gateway-kw
+//   /episode/v2 응답을 받게 하고 그 응답을 가로채 총 회차수 파싱(로그인/익명 세션이 발급하는 토큰은 앱 JS가 처리).
+//   App이 구현 주입(globalKakaoCapture와 동일 패턴, mode:'episodes'). 미주입/세션미준비면 null(무회귀).
+let globalKakaoWebtoonEpisodes = null; // (contentUrl) => Promise<number|null>
+let globalKkWebtoonEp = false; // 설정 토글 — 카카오웹툰 회차수 세션캡처 사용(기본 OFF, 세션 WebView 팝업 동반)
 // 카카오 페이지에 주입: fetch·XHR을 후킹해 contentHomeOverview 응답을 postMessage. 앱 JS보다 먼저 실행(beforeContentLoaded).
 //   🔧 v7.44.1: responseType='json'(axios 기본)이면 responseText 접근이 예외 → this.response 우선. + 실패 진단용 요청 로그(kkdbg) 전송.
 const KAKAO_CAPTURE_JS = "(function(){" +
@@ -16176,8 +16201,9 @@ const KAKAO_CAPTURE_JS = "(function(){" +
   "P({t:'kkdbg',u:'__run__',l:0,ov:false});" + // 매 주입 호출마다(before/after 어느 게 떴는지)
   "if(window.__kkCap){return;}window.__kkCap=1;" +
   "function H(t){return typeof t==='string'&&t.indexOf('contentHomeOverview')>-1&&(t.indexOf('onIssue')>-1||t.indexOf('startSaleDt')>-1||t.indexOf('lastSlideAddedDate')>-1||t.indexOf('\"content\"')>-1);}" +
+  "function HE(u,t){try{return String(u||'').indexOf('/episode')>-1&&typeof t==='string'&&(t.indexOf('episodeId')>-1||t.indexOf('episodeNumber')>-1||t.indexOf('\"seq\"')>-1||t.indexOf('\"asset\"')>-1);}catch(e){return false;}}" + // 🆕 v7.57.2: 회차목록 응답 탐지
   "function D(u,t){try{var s=String(u||'');if(s.indexOf('graphql')>-1||s.indexOf('kakao.com')>-1||(typeof t==='string'&&t.indexOf('contentHomeOverview')>-1))P({t:'kkdbg',u:s.slice(0,90),l:(t?t.length:0),ov:H(t)});}catch(e){}}" +
-  "function G(u,t){D(u,t);if(H(t))P({t:'kk',ok:true,body:t});}" +
+  "function G(u,t){D(u,t);if(H(t))P({t:'kk',ok:true,body:t});if(HE(u,t))P({t:'kwep',ok:true,body:t});}" +
   "try{var of=window.fetch;window.fetch=function(){var a=arguments,u=(a[0]&&a[0].url)?a[0].url:a[0];return of.apply(this,a).then(function(r){try{r.clone().text().then(function(t){G(u,t);}).catch(function(){});}catch(e){}return r;});};}catch(e){}" +
   "try{var oo=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){this.__u=u;return oo.apply(this,arguments);};" +
   "var os=XMLHttpRequest.prototype.send;XMLHttpRequest.prototype.send=function(){var x=this;try{x.addEventListener('load',function(){var t='';try{var rt=x.responseType;if(rt===''||rt==='text'){t=x.responseText;}else if(rt==='json'){t=JSON.stringify(x.response);}else{t=(typeof x.response==='string')?x.response:'';}}catch(e){try{t=JSON.stringify(x.response);}catch(e2){}}G(x.__u,t);});}catch(e){}return os.apply(this,arguments);};}catch(e){}" +
@@ -18349,7 +18375,50 @@ async function fetchKakaoWebtoonMeta(url, opts = {}) {
   if (block.blocked) throw new Error(`카카오웹툰 정보를 바로 못 가져왔어요. ${block.hint || "폰 브라우저나 설정 › 연결 › ‘긁기 진단’을 이용해 주세요."}`);
   let data; try { data = JSON.parse(text); } catch { data = null; }
   const meta = kakaoWebtoonDetailToMeta(data && data.data ? data.data : null);
-  return meta || { ok: false, platform: "카카오웹툰", url };
+  if (!meta || !meta.ok) return meta || { ok: false, platform: "카카오웹툰", url };
+  // 🆕 v7.57.2: 회차수 — 세션 WebView가 앱 JS의 /episode/v2 응답을 가로채 총 회차수 파싱(옵트인·세션 필요).
+  //   상세 API(decorator)엔 회차수가 없어(토큰 게이트) 이 경로로만 취득. 미준비/실패는 조용히 스킵 → 기본 메타 그대로(무회귀).
+  if (globalKkWebtoonEp && typeof globalKakaoWebtoonEpisodes === "function" && opts.wantEpisodes !== false) {
+    try {
+      const ep = await globalKakaoWebtoonEpisodes(meta.url || url);
+      if (Number(ep) > 0) meta.totalEpisodes = Number(ep);
+    } catch {}
+  }
+  return meta;
+}
+// 🆕 v7.57.2: 카카오웹툰 회차목록 응답(gateway-kw /episode/v2/…/episodes) → 총 회차수. 실응답 미확인이라 다중 shape 방어:
+//   ① 명시 총계 필드(total/totalCount/episodeCount…) ② 회차배열 최대 회차번호 ③ 배열 길이 — 최댓값 채택. 못 찾으면 null.
+function parseKakaoWebtoonEpisodeCount(body) {
+  let d = body;
+  if (typeof body === "string") { try { d = JSON.parse(body); } catch { return null; } }
+  if (!d || typeof d !== "object") return null;
+  const totals = [];
+  const digTotal = (o, depth) => {
+    if (!o || depth > 6 || typeof o !== "object") return;
+    for (const k of Object.keys(o)) {
+      const v = o[k];
+      if (typeof v === "number" && v > 0 && v < 100000 && /^(total|totalCount|totalCnt|count|episodeCount|totalEpisodeCount|episodeTotalCount)$/i.test(k)) totals.push(v);
+      else if (v && typeof v === "object") digTotal(v, depth + 1);
+    }
+  };
+  digTotal(d, 0);
+  let maxNo = 0, arrLen = 0;
+  const looksEpisode = (x) => x && typeof x === "object" && (x.no != null || x.episodeNumber != null || x.seq != null || x.episodeId != null || x.asset != null);
+  const digArr = (o, depth) => {
+    if (!o || depth > 6) return;
+    if (Array.isArray(o)) {
+      if (o.length && o.some(looksEpisode)) {
+        if (o.length > arrLen) arrLen = o.length;
+        for (const x of o) { const n = Number(x && (x.no != null ? x.no : (x.episodeNumber != null ? x.episodeNumber : x.seq))) || 0; if (n > maxNo) maxNo = n; }
+      }
+      o.forEach(x => digArr(x, depth + 1));
+      return;
+    }
+    if (typeof o === "object") for (const k of Object.keys(o)) digArr(o[k], depth + 1);
+  };
+  digArr(d, 0);
+  const best = Math.max(totals.length ? Math.max(...totals) : 0, maxNo, arrLen);
+  return best > 0 ? best : null;
 }
 
 // 🆕 v7.38.0: 노벨피아 단건 상세 API(get_novel) — 로그인 없이 19금 포함 전체 메타(검색과 동일 스키마).
@@ -39662,6 +39731,8 @@ function AppContent() {
   const [gaidenExp, setGaidenExp] = useState(true); // 🔧 v7.42.0: 카카오·문피아 본편/외전 분리 — 기본 ON(설정에서 끌 수 있음)
   const [kkReady, setKkReady] = useState(false); // 🆕 v7.43.0: 카카오 익명 토큰(_kawlt) 부트스트랩 완료 여부(쿠키 캡처됨)
   const [kkSessionModalOpen, setKkSessionModalOpen] = useState(false); // 🆕 v7.43.0: 카카오 세션 부트스트랩 WebView 모달
+  const [kkWebtoonEp, setKkWebtoonEp] = useState(false); // 🆕 v7.57.2: 카카오웹툰 회차수 세션캡처 사용(옵트인 — 불러오기 시 세션 WebView 팝업)
+  useEffect(() => { globalKkWebtoonEp = kkWebtoonEp; }, [kkWebtoonEp]); // 모듈 스크래퍼가 읽는 전역과 동기화
   const [kkBusy, setKkBusy] = useState(false);
   const [kkCaptureUrl, setKkCaptureUrl] = useState(null); // 🆕 v7.44.0: 응답 가로채기 진행 중인 카카오 content URL(설정 시 캡처 WebView 마운트)
   const kkCaptureResolver = useRef(null); // { finish, timer } — onMessage/타임아웃이 캡처 Promise를 종료
@@ -48499,13 +48570,22 @@ function AppContent() {
   //   캡처 WebView 마운트(kkCaptureUrl) → 카카오 앱 JS가 보낸 contentHomeOverview 응답을 onMessage로 수신 → Promise 종료.
   useEffect(() => {
     // 🔧 v7.44.3: 캡처 결과를 {ok, meta, diag}로 반환 — 실패 진단을 throw 메시지에 실어 단일 알림으로 보여줌(덮어쓰기 방지)+클립보드 복사.
-    globalKakaoCapture = (url) => new Promise((resolve) => {
+    // 🆕 v7.57.2: mode 'overview'(기존 page.kakao 메타) | 'episodes'(webtoon.kakao 회차수). 캡처 WebView·resolver 공유.
+    const runKkCapture = (url, mode) => new Promise((resolve) => {
       if (kkCaptureResolver.current) { resolve({ ok: false, diag: "이미 다른 카카오 캡처가 진행 중" }); return; }
       kkCaptureDbg.current = [];
-      const finish = (meta, reason) => {
+      const finish = (payload, reason) => {
         const r = kkCaptureResolver.current; if (!r) return;
         clearTimeout(r.timer); kkCaptureResolver.current = null; setKkCaptureUrl(null);
-        if (meta && meta.ok) { resolve({ ok: true, meta }); return; }
+        if (mode === "episodes") {
+          if (Number(payload) > 0) { resolve({ ok: true, episodeCount: Number(payload) }); return; }
+          const reqs = kkCaptureDbg.current.filter(d => d.u !== "__hook_installed__");
+          const diag = `회차수 캡처 실패: ${reason || "실패"} · 요청 ${reqs.length}건`;
+          try { Clipboard.setStringAsync("[카카오 회차수 캡처 진단]\nURL:" + (r.url || "") + "\n" + diag + "\n(raw)\n" + String(r.rawEp || "").slice(0, 3000)); } catch {}
+          resolve({ ok: false, diag });
+          return;
+        }
+        if (payload && payload.ok) { resolve({ ok: true, meta: payload }); return; }
         const log = kkCaptureDbg.current;
         const installed = log.some(d => d.u === "__hook_installed__");
         const ovSeen = log.some(d => d.ov);
@@ -48516,16 +48596,22 @@ function AppContent() {
         resolve({ ok: false, diag });
       };
       const timer = setTimeout(() => finish(null, "timeout(30s)"), 30000);
-      kkCaptureResolver.current = { finish, timer, url };
+      kkCaptureResolver.current = { finish, timer, url, mode };
       setKkCaptureUrl(url);
     });
-    return () => { globalKakaoCapture = null; const r = kkCaptureResolver.current; if (r) { clearTimeout(r.timer); kkCaptureResolver.current = null; } };
+    globalKakaoCapture = (url) => runKkCapture(url, "overview");
+    globalKakaoWebtoonEpisodes = (url) => runKkCapture(url, "episodes").then(r => (r && r.ok) ? r.episodeCount : null);
+    return () => { globalKakaoCapture = null; globalKakaoWebtoonEpisodes = null; const r = kkCaptureResolver.current; if (r) { clearTimeout(r.timer); kkCaptureResolver.current = null; } };
   }, []);
   function onKkCaptureMessage(e) {
     const r = kkCaptureResolver.current; if (!r) return;
     let p = null; try { p = JSON.parse(e?.nativeEvent?.data); } catch { return; }
     if (!p) return;
     if (p.t === "kkdbg") { if (kkCaptureDbg.current.length < 60) kkCaptureDbg.current.push({ u: p.u, l: p.l, ov: p.ov }); return; }
+    if (r.mode === "episodes") { // 🆕 v7.57.2: 회차목록 응답 → 총 회차수
+      if (p.t === "kwep" && p.ok && p.body) { r.rawEp = String(p.body); const n = parseKakaoWebtoonEpisodeCount(p.body); if (Number(n) > 0) r.finish(n); } // 못 파싱하면 대기(타임아웃 종료 시 raw 진단 복사)
+      return;
+    }
     if (p.t !== "kk" || !p.ok || !p.body) return;
     const meta = parseKakaoOverview(p.body, r.url || "");
     if (meta && meta.ok && meta.title) r.finish(meta); // 매칭 안 되면 계속 대기(타임아웃이 종료)
@@ -49060,6 +49146,7 @@ function AppContent() {
         setKkReady(has);
         if (!has) { globalKkCookie = null; try { await saveGlobalAiConfig({ kk_session: false }); } catch {} }
       }
+      if (cfg.kk_webtoon_ep === true) { setKkWebtoonEp(true); globalKkWebtoonEp = true; } // 🆕 v7.57.2: 카카오웹툰 회차수 세션캡처 복원
       if (cfg.ai_usage && typeof cfg.ai_usage === "object") {
         _aiUsage = {
           calls: Number(cfg.ai_usage.calls) || 0, input: Number(cfg.ai_usage.input) || 0,
@@ -69400,6 +69487,17 @@ async function importJSON(directText, onSuccess, onSettled) {
                 <Text style={{ color: C.sub, fontSize: 10, marginTop: 8, lineHeight: 14 }}>
                   ※ 시험 기능(폰 검증 중) — 카카오가 막아둔 구조라 안 될 수도 있어요. 안 되면 ‘긁기 진단 › 카카오’로 응답을 캡처해 보내 주세요.
                 </Text>
+              </View>
+
+              {/* 🆕 v7.57.2: 카카오웹툰 회차수 세션캡처 토글 — 상세 API엔 회차수가 없어(토큰 게이트) 작품 페이지를 잠깐 열어 회차목록 응답을 가로챈다. */}
+              <View style={{ backgroundColor: C.chip, borderRadius: 14, padding: 14, marginBottom: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                <View style={{ flex: 1, paddingRight: 10 }}>
+                  <Text style={{ color: C.text, fontSize: 14, fontWeight: "800" }}>📚 카카오웹툰 회차수 가져오기</Text>
+                  <Text style={{ color: C.sub, fontSize: 11.5, marginTop: 4, lineHeight: 16 }}>
+                    카카오웹툰은 상세 정보에 회차수가 없어요. 켜면 불러오기·재취득 때 작품 페이지를 잠깐 열어 회차수를 받아와요(‘카카오 세션’ 준비 권장, 로그인하면 더 안정적). 팝업이 뜨고 느려질 수 있어 기본은 꺼져 있어요. 웹툰 슬롯에서만 의미 있어요.
+                  </Text>
+                </View>
+                <Switch value={kkWebtoonEp} onValueChange={(v) => { setKkWebtoonEp(v); globalKkWebtoonEp = v; saveGlobalAiConfig({ kk_webtoon_ep: v }).catch(() => {}); }} />
               </View>
 
               {/* 🔧 v7.42.0: 카카오·문피아 외전 분리 토글 — 기본 ON(끌 수 있는 안전밸브). 끄면 완결일만 가져옴(외전 분리 생략). */}

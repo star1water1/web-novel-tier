@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, applyEpisodeSplitToMeta, parseKakaoProductList, parseKakaoViewerDate, parseKakaoOverview, kakaoSeriesIdFromUrl, parseMunpiaEntries, parseMunpiaNovelInfo, munpiaIdFromUrl, SCRAPER_HEADERS, SCRAPER_UA, parseNaverWebtoonSearch, extractNaverWebtoonItems, naverWebtoonItemToMeta, WEBTOON_SEARCH_PLATFORMS, naverNormalizeDate, naverDate2ToYear, parseNaverWebtoonStartYear, coverUrlHighRes, isImplausibleEpisodeDrop, parseKakaoWebtoonSearch, kakaoWebtoonDetailToMeta, kakaoAuthorsSplit, naverPublishDayLabel };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, applyEpisodeSplitToMeta, parseKakaoProductList, parseKakaoViewerDate, parseKakaoOverview, kakaoSeriesIdFromUrl, parseMunpiaEntries, parseMunpiaNovelInfo, munpiaIdFromUrl, SCRAPER_HEADERS, SCRAPER_UA, parseNaverWebtoonSearch, extractNaverWebtoonItems, naverWebtoonItemToMeta, WEBTOON_SEARCH_PLATFORMS, naverNormalizeDate, naverDate2ToYear, parseNaverWebtoonStartYear, coverUrlHighRes, isImplausibleEpisodeDrop, parseKakaoWebtoonSearch, kakaoWebtoonDetailToMeta, kakaoAuthorsSplit, naverPublishDayLabel, parseKakaoWebtoonEpisodeCount };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -166,6 +166,15 @@ eq("카카오웹툰 상세 연재요일 없음(publishDay undefined)", kwDetail.
 const kwNoStat = S.kakaoWebtoonDetailToMeta({ id: 9, title: "무통계", authors: [] });
 eq("카카오웹툰 statistics 없음→viewCount 0", kwNoStat.viewCount, 0);
 eq("카카오웹툰 statistics 없음→likeCount 0", kwNoStat.likeCount, 0);
+// 🆕 v7.57.2: 회차수 파서(실응답 미확인 → 다중 shape 방어). 세션 WebView가 가로챈 episodes 응답 대응.
+const kep = S.parseKakaoWebtoonEpisodeCount;
+eq("회차수: 명시 totalCount", kep({ data: { meta: { pagination: { totalCount: 179 } }, episodes: [{ episodeId: "a", no: 1 }] } }), 179);
+eq("회차수: 배열 최대 no", kep({ data: { episodes: [{ no: 1 }, { no: 2 }, { no: 3 }] } }), 3);
+eq("회차수: episodeNumber 최대", kep({ episodes: [{ episodeNumber: 5 }, { episodeNumber: 12 }, { episodeNumber: 8 }] }), 12);
+eq("회차수: 문자열 JSON 입력", kep(JSON.stringify({ data: { episodes: [{ seq: 1 }, { seq: 2 }] } })), 2);
+eq("회차수: episodeCount 필드", kep({ data: { content: { episodeCount: 84 } } }), 84);
+eq("회차수: 비회차 객체 → null", kep({ foo: { bar: 1 }, baz: [{ x: 1 }] }), null);
+eq("회차수: 빈/이상 입력 → null", kep(""), null);
 eq("detect 카카오웹툰 URL", S.detectPlatformFromUrl("https://webtoon.kakao.com/content/x/2320"), "카카오웹툰");
 eq("detect 카카오페이지 URL(구분)", S.detectPlatformFromUrl("https://page.kakao.com/content/123"), "카카오페이지");
 
