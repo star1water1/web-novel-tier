@@ -2,9 +2,52 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.7 (구색 기능 개선 Phase 3 — 검증 큐 유입/소진 균형)                    ║
+ * ║  버전: 7.59.8 (구색 기능 개선 Phase 3 — 순위 표시 정규화)                          ║
  * ║  최종 수정: 2026-08-02                                                        ║
- * ║  총 라인 수: 약 78,920줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 78,940줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔢 v7.59.8 순위 표시 정규화 (#300 → 3위) (T10 · HYB-6) (2026-08-02)              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제 ①] 화면의 '순위 #'가 내부 `manual_order` 원값이었다. 이 값은 100단위 gap을 ║
+ * ║ 두고 매겨지므로(rebalanceTierOrder `(i+1)*100`), 티어의 3번째 작품이 '순위      ║
+ * ║ #300'으로 표시됐다. 사용자가 목록에서 세는 번호와 무관한 숫자다.                  ║
+ * ║ 지점: 어워드 3곳 · 검증 카드 후보 · 수문장 카드 · 배치 상대.                     ║
+ * ║                                                                              ║
+ * ║ [문제 ②] 재배치 이력의 목적지 `#{result_order}`는 더 나빴다. result_order는      ║
+ * ║ computeNewPosition이 만든 **두 작품 사이 중간값**(예: 250)이고, finalize 직후    ║
+ * ║ rebalanceTierOrder가 티어 전체를 (i+1)*100으로 다시 매긴다 → 화면에 뜨는 그      ║
+ * ║ 번호는 **어디에도 존재하지 않는 값**이라 순위 탭과 대조조차 불가능했다.           ║
+ * ║                                                                              ║
+ * ║ [수정 ①] 표시 순위를 '값'이 아니라 **정렬된 위치**로 센다 — `globalTierPositionMap`║
+ * ║ (id → {r: 1-based 순위, n: 티어 크기, t: 티어키})을 loadList에서 기존            ║
+ * ║ globalTierRankMap과 함께 계산. 추가 SQL 0건. `round(order/100)` 대안은 기각 —    ║
+ * ║ 스왑 충돌 분기(-50)나 삽입 중간값 같은 과도기 값에서 번호가 겹치거나 건너뛴다     ║
+ * ║ (실측: order 50/100/250 → round는 1·1·3, 위치 기반은 1·2·3).                    ║
+ * ║                                                                              ║
+ * ║ [수정 ②] 티어 내 정렬을 `compareWithinTier` 한 곳으로 모으고 **순위 탭           ║
+ * ║ (rankedEntries)·티어 관리 탭(tierManageEntries)·표시 순위 맵이 같은 함수**를     ║
+ * ║ 쓰게 했다. 카드 설계는 정렬 기준을 rebalance(manual_order, created_at)에 맞추라  ║
+ * ║ 했지만, 그러면 **티어를 안 매긴 작품**(hybrid에서 rating으로 티어가 정해지는       ║
+ * ║ 경우 manual_order가 전부 0)에서 화면(rating DESC)과 번호가 어긋난다. 사용자가     ║
+ * ║ 대조하는 대상은 rebalance가 아니라 눈앞의 목록이므로 화면 정렬을 정본으로 삼았다. ║
+ * ║ (getPrefScore가 먹는 globalTierRankMap의 tie-break는 **일부러 그대로** 뒀다 —    ║
+ * ║  표시 정합을 맞추자고 건드리면 추천 점수가 딸려 움직인다. T10 범위 밖.)          ║
+ * ║                                                                              ║
+ * ║ [수정 ③] 이력 목적지를 `repoDestLabel`로 — 이미 함께 읽어 오던 현재 자리          ║
+ * ║ (cur_tier/cur_order)로 `S 3위(현재)`. 이후 사용자가 직접 옮겼어도 '(현재)'라      ║
+ * ║ 거짓이 되지 않는다. 스키마·finalize·result_order 저장은 무변경.                  ║
+ * ║                                                                              ║
+ * ║ [안 건드린 것] 쓰기 경로 전부 — rebalance의 (i+1)*100, 스왑의 -50 분기,          ║
+ * ║ computeNewPosition의 중간값. 내부 100단위 체계는 그대로고 표시만 바뀐다.          ║
+ * ║ 진단 탭의 `tier=A #300` 표기도 유지 — 거기선 내부 원값을 봐야 한다.              ║
+ * ║ 순위를 모르면(맵 미갱신·티어 없음) 숫자를 지어내지 않고 티어만 보여 준다.         ║
+ * ║                                                                              ║
+ * ║ [검증] 실제 비교자·맵 계산·표기 헬퍼를 떼어내 27개 단언 — 위치 기반 1·2·3위,     ║
+ * ║ round 대조군, 동률 시 rating tie-break가 화면과 일치, 미상 시 빈 문자열,          ║
+ * ║ 이력 4케이스, 표시 지점 6곳 전환, 쓰기 경로 3종 불변.                            ║
+ * ║ esbuild 통과, scraper-test 526/526. APP_VERSION 7.59.8.                           ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -21312,7 +21355,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.7";
+const APP_VERSION = "7.59.8";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -32573,7 +32616,7 @@ const AwardsScreen = memo(({
                           </Text>
                           <Text style={{ color: C.text, fontSize: 13, fontWeight: "700" }}>
                             {/* 🆕 v7.0.6 (m5): manual 모드도 manual_tier #order 표시 */}
-                            {isManualOrHybrid ? `${getTierLabel(novel.manual_tier || "")} #${novel.manual_order || 0}` : `${(novel.rating || 0).toFixed(0)}점`}
+                            {isManualOrHybrid ? (tierRankText(novel.id, true) || getTierLabel(novel.manual_tier || "")) : `${(novel.rating || 0).toFixed(0)}점`}
                           </Text>
                         </View>
                         
@@ -32866,7 +32909,7 @@ const AwardsScreen = memo(({
                                 <Text style={{ fontSize: 13 }}>📊</Text>
                                 <Text style={{ color: C.text, fontSize: 13, fontWeight: "700", marginLeft: 4 }}>
                                   {/* 🆕 v7.0.6 (M2/m5): hybrid/manual 모드는 ELO rating 비활성 — manual_tier #order 표시 */}
-                                  {isManualOrHybrid ? `${getTierLabel(novel.manual_tier || "")} #${novel.manual_order || 0}` : `${(novel.rating || 0).toFixed(0)}점`}
+                                  {isManualOrHybrid ? (tierRankText(novel.id, true) || getTierLabel(novel.manual_tier || "")) : `${(novel.rating || 0).toFixed(0)}점`}
                                 </Text>
                               </View>
                               {/* 🔧 v7.10.0: hybrid/manual은 ELO 승패가 0으로 박제됨 → 검증 전적으로 대체 */}
@@ -33274,7 +33317,7 @@ const AwardsScreen = memo(({
                           marginTop: 2,
                         }}>
                           {/* 🆕 v7.0.6 (M2/m5): hybrid/manual 모드는 ELO rating 비활성 — manual_tier #order 표시 */}
-                          {isManualOrHybrid ? `${getTierLabel(novel.manual_tier || "")} #${novel.manual_order || 0}` : `${(novel.rating || 0).toFixed(0)}점`}
+                          {isManualOrHybrid ? (tierRankText(novel.id, true) || getTierLabel(novel.manual_tier || "")) : `${(novel.rating || 0).toFixed(0)}점`}
                         </Text>
                       </View>
                     );
@@ -37550,16 +37593,18 @@ let globalRatioTierMap = new Map();
 // 🆕 v7.22.0: hybrid/manual 모드 — id → 티어 내 순위 비율(0=티어 top, 1=티어 bottom). loadList에서 재계산.
 //   getPrefScore가 manual_order를 '티어 크기 대비 상대 위치'로 반영하기 위함(절대 order 포화 해소).
 let globalTierRankMap = new Map();
+// 🆕 v7.59.8 (T10·HYB-6): id → { r: 티어 내 1-based 순위, n: 티어 크기, t: 티어키 }. loadList에서 함께 재계산.
+//   화면 표시 전용 — manual_order 쓰기 경로는 이 맵을 읽지 않는다(내부 100단위 체계는 그대로).
+let globalTierPositionMap = new Map();
 // 순위가 티어 밴드에서 차지하는 최대 비율 — 티어를 1차 신호로 보존(밴드 침범/티어 역전 방지).
 const ORDER_BAND_FRACTION = 0.45;
 
-// 🆕 v7.22.0: 티어 내 순위 비율 맵 계산 (hybrid/manual). manual_order ASC가 사용자 진실 순위.
-function computeTierRankMap(novels, cfg) {
-  const map = new Map();
-  if (!Array.isArray(novels) || novels.length === 0) return map;
-  const tierOrder = getActiveTierOrder(cfg);
-  const tierSet = new Set(tierOrder);
+// 🆕 v7.59.8 (T10·HYB-6): 티어별 그룹핑(정렬은 호출자가 준 비교자로). 그룹 기준은 `getDisplayTier` —
+//   순위 탭(tierManageEntries)이 쓰는 것과 같아야 화면에 보이는 묶음과 순번이 일치한다.
+function groupNovelsByTier(novels, cfg, cmp) {
   const byTier = new Map();
+  if (!Array.isArray(novels) || novels.length === 0) return byTier;
+  const tierSet = new Set(getActiveTierOrder(cfg));
   for (const n of novels) {
     if (!n || !n.id) continue;
     const t = getDisplayTier(n, cfg);
@@ -37567,17 +37612,75 @@ function computeTierRankMap(novels, cfg) {
     if (!byTier.has(t)) byTier.set(t, []);
     byTier.get(t).push(n);
   }
-  for (const arr of byTier.values()) {
-    arr.sort((a, b) =>
-      (Number(a.manual_order) || 0) - (Number(b.manual_order) || 0) ||
-      (Number(a.created_at) || 0) - (Number(b.created_at) || 0)
-    );
+  for (const arr of byTier.values()) arr.sort(cmp);
+  return byTier;
+}
+
+// 🆕 v7.59.8 (T10·HYB-6): 순위 탭이 한 티어 안에서 쓰는 정렬 그대로. **표시 순위의 유일한 기준**이다.
+//   manual_order만 보면 안 되는 이유: 티어를 안 매긴 작품(hybrid에서 rating으로 티어가 정해지는 경우)은
+//   manual_order가 전부 0이라 동률이고, 그때 화면은 rating 내림차순으로 늘어선다. 여기서 created_at로만
+//   가르면 화면과 번호가 어긋난다. tierManageEntries도 이 함수를 쓴다(복제 금지 — 어긋나면 곧 거짓말).
+function compareWithinTier(a, b, cfg) {
+  const mode = (cfg || globalTierConfig)?.mode;
+  if (mode === "manual" || mode === "hybrid") {
+    const oA = Number(a.manual_order) || 0, oB = Number(b.manual_order) || 0;
+    if (oA !== oB) return oA - oB;
+  }
+  if ((b.rating || 0) !== (a.rating || 0)) return (b.rating || 0) - (a.rating || 0);
+  const ac = a.created_at || 0, bc = b.created_at || 0;
+  if (ac !== bc) return ac - bc;
+  return (a.title || "").localeCompare(b.title || "");
+}
+
+// 🆕 v7.22.0: 티어 내 순위 비율 맵 계산 (hybrid/manual). manual_order ASC가 사용자 진실 순위.
+//   ⚠️ 비교자를 표시용(compareWithinTier)과 **일부러 다르게** 둔다 — 이 맵은 getPrefScore(추천 점수)의
+//   입력이라, 표시 정합을 맞추자고 tie-break를 바꾸면 추천 결과가 딸려 움직인다(T10 범위 밖).
+function computeTierRankMap(novels, cfg) {
+  const map = new Map();
+  const cmp = (a, b) =>
+    (Number(a.manual_order) || 0) - (Number(b.manual_order) || 0) ||
+    (Number(a.created_at) || 0) - (Number(b.created_at) || 0);
+  for (const arr of groupNovelsByTier(novels, cfg, cmp).values()) {
     const sz = arr.length;
     for (let i = 0; i < sz; i++) {
       map.set(arr[i].id, sz > 1 ? i / (sz - 1) : 0); // 0=top, 1=bottom
     }
   }
   return map;
+}
+
+// 🆕 v7.59.8 (T10·HYB-6): 표시용 순위 맵 — id → { r: 티어 내 1-based 순위, n: 티어 크기, t: 티어키 }.
+//   화면이 그동안 보여 준 '순위 #300'은 내부 manual_order 원값(100단위 gap)이라 사용자가 세는 순번과
+//   전혀 달랐다. 게다가 스왑의 -50 분기·삽입 중간값 때문에 `round(order/100)`도 과도기엔 틀린다
+//   (같은 값이 두 작품에 나오거나 번호가 건너뛴다) → 값이 아니라 **정렬된 위치**로 센다.
+function computeTierPositionMap(novels, cfg) {
+  const map = new Map();
+  for (const [t, arr] of groupNovelsByTier(novels, cfg, (a, b) => compareWithinTier(a, b, cfg)).entries()) {
+    for (let i = 0; i < arr.length; i++) map.set(arr[i].id, { r: i + 1, n: arr.length, t });
+  }
+  return map;
+}
+
+// 표시 문자열 헬퍼 — 순위를 모르면(맵 미갱신·티어 없음) 숫자를 지어내지 않고 빈 문자열을 준다.
+//   `withTier`면 "S 3위", 아니면 "3위".
+function tierRankText(novelId, withTier) {
+  const p = globalTierPositionMap.get(novelId);
+  if (!p) return "";
+  return withTier ? `${getTierLabel(p.t)} ${p.r}위` : `${p.r}위`;
+}
+
+// 🆕 v7.59.8 (T10·HYB-6): 재배치 이력의 '목적지' 표기.
+//   [문제] 종전엔 `result_tier #result_order`였는데, result_order는 computeNewPosition이 만든 **중간값**
+//   (예: 두 작품 사이 250)이고 finalize 직후 rebalanceTierOrder가 티어 전체를 (i+1)*100으로 다시 매긴다.
+//   즉 화면에 뜨는 그 번호는 **어디에도 존재하지 않는 값**이었다(순위 탭과 대조 불가).
+//   [해결] loadRepositioningHistory가 이미 함께 읽어 오는 현재 자리(cur_tier/cur_order)로 표기하고
+//   '(현재)'를 붙여, 이후 사용자가 직접 옮긴 경우에도 거짓말이 되지 않게 한다. 스키마·finalize는 무변경.
+function repoDestLabel(h) {
+  if (!h) return "";
+  const cur = tierRankText(h.novel_id, true);
+  if (cur) return `${cur}(현재)`;
+  if (h.cur_tier) return `${getTierLabel(h.cur_tier)}(현재)`;
+  return h.result_tier ? `${getTierLabel(h.result_tier)}` : "티어 없음";
 }
 
 // 🆕 v7.24.3 (🅡): ratio 티어별 누적 경계(0..total) 산출 — computeRatioTierMap과 정원 경고가 공유.
@@ -52355,8 +52458,12 @@ function AppContent() {
       if (globalTierConfig?.mode === "hybrid" || globalTierConfig?.mode === "manual") {
         try { globalTierRankMap = computeTierRankMap(safeRows, globalTierConfig); }
         catch (e) { console.warn("[tierRank] computeTierRankMap 실패:", e?.message); globalTierRankMap = new Map(); }
+        // 🆕 v7.59.8 (T10·HYB-6): 표시용 순위 맵도 같은 시점에 — 화면의 '몇 위'가 목록 실물과 어긋나지 않도록.
+        try { globalTierPositionMap = computeTierPositionMap(safeRows, globalTierConfig); }
+        catch (e) { console.warn("[tierRank] computeTierPositionMap 실패:", e?.message); globalTierPositionMap = new Map(); }
       } else {
         globalTierRankMap = new Map();
+        globalTierPositionMap = new Map();
       }
       setList(safeRows);
       updateTagUsageCounts(safeRows); // 🏷️ 태그 사용 빈도 업데이트
@@ -54444,9 +54551,9 @@ function AppContent() {
       }
       const wonStr = won.length ? `${won.slice(0, 3).join(", ")}${won.length > 3 ? " 외" : ""} 이기고 ` : "";
       const blockStr = h.blocker_title ? `${h.blocker_title}에 막혀 ` : (lost.length ? `${lost[0]}에 막혀 ` : "");
-      const dest = h.result_action === "moved" && h.result_tier
-        ? `${getTierLabel(h.result_tier)} #${h.result_order ?? "?"}로 이동`
-        : "자리 유지";
+      // 🔧 v7.59.8 (T10·HYB-6): result_order는 세션이 계산한 '중간값'(예: 250)이고, 직후 rebalanceTierOrder가
+      //   (i+1)*100으로 전부 다시 매기므로 **화면 어디에도 없는 번호**였다. 현재 실제 자리로 대체.
+      const dest = h.result_action === "moved" ? `${repoDestLabel(h)}로 이동` : "자리 유지";
       return `${wonStr}${blockStr}${dest}`;
     } catch (e) { console.warn("[Q4] buildWhyExplanation 오류:", e?.message); return ""; }
   }, []);
@@ -55893,21 +56000,10 @@ function AppContent() {
 
       // 🔧 v7.17.1: hybrid/manual은 같은 티어 내 manual_order 우선 (배정탭·홈과 정합).
       //   이전엔 순위탭만 rating 정렬 → 검증기반 모드에선 rating이 정체값이라 사용자 수동순서와 어긋남.
-      if (globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid") {
-        const oA = Number(a.manual_order) || 0;
-        const oB = Number(b.manual_order) || 0;
-        if (oA !== oB) return oA - oB;
-      }
-
-      // 같은 티어 내에서는 레이팅 내림차순
-      if (b.rating !== a.rating) return b.rating - a.rating;
-      
-      // 레이팅도 같으면 등록순
-      const ac = a.created_at || 0;
-      const bc = b.created_at || 0;
-      if (ac !== bc) return ac - bc;
-      
-      return (a.title || "").localeCompare(b.title || "");
+      // 🔧 v7.59.8 (T10·HYB-6): 그 tie-break 체인(manual_order → rating → created_at → title)을
+      //   compareWithinTier로 위임. computeTierPositionMap이 'N위'를 이 함수로 세므로, 여기가 따로 놀면
+      //   화면에 3번째로 보이는 작품이 '2위'로 표기되는 어긋남이 생긴다. 티어 관리 탭도 같은 함수를 쓴다.
+      return compareWithinTier(a, b, globalTierConfig);
     });
 
     const q = rankQuery.toLowerCase().trim();
@@ -55960,24 +56056,15 @@ function AppContent() {
     if (screen !== "tierManage") return [];
     if (!list || list.length === 0) return [];
 
-    const isManualOrHybrid = globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid";
-
     const sorted = [...list].sort((a, b) => {
       const tierA = getDisplayTier(a, globalTierConfig);
       const tierB = getDisplayTier(b, globalTierConfig);
       const tierRankA = tierRank(tierA, globalTierConfig);
       const tierRankB = tierRank(tierB, globalTierConfig);
       if (tierRankA !== tierRankB) return tierRankA - tierRankB;
-      if (isManualOrHybrid) {
-        const oA = Number(a.manual_order) || 0;
-        const oB = Number(b.manual_order) || 0;
-        if (oA !== oB) return oA - oB;
-      }
-      if (b.rating !== a.rating) return b.rating - a.rating;
-      const ac = a.created_at || 0;
-      const bc = b.created_at || 0;
-      if (ac !== bc) return ac - bc;
-      return (a.title || "").localeCompare(b.title || "");
+      // 🔧 v7.59.8 (T10·HYB-6): 티어 내 정렬을 compareWithinTier로 위임 — computeTierPositionMap('N위' 표기)이
+      //   같은 함수를 쓴다. 여기 인라인으로 두면 한쪽만 바뀌는 순간 화면 순서와 표시 번호가 어긋난다.
+      return compareWithinTier(a, b, globalTierConfig);
     });
 
     const q = tierManageQuery.toLowerCase().trim();
@@ -63454,7 +63541,7 @@ async function importJSON(directText, onSuccess, onSettled) {
                             </View>
                           </View>
                           <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }} numberOfLines={1}>
-                            {dirLabel}{moved && h.result_tier ? ` → ${getTierLabel(h.result_tier)} #${h.result_order ?? "?"}` : ""}{h.blocker_title ? ` · 경계 ${h.blocker_title}` : ""} · 비교 {h.total_responses || 0}회 · {when}
+                            {dirLabel}{moved ? ` → ${repoDestLabel(h)}` : ""}{h.blocker_title ? ` · 경계 ${h.blocker_title}` : ""} · 비교 {h.total_responses || 0}회 · {when}
                           </Text>
                           {/* 🆕 Q4: '왜?' 설명 + '되돌리기'. moved이고 prev_tier/order가 기록된 세션만 되돌리기 가능. */}
                           <View style={{ flexDirection: "row", alignItems: "center", marginTop: 6, gap: 8 }}>
@@ -63583,7 +63670,7 @@ async function importJSON(directText, onSuccess, onSettled) {
                               </View>
                             </View>
                             <Text style={{ color: C.sub, fontSize: 12 }} numberOfLines={1}>
-                              순위 #{cand.manual_order || 0}
+                              순위 {tierRankText(cand.id, false) || "—"}
                             </Text>
                           </View>
                         </View>
@@ -63699,7 +63786,7 @@ async function importJSON(directText, onSuccess, onSettled) {
                           </View>
                         </View>
                         <Text style={{ color: C.sub, fontSize: 11 }}>
-                          변곡점 등장 횟수: {g.block_count}회 · 순위 #{g.manual_order || 0}
+                          변곡점 등장 횟수: {g.block_count}회 · 순위 {tierRankText(g.id, false) || "—"}
                         </Text>
                         <View style={{ flexDirection: "row", gap: 6, marginTop: 8 }}>
                           {(() => {
@@ -66027,7 +66114,7 @@ async function importJSON(directText, onSuccess, onSettled) {
                           </View>
                         </View>
                         <Text style={{ color: C.sub, fontSize: 12 }} numberOfLines={1}>
-                          {opp.author || "작가 미상"} · 순위 #{opp.manual_order || 0}
+                          {opp.author || "작가 미상"} · 순위 {tierRankText(opp.id, false) || "—"}
                         </Text>
                       </View>
                     </View>
