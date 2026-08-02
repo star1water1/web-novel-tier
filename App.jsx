@@ -2,9 +2,46 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.58.4 (있으나 마나 한 기능 감사 — 장르 어휘 붕괴 수정, 베타)                ║
+ * ║  버전: 7.59.0 (구색 기능 개선 Phase 1 — 콘텐츠 필터 실질화, 베타)                  ║
  * ║  최종 수정: 2026-08-02                                                        ║
- * ║  총 라인 수: 약 77,000줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 78,400줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🧹 v7.59.0 넷상 추천 콘텐츠 필터 실질화 (T01 · REC-4) (2026-08-02)                ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ docs/hollow-fix-roadmap.md 순서표의 첫 작업. '걸러진다고 믿었는데 안 걸러지던'     ║
+ * ║ 화면부터 손본다.                                                                ║
+ * ║                                                                              ║
+ * ║ [문제] 완결만/최소회차/19금 제외 필터가 `m && ...` 가드라 **메타 없는 후보를**     ║
+ * ║ **무조건 통과**시켰다(v7.53.4 주석도 "메타가 끝내 없으면 종전대로 통과"로 자인).   ║
+ * ║ 검색 단계에서 meta를 주는 건 노벨피아·문피아뿐 — 리디/네이버/카카오 후보는 사실상  ║
+ * ║ 전량 무검사 통과. 사용자에게는 '필터 켬 = 걸러짐'으로 보이므로 순수한 착각이었다.  ║
+ * ║ 보강(fetchNovelMeta)은 있었지만 상한 10건을 **정렬 전** 임의 순서로 써버려서,      ║
+ * ║ 정작 화면에 오를 상위 후보가 보강 대상에서 빠지는 일이 흔했다.                     ║
+ * ║                                                                              ║
+ * ║ [수정] fetchWebRecommendations 파이프라인 재배열 + 3분류 판정                     ║
+ * ║ • 정렬을 메타 보강보다 앞으로 — 보강 예산(WEB_RECO_ENRICH_CAP=10)을 '실제로 화면에 ║
+ * ║   오를 상위 후보'에 배정. 정렬 키는 category 토큰/검색단계 popularity라 선정렬 무해.║
+ * ║ • contentVerdict(): pass(조건 충족 확정) / violate(위반 확정) / unknown(확인 불가).║
+ * ║   - 위반 확정작은 **무조건 배제** (종전엔 메타만 없으면 통과했다)                  ║
+ * ║   - 확인 불가작은 확정 통과분으로 요청 수를 못 채울 때만 뒤에서 충전 + 카드 배지     ║
+ * ║   - 판정은 조건별 — 메타가 있어도 workStatus/totalEpisodes가 없으면 unknown        ║
+ * ║     (v7.58.1 '근거 없는 단정 금지'와 같은 원칙). ageTag=null은 파서가 성인 플래그를 ║
+ * ║     '있을 때만' 다는 구조라 비성인 확정으로 본다.                                 ║
+ * ║ • 보강 대상 선정도 `!c.meta`가 아니라 verdict==='unknown' 기준 — 메타는 있는데     ║
+ * ║   연재상태만 비어 조용히 통과하던 후보가 이제 보강 대상에 들어온다.                 ║
+ * ║ • unknown 완전 배제는 하지 않는다: 스크레이퍼가 막히면 전 후보가 unknown이 되어     ║
+ * ║   결과 0건이 된다. '조용한 통과'와 '0건' 사이를 배지로 정직하게 메운다.             ║
+ * ║                                                                              ║
+ * ║ [스키마] web_reco.meta_unknown INTEGER DEFAULT 0 (+ ensureColumn 안전망).       ║
+ * ║   web_reco는 백업 대상이 아니라 export/import 동기화 불요.                        ║
+ * ║                                                                              ║
+ * ║ [UI] 추천 카드에 '❔ 조건 미확인' pill. 설정의 연재상태·19금 행에 고지 캡션 추가,   ║
+ * ║   최소회차 캡션을 새 동작에 맞게 수정("회차 정보 없으면 ‘❔ 조건 미확인’").          ║
+ * ║                                                                              ║
+ * ║ 필터 OFF(기본값 workStatus=all·includeAdult=true·minEpisodes=0) 경로는 판정 블록  ║
+ * ║ 자체를 건너뛰므로 동작 불변. esbuild 통과. APP_VERSION 7.59.0.                    ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11084,8 +11121,12 @@ async function initDb(progressCb) {
     fetched_at INTEGER,
     batch_id TEXT,
     pinned INTEGER DEFAULT 0,
-    status TEXT DEFAULT 'pending'
+    status TEXT DEFAULT 'pending',
+    meta_unknown INTEGER DEFAULT 0
   );`);
+  // 🌐 v7.59.0: meta_unknown — 콘텐츠 필터 조건을 '확인하지 못한 채' 노출된 후보(카드에 미확인 배지).
+  //   기존 슬롯 DB 회복용 ensureColumn(정상 스키마면 no-op).
+  await ensureColumn("web_reco", "meta_unknown", "INTEGER", "0");
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_webreco_status ON web_reco(status, fetched_at DESC);`);
   // web_reco_keywords: 수확 키워드 풀(검색 결과의 실제 플랫폼 태그 누적 → 에코챔버 역가중)
   await database.runAsync(`CREATE TABLE IF NOT EXISTS web_reco_keywords (
@@ -20844,7 +20885,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.58.4";
+const APP_VERSION = "7.59.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -45305,32 +45346,6 @@ function AppContent() {
         if (matchesBannedKeyword(c, bannedList)) return false; // 🌐 v7.53: 밴 키워드 결과 필터(제목/작가/장르/카테고리)
         return true;
       });
-      // 🌐 v7.53.4: 콘텐츠 필터(완결/회차/19금)가 켜져 있으면, 메타 없는 후보(리디·네이버·미복구 카카오)를
-      //   content 페이지 메타로 보강해 필터가 실제로 동작하게 한다. 상한(WEB_RECO_ENRICH_CAP) + 전체 데드라인으로
-      //   '🎲 가져오기' 지연을 제한(부분 보강만 돼도 진행, 보강 실패분은 종전대로 통과 = best-effort).
-      const wantContentFilter = (!web.includeAdult) || (Number(web.minEpisodes) > 0) || (web.workStatus === "completed") || (web.workStatus === "ongoing");
-      if (wantContentFilter) {
-        const targets = cands.filter((c) => !c.meta && (c.url || c.link)).slice(0, WEB_RECO_ENRICH_CAP);
-        if (targets.length) {
-          const enrich = Promise.allSettled(targets.map(async (c) => {
-            try {
-              const mm = await fetchNovelMeta(c.url || c.link, { timeoutMs: 6000, noKakaoFallback: true });
-              if (mm && mm.ok) c.meta = { ...(c.meta || {}), genres: mm.genres, synopsis: mm.synopsis, totalEpisodes: mm.totalEpisodes, workStatus: mm.workStatus, ageTag: mm.ageTag, startYear: mm.startYear, popularity: mm.popularity || 0 };
-            } catch {}
-          }));
-          await Promise.race([enrich, new Promise((r) => setTimeout(r, 12000))]);
-        }
-      }
-      // 메타 의존 필터(보강 후 적용) — 메타가 끝내 없으면 종전대로 통과(누수 최소화는 보강이 담당).
-      cands = cands.filter((c) => {
-        const m = c.meta || null;
-        if (!web.includeAdult && m && m.ageTag === "19금") return false;
-        if (web.minEpisodes > 0 && m && m.totalEpisodes != null && m.totalEpisodes < web.minEpisodes) return false;
-        if (web.workStatus === "completed" && m && m.workStatus && m.workStatus !== "completed") return false;
-        if (web.workStatus === "ongoing" && m && m.workStatus && m.workStatus !== "ongoing") return false;
-        return true;
-      });
-      if (!cands.length) { setWebRecoError("조건에 맞는 새 작품을 못 찾았어요. 필터를 완화하거나 다시 시도해 주세요."); return; }
       // 취향 점수(간이): preference_patterns 승률로 후보 장르/태그 매칭
       const tasteMap = {};
       try { const pats = await all("SELECT pattern_key, win_rate FROM preference_patterns WHERE sample_size>=3;"); for (const p of (pats || [])) { const k = p.pattern_key || ""; const v = k.includes(":") ? k.slice(k.indexOf(":") + 1) : k; tasteMap[v] = Math.max(tasteMap[v] || 0, Number(p.win_rate) || 0); } } catch {}
@@ -45341,11 +45356,70 @@ function AppContent() {
         return Math.min(100, Math.round(s));
       };
       for (const c of cands) c._taste = scoreWeb(c);
+      // 🌐 v7.59.0(T01): 정렬을 메타 보강보다 **앞으로** — 한정된 보강 예산(WEB_RECO_ENRICH_CAP)을
+      //   '실제로 화면에 오를 상위 후보'에 쓰기 위함. 정렬 키(취향 토큰은 category로, popularity는
+      //   검색 단계 메타로) 는 보강 없이도 부분 동작하므로 선정렬이 정확도를 떨어뜨리지 않는다.
       const sortMode = web.sort || "random";
-      if (sortMode === "taste") cands.sort((a, b) => (b._taste || 0) - (a._taste || 0));
-      else if (sortMode === "popular") cands.sort((a, b) => ((b.meta && b.meta.popularity) || 0) - ((a.meta && a.meta.popularity) || 0));
-      else if (sortMode === "hidden") cands.sort((a, b) => (((a.meta && a.meta.popularity) != null ? a.meta.popularity : 1e9)) - (((b.meta && b.meta.popularity) != null ? b.meta.popularity : 1e9)));
-      else { for (let i = cands.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const tmp = cands[i]; cands[i] = cands[j]; cands[j] = tmp; } }
+      const applySort = () => {
+        if (sortMode === "taste") cands.sort((a, b) => (b._taste || 0) - (a._taste || 0));
+        else if (sortMode === "popular") cands.sort((a, b) => ((b.meta && b.meta.popularity) || 0) - ((a.meta && a.meta.popularity) || 0));
+        else if (sortMode === "hidden") cands.sort((a, b) => (((a.meta && a.meta.popularity) != null ? a.meta.popularity : 1e9)) - (((b.meta && b.meta.popularity) != null ? b.meta.popularity : 1e9)));
+      };
+      if (sortMode === "random") { for (let i = cands.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const tmp = cands[i]; cands[i] = cands[j]; cands[j] = tmp; } }
+      else applySort();
+      // 🌐 v7.59.0(T01): 콘텐츠 필터 실질화 — 후보를 3분류한다.
+      //   pass(조건 충족 확정) / violate(위반 확정 → 무조건 배제) / unknown(확인 불가).
+      //   종전(v7.53.4)은 `m &&` 가드라 **메타가 없으면 무조건 통과** — 즉 '걸렀다'는 착각만 주고 실제론 안 걸렀다.
+      //   이제 unknown은 확정 통과분으로 요청 수를 못 채울 때만 뒤에서 충전되고, 카드에 '조건 미확인' 배지가 붙는다.
+      //   unknown을 완전 배제하지 않는 이유: 스크레이퍼가 막히면 전 후보가 unknown이 되어 결과 0건이 된다.
+      const wantContentFilter = (!web.includeAdult) || (Number(web.minEpisodes) > 0) || (web.workStatus === "completed") || (web.workStatus === "ongoing");
+      const contentVerdict = (c) => {
+        const m = c.meta || null;
+        if (!m) return "unknown";                                   // 메타 자체가 없음 → 어떤 조건도 판정 불가
+        let unsure = false;
+        // 19금: 파서가 성인 플래그를 '있으면 태깅'하므로 ageTag=null은 비성인 확정(미확인 아님).
+        if (!web.includeAdult && m.ageTag === "19금") return "violate";
+        if (Number(web.minEpisodes) > 0) {
+          if (m.totalEpisodes != null) { if (m.totalEpisodes < web.minEpisodes) return "violate"; }
+          else unsure = true;                                       // 회차를 안 주는 플랫폼(카카오 등)
+        }
+        if (web.workStatus === "completed" || web.workStatus === "ongoing") {
+          if (m.workStatus) { if (m.workStatus !== web.workStatus) return "violate"; }
+          else unsure = true;                                       // 연재상태 판별 실패(v7.58.1 '근거 없는 단정' 금지와 동일 원칙)
+        }
+        return unsure ? "unknown" : "pass";
+      };
+      if (wantContentFilter) {
+        // 정렬 상위부터 '확인 불가' 후보만 골라 메타 보강(상한 + 전체 12s 데드라인 — 부분 보강만 돼도 진행).
+        const targets = [];
+        for (const c of cands) {
+          if (targets.length >= WEB_RECO_ENRICH_CAP) break;
+          if (contentVerdict(c) === "unknown" && (c.url || c.link)) targets.push(c);
+        }
+        if (targets.length) {
+          const enrich = Promise.allSettled(targets.map(async (c) => {
+            try {
+              const mm = await fetchNovelMeta(c.url || c.link, { timeoutMs: 6000, noKakaoFallback: true });
+              if (mm && mm.ok) c.meta = { ...(c.meta || {}), genres: mm.genres, synopsis: mm.synopsis, totalEpisodes: mm.totalEpisodes, workStatus: mm.workStatus, ageTag: mm.ageTag, startYear: mm.startYear, popularity: mm.popularity || 0 };
+            } catch {}
+          }));
+          await Promise.race([enrich, new Promise((r) => setTimeout(r, 12000))]);
+          // 보강으로 장르가 생겼으면 취향 점수를 다시 매긴다(카드 🧠 점수 정확도). 무작위는 재섞지 않음
+          // — 이미 그 순서로 보강 예산을 배정했으므로 재섞으면 예산이 헛돈다.
+          for (const c of targets) c._taste = scoreWeb(c);
+          if (sortMode !== "random") applySort();
+        }
+        // 확정 통과분으로 먼저 채우고, 모자란 만큼만 '확인 불가'로 충전. 위반 확정은 여기서 사라진다.
+        const passedCands = [], unsureCands = [];
+        for (const c of cands) {
+          const v = contentVerdict(c);
+          if (v === "violate") continue;
+          if (v === "pass") passedCands.push(c);
+          else { c._metaUnknown = true; unsureCands.push(c); }
+        }
+        cands = passedCands.concat(unsureCands);
+      }
+      if (!cands.length) { setWebRecoError("조건에 맞는 새 작품을 못 찾았어요. 필터를 완화하거나 다시 시도해 주세요."); return; }
       const chosen = cands.slice(0, wantN);
       await cleanupExpiredWebReco();
       await exec("DELETE FROM web_reco WHERE pinned=0 AND status='pending';"); // 이전 미보관 배치 교체
@@ -45354,12 +45428,12 @@ function AppContent() {
         const m = c.meta || {};
         const genres = Array.isArray(m.genres) ? m.genres : (c.category ? String(c.category).split(/[,/|·]/).map((s) => s.trim()).filter(Boolean) : []);
         await exec(
-          `INSERT INTO web_reco (id,title,author,platform,link,cover_url,genres,tags,synopsis,total_episodes,is_completed,age,popularity,taste_score,source_keyword,keyword_source,fetched_at,batch_id,pinned,status)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,'pending');`,
+          `INSERT INTO web_reco (id,title,author,platform,link,cover_url,genres,tags,synopsis,total_episodes,is_completed,age,popularity,taste_score,source_keyword,keyword_source,fetched_at,batch_id,pinned,status,meta_unknown)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,'pending',?);`,
           [uuid(), c.title || "", c.author || "", c.platform || "", c.url || c.link || "", c.coverUrl || "",
            JSON.stringify(genres), "", (m.synopsis || ""), (m.totalEpisodes != null ? m.totalEpisodes : null),
            (m.workStatus === "completed" ? 1 : 0), (m.ageTag === "19금" ? 1 : 0), (m.popularity || 0),
-           (c._taste || 0), c._kw || "", c._src || "explore", nowMs, batchId]
+           (c._taste || 0), c._kw || "", c._src || "explore", nowMs, batchId, (c._metaUnknown ? 1 : 0)]
         );
       }
       await loadWebReco();
@@ -60238,9 +60312,13 @@ async function importJSON(directText, onSuccess, onSettled) {
                     <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
                       {[["전체", "all"], ["완결만", "completed"], ["연재중", "ongoing"]].map(([l, v]) => chip(l, web.workStatus === v, () => updateRecoSetting("web", "workStatus", v)))}
                     </View>
+                    {/* 🌐 v7.59.0: 필터는 '위반 확정작'만 확실히 걸러낸다 — 확인 못 한 작품은 숨기지 않고 배지로 알린다(고지 정직화) */}
+                    {(web.workStatus === "completed" || web.workStatus === "ongoing") ? (
+                      <Text style={{ color: C.sub, fontSize: 10, marginTop: 6, lineHeight: 14 }}>조건에 어긋나는 게 확인된 작품은 안 나와요. 확인이 안 된 작품은 ‘❔ 조건 미확인’ 배지로 뒤쪽에만 나와요.</Text>
+                    ) : null}
                   </View>
                   <View>
-                    <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>최소 회차 — <Text style={{ color: C.text, fontWeight: "700" }}>{minEp === 0 ? "끔" : `${minEp}화 이상`}</Text> <Text style={{ color: C.sub, fontSize: 10 }}>(회차 정보 있는 작품에만)</Text></Text>
+                    <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>최소 회차 — <Text style={{ color: C.text, fontWeight: "700" }}>{minEp === 0 ? "끔" : `${minEp}화 이상`}</Text> <Text style={{ color: C.sub, fontSize: 10 }}>(회차 정보 없으면 ‘❔ 조건 미확인’)</Text></Text>
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
                       {sBtn("−", () => updateRecoSetting("web", "minEpisodes", Math.max(0, minEp - 10)))}
                       <Text style={{ color: C.text, fontSize: 16, fontWeight: "800", minWidth: 56, textAlign: "center" }}>{minEp === 0 ? "끔" : minEp}</Text>
@@ -60263,7 +60341,7 @@ async function importJSON(directText, onSuccess, onSettled) {
                       ) : null;
                     })()}
                   </View>
-                  {toggleRow("19금(성인) 포함", !!web.includeAdult, () => updateRecoSetting("web", "includeAdult", !web.includeAdult))}
+                  {toggleRow("19금(성인) 포함", !!web.includeAdult, () => updateRecoSetting("web", "includeAdult", !web.includeAdult), web.includeAdult ? undefined : "성인 표시가 확인된 작품은 제외돼요. 메타를 못 읽은 작품은 ‘❔ 조건 미확인’ 배지로 뒤쪽에만 나와요.")}
                   {toggleRow("AI 키워드 생성", !!web.useAiKeywords, () => updateRecoSetting("web", "useAiKeywords", !web.useAiKeywords), ((aiProvider === "claude" && claudeApiKey) || (aiProvider === "gemini" && geminiApiKey)) ? `${aiProvider === "claude" ? "Claude" : "Gemini"} 키로 트렌디 키워드 추가` : "AI 키(설정 › 연결)가 있어야 동작해요")}
                   {toggleRow("매일 자동 가져오기", !!web.autoDaily, () => updateRecoSetting("web", "autoDaily", !web.autoDaily), "추천 탭 열 때 하루 한 번 자동")}
                   <View>
@@ -60719,6 +60797,8 @@ async function importJSON(directText, onSuccess, onSettled) {
                         {w.total_episodes ? pill(`${w.total_episodes}화`, "ep") : null}
                         {w.is_completed ? pill("완결", "cp", "#22c55e") : null}
                         {w.age ? pill("19", "ag", "#ef4444") : null}
+                        {/* 🌐 v7.59.0: 콘텐츠 필터 조건을 끝내 확인 못 한 작품 — 걸러진 척하지 않고 드러낸다 */}
+                        {w.meta_unknown ? pill("❔ 조건 미확인", "mu", "#f59e0b") : null}
                         {genres.slice(0, 3).map((g, gi) => pill(g, "g" + gi))}
                       </View>
                       {ts > 0 ? (
