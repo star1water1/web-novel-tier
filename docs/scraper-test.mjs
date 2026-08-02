@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, applyEpisodeSplitToMeta, parseKakaoProductList, parseKakaoViewerDate, parseKakaoOverview, kakaoSeriesIdFromUrl, parseMunpiaEntries, parseMunpiaNovelInfo, munpiaIdFromUrl, SCRAPER_HEADERS, SCRAPER_UA, parseNaverWebtoonSearch, extractNaverWebtoonItems, naverWebtoonItemToMeta, WEBTOON_SEARCH_PLATFORMS, naverNormalizeDate, naverDate2ToYear, parseNaverWebtoonStartYear, coverUrlHighRes, isImplausibleEpisodeDrop, parseKakaoWebtoonSearch, kakaoWebtoonDetailToMeta, kakaoAuthorsSplit, naverPublishDayLabel, parseKakaoWebtoonEpisodeCount, detectWorkStatusFromHtml, scraperStripHtmlNoise, scraperStatusFromLabel, isBadWebTitle, novelpiaIdFromUrl, parseKakaoSerpHtml, collectKakaoCandidate, kakaoUsableTitle, HTML_STATUS_UNRELIABLE_PLATFORMS };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, applyEpisodeSplitToMeta, parseKakaoProductList, parseKakaoViewerDate, parseKakaoOverview, kakaoSeriesIdFromUrl, parseMunpiaEntries, parseMunpiaNovelInfo, munpiaIdFromUrl, SCRAPER_HEADERS, SCRAPER_UA, parseNaverWebtoonSearch, extractNaverWebtoonItems, naverWebtoonItemToMeta, WEBTOON_SEARCH_PLATFORMS, naverNormalizeDate, naverDate2ToYear, parseNaverWebtoonStartYear, coverUrlHighRes, isImplausibleEpisodeDrop, parseKakaoWebtoonSearch, kakaoWebtoonDetailToMeta, kakaoAuthorsSplit, naverPublishDayLabel, parseKakaoWebtoonEpisodeCount, detectWorkStatusFromHtml, scraperStripHtmlNoise, scraperStatusFromLabel, isBadWebTitle, novelpiaIdFromUrl, parseKakaoSerpHtml, collectKakaoCandidate, kakaoUsableTitle, HTML_STATUS_UNRELIABLE_PLATFORMS, naverWebtoonStatusOf };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -823,6 +823,10 @@ eq("pickRidiGaidenSeries: 빈 목록 → []", S.pickRidiGaidenSeries({ title: "x
   eq("완결오탐: script/nav의 '완결' 무시 → 연재중", norm(hidden, "https://ridibooks.com/books/1").workStatus, "ongoing");
   eq("stripHtmlNoise: script 제거", /완결/.test(S.scraperStripHtmlNoise('<script>{"s":"완결"}</script><p>연재중</p>')), false);
   eq("stripHtmlNoise: 주석 제거", /완결/.test(S.scraperStripHtmlNoise('<!-- 완결 --><p>연재중</p>')), false);
+  eq("stripHtmlNoise: nav/aside 제거", /완결/.test(S.scraperStripHtmlNoise('<nav>완결</nav><aside>완결</aside><p>연재중</p>')), false);
+  // 🔧 v7.58.1: <header>는 상세 페이지에서 작품 제목+배지 블록인 경우가 많아 남긴다(진짜 배지 유실 방지)
+  eq("stripHtmlNoise: header는 보존(작품 배지 블록)", /완결/.test(S.scraperStripHtmlNoise('<header><h1>제목</h1><span>완결</span></header>')), true);
+  eq("완결: <header> 안 배지도 인식", norm('<html><head><meta property="og:title" content="H"></head><body><header><span>완결</span></header><p>본문</p></body></html>', "https://ridibooks.com/books/7").workStatus, "completed");
   // ③ 라벨 첫 등장 규칙 — 상태 배지(앞) vs 추천 캐러셀(뒤)
   const badgeFirst = '<html><head><meta property="og:title" content="A"></head><body>' +
     '<span class="status">연재중</span><section class="reco">완결작 추천</section></body></html>';
@@ -889,6 +893,21 @@ eq("pickRidiGaidenSeries: 빈 목록 → []", S.pickRidiGaidenSeries({ title: "x
   const cands = S.parseKakaoSerpHtml(serp);
   eq("카카오 SERP: 부산물 카드 제외", cands.length, 1);
   eq("카카오 SERP: 진짜 작품만 남음", cands[0].title, "데뷔 못 하면 죽는 병 걸림");
+  // 🔧 v7.58.1: 같은 작품의 앵커가 'URL 표시 → 진짜 제목' 순서로 와도 진짜 제목이 이겨야 한다
+  //   (종전엔 먼저 온 앵커가 이겨서 부산물 제목이 그대로 남았다).
+  const serp2 = '<a href="https://page.kakao.com/content/333">page.kakao.com › content › 333</a>' +
+                '<a href="https://page.kakao.com/content/333">화산귀환 - 카카오페이지</a>';
+  const c2 = S.parseKakaoSerpHtml(serp2);
+  eq("카카오 SERP: 나중에 온 진짜 제목이 부산물을 대체", c2.length && c2[0].title, "화산귀환");
+  // 반대 순서에서도 진짜 제목이 지켜져야 한다(나쁜 제목이 좋은 제목을 덮지 않음)
+  const serp3 = '<a href="https://page.kakao.com/content/444">화산귀환 - 카카오페이지</a>' +
+                '<a href="https://page.kakao.com/content/444">page.kakao.com › content › 444</a>';
+  eq("카카오 SERP: 부산물이 진짜 제목을 덮지 않음", S.parseKakaoSerpHtml(serp3)[0].title, "화산귀환");
+  // 뷰어보다 작품홈 문서 우선(동급 제목일 때)
+  const serp4 = '<a href="https://page.kakao.com/content/555/viewer/900">10화. 화산귀환</a>' +
+                '<a href="https://page.kakao.com/content/555">화산귀환</a>';
+  eq("카카오 SERP: 뷰어보다 작품홈 우선", S.parseKakaoSerpHtml(serp4)[0].title, "화산귀환");
+  eq("카카오 SERP: 후보 내부 플래그 미노출", Object.keys(S.parseKakaoSerpHtml(serp)[0]).includes("bad"), false);
   eq("isBadWebTitle: 콘텐츠홈", S.isBadWebTitle("콘텐츠홈 - 카카오페이지"), true);
   eq("isBadWebTitle: 정상 제목", S.isBadWebTitle("전지적 독자 시점"), false);
 }
@@ -904,6 +923,37 @@ eq("pickRidiGaidenSeries: 빈 목록 → []", S.pickRidiGaidenSeries({ title: "x
   const both = JSON.stringify({ x: [{ seriesId: 999, title: "웹툰판", categoryType: "Webtoon", onIssue: "Ing" }, { seriesId: 555, title: "소설판", categoryType: "Webnovel", onIssue: "End" }] });
   eq("카카오 overview 딥서치: URL seriesId 우선", S.parseKakaoOverview(both, "https://page.kakao.com/content/555").title, "소설판");
   eq("카카오 overview: 완전 무관 JSON → null", S.parseKakaoOverview('{"a":1}', "https://page.kakao.com/content/1"), null);
+}
+
+// ── 🔧 v7.58.1: 웹툰 연재상태 — '근거 없으면 ongoing 단정' 금지 + 네이버 TERMINATION 인식 ──
+{
+  const N = S.naverWebtoonStatusOf;
+  // 실제 네이버 값은 SERIES / REST / TERMINATION. 종전 정규식(/END|COMPLETE|FINISH/)엔
+  // 'TERMINATION'이 안 걸려 완결 웹툰이 전부 '연재중'으로 찍혔다 — 이번 수정의 핵심 회귀 방지.
+  eq("네이버웹툰: TERMINATION → 완결", N({ restTerminationStatus: "TERMINATION" }), "completed");
+  eq("네이버웹툰: SERIES → 연재중", N({ restTerminationStatus: "SERIES" }), "ongoing");
+  eq("네이버웹툰: REST → 휴재", N({ restTerminationStatus: "REST" }), "hiatus");
+  eq("네이버웹툰: 검색항목형 finished=true → 완결", N({ finished: true }), "completed");
+  eq("네이버웹툰: finished=false + rest=true → 휴재", N({ finished: false, rest: true }), "hiatus");
+  eq("네이버웹툰: finished=false → 연재중", N({ finished: false }), "ongoing");
+  eq("네이버웹툰: 상태 근거 없음 → 미상(null, ongoing 단정 금지)", N({ titleName: "제목만" }), null);
+  eq("네이버웹툰: info 없음 → null", N(null), null);
+  eq("네이버웹툰: 모르는 값 → null", N({ status: "WHATEVER" }), null);
+
+  // 카카오웹툰 — badges에 상태 외 배지(WAIT_FOR_FREE·UP·요일)가 섞여 있다(실측 픽스처).
+  const K = S.kakaoWebtoonDetailToMeta;
+  const mk = (badges) => K({ id: 1, title: "T", authors: [], badges });
+  eq("카카오웹툰: STATUS 배지 COMPLETED → 완결", mk([{ title: "WAIT_FOR_FREE", type: "INFO" }, { title: "COMPLETED", type: "STATUS" }]).workStatus, "completed");
+  eq("카카오웹툰: STATUS 배지 없고 INFO만 → 연재중", mk([{ title: "WAIT_FOR_FREE", type: "INFO" }, { title: "thu", type: "WEEKDAYS" }]).workStatus, "ongoing");
+  eq("카카오웹툰: 배지 자체가 없음 → 미상(null)", mk(undefined).workStatus, null);
+  eq("카카오웹툰: 빈 배지 배열 → 미상(null)", mk([]).workStatus, null);
+  eq("카카오웹툰: REST(STATUS) → 휴재", mk([{ title: "REST", type: "STATUS" }]).workStatus, "hiatus");
+  // 실캡처 픽스처 회귀(솔로 레벨링 = 완결)
+  eq("카카오웹툰 실캡처: 완결 유지", S.kakaoWebtoonDetailToMeta(JSON.parse(fx("kakao-webtoon-detail-2320.json")).data).workStatus, "completed");
+
+  // 문피아 상세 API — finish/pause 둘 다 없으면 미상
+  eq("문피아 메타: finish/pause 부재 → 미상(null)", S.parseMunpiaNovelInfo(JSON.stringify({ result: { novelInfo: { title: "T" } } }), "u").workStatus, null);
+  eq("문피아 메타: finish=false → 연재중 유지", S.parseMunpiaNovelInfo(JSON.stringify({ result: { novelInfo: { title: "T", finish: false, pause: false } } }), "u").workStatus, "ongoing");
 }
 
 console.log(`\n${fail === 0 ? "🎉 ALL PASS" : "⚠️  FAILED"}  pass=${pass} fail=${fail}`);

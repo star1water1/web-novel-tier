@@ -2,9 +2,48 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.58.0 (카카오 불러오기 DOM 캡처 + 완결 오탐지 수정, 베타)                 ║
+ * ║  버전: 7.58.1 (연재상태 판정 전수 점검 + 카카오 캡처 경량화, 베타)                ║
  * ║  최종 수정: 2026-08-02                                                        ║
  * ║  총 라인 수: 약 77,000줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔎 v7.58.1 추가 전수조사 — 연재상태 '근거 없는 단정' 일소 (2026-08-02)            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ v7.58.0에서 고친 건 '완결로 잘못 찍는' 방향뿐이었다. 같은 결함의 나머지 갈래를    ║
+ * ║ 전 플랫폼 상태 판정 코드에서 훑어 5건 더 발견·수정.                              ║
+ * ║                                                                              ║
+ * ║ • [네이버웹툰 — 반대 방향 오탐, 중대] 상세 파싱이                                ║
+ * ║   `/END|COMPLETE|FINISH|완결|휴재/.test(status)` 였는데 네이버 실제 값은         ║
+ * ║   SERIES / REST / **TERMINATION**. 'TERMINATION'이 이 정규식 어디에도 안 걸려    ║
+ * ║   → **완결 웹툰이 전부 '연재중'으로** 찍혔다. 게다가 상태 필드가 없어도 else로    ║
+ * ║   'ongoing'을 단정. → naverWebtoonStatusOf 신설(값 정확 분류 + finished/rest     ║
+ * ║   불리언 폴백 + 모르면 null).                                                   ║
+ * ║ • [카카오웹툰] badges엔 상태 외 WAIT_FOR_FREE·UP·요일 배지가 섞여 있다(실측       ║
+ * ║   픽스처 확인) → type==="STATUS" 배지만 상태로 사용(없으면 전체 탐색 폴백).      ║
+ * ║   배지가 아예 없을 때 'ongoing' 단정하던 것도 null(미상)로.                      ║
+ * ║ • [문피아] 상세 API에 finish/pause가 둘 다 없으면 'ongoing' 단정 → null(미상).   ║
+ * ║   근거 없는 '연재중' 관측은 reconcileWork에서 휴재/연중 판정을 눌러버린다.        ║
+ * ║ • [카카오 SERP] 같은 작품에 앵커가 여러 개인데(제목 앵커 + URL 표시 앵커)         ║
+ * ║   병합 규칙이 '먼저 온 것이 이김'이라, URL 앵커가 앞서면 진짜 제목이 영영 반영    ║
+ * ║   안 됐다. → 좋은 제목 > 나쁜 제목 > (동급이면) 작품홈 > 뷰어. 끝까지 제목을      ║
+ * ║   못 얻은 id만 제외(v7.58.0의 '나쁘면 즉시 버림'은 정상 작품까지 지울 수 있었음). ║
+ * ║ • [strip 범위 조정] v7.58.0이 <header>까지 지웠는데, 상세 페이지의 <header>는     ║
+ * ║   사이트 GNB가 아니라 '작품 제목+배지' 블록인 경우가 많아 진짜 배지를 잃는다.     ║
+ * ║   사이트 GNB는 대개 <nav>라 nav/footer/aside만 제거하도록 되돌림.                ║
+ * ║                                                                              ║
+ * ║ 성능/안정성:                                                                   ║
+ * ║ • 카카오 DOM 스냅샷 프루닝 — __NEXT_DATA__ 전체(실제 페이지 수백 KB)를 RN         ║
+ * ║   브리지로 넘기던 걸, 필요한 노드(ogTitle / onIssue+seriesId)만 골라 배열로       ║
+ * ║   보내도록. RN 파서가 '경로'가 아니라 '모양'으로 찾으므로 결과 동일.              ║
+ * ║   실측(픽스처) 10,066자 → 4,012자, 실제 페이지에선 수백 KB → 수 KB.              ║
+ * ║   onIssue 노드를 못 찾으면(필드 개명) 프루닝을 신뢰하지 않고 원문 전송.           ║
+ * ║ • 실패 총 소요 단축 — 캡처(~15s) 뒤 GraphQL 폴백이 20s×2 더 붙어 ~55s까지 갔다.   ║
+ * ║   최후 폴백은 8s로 제한. 창을 닫아 취소하면 진단에 '사용자가 창을 닫음'으로 표기.  ║
+ * ║ • scraperStripHtmlNoise 결과를 상태·회차가 공유(일괄 갱신은 수백 건 루프).        ║
+ * ║                                                                              ║
+ * ║ 검증: scraper-test 494/494(+24). 주입 JS 문법·프루닝 모의실행(실 픽스처로         ║
+ * ║   제목/작가/장르/완결/연도 동일 추출 확인) + esbuild. APP_VERSION 7.58.1.        ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -16322,12 +16361,27 @@ const KAKAO_CAPTURE_JS = "(function(){" +
   //   앱 JS가 contentHomeOverview를 '다시' 요청하지 않는 경우가 많다(=기존 fetch/XHR 후킹만으론 30s 타임아웃 → 불러오기 실패).
   //   렌더된 페이지에서 <meta>·ld+json·__NEXT_DATA__만 추려 RN으로 넘기면 기존 HTML 파서(scraperRefineKakao)가 그대로 처리한다.
   //   ※WebView는 진짜 브라우저라 안티봇/CSR 벽을 통과 — RN fetch가 막히는 상황의 정답 경로.
+  // 🆕 v7.58.1 프루닝: __NEXT_DATA__ 전체(수백 KB)를 RN 브리지로 넘기면 느리고 위험하다.
+  //   필요한 건 ogTitle 노드와 onIssue+seriesId 노드뿐이고, RN 쪽 파서(scraperDeepFind)는 '경로'가 아니라
+  //   '모양'으로 찾으므로 그 노드들만 배열로 감싸 보내도 결과가 같다(수백 KB → 수 KB).
+  //   단, onIssue 노드를 못 찾으면(카카오가 필드명을 바꾼 경우) 프루닝 결과를 믿을 수 없으므로 원문을 그대로 보낸다.
+  "function PR(txt){try{var j=JSON.parse(txt);var out=[],hit=false,st=[[j,0]];" +
+  "while(st.length&&out.length<12){var e=st.pop(),o=e[0],d=e[1];" +
+  "if(!o||typeof o!=='object'||d>16)continue;" +
+  "if(Object.prototype.toString.call(o)==='[object Array]'){for(var i=0;i<o.length&&i<200;i++)st.push([o[i],d+1]);continue;}" +
+  "var isOv=(typeof o.onIssue==='string'&&o.seriesId!=null);" +
+  "if(isOv||typeof o.ogTitle==='string'){var c={};for(var k in o){var v=o[k],t=typeof v;" +
+  "if(t==='string'){c[k]=v.length>4000?v.slice(0,4000):v;}else if(t==='number'||t==='boolean'){c[k]=v;}}" +
+  "out.push(c);if(isOv)hit=true;}" +
+  "for(var k2 in o)st.push([o[k2],d+1]);}" +
+  "return hit?JSON.stringify({kk:out}):'';}catch(e){return '';}}" +
   "function SNAP(){try{if(String(location.host).indexOf('page.kakao.com')<0)return;" +
   "var nd=document.getElementById('__NEXT_DATA__');var ndt=nd?String(nd.textContent||''):'';" +
   "var ms='';var mt=document.getElementsByTagName('meta');for(var i=0;i<mt.length;i++){try{ms+=mt[i].outerHTML;}catch(e){}}" +
   "var ld='';var sc=document.querySelectorAll('script[type=\"application/ld+json\"]');for(var j=0;j<sc.length;j++){ld+='<script type=\"application/ld+json\">'+String(sc[j].textContent||'')+'<\\/script>';}" +
   "if(!ms&&!ndt)return;" +
-  "var b='<html><head>'+ms+ld+(ndt?('<script id=\"__NEXT_DATA__\" type=\"application/json\">'+ndt+'<\\/script>'):'')+'</head><body></body></html>';" +
+  "var nds=ndt?(PR(ndt)||ndt):'';" +
+  "var b='<html><head>'+ms+ld+(nds?('<script id=\"__NEXT_DATA__\" type=\"application/json\">'+nds+'<\\/script>'):'')+'</head><body></body></html>';" +
   "if(b.length>1200000){P({t:'kkdbg',u:'__snap_too_big__',l:b.length,ov:false});return;}" +
   "if(window.__kkSnapLen===b.length)return;window.__kkSnapLen=b.length;" + // 동일 내용 재전송 방지(주입은 before/after 2회 + 타이머)
   "P({t:'kkdom',ok:true,body:b});}catch(e){P({t:'kkdbg',u:'__snap_err__',l:0,ov:false});}}" +
@@ -16461,7 +16515,11 @@ function scraperStripHtmlNoise(html) {
     .replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/<script\b[\s\S]*?<\/script>/gi, " ")   // __NEXT_DATA__ 등 숨은 JSON(다른 작품 상태 포함)
     .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
-    .replace(/<(nav|footer|header|aside)\b[\s\S]*?<\/\1>/gi, " "); // '완결' 필터 탭 등
+    // 사이트 크롬('완결' 필터 탭·추천 사이드바) 제거.
+    // 🔧 v7.58.1: <header>는 일부러 뺐다 — 상세 페이지에서 <header>는 사이트 GNB가 아니라 '작품 제목+배지' 블록인
+    //   경우가 많아, 지우면 진짜 상태 배지를 잃는다(리디·네이버시리즈처럼 아직 본문 판정에 의존하는 곳에서 손해).
+    //   사이트 GNB는 대부분 <nav>(또는 <header><nav>)라 nav 제거만으로 충분하다.
+    .replace(/<(nav|footer|aside)\b[\s\S]*?<\/\1>/gi, " ");
 }
 // 라벨 문자열 → 상태. '연재중단/연중'을 '연재 중'보다 먼저 봐야 오분류가 없다.
 function scraperStatusFromLabel(s) {
@@ -16473,7 +16531,7 @@ function scraperStatusFromLabel(s) {
   if (/연재\s*중|ongoing|serial(?:izing)?/i.test(t)) return "ongoing";
   return null;
 }
-function detectWorkStatusFromHtml(html, og, book, platform) {
+function detectWorkStatusFromHtml(html, og, book, platform, stripped) {
   // ① 구조화 데이터
   const structured = [
     book && (book.creativeWorkStatus || book.status),
@@ -16482,8 +16540,8 @@ function detectWorkStatusFromHtml(html, og, book, platform) {
   for (const s of structured) { const v = scraperStatusFromLabel(s); if (v) return v; }
   // ③ 앱셸 플랫폼은 본문 추측 금지(전용 API/구조화 경로가 정본 — 여기서 추측하면 오탐만 남는다)
   if (platform && HTML_STATUS_UNRELIABLE_PLATFORMS.indexOf(platform) >= 0) return null;
-  // ② 본문 텍스트에서 상태 라벨 첫 등장
-  const m = scraperStripHtmlNoise(html).match(/연재\s*중단|완결|휴재|연재\s*중/);
+  // ② 본문 텍스트에서 상태 라벨 첫 등장 (stripped는 호출자가 이미 만들어 둔 정제본 — 대량 갱신에서 중복 정제 방지)
+  const m = (stripped == null ? scraperStripHtmlNoise(html) : stripped).match(/연재\s*중단|완결|휴재|연재\s*중/);
   return m ? scraperStatusFromLabel(m[0]) : null;
 }
 
@@ -16518,7 +16576,9 @@ function scraperNormalizeFromHtml(html, url) {
     : (genres ? String(genres).split(/[,/|·]/).map(s => s.trim()).filter(Boolean) : []);
 
   // 🔧 v7.58.0: 전문(全文) '완결' 검색 → 구조화 우선 + 앱셸 플랫폼 금지 규칙으로 교체(완결 오탐지 수정). 미상은 null.
-  const workStatus = detectWorkStatusFromHtml(html, og, book, platform);
+  //   🔧 v7.58.1: 정제본은 한 번만 만들어 상태·회차가 공유(일괄 갱신은 수백 건을 도는 경로라 중복 정제 비용이 실측된다).
+  const stripped = scraperStripHtmlNoise(html);
+  const workStatus = detectWorkStatusFromHtml(html, og, book, platform, stripped);
 
   let totalEpisodes = null;
   const ne = book.numberOfEpisodes || book.numberOfPages;
@@ -16526,7 +16586,7 @@ function scraperNormalizeFromHtml(html, url) {
   if (totalEpisodes == null) {
     // 🔧 v7.58.0: 상태 판정과 같은 이유로 본문만 본다 — 전문 검색은 <script>(다른 작품 JSON)·추천 캐러셀의
     //   '총 000화'를 이 작품의 회차로 집어올 수 있었고, 회차는 grow-only 저장이라 한 번 부풀면 되돌아오지 않는다.
-    const mm = scraperStripHtmlNoise(html).match(/(?:전체|총)\s*([0-9,]+)\s*화/);
+    const mm = stripped.match(/(?:전체|총)\s*([0-9,]+)\s*화/);
     if (mm) totalEpisodes = Number(mm[1].replace(/,/g, ""));
   }
 
@@ -17235,7 +17295,10 @@ function parseMunpiaNovelInfo(jsonText, url) {
   const tagTitles = (r.introductionInfo && Array.isArray(r.introductionInfo.tags)) ? r.introductionInfo.tags.map(t => t && t.title).filter(Boolean) : [];
   const baseGen = Array.isArray(ni.genres) ? ni.genres.filter(Boolean) : [];
   const genres = []; for (const g of [...baseGen, ...tagTitles]) if (g && !genres.includes(g)) genres.push(g); // 장르+소재태그 병합(중복 제거) → mapScrapedGenres가 분류
-  const workStatus = ni.finish ? "completed" : (ni.pause ? "hiatus" : "ongoing");
+  // 🔧 v7.58.1: finish/pause가 둘 다 없으면(응답 축약·필드 개명) 'ongoing'을 단정하지 않고 null(미상).
+  //   근거 없는 '연재중' 관측은 reconcileWork에서 휴재/연중 판정을 눌러버리고, 정본을 조용히 덮는다.
+  const workStatus = ni.finish ? "completed" : (ni.pause ? "hiatus"
+    : ((ni.finish === undefined && ni.pause === undefined) ? null : "ongoing"));
   let startYear = null;
   const cm = String(ni.createdAt == null ? "" : ni.createdAt).match(/(20\d\d|19[89]\d)/);
   if (cm) { const y = Number(cm[1]); if (y >= 1980 && y <= 2099) startYear = y; }
@@ -17502,7 +17565,9 @@ async function fetchNovelMeta(url, opts = {}) {
         else if (cap && cap.diag) kkDiag = String(cap.diag);
       } catch (e) { kkDiag = "캡처 예외: " + (e?.message || e); }
     } else kkDiag = "브라우저 캡처 준비 안 됨(앱을 완전히 껐다 켜 주세요)";
-    if (!km || !km.title) { try { const gm = await fetchKakaoMetaGql(url, opts); if (gm && gm.ok && gm.title) km = gm; } catch {} }
+    // 🔧 v7.58.1: 최후 시도(GraphQL)는 짧게. 기본 20s × 엔드포인트 2개라 캡처(~15s) 뒤에 40s가 더 붙어
+    //   실패까지 1분 가까이 걸렸다. 여기까지 왔으면 성공 확률이 낮으니 8s로 잘라 빨리 안내한다.
+    if (!km || !km.title) { try { const gm = await fetchKakaoMetaGql(url, { ...opts, timeoutMs: Math.min(Number(opts.timeoutMs) || 8000, 8000) }); if (gm && gm.ok && gm.title) km = gm; } catch {} }
     if (km && km.title) meta = km;
   }
   if (!meta || !meta.ok || !meta.title) {
@@ -17702,16 +17767,24 @@ function collectKakaoCandidate(byId, rawUrl, rawTitle) {
   const isViewer = /\/viewer\//.test(u);
   const cat = (/웹툰/.test(rawTitle) && !/웹소설/.test(rawTitle)) ? "웹툰" : (/웹소설/.test(rawTitle) ? "웹소설" : "");
   const title = cleanKakaoTitle(rawTitle);
-  // 🔧 v7.58.0: SERP 부산물 후보 제거 — '콘텐츠홈', 도메인/경로 문자열이 제목으로 들어온 카드는
-  //   눌러도 어차피 같은 작품이거나 쓰레기라 검색결과만 어지럽힌다(‘검색은 뜨는데 눌러도 실패’ 체감의 일부).
-  if (!title || isBadWebTitle(title)) return;
+  if (!title) return;
+  // 🔧 v7.58.1: SERP는 같은 작품에 앵커가 여러 개다(제목 앵커 + 'page.kakao.com › content …' URL 표시 앵커).
+  //   종전 규칙(!prev || (prev.isViewer && !isViewer))은 **먼저 온 것이 이김**이라, URL 앵커가 먼저 나오면
+  //   뒤에 오는 진짜 제목이 영영 반영되지 않았다(= 제목이 부산물인 카드가 그대로 노출).
+  //   → 좋은 제목 > 나쁜 제목, 동급이면 작품홈 > 뷰어. 끝까지 좋은 제목을 못 얻은 id만 결과에서 뺀다
+  //     (v7.58.0에서 '나쁜 제목이면 즉시 버림'으로 했더니, 유일한 앵커가 URL형인 정상 작품까지 사라질 수 있었다).
+  const bad = isBadWebTitle(title);
   const prev = byId.get(id);
-  if (!prev || (prev.isViewer && !isViewer)) {
-    byId.set(id, { title, author: "", url: "https://page.kakao.com/content/" + id, platform: "카카오페이지", category: cat, isComic: cat === "웹툰", isViewer }); // 🔧 v7.46.3: isComic으로 웹툰 후순위 정렬(mergeSearchResults)
+  const better = !prev ? true
+    : (prev.bad !== bad ? (prev.bad && !bad) // 나쁜 제목 → 좋은 제목만 승격(반대는 금지)
+      : (prev.isViewer && !isViewer));       // 동급이면 뷰어보다 작품홈 문서 우선
+  if (better) {
+    byId.set(id, { title, author: "", url: "https://page.kakao.com/content/" + id, platform: "카카오페이지", category: cat, isComic: cat === "웹툰", isViewer, bad }); // 🔧 v7.46.3: isComic으로 웹툰 후순위 정렬(mergeSearchResults)
   }
 }
 function kakaoCandidatesFromMap(byId) {
-  return [...byId.values()].slice(0, 20).map(({ isViewer, ...c }) => c);
+  // 🔧 v7.58.1: 어떤 앵커에서도 쓸만한 제목을 못 얻은 id만 제외(제목이 도메인/‘콘텐츠홈’인 부산물 카드).
+  return [...byId.values()].filter(c => !c.bad).slice(0, 20).map(({ isViewer, bad, ...c }) => c);
 }
 // (옵션) 다음 웹문서 검색 API(JSON) → 후보
 function parseKakaoWebSearch(data) {
@@ -18468,8 +18541,12 @@ async function fetchNaverWebtoonMeta(url, opts = {}) {
       genres = Array.isArray(info.genreList) ? info.genreList.map(g => (g && (g.description || g.name)) || g).filter(Boolean)
              : (Array.isArray(info.gfpAdCustomParam?.genreTypes) ? info.gfpAdCustomParam.genreTypes : (info.genre ? [info.genre] : []));
       totalEpisodes = Number(info.totalCount || info.articleTotalCount || info.totalCrcCount) || null;
-      const status = String(info.restTerminationStatus || info.status || info.serializationStatus || "").toUpperCase();
-      workStatus = /END|COMPLETE|FINISH|완결|휴재/i.test(status) ? (/휴재|REST/i.test(status) ? "hiatus" : "completed") : "ongoing";
+      // 🔧 v7.58.1 [완결 오탐지 — 반대 방향] 네이버 실제 값은 SERIES / REST / TERMINATION 인데,
+      //   종전 정규식(/END|COMPLETE|FINISH|완결|휴재/)에 'TERMINATION'이 어디에도 안 걸려 **완결 웹툰이 통째로
+      //   '연재중'으로** 찍혔다. 게다가 상태 필드가 아예 없을 때도 else로 'ongoing'을 단정해,
+      //   근거 없는 관측치가 링크에 기록되고 reconcileWork에서 휴재/연중 판정까지 눌렀다.
+      //   → 값을 정확히 분류하고, 모르면 null(미상)로 둔다(빈 상태는 저장 경로가 건너뛴다).
+      workStatus = naverWebtoonStatusOf(info);
       if (info.thumbnailUrl) coverUrl = info.thumbnailUrl;
     }
   } catch { /* OG만으로 진행 */ }
@@ -18488,6 +18565,21 @@ async function fetchNaverWebtoonMeta(url, opts = {}) {
   };
 }
 
+// 🆕 v7.58.1: 네이버웹툰 상세 info → 연재상태. 실제 필드/값: restTerminationStatus = SERIES|REST|TERMINATION,
+//   검색 항목형(shape 공유)은 finished/rest 불리언. 어느 쪽으로도 못 정하면 null(미상) — 'ongoing' 단정 금지.
+function naverWebtoonStatusOf(info) {
+  if (!info || typeof info !== "object") return null;
+  const s = String(info.restTerminationStatus || info.serializationStatus || info.status || "").toUpperCase();
+  if (s) {
+    if (/REST|HIATUS|휴재/.test(s)) return "hiatus";
+    if (/TERMINAT|END|COMPLETE|FINISH|완결/.test(s)) return "completed";
+    if (/SERIES|SERIAL|ONGOING|연재/.test(s)) return "ongoing";
+  }
+  if (info.finished === true) return "completed";
+  if (info.rest === true) return "hiatus";
+  if (info.finished === false) return info.rest === true ? "hiatus" : "ongoing";
+  return null; // 근거 없음 → 미상(정본 유지)
+}
 function naverAuthorNames(arr) {
   if (!Array.isArray(arr)) return "";
   return arr.map(a => (typeof a === "string" ? a : (a && (a.name || a.artistName || a.authorName)) || "")).filter(Boolean).join(", ");
@@ -18582,8 +18674,17 @@ function kakaoWebtoonDetailToMeta(d) {
   const genres = [];
   for (const g of String(d.genre || "").split(/[\/,·]/)) { const s = g.trim(); if (s && !genres.includes(s)) genres.push(s); }
   if (original && !genres.includes("원작있음")) genres.push("원작있음");
-  const badges = Array.isArray(d.badges) ? d.badges.map(b => String((b && b.title) || "").toUpperCase()) : [];
-  const workStatus = badges.includes("COMPLETED") ? "completed" : ((badges.includes("REST") || badges.includes("HIATUS")) ? "hiatus" : "ongoing");
+  // 🔧 v7.58.1: badges엔 상태 외에도 WAIT_FOR_FREE·UP·요일(thu) 배지가 섞여 있다(실측 픽스처) →
+  //   type==="STATUS"인 배지만 상태로 본다(그 타입이 없으면 종전처럼 전체에서 탐색 — shape 변경 내성).
+  //   그리고 배지가 아예 없으면 'ongoing'을 단정하지 않고 null(미상). 근거 없는 관측치가 정본을 덮는 걸 막는다.
+  //   ※d.status("SELLING")는 판매 상태지 연재 상태가 아니라 사용하지 않는다.
+  const allBadges = Array.isArray(d.badges) ? d.badges : [];
+  const titlesOf = (arr) => arr.map(b => String((b && b.title) || "").toUpperCase()).filter(Boolean);
+  const statusBadges = titlesOf(allBadges.filter(b => b && String(b.type || "").toUpperCase() === "STATUS"));
+  const badges = statusBadges.length ? statusBadges : titlesOf(allBadges);
+  const workStatus = badges.includes("COMPLETED") ? "completed"
+    : ((badges.includes("REST") || badges.includes("HIATUS")) ? "hiatus"
+      : (badges.length ? "ongoing" : null));
   let coverUrl = String(d.thumbnailImage || d.sharingThumbnailImage || "");
   if (coverUrl.startsWith("//")) coverUrl = "https:" + coverUrl;
   return {
@@ -20588,7 +20689,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.58.0";
+const APP_VERSION = "7.58.1";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -20614,6 +20715,20 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.58.1", date: "2026-08-02",
+    title: "🔎 연재 상태 판정 전수 점검",
+    highlights: [
+      { type: "fix", text: "✅ 완결된 네이버웹툰이 ‘연재중’으로 표시되던 문제를 고쳤어요. 네이버가 쓰는 완결 표시를 앱이 못 알아보고 있었어요." },
+      { type: "fix", text: "🔍 연재 상태를 알려주는 정보가 응답에 없을 때 앱이 ‘연재중’으로 단정하던 곳들(네이버웹툰·카카오웹툰·문피아)을 모두 ‘모름’으로 바꿨어요. 모르면 기존 값을 그대로 둬요." },
+      { type: "fix", text: "🟡 카카오 검색 결과에서 같은 작품의 제목이 ‘page.kakao.com › …’ 같은 주소로 표시되던 카드가 진짜 제목으로 채워져요." },
+      { type: "perf", text: "⚡ 카카오 작품 정보를 읽어올 때 주고받는 데이터를 크게 줄였고, 실패할 때 최대 1분 가까이 걸리던 대기를 훨씬 짧게 줄였어요." },
+    ],
+    details: [
+      { type: "fix", text: "카카오웹툰의 ‘기다리면 무료’·연재요일 배지를 연재 상태로 오해하지 않도록 상태 배지만 보게 했어요." },
+      { type: "fix", text: "작품 페이지의 제목·배지 영역(header)을 상태 판정에서 제외하던 것을 되돌렸어요 — 진짜 완결 표시를 놓칠 수 있었어요." },
+    ],
+  },
   {
     version: "7.58.0", date: "2026-08-02",
     title: "🔧 카카오페이지 불러오기 + 완결 여부 오탐지 수정",
@@ -70159,12 +70274,12 @@ async function importJSON(directText, onSuccess, onSettled) {
               </Modal>
 
               {/* 🆕 v7.44.0/v7.44.4: 카카오 응답 가로채기 WebView — 실제로 보이게(불투명) 띄워 JS 실행 보장. 상단 배너로 안내, 페이지는 그대로 노출 */}
-              <Modal visible={!!kkCaptureUrl} animationType="slide" statusBarTranslucent onRequestClose={() => { const r = kkCaptureResolver.current; if (r) r.finish(null); }}>
+              <Modal visible={!!kkCaptureUrl} animationType="slide" statusBarTranslucent onRequestClose={() => { const r = kkCaptureResolver.current; if (r) r.finish(null, "사용자가 창을 닫음"); }}>
                 <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line }}>
                     <ActivityIndicator size="small" color={C.primary} />
                     <Text style={{ color: C.text, fontSize: 13.5, fontWeight: "800", flex: 1 }}>카카오에서 작품 정보를 가져오는 중…</Text>
-                    <TouchableOpacity onPress={() => { const r = kkCaptureResolver.current; if (r) r.finish(null); }} activeOpacity={0.7} style={{ paddingVertical: 6, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1, borderColor: C.line }}>
+                    <TouchableOpacity onPress={() => { const r = kkCaptureResolver.current; if (r) r.finish(null, "사용자가 창을 닫음"); }} activeOpacity={0.7} style={{ paddingVertical: 6, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1, borderColor: C.line }}>
                       <Text style={{ color: C.sub, fontSize: 12.5, fontWeight: "800" }}>취소</Text>
                     </TouchableOpacity>
                   </View>
