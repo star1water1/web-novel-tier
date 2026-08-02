@@ -2,9 +2,51 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.16 (구색 기능 개선 Phase 5 — 수상 pre-select를 patrick truth와 정합)   ║
+ * ║  버전: 7.59.17 (구색 기능 개선 Phase 5 — 핵심 취향 헤드라인 정직화)                ║
  * ║  최종 수정: 2026-08-02                                                        ║
- * ║  총 라인 수: 약 79,900줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 79,950줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🧭 v7.59.17 핵심 취향 헤드라인 정직화 (T19 · ANA-2 ANA-8) (2026-08-02)            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제 ①·ANA-2] 취향 분석 최상단 '항상 펼침' 카드의 한 문장이 사실상 **개수 1위**  ║
+ * ║ 만 읊었다. majorGenreAnalysis 정렬 키가 `weightedCount` 1차이고 adjRating(수축   ║
+ * ║ 평균)은 동점일 때만 쓰이는 2차 키인데, weightedCount가 다회독 가중 실수라 동점이  ║
+ * ║ 사실상 없다 → 많이 등록했지만 낮게 평가한 장르가 대표 문장에 못박히고, 높게       ║
+ * ║ 평가한 소수 장르는 이 문장에 등장할 수 없었다. 표본 게이트도                      ║
+ * ║ `novels.length === 0` 하나뿐이라 3작짜리 서재도 같은 확신 어조였다.               ║
+ * ║                                                                              ║
+ * ║ [문제 ②·ANA-8] `preferredLength`에 count 조건이 전무했다. `avg`가 빈 배열에 0을   ║
+ * ║ 주는데 lens 길이가 **항상 3**이라 `|| "unknown"` 폴백이 **도달 불가** — 회차를    ║
+ * ║ 아무도 입력하지 않은 서재에서 안정정렬이 short를 1위로 만들어 헤드라인이           ║
+ * ║ '단편(100화 미만)의 작품을 즐겨 읽습니다'로 **단정**됐다(실측 재현). 400화 한 편이 ║
+ * ║ 우연히 최상위 티어면 즉시 '장편 선호'가 되던 것도 같은 뿌리.                       ║
+ * ║                                                                              ║
+ * ║ [수정 ①] 빈도 1위와 만족도 1위(adjRating, 표본 3작 이상)를 **함께** 말한다 —      ║
+ * ║ 다르면 "가장 많이 읽은 장르는 A, 가장 높게 평가한 장르는 B입니다", 같으면 "…도    ║
+ * ║ …도 A입니다". ⚠️ majorGenreAnalysis는 '선호 장르' 칩·장르 차트·신뢰도 정렬        ║
+ * ║ 토글이 **빈도 순서 그대로** 소비하는 공유 배열이라 반드시 사본을 정렬한다.         ║
+ * ║                                                                              ║
+ * ║ [수정 ②] 길이 버킷에 표본 하한(`LENGTH_BUCKET_MIN`=5) + 비교 가능 버킷 2개 미만   ║
+ * ║ 이면 "unknown". 이때 '다양한 길이'로 얼버무리지 않고 **판단 보류를 밝힌다**       ║
+ * ║ (회차 미입력 서재는 길이가 '다양한' 게 아니라 '모르는' 것이다). 사장돼 있던        ║
+ * ║ '다양한 길이' 라벨은 제거. 파이 차트·읽기 패턴 섹션은 lengthPreference의          ║
+ * ║ count/avgRating을 직접 읽으므로 표시 불변.                                       ║
+ * ║                                                                              ║
+ * ║ [수정 ③] 표본 게이트(`CORE_PREF_MIN_TOTAL`=10)를 **총 작품이 아니라 분석          ║
+ * ║ 모집단(reliable)**으로 잡았다 — 장르·길이 통계가 전부 그 위에서 계산되므로 총     ║
+ * ║ 50작이어도 reliable이 6작이면 문장이 기대는 근거는 6작이다. 둘이 다르면 그        ║
+ * ║ 사실까지 문구에 적는다.                                                          ║
+ * ║                                                                              ║
+ * ║ [기각] 버킷 경계(100/400) 편집 UI·모드별 기본값 — 같은 경계가                     ║
+ * ║ `processPatternUpdates`의 `getEpBucket`에도 있고 그건 `episode_length` 패턴 키로  ║
+ * ║ **DB에 영속**된다. 값을 바꾸면 누적 통계가 조용히 어긋난다(카드 미인용 사실).      ║
+ * ║ 표본 하한만으로 웹툰 슬롯 편중·1작 확정이 모두 'unknown'으로 떨어져 실익도 없다.   ║
+ * ║                                                                              ║
+ * ║ [검증] 실제 preferredLength IIFE·corePreference 산출부를 소스에서 떼어내 실행 —   ║
+ * ║ 길이 8시나리오(종전 대조: 미입력→short/장편1작→long 재현 후 전부 해소), 헤드라인   ║
+ * ║ 7시나리오, 공유 배열 순서 불변, 사장 라벨 제거. esbuild 통과. APP_VERSION 7.59.17. ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -21755,7 +21797,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.16";
+const APP_VERSION = "7.59.17";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -39496,6 +39538,13 @@ function computeReliability(novel, totalNovelCount) {
    🎯 취향 분석 시스템
    ========================================================= */
 
+// 🆕 v7.59.17 (T19·ANA-2/ANA-8): '핵심 취향' 헤드라인이 근거 없이 단정하지 않도록 하는 표본 하한 3종.
+//   이 문장은 취향 분석 최상단 '항상 펼침' 카드라 사용자가 가장 먼저·거의 유일하게 읽는 결론이다.
+//   → 표본이 뒷받침하지 못하는 절은 말하지 않는다(생략 또는 보류 문구).
+const CORE_PREF_MIN_TOTAL = 10;   // 이 미만이면 성향 단정 자체를 보류
+const CORE_PREF_GENRE_MIN = 3;    // '가장 높게 평가한 장르' 후보 자격 (adjRating 수축 위의 2차 방어)
+const LENGTH_BUCKET_MIN = 5;      // 길이 버킷이 '선호 비교'에 참여할 최소 작품 수
+
 // 작품별 신뢰도 점수 계산 (분석용 확장 버전)
 function calcNovelReliabilityScore(novel, totalCount) {
   let score = 0;
@@ -40158,13 +40207,22 @@ async function analyzePreferences(novels, matches) {
       medium: { count: lengthGroups.medium.length, avgRating: avg(lengthGroups.medium.map(n => n.prefScore)) },
       long: { count: lengthGroups.long.length, avgRating: avg(lengthGroups.long.map(n => n.prefScore)) },
     },
+    // 🔧 v7.59.17 (T19·ANA-8): 버킷 표본 하한 + '비교 가능 버킷 2개 미만이면 unknown'.
+    //   [문제] 종전엔 count 조건이 전혀 없었고, `avg`(39548)가 빈 배열에 0을 주는데 lens 길이는 **항상 3**이라
+    //   `|| "unknown"` 폴백이 **도달 불가**였다 → 회차를 아무도 입력하지 않은 서재(세 버킷 전부 0점)에서
+    //   안정정렬이 short를 1위로 만들어 헤드라인이 '단편(100화 미만)의 작품을 즐겨 읽습니다'로 단정됐다.
+    //   400화짜리 한 편이 우연히 최상위 티어면 즉시 '장편 선호'가 되던 것도 같은 뿌리(표본 1로 확정).
+    //   [해결] count>=LENGTH_BUCKET_MIN인 버킷만 비교에 넣고, 비교 대상이 2개 미만이면 '선호'가 성립하지
+    //   않으므로 "unknown". 소비처는 generateInsights의 lengthLabel 한 곳뿐이라 파급 없음(파이 차트·읽기 패턴
+    //   섹션은 lengthPreference의 count/avgRating을 직접 읽으므로 이 판정과 무관하게 종전 그대로 표시된다).
     preferredLength: (() => {
       const lens = [
-        { key: "short", rating: avg(lengthGroups.short.map(n => n.prefScore)) || 0 },
-        { key: "medium", rating: avg(lengthGroups.medium.map(n => n.prefScore)) || 0 },
-        { key: "long", rating: avg(lengthGroups.long.map(n => n.prefScore)) || 0 },
-      ];
-      return lens.sort((a, b) => b.rating - a.rating)[0]?.key || "unknown";
+        { key: "short", count: lengthGroups.short.length, rating: avg(lengthGroups.short.map(n => n.prefScore)) || 0 },
+        { key: "medium", count: lengthGroups.medium.length, rating: avg(lengthGroups.medium.map(n => n.prefScore)) || 0 },
+        { key: "long", count: lengthGroups.long.length, rating: avg(lengthGroups.long.map(n => n.prefScore)) || 0 },
+      ].filter(l => l.count >= LENGTH_BUCKET_MIN);
+      if (lens.length < 2) return "unknown";
+      return lens.sort((a, b) => b.rating - a.rating)[0].key;
     })(),
     completedVsOngoing: {
       completed: reliable.filter(n => n.work_status === "completed"),
@@ -41093,17 +41151,67 @@ function generateInsights(data) {
   const topMajorGenres = majorGenreAnalysis.slice(0, 3).map(g => g.genre);
   const topSubGenres = subGenreAnalysis.slice(0, 3).map(g => g.genre);
   const topPlatform = platformAnalysis[0]?.platform || "";
-  
-  // 선호 길이
+
+  // 선호 길이 — "unknown"이면 라벨 자체가 없다(아래에서 절을 통째로 보류 문구로 대체)
   const lengthLabel = {
     short: "단편(100화 미만)",
     medium: "중편(100~400화)",
     long: "장편(400화 이상)",
-    unknown: "다양한 길이"
-  }[readingPattern.preferredLength];
-  
-  // 핵심 취향 문장
-  const corePreference = `${topMajorGenres[0] || "다양한 장르"} 기반에 ${topSubGenres.slice(0, 2).join(", ") || "다양한 소재"}를 선호하며, ${lengthLabel}의 작품을 즐겨 읽습니다.${topPlatform ? ` ${topPlatform} 플랫폼을 주로 이용합니다.` : ""}`;
+  }[readingPattern.preferredLength] || "";
+
+  // ═══════════════════════════════════════════════════════════════
+  // 🔧 v7.59.17 (T19·ANA-2+ANA-8): 핵심 취향 문장 정직화
+  //   [문제 ①] 재료의 정렬 키가 전부 **빈도**다(majorGenreAnalysis 39919 `weightedCount` 1차, adjRating은
+  //   동점 시에만 쓰이는 2차 키인데 weightedCount가 실수라 동점이 거의 없다). 즉 '선호 장르'는 사실상
+  //   '많이 등록한 장르'였고, 많이 읽었지만 낮게 평가한 장르가 대표 문장에 못박혔다.
+  //   [문제 ②] 표본 게이트가 `novels.length === 0` 하나뿐이라 3작짜리 서재도 같은 확신 어조였다.
+  //   [해결] 빈도 1위와 만족도(adjRating=수축평균) 1위를 **함께** 말하고, 다르면 두 축을 나란히 밝힌다.
+  //   분석 모집단이 CORE_PREF_MIN_TOTAL 미만이면 단정 대신 보류 문구.
+  //   ⚠️ majorGenreAnalysis는 '선호 장르' 칩(35661)·장르 차트(35473)·신뢰도 정렬 토글(35457)이 **빈도 순서
+  //   그대로** 소비하는 공유 배열이다 → 반드시 사본을 정렬한다(제자리 sort 금지).
+  // ═══════════════════════════════════════════════════════════════
+  const freqTopGenre = topMajorGenres[0] || "";
+  //   adjRating은 k=4 수축이라 1~2작 장르가 상위를 점령하기 어렵지만, 그래도 '가장 높게 평가'라고
+  //   단언하는 자리라 표본 하한을 한 겹 더 둔다.
+  const satTopGenre = [...majorGenreAnalysis]
+    .filter(g => g.count >= CORE_PREF_GENRE_MIN)
+    .sort((a, b) => b.adjRating - a.adjRating)[0]?.genre || "";
+  const subTop2 = topSubGenres.slice(0, 2).join(", ");
+  const subSentence = subTop2 ? ` ${subTop2} 소재를 즐겨 봅니다.` : "";
+  const platformSentence = topPlatform ? ` ${topPlatform} 플랫폼을 주로 이용합니다.` : "";
+  // 길이 절 — 표본이 못 받치면 '다양한 길이'로 얼버무리지 않고 판단 보류를 밝힌다.
+  //   (회차 미입력 서재는 길이가 '다양한' 게 아니라 '모르는' 것이다.)
+  const epKnownCount = readingPattern.lengthPreference.short.count
+    + readingPattern.lengthPreference.medium.count
+    + readingPattern.lengthPreference.long.count;
+  const lengthSentence = lengthLabel
+    ? ` 작품 길이는 주로 ${lengthLabel}입니다.`
+    : (epKnownCount === 0
+        ? " 회차 수가 입력된 작품이 없어 길이 선호는 판단하지 않았습니다."
+        : " 길이는 표본이 부족해 선호를 판단하지 않았습니다.");
+
+  // 표본 게이트는 '총 작품'이 아니라 **분석 모집단(reliable)**으로 잡는다 — 장르·길이 통계가 전부 그 위에서
+  //   계산되므로(39875 등), 총 50작이어도 reliable이 6작이면 이 문장이 기대는 근거는 6작이다.
+  //   (reliable은 신뢰도>=30 필터, 5작 미만이면 전체로 폴백하므로 reliableTotal <= total이 항상 성립.)
+  const coreN = basicStats.reliableTotal || 0;
+  let corePreference;
+  if (coreN < CORE_PREF_MIN_TOTAL) {
+    const why = coreN === basicStats.total
+      ? `아직 ${coreN}작이라`
+      : `분석 기준(읽은 회차·매칭 기록 등)을 충족하는 작품이 ${coreN}작뿐이라`;
+    corePreference = `${why} 취향을 단정하기에는 표본이 적습니다.`
+      + (freqTopGenre ? ` 지금까지 가장 많이 읽은 장르는 ${freqTopGenre}입니다.` : "")
+      + subSentence;
+  } else {
+    const lead = !freqTopGenre
+      ? "장르가 기록된 작품이 없어 장르 취향은 판단하지 않았습니다." // '다양한 장르'로 얼버무리지 않는다
+      : satTopGenre && satTopGenre !== freqTopGenre
+        ? `가장 많이 읽은 장르는 ${freqTopGenre}, 가장 높게 평가한 장르는 ${satTopGenre}입니다.`
+        : satTopGenre
+          ? `가장 많이 읽은 장르도, 가장 높게 평가한 장르도 ${freqTopGenre}입니다.`
+          : `가장 많이 읽은 장르는 ${freqTopGenre}입니다.`; // 표본 3작 이상 장르 없음 → 만족도 축만 보류
+    corePreference = `${lead}${subSentence}${lengthSentence}${platformSentence}`;
+  }
 
   // 숨겨진 패턴
   const hiddenPatterns = [];
