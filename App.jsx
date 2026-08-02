@@ -2,9 +2,106 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.6 (구색 기능 개선 Phase 2 — 백업 절단 고지 + 수문장 필터 완화)         ║
+ * ║  버전: 7.59.8 (구색 기능 개선 Phase 3 — 순위 표시 정규화)                          ║
  * ║  최종 수정: 2026-08-02                                                        ║
- * ║  총 라인 수: 약 78,890줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 78,940줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔢 v7.59.8 순위 표시 정규화 (#300 → 3위) (T10 · HYB-6) (2026-08-02)              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제 ①] 화면의 '순위 #'가 내부 `manual_order` 원값이었다. 이 값은 100단위 gap을 ║
+ * ║ 두고 매겨지므로(rebalanceTierOrder `(i+1)*100`), 티어의 3번째 작품이 '순위      ║
+ * ║ #300'으로 표시됐다. 사용자가 목록에서 세는 번호와 무관한 숫자다.                  ║
+ * ║ 지점: 어워드 3곳 · 검증 카드 후보 · 수문장 카드 · 배치 상대.                     ║
+ * ║                                                                              ║
+ * ║ [문제 ②] 재배치 이력의 목적지 `#{result_order}`는 더 나빴다. result_order는      ║
+ * ║ computeNewPosition이 만든 **두 작품 사이 중간값**(예: 250)이고, finalize 직후    ║
+ * ║ rebalanceTierOrder가 티어 전체를 (i+1)*100으로 다시 매긴다 → 화면에 뜨는 그      ║
+ * ║ 번호는 **어디에도 존재하지 않는 값**이라 순위 탭과 대조조차 불가능했다.           ║
+ * ║                                                                              ║
+ * ║ [수정 ①] 표시 순위를 '값'이 아니라 **정렬된 위치**로 센다 — `globalTierPositionMap`║
+ * ║ (id → {r: 1-based 순위, n: 티어 크기, t: 티어키})을 loadList에서 기존            ║
+ * ║ globalTierRankMap과 함께 계산. 추가 SQL 0건. `round(order/100)` 대안은 기각 —    ║
+ * ║ 스왑 충돌 분기(-50)나 삽입 중간값 같은 과도기 값에서 번호가 겹치거나 건너뛴다     ║
+ * ║ (실측: order 50/100/250 → round는 1·1·3, 위치 기반은 1·2·3).                    ║
+ * ║                                                                              ║
+ * ║ [수정 ②] 티어 내 정렬을 `compareWithinTier` 한 곳으로 모으고 **순위 탭           ║
+ * ║ (rankedEntries)·티어 관리 탭(tierManageEntries)·표시 순위 맵이 같은 함수**를     ║
+ * ║ 쓰게 했다. 카드 설계는 정렬 기준을 rebalance(manual_order, created_at)에 맞추라  ║
+ * ║ 했지만, 그러면 **티어를 안 매긴 작품**(hybrid에서 rating으로 티어가 정해지는       ║
+ * ║ 경우 manual_order가 전부 0)에서 화면(rating DESC)과 번호가 어긋난다. 사용자가     ║
+ * ║ 대조하는 대상은 rebalance가 아니라 눈앞의 목록이므로 화면 정렬을 정본으로 삼았다. ║
+ * ║ (getPrefScore가 먹는 globalTierRankMap의 tie-break는 **일부러 그대로** 뒀다 —    ║
+ * ║  표시 정합을 맞추자고 건드리면 추천 점수가 딸려 움직인다. T10 범위 밖.)          ║
+ * ║                                                                              ║
+ * ║ [수정 ③] 이력 목적지를 `repoDestLabel`로 — 이미 함께 읽어 오던 현재 자리          ║
+ * ║ (cur_tier/cur_order)로 `S 3위(현재)`. 이후 사용자가 직접 옮겼어도 '(현재)'라      ║
+ * ║ 거짓이 되지 않는다. 스키마·finalize·result_order 저장은 무변경.                  ║
+ * ║                                                                              ║
+ * ║ [안 건드린 것] 쓰기 경로 전부 — rebalance의 (i+1)*100, 스왑의 -50 분기,          ║
+ * ║ computeNewPosition의 중간값. 내부 100단위 체계는 그대로고 표시만 바뀐다.          ║
+ * ║ 진단 탭의 `tier=A #300` 표기도 유지 — 거기선 내부 원값을 봐야 한다.              ║
+ * ║ 순위를 모르면(맵 미갱신·티어 없음) 숫자를 지어내지 않고 티어만 보여 준다.         ║
+ * ║                                                                              ║
+ * ║ [검증] 실제 비교자·맵 계산·표기 헬퍼를 떼어내 27개 단언 — 위치 기반 1·2·3위,     ║
+ * ║ round 대조군, 동률 시 rating tie-break가 화면과 일치, 미상 시 빈 문자열,          ║
+ * ║ 이력 4케이스, 표시 지점 6곳 전환, 쓰기 경로 3종 불변.                            ║
+ * ║ esbuild 통과, scraper-test 526/526. APP_VERSION 7.59.8.                           ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔁 v7.59.7 건너뛰기 실효화 · 큐 유입 게이트 · 팬텀 큐 제거 · 🔍 우선            ║
+ * ║    (T08 · HYB-1 HYB-2 / T09 · HYB-7 HYB-8) (2026-08-02)                          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제 ①·HYB-2] '건너뛰기'·'시퀀스 중단'이 큐를 skipped로 마감하고 🔍만 해제해,   ║
+ * ║ finalize(38308-38318)가 하는 나머지 둘 — `suspicion_score` 정리와                ║
+ * ║ `verification_baseline = verification_count` — 을 빠뜨렸다. 그래서 다음 finalize의║
+ * ║ detectAutomaticSuspects가 두 트리거(count>baseline 쏠림 / score>=checkLine)에     ║
+ * ║ 그대로 걸려 **방금 건너뛴 작품을 즉시 다시 등록**했다. 건너뛰기가 아무것도         ║
+ * ║ 미루지 못한 이유이자, 종료 경로만 비대칭이던 구조적 누락이다.                     ║
+ * ║                                                                              ║
+ * ║ [문제 ②·HYB-1] 큐가 소진보다 빨리 자란다. 한 세션이 큐 1건을 비우는 동안          ║
+ * ║ finalize마다 detectAutomaticSuspects가 최대 5건을 넣고, ▲/▼ 한 번이 2건을        ║
+ * ║ 넣었다(idA + idB). 대기 숫자가 줄지 않아 '끝이 안 보이는' 화면이 된다.            ║
+ * ║                                                                              ║
+ * ║ [문제 ③·HYB-7] 티어를 지운(manual_tier→null) 작품을 큐에 넣는데,                 ║
+ * ║ getCandidatesForVerification은 mt가 없으면 항상 `[]`(37976) — **검증이 원리적으로 ║
+ * ║ 불가능**하다. 세션 시작 즉시 no_candidates로 자동 마감되며 큐를 'resolved'로      ║
+ * ║ 바꾸니, 아무것도 안 한 항목이 '완료' 수치만 올렸다(팬텀).                          ║
+ * ║                                                                              ║
+ * ║ [문제 ④·HYB-8] 사용자가 🔍로 직접 지목한 작품의 가중(base 0 + flagWeight 3 = 3)이 ║
+ * ║ 자동 tier_change(4)보다 낮아, 방금 티어를 만진 작품에 계속 밀렸다.                ║
+ * ║                                                                              ║
+ * ║ [수정 ①] 두 종료 핸들러를 공용 `skipVerificationQueries`로 통일 — 큐 마감 + 🔍   ║
+ * ║ 해제 + baseline 갱신 + 의심도 정리 3종을 한 execBatch로. 단 finalize처럼 score를  ║
+ * ║ 0으로 지우진 않는다: 건너뛰기는 '해소'가 아니라 '미루기'라, 점검선 바로 아래로만  ║
+ * ║ 내려 새 증거가 쌓이면 다시 오르게 했다(0 리셋이면 복귀에 12회 가산, 현 설계는 2회)║
+ * ║                                                                              ║
+ * ║ [수정 ②] `detectAutomaticSuspects` 서두에 유입 게이트 —                          ║
+ * ║ pending >= VERIFICATION_QUEUE_SOFT_CAP(10)이면 이번 회차 자동 등록을 쉰다.        ║
+ * ║ 신호는 score/baseline에 남으므로 유실이 아니라 지연이고, 큐가 줄면 자동 재개된다. ║
+ * ║ 사용자 path 등록은 게이트 밖 — 방금 만진 작품이 밀리면 안 되므로 의도된 비대칭.   ║
+ * ║ swapRating의 idB 즉시 등록은 제거(▲ 1회 → 큐 1건). v7.0.2의 '양쪽 검증' 의도는   ║
+ * ║ v7.17.0 propagateRankSuspicion이 대체한다 — idB는 사라진 게 아니라 증거가 쌓이면  ║
+ * ║ 올라온다.                                                                      ║
+ * ║                                                                              ║
+ * ║ [수정 ③] 티어 클리어의 enqueue를 `suspicionBumpQuery(moveBase)`로 교체(원 주석의 ║
+ * ║ '가벼운 신호로만' 의도 보존) + no_candidates 큐 마감을 'resolved'→'cancelled'로.  ║
+ * ║ 'cancelled'는 작품 삭제 경로가 이미 쓰는 상태라 신규 state도 마이그레이션도 불요. ║
+ * ║ 진단 탭의 result_action='no_candidates' 세션 row는 그대로 남아 추적은 유지.       ║
+ * ║                                                                              ║
+ * ║ [수정 ④] 큐 ORDER에 `COALESCE(n.user_flagged_suspect,0) DESC`를 1순위로 —        ║
+ * ║ **3곳 전부**(실행 fetch 38090 · 미리보기 54361 · 진단 상위10 54499). 카드는 2곳만 ║
+ * ║ 지목했지만 진단 화면만 옛 순서면 그 화면 자체가 거짓말이 된다. COALESCE는 작품이  ║
+ * ║ 삭제된 고아 행(n.* NULL)을 0에 묶어 기존 정리 경로를 그대로 살리기 위한 것.       ║
+ * ║                                                                              ║
+ * ║ [검증] 실제 판정식·SQL·핸들러를 떼어내 50개 단언(T08 33 + T09 17) — 건너뛰기 후   ║
+ * ║ 재등록 차단을 '종전이면 재등록됨' 대조군과 함께 확인, 새 증거 시 재등록 복귀,     ║
+ * ║ 게이트 경계(12/10/9/0)와 COUNT 실패 폴백, 프리셋별 cap(8/6/5→7/5/4),             ║
+ * ║ 🔍 지목이 tier_change보다 먼저·🔍끼리는 종전 규칙·고아 행 정리 경로 유지.        ║
+ * ║ finalize 정상 경로 4종 불변 확인. esbuild 통과, scraper-test 526/526.             ║
+ * ║ APP_VERSION 7.59.7.                                                               ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -21258,7 +21355,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.6";
+const APP_VERSION = "7.59.8";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -32519,7 +32616,7 @@ const AwardsScreen = memo(({
                           </Text>
                           <Text style={{ color: C.text, fontSize: 13, fontWeight: "700" }}>
                             {/* 🆕 v7.0.6 (m5): manual 모드도 manual_tier #order 표시 */}
-                            {isManualOrHybrid ? `${getTierLabel(novel.manual_tier || "")} #${novel.manual_order || 0}` : `${(novel.rating || 0).toFixed(0)}점`}
+                            {isManualOrHybrid ? (tierRankText(novel.id, true) || getTierLabel(novel.manual_tier || "")) : `${(novel.rating || 0).toFixed(0)}점`}
                           </Text>
                         </View>
                         
@@ -32812,7 +32909,7 @@ const AwardsScreen = memo(({
                                 <Text style={{ fontSize: 13 }}>📊</Text>
                                 <Text style={{ color: C.text, fontSize: 13, fontWeight: "700", marginLeft: 4 }}>
                                   {/* 🆕 v7.0.6 (M2/m5): hybrid/manual 모드는 ELO rating 비활성 — manual_tier #order 표시 */}
-                                  {isManualOrHybrid ? `${getTierLabel(novel.manual_tier || "")} #${novel.manual_order || 0}` : `${(novel.rating || 0).toFixed(0)}점`}
+                                  {isManualOrHybrid ? (tierRankText(novel.id, true) || getTierLabel(novel.manual_tier || "")) : `${(novel.rating || 0).toFixed(0)}점`}
                                 </Text>
                               </View>
                               {/* 🔧 v7.10.0: hybrid/manual은 ELO 승패가 0으로 박제됨 → 검증 전적으로 대체 */}
@@ -33220,7 +33317,7 @@ const AwardsScreen = memo(({
                           marginTop: 2,
                         }}>
                           {/* 🆕 v7.0.6 (M2/m5): hybrid/manual 모드는 ELO rating 비활성 — manual_tier #order 표시 */}
-                          {isManualOrHybrid ? `${getTierLabel(novel.manual_tier || "")} #${novel.manual_order || 0}` : `${(novel.rating || 0).toFixed(0)}점`}
+                          {isManualOrHybrid ? (tierRankText(novel.id, true) || getTierLabel(novel.manual_tier || "")) : `${(novel.rating || 0).toFixed(0)}점`}
                         </Text>
                       </View>
                     );
@@ -37496,16 +37593,18 @@ let globalRatioTierMap = new Map();
 // 🆕 v7.22.0: hybrid/manual 모드 — id → 티어 내 순위 비율(0=티어 top, 1=티어 bottom). loadList에서 재계산.
 //   getPrefScore가 manual_order를 '티어 크기 대비 상대 위치'로 반영하기 위함(절대 order 포화 해소).
 let globalTierRankMap = new Map();
+// 🆕 v7.59.8 (T10·HYB-6): id → { r: 티어 내 1-based 순위, n: 티어 크기, t: 티어키 }. loadList에서 함께 재계산.
+//   화면 표시 전용 — manual_order 쓰기 경로는 이 맵을 읽지 않는다(내부 100단위 체계는 그대로).
+let globalTierPositionMap = new Map();
 // 순위가 티어 밴드에서 차지하는 최대 비율 — 티어를 1차 신호로 보존(밴드 침범/티어 역전 방지).
 const ORDER_BAND_FRACTION = 0.45;
 
-// 🆕 v7.22.0: 티어 내 순위 비율 맵 계산 (hybrid/manual). manual_order ASC가 사용자 진실 순위.
-function computeTierRankMap(novels, cfg) {
-  const map = new Map();
-  if (!Array.isArray(novels) || novels.length === 0) return map;
-  const tierOrder = getActiveTierOrder(cfg);
-  const tierSet = new Set(tierOrder);
+// 🆕 v7.59.8 (T10·HYB-6): 티어별 그룹핑(정렬은 호출자가 준 비교자로). 그룹 기준은 `getDisplayTier` —
+//   순위 탭(tierManageEntries)이 쓰는 것과 같아야 화면에 보이는 묶음과 순번이 일치한다.
+function groupNovelsByTier(novels, cfg, cmp) {
   const byTier = new Map();
+  if (!Array.isArray(novels) || novels.length === 0) return byTier;
+  const tierSet = new Set(getActiveTierOrder(cfg));
   for (const n of novels) {
     if (!n || !n.id) continue;
     const t = getDisplayTier(n, cfg);
@@ -37513,17 +37612,75 @@ function computeTierRankMap(novels, cfg) {
     if (!byTier.has(t)) byTier.set(t, []);
     byTier.get(t).push(n);
   }
-  for (const arr of byTier.values()) {
-    arr.sort((a, b) =>
-      (Number(a.manual_order) || 0) - (Number(b.manual_order) || 0) ||
-      (Number(a.created_at) || 0) - (Number(b.created_at) || 0)
-    );
+  for (const arr of byTier.values()) arr.sort(cmp);
+  return byTier;
+}
+
+// 🆕 v7.59.8 (T10·HYB-6): 순위 탭이 한 티어 안에서 쓰는 정렬 그대로. **표시 순위의 유일한 기준**이다.
+//   manual_order만 보면 안 되는 이유: 티어를 안 매긴 작품(hybrid에서 rating으로 티어가 정해지는 경우)은
+//   manual_order가 전부 0이라 동률이고, 그때 화면은 rating 내림차순으로 늘어선다. 여기서 created_at로만
+//   가르면 화면과 번호가 어긋난다. tierManageEntries도 이 함수를 쓴다(복제 금지 — 어긋나면 곧 거짓말).
+function compareWithinTier(a, b, cfg) {
+  const mode = (cfg || globalTierConfig)?.mode;
+  if (mode === "manual" || mode === "hybrid") {
+    const oA = Number(a.manual_order) || 0, oB = Number(b.manual_order) || 0;
+    if (oA !== oB) return oA - oB;
+  }
+  if ((b.rating || 0) !== (a.rating || 0)) return (b.rating || 0) - (a.rating || 0);
+  const ac = a.created_at || 0, bc = b.created_at || 0;
+  if (ac !== bc) return ac - bc;
+  return (a.title || "").localeCompare(b.title || "");
+}
+
+// 🆕 v7.22.0: 티어 내 순위 비율 맵 계산 (hybrid/manual). manual_order ASC가 사용자 진실 순위.
+//   ⚠️ 비교자를 표시용(compareWithinTier)과 **일부러 다르게** 둔다 — 이 맵은 getPrefScore(추천 점수)의
+//   입력이라, 표시 정합을 맞추자고 tie-break를 바꾸면 추천 결과가 딸려 움직인다(T10 범위 밖).
+function computeTierRankMap(novels, cfg) {
+  const map = new Map();
+  const cmp = (a, b) =>
+    (Number(a.manual_order) || 0) - (Number(b.manual_order) || 0) ||
+    (Number(a.created_at) || 0) - (Number(b.created_at) || 0);
+  for (const arr of groupNovelsByTier(novels, cfg, cmp).values()) {
     const sz = arr.length;
     for (let i = 0; i < sz; i++) {
       map.set(arr[i].id, sz > 1 ? i / (sz - 1) : 0); // 0=top, 1=bottom
     }
   }
   return map;
+}
+
+// 🆕 v7.59.8 (T10·HYB-6): 표시용 순위 맵 — id → { r: 티어 내 1-based 순위, n: 티어 크기, t: 티어키 }.
+//   화면이 그동안 보여 준 '순위 #300'은 내부 manual_order 원값(100단위 gap)이라 사용자가 세는 순번과
+//   전혀 달랐다. 게다가 스왑의 -50 분기·삽입 중간값 때문에 `round(order/100)`도 과도기엔 틀린다
+//   (같은 값이 두 작품에 나오거나 번호가 건너뛴다) → 값이 아니라 **정렬된 위치**로 센다.
+function computeTierPositionMap(novels, cfg) {
+  const map = new Map();
+  for (const [t, arr] of groupNovelsByTier(novels, cfg, (a, b) => compareWithinTier(a, b, cfg)).entries()) {
+    for (let i = 0; i < arr.length; i++) map.set(arr[i].id, { r: i + 1, n: arr.length, t });
+  }
+  return map;
+}
+
+// 표시 문자열 헬퍼 — 순위를 모르면(맵 미갱신·티어 없음) 숫자를 지어내지 않고 빈 문자열을 준다.
+//   `withTier`면 "S 3위", 아니면 "3위".
+function tierRankText(novelId, withTier) {
+  const p = globalTierPositionMap.get(novelId);
+  if (!p) return "";
+  return withTier ? `${getTierLabel(p.t)} ${p.r}위` : `${p.r}위`;
+}
+
+// 🆕 v7.59.8 (T10·HYB-6): 재배치 이력의 '목적지' 표기.
+//   [문제] 종전엔 `result_tier #result_order`였는데, result_order는 computeNewPosition이 만든 **중간값**
+//   (예: 두 작품 사이 250)이고 finalize 직후 rebalanceTierOrder가 티어 전체를 (i+1)*100으로 다시 매긴다.
+//   즉 화면에 뜨는 그 번호는 **어디에도 존재하지 않는 값**이었다(순위 탭과 대조 불가).
+//   [해결] loadRepositioningHistory가 이미 함께 읽어 오는 현재 자리(cur_tier/cur_order)로 표기하고
+//   '(현재)'를 붙여, 이후 사용자가 직접 옮긴 경우에도 거짓말이 되지 않게 한다. 스키마·finalize는 무변경.
+function repoDestLabel(h) {
+  if (!h) return "";
+  const cur = tierRankText(h.novel_id, true);
+  if (cur) return `${cur}(현재)`;
+  if (h.cur_tier) return `${getTierLabel(h.cur_tier)}(현재)`;
+  return h.result_tier ? `${getTierLabel(h.result_tier)}` : "티어 없음";
 }
 
 // 🆕 v7.24.3 (🅡): ratio 티어별 누적 경계(0..total) 산출 — computeRatioTierMap과 정원 경고가 공유.
@@ -38064,6 +38221,12 @@ const GATEKEEPER_BLOCK_THRESHOLD = 3;
 // 🆕 v7.20.11: 갤로핑+이진 탐색 후보 풀 — 지수 점프(2^k-1)가 닿을 범위. 7회 응답이면 idx~63까지 도달 가능.
 //   (선형 시절엔 10이면 충분했으나, 점프로 멀리 어긋난 작품을 적은 매칭으로 옮기려면 풀을 넓혀야 함.)
 const VERIFICATION_CANDIDATE_POOL = 64;
+// 🆕 v7.59.7 (T08·HYB-1): 자동 검출(detectAutomaticSuspects)의 큐 유입 게이트. pending이 이 수 이상이면
+//   자동 등록을 쉰다 — 한 세션이 큐 1건을 비우는 동안 finalize마다 최대 5건이 들어와 큐가 소진보다 빨리
+//   자라던 구조를 끊는다. 신호는 suspicion_score/verification_baseline에 남아 있으므로 유실이 아니라 '지연'이고,
+//   큐가 줄면 다음 finalize에서 자동으로 재개된다. ('큐가 완전히 빌 때만'은 사용자 path 유입이 끊이지 않는
+//   서재에서 자동 검출을 영구 기아 상태로 만들어 기각.)
+const VERIFICATION_QUEUE_SOFT_CAP = 10;
 
 // ⚠️ v7.4.13에서 read_progress(읽은 회차 누적) 트리거는 noise로 판단되어 제거됨.
 //    read_count_baseline 컬럼은 백업 round-trip/마이그레이션 호환을 위해 유지하나,
@@ -38073,12 +38236,15 @@ const VERIFICATION_CANDIDATE_POOL = 64;
 async function getNextVerificationTarget() {
   try {
     const cutoff = Date.now() - 1000; // 1초 디바운스 (생성 직후는 제외)
+    // 🆕 v7.59.7 (T09·HYB-8): 사용자가 🔍로 직접 지목한 작품을 1순위로. priority만 보면 user_flag의 가중
+    //   (base 0 + flagWeight 3 = 3)이 자동 tier_change(4)보다 낮아, 방금 티어를 만진 작품에 계속 밀렸다.
+    //   COALESCE로 NULL(작품이 삭제된 고아 행)을 0에 묶어야 아래 novel_exists 정리 경로가 종전처럼 동작한다.
     const row = await first(
       `SELECT q.*, n.id as novel_exists, n.title, n.manual_tier, n.manual_order
        FROM tier_verification_queue q
        LEFT JOIN novels n ON n.id = q.novel_id
        WHERE q.state='pending' AND q.created_at < ?
-       ORDER BY q.priority DESC, q.created_at ASC
+       ORDER BY COALESCE(n.user_flagged_suspect, 0) DESC, q.priority DESC, q.created_at ASC
        LIMIT 1`,
       [cutoff]
     );
@@ -38404,6 +38570,24 @@ async function logVerificationMatch(sessionId, suspicionId, candidateId, suspici
   }
 }
 
+// 🆕 v7.59.7 (T08·HYB-2): 검증 '건너뛰기 / 시퀀스 중단'의 공통 처리.
+//   [문제] 종전 두 핸들러는 큐를 'skipped'로 마감하고 🔍만 해제했다. finalize(38308-38318)가 하는
+//   `suspicion_score` 리셋과 `verification_baseline = verification_count`를 빠뜨려서,
+//   다음 finalize의 detectAutomaticSuspects가 두 트리거(count>baseline 쏠림 / score>=checkLine)에
+//   그대로 걸려 **방금 건너뛴 작품을 즉시 다시 등록**했다. 건너뛰기가 아무것도 미루지 못한 이유.
+//   [설계] 다만 finalize처럼 score를 0으로 지우지는 않는다 — 건너뛰기는 '해소'가 아니라 '미루기'다.
+//   점검선(checkLine) 바로 아래로만 내려, 지금은 안 뽑히되 새 증거(인접 순위변동 등)가 쌓이면 다시 오르게 한다.
+//   verification_baseline은 finalize와 동일하게 올린다(이미 본 응답은 '새 증거'가 아니므로).
+function skipVerificationQueries(queueRow) {
+  const line = Number(globalSuspicionConfig.checkLine) || 6;
+  return [
+    { sql: `UPDATE tier_verification_queue SET state='skipped', processed_at=? WHERE id=?`, params: [Date.now(), queueRow.id] },
+    // 🆕 v7.13.9: 건너뛰기/중단도 🔍 해제 — flag만 남고 큐엔 없는 stuck 상태 방지(다시 의심되면 재지정)
+    { sql: `UPDATE novels SET user_flagged_suspect=0, suspicion_score=MIN(COALESCE(suspicion_score,0), ?) WHERE id=?`, params: [Math.max(0, line - 1), queueRow.novel_id] },
+    { sql: `UPDATE novels SET verification_baseline = verification_count WHERE id=?`, params: [queueRow.novel_id] },
+  ];
+}
+
 // 🆕 v7.5.0: 전적 기반 자동 의심 검출 (시스템 자가 시그널).
 // 사용자 비전 "전적이 다음 의심 판단의 근거" 구현. finalizeVerificationSession 직후 호출.
 // 조건: verification_count >= 3 AND |W-L|/count >= 0.6 (한쪽 쏠림)
@@ -38411,6 +38595,12 @@ async function logVerificationMatch(sessionId, suspicionId, candidateId, suspici
 // LIMIT 5: finalize 후 한 번에 5개까지만 자동 enqueue — 갑작스러운 큐 플러드 방지
 async function detectAutomaticSuspects(excludeNovelId) {
   try {
+    // 🆕 v7.59.7 (T08·HYB-1): 유입 게이트 — 대기 큐가 이미 SOFT_CAP 이상이면 이번 finalize에서는 자동 등록을 쉰다.
+    //   (사용자 path 등록은 게이트 밖이라 그대로 들어온다 — 사용자가 방금 만진 작품이 밀리면 안 되므로 의도된 비대칭.)
+    try {
+      const pendRow = await first("SELECT COUNT(*) AS c FROM tier_verification_queue WHERE state='pending'");
+      if ((Number(pendRow?.c) || 0) >= VERIFICATION_QUEUE_SOFT_CAP) return;
+    } catch { /* COUNT 실패 시 게이트 생략 — 종전 동작(등록)으로 폴백 */ }
     // 🆕 v7.17.0: 전적 쏠림(기존) OR 누적 의심도(신규)로 자동 검출. 둘 다 ORDER 가중에 반영 →
     //   매칭 업셋·순위변동으로 의심도가 높아진 연관작이 자동으로 다음 검증 대상에 오름.
     const rows = await all(
@@ -52268,8 +52458,12 @@ function AppContent() {
       if (globalTierConfig?.mode === "hybrid" || globalTierConfig?.mode === "manual") {
         try { globalTierRankMap = computeTierRankMap(safeRows, globalTierConfig); }
         catch (e) { console.warn("[tierRank] computeTierRankMap 실패:", e?.message); globalTierRankMap = new Map(); }
+        // 🆕 v7.59.8 (T10·HYB-6): 표시용 순위 맵도 같은 시점에 — 화면의 '몇 위'가 목록 실물과 어긋나지 않도록.
+        try { globalTierPositionMap = computeTierPositionMap(safeRows, globalTierConfig); }
+        catch (e) { console.warn("[tierRank] computeTierPositionMap 실패:", e?.message); globalTierPositionMap = new Map(); }
       } else {
         globalTierRankMap = new Map();
+        globalTierPositionMap = new Map();
       }
       setList(safeRows);
       updateTagUsageCounts(safeRows); // 🏷️ 태그 사용 빈도 업데이트
@@ -53800,7 +53994,12 @@ function AppContent() {
             propagateRankSuspicion(n.id).catch(() => {}); // 🆕 v7.17.0 증거①: 새 자리 인접권 의심도 전파
           } else if (_v7TierCleared) {
             // manual_tier → null: 더 이상 잠정 truth 없음, 자리 검증 불필요. 오버레이트 가능성을 가벼운 신호로만 인입
-            await enqueueVerification(n.id, "tier_change", "overrated", "saveEdit");
+            // 🔧 v7.59.7 (T09·HYB-7): 큐 등록 → 의심도 가산으로 교체. manual_tier가 없어진 작품은
+            //   getCandidatesForVerification이 항상 `[]`을 반환(37976)해 **검증이 원리적으로 불가능**한데,
+            //   큐에 넣으니 세션 시작 즉시 no_candidates로 자동 마감돼 '완료' 수치만 올리는 팬텀 항목이 됐다.
+            //   원 주석의 '가벼운 신호로만' 의도는 suspicion_score 가산이 그대로 수행한다 —
+            //   티어를 다시 매기면 그때 detectAutomaticSuspects가 이 점수를 보고 집어간다(신호 유실 없음).
+            await execBatch([suspicionBumpQuery(n.id, globalSuspicionConfig.moveBase)]);
           }
           // (v7.4.13 제거) read_progress 트리거 — manual_tier 의심 신호로 약함
           // (m6 제거) meta_edit 트리거 — 메타 편집(제목/태그/note 등)은 검증 큐에 영향 X
@@ -54314,12 +54513,13 @@ function AppContent() {
       const pendingRow = await first(`SELECT COUNT(*) as cnt FROM tier_verification_queue WHERE state='pending'`);
       const resolvedRow = await first(`SELECT COUNT(*) as cnt FROM tier_verification_queue WHERE state='resolved'`);
       setVerificationStats({ pending: pendingRow?.cnt || 0, resolved: resolvedRow?.cnt || 0 });
-      // 다음 점검 미리보기 — getNextVerificationTarget 동일 ORDER (priority DESC, created_at ASC)
+      // 다음 점검 미리보기 — getNextVerificationTarget 동일 ORDER
+      // 🆕 v7.59.7 (T09·HYB-8): 🔍 지목 1순위 키 추가. 두 쿼리는 반드시 같은 ORDER를 써야 미리보기가 거짓말을 안 한다.
       const nextRow = await first(
         `SELECT q.trigger_type, n.title FROM tier_verification_queue q
          LEFT JOIN novels n ON n.id = q.novel_id
          WHERE q.state='pending' AND n.id IS NOT NULL
-         ORDER BY q.priority DESC, q.created_at ASC LIMIT 1`
+         ORDER BY COALESCE(n.user_flagged_suspect, 0) DESC, q.priority DESC, q.created_at ASC LIMIT 1`
       );
       setNextVerificationPreview(nextRow ? { title: nextRow.title, trigger_type: nextRow.trigger_type } : null);
     } catch (e) {
@@ -54351,9 +54551,9 @@ function AppContent() {
       }
       const wonStr = won.length ? `${won.slice(0, 3).join(", ")}${won.length > 3 ? " 외" : ""} 이기고 ` : "";
       const blockStr = h.blocker_title ? `${h.blocker_title}에 막혀 ` : (lost.length ? `${lost[0]}에 막혀 ` : "");
-      const dest = h.result_action === "moved" && h.result_tier
-        ? `${getTierLabel(h.result_tier)} #${h.result_order ?? "?"}로 이동`
-        : "자리 유지";
+      // 🔧 v7.59.8 (T10·HYB-6): result_order는 세션이 계산한 '중간값'(예: 250)이고, 직후 rebalanceTierOrder가
+      //   (i+1)*100으로 전부 다시 매기므로 **화면 어디에도 없는 번호**였다. 현재 실제 자리로 대체.
+      const dest = h.result_action === "moved" ? `${repoDestLabel(h)}로 이동` : "자리 유지";
       return `${wonStr}${blockStr}${dest}`;
     } catch (e) { console.warn("[Q4] buildWhyExplanation 오류:", e?.message); return ""; }
   }, []);
@@ -54455,7 +54655,9 @@ function AppContent() {
       const queueByTrigger = await all(`SELECT trigger_type, COUNT(*) as cnt FROM tier_verification_queue WHERE state='pending' GROUP BY trigger_type`);
       const queueByPriority = await all(`SELECT priority, COUNT(*) as cnt FROM tier_verification_queue WHERE state='pending' GROUP BY priority ORDER BY priority DESC`);
       const queueByTriggerSuspicion = await all(`SELECT trigger_type, suspicion_type, COUNT(*) as cnt FROM tier_verification_queue GROUP BY trigger_type, suspicion_type ORDER BY trigger_type, suspicion_type`);
-      const recentPending = await all(`SELECT q.id, q.priority, q.trigger_type, q.suspicion_type, q.created_at, n.title, n.manual_tier, n.manual_order FROM tier_verification_queue q LEFT JOIN novels n ON n.id=q.novel_id WHERE q.state='pending' ORDER BY q.priority DESC, q.created_at ASC LIMIT 10`);
+      // 🆕 v7.59.7 (T09·HYB-8): 진단 '대기 큐 상위 10건'도 같은 ORDER를 써야 한다 — 실행 순서와 다르게 보이면
+      //   진단 화면 자체가 거짓말이 된다(카드가 지목한 2곳 외 제3의 표시 지점).
+      const recentPending = await all(`SELECT q.id, q.priority, q.trigger_type, q.suspicion_type, q.created_at, n.title, n.manual_tier, n.manual_order FROM tier_verification_queue q LEFT JOIN novels n ON n.id=q.novel_id WHERE q.state='pending' ORDER BY COALESCE(n.user_flagged_suspect, 0) DESC, q.priority DESC, q.created_at ASC LIMIT 10`);
       // S1 — trigger_fire_log (정확)
       const fire24hByTrigger = await all(`SELECT trigger_type, COUNT(*) as cnt FROM trigger_fire_log WHERE created_at > ? GROUP BY trigger_type ORDER BY cnt DESC`, [dayAgo]);
       const fire24hBySource = await all(`SELECT source, trigger_type, COUNT(*) as cnt FROM trigger_fire_log WHERE created_at > ? GROUP BY source, trigger_type ORDER BY source, trigger_type`, [dayAgo]);
@@ -54578,7 +54780,12 @@ function AppContent() {
            VALUES (?, ?, ?, ?, 'completed', 'no_candidates', 0, ?, ?)`,
           [sessionId, queueRow.novel_id, queueRow.suspicion_type, queueRow.trigger_type, now, now]
         );
-        await exec(`UPDATE tier_verification_queue SET state='resolved', processed_at=? WHERE id=?`, [now, queueRow.id]);
+        // 🔧 v7.59.7 (T09·HYB-7): 'resolved' → 'cancelled'. 통계(loadVerificationStats)가 pending/resolved만
+        //   세므로, 후보가 없어 아무것도 검증하지 못한 항목이 '완료'로 잡혀 수치를 부풀렸다. 'cancelled'는
+        //   작품 삭제 경로(54595)가 이미 쓰는 상태라 신규 state도, 마이그레이션도 필요 없다.
+        //   진단 탭의 sessionByAction은 tier_repositioning_session의 result_action='no_candidates'를 보므로
+        //   위 INSERT가 그대로 남아 '왜 아무 일도 안 일어났나'는 계속 추적된다.
+        await exec(`UPDATE tier_verification_queue SET state='cancelled', processed_at=? WHERE id=?`, [now, queueRow.id]);
         await loadVerificationStats();
         shouldRetry = true; // 다음 큐 항목 자동 시도
         return;
@@ -55793,21 +56000,10 @@ function AppContent() {
 
       // 🔧 v7.17.1: hybrid/manual은 같은 티어 내 manual_order 우선 (배정탭·홈과 정합).
       //   이전엔 순위탭만 rating 정렬 → 검증기반 모드에선 rating이 정체값이라 사용자 수동순서와 어긋남.
-      if (globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid") {
-        const oA = Number(a.manual_order) || 0;
-        const oB = Number(b.manual_order) || 0;
-        if (oA !== oB) return oA - oB;
-      }
-
-      // 같은 티어 내에서는 레이팅 내림차순
-      if (b.rating !== a.rating) return b.rating - a.rating;
-      
-      // 레이팅도 같으면 등록순
-      const ac = a.created_at || 0;
-      const bc = b.created_at || 0;
-      if (ac !== bc) return ac - bc;
-      
-      return (a.title || "").localeCompare(b.title || "");
+      // 🔧 v7.59.8 (T10·HYB-6): 그 tie-break 체인(manual_order → rating → created_at → title)을
+      //   compareWithinTier로 위임. computeTierPositionMap이 'N위'를 이 함수로 세므로, 여기가 따로 놀면
+      //   화면에 3번째로 보이는 작품이 '2위'로 표기되는 어긋남이 생긴다. 티어 관리 탭도 같은 함수를 쓴다.
+      return compareWithinTier(a, b, globalTierConfig);
     });
 
     const q = rankQuery.toLowerCase().trim();
@@ -55860,24 +56056,15 @@ function AppContent() {
     if (screen !== "tierManage") return [];
     if (!list || list.length === 0) return [];
 
-    const isManualOrHybrid = globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid";
-
     const sorted = [...list].sort((a, b) => {
       const tierA = getDisplayTier(a, globalTierConfig);
       const tierB = getDisplayTier(b, globalTierConfig);
       const tierRankA = tierRank(tierA, globalTierConfig);
       const tierRankB = tierRank(tierB, globalTierConfig);
       if (tierRankA !== tierRankB) return tierRankA - tierRankB;
-      if (isManualOrHybrid) {
-        const oA = Number(a.manual_order) || 0;
-        const oB = Number(b.manual_order) || 0;
-        if (oA !== oB) return oA - oB;
-      }
-      if (b.rating !== a.rating) return b.rating - a.rating;
-      const ac = a.created_at || 0;
-      const bc = b.created_at || 0;
-      if (ac !== bc) return ac - bc;
-      return (a.title || "").localeCompare(b.title || "");
+      // 🔧 v7.59.8 (T10·HYB-6): 티어 내 정렬을 compareWithinTier로 위임 — computeTierPositionMap('N위' 표기)이
+      //   같은 함수를 쓴다. 여기 인라인으로 두면 한쪽만 바뀌는 순간 화면 순서와 표시 번호가 어긋난다.
+      return compareWithinTier(a, b, globalTierConfig);
     });
 
     const q = tierManageQuery.toLowerCase().trim();
@@ -56529,14 +56716,14 @@ function AppContent() {
         }
         moveDir = suspicionForHybrid === "underrated" ? "up" : "down"; // 🆕 v7.28.65: -50/작은 order = 상승
         // 🆕 v7.0: hybrid 모드 — 사용자 path 트리거
-        // 🆕 v7.0.2: idB도 함께 enqueue (역방향 의심) — 양쪽이 모두 변위했으므로 양쪽 검증 필요
+        // 🔧 v7.59.7 (T08·HYB-1): idB 즉시 enqueue 제거. [이전] v7.0.2가 '양쪽이 변위했으니 양쪽 검증'
+        //   의도로 idB도 등록했으나, ▲/▼ 한 번에 큐가 2건씩 늘어 소진(세션당 1건)보다 빨리 자랐다.
+        //   그 의도는 v7.17.0의 propagateRankSuspicion이 대체한다 — 아래 호출이 인접권(idB 포함)에
+        //   의심도를 가산하고, 점검선을 넘으면 detectAutomaticSuspects가 알아서 등록한다.
+        //   즉 idB는 '사라진' 게 아니라 '증거가 쌓이면' 올라온다. 사용자가 직접 움직인 idA만 즉시 등록.
         if (mode === "hybrid") {
           try {
             await enqueueVerification(idA, "order_change", suspicionForHybrid, "swapRating_idA");
-            if (idA !== idB) {
-              const inverseSuspicion = suspicionForHybrid === "underrated" ? "overrated" : "underrated";
-              await enqueueVerification(idB, "order_change", inverseSuspicion, "swapRating_idB");
-            }
             propagateRankSuspicion(idA).catch(() => {}); // 🆕 v7.17.0 증거①: swap 인접권 의심도 전파
           } catch (e) {
             console.warn("검증 큐 INSERT 실패:", e?.message);
@@ -63354,7 +63541,7 @@ async function importJSON(directText, onSuccess, onSettled) {
                             </View>
                           </View>
                           <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }} numberOfLines={1}>
-                            {dirLabel}{moved && h.result_tier ? ` → ${getTierLabel(h.result_tier)} #${h.result_order ?? "?"}` : ""}{h.blocker_title ? ` · 경계 ${h.blocker_title}` : ""} · 비교 {h.total_responses || 0}회 · {when}
+                            {dirLabel}{moved ? ` → ${repoDestLabel(h)}` : ""}{h.blocker_title ? ` · 경계 ${h.blocker_title}` : ""} · 비교 {h.total_responses || 0}회 · {when}
                           </Text>
                           {/* 🆕 Q4: '왜?' 설명 + '되돌리기'. moved이고 prev_tier/order가 기록된 세션만 되돌리기 가능. */}
                           <View style={{ flexDirection: "row", alignItems: "center", marginTop: 6, gap: 8 }}>
@@ -63483,7 +63670,7 @@ async function importJSON(directText, onSuccess, onSettled) {
                               </View>
                             </View>
                             <Text style={{ color: C.sub, fontSize: 12 }} numberOfLines={1}>
-                              순위 #{cand.manual_order || 0}
+                              순위 {tierRankText(cand.id, false) || "—"}
                             </Text>
                           </View>
                         </View>
@@ -63502,12 +63689,10 @@ async function importJSON(directText, onSuccess, onSettled) {
                                   // 🆕 v7.0.3: 'pending' 유지 시 다음 fetch에서 같은 row 재인입(무한 루프) — 'skipped'로 마감
                                   // (편집/추가 등 사용자 후속 행동이 enqueueVerification으로 새 row를 만들면 다시 검증됨)
                                   try {
-                                    await exec(
-                                      `UPDATE tier_verification_queue SET state='skipped', processed_at=? WHERE id=?`,
-                                      [Date.now(), verificationSession.queueRow.id]
-                                    );
-                                    // 🆕 v7.13.9: 중단도 🔍 해제 — flag만 남고 큐엔 없는 stuck 상태 방지(다시 의심되면 재지정)
-                                    await exec(`UPDATE novels SET user_flagged_suspect=0 WHERE id=?`, [verificationSession.queueRow.novel_id]);
+                                    // 🔧 v7.59.7 (T08·HYB-2): finalize와 같은 '재큐잉 차단' 3종을 함께 실행.
+                                    //   종전엔 큐 마감 + 🔍 해제만 해서, 다음 finalize의 detectAutomaticSuspects가
+                                    //   같은 작품을 즉시 다시 등록했다(건너뛰기가 아무것도 못 미룸).
+                                    await execBatch(skipVerificationQueries(verificationSession.queueRow));
                                   } catch {}
                                   setVerificationSession(null);
                                   verificationSessionIdRef.current = null;
@@ -63525,9 +63710,8 @@ async function importJSON(directText, onSuccess, onSettled) {
                           onPress={async () => {
                             // 현재 큐 항목 cancel + 다음 큐로
                             try {
-                              await exec(`UPDATE tier_verification_queue SET state='skipped', processed_at=? WHERE id=?`, [Date.now(), verificationSession.queueRow.id]);
-                              // 🆕 v7.13.9: 건너뛰기도 🔍 해제 — stuck 상태 방지(다시 의심되면 재지정)
-                              await exec(`UPDATE novels SET user_flagged_suspect=0 WHERE id=?`, [verificationSession.queueRow.novel_id]);
+                              // 🔧 v7.59.7 (T08·HYB-2): 중단 경로와 동일 처리(같은 헬퍼) — 두 경로가 갈리면 한쪽만 고쳐진다.
+                              await execBatch(skipVerificationQueries(verificationSession.queueRow));
                             } catch {}
                             setVerificationSession(null);
                             verificationSessionIdRef.current = null;
@@ -63602,7 +63786,7 @@ async function importJSON(directText, onSuccess, onSettled) {
                           </View>
                         </View>
                         <Text style={{ color: C.sub, fontSize: 11 }}>
-                          변곡점 등장 횟수: {g.block_count}회 · 순위 #{g.manual_order || 0}
+                          변곡점 등장 횟수: {g.block_count}회 · 순위 {tierRankText(g.id, false) || "—"}
                         </Text>
                         <View style={{ flexDirection: "row", gap: 6, marginTop: 8 }}>
                           {(() => {
@@ -65930,7 +66114,7 @@ async function importJSON(directText, onSuccess, onSettled) {
                           </View>
                         </View>
                         <Text style={{ color: C.sub, fontSize: 12 }} numberOfLines={1}>
-                          {opp.author || "작가 미상"} · 순위 #{opp.manual_order || 0}
+                          {opp.author || "작가 미상"} · 순위 {tierRankText(opp.id, false) || "—"}
                         </Text>
                       </View>
                     </View>

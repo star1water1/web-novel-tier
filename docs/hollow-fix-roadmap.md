@@ -84,9 +84,9 @@
 | T05 | ✅ | 2 데이터 안전 | 클라우드 push 충돌 감지 | DAT-2 🟡 | M | v7.59.4 완료 |
 | T06 | ✅ | 2 | 백업 고지 정직화 (표지/갤러리) | DAT-3 DAT-4 🟡 | S | v7.59.5 완료 (+DAT-7 최소 문구) |
 | T07 | ✅ | 2 | 백업 절단 고지 + 수문장 필터 완화 | DAT-8 ⚪ | S | v7.59.6 완료 (T06과 묶어 처리) |
-| T08 | ⬜ | 3 하이브리드 | 건너뛰기 실효화 + 큐 유입 게이트 | HYB-1 HYB-2 🟡 | M | 공통 뿌리: skip 경로의 리셋 누락 |
-| T09 | ⬜ | 3 | 팬텀 큐 제거 + 🔍 우선 처리 | HYB-7 HYB-8 ⚪ | S | T08과 묶음가능 |
-| T10 | ⬜ | 3 | 순위 표시 정규화 (#300 → 3위) | HYB-6 🟡 | M | |
+| T08 | ✅ | 3 하이브리드 | 건너뛰기 실효화 + 큐 유입 게이트 | HYB-1 HYB-2 🟡 | M | v7.59.7 완료 |
+| T09 | ✅ | 3 | 팬텀 큐 제거 + 🔍 우선 처리 | HYB-7 HYB-8 ⚪ | S | v7.59.7 완료 (T08과 묶어 처리) |
+| T10 | ✅ | 3 | 순위 표시 정규화 (#300 → 3위) | HYB-6 🟡 | M | v7.59.8 완료 |
 | T11 | ⬜ | 3 | 수문장 모달 재설계 (방향/무시/강등) | HYB-3 HYB-4 🟡⚪ | M | |
 | T12 | ⬜ | 3 | 검증 설정 노출 (길이/임계/감쇠) | HYB-5 HC-3 HC-4 🟡⚪ | L | suspicionConfig 확장 — 4지점 동기화 |
 | T13 | ⬜ | 4 추천 | 정렬 실효화 + 인기 데이터 정직화 | REC-1 REC-2 🟡 | S | |
@@ -363,7 +363,7 @@
 
 하이브리드(주 사용 모드)의 검증 루프가 '끝을 볼 수 있고, 사용자 판단을 기억하는' 구조가 되도록.
 
-### T08 · HYB-1+HYB-2 — 건너뛰기 실효화 + 큐 유입 게이트 ⬜
+### T08 · HYB-1+HYB-2 — 건너뛰기 실효화 + 큐 유입 게이트 ✅
 
 **대상**: 건너뛰기가 재큐잉을 못 막고(HYB-2), 큐가 소진보다 빠르게 재생성(HYB-1) (🟨🟡 둘 다 2차 유지 — 공통 뿌리: skip/중단 경로만 finalize의 리셋을 빠뜨린 비대칭. '무한 발산'은 기각됨: UPSERT 상한·baseline 가드·decay 존재)
 
@@ -379,19 +379,27 @@
 2. `detectAutomaticSuspects` 서두에 pending COUNT 게이트 — pending < 10일 때만 자동 등록 (신호는 score/baseline에 남아 유실 없음; '큐 빌 때만'은 기아 유발이라 기각).
 3. swapRating idB enqueue 제거 (56063-66 블록; v7.0.2 의도 주석 56059는 propagateRankSuspicion으로 대체됨을 기록).
 
+**검증 노트 (2026-08-02 구현 세션)**: 전제 5건 전부 코드로 일치(줄번호 +560 안팎). 카드에 없던 확인 사실 2건:
+- `logVerificationMatch`(38392-38406)가 의심작·후보 **양쪽** count를 올린다 → 건너뛰기 시점에 baseline=count로 맞추면 그 세션의 응답이 '새 증거'로 재계상되지 않는다(설계가 성립하는 근거).
+- 설계 1의 '감쇠'를 구체화해야 했다. `MIN(score, checkLine-1)`을 골랐다 — 0 리셋이면 점검선 복귀에 인접 가산 12회가 필요해 '미루기'가 사실상 '해소'가 되고, 그대로 두면 다음 finalize에서 즉시 재등록이라 아무것도 안 미룬다. 현 설계는 2회 가산이면 복귀한다.
+
 **완료 기준**:
-- [ ] 몇 판 답한 뒤 건너뛰기 → 다음 finalize에서 같은 작품 미재등록 (조건식 수동 추적)
-- [ ] pending 12일 때 auto_detected 미등록 / 9일 때 등록
-- [ ] ▲ 1회 → 큐 증가 1건만
-- [ ] finalize 정상 경로(리셋·baseline) 불변, esbuild 통과
+- [x] 몇 판 답한 뒤 건너뛰기 → 다음 finalize에서 같은 작품 미재등록 (실제 SQL WHERE + per-row 가드를 떼어내 판정 — '종전이면 재등록됨' 대조군과 함께)
+- [x] pending 12일 때 auto_detected 미등록 / 9일 때 등록 (경계 10 포함, COUNT 실패 시 종전 동작 폴백까지)
+- [x] ▲ 1회 → 큐 증가 1건만 (`swapRating_idB`·`inverseSuspicion` 소스 소거 확인)
+- [x] finalize 정상 경로(리셋·baseline) 불변, esbuild 통과 (+ scraper-test 526/526)
 
 **리스크**: 검증 흐름은 matchQueue와 독립(헤더 4234) — 5대 불변조건 무저촉. enqueue는 큐 테이블 INSERT라 시스템 path 재트리거 루프 없음.
 
 **진행 기록**:
+- 2026-08-02 · **v7.59.7 완료** (T09와 같은 커밋). 설계 3건 모두 채택, 구현 세부만 보강.
+- 설계와 달라진 점 ①: 두 종료 핸들러(건너뛰기·중단)가 문자 단위로 같은 코드를 복제하고 있어 **공용 헬퍼 `skipVerificationQueries`**로 뽑았다. 카드의 'execBatch로 두 UPDATE 복제'를 그대로 하면 다음에 한쪽만 고쳐지는 비대칭이 재발한다 — 이 카드가 고치는 결함이 정확히 그 종류였다.
+- 설계와 달라진 점 ②: 감쇠 폭을 `MIN(score, checkLine-1)`로 확정(위 검증 노트). checkLine이 프리셋마다 다르므로(8/6/5) 상수가 아니라 config에서 읽고, `Math.max(0, line-1)`로 음수를 막았다.
+- 남긴 것: 게이트 상한 10은 상수(`VERIFICATION_QUEUE_SOFT_CAP`)로만 뒀다 — 설정 노출은 T12(검증 설정 노출) 범위라 선점하면 그쪽 전제가 어긋난다. `detectAutomaticSuspects`의 LIMIT 5도 그대로.
 
 ---
 
-### T09 · HYB-7+HYB-8 — 팬텀 큐 제거 + 🔍 우선 처리 ⬜ [T08과 묶음가능]
+### T09 · HYB-7+HYB-8 — 팬텀 큐 제거 + 🔍 우선 처리 ✅ [T08과 묶어 처리]
 
 **대상**: 티어 클리어가 절대 검증 불가한 큐 항목을 만들어 '완료' 수치를 부풀림(HYB-7) + 사용자 🔍 지목이 자동 tier_change보다 밀림(HYB-8) (✅⚪ 둘 다 2차 유지)
 
@@ -406,33 +414,49 @@
 2. 54108 `'resolved'` → `'cancelled'` 1단어 — 통계가 pending/resolved만 세므로(53841-42) 완료 오염 즉시 해소, 신규 state 불요
 3. fetch·미리보기 ORDER BY에 `n.user_flagged_suspect DESC`를 1순위 키로 (37665, 53849 — 두 쿼리 동일성 주석 53844 준수; 두 쿼리 모두 이미 novels JOIN). base 상향은 차선(하면 무해).
 
+**검증 노트 (2026-08-02 구현 세션)**: 전제 4건 일치. 카드에 없던 사실 1건 — **ORDER BY 지점이 2곳이 아니라 3곳**이다. 진단 탭의 '대기 큐 상위 10건'(`recentPending`)도 같은 큐를 같은 순서로 보여주는데, 여기만 옛 ORDER면 진단 화면이 실제 처리 순서와 다른 걸 보여준다 — 이 카드가 고치려는 것과 같은 종류의 거짓말이다. 3곳 모두 고쳤다.
+
 **완료 기준**:
-- [ ] 티어 클리어 → 대기 카운트 불변, suspicion만 증가
-- [ ] 🔍 지목작이 방금 티어 만진 작품보다 먼저 나옴 (정렬 추적)
-- [ ] 진단 탭 sessionByAction의 no_candidates 집계 잔존 무해 확인, esbuild 통과
+- [x] 티어 클리어 → 대기 카운트 불변, suspicion만 증가 (enqueue 소거 + `suspicionBumpQuery(moveBase)` 대체 확인)
+- [x] 🔍 지목작이 방금 티어 만진 작품보다 먼저 나옴 (정렬 시뮬레이션: flag(priority 3) > tier_change(priority 4), 종전 정렬 대조군 포함)
+- [x] 진단 탭 sessionByAction의 no_candidates 집계 잔존 무해 확인 (RS INSERT는 무변경 — 큐 state만 'cancelled'), esbuild 통과
 
 **진행 기록**:
+- 2026-08-02 · **v7.59.7 완료** (T08과 같은 세션·같은 커밋). 설계 3건 그대로.
+- 설계와 달라진 점: ORDER BY를 **3곳**에 적용(위 검증 노트). 또 `COALESCE(n.user_flagged_suspect, 0)`으로 감쌌다 — 맨 `n.user_flagged_suspect DESC`면 작품이 삭제된 고아 행(LEFT JOIN → NULL)이 맨 뒤로 밀려, `getNextVerificationTarget`이 그 행을 집어 'cancelled'로 정리하던 경로(38094)가 늦어진다. 0에 묶으면 종전대로 동작한다.
+- 티어 클리어의 가산량은 `moveBase`(0.6)를 썼다 — 티어 제거는 자리 변동의 일종이고, 같은 상수를 쓰는 propagateRankSuspicion과 해석이 일관된다. 점검선(6) 기준 약 10회 누적이면 자동 검출에 오른다.
+- 남긴 것: `enqueueVerification`의 user_flag base 상향(카드의 '차선')은 안 했다 — UPSERT가 max(priority)를 보존해 기존 행에 소급되지 않으므로 정렬 키 추가만으로 목적이 달성되고, base를 건드리면 T12의 우선순위 설계와 겹친다.
 
 ---
 
-### T10 · HYB-6 — 순위 표시 정규화 (#300 → 3위) ⬜
+### T10 · HYB-6 — 순위 표시 정규화 (#300 → 3위) ✅
 
 **대상**: 화면 '순위 #'가 내부 manual_order 원값(100단위), 이력 목적지는 rebalance 이전의 존재하지 않는 번호 (✅🟡, 2차 유지)
 
 **전제**:
-- [ ] rebalance `(i+1)*100` (38173-38177)
-- [ ] 원값 표시 지점: 검증카드 62907 · 수문장 63026 · 배치 상대 65354 · 어워드 32106/32399/32807 · 이력 62778·53882
-- [ ] 세션 result_order는 중간값 (37845-62; computeNewPosition 37801/37804/37784) + rebalance는 37917에서 나중 실행 — 이력 stale의 원인
-- [ ] `loadRepositioningHistory`가 이미 `n.manual_order AS cur_order` SELECT (53893-95) — 지름길의 근거
+- [x] rebalance `(i+1)*100` (38173-38177) → **실제 38679**
+- [x] 원값 표시 지점: 검증카드 62907 · 수문장 63026 · 배치 상대 65354 · 어워드 32106/32399/32807 · 이력 62778·53882 → **실제 63586 / 63702 / 66030 / 32576·32869·33277 / 63457·54448**
+- [x] 세션 result_order는 중간값 + rebalance는 나중 실행 — 이력 stale의 원인
+- [x] `loadRepositioningHistory`가 이미 `n.manual_order AS cur_order` SELECT — 지름길의 근거 → **실제 54461**
 
 **설계**: ① 표시용 순위는 **티어 내 인덱스+1** (`Math.round(/100)`는 과도기 값 — 스왑 -50 분기 56041, 삽입 중간값 — 에 부정확하므로 기각). 후보/수문장: getCandidatesForVerification·getGatekeeperCandidates에서 동티어 rank 필드 첨부(이미 로드된 목록 재사용 — 지점당 SQL COUNT 추가 금지). 어워드: 컴포넌트 내 novels 배열로 인덱스 산출. ② 이력 목적지: 62778/53882를 cur_tier/cur_order 기반 '현재 위치' 표기로 (스키마·finalize 무변경). 표기 통일: `S 3위`, 이력은 `→ S 3위(현재)`.
 
+**검증 노트 (2026-08-02 구현 세션)**: 전제 4건 일치. 카드에 없던 사실 3건 — 그중 하나는 **설계를 바꿔야 했다**:
+- **`globalTierRankMap`이 이미 있다**(v7.22.0, loadList에서 hybrid/manual일 때 계산). 다만 저장값이 0~1 **비율**이라 순번을 못 꺼낸다. 그래서 같은 그룹핑을 공유하는 `globalTierPositionMap`(1-based 순위)을 나란히 만들었다 — 추가 SQL 0건이라 카드의 '지점당 SQL COUNT 금지'는 자동 충족.
+- **정렬 기준을 rebalance에 맞추면 안 된다.** rebalance는 `manual_order ASC, created_at ASC`인데, 화면(순위 탭 `rankedEntries` / 티어 관리 탭 `tierManageEntries`)은 `manual_order → rating DESC → created_at → title`이다. **티어를 안 매긴 작품**(hybrid에서 rating으로 티어가 정해지는 경우)은 manual_order가 전부 0이라 동률이고, 그때 두 기준의 순서가 갈린다. 사용자가 대조하는 대상은 rebalance가 아니라 눈앞의 목록이므로 **화면 정렬을 정본**으로 삼았다.
+- 표시 지점이 카드의 목록 외에 **진단 탭 2곳**(`tier=A #300`)에도 있는데, 거기선 내부 원값을 봐야 하므로 **일부러 안 고쳤다**.
+
 **완료 기준**:
-- [ ] 티어 3번째 작품이 모든 화면에서 3위로 표시
-- [ ] 이력 번호가 순위 탭 실물과 일치
-- [ ] 쓰기 경로(manual_order 값 자체) 무변경 확인, esbuild 통과
+- [x] 티어 3번째 작품이 모든 화면에서 3위로 표시 (6지점 전환 — 어워드 3 · 검증 카드 · 수문장 · 배치 상대)
+- [x] 이력 번호가 순위 탭 실물과 일치 (`repoDestLabel`이 cur_tier/cur_order 기반 `S 3위(현재)`; 순위 탭·티어 관리 탭·표시 맵이 `compareWithinTier` 한 함수를 공유해 구조적으로 일치)
+- [x] 쓰기 경로(manual_order 값 자체) 무변경 확인 (rebalance `(i+1)*100`·스왑 `-50`·computeNewPosition 중간값 전부 그대로; 표시 맵을 읽는 쓰기 경로 0건), esbuild 통과 (+ scraper-test 526/526)
 
 **진행 기록**:
+- 2026-08-02 · **v7.59.8 완료**. `globalTierPositionMap` + `compareWithinTier` + `tierRankText` + `repoDestLabel` 신규, 표시 6지점 + 이력 2지점 전환.
+- 설계와 달라진 점 ①: 정렬 정본을 rebalance가 아니라 **화면 정렬**로 (위 검증 노트). 그래서 순위 탭·티어 관리 탭의 인라인 tie-break 체인을 `compareWithinTier`로 위임시켰다 — 세 곳이 같은 함수를 쓰지 않으면 '화면 3번째인데 2위로 표기'가 언제든 재발한다.
+- 설계와 달라진 점 ②: `globalTierRankMap`(getPrefScore 입력)의 tie-break는 **일부러 안 맞췄다**. 표시 정합을 이유로 건드리면 추천 점수가 딸려 움직여, 표시 수정이 추천 결과 변경으로 번진다. 두 맵이 다른 비교자를 쓰는 이유를 코드 주석에 남겼다.
+- 설계와 달라진 점 ③: 순위를 모를 때(맵 미갱신·티어 없음) 숫자를 지어내지 않고 티어 라벨만 보여 준다. 카드엔 폴백 규정이 없었는데, 0위/#0 같은 표기가 새 거짓말이 된다.
+- 남긴 것: 진단 탭의 원값 표기 2곳(의도). `result_order` 컬럼 저장·백업은 무변경 — 이력 표시만 현재 자리로 바꿨다(스키마를 건드리면 T07이 방금 넓힌 RS 백업과 충돌).
 
 ---
 
