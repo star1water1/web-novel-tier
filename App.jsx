@@ -2,9 +2,65 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.57.7 (카카오웹툰 회차수 — 탐지 확장 + 진단 강화, 베타)                   ║
- * ║  최종 수정: 2026-07-01                                                        ║
+ * ║  버전: 7.58.0 (카카오 불러오기 DOM 캡처 + 완결 오탐지 수정, 베타)                 ║
+ * ║  최종 수정: 2026-08-02                                                        ║
  * ║  총 라인 수: 약 77,000줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛠️ v7.58.0 카카오 ‘검색은 되는데 눌러도 실패’ + 완결 오탐지 (2026-08-02)          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 사용자 제보 2건 전수조사. 둘 다 '실패가 조용히 잘못된 값을 남기는' 구조 문제였음.   ║
+ * ║                                                                              ║
+ * ║ [A] 카카오페이지 — 검색 결과는 뜨는데 누르면 “데이터 읽어오기 실패”              ║
+ * ║ 원인 4중(모두 수정):                                                          ║
+ * ║  A1 WebView 폴백이 사실상 죽어 있었음. globalKakaoCapture는 ‘앱 JS가 보낸        ║
+ * ║     contentHomeOverview 응답 가로채기’만 했는데, 카카오 작품 페이지는 SSR        ║
+ * ║     (__NEXT_DATA__)이라 그 요청이 아예 안 나가는 경우가 많음 → 30초 대기 후 실패. ║
+ * ║     → KAKAO_CAPTURE_JS에 DOM 스냅샷(kkdom) 추가: 렌더된 페이지의 <meta>·ld+json· ║
+ * ║       __NEXT_DATA__만 추려 RN으로 전송 → 기존 HTML 파서(scraperRefineKakao)가    ║
+ * ║       그대로 처리. WebView는 진짜 브라우저라 안티봇/CSR 벽을 통과한다.           ║
+ * ║       (실측 픽스처 재구성 검증: 제목·작가·장르·완결·연도 전부 정상 추출)          ║
+ * ║  A2 GET이 막히면(403/챌린지/타임아웃) 그 자리에서 throw → 유일하게 통하는 WebView ║
+ * ║     경로를 아예 못 탔음. → 카카오페이지에 한해 응답 실패를 '보류'하고 폴백까지    ║
+ * ║     진행, 그래도 안 되면 사유를 합쳐서 안내(다른 플랫폼은 종전과 동일·무회귀).    ║
+ * ║  A3 v7.53의 '__NEXT_DATA__ ogTitle 항상 덮어쓰기'가 회귀였음 — DFS가 사이트 일반  ║
+ * ║     제목('콘텐츠홈 - 카카오페이지') 노드를 먼저 잡으면 진짜 제목을 지워 버려      ║
+ * ║     상위에서 무효 처리 → 불러오기 실패. → 제목 우선순위를 ①seriesId 정확 매칭     ║
+ * ║     content.title ②쓸만한 ogTitle ③og:title 로 재설계(kakaoUsableTitle 게이트).  ║
+ * ║  A4 실패 진단이 통째로 버려져 원인 파악 불가 → 캡처 diag(후킹설치/응답수신/DOM    ║
+ * ║     스냅샷 도달 여부)+HTTP status·본문길이·내장데이터 유무를 오류 메시지에 노출.  ║
+ * ║ 부가: parseKakaoOverview 딥서치 폴백(래핑/필드 이동 내성, relatedSeries 오선택   ║
+ * ║   방지), SERP 부산물 후보('콘텐츠홈') 제거, 실패 대기 30s→최대 ~15s,             ║
+ * ║   `/kakao/i` 느슨 매칭이 카카오웹툰 링크를 삼키던 문제 차단.                     ║
+ * ║ ※A2의 부작용 차단: fetchMetaForUpdate(일괄 갱신·표지 일괄·회차 보정·링크 새로고침 ║
+ * ║   — 전부 루프)는 noKakaoFallback 기본 ON. 안 그러면 작품마다 WebView가 뜬다.     ║
+ * ║   단건 사용자 조작(‘🔗 불러오기’·검색결과 선택)만 WebView 폴백을 탄다.            ║
+ * ║                                                                              ║
+ * ║ [B] 노벨피아 완결 여부 오탐지 — 원인 2개(둘 다 '조용히 틀린 값'을 남김)          ║
+ * ║  B1 fetchMetaForUpdate가 노벨피아·문피아를 '제목 검색 → URL에 ID 문자열 포함'으로 ║
+ * ║     매칭했는데 includes()는 부분 일치 → id=12가 120·1234에도 걸려 '다른 작품'의   ║
+ * ║     메타(is_complete 포함)를 덮어씀. → ①정확 ID 단건 API(get_novel/detail) 우선   ║
+ * ║     ②검색은 폴백으로만, ID 정확 일치만 채택.                                    ║
+ * ║  B2 scraperNormalizeFromHtml의 `/완결|completed/i.test(html)` — HTML '전문'에    ║
+ * ║     '완결' 두 글자만 있으면 완결. <script>/__NEXT_DATA__/추천 캐러셀/네비의       ║
+ * ║     '완결' 필터 탭에도 걸렸고, 노벨피아·문피아 상세는 SPA 앱셸이라 상시 오탐.     ║
+ * ║     게다가 applyScrapedUpdateToWork의 '✅완결 전환'은 단방향이라 한번 틀리면 고착. ║
+ * ║     → detectWorkStatusFromHtml 신설: ①구조화(JSON-LD creativeWorkStatus·        ║
+ * ║       og:novel:status) ②script/style/nav/주석 제거 후 '상태 라벨 첫 등장'        ║
+ * ║       ③앱셸 플랫폼(노벨피아·문피아·카카오페이지·카카오웹툰·네이버웹툰)은 ②금지    ║
+ * ║       → null(미상). null은 '연재중'이 아니라 '관측 없음'이라 기존 값이 보존된다.  ║
+ * ║       (각 플랫폼 정본: 노벨피아=is_complete, 문피아=finish/pause, 카카오=onIssue) ║
+ * ║ 부가: 같은 이유로 '총 N화' 회차 추출도 본문만 보게 수정(회차는 grow-only 저장이라  ║
+ * ║   한 번 부풀면 안 돌아옴), 빈-껍데기 제목(사이트명) 무효화를 전 플랫폼 공통으로.   ║
+ * ║                                                                              ║
+ * ║ 검증: docs/scraper-test.mjs 470/470 통과(+38 신규 — 완결 오탐 4종·앱셸 null·     ║
+ * ║   카카오 제목 우선순위·relatedSeries 분리·딥서치 폴백·ID 정확일치·SERP 정리).     ║
+ * ║   스테일 기대값 3건도 현행 동작에 맞게 갱신(카카오페이지 검색 추가 v7.46.0,       ║
+ * ║   완결일 UTC 자정 정규화 v7.49.17 미반영분). 주입 JS 문법·모의실행 검증 + esbuild. ║
+ * ║ ※기존에 잘못 '완결'로 굳은 작품은 설정 › 일괄 갱신 › '재취득(덮어쓰기)'로 교정됨.  ║
+ * ║ ⚠️ 카카오는 개발망 IP 차단이라 온디바이스 미검증(폰에서 확인 필요). APP_VERSION    ║
+ * ║   7.58.0으로 올림.                                                             ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -16262,6 +16318,20 @@ let globalKkWebtoonEp = false; // 설정 토글 — 카카오웹툰 회차수 �
 const KAKAO_CAPTURE_JS = "(function(){" +
   "function P(o){try{window.ReactNativeWebView.postMessage(JSON.stringify(o));}catch(e){}}" +
   "P({t:'kkdbg',u:'__run__',l:0,ov:false});" + // 매 주입 호출마다(before/after 어느 게 떴는지)
+  // 🆕 v7.58.0 DOM 스냅샷(kkdom) — 카카오 작품 페이지는 SSR(__NEXT_DATA__)로 이미 메타를 들고 오므로,
+  //   앱 JS가 contentHomeOverview를 '다시' 요청하지 않는 경우가 많다(=기존 fetch/XHR 후킹만으론 30s 타임아웃 → 불러오기 실패).
+  //   렌더된 페이지에서 <meta>·ld+json·__NEXT_DATA__만 추려 RN으로 넘기면 기존 HTML 파서(scraperRefineKakao)가 그대로 처리한다.
+  //   ※WebView는 진짜 브라우저라 안티봇/CSR 벽을 통과 — RN fetch가 막히는 상황의 정답 경로.
+  "function SNAP(){try{if(String(location.host).indexOf('page.kakao.com')<0)return;" +
+  "var nd=document.getElementById('__NEXT_DATA__');var ndt=nd?String(nd.textContent||''):'';" +
+  "var ms='';var mt=document.getElementsByTagName('meta');for(var i=0;i<mt.length;i++){try{ms+=mt[i].outerHTML;}catch(e){}}" +
+  "var ld='';var sc=document.querySelectorAll('script[type=\"application/ld+json\"]');for(var j=0;j<sc.length;j++){ld+='<script type=\"application/ld+json\">'+String(sc[j].textContent||'')+'<\\/script>';}" +
+  "if(!ms&&!ndt)return;" +
+  "var b='<html><head>'+ms+ld+(ndt?('<script id=\"__NEXT_DATA__\" type=\"application/json\">'+ndt+'<\\/script>'):'')+'</head><body></body></html>';" +
+  "if(b.length>1200000){P({t:'kkdbg',u:'__snap_too_big__',l:b.length,ov:false});return;}" +
+  "if(window.__kkSnapLen===b.length)return;window.__kkSnapLen=b.length;" + // 동일 내용 재전송 방지(주입은 before/after 2회 + 타이머)
+  "P({t:'kkdom',ok:true,body:b});}catch(e){P({t:'kkdbg',u:'__snap_err__',l:0,ov:false});}}" +
+  "try{SNAP();}catch(e){}setTimeout(SNAP,800);setTimeout(SNAP,2500);setTimeout(SNAP,6000);" + // 하이드레이션 진행에 따라 재시도
   "if(window.__kkCap){return;}window.__kkCap=1;" +
   "function H(t){return typeof t==='string'&&t.indexOf('contentHomeOverview')>-1&&(t.indexOf('onIssue')>-1||t.indexOf('startSaleDt')>-1||t.indexOf('lastSlideAddedDate')>-1||t.indexOf('\"content\"')>-1);}" +
   "function HE(u,t){try{var s=String(u||''),i=s.indexOf('/episodes');return i>-1&&(s.length===i+9||s.charAt(i+9)==='?')&&s.indexOf('viewer')<0&&typeof t==='string'&&t.length>30;}catch(e){return false;}}" + // 🆕 v7.57.2/🛠️v7.57.7: 회차목록(…/episodes[?]) 응답 탐지(단건/뷰어 제외), body는 RN 파서가 판정
@@ -16371,6 +16441,52 @@ function scraperExtractJsonLd(html) {
   return blocks;
 }
 
+// 🔧 v7.58.0 연재상태 판정 재설계 — '완결 오탐지'의 원인이던 "HTML 전문에 '완결'이 있으면 완결" 휴리스틱 폐기.
+//   기존 규칙(`/완결|completed/i.test(html)`)은 본문뿐 아니라 <script>·__NEXT_DATA__·추천 캐러셀·네비게이션의
+//   '완결' 필터 탭 글자에도 걸렸다. 즉 연재중 작품인데도 페이지 어딘가에 '완결' 두 글자만 있으면 완결로 판정.
+//   특히 노벨피아·문피아처럼 상세가 SPA 앱셸(내용은 JS가 그림)인 곳에서는 상시 오탐이었고,
+//   applyScrapedUpdateToWork의 '✅완결 전환'은 단방향이라 한 번 오탐되면 계속 남았다.
+//   새 규칙:
+//     ① 구조화 데이터(JSON-LD creativeWorkStatus/status, og:novel:status 등) — 있으면 그대로 채택
+//     ② 본문 텍스트(script/style/주석/nav/footer 제거)에서 상태 라벨의 '첫 등장'으로 판정
+//        (상태 배지는 제목 근처=문서 앞쪽, 추천/네비 목록은 뒤쪽이라 선후로 구분됨)
+//     ③ 앱셸 플랫폼은 ②를 아예 적용하지 않음 → null(=미상)
+//   null은 '연재중'이 아니라 '관측 없음'이다. buildScrapeItems·recordLinkObservation·applyScrapedUpdateToWork
+//   모두 빈 상태를 건너뛰므로 기존 값이 보존된다 — 오탐보다 미상이 언제나 안전하다.
+//   ※앱셸 플랫폼은 각자 정본 경로가 따로 있다: 노벨피아=get_novel(is_complete), 문피아=detail(finish/pause),
+//     카카오페이지=__NEXT_DATA__ onIssue(scraperRefineKakao), 카카오웹툰/네이버웹툰=전용 API.
+const HTML_STATUS_UNRELIABLE_PLATFORMS = ["노벨피아", "문피아", "카카오페이지", "카카오웹툰", "네이버웹툰"];
+function scraperStripHtmlNoise(html) {
+  return String(html == null ? "" : html)
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")   // __NEXT_DATA__ 등 숨은 JSON(다른 작품 상태 포함)
+    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+    .replace(/<(nav|footer|header|aside)\b[\s\S]*?<\/\1>/gi, " "); // '완결' 필터 탭 등
+}
+// 라벨 문자열 → 상태. '연재중단/연중'을 '연재 중'보다 먼저 봐야 오분류가 없다.
+function scraperStatusFromLabel(s) {
+  const t = String(s == null ? "" : s);
+  if (!t) return null;
+  if (/연재\s*중단/.test(t) || /^\s*연중\s*$/.test(t)) return "dropped"; // '연중'은 단독 라벨일 때만(연중무휴 등 오탐 방지)
+  if (/완결|completed|finished/i.test(t)) return "completed";
+  if (/휴재|hiatus/i.test(t)) return "hiatus";
+  if (/연재\s*중|ongoing|serial(?:izing)?/i.test(t)) return "ongoing";
+  return null;
+}
+function detectWorkStatusFromHtml(html, og, book, platform) {
+  // ① 구조화 데이터
+  const structured = [
+    book && (book.creativeWorkStatus || book.status),
+    og && (og["og:novel:status"] || og["novel:status"] || og["og:book:status"] || og["books:status"]),
+  ];
+  for (const s of structured) { const v = scraperStatusFromLabel(s); if (v) return v; }
+  // ③ 앱셸 플랫폼은 본문 추측 금지(전용 API/구조화 경로가 정본 — 여기서 추측하면 오탐만 남는다)
+  if (platform && HTML_STATUS_UNRELIABLE_PLATFORMS.indexOf(platform) >= 0) return null;
+  // ② 본문 텍스트에서 상태 라벨 첫 등장
+  const m = scraperStripHtmlNoise(html).match(/연재\s*중단|완결|휴재|연재\s*중/);
+  return m ? scraperStatusFromLabel(m[0]) : null;
+}
+
 // HTML → 정규화 메타. OG + JSON-LD 우선. (작은 헬퍼는 전역 충돌 방지 위해 로컬)
 function scraperNormalizeFromHtml(html, url) {
   const pickType = (blocks, types) => blocks.find(b => {
@@ -16401,15 +16517,16 @@ function scraperNormalizeFromHtml(html, url) {
   genres = Array.isArray(genres) ? genres.map(g => String(g).trim()).filter(Boolean)
     : (genres ? String(genres).split(/[,/|·]/).map(s => s.trim()).filter(Boolean) : []);
 
-  let workStatus = null;
-  if (/완결|completed/i.test(html)) workStatus = "completed";
-  else if (/연재\s*중|연재중|ongoing/i.test(html)) workStatus = "ongoing";
+  // 🔧 v7.58.0: 전문(全文) '완결' 검색 → 구조화 우선 + 앱셸 플랫폼 금지 규칙으로 교체(완결 오탐지 수정). 미상은 null.
+  const workStatus = detectWorkStatusFromHtml(html, og, book, platform);
 
   let totalEpisodes = null;
   const ne = book.numberOfEpisodes || book.numberOfPages;
   if (ne != null && !isNaN(Number(ne))) totalEpisodes = Number(ne);
   if (totalEpisodes == null) {
-    const mm = html.match(/(?:전체|총)\s*([0-9,]+)\s*화/);
+    // 🔧 v7.58.0: 상태 판정과 같은 이유로 본문만 본다 — 전문 검색은 <script>(다른 작품 JSON)·추천 캐러셀의
+    //   '총 000화'를 이 작품의 회차로 집어올 수 있었고, 회차는 grow-only 저장이라 한 번 부풀면 되돌아오지 않는다.
+    const mm = scraperStripHtmlNoise(html).match(/(?:전체|총)\s*([0-9,]+)\s*화/);
     if (mm) totalEpisodes = Number(mm[1].replace(/,/g, ""));
   }
 
@@ -16470,29 +16587,42 @@ function scraperRefineRidi(meta) {
   return meta;
 }
 
+// 🔧 v7.58.0: 카카오 제목 후보 정제 — 말미 '- 웹소설/웹툰' 절단 후 사이트 일반명(카카오페이지·콘텐츠홈…)이면 버림.
+function kakaoUsableTitle(v) {
+  const t = String(v == null ? "" : v).replace(/\s*-\s*(웹소설|웹툰)\s*$/, "").trim();
+  return (t && !isBadWebTitle(t)) ? t : "";
+}
 function scraperRefineKakao(meta, html) {
   const nd = scraperExtractNextData(html);
   if (!nd) return meta;
-  // metaInfo: ogTitle(깨끗한 제목)·author 보유. content: categoryType/onIssue/subcategory(장르) 보유.
-  const metaInfo = scraperDeepFind(nd, (o) => typeof o.ogTitle === "string");
-  // 한 페이지에 웹소설+웹툰화가 함께 실릴 수 있음(제목 동일, seriesId/연재상태 다름) → URL의 content id로 정확 매칭.
+  // 한 페이지에 웹소설+웹툰화가 함께 실림(relatedSeries — 제목 동일, seriesId/연재상태 다름) → URL의 content id로 정확 매칭.
   //   실패 시 웹소설(Webnovel) 우선, 그래도 없으면 onIssue 보유 첫 노드.
   const hasOverview = (o) => typeof o.onIssue === "string" && (o.categoryType != null || o.subcategory != null);
   const idm = String(meta.url || "").match(/\/content\/(\d+)/);
   const wantId = idm ? Number(idm[1]) : null;
   const content =
     (wantId != null && scraperDeepFind(nd, (o) => hasOverview(o) && Number(o.seriesId) === wantId)) ||
+    // 🆕 v7.58.0 느슨한 폴백: 카카오가 categoryType/subcategory 필드명을 바꿔도 seriesId만 맞으면 채택(구조 변경 내성).
+    (wantId != null && scraperDeepFind(nd, (o) => Number(o.seriesId) === wantId && typeof o.title === "string" && String(o.title).trim())) ||
     scraperDeepFind(nd, (o) => hasOverview(o) && /novel/i.test(String(o.categoryType))) ||
     scraperDeepFind(nd, hasOverview);
+  // metaInfo: ogTitle(깨끗한 제목)·author 보유.
+  //   🔧 v7.58.0: '쓸만한 ogTitle'을 가진 노드를 우선 찾는다. scraperDeepFind는 DFS라 어떤 노드가 먼저 잡힐지
+  //   보장이 없는데, v7.53이 ndTitle을 '항상 덮어쓰기'로 바꾸면서 사이트 일반 제목('카카오페이지'·'콘텐츠홈…')을
+  //   가진 노드가 먼저 잡히면 진짜 제목을 지워버렸다(→ 상위에서 무효 처리 → 불러오기 실패).
+  const metaInfo = scraperDeepFind(nd, (o) => typeof o.ogTitle === "string" && kakaoUsableTitle(o.ogTitle))
+    || scraperDeepFind(nd, (o) => typeof o.ogTitle === "string");
+  // 제목 우선순위: ① seriesId 정확 매칭 content.title(가장 신뢰) ② metaInfo.ogTitle ③ 공통엔진이 뽑은 og:title
+  //   ①은 'URL의 id와 일치가 확인된' content일 때만 — 그렇지 않으면 웹툰화(relatedSeries) 제목을 집을 수 있어 ②를 먼저 본다.
+  const idMatched = content && wantId != null && Number(content.seriesId) === wantId;
+  for (const cand of [idMatched ? content.title : null, metaInfo && (metaInfo.ogTitle || metaInfo.title), content && content.title, meta.title]) {
+    const t = kakaoUsableTitle(cand);
+    if (t) { meta.title = t; break; }
+  }
   if (metaInfo) {
-    // 🌐 v7.53: __NEXT_DATA__의 ogTitle이 카카오의 진짜 작품 제목 — og:title은 '콘텐츠홈 - 카카오페이지'
-    //   같은 사이트/홈 일반 제목이 색인돼 신뢰 불가하므로, 진짜 제목이 있으면 항상 덮어쓴다(기존 if(!meta.title) 버그 수정).
-    const ndTitle = String(metaInfo.ogTitle || metaInfo.title || "").replace(/\s*-\s*(웹소설|웹툰)\s*$/, "").trim();
-    if (ndTitle) meta.title = ndTitle;
     if (!meta.author && metaInfo.author) meta.author = String(metaInfo.author).trim();
   }
   if (content) {
-    if (content.title && !meta.title) meta.title = String(content.title).trim();
     if (!meta.author && content.authors) meta.author = String(content.authors).trim();
     // 🆕 v7.37.0: 줄거리는 content.description이 정답(전체 본문 + 줄바꿈 \n 보존). og:description은
     //   같은 글이라도 줄바꿈이 사라지고 길면 잘릴 수 있어, 구조화 본문이 있으면 그걸 우선한다.
@@ -16861,7 +16991,17 @@ function parseKakaoViewerDate(jsonText) {
 //   쿼리·필드는 korea-webtoon-api 검증분 + 본 repo 픽스처(kakao-novel-heukbaekmuje)로 확인. 순수 함수(테스트용).
 function parseKakaoOverview(jsonText, url) {
   let j; try { j = JSON.parse(jsonText); } catch { return null; }
-  const c = j && j.data && j.data.contentHomeOverview && j.data.contentHomeOverview.content;
+  let c = j && j.data && j.data.contentHomeOverview && j.data.contentHomeOverview.content;
+  // 🆕 v7.58.0: 정규 경로가 아니어도(배치 응답·다른 래핑·필드 이동) content 노드를 딥서치로 찾는다.
+  //   relatedSeries(웹툰화)를 잘못 집지 않도록 URL의 seriesId 정확 매칭 → 웹소설 우선 → 마지막에 첫 노드.
+  if (!c || typeof c !== "object") {
+    const wm = String(url || "").match(/\/content\/(\d+)/);
+    const want = wm ? Number(wm[1]) : null;
+    const isC = (o) => typeof o.onIssue === "string" && typeof o.title === "string" && !!String(o.title).trim();
+    c = (want != null && scraperDeepFind(j, (o) => isC(o) && Number(o.seriesId) === want))
+      || scraperDeepFind(j, (o) => isC(o) && /novel/i.test(String(o.categoryType)))
+      || scraperDeepFind(j, isC);
+  }
   if (!c || typeof c !== "object") return null;
   const title = String(c.title == null ? "" : c.title).replace(/\s*-\s*(웹소설|웹툰)\s*$/, "").trim();
   if (!title) return null;
@@ -17282,8 +17422,11 @@ async function fetchNovelMeta(url, opts = {}) {
   // 🆕 v7.44.5: 카카오 — 공유링크(series_id=)·비정규 host도 정규 content URL로 보정 → 일반 HTML 경로가 SSR(__NEXT_DATA__)을 받음.
   //   카카오 작품 페이지는 plain GET으로 contentHomeOverview.content(제목·작가·장르·연재상태·시작/완결일)를 SSR로 내려줌(실측·나무위키 교차검증).
   //   ※막힌 건 /graphql POST뿐. content GET은 열려 있음 — v7.43~44.4의 'CSR 난독화' 진단은 죽은 id(53705302)로 인한 오판이었음.
+  //   🔧 v7.58.0: 느슨한 `/kakao/i` 매칭이 카카오웹툰(webtoon.kakao.com/content/{seo}/{id})까지 삼켜
+  //   웹툰 링크를 카카오페이지 URL로 재작성할 수 있었다 → 웹툰 호스트는 명시 제외.
   const kkSid = kakaoSeriesIdFromUrl(url);
-  if (kkSid && (platform === "카카오페이지" || /(?:^|\.)page\.kakao\.com/i.test(url) || /kakao/i.test(url))) {
+  const isKkWebtoonUrl = /(?:^|\.)webtoon\.kakao\.com/i.test(url) || platform === "카카오웹툰";
+  if (kkSid && !isKkWebtoonUrl && (platform === "카카오페이지" || /(?:^|\.)pagew?\.kakao\.com/i.test(url) || /kakao/i.test(url))) {
     url = "https://page.kakao.com/content/" + kkSid; // 정규화(쿼리 제거·host 통일)
     platform = "카카오페이지";
   }
@@ -17319,34 +17462,62 @@ async function fetchNovelMeta(url, opts = {}) {
     throw new Error("카카오웹툰 정보를 가져오지 못했어요. 제목·작가는 직접 입력하거나 설정 › 연결 › ‘긁기 진단’으로 캡처해 주세요.");
   }
   const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 20000 });
-  let res, html = "";
+  let res = null, html = "", fetchErr = "";
   try {
     res = await fetch(url, { headers: SCRAPER_HEADERS, redirect: "follow", signal });
     html = await res.text();
   } catch (e) {
-    if (e?.name === "AbortError") throw new Error("응답이 없어 중단했어요 (시간 초과)");
-    throw new Error("페이지를 불러오지 못했어요: " + (e?.message || e));
+    fetchErr = (e?.name === "AbortError") ? "응답이 없어 중단했어요 (시간 초과)" : ("페이지를 불러오지 못했어요: " + (e?.message || e));
   } finally { cleanup(); }
 
-  const block = scraperDetectBlock(res.status, html);
-  if (block.blocked) throw new Error(`${platform ? platform + " " : ""}정보를 바로 못 가져왔어요. ${block.hint}`);
-  if (!res.ok) throw new Error(`페이지 오류 ${res.status}`);
+  // 🔧 v7.58.0 [카카오 불러오기 실패 수정] 여기서 곧장 throw하면, 정작 유일하게 통하는 경로(WebView 캡처)를 못 탄다.
+  //   카카오는 앱 fetch를 안티봇(403/챌린지/타임아웃/리다이렉트 벽)으로 막아도 진짜 브라우저(WebView)로는 열리므로,
+  //   카카오페이지에 한해 응답 실패를 '보류'해 두고 아래 폴백까지 진행한 뒤, 그래도 안 되면 사유를 합쳐서 알린다.
+  //   (다른 플랫폼은 종전과 100% 동일하게 즉시 안내 — 무회귀.)
+  const kkTolerant = (platform === "카카오페이지" && !opts.noKakaoFallback);
+  let respHint = "";
+  if (!fetchErr && res) {
+    const block = scraperDetectBlock(res.status, html);
+    if (block.blocked) respHint = `${platform ? platform + " " : ""}정보를 바로 못 가져왔어요. ${block.hint}`;
+    else if (!res.ok) respHint = `페이지 오류 ${res.status}`;
+  }
+  if ((fetchErr || respHint) && !kkTolerant) throw new Error(fetchErr || respHint);
 
   let meta = scraperNormalizeFromHtml(html, url);
   meta = scraperRefineByPlatform(meta, html, platform);
-  // 🆕 v7.44.5: 카카오 빈-껍데기(죽은/비공개/연령벽 id)는 og:title이 사이트명 "카카오페이지"로 잡혀 가짜 성공이 됨 → 무효 처리.
-  if (platform === "카카오페이지" && meta && (!meta.title || isBadWebTitle(meta.title))) { meta.ok = false; meta.title = ""; } // 🌐 v7.53: '콘텐츠홈 - 카카오페이지' 등 일반/SERP 제목도 무효 처리 → 아래 폴백 유도
-  // 🆕 v7.44.5: 카카오 폴백 — SSR HTML에서 제목을 못 얻은 경우(client-only 렌더/연령벽)만 WebView 캡처→토큰 GraphQL 시도. 보통은 위 HTML에서 성공.
+  // 🆕 v7.44.5 / 🔧 v7.58.0: 빈-껍데기(죽은·비공개·연령벽 id, 앱셸 응답)는 og:title이 사이트명("카카오페이지",
+  //   "노벨피아")으로 잡혀 '가짜 성공'이 된다 → 전 플랫폼 공통으로 무효 처리(종전 카카오 전용 → 확대).
+  //   노벨피아 API 폴백 HTML이 제목="노벨피아"·작가="Devlife"로 저장되던 오염 경로도 함께 차단.
+  if (meta && (!meta.title || isBadWebTitle(meta.title))) { meta.ok = false; meta.title = ""; }
+  // 🆕 v7.44.5: 카카오 폴백 — SSR HTML에서 제목을 못 얻은 경우(client-only 렌더/연령벽/안티봇)만 WebView 캡처→토큰 GraphQL 시도.
   //   🌐 v7.53.1: opts.noKakaoFallback이면 느린 WebView/GraphQL 폴백을 건너뜀(추천 일괄 복구처럼 지연이 치명적인 경로용 — 실패 시 그냥 제외).
+  //   🔧 v7.58.0: 캡처가 준 진단(diag)을 버리지 않고 실패 메시지에 실어 보낸다(종전엔 원인 불명 문구 하나뿐이라 사용자가 신고할 근거가 없었음).
+  let kkDiag = "";
   if (platform === "카카오페이지" && !opts.noKakaoFallback && (!meta || !meta.ok || !meta.title)) {
     let km = null;
-    if (globalKakaoCapture) { try { const cap = await globalKakaoCapture(url, opts); if (cap && cap.ok && cap.meta && cap.meta.title) km = cap.meta; } catch {} }
+    if (globalKakaoCapture) {
+      try {
+        const cap = await globalKakaoCapture(url, opts);
+        if (cap && cap.ok && cap.meta && cap.meta.title) km = cap.meta;
+        else if (cap && cap.diag) kkDiag = String(cap.diag);
+      } catch (e) { kkDiag = "캡처 예외: " + (e?.message || e); }
+    } else kkDiag = "브라우저 캡처 준비 안 됨(앱을 완전히 껐다 켜 주세요)";
     if (!km || !km.title) { try { const gm = await fetchKakaoMetaGql(url, opts); if (gm && gm.ok && gm.title) km = gm; } catch {} }
     if (km && km.title) meta = km;
   }
   if (!meta || !meta.ok || !meta.title) {
     // 🆕 v7.37.0: 카카오페이지도 작품 페이지가 SSR(__NEXT_DATA__)이라 링크로 불러와짐 — v7.31.3의 '미지원' 안내 철회.
-    //   드물게 실패(일시 차단/구조 변경)할 땐 다른 플랫폼과 동일한 일반 안내로 처리한다.
+    // 🔧 v7.58.0: 카카오는 실패 원인이 여러 갈래(응답 벽·구조 변경·캡처 실패)라 실측값을 함께 보여준다.
+    if (platform === "카카오페이지") {
+      const hasNd = /id\s*=\s*["']__NEXT_DATA__["']/.test(html);
+      throw new Error(
+        "카카오페이지에서 작품 정보를 가져오지 못했어요.\n" +
+        `· 응답: ${res ? `HTTP ${res.status} · ${html.length}자 · 내장데이터 ${hasNd ? "있음" : "없음"}` : "요청 실패"}\n` +
+        (fetchErr || respHint ? "· " + (fetchErr || respHint) + "\n" : "") +
+        (kkDiag ? "· 브라우저 캡처: " + kkDiag.slice(0, 600) + "\n" : "") +
+        "잠시 후 다시 시도해 보시고, 계속 안 되면 설정 › 🔌 연결 › ‘긁기 진단’에서 이 링크로 응답을 캡처해 보내 주세요(자동으로 클립보드에 복사돼요)."
+      );
+    }
     throw new Error("이 페이지에서 작품 정보를 찾지 못했어요. (지원 안 되는 페이지이거나 구조가 바뀌었을 수 있어요)");
   }
   // 🆕 v7.40.1: 네이버시리즈 연재 시작연도 보강 — 상세 SSR엔 시작일이 없어 회차목록 API로 1화 등록일을 가져옴. 시작연도 비었을 때만.
@@ -17531,7 +17702,9 @@ function collectKakaoCandidate(byId, rawUrl, rawTitle) {
   const isViewer = /\/viewer\//.test(u);
   const cat = (/웹툰/.test(rawTitle) && !/웹소설/.test(rawTitle)) ? "웹툰" : (/웹소설/.test(rawTitle) ? "웹소설" : "");
   const title = cleanKakaoTitle(rawTitle);
-  if (!title) return;
+  // 🔧 v7.58.0: SERP 부산물 후보 제거 — '콘텐츠홈', 도메인/경로 문자열이 제목으로 들어온 카드는
+  //   눌러도 어차피 같은 작품이거나 쓰레기라 검색결과만 어지럽힌다(‘검색은 뜨는데 눌러도 실패’ 체감의 일부).
+  if (!title || isBadWebTitle(title)) return;
   const prev = byId.get(id);
   if (!prev || (prev.isViewer && !isViewer)) {
     byId.set(id, { title, author: "", url: "https://page.kakao.com/content/" + id, platform: "카카오페이지", category: cat, isComic: cat === "웹툰", isViewer }); // 🔧 v7.46.3: isComic으로 웹툰 후순위 정렬(mergeSearchResults)
@@ -17971,6 +18144,11 @@ async function searchNovelpia(query, opts = {}) {
   return parseNovelpiaSearch(text);
 }
 
+// 🆕 v7.58.0: 노벨피아 작품 ID 추출(munpiaIdFromUrl과 동일 역할). URL 부분일치 매칭(=다른 작품 오매칭) 제거용.
+function novelpiaIdFromUrl(url) {
+  const m = String(url == null ? "" : url).match(/\/novel\/(\d+)/);
+  return m ? m[1] : null;
+}
 // 노벨피아 작품 객체(검색 list 항목 ≡ get_novel.novel, 동일 스키마) → 정규화 meta(scraperNormalizeFromHtml과 같은 모양).
 //   cover 필드: 검색=cover_url / 단건=cover_img·novel_img. 성인물 표지는 게이트 플레이스홀더(adult_cover_img)라 저장 안 함(빈 칸).
 function novelpiaItemToMeta(it) {
@@ -20410,7 +20588,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.53.8";
+const APP_VERSION = "7.58.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -20436,6 +20614,22 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.58.0", date: "2026-08-02",
+    title: "🔧 카카오페이지 불러오기 + 완결 여부 오탐지 수정",
+    highlights: [
+      { type: "fix", text: "🟡 카카오페이지에서 제목으로 검색은 되는데 결과를 누르면 ‘데이터 읽어오기 실패’가 뜨던 문제를 고쳤어요. 이제 카카오가 앱의 직접 요청을 막아도, 앱 안에서 작품 페이지를 실제로 열어 화면에 실린 정보를 그대로 읽어옵니다." },
+      { type: "fix", text: "✅ 연재 중인 작품이 ‘완결’로 잘못 표시되던 문제를 고쳤어요(노벨피아·문피아에서 특히 자주 났어요). 원인은 두 가지였어요 — ① 자동 갱신이 작품 번호를 ‘부분 일치’로 찾아 번호가 비슷한 다른 작품 정보를 가져오던 것, ② 페이지 어딘가에 ‘완결’ 두 글자만 있으면(메뉴의 완결 탭, 추천 목록 등) 완결로 판정하던 것." },
+      { type: "improve", text: "🔍 이제 연재 상태를 확실히 알 수 없으면 ‘완결’로 찍지 않고 기존 값을 그대로 둬요. 잘못 채우는 것보다 비워 두는 게 안전하니까요." },
+      { type: "improve", text: "💬 카카오 불러오기가 실패하면 어디서 막혔는지(응답 상태·페이지 로딩 여부 등)를 함께 보여주고 클립보드에도 복사해요. 그대로 보내 주시면 원인을 바로 찾을 수 있어요." },
+    ],
+    details: [
+      { type: "fix", text: "이미 잘못 ‘완결’로 굳어버린 작품은 설정 › 일괄 갱신 › ‘재취득(덮어쓰기)’을 한 번 돌리면 바로잡혀요." },
+      { type: "fix", text: "카카오 검색 결과에 섞이던 ‘콘텐츠홈’ 같은 빈 카드를 걸러냈어요. 카카오 작품 제목을 사이트 이름(‘카카오페이지’)으로 잘못 가져오던 것도 고쳤어요." },
+      { type: "improve", text: "카카오 불러오기가 실패할 때 30초까지 멈춰 있던 대기 시간을 최대 15초 안팎으로 줄였어요." },
+      { type: "fix", text: "총 회차 수도 같은 이유(추천 목록의 ‘총 000화’를 잘못 읽음)로 부풀 수 있어 본문만 보도록 고쳤어요." },
+    ],
+  },
   {
     version: "7.53.8", date: "2026-06-30",
     title: "🔄 그동안의 업데이트를 앱에 반영 + 복원 안전장치 보강",
@@ -47852,38 +48046,52 @@ function AppContent() {
     if (bulkUpdateProgress) return; // 갱신/매핑 진행 중엔 닫기 금지
     setBulkUpdateOpen(false);
   }
-  // 🆕 v7.28.60: 자동갱신 강화 — 노벨피아·문피아는 상세 페이지(SPA/빈약) 대신 검색 API(풍부한 회차·연도)로
-  //   저장된 링크의 작품ID를 매칭해 메타 확보. 못 찾으면 상세 페이지(fetchNovelMeta)로 폴백. 그 외는 상세 직접.
+  // 🆕 v7.28.60: 자동갱신 강화 — 노벨피아·문피아는 상세 HTML(SPA/빈약) 대신 API로 메타 확보.
+  // 🔧 v7.58.0 [완결 오탐지 수정] 종전엔 두 플랫폼을 '제목 검색 → URL에 ID 문자열이 포함되는 후보'로 매칭했다.
+  //   그런데 includes("/novel/"+id) / includes("id="+id)는 부분 일치라 id=123이 1234·12345에도 걸린다.
+  //   → 제목이 비슷한 전혀 다른 작품의 메타(is_complete 포함)를 그 작품에 덮어써 '완결 오탐지'가 생겼다.
+  //   이제 ① 정확 ID 단건 API(fetchNovelMeta 내부: get_novel / 문피아 detail)를 먼저 쓰고,
+  //        ② 그게 실패했을 때만 검색 폴백을 쓰되 ID '정확 일치'만 채택한다.
   async function fetchMetaForUpdate(link, title, opts) {
+    // 🔧 v7.58.0: 이 함수의 호출자는 전부 '여러 작품/링크를 도는 루프'(일괄 갱신·표지 일괄·회차 보정·링크 새로고침).
+    //   카카오 폴백은 화면을 덮는 WebView를 띄우므로 루프에서 작품마다 창이 뜨면 쓸 수가 없다 →
+    //   기본으로 폴백을 끄고(호출자가 명시로만 해제), 카카오는 SSR HTML이 되는 경우에만 갱신한다.
+    //   ※단건 사용자 조작(‘🔗 불러오기’·검색 결과 선택)은 fetchNovelMeta를 직접 타므로 폴백이 살아 있다.
+    const o = { noKakaoFallback: true, ...(opts || {}) };
     const platform = detectPlatformFromUrl(link);
-    const idOf = (re) => (String(link).match(re) || [])[1];
+    let firstErr = null;
+    try {
+      const m = await fetchNovelMeta(link, o); // 노벨피아=get_novel(novel_no 정확), 문피아=detail(정확), 그 외=상세
+      if (m && m.ok && m.title) return m;
+    } catch (e) { firstErr = e; }
+    // 검색 API 폴백 — 상세/단건이 죽었을 때만. ID 정확 일치가 아니면 절대 채택하지 않는다.
     if (platform === "노벨피아") {
-      const id = idOf(/\/novel\/(\d+)/);
+      const id = novelpiaIdFromUrl(link);
       if (id) {
         try {
-          const hit = (await searchNovelpia(title || "", opts)).find(c => c.url && c.url.includes("/novel/" + id) && c.meta);
+          const hit = (await searchNovelpia(title || "", o)).find(c => c.meta && novelpiaIdFromUrl(c.url) === id);
           if (hit) {
             // 🆕 v7.41.1: 완결작이면 회차목록으로 본편/외전 분리 보강(검색 meta엔 회차 분리 정보 없음)
-            if (hit.meta && hit.meta.workStatus === "completed") { try { const sp = await fetchNovelpiaEpisodeSplit(link, opts); if (sp) applyEpisodeSplitToMeta(hit.meta, sp); } catch {} }
+            if (hit.meta.workStatus === "completed") { try { const sp = await fetchNovelpiaEpisodeSplit(link, o); if (sp) applyEpisodeSplitToMeta(hit.meta, sp); } catch {} }
             return hit.meta;
           }
         } catch {}
       }
     } else if (platform === "문피아") {
-      const id = idOf(/[?&]id=(\d+)/) || idOf(/\/novel\/(\d+)/);
+      const id = munpiaIdFromUrl(link);
       if (id) {
         try {
-          const hit = (await searchMunpia(title || "", opts)).find(c => c.url && c.url.includes("id=" + id) && c.meta);
+          const hit = (await searchMunpia(title || "", o)).find(c => c.meta && munpiaIdFromUrl(c.url) === id);
           if (hit) {
             // 🆕 v7.41.5: 완결작이면 회차목록으로 본편/외전 분리 보강(검색 meta엔 회차 분리 정보 없음)
-            if (globalGaidenExp && hit.meta && hit.meta.workStatus === "completed") { try { const sp = await fetchMunpiaEpisodeSplit(link, opts); if (sp && (sp.mainCompletedAt || sp.hasGaiden)) applyEpisodeSplitToMeta(hit.meta, sp); } catch {} }
+            if (globalGaidenExp && hit.meta.workStatus === "completed") { try { const sp = await fetchMunpiaEpisodeSplit(link, o); if (sp && (sp.mainCompletedAt || sp.hasGaiden)) applyEpisodeSplitToMeta(hit.meta, sp); } catch {} }
             return hit.meta;
           }
         } catch {}
       }
     }
-    // 리디·네이버·카카오, 또는 위에서 ID 매칭 실패 → 상세 페이지 직접
-    return await fetchNovelMeta(link, opts);
+    if (firstErr) throw firstErr;
+    throw new Error("작품 정보를 가져오지 못했어요.");
   }
   // 🔧 v7.41.0: options = { overwrite, platforms } — overwrite는 덮어쓰기(재취득) 모드, platforms는 대상 플랫폼 필터(빈 배열=전체).
   async function runBulkAutoUpdate(options = {}) {
@@ -48641,7 +48849,7 @@ function AppContent() {
       kkCaptureDbg.current = [];
       const finish = (payload, reason) => {
         const r = kkCaptureResolver.current; if (!r) return;
-        clearTimeout(r.timer); clearTimeout(r.epTimer); kkCaptureResolver.current = null; setKkCaptureUrl(null);
+        clearTimeout(r.timer); clearTimeout(r.epTimer); clearTimeout(r.domTimer); kkCaptureResolver.current = null; setKkCaptureUrl(null);
         if (mode === "episodes") {
           if (Number(payload) > 0) { resolve({ ok: true, episodeCount: Number(payload) }); return; }
           const log = kkCaptureDbg.current;
@@ -48658,9 +48866,10 @@ function AppContent() {
         const log = kkCaptureDbg.current;
         const installed = log.some(d => d.u === "__hook_installed__");
         const ovSeen = log.some(d => d.ov);
+        const domSeen = log.filter(d => String(d.u).indexOf("__dom_") === 0); // 🆕 v7.58.0: DOM 스냅샷 도달 여부
         const reqs = log.filter(d => d.u !== "__hook_installed__");
         const lines = reqs.slice(-14).map(d => `${d.ov ? "★" : "·"} ${d.u} (${d.l})`);
-        const diag = `사유: ${reason || "실패"}\n후킹설치: ${installed ? "O" : "X(주입실패)"} · overview응답: ${ovSeen ? "O(파싱실패)" : "X(못봄)"} · 요청 ${reqs.length}건\n` + (lines.length ? lines.join("\n") : "(요청 0건 — 페이지 미로딩/차단)");
+        const diag = `사유: ${reason || "실패"}\n후킹설치: ${installed ? "O" : "X(주입실패)"} · overview응답: ${ovSeen ? "O(파싱실패)" : "X(못봄)"} · DOM스냅샷: ${domSeen.length ? `O(${domSeen.length}회, 파싱실패)` : "X(못받음)"} · 요청 ${reqs.length}건\n` + (lines.length ? lines.join("\n") : "(요청 0건 — 페이지 미로딩/차단)");
         try { Clipboard.setStringAsync("[카카오 캡처 진단]\nURL:" + (r.url || "") + "\n" + diag); } catch {}
         resolve({ ok: false, diag });
       };
@@ -48670,7 +48879,7 @@ function AppContent() {
     });
     globalKakaoCapture = (url) => runKkCapture(url, "overview");
     globalKakaoWebtoonEpisodes = (url) => runKkCapture(url, "episodes").then(r => (r && r.ok) ? r.episodeCount : null);
-    return () => { globalKakaoCapture = null; globalKakaoWebtoonEpisodes = null; const r = kkCaptureResolver.current; if (r) { clearTimeout(r.timer); kkCaptureResolver.current = null; } };
+    return () => { globalKakaoCapture = null; globalKakaoWebtoonEpisodes = null; const r = kkCaptureResolver.current; if (r) { clearTimeout(r.timer); clearTimeout(r.epTimer); clearTimeout(r.domTimer); kkCaptureResolver.current = null; } };
   }, []);
   function onKkCaptureMessage(e) {
     const r = kkCaptureResolver.current; if (!r) return;
@@ -48684,6 +48893,24 @@ function AppContent() {
         else if (!r.rawEp) r.rawEp = String(p.body);
         if (r.bestEp > 0) { clearTimeout(r.epTimer); r.epTimer = setTimeout(() => { const rr = kkCaptureResolver.current; if (rr && rr.bestEp > 0) rr.finish(rr.bestEp); }, 3500); }
       }
+      return;
+    }
+    // 🆕 v7.58.0: DOM 스냅샷 — 카카오 작품 페이지는 SSR(__NEXT_DATA__)이라 앱 JS가 contentHomeOverview를
+    //   '다시' 요청하지 않는 경우가 많다. 그때 기존 fetch/XHR 후킹은 아무것도 못 잡고 30초 뒤 실패했다(사용자 체감:
+    //   "검색은 되는데 누르면 한참 뒤 실패"). 렌더된 페이지의 og/ld+json/__NEXT_DATA__를 그대로 받아 기존 HTML 파서로 처리.
+    if (p.t === "kkdom" && p.ok && p.body) {
+      const body = String(p.body);
+      let note = "__dom_no_title__";
+      try {
+        let m = scraperNormalizeFromHtml(body, r.url || "https://page.kakao.com/");
+        m = scraperRefineByPlatform(m, body, "카카오페이지");
+        if (m && m.ok && m.title && !isBadWebTitle(m.title)) { r.finish(m); return; }
+      } catch (e) { note = "__dom_parse_err__:" + String(e?.message || e).slice(0, 40); }
+      if (kkCaptureDbg.current.length < 60) kkCaptureDbg.current.push({ u: note, l: body.length, ov: false });
+      // 🆕 v7.58.0: 페이지는 떴는데(스냅샷 도착) 메타가 없으면 30초를 다 기다릴 이유가 없다 —
+      //   마지막 스냅샷 후 9초까지만 응답 후킹을 더 기다리고 실패로 마감(‘눌렀는데 30초 멈춤’ 체감 제거).
+      clearTimeout(r.domTimer);
+      r.domTimer = setTimeout(() => { const rr = kkCaptureResolver.current; if (rr) rr.finish(null, "페이지는 열렸지만 작품 정보가 없음(비공개·연령제한·구조 변경)"); }, 9000);
       return;
     }
     if (p.t !== "kk" || !p.ok || !p.body) return;

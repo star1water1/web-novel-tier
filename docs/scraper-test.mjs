@@ -16,7 +16,7 @@ const start = src.indexOf("const SCRAPER_UA =");
 const end = src.indexOf("function findSameTag(");
 if (start < 0 || end < 0 || end <= start) { console.error("✗ 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); process.exit(1); }
 let slice = src.slice(start, end);
-slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, applyEpisodeSplitToMeta, parseKakaoProductList, parseKakaoViewerDate, parseKakaoOverview, kakaoSeriesIdFromUrl, parseMunpiaEntries, parseMunpiaNovelInfo, munpiaIdFromUrl, SCRAPER_HEADERS, SCRAPER_UA, parseNaverWebtoonSearch, extractNaverWebtoonItems, naverWebtoonItemToMeta, WEBTOON_SEARCH_PLATFORMS, naverNormalizeDate, naverDate2ToYear, parseNaverWebtoonStartYear, coverUrlHighRes, isImplausibleEpisodeDrop, parseKakaoWebtoonSearch, kakaoWebtoonDetailToMeta, kakaoAuthorsSplit, naverPublishDayLabel, parseKakaoWebtoonEpisodeCount };\n";
+slice += "\n;globalThis.__SCR = { detectPlatformFromUrl, scraperExtractMetaTags, scraperExtractJsonLd, scraperNormalizeFromHtml, scraperRefineByPlatform, scraperDetectBlock, parseRidiSearch, parseNaverSeriesSearch, parseMunpiaSearch, parseNovelpiaSearch, parseNovelpiaGetNovel, novelpiaItemToMeta, mergeSearchResults, SEARCH_PLATFORMS, isSearchPlatformOn, scraperDecodeEntities, scraperCleanSynopsis, scraperExtractHashtags, scraperExtractNextData, mapScrapedGenres, buildScrapeItems, parseNaverUpdateYear, parseNaverUpdateTs, scraperDateToTs, canonicalPlatform, mergePlatformFromLink, parseMunpiaSearchJson, parseNaverStartYear, ridiBookOf, ridiPublishDate, backfillMetaFromCandidate, isGaidenTitle, parseNaverEpisodeSplit, splitEpisodesByGaiden, parseNovelpiaEpisodeList, parseRidiSearchSeries, pickRidiGaidenSeries, applyEpisodeSplitToMeta, parseKakaoProductList, parseKakaoViewerDate, parseKakaoOverview, kakaoSeriesIdFromUrl, parseMunpiaEntries, parseMunpiaNovelInfo, munpiaIdFromUrl, SCRAPER_HEADERS, SCRAPER_UA, parseNaverWebtoonSearch, extractNaverWebtoonItems, naverWebtoonItemToMeta, WEBTOON_SEARCH_PLATFORMS, naverNormalizeDate, naverDate2ToYear, parseNaverWebtoonStartYear, coverUrlHighRes, isImplausibleEpisodeDrop, parseKakaoWebtoonSearch, kakaoWebtoonDetailToMeta, kakaoAuthorsSplit, naverPublishDayLabel, parseKakaoWebtoonEpisodeCount, detectWorkStatusFromHtml, scraperStripHtmlNoise, scraperStatusFromLabel, isBadWebTitle, novelpiaIdFromUrl, parseKakaoSerpHtml, collectKakaoCandidate, kakaoUsableTitle, HTML_STATUS_UNRELIABLE_PLATFORMS };\n";
 
 // fetch/resolveAbortSignal은 정의 시점엔 호출 안 됨(스텁만). 순수 함수만 꺼내 쓴다.
 // buildScrapeItems가 슬라이스 밖 parseGenreArray·MAJOR/SUB_GENRES를 참조 → 샌드박스에 주입(실제 동작 동일).
@@ -43,19 +43,19 @@ const A = `<html><head>
 <meta property="og:title" content="OG제목"><meta property="og:image" content="https://x/og.jpg">
 <script type="application/ld+json">{"@context":"https://schema.org","@type":"Book","name":"별을 삼킨 검","author":{"@type":"Person","name":"홍길동"},"image":"https://x/cover.jpg","description":"무협 줄거리","genre":["무협","판타지"],"numberOfEpisodes":320}</script>
 </head><body>이 작품은 완결되었습니다</body></html>`;
-const a = S.scraperNormalizeFromHtml(A, "https://novelpia.com/novel/1");
+const a = S.scraperNormalizeFromHtml(A, "https://ridibooks.com/books/1");
 eq("A.title", a.title, "별을 삼킨 검");
 eq("A.author", a.author, "홍길동");
 eq("A.coverUrl", a.coverUrl, "https://x/cover.jpg");      // JSON-LD가 OG보다 우선
 eq("A.genres", a.genres, ["무협", "판타지"]);
 eq("A.totalEpisodes", a.totalEpisodes, 320);
 eq("A.workStatus", a.workStatus, "completed");
-eq("A.platform", a.platform, "노벨피아");
+eq("A.platform", a.platform, "리디");
 
 const B = `<html><head>
 <meta property="og:title" content="연재작"><meta property="og:image" content="https://x/b.jpg">
 <meta property="og:description" content="설명"></head><body>연재중</body></html>`;
-const b = S.scraperNormalizeFromHtml(B, "https://www.munpia.com/novel/2");
+const b = S.scraperNormalizeFromHtml(B, "https://series.naver.com/novel/detail.series?productNo=2");
 eq("B.title", b.title, "연재작");
 eq("B.author(공란 degrade)", b.author, "");
 eq("B.workStatus", b.workStatus, "ongoing");
@@ -313,8 +313,8 @@ eq("노벨피아 get_novel 깨진 JSON → null", S.parseNovelpiaGetNovel("<html
 eq("노벨피아 genres novel_genre 문자열 폴백", S.novelpiaItemToMeta({ novel_no: 1, novel_name: "t", novel_genre: '["로맨스","여사친"]' }).genres, ["로맨스", "여사친"]);
 
 // ── v7.39.0: 제목 검색 사이트 온오프(기본 전체 활성) ───────────────────────────
-eq("검색 사이트 목록(검색 가능 4종)", S.SEARCH_PLATFORMS, ["리디", "네이버시리즈", "문피아", "노벨피아"]);
-eq("검색 사이트 기본 전체 ON(globalSearchPlatforms null)", S.SEARCH_PLATFORMS.map(S.isSearchPlatformOn), [true, true, true, true]);
+eq("검색 사이트 목록(검색 가능 5종)", S.SEARCH_PLATFORMS, ["리디", "네이버시리즈", "문피아", "노벨피아", "카카오페이지"]);
+eq("검색 사이트 기본 전체 ON(globalSearchPlatforms null)", S.SEARCH_PLATFORMS.map(S.isSearchPlatformOn), [true, true, true, true, true]);
 
 // ── ④' 네이버시리즈 검색 파싱(v7.28.39, 폰 캡처 실측 픽스처) ────────────────────
 //   itemList SSR <li class="lst"> 4건 + 클라이언트 템플릿/푸터폼 디코이 → 디코이 제외 4건만.
@@ -409,7 +409,7 @@ eq("문피아 JSON 후보3 연재중 상태", mj[2].meta.workStatus, "ongoing");
 truthy("문피아 JSON 표지(cdn1+tb.jpg)", /^https:\/\/cdn1\.munpia\.com\/.*tb\.jpg$/.test(mj[1].meta.coverUrl));
 eq("문피아 JSON 회차수(863)", mj[0].meta.totalEpisodes, 863);
 // v7.28.61: 완결일(ms) + 연중(dropped) + 날짜 헬퍼
-eq("문피아 JSON 후보1 완결일(역타임스탬프 ms)", mj[0].meta.completedAt, (10000000000 - 8232824800) * 1000);
+eq("문피아 JSON 후보1 완결일(KST 달력일 → UTC 자정, v7.49.17)", mj[0].meta.completedAt, (() => { const kd = new Date(((10000000000 - 8232824800) + 32400) * 1000); return Date.UTC(kd.getUTCFullYear(), kd.getUTCMonth(), kd.getUTCDate()); })());
 eq("문피아 JSON 후보3 연재중 → 완결일 0", mj[2].meta.completedAt, 0);
 truthy("scraperDateToTs YYYY.MM.DD → 2019", new Date(S.scraperDateToTs("2019.07.03")).getUTCFullYear() === 2019);
 truthy("scraperDateToTs YYYY-MM-DD HH:MM → 2018", new Date(S.scraperDateToTs("2018-01-29 10:00:00")).getUTCFullYear() === 2018);
@@ -803,6 +803,107 @@ eq("pickRidiGaidenSeries: 빈 목록 → []", S.pickRidiGaidenSeries({ title: "x
   eq("문피아 id: link /n/", S.munpiaIdFromUrl("https://link.munpia.com/n/346981"), "346981");
   eq("문피아 id: /novel/", S.munpiaIdFromUrl("https://m.munpia.com/novel/346981"), "346981");
   eq("문피아 id: 없음 → null", S.munpiaIdFromUrl("https://m.munpia.com/"), null);
+}
+
+// ── 🔧 v7.58.0: 연재상태 판정 재설계 (완결 오탐지 수정) ───────────────────────────
+{
+  const norm = (html, url) => S.scraperNormalizeFromHtml(html, url);
+  // ① 앱셸 플랫폼 — 본문에 '완결' 두 글자가 있어도 절대 완결로 단정하지 않는다(=미상 null).
+  //    노벨피아·문피아 상세는 JS가 그리는 껍데기라 나머지 글자는 전부 네비/추천 잔여물이다.
+  const shell = '<html><head><meta property="og:title" content="연재중인작품"></head>' +
+    '<body><ul class="gnb"><li>신작</li><li>완결</li><li>인기</li></ul><div id="app"></div></body></html>';
+  eq("완결오탐: 노벨피아 앱셸 '완결' 탭 → 미상(null)", norm(shell, "https://novelpia.com/novel/12").workStatus, null);
+  eq("완결오탐: 문피아 앱셸 '완결' 탭 → 미상(null)", norm(shell, "https://m.munpia.com/novel?id=12").workStatus, null);
+  eq("완결오탐: 카카오페이지 앱셸 → 미상(null, onIssue만 정본)", norm(shell, "https://page.kakao.com/content/12").workStatus, null);
+  eq("완결오탐: 앱셸 플랫폼 목록", S.HTML_STATUS_UNRELIABLE_PLATFORMS, ["노벨피아", "문피아", "카카오페이지", "카카오웹툰", "네이버웹툰"]);
+  // ② 숨은 JSON(<script>)·네비의 '완결'은 상태 판정에서 제외 — 종전 전문검색이 여기서 오탐했다.
+  const hidden = '<html><head><meta property="og:title" content="연재작"></head><body>' +
+    '<nav>완결 웹소설</nav><div class="badge">연재중</div>' +
+    '<script>window.__D={related:[{title:"다른작품",status:"완결"}]}</script></body></html>';
+  eq("완결오탐: script/nav의 '완결' 무시 → 연재중", norm(hidden, "https://ridibooks.com/books/1").workStatus, "ongoing");
+  eq("stripHtmlNoise: script 제거", /완결/.test(S.scraperStripHtmlNoise('<script>{"s":"완결"}</script><p>연재중</p>')), false);
+  eq("stripHtmlNoise: 주석 제거", /완결/.test(S.scraperStripHtmlNoise('<!-- 완결 --><p>연재중</p>')), false);
+  // ③ 라벨 첫 등장 규칙 — 상태 배지(앞) vs 추천 캐러셀(뒤)
+  const badgeFirst = '<html><head><meta property="og:title" content="A"></head><body>' +
+    '<span class="status">연재중</span><section class="reco">완결작 추천</section></body></html>';
+  eq("완결오탐: 배지(연재중)가 추천(완결)보다 앞 → 연재중", norm(badgeFirst, "https://ridibooks.com/books/2").workStatus, "ongoing");
+  const badgeDone = '<html><head><meta property="og:title" content="B"></head><body>' +
+    '<span class="status">완결</span><section class="reco">연재중 신작</section></body></html>';
+  eq("완결: 배지(완결)가 앞 → 완결(정상 케이스 무회귀)", norm(badgeDone, "https://ridibooks.com/books/3").workStatus, "completed");
+  // ④ 구조화 데이터 우선 — 본문보다 og:novel:status / JSON-LD가 이긴다
+  const og = '<html><head><meta property="og:title" content="C"><meta property="og:novel:status" content="연재중"></head><body>완결</body></html>';
+  eq("완결오탐: og:novel:status가 본문보다 우선", norm(og, "https://ridibooks.com/books/4").workStatus, "ongoing");
+  const ld = '<html><head><script type="application/ld+json">{"@type":"Book","name":"D","creativeWorkStatus":"완결"}</script></head><body>연재중</body></html>';
+  eq("구조화: JSON-LD creativeWorkStatus 우선", norm(ld, "https://ridibooks.com/books/5").workStatus, "completed");
+  // ⑤ 라벨 매퍼 — '연재중단'을 '연재 중'보다 먼저 본다
+  eq("라벨: 연재중단 → dropped", S.scraperStatusFromLabel("연재중단"), "dropped");
+  eq("라벨: 완결 → completed", S.scraperStatusFromLabel("완결"), "completed");
+  eq("라벨: 휴재 → hiatus", S.scraperStatusFromLabel("휴재"), "hiatus");
+  eq("라벨: 연재 중 → ongoing", S.scraperStatusFromLabel("연재 중"), "ongoing");
+  eq("라벨: 무관 문자열 → null", S.scraperStatusFromLabel("판타지"), null);
+  eq("완결오탐: 상태 라벨 자체가 없으면 미상", norm('<html><head><meta property="og:title" content="E"></head><body>줄거리만</body></html>', "https://ridibooks.com/books/6").workStatus, null);
+}
+
+// ── 🔧 v7.58.0: 노벨피아/문피아 ID '정확 일치'(부분일치 오매칭 = 완결 오탐지 원인) ──
+{
+  eq("노벨피아 id: /novel/", S.novelpiaIdFromUrl("https://novelpia.com/novel/113155"), "113155");
+  eq("노벨피아 id: 없음 → null", S.novelpiaIdFromUrl("https://novelpia.com/"), null);
+  // 종전 버그 재현 방지: includes("/novel/12")는 /novel/1234에도 걸렸다 → 정확 비교는 안 걸림
+  eq("id 정확일치: 12 ≠ 1234", S.novelpiaIdFromUrl("https://novelpia.com/novel/1234") === "12", false);
+  eq("문피아 id 정확일치: 12 ≠ 1234", S.munpiaIdFromUrl("https://m.munpia.com/novel?id=1234") === "12", false);
+}
+
+// ── 🔧 v7.58.0: 카카오 제목 선정(v7.53 '항상 덮어쓰기' 회귀 수정) + SERP 후보 정리 ──
+{
+  // metaInfo가 사이트 일반 제목('콘텐츠홈 - 카카오페이지')을 들고 있어도 seriesId 매칭 content.title이 이긴다.
+  const mk = (nd) => '<html><head><meta property="og:title" content="콘텐츠홈 - 카카오페이지"></head><body>' +
+    '<script id="__NEXT_DATA__" type="application/json">' + JSON.stringify(nd) + '</script></body></html>';
+  const nd1 = { props: { pageProps: {
+    metaInfo: { ogTitle: "콘텐츠홈 - 카카오페이지", author: "" },
+    data: { contentHomeOverview: { content: { seriesId: 555, title: "진짜작품명", authors: "정작가", categoryType: "Webnovel", subcategory: "판타지", onIssue: "Ing", startSaleDt: "2020-05-05" } } },
+  } } };
+  const h1 = mk(nd1);
+  const k1 = S.scraperRefineByPlatform(S.scraperNormalizeFromHtml(h1, "https://page.kakao.com/content/555"), h1, "카카오페이지");
+  eq("카카오 제목: 사이트 일반제목 대신 content.title 채택", k1.title, "진짜작품명");
+  eq("카카오 제목: ok=true", k1.ok, true);
+  eq("카카오: 연재중(onIssue=Ing)", k1.workStatus, "ongoing");
+  // 웹툰화(relatedSeries)가 먼저 잡혀도 URL seriesId로 본편을 집는다
+  const nd2 = { props: { pageProps: { data: { contentHomeOverview: {
+    relatedSeries: { seriesId: 999, title: "웹툰판", categoryType: "Webtoon", subcategory: "무협", onIssue: "Ing" },
+    content: { seriesId: 555, title: "소설판", categoryType: "Webnovel", subcategory: "무협", onIssue: "End", lastSlideAddedDate: "2024-02-02T09:00:00+09:00" },
+  } } } } };
+  const h2 = mk(nd2);
+  const k2 = S.scraperRefineByPlatform(S.scraperNormalizeFromHtml(h2, "https://page.kakao.com/content/555"), h2, "카카오페이지");
+  eq("카카오: relatedSeries(웹툰) 아닌 본편 제목", k2.title, "소설판");
+  eq("카카오: 본편 완결(End)", k2.workStatus, "completed");
+  // 필드명이 바뀌어도 seriesId만 맞으면 제목은 건진다(느슨한 폴백)
+  const nd3 = { props: { pageProps: { q: { seriesId: 555, title: "구조바뀜작" } } } };
+  const h3 = mk(nd3);
+  const k3 = S.scraperRefineByPlatform(S.scraperNormalizeFromHtml(h3, "https://page.kakao.com/content/555"), h3, "카카오페이지");
+  eq("카카오: 필드 구조 변경에도 seriesId로 제목 확보", k3.title, "구조바뀜작");
+  eq("kakaoUsableTitle: 사이트 일반명 버림", S.kakaoUsableTitle("카카오페이지"), "");
+  eq("kakaoUsableTitle: '- 웹소설' 말미 절단", S.kakaoUsableTitle("흑백무제 - 웹소설"), "흑백무제");
+  // SERP 후보 정리 — '콘텐츠홈' 같은 부산물 카드 제외
+  const serp = '<a href="https://page.kakao.com/content/111">콘텐츠홈 - 카카오페이지</a>' +
+               '<a href="https://page.kakao.com/content/222">데뷔 못 하면 죽는 병 걸림</a>';
+  const cands = S.parseKakaoSerpHtml(serp);
+  eq("카카오 SERP: 부산물 카드 제외", cands.length, 1);
+  eq("카카오 SERP: 진짜 작품만 남음", cands[0].title, "데뷔 못 하면 죽는 병 걸림");
+  eq("isBadWebTitle: 콘텐츠홈", S.isBadWebTitle("콘텐츠홈 - 카카오페이지"), true);
+  eq("isBadWebTitle: 정상 제목", S.isBadWebTitle("전지적 독자 시점"), false);
+}
+
+// ── 🔧 v7.58.0: 카카오 overview 응답 딥서치 폴백(래핑/필드 이동 내성) ──
+{
+  const wrapped = JSON.stringify({ payload: { any: { deep: { seriesId: 56598258, title: "흑백무제", authors: "현임", categoryType: "Webnovel", subcategory: "무협", onIssue: "End", startSaleDt: "2021-02-26T12:00:47+09:00", lastSlideAddedDate: "2025-08-08T17:00:04+09:00" } } } });
+  const wm = S.parseKakaoOverview(wrapped, "https://page.kakao.com/content/56598258");
+  truthy("카카오 overview 딥서치: 비정규 래핑도 파싱", wm && wm.ok);
+  eq("카카오 overview 딥서치: 제목", wm.title, "흑백무제");
+  eq("카카오 overview 딥서치: 완결", wm.workStatus, "completed");
+  // seriesId가 맞는 노드를 골라 웹툰화 노드에 오염되지 않음
+  const both = JSON.stringify({ x: [{ seriesId: 999, title: "웹툰판", categoryType: "Webtoon", onIssue: "Ing" }, { seriesId: 555, title: "소설판", categoryType: "Webnovel", onIssue: "End" }] });
+  eq("카카오 overview 딥서치: URL seriesId 우선", S.parseKakaoOverview(both, "https://page.kakao.com/content/555").title, "소설판");
+  eq("카카오 overview: 완전 무관 JSON → null", S.parseKakaoOverview('{"a":1}', "https://page.kakao.com/content/1"), null);
 }
 
 console.log(`\n${fail === 0 ? "🎉 ALL PASS" : "⚠️  FAILED"}  pass=${pass} fail=${fail}`);
