@@ -2,9 +2,48 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.3 (구색 기능 개선 Phase 1 — AI 태그 근거 표시, 베타)                   ║
+ * ║  버전: 7.59.4 (구색 기능 개선 Phase 2 — 클라우드 push 충돌 감지, 베타)             ║
  * ║  최종 수정: 2026-08-02                                                        ║
- * ║  총 라인 수: 약 78,600줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 78,750줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ ☁️ v7.59.4 클라우드 push 충돌(발산) 감지 (T05 · DAT-2) (2026-08-02)              ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제] push가 원격 매니페스트의 rev만 읽고, 이 기기가 마지막으로 아는 rev         ║
+ * ║ (app_meta `cloud_rev`)와는 **대조하지 않았다**. 기기 A(로컬 rev 5)가 기기 B의     ║
+ * ║ rev 6을 아직 안 받은 상태에서 올리면 baseRev=6 → rev 7로 B의 변경이 스냅샷째      ║
+ * ║ 사라지고, 옛 스냅샷은 정리 루틴이 삭제까지 했다. 유일한 가드였던 M4는             ║
+ * ║ 'push가 도는 몇 초 사이의 변경'만 보므로 이 발산을 통과시킨다.                    ║
+ * ║ 자동 동기화를 켜 두면 앱을 백그라운드로 보낼 때마다 push가 돌아, 포그라운드       ║
+ * ║ 프롬프트에서 '나중에'를 한 번 누른 것만으로 다른 기기의 작업이 조용히 소멸했다.   ║
+ * ║                                                                              ║
+ * ║ [수정 ①] push 진입부(baseRev 직후, unchanged 스킵보다 **앞**)에 발산 가드.        ║
+ * ║ 조건은 반드시 두 개다 — `로컬 rev < 원격 rev` **그리고** `원격을 마지막에 쓴      ║
+ * ║ 기기 ≠ 이 기기`. 앞 조건만 쓰면 C2 가드(동기화 중 슬롯이 바뀌면 cloud_rev를       ║
+ * ║ 일부러 안 씀) 때문에 **내가 올린 리비전에도 걸리는 오탐**이 난다.                 ║
+ * ║ 스냅샷 생성(exportJSON) 전에 끊으므로 헛일도 없다.                                ║
+ * ║                                                                              ║
+ * ║ [수정 ②] 충돌은 두 종류가 됐다 — `kind:"stale"`(발산) / `kind:"inflight"`(M4).    ║
+ * ║ 수동 '지금 백업'은 stale에서 **1회 선택**을 띄운다: 먼저 받기 / 덮어쓰기 / 취소.  ║
+ * ║ 덮어쓰기는 되돌릴 수 없으므로(리비전 보관은 미구현) 2단 확인 후 `force:true`로    ║
+ * ║ 발산 가드만 우회한다 — M4는 그대로 유효.                                          ║
+ * ║                                                                              ║
+ * ║ [수정 ③] 자동(무음) push 경로는 Alert을 띄울 수 없으므로(불변 #1과 같은 이유)     ║
+ * ║ `cloudConflict` state → 동기화 카드 배지로 남긴다: 원격 rev·시각, 이 기기가 아는  ║
+ * ║ rev, '자동 백업을 멈췄다'는 사실, 다음 행동 2가지. 상태 줄에도 '⚠️ 충돌'.        ║
+ * ║ 배지는 push 성공·pull 성공·무변경 확인 시 해제되고, 슬롯 전환 시에도 비운다       ║
+ * ║ (rev와 같은 슬롯별 값이라 남으면 다른 슬롯 배지가 된다).                          ║
+ * ║                                                                              ║
+ * ║ [수정 ④] 베타 안내 문구를 실제 동작으로 — "동시 편집하면 한쪽이 덮어써질 수       ║
+ * ║ 있어요"는 이제 사실이 아니다. '못 받은 변경이 있으면 백업이 멈춘다 · 덮어쓰기는   ║
+ * ║ 직접 고를 때만'으로 교체.                                                         ║
+ * ║                                                                              ║
+ * ║ [검증] 실제 소스의 가드 블록을 문자열로 떼어내 스텁 스코프에서 9개 시나리오       ║
+ * ║ 실행 — 발산 차단 / 같은 기기 연속 push 통과 / **C2 오탐 없음** / 첫 백업 통과 /   ║
+ * ║ 로컬 기록 없음(문구 분기) / force 통과 / 로컬이 앞선 경우 통과 / 기기 식별 불가   ║
+ * ║ 매니페스트는 안전측 차단 / activeDevice 폴백. 전부 통과.                          ║
+ * ║ esbuild 통과, scraper-test 526/526. APP_VERSION 7.59.4.                           ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -21114,7 +21153,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.3";
+const APP_VERSION = "7.59.4";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -41074,6 +41113,9 @@ function AppContent() {
   const [cloudRev, setCloudRev] = useState(0);
   const [cloudLastSync, setCloudLastSync] = useState(0);
   const [cloudBusy, setCloudBusy] = useState(false);             // 로그인/수동 작업 중
+  // 🆕 v7.59.4 (T05·DAT-2): push 전 감지된 '발산' 상태 — null | { remoteRev, localRev, updatedAt, slotName }.
+  //   자동(무음) push가 중단됐다는 사실을 동기화 카드 배지로 남기는 유일한 경로다(자동 경로엔 Alert 금지).
+  const [cloudConflict, setCloudConflict] = useState(null);
   const cloudSyncingRef = useRef(false);                          // 동시 동기화 가드
   const cloudAutoRef = useRef(false);                             // AppState 콜백용 최신 enabled
   const cloudPushRef = useRef(null);                              // AppState 콜백이 최신 push 클로저 참조(불변 #2)
@@ -41442,6 +41484,7 @@ function AppContent() {
         const ls = Number(await getAppMeta("cloud_last_sync")) || 0;
         if (!alive) return;
         setCloudEnabled(en); setCloudRev(rev); setCloudLastSync(ls);
+        setCloudConflict(null); // 🆕 v7.59.4(T05): 충돌 상태도 슬롯별 — 전환 시 이전 슬롯 배지가 남지 않도록
       } catch {}
     })();
     return () => { alive = false; };
@@ -57213,8 +57256,10 @@ async function cloudCollectAssets() {
 }
 
 // 현재 슬롯 → 클라우드 업로드. 스냅샷(content-addressed: snapshot-<rev>.json) + 갤러리 자산 증분 + 매니페스트(마지막).
-// 가드: 빌드설정(#0)·동시동기화·복원중(#H0)·자동매칭(#1)·로그인. 슬롯전환(#C2)은 _slotGeneration로 차단. 충돌(#M4)은 매니페스트 직전 rev 재확인.
-async function cloudPushCurrentSlot({ silent = true, embedCovers = true } = {}) {
+// 가드: 빌드설정(#0)·동시동기화·복원중(#H0)·자동매칭(#1)·로그인. 슬롯전환(#C2)은 _slotGeneration로 차단.
+// 충돌 가드 2종: **발산(#T05, push 진입 시 로컬 cloud_rev vs 원격 rev)** + 인플라이트(#M4, 매니페스트 직전 rev 재확인).
+//   force=true는 발산 가드만 무시한다(사용자가 '덮어쓰기'를 명시적으로 고른 경우) — M4는 그대로 유효.
+async function cloudPushCurrentSlot({ silent = true, embedCovers = true, force = false } = {}) {
   if (!cloudIsConfigured()) return { ok: false, error: "GOOGLE_OAUTH_CLIENT_ID 미설정" };
   if (cloudSyncingRef.current || cloudRestoreInProgressRef.current) return { ok: false, error: "동기화 진행 중" };
   if (isAutoMatchingRef.current) return { ok: false, error: "자동 매칭 중 — 잠시 후 다시" }; // 불변 #1
@@ -57233,6 +57278,22 @@ async function cloudPushCurrentSlot({ silent = true, embedCovers = true } = {}) 
     const remote = rr.manifest;
     let folderId = rr.folderId || await cloudEnsureSlotFolder(slotUuid); // L4: 읽기에서 얻은 폴더 재사용
     const baseRev = (remote && Number(remote.rev)) || 0;
+    // 🆕 v7.59.4 (T05·DAT-2): **발산 감지** — 종전엔 원격 rev만 읽고 로컬 기록(cloud_rev)과 대조하지 않아,
+    //   다른 기기가 올린 리비전을 아직 안 받은 상태에서도 baseRev+1로 통째로 덮어썼다(옛 스냅샷은 삭제까지).
+    //   아래 M4 가드는 'push가 도는 몇 초 사이의 변경'만 보므로 이 케이스(A: localRev=5, 원격=6)를 못 잡는다.
+    //   ⚠️ 조건은 반드시 2개다. `localRev < baseRev` 단독이면 C2 가드(슬롯 전환 시 cloud_rev 기록 스킵) 때문에
+    //   **내가 올린 리비전에도 걸리는 오탐**이 난다 → '원격을 마지막에 쓴 기기가 내가 아닐 때'만 충돌로 본다.
+    //   unchanged 스킵보다 앞에 둔다 — 내용이 그대로여도 원격이 앞서면 '최신 상태'는 거짓말이기 때문.
+    const localRev = Number(await getAppMeta("cloud_rev")) || 0;
+    const remoteDevice = remote ? (remote.activeDevice || remote.deviceId || "") : "";
+    if (!force && baseRev > localRev && remoteDevice !== deviceId) {
+      const info = { remoteRev: baseRev, localRev, updatedAt: Number(remote?.updatedAt) || 0, slotName: remote?.slotName || "" };
+      setCloudConflict(info);
+      setCloudSyncStatus("idle"); // 🔧 R1과 같은 이유 — 충돌 return 전 상태 해제(버튼 영구 잠김 방지)
+      const known = localRev > 0 ? `이 기기가 아는 마지막 백업은 rev ${localRev}` : "이 기기에는 이 슬롯의 클라우드 백업 기록이 없어요";
+      return { ok: false, conflict: true, kind: "stale", ...info,
+        error: `클라우드에 이 기기가 아직 받지 않은 변경이 있어요.\n원격 rev ${baseRev}(다른 기기) · ${known}.\n지금 올리면 그 변경이 사라져요.` };
+    }
     // 스냅샷 생성. 🔧 v7.54.3(Q1): 자동(백그라운드) push는 표지 제외(embedCovers=false)로 가볍게,
     //   수동/포그라운드 push는 표지 base64 동봉. exportJSON은 현재 DB를 읽으므로 직후 슬롯 전환 확인.
     _cloudLastCoverDropped = 0;
@@ -57243,7 +57304,7 @@ async function cloudPushCurrentSlot({ silent = true, embedCovers = true } = {}) 
     const contentHash = cloudHashStr(json);
     const lastHash = await getAppMeta("cloud_pushed_hash");
     // 변경 없음 + 원격 백업이 실제로 존재할 때만 스킵(원격이 지워졌으면 재생성하도록 remote 확인).
-    if (lastHash && lastHash === contentHash && remote) { setCloudSyncStatus("idle"); return { ok: true, unchanged: true, rev: baseRev }; }
+    if (lastHash && lastHash === contentHash && remote) { setCloudConflict(null); setCloudSyncStatus("idle"); return { ok: true, unchanged: true, rev: baseRev }; } // 🆕 v7.59.4: 여기까지 왔으면 발산 없음 → 옛 배지 해제
     const newRev = baseRev + 1;
     const snapName = `snapshot-${newRev}.json`; // 🔧 H3: content-addressed(덮어쓰기 skew 방지)
     const existSnap = await driveFind(snapName, folderId);
@@ -57272,7 +57333,7 @@ async function cloudPushCurrentSlot({ silent = true, embedCovers = true } = {}) 
     const confirmRev = (rr2.manifest && Number(rr2.manifest.rev)) || 0;
     if (confirmRev !== baseRev) {
       setCloudSyncStatus("idle"); // 🔧 R1: 충돌 경로도 상태 해제(버튼 영구 잠김 방지)
-      return { ok: false, conflict: true, error: `원격이 먼저 변경됨 (rev ${confirmRev}). 먼저 '클라우드에서 복원'으로 가져오세요.` };
+      return { ok: false, conflict: true, kind: "inflight", remoteRev: confirmRev, error: `원격이 먼저 변경됨 (rev ${confirmRev}). 먼저 '클라우드에서 복원'으로 가져오세요.` };
     }
     // 슬롯명·작품수(목록 UI용)
     let slotName = ""; let novelCount = 0;
@@ -57288,6 +57349,7 @@ async function cloudPushCurrentSlot({ silent = true, embedCovers = true } = {}) 
       await setAppMeta("cloud_last_sync", String(manifest.updatedAt));
       await setAppMeta("cloud_pushed_hash", contentHash); // 🔧 R2/NS5: 변경 감지 기준
       setCloudRev(newRev); setCloudLastSync(manifest.updatedAt);
+      setCloudConflict(null); // 🆕 v7.59.4(T05): 업로드 성공 = 이 기기가 최신 정본 → 배지 해제
     }
     setCloudSyncStatus("idle");
     return { ok: true, rev: newRev, coverDropped: _cloudLastCoverDropped };
@@ -57368,6 +57430,7 @@ async function cloudPullCurrentSlot({ silent = true, targetUuid = null } = {}) {
           await setAppMeta("cloud_last_sync", String(Date.now()));
         } catch {}
         setCloudRev(remoteRev); setCloudLastSync(Date.now());
+        setCloudConflict(null); // 🆕 v7.59.4(T05): 원격을 받아왔으니 발산 해소 → 배지 해제
       },
       () => { cloudRestoreInProgressRef.current = false; setCloudSyncStatus(s => (s === "syncing" ? "idle" : s)); } // onSettled: 성공/실패/취소 모두
     );
@@ -70118,17 +70181,46 @@ async function importJSON(directText, onSuccess, onSettled) {
                   ) : (<>
                     <View style={{ flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10 }}>
                       <Text style={{ color: C.sub, fontSize: 12, flex: 1, lineHeight: 17 }}>
-                        상태: {cloudSyncStatus === "syncing" ? "동기화 중…" : cloudSyncStatus === "error" ? "⚠️ 오류" : "연결됨"}{cloudRev > 0 ? `  ·  rev ${cloudRev}` : ""}{cloudLastSync > 0 ? `\n마지막 동기화: ${new Date(cloudLastSync).toLocaleString()}` : ""}
+                        상태: {cloudSyncStatus === "syncing" ? "동기화 중…" : cloudSyncStatus === "error" ? "⚠️ 오류" : cloudConflict ? "⚠️ 충돌 — 원격이 앞섬" : "연결됨"}{cloudRev > 0 ? `  ·  rev ${cloudRev}` : ""}{cloudLastSync > 0 ? `\n마지막 동기화: ${new Date(cloudLastSync).toLocaleString()}` : ""}
                       </Text>
                       <TouchableOpacity onPress={cloudUiSignOut} disabled={cloudBusy} style={{ marginLeft: 8 }}>
                         <Text style={{ color: "#ef4444", fontSize: 12, fontWeight: "600" }}>연결 해제</Text>
                       </TouchableOpacity>
                     </View>
+                    {/* ⚠️ v7.59.4 (T05·DAT-2): 발산 배지 — 자동 push는 무음이라 '멈췄다'는 사실이 남는 곳이 여기뿐이다 */}
+                    {cloudConflict && (
+                      <View style={{ backgroundColor: isDark ? "#422006" : "#fef3c7", borderRadius: 10, padding: 10, marginBottom: 10, borderWidth: 1, borderColor: isDark ? "#a16207" : "#fcd34d" }}>
+                        <Text style={{ color: isDark ? "#fde68a" : "#92400e", fontSize: 11, lineHeight: 16 }}>
+                          ⚠️ 다른 기기의 변경이 클라우드에 있어요 — 원격 rev {cloudConflict.remoteRev}{cloudConflict.updatedAt > 0 ? ` · ${new Date(cloudConflict.updatedAt).toLocaleString()}` : ""}
+                          {"\n"}{cloudConflict.localRev > 0 ? `이 기기가 아는 마지막 백업은 rev ${cloudConflict.localRev}예요.` : "이 기기에는 이 슬롯의 백업 기록이 없어요."} 덮어쓰지 않으려고 업로드를 멈췄어요(자동 백업 포함).
+                          {"\n"}먼저 ‘⬇️ 클라우드에서 복원’으로 받거나, ‘⬆️ 지금 백업’에서 덮어쓸지 직접 고르세요.
+                        </Text>
+                      </View>
+                    )}
                     <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
                       <TouchableOpacity onPress={async () => {
                         const r = await cloudPushCurrentSlot({ silent: false });
                         if (r.ok && r.unchanged) Alert.alert("최신 상태", "변경 사항이 없어 그대로예요.");
                         else if (r.ok) Alert.alert("백업 완료", `클라우드에 저장했어요 (rev ${r.rev}).` + (r.coverDropped > 0 ? `\n⚠️ 표지 ${r.coverDropped}개는 용량 상한으로 제외됐어요.` : ""));
+                        else if (r.conflict && r.kind === "stale") {
+                          // 🆕 v7.59.4 (T05·DAT-2): 조용한 덮어쓰기 대신 '1회 선택'(cloud-sync-plan 설계5).
+                          //   옛 스냅샷은 push 성공 시 삭제되고 리비전 보관은 아직 없으므로 덮어쓰기는 2단 확인.
+                          Alert.alert("동기화 충돌", r.error, [
+                            { text: "취소", style: "cancel" },
+                            { text: "먼저 받기", onPress: () => { cloudPullCurrentSlot({ silent: false }); } },
+                            { text: "덮어쓰기", style: "destructive", onPress: () => {
+                              Alert.alert("클라우드 덮어쓰기", `원격 rev ${r.remoteRev}(다른 기기)의 변경은 사라지고 되돌릴 수 없어요. 이 기기 내용으로 덮어쓸까요?`, [
+                                { text: "취소", style: "cancel" },
+                                { text: "덮어쓰기", style: "destructive", onPress: async () => {
+                                  const r2 = await cloudPushCurrentSlot({ silent: false, force: true });
+                                  if (r2.ok && r2.unchanged) Alert.alert("최신 상태", "변경 사항이 없어 그대로예요.");
+                                  else if (r2.ok) Alert.alert("백업 완료", `클라우드에 저장했어요 (rev ${r2.rev}).` + (r2.coverDropped > 0 ? `\n⚠️ 표지 ${r2.coverDropped}개는 용량 상한으로 제외됐어요.` : ""));
+                                  else if (r2.conflict) Alert.alert("동기화 충돌", r2.error);
+                                } },
+                              ]);
+                            } },
+                          ]);
+                        }
                         else if (r.conflict) Alert.alert("동기화 충돌", r.error);
                       }}
                         disabled={cloudSyncStatus === "syncing"}
@@ -70153,7 +70245,7 @@ async function importJSON(directText, onSuccess, onSettled) {
                       </View>
                     </TouchableOpacity>
                     <Text style={{ color: C.sub, fontSize: 10, lineHeight: 15, marginTop: 6 }}>
-                      ⚠️ 베타 — 같은 슬롯을 두 기기에서 동시에 편집하면 한쪽 변경이 덮어써질 수 있어요(번갈아 사용 권장). 복원은 실패 시 원본을 자동 복구해요.
+                      ⚠️ 베타 — 이 기기가 아직 받지 않은 변경이 클라우드에 있으면 백업이 멈추고 위에 알림이 떠요(조용한 덮어쓰기 없음). 덮어쓰기는 직접 고를 때만 실행되고, 그때 원격 내용은 되돌릴 수 없어요. 두 기기를 번갈아 쓰면서 그때그때 받아두는 걸 권장해요. 복원은 실패 시 원본을 자동 복구해요.
                     </Text>
                   </>)}
                 </>)}
