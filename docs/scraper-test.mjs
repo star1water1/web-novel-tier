@@ -966,7 +966,7 @@ eq("pickRidiGaidenSeries: 빈 목록 → []", S.pickRidiGaidenSeries({ title: "x
     const aiBox = { console, saveGlobalAiConfig() {}, resolveAbortSignal: () => ({ signal: undefined, cleanup() {} }), fetch() {} };
     aiBox.globalThis = aiBox;
     vm.createContext(aiBox);
-    vm.runInContext(src.slice(aiStart, aiEnd) + ";globalThis.__AI={normalizeClaudeModelId,claudeRequestBody,anthropicMessages,claudeErrorMessage,CLAUDE_MODEL_OPTIONS};", aiBox, { filename: "App.jsx#ai" });
+    vm.runInContext(src.slice(aiStart, aiEnd) + ";globalThis.__AI={normalizeClaudeModelId,claudeRequestBody,anthropicMessages,claudeErrorMessage,CLAUDE_MODEL_OPTIONS,buildClaudeModelChoices,claudeModelTier,fetchClaudeModels,setModels:(m)=>{globalClaudeModels=m;}};", aiBox, { filename: "App.jsx#ai" });
     const A = aiBox.__AI;
 
     // 모델 목록은 현행 세대만(구세대 ID가 남아 있으면 사용자에게 낡은 선택지를 노출)
@@ -982,6 +982,44 @@ eq("pickRidiGaidenSeries: 빈 목록 → []", S.pickRidiGaidenSeries({ title: "x
     eq("요청조립: 구세대는 추가 파라미터 없음", A.claudeRequestBody("claude-haiku-4-5", { max_tokens: 2048 }), { max_tokens: 2048, model: "claude-haiku-4-5" });
     eq("요청조립: Opus 5는 effort low + 예산 상향", A.claudeRequestBody("claude-opus-5", { max_tokens: 2048 }), { max_tokens: 8192, model: "claude-opus-5", output_config: { effort: "low" } });
     eq("요청조립: 이미 큰 예산은 안 깎음", A.claudeRequestBody("claude-sonnet-5", { max_tokens: 16000 }).max_tokens, 16000);
+
+
+    // ── 🆕 v7.58.3: 모델 목록 자동 발견(Models API) ───────────────────────────
+    const apiModels = [
+      { id: "claude-haiku-4-5", display_name: "Claude Haiku 4.5", created_at: "2025-10-01T00:00:00Z",
+        capabilities: { effort: { low: { supported: false } }, thinking: { types: { adaptive: { supported: false } } } } },
+      { id: "claude-sonnet-4-6", display_name: "Claude Sonnet 4.6", created_at: "2025-11-14T00:00:00Z",
+        capabilities: { effort: { low: { supported: true } }, thinking: { types: { adaptive: { supported: true } } } } },
+      { id: "claude-sonnet-5", display_name: "Claude Sonnet 5", created_at: "2026-03-01T00:00:00Z",
+        capabilities: { effort: { low: { supported: true } }, thinking: { types: { adaptive: { supported: true } } } } },
+      { id: "claude-opus-4-8", display_name: "Claude Opus 4.8", created_at: "2026-01-20T00:00:00Z",
+        capabilities: { effort: { low: { supported: true } }, thinking: { types: { adaptive: { supported: true } } } } },
+      { id: "claude-opus-6", display_name: "Claude Opus 6", created_at: "2026-09-01T00:00:00Z",
+        capabilities: { effort: { low: { supported: true } }, thinking: { types: { adaptive: { supported: true } } } } },
+    ];
+    const built = A.buildClaudeModelChoices(apiModels);
+    eq("모델발견: 등급 분류", ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-6"].map(A.claudeModelTier), ["haiku", "sonnet", "opus"]);
+    // 등급별 '가장 최신'이 추천 — 앱이 모르는 미래 모델(Opus 6)도 상수 갱신 없이 추천된다
+    eq("모델발견: 등급별 최신이 추천", built.filter(r => r.recommended).map(r => r.id), ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-6"]);
+    eq("모델발견: 표시 순서(빠름→균형→고품질)", built.map(r => r.tier), ["haiku", "sonnet", "sonnet", "opus", "opus"]);
+    eq("모델발견: 라벨에서 'Claude ' 접두 제거", built[0].label, "Haiku 4.5");
+    eq("모델발견: 구세대도 목록에 남김(강제 이관 아님)", built.some(r => r.id === "claude-opus-4-8"), true);
+    eq("모델발견: 빈 응답 → 빈 목록(폴백 유지)", A.buildClaudeModelChoices([]), []);
+    eq("모델발견: 이상한 응답도 죽지 않음", A.buildClaudeModelChoices([null, { }, { id: "" }]), []);
+    // 모르는 계열은 버리지 않고 '기타'로 남긴다(새 계열 출시 대비)
+    const withNew = A.buildClaudeModelChoices([{ id: "claude-newfamily-1", created_at: "2027-01-01T00:00:00Z" }]);
+    eq("모델발견: 모르는 계열도 선택 가능", [withNew.length, withNew[0].tier], [1, "other"]);
+
+    // 요청 조립이 하드코딩 세트가 아니라 '실제 capabilities'를 따르는지
+    A.setModels(built);
+    eq("요청조립(실능력): Haiku는 추가 없음", A.claudeRequestBody("claude-haiku-4-5", { max_tokens: 2048 }), { max_tokens: 2048, model: "claude-haiku-4-5" });
+    eq("요청조립(실능력): 미래 Opus 6에도 자동 적용", A.claudeRequestBody("claude-opus-6", { max_tokens: 2048 }), { max_tokens: 8192, model: "claude-opus-6", output_config: { effort: "low" } });
+    eq("요청조립(실능력): 능력 없는 구세대엔 미적용", A.claudeRequestBody("claude-sonnet-4-6", { max_tokens: 2048 }).output_config, { effort: "low" });
+    // 목록에 없는 모델은 아무 파라미터도 안 붙인다(안전측)
+    eq("요청조립: 미상 모델엔 파라미터 미부착", A.claudeRequestBody("claude-unknown-9", { max_tokens: 2048 }), { max_tokens: 2048, model: "claude-unknown-9" });
+    eq("모델 승계: 발견 목록에 있으면 그대로", A.normalizeClaudeModelId("claude-opus-4-8"), "claude-opus-4-8");
+    A.setModels(null); // 이후 테스트는 폴백(하드코딩) 기준으로 되돌림
+    eq("모델 승계: 목록 없으면 구세대→후속", A.normalizeClaudeModelId("claude-opus-4-8"), "claude-opus-5");
 
     // 상태코드별 안내(종전엔 401/429 외 전부 'API 오류 N')
     const resOf = (status, body) => ({ status, ok: false, json: async () => body });

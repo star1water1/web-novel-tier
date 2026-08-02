@@ -2,9 +2,42 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.58.2 (AI 호출 계층 일원화 + 모델 세대 갱신, 베타)                        ║
+ * ║  버전: 7.58.3 (AI 모델 자동 발견 + 적대적 점검, 베타)                             ║
  * ║  최종 수정: 2026-08-02                                                        ║
  * ║  총 라인 수: 약 77,000줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔭 v7.58.3 AI 모델 자동 발견 + 적대적 점검 (2026-08-02)                          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [A] 모델 목록을 하드코딩에서 '자동 발견'으로                                     ║
+ * ║ v7.58.2까지는 모델 3종이 상수 배열이었고, 새 모델이 나올 때마다 앱을 고쳐야 했다.  ║
+ * ║ 게다가 5세대 전용 파라미터(effort·출력 예산)도 하드코딩 Set으로 판정해, 다음      ║
+ * ║ 세대가 나오면 또 낡는 구조였다.                                                 ║
+ * ║ • fetchClaudeModels: GET /v1/models — '이 키로 지금 쓸 수 있는 모델'을 그대로     ║
+ * ║   받아온다(앱이 모델 ID를 추측하지 않는다). 키 저장 시 자동 조회 + ‘↻ 최신 목록’. ║
+ * ║ • buildClaudeModelChoices: id/display_name으로 등급(빠름·균형·고품질) 분류 후     ║
+ * ║   **등급별 created_at 최신 1개에 ⭐추천**. 모르는 계열도 버리지 않고 '기타'로     ║
+ * ║   남겨 선택 가능(새 계열 출시 대비). 목록·조회시각은 ai_config에 캐시(오프라인).  ║
+ * ║ • claudeRequestBody가 하드코딩 Set 대신 **응답의 capabilities**로 판단 —          ║
+ * ║   effort.low.supported → effort=low, thinking.adaptive.supported → 출력 예산      ║
+ * ║   하한. 회귀 테스트로 '앱이 모르는 미래 모델(Opus 6)'에도 자동 적용됨을 고정.      ║
+ * ║   목록을 못 받았으면 종전 하드코딩 폴백(무회귀), 능력 미상 모델엔 미부착(안전측).  ║
+ * ║ • 고른 모델이 목록에서 사라지면(종료) 같은 등급의 추천 모델로 승계 + 안내.        ║
+ * ║                                                                              ║
+ * ║ [B] 적대적 점검 — '구색만 갖춘 기능' 색출 (정의만 되고 안 쓰이는 함수 25종 스캔)   ║
+ * ║ • 확인된 사실(호출 0): 조합 태그 5종(createComboTag·parseComboTag·isComboTag…)은  ║
+ * ║   v3.5.12에 '조합식 분류 폐지'된 뒤 코드만 잔존. 카카오 회차 GraphQL 3종          ║
+ * ║   (fetchKakaoEpisodeSplit·parseKakaoProductList·parseKakaoViewerDate)은 v7.49.6이 ║
+ * ║   '받을 방법 없음'으로 호출을 뗀 뒤 잔존. perfWrap 미사용.                        ║
+ * ║ • 오탐으로 판명(중요): saveHiddenTags·savePinnedTags·saveTierHistory가 미호출이라  ║
+ * ║   '저장이 안 되는 기능'으로 의심했으나, 실제 저장은 deferSetAppMeta·              ║
+ * ║   addTierHistoryEntry 내부 setAppMeta로 정상 수행 중 — 중복 래퍼일 뿐 결함 아님.   ║
+ * ║   perfMonitor도 trackFunc가 12곳에 직접 배선돼 정상(perfWrap 래퍼만 미사용).      ║
+ * ║ • 이번엔 삭제하지 않음: 죽은 함수 제거는 사용자 이득 0 + 회귀 위험만 있고,         ║
+ * ║   일부는 회귀 테스트 픽스처로 쓰이고 있다. 목록만 남겨 후속 판단에 넘긴다.         ║
+ * ║ 검증: scraper-test 526/526(+14 신규 — 등급 분류·추천 선정·미래 모델 자동 적용·    ║
+ * ║ 이상 응답 방어·폴백). esbuild 통과. APP_VERSION 7.58.3.                          ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -15562,20 +15595,88 @@ const AI_SCAN_CHUNK_SIZE = 120;
 // 🆕 v7.31.1: 사용자 선택 Claude 모델 (설정에서 변경, ai_config.json 영속). callClaude* 호출에 우선 적용.
 //   globalTierConfig 패턴과 동일하게 모듈 전역 mutable로 두고, 설정 로드/변경 시 갱신.
 let globalAiModel = SYNONYM_AI_MODEL;
-// 🔧 v7.58.2: 세대 갱신 — Sonnet 4.6 → Sonnet 5, Opus 4.8 → Opus 5.
-//   둘 다 이전 세대와 '같은 가격대'에서 품질만 올라간 교체라 비용 증가 없이 이득이다.
-//   ※기존 사용자가 저장해 둔 claude-sonnet-4-6 / claude-opus-4-8도 API에서 아직 유효하지만,
-//     목록에 없으면 로드 시 기본(Haiku)으로 되돌아간다 → CLAUDE_MODEL_LEGACY로 매핑해 승계한다.
+// 🆕 v7.58.3: 모델 목록은 더 이상 하드코딩이 정본이 아니다 — Models API(GET /v1/models)로
+//   '이 키로 지금 쓸 수 있는 모델'을 직접 받아 최신 세대를 자동 추천한다(아래 fetchClaudeModels).
+//   아래 목록은 키가 없거나 조회에 실패했을 때만 쓰는 폴백이다. 새 모델이 나와도 앱 업데이트 없이 뜬다.
 const CLAUDE_MODEL_OPTIONS = [
   { id: "claude-haiku-4-5", label: "Haiku 4.5", desc: "빠르고 저렴 (기본)" },
   { id: "claude-sonnet-5",  label: "Sonnet 5",  desc: "균형 · 중간 비용" },
   { id: "claude-opus-5",    label: "Opus 5",    desc: "최고 품질 · 고가" },
 ];
 const CLAUDE_MODEL_LEGACY = { "claude-sonnet-4-6": "claude-sonnet-5", "claude-sonnet-4-5": "claude-sonnet-5", "claude-opus-4-8": "claude-opus-5", "claude-opus-4-7": "claude-opus-5", "claude-opus-4-6": "claude-opus-5", "claude-opus-4-5": "claude-opus-5" };
+// 🆕 v7.58.3: Models API로 받아 온 목록(앱 부팅/키 저장/새로고침 시 채움). null = 아직 모름 → 폴백 사용.
+//   [{ id, label, desc, tier, createdAt, effort:boolean, adaptive:boolean, recommended:boolean }]
+let globalClaudeModels = null;
+function claudeModelList() { return (globalClaudeModels && globalClaudeModels.length) ? globalClaudeModels : CLAUDE_MODEL_OPTIONS; }
 function normalizeClaudeModelId(m) {
   const id = String(m == null ? "" : m).trim();
-  if (CLAUDE_MODEL_OPTIONS.some(o => o.id === id)) return id;
+  if (claudeModelList().some(o => o.id === id)) return id;
+  if (CLAUDE_MODEL_OPTIONS.some(o => o.id === id)) return id; // 폴백 목록에 있으면 유효한 선택으로 인정
   return CLAUDE_MODEL_LEGACY[id] || SYNONYM_AI_MODEL;
+}
+// 모델 ID/표시명 → 등급. 앤트로픽 명명 규칙(haiku/sonnet/opus)에 기대되, 모르는 계열은 '기타'로
+//   버리지 않고 목록에 남긴다(새 계열이 나와도 사용자가 고를 수 있게).
+const CLAUDE_TIERS = [
+  { key: "haiku",  match: /haiku/i,  label: "빠름",   desc: "빠르고 저렴" },
+  { key: "sonnet", match: /sonnet/i, label: "균형",   desc: "균형 · 중간 비용" },
+  { key: "opus",   match: /opus/i,   label: "고품질", desc: "최고 품질 · 고가" },
+];
+function claudeModelTier(id) {
+  const t = CLAUDE_TIERS.find(x => x.match.test(String(id || "")));
+  return t ? t.key : "other";
+}
+// 응답 capabilities → 우리가 쓰는 두 가지 사실만 뽑는다. 모양이 달라지면 조용히 false(=구세대 취급).
+function claudeCapsOf(m) {
+  const c = (m && m.capabilities) || {};
+  const effort = !!(c.effort && (c.effort.low || {}).supported === true);
+  const adaptive = !!(c.thinking && c.thinking.types && (c.thinking.types.adaptive || {}).supported === true);
+  return { effort, adaptive };
+}
+// Models API 응답(data[]) → 화면/요청에 쓸 목록. 등급별 최신 1개에 '추천' 표시.
+function buildClaudeModelChoices(apiModels) {
+  const rows = (Array.isArray(apiModels) ? apiModels : [])
+    .filter(m => m && typeof m.id === "string" && m.id)
+    .map(m => {
+      const caps = claudeCapsOf(m);
+      return {
+        id: m.id,
+        label: String(m.display_name || m.id).replace(/^Claude\s+/i, "").trim() || m.id,
+        tier: claudeModelTier(m.id),
+        createdAt: Date.parse(m.created_at || "") || 0,
+        effort: caps.effort, adaptive: caps.adaptive,
+        recommended: false, desc: "",
+      };
+    });
+  if (!rows.length) return [];
+  // 등급별 최신(created_at) 1개 = 추천. 동률이면 ID 사전순 뒤쪽(대개 상위 버전).
+  for (const t of CLAUDE_TIERS) {
+    const inTier = rows.filter(r => r.tier === t.key)
+      .sort((a, b) => (b.createdAt - a.createdAt) || (a.id < b.id ? 1 : -1));
+    if (inTier[0]) { inTier[0].recommended = true; inTier[0].desc = t.desc; }
+  }
+  // 표시 순서: 빠름 → 균형 → 고품질 → 기타, 각 등급 안에서는 최신 먼저
+  const order = { haiku: 0, sonnet: 1, opus: 2, other: 3 };
+  rows.sort((a, b) => (order[a.tier] - order[b.tier]) || (b.createdAt - a.createdAt) || (a.id < b.id ? 1 : -1));
+  return rows;
+}
+// GET /v1/models — 이 키로 쓸 수 있는 모델을 그대로 받아온다(모델 ID를 앱이 추측하지 않는다).
+async function fetchClaudeModels(apiKey, opts = {}) {
+  if (!apiKey) throw new Error("API 키가 없습니다");
+  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: opts.timeoutMs || 15000 });
+  let res;
+  try {
+    res = await fetch("https://api.anthropic.com/v1/models?limit=100", {
+      headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" }, signal,
+    });
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error("응답이 없어 중단했어요 (시간 초과)");
+    throw e;
+  } finally { cleanup(); }
+  if (!res.ok) throw new Error(await claudeErrorMessage(res, "models"));
+  const data = await res.json();
+  const rows = buildClaudeModelChoices(data && data.data);
+  if (!rows.length) throw new Error("쓸 수 있는 모델을 못 찾았어요. 잠시 후 다시 시도해 주세요.");
+  return rows;
 }
 // 🆕 v7.31.1: 누적 토큰 사용량(전 슬롯 공통, ai_config.json 영속). Claude 응답 usage에서 집계.
 //   ※ 조직 단위 청구/사용량 API는 admin 키가 필요해 일반 키로는 못 불러옴 → 앱이 보낸 호출의 토큰만 누적.
@@ -15650,10 +15751,14 @@ const CLAUDE_THINKING_DEFAULT_ON = new Set(["claude-opus-5", "claude-sonnet-5"])
 const CLAUDE_THINKING_MIN_MAX_TOKENS = 8192;
 function claudeRequestBody(model, body) {
   const out = { ...body, model };
-  if (CLAUDE_THINKING_DEFAULT_ON.has(model)) {
-    out.output_config = { ...(out.output_config || {}), effort: "low" };
-    out.max_tokens = Math.max(Number(out.max_tokens) || 0, CLAUDE_THINKING_MIN_MAX_TOKENS);
-  }
+  // 🆕 v7.58.3: 하드코딩 세트가 아니라 Models API가 알려준 실제 능력으로 판단한다.
+  //   목록을 아직 못 받았으면(키 없음·오프라인) 종전 하드코딩 세트로 폴백 → 새 모델이 나와도
+  //   상수 갱신 없이 올바른 파라미터가 붙고, 능력을 모르는 모델엔 아무것도 안 붙는다(안전측).
+  const known = (globalClaudeModels || []).find(m => m.id === model);
+  const useEffort = known ? known.effort : CLAUDE_THINKING_DEFAULT_ON.has(model);
+  const useFloor = known ? known.adaptive : CLAUDE_THINKING_DEFAULT_ON.has(model);
+  if (useEffort) out.output_config = { ...(out.output_config || {}), effort: "low" };
+  if (useFloor) out.max_tokens = Math.max(Number(out.max_tokens) || 0, CLAUDE_THINKING_MIN_MAX_TOKENS);
   return out;
 }
 // 상태코드 → 사용자가 뭘 해야 하는지 아는 안내. 종전엔 401/429만 문구가 있고 나머지는
@@ -20705,7 +20810,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.58.2";
+const APP_VERSION = "7.58.3";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -20731,6 +20836,19 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.58.3", date: "2026-08-02",
+    title: "🔭 AI 모델을 자동으로 최신 상태로",
+    highlights: [
+      { type: "new", text: "🔭 이제 AI 모델 목록을 앱에 박아 두지 않고 Anthropic에서 직접 받아와요. 새 모델이 나오면 앱 업데이트 없이 설정에 바로 뜨고, 등급별로 가장 최신 모델에 ⭐추천이 붙어요." },
+      { type: "new", text: "↻ 설정 › 🔌 연결에 ‘최신 목록’ 버튼이 생겼어요. API 키를 저장하면 처음 한 번은 자동으로 받아와요." },
+      { type: "fix", text: "🔁 고르셨던 모델이 종료되면 같은 등급의 최신 모델로 자동으로 이어져요(예전엔 조용히 기본 모델로 되돌아갔어요)." },
+      { type: "improve", text: "⚙️ 모델마다 필요한 설정(생각 깊이·출력 여유)을 앱이 추측하지 않고 모델이 알려준 정보대로 맞춰요. 앞으로 나올 모델에도 자동으로 맞아요." },
+    ],
+    details: [
+      { type: "improve", text: "받아 온 목록은 기기에 저장돼 오프라인에서도 유지돼요. 목록을 못 받으면 기존 3종(Haiku 4.5 · Sonnet 5 · Opus 5)으로 동작해요." },
+    ],
+  },
   {
     version: "7.58.2", date: "2026-08-02",
     title: "🤖 AI 기능 점검 — 최신 모델 + 실패할 때 알려주기",
@@ -40120,6 +40238,9 @@ function AppContent() {
   const [kakaoRestApiKey, setKakaoRestApiKey] = useState(""); // 🆕 v7.46.0: 카카오페이지 검색용 다음(Daum) REST 키 (ai_config 영속, 전역 globalKakaoRestKey 동기화)
   const [aiProvider, setAiProvider] = useState("gemini"); // 🆕 v7.28.9 AI 제공자 ("claude"|"gemini") · 🆕 v7.28.10 기본값 Gemini(무료)
   const [claudeModel, setClaudeModel] = useState(SYNONYM_AI_MODEL); // 🆕 v7.31.1: 사용자 선택 Claude 모델 (ai_config 영속)
+  const [claudeModels, setClaudeModels] = useState(CLAUDE_MODEL_OPTIONS); // 🆕 v7.58.3: Models API로 받은 실제 목록(폴백=하드코딩)
+  const [claudeModelsAt, setClaudeModelsAt] = useState(0);   // 마지막 조회 시각(ms) — 0이면 아직 조회 전
+  const [claudeModelsBusy, setClaudeModelsBusy] = useState(false);
   const [aiUsage, setAiUsage] = useState({ calls: 0, input: 0, output: 0, byModel: {} }); // 🆕 v7.31.1: 누적 토큰 사용량
   const [apiKeyHelpModalOpen, setApiKeyHelpModalOpen] = useState(false); // 🆕 v7.28.10: API 키 발급 방법 안내 모달
   const [aiWideScan, setAiWideScan] = useState(false); // 🆕 v7.28.11: 넓게 점검(옵트인) — 1회 태그 포함·상한 400
@@ -48845,12 +48966,44 @@ function AppContent() {
     const k = (key || "").trim();
     setClaudeApiKey(k);
     try { await saveGlobalAiConfig({ claude_api_key: k }); } catch (e) { console.warn("[ai] 키 저장 실패:", e?.message); }
+    // 🆕 v7.58.3: 키가 생기면 바로 모델 목록을 받아 최신 세대를 추천한다(실패는 조용히 폴백 유지).
+    if (k) { try { const rows = await fetchClaudeModels(k); globalClaudeModels = rows; setClaudeModels(rows); const now = Date.now(); setClaudeModelsAt(now); await saveGlobalAiConfig({ claude_models: rows, claude_models_at: now }); } catch (e) { console.warn("[ai] 모델 목록 조회 실패:", e?.message); } }
   }
   // 🆕 v7.31.1: Claude 모델 선택 저장 (전역 mutable + ai_config 영속)
   async function saveClaudeModel(m) {
     const id = normalizeClaudeModelId(m); // 🔧 v7.58.2: 구세대 저장값은 후속 모델로 승계
     globalAiModel = id; setClaudeModel(id);
     try { await saveGlobalAiConfig({ claude_model: id }); } catch (e) { console.warn("[ai] 모델 저장 실패:", e?.message); }
+  }
+  // 🆕 v7.58.3: 모델 목록 새로고침 — Models API에서 '이 키로 쓸 수 있는 모델'을 받아 목록·추천을 갱신.
+  //   전역(globalClaudeModels)에도 반영해야 요청 조립(claudeRequestBody)이 실제 능력을 보고 판단한다.
+  //   조용히 실패하면 하드코딩 폴백이 계속 쓰이므로 무회귀. silent=true면 부팅 자동 갱신(알림 없음).
+  async function refreshClaudeModels(silent = false) {
+    const key = (claudeApiKey || "").trim();
+    if (!key) { if (!silent) Alert.alert("Claude 모델", "먼저 API 키를 저장해 주세요."); return; }
+    if (claudeModelsBusy) return;
+    setClaudeModelsBusy(true);
+    try {
+      const rows = await fetchClaudeModels(key);
+      globalClaudeModels = rows;
+      setClaudeModels(rows);
+      const now = Date.now(); setClaudeModelsAt(now);
+      // 지금 고른 모델이 목록에서 사라졌으면(종료) 같은 등급의 추천 모델로 승계
+      const stillThere = rows.some(r => r.id === claudeModel);
+      let picked = claudeModel;
+      if (!stillThere) {
+        const tier = claudeModelTier(claudeModel);
+        const rec = rows.find(r => r.recommended && r.tier === tier) || rows.find(r => r.recommended) || rows[0];
+        if (rec) { picked = rec.id; globalAiModel = rec.id; setClaudeModel(rec.id); }
+      }
+      try { await saveGlobalAiConfig({ claude_models: rows, claude_models_at: now, claude_model: picked }); } catch {}
+      if (!silent) {
+        const rec = rows.filter(r => r.recommended).map(r => r.label).join(" · ");
+        Alert.alert("모델 목록 갱신됨", `${rows.length}개 모델을 받았어요.${rec ? "\n추천: " + rec : ""}${stillThere ? "" : "\n고르셨던 모델이 종료돼 최신 모델로 바꿨어요."}`);
+      }
+    } catch (e) {
+      if (!silent) Alert.alert("모델 목록을 못 받았어요", e?.message || String(e));
+    } finally { setClaudeModelsBusy(false); }
   }
   // 🆕 v7.31.1: 누적 토큰 사용량 초기화
   async function resetAiUsage() {
@@ -49557,6 +49710,11 @@ function AppContent() {
       if (cfg.ai_provider === "gemini" || cfg.ai_provider === "claude") setAiProvider(cfg.ai_provider);
       if (typeof cfg.ai_wide_scan === "boolean") setAiWideScan(cfg.ai_wide_scan);
       // 🆕 v7.31.1: Claude 모델 선택 + 누적 토큰 사용량 복원
+      // 🆕 v7.58.3: 지난번에 받아 둔 모델 목록을 먼저 복원(오프라인에서도 목록·능력 유지).
+      if (Array.isArray(cfg.claude_models) && cfg.claude_models.length) {
+        const rows = cfg.claude_models.filter(r => r && typeof r.id === "string" && r.id);
+        if (rows.length) { globalClaudeModels = rows; setClaudeModels(rows); setClaudeModelsAt(Number(cfg.claude_models_at) || 0); }
+      }
       // 🔧 v7.58.2: 저장된 모델이 구세대(Sonnet 4.6·Opus 4.8 등)면 후속 모델로 승계.
       //   종전엔 목록에 없으면 조용히 기본(Haiku)으로 되돌아가, 사용자가 고른 등급이 사라졌다.
       if (typeof cfg.claude_model === "string" && cfg.claude_model) {
@@ -69725,27 +69883,40 @@ async function importJSON(directText, onSuccess, onSettled) {
                       </TouchableOpacity>
                     </View>
                     <Text style={{ color: (claudeApiKey || "").trim() ? (isDark ? "#4ade80" : "#16a34a") : C.sub, fontSize: 11, marginTop: 6 }}>
-                      {(claudeApiKey || "").trim() ? `✓ 키 입력됨 · 모델 ${(CLAUDE_MODEL_OPTIONS.find(o => o.id === claudeModel) || {}).label || claudeModel}` : "키 미설정 — AI 점검 비활성"}
+                      {(claudeApiKey || "").trim() ? `✓ 키 입력됨 · 모델 ${(claudeModels.find(o => o.id === claudeModel) || CLAUDE_MODEL_OPTIONS.find(o => o.id === claudeModel) || {}).label || claudeModel}` : "키 미설정 — AI 점검 비활성"}
                     </Text>
                     <Text style={{ color: C.sub, fontSize: 10, marginTop: 4 }}>
                       키 발급: console.anthropic.com → API Keys
                     </Text>
                     {/* 🆕 v7.31.1: Claude 모델 선택 — 태그추천·OCR·정보불러오기·유의어 공통 적용 */}
-                    <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", marginTop: 14, marginBottom: 6 }}>🤖 Claude 모델</Text>
-                    <View style={{ flexDirection: "row", gap: 6 }}>
-                      {CLAUDE_MODEL_OPTIONS.map(o => {
+                    {/* 🆕 v7.58.3: 목록을 하드코딩하지 않고 Models API에서 받아 표시 — 새 모델이 나오면
+                        앱 업데이트 없이 여기에 뜨고, 등급별 최신 모델에 '추천' 배지가 붙는다. */}
+                    <View style={{ flexDirection: "row", alignItems: "center", marginTop: 14, marginBottom: 6 }}>
+                      <Text style={{ color: C.text, fontSize: 12, fontWeight: "700", flex: 1 }}>🤖 Claude 모델</Text>
+                      <TouchableOpacity onPress={() => refreshClaudeModels(false)} disabled={claudeModelsBusy} activeOpacity={0.7}
+                        style={{ paddingVertical: 5, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: C.line, opacity: claudeModelsBusy ? 0.5 : 1 }}>
+                        <Text style={{ color: C.primary, fontSize: 11, fontWeight: "800" }}>{claudeModelsBusy ? "확인 중…" : "↻ 최신 목록"}</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                      {claudeModels.map(o => {
                         const on = claudeModel === o.id;
                         return (
                           <TouchableOpacity key={o.id} onPress={() => saveClaudeModel(o.id)} activeOpacity={0.7}
-                            style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 6, borderRadius: 10, alignItems: "center", backgroundColor: on ? C.primary : C.bg, borderWidth: 1, borderColor: on ? C.primary : C.line }}>
-                            <Text style={{ color: on ? "#fff" : C.text, fontWeight: "800", fontSize: 12 }}>{o.label}</Text>
-                            <Text style={{ color: on ? "#e0e7ff" : C.sub, fontSize: 9, marginTop: 2, textAlign: "center" }}>{o.desc}</Text>
+                            style={{ minWidth: "31%", flexGrow: 1, paddingVertical: 8, paddingHorizontal: 6, borderRadius: 10, alignItems: "center", backgroundColor: on ? C.primary : C.bg, borderWidth: 1, borderColor: on ? C.primary : (o.recommended ? C.primary : C.line) }}>
+                            <Text numberOfLines={1} style={{ color: on ? "#fff" : C.text, fontWeight: "800", fontSize: 12 }}>{o.label}</Text>
+                            <Text numberOfLines={1} style={{ color: on ? "#e0e7ff" : C.sub, fontSize: 9, marginTop: 2, textAlign: "center" }}>
+                              {o.recommended ? "⭐ 추천" : ""}{o.recommended && o.desc ? " · " : ""}{o.desc || ""}
+                            </Text>
                           </TouchableOpacity>
                         );
                       })}
                     </View>
                     <Text style={{ color: C.sub, fontSize: 10, marginTop: 6, lineHeight: 14 }}>
-                      모든 AI 기능이 이 모델을 사용해요. 품질이 필요하면 Sonnet/Opus, 비용·속도 우선이면 Haiku.
+                      모든 AI 기능이 이 모델을 사용해요. 품질이 필요하면 고품질 등급, 비용·속도 우선이면 빠름 등급.
+                      {claudeModelsAt
+                        ? ` 목록은 ${new Date(claudeModelsAt).toLocaleDateString()}에 Anthropic에서 직접 받아왔어요 — 새 모델이 나오면 ‘↻ 최신 목록’으로 바로 반영돼요.`
+                        : " ‘↻ 최신 목록’을 누르면 지금 쓸 수 있는 모델을 직접 받아와 최신 모델을 추천해요."}
                     </Text>
                   </>
                 )}
@@ -69772,7 +69943,7 @@ async function importJSON(directText, onSuccess, onSettled) {
                         </Text>
                         {Object.entries(aiUsage.byModel || {}).map(([m, v]) => (
                           <Text key={m} style={{ color: C.sub, fontSize: 10.5, marginTop: 2 }}>
-                            · {(CLAUDE_MODEL_OPTIONS.find(o => o.id === m) || {}).label || m}: {Number(v.calls).toLocaleString()}회 · 입력 {Number(v.input).toLocaleString()} · 출력 {Number(v.output).toLocaleString()}
+                            · {(claudeModels.find(o => o.id === m) || CLAUDE_MODEL_OPTIONS.find(o => o.id === m) || {}).label || m}: {Number(v.calls).toLocaleString()}회 · 입력 {Number(v.input).toLocaleString()} · 출력 {Number(v.output).toLocaleString()}
                           </Text>
                         ))}
                         <TouchableOpacity onPress={resetAiUsage} style={{ alignSelf: "flex-start", marginTop: 8, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: C.line }}>
