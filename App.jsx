@@ -2,9 +2,64 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.9 (구색 기능 개선 Phase 3 — 수문장 모달 재설계)                        ║
+ * ║  버전: 7.59.10 (구색 기능 개선 Phase 3 — 검증 설정 노출)                           ║
  * ║  최종 수정: 2026-08-02                                                        ║
- * ║  총 라인 수: 약 79,290줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 79,450줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🎛️ v7.59.10 검증 설정 노출 — 점검 길이·수문장 임계·감쇠 (T12 · HYB-5 HC-3 HC-4)  ║
+ * ║    (2026-08-02)                                                                  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제] '🔍 의심도 민감도' 설정은 **'얼마나 자주'만** 조절할 수 있었다. 사용자가    ║
+ * ║ 체감하는 피로의 대부분인 '한 번 점검이 얼마나 긴가'(갤로핑 7 + 이진 4 = 최대 11회)║
+ * ║ 와 수문장 제안 임계(3), 자기보정 감쇠(decay 0.85)는 전부 module 상수라 잠겨       ║
+ * ║ 있었다. 길다고 느끼는 사용자에게 남은 선택지는 매번 '시퀀스 중단'뿐이었다.        ║
+ * ║                                                                              ║
+ * ║ [수정 ①] suspicionConfig에 키 2개 추가 — `gallopMax`(5~8, 기본 7) ·              ║
+ * ║ `gatekeeperThreshold`(2~5, 기본 3). 이미 있던 `decay`는 스테퍼만 없었으므로       ║
+ * ║ (프리셋으로만 간접 변경) 스테퍼를 붙였다(HC-4). **신규 module-global 0개** —      ║
+ * ║ 전부 globalSuspicionConfig를 읽는 접근자 함수(verificationGallopMax /             ║
+ * ║ verificationMaxResponses / verificationCandidatePool / gatekeeperThreshold)다.   ║
+ * ║ 범위를 벗어나거나 손상된 값은 기존 상수로 폴백해 엔진이 죽지 않는다.              ║
+ * ║                                                                              ║
+ * ║ [수정 ②] 후보 풀을 상수 64에서 **갤로핑 예산 파생값**으로 — `2^(gallopMax-1)`.   ║
+ * ║ ⚠️ 로드맵 카드의 공식 `2^gallopMax - 1`(=127)은 **오산이었다**. probe는           ║
+ * ║ `next = lo + jump`이고 jump는 *다음* 라운드용으로만 2배가 되므로 실제 probe       ║
+ * ║ 인덱스는 0,1,3,7,15,31,63,127 — g회에 2^(g-1)-1까지만 닿는다. 카드 공식을 그대로  ║
+ * ║ 썼다면 갤로핑이 평생 닿지 못하는 절반을 풀에 담아, 카드가 경계한 '넓지만 닿지     ║
+ * ║ 못하는 조합'을 설정이 아니라 코드가 만들어 냈을 것이다. 올바른 파생값은 g=7에서   ║
+ * ║ 정확히 **64** — 즉 종전 상수가 맞았고 **기본값 동작은 무변경**이다.               ║
+ * ║                                                                              ║
+ * ║ [수정 ③] 진행 중 세션은 **시작 시점 예산 스냅샷**(session.limits)으로 끝까지      ║
+ * ║ 간다. 런타임 변경이 즉시 먹으면 시퀀스 중간에 상한이 줄어 '11/9' 같은 진행       ║
+ * ║ 표시가 나온다(불변조건 2와 같은 원리). planVerificationProbe /                    ║
+ * ║ evaluateSequenceProgress가 limits 인자를 받고, 진행바·진단 4곳은 limitsOf()로      ║
+ * ║ 읽는다 — 스냅샷이 없는 구 세션 객체는 현재 설정으로 폴백(크래시 없음).            ║
+ * ║                                                                              ║
+ * ║ [수정 ④] 프리셋 3종에 새 키를 **전부** 넣었다. saveAppSettings가 suspicionConfig를║
+ * ║ deep merge하므로 프리셋에 빠진 키는 이전 값이 잔류하는데, presetEq는 프리셋의     ║
+ * ║ 키만 비교해 '활성'으로 칠한다 → 화면은 '보수적'인데 길이는 직전 값인 불일치.      ║
+ * ║ 보수적 6/임계4, 보통 7/3, 민감 8/2 — 빈도와 길이가 같은 방향으로 움직인다.        ║
+ * ║                                                                              ║
+ * ║ [수정 ⑤] decay 하한 가드(0.5). 스테퍼로 열린 값이라 0이면 검증 한 번에 전 작품    ║
+ * ║ 의심도가 0으로 날아가 엔진이 무력화된다. `Number(null)===0`이므로 null 체크를     ║
+ * ║ 먼저 한다 — 안 그러면 '키 없음'이 하한 0.5로 둔갑한다(구버전 백업 경로).          ║
+ * ║                                                                              ║
+ * ║ [제거] `VERIFICATION_MAX_RESPONSES` · `VERIFICATION_CANDIDATE_POOL` 상수 —       ║
+ * ║ 이제 전부 파생값이라 상수로 남기면 '11'과 '64'가 어딘가에서 계속 참조되는 죽은    ║
+ * ║ 진실이 하나 더 생긴다. GALLOP/BINARY/GATEKEEPER 상수는 폴백 기본값으로 잔존.      ║
+ * ║                                                                              ║
+ * ║ [배관] suspicionConfig 6지점(선로드·병합·saveAppSettings·백업·복원·슬롯 리셋)이   ║
+ * ║ 전부 `{...DEFAULT_SUSPICION_CONFIG, ...saved}` 형태라 **추가 배선이 필요 없다**.  ║
+ * ║ 구버전 백업(신규 키 없음)도 기본값으로 채워진다. v9 스키마 무변경.                ║
+ * ║                                                                              ║
+ * ║ [검증] 실제 플래너·접근자·프리셋을 소스에서 떼어내 45개 단언 —                    ║
+ * ║ gallop 5~8 × 파생 풀 × **전 경계 위치 244케이스** 수렴(lo<b≤hi) + 예산 초과 0건,  ║
+ * ║ 풀 끝 도달 exhausted 4종, 카드 공식(127) 대조군(lo=63에서 max), 스냅샷 불변성,    ║
+ * ║ 프리셋 3종 presetEq 단독 활성 + 키 누락 대조군, 라운드트립 4종 + 구버전 백업,     ║
+ * ║ 범위 밖 18종 폴백, decay 가드 12케이스. esbuild 통과, scraper-test 526/526.       ║
+ * ║ APP_VERSION 7.59.10.                                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -21422,7 +21477,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.9";
+const APP_VERSION = "7.59.10";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -38274,9 +38329,13 @@ async function buildPlacementList(excludeId) {
 //   소진하면(idx 63 도달까지 7회) 이진 정제 단계 전에 max 종료 → 큰 이동을 [lo,hi]
 //   중앙(±최대 16칸)에만 놓고 "continue"로 떠넘김(다음 세션이 idx 0부터 재갤로핑 낭비).
 //   [수정] 갤로핑과 이진에 분리 예산 부여 — 경계를 찾으면 이진 정제가 항상 실행돼 정밀 수렴.
-const VERIFICATION_GALLOP_MAX = 7;   // 갤로핑(경계 발견) 단계 probe 상한
-const VERIFICATION_BINARY_MAX = 4;   // 경계 발견 후 이진 정제 추가 probe 상한 (구간 2^4=16배 축소)
-const VERIFICATION_MAX_RESPONSES = VERIFICATION_GALLOP_MAX + VERIFICATION_BINARY_MAX; // 총 안전 상한(=11)
+// 🔧 v7.59.10 (T12·HYB-5): GALLOP는 이제 **기본값**이다 — suspicionConfig.gallopMax(5~8)로 사용자가 조절한다.
+//   상수는 설정이 없거나 범위를 벗어났을 때의 폴백. BINARY는 고정(4) — 이진 정제는 구간을 2^4=16배 좁히는
+//   '마무리' 예산이라 여기까지 열면 경계를 찾고도 못 좁히는 조합이 생긴다.
+const VERIFICATION_GALLOP_MAX = 7;   // 갤로핑(경계 발견) 단계 probe 상한 (기본값)
+const VERIFICATION_BINARY_MAX = 4;   // 경계 발견 후 이진 정제 추가 probe 상한 (구간 2^4=16배 축소) — 고정
+// (구 VERIFICATION_MAX_RESPONSES 상수는 v7.59.10에서 제거 — 이제 verificationMaxResponses()가 유일한 진실원천이다.
+//  상수로 남겨 두면 '11'이 어딘가에서 계속 참조되는 죽은 진실이 하나 더 생긴다.)
 const VERIFICATION_K_AFTER_INFLECTION = 2; // (v7.20.11~ 이진 수렴이 경계를 직접 확정 — 코어 루프 미사용, 진단/하위호환 잔존)
 // 🆕 Q3: 다회독 승급 후보 — saveEdit에서 reread_count가 이 값 이상으로 '증가'했고 현재 티어가 하위 절반이면
 //   underrated 검증을 큐에 제안만(티어 직접변경 X, patrick-truth 유지). v7.4.13 폐지(읽은수 자동검증 noise) 재발 방지를
@@ -38284,10 +38343,42 @@ const VERIFICATION_K_AFTER_INFLECTION = 2; // (v7.20.11~ 이진 수렴이 경계
 const VERIFICATION_REREAD_PROMOTE_MIN = 3; // 승급 후보 제안 최소 다회독 수(보수적: 3회 이상 재독)
 // 🔧 v7.21.0: 수문장 제안 임계 5→3. [이전] 같은 작품이 5개 세션에서 경계(blocker)여야 제안 →
 //   일반 라이브러리에선 사실상 도달 불가(거의 vestigial). 3으로 낮춰 실제 발화하게 함.
+// 🔧 v7.59.10 (T12·HC-3): 기본값 — suspicionConfig.gatekeeperThreshold(2~5)로 조절.
 const GATEKEEPER_BLOCK_THRESHOLD = 3;
-// 🆕 v7.20.11: 갤로핑+이진 탐색 후보 풀 — 지수 점프(2^k-1)가 닿을 범위. 7회 응답이면 idx~63까지 도달 가능.
-//   (선형 시절엔 10이면 충분했으나, 점프로 멀리 어긋난 작품을 적은 매칭으로 옮기려면 풀을 넓혀야 함.)
-const VERIFICATION_CANDIDATE_POOL = 64;
+// 🆕 v7.20.11: 갤로핑+이진 탐색 후보 풀 — 지수 점프(2^k-1)가 닿을 범위.
+// 🔧 v7.59.10 (T12·HYB-5): 상수 64를 폐기하고 **갤로핑 예산에서 파생**한다 — `2^(gallopMax-1)`.
+//   [근거] 풀과 갤로핑 도달 범위는 독립 변수가 아니다. probe는 `next = lo + jump`이고 jump는 *다음*
+//   라운드용으로만 2배가 되므로 실제 probe 인덱스는 0,1,3,7,15,31,63,127 — g회에 2^(g-1)-1까지 닿는다.
+//   따라서 필요한 풀은 2^(g-1)이고, g=7이면 정확히 **64**(= 종전 상수)다. 기본값 동작은 그대로다.
+//   ⚠️ 로드맵 카드의 `2^gallopMax - 1`(=127)은 오산이다 — jump가 next 계산에 곧바로 반영된다고 본 것.
+//   그대로 쓰면 갤로핑이 닿지도 못하는 절반의 후보를 풀에 담아, 카드가 경계한 '넓지만 닿지 못하는 조합'을
+//   설정이 아니라 코드가 만들어 낸다. 시뮬레이션으로 확인(g=5~8 전 경계 480케이스).
+//   설정에는 '점검 길이' 하나만 노출하고 풀은 따라 움직인다.
+
+// ── 🆕 v7.59.10 (T12): 검증 예산 접근자. 신규 module-global을 만들지 않고 globalSuspicionConfig에서 읽는다.
+//   범위를 벗어나거나 값이 없으면 위 상수로 폴백 — 손상된 설정·구버전 백업이 엔진을 무력화하지 못하게.
+function verificationGallopMax() {
+  const v = Math.round(Number(globalSuspicionConfig && globalSuspicionConfig.gallopMax));
+  return (Number.isFinite(v) && v >= 5 && v <= 8) ? v : VERIFICATION_GALLOP_MAX;
+}
+function verificationMaxResponses() { return verificationGallopMax() + VERIFICATION_BINARY_MAX; }
+function verificationCandidatePool() { return Math.pow(2, verificationGallopMax() - 1); }
+function gatekeeperThreshold() {
+  const v = Math.round(Number(globalSuspicionConfig && globalSuspicionConfig.gatekeeperThreshold));
+  return (Number.isFinite(v) && v >= 2 && v <= 5) ? v : GATEKEEPER_BLOCK_THRESHOLD;
+}
+// 세션 시작 시 한 번 찍는 예산 스냅샷. 진행 중 세션이 런타임 설정 변경에 흔들리지 않게 한다
+// (불변조건 2와 같은 원리 — 시퀀스 중간에 상한이 줄면 '11/9' 같은 진행 표시가 나온다).
+function verificationLimitsSnapshot() {
+  const gallopMax = verificationGallopMax();
+  return { gallopMax, binaryMax: VERIFICATION_BINARY_MAX, maxResponses: gallopMax + VERIFICATION_BINARY_MAX };
+}
+// 세션에 스냅샷이 없을 때(구 세션 객체·진단 경로)의 안전한 읽기.
+function limitsOf(session) {
+  const l = session && session.limits;
+  if (l && Number(l.maxResponses) > 0) return l;
+  return verificationLimitsSnapshot();
+}
 // 🆕 v7.59.7 (T08·HYB-1): 자동 검출(detectAutomaticSuspects)의 큐 유입 게이트. pending이 이 수 이상이면
 //   자동 등록을 쉰다 — 한 세션이 큐 1건을 비우는 동안 finalize마다 최대 5건이 들어와 큐가 소진보다 빨리
 //   자라던 구조를 끊는다. 신호는 suspicion_score/verification_baseline에 남아 있으므로 유실이 아니라 '지연'이고,
@@ -38350,8 +38441,9 @@ function findInflectionPoint(responses, suspicionType) {
 // 🆕 v7.0: 시퀀스 종료 판정
 // returns: { shouldStop, reason }
 // reason: "max" | "decisive" | "no_inflection" | "continue"
-function evaluateSequenceProgress(responses, suspicionType) {
-  if (responses.length >= VERIFICATION_MAX_RESPONSES) {
+function evaluateSequenceProgress(responses, suspicionType, limits) {
+  // 🔧 v7.59.10 (T12): 상한은 세션 스냅샷에서 (없으면 현재 설정)
+  if (responses.length >= (Number(limits && limits.maxResponses) || verificationMaxResponses())) {
     return { shouldStop: true, reason: "max" };
   }
   const infIdx = findInflectionPoint(responses, suspicionType);
@@ -38376,7 +38468,11 @@ function evaluateSequenceProgress(responses, suspicionType) {
 //   점프 탐색으로 대체(매칭 폭증 완화). 입력 lo=가설방향(expected) 최원거리 인덱스(-1=없음),
 //   hi=경계 넘은(unexpected) 최근거리 인덱스(poolSize=아직 없음), jump=현재 보폭, phase="gallop"|"binary".
 //   반환: 종료면 {stop:true, reason}, 계속이면 {stop:false, reason, nextIdx, lo, hi, jump, phase}.
-function planVerificationProbe(lo, hi, jump, phase, poolSize, responseCount, binaryCount) {
+function planVerificationProbe(lo, hi, jump, phase, poolSize, responseCount, binaryCount, limits) {
+  // 🔧 v7.59.10 (T12): 예산은 세션 시작 시점 스냅샷에서 읽는다(없으면 현재 설정으로 폴백).
+  const _gallopMax = Number(limits && limits.gallopMax) || verificationGallopMax();
+  const _binaryMax = Number(limits && limits.binaryMax) || VERIFICATION_BINARY_MAX;
+  const _maxResponses = Number(limits && limits.maxResponses) || (_gallopMax + _binaryMax);
   // 첫(가장 가까운) 후보부터 경계 넘음 → 의심 무효
   if (lo === -1 && hi === 0) return { stop: true, reason: "rejected" };
   // 🔧 v7.21.0: 경계 발견 여부로 단계 판정 (phase==="binary" 또는 hi<poolSize=unexpected 후보 존재).
@@ -38389,17 +38485,17 @@ function planVerificationProbe(lo, hi, jump, phase, poolSize, responseCount, bin
       // 🔧 v7.21.0: 맨 끝 후보까지 모두 가설 방향이면 exhausted(확정 결과 — 예산 cutoff보다 우선,
       //   불필요한 'continue' 재등록 방지). 끝 후보 미확인이면 예산 내에서 한 번 더 확인.
       if (lo >= poolSize - 1) return { stop: true, reason: "exhausted" };
-      if (responseCount >= VERIFICATION_GALLOP_MAX) return { stop: true, reason: "max" };
+      if (responseCount >= _gallopMax) return { stop: true, reason: "max" };
       return { stop: false, reason: "gallop", nextIdx: poolSize - 1, lo, hi, jump: jump * 2, phase: "gallop", binaryCount: 0 };
     }
-    if (responseCount >= VERIFICATION_GALLOP_MAX) return { stop: true, reason: "max" };
+    if (responseCount >= _gallopMax) return { stop: true, reason: "max" };
     return { stop: false, reason: "gallop", nextIdx: next, lo, hi, jump: jump * 2, phase: "gallop", binaryCount: 0 };
   }
   // === 이진 정제 단계 — lo(expected) < hi(unexpected) 구간 좁히기 ===
   if (hi - lo <= 1) return { stop: true, reason: "decisive" }; // 인접(또는 노이즈 lo>=hi) → 경계 확정
   // 🔧 v7.21.0: 갤로핑이 예산을 다 써도 이진은 별도 예산으로 정제 실행(중앙 ±16 → 수렴).
-  if (responseCount >= VERIFICATION_MAX_RESPONSES) return { stop: true, reason: "max" };
-  if ((binaryCount || 0) >= VERIFICATION_BINARY_MAX) return { stop: true, reason: "max" };
+  if (responseCount >= _maxResponses) return { stop: true, reason: "max" };
+  if ((binaryCount || 0) >= _binaryMax) return { stop: true, reason: "max" };
   const mid = Math.floor((lo + hi) / 2);
   return { stop: false, reason: "binary", nextIdx: mid, lo, hi, jump, phase: "binary", binaryCount: (binaryCount || 0) + 1 };
 }
@@ -38530,7 +38626,11 @@ async function finalizeVerificationSession(queueRow, suspicionNovel, candidates,
     //   (이전: 검증작만 0 리셋, propagateRankSuspicion으로 이웃은 단조 증가만 → 활발한 티어에
     //    저강도 의심 누적 → detectAutomaticSuspects 오선정. 검증=시간 신호로 보고 점감.)
     //   순서: 전체 감쇠 → 검증작 0 리셋(아래) → (txBatch 후) propagateRankSuspicion 신규 증거 가산.
-    const _decay = (globalSuspicionConfig.decay != null ? globalSuspicionConfig.decay : 0.85);
+    // 🔧 v7.59.10 (T12·HC-4): decay가 스테퍼로 열렸으므로 읽는 쪽에 하한 가드를 둔다. 0/음수면 검증 한 번에
+    //   전 작품 의심도가 0으로 날아가 엔진이 무력화된다(손상된 설정·외부 편집 백업 대비). UI는 0.5~0.95.
+    //   ⚠️ `Number(null) === 0`이라 null 체크를 먼저 해야 한다 — 안 그러면 '키 없음'이 하한 0.5로 둔갑한다.
+    const _decayRaw = globalSuspicionConfig.decay == null ? NaN : Number(globalSuspicionConfig.decay);
+    const _decay = Number.isFinite(_decayRaw) ? Math.min(1, Math.max(0.5, _decayRaw)) : 0.85;
     if (_decay < 1) {
       txBatch.push({
         sql: "UPDATE novels SET suspicion_score = ROUND(suspicion_score * ?, 2) WHERE suspicion_score > 0",
@@ -38724,13 +38824,21 @@ const DEFAULT_SUSPICION_CONFIG = {
   // 🆕 v7.21.0: 검증 완료마다 전 작품 의심도에 곱하는 감쇠 계수(자기보정 — 드리프트/폭주 방지).
   //   1=감쇠 없음(구 동작). 검증=시간 경과 신호로 보고, 갱신 안 된 누적 증거를 점감.
   decay: 0.85,
+  // 🆕 v7.59.10 (T12·HYB-5): 한 작품 점검의 **길이**. 종전엔 상수라 설정에 '빈도'만 있고 '길이'가 없었다.
+  //   갤로핑 probe 상한이자 후보 풀의 근거(2^gallopMax-1) — 총 상한은 여기에 이진 정제 4회가 더해진다.
+  gallopMax: 7,
+  // 🆕 v7.59.10 (T12·HC-3): 수문장 'AI 제안'이 뜨기까지 필요한 경계 차단 횟수.
+  gatekeeperThreshold: 3,
 };
 let globalSuspicionConfig = { ...DEFAULT_SUSPICION_CONFIG };
 // 민감도 프리셋 — 설정 UI 빠른 적용용
+// ⚠️ v7.59.10: 새 키는 **세 프리셋 전부**에 넣어야 한다. saveAppSettings가 suspicionConfig를 deep merge하므로
+//   프리셋에 빠진 키는 이전 값이 그대로 남고, presetEq는 프리셋의 키만 비교해 '활성'으로 하이라이트한다
+//   → 화면은 '보수적'인데 점검 길이는 직전 값인 불일치가 생긴다. (balanced는 DEFAULT 스프레드라 자동.)
 const SUSPICION_PRESETS = {
-  conservative: { cap: 20, moveBase: 0.3, moveWindow: 4, matchBase: 0.15, upsetBase: 0.5, upsetPerGap: 0.12, checkLine: 8, decay: 0.8 },
+  conservative: { cap: 20, moveBase: 0.3, moveWindow: 4, matchBase: 0.15, upsetBase: 0.5, upsetPerGap: 0.12, checkLine: 8, decay: 0.8, gallopMax: 6, gatekeeperThreshold: 4 },
   balanced:     { ...DEFAULT_SUSPICION_CONFIG },
-  sensitive:    { cap: 20, moveBase: 1.2, moveWindow: 6, matchBase: 0.5, upsetBase: 1.6, upsetPerGap: 0.35, checkLine: 5, decay: 0.92 },
+  sensitive:    { cap: 20, moveBase: 1.2, moveWindow: 6, matchBase: 0.5, upsetBase: 1.6, upsetPerGap: 0.35, checkLine: 5, decay: 0.92, gallopMax: 8, gatekeeperThreshold: 2 },
 };
 
 // 누적 증분 쿼리 (0~CAP clamp). execBatch/exec 양쪽에서 사용.
@@ -38891,7 +38999,7 @@ async function setNovelTierAtomic(novelId, newTier) {
 //   ② **무시 기준선 필터** — novels.gatekeeper_dismissed 이후 threshold만큼 새로 쌓이기 전엔 다시 뜨지 않는다.
 //   ③ novels JOIN을 SQL로 내렸다. 이전엔 LIMIT 20을 먼저 적용한 뒤 JS에서 `.filter(r => r.id)`로 걸러
 //      삭제된 작품(고아 blocker)이 후보 20자리를 차지하면 살아있는 후보가 그만큼 밀려났다.
-async function getGatekeeperCandidates(threshold = GATEKEEPER_BLOCK_THRESHOLD) {
+async function getGatekeeperCandidates(threshold = gatekeeperThreshold()) {
   // 🔧 v7.10.0: result_action='moved' 한정 제거 — 즉시 막아 이동을 무산시킨(no_change) 세션도
   //   수문장 누적에 포함(블록할수록 카운트되도록). 막은 횟수가 많을수록 빠지던 역전 수정.
   const baseSql =
@@ -54854,7 +54962,10 @@ function AppContent() {
         shouldRetry = true; // 다음 큐 항목 자동 시도
         return;
       }
-      const candidates = await getCandidatesForVerification(queueRow.novel_id, queueRow.suspicion_type, VERIFICATION_CANDIDATE_POOL);
+      // 🔧 v7.59.10 (T12·HYB-5): 후보 풀은 이제 갤로핑 예산에서 파생(2^gallopMax - 1). 설정을 바꾸면
+      //   다음 세션부터 반영된다 — 진행 중 세션은 아래 limits 스냅샷과 이 candidates 배열을 그대로 쓴다.
+      const _limits = verificationLimitsSnapshot();
+      const candidates = await getCandidatesForVerification(queueRow.novel_id, queueRow.suspicion_type, verificationCandidatePool());
       if (!candidates || candidates.length === 0) {
         // 후보 부족 → 자동 finalize (no_change)
         const sessionId = uuid();
@@ -54884,6 +54995,8 @@ function AppContent() {
         suspicionType: queueRow.suspicion_type,
         // 🆕 v7.20.11: 갤로핑+이진 탐색 상태 (lo=expected 최원거리, hi=unexpected 최근거리, jump=보폭, phase)
         search: { lo: -1, hi: candidates.length, jump: 1, phase: "gallop" },
+        // 🆕 v7.59.10 (T12): 예산 스냅샷 — 진행 중에 설정을 바꿔도 이 세션의 상한/진행바는 안 흔들린다.
+        limits: _limits,
       });
     } catch (e) {
       console.warn("[v7.0] startVerificationSession 오류:", e?.message);
@@ -54952,7 +55065,7 @@ function AppContent() {
     if (expected) { if (currentIdx > sLo) sLo = currentIdx; }
     else { if (currentIdx < sHi) sHi = currentIdx; }
     // 🔧 v7.21.0: binaryCount 전달 — 갤로핑 예산 소진과 무관하게 이진 정제가 별도 예산으로 수렴
-    const plan = planVerificationProbe(sLo, sHi, prevSearch.jump, prevSearch.phase, candidates.length, newResponses.length, prevSearch.binaryCount || 0);
+    const plan = planVerificationProbe(sLo, sHi, prevSearch.jump, prevSearch.phase, candidates.length, newResponses.length, prevSearch.binaryCount || 0, limitsOf(verificationSession));
 
     if (plan.stop) {
       // 시퀀스 종료 — finalize
@@ -54969,7 +55082,7 @@ function AppContent() {
       await loadRepositioningHistory(); // 🆕 v7.16.0: 방금 완료된 자동 조정을 이력에 즉시 반영
       // Stage 4: 수문장 후보 갱신 (5개 누적 시 모달 트리거)
       try {
-        const gks = await getGatekeeperCandidates(GATEKEEPER_BLOCK_THRESHOLD);
+        const gks = await getGatekeeperCandidates(gatekeeperThreshold());
         setGatekeeperCandidates(gks);
         if (gks.length > 0 && !gatekeeperModalOpen) {
           // 자동으로는 띄우지 않음 — 헤더 인디케이터로만 표시 (사용자 클릭 시 모달)
@@ -55004,7 +55117,7 @@ function AppContent() {
   // 🆕 v7.0: 매칭 화면 진입 시 수문장 후보 사전 로드 (hybrid)
   useEffect(() => {
     if (screen === "match" && globalTierConfig.mode === "hybrid") {
-      getGatekeeperCandidates(GATEKEEPER_BLOCK_THRESHOLD).then(setGatekeeperCandidates).catch(() => {});
+      getGatekeeperCandidates(gatekeeperThreshold()).then(setGatekeeperCandidates).catch(() => {});
     }
   }, [screen, globalTierConfig.mode, verificationStats.resolved]);
 
@@ -55049,7 +55162,7 @@ function AppContent() {
       // 사용자가 AI 제안 수락 = 결정 확정. 재검증 필요 시 🔍 flag로 명시 호출.
       await loadList(undefined, undefined, "v7-gatekeeper");
       await loadVerificationStats(); // 🆕 v7.0.3: pending 카운터 즉시 갱신
-      const gks = await getGatekeeperCandidates(GATEKEEPER_BLOCK_THRESHOLD);
+      const gks = await getGatekeeperCandidates(gatekeeperThreshold());
       setGatekeeperCandidates(gks);
     } catch (e) { console.warn("[v7.59.9] 수문장 이동 실패:", e?.message); }
     finally { gatekeeperRespondingRef.current = false; } // 🆕 v7.0.6
@@ -55065,7 +55178,7 @@ function AppContent() {
     gatekeeperRespondingRef.current = true;
     try {
       await exec("UPDATE novels SET gatekeeper_dismissed=? WHERE id=?", [Number(g.block_count) || 0, g.id]);
-      const gks = await getGatekeeperCandidates(GATEKEEPER_BLOCK_THRESHOLD);
+      const gks = await getGatekeeperCandidates(gatekeeperThreshold());
       setGatekeeperCandidates(gks);
     } catch (e) { console.warn("[v7.59.9] 수문장 제안 무시 실패:", e?.message); }
     finally { gatekeeperRespondingRef.current = false; }
@@ -63728,11 +63841,11 @@ async function importJSON(directText, onSuccess, onSettled) {
 
             {/* 검증 시퀀스 본체 */}
             {verificationSession ? (
-              <Section title={`🤖 점검 중 — ${verificationSession.suspicionType === "underrated" ? "위로 이동 검증" : "아래로 이동 검증"} (${verificationSession.responses.length + 1}/${VERIFICATION_MAX_RESPONSES})`}>
+              <Section title={`🤖 점검 중 — ${verificationSession.suspicionType === "underrated" ? "위로 이동 검증" : "아래로 이동 검증"} (${verificationSession.responses.length + 1}/${limitsOf(verificationSession).maxResponses})`}>
                 {/* 진행도 바 */}
                 <View style={{ height: 8, backgroundColor: isDark ? "#1e1e3a" : "#eef2ff", borderRadius: 999, overflow: "hidden", marginBottom: 12 }}>
                   <View style={{
-                    width: `${Math.min(100, (verificationSession.responses.length / VERIFICATION_MAX_RESPONSES) * 100)}%`,
+                    width: `${Math.min(100, (verificationSession.responses.length / limitsOf(verificationSession).maxResponses) * 100)}%`,
                     height: "100%",
                     backgroundColor: C.primary,
                   }} />
@@ -63930,7 +64043,7 @@ async function importJSON(directText, onSuccess, onSettled) {
                         이제 막은 방향을 집계해 한쪽을 추천하고, 동의하지 않으면 접어 둘 수 있다고 알린다. */}
                     <Text style={{ color: C.sub, fontSize: 12, marginBottom: 12 }}>
                       여러 비교에서 경계(변곡점)로 작용한 작품들입니다. 무엇을 막았는지로 방향을 추천하되 판단은 사용자 몫이며,
-                      동의하지 않으면 '무시'로 접어 둘 수 있어요(새 근거가 {GATEKEEPER_BLOCK_THRESHOLD}회 더 쌓이면 다시 제안).
+                      동의하지 않으면 '무시'로 접어 둘 수 있어요(새 근거가 {gatekeeperThreshold()}회 더 쌓이면 다시 제안).
                     </Text>
                     {gatekeeperCandidates.length === 0 ? (
                       <Text style={{ color: C.sub, textAlign: "center", padding: 16 }}>현재 제안할 수문장 후보가 없습니다.</Text>
@@ -64014,7 +64127,7 @@ async function importJSON(directText, onSuccess, onSettled) {
                                     Alert.alert(
                                       "이 제안 무시",
                                       `${g.title}의 자리 조정 제안을 접어 둘까요?\n\n` +
-                                      `지금까지의 경계 기록(${g.block_count}회)은 그대로 남고, 앞으로 ${GATEKEEPER_BLOCK_THRESHOLD}회 더 쌓이면 다시 제안합니다.`,
+                                      `지금까지의 경계 기록(${g.block_count}회)은 그대로 남고, 앞으로 ${gatekeeperThreshold()}회 더 쌓이면 다시 제안합니다.`,
                                       [{ text: "취소" }, { text: "무시", onPress: () => dismissGatekeeper(g) }]
                                     );
                                   }}
@@ -69813,7 +69926,7 @@ async function importJSON(directText, onSuccess, onSettled) {
               return (
                 <Section title="🔍 의심도 민감도 (하이브리드)">
                   <Text style={{ color: C.sub, fontSize: 12, lineHeight: 18, marginBottom: 8 }}>
-                    배정탭 의심도(🔍)가 오르는 속도와 자동 점검(파생매칭) 빈도를 조절해요. 값이 클수록 의심도가 빨리 오르고 자동 점검이 잦아집니다. '점검선'은 자동 점검이 시작되는 기준(표시 100%)이에요.
+                    배정탭 의심도(🔍)가 오르는 속도와 자동 점검(파생매칭) 빈도, 그리고 점검 한 번의 길이를 조절해요. 값이 클수록 의심도가 빨리 오르고 자동 점검이 잦아집니다. '점검선'은 자동 점검이 시작되는 기준(표시 100%)이에요. 프리셋은 빈도와 길이를 함께 바꿉니다 — 보수적은 짧고 드물게, 민감은 길고 자주.
                   </Text>
                   <View style={{ flexDirection: "row", gap: 8, marginBottom: 4 }}>
                     {[["보수적", "conservative"], ["보통", "balanced"], ["민감", "sensitive"]].map(([lbl, pk]) => {
@@ -69832,6 +69945,21 @@ async function importJSON(directText, onSuccess, onSettled) {
                   {stepper("업셋 가중", "upsetBase", 0.1, 0, 5, "순위와 모순된 결과(업셋) 시 추가 상승")}
                   {stepper("업셋 순위차 계수", "upsetPerGap", 0.05, 0, 1, "업셋일 때 순위 차이 1당 추가")}
                   {stepper("점검선(자동검증 기준)", "checkLine", 1, 2, 30, "의심도가 이 값에 닿으면 자동 점검. 표시 100% 기준 — 낮출수록 자주 점검")}
+                  {/* 🆕 v7.59.10 (T12·HYB-5 HC-3 HC-4): 여기까지가 '얼마나 자주'였고, 아래 셋이 '한 번에 얼마나'다.
+                      종전엔 길이(11회 상한)·수문장 임계(3)·감쇠(0.85)가 전부 상수라 민감도 설정이 반쪽이었다. */}
+                  <Text style={{ color: C.sub, fontSize: 11, marginTop: 14, fontWeight: "700" }}>— 점검 한 번의 길이·마무리 —</Text>
+                  {(() => {
+                    const g = Math.min(8, Math.max(5, Math.round(Number(sc.gallopMax) || VERIFICATION_GALLOP_MAX)));
+                    return stepper(
+                      "한 작품 점검 길이", "gallopMax", 1, 5, 8,
+                      `자리 탐색 ${g}회 + 경계 정밀화 ${VERIFICATION_BINARY_MAX}회 = 한 작품당 최대 ${g + VERIFICATION_BINARY_MAX}번 비교 · 비교 후보 ${Math.pow(2, g - 1)}개까지. 줄이면 빨리 끝나지만 멀리 어긋난 작품을 한 번에 못 옮겨 다음 점검으로 넘어가요.`
+                    );
+                  })()}
+                  {stepper("AI 제안 임계", "gatekeeperThreshold", 1, 2, 5, "한 작품이 경계(변곡점)로 몇 번 걸리면 '🤖 AI 제안'에 올릴지. 낮추면 제안이 자주 뜹니다")}
+                  {stepper("의심도 감쇠", "decay", 0.05, 0.5, 0.95, "점검이 한 번 끝날 때마다 모든 작품 의심도에 곱하는 값. 낮출수록 오래된 의심이 빨리 식어 큐가 덜 쌓여요 (1에 가까울수록 누적 유지)")}
+                  <Text style={{ color: C.sub, fontSize: 11, marginTop: 8 }}>
+                    ※ 길이·임계·감쇠는 다음 점검부터 적용돼요. 진행 중인 점검은 시작할 때의 값으로 끝까지 갑니다.
+                  </Text>
                   <TouchableOpacity onPress={() => saveAppSettings({ suspicionConfig: { ...DEFAULT_SUSPICION_CONFIG } })}
                     style={{ marginTop: 12, alignSelf: "flex-start", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: C.chip }}>
                     <Text style={{ color: C.warn, fontWeight: "700", fontSize: 13 }}>기본값 복원</Text>
@@ -73475,13 +73603,13 @@ async function importJSON(directText, onSuccess, onSettled) {
                   ) : (() => {
                     const responses = verificationSession.responses || [];
                     const infIdx = responses.length ? findInflectionPoint(responses, verificationSession.suspicionType) : -1;
-                    const eval_ = responses.length ? evaluateSequenceProgress(responses, verificationSession.suspicionType) : null;
+                    const eval_ = responses.length ? evaluateSequenceProgress(responses, verificationSession.suspicionType, limitsOf(verificationSession)) : null;
                     const sus = verificationSession.suspicionNovel;
                     return (
                       <View style={{ gap: 8 }}>
                         <View style={{ padding: 8, backgroundColor: C.bg, borderRadius: 6 }}>
                           <Text style={{ color: C.text, fontWeight: "700" }}>{sus?.title || "?"} · tier={sus?.manual_tier || "-"} #{sus?.manual_order || 0}</Text>
-                          <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>의심방향: {verificationSession.suspicionType} · 후보 풀: {(verificationSession.candidates || []).length} · 응답: {responses.length}/{VERIFICATION_MAX_RESPONSES}</Text>
+                          <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>의심방향: {verificationSession.suspicionType} · 후보 풀: {(verificationSession.candidates || []).length} · 응답: {responses.length}/{limitsOf(verificationSession).maxResponses}</Text>
                           {/* 🆕 v7.20.11: 갤로핑+이진 탐색 상태 (현재 알고리즘 기준) */}
                           {verificationSession.search && (
                             <Text style={{ color: "#38bdf8", fontSize: 11, marginTop: 2 }}>
@@ -73758,7 +73886,7 @@ async function importJSON(directText, onSuccess, onSettled) {
                       lines.push(`[24h trigger fire] ${fire24 || "없음"} (총 누적 ${hybridDiagData.fireTotal || 0}회)`);
                       const fbs = (hybridDiagData.fire24hBySource || []).map(r => `${r.source || "(none)"}/${r.trigger_type}=${r.cnt}`).slice(0, 10).join(", ");
                       if (fbs) lines.push(`[24h source × trigger] ${fbs}`);
-                      lines.push(``, `[in-flight 세션] ${verificationSession ? `YES (${verificationSession.suspicionNovel?.title || "?"} · 응답=${(verificationSession.responses || []).length}/${VERIFICATION_MAX_RESPONSES})` : "NO"}`);
+                      lines.push(``, `[in-flight 세션] ${verificationSession ? `YES (${verificationSession.suspicionNovel?.title || "?"} · 응답=${(verificationSession.responses || []).length}/${limitsOf(verificationSession).maxResponses})` : "NO"}`);
                       const gks = (hybridDiagData.gatekeeperTop || []).slice(0, 5).map(r => `${_anon(r.title)}(×${r.block_count})`).join(", ");
                       if (gks) lines.push(`[수문장 후보 top5] ${gks}`);
                       const acts = (hybridDiagData.sessionByAction || []).map(r => `${r.result_action || "?"}=${r.cnt}`).join(", ");
