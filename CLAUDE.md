@@ -115,4 +115,7 @@ eas build -p android --profile preview  # APK 빌드
 ## Git 워크플로
 
 - 개발은 작업 브랜치에서, **주요 업데이트(기능 추가/버그 수정 묶음/버전 올림) 완료 시마다 `main`에 병합**한다 (빌드는 `main`에서 수행 — `package.json` build 스크립트가 `git checkout main` 사용).
-- 병합은 가능하면 fast-forward, 분기 시 머지 커밋. 병합 후에도 작업 브랜치에서 계속 개발.
+- **병합은 PR(Pull Request)로 한다** (2026-08-02 사용자 지정). 작업 브랜치에 커밋 → PR 생성(base `main`) → GitHub에서 병합.
+  로컬 `git merge` 후 `main`에 직접 push하지 않는다 — PR이 없으면 GitHub에 보라색 `Merged` 배지도, 리뷰·논의 이력도 남지 않는다.
+  (v7.59.5/v7.59.6은 이 지정 전이라 직접 병합으로 들어갔다.)
+- 병합 후에도 작업 브랜치에서 계속 개발.
