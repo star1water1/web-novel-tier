@@ -2,9 +2,43 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.58.3 (AI 모델 자동 발견 + 적대적 점검, 베타)                             ║
+ * ║  버전: 7.58.4 (있으나 마나 한 기능 감사 — 장르 어휘 붕괴 수정, 베타)                ║
  * ║  최종 수정: 2026-08-02                                                        ║
  * ║  총 라인 수: 약 77,000줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🕳 v7.58.4 '있으나 마나 한 기능' 감사 + AI 장르 어휘 붕괴 수정 (2026-08-02)        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 6개 도메인(AI 태그관리·하이브리드·추천·하드코딩·분석·데이터)을 병렬 감사하고 각    ║
+ * ║ 주장을 '반박 기본자세' 검증자가 코드로 재확인 → 47건 잔존(CONFIRMED 22/PARTIAL 25).║
+ * ║ 이번 커밋은 그중 '명백한 버그 1건'만 고치고, 나머지는 보고로 남긴다(제품 결정 필요).║
+ * ║                                                                              ║
+ * ║ [수정] AI 태그 추천의 장르 어휘가 커스텀 추가 시 붕괴하던 문제                    ║
+ * ║ 종전: `const majorVocab = 사용자추가분.length ? 사용자추가분 : FACTORY_MAJOR_GENRES` ║
+ * ║ 그런데 deriveUserMajorGenres(15055~)는 '팩토리를 뺀 사용자 추가분만' 돌려준다.     ║
+ * ║ → 커스텀 대장르를 **하나만** 추가해도 AI 프롬프트의 '대장르는 다음 중에서만        ║
+ * ║   고르세요'가 그 하나로 줄어든다. 장르를 손댄 사용자(=이 기능을 가장 쓰는 사람)일   ║
+ * ║   수록 AI가 장르를 못 단다. AI가 '판타지'를 뱉어도 majorMap에 없어 일반 태그로 새고, ║
+ * ║   '내 태그만' 모드면 조용히 폐기된다.                                            ║
+ * ║ 게다가 폴백이 모드 무관 FACTORY_*(소설 전용)라, 웹툰 슬롯에서 커스텀이 없으면      ║
+ * ║ '무협·선협·대체역사' 같은 소설 장르가 후보로 나갔다(활성 모드 목록은 MAJOR_GENRES). ║
+ * ║ → 단건(작품 편집)·배치(일괄 태깅) 두 경로 모두 '활성 모드 팩토리 + 사용자 추가분   ║
+ * ║   합집합'으로 교체. 앱의 다른 모든 곳이 이미 쓰던 방식과 일치(25449·27223).        ║
+ * ║                                                                              ║
+ * ║ [보고만] 대표 사례 — 코드로 직접 확인한 것                                       ║
+ * ║ • 클라우드 동기화 전체가 `const GOOGLE_OAUTH_CLIENT_ID = ""`(9128) + cloudIs-     ║
+ * ║   Configured()(9139)로 봉인 → 배포판 사용자는 켤 수 없다. 함수군·UI는 다 있다.     ║
+ * ║ • 콘텐츠 필터(최소 회차)가 45283 `m && m.totalEpisodes != null` 조건이라           ║
+ * ║   **메타 없는 후보를 무조건 통과**시킨다 — 거르는 것처럼 보이지만 안 거른다.        ║
+ * ║ • '내 태그만' vs '표준까지'가 프롬프트상 완전히 동일(16188~, 분기는 allowNew뿐).   ║
+ * ║   사용자 어휘는 topTags 40개만 전달하면서 사후 필터는 전체 태그 기준 → 태그 많은   ║
+ * ║   사용자일수록 결과가 비고, 몇 개가 왜 버려졌는지 안 알려 준다.                    ║
+ * ║ • AI 스키마가 reason(근거)을 요구하는데(16245) 태그 추천 결과 객체엔 안 실린다     ║
+ * ║   (47315~) — 매 호출 근거 토큰을 과금하고 화면엔 안 띄운다.                        ║
+ * ║ • 넷상 추천 정렬이 45003 `ORDER BY pinned DESC, fetched_at DESC, taste_score      ║
+ * ║   DESC` 고정 — 정렬 선택이 로더에 반영되지 않는다.                                ║
+ * ║ 검증: scraper-test 526/526 유지, esbuild 통과. APP_VERSION 7.58.4.               ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -20810,7 +20844,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.58.3";
+const APP_VERSION = "7.58.4";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -20836,6 +20870,17 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.58.4", date: "2026-08-02",
+    title: "🔧 커스텀 장르를 쓰면 AI가 장르를 못 달던 문제",
+    highlights: [
+      { type: "fix", text: "🏷️ 대장르·부장르를 하나라도 직접 추가하면, AI 태그 추천이 기본 장르(판타지·무협·로맨스…)를 후보에서 통째로 빼먹던 문제를 고쳤어요. 이제 기본 장르 + 내가 추가한 장르를 함께 봅니다." },
+      { type: "fix", text: "🎨 웹툰 슬롯에서 AI가 웹툰에 없는 소설 장르(무협·선협 등)를 후보로 쓰던 것도 함께 고쳤어요." },
+    ],
+    details: [
+      { type: "fix", text: "작품 하나씩 추천할 때와 여러 작품을 한꺼번에 태깅할 때 양쪽 모두 고쳤어요." },
+    ],
+  },
   {
     version: "7.58.3", date: "2026-08-02",
     title: "🔭 AI 모델을 자동으로 최신 상태로",
@@ -47250,8 +47295,21 @@ function AppContent() {
       const topTags = [...freq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([k]) => disp.get(k));
       const avgTags = worksWithTags ? Math.max(2, Math.round(totalTagCount / worksWithTags)) : 0;
       const usedKeys = new Set(disp.keys()); const usedList = [...disp.entries()];
-      const majorVocab = (Array.isArray(userMajorGenres) && userMajorGenres.length ? userMajorGenres : FACTORY_MAJOR_GENRES);
-      const subVocab = (Array.isArray(userSubGenres) && userSubGenres.length ? userSubGenres : FACTORY_SUB_GENRES);
+      // 🔧 v7.58.4: 종전 `사용자추가분.length ? 사용자추가분 : FACTORY_*` 는 두 가지가 동시에 깨졌다.
+      //   ① deriveUserMajorGenres는 '팩토리를 뺀 사용자 추가분만' 돌려준다(15055~) → 커스텀 장르를 하나만
+      //      추가해도 AI에게 보내는 장르 후보가 그 하나로 줄어, 장르를 손댄 사용자일수록 AI가 장르를 못 단다.
+      //   ② 폴백이 모드 무관 FACTORY_*(소설 전용) → 웹툰 슬롯에서 '무협·선협' 같은 소설 장르가 후보로 나갔다.
+      //   앱의 다른 모든 곳은 이미 합집합을 쓴다(25449·27223 `[...SUB_GENRES, ...userSubGenres]`) → 동일하게 맞춘다.
+      //   MAJOR_GENRES/SUB_GENRES는 슬롯 모드 전환 시 재대입되는 '활성 모드 팩토리'다(19672~).
+      const unionVocab = (base, extra) => {
+        const out = [], seen = new Set();
+        for (const t of [...(Array.isArray(base) ? base : []), ...(Array.isArray(extra) ? extra : [])]) {
+          const k = normalizeTagKey(t); if (!t || !k || seen.has(k)) continue; seen.add(k); out.push(t);
+        }
+        return out;
+      };
+      const majorVocab = unionVocab(MAJOR_GENRES, userMajorGenres);
+      const subVocab = unionVocab(SUB_GENRES, userSubGenres);
       const majorMap = new Map(majorVocab.map(t => [normalizeTagKey(t), t]));
       const subMap = new Map(subVocab.map(t => [normalizeTagKey(t), t]));
       // 표준 일반태그 키맵(장르 제외)
@@ -48848,8 +48906,16 @@ function AppContent() {
     const topTags = [...freq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([k]) => disp.get(k));
     const avgTags = worksWithTags ? Math.max(2, Math.round(totalTagCount / worksWithTags)) : 0;
     const usedKeys = new Set(disp.keys()); const usedList = [...disp.entries()];
-    const majorVocab = (Array.isArray(userMajorGenres) && userMajorGenres.length ? userMajorGenres : FACTORY_MAJOR_GENRES);
-    const subVocab = (Array.isArray(userSubGenres) && userSubGenres.length ? userSubGenres : FACTORY_SUB_GENRES);
+    // 🔧 v7.58.4: 위 단건 경로와 동일 수정(활성 모드 팩토리 + 사용자 추가분 합집합). 배치 태깅도 같은 결함이 있었다.
+    const unionVocab = (base, extra) => {
+      const out = [], seen = new Set();
+      for (const t of [...(Array.isArray(base) ? base : []), ...(Array.isArray(extra) ? extra : [])]) {
+        const k = normalizeTagKey(t); if (!t || !k || seen.has(k)) continue; seen.add(k); out.push(t);
+      }
+      return out;
+    };
+    const majorVocab = unionVocab(MAJOR_GENRES, userMajorGenres);
+    const subVocab = unionVocab(SUB_GENRES, userSubGenres);
     const majorMap = new Map(majorVocab.map(t => [normalizeTagKey(t), t]));
     const subMap = new Map(subVocab.map(t => [normalizeTagKey(t), t]));
     const stdMap = new Map();
