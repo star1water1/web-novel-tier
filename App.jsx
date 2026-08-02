@@ -2,9 +2,45 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.14 (구색 기능 개선 Phase 4 — 슬라이더 정합 · TTL 상수 정리)             ║
+ * ║  버전: 7.59.15 (구색 기능 개선 Phase 4 완료 — AI 키워드 일일 캐시 · 동적 가중)      ║
  * ║  최종 수정: 2026-08-02                                                        ║
- * ║  총 라인 수: 약 79,700줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 79,800줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🤖 v7.59.15 AI 키워드 일일 캐시 + 동적 가중 (T17 · REC-5) (2026-08-02)           ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제] 'AI 키워드 생성'을 켜면 **가져오기를 누를 때마다** LLM에 과금하는데, 얻는  ║
+ * ║ 건 키워드 2개고 그 가중이 **1.5 고정**이었다. 탐험 풀은 수확분까지 최대 400행이라 ║
+ * ║ 풀이 커질수록 지분이 희석돼(실측 50행 5.7% → 400행 0.7%) 과금한 키워드가 사실상   ║
+ * ║ 안 뽑혔다. 게다가 토글 설명은 "트렌디 키워드 추가"뿐이라 호출 빈도도, 생성분이    ║
+ * ║ 이후에도 쓰이는지도 알 수 없었다. (2차 재검증: '무가치'는 기각 — source='ai'로     ║
+ * ║ 수확 풀에 적립돼 재수용되므로 지분은 쌓인다. 문제는 **불투명·비효율**이다.)       ║
+ * ║                                                                              ║
+ * ║ [수정 ①] **일 1회 생성 캐시**. 같은 날·같은 공급자·같은 키·같은 개수면 저장분을   ║
+ * ║ 재사용한다(선례: web_reco_auto_day의 dayKey 패턴). 키/공급자를 바꾸면 지문이      ║
+ * ║ 달라져 자동 무효화 — 지문은 djb2 계열 비암호 해시라 **API 키 원문을 저장하지      ║
+ * ║ 않는다**. 빈 결과는 캐시하지 않는다(일시적 실패를 하루 굳히면 그날 내내 죽는다).  ║
+ * ║ 캐시 히트 경로도 수확 풀에 재적립해 last_seen을 갱신한다 — 안 하면                ║
+ * ║ WEB_RECO_KEYWORD_CAP 정리(last_seen DESC)가 '오늘도 쓰는' 키워드를 먼저 버린다.   ║
+ * ║                                                                              ║
+ * ║ [수정 ②] 가중을 **풀 총합 대비 지분**으로(`AI_KEYWORD_POOL_SHARE = 0.10`).        ║
+ * ║ 풀이 400행이든 50행이든 AI 지분이 ~9%로 유지된다(실측). 하한은 종전 고정값 1.5라  ║
+ * ║ 풀이 작을 때도 회귀가 없다. 밴 필터를 가중 계산 **앞**에 둬서 밴된 키워드가 지분을║
+ * ║ 먹지 않는다. ※ 실제 노출 확률에는 취향↔탐험 슬라이더가 곱해진다(AI는 탐험 풀).    ║
+ * ║                                                                              ║
+ * ║ [수정 ③] 토글 힌트에 호출 빈도와 누적 경로 명시 — "하루 1번만 생성(같은 날        ║
+ * ║ 재시도는 저장분 재사용)" + 켜져 있을 때 harvest 상태별 안내('수확 키워드'가 꺼져  ║
+ * ║ 있으면 생성분이 누적되지 않는다는 경고). 종전엔 이 의존이 완전히 숨어 있었다.     ║
+ * ║                                                                              ║
+ * ║ [기각] 'AI 전용 검색 슬롯' — ToS 상한 3회의 33%를 LLM 추측에 고정 배정하는 셈이라 ║
+ * ║ 취향↔탐험 슬라이더를 무시하게 된다. 2차 재검증 판정을 그대로 따랐다.              ║
+ * ║                                                                              ║
+ * ║ [검증] 실제 generateAiKeywords·가중식을 소스에서 떼어내 31개 단언 — 같은 날 3회   ║
+ * ║ 호출에 LLM 1회, 날짜/키/공급자/개수 4종 무효화 + 동일 조건 음성 대조, 지문에 키   ║
+ * ║ 원문 없음, 빈 응답 미캐시, 캐시 히트도 재적립, 풀 400/50/5 가중과 지분 불변,      ║
+ * ║ 고정 1.5의 희석 대조군, 밴 순서, 문구 4종.                                        ║
+ * ║ esbuild 통과, scraper-test 526/526. APP_VERSION 7.59.15.                          ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -18610,6 +18646,14 @@ const WEB_RECO_TTL_DAYS = 1;                       // 임시 추천작 보존(�
 const WEB_RECO_HIDDEN_CAP = 500;                   // "관심없음" 숨김 목록 상한
 const WEB_RECO_REROLL_COOLDOWN_MS = 20 * 1000;     // 재뽑기 쿨다운(과도 요청 방지 — 탐색 UX 위해 완화)
 const WEB_RECO_MAX_KEYWORDS = 3;                   // 한 번 가져올 때 검색 횟수 상한(ToS — on-demand)
+// 🤖 v7.59.15 (T17·REC-5): AI 생성 키워드가 탐험 풀에서 차지할 목표 지분(총 가중 대비).
+//   [문제] 종전엔 가중이 1.5 **고정**이라, 수확 풀이 커질수록(최대 400행) 지분이 한없이 희석됐다 —
+//   과금은 매 fetch 하는데 그 키워드가 실제로 뽑힐 확률은 1%대로 떨어지는 구조였다.
+//   [해결] 풀 총합에 비례시켜 지분을 고정한다. 풀이 커져도 AI 키워드의 존재감이 유지된다.
+//   ※ 실제 노출 확률은 취향↔탐험 슬라이더에도 곱해진다(AI는 탐험 풀에 들어가므로, 기본 70이면
+//     추첨의 30%만 탐험 몫). 이 값을 올리면 그만큼 탐험 슬롯을 AI가 더 가져간다.
+const AI_KEYWORD_POOL_SHARE = 0.10;
+const AI_KEYWORD_MIN_WEIGHT = 1.5;                 // 종전 고정값 — 풀이 작을 때 하한(무회귀 보장)
 const WEB_RECO_ENRICH_CAP = 10;                    // 🌐 v7.53.4: 콘텐츠 필터용 메타 보강 후보 상한(지연 제한)
 // 🌐 v7.59.12 (T14·ANA-5): 승률 패턴이 없을 때 쓰는 서재 폴백 키워드의 '유사 승률'.
 //   buildTasteKeywordPool의 폴백 경로는 가중치가 1.2 고정이라(= '내가 높이 평가한 작품에 실제로 붙어 있다'는
@@ -21669,7 +21713,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.14";
+const APP_VERSION = "7.59.15";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -46193,9 +46237,47 @@ function AppContent() {
     return Array.from(out.entries()).map(([kw, weight]) => ({ kw, weight }));
   }
 
+  // 🤖 v7.59.15 (T17·REC-5): 생성분을 수확 풀에 적립(재사용 원천). 캐시 히트 경로도 이걸 호출해
+  //   last_seen을 갱신한다 — 안 하면 WEB_RECO_KEYWORD_CAP 정리(last_seen DESC)가 '오늘도 쓰는' 키워드를
+  //   먼저 버릴 수 있다. 종전 INSERT문과 동일(무회귀).
+  async function _persistAiKeywords(kws) {
+    const now = Date.now();
+    for (const k of (kws || [])) {
+      try {
+        await exec(
+          `INSERT INTO web_reco_keywords (keyword, source, hit_count, last_seen, first_seen) VALUES (?, 'ai', 1, ?, ?) ON CONFLICT(keyword) DO UPDATE SET last_seen=?;`,
+          [k, now, now, now]
+        );
+      } catch {}
+    }
+  }
+  // API 키 지문 — 키 자체를 저장하지 않고 '바뀌었는지'만 판별하기 위한 비암호 해시(djb2 계열).
+  function _aiKeyFingerprint(key) {
+    const s = String(key || "");
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    return `${s.length}${Math.abs(h).toString(36)}`;
+  }
+
   // AI 키워드(선택) — Claude/Gemini 양쪽 지원. 전부 try/catch → 실패/미설정 시 []로 폴백.
+  // 🔧 v7.59.15 (T17·REC-5): **일 1회 생성 캐시**. 종전엔 fetch할 때마다 LLM을 호출했는데(자동 1회 +
+  //   수동 재뽑기마다), 얻는 건 키워드 2개고 그마저 풀에서 희석돼 노출이 드물었다 — 불투명한 반복 과금.
+  //   같은 날·같은 공급자·같은 키·같은 개수면 저장분을 재사용한다(선례: web_reco_auto_day의 dayKey 패턴).
+  //   키/공급자를 바꾸면 지문이 달라져 자동 무효화된다.
   async function generateAiKeywords(count) {
     try {
+      const _provider = aiProvider === "claude" ? "claude" : "gemini";
+      const _key = _provider === "claude" ? claudeApiKey : geminiApiKey;
+      if (!_key) return [];                                   // 키 없으면 종전대로 조용히 [] (호출 자체를 안 함)
+      const _d = new Date();
+      const _sig = `${_d.getFullYear()}-${_d.getMonth()}-${_d.getDate()}|${_provider}|${_aiKeyFingerprint(_key)}|${count}`;
+      try {
+        const cached = await getAppMeta("web_reco_ai_kw");
+        if (cached && cached.sig === _sig && Array.isArray(cached.kws) && cached.kws.length) {
+          await _persistAiKeywords(cached.kws);               // 재사용분도 '오늘 쓴' 것으로 표시
+          return cached.kws;
+        }
+      } catch {}
       const prompt = `한국 웹소설 검색에 쓸 인기·트렌디한 키워드(장르·소재·클리셰) ${count}개를 한국어 단어로만, 쉼표로 구분해서 답해줘. 설명/번호 없이 단어만.`;
       let text = "";
       if (aiProvider === "claude") {
@@ -46219,8 +46301,9 @@ function AppContent() {
         text = ((((data.candidates || [])[0] || {}).content || {}).parts || []).map((p) => p.text || "").join(" ");
       }
       const kws = text.split(/[,\n·]/).map((s) => s.replace(/^[0-9.\-\s)]+/, "").trim()).filter((k) => k && k.length >= 2 && k.length <= 12).slice(0, count);
-      const now = Date.now();
-      for (const k of kws) { try { await exec(`INSERT INTO web_reco_keywords (keyword, source, hit_count, last_seen, first_seen) VALUES (?, 'ai', 1, ?, ?) ON CONFLICT(keyword) DO UPDATE SET last_seen=?;`, [k, now, now, now]); } catch {} }
+      await _persistAiKeywords(kws);
+      // 빈 결과는 캐시하지 않는다 — 일시적 실패를 하루 동안 굳혀 버리면 켜 둔 기능이 그날 내내 죽는다.
+      try { if (kws.length) await setAppMeta("web_reco_ai_kw", { sig: _sig, kws }); } catch {}
       return kws;
     } catch { return []; }
   }
@@ -46237,8 +46320,15 @@ function AppContent() {
     //   밴한 키워드를 AI가 뱉으면 그대로 검색에 쓰였다(두 풀은 거르는데 여기만 새는 구멍).
     if (web.useAiKeywords) {
       const aiBanned = new Set((reco.bannedKeywords || []).map((s) => String(s).trim()).filter(Boolean));
-      const ai = await generateAiKeywords(2);
-      for (const k of ai) { if (!aiBanned.has(String(k).trim())) explore = [...explore, { kw: k, weight: 1.5 }]; }
+      const ai = (await generateAiKeywords(2)).filter((k) => !aiBanned.has(String(k).trim()));
+      if (ai.length) {
+        // 🔧 v7.59.15 (T17·REC-5): 가중을 풀 총합에 비례시킨다. 고정 1.5는 수확 풀이 커질수록 지분이
+        //   희석돼(최대 400행) 과금한 키워드가 사실상 안 뽑혔다 — 이제 풀 크기와 무관하게 지분이 유지된다.
+        //   하한은 종전 값이라 풀이 작을 때도 회귀가 없다.
+        const poolTotal = exploreBase.reduce((s, x) => s + (Number(x.weight) || 0), 0);
+        const aiWeight = Math.max(AI_KEYWORD_MIN_WEIGHT, (poolTotal * AI_KEYWORD_POOL_SHARE) / ai.length);
+        for (const k of ai) explore = [...explore, { kw: k, weight: aiWeight }];
+      }
     }
     const usableTaste = taste.length ? taste : explore; // 취향 비어있으면 탐험으로 폴백
     const picks = [];
@@ -61590,7 +61680,16 @@ async function importJSON(directText, onSuccess, onSettled) {
                     })()}
                   </View>
                   {toggleRow("19금(성인) 포함", !!web.includeAdult, () => updateRecoSetting("web", "includeAdult", !web.includeAdult), web.includeAdult ? undefined : "성인 표시가 확인된 작품은 제외돼요. 메타를 못 읽은 작품은 ‘❔ 조건 미확인’ 배지로 뒤쪽에만 나와요.")}
-                  {toggleRow("AI 키워드 생성", !!web.useAiKeywords, () => updateRecoSetting("web", "useAiKeywords", !web.useAiKeywords), ((aiProvider === "claude" && claudeApiKey) || (aiProvider === "gemini" && geminiApiKey)) ? `${aiProvider === "claude" ? "Claude" : "Gemini"} 키로 트렌디 키워드 추가` : "AI 키(설정 › 연결)가 있어야 동작해요")}
+                  {/* 🤖 v7.59.15 (T17·REC-5): 과금 빈도와 누적 경로를 밝힌다. 종전 문구는 '추가'라고만 해서
+                      매 가져오기마다 호출되는지, 생성분이 이후에도 쓰이는지 알 수 없었다. */}
+                  {toggleRow("AI 키워드 생성", !!web.useAiKeywords, () => updateRecoSetting("web", "useAiKeywords", !web.useAiKeywords), ((aiProvider === "claude" && claudeApiKey) || (aiProvider === "gemini" && geminiApiKey)) ? `${aiProvider === "claude" ? "Claude" : "Gemini"} 키로 트렌디 키워드 추가 · 하루 1번만 생성(같은 날 재시도는 저장분 재사용)` : "AI 키(설정 › 연결)가 있어야 동작해요")}
+                  {web.useAiKeywords ? (
+                    <Text style={{ color: C.sub, fontSize: 10, marginTop: 4, lineHeight: 14 }}>
+                      {((appSettings && appSettings.reco && appSettings.reco.keywordSources) || {}).harvest !== false
+                        ? "생성한 키워드는 수확 풀에 누적돼 이후 가져오기에도 계속 쓰여요."
+                        : "⚠️ '수확 키워드'가 꺼져 있어 생성분이 누적되지 않아요 — 그날 한 번 쓰이고 끝납니다."}
+                    </Text>
+                  ) : null}
                   {toggleRow("매일 자동 가져오기", !!web.autoDaily, () => updateRecoSetting("web", "autoDaily", !web.autoDaily), "추천 탭 열 때 하루 한 번 자동")}
                   <View>
                     <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>키워드 관리</Text>
