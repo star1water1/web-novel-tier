@@ -2,9 +2,177 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.11 (구색 기능 개선 Phase 4 — 추천 정렬 실효화)                         ║
+ * ║  버전: 7.59.15 (구색 기능 개선 Phase 4 완료 — AI 키워드 일일 캐시 · 동적 가중)      ║
  * ║  최종 수정: 2026-08-02                                                        ║
- * ║  총 라인 수: 약 79,500줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 79,800줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🤖 v7.59.15 AI 키워드 일일 캐시 + 동적 가중 (T17 · REC-5) (2026-08-02)           ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제] 'AI 키워드 생성'을 켜면 **가져오기를 누를 때마다** LLM에 과금하는데, 얻는  ║
+ * ║ 건 키워드 2개고 그 가중이 **1.5 고정**이었다. 탐험 풀은 수확분까지 최대 400행이라 ║
+ * ║ 풀이 커질수록 지분이 희석돼(실측 50행 5.7% → 400행 0.7%) 과금한 키워드가 사실상   ║
+ * ║ 안 뽑혔다. 게다가 토글 설명은 "트렌디 키워드 추가"뿐이라 호출 빈도도, 생성분이    ║
+ * ║ 이후에도 쓰이는지도 알 수 없었다. (2차 재검증: '무가치'는 기각 — source='ai'로     ║
+ * ║ 수확 풀에 적립돼 재수용되므로 지분은 쌓인다. 문제는 **불투명·비효율**이다.)       ║
+ * ║                                                                              ║
+ * ║ [수정 ①] **일 1회 생성 캐시**. 같은 날·같은 공급자·같은 키·같은 개수면 저장분을   ║
+ * ║ 재사용한다(선례: web_reco_auto_day의 dayKey 패턴). 키/공급자를 바꾸면 지문이      ║
+ * ║ 달라져 자동 무효화 — 지문은 djb2 계열 비암호 해시라 **API 키 원문을 저장하지      ║
+ * ║ 않는다**. 빈 결과는 캐시하지 않는다(일시적 실패를 하루 굳히면 그날 내내 죽는다).  ║
+ * ║ 캐시 히트 경로도 수확 풀에 재적립해 last_seen을 갱신한다 — 안 하면                ║
+ * ║ WEB_RECO_KEYWORD_CAP 정리(last_seen DESC)가 '오늘도 쓰는' 키워드를 먼저 버린다.   ║
+ * ║                                                                              ║
+ * ║ [수정 ②] 가중을 **풀 총합 대비 지분**으로(`AI_KEYWORD_POOL_SHARE = 0.10`).        ║
+ * ║ 풀이 400행이든 50행이든 AI 지분이 ~9%로 유지된다(실측). 하한은 종전 고정값 1.5라  ║
+ * ║ 풀이 작을 때도 회귀가 없다. 밴 필터를 가중 계산 **앞**에 둬서 밴된 키워드가 지분을║
+ * ║ 먹지 않는다. ※ 실제 노출 확률에는 취향↔탐험 슬라이더가 곱해진다(AI는 탐험 풀).    ║
+ * ║                                                                              ║
+ * ║ [수정 ③] 토글 힌트에 호출 빈도와 누적 경로 명시 — "하루 1번만 생성(같은 날        ║
+ * ║ 재시도는 저장분 재사용)" + 켜져 있을 때 harvest 상태별 안내('수확 키워드'가 꺼져  ║
+ * ║ 있으면 생성분이 누적되지 않는다는 경고). 종전엔 이 의존이 완전히 숨어 있었다.     ║
+ * ║                                                                              ║
+ * ║ [기각] 'AI 전용 검색 슬롯' — ToS 상한 3회의 33%를 LLM 추측에 고정 배정하는 셈이라 ║
+ * ║ 취향↔탐험 슬라이더를 무시하게 된다. 2차 재검증 판정을 그대로 따랐다.              ║
+ * ║                                                                              ║
+ * ║ [검증] 실제 generateAiKeywords·가중식을 소스에서 떼어내 31개 단언 — 같은 날 3회   ║
+ * ║ 호출에 LLM 1회, 날짜/키/공급자/개수 4종 무효화 + 동일 조건 음성 대조, 지문에 키   ║
+ * ║ 원문 없음, 빈 응답 미캐시, 캐시 히트도 재적립, 풀 400/50/5 가중과 지분 불변,      ║
+ * ║ 고정 1.5의 희석 대조군, 밴 순서, 문구 4종.                                        ║
+ * ║ esbuild 통과, scraper-test 526/526. APP_VERSION 7.59.15.                          ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🎚️ v7.59.14 취향↔탐험 슬라이더 정합 + TTL 상수 정리 (T16 · REC-6 REC-7)          ║
+ * ║    (2026-08-02)                                                                  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제 ①·REC-6] 내 서재 추천의 취향↔탐험 슬라이더 설명은 "탐험↑: **안 읽은**·      ║
+ * ║ 데이터 적은 작품 위주"인데, `CAT_AXIS`가 `planned_unread`(미읽은 예정작 📋)를     ║
+ * ║ **취향 축**에 배정하고 있었다 → 탐험을 올릴수록 미읽은 예정작이 오히려 줄어들어,  ║
+ * ║ 슬라이더가 설명과 정반대로 동작하던 유일한 배정 오류.                            ║
+ * ║                                                                              ║
+ * ║ [문제 ②·REC-6] 가중식 주석은 "ratio=0.5면 중립"이라 하는데 **기본값은 70**이다.   ║
+ * ║ 즉 아무것도 안 건드린 상태에서 이미 취향형 ×1.2 / 탐험형 ×0.8로 기울어 출고되는데 ║
+ * ║ 화면 어디에도 '50이 중립'이라는 말이 없었다.                                     ║
+ * ║                                                                              ║
+ * ║ [문제 ③·REC-7] `WEB_RECO_TTL_DAYS = 1`은 이름이 '보존 기간'을 약속하지만          ║
+ * ║ **참조가 0**이었다 — cleanupExpiredWebReco가 오늘 0시를 직접 계산해 썼다.         ║
+ * ║                                                                              ║
+ * ║ [수정 ①] `planned_unread`를 't' → 'e'로 재배정(1줄). 실측: 탐험 100%에서 가중     ║
+ * ║ 15, 취향 100%에서 5 — 이제 low_data(데이터 적음)와 같은 방향으로 움직인다.        ║
+ * ║ 나머지 7개 배정은 무변경.                                                        ║
+ * ║                                                                              ║
+ * ║ [수정 ②] 기본값 편향을 **명문화**로 해소 — 코드 주석에 '기본값은 0.5가 아니라     ║
+ * ║ 0.7'을 박고, 슬라이더 설명에 "(50이 중립, 기본 70은 취향 쪽으로 조금 기울어       ║
+ * ║ 있어요)"를 붙였다. 기본을 50으로 내리는 안은 **채택하지 않았다** — 기존 사용자의  ║
+ * ║ 추천 구성이 통째로 바뀐다. taste.score에 계수를 도입하는 안도 제외했다(그 값이    ║
+ * ║ 가산과 **분류 임계**를 겸용해 임계가 오염된다 — 별도 설계 필요).                  ║
+ * ║                                                                              ║
+ * ║ [수정 ③] TTL 상수를 컷오프 계산에 배선. **달력일 뺄셈**(`d.setDate(d.getDate()   ║
+ * ║ - (TTL-1))`)이라 '자정 정리' 의미가 보존되고, TTL=1이면 컷오프가 오늘 0시라       ║
+ * ║ **종전과 완전히 동일**하다. 손상 값(0/음수/NaN)은 1로 폴백. TTL **설정 노출은     ║
+ * ║ 하지 않는다** — fetch마다 미보관 배치를 전량 교체하므로 TTL을 올려도 '며칠        ║
+ * ║ 보관'을 지킬 수 없어 못 지킬 약속이 된다(⭐ 보관이 그 역할). 2차 재검증의 기각    ║
+ * ║ 판정을 그대로 따랐다.                                                            ║
+ * ║                                                                              ║
+ * ║ [검증] 실제 CAT_AXIS·가중식·컷오프 계산을 소스에서 떼어내 24개 단언 —             ║
+ * ║ 탐험 100%에서 미읽은 예정작 ↑(+종전이면 반대인 대조군), 중립 50에서 세 축 동일,   ║
+ * ║ 기본 70의 ×1.2/×0.8 실측, TTL 1/2/5/7 컷오프와 월 경계(8/2→7/29), 손상값 폴백,    ║
+ * ║ 실제 DELETE에서 ⭐ 보관작 5일 전 것도 생존.                                       ║
+ * ║ esbuild 통과, scraper-test 526/526. APP_VERSION 7.59.14.                          ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🚫 v7.59.13 밴 일관 적용 + 승률 게이트 실질화 (T15 · REC-3 REC-8) (2026-08-02)   ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제 ①·REC-3] 설정은 "🚫 밴: 검색 키워드 선정에서 빠지고, 제목·작가·장르가       ║
+ * ║ 일치하는 결과도 가려져요"라고 약속하는데, 밴이 적용되는 건 **탐험 풀과 결과       ║
+ * ║ 필터뿐**이었다. `buildTasteKeywordPool`에는 banned 검사가 아예 없고(패턴 경로·    ║
+ * ║ 폴백 경로 모두), AI 생성 키워드 append도 무검사라, 밴한 키워드가 취향 경로와      ║
+ * ║ AI 경로로는 그대로 검색에 쓰였다.                                                ║
+ * ║                                                                              ║
+ * ║ [문제 ②·REC-8] win_rate를 채우는 곳은 refreshPatternStats 하나인데 문턱이         ║
+ * ║ `sample_size >= 5`였다. 반면 소비부는 전부 `>= 3`을 게이트로 쓴다(장르/태그/작가  ║
+ * ║ 보너스·취향 키워드 풀·웹 tasteMap) → 코드가 내세운 3은 **실질 5**였고, 표본 3~4   ║
+ * ║ 패턴은 win_rate가 영원히 NULL이었다. 더 나쁜 건 추천 점수 경로다: NULL 행도       ║
+ * ║ `hasPatterns=true`와 genreScores를 채우므로 **패턴 분기로 들어가는데**,           ║
+ * ║ `(null - 0.5) * 100`이 음수라 보너스는 0이고 **else의 폴백 25점까지 건너뛴다**    ║
+ * ║ — 즉 표본이 3~4로 쌓이는 순간 점수가 오히려 사라졌다(2차 재검증의 신규 발견).     ║
+ * ║                                                                              ║
+ * ║ [수정 ①] `buildTasteKeywordPool` 내부에 banned Set + `add` 가드. 한 곳에 두면     ║
+ * ║ 패턴 경로와 폴백 경로가 **함께** 커버된다(폴백에 따로 심으면 언젠가 어긋난다).    ║
+ * ║ 시그니처는 그대로 — refreshKeywordPreview가 같은 함수를 부르므로 '미리보기와      ║
+ * ║ 실제'가 자동으로 일치한다. AI append(pickRecoKeywords)에도 같은 가드를 붙였다.    ║
+ * ║                                                                              ║
+ * ║ [수정 ②] refreshPatternStats 문턱 `>= 5` → `>= 3` (1줄). 소비 게이트와 숫자가     ║
+ * ║ 맞아 3~4 표본도 win_rate를 받는다. 과대평가 방지는 이미 있는 `_confGate`가        ║
+ * ║ 담당한다 — 소표본은 Wilson 구간이 넓어 significance가 낮게 나오고, 실측에서       ║
+ * ║ 3전 게이트 0.72 < 10전 0.77로 자동 보수화된다. `is_notable`은 `n >= 15` 조건이라  ║
+ * ║ 이 하향과 무관하고, 인사이트 발견은 `is_notable = 1`만 읽으므로 새 인사이트가     ║
+ * ║ 남발되지 않는다(스케줄 호출 횟수도 종전과 동일).                                 ║
+ * ║                                                                              ║
+ * ║ [수정 ③] 승률 칩에 표본 병기(`80% · 3전`). 3~4 표본 승률이 이제 실제로 점수에     ║
+ * ║ 들어오므로, 퍼센트만 보이면 근거가 얼마나 얇은지 알 수 없다(3전 2승도 67%다).     ║
+ * ║ 장르·태그·작가 3종 모두 sample을 싣고, 표본 없는 '고티어' 폴백 칩은 종전 표기.    ║
+ * ║                                                                              ║
+ * ║ [파급] 이제 표본 3~4 패턴이 `win_rate >= 0.55`를 만족하면 **취향 키워드 풀에도**  ║
+ * ║ 유입된다(종전엔 NULL이라 영원히 미유입). 검색 키워드가 소표본 신호로 조금 더      ║
+ * ║ 빨리 개인화되는 대신, 초반 표본의 흔들림도 함께 들어온다 — 의도한 트레이드오프다  ║
+ * ║ (설계 주석이 원래 말하던 '3~4는 반감' 상태로 복원). v7.59.12의 웹 tasteMap        ║
+ * ║ 폴백 판정도 실제 승률이 생기면 'library'에서 'patterns'로 자연 전환된다.          ║
+ * ║                                                                              ║
+ * ║ [안 건드린 것] 분석 탭 matchBehavior의 `>= 5`(다른 목적 — 인사이트 서술용),       ║
+ * ║ is_notable 조건, batchUpdatePatternStats(win_rate를 안 씀), 결과 필터            ║
+ * ║ matchesBannedKeyword(이미 적용 중).                                              ║
+ * ║                                                                              ║
+ * ║ [검증] 실제 add 가드·SQL·refreshPatternStats 본체·_confGate·칩 조립을 소스에서    ║
+ * ║ 떼어내 35개 단언 — 패턴/폴백/AI 3경로 밴 적용(+종전이면 새는 대조군), 3전·4전     ║
+ * ║ win_rate 충전·2전은 여전히 제외, is_notable=0 유지, 소표본 게이트 반감,           ║
+ * ║ NULL이면 폴백 25점까지 막히던 대조군, 표본 병기 4지점 + 폴백 칩 무변경.           ║
+ * ║ esbuild 통과, scraper-test 526/526. APP_VERSION 7.59.13.                          ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🧠 v7.59.12 '취향순'을 hybrid/manual에서도 동작하게 (T14 · ANA-5) (2026-08-02)   ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제] 넷상 추천의 '취향순'이 `preference_patterns.win_rate`에만 의존했다.        ║
+ * ║ 그런데 win_rate는 **ELO 매칭에서만** 생긴다 — refreshPatternStats가                ║
+ * ║ win_count/sample_size로 계산하고(sample_size≥5), 정적 메트릭 UPSERT는 win_rate를  ║
+ * ║ NULL로 넣고 ON CONFLICT에서도 갱신하지 않으며, 하이브리드의 logVerificationMatch는 ║
+ * ║ tier_validation_log와 novels 카운터만 건드리고 preference_patterns는 아예 안 쓴다.║
+ * ║ → 순수 hybrid/manual 서재에선 tasteMap 값이 전부 0/NULL이라 scoreWeb이 모든       ║
+ * ║ 후보에 0점을 주고, '취향순'은 아무 일도 하지 않았다(정렬 무동작 + 카드 🧠 막대    ║
+ * ║ 전멸). 게다가 실패 표시가 전무 — 막대는 `ts > 0` 조건으로 조용히 사라질 뿐이라    ║
+ * ║ 사용자는 '왜 점수가 없는지' 알 방법이 없었다.                                     ║
+ * ║                                                                              ║
+ * ║ [수정 ①] 쓸 수 있는 승률이 하나도 없을 때만(값 > 0.5 기준) `buildTasteKeywordPool`║
+ * ║ 을 **재사용**해 tasteMap을 시드한다. 그 함수의 폴백 경로는 `getPrefScore` 기반이라║
+ * ║ **mode-aware**(hybrid=티어+순위, match=레이팅) — 여기서 모드 분기를 다시 짤 필요가║
+ * ║ 없고 폴백 로직도 중복되지 않는다. ELO 서재는 첫 조건에서 걸러져 이 블록에 오지    ║
+ * ║ 않으므로 **기존 동작 무변경**.                                                   ║
+ * ║                                                                              ║
+ * ║ [수정 ②] weight → 유사 승률 환산. 패턴 경로(weight = 1 + win_rate ≥ 1.55)는       ║
+ * ║ `w - 1`로 원래 승률을 무손실 복원하고, 서재 폴백(1.2 고정 — 승률이 아니라 '내가   ║
+ * ║ 높이 평가한 작품에 실제로 붙어 있다'는 이진 신호라 등급이 없다)은 상수            ║
+ * ║ `WEB_TASTE_FALLBACK_WR = 0.7`. scoreWeb이 `(wr-0.5)*100`을 더하므로 토큰당 20점 —  ║
+ * ║ **승률이 아니라 '일치 개수'로 차등**이 생긴다(3개 맞으면 60점=초록 구간).         ║
+ * ║                                                                              ║
+ * ║ [수정 ③] 실패를 보이게. `webRecoTasteBasis` state("patterns"|"library"|"none")로  ║
+ * ║ 마지막 가져오기의 근거를 기록해 추천 섹션에 한 줄로 안내하고, 정렬 칩에도 '취향순'║
+ * ║ 을 고른 동안 근거가 둘이라는 캡션을 붙였다. 없는 점수를 지어내지는 않는다 —       ║
+ * ║ 근거가 아예 없으면 tasteMap을 비운 채 'none'으로 정직하게 알린다.                 ║
+ * ║                                                                              ║
+ * ║ [안 건드린 것] 막대 은닉 조건(`ts > 0`), scoreWeb 산식, 정렬 파이프라인(T01·T13), ║
+ * ║ preference_patterns 스키마·기록 경로. 하이브리드 검증 결과를 패턴에 적립하는 건   ║
+ * ║ 별개 설계라 범위 밖(match→hybrid 전환 슬롯의 '낡은 ELO 승률' 이슈와 함께 T33).    ║
+ * ║                                                                              ║
+ * ║ [검증] 실제 폴백 블록·scoreWeb·buildTasteKeywordPool을 소스에서 떼어내 25개 단언 —║
+ * ║ ELO 서재 무변경(승률 그대로·32/48점), 순수 hybrid에서 3개일치(60) > 1개일치(20) > ║
+ * ║ 무관작(0)으로 **실제 차등 정렬**(+종전엔 전부 0점인 대조군), 고평가작 태그만 시드,║
+ * ║ 빈 서재는 'none', 패턴이 전부 0.5 이하/NULL이면 폴백 진입·0.51이 하나라도 있으면  ║
+ * ║ patterns 유지, 환산 무손실, category 토큰으로 보강 전에도 정렬 가능.              ║
+ * ║ esbuild 통과, scraper-test 526/526. APP_VERSION 7.59.12.                          ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -13752,7 +13920,15 @@ async function refreshPatternStats() {
     // 🔧 DB 최적화: 필요 컬럼만 + WHERE로 sample_size < 5 사전 필터링
     // 🔧 v7.49.20: 정적 메트릭 카테고리(win_count 무의미·항상 0) 제외 — 이전엔 이들의 win_rate/significance/is_notable을
     //   '강한 0% notable'로 오기록해 DB 오염(현재 소비자는 없으나, is_notable/significance 읽는 소비자 추가 시 회귀 방지).
-    const patterns = await all(`SELECT id, sample_size, win_count FROM preference_patterns WHERE sample_size >= 5 AND category NOT IN ('tier_concentration','tier_inversion','award_tier')`);
+    // 🔧 v7.59.13 (T15·REC-8): `sample_size >= 5` → `>= 3`. [문제] win_rate를 채우는 곳은 여기뿐인데
+    //   문턱이 5라, 표본 3~4인 패턴은 win_rate가 **영원히 NULL**이었다. 그런데 소비부는 전부 `>= 3`을
+    //   게이트로 쓴다(genre/tag/author 보너스, 취향 풀, 웹 tasteMap) → 코드가 내세운 3은 실질 5였다.
+    //   더 나쁜 건 추천 점수 경로: NULL 행도 `hasPatterns=true`와 genreScores를 채우므로 패턴 분기로
+    //   들어가는데, `(null - 0.5) * 100`이 음수라 보너스는 0이고 **else의 폴백 25점까지 건너뛴다**
+    //   (= 표본 3~4가 쌓이는 순간 점수가 오히려 사라진다).
+    //   [안전장치] 3~4 표본이 과대평가되지 않는 건 _confGate가 이미 담당한다(significance 낮음 → 반감).
+    //   is_notable은 `n >= 15` 조건이라 이 하향과 무관하다(주목 패턴이 남발되지 않음).
+    const patterns = await all(`SELECT id, sample_size, win_count FROM preference_patterns WHERE sample_size >= 3 AND category NOT IN ('tier_concentration','tier_inversion','award_tier')`);
 
     const queries = [];
 
@@ -18470,7 +18646,20 @@ const WEB_RECO_TTL_DAYS = 1;                       // 임시 추천작 보존(�
 const WEB_RECO_HIDDEN_CAP = 500;                   // "관심없음" 숨김 목록 상한
 const WEB_RECO_REROLL_COOLDOWN_MS = 20 * 1000;     // 재뽑기 쿨다운(과도 요청 방지 — 탐색 UX 위해 완화)
 const WEB_RECO_MAX_KEYWORDS = 3;                   // 한 번 가져올 때 검색 횟수 상한(ToS — on-demand)
+// 🤖 v7.59.15 (T17·REC-5): AI 생성 키워드가 탐험 풀에서 차지할 목표 지분(총 가중 대비).
+//   [문제] 종전엔 가중이 1.5 **고정**이라, 수확 풀이 커질수록(최대 400행) 지분이 한없이 희석됐다 —
+//   과금은 매 fetch 하는데 그 키워드가 실제로 뽑힐 확률은 1%대로 떨어지는 구조였다.
+//   [해결] 풀 총합에 비례시켜 지분을 고정한다. 풀이 커져도 AI 키워드의 존재감이 유지된다.
+//   ※ 실제 노출 확률은 취향↔탐험 슬라이더에도 곱해진다(AI는 탐험 풀에 들어가므로, 기본 70이면
+//     추첨의 30%만 탐험 몫). 이 값을 올리면 그만큼 탐험 슬롯을 AI가 더 가져간다.
+const AI_KEYWORD_POOL_SHARE = 0.10;
+const AI_KEYWORD_MIN_WEIGHT = 1.5;                 // 종전 고정값 — 풀이 작을 때 하한(무회귀 보장)
 const WEB_RECO_ENRICH_CAP = 10;                    // 🌐 v7.53.4: 콘텐츠 필터용 메타 보강 후보 상한(지연 제한)
+// 🌐 v7.59.12 (T14·ANA-5): 승률 패턴이 없을 때 쓰는 서재 폴백 키워드의 '유사 승률'.
+//   buildTasteKeywordPool의 폴백 경로는 가중치가 1.2 고정이라(= '내가 높이 평가한 작품에 실제로 붙어 있다'는
+//   이진 신호) 등급이 없다. scoreWeb이 `(wr-0.5)*100`을 더하므로 0.7이면 토큰 하나당 20점 — 3개 맞으면
+//   60점(초록 구간)이 되는 눈금이다. 승률이 아니라 '일치 개수'로 차등이 생긴다.
+const WEB_TASTE_FALLBACK_WR = 0.7;
 const WEB_RECO_KEYWORD_CAP = 2000;                 // 🌐 v7.53.6: 수확/제목 키워드 풀 상한(최근순 유지, DB 무한증가 방지)
 // 수확 시 제외할 잡음 키워드(연령/독점/공모전/형식 등 — 작품 검색어로 부적합)
 const WEB_RECO_JUNK_KEYWORDS = ["19","19금","독점","무료","연재","완결","연재중","단행본","성인","공모전","웹툰","웹소설","외전","단편","장편","무료연재","유료"];
@@ -21524,7 +21713,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.11";
+const APP_VERSION = "7.59.15";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -41498,6 +41687,9 @@ function AppContent() {
   const [recoSettingsOpen, setRecoSettingsOpen] = useState(false); // 추천 맞춤설정 패널 접이식
   // 🌐 v7.50.x: 넷상 추천(M2)
   const [webRecoList, setWebRecoList] = useState([]);          // 임시 추천작 [{...web_reco row}]
+  // 🌐 v7.59.12 (T14·ANA-5): 마지막 가져오기가 취향 점수를 무엇으로 계산했는지 — "patterns" | "library" | "none".
+  //   종전엔 근거가 없으면 카드의 🧠 막대가 조용히 사라질 뿐이라 '왜 점수가 없는지'를 알 길이 없었다.
+  const [webRecoTasteBasis, setWebRecoTasteBasis] = useState(null);
   const [webRecoLoading, setWebRecoLoading] = useState(false);
   const [webRecoError, setWebRecoError] = useState(null);
   const [webRecoTierPick, setWebRecoTierPick] = useState(null); // manual 모드 본목록 추가 시 티어 선택 대상 item
@@ -45395,8 +45587,10 @@ function AppContent() {
 
       // 📊 통계 엄격도 게이트: significance(CI 폭 좁음)·confidence_lower(Wilson 하한)로
       //   패턴 기여를 보수화 가중. 소표본/저신뢰는 영향 축소하되 완전 차단 금지(콜드스타트 보호).
-      //   refreshPatternStats는 sample_size>=5만 significance 갱신 → sample 3~4는 sig=0/NULL이
-      //   들어와 floor(0.5)로 반감만 됨(공격적 다양성 유지). 반환 ∈ [0.5, 1.0].
+      //   🔧 v7.59.13 (T15·REC-8): refreshPatternStats 문턱을 5→3으로 내렸으므로 sample 3~4도 이제
+      //   실제 significance를 받는다(종전엔 sig=NULL→0으로 일괄 floor 0.5). 소표본은 Wilson 구간이 넓어
+      //   sig가 낮게 나오니 여전히 0.5 근처로 반감된다 — 게이트가 '자동 보수화' 역할을 그대로 한다.
+      //   반환 ∈ [0.5, 1.0].
       function _confGate(significance, confidenceLower) {
         const sig = Math.max(0, Math.min(1, Number(significance) || 0));
         let w = 0.5 + 0.5 * sig; // sig=0 → 0.5(반감), sig=1 → 1.0(원본)
@@ -45444,7 +45638,9 @@ function AppContent() {
               if (gs.winRate >= 0.55) {
                 const pct = Math.round(gs.winRate * 100);
                 factors.push(`${g} 장르 선호도 ${pct}%`);
-                chips.push({ label: g, value: `${pct}%`, type: "genre", confirmed: !!gs.confirmed });
+                // 🔧 v7.59.13 (T15·REC-8): 표본 수 병기 — 3~4표본 승률이 이제 실제로 점수에 들어오므로
+                //   "80%"만 보이면 근거가 얼마나 얇은지 알 수 없다(3전 2승도 67%다).
+                chips.push({ label: g, value: `${pct}%`, sample: gs.sampleSize, type: "genre", confirmed: !!gs.confirmed });
               }
             }
           }
@@ -45474,7 +45670,7 @@ function AppContent() {
               const gatedWr = 0.5 + (ts.winRate - 0.5) * gate;
               // 🧠 v3.5.5: confirmed 태그 승률 보정(게이트 후 가산)
               const effectiveWr = ts.confirmed ? Math.min(1, gatedWr + 0.05) : gatedWr;
-              tagHits.push({ tag, winRate: effectiveWr, confirmed: !!ts.confirmed });
+              tagHits.push({ tag, winRate: effectiveWr, sample: ts.sampleSize, confirmed: !!ts.confirmed });
             }
           }
           // 상위 3개 태그 평균
@@ -45484,7 +45680,7 @@ function AppContent() {
             const avgWr = topTags.reduce((s, t) => s + t.winRate, 0) / topTags.length;
             tagScore = Math.min(35, Math.max(0, (avgWr - 0.5) * 100) + topTags.length * 5);
             for (const tt of topTags) {
-              chips.push({ label: tt.tag, value: `${Math.round(tt.winRate * 100)}%`, type: "tag", confirmed: tt.confirmed });
+              chips.push({ label: tt.tag, value: `${Math.round(tt.winRate * 100)}%`, sample: tt.sample, type: "tag", confirmed: tt.confirmed });
             }
             if (topTags.length >= 2) {
               factors.push(`선호 태그 ${topTags.length}개 일치 (${topTags.map(t => t.tag).join(", ")})`);
@@ -45514,7 +45710,7 @@ function AppContent() {
             if (as.winRate >= 0.55) {
               const pct = Math.round(as.winRate * 100);
               factors.push(`${author} 작가 선호도 ${pct}%`);
-              chips.push({ label: author, value: `${pct}%`, type: "author", confirmed: !!as.confirmed });
+              chips.push({ label: author, value: `${pct}%`, sample: as.sampleSize, type: "author", confirmed: !!as.confirmed });
             }
           }
         }
@@ -45707,11 +45903,18 @@ function AppContent() {
         }
       }
 
-      // 🎯 v7.50.0: 취향↔탐험 슬라이더로 카테고리 가중 편향. ratio=0.5면 중립(기존 동작),
+      // 🎯 v7.50.0: 취향↔탐험 슬라이더로 카테고리 가중 편향. ratio=0.5면 중립,
       //   1.0이면 취향형 카테고리 ×1.5·탐험형 ×0.5, 0.0이면 반대. (내 서재 슬라이더, 넷상과 분리)
+      //   ⚠️ v7.59.14 (T16·REC-6): **기본값은 0.5가 아니라 0.7이다**(DEFAULT_SETTINGS.reco.library).
+      //   즉 아무것도 안 건드린 상태에서 이미 취향형 ×1.2 / 탐험형 ×0.8로 기울어 출고된다.
+      //   '중립'이라는 말이 기본값을 가리킨다고 오해하지 말 것 — 중립은 슬라이더 50이다(설명 문구에도 명시).
+      //   기본을 50으로 내리는 안은 기존 사용자의 추천 구성이 통째로 바뀌므로 채택하지 않았다.
+      // 🔧 v7.59.14 (T16·REC-6): `planned_unread`를 't' → 'e'. 설명 문구가 "탐험↑: **안 읽은**·데이터 적은
+      //   작품 위주"라고 하는데, 미읽은 예정작을 취향 축에 두면 탐험을 올릴수록 오히려 덜 나온다 —
+      //   슬라이더를 설명과 정반대로 만들던 유일한 배정 오류다.
       const CAT_AXIS = {
-        taste_high_tier: "t", taste_match_paused: "t", reread_recommend: "t", almost_done: "t", planned_unread: "t",
-        low_data: "e", other: "e", high_tier_less_read: "e",
+        taste_high_tier: "t", taste_match_paused: "t", reread_recommend: "t", almost_done: "t",
+        low_data: "e", other: "e", high_tier_less_read: "e", planned_unread: "e",
       };
       for (const c of candidates) {
         const axis = CAT_AXIS[c.category] || "e";
@@ -45916,8 +46119,15 @@ function AppContent() {
 
   async function cleanupExpiredWebReco() {
     try {
+      // 🔧 v7.59.14 (T16·REC-7): `WEB_RECO_TTL_DAYS`를 실제로 배선. 종전엔 상수만 선언돼 있고 참조가
+      //   0이라, 이름이 약속하는 '보존 기간'을 아무도 읽지 않는 죽은 값이었다(여기서 오늘 0시를 직접 계산).
+      //   달력일 뺄셈으로 의미를 보존한다 — TTL=1이면 컷오프가 오늘 0시라 **종전과 완전히 동일**하고,
+      //   값을 올리면 그 일수만큼 배치가 남는다. (설정 노출은 하지 않는다: fetch마다 미보관 배치를
+      //   전량 교체하므로, TTL을 늘려도 '며칠 보관'을 지킬 수 없어 못 지킬 약속이 된다 — ⭐ 보관이 그 역할.)
+      const _ttlDays = Math.max(1, Math.round(Number(WEB_RECO_TTL_DAYS)) || 1);
       const d = new Date(); d.setHours(0, 0, 0, 0);
-      const todayStart = d.getTime(); // 달력일 기준: 오늘 0시 이전 배치는 만료(보관 제외)
+      d.setDate(d.getDate() - (_ttlDays - 1));
+      const todayStart = d.getTime(); // 달력일 기준: 이 시각 이전 배치는 만료(보관 제외)
       await exec("DELETE FROM web_reco WHERE pinned=0 AND status='pending' AND fetched_at < ?;", [todayStart]);
       await exec("DELETE FROM web_reco WHERE status!='pending' AND fetched_at < ?;", [todayStart]);
       // 🌐 v7.53.6: 수확/제목 키워드 풀 상한 — 최근 본 순으로 WEB_RECO_KEYWORD_CAP개만 유지(무한 증가 방지). 읽기는 어차피 LIMIT 400/300.
@@ -45996,7 +46206,12 @@ function AppContent() {
     const ks = reco.keywordSources || DEFAULT_SETTINGS.reco.keywordSources || {};
     catCache = catCache || new Map();
     const out = new Map();
-    const add = (kw, w) => { kw = String(kw || "").trim(); if (kw && kw.length >= 2 && kw.length <= 14) out.set(kw, Math.max(out.get(kw) || 0, w)); };
+    // 🔧 v7.59.13 (T15·REC-3): 밴 키워드 가드 — 탐험 풀(buildExploreKeywordPool)에는 있는데 취향 풀에는
+    //   없어서, 설정이 "🚫 밴: 검색 키워드 선정에서 빠지고…"라고 약속해 놓고 취향 경로로는 그대로 검색됐다.
+    //   `add` 한 곳에 두면 패턴 경로와 폴백 경로가 **함께** 커버된다(폴백에 따로 심으면 언젠가 어긋난다).
+    //   ※ 시그니처는 그대로 — refreshKeywordPreview가 같은 함수를 부르므로 미리보기와 실제가 자동 일치한다.
+    const banned = new Set((reco.bannedKeywords || []).map((s) => String(s).trim()).filter(Boolean));
+    const add = (kw, w) => { kw = String(kw || "").trim(); if (kw && kw.length >= 2 && kw.length <= 14 && !banned.has(kw)) out.set(kw, Math.max(out.get(kw) || 0, w)); };
     try {
       const pats = await all("SELECT pattern_key, win_rate FROM preference_patterns WHERE sample_size >= 3 AND win_rate >= 0.55;");
       // 🌐 v7.53.1: 'tag:' 패턴만 카테고리 게이트 — 'genre:'/'author:'/무접두 패턴은 분류 대상이 아니라 그대로 유지(추천 품질 보존).
@@ -46022,9 +46237,47 @@ function AppContent() {
     return Array.from(out.entries()).map(([kw, weight]) => ({ kw, weight }));
   }
 
+  // 🤖 v7.59.15 (T17·REC-5): 생성분을 수확 풀에 적립(재사용 원천). 캐시 히트 경로도 이걸 호출해
+  //   last_seen을 갱신한다 — 안 하면 WEB_RECO_KEYWORD_CAP 정리(last_seen DESC)가 '오늘도 쓰는' 키워드를
+  //   먼저 버릴 수 있다. 종전 INSERT문과 동일(무회귀).
+  async function _persistAiKeywords(kws) {
+    const now = Date.now();
+    for (const k of (kws || [])) {
+      try {
+        await exec(
+          `INSERT INTO web_reco_keywords (keyword, source, hit_count, last_seen, first_seen) VALUES (?, 'ai', 1, ?, ?) ON CONFLICT(keyword) DO UPDATE SET last_seen=?;`,
+          [k, now, now, now]
+        );
+      } catch {}
+    }
+  }
+  // API 키 지문 — 키 자체를 저장하지 않고 '바뀌었는지'만 판별하기 위한 비암호 해시(djb2 계열).
+  function _aiKeyFingerprint(key) {
+    const s = String(key || "");
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    return `${s.length}${Math.abs(h).toString(36)}`;
+  }
+
   // AI 키워드(선택) — Claude/Gemini 양쪽 지원. 전부 try/catch → 실패/미설정 시 []로 폴백.
+  // 🔧 v7.59.15 (T17·REC-5): **일 1회 생성 캐시**. 종전엔 fetch할 때마다 LLM을 호출했는데(자동 1회 +
+  //   수동 재뽑기마다), 얻는 건 키워드 2개고 그마저 풀에서 희석돼 노출이 드물었다 — 불투명한 반복 과금.
+  //   같은 날·같은 공급자·같은 키·같은 개수면 저장분을 재사용한다(선례: web_reco_auto_day의 dayKey 패턴).
+  //   키/공급자를 바꾸면 지문이 달라져 자동 무효화된다.
   async function generateAiKeywords(count) {
     try {
+      const _provider = aiProvider === "claude" ? "claude" : "gemini";
+      const _key = _provider === "claude" ? claudeApiKey : geminiApiKey;
+      if (!_key) return [];                                   // 키 없으면 종전대로 조용히 [] (호출 자체를 안 함)
+      const _d = new Date();
+      const _sig = `${_d.getFullYear()}-${_d.getMonth()}-${_d.getDate()}|${_provider}|${_aiKeyFingerprint(_key)}|${count}`;
+      try {
+        const cached = await getAppMeta("web_reco_ai_kw");
+        if (cached && cached.sig === _sig && Array.isArray(cached.kws) && cached.kws.length) {
+          await _persistAiKeywords(cached.kws);               // 재사용분도 '오늘 쓴' 것으로 표시
+          return cached.kws;
+        }
+      } catch {}
       const prompt = `한국 웹소설 검색에 쓸 인기·트렌디한 키워드(장르·소재·클리셰) ${count}개를 한국어 단어로만, 쉼표로 구분해서 답해줘. 설명/번호 없이 단어만.`;
       let text = "";
       if (aiProvider === "claude") {
@@ -46048,8 +46301,9 @@ function AppContent() {
         text = ((((data.candidates || [])[0] || {}).content || {}).parts || []).map((p) => p.text || "").join(" ");
       }
       const kws = text.split(/[,\n·]/).map((s) => s.replace(/^[0-9.\-\s)]+/, "").trim()).filter((k) => k && k.length >= 2 && k.length <= 12).slice(0, count);
-      const now = Date.now();
-      for (const k of kws) { try { await exec(`INSERT INTO web_reco_keywords (keyword, source, hit_count, last_seen, first_seen) VALUES (?, 'ai', 1, ?, ?) ON CONFLICT(keyword) DO UPDATE SET last_seen=?;`, [k, now, now, now]); } catch {} }
+      await _persistAiKeywords(kws);
+      // 빈 결과는 캐시하지 않는다 — 일시적 실패를 하루 동안 굳혀 버리면 켜 둔 기능이 그날 내내 죽는다.
+      try { if (kws.length) await setAppMeta("web_reco_ai_kw", { sig: _sig, kws }); } catch {}
       return kws;
     } catch { return []; }
   }
@@ -46062,7 +46316,20 @@ function AppContent() {
     const catCache = new Map(); // 🌐 v7.53.1: 두 풀 빌드가 태그 분류를 공유(중복 스캔 방지)
     const [taste, exploreBase] = await Promise.all([buildTasteKeywordPool(catCache), buildExploreKeywordPool(catCache)]);
     let explore = exploreBase;
-    if (web.useAiKeywords) { const ai = await generateAiKeywords(2); for (const k of ai) explore = [...explore, { kw: k, weight: 1.5 }]; }
+    // 🔧 v7.59.13 (T15·REC-3): AI 생성 키워드도 밴을 통과시킨다. 종전엔 무검사로 append돼,
+    //   밴한 키워드를 AI가 뱉으면 그대로 검색에 쓰였다(두 풀은 거르는데 여기만 새는 구멍).
+    if (web.useAiKeywords) {
+      const aiBanned = new Set((reco.bannedKeywords || []).map((s) => String(s).trim()).filter(Boolean));
+      const ai = (await generateAiKeywords(2)).filter((k) => !aiBanned.has(String(k).trim()));
+      if (ai.length) {
+        // 🔧 v7.59.15 (T17·REC-5): 가중을 풀 총합에 비례시킨다. 고정 1.5는 수확 풀이 커질수록 지분이
+        //   희석돼(최대 400행) 과금한 키워드가 사실상 안 뽑혔다 — 이제 풀 크기와 무관하게 지분이 유지된다.
+        //   하한은 종전 값이라 풀이 작을 때도 회귀가 없다.
+        const poolTotal = exploreBase.reduce((s, x) => s + (Number(x.weight) || 0), 0);
+        const aiWeight = Math.max(AI_KEYWORD_MIN_WEIGHT, (poolTotal * AI_KEYWORD_POOL_SHARE) / ai.length);
+        for (const k of ai) explore = [...explore, { kw: k, weight: aiWeight }];
+      }
+    }
     const usableTaste = taste.length ? taste : explore; // 취향 비어있으면 탐험으로 폴백
     const picks = [];
     const used = new Set();
@@ -46171,6 +46438,30 @@ function AppContent() {
       // 취향 점수(간이): preference_patterns 승률로 후보 장르/태그 매칭
       const tasteMap = {};
       try { const pats = await all("SELECT pattern_key, win_rate FROM preference_patterns WHERE sample_size>=3;"); for (const p of (pats || [])) { const k = p.pattern_key || ""; const v = k.includes(":") ? k.slice(k.indexOf(":") + 1) : k; tasteMap[v] = Math.max(tasteMap[v] || 0, Number(p.win_rate) || 0); } } catch {}
+      // 🔧 v7.59.12 (T14·ANA-5): 서재 폴백. [문제] win_rate는 **ELO 매칭에서만** 생긴다 —
+      //   refreshPatternStats가 win_count/sample_size로 계산하고, 정적 메트릭 UPSERT는 win_rate를 NULL로 넣고
+      //   ON CONFLICT에서도 갱신하지 않으며, hybrid의 logVerificationMatch는 preference_patterns를 아예 안 건드린다.
+      //   그래서 순수 hybrid/manual 서재에선 tasteMap 값이 전부 0/NULL → scoreWeb이 모든 후보에 0점 →
+      //   '취향순'이 아무 일도 안 했다(정렬 무동작 + 카드 🧠 막대 전멸).
+      //   [해결] 쓸 수 있는 승률이 하나도 없을 때만 buildTasteKeywordPool을 재사용해 시드한다. 그 함수의 폴백은
+      //   getPrefScore 기반이라 **mode-aware**(hybrid=티어+순위, match=레이팅) — 여기서 모드 분기를 다시 짤 필요가 없다.
+      //   ELO 서재는 첫 조건에서 걸러져 이 블록에 오지 않으므로 기존 동작 무변경.
+      let tasteBasis = Object.values(tasteMap).some((v) => Number(v) > 0.5) ? "patterns" : "none";
+      if (tasteBasis === "none") {
+        try {
+          const pool = await buildTasteKeywordPool(new Map());
+          for (const p of (pool || [])) {
+            const kw = String(p && p.kw || "").trim();
+            if (!kw) continue;
+            const w = Number(p.weight) || 0;
+            // 패턴 경로는 weight = 1 + win_rate(≥1.55)라 원래 승률을 복원하고, 서재 폴백(1.2 고정)은 상수 눈금.
+            const wr = w >= 1.5 ? Math.min(1, w - 1) : WEB_TASTE_FALLBACK_WR;
+            tasteMap[kw] = Math.max(tasteMap[kw] || 0, wr);
+          }
+          if (pool && pool.length) tasteBasis = "library";
+        } catch {}
+      }
+      setWebRecoTasteBasis(tasteBasis);
       const scoreWeb = (c) => {
         const m = c.meta || {};
         const toks = new Set([...(m.genres || []), ...String(c.category || "").split(/[,/|·]/).map((s) => s.trim()).filter(Boolean)]);
@@ -61270,7 +61561,8 @@ async function importJSON(directText, onSuccess, onSettled) {
             <View>
               <Text style={{ color: C.sub, fontSize: 12, marginBottom: 2 }}>취향 ↔ 탐험 비중 — <Text style={{ color: C.text, fontWeight: "700" }}>취향 {ratio} / 탐험 {100 - ratio}</Text></Text>
               <CoordSlider value={ratio / 100} onValueChange={(v) => updateRecoSetting("library", "tasteExploreRatio", Math.round(v * 100))} color="#3b82f6" negLabel="탐험" posLabel="취향" theme={C} />
-              <Text style={{ color: C.sub, fontSize: 11 }}>취향↑: 내 취향에 맞는 작품 위주 · 탐험↑: 안 읽은·데이터 적은 작품 위주</Text>
+              {/* 🔧 v7.59.14 (T16·REC-6): 중립 지점을 밝힌다 — 기본 70은 이미 취향 쪽으로 기운 값이다. */}
+              <Text style={{ color: C.sub, fontSize: 11 }}>취향↑: 내 취향에 맞는 작품 위주 · 탐험↑: 안 읽은·데이터 적은 작품 위주 (50이 중립, 기본 70은 취향 쪽으로 조금 기울어 있어요)</Text>
             </View>
             {/* 재추천 방지 윈도우 */}
             <View>
@@ -61346,6 +61638,12 @@ async function importJSON(directText, onSuccess, onSettled) {
                         회원수 데이터는 현재 노벨피아 제공분만 있어요. 데이터가 없는 작품은 순위를 매기지 않고 뒤에 원래 순서로 붙습니다.
                       </Text>
                     ) : null}
+                    {/* 🌐 v7.59.12 (T14·ANA-5): 취향 점수의 근거가 둘이라는 걸 밝힌다(하이브리드는 매칭 승률이 안 쌓인다). */}
+                    {web.sort === "taste" ? (
+                      <Text style={{ color: C.sub, fontSize: 10, marginTop: 6, lineHeight: 14 }}>
+                        매칭 기록이 쌓이면 승률 패턴으로, 없으면 서재에서 높이 평가한 작품의 장르·태그로 점수를 매겨요.
+                      </Text>
+                    ) : null}
                   </View>
                   <View>
                     <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>연재 상태</Text>
@@ -61382,7 +61680,16 @@ async function importJSON(directText, onSuccess, onSettled) {
                     })()}
                   </View>
                   {toggleRow("19금(성인) 포함", !!web.includeAdult, () => updateRecoSetting("web", "includeAdult", !web.includeAdult), web.includeAdult ? undefined : "성인 표시가 확인된 작품은 제외돼요. 메타를 못 읽은 작품은 ‘❔ 조건 미확인’ 배지로 뒤쪽에만 나와요.")}
-                  {toggleRow("AI 키워드 생성", !!web.useAiKeywords, () => updateRecoSetting("web", "useAiKeywords", !web.useAiKeywords), ((aiProvider === "claude" && claudeApiKey) || (aiProvider === "gemini" && geminiApiKey)) ? `${aiProvider === "claude" ? "Claude" : "Gemini"} 키로 트렌디 키워드 추가` : "AI 키(설정 › 연결)가 있어야 동작해요")}
+                  {/* 🤖 v7.59.15 (T17·REC-5): 과금 빈도와 누적 경로를 밝힌다. 종전 문구는 '추가'라고만 해서
+                      매 가져오기마다 호출되는지, 생성분이 이후에도 쓰이는지 알 수 없었다. */}
+                  {toggleRow("AI 키워드 생성", !!web.useAiKeywords, () => updateRecoSetting("web", "useAiKeywords", !web.useAiKeywords), ((aiProvider === "claude" && claudeApiKey) || (aiProvider === "gemini" && geminiApiKey)) ? `${aiProvider === "claude" ? "Claude" : "Gemini"} 키로 트렌디 키워드 추가 · 하루 1번만 생성(같은 날 재시도는 저장분 재사용)` : "AI 키(설정 › 연결)가 있어야 동작해요")}
+                  {web.useAiKeywords ? (
+                    <Text style={{ color: C.sub, fontSize: 10, marginTop: 4, lineHeight: 14 }}>
+                      {((appSettings && appSettings.reco && appSettings.reco.keywordSources) || {}).harvest !== false
+                        ? "생성한 키워드는 수확 풀에 누적돼 이후 가져오기에도 계속 쓰여요."
+                        : "⚠️ '수확 키워드'가 꺼져 있어 생성분이 누적되지 않아요 — 그날 한 번 쓰이고 끝납니다."}
+                    </Text>
+                  ) : null}
                   {toggleRow("매일 자동 가져오기", !!web.autoDaily, () => updateRecoSetting("web", "autoDaily", !web.autoDaily), "추천 탭 열 때 하루 한 번 자동")}
                   <View>
                     <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>키워드 관리</Text>
@@ -61558,7 +61865,8 @@ async function importJSON(directText, onSuccess, onSettled) {
                               {chip.type === "genre" ? "📚" : chip.type === "tag" ? "🏷️" : "✍️"}{" "}
                               {chip.label}
                             </Text>
-                            <Text style={{ fontSize: 10, color: C.sub, marginLeft: 4 }}>{chip.value}</Text>
+                            {/* 🔧 v7.59.13 (T15·REC-8): 승률 옆에 표본 수 — 근거의 두께를 숨기지 않는다. */}
+                            <Text style={{ fontSize: 10, color: C.sub, marginLeft: 4 }}>{chip.value}{Number(chip.sample) > 0 ? ` · ${chip.sample}전` : ""}</Text>
                             {chip.confirmed && <Text style={{ fontSize: 9, marginLeft: 2 }}>✅</Text>}
                           </View>
                         ))}
@@ -61791,6 +62099,17 @@ async function importJSON(directText, onSuccess, onSettled) {
         </TouchableOpacity>
       </View>
       {webRecoError ? <Text style={{ color: "#ef4444", fontSize: 12, marginBottom: 8 }}>{webRecoError}</Text> : null}
+      {/* 🌐 v7.59.12 (T14·ANA-5): 마지막 가져오기의 취향 점수 근거. 종전엔 근거가 없으면 카드의 🧠 막대가
+          조용히 사라질 뿐(ts>0 조건)이라 '점수가 왜 없는지'를 알 방법이 아예 없었다. */}
+      {webRecoTasteBasis === "library" ? (
+        <Text style={{ color: C.sub, fontSize: 11, marginBottom: 8, lineHeight: 15 }}>
+          🧠 매칭 승률 기록이 없어, 취향 점수를 서재에서 높이 평가한 작품의 장르·태그로 계산했어요.
+        </Text>
+      ) : webRecoTasteBasis === "none" ? (
+        <Text style={{ color: C.sub, fontSize: 11, marginBottom: 8, lineHeight: 15 }}>
+          🧠 취향 점수를 매길 근거가 아직 없어요 — 작품을 더 담거나 티어를 매기면 점수가 붙어요.
+        </Text>
+      ) : null}
       {visibleReco.length === 0 ? (
         <Text style={{ color: C.sub, fontSize: 13 }}>{webRecoLoading ? "플랫폼에서 작품을 찾는 중이에요…" : (webRecoList.length ? "표시할 작품이 모두 밴 키워드로 가려졌어요. 밴을 조정해 보세요." : "‘🎲 가져오기’를 눌러 넷상에서 새 작품을 발견해 보세요.")}</Text>
       ) : (
