@@ -91,7 +91,7 @@
 | T12 | ✅ | 3 | 검증 설정 노출 (길이/임계/감쇠) | HYB-5 HC-3 HC-4 🟡⚪ | L | v7.59.10 완료 |
 | T13 | ✅ | 4 추천 | 정렬 실효화 + 인기 데이터 정직화 | REC-1 REC-2 🟡 | S | v7.59.11 완료 |
 | T14 | ✅ | 4 | '취향순' hybrid/manual 폴백 | ANA-5 🟡 | M | v7.59.12 완료 |
-| T15 | ⬜ | 4 | 밴 일관 적용 + 승률 게이트 실질화 | REC-3 REC-8 🟡 | M | |
+| T15 | ✅ | 4 | 밴 일관 적용 + 승률 게이트 실질화 | REC-3 REC-8 🟡 | M | v7.59.13 완료 |
 | T16 | ⬜ | 4 | 슬라이더 정합 + TTL 상수 정리 | REC-6 REC-7 🟡 | S | T17과 묶음가능 |
 | T17 | ⬜ | 4 | AI 키워드 일일 캐시 + 동적 가중 | REC-5 🟡 | M | |
 | T18 | ⬜ | 5 분석 | 수상 pre-select를 patrick truth 정합 | ANA-1 🟡 | S | |
@@ -613,24 +613,34 @@
 
 ---
 
-### T15 · REC-3+REC-8 — 밴 일관 적용 + 승률 게이트 실질화 ⬜
+### T15 · REC-3+REC-8 — 밴 일관 적용 + 승률 게이트 실질화 ✅
 
 **대상**: 밴 키워드가 취향 풀·AI 키워드에 미적용(REC-3) + win_rate가 표본 5 미만이면 영원히 NULL이라 코드가 내세운 >=3 게이트가 무의미(REC-8 — 2차: NULL 행이 hasPatterns=true를 만들어 **폴백 25점까지 차단**, 주장보다 나쁨) (🟨/✅🟡)
 
 **전제**:
-- [ ] `buildTasteKeywordPool`(45131-45159)에 banned 검사 전무 — add 45136, 폴백 45147-57; AI append 45202도 무검사; explore 쪽은 적용 중 45107/45111/45124
-- [ ] UI 약속 60274 "밴은 검색 선정과 결과 모두에서 제외" / 60952
-- [ ] refreshPatternStats만 win_rate 채움 `WHERE sample_size >= 5` (13208); batchUpdatePatternStats는 win_rate 안 씀 (13131-79)
-- [ ] 소비 임계 >=3 (44465/44580/44615/44653, 웹 45336)이지만 NULL→0 기여 → 실질 5; 주석 44542-43 "3~4는 반감" 설계 의도; _confGate 44544-51 (Wilson 기반 자동 반감 — 하향의 안전장치)
-- [ ] is_notable은 n>=15 조건이라 게이트 하향과 무관
+- [x] `buildTasteKeywordPool`에 banned 검사 전무 — add·폴백 모두; AI append도 무검사; explore 쪽은 적용 중 → **실제 46044 / add 46049 / 폴백 46060-46071 / AI append 46115 / explore 46020·46024·46037**
+- [x] UI 약속 "밴은 검색 선정과 결과 모두에서 제외" → **실제 62163**
+- [x] refreshPatternStats만 win_rate 채움 `WHERE sample_size >= 5`; batchUpdatePatternStats는 win_rate 안 씀 → **실제 13797 / 13720-**(INSERT·UPDATE 모두 sample_size·win_count만)
+- [x] 소비 임계 >=3이지만 NULL→0 기여 → 실질 5; 주석 "3~4는 반감" 설계 의도; _confGate(Wilson 기반 자동 반감) → **실제 45371·45486·45521·45559, 웹 46223 / 주석 45448-49 / _confGate 45450**
+- [x] is_notable은 n>=15 조건이라 게이트 하향과 무관 → **실제 13773**
 
-**설계**: ① buildTasteKeywordPool **내부**에서 banned Set 생성(45132-36) + add 가드 — 폴백 경로 자동 커버. **시그니처 변경 금지**(refreshKeywordPreview 45011 공용 — 미리보기와 실제가 어긋남). 45202 AI append에도 가드. ② 13208 `>=5` → `>=3` 1줄 (주석의 설계 의도 복원 — _confGate가 3~4표본 자동 반감). ③ 승률 칩에 표본 병기 `(N전)` — 44591/44631/44661 → 60375-77/60381-404.
+**검증 노트 (2026-08-02 구현 세션)**: 전제 5건 전부 일치. 2차 재검증이 지목한 '주장보다 나쁨'을 코드로 확인했고, 카드에 없던 사실 1건을 추가로 확인했다.
+- **'폴백 25점 차단'이 실재한다.** 45482가 `if (hasPatterns && Object.keys(genreScores).length > 0)`인데, win_rate=NULL 행도 `hasPatterns=true`와 genreScores를 채운다. 그래서 패턴 분기로 들어가고 → `Math.max(0, (null-0.5)*100)` = 0 → **else의 폴백 25점은 실행조차 안 된다**. 표본이 3~4로 쌓이는 순간 점수가 오히려 사라지는 역전이다.
+- **인사이트 남발 걱정도 없다.** `scheduleInsightDiscovery`가 읽는 쿼리가 `WHERE is_notable = 1 AND is_shown = 0`이라, is_notable(n≥15)이 걸러 주므로 문턱 하향이 새 인사이트를 만들지 않는다. 스케줄 호출 횟수도 종전과 동일(실측 1회).
+
+**설계**: ① buildTasteKeywordPool **내부**에서 banned Set 생성 + add 가드 — 폴백 경로 자동 커버. **시그니처 변경 금지**(refreshKeywordPreview 공용 — 미리보기와 실제가 어긋남). AI append에도 가드. ② `>=5` → `>=3` 1줄 (주석의 설계 의도 복원 — _confGate가 3~4표본 자동 반감). ③ 승률 칩에 표본 병기 `(N전)`.
 
 **완료 기준**:
-- [ ] 밴 키워드가 취향 풀·AI append에서 제외(추적) · 3~4표본 win_rate 채워지고 반감 동작 · 표본 병기 표시
-- [ ] 45138 취향 풀 유입 조건(sample>=3 & win>=0.55)에 3~4표본 유입되는 파급을 진행 기록에 명시 · esbuild 통과
+- [x] 밴 키워드가 취향 풀·AI append에서 제외 — 패턴/폴백/AI 3경로 실측(+종전이면 NTR·판타지가 검색으로 나가는 대조군)
+- [x] 3~4표본 win_rate 채워지고 반감 동작 — 3전 3승→1.0 / 4전 3승→0.75 충전, 2전은 여전히 제외, 게이트 3전 0.72 < 10전 0.77
+- [x] 표본 병기 표시 — 장르·태그·작가 3종 + tagHits 운반 + 렌더러(`67% · 3전`), 표본 없는 '고티어' 칩은 무변경
+- [x] 취향 풀 유입 조건(sample>=3 & win>=0.55)에 3~4표본 유입되는 파급을 진행 기록에 명시(아래) · esbuild 통과 (+ scraper-test 526/526)
 
 **진행 기록**:
+- 2026-08-02 · **v7.59.13 완료**. 취향 풀 banned Set+add 가드, AI append 가드, refreshPatternStats 문턱 5→3, 칩 4지점 sample 운반 + 렌더러 병기, `_confGate` 주석 갱신.
+- **파급 (완료 기준 명시 항목)**: 표본 3~4 패턴이 `win_rate >= 0.55`를 만족하면 이제 **취향 키워드 풀에 유입된다**(종전엔 NULL이라 영원히 미유입). 검색 키워드가 소표본 신호로 더 빨리 개인화되는 대신 초반 표본의 흔들림도 함께 들어온다 — 설계 주석이 원래 말하던 '3~4는 반감' 상태로 복원한 것이라 의도한 트레이드오프다. 추가로 **T14의 웹 tasteMap 폴백 판정**도 영향을 받는다: 3~4표본 승률이 채워지면서 basis가 'library'에서 'patterns'로 자연 전환된다(더 정확한 신호로 승격이라 무해).
+- 설계와 달라진 점: 없음(3건 그대로). 다만 `_confGate` 위 주석이 "sample 3~4는 sig=0/NULL이 들어와 floor(0.5)로 반감만 됨"이라 **문턱 하향으로 사실이 아니게 되어** 함께 갱신했다 — 이제 실제 significance를 받고, 소표본은 Wilson 구간이 넓어 여전히 0.5 근처로 보수화된다.
+- 남긴 것: 분석 탭 matchBehavior의 `sample_size >= 5`(40298)는 그대로 — 거긴 '주목할 만한 패턴을 문장으로 설명'하는 다른 목적이라 소표본을 끌어들이면 인사이트가 얇아진다. `batchUpdatePatternStats`도 무변경(win_rate를 안 쓰는 게 정상 — 계산은 refreshPatternStats 단일 지점).
 
 ---
 

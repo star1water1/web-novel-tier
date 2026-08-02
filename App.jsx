@@ -2,9 +2,59 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.12 (구색 기능 개선 Phase 4 — 취향순 hybrid 폴백)                       ║
+ * ║  버전: 7.59.13 (구색 기능 개선 Phase 4 — 밴 일관 적용 · 승률 게이트 실질화)         ║
  * ║  최종 수정: 2026-08-02                                                        ║
- * ║  총 라인 수: 약 79,600줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 79,660줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🚫 v7.59.13 밴 일관 적용 + 승률 게이트 실질화 (T15 · REC-3 REC-8) (2026-08-02)   ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제 ①·REC-3] 설정은 "🚫 밴: 검색 키워드 선정에서 빠지고, 제목·작가·장르가       ║
+ * ║ 일치하는 결과도 가려져요"라고 약속하는데, 밴이 적용되는 건 **탐험 풀과 결과       ║
+ * ║ 필터뿐**이었다. `buildTasteKeywordPool`에는 banned 검사가 아예 없고(패턴 경로·    ║
+ * ║ 폴백 경로 모두), AI 생성 키워드 append도 무검사라, 밴한 키워드가 취향 경로와      ║
+ * ║ AI 경로로는 그대로 검색에 쓰였다.                                                ║
+ * ║                                                                              ║
+ * ║ [문제 ②·REC-8] win_rate를 채우는 곳은 refreshPatternStats 하나인데 문턱이         ║
+ * ║ `sample_size >= 5`였다. 반면 소비부는 전부 `>= 3`을 게이트로 쓴다(장르/태그/작가  ║
+ * ║ 보너스·취향 키워드 풀·웹 tasteMap) → 코드가 내세운 3은 **실질 5**였고, 표본 3~4   ║
+ * ║ 패턴은 win_rate가 영원히 NULL이었다. 더 나쁜 건 추천 점수 경로다: NULL 행도       ║
+ * ║ `hasPatterns=true`와 genreScores를 채우므로 **패턴 분기로 들어가는데**,           ║
+ * ║ `(null - 0.5) * 100`이 음수라 보너스는 0이고 **else의 폴백 25점까지 건너뛴다**    ║
+ * ║ — 즉 표본이 3~4로 쌓이는 순간 점수가 오히려 사라졌다(2차 재검증의 신규 발견).     ║
+ * ║                                                                              ║
+ * ║ [수정 ①] `buildTasteKeywordPool` 내부에 banned Set + `add` 가드. 한 곳에 두면     ║
+ * ║ 패턴 경로와 폴백 경로가 **함께** 커버된다(폴백에 따로 심으면 언젠가 어긋난다).    ║
+ * ║ 시그니처는 그대로 — refreshKeywordPreview가 같은 함수를 부르므로 '미리보기와      ║
+ * ║ 실제'가 자동으로 일치한다. AI append(pickRecoKeywords)에도 같은 가드를 붙였다.    ║
+ * ║                                                                              ║
+ * ║ [수정 ②] refreshPatternStats 문턱 `>= 5` → `>= 3` (1줄). 소비 게이트와 숫자가     ║
+ * ║ 맞아 3~4 표본도 win_rate를 받는다. 과대평가 방지는 이미 있는 `_confGate`가        ║
+ * ║ 담당한다 — 소표본은 Wilson 구간이 넓어 significance가 낮게 나오고, 실측에서       ║
+ * ║ 3전 게이트 0.72 < 10전 0.77로 자동 보수화된다. `is_notable`은 `n >= 15` 조건이라  ║
+ * ║ 이 하향과 무관하고, 인사이트 발견은 `is_notable = 1`만 읽으므로 새 인사이트가     ║
+ * ║ 남발되지 않는다(스케줄 호출 횟수도 종전과 동일).                                 ║
+ * ║                                                                              ║
+ * ║ [수정 ③] 승률 칩에 표본 병기(`80% · 3전`). 3~4 표본 승률이 이제 실제로 점수에     ║
+ * ║ 들어오므로, 퍼센트만 보이면 근거가 얼마나 얇은지 알 수 없다(3전 2승도 67%다).     ║
+ * ║ 장르·태그·작가 3종 모두 sample을 싣고, 표본 없는 '고티어' 폴백 칩은 종전 표기.    ║
+ * ║                                                                              ║
+ * ║ [파급] 이제 표본 3~4 패턴이 `win_rate >= 0.55`를 만족하면 **취향 키워드 풀에도**  ║
+ * ║ 유입된다(종전엔 NULL이라 영원히 미유입). 검색 키워드가 소표본 신호로 조금 더      ║
+ * ║ 빨리 개인화되는 대신, 초반 표본의 흔들림도 함께 들어온다 — 의도한 트레이드오프다  ║
+ * ║ (설계 주석이 원래 말하던 '3~4는 반감' 상태로 복원). v7.59.12의 웹 tasteMap        ║
+ * ║ 폴백 판정도 실제 승률이 생기면 'library'에서 'patterns'로 자연 전환된다.          ║
+ * ║                                                                              ║
+ * ║ [안 건드린 것] 분석 탭 matchBehavior의 `>= 5`(다른 목적 — 인사이트 서술용),       ║
+ * ║ is_notable 조건, batchUpdatePatternStats(win_rate를 안 씀), 결과 필터            ║
+ * ║ matchesBannedKeyword(이미 적용 중).                                              ║
+ * ║                                                                              ║
+ * ║ [검증] 실제 add 가드·SQL·refreshPatternStats 본체·_confGate·칩 조립을 소스에서    ║
+ * ║ 떼어내 35개 단언 — 패턴/폴백/AI 3경로 밴 적용(+종전이면 새는 대조군), 3전·4전     ║
+ * ║ win_rate 충전·2전은 여전히 제외, is_notable=0 유지, 소표본 게이트 반감,           ║
+ * ║ NULL이면 폴백 25점까지 막히던 대조군, 표본 병기 4지점 + 폴백 칩 무변경.           ║
+ * ║ esbuild 통과, scraper-test 526/526. APP_VERSION 7.59.13.                          ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -13794,7 +13844,15 @@ async function refreshPatternStats() {
     // 🔧 DB 최적화: 필요 컬럼만 + WHERE로 sample_size < 5 사전 필터링
     // 🔧 v7.49.20: 정적 메트릭 카테고리(win_count 무의미·항상 0) 제외 — 이전엔 이들의 win_rate/significance/is_notable을
     //   '강한 0% notable'로 오기록해 DB 오염(현재 소비자는 없으나, is_notable/significance 읽는 소비자 추가 시 회귀 방지).
-    const patterns = await all(`SELECT id, sample_size, win_count FROM preference_patterns WHERE sample_size >= 5 AND category NOT IN ('tier_concentration','tier_inversion','award_tier')`);
+    // 🔧 v7.59.13 (T15·REC-8): `sample_size >= 5` → `>= 3`. [문제] win_rate를 채우는 곳은 여기뿐인데
+    //   문턱이 5라, 표본 3~4인 패턴은 win_rate가 **영원히 NULL**이었다. 그런데 소비부는 전부 `>= 3`을
+    //   게이트로 쓴다(genre/tag/author 보너스, 취향 풀, 웹 tasteMap) → 코드가 내세운 3은 실질 5였다.
+    //   더 나쁜 건 추천 점수 경로: NULL 행도 `hasPatterns=true`와 genreScores를 채우므로 패턴 분기로
+    //   들어가는데, `(null - 0.5) * 100`이 음수라 보너스는 0이고 **else의 폴백 25점까지 건너뛴다**
+    //   (= 표본 3~4가 쌓이는 순간 점수가 오히려 사라진다).
+    //   [안전장치] 3~4 표본이 과대평가되지 않는 건 _confGate가 이미 담당한다(significance 낮음 → 반감).
+    //   is_notable은 `n >= 15` 조건이라 이 하향과 무관하다(주목 패턴이 남발되지 않음).
+    const patterns = await all(`SELECT id, sample_size, win_count FROM preference_patterns WHERE sample_size >= 3 AND category NOT IN ('tier_concentration','tier_inversion','award_tier')`);
 
     const queries = [];
 
@@ -21571,7 +21629,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.12";
+const APP_VERSION = "7.59.13";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -45445,8 +45503,10 @@ function AppContent() {
 
       // 📊 통계 엄격도 게이트: significance(CI 폭 좁음)·confidence_lower(Wilson 하한)로
       //   패턴 기여를 보수화 가중. 소표본/저신뢰는 영향 축소하되 완전 차단 금지(콜드스타트 보호).
-      //   refreshPatternStats는 sample_size>=5만 significance 갱신 → sample 3~4는 sig=0/NULL이
-      //   들어와 floor(0.5)로 반감만 됨(공격적 다양성 유지). 반환 ∈ [0.5, 1.0].
+      //   🔧 v7.59.13 (T15·REC-8): refreshPatternStats 문턱을 5→3으로 내렸으므로 sample 3~4도 이제
+      //   실제 significance를 받는다(종전엔 sig=NULL→0으로 일괄 floor 0.5). 소표본은 Wilson 구간이 넓어
+      //   sig가 낮게 나오니 여전히 0.5 근처로 반감된다 — 게이트가 '자동 보수화' 역할을 그대로 한다.
+      //   반환 ∈ [0.5, 1.0].
       function _confGate(significance, confidenceLower) {
         const sig = Math.max(0, Math.min(1, Number(significance) || 0));
         let w = 0.5 + 0.5 * sig; // sig=0 → 0.5(반감), sig=1 → 1.0(원본)
@@ -45494,7 +45554,9 @@ function AppContent() {
               if (gs.winRate >= 0.55) {
                 const pct = Math.round(gs.winRate * 100);
                 factors.push(`${g} 장르 선호도 ${pct}%`);
-                chips.push({ label: g, value: `${pct}%`, type: "genre", confirmed: !!gs.confirmed });
+                // 🔧 v7.59.13 (T15·REC-8): 표본 수 병기 — 3~4표본 승률이 이제 실제로 점수에 들어오므로
+                //   "80%"만 보이면 근거가 얼마나 얇은지 알 수 없다(3전 2승도 67%다).
+                chips.push({ label: g, value: `${pct}%`, sample: gs.sampleSize, type: "genre", confirmed: !!gs.confirmed });
               }
             }
           }
@@ -45524,7 +45586,7 @@ function AppContent() {
               const gatedWr = 0.5 + (ts.winRate - 0.5) * gate;
               // 🧠 v3.5.5: confirmed 태그 승률 보정(게이트 후 가산)
               const effectiveWr = ts.confirmed ? Math.min(1, gatedWr + 0.05) : gatedWr;
-              tagHits.push({ tag, winRate: effectiveWr, confirmed: !!ts.confirmed });
+              tagHits.push({ tag, winRate: effectiveWr, sample: ts.sampleSize, confirmed: !!ts.confirmed });
             }
           }
           // 상위 3개 태그 평균
@@ -45534,7 +45596,7 @@ function AppContent() {
             const avgWr = topTags.reduce((s, t) => s + t.winRate, 0) / topTags.length;
             tagScore = Math.min(35, Math.max(0, (avgWr - 0.5) * 100) + topTags.length * 5);
             for (const tt of topTags) {
-              chips.push({ label: tt.tag, value: `${Math.round(tt.winRate * 100)}%`, type: "tag", confirmed: tt.confirmed });
+              chips.push({ label: tt.tag, value: `${Math.round(tt.winRate * 100)}%`, sample: tt.sample, type: "tag", confirmed: tt.confirmed });
             }
             if (topTags.length >= 2) {
               factors.push(`선호 태그 ${topTags.length}개 일치 (${topTags.map(t => t.tag).join(", ")})`);
@@ -45564,7 +45626,7 @@ function AppContent() {
             if (as.winRate >= 0.55) {
               const pct = Math.round(as.winRate * 100);
               factors.push(`${author} 작가 선호도 ${pct}%`);
-              chips.push({ label: author, value: `${pct}%`, type: "author", confirmed: !!as.confirmed });
+              chips.push({ label: author, value: `${pct}%`, sample: as.sampleSize, type: "author", confirmed: !!as.confirmed });
             }
           }
         }
@@ -46046,7 +46108,12 @@ function AppContent() {
     const ks = reco.keywordSources || DEFAULT_SETTINGS.reco.keywordSources || {};
     catCache = catCache || new Map();
     const out = new Map();
-    const add = (kw, w) => { kw = String(kw || "").trim(); if (kw && kw.length >= 2 && kw.length <= 14) out.set(kw, Math.max(out.get(kw) || 0, w)); };
+    // 🔧 v7.59.13 (T15·REC-3): 밴 키워드 가드 — 탐험 풀(buildExploreKeywordPool)에는 있는데 취향 풀에는
+    //   없어서, 설정이 "🚫 밴: 검색 키워드 선정에서 빠지고…"라고 약속해 놓고 취향 경로로는 그대로 검색됐다.
+    //   `add` 한 곳에 두면 패턴 경로와 폴백 경로가 **함께** 커버된다(폴백에 따로 심으면 언젠가 어긋난다).
+    //   ※ 시그니처는 그대로 — refreshKeywordPreview가 같은 함수를 부르므로 미리보기와 실제가 자동 일치한다.
+    const banned = new Set((reco.bannedKeywords || []).map((s) => String(s).trim()).filter(Boolean));
+    const add = (kw, w) => { kw = String(kw || "").trim(); if (kw && kw.length >= 2 && kw.length <= 14 && !banned.has(kw)) out.set(kw, Math.max(out.get(kw) || 0, w)); };
     try {
       const pats = await all("SELECT pattern_key, win_rate FROM preference_patterns WHERE sample_size >= 3 AND win_rate >= 0.55;");
       // 🌐 v7.53.1: 'tag:' 패턴만 카테고리 게이트 — 'genre:'/'author:'/무접두 패턴은 분류 대상이 아니라 그대로 유지(추천 품질 보존).
@@ -46112,7 +46179,13 @@ function AppContent() {
     const catCache = new Map(); // 🌐 v7.53.1: 두 풀 빌드가 태그 분류를 공유(중복 스캔 방지)
     const [taste, exploreBase] = await Promise.all([buildTasteKeywordPool(catCache), buildExploreKeywordPool(catCache)]);
     let explore = exploreBase;
-    if (web.useAiKeywords) { const ai = await generateAiKeywords(2); for (const k of ai) explore = [...explore, { kw: k, weight: 1.5 }]; }
+    // 🔧 v7.59.13 (T15·REC-3): AI 생성 키워드도 밴을 통과시킨다. 종전엔 무검사로 append돼,
+    //   밴한 키워드를 AI가 뱉으면 그대로 검색에 쓰였다(두 풀은 거르는데 여기만 새는 구멍).
+    if (web.useAiKeywords) {
+      const aiBanned = new Set((reco.bannedKeywords || []).map((s) => String(s).trim()).filter(Boolean));
+      const ai = await generateAiKeywords(2);
+      for (const k of ai) { if (!aiBanned.has(String(k).trim())) explore = [...explore, { kw: k, weight: 1.5 }]; }
+    }
     const usableTaste = taste.length ? taste : explore; // 취향 비어있으면 탐험으로 폴백
     const picks = [];
     const used = new Set();
@@ -61638,7 +61711,8 @@ async function importJSON(directText, onSuccess, onSettled) {
                               {chip.type === "genre" ? "📚" : chip.type === "tag" ? "🏷️" : "✍️"}{" "}
                               {chip.label}
                             </Text>
-                            <Text style={{ fontSize: 10, color: C.sub, marginLeft: 4 }}>{chip.value}</Text>
+                            {/* 🔧 v7.59.13 (T15·REC-8): 승률 옆에 표본 수 — 근거의 두께를 숨기지 않는다. */}
+                            <Text style={{ fontSize: 10, color: C.sub, marginLeft: 4 }}>{chip.value}{Number(chip.sample) > 0 ? ` · ${chip.sample}전` : ""}</Text>
                             {chip.confirmed && <Text style={{ fontSize: 9, marginLeft: 2 }}>✅</Text>}
                           </View>
                         ))}
