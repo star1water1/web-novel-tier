@@ -2,9 +2,51 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.15 (구색 기능 개선 Phase 4 완료 — AI 키워드 일일 캐시 · 동적 가중)      ║
+ * ║  버전: 7.59.16 (구색 기능 개선 Phase 5 — 수상 pre-select를 patrick truth와 정합)   ║
  * ║  최종 수정: 2026-08-02                                                        ║
- * ║  총 라인 수: 약 79,800줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 79,900줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🏆 v7.59.16 수상 pre-select를 patrick truth와 정합 (T18 · ANA-1) (2026-08-02)     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제 ①] '자동 후보'의 pre-select가 calculateWinProbability 내림차순인데, 그      ║
+ * ║ 점수식은 hybrid/manual에서도 태그매칭(≤50)·완결(25)·재독(≤30)·신뢰도(≤15)를       ║
+ * ║ 그대로 더한다. 같은 티어 안에서 manual_order 항은 `max(0, 15 - order/200)`이라    ║
+ * ║ 변동폭이 ~15뿐 — **사용자가 직접 1위로 올려 둔 작품을 보너스가 눌러버렸다.**       ║
+ * ║ 실측(A티어 3작 + B티어 1작, 정원 2): 종전 pre-select는 A2·A3이고 사용자의 A1은    ║
+ * ║ 3순위로 밀려 아예 수여 대상에서 빠졌다. calculateNovelScore의 v7.10.0 주석이       ║
+ * ║ 적어 둔 원 가정('정렬은 compareNovels라 무관 — 확률 배지만 정합')이 이 경로에서    ║
+ * ║ 만 깨져 있었다. 후보 목록(filteredCandidates·candidatesForThisAward)은 둘 다      ║
+ * ║ compareNovels 정렬이라 표시 순서와 pre-select 순서가 서로 어긋나 있기도 했다.     ║
+ * ║                                                                              ║
+ * ║ [문제 ②] 확률 표기가 1~99 클램프 + `toFixed(1)`. 하이브리드는 티어 격차가 200점   ║
+ * ║ (temperature 50 → exp(-4)/티어)이라 2티어 아래부터 소프트맥스가 0.03% 밑인데,     ║
+ * ║ 클램프가 그걸 전부 '1.0%'라는 존재하지 않는 수치로 바꿨다(실측 5티어 열 합계       ║
+ * ║ 102.97%). 소수점 한 자리는 애초에 근거 없는 정밀도다.                             ║
+ * ║                                                                              ║
+ * ║ [수정 ①] hybrid/manual은 pre-select 재정렬을 **생략**하고 pool 순서를 그대로      ║
+ * ║ 쓴다 — pool은 이미 getCandidatesForAward가 compareNovels(=manual_tier→          ║
+ * ║ manual_order)로 정렬한 patrick truth다. **점수식은 무수정** — 티어 200점 독점은   ║
+ * ║ 티어 횡단 역전을 막는 v7.10.0 의도 동작이고, 동티어 밴드를 넓히면 그게 깨진다.     ║
+ * ║ ELO 모드는 종전대로 prob 정렬(pool이 rating desc라 순서가 대체로 같고, 승률·      ║
+ * ║ 신뢰도 등 rating 밖 신호를 반영하는 편이 모드 의도에 맞다).                        ║
+ * ║                                                                              ║
+ * ║ [수정 ②] 클램프 제거 + 표기 헬퍼 `winProbText` — 0.5% 미만은 `<1%`, 99.5% 이상은  ║
+ * ║ `>99%`, 그 사이는 정수 %. 숫자를 지어내지 않으면서 '무시할 만큼'과 '없음'을 구분   ║
+ * ║ 한다. 표기 3곳(자동 후보 행·후보작 배지·결과 탭 썸네일)을 한 함수로 통일.          ║
+ * ║                                                                              ║
+ * ║ [수정 ③] hybrid/manual의 자동 후보 행은 `%` 대신 **tierRankText("A 3위")**를      ║
+ * ║ 보인다. 재정렬을 없애면 확률이 내림차순이 아니게 되는데(위 14% · 아래 47%),        ║
+ * ║ 그대로 두면 목록이 잘못 정렬된 것처럼 읽힌다. 섹션 안내문도 모드별로 갈라          ║
+ * ║ '무엇을 보고 골랐는지'(내 순위 / 예상 확률)를 밝힌다.                             ║
+ * ║                                                                              ║
+ * ║ [기각] 티어 가중(30/170)·temperature(50) 설정 노출 — 두 모드의 score 스케일이     ║
+ * ║ 달라(hybrid 200/티어 vs match rating×0.5) 단일 노브로 둘 다 다룰 수 없다.          ║
+ * ║                                                                              ║
+ * ║ [검증] 실제 calculateWinProbability 본문·winProbText·선정부를 소스에서 떼어내      ║
+ * ║ 실행 — 동티어 역행 재현/해소, ELO 불변, 5티어 클램프 대조(102.97% → 100.00%),     ║
+ * ║ 경계 14종, 정원 4경로, 조기 반환 3종. esbuild 통과. APP_VERSION 7.59.16.          ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -21713,7 +21755,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.15";
+const APP_VERSION = "7.59.16";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -31807,6 +31849,21 @@ const PlatformChips = memo(({ platforms, onChange, options, extraPlatforms, them
    - 상 설정 커스터마이즈
    - 후보작 기준: 해당 연도 완결 또는 연재시작 작품
    ========================================================= */
+
+// 🆕 v7.59.16 (T18·ANA-1): 수상 확률 표기 헬퍼.
+//   [문제] 종전엔 calculateWinProbability가 결과를 1~99로 클램프한 뒤 화면이 `toFixed(1)`로 찍었다.
+//   하이브리드는 티어 격차가 200점(=exp(-4)/티어)이라 2티어 아래부터 소프트맥스 값이 0.03% 밑으로 떨어지는데,
+//   클램프가 그걸 전부 '1.0%'라는 **존재하지 않는 수치**로 바꿔 놓았다(합계도 100%를 넘김).
+//   [해결] 클램프를 걷고 표기 단계에서 정직하게 — 0.5% 미만은 `<1%`, 99.5% 이상은 `>99%`, 그 사이는 정수 %.
+//   소수점 한 자리는 애초에 근거 없는 정밀도라 버린다.
+function winProbText(p) {
+  if (!Number.isFinite(p)) return "0%";
+  if (p >= 100) return "100%";       // 후보가 1작뿐인 경우(조기 반환)
+  if (p > 0 && p < 0.5) return "<1%"; // 반올림하면 0%가 되는 구간 — '없음'이 아니라 '무시할 만큼'
+  if (p >= 99.5) return ">99%";       // 반올림하면 100%가 되지만 확정은 아닌 구간
+  return `${Math.round(p)}%`;
+}
+
 const AwardsScreen = memo(({
   list,
   awardSystemSettings,
@@ -32200,8 +32257,10 @@ const AwardsScreen = memo(({
     
     const probability = (novelExpScore.exp / sumExp) * 100;
 
-    // 범위 제한 (1% ~ 99%)
-    return Math.min(99, Math.max(1, probability));
+    // 🔧 v7.59.16 (T18·ANA-1): 범위 제한(1~99) 제거 — 정규화된 소프트맥스 값을 그대로 돌려준다.
+    //   클램프는 하위 티어를 전부 '1.0%'로 뭉개 후보 간 구분을 없애고, 열의 합을 100% 밖으로 밀어냈다.
+    //   표기의 하한/상한은 winProbText가 `<1%` / `>99%`로 처리한다 (숫자를 지어내지 않는 쪽).
+    return probability;
     // 🔧 v7.0.7 (MAJ-4): isManualOrHybrid 추가 — manual↔match 라이브 전환 시 stale closure 방지
     // (이전: isHybrid만 deps → match→manual 변경 시 isHybrid는 false→false 불변, isManualOrHybrid가 false→true이지만 invalidate 안 됨)
   }, [list.length, isHybrid, isManualOrHybrid]);
@@ -32262,16 +32321,22 @@ const AwardsScreen = memo(({
       if (remaining <= 0) continue; // 정원 충족 → 추천 없음
       const pool = getCandidatesForAward(award); // matchTags+tierMin+미수상 필터 완료
       if (pool.length === 0) continue;
-      const ranked = pool
-        .map(n => ({ novel: n, prob: calculateWinProbability(n, award, pool) }))
-        .sort((a, b) => b.prob - a.prob);
+      // 🔧 v7.59.16 (T18·ANA-1): hybrid/manual은 pool 순서(=compareNovels, patrick truth) 그대로 pre-select.
+      //   [문제] prob 내림차순 재정렬은 같은 티어 안에서 태그매칭(≤50)·완결(25)·재독(≤30)이 manual_order 항
+      //   (`Math.max(0, 15 - order/200)`, 티어 내 변동폭 ~15)을 압도해, 사용자가 직접 1위로 올려 둔 작품 대신
+      //   완결·다회독 표시가 붙은 아래 작품이 pre-select됐다. calculateNovelScore의 v7.10.0 주석이 말한
+      //   '정렬은 compareNovels라 무관 — 확률 배지만 정합'이라는 원 가정이 이 경로에서만 깨져 있던 것.
+      //   [해결] 두 모드에선 재정렬을 생략한다. 점수식(티어 200점 독점)은 그대로 — 티어 횡단 역전 방지는 의도 동작이다.
+      //   ELO 모드는 종전대로 prob 정렬 (pool이 rating desc라 순서가 대체로 같고, 승률·신뢰도 등 rating 밖 신호를 반영).
+      const ranked = pool.map(n => ({ novel: n, prob: calculateWinProbability(n, award, pool) }));
+      if (!isManualOrHybrid) ranked.sort((a, b) => b.prob - a.prob);
       const take = Number.isFinite(remaining) ? remaining : 5;
       const suggested = ranked.slice(0, take);
       if (suggested.length === 0) continue;
       out.push({ award, suggested, remaining: Number.isFinite(remaining) ? remaining : suggested.length });
     }
     return out;
-  }, [autoAwardSuggest, currentYearAwards, awardWinners, getCandidatesForAward, calculateWinProbability]);
+  }, [autoAwardSuggest, currentYearAwards, awardWinners, getCandidatesForAward, calculateWinProbability, isManualOrHybrid]);
 
   // 선택 여부 판정: override 우선, 없으면 pre-select(suggested 전부 기본 선택)
   const isSuggestSelected = useCallback((awardId, novelId) => {
@@ -32822,8 +32887,11 @@ const AwardsScreen = memo(({
           {/* 🆕 자동 수상 후보 추천(반자동): 정원/조건 준수 상위 후보 pre-select. 체크박스로 가감 후 '선택 수여' */}
           {autoAwardSuggest && autoSuggestions.length > 0 && (
             <Section title="🏆 자동 후보">
+              {/* 🆕 v7.59.16 (T18·ANA-1): 선택 기준을 모드별로 명시 — 무엇을 보고 골랐는지 알아야 체크를 가감할 수 있다 */}
               <Text style={{ color: C.sub, marginBottom: 10, fontSize: 12 }}>
-                각 상의 정원·조건에 맞는 상위 후보를 자동 선택했습니다. 체크를 가감한 뒤 수여하세요.
+                {isManualOrHybrid
+                  ? "각 상의 정원·조건에 맞는 후보를 내 순위(티어 → 티어 내 순서) 상위부터 자동 선택했습니다. 체크를 가감한 뒤 수여하세요."
+                  : "각 상의 정원·조건에 맞는 후보를 예상 확률 상위부터 자동 선택했습니다. 체크를 가감한 뒤 수여하세요."}
               </Text>
               {autoSuggestions.map(grp => (
                 <View key={grp.award.id} style={{ marginBottom: 14 }}>
@@ -32853,8 +32921,12 @@ const AwardsScreen = memo(({
                         <Text style={{ color: C.text, fontWeight: "700", flex: 1 }} numberOfLines={1}>
                           {novel.title}
                         </Text>
+                        {/* 🔧 v7.59.16 (T18·ANA-1): hybrid/manual은 선택 근거가 확률이 아니라 내 순위다.
+                            확률을 그대로 두면 목록이 내림차순이 아니어서(위 40% · 아래 55%) 잘못 정렬된 것처럼 보인다. */}
                         <Text style={{ color: C.sub, fontSize: 12, marginLeft: 8 }}>
-                          {getDisplayTier(novel, globalTierConfig)} · {Math.round(prob)}%
+                          {isManualOrHybrid
+                            ? (tierRankText(novel.id, true) || getDisplayTier(novel, globalTierConfig))
+                            : `${getDisplayTier(novel, globalTierConfig)} · ${winProbText(prob)}`}
                         </Text>
                       </TouchableOpacity>
                     );
@@ -33003,7 +33075,7 @@ const AwardsScreen = memo(({
                               fontSize: 11,
                               fontWeight: "700"
                             }}>
-                              📊 수상 확률: {winProbability.toFixed(1)}%
+                              📊 수상 확률: {winProbText(winProbability)}
                             </Text>
                           </View>
                         )}
@@ -33555,7 +33627,7 @@ const AwardsScreen = memo(({
                                         fontWeight: "700",
                                         marginTop: 2,
                                       }}>
-                                        {prob.toFixed(0)}%
+                                        {winProbText(prob)}
                                       </Text>
                                     </View>
                                   );
