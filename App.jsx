@@ -2,9 +2,46 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.18 (구색 기능 개선 Phase 5 — 표본 정직 표시)                          ║
+ * ║  버전: 7.59.19 (구색 기능 개선 Phase 5 완료 — 스펙트럼 rename 이전 + 빈 축 사유)   ║
  * ║  최종 수정: 2026-08-02                                                        ║
- * ║  총 라인 수: 약 79,990줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 80,040줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔤 v7.59.19 스펙트럼 rename 이전 + 빈 축 사유 (T21 · ANA-4 HC-2) (2026-08-02)     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제 ①·ANA-4] `renameTagGlobally`가 레지스트리의 majorGenres·subGenres·        ║
+ * ║ generalTags·pinned/hidden·sentiment/attributes·tag_relations·coordinateSystems  ║
+ * ║ 를 전부 이전하면서 **spectrumGroups 하나만** 빠뜨렸다. 축에 쓰인 태그 이름을     ║
+ * ║ 바꾸면 그 축은 매칭되는 작품이 사라져 화면에서 **조용히 없어졌고**, 완료 알림은  ║
+ * ║ "관계·좌표 설정도 함께 이전됐어요"라 오히려 이전됐다고 믿게 만들었다.            ║
+ * ║ 헬스 패널의 클러스터 병합은 이 함수를 silent 루프로 반복 호출하므로 축이         ║
+ * ║ 연쇄적으로 깎일 수 있다.                                                        ║
+ * ║                                                                              ║
+ * ║ [문제 ②·HC-2] 조건을 못 넘긴 축은 **아무 흔적 없이** 사라졌다 — '태그 이름을     ║
+ * ║ 바꿔서 비었다'와 '원래 작품이 적다'가 화면상 구분되지 않았다.                     ║
+ * ║                                                                              ║
+ * ║ [수정 ①] rename 시 spectrumGroups 각 축의 tags에도 동일한 `ren()`(치환+dedupe)  ║
+ * ║ 적용. `prev.spectrumGroups`가 없으면 applyTagRegistry와 **같은 FACTORY 폴백**을  ║
+ * ║ 써서 첫 rename이 축을 팩토리로 되돌리지 않게 한다. 알림 문구도 '스펙트럼' 추가.  ║
+ * ║                                                                              ║
+ * ║ [수정 ②] 분석이 `spectrumSkipped`(축 id·이름·사유·표본)를 함께 반환하고, 화면    ║
+ * ║ 하단에 '표시되지 않은 축 N개 + 사유' 행을 낸다. 사유는 두 갈래 —                 ║
+ * ║ **tags**(축 태그가 2개 미만 → 병합으로 줄었을 수 있음) / **sample**(해당 태그    ║
+ * ║ 작품이 SPECTRUM_MIN_NOVELS 미만). 표시할 축이 0개여도 사유가 있으면 섹션을 연다  ║
+ * ║ (종전엔 섹션째 사라져 설명할 자리가 없었다).                                     ║
+ * ║                                                                              ║
+ * ║ [설계 변경] 카드의 '축소된 축을 비활성 처리'는 **레지스트리에 플래그를 넣지 않고**║
+ * ║ 분석 단계 판정으로 했다. tags<2면 normalizedPosition이 전부 0.5로 고정돼         ║
+ * ║ 어떤 서재에서도 '중간 성향'만 나오는데, 그 무의미한 축을 그리는 대신 사유로       ║
+ * ║ 돌린다. 축 자체는 지우지 않는다 — 사용자가 태그를 다시 나누면 그대로 살아난다.    ║
+ * ║                                                                              ║
+ * ║ [검증] 실제 레지스트리 rename 블록·팩토리 상수를 소스에서 떼어내 실행 — 축 이전   ║
+ * ║ 재현/해소, 같은 축 3연속 병합(4→3→2→1개), spectrumGroups 없을 때 팩토리 폴백,    ║
+ * ║ 손상 데이터(null/tags 없음/배열형) 방어, 사유 문구 3케이스. 레지스트리 재구성     ║
+ * ║ 5지점 점검 — 모드 전환은 `curReg?.spectrumGroups` 보존, seed는 tag_registry가    ║
+ * ║ 없을 때만, 백업 `payload.TR`은 registry 전체라 왕복 보존. esbuild 통과.          ║
+ * ║ APP_VERSION 7.59.19.                                                          ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -21833,7 +21870,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.18";
+const APP_VERSION = "7.59.19";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -35522,7 +35559,7 @@ const TasteAnalysisScreen = memo(({
 
   const { basicStats, majorGenreAnalysis, subGenreAnalysis, tagAnalysis,
           comboAnalysis, platformAnalysis, loyalAuthors, readingPattern,
-          matchAnalysis, trendAnalysis, anomalies, insights, spectrumAnalysis,
+          matchAnalysis, trendAnalysis, anomalies, insights, spectrumAnalysis, spectrumSkipped,
           // 🆕 v7.1: 티어 인사이트
           tierStratification, tierConcentration, tierEntropy, tierInversion,
           awardTierCorrelation, tierDistribution } = analysis;
@@ -37253,7 +37290,10 @@ const TasteAnalysisScreen = memo(({
       )}
 
       {/* 🎯 v3.1.2 스펙트럼 분석 UI */}
-      {isGroupExpanded("genreTag") && spectrumAnalysis && Object.keys(spectrumAnalysis).length > 0 && (
+      {/* 🔧 v7.59.19 (T21·ANA-4): 표시할 축이 하나도 없어도 **사유가 있으면** 섹션을 연다.
+          종전엔 축이 전부 조건을 못 넘기면 섹션 자체가 사라져, '왜 안 보이는지'를 말할 자리가 없었다. */}
+      {isGroupExpanded("genreTag") && spectrumAnalysis
+        && (Object.keys(spectrumAnalysis).length > 0 || (spectrumSkipped || []).length > 0) && (
         <TouchableOpacity onPress={() => toggleSection("spectrum")}>
           <Section title={`📊 취향 스펙트럼 ${isExpanded("spectrum") ? "▼" : "▶"}`}>
             <Text style={{ color: C.sub, fontSize: 12, marginBottom: 12 }}>
@@ -37410,6 +37450,25 @@ const TasteAnalysisScreen = memo(({
                 </View>
               );
             })}
+
+            {/* 🆕 v7.59.19 (T21·ANA-4+HC-2): 표시되지 못한 축의 사유. 종전엔 흔적 없이 사라져
+                '태그 이름을 바꿔서 축이 비었다'와 '원래 작품이 적다'를 구분할 수 없었다. */}
+            {(spectrumSkipped || []).length > 0 && (
+              <View style={{ marginTop: 4, paddingTop: 10, borderTopWidth: 1, borderTopColor: C.line + "60" }}>
+                <Text style={{ color: C.sub, fontSize: 11, fontWeight: "700", marginBottom: 4 }}>
+                  표시되지 않은 축 {spectrumSkipped.length}개
+                </Text>
+                {spectrumSkipped.map(sk => (
+                  <Text key={sk.id} style={{ color: C.sub, fontSize: 11, marginBottom: 2 }}>
+                    · {sk.name} — {sk.reason === "tags"
+                      ? `축을 이루는 태그가 ${sk.tagCount}개뿐이라 비교할 수 없어요 (태그 이름 변경·병합으로 줄었을 수 있어요)`
+                      : sk.novelCount === 0
+                        ? `이 축의 태그가 달린 작품이 없어요 (최소 ${SPECTRUM_MIN_NOVELS}개 필요)`
+                        : `이 축의 태그가 달린 작품이 ${sk.novelCount}개뿐이에요 (최소 ${SPECTRUM_MIN_NOVELS}개 필요)`}
+                  </Text>
+                ))}
+              </View>
+            )}
           </Section>
         </TouchableOpacity>
       )}
@@ -40499,12 +40558,26 @@ async function analyzePreferences(novels, matches) {
 
   // 13. 🎯 v3.1.2 스펙트럼 분석 (태그 연속 스케일 분석)
   const spectrumAnalysis = {};
+  // 🆕 v7.59.19 (T21·ANA-4): 표시되지 못한 축과 **그 사유**를 함께 내보낸다.
+  //   종전엔 조건을 못 넘긴 축이 아무 흔적 없이 사라져, 태그 이름을 바꿔 축이 비었을 때와
+  //   원래 작품이 적을 때가 화면상 구분되지 않았다(둘 다 '그냥 없음').
+  const spectrumSkipped = [];
   const spectrumIds = Object.keys(TAG_SPECTRUM_GROUPS);
-  
+
   for (const spectrumId of spectrumIds) {
     const spectrum = TAG_SPECTRUM_GROUPS[spectrumId];
-    const spectrumLength = spectrum.tags.length;
-    
+    const spectrumLength = Array.isArray(spectrum?.tags) ? spectrum.tags.length : 0;
+    const _skipBase = { id: spectrumId, name: spectrum?.name || spectrumId, tagCount: spectrumLength };
+
+    // 축의 태그가 2개 미만이면 위치 계산 자체가 성립하지 않는다 —
+    //   normalizedPosition이 `spectrumLength > 1 ? … : 0.5`라 모든 작품이 0.5로 고정되어
+    //   어떤 서재에서도 '중간 성향'만 나온다. 태그 이름 변경/병합으로 같은 축의 두 태그가
+    //   하나로 합쳐지면 실제로 이 상태가 되므로, 무의미한 축을 그리는 대신 사유로 돌린다.
+    if (spectrumLength < 2) {
+      spectrumSkipped.push({ ..._skipBase, reason: "tags", novelCount: 0 });
+      continue;
+    }
+
     // 각 작품별 스펙트럼 분석
     const novelAnalyses = [];
     for (const n of reliable) {
@@ -40610,10 +40683,13 @@ async function analyzePreferences(novels, matches) {
         preferredSegment: preferredSegment?.range || null,
         preferredSegmentAvgRating: preferredSegment?.avgRating || 0,
         // 선호 성향 해석 (0~1 범위를 텍스트로)
-        preferenceLabel: avgPos < 0.35 ? spectrum.tags[0] + " 선호" 
+        preferenceLabel: avgPos < 0.35 ? spectrum.tags[0] + " 선호"
                        : avgPos > 0.65 ? spectrum.tags[spectrumLength - 1] + " 선호"
                        : "중간 성향",
       };
+    } else {
+      // 표본 미달 — 종전엔 여기서 아무 기록 없이 빠져나갔다
+      spectrumSkipped.push({ ..._skipBase, reason: "sample", novelCount: novelAnalyses.length });
     }
   }
 
@@ -41058,6 +41134,7 @@ async function analyzePreferences(novels, matches) {
     trendAnalysis,
     anomalies,
     spectrumAnalysis, // 🎯 v3.1.2: 스펙트럼 분석
+    spectrumSkipped,  // 🆕 v7.59.19 (T21·ANA-4): 표시 못 한 축 + 사유 (tags 부족 / 표본 부족)
     matchBehavior, // 🧠 v3.5.4: 매칭 행동 분석
     discontinuedAnalysis, // 🆕 v7.0.4: 연중 원인 분석
     insights,
@@ -52142,6 +52219,21 @@ function AppContent() {
         const ng = {};
         for (const [cat, tags] of Object.entries(nr.generalTags || {})) ng[cat] = ren(tags);
         nr.generalTags = ng;
+        // 🆕 v7.59.19 (T21·ANA-4): 스펙트럼 축의 tags도 이전한다.
+        //   [문제] 레지스트리의 다른 필드는 전부 이전하면서 spectrumGroups **하나만** 빠져 있었다.
+        //   → 축에 쓰인 태그 이름을 바꾸면 그 축은 매칭되는 작품이 사라져 화면에서 조용히 없어졌고,
+        //   완료 알림은 "관계·좌표 설정도 함께 이전됐어요"라 오히려 이전됐다고 믿게 만들었다.
+        //   [주의] prev.spectrumGroups가 없으면 applyTagRegistry가 FACTORY로 폴백하므로(15909),
+        //   여기서도 같은 폴백을 적용해야 '첫 rename이 축을 팩토리로 되돌린 뒤 이전'하는 일이 없다.
+        //   [축소] ren()의 dedupe로 tags가 1개 이하로 줄 수 있다(같은 축의 두 태그를 병합한 경우).
+        //   그 축은 지우지 않고 그대로 둔다 — 사라진 이유를 분석 쪽에서 사유 행으로 밝힌다(아래 spectrumSkipped).
+        const _curSpectra = (nr.spectrumGroups && typeof nr.spectrumGroups === "object" && !Array.isArray(nr.spectrumGroups))
+          ? nr.spectrumGroups : FACTORY_TAG_SPECTRUM_GROUPS;
+        const nsp = {};
+        for (const [sid, grp] of Object.entries(_curSpectra)) {
+          nsp[sid] = (grp && Array.isArray(grp.tags)) ? { ...grp, tags: ren(grp.tags) } : grp;
+        }
+        nr.spectrumGroups = nsp;
         return nr;
       });
 
@@ -52222,7 +52314,8 @@ function AppContent() {
 
       if (!silent) {
         await loadList(undefined, undefined, "tag_rename");
-        Alert.alert("완료", `"${from}" → "${to}" 이름 변경/병합 완료 (${affected}개 작품 수정).\n\n관계·좌표 설정도 함께 이전됐어요.`);
+        // 🔧 v7.59.19 (T21·ANA-4): 스펙트럼도 실제로 이전하므로 문구에 추가 (종전엔 이전 안 하면서 관계·좌표만 말했다)
+        Alert.alert("완료", `"${from}" → "${to}" 이름 변경/병합 완료 (${affected}개 작품 수정).\n\n관계·좌표·스펙트럼 설정도 함께 이전됐어요.`);
       }
     } catch (e) {
       console.warn('[renameTag] failed:', e?.message);
