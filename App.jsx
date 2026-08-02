@@ -2,9 +2,51 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.11 (구색 기능 개선 Phase 4 — 추천 정렬 실효화)                         ║
+ * ║  버전: 7.59.12 (구색 기능 개선 Phase 4 — 취향순 hybrid 폴백)                       ║
  * ║  최종 수정: 2026-08-02                                                        ║
- * ║  총 라인 수: 약 79,500줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 79,600줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🧠 v7.59.12 '취향순'을 hybrid/manual에서도 동작하게 (T14 · ANA-5) (2026-08-02)   ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제] 넷상 추천의 '취향순'이 `preference_patterns.win_rate`에만 의존했다.        ║
+ * ║ 그런데 win_rate는 **ELO 매칭에서만** 생긴다 — refreshPatternStats가                ║
+ * ║ win_count/sample_size로 계산하고(sample_size≥5), 정적 메트릭 UPSERT는 win_rate를  ║
+ * ║ NULL로 넣고 ON CONFLICT에서도 갱신하지 않으며, 하이브리드의 logVerificationMatch는 ║
+ * ║ tier_validation_log와 novels 카운터만 건드리고 preference_patterns는 아예 안 쓴다.║
+ * ║ → 순수 hybrid/manual 서재에선 tasteMap 값이 전부 0/NULL이라 scoreWeb이 모든       ║
+ * ║ 후보에 0점을 주고, '취향순'은 아무 일도 하지 않았다(정렬 무동작 + 카드 🧠 막대    ║
+ * ║ 전멸). 게다가 실패 표시가 전무 — 막대는 `ts > 0` 조건으로 조용히 사라질 뿐이라    ║
+ * ║ 사용자는 '왜 점수가 없는지' 알 방법이 없었다.                                     ║
+ * ║                                                                              ║
+ * ║ [수정 ①] 쓸 수 있는 승률이 하나도 없을 때만(값 > 0.5 기준) `buildTasteKeywordPool`║
+ * ║ 을 **재사용**해 tasteMap을 시드한다. 그 함수의 폴백 경로는 `getPrefScore` 기반이라║
+ * ║ **mode-aware**(hybrid=티어+순위, match=레이팅) — 여기서 모드 분기를 다시 짤 필요가║
+ * ║ 없고 폴백 로직도 중복되지 않는다. ELO 서재는 첫 조건에서 걸러져 이 블록에 오지    ║
+ * ║ 않으므로 **기존 동작 무변경**.                                                   ║
+ * ║                                                                              ║
+ * ║ [수정 ②] weight → 유사 승률 환산. 패턴 경로(weight = 1 + win_rate ≥ 1.55)는       ║
+ * ║ `w - 1`로 원래 승률을 무손실 복원하고, 서재 폴백(1.2 고정 — 승률이 아니라 '내가   ║
+ * ║ 높이 평가한 작품에 실제로 붙어 있다'는 이진 신호라 등급이 없다)은 상수            ║
+ * ║ `WEB_TASTE_FALLBACK_WR = 0.7`. scoreWeb이 `(wr-0.5)*100`을 더하므로 토큰당 20점 —  ║
+ * ║ **승률이 아니라 '일치 개수'로 차등**이 생긴다(3개 맞으면 60점=초록 구간).         ║
+ * ║                                                                              ║
+ * ║ [수정 ③] 실패를 보이게. `webRecoTasteBasis` state("patterns"|"library"|"none")로  ║
+ * ║ 마지막 가져오기의 근거를 기록해 추천 섹션에 한 줄로 안내하고, 정렬 칩에도 '취향순'║
+ * ║ 을 고른 동안 근거가 둘이라는 캡션을 붙였다. 없는 점수를 지어내지는 않는다 —       ║
+ * ║ 근거가 아예 없으면 tasteMap을 비운 채 'none'으로 정직하게 알린다.                 ║
+ * ║                                                                              ║
+ * ║ [안 건드린 것] 막대 은닉 조건(`ts > 0`), scoreWeb 산식, 정렬 파이프라인(T01·T13), ║
+ * ║ preference_patterns 스키마·기록 경로. 하이브리드 검증 결과를 패턴에 적립하는 건   ║
+ * ║ 별개 설계라 범위 밖(match→hybrid 전환 슬롯의 '낡은 ELO 승률' 이슈와 함께 T33).    ║
+ * ║                                                                              ║
+ * ║ [검증] 실제 폴백 블록·scoreWeb·buildTasteKeywordPool을 소스에서 떼어내 25개 단언 —║
+ * ║ ELO 서재 무변경(승률 그대로·32/48점), 순수 hybrid에서 3개일치(60) > 1개일치(20) > ║
+ * ║ 무관작(0)으로 **실제 차등 정렬**(+종전엔 전부 0점인 대조군), 고평가작 태그만 시드,║
+ * ║ 빈 서재는 'none', 패턴이 전부 0.5 이하/NULL이면 폴백 진입·0.51이 하나라도 있으면  ║
+ * ║ patterns 유지, 환산 무손실, category 토큰으로 보강 전에도 정렬 가능.              ║
+ * ║ esbuild 통과, scraper-test 526/526. APP_VERSION 7.59.12.                          ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -18471,6 +18513,11 @@ const WEB_RECO_HIDDEN_CAP = 500;                   // "관심없음" 숨김 목�
 const WEB_RECO_REROLL_COOLDOWN_MS = 20 * 1000;     // 재뽑기 쿨다운(과도 요청 방지 — 탐색 UX 위해 완화)
 const WEB_RECO_MAX_KEYWORDS = 3;                   // 한 번 가져올 때 검색 횟수 상한(ToS — on-demand)
 const WEB_RECO_ENRICH_CAP = 10;                    // 🌐 v7.53.4: 콘텐츠 필터용 메타 보강 후보 상한(지연 제한)
+// 🌐 v7.59.12 (T14·ANA-5): 승률 패턴이 없을 때 쓰는 서재 폴백 키워드의 '유사 승률'.
+//   buildTasteKeywordPool의 폴백 경로는 가중치가 1.2 고정이라(= '내가 높이 평가한 작품에 실제로 붙어 있다'는
+//   이진 신호) 등급이 없다. scoreWeb이 `(wr-0.5)*100`을 더하므로 0.7이면 토큰 하나당 20점 — 3개 맞으면
+//   60점(초록 구간)이 되는 눈금이다. 승률이 아니라 '일치 개수'로 차등이 생긴다.
+const WEB_TASTE_FALLBACK_WR = 0.7;
 const WEB_RECO_KEYWORD_CAP = 2000;                 // 🌐 v7.53.6: 수확/제목 키워드 풀 상한(최근순 유지, DB 무한증가 방지)
 // 수확 시 제외할 잡음 키워드(연령/독점/공모전/형식 등 — 작품 검색어로 부적합)
 const WEB_RECO_JUNK_KEYWORDS = ["19","19금","독점","무료","연재","완결","연재중","단행본","성인","공모전","웹툰","웹소설","외전","단편","장편","무료연재","유료"];
@@ -21524,7 +21571,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.11";
+const APP_VERSION = "7.59.12";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -41498,6 +41545,9 @@ function AppContent() {
   const [recoSettingsOpen, setRecoSettingsOpen] = useState(false); // 추천 맞춤설정 패널 접이식
   // 🌐 v7.50.x: 넷상 추천(M2)
   const [webRecoList, setWebRecoList] = useState([]);          // 임시 추천작 [{...web_reco row}]
+  // 🌐 v7.59.12 (T14·ANA-5): 마지막 가져오기가 취향 점수를 무엇으로 계산했는지 — "patterns" | "library" | "none".
+  //   종전엔 근거가 없으면 카드의 🧠 막대가 조용히 사라질 뿐이라 '왜 점수가 없는지'를 알 길이 없었다.
+  const [webRecoTasteBasis, setWebRecoTasteBasis] = useState(null);
   const [webRecoLoading, setWebRecoLoading] = useState(false);
   const [webRecoError, setWebRecoError] = useState(null);
   const [webRecoTierPick, setWebRecoTierPick] = useState(null); // manual 모드 본목록 추가 시 티어 선택 대상 item
@@ -46171,6 +46221,30 @@ function AppContent() {
       // 취향 점수(간이): preference_patterns 승률로 후보 장르/태그 매칭
       const tasteMap = {};
       try { const pats = await all("SELECT pattern_key, win_rate FROM preference_patterns WHERE sample_size>=3;"); for (const p of (pats || [])) { const k = p.pattern_key || ""; const v = k.includes(":") ? k.slice(k.indexOf(":") + 1) : k; tasteMap[v] = Math.max(tasteMap[v] || 0, Number(p.win_rate) || 0); } } catch {}
+      // 🔧 v7.59.12 (T14·ANA-5): 서재 폴백. [문제] win_rate는 **ELO 매칭에서만** 생긴다 —
+      //   refreshPatternStats가 win_count/sample_size로 계산하고, 정적 메트릭 UPSERT는 win_rate를 NULL로 넣고
+      //   ON CONFLICT에서도 갱신하지 않으며, hybrid의 logVerificationMatch는 preference_patterns를 아예 안 건드린다.
+      //   그래서 순수 hybrid/manual 서재에선 tasteMap 값이 전부 0/NULL → scoreWeb이 모든 후보에 0점 →
+      //   '취향순'이 아무 일도 안 했다(정렬 무동작 + 카드 🧠 막대 전멸).
+      //   [해결] 쓸 수 있는 승률이 하나도 없을 때만 buildTasteKeywordPool을 재사용해 시드한다. 그 함수의 폴백은
+      //   getPrefScore 기반이라 **mode-aware**(hybrid=티어+순위, match=레이팅) — 여기서 모드 분기를 다시 짤 필요가 없다.
+      //   ELO 서재는 첫 조건에서 걸러져 이 블록에 오지 않으므로 기존 동작 무변경.
+      let tasteBasis = Object.values(tasteMap).some((v) => Number(v) > 0.5) ? "patterns" : "none";
+      if (tasteBasis === "none") {
+        try {
+          const pool = await buildTasteKeywordPool(new Map());
+          for (const p of (pool || [])) {
+            const kw = String(p && p.kw || "").trim();
+            if (!kw) continue;
+            const w = Number(p.weight) || 0;
+            // 패턴 경로는 weight = 1 + win_rate(≥1.55)라 원래 승률을 복원하고, 서재 폴백(1.2 고정)은 상수 눈금.
+            const wr = w >= 1.5 ? Math.min(1, w - 1) : WEB_TASTE_FALLBACK_WR;
+            tasteMap[kw] = Math.max(tasteMap[kw] || 0, wr);
+          }
+          if (pool && pool.length) tasteBasis = "library";
+        } catch {}
+      }
+      setWebRecoTasteBasis(tasteBasis);
       const scoreWeb = (c) => {
         const m = c.meta || {};
         const toks = new Set([...(m.genres || []), ...String(c.category || "").split(/[,/|·]/).map((s) => s.trim()).filter(Boolean)]);
@@ -61346,6 +61420,12 @@ async function importJSON(directText, onSuccess, onSettled) {
                         회원수 데이터는 현재 노벨피아 제공분만 있어요. 데이터가 없는 작품은 순위를 매기지 않고 뒤에 원래 순서로 붙습니다.
                       </Text>
                     ) : null}
+                    {/* 🌐 v7.59.12 (T14·ANA-5): 취향 점수의 근거가 둘이라는 걸 밝힌다(하이브리드는 매칭 승률이 안 쌓인다). */}
+                    {web.sort === "taste" ? (
+                      <Text style={{ color: C.sub, fontSize: 10, marginTop: 6, lineHeight: 14 }}>
+                        매칭 기록이 쌓이면 승률 패턴으로, 없으면 서재에서 높이 평가한 작품의 장르·태그로 점수를 매겨요.
+                      </Text>
+                    ) : null}
                   </View>
                   <View>
                     <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>연재 상태</Text>
@@ -61791,6 +61871,17 @@ async function importJSON(directText, onSuccess, onSettled) {
         </TouchableOpacity>
       </View>
       {webRecoError ? <Text style={{ color: "#ef4444", fontSize: 12, marginBottom: 8 }}>{webRecoError}</Text> : null}
+      {/* 🌐 v7.59.12 (T14·ANA-5): 마지막 가져오기의 취향 점수 근거. 종전엔 근거가 없으면 카드의 🧠 막대가
+          조용히 사라질 뿐(ts>0 조건)이라 '점수가 왜 없는지'를 알 방법이 아예 없었다. */}
+      {webRecoTasteBasis === "library" ? (
+        <Text style={{ color: C.sub, fontSize: 11, marginBottom: 8, lineHeight: 15 }}>
+          🧠 매칭 승률 기록이 없어, 취향 점수를 서재에서 높이 평가한 작품의 장르·태그로 계산했어요.
+        </Text>
+      ) : webRecoTasteBasis === "none" ? (
+        <Text style={{ color: C.sub, fontSize: 11, marginBottom: 8, lineHeight: 15 }}>
+          🧠 취향 점수를 매길 근거가 아직 없어요 — 작품을 더 담거나 티어를 매기면 점수가 붙어요.
+        </Text>
+      ) : null}
       {visibleReco.length === 0 ? (
         <Text style={{ color: C.sub, fontSize: 13 }}>{webRecoLoading ? "플랫폼에서 작품을 찾는 중이에요…" : (webRecoList.length ? "표시할 작품이 모두 밴 키워드로 가려졌어요. 밴을 조정해 보세요." : "‘🎲 가져오기’를 눌러 넷상에서 새 작품을 발견해 보세요.")}</Text>
       ) : (

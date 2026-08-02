@@ -90,7 +90,7 @@
 | T11 | ✅ | 3 | 수문장 모달 재설계 (방향/무시/강등) | HYB-3 HYB-4 🟡⚪ | M | v7.59.9 완료 |
 | T12 | ✅ | 3 | 검증 설정 노출 (길이/임계/감쇠) | HYB-5 HC-3 HC-4 🟡⚪ | L | v7.59.10 완료 |
 | T13 | ✅ | 4 추천 | 정렬 실효화 + 인기 데이터 정직화 | REC-1 REC-2 🟡 | S | v7.59.11 완료 |
-| T14 | ⬜ | 4 | '취향순' hybrid/manual 폴백 | ANA-5 🟡 | M | |
+| T14 | ✅ | 4 | '취향순' hybrid/manual 폴백 | ANA-5 🟡 | M | v7.59.12 완료 |
 | T15 | ⬜ | 4 | 밴 일관 적용 + 승률 게이트 실질화 | REC-3 REC-8 🟡 | M | |
 | T16 | ⬜ | 4 | 슬라이더 정합 + TTL 상수 정리 | REC-6 REC-7 🟡 | S | T17과 묶음가능 |
 | T17 | ⬜ | 4 | AI 키워드 일일 캐시 + 동적 가중 | REC-5 🟡 | M | |
@@ -582,23 +582,34 @@
 
 ---
 
-### T14 · ANA-5 — '취향순'을 hybrid/manual에서도 동작하게 ⬜
+### T14 · ANA-5 — '취향순'을 hybrid/manual에서도 동작하게 ✅
 
 **대상**: 취향순이 ELO 승률(win_rate)에만 의존해 hybrid/manual에서 전 후보 0점 → 정렬 무동작 (✅🟡, 2차 수정 — 정밀화: match→hybrid 전환 슬롯은 '낡은 ELO 신호로 동작', 순수 hybrid 서재만 전량 0)
 
 **전제**:
-- [ ] tasteMap이 win_rate 전용 (45336); scoreWeb 폴백 없음 (45337-45342); 정렬 45345
-- [ ] win_rate 생성은 ELO 매칭뿐 — 정적 upsert NULL 삽입 39770 + ON CONFLICT 미갱신 39756-66; logVerificationMatch는 tier_validation_log 등만 기록 37953-85
-- [ ] 폴백 자산: `buildTasteKeywordPool` 45131 (prefScore 기반 — **mode-aware**), 칩 60233, 취향 막대 은닉 60724
+- [x] tasteMap이 win_rate 전용; scoreWeb 폴백 없음; 정렬 → **실제 46172-46173 / 46174-46179 / applySort 46186**
+- [x] win_rate 생성은 ELO 매칭뿐 — 정적 upsert NULL 삽입 + ON CONFLICT 미갱신; logVerificationMatch는 tier_validation_log 등만 기록 → **실제 40614(win_rate 자리 null) / 40600-40610 / `refreshPatternStats` 13790이 유일 writer(sample_size≥5·정적 카테고리 제외)**
+- [x] 폴백 자산: `buildTasteKeywordPool` (prefScore 기반 — **mode-aware**), 칩, 취향 막대 은닉 → **실제 45994(폴백 46010-46021) / 61259 / 61844 `{ts > 0 ? ... : null}`**
 
-**설계**: ① fetchWebRecommendations에서 tasteMap이 비면 buildTasteKeywordPool 호출해 kw→가중치 시드(폴백 로직 중복 없음 — 함수 재사용; prefScore가 mode-aware라 모드 분기 불요). ② 칩에 상태 표기 — 패턴 데이터 없으면 '취향순(간이)' 라벨 또는 캡션(현재는 실패 표시가 전무 — 막대만 사라짐 60724). ③ 전환 슬롯의 낡은 win_rate 이슈는 T33에 기록만.
+**검증 노트 (2026-08-02 구현 세션)**: 전제 3건 전부 일치. 카드에 없던 사실 2건 — 그중 하나는 **설계를 구체화해야 했다**:
+- **`buildTasteKeywordPool`의 두 경로는 weight 스케일이 다르다.** 패턴 경로는 `1 + win_rate`(1.55~2.0)인데 폴백 경로는 **1.2 고정**이다. 카드는 "kw→가중치 시드"라고만 했는데, 그 1.2를 그대로 승률로 넣으면 `scoreWeb`의 `(wr-0.5)*100`에서 **음수→0점**이 되어 폴백이 아무 효과가 없다. 환산이 필수였다: 패턴 경로는 `w-1`로 원래 승률 복원, 폴백 경로는 상수 `WEB_TASTE_FALLBACK_WR = 0.7`(토큰당 20점). 그래서 폴백의 차등은 승률이 아니라 **'일치 개수'**에서 나온다 — 3개 맞으면 60점(초록)이 되는 눈금으로 잡았다.
+- **'tasteMap이 비면'을 그대로 쓰면 안 된다.** 정적 메트릭 행이 `sample_size≥3`을 만족한 채 `win_rate=NULL`로 들어오므로 tasteMap은 **비어 있지 않으면서 전 값이 0**인 상태가 흔하다. 판정을 `Object.keys().length === 0`이 아니라 **`some(v => v > 0.5)`**(= scoreWeb이 실제로 점수를 줄 수 있는 값이 하나라도 있는가)로 잡았다.
+
+**설계 (실제 구현)**: ① tasteMap에 쓸 수 있는 승률이 하나도 없을 때만 `buildTasteKeywordPool` 재사용해 시드(mode-aware라 모드 분기 불요, ELO 서재는 진입 자체를 안 함). ② weight→유사 승률 환산(위 검증 노트). ③ `webRecoTasteBasis` state("patterns"|"library"|"none") + 추천 섹션 안내 한 줄 + 정렬 칩 캡션. ④ 전환 슬롯의 낡은 win_rate 이슈는 T33에 기록만.
 
 **완료 기준**:
-- [ ] 순수 hybrid 서재에서 취향순이 실제 차등 정렬(추적) · ELO 모드 기존 동작 불변 · esbuild 통과
+- [x] 순수 hybrid 서재에서 취향순이 실제 차등 정렬 — 실측: 3개일치(60) > 1개일치(20) > 무관작(0) (종전 대조군은 전부 0점)
+- [x] ELO 모드 기존 동작 불변 — 승률 그대로·판타지 32점·판타지+회귀 48점, 폴백 블록 미진입
+- [x] esbuild 통과 (+ scraper-test 526/526 유지)
 
 **리스크**: 웹 후보 토큰은 플랫폼 장르명(m.genres/category)이라 폴백 시드는 장르 위주가 실효적 — 일반 태그 어휘 어긋남 인지.
 
 **진행 기록**:
+- 2026-08-02 · **v7.59.12 완료**. tasteMap 폴백 블록 + `WEB_TASTE_FALLBACK_WR` + `webRecoTasteBasis` state·안내줄 + 정렬 칩 캡션.
+- 설계와 달라진 점 ①: weight 환산이 필요했다(위 검증 노트). 카드대로 1.2를 승률로 넣었으면 폴백이 **무동작**이라 이 카드가 고치려는 결함이 그대로 남았을 것이다.
+- 설계와 달라진 점 ②: 폴백 진입 판정을 '비었는가'가 아니라 **'쓸 수 있는 값이 있는가(>0.5)'**로. 정적 메트릭 행 때문에 '비어 있지 않으면서 전 값 0'이 흔하다.
+- 설계와 달라진 점 ③: 카드는 칩 라벨을 '취향순(간이)'로 바꾸는 안을 냈는데, 라벨을 바꾸면 **설정 화면이 그 시점의 DB 상태를 알아야** 한다(렌더 중 DB 조회). 대신 칩에는 '근거가 둘'이라는 상시 정확한 캡션을 두고, **실제로 무엇이 쓰였는지는 결과가 나온 추천 섹션**에서 한 줄로 알린다.
+- 남긴 것: 막대 은닉 조건(`ts > 0`)·scoreWeb 산식·preference_patterns 기록 경로 무변경. **하이브리드 검증 결과를 preference_patterns에 적립하는 것은 안 했다** — 그러면 취향순이 폴백 없이도 동작하지만 win_rate의 의미(ELO 승률)가 달라져 분석 탭 전체에 파급된다. match→hybrid 전환 슬롯의 '낡은 ELO 승률로 동작' 이슈와 함께 **T33** 범위.
 
 ---
 
