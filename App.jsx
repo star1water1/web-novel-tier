@@ -2,9 +2,63 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.6 (구색 기능 개선 Phase 2 — 백업 절단 고지 + 수문장 필터 완화)         ║
+ * ║  버전: 7.59.7 (구색 기능 개선 Phase 3 — 검증 큐 유입/소진 균형)                    ║
  * ║  최종 수정: 2026-08-02                                                        ║
- * ║  총 라인 수: 약 78,890줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 78,920줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔁 v7.59.7 건너뛰기 실효화 · 큐 유입 게이트 · 팬텀 큐 제거 · 🔍 우선            ║
+ * ║    (T08 · HYB-1 HYB-2 / T09 · HYB-7 HYB-8) (2026-08-02)                          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제 ①·HYB-2] '건너뛰기'·'시퀀스 중단'이 큐를 skipped로 마감하고 🔍만 해제해,   ║
+ * ║ finalize(38308-38318)가 하는 나머지 둘 — `suspicion_score` 정리와                ║
+ * ║ `verification_baseline = verification_count` — 을 빠뜨렸다. 그래서 다음 finalize의║
+ * ║ detectAutomaticSuspects가 두 트리거(count>baseline 쏠림 / score>=checkLine)에     ║
+ * ║ 그대로 걸려 **방금 건너뛴 작품을 즉시 다시 등록**했다. 건너뛰기가 아무것도         ║
+ * ║ 미루지 못한 이유이자, 종료 경로만 비대칭이던 구조적 누락이다.                     ║
+ * ║                                                                              ║
+ * ║ [문제 ②·HYB-1] 큐가 소진보다 빨리 자란다. 한 세션이 큐 1건을 비우는 동안          ║
+ * ║ finalize마다 detectAutomaticSuspects가 최대 5건을 넣고, ▲/▼ 한 번이 2건을        ║
+ * ║ 넣었다(idA + idB). 대기 숫자가 줄지 않아 '끝이 안 보이는' 화면이 된다.            ║
+ * ║                                                                              ║
+ * ║ [문제 ③·HYB-7] 티어를 지운(manual_tier→null) 작품을 큐에 넣는데,                 ║
+ * ║ getCandidatesForVerification은 mt가 없으면 항상 `[]`(37976) — **검증이 원리적으로 ║
+ * ║ 불가능**하다. 세션 시작 즉시 no_candidates로 자동 마감되며 큐를 'resolved'로      ║
+ * ║ 바꾸니, 아무것도 안 한 항목이 '완료' 수치만 올렸다(팬텀).                          ║
+ * ║                                                                              ║
+ * ║ [문제 ④·HYB-8] 사용자가 🔍로 직접 지목한 작품의 가중(base 0 + flagWeight 3 = 3)이 ║
+ * ║ 자동 tier_change(4)보다 낮아, 방금 티어를 만진 작품에 계속 밀렸다.                ║
+ * ║                                                                              ║
+ * ║ [수정 ①] 두 종료 핸들러를 공용 `skipVerificationQueries`로 통일 — 큐 마감 + 🔍   ║
+ * ║ 해제 + baseline 갱신 + 의심도 정리 3종을 한 execBatch로. 단 finalize처럼 score를  ║
+ * ║ 0으로 지우진 않는다: 건너뛰기는 '해소'가 아니라 '미루기'라, 점검선 바로 아래로만  ║
+ * ║ 내려 새 증거가 쌓이면 다시 오르게 했다(0 리셋이면 복귀에 12회 가산, 현 설계는 2회)║
+ * ║                                                                              ║
+ * ║ [수정 ②] `detectAutomaticSuspects` 서두에 유입 게이트 —                          ║
+ * ║ pending >= VERIFICATION_QUEUE_SOFT_CAP(10)이면 이번 회차 자동 등록을 쉰다.        ║
+ * ║ 신호는 score/baseline에 남으므로 유실이 아니라 지연이고, 큐가 줄면 자동 재개된다. ║
+ * ║ 사용자 path 등록은 게이트 밖 — 방금 만진 작품이 밀리면 안 되므로 의도된 비대칭.   ║
+ * ║ swapRating의 idB 즉시 등록은 제거(▲ 1회 → 큐 1건). v7.0.2의 '양쪽 검증' 의도는   ║
+ * ║ v7.17.0 propagateRankSuspicion이 대체한다 — idB는 사라진 게 아니라 증거가 쌓이면  ║
+ * ║ 올라온다.                                                                      ║
+ * ║                                                                              ║
+ * ║ [수정 ③] 티어 클리어의 enqueue를 `suspicionBumpQuery(moveBase)`로 교체(원 주석의 ║
+ * ║ '가벼운 신호로만' 의도 보존) + no_candidates 큐 마감을 'resolved'→'cancelled'로.  ║
+ * ║ 'cancelled'는 작품 삭제 경로가 이미 쓰는 상태라 신규 state도 마이그레이션도 불요. ║
+ * ║ 진단 탭의 result_action='no_candidates' 세션 row는 그대로 남아 추적은 유지.       ║
+ * ║                                                                              ║
+ * ║ [수정 ④] 큐 ORDER에 `COALESCE(n.user_flagged_suspect,0) DESC`를 1순위로 —        ║
+ * ║ **3곳 전부**(실행 fetch 38090 · 미리보기 54361 · 진단 상위10 54499). 카드는 2곳만 ║
+ * ║ 지목했지만 진단 화면만 옛 순서면 그 화면 자체가 거짓말이 된다. COALESCE는 작품이  ║
+ * ║ 삭제된 고아 행(n.* NULL)을 0에 묶어 기존 정리 경로를 그대로 살리기 위한 것.       ║
+ * ║                                                                              ║
+ * ║ [검증] 실제 판정식·SQL·핸들러를 떼어내 50개 단언(T08 33 + T09 17) — 건너뛰기 후   ║
+ * ║ 재등록 차단을 '종전이면 재등록됨' 대조군과 함께 확인, 새 증거 시 재등록 복귀,     ║
+ * ║ 게이트 경계(12/10/9/0)와 COUNT 실패 폴백, 프리셋별 cap(8/6/5→7/5/4),             ║
+ * ║ 🔍 지목이 tier_change보다 먼저·🔍끼리는 종전 규칙·고아 행 정리 경로 유지.        ║
+ * ║ finalize 정상 경로 4종 불변 확인. esbuild 통과, scraper-test 526/526.             ║
+ * ║ APP_VERSION 7.59.7.                                                               ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -21258,7 +21312,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.6";
+const APP_VERSION = "7.59.7";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -38064,6 +38118,12 @@ const GATEKEEPER_BLOCK_THRESHOLD = 3;
 // 🆕 v7.20.11: 갤로핑+이진 탐색 후보 풀 — 지수 점프(2^k-1)가 닿을 범위. 7회 응답이면 idx~63까지 도달 가능.
 //   (선형 시절엔 10이면 충분했으나, 점프로 멀리 어긋난 작품을 적은 매칭으로 옮기려면 풀을 넓혀야 함.)
 const VERIFICATION_CANDIDATE_POOL = 64;
+// 🆕 v7.59.7 (T08·HYB-1): 자동 검출(detectAutomaticSuspects)의 큐 유입 게이트. pending이 이 수 이상이면
+//   자동 등록을 쉰다 — 한 세션이 큐 1건을 비우는 동안 finalize마다 최대 5건이 들어와 큐가 소진보다 빨리
+//   자라던 구조를 끊는다. 신호는 suspicion_score/verification_baseline에 남아 있으므로 유실이 아니라 '지연'이고,
+//   큐가 줄면 다음 finalize에서 자동으로 재개된다. ('큐가 완전히 빌 때만'은 사용자 path 유입이 끊이지 않는
+//   서재에서 자동 검출을 영구 기아 상태로 만들어 기각.)
+const VERIFICATION_QUEUE_SOFT_CAP = 10;
 
 // ⚠️ v7.4.13에서 read_progress(읽은 회차 누적) 트리거는 noise로 판단되어 제거됨.
 //    read_count_baseline 컬럼은 백업 round-trip/마이그레이션 호환을 위해 유지하나,
@@ -38073,12 +38133,15 @@ const VERIFICATION_CANDIDATE_POOL = 64;
 async function getNextVerificationTarget() {
   try {
     const cutoff = Date.now() - 1000; // 1초 디바운스 (생성 직후는 제외)
+    // 🆕 v7.59.7 (T09·HYB-8): 사용자가 🔍로 직접 지목한 작품을 1순위로. priority만 보면 user_flag의 가중
+    //   (base 0 + flagWeight 3 = 3)이 자동 tier_change(4)보다 낮아, 방금 티어를 만진 작품에 계속 밀렸다.
+    //   COALESCE로 NULL(작품이 삭제된 고아 행)을 0에 묶어야 아래 novel_exists 정리 경로가 종전처럼 동작한다.
     const row = await first(
       `SELECT q.*, n.id as novel_exists, n.title, n.manual_tier, n.manual_order
        FROM tier_verification_queue q
        LEFT JOIN novels n ON n.id = q.novel_id
        WHERE q.state='pending' AND q.created_at < ?
-       ORDER BY q.priority DESC, q.created_at ASC
+       ORDER BY COALESCE(n.user_flagged_suspect, 0) DESC, q.priority DESC, q.created_at ASC
        LIMIT 1`,
       [cutoff]
     );
@@ -38404,6 +38467,24 @@ async function logVerificationMatch(sessionId, suspicionId, candidateId, suspici
   }
 }
 
+// 🆕 v7.59.7 (T08·HYB-2): 검증 '건너뛰기 / 시퀀스 중단'의 공통 처리.
+//   [문제] 종전 두 핸들러는 큐를 'skipped'로 마감하고 🔍만 해제했다. finalize(38308-38318)가 하는
+//   `suspicion_score` 리셋과 `verification_baseline = verification_count`를 빠뜨려서,
+//   다음 finalize의 detectAutomaticSuspects가 두 트리거(count>baseline 쏠림 / score>=checkLine)에
+//   그대로 걸려 **방금 건너뛴 작품을 즉시 다시 등록**했다. 건너뛰기가 아무것도 미루지 못한 이유.
+//   [설계] 다만 finalize처럼 score를 0으로 지우지는 않는다 — 건너뛰기는 '해소'가 아니라 '미루기'다.
+//   점검선(checkLine) 바로 아래로만 내려, 지금은 안 뽑히되 새 증거(인접 순위변동 등)가 쌓이면 다시 오르게 한다.
+//   verification_baseline은 finalize와 동일하게 올린다(이미 본 응답은 '새 증거'가 아니므로).
+function skipVerificationQueries(queueRow) {
+  const line = Number(globalSuspicionConfig.checkLine) || 6;
+  return [
+    { sql: `UPDATE tier_verification_queue SET state='skipped', processed_at=? WHERE id=?`, params: [Date.now(), queueRow.id] },
+    // 🆕 v7.13.9: 건너뛰기/중단도 🔍 해제 — flag만 남고 큐엔 없는 stuck 상태 방지(다시 의심되면 재지정)
+    { sql: `UPDATE novels SET user_flagged_suspect=0, suspicion_score=MIN(COALESCE(suspicion_score,0), ?) WHERE id=?`, params: [Math.max(0, line - 1), queueRow.novel_id] },
+    { sql: `UPDATE novels SET verification_baseline = verification_count WHERE id=?`, params: [queueRow.novel_id] },
+  ];
+}
+
 // 🆕 v7.5.0: 전적 기반 자동 의심 검출 (시스템 자가 시그널).
 // 사용자 비전 "전적이 다음 의심 판단의 근거" 구현. finalizeVerificationSession 직후 호출.
 // 조건: verification_count >= 3 AND |W-L|/count >= 0.6 (한쪽 쏠림)
@@ -38411,6 +38492,12 @@ async function logVerificationMatch(sessionId, suspicionId, candidateId, suspici
 // LIMIT 5: finalize 후 한 번에 5개까지만 자동 enqueue — 갑작스러운 큐 플러드 방지
 async function detectAutomaticSuspects(excludeNovelId) {
   try {
+    // 🆕 v7.59.7 (T08·HYB-1): 유입 게이트 — 대기 큐가 이미 SOFT_CAP 이상이면 이번 finalize에서는 자동 등록을 쉰다.
+    //   (사용자 path 등록은 게이트 밖이라 그대로 들어온다 — 사용자가 방금 만진 작품이 밀리면 안 되므로 의도된 비대칭.)
+    try {
+      const pendRow = await first("SELECT COUNT(*) AS c FROM tier_verification_queue WHERE state='pending'");
+      if ((Number(pendRow?.c) || 0) >= VERIFICATION_QUEUE_SOFT_CAP) return;
+    } catch { /* COUNT 실패 시 게이트 생략 — 종전 동작(등록)으로 폴백 */ }
     // 🆕 v7.17.0: 전적 쏠림(기존) OR 누적 의심도(신규)로 자동 검출. 둘 다 ORDER 가중에 반영 →
     //   매칭 업셋·순위변동으로 의심도가 높아진 연관작이 자동으로 다음 검증 대상에 오름.
     const rows = await all(
@@ -53800,7 +53887,12 @@ function AppContent() {
             propagateRankSuspicion(n.id).catch(() => {}); // 🆕 v7.17.0 증거①: 새 자리 인접권 의심도 전파
           } else if (_v7TierCleared) {
             // manual_tier → null: 더 이상 잠정 truth 없음, 자리 검증 불필요. 오버레이트 가능성을 가벼운 신호로만 인입
-            await enqueueVerification(n.id, "tier_change", "overrated", "saveEdit");
+            // 🔧 v7.59.7 (T09·HYB-7): 큐 등록 → 의심도 가산으로 교체. manual_tier가 없어진 작품은
+            //   getCandidatesForVerification이 항상 `[]`을 반환(37976)해 **검증이 원리적으로 불가능**한데,
+            //   큐에 넣으니 세션 시작 즉시 no_candidates로 자동 마감돼 '완료' 수치만 올리는 팬텀 항목이 됐다.
+            //   원 주석의 '가벼운 신호로만' 의도는 suspicion_score 가산이 그대로 수행한다 —
+            //   티어를 다시 매기면 그때 detectAutomaticSuspects가 이 점수를 보고 집어간다(신호 유실 없음).
+            await execBatch([suspicionBumpQuery(n.id, globalSuspicionConfig.moveBase)]);
           }
           // (v7.4.13 제거) read_progress 트리거 — manual_tier 의심 신호로 약함
           // (m6 제거) meta_edit 트리거 — 메타 편집(제목/태그/note 등)은 검증 큐에 영향 X
@@ -54314,12 +54406,13 @@ function AppContent() {
       const pendingRow = await first(`SELECT COUNT(*) as cnt FROM tier_verification_queue WHERE state='pending'`);
       const resolvedRow = await first(`SELECT COUNT(*) as cnt FROM tier_verification_queue WHERE state='resolved'`);
       setVerificationStats({ pending: pendingRow?.cnt || 0, resolved: resolvedRow?.cnt || 0 });
-      // 다음 점검 미리보기 — getNextVerificationTarget 동일 ORDER (priority DESC, created_at ASC)
+      // 다음 점검 미리보기 — getNextVerificationTarget 동일 ORDER
+      // 🆕 v7.59.7 (T09·HYB-8): 🔍 지목 1순위 키 추가. 두 쿼리는 반드시 같은 ORDER를 써야 미리보기가 거짓말을 안 한다.
       const nextRow = await first(
         `SELECT q.trigger_type, n.title FROM tier_verification_queue q
          LEFT JOIN novels n ON n.id = q.novel_id
          WHERE q.state='pending' AND n.id IS NOT NULL
-         ORDER BY q.priority DESC, q.created_at ASC LIMIT 1`
+         ORDER BY COALESCE(n.user_flagged_suspect, 0) DESC, q.priority DESC, q.created_at ASC LIMIT 1`
       );
       setNextVerificationPreview(nextRow ? { title: nextRow.title, trigger_type: nextRow.trigger_type } : null);
     } catch (e) {
@@ -54455,7 +54548,9 @@ function AppContent() {
       const queueByTrigger = await all(`SELECT trigger_type, COUNT(*) as cnt FROM tier_verification_queue WHERE state='pending' GROUP BY trigger_type`);
       const queueByPriority = await all(`SELECT priority, COUNT(*) as cnt FROM tier_verification_queue WHERE state='pending' GROUP BY priority ORDER BY priority DESC`);
       const queueByTriggerSuspicion = await all(`SELECT trigger_type, suspicion_type, COUNT(*) as cnt FROM tier_verification_queue GROUP BY trigger_type, suspicion_type ORDER BY trigger_type, suspicion_type`);
-      const recentPending = await all(`SELECT q.id, q.priority, q.trigger_type, q.suspicion_type, q.created_at, n.title, n.manual_tier, n.manual_order FROM tier_verification_queue q LEFT JOIN novels n ON n.id=q.novel_id WHERE q.state='pending' ORDER BY q.priority DESC, q.created_at ASC LIMIT 10`);
+      // 🆕 v7.59.7 (T09·HYB-8): 진단 '대기 큐 상위 10건'도 같은 ORDER를 써야 한다 — 실행 순서와 다르게 보이면
+      //   진단 화면 자체가 거짓말이 된다(카드가 지목한 2곳 외 제3의 표시 지점).
+      const recentPending = await all(`SELECT q.id, q.priority, q.trigger_type, q.suspicion_type, q.created_at, n.title, n.manual_tier, n.manual_order FROM tier_verification_queue q LEFT JOIN novels n ON n.id=q.novel_id WHERE q.state='pending' ORDER BY COALESCE(n.user_flagged_suspect, 0) DESC, q.priority DESC, q.created_at ASC LIMIT 10`);
       // S1 — trigger_fire_log (정확)
       const fire24hByTrigger = await all(`SELECT trigger_type, COUNT(*) as cnt FROM trigger_fire_log WHERE created_at > ? GROUP BY trigger_type ORDER BY cnt DESC`, [dayAgo]);
       const fire24hBySource = await all(`SELECT source, trigger_type, COUNT(*) as cnt FROM trigger_fire_log WHERE created_at > ? GROUP BY source, trigger_type ORDER BY source, trigger_type`, [dayAgo]);
@@ -54578,7 +54673,12 @@ function AppContent() {
            VALUES (?, ?, ?, ?, 'completed', 'no_candidates', 0, ?, ?)`,
           [sessionId, queueRow.novel_id, queueRow.suspicion_type, queueRow.trigger_type, now, now]
         );
-        await exec(`UPDATE tier_verification_queue SET state='resolved', processed_at=? WHERE id=?`, [now, queueRow.id]);
+        // 🔧 v7.59.7 (T09·HYB-7): 'resolved' → 'cancelled'. 통계(loadVerificationStats)가 pending/resolved만
+        //   세므로, 후보가 없어 아무것도 검증하지 못한 항목이 '완료'로 잡혀 수치를 부풀렸다. 'cancelled'는
+        //   작품 삭제 경로(54595)가 이미 쓰는 상태라 신규 state도, 마이그레이션도 필요 없다.
+        //   진단 탭의 sessionByAction은 tier_repositioning_session의 result_action='no_candidates'를 보므로
+        //   위 INSERT가 그대로 남아 '왜 아무 일도 안 일어났나'는 계속 추적된다.
+        await exec(`UPDATE tier_verification_queue SET state='cancelled', processed_at=? WHERE id=?`, [now, queueRow.id]);
         await loadVerificationStats();
         shouldRetry = true; // 다음 큐 항목 자동 시도
         return;
@@ -56529,14 +56629,14 @@ function AppContent() {
         }
         moveDir = suspicionForHybrid === "underrated" ? "up" : "down"; // 🆕 v7.28.65: -50/작은 order = 상승
         // 🆕 v7.0: hybrid 모드 — 사용자 path 트리거
-        // 🆕 v7.0.2: idB도 함께 enqueue (역방향 의심) — 양쪽이 모두 변위했으므로 양쪽 검증 필요
+        // 🔧 v7.59.7 (T08·HYB-1): idB 즉시 enqueue 제거. [이전] v7.0.2가 '양쪽이 변위했으니 양쪽 검증'
+        //   의도로 idB도 등록했으나, ▲/▼ 한 번에 큐가 2건씩 늘어 소진(세션당 1건)보다 빨리 자랐다.
+        //   그 의도는 v7.17.0의 propagateRankSuspicion이 대체한다 — 아래 호출이 인접권(idB 포함)에
+        //   의심도를 가산하고, 점검선을 넘으면 detectAutomaticSuspects가 알아서 등록한다.
+        //   즉 idB는 '사라진' 게 아니라 '증거가 쌓이면' 올라온다. 사용자가 직접 움직인 idA만 즉시 등록.
         if (mode === "hybrid") {
           try {
             await enqueueVerification(idA, "order_change", suspicionForHybrid, "swapRating_idA");
-            if (idA !== idB) {
-              const inverseSuspicion = suspicionForHybrid === "underrated" ? "overrated" : "underrated";
-              await enqueueVerification(idB, "order_change", inverseSuspicion, "swapRating_idB");
-            }
             propagateRankSuspicion(idA).catch(() => {}); // 🆕 v7.17.0 증거①: swap 인접권 의심도 전파
           } catch (e) {
             console.warn("검증 큐 INSERT 실패:", e?.message);
@@ -63502,12 +63602,10 @@ async function importJSON(directText, onSuccess, onSettled) {
                                   // 🆕 v7.0.3: 'pending' 유지 시 다음 fetch에서 같은 row 재인입(무한 루프) — 'skipped'로 마감
                                   // (편집/추가 등 사용자 후속 행동이 enqueueVerification으로 새 row를 만들면 다시 검증됨)
                                   try {
-                                    await exec(
-                                      `UPDATE tier_verification_queue SET state='skipped', processed_at=? WHERE id=?`,
-                                      [Date.now(), verificationSession.queueRow.id]
-                                    );
-                                    // 🆕 v7.13.9: 중단도 🔍 해제 — flag만 남고 큐엔 없는 stuck 상태 방지(다시 의심되면 재지정)
-                                    await exec(`UPDATE novels SET user_flagged_suspect=0 WHERE id=?`, [verificationSession.queueRow.novel_id]);
+                                    // 🔧 v7.59.7 (T08·HYB-2): finalize와 같은 '재큐잉 차단' 3종을 함께 실행.
+                                    //   종전엔 큐 마감 + 🔍 해제만 해서, 다음 finalize의 detectAutomaticSuspects가
+                                    //   같은 작품을 즉시 다시 등록했다(건너뛰기가 아무것도 못 미룸).
+                                    await execBatch(skipVerificationQueries(verificationSession.queueRow));
                                   } catch {}
                                   setVerificationSession(null);
                                   verificationSessionIdRef.current = null;
@@ -63525,9 +63623,8 @@ async function importJSON(directText, onSuccess, onSettled) {
                           onPress={async () => {
                             // 현재 큐 항목 cancel + 다음 큐로
                             try {
-                              await exec(`UPDATE tier_verification_queue SET state='skipped', processed_at=? WHERE id=?`, [Date.now(), verificationSession.queueRow.id]);
-                              // 🆕 v7.13.9: 건너뛰기도 🔍 해제 — stuck 상태 방지(다시 의심되면 재지정)
-                              await exec(`UPDATE novels SET user_flagged_suspect=0 WHERE id=?`, [verificationSession.queueRow.novel_id]);
+                              // 🔧 v7.59.7 (T08·HYB-2): 중단 경로와 동일 처리(같은 헬퍼) — 두 경로가 갈리면 한쪽만 고쳐진다.
+                              await execBatch(skipVerificationQueries(verificationSession.queueRow));
                             } catch {}
                             setVerificationSession(null);
                             verificationSessionIdRef.current = null;
