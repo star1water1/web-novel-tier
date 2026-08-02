@@ -2,9 +2,37 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.0 (구색 기능 개선 Phase 1 — 콘텐츠 필터 실질화, 베타)                  ║
+ * ║  버전: 7.59.1 (구색 기능 개선 Phase 1 — AI 장르 어휘 전량 전송, 베타)              ║
  * ║  최종 수정: 2026-08-02                                                        ║
  * ║  총 라인 수: 약 78,400줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🧩 v7.59.1 AI 장르 어휘 전량 전송 (T02 · AI-2) (2026-08-02)                       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제] AI 태그 추천이 장르 후보를 `majorVocab.slice(0, 40)`·`subVocab.slice(0, 60)` ║
+ * ║ 으로 잘라 보냈다. 부장르 팩토리가 106개라 인덱스 60 이후 — 재벌·연예계·아이돌·요리· ║
+ * ║ 의사·검사·연금술사·상인 등 46개 — 는 **AI에게 한 번도 전달된 적이 없다**. 그 장르가 ║
+ * ║ 딱 맞는 작품이어도 AI는 고를 수가 없었고, 사용자는 'AI가 장르를 잘 못 단다'로만 본다. ║
+ * ║                                                                              ║
+ * ║ 게다가 직전 v7.58.4가 어휘를 '활성 모드 팩토리 + 사용자 추가분 합집합'으로 고치면서 ║
+ * ║ **팩토리를 앞에** 두었기 때문에, 소설 모드의 커스텀 부장르는 항상 인덱스 ≥106 → 상한 ║
+ * ║ 60에 **무조건** 잘렸다(그 수정 전에는 커스텀만은 전달됐다). 대장르도 팩토리 34개라 ║
+ * ║ 커스텀 7번째부터 잘린다. 즉 '커스텀 장르를 AI에 알린다'는 v7.58.4의 목적이 부장르에서 ║
+ * ║ 100% 무효였고, 이 slice 제거가 그 수정의 완결 조건이다.                           ║
+ * ║                                                                              ║
+ * ║ [수정] 단건(runAiTagSuggest 47454)·배치(runBatchTagSuggest 49075) 두 경로 모두 slice ║
+ * ║ 제거 → 합집합 전량 전송. 프롬프트 빌더(buildTaggingPrompt 16306-07)는 공용이라 무수정, ║
+ * ║ Claude·Gemini 양 제공자가 자동으로 같은 어휘를 받는다. 두 호출 함수 모두 context를 ║
+ * ║ 프롬프트 문자열로만 쓰고 스키마 enum에는 안 넣으므로 응답 파싱 경로도 무영향.     ║
+ * ║                                                                              ║
+ * ║ [비용] 실측 +251자(≈114토큰)/호출. 팩토리 106+커스텀을 다 실어도 수백 토큰이라 상한 ║
+ * ║ 자체가 불필요했다. '빈도순 정렬 후 자르기' 대안은 기각 — 자를 이유가 없다.        ║
+ * ║                                                                              ║
+ * ║ 분류 로직은 무변경: majorMap/subMap은 처음부터 잘리지 않은 전체 어휘로 만든다     ║
+ * ║ (47415-16·49028-29). 검증은 실제 소스의 팩토리 배열 + buildTaggingPrompt로 프롬프트를 ║
+ * ║ 조립해 대조 — 수정 전 부장르 51건 누락(팩토리 46 + 커스텀 5 전량), 수정 후 0건.   ║
+ * ║ esbuild 통과. APP_VERSION 7.59.1.                                                 ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -20885,7 +20913,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.0";
+const APP_VERSION = "7.59.1";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -47416,7 +47444,14 @@ function AppContent() {
         title: draft.title, author: draft.author, existingTags,
         note: aiTagUseNote ? draft.note : null,
         profile: { avgTags, topTags }, examples,
-        majorOptions: majorVocab.slice(0, 40), subOptions: subVocab.slice(0, 60),
+        // 🔧 v7.59.1 (T02·AI-2): slice(0,40)/slice(0,60) 제거 — 전량 전송.
+        //   부장르 팩토리가 106개라 인덱스 60 이후(재벌·연예계·의사·기사·연금술사…)는 애초에
+        //   AI 프롬프트에 실린 적이 없다. 게다가 위 v7.58.4 합집합은 **팩토리를 앞에** 두므로
+        //   소설 모드 커스텀 부장르는 무조건 인덱스 ≥106 → 상한 60에 전량 잘렸다(대장르는
+        //   팩토리 34개라 커스텀 7번째부터). 즉 '커스텀 장르를 AI에 알린다'는 v7.58.4의 목적이
+        //   이 slice 때문에 부장르에선 100% 무효였다.
+        //   목록 전량(106+커스텀)이라야 수백 토큰이라 상한 자체가 불필요하다.
+        majorOptions: majorVocab, subOptions: subVocab,
         wantIntensity: aiTagSuggestIntensity, allowNew,
       };
       const out = provider === "gemini"
@@ -49035,7 +49070,9 @@ function AppContent() {
         const n = works[i];
         const existingTags = deduplicateTags((n.tags || "").split(",").map(t => t.trim()).filter(Boolean));
         const existingKeys = new Set(existingTags.map(t => normalizeTagKey(t)));
-        const ctx = { title: (n.title || "").trim(), author: (n.author || "").trim(), existingTags, profile: { avgTags, topTags }, majorOptions: majorVocab.slice(0, 40), subOptions: subVocab.slice(0, 60), wantIntensity: batchIntensity, allowNew };
+        // 🔧 v7.59.1 (T02·AI-2): 단건 경로와 동일 — 어휘 slice 제거(전량 전송). 한쪽만 고치면
+        //   같은 작품이 단건/배치에서 다른 장르를 받는다.
+        const ctx = { title: (n.title || "").trim(), author: (n.author || "").trim(), existingTags, profile: { avgTags, topTags }, majorOptions: majorVocab, subOptions: subVocab, wantIntensity: batchIntensity, allowNew };
         let res;
         const ctrl = new AbortController(); batchAbortRef.current = ctrl; // 🆕 v7.28.17: 취소 버튼이 이 요청을 즉시 끊을 수 있게
         const to = setTimeout(() => { try { ctrl.abort(); } catch {} }, 30000); // 🆕 v7.28.17: 응답 없는 요청 30초 후 자동 중단(다음 작품으로)
