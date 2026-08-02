@@ -2,9 +2,43 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.5 (구색 기능 개선 Phase 2 — 백업 고지 정직화)                        ║
+ * ║  버전: 7.59.6 (구색 기능 개선 Phase 2 — 백업 절단 고지 + 수문장 필터 완화)         ║
  * ║  최종 수정: 2026-08-02                                                        ║
- * ║  총 라인 수: 약 78,850줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 78,890줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🗂️ v7.59.6 백업 절단 고지 + 수문장 필터 완화 (T07 · DAT-8) (2026-08-02)          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제 ①] RS(재배치 세션) export가 `WHERE state='completed' AND blocker_id       ║
+ * ║ IS NOT NULL`이라, **수문장 없이 끝난 세션은 백업에 아예 안 담겼다.** 그런데       ║
+ * ║ 화면의 이력 목록(loadRepositioningHistory)은 blocker 무필터라 그 세션들을 보여    ║
+ * ║ 준다 — 복원하면 '왜 이 자리인가'의 절반이 소리 없이 사라진다.                     ║
+ * ║ (수문장 누적 통계 자체는 blocker_id 있는 행만 세므로 현행 필터로도 정확했다 —     ║
+ * ║  감사의 '통계 파괴' 서술은 과장. 실손실은 이력 표시분이다.)                       ║
+ * ║                                                                              ║
+ * ║ [문제 ②] RS 500 / VL 1000 / VQ 200 상한을 넘긴 만큼이 **아무 표시 없이** 잘렸다. ║
+ * ║ 요약에도 복원 완료 Alert에도 항목이 없어, 복원 후 이력이 짧아진 이유를 알 수      ║
+ * ║ 없었다('복원 실패'로 오해할 여지).                                                ║
+ * ║                                                                              ║
+ * ║ [수정 ①] RS의 blocker 필터 제거. 단, **무필터 + created_at DESC로만 두면 최근    ║
+ * ║ 무수문장 세션이 옛 수문장 행을 상한 밖으로 밀어내 통계가 되레 나빠진다** —        ║
+ * ║ 그래서 `ORDER BY (blocker_id IS NOT NULL) DESC, created_at DESC`로 수문장 행을   ║
+ * ║ 먼저 담는다. 상한에 걸려도 통계분은 종전과 정확히 동일하고, 남는 자리만           ║
+ * ║ 무수문장 세션이 채운다(검증: 수문장 300 + 무수문장 900 → 300 전량 보존 + 200).   ║
+ * ║                                                                              ║
+ * ║ [수정 ②] 각 export 쿼리 옆에서 COUNT(*) 1회 → 잘린 항목만 `payload.TRC`에        ║
+ * ║ 기록하고, 백업 요약과 복원 완료 Alert 양쪽에 `재배치 이력 500/1843건` 식으로      ║
+ * ║ 고지. TRC는 잘렸을 때만 실리므로 평소 크기 영향 0이고, 모르는 키라 구버전 앱이    ║
+ * ║ 읽어도 무해하다(하위호환). blocker 없는 행은 import 필수값 가드(st/s)를 통과하고  ║
+ * ║ `blockerId || null`로 들어가므로 스키마 변경도 불필요.                            ║
+ * ║                                                                              ║
+ * ║ [안 한 것] '이력 포함/제외' 사용자 옵션 — 진단성 데이터에 과설계(로드맵 기각).    ║
+ * ║                                                                              ║
+ * ║ [검증] 실제 SQL 문자열·고지 조립부를 떼어내 29개 단언 — 정렬 회귀 3케이스(수문장  ║
+ * ║ 과다/과소/전무), 대조군(필터만 제거 시 수문장 0건 = 통계 파괴)까지 확인.          ║
+ * ║ 절단 고지는 잘린 항목만 표기, TRC 없는 구버전 백업은 무표기.                      ║
+ * ║ esbuild 통과, scraper-test 526/526. APP_VERSION 7.59.6.                           ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -21224,7 +21258,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.5";
+const APP_VERSION = "7.59.6";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -57740,15 +57774,27 @@ async function exportJSON(opts) {
       console.warn("gallery_images 백업 실패:", giErr);
     }
 
+    // 🆕 v7.59.6 (T07·DAT-8): 하이브리드 검증 기록은 export마다 상한(RS 500 / VL 1000 / VQ 200)에 걸려
+    //   조용히 잘렸다. 각 쿼리 옆에서 전체 건수를 세어 담긴 만큼을 payload.TRC로 남기고 요약·복원 Alert에 고지한다.
+    //   (잘린 값이 있을 때만 채우므로 평소 백업 크기 영향 0. 구버전 앱은 모르는 키라 무시 = 하위호환.)
+    const backupTrunc = {};
+
     // 🆕 v7.0.1 (N5 fix): tier_repositioning_session 백업 (RS = Repositioning Sessions)
     // 수문장 식별 누적 통계(blocker_id COUNT≥5) 보존을 위해 결과 row 자체 보존
     try {
+      const rsTotal = (await first("SELECT COUNT(*) AS c FROM tier_repositioning_session WHERE state='completed'"))?.c || 0;
       const rsRows = await all(
+        // 🔧 v7.59.6 (T07·DAT-8): `AND blocker_id IS NOT NULL` 제거 — 수문장 없이 끝난 세션도 이력 UI
+        //   (loadRepositioningHistory는 blocker 무필터)에는 뜨는데 백업만 버려서, 복원하면 '왜 이 자리인가'의
+        //   절반이 사라졌다. 다만 무필터 + created_at DESC로만 두면 최근 무수문장 세션이 옛 수문장 행을 상한
+        //   밖으로 밀어내 수문장 통계(38602는 blocker_id 있는 행만 셈)가 되레 나빠진다 → blocker 행을 먼저 담는다.
+        //   그래서 상한에 걸려도 통계분은 종전과 정확히 동일하고, 남는 자리만 무수문장 세션이 채운다.
         `SELECT novel_id, suspicion_type, trigger_type, state, result_tier, result_order, result_action, total_responses, blocker_id, prev_tier, prev_order, created_at, completed_at
          FROM tier_repositioning_session
-         WHERE state='completed' AND blocker_id IS NOT NULL
-         ORDER BY created_at DESC LIMIT 500`
+         WHERE state='completed'
+         ORDER BY (blocker_id IS NOT NULL) DESC, created_at DESC LIMIT 500`
       );
+      if (rsTotal > (rsRows?.length || 0)) backupTrunc.rs = rsTotal;
       if (rsRows && rsRows.length > 0) {
         // 압축: novel_id/blocker_id는 NID 매핑으로 복원 시 remap
         payload.RS = rsRows.map(r => ({
@@ -57768,10 +57814,12 @@ async function exportJSON(opts) {
     //   [이전] 미포함(상대 리스트 UI 제거 후 일관성 우선) → 복원 시 검증 이력/대기 소실.
     //   사용자 결정으로 포함. novel id 참조는 NID 매핑으로 복원 시 remapNovelId.
     try {
+      const vlTotal = (await first("SELECT COUNT(*) AS c FROM tier_validation_log"))?.c || 0; // 🆕 v7.59.6(T07)
       const vlRows = await all(
         `SELECT session_id, novel_a_id, novel_b_id, user_choice, violation_type, created_at
          FROM tier_validation_log ORDER BY created_at DESC LIMIT 1000`
       );
+      if (vlTotal > (vlRows?.length || 0)) backupTrunc.vl = vlTotal;
       if (vlRows && vlRows.length > 0) {
         payload.VL = vlRows.map(r => ({
           si: r.session_id || "", a: r.novel_a_id, b: r.novel_b_id,
@@ -57781,10 +57829,12 @@ async function exportJSON(opts) {
       }
     } catch (vlErr) { console.warn("tier_validation_log 백업 실패:", vlErr); }
     try {
+      const vqTotal = (await first("SELECT COUNT(*) AS c FROM tier_verification_queue WHERE state='pending'"))?.c || 0; // 🆕 v7.59.6(T07)
       const vqRows = await all(
         `SELECT novel_id, trigger_type, suspicion_type, priority, created_at
          FROM tier_verification_queue WHERE state='pending' ORDER BY created_at DESC LIMIT 200`
       );
+      if (vqTotal > (vqRows?.length || 0)) backupTrunc.vq = vqTotal;
       if (vqRows && vqRows.length > 0) {
         payload.VQ = vqRows.map(r => ({
           n: r.novel_id, tt: r.trigger_type || "", st: r.suspicion_type || "",
@@ -57793,6 +57843,8 @@ async function exportJSON(opts) {
         if (!payload.NID) payload.NID = novels.map(n => n.id);
       }
     } catch (vqErr) { console.warn("tier_verification_queue 백업 실패:", vqErr); }
+    // 🆕 v7.59.6 (T07·DAT-8): 잘린 게 있을 때만 실린다 — 복원 측이 '이 백업은 일부만 담고 있었다'를 말할 수 있게.
+    if (Object.keys(backupTrunc).length > 0) payload.TRC = backupTrunc;
 
     // 📋 v3.3.0: 예정 작품 백업 (PL = Planned List)
     // 🆕 v3.4: 확장 필드 추가
@@ -57928,7 +57980,15 @@ async function exportJSON(opts) {
     const imageMissInfo = _missParts.length
       ? `\n⚠️ 사진 '파일'은 이 백업에 안 담겨요 — ${_missParts.join(" · ")}. 같은 기기에서 복원하면 다시 연결되지만, 기기를 바꾸거나 앱을 지웠다 깔면 비어요. (사진까지 옮기려면 설정 › 연결 › ☁️ 클라우드 백업)`
       : "";
-    const summary = `${novels.length}작품, ${matches.length}매치${plannedInfo}${coverInfo}${galleryInfo}${analysisInfo}${tagMetaInfo}${tagRegistryInfo}${patternInfo}\n크기: ${sizeText}${quoteCapInfo}${imageMissInfo}`;
+    // 🆕 v7.59.6 (T07·DAT-8): 하이브리드 검증 기록 절단 고지 — 종전엔 상한을 넘긴 만큼이 아무 표시 없이 사라졌다.
+    const _trcParts = [];
+    if (backupTrunc.rs) _trcParts.push(`재배치 이력 ${payload.RS ? payload.RS.length : 0}/${backupTrunc.rs}건`);
+    if (backupTrunc.vl) _trcParts.push(`검증 매치 ${payload.VL ? payload.VL.length : 0}/${backupTrunc.vl}건`);
+    if (backupTrunc.vq) _trcParts.push(`대기 큐 ${payload.VQ ? payload.VQ.length : 0}/${backupTrunc.vq}건`);
+    const truncInfo = _trcParts.length
+      ? `\n⚠️ 하이브리드 검증 기록은 최근 것만 담겨요 — ${_trcParts.join(" · ")}. 나머지는 이 백업으로 복원되지 않아요(작품·티어·순위는 전량 포함).`
+      : "";
+    const summary = `${novels.length}작품, ${matches.length}매치${plannedInfo}${coverInfo}${galleryInfo}${analysisInfo}${tagMetaInfo}${tagRegistryInfo}${patternInfo}\n크기: ${sizeText}${quoteCapInfo}${imageMissInfo}${truncInfo}`;
     
     if (_pt) PerfMonitor.trackFunc("exportJSON", Date.now() - _pt); // 🔬
     setIsLoading(false);
@@ -59036,6 +59096,14 @@ async function importJSON(directText, onSuccess, onSettled) {
                     ? `\n(갤러리 ${giRestored}장 복원)`
                     : `\n⚠️ 갤러리 ${giRestored}/${giTotal}장만 복원 — 나머지 ${giTotal - giRestored}장은 이 기기에 사진 파일이 없어요(백업엔 경로만 담겨요).`)
                 : "";
+              // 🆕 v7.59.6 (T07·DAT-8): 이 백업이 만들어질 때 잘려나간 검증 기록 — 복원 후 이력이 짧아 보이는
+              //   이유가 '복원 실패'가 아니라 '백업 시점 상한'임을 여기서만 말할 수 있다(TRC는 잘렸을 때만 실림).
+              const _trc = data.TRC && typeof data.TRC === "object" ? data.TRC : null;
+              const _trcParts = [];
+              if (_trc?.rs) _trcParts.push(`재배치 이력 ${(data.RS || []).length}/${_trc.rs}건`);
+              if (_trc?.vl) _trcParts.push(`검증 매치 ${(data.VL || []).length}/${_trc.vl}건`);
+              if (_trc?.vq) _trcParts.push(`대기 큐 ${(data.VQ || []).length}/${_trc.vq}건`);
+              const truncInfo = _trcParts.length ? `\n⚠️ 이 백업엔 하이브리드 검증 기록이 일부만 담겨 있었어요 — ${_trcParts.join(" · ")}.` : "";
               // 🔧 v3.5.8: 복원 검증 결과 포함
               const verifyInfo = insertedCount < lenN ? `\n⚠️ 주의: ${lenN}개 중 ${insertedCount}개만 복원됨` : "";
               if (_pt) PerfMonitor.trackFunc("importJSON", Date.now() - _pt); // 🔬
@@ -59045,7 +59113,7 @@ async function importJSON(directText, onSuccess, onSettled) {
               if (typeof onSuccess === "function") { try { await onSuccess(); } catch (cbErr) { console.warn("[import] onSuccess 콜백 오류:", cbErr?.message); } }
               cloudRestoreInProgressRef.current = false; // 🔧 v7.54.3(NS7): 수동 import 경로도 해제(onSettled 없는 호출 대비)
               if (typeof onSettled === "function") { try { onSettled(); } catch {} } // ☁️ v7.54.2(H0): 복원 성공 종료 신호(클라우드 뮤텍스 해제)
-              Alert.alert("완료", `데이터를 성공적으로 가져왔습니다!\n(Elo 데이터 완전 복원)${verifyInfo}${extraInfo}${histInfo}${analysisInfo}${comboInfo}${tagMetaInfo}${plannedInfo}${patternInfo}${pcInfo}${giInfo}`);
+              Alert.alert("완료", `데이터를 성공적으로 가져왔습니다!\n(Elo 데이터 완전 복원)${verifyInfo}${extraInfo}${histInfo}${analysisInfo}${comboInfo}${tagMetaInfo}${plannedInfo}${patternInfo}${pcInfo}${giInfo}${truncInfo}`);
               } catch (restoreErr) {
                 // 🔧 v3.5.9: 복원 실패 시 자동 재시도 옵션 제공
                 if (_pt) PerfMonitor.logError("importJSON", restoreErr); // 🔬
