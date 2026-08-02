@@ -24,7 +24,16 @@ ELO 매칭 시스템으로 작품 간 대전을 통해 자동으로 티어를 �
 - DB/판정: `detectViolation`, `enqueueVerification`, `getCandidatesForVerification`, `backfillManualOrder`, `getNextVerificationTarget`
 - 시퀀스: `findInflectionPoint`, `evaluateSequenceProgress`, `computeNewPosition`, `finalizeVerificationSession`, `logVerificationMatch`, `getGatekeeperCandidates`
 
-신규 상수: `VERIFICATION_GALLOP_MAX = 7` + `VERIFICATION_BINARY_MAX = 4` → `VERIFICATION_MAX_RESPONSES = 11` (v7.20.11~ 갤로핑 경계탐색 + 이진 정제 분리 예산), `VERIFICATION_K_AFTER_INFLECTION = 2` (코어 루프 미사용 — 진단/하위호환 잔존), `VERIFICATION_PRIORITY` (gatekeeper=5, tier_change=4, order_change=3, new=2, meta_edit=1)
+검증 예산 (v7.59.10~ **상수가 아니라 `suspicionConfig` 설정값**):
+- `gallopMax` (5~8, 기본 7) — 갤로핑 경계탐색 probe 상한. 설정 '한 작품 점검 길이'.
+- `VERIFICATION_BINARY_MAX = 4` (고정) — 경계 발견 후 이진 정제 예산.
+- 파생: `verificationMaxResponses()` = gallopMax + 4 (기본 11) · `verificationCandidatePool()` = **2^(gallopMax−1)** (기본 64).
+  ⚠️ probe 인덱스는 0,1,3,7,15,31,63… (`next = lo + jump`, jump는 *다음* 라운드용으로 2배) → g회에 2^(g−1)−1까지만 닿는다. `2^g−1`이 아니다.
+- `gatekeeperThreshold` (2~5, 기본 3) — 수문장 제안 임계. `decay` (0.5~0.95, 기본 0.85, 읽는 쪽 하한 가드).
+- 진행 중 세션은 `session.limits` 스냅샷으로 끝까지 간다 (런타임 변경은 다음 세션부터). 없으면 `limitsOf()`가 현재 설정으로 폴백.
+- 구 상수 `VERIFICATION_MAX_RESPONSES` · `VERIFICATION_CANDIDATE_POOL`은 **제거됨**(파생 함수가 유일한 진실원천).
+
+기타 상수: `VERIFICATION_K_AFTER_INFLECTION = 2` (코어 루프 미사용 — 진단/하위호환 잔존), `VERIFICATION_PRIORITY` (gatekeeper=5, tier_change=4, order_change=3, new=2, meta_edit=1)
 
 CRUD 트리거 hook 위치 (App.jsx, hybrid 모드만):
 - `addNovel` (manual_tier 설정 시): `new` / `underrated`
