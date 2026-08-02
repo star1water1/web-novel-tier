@@ -2,9 +2,45 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.17 (구색 기능 개선 Phase 5 — 핵심 취향 헤드라인 정직화)                ║
+ * ║  버전: 7.59.18 (구색 기능 개선 Phase 5 — 표본 정직 표시)                          ║
  * ║  최종 수정: 2026-08-02                                                        ║
- * ║  총 라인 수: 약 79,950줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 79,990줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📏 v7.59.18 표본 정직 표시 (T20 · ANA-3 ANA-7) (2026-08-02)                       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제 ①·ANA-7] '상위 티어 집중도'가 `topTierRatio` 단독 내림차순이라 **N=2에서    ║
+ * ║ 2작 다 상위 티어면 100%**가 되어 N=20·80%짜리를 제치고 1위로 올라섰다. 표본       ║
+ * ║ 임계(2/2/3/3)는 목록 진입만 막을 뿐 순위는 못 막는다. 정작 표본 보정용            ║
+ * ║ **윌슨 신뢰구간을 computeTierStratification이 이미 계산해 저장(topTierCI)**       ║
+ * ║ 해 두고도 화면에서 아무도 쓰지 않았다.                                            ║
+ * ║                                                                              ║
+ * ║ [문제 ②·ANA-3] '취향 스펙트럼'의 선호 배지가 작품 2개짜리 판정과 40개짜리 판정을  ║
+ * ║ 같은 모습으로 보였다(표본 수는 펼쳐야만 노출). 게다가 고평가작이 **0작이면**       ║
+ * ║ `highRatedAvgPos`가 전체 평균으로 폴백하는데, UI는 그 값을 '고평점 작품 성향'      ║
+ * ║ 이라 불렀다 — 같은 숫자를 두 번 말하면서 새 정보인 척한 셈.                        ║
+ * ║                                                                              ║
+ * ║ [수정 ①] 집중도 정렬 키를 **윌슨 하한(`topTierCI.lower`)**으로. 실측 5엔티티      ║
+ * ║ 배치에서 N=2·100%가 **1위 → 5위**로, N=20·80%가 1위로 올라온다. 하한 동률이면     ║
+ * ║ 표본 큰 쪽 우선. 임계 상향은 하지 않았다 — 윌슨이 이미 강등하므로 상향은 소형     ║
+ * ║ 서재에서 목록만 비운다. 정렬 근거를 섹션 캡션에 명시(표시 %는 내림차순이 아니게    ║
+ * ║ 되므로). ⚠️ 이 배열은 `preference_patterns`/`insight_queue`로도 흘러 slice        ║
+ * ║ 멤버십이 바뀌지만, 저장 직전 해당 category를 DELETE 후 재삽입하므로 자가 치유.     ║
+ * ║                                                                              ║
+ * ║ [수정 ②] 스펙트럼 — 접힌 배지에 `· N작` 병기, 확장 시 '전체 분포'와 '특히 높게    ║
+ * ║ 평가한 N작'을 **나란히**, 고평가작 0작이면 폴백값을 보여 주는 대신 비교하지        ║
+ * ║ 않았음을 밝힌다. 게이트 2는 값 그대로 `SPECTRUM_MIN_NOVELS` 상수로만 승격 —       ║
+ * ║ 상향은 '축이 왜 비었는지' 사유 표시(T21)와 동시에 해야 침묵이 늘지 않는다.         ║
+ * ║ analyzePreferences에 `highRatedCount` 필드 추가(영속 대상 아님 — 런타임 산출).     ║
+ * ║                                                                              ║
+ * ║ [수정 ③] entropy 목록('강한 선호'·'균등 분산')에도 N 병기 — 형제 섹션인 집중도는  ║
+ * ║ N을 보이는데 여기만 없었다.                                                       ║
+ * ║                                                                              ║
+ * ║ [검증] 실제 `_toSortedArray`·`topTierCI` 후처리·`wilsonConfidenceInterval`을     ║
+ * ║ 소스에서 떼어내 실행 — 5엔티티 순위 역전, 임계 필터 불변, 하한 동률 타이브레이크,  ║
+ * ║ topTierCI 없는 stat 방어, 스펙트럼 4케이스 문구. esbuild 통과. APP_VERSION       ║
+ * ║ 7.59.18.                                                                      ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -21797,7 +21833,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.17";
+const APP_VERSION = "7.59.18";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -36508,8 +36544,11 @@ const TasteAnalysisScreen = memo(({
       {isTierMode && isGroupExpanded("tier") && tierConcentration && (
         <TouchableOpacity onPress={() => toggleSection("tierConcentration")}>
           <Section title={`🏆 상위 티어 집중도 ${isExpanded("tierConcentration") ? "▼" : "▶"}`}>
+            {/* 🔧 v7.59.18 (T20·ANA-7): 정렬 기준을 밝힌다 — 윌슨 하한 순이라 표시되는 %가 내림차순이
+                아닐 수 있고(예: 80%·N=20이 100%·N=2보다 위), 근거를 안 적으면 잘못 정렬된 것처럼 보인다. */}
             <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
-              내 상위 티어에 가장 많이 등장하는 작가/태그/장르
+              내 상위 티어에 가장 많이 등장하는 작가/태그/장르{"\n"}
+              표본 크기를 반영한 신뢰 하한 순 — 표본이 작으면 비율이 높아도 아래로 내려갑니다.
             </Text>
             {isExpanded("tierConcentration") && (
               <View style={{ gap: 14 }}>
@@ -36646,7 +36685,8 @@ const TasteAnalysisScreen = memo(({
                         <Text style={{ color: C.text, fontSize: 12, flex: 1 }} numberOfLines={1}>
                           {s.kind === "tag" ? "🏷️" : s.kind === "author" ? "✍️" : "📚"} {s.key}
                         </Text>
-                        <Text style={{ color: C.sub, fontSize: 11 }}>상위 {(s.topTierRatio * 100).toFixed(0)}%</Text>
+                        {/* 🔧 v7.59.18 (T20·ANA-7): 표본 병기 — 집중도 목록은 N을 보이는데 여기만 없었다 */}
+                        <Text style={{ color: C.sub, fontSize: 11 }}>상위 {(s.topTierRatio * 100).toFixed(0)}% (N={s.totalCount})</Text>
                       </View>
                     ))}
                   </View>
@@ -36659,7 +36699,7 @@ const TasteAnalysisScreen = memo(({
                         <Text style={{ color: C.text, fontSize: 12, flex: 1 }} numberOfLines={1}>
                           {s.kind === "tag" ? "🏷️" : s.kind === "author" ? "✍️" : "📚"} {s.key}
                         </Text>
-                        <Text style={{ color: C.sub, fontSize: 11 }}>모든 티어 산재</Text>
+                        <Text style={{ color: C.sub, fontSize: 11 }}>모든 티어 산재 (N={s.totalCount})</Text>
                       </View>
                     ))}
                   </View>
@@ -37253,8 +37293,10 @@ const TasteAnalysisScreen = memo(({
                       paddingVertical: 3, 
                       borderRadius: 10 
                     }}>
+                      {/* 🔧 v7.59.18 (T20·ANA-3): 접힌 상태에서도 표본을 보인다 — 종전엔 작품 2개짜리 판정과
+                          40개짜리 판정이 같은 배지로 보였고, 표본 수는 펼쳐야만 나왔다. */}
                       <Text style={{ color: posColor, fontSize: 11, fontWeight: "700" }}>
-                        {data.preferenceLabel}
+                        {data.preferenceLabel} · {data.novelCount}작
                       </Text>
                     </View>
                   </View>
@@ -37308,12 +37350,24 @@ const TasteAnalysisScreen = memo(({
                   {/* 상세 정보 (확장 시) */}
                   {isExpanded("spectrum") && (
                     <View style={{ marginTop: 8 }}>
+                      {/* 🔧 v7.59.18 (T20·ANA-3): '전체 분포'와 '고평가 성향'을 나란히 — 둘은 다른 값인데
+                          종전엔 고평가 쪽만 보였고, 고평가작이 0작이면 폴백된 전체 평균이 '고평점 작품 성향'
+                          이라는 이름을 달고 나왔다(같은 숫자를 두 번 말하면서 새 정보인 척). */}
                       <Text style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>
-                        {data.novelCount}개 작품 분석 · 고평점 작품 성향: {
-                          data.highRatedAvgPosition < 0.35 ? leftTag
-                          : data.highRatedAvgPosition > 0.65 ? rightTag
+                        전체 분포({data.novelCount}작): {
+                          data.avgPosition < 0.35 ? leftTag
+                          : data.avgPosition > 0.65 ? rightTag
                           : "중간"
                         }
+                      </Text>
+                      <Text style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>
+                        {data.highRatedCount > 0
+                          ? `특히 높게 평가한 ${data.highRatedCount}작: ${
+                              data.highRatedAvgPosition < 0.35 ? leftTag
+                              : data.highRatedAvgPosition > 0.65 ? rightTag
+                              : "중간"
+                            }`
+                          : "특히 높게 평가한 작품 없음 — 고평가 성향은 비교하지 않았습니다"}
                       </Text>
                       {/* 🆕 v7.23.1: 대표 예시 작품 */}
                       {data.topNovel && (
@@ -39545,6 +39599,12 @@ const CORE_PREF_MIN_TOTAL = 10;   // 이 미만이면 성향 단정 자체를 �
 const CORE_PREF_GENRE_MIN = 3;    // '가장 높게 평가한 장르' 후보 자격 (adjRating 수축 위의 2차 방어)
 const LENGTH_BUCKET_MIN = 5;      // 길이 버킷이 '선호 비교'에 참여할 최소 작품 수
 
+// 🆕 v7.59.18 (T20·ANA-3): 스펙트럼 축이 표시될 최소 작품 수. 값은 종전(2) 그대로 두고 상수로만 승격한다 —
+//   상향은 '축이 왜 비었는지' 사유 표시(T21)와 **동시에** 해야 한다. 지금 올리면 축이 조용히 사라져
+//   ANA-4가 지적한 '태그 rename 후 축이 말없이 빈다'와 같은 종류의 침묵이 하나 더 생긴다.
+//   대신 이 값이 낮다는 사실을 화면에 드러낸다(접힌 배지에 표본 수 병기 → 2작짜리 판정임을 사용자가 안다).
+const SPECTRUM_MIN_NOVELS = 2;
+
 // 작품별 신뢰도 점수 계산 (분석용 확장 버전)
 function calcNovelReliabilityScore(novel, totalCount) {
   let score = 0;
@@ -40489,15 +40549,18 @@ async function analyzePreferences(novels, matches) {
       }
     }
     
-    if (novelAnalyses.length >= 2) {
+    if (novelAnalyses.length >= SPECTRUM_MIN_NOVELS) {
       // 통계 계산
       const positions = novelAnalyses.map(n => n.normalizedPosition);
       const avgPos = positions.reduce((a, b) => a + b, 0) / positions.length;
-      
+
       // 고평점 작품의 평균 위치 — 🆕 v7.1: mean+1σ 기반 (mode-aware)
+      // 🔧 v7.59.18 (T20·ANA-3): 0작일 때 avgPos로 폴백하는 구조는 유지하되 **개수를 함께 내보낸다**.
+      //   폴백 자체는 계산상 필요하지만, UI가 그 값을 '고평점 작품 성향'이라 부르면 고평가작이 하나도
+      //   없는 축에서 전체 평균을 고평가 신호로 둔갑시킨다 → 소비부가 개수를 보고 문구를 가른다.
       const highRated = novelAnalyses.filter(n => n.rating >= HIGH_THRESHOLD);
-      const highRatedAvgPos = highRated.length > 0 
-        ? highRated.reduce((sum, n) => sum + n.normalizedPosition, 0) / highRated.length 
+      const highRatedAvgPos = highRated.length > 0
+        ? highRated.reduce((sum, n) => sum + n.normalizedPosition, 0) / highRated.length
         : avgPos;
       
       // 위치별 레이팅 분포 (5구간)
@@ -40542,6 +40605,7 @@ async function analyzePreferences(novels, matches) {
         } : null,
         avgPosition: avgPos,
         highRatedAvgPosition: highRatedAvgPos,
+        highRatedCount: highRated.length, // 🆕 v7.59.18 (T20·ANA-3): 고평가 성향 문구의 표본 (0이면 폴백값이라 비교 불가)
         segments,
         preferredSegment: preferredSegment?.range || null,
         preferredSegmentAvgRating: preferredSegment?.avgRating || 0,
@@ -40674,10 +40738,20 @@ async function analyzePreferences(novels, matches) {
   };
 
   // 2. 상위 티어 집중도 (sample_size 임계치 적용)
+  // 🔧 v7.59.18 (T20·ANA-7): 정렬 키를 raw 비율에서 **윌슨 신뢰구간 하한**으로.
+  //   [문제] `topTierRatio` 단독 정렬은 N=2에서 우연히 2작 다 상위 티어면 100%가 되어 N=20·80%짜리를
+  //   제친다. 임계(2/2/3/3)는 목록 진입만 막을 뿐 순위는 못 막는다. 정작 표본 보정용 윌슨 CI는
+  //   computeTierStratification이 **이미 계산해 저장**해 두고도(topTierCI) 아무도 안 썼다.
+  //   [해결] 하한으로 비교하면 소표본이 자동으로 강등된다(N=2 100% → 하한 0.34, N=20 80% → 하한 0.58).
+  //   임계 상향은 하지 않는다 — 윌슨이 이미 강등하므로 상향은 소형 서재에서 목록만 비우는 부작용뿐이다.
+  //   ⚠️ 이 배열은 UI뿐 아니라 `_addConcentrationRow`(→ preference_patterns/insight_queue)로도 흘러
+  //   slice(0,5/10) 멤버십이 바뀐다. 저장 직전 해당 category를 DELETE 후 재삽입하므로 자가 치유된다.
   const _toSortedArray = (map, sampleThreshold) =>
     Array.from(map.values())
       .filter(s => s.totalCount >= sampleThreshold)
-      .sort((a, b) => b.topTierRatio - a.topTierRatio);
+      .sort((a, b) =>
+        ((b.topTierCI?.lower ?? b.topTierRatio ?? 0) - (a.topTierCI?.lower ?? a.topTierRatio ?? 0))
+        || (b.totalCount - a.totalCount)); // 하한 동률이면 표본 큰 쪽 우선
 
   const tierConcentration = {
     topGenres: _toSortedArray(tierStratification.byMajorGenre, 2).slice(0, 5),
