@@ -956,5 +956,60 @@ eq("pickRidiGaidenSeries: 빈 목록 → []", S.pickRidiGaidenSeries({ title: "x
   eq("문피아 메타: finish=false → 연재중 유지", S.parseMunpiaNovelInfo(JSON.stringify({ result: { novelInfo: { title: "T", finish: false, pause: false } } }), "u").workStatus, "ongoing");
 }
 
-console.log(`\n${fail === 0 ? "🎉 ALL PASS" : "⚠️  FAILED"}  pass=${pass} fail=${fail}`);
-process.exit(fail === 0 ? 0 : 1);
+// ── 🤖 v7.58.2: AI(Anthropic Messages API) 호출 계층 ──────────────────────────
+//   App.jsx의 AI 슬라이스를 별도 vm 컨텍스트로 떼어 검증(스크래퍼 슬라이스와 독립).
+{
+  const aiStart = src.indexOf("const SYNONYM_AI_MODEL =");
+  const aiEnd = src.indexOf("async function callClaudeForSynonyms");
+  if (aiStart < 0 || aiEnd <= aiStart) { console.log("❌ AI 슬라이스 마커를 못 찾음(App.jsx 구조 변경?)"); fail++; }
+  else {
+    const aiBox = { console, saveGlobalAiConfig() {}, resolveAbortSignal: () => ({ signal: undefined, cleanup() {} }), fetch() {} };
+    aiBox.globalThis = aiBox;
+    vm.createContext(aiBox);
+    vm.runInContext(src.slice(aiStart, aiEnd) + ";globalThis.__AI={normalizeClaudeModelId,claudeRequestBody,anthropicMessages,claudeErrorMessage,CLAUDE_MODEL_OPTIONS};", aiBox, { filename: "App.jsx#ai" });
+    const A = aiBox.__AI;
+
+    // 모델 목록은 현행 세대만(구세대 ID가 남아 있으면 사용자에게 낡은 선택지를 노출)
+    eq("AI 모델 목록(현행 3종)", A.CLAUDE_MODEL_OPTIONS.map(o => o.id), ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5"]);
+    // 저장돼 있던 구세대 선택은 후속 모델로 승계(종전엔 조용히 기본 Haiku로 강등됐다)
+    eq("모델 승계: sonnet 4.6 → 5", A.normalizeClaudeModelId("claude-sonnet-4-6"), "claude-sonnet-5");
+    eq("모델 승계: opus 4.8 → 5", A.normalizeClaudeModelId("claude-opus-4-8"), "claude-opus-5");
+    eq("모델 승계: opus 4.7 → 5", A.normalizeClaudeModelId("claude-opus-4-7"), "claude-opus-5");
+    eq("모델: 현행값은 그대로", A.normalizeClaudeModelId("claude-haiku-4-5"), "claude-haiku-4-5");
+    eq("모델: 미상/빈값 → 기본", [A.normalizeClaudeModelId("garbage"), A.normalizeClaudeModelId("")], ["claude-haiku-4-5", "claude-haiku-4-5"]);
+
+    // 5세대는 thinking이 기본 ON + max_tokens가 '생각+답변' 합산 → effort 축소 + 예산 하한
+    eq("요청조립: 구세대는 추가 파라미터 없음", A.claudeRequestBody("claude-haiku-4-5", { max_tokens: 2048 }), { max_tokens: 2048, model: "claude-haiku-4-5" });
+    eq("요청조립: Opus 5는 effort low + 예산 상향", A.claudeRequestBody("claude-opus-5", { max_tokens: 2048 }), { max_tokens: 8192, model: "claude-opus-5", output_config: { effort: "low" } });
+    eq("요청조립: 이미 큰 예산은 안 깎음", A.claudeRequestBody("claude-sonnet-5", { max_tokens: 16000 }).max_tokens, 16000);
+
+    // 상태코드별 안내(종전엔 401/429 외 전부 'API 오류 N')
+    const resOf = (status, body) => ({ status, ok: false, json: async () => body });
+    (async () => {
+      truthy("AI 오류: 404는 모델명을 알려줌", (await A.claudeErrorMessage(resOf(404, {}), "claude-opus-5")).includes("claude-opus-5"));
+      truthy("AI 오류: 400 크레딧 부족 안내", (await A.claudeErrorMessage(resOf(400, { error: { message: "Your credit balance is too low" } }), "m")).includes("크레딧"));
+      truthy("AI 오류: 529 혼잡 안내", (await A.claudeErrorMessage(resOf(529, {}), "m")).includes("혼잡"));
+      truthy("AI 오류: 413 크기 안내", (await A.claudeErrorMessage(resOf(413, {}), "m")).includes("너무 커요"));
+
+      // stop_reason 판정 — 종전엔 어디서도 안 봐서 '잘림'과 '결과 없음'이 구분되지 않았다
+      const okRes = (body) => ({ ok: true, status: 200, json: async () => body });
+      const expectThrow = async (name, body, opts, needle) => {
+        aiBox.fetch = async () => okRes(body);
+        let msg = "";
+        try { await A.anthropicMessages("k", { model: "claude-haiku-4-5" }, opts); } catch (e) { msg = e.message; }
+        truthy(name, msg.includes(needle));
+      };
+      await expectThrow("AI: 구조화 결과 잘림 → 오류(부분 JSON 신뢰 금지)", { stop_reason: "max_tokens", content: [{ type: "tool_use", name: "t", input: {} }] }, { toolName: "t" }, "잘렸어요");
+      await expectThrow("AI: 거절 → 오류", { stop_reason: "refusal", content: [] }, { toolName: "t" }, "답하지 않았어요");
+      await expectThrow("AI: tool_use 부재 → 조용한 빈 결과 대신 오류", { stop_reason: "end_turn", content: [{ type: "text", text: "x" }] }, { toolName: "t" }, "정해진 형식");
+
+      aiBox.fetch = async () => okRes({ stop_reason: "max_tokens", content: [{ type: "text", text: "부분" }] });
+      truthy("AI: 자유 텍스트 잘림은 버리지 않고 플래그", (await A.anthropicMessages("k", { model: "claude-haiku-4-5" }, {})).truncated);
+      aiBox.fetch = async () => okRes({ stop_reason: "tool_use", content: [{ type: "tool_use", name: "t", input: { groups: [1] } }] });
+      eq("AI: 정상 tool_use 입력 추출", await A.anthropicMessages("k", { model: "claude-haiku-4-5" }, { toolName: "t" }), { groups: [1] });
+
+      console.log(`\n${fail === 0 ? "🎉 ALL PASS" : "⚠️  FAILED"}  pass=${pass} fail=${fail}`);
+      process.exit(fail === 0 ? 0 : 1);
+    })();
+  }
+}

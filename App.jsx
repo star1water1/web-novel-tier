@@ -2,9 +2,42 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.58.1 (연재상태 판정 전수 점검 + 카카오 캡처 경량화, 베타)                ║
+ * ║  버전: 7.58.2 (AI 호출 계층 일원화 + 모델 세대 갱신, 베타)                        ║
  * ║  최종 수정: 2026-08-02                                                        ║
  * ║  총 라인 수: 약 77,000줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🤖 v7.58.2 AI 기능 점검 — 호출 계층 일원화 + 모델 세대 갱신 (2026-08-02)          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ callClaudeFor{Synonyms,TypeGroups,Placements,Tagging,OCR} 5곳 + 추천 키워드가    ║
+ * ║ 요청 조립·에러 매핑·토큰 집계를 각자 복붙해 갖고 있었다. 같은 수정을 6번 해야 했고, ║
+ * ║ 그래서 실제로 **stop_reason 검사가 어디에도 없었다**.                            ║
+ * ║                                                                              ║
+ * ║ • [조용히 틀린 값] 응답이 길이 제한(stop_reason=max_tokens)에 걸려 tool_use JSON이 ║
+ * ║   잘려도 `Array.isArray(x) ? x : []`가 흡수 → 'AI가 아무것도 못 찾음'과 구분 불가. ║
+ * ║   청크 루프는 그 청크를 '성공'으로 집계했다(스크래퍼에서 고친 패턴과 동일 결함).    ║
+ * ║   → 구조화 경로는 잘림/거절/형식오류를 throw(루프가 '실패'로 집계·사용자에 안내),   ║
+ * ║     OCR 같은 자유 텍스트는 부분 결과를 살리되 잘렸다는 표시를 본문에 덧붙인다.      ║
+ * ║ • [모델 세대] Sonnet 4.6 → Sonnet 5, Opus 4.8 → Opus 5. 둘 다 같은 가격대에서     ║
+ * ║   품질만 오른 교체라 비용 증가 없음. 단, 5세대는 thinking이 **기본 ON**이고        ║
+ * ║   max_tokens가 '생각+답변'을 합쳐 제한해 — ID만 바꾸면 2048~4096 예산을 생각이     ║
+ * ║   먹어 답이 잘린다. 그래서 5세대에만 output_config.effort=low + 출력 예산 하한     ║
+ * ║   8192를 적용(청구는 실제 생성분만). 구세대(Haiku 4.5)는 필드를 아예 안 보냄(무회귀).║
+ * ║   ※thinking을 끄는 선택지도 있으나 그 상태에선 도구 호출이 평문으로 새거나 내부     ║
+ * ║     태그가 노출되는 알려진 부작용이 있어 '켜두고 effort 낮추기'를 택했다.          ║
+ * ║ • [설정 승계] 목록에 없는 모델 ID는 조용히 기본(Haiku)으로 강등됐다 — 사용자가 고른  ║
+ * ║   등급이 업데이트만으로 사라진다. normalizeClaudeModelId로 구세대→후속 모델 승계.   ║
+ * ║ • [오류 안내] 401·429 외 전부 'API 오류 N'이었다 → 404(모델 종료)·400(크레딧 부족)· ║
+ * ║   403·413(이미지 과대)·5xx/529(혼잡)를 각각 '무엇을 하면 되는지'로 안내.           ║
+ * ║ • OCR 출력 예산 2048 → 4096(화면 가득한 목록이 끝에서 잘리던 문제).               ║
+ * ║                                                                              ║
+ * ║ 점검했으나 손대지 않은 것: anthropic-version 2023-06-01(현행), 키는 ai_config.json ║
+ * ║ (백업 미포함)에만 저장·프롬프트에 미포함(정상), OCR 다운스케일 1536px(5세대는 고해상 ║
+ * ║ 2576px까지 가능하나 토큰비 3배라 유지), Gemini 경로는 usage 미집계(‘Claude 누적    ║
+ * ║ 토큰’ 화면이라 의도된 범위) — 별건으로 남김.                                      ║
+ * ║ 검증: scraper-test 512/512(+18 신규 — 모델 승계·요청 조립·상태코드·stop_reason).   ║
+ * ║ esbuild 통과. APP_VERSION 7.58.2.                                              ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -15516,7 +15549,7 @@ function computeSynonymCandidates(novels, tagRelations, opts = {}) {
    - 단일 호출 + tool_use로 그룹 JSON 강제(구조화 출력). 가끔 누르는 버튼.
    - 형태/통계가 못 잡는 '의미만 같은' 유의어(먼치킨↔사기캐)를 LLM이 담당.
    - 기본 Haiku(저렴·충분, 1회 ~20원). 더 미묘한 의미까지 원하면 아래 상수를
-     "claude-sonnet-4-6" 또는 "claude-opus-4-8"로 바꾸면 된다(비용↑).
+     "claude-sonnet-5" 또는 "claude-opus-5"로 바꾸면 된다(비용↑). 설정 화면에서도 고를 수 있다.
    ========================================================= */
 const SYNONYM_AI_MODEL = "claude-haiku-4-5";
 // 🆕 v7.28.9: 무료 대안 — Google Gemini (AI Studio 무료 한도). Flash 계열 = 무료·충분.
@@ -15529,11 +15562,21 @@ const AI_SCAN_CHUNK_SIZE = 120;
 // 🆕 v7.31.1: 사용자 선택 Claude 모델 (설정에서 변경, ai_config.json 영속). callClaude* 호출에 우선 적용.
 //   globalTierConfig 패턴과 동일하게 모듈 전역 mutable로 두고, 설정 로드/변경 시 갱신.
 let globalAiModel = SYNONYM_AI_MODEL;
+// 🔧 v7.58.2: 세대 갱신 — Sonnet 4.6 → Sonnet 5, Opus 4.8 → Opus 5.
+//   둘 다 이전 세대와 '같은 가격대'에서 품질만 올라간 교체라 비용 증가 없이 이득이다.
+//   ※기존 사용자가 저장해 둔 claude-sonnet-4-6 / claude-opus-4-8도 API에서 아직 유효하지만,
+//     목록에 없으면 로드 시 기본(Haiku)으로 되돌아간다 → CLAUDE_MODEL_LEGACY로 매핑해 승계한다.
 const CLAUDE_MODEL_OPTIONS = [
-  { id: "claude-haiku-4-5",  label: "Haiku 4.5",  desc: "빠르고 저렴 (기본)" },
-  { id: "claude-sonnet-4-6", label: "Sonnet 4.6", desc: "균형 · 중간 비용" },
-  { id: "claude-opus-4-8",   label: "Opus 4.8",   desc: "최고 품질 · 고가" },
+  { id: "claude-haiku-4-5", label: "Haiku 4.5", desc: "빠르고 저렴 (기본)" },
+  { id: "claude-sonnet-5",  label: "Sonnet 5",  desc: "균형 · 중간 비용" },
+  { id: "claude-opus-5",    label: "Opus 5",    desc: "최고 품질 · 고가" },
 ];
+const CLAUDE_MODEL_LEGACY = { "claude-sonnet-4-6": "claude-sonnet-5", "claude-sonnet-4-5": "claude-sonnet-5", "claude-opus-4-8": "claude-opus-5", "claude-opus-4-7": "claude-opus-5", "claude-opus-4-6": "claude-opus-5", "claude-opus-4-5": "claude-opus-5" };
+function normalizeClaudeModelId(m) {
+  const id = String(m == null ? "" : m).trim();
+  if (CLAUDE_MODEL_OPTIONS.some(o => o.id === id)) return id;
+  return CLAUDE_MODEL_LEGACY[id] || SYNONYM_AI_MODEL;
+}
 // 🆕 v7.31.1: 누적 토큰 사용량(전 슬롯 공통, ai_config.json 영속). Claude 응답 usage에서 집계.
 //   ※ 조직 단위 청구/사용량 API는 admin 키가 필요해 일반 키로는 못 불러옴 → 앱이 보낸 호출의 토큰만 누적.
 let _aiUsage = { calls: 0, input: 0, output: 0, byModel: {} };
@@ -15588,6 +15631,80 @@ function aiUsageSummary() {
   return { lastMin, lastHour: _aiCallLog.length };
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   🤖 v7.58.2 Anthropic Messages API 공통 호출기
+   종전엔 callClaudeFor{Synonyms,TypeGroups,Placements,Tagging,OCR} 5곳(+추천 키워드)이
+   요청 조립·에러 매핑·토큰 집계를 각자 복붙해 갖고 있었다. 같은 수정을 6번 해야 했고,
+   실제로 **stop_reason 검사는 어디에도 없었다** — 응답이 길이 제한(max_tokens)에 걸려
+   tool_use JSON이 잘려도 `Array.isArray(x) ? x : []`로 흡수돼 'AI가 아무것도 못 찾음'과
+   구분되지 않았다(스크래퍼에서 고친 '조용히 틀린 값' 패턴과 동일). 여기로 일원화한다.
+   ───────────────────────────────────────────────────────────────────────────── */
+// Claude 5세대는 thinking이 기본 ON이고 max_tokens가 '생각+답변'을 합쳐 제한한다 →
+//   2048~4096 예산을 생각이 먹으면 답이 잘린다. 우리 용도(구조화 추출·OCR)는 깊은 사고가
+//   불필요하므로 effort를 낮춰 생각을 짧게 하고, 출력 예산에 여유를 준다(청구는 실제 생성분만).
+//   ※thinking을 아예 끄는 선택지도 있으나, 끈 상태에선 도구 호출이 평문으로 새거나 내부 태그가
+//     노출되는 알려진 부작용이 있어 '켜두고 effort=low'를 택했다.
+//   ※구세대(Haiku 4.5 등)는 생략 시 애초에 생각을 안 하고 effort 파라미터도 받지 않으므로
+//     아무 필드도 추가하지 않는다(무회귀).
+const CLAUDE_THINKING_DEFAULT_ON = new Set(["claude-opus-5", "claude-sonnet-5"]);
+const CLAUDE_THINKING_MIN_MAX_TOKENS = 8192;
+function claudeRequestBody(model, body) {
+  const out = { ...body, model };
+  if (CLAUDE_THINKING_DEFAULT_ON.has(model)) {
+    out.output_config = { ...(out.output_config || {}), effort: "low" };
+    out.max_tokens = Math.max(Number(out.max_tokens) || 0, CLAUDE_THINKING_MIN_MAX_TOKENS);
+  }
+  return out;
+}
+// 상태코드 → 사용자가 뭘 해야 하는지 아는 안내. 종전엔 401/429만 문구가 있고 나머지는
+//   'API 오류 404'처럼 원인 불명이었다(모델 종료·크레딧 소진·이미지 과대가 전부 같은 문구).
+async function claudeErrorMessage(res, model) {
+  let detail = "";
+  try { detail = (await res.json())?.error?.message || ""; } catch { /* 비JSON 오류 본문 */ }
+  const s = res.status;
+  const tail = detail ? ": " + detail.slice(0, 140) : "";
+  if (s === 400 && /credit balance|billing|insufficient|quota/i.test(detail)) return "Claude 크레딧이 부족해요. console.anthropic.com에서 충전한 뒤 다시 시도해 주세요. (400)";
+  if (s === 401) return "API 키가 올바르지 않아요 (401)";
+  if (s === 403) return "이 API 키로는 사용할 수 없어요 (403). 키 권한을 확인해 주세요.";
+  if (s === 404) return `‘${model}’ 모델을 쓸 수 없어요 (404). 모델이 종료됐을 수 있어요 — 설정 › 🔌 연결에서 다른 모델을 골라 주세요.`;
+  if (s === 413) return "보낸 내용이 너무 커요 (413). 이미지 크기나 한 번에 보내는 태그 수를 줄여 주세요.";
+  if (s === 429) return "요청이 많아요. 잠시 후 다시 시도 (429)";
+  if (s === 529 || s >= 500) return `Claude 서버가 혼잡해요. 잠시 후 다시 시도해 주세요 (${s})`;
+  if (s === 400) return `요청이 거부됐어요 (400)${tail}`;
+  return `API 오류 ${s}${tail}`;
+}
+// opts.toolName을 주면 tool_use 입력을 꺼내 반환(구조화 추출용), 없으면 {data, truncated}.
+//   잘림(max_tokens): 구조화 경로는 부분 JSON을 믿을 수 없으니 throw(청크 루프가 '실패'로 집계),
+//   자유 텍스트(OCR)는 부분 결과도 쓸모가 있으니 truncated 플래그로 알린다.
+async function anthropicMessages(apiKey, body, opts = {}) {
+  if (!apiKey) throw new Error("API 키가 없습니다");
+  const model = body.model;
+  const { signal, cleanup } = resolveAbortSignal(opts);
+  let res;
+  try {
+    res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify(claudeRequestBody(model, body)),
+      signal,
+    });
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error("응답이 없어 중단했어요 (시간 초과/취소)");
+    throw e;
+  } finally { cleanup(); }
+  if (!res.ok) throw new Error(await claudeErrorMessage(res, model));
+  const data = await res.json();
+  try { recordAiTokens(model, data.usage); } catch { /* 집계 실패는 본 기능과 무관 */ }
+  if (data.stop_reason === "refusal") throw new Error("AI가 이 요청에는 답하지 않았어요. 내용을 조금 바꿔 다시 시도해 주세요.");
+  const truncated = data.stop_reason === "max_tokens";
+  if (!opts.toolName) return { data, truncated };
+  if (truncated) throw new Error("AI 응답이 길이 제한에 걸려 결과가 잘렸어요. 한 번에 점검하는 양을 줄여 주세요(‘넓게 점검’을 끄면 청크가 작아져요).");
+  const blocks = Array.isArray(data.content) ? data.content : [];
+  const toolUse = blocks.find(b => b.type === "tool_use" && b.name === opts.toolName) || blocks.find(b => b.type === "tool_use");
+  if (!toolUse || !toolUse.input) throw new Error("AI가 결과를 정해진 형식으로 주지 않았어요. 잠시 후 다시 시도해 주세요.");
+  return toolUse.input;
+}
+
 async function callClaudeForSynonyms(tags, apiKey, model = SYNONYM_AI_MODEL, context = {}) {
   if (!apiKey) throw new Error("API 키가 없습니다");
   recordAiCall(); // 🔢 v7.28.33 사용량 집계(로컬 추정)
@@ -15629,37 +15746,15 @@ async function callClaudeForSynonyms(tags, apiKey, model = SYNONYM_AI_MODEL, con
       required: ["groups"],
     },
   };
-  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: 30000 }); // 🆕 v7.28.19: 행 방지(30초)
-  let res;
-  try {
-    res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({
-        model,
-        max_tokens: context.maxTokens || 4096, // 🆕 v7.28.11: 넓게 점검 시 상향(잘림 방지)
-        tools: [tool],
-        tool_choice: { type: "tool", name: "report_synonyms" },
-        messages: [{ role: "user", content: promptText }],
-      }),
-      signal,
-    });
-  } catch (e) {
-    if (e?.name === "AbortError") throw new Error("응답이 없어 중단했어요 (시간 초과)");
-    throw e;
-  } finally { cleanup(); }
-  if (!res.ok) {
-    let detail = "";
-    try { detail = (await res.json())?.error?.message || ""; } catch {}
-    if (res.status === 401) throw new Error("API 키가 올바르지 않아요 (401)");
-    if (res.status === 429) throw new Error("요청이 많아요. 잠시 후 다시 시도 (429)");
-    throw new Error(`API 오류 ${res.status}${detail ? ": " + detail.slice(0, 120) : ""}`);
-  }
-  const data = await res.json();
-  try { recordAiTokens(model, data.usage); } catch {} // 🆕 v7.31.1 토큰 사용량 집계
-  const toolUse = (data.content || []).find(b => b.type === "tool_use");
-  const groups = toolUse?.input?.groups;
-  const opposites = toolUse?.input?.opposites;
+  // 🤖 v7.58.2: 공통 호출기로 일원화(에러 매핑·토큰 집계·stop_reason 잘림/거절 판정 포함)
+  const inp = await anthropicMessages(apiKey, {
+    model,
+    max_tokens: context.maxTokens || 4096, // 🆕 v7.28.11: 넓게 점검 시 상향(잘림 방지)
+    tools: [tool],
+    tool_choice: { type: "tool", name: "report_synonyms" },
+    messages: [{ role: "user", content: promptText }],
+  }, { timeoutMs: 30000, toolName: "report_synonyms" }); // 🆕 v7.28.19: 행 방지(30초)
+  const groups = inp.groups, opposites = inp.opposites;
   return { groups: Array.isArray(groups) ? groups : [], opposites: Array.isArray(opposites) ? opposites : [] };
 }
 
@@ -15789,29 +15884,12 @@ async function callClaudeForTypeGroups(tags, categoryLabels, apiKey, model = SYN
       required: ["assignments"],
     },
   };
-  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: 30000 });
-  let res;
-  try {
-    res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model, max_tokens: opts.maxTokens || 4096, tools: [tool], tool_choice: { type: "tool", name: "report_typegroups" }, messages: [{ role: "user", content: promptText }] }),
-      signal,
-    });
-  } catch (e) {
-    if (e?.name === "AbortError") throw new Error("응답이 없어 중단했어요 (시간 초과)");
-    throw e;
-  } finally { cleanup(); }
-  if (!res.ok) {
-    let detail = ""; try { detail = (await res.json())?.error?.message || ""; } catch {}
-    if (res.status === 401) throw new Error("API 키가 올바르지 않아요 (401)");
-    if (res.status === 429) throw new Error("요청이 많아요. 잠시 후 다시 시도 (429)");
-    throw new Error(`API 오류 ${res.status}${detail ? ": " + detail.slice(0, 120) : ""}`);
-  }
-  const data = await res.json();
-  try { recordAiTokens(model, data.usage); } catch {}
-  const toolUse = (data.content || []).find(b => b.type === "tool_use");
-  const assignments = toolUse?.input?.assignments;
+  const inp = await anthropicMessages(apiKey, {
+    model, max_tokens: opts.maxTokens || 4096, tools: [tool],
+    tool_choice: { type: "tool", name: "report_typegroups" },
+    messages: [{ role: "user", content: promptText }],
+  }, { timeoutMs: 30000, toolName: "report_typegroups" });
+  const assignments = inp.assignments;
   return { assignments: Array.isArray(assignments) ? assignments : [] };
 }
 async function callGeminiForTypeGroups(tags, categoryLabels, apiKey, model = GEMINI_AI_MODEL, opts = {}) {
@@ -15918,36 +15996,14 @@ async function callClaudeForPlacements(tags, apiKey, model = SYNONYM_AI_MODEL, c
       required: ["placements"],
     },
   };
-  const { signal, cleanup } = resolveAbortSignal({ timeoutMs: 30000 }); // 🆕 v7.28.19: 행 방지(30초)
-  let res;
-  try {
-    res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({
-        model,
-        max_tokens: context.maxTokens || 4096,
-        tools: [tool],
-        tool_choice: { type: "tool", name: "report_placements" },
-        messages: [{ role: "user", content: promptText }],
-      }),
-      signal,
-    });
-  } catch (e) {
-    if (e?.name === "AbortError") throw new Error("응답이 없어 중단했어요 (시간 초과)");
-    throw e;
-  } finally { cleanup(); }
-  if (!res.ok) {
-    let detail = "";
-    try { detail = (await res.json())?.error?.message || ""; } catch {}
-    if (res.status === 401) throw new Error("API 키가 올바르지 않아요 (401)");
-    if (res.status === 429) throw new Error("요청이 많아요. 잠시 후 다시 시도 (429)");
-    throw new Error(`API 오류 ${res.status}${detail ? ": " + detail.slice(0, 120) : ""}`);
-  }
-  const data = await res.json();
-  try { recordAiTokens(model, data.usage); } catch {} // 🆕 v7.31.1 토큰 사용량 집계
-  const toolUse = (data.content || []).find(b => b.type === "tool_use");
-  const placements = toolUse?.input?.placements;
+  const inp = await anthropicMessages(apiKey, {
+    model,
+    max_tokens: context.maxTokens || 4096,
+    tools: [tool],
+    tool_choice: { type: "tool", name: "report_placements" },
+    messages: [{ role: "user", content: promptText }],
+  }, { timeoutMs: 30000, toolName: "report_placements" }); // 🆕 v7.28.19: 행 방지(30초)
+  const placements = inp.placements;
   return { placements: Array.isArray(placements) ? placements : [] };
 }
 
@@ -16090,36 +16146,13 @@ async function callClaudeForTagging(context = {}, apiKey, model = SYNONYM_AI_MOD
       required: ["tags"],
     },
   };
-  const { signal, cleanup } = resolveAbortSignal(opts);
-  let res;
-  try {
-    res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({
-        model,
-        max_tokens: 2048,
-        tools: [tool],
-        tool_choice: { type: "tool", name: "report_tags" },
-        messages: [{ role: "user", content: promptText }],
-      }),
-      signal,
-    });
-  } catch (e) {
-    if (e?.name === "AbortError") throw new Error("응답이 없어 중단했어요 (시간 초과/취소)");
-    throw e;
-  } finally { cleanup(); }
-  if (!res.ok) {
-    let detail = "";
-    try { detail = (await res.json())?.error?.message || ""; } catch {}
-    if (res.status === 401) throw new Error("API 키가 올바르지 않아요 (401)");
-    if (res.status === 429) throw new Error("요청이 많아요. 잠시 후 다시 시도 (429)");
-    throw new Error(`API 오류 ${res.status}${detail ? ": " + detail.slice(0, 120) : ""}`);
-  }
-  const data = await res.json();
-  try { recordAiTokens(model, data.usage); } catch {} // 🆕 v7.31.1 토큰 사용량 집계
-  const toolUse = (data.content || []).find(b => b.type === "tool_use");
-  const inp = toolUse?.input || {};
+  const inp = await anthropicMessages(apiKey, {
+    model,
+    max_tokens: 2048,
+    tools: [tool],
+    tool_choice: { type: "tool", name: "report_tags" },
+    messages: [{ role: "user", content: promptText }],
+  }, { ...opts, toolName: "report_tags" });
   return {
     majorGenres: Array.isArray(inp.majorGenres) ? inp.majorGenres : [],
     subGenres: Array.isArray(inp.subGenres) ? inp.subGenres : [],
@@ -16237,36 +16270,19 @@ async function callClaudeForOCR(base64, mimeType, apiKey, model = SYNONYM_AI_MOD
   if (!apiKey) throw new Error("API 키가 없습니다");
   recordAiCall(); // 🔢 v7.28.33 사용량 집계(로컬 추정)
   if (globalAiModel) model = globalAiModel; // 🆕 v7.31.1 사용자 선택 모델 우선
-  const { signal, cleanup } = resolveAbortSignal(opts);
-  let res;
-  try {
-    res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({
-        model,
-        max_tokens: 2048,
-        messages: [{ role: "user", content: [
-          { type: "image", source: { type: "base64", media_type: mimeType, data: base64 } },
-          { type: "text", text: OCR_PROMPT },
-        ] }],
-      }),
-      signal,
-    });
-  } catch (e) {
-    if (e?.name === "AbortError") throw new Error("응답이 없어 중단했어요 (시간 초과/취소)");
-    throw e;
-  } finally { cleanup(); }
-  if (!res.ok) {
-    let detail = "";
-    try { detail = (await res.json())?.error?.message || ""; } catch {}
-    if (res.status === 401) throw new Error("API 키가 올바르지 않아요 (401)");
-    if (res.status === 429) throw new Error("요청이 많아요. 잠시 후 다시 시도 (429)");
-    throw new Error(`API 오류 ${res.status}${detail ? ": " + detail.slice(0, 120) : ""}`);
-  }
-  const data = await res.json();
-  try { recordAiTokens(model, data.usage); } catch {} // 🆕 v7.31.1 토큰 사용량 집계
-  return (data.content || []).filter(b => b.type === "text").map(b => b.text || "").join("").trim();
+  // 🔧 v7.58.2: 출력 예산 2048 → 4096. 화면 가득한 목록을 읽히면 2048로는 끝이 잘렸고,
+  //   잘려도 아무 신호가 없어 사용자는 '일부만 인식됐다'는 걸 몰랐다(청구는 실제 생성분만이라 무해).
+  const { data, truncated } = await anthropicMessages(apiKey, {
+    model,
+    max_tokens: 4096,
+    messages: [{ role: "user", content: [
+      { type: "image", source: { type: "base64", media_type: mimeType, data: base64 } },
+      { type: "text", text: OCR_PROMPT },
+    ] }],
+  }, opts);
+  const text = (data.content || []).filter(b => b.type === "text").map(b => b.text || "").join("").trim();
+  // 자유 텍스트라 부분 결과도 쓸모가 있다 → 버리지 않고 잘렸다는 사실만 눈에 보이게 덧붙인다.
+  return truncated ? (text + "\n\n⚠️ (길이 제한으로 여기서 잘렸어요 — 화면을 나눠 다시 찍어 주세요)") : text;
 }
 
 async function callGeminiForOCR(base64, mimeType, apiKey, model = GEMINI_AI_MODEL, opts = {}) {
@@ -20689,7 +20705,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.58.1";
+const APP_VERSION = "7.58.2";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -20715,6 +20731,20 @@ function compareVersions(a, b) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.58.2", date: "2026-08-02",
+    title: "🤖 AI 기능 점검 — 최신 모델 + 실패할 때 알려주기",
+    highlights: [
+      { type: "improve", text: "🤖 AI 모델을 최신 세대로 바꿨어요(Sonnet 5 · Opus 5). 같은 가격대에서 품질만 올라가요. 전에 고르셨던 등급은 그대로 이어져요." },
+      { type: "fix", text: "✂️ AI 답변이 길이 제한에 걸려 잘렸을 때 ‘결과 없음’처럼 조용히 넘어가던 문제를 고쳤어요. 이제 잘렸다고 알려주고, 한 번에 점검하는 양을 줄이라고 안내해요." },
+      { type: "fix", text: "💬 AI 오류 안내가 자세해졌어요. ‘API 오류 404’ 대신 크레딧 부족·모델 종료·이미지 과대·서버 혼잡을 구분해서 무엇을 하면 되는지 알려줘요." },
+      { type: "improve", text: "📷 이미지에서 작품 목록 읽기(OCR)가 끝에서 잘리던 한도를 늘렸어요. 그래도 잘리면 잘렸다고 본문에 표시해요." },
+    ],
+    details: [
+      { type: "fix", text: "AI 태그 점검을 여러 번에 나눠 돌릴 때, 잘린 묶음이 ‘성공’으로 세어지던 것을 ‘실패’로 세도록 고쳤어요(실패 개수가 실제와 맞아요)." },
+      { type: "improve", text: "AI 호출 코드를 한곳으로 모아, 앞으로 이런 수정이 한 번에 전체에 적용되게 정리했어요." },
+    ],
+  },
   {
     version: "7.58.1", date: "2026-08-02",
     title: "🔎 연재 상태 판정 전수 점검",
@@ -44970,18 +45000,12 @@ function AppContent() {
       let text = "";
       if (aiProvider === "claude") {
         if (!claudeApiKey) return [];
-        const { signal, cleanup } = resolveAbortSignal({ timeoutMs: 15000 });
-        let res;
-        try {
-          res = await fetch("https://api.anthropic.com/v1/messages", {
-            method: "POST",
-            headers: { "content-type": "application/json", "x-api-key": claudeApiKey, "anthropic-version": "2023-06-01" },
-            body: JSON.stringify({ model: claudeModel || SYNONYM_AI_MODEL, max_tokens: 256, messages: [{ role: "user", content: prompt }] }),
-            signal,
-          });
-        } finally { cleanup(); }
-        if (!res.ok) return [];
-        const data = await res.json();
+        // 🤖 v7.58.2: 공통 호출기 경유 — 5세대 모델의 thinking 기본 ON에 대응(종전 max_tokens 256은
+        //   생각에 다 먹혀 빈 응답이 될 수 있었다). 실패는 종전대로 [] 폴백(추천은 부가 기능).
+        const { data } = await anthropicMessages(claudeApiKey, {
+          model: claudeModel || SYNONYM_AI_MODEL, max_tokens: 256,
+          messages: [{ role: "user", content: prompt }],
+        }, { timeoutMs: 15000 });
         text = ((data.content || []).filter((b) => b.type === "text").map((b) => b.text).join(" ")) || "";
       } else {
         if (!geminiApiKey) return [];
@@ -48824,7 +48848,7 @@ function AppContent() {
   }
   // 🆕 v7.31.1: Claude 모델 선택 저장 (전역 mutable + ai_config 영속)
   async function saveClaudeModel(m) {
-    const id = CLAUDE_MODEL_OPTIONS.some(o => o.id === m) ? m : SYNONYM_AI_MODEL;
+    const id = normalizeClaudeModelId(m); // 🔧 v7.58.2: 구세대 저장값은 후속 모델로 승계
     globalAiModel = id; setClaudeModel(id);
     try { await saveGlobalAiConfig({ claude_model: id }); } catch (e) { console.warn("[ai] 모델 저장 실패:", e?.message); }
   }
@@ -49533,8 +49557,12 @@ function AppContent() {
       if (cfg.ai_provider === "gemini" || cfg.ai_provider === "claude") setAiProvider(cfg.ai_provider);
       if (typeof cfg.ai_wide_scan === "boolean") setAiWideScan(cfg.ai_wide_scan);
       // 🆕 v7.31.1: Claude 모델 선택 + 누적 토큰 사용량 복원
-      if (typeof cfg.claude_model === "string" && CLAUDE_MODEL_OPTIONS.some(o => o.id === cfg.claude_model)) {
-        globalAiModel = cfg.claude_model; setClaudeModel(cfg.claude_model);
+      // 🔧 v7.58.2: 저장된 모델이 구세대(Sonnet 4.6·Opus 4.8 등)면 후속 모델로 승계.
+      //   종전엔 목록에 없으면 조용히 기본(Haiku)으로 되돌아가, 사용자가 고른 등급이 사라졌다.
+      if (typeof cfg.claude_model === "string" && cfg.claude_model) {
+        const id = normalizeClaudeModelId(cfg.claude_model);
+        globalAiModel = id; setClaudeModel(id);
+        if (id !== cfg.claude_model) { try { await saveGlobalAiConfig({ claude_model: id }); } catch {} }
       }
       // 🆕 v7.39.0: 제목검색 대상 플랫폼 온오프 복원(전역 동기화)
       if (cfg.search_platforms && typeof cfg.search_platforms === "object") {
