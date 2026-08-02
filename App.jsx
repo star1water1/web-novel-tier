@@ -2,9 +2,56 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.10 (구색 기능 개선 Phase 3 — 검증 설정 노출)                           ║
+ * ║  버전: 7.59.11 (구색 기능 개선 Phase 4 — 추천 정렬 실효화)                         ║
  * ║  최종 수정: 2026-08-02                                                        ║
- * ║  총 라인 수: 약 79,450줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 79,500줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔀 v7.59.11 추천 정렬 실효화 + 인기 데이터 정직화 (T13 · REC-1 REC-2)            ║
+ * ║    (2026-08-02)                                                                  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제 ①·REC-1] 넷상 추천의 정렬 칩(무작위/취향순/인기순/숨은작)이 **화면 순서에** ║
+ * ║ 반영되지 않았다. `loadWebReco`의 ORDER BY가                                      ║
+ * ║ `pinned DESC, fetched_at DESC, taste_score DESC`인데, 한 배치의 행은 fetched_at이 ║
+ * ║ 전부 같은 값(nowMs)이라 동타이 → 실질 정렬 키가 taste_score가 된다. 즉 어떤 칩을  ║
+ * ║ 고르든 화면은 **언제나 취향 점수순**이었고, 칩은 '어느 5개를 고를지'에만 영향을    ║
+ * ║ 줬다. (취향순만 우연히 맞아 보였다.)                                             ║
+ * ║                                                                              ║
+ * ║ [문제 ②·REC-2] 인기순/숨은작이 사실상 '노벨피아 골라내기'였다. popularity(회원수)║
+ * ║ 를 주는 파서는 novelpiaItemToMeta 하나뿐인데, 비교자가 미보유를 popular에선 0,    ║
+ * ║ hidden에선 1e9로 **뭉개** 실제 값처럼 취급했다. 더 나쁜 건 메타 보강부의          ║
+ * ║ `popularity: mm.popularity || 0` — 회원수를 안 주는 파서(리디·문피아·카카오·      ║
+ * ║ 네이버)의 undefined를 0으로 만들어, 보강만 받으면 '가장 안 읽힌 작품'으로 둔갑해  ║
+ * ║ **숨은작 최상위를 점령**했다. 같은 줄이 검색 단계에서 이미 받아 둔 노벨피아       ║
+ * ║ 회원수까지 0으로 덮어썼다.                                                       ║
+ * ║                                                                              ║
+ * ║ [수정 ①] ORDER BY 마지막 키를 `taste_score DESC` → `rowid ASC`. fetchWeb…는 이미 ║
+ * ║ 선택한 정렬 순서 그대로 INSERT하므로(정렬 → 3분류 → slice → INSERT) 삽입 순서를   ║
+ * ║ 그대로 쓰면 4개 모드가 전부 화면에 반영된다. taste 모드도 삽입 순서가 곧 취향순   ║
+ * ║ 이라 무손실. web_reco는 TEXT PK이고 WITHOUT ROWID가 아니라 rowid가 있다           ║
+ * ║ (rank 컬럼 신설 + 마이그레이션은 과설계라 기각).                                 ║
+ * ║                                                                              ║
+ * ║ [수정 ②] 인기/숨은작 비교자를 **보유/미보유 분리**로. 값이 있는 후보끼리만 순위를 ║
+ * ║ 매기고 미보유는 뒤에 원래 순서로 붙인다(Array.sort 안정성 이용). 보강부의         ║
+ * ║ `|| 0`을 제거해 값이 실제로 왔을 때만 갱신하고, INSERT도 미보유를 0이 아니라      ║
+ * ║ **NULL**로 저장한다 — DB에서도 '0명'과 '데이터 없음'이 구분된다.                  ║
+ * ║                                                                              ║
+ * ║ [수정 ③] 인기순/숨은작을 고른 동안에만 칩 아래 캡션 — "회원수 데이터는 현재       ║
+ * ║ 노벨피아 제공분만… 없는 작품은 순위를 매기지 않고 뒤에 원래 순서로." 데이터를     ║
+ * ║ 지어내는 대신 한계를 말한다(리디/네이버 대체 지표 제안은 2차 재검증에서 기각 —    ║
+ * ║ 실측 미확인·전 플랫폼 커버 불가).                                                ║
+ * ║                                                                              ║
+ * ║ [안 건드린 것] fetch 파이프라인 구조(T01의 취향점수→정렬→보강→3분류→선정)와       ║
+ * ║ 3분류 필터, setWebRecoList 갱신 경로 4곳(전부 filter/map이라 순서 보존).          ║
+ * ║ hybrid/manual의 taste_score 전 0 문제는 T14 범위.                                ║
+ * ║                                                                              ║
+ * ║ [검증] 실제 SQL·비교자·보강부·INSERT 인자를 소스에서 떼어내 node:sqlite로 22개    ║
+ * ║ 단언 — 삽입 순서 표시(+종전 SQL 대조군이 취향순으로 뒤집힘), ⭐ 보관작 우선,      ║
+ * ║ 배치 교체(rowid 재사용) 후 순서 보존, taste_score 전 0에서 회귀 없음,             ║
+ * ║ 보유/미보유 분리 정렬(+종전 조합이 리디·문피아·카카오로 숨은작 최상위를 점령하는  ║
+ * ║ 대조군), 보강이 노벨피아 값을 안 덮어씀, NULL 저장·조회, 정렬 안정성 2종.         ║
+ * ║ esbuild 통과, scraper-test 526/526. APP_VERSION 7.59.11.                          ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -21477,7 +21524,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.10";
+const APP_VERSION = "7.59.11";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -45854,7 +45901,14 @@ function AppContent() {
 
   async function loadWebReco() {
     try {
-      const rows = await all("SELECT * FROM web_reco WHERE status='pending' ORDER BY pinned DESC, fetched_at DESC, taste_score DESC;");
+      // 🔧 v7.59.11 (T13·REC-1): 마지막 정렬 키를 `taste_score DESC` → `rowid ASC`로.
+      //   [문제] 한 배치의 행은 fetched_at이 전부 같은 값(nowMs)이라 동타이가 되고, 그러면 taste_score가
+      //   실질 정렬 키가 된다 → 사용자가 '인기순/숨은작/무작위'를 골라도 화면은 **언제나 취향 점수순**이었다.
+      //   즉 정렬 칩이 '어느 5개를 고를지'에만 영향을 주고 '어떤 순서로 보일지'에는 무력했다.
+      //   [해결] fetchWebRecommendations는 이미 선택한 정렬 순서 그대로 INSERT하므로(정렬 → 3분류 → slice → INSERT),
+      //   삽입 순서(rowid)를 그대로 쓰면 4개 모드가 전부 화면에 반영된다. taste 모드도 삽입 순서가 곧 취향순이라 무손실.
+      //   (rank 컬럼 신설 + 마이그레이션은 과설계라 기각 — web_reco는 TEXT PK이고 WITHOUT ROWID가 아니라 rowid가 있다.)
+      const rows = await all("SELECT * FROM web_reco WHERE status='pending' ORDER BY pinned DESC, fetched_at DESC, rowid ASC;");
       setWebRecoList(rows || []);
       return rows || [];
     } catch (e) { console.warn("loadWebReco 오류:", e); return []; }
@@ -46128,10 +46182,27 @@ function AppContent() {
       //   '실제로 화면에 오를 상위 후보'에 쓰기 위함. 정렬 키(취향 토큰은 category로, popularity는
       //   검색 단계 메타로) 는 보강 없이도 부분 동작하므로 선정렬이 정확도를 떨어뜨리지 않는다.
       const sortMode = web.sort || "random";
+      // 🔧 v7.59.11 (T13·REC-2): 인기/숨은작 정렬을 '보유/미보유 분리'로.
+      //   [문제] popularity(회원수)를 주는 파서는 노벨피아 하나뿐인데(novelpiaItemToMeta), 종전 비교자는
+      //   미보유를 popular에선 0, hidden에선 1e9로 **뭉개** 실제 값처럼 취급했다. 그래서 '0명인 작품'과
+      //   '데이터가 없는 작품'이 구분되지 않았고, 아래 보강부의 `|| 0` 때문에 리디/문피아 작품이 보강만
+      //   받으면 popularity=0이 되어 **숨은작 최상위를 점령**했다(가장 안 읽힌 작품인 척).
+      //   [해결] 값이 있는 후보끼리만 순위를 매기고, 미보유는 뒤에 원래 순서로 붙인다(정렬 안정성 이용).
+      const popOf = (c) => {
+        const p = c && c.meta ? c.meta.popularity : null;
+        return (p == null || !Number.isFinite(Number(p))) ? null : Number(p);
+      };
+      const cmpPop = (asc) => (a, b) => {
+        const pa = popOf(a), pb = popOf(b);
+        if (pa == null && pb == null) return 0;   // 둘 다 미보유 → 원순서 유지
+        if (pa == null) return 1;                 // 미보유는 항상 뒤로 (0명인 척하지 않는다)
+        if (pb == null) return -1;
+        return asc ? pa - pb : pb - pa;
+      };
       const applySort = () => {
         if (sortMode === "taste") cands.sort((a, b) => (b._taste || 0) - (a._taste || 0));
-        else if (sortMode === "popular") cands.sort((a, b) => ((b.meta && b.meta.popularity) || 0) - ((a.meta && a.meta.popularity) || 0));
-        else if (sortMode === "hidden") cands.sort((a, b) => (((a.meta && a.meta.popularity) != null ? a.meta.popularity : 1e9)) - (((b.meta && b.meta.popularity) != null ? b.meta.popularity : 1e9)));
+        else if (sortMode === "popular") cands.sort(cmpPop(false));
+        else if (sortMode === "hidden") cands.sort(cmpPop(true));
       };
       if (sortMode === "random") { for (let i = cands.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const tmp = cands[i]; cands[i] = cands[j]; cands[j] = tmp; } }
       else applySort();
@@ -46168,7 +46239,14 @@ function AppContent() {
           const enrich = Promise.allSettled(targets.map(async (c) => {
             try {
               const mm = await fetchNovelMeta(c.url || c.link, { timeoutMs: 6000, noKakaoFallback: true });
-              if (mm && mm.ok) c.meta = { ...(c.meta || {}), genres: mm.genres, synopsis: mm.synopsis, totalEpisodes: mm.totalEpisodes, workStatus: mm.workStatus, ageTag: mm.ageTag, startYear: mm.startYear, popularity: mm.popularity || 0 };
+              // 🔧 v7.59.11 (T13·REC-2): `popularity: mm.popularity || 0` 제거. 두 가지를 동시에 망가뜨리던 줄이다 —
+              //   ① 회원수를 안 주는 파서(리디·문피아·카카오·네이버)의 undefined를 **0**으로 만들어 '가장 안 읽힌 작품'으로
+              //      둔갑시켰고(숨은작 최상위 점령), ② 검색 단계에서 이미 받아 둔 노벨피아 회원수를 0으로 덮어썼다.
+              //   이제 값이 실제로 왔을 때만 갱신하고, 아니면 기존 값을 그대로 둔다(없으면 계속 '미보유').
+              if (mm && mm.ok) {
+                c.meta = { ...(c.meta || {}), genres: mm.genres, synopsis: mm.synopsis, totalEpisodes: mm.totalEpisodes, workStatus: mm.workStatus, ageTag: mm.ageTag, startYear: mm.startYear };
+                if (mm.popularity != null && Number.isFinite(Number(mm.popularity))) c.meta.popularity = Number(mm.popularity);
+              }
             } catch {}
           }));
           await Promise.race([enrich, new Promise((r) => setTimeout(r, 12000))]);
@@ -46200,7 +46278,10 @@ function AppContent() {
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,'pending',?);`,
           [uuid(), c.title || "", c.author || "", c.platform || "", c.url || c.link || "", c.coverUrl || "",
            JSON.stringify(genres), "", (m.synopsis || ""), (m.totalEpisodes != null ? m.totalEpisodes : null),
-           (m.workStatus === "completed" ? 1 : 0), (m.ageTag === "19금" ? 1 : 0), (m.popularity || 0),
+           // 🔧 v7.59.11 (T13·REC-2): 미보유는 0이 아니라 NULL로 저장 — DB에서도 '0명'과 '데이터 없음'을 구분한다.
+           //   (컬럼 DEFAULT는 0이지만 명시 NULL 삽입은 허용. 현재 표시 경로는 이 값을 읽지 않는다.)
+           (m.workStatus === "completed" ? 1 : 0), (m.ageTag === "19금" ? 1 : 0),
+           (m.popularity != null && Number.isFinite(Number(m.popularity)) ? Number(m.popularity) : null),
            (c._taste || 0), c._kw || "", c._src || "explore", nowMs, batchId, (c._metaUnknown ? 1 : 0)]
         );
       }
@@ -61258,6 +61339,13 @@ async function importJSON(directText, onSuccess, onSettled) {
                     <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
                       {[["무작위", "random"], ["취향순", "taste"], ["인기순", "popular"], ["숨은작", "hidden"]].map(([l, v]) => chip(l, web.sort === v, () => updateRecoSetting("web", "sort", v)))}
                     </View>
+                    {/* 🌐 v7.59.11 (T13·REC-2): 회원수를 주는 파서가 노벨피아뿐이라는 사실을 숨기지 않는다.
+                        종전엔 미보유를 0/1e9로 뭉개 다른 플랫폼도 순위가 매겨진 것처럼 보였다. */}
+                    {(web.sort === "popular" || web.sort === "hidden") ? (
+                      <Text style={{ color: C.sub, fontSize: 10, marginTop: 6, lineHeight: 14 }}>
+                        회원수 데이터는 현재 노벨피아 제공분만 있어요. 데이터가 없는 작품은 순위를 매기지 않고 뒤에 원래 순서로 붙습니다.
+                      </Text>
+                    ) : null}
                   </View>
                   <View>
                     <Text style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>연재 상태</Text>
