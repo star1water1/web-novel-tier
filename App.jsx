@@ -2,9 +2,71 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.8 (구색 기능 개선 Phase 3 — 순위 표시 정규화)                          ║
+ * ║  버전: 7.59.9 (구색 기능 개선 Phase 3 — 수문장 모달 재설계)                        ║
  * ║  최종 수정: 2026-08-02                                                        ║
- * ║  총 라인 수: 약 78,940줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 79,290줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🛡️ v7.59.9 수문장 모달 재설계 — 방향·거절·강등 위치 (T11 · HYB-3 HYB-4)          ║
+ * ║    (2026-08-02)                                                                  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제 ①·HYB-3] 'AI 제안'이 방향을 제안하지 않았다. 안내문은 "한 단계 위/아래      ║
+ * ║ 이동을 제안합니다"인데 ⬆/⬇를 무조건 나란히 렌더하고 어느 쪽인지는 사용자가        ║
+ * ║ 정했다. 집계 쿼리가 `COUNT(*) GROUP BY blocker_id` 하나뿐이라 방향을 낼 근거를     ║
+ * ║ 안 뽑았기 때문 — 정작 `tier_repositioning_session.suspicion_type`은 저장돼 있다.  ║
+ * ║                                                                              ║
+ * ║ [문제 ②·HYB-3] 거절 수단이 없었다. 후보를 목록에서 빼는 유일한 경로가 ⬆/⬇ 수락   ║
+ * ║ 시의 `blocker_id=NULL`이라, 제안에 동의하지 않는 사용자는 티어를 바꾸기 전까지    ║
+ * ║ 노란 '🤖 AI 제안 N' 배지를 영구히 달고 살아야 했다.                              ║
+ * ║                                                                              ║
+ * ║ [문제 ③·HYB-4] '한 단계 아래'가 실제로는 **하위 티어 맨 끝**이었다. 강등이 승급과 ║
+ * ║ 같은 `MAX(manual_order)+100`을 써서 그렇다(승급은 그 공식이 우연히 맞는다 —      ║
+ * ║ 상위 티어 맨 아래 = 경계 바로 위 한 칸이라 실제로 인접 이동).                     ║
+ * ║                                                                              ║
+ * ║ [수정 ①] 집계에 방향 두 축 추가 — `SUM(CASE WHEN suspicion_type='underrated')`,  ║
+ * ║ `...'overrated'`. underrated 세션의 blocker는 아래에서 올라오려던 의심작을        ║
+ * ║ **이긴** 쪽(⬆ 신호), overrated 세션의 blocker는 내려오던 의심작에 **진** 쪽       ║
+ * ║ (⬇ 신호)다. 우세한 방향 버튼을 '· 추천'으로 강조하고 근거 줄을 함께 낸다.        ║
+ * ║ **반대 방향 버튼은 숨기지 않는다** — '이겨냈다'는 '지금 자리가 맞다'로도 읽혀     ║
+ * ║ 증거가 비대칭이다. 동률이면 어느 쪽도 추천하지 않는다고 명시한다.                 ║
+ * ║                                                                              ║
+ * ║ [수정 ②] '이 제안 무시' 버튼 + `novels.gatekeeper_dismissed`(무시 시점의 누적     ║
+ * ║ 횟수 스냅샷). 수락 경로처럼 `blocker_id=NULL`로 지우지 **않는다** — 그 컬럼은     ║
+ * ║ 이력의 '경계 ○○' 표시·buildWhyExplanation·enqueue priority의 blockWeight가       ║
+ * ║ 읽는 원천이라, 거절 한 번에 과거 기록까지 사라진다. 기준선 + threshold만큼 새     ║
+ * ║ 증거가 쌓이면 다시 제안한다(verification_baseline과 같은 패턴). 수락 시에는       ║
+ * ║ 누적이 0으로 돌아가므로 기준선도 함께 리셋 — 안 하면 옛 기준선이 영구 차단한다.   ║
+ * ║                                                                              ║
+ * ║ [수정 ③] 강등만 `MIN(manual_order)-50` 삽입 → `rebalanceTierOrder(하위 티어)`로  ║
+ * ║ 맨 위 자리 확정. MIN-100이 아닌 이유: rebalance 직후 MIN=100이라 MIN-100=0인데    ║
+ * ║ backfillManualOrder가 0을 '미지정'으로 취급해 재백필 때 rating 순으로 밀려난다.   ║
+ * ║ 승급 경로는 현행 유지. 확인 다이얼로그에 `지금: S 3위 → 이동 후: A 티어 맨 위`.   ║
+ * ║                                                                              ║
+ * ║ [수정 ④] ⬆/⬇ 두 핸들러가 문자 단위로 같은 코드를 복제하고 있어(한쪽만 고쳐지는   ║
+ * ║ 비대칭의 씨앗 — 이 카드가 고치는 결함이 정확히 그 종류다) 공용                    ║
+ * ║ `applyGatekeeperMove(g, targetTier, direction)`로 합쳤다.                        ║
+ * ║                                                                              ║
+ * ║ [곁다리 수정] 집계의 novels JOIN을 SQL로 내렸다. 종전엔 `LIMIT 20`을 먼저 걸고    ║
+ * ║ JS에서 `.filter(r => r.id)`로 삭제된 작품을 걸러, 고아 blocker가 20자리를         ║
+ * ║ 차지하면 살아있는 후보가 그만큼 밀려났다(실측: 고아 25건 → 후보 0건 노출).        ║
+ * ║                                                                              ║
+ * ║ [백업] `gatekeeper_dismissed`를 opt.gd로 직렬화(0 초과일 때만) + 복원. uf와       ║
+ * ║ 같은 부류(재계산 불가한 순수 사용자 판단) — 빠뜨리면 복원 직후 거절한 제안이      ║
+ * ║ RS 이력과 함께 전부 되살아난다. v9 하위호환(구버전 백업은 gd 없음 → 0).           ║
+ * ║ 하이브리드 '완전 비움' 초기화에도 gatekeeper_dismissed=0을 넣었다.                ║
+ * ║                                                                              ║
+ * ║ [안 건드린 것] 수락 경로의 `blocker_id=NULL`(v7.0.3 누적 통계 소비) 그대로 —      ║
+ * ║ 기준선으로 바꾸면 blockWeight가 안 빠져 수락한 작품이 큐 상단에 계속 남는다.      ║
+ * ║ 승급의 MAX+100, 진단 탭의 직접 SQL 수문장 목록(임계 미만까지 보는 게 목적)도      ║
+ * ║ 무변경. 임계 상수 3(GATEKEEPER_BLOCK_THRESHOLD)의 설정 노출은 T12 범위.          ║
+ * ║                                                                              ║
+ * ║ [검증] 실제 SQL·판정 함수·모달 판정부를 소스에서 떼어내 node:sqlite로 실행 —      ║
+ * ║ 47개 단언. 방향 집계 4:1/0:3/2:2, 무시 후 미노출 → 새 근거 2회 미복귀 → 3회       ║
+ * ║ 복귀, 수락 후 기준선 리셋(없으면 영구 차단), 고아 25건 대조군, state 필터,        ║
+ * ║ 컬럼 부재 시 폴백 쿼리, 강등 21위→1위 + gap=100 회복 + 상대순서 보존 + undo       ║
+ * ║ 원위치, 최상위/최하위/비활성 티어에서 문구·버튼 자가당착 없음.                    ║
+ * ║ esbuild 통과, scraper-test 526/526. APP_VERSION 7.59.9.                           ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -11207,6 +11269,11 @@ async function initDb(progressCb) {
     ["conflict_hits", "INTEGER", "0"],
     // 🆕 v7.17.0: 관계형 의심도 누적 점수 — 순위변동 전파 + 매칭 업셋으로 상승, 검증 시 리셋
     ["suspicion_score", "REAL", "0"],
+    // 🆕 v7.59.9 (T11·HYB-3): 수문장 'AI 제안' 무시 기준선 — 무시를 누른 시점의 blocker 누적 횟수 스냅샷(0=무시한 적 없음).
+    //   blocker_id를 NULL로 지워 가리는 방식을 쓰지 않는 이유: 그 컬럼은 이력의 '경계 ○○' 표시·buildWhyExplanation·
+    //   enqueue priority의 blockWeight가 읽는 원천이라, 제안을 거절했을 뿐인데 과거 기록까지 사라진다.
+    //   기준선 + threshold만큼 새 증거가 더 쌓이면 다시 제안된다(verification_baseline과 같은 패턴).
+    ["gatekeeper_dismissed", "INTEGER", "0"],
     // 🆕 v7.21.6: 예정작 기대 데이터 보존 — 전환 시 채워 '예상↔실제' 적중률·발견경로 성과 분석.
     //   (이전: convertPlannedToNovel이 메모 텍스트로만 합쳐 구조적 분석 불가)
     ["expected_tier", "TEXT", "''"],       // 읽기 전 예상 티어 (전환 시점 스냅샷)
@@ -21355,7 +21422,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.8";
+const APP_VERSION = "7.59.9";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -38817,38 +38884,54 @@ async function setNovelTierAtomic(novelId, newTier) {
 }
 
 // 🆕 v7.0: 수문장 식별 — 최근 N개 세션의 blocker_id 누적 통계
-// 5개 누적 시 수문장 후보로 제안
+// 3개 누적 시 수문장 후보로 제안
+// 🔧 v7.59.9 (T11·HYB-3): 세 가지를 바꿨다.
+//   ① **방향 집계** — 세션의 suspicion_type을 함께 세어 '어느 쪽 이동을 막았는지'를 낸다. 이전엔 COUNT(*)
+//      하나뿐이라 모달이 ⬆/⬇를 무조건 나란히 띄우고 어느 쪽인지는 사용자가 정해야 했다(=제안 아님).
+//   ② **무시 기준선 필터** — novels.gatekeeper_dismissed 이후 threshold만큼 새로 쌓이기 전엔 다시 뜨지 않는다.
+//   ③ novels JOIN을 SQL로 내렸다. 이전엔 LIMIT 20을 먼저 적용한 뒤 JS에서 `.filter(r => r.id)`로 걸러
+//      삭제된 작품(고아 blocker)이 후보 20자리를 차지하면 살아있는 후보가 그만큼 밀려났다.
 async function getGatekeeperCandidates(threshold = GATEKEEPER_BLOCK_THRESHOLD) {
+  // 🔧 v7.10.0: result_action='moved' 한정 제거 — 즉시 막아 이동을 무산시킨(no_change) 세션도
+  //   수문장 누적에 포함(블록할수록 카운트되도록). 막은 횟수가 많을수록 빠지던 역전 수정.
+  const baseSql =
+    `SELECT s.blocker_id AS id, COUNT(*) AS block_count,
+            SUM(CASE WHEN s.suspicion_type='underrated' THEN 1 ELSE 0 END) AS up_blocks,
+            SUM(CASE WHEN s.suspicion_type='overrated'  THEN 1 ELSE 0 END) AS down_blocks,
+            n.title, n.manual_tier, n.manual_order, n.rating
+       FROM tier_repositioning_session s
+       INNER JOIN novels n ON n.id = s.blocker_id
+      WHERE s.state='completed' AND s.blocker_id IS NOT NULL
+      GROUP BY s.blocker_id`;
+  const run = (having, params) =>
+    all(`${baseSql} HAVING ${having} ORDER BY block_count DESC LIMIT 20`, params);
   try {
-    const rows = await all(
-      // 🔧 v7.10.0: result_action='moved' 한정 제거 — 즉시 막아 이동을 무산시킨(no_change) 세션도
-      //   수문장 누적에 포함(블록할수록 카운트되도록). 막은 횟수가 많을수록 빠지던 역전 수정.
-      `SELECT blocker_id, COUNT(*) as block_count
-       FROM tier_repositioning_session
-       WHERE state='completed' AND blocker_id IS NOT NULL
-       GROUP BY blocker_id
-       HAVING block_count >= ?
-       ORDER BY block_count DESC
-       LIMIT 20`,
-      [threshold]
-    );
-    if (!rows || rows.length === 0) return [];
-
-    // 작품 정보 join
-    const ids = rows.map(r => r.blocker_id);
-    const placeholders = ids.map(() => "?").join(",");
-    const novels = await all(
-      `SELECT id, title, manual_tier, manual_order, rating FROM novels WHERE id IN (${placeholders})`,
-      ids
-    );
-    const byId = new Map(novels.map(n => [n.id, n]));
-    return rows
-      .map(r => ({ ...byId.get(r.blocker_id), block_count: r.block_count }))
-      .filter(r => r.id);
+    return (await run(
+      "block_count >= ? AND block_count >= COALESCE(n.gatekeeper_dismissed, 0) + ?",
+      [threshold, threshold]
+    )) || [];
   } catch (e) {
     console.warn("[v7.0] getGatekeeperCandidates 오류:", e?.message);
-    return [];
+    // gatekeeper_dismissed 컬럼이 아직 없는 런타임(마이그레이션 지연·부분 스키마)에서도 제안 자체는 살린다.
+    try {
+      return (await run("block_count >= ?", [threshold])) || [];
+    } catch (e2) {
+      console.warn("[v7.0] getGatekeeperCandidates 폴백 오류:", e2?.message);
+      return [];
+    }
   }
+}
+
+// 🆕 v7.59.9 (T11·HYB-3): 수문장이 '무엇을 막았는지' → 제안 방향.
+//   underrated 세션의 blocker = 아래에서 올라오려던 의심작을 **이긴** 쪽(그 자리에서 멈춰 세웠다) → ⬆ 신호.
+//   overrated  세션의 blocker = 위에서 내려오던 의심작에 **진** 쪽(그 위로 들어왔다) → ⬇ 신호.
+//   ⚠️ 두 증거는 비대칭이다 — '이겨냈다'는 '지금 자리가 맞다'로도 읽힌다. 그래서 우세한 쪽을 강조만 하고
+//   반대 방향 버튼을 숨기지 않는다(제안이지 판정이 아니다). 동률이면 어느 쪽도 추천하지 않는다.
+function gatekeeperDirection(g) {
+  const up = Number(g && g.up_blocks) || 0;
+  const down = Number(g && g.down_blocks) || 0;
+  if (up === down) return null;
+  return up > down ? "up" : "down";
 }
 
 // 🆕 v6.0: 모드별 표시 티어 계산
@@ -51863,7 +51946,8 @@ function AppContent() {
       const tierOrder = getActiveTierOrder(oldConfig);
       if (strategy === "reset") {
         // ③ 완전 비움 — manual_tier/order/의심신호 모두 클리어 → 하이브리드가 ELO로 표시(백지)
-        await exec("UPDATE novels SET manual_tier=NULL, manual_order=0, suspicion_score=0, user_flagged_suspect=0;");
+        // 🆕 v7.59.9 (T11): gatekeeper_dismissed도 함께 — 무시 판단은 '지금 이 자리'에 대한 것인데 자리 자체가 사라진다.
+        await exec("UPDATE novels SET manual_tier=NULL, manual_order=0, suspicion_score=0, user_flagged_suspect=0, gatekeeper_dismissed=0;");
       } else {
         const novels = await all("SELECT id, rating, manual_tier, manual_order FROM novels");
         // 현재 표시 순위(티어→레이팅 내림차순)로 정렬 — 순위탭/rankedEntries와 동일 기준
@@ -54924,6 +55008,69 @@ function AppContent() {
     }
   }, [screen, globalTierConfig.mode, verificationStats.resolved]);
 
+  // 🆕 v7.59.9 (T11·HYB-3+HYB-4): 수문장 제안 수락 — 승급/강등 공용 경로.
+  //   [이전] ⬆/⬇ 두 핸들러가 문자 단위로 같은 코드를 복제하고 있었고(한쪽만 고쳐지는 비대칭의 씨앗),
+  //     둘 다 `MAX(manual_order)+100`을 써서 강등이 '한 단계 아래'가 아니라 **하위 티어 맨 끝**으로 보냈다.
+  //     승급은 같은 공식이 우연히 맞는다 — 상위 티어 맨 아래 = 경계 바로 위 한 칸이라 실제로 인접 이동이다.
+  //   [수정] 강등만 하위 티어 MIN-50 삽입 → rebalanceTierOrder로 gap=100 복원. 승급 경로는 현행 유지.
+  //   MIN-100이 아니라 MIN-50인 이유: rebalance 직후 MIN=100이라 MIN-100=0이 되는데, backfillManualOrder가
+  //   0을 '미지정'으로 취급해 재백필 시 rating 순으로 밀려난다(0 금지).
+  //   memo하지 않는다 — 종전 인라인 onPress는 매 렌더 재생성돼 항상 최신 `loadList`/`pushUndo`를 잡았다.
+  //   좁은 의존성 배열로 memo하면 그 둘이 첫 렌더 시점에 고정돼 stale closure가 된다(불변조건 2와 같은 함정).
+  const applyGatekeeperMove = async (g, targetTier, direction) => {
+    if (!g || !targetTier) return;
+    // 🆕 v7.0.6 (M1): 더블탭 가드 — Alert "변경" 빠른 두 번 탭 시 manual_order 중복 적용 방지
+    if (gatekeeperRespondingRef.current) return;
+    gatekeeperRespondingRef.current = true;
+    try {
+      let newOrder;
+      if (direction === "down") {
+        const minRow = await first("SELECT MIN(manual_order) AS m FROM novels WHERE manual_tier=?", [targetTier]);
+        newOrder = (minRow && minRow.m != null) ? ((Number(minRow.m) || 0) - 50) : 100; // 빈 티어면 첫 자리
+      } else {
+        // 🆕 v7.0.2: gap=100 invariant 보존 — 새 티어 MAX+100 (이전 tier의 order가 잔류하면 새 tier에서 충돌)
+        const maxRow = await first("SELECT MAX(manual_order) AS m FROM novels WHERE manual_tier=?", [targetTier]);
+        newOrder = (Number(maxRow?.m) || 0) + 100;
+      }
+      await exec("UPDATE novels SET manual_tier=?, manual_order=? WHERE id=?", [targetTier, newOrder, g.id]);
+      // 강등은 -50/음수 같은 과도기 값을 남기므로 즉시 정규화(승급의 MAX+100은 이미 gap=100 정합).
+      if (direction === "down") await rebalanceTierOrder(targetTier);
+      addTierHistoryEntry(g.id, g.title, g.manual_tier, targetTier);
+      pushUndo(
+        'tier_change',
+        { id: g.id, title: g.title, prevTier: g.manual_tier, newTier: targetTier, prevManualOrder: Number(g.manual_order) || 0 },
+        `수문장 ${direction === "down" ? "강등" : "승급"}: ${g.title} → ${targetTier}`
+      );
+      // 🆕 v7.0.3: 누적 통계 소비 — 과거 blocker_id 기록 NULL 처리 (이전: 누적이 안 빠져 같은 작품이 모달에 영원히 재등장)
+      await exec("UPDATE tier_repositioning_session SET blocker_id=NULL WHERE blocker_id=?", [g.id]);
+      // 🆕 v7.59.9: 누적이 0으로 돌아갔으니 '무시' 기준선도 같이 리셋 — 안 그러면 옛 기준선이 이후 제안을 영구 차단한다.
+      try { await exec("UPDATE novels SET gatekeeper_dismissed=0 WHERE id=?", [g.id]); } catch { /* 컬럼 부재 런타임 무해 */ }
+      // 🆕 v7.4.13 (F1): 재트리거 enqueueVerification 호출 제거.
+      // 사용자가 AI 제안 수락 = 결정 확정. 재검증 필요 시 🔍 flag로 명시 호출.
+      await loadList(undefined, undefined, "v7-gatekeeper");
+      await loadVerificationStats(); // 🆕 v7.0.3: pending 카운터 즉시 갱신
+      const gks = await getGatekeeperCandidates(GATEKEEPER_BLOCK_THRESHOLD);
+      setGatekeeperCandidates(gks);
+    } catch (e) { console.warn("[v7.59.9] 수문장 이동 실패:", e?.message); }
+    finally { gatekeeperRespondingRef.current = false; } // 🆕 v7.0.6
+  };
+
+  // 🆕 v7.59.9 (T11·HYB-3): '이 제안 무시' — 제안에 동의하지 않는 사용자의 유일한 출구.
+  //   blocker_id=NULL(수락 경로가 쓰는 방식)을 쓰지 않는다: 그 컬럼은 이력의 '경계 ○○' 표시,
+  //   buildWhyExplanation, enqueue priority의 blockWeight가 읽는 원천이라 거절 한 번에 과거 기록이 사라진다.
+  //   대신 지금 누적치를 기준선으로 저장해 가리고, 새 증거가 threshold만큼 더 쌓이면 다시 제안한다.
+  const dismissGatekeeper = async (g) => {
+    if (!g || !g.id) return;
+    if (gatekeeperRespondingRef.current) return;
+    gatekeeperRespondingRef.current = true;
+    try {
+      await exec("UPDATE novels SET gatekeeper_dismissed=? WHERE id=?", [Number(g.block_count) || 0, g.id]);
+      const gks = await getGatekeeperCandidates(GATEKEEPER_BLOCK_THRESHOLD);
+      setGatekeeperCandidates(gks);
+    } catch (e) { console.warn("[v7.59.9] 수문장 제안 무시 실패:", e?.message); }
+    finally { gatekeeperRespondingRef.current = false; }
+  };
+
   // 🧠 v3.5.0: 분석 탭 진입 시 인사이트 자동 로드
   useEffect(() => {
     if (screen === "analysis") {
@@ -57289,6 +57436,9 @@ async function buildUltraCompactBackup(novels, matches, coverImages = null) {
     if (n.match_ban) opt.mb = 1;
     // 🔧 v7.10.0: 사용자 🔍 의심 플래그 — 백업 누락으로 복원 시 소실되던 것 추가(재계산 불가한 순수 사용자 입력)
     if (n.user_flagged_suspect) opt.uf = 1;
+    // 🆕 v7.59.9 (T11·HYB-3): 수문장 제안 '무시' 기준선 — uf와 같은 부류(재계산 불가한 순수 사용자 판단).
+    //   빠뜨리면 복원 직후 사용자가 이미 거절한 제안이 RS 이력과 함께 전부 되살아난다.
+    if (Number(n.gatekeeper_dismissed) > 0) opt.gd = Number(n.gatekeeper_dismissed);
     // 🤖 v7.6.1: 하이브리드 검증 증거 4종 — 0 외 저장 (v7.5 헤더는 "자동 직렬화" 주장했으나
     //   실제 누락되어 있던 것 수정. matches로 재계산 불가한 denormalized 카운터라 복원 보존 필수)
     if (Number(n.verification_wins) > 0) opt.vw = Number(n.verification_wins);
@@ -58594,6 +58744,8 @@ async function importJSON(directText, onSuccess, onSettled) {
                 const matchBanVal = opt.mb ? 1 : 0;
                 // 🔧 v7.10.0: 사용자 🔍 의심 플래그 복원 (구버전 백업은 opt.uf 없음 → 0)
                 const userFlaggedVal = opt.uf ? 1 : 0;
+                // 🆕 v7.59.9 (T11·HYB-3): 수문장 '무시' 기준선 복원 (구버전 백업은 opt.gd 없음 → 0 = 무시한 적 없음)
+                const gatekeeperDismissedVal = Number(opt.gd) || 0;
                 // 🤖 v7.6.1: 하이브리드 검증 증거 복원 (구버전 백업은 vw/vl/vc/ch 없음 → 0)
                 const verWins = Number(opt.vw) || 0;
                 const verLosses = Number(opt.vl) || 0;
@@ -58647,9 +58799,10 @@ async function importJSON(directText, onSuccess, onSettled) {
                   // 🔧 v7.10.0: user_flagged_suspect 컬럼 추가 (41→42)
                   // 🆕 v7.21.3: suspicion_score 컬럼 추가 (42→43)
                   // 🆕 v7.49.22: expected_tier/discovery_source 컬럼 추가 (48→50) — suspicion_score 뒤 정렬 유지
-                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,artist,view_count,like_count,publish_day,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,read_count_baseline,start_year,end_year,match_ban,verification_wins,verification_losses,verification_count,conflict_hits,user_flagged_suspect,suspicion_score,expected_tier,discovery_source,links,update_link,completed_at,gaiden_start_at,gaiden_completed_at)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
-                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, artist, viewCountVal, likeCountVal, publishDayVal, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, manualOrder, rereadCount, tagData, aliases, memorableQuote, readCount, startYearVal, endYearVal, matchBanVal, verWins, verLosses, verCount, conflictHits, userFlaggedVal, suspicionScoreVal, expectedTierVal, discoverySourceVal, links, updateLink, completedAtVal, gaidenStartAtVal, gaidenCompletedAtVal],
+                  // 🆕 v7.59.9 (T11): gatekeeper_dismissed 컬럼 추가 (54→55) — user_flagged_suspect 뒤 정렬 유지
+                  sql: `INSERT INTO novels (id,title,author,tags,platforms,note,read_count,rating,rd,wins,losses,match_count,tier,created_at,awards,total_episodes,status,pinned,cover_image,link,work_status,read_count_updated_at,major_genre,sub_genre,artist,view_count,like_count,publish_day,gaiden_status,gaiden_read_count,gaiden_total_episodes,manual_tier,manual_order,reread_count,tag_data,aliases,memorable_quote,read_count_baseline,start_year,end_year,match_ban,verification_wins,verification_losses,verification_count,conflict_hits,user_flagged_suspect,gatekeeper_dismissed,suspicion_score,expected_tier,discovery_source,links,update_link,completed_at,gaiden_start_at,gaiden_completed_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);`,
+                  params: [id, title, author, tags, platforms, note, readCount, rating, rd, wins, losses, matchCount, tierFromRating(rating, globalTierConfig), createdAt, awards, totalEpisodes, status, pinned, coverImage, link, workStatus, readCountUpdatedAt, majorGenre, subGenre, artist, viewCountVal, likeCountVal, publishDayVal, gaidenStatus, gaidenReadCount, gaidenTotalEpisodes, manualTier, manualOrder, rereadCount, tagData, aliases, memorableQuote, readCount, startYearVal, endYearVal, matchBanVal, verWins, verLosses, verCount, conflictHits, userFlaggedVal, gatekeeperDismissedVal, suspicionScoreVal, expectedTierVal, discoverySourceVal, links, updateLink, completedAtVal, gaidenStartAtVal, gaidenCompletedAtVal],
                 });
               }
 
@@ -63772,11 +63925,15 @@ async function importJSON(directText, onSuccess, onSettled) {
                     </TouchableOpacity>
                   </View>
                   <ScrollView style={{ padding: 16 }}>
+                    {/* 🔧 v7.59.9 (T11·HYB-3): 종전 문구는 "한 단계 위/아래 이동을 제안합니다"였는데
+                        실제로는 방향을 제안하지 않고 ⬆/⬇를 나란히 띄울 뿐이었다(=제안이 아니라 되묻기).
+                        이제 막은 방향을 집계해 한쪽을 추천하고, 동의하지 않으면 접어 둘 수 있다고 알린다. */}
                     <Text style={{ color: C.sub, fontSize: 12, marginBottom: 12 }}>
-                      이 작품들은 여러 비교에서 경계로 작용했습니다. AI는 한 단계 위/아래 이동을 제안합니다.
+                      여러 비교에서 경계(변곡점)로 작용한 작품들입니다. 무엇을 막았는지로 방향을 추천하되 판단은 사용자 몫이며,
+                      동의하지 않으면 '무시'로 접어 둘 수 있어요(새 근거가 {GATEKEEPER_BLOCK_THRESHOLD}회 더 쌓이면 다시 제안).
                     </Text>
                     {gatekeeperCandidates.length === 0 ? (
-                      <Text style={{ color: C.sub, textAlign: "center", padding: 16 }}>현재 누적된 수문장 후보가 없습니다.</Text>
+                      <Text style={{ color: C.sub, textAlign: "center", padding: 16 }}>현재 제안할 수문장 후보가 없습니다.</Text>
                     ) : gatekeeperCandidates.map(g => (
                       <View key={g.id} style={{ backgroundColor: C.bg, padding: 12, borderRadius: 10, marginBottom: 8, borderWidth: 1, borderColor: C.line }}>
                         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
@@ -63788,91 +63945,87 @@ async function importJSON(directText, onSuccess, onSettled) {
                         <Text style={{ color: C.sub, fontSize: 11 }}>
                           변곡점 등장 횟수: {g.block_count}회 · 순위 {tierRankText(g.id, false) || "—"}
                         </Text>
-                        <View style={{ flexDirection: "row", gap: 6, marginTop: 8 }}>
-                          {(() => {
-                            const order = getActiveTierOrder(globalTierConfig);
-                            const idx = order.indexOf(g.manual_tier);
-                            const higher = idx > 0 ? order[idx - 1] : null;
-                            const lower = idx >= 0 && idx < order.length - 1 ? order[idx + 1] : null;
-                            return (
-                              <>
+                        {/* 🆕 v7.59.9 (T11·HYB-3+HYB-4): 방향 근거 + 추천 강조 + 거절.
+                            근거 줄이 없으면 이 모달은 '자리를 바꿔보세요' 이상을 말하지 못해 순위 탭 인라인 칩과 다를 게 없다.
+                            방향 판정과 버튼 렌더를 **한 IIFE 안에서** 한다 — 나눠 두면 "한 단계 위가 맞습니다"라고 해 놓고
+                            정작 위 티어가 없어 버튼이 안 나오는 조합(최상위 티어·비활성 티어)에서 화면이 자가당착이 된다. */}
+                        {(() => {
+                          const up = Number(g.up_blocks) || 0;
+                          const down = Number(g.down_blocks) || 0;
+                          const dir = gatekeeperDirection(g);
+                          const order = getActiveTierOrder(globalTierConfig);
+                          const idx = order.indexOf(g.manual_tier);
+                          const higher = idx > 0 ? order[idx - 1] : null;
+                          const lower = idx >= 0 && idx < order.length - 1 ? order[idx + 1] : null;
+                          const curLabel = tierRankText(g.id, true) || getTierLabel(g.manual_tier || "");
+                          // 추천 방향은 채운 버튼 + '추천', 보조 방향은 테두리만. 동률(dir=null)이면 종전처럼 둘 다 채운다.
+                          // 단독 숨김은 하지 않는다 — 증거가 비대칭이라(gatekeeperDirection 주석) 반대 선택지를 뺏으면 안 된다.
+                          const recStyle = (tierKey) => ({ backgroundColor: getTierColor(tierKey), paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: getTierColor(tierKey) });
+                          const subStyle = { backgroundColor: "transparent", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: C.line };
+                          const isRec = (d) => d === dir || dir === null;
+                          const target = dir === "up" ? higher : dir === "down" ? lower : null;
+                          const reason =
+                            idx === -1
+                              ? "→ 지금 티어가 현재 프리셋에 없어 이동 버튼을 낼 수 없습니다(티어를 먼저 지정해 주세요)."
+                              : dir === "up"
+                                ? (higher
+                                  ? "→ 아래에서 올라오려는 도전을 더 자주 이겨냈어요. 한 단계 위가 맞을 수 있습니다."
+                                  : "→ 아래에서 올라오려는 도전을 더 자주 이겨냈지만, 더 위 티어가 없어 올릴 곳이 없습니다.")
+                                : dir === "down"
+                                  ? (lower
+                                    ? "→ 위에서 내려온 작품에 더 자주 밀렸어요. 한 단계 아래가 맞을 수 있습니다."
+                                    : "→ 위에서 내려온 작품에 더 자주 밀렸지만, 더 아래 티어가 없어 내릴 곳이 없습니다.")
+                                  : "→ 양쪽이 비슷해 어느 쪽도 추천하지 않습니다. 지금 자리가 맞을 수도 있어요.";
+                          const confirm = (targetTier, direction) => {
+                            const isDown = direction === "down";
+                            Alert.alert(
+                              isDown ? "티어 강등" : "티어 승급",
+                              `${g.title}을(를) ${getTierLabel(targetTier)} 티어로 ${isDown ? "내릴까요" : "올릴까요"}?\n\n` +
+                              `지금: ${curLabel || "—"}\n이동 후: ${getTierLabel(targetTier)} 티어 ${isDown ? "맨 위" : "맨 아래"}`,
+                              [{ text: "취소" }, { text: "변경", onPress: () => applyGatekeeperMove(g, targetTier, direction) }]
+                            );
+                          };
+                          return (
+                            <>
+                              <Text style={{ color: C.sub, fontSize: 11, marginTop: 2 }}>
+                                ⬆ 올라오려던 작품을 막음 {up}회 · ⬇ 내려온 작품에 밀림 {down}회
+                              </Text>
+                              <Text style={{ color: (dir && target) ? (isDark ? "#fcd34d" : "#92400e") : C.sub, fontSize: 11, marginTop: 2 }}>
+                                {reason}
+                              </Text>
+                              <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 8 }}>
                                 {higher && (
-                                  <TouchableOpacity
-                                    onPress={() => {
-                                      Alert.alert("티어 승급", `${g.title}을(를) ${getTierLabel(higher)} 티어로 변경할까요?`, [
-                                        { text: "취소" },
-                                        {
-                                          text: "변경",
-                                          onPress: async () => {
-                                            // 🆕 v7.0.6 (M1): 더블탭 가드 — Alert "변경" 빠른 두 번 탭 시 manual_order +100 중복 적용 방지
-                                            if (gatekeeperRespondingRef.current) return;
-                                            gatekeeperRespondingRef.current = true;
-                                            try {
-                                              // 🆕 v7.0.2: gap=100 invariant 보존 — 새 티어 MAX+100으로 manual_order 재설정 (이전 tier의 order가 잔류하면 새 tier에서 충돌)
-                                              const maxRow = await first("SELECT MAX(manual_order) AS m FROM novels WHERE manual_tier=?", [higher]);
-                                              const newOrder = ((Number(maxRow?.m) || 0) + 100);
-                                              await exec("UPDATE novels SET manual_tier=?, manual_order=? WHERE id=?", [higher, newOrder, g.id]);
-                                              addTierHistoryEntry(g.id, g.title, g.manual_tier, higher);
-                                              pushUndo('tier_change', { id: g.id, title: g.title, prevTier: g.manual_tier, newTier: higher, prevManualOrder: Number(g.manual_order) || 0 }, `수문장 승급: ${g.title} → ${higher}`);
-                                              // 🆕 v7.0.3: 누적 통계 소비 — 과거 blocker_id 기록 NULL 처리 (이전: 5+ 누적이 안 빠져 같은 작품이 모달에 영원히 재등장)
-                                              await exec("UPDATE tier_repositioning_session SET blocker_id=NULL WHERE blocker_id=?", [g.id]);
-                                              // 🆕 v7.4.13 (F1): 재트리거 enqueueVerification 호출 제거.
-                                              // 사용자가 AI 제안 수락 = 결정 확정. 재검증 필요 시 🔍 flag로 명시 호출.
-                                              await loadList(undefined, undefined, "v7-gatekeeper");
-                                              await loadVerificationStats(); // 🆕 v7.0.3: pending 카운터 즉시 갱신
-                                              const gks = await getGatekeeperCandidates(GATEKEEPER_BLOCK_THRESHOLD);
-                                              setGatekeeperCandidates(gks);
-                                            } catch (e) { console.warn(e); }
-                                            finally { gatekeeperRespondingRef.current = false; } // 🆕 v7.0.6
-                                          },
-                                        },
-                                      ]);
-                                    }}
-                                    style={{ backgroundColor: getTierColor(higher), paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
-                                  >
-                                    <Text style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}>⬆️ {getTierLabel(higher)}</Text>
+                                  <TouchableOpacity onPress={() => confirm(higher, "up")} style={isRec("up") ? recStyle(higher) : subStyle}>
+                                    <Text style={{ color: isRec("up") ? "#fff" : C.sub, fontWeight: "700", fontSize: 12 }}>
+                                      ⬆️ {getTierLabel(higher)}{dir === "up" ? " · 추천" : ""}
+                                    </Text>
                                   </TouchableOpacity>
                                 )}
                                 {lower && (
-                                  <TouchableOpacity
-                                    onPress={() => {
-                                      Alert.alert("티어 강등", `${g.title}을(를) ${getTierLabel(lower)} 티어로 변경할까요?`, [
-                                        { text: "취소" },
-                                        {
-                                          text: "변경",
-                                          onPress: async () => {
-                                            // 🆕 v7.0.6 (M1): 더블탭 가드
-                                            if (gatekeeperRespondingRef.current) return;
-                                            gatekeeperRespondingRef.current = true;
-                                            try {
-                                              // 🆕 v7.0.2: 강등도 동일하게 새 티어 MAX+100 부여 (gap=100 invariant 보존)
-                                              const maxRow = await first("SELECT MAX(manual_order) AS m FROM novels WHERE manual_tier=?", [lower]);
-                                              const newOrder = ((Number(maxRow?.m) || 0) + 100);
-                                              await exec("UPDATE novels SET manual_tier=?, manual_order=? WHERE id=?", [lower, newOrder, g.id]);
-                                              addTierHistoryEntry(g.id, g.title, g.manual_tier, lower);
-                                              pushUndo('tier_change', { id: g.id, title: g.title, prevTier: g.manual_tier, newTier: lower, prevManualOrder: Number(g.manual_order) || 0 }, `수문장 강등: ${g.title} → ${lower}`);
-                                              // 🆕 v7.0.3: 누적 통계 소비
-                                              await exec("UPDATE tier_repositioning_session SET blocker_id=NULL WHERE blocker_id=?", [g.id]);
-                                              // 🆕 v7.4.13 (F1): 재트리거 enqueueVerification 호출 제거
-                                              await loadList(undefined, undefined, "v7-gatekeeper");
-                                              await loadVerificationStats(); // 🆕 v7.0.3
-                                              const gks = await getGatekeeperCandidates(GATEKEEPER_BLOCK_THRESHOLD);
-                                              setGatekeeperCandidates(gks);
-                                            } catch (e) { console.warn(e); }
-                                            finally { gatekeeperRespondingRef.current = false; } // 🆕 v7.0.6
-                                          },
-                                        },
-                                      ]);
-                                    }}
-                                    style={{ backgroundColor: getTierColor(lower), paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
-                                  >
-                                    <Text style={{ color: "#fff", fontWeight: "700", fontSize: 12 }}>⬇️ {getTierLabel(lower)}</Text>
+                                  <TouchableOpacity onPress={() => confirm(lower, "down")} style={isRec("down") ? recStyle(lower) : subStyle}>
+                                    <Text style={{ color: isRec("down") ? "#fff" : C.sub, fontWeight: "700", fontSize: 12 }}>
+                                      ⬇️ {getTierLabel(lower)}{dir === "down" ? " · 추천" : ""}
+                                    </Text>
                                   </TouchableOpacity>
                                 )}
-                              </>
-                            );
-                          })()}
-                        </View>
+                                {/* 거절 수단. 이게 없으면 동의하지 않는 사용자는 티어를 바꾸기 전까지 '🤖 AI 제안' 배지를 영구히 달고 살아야 했다. */}
+                                <TouchableOpacity
+                                  onPress={() => {
+                                    Alert.alert(
+                                      "이 제안 무시",
+                                      `${g.title}의 자리 조정 제안을 접어 둘까요?\n\n` +
+                                      `지금까지의 경계 기록(${g.block_count}회)은 그대로 남고, 앞으로 ${GATEKEEPER_BLOCK_THRESHOLD}회 더 쌓이면 다시 제안합니다.`,
+                                      [{ text: "취소" }, { text: "무시", onPress: () => dismissGatekeeper(g) }]
+                                    );
+                                  }}
+                                  style={{ paddingHorizontal: 8, paddingVertical: 6 }}
+                                >
+                                  <Text style={{ color: C.sub, fontSize: 12, fontWeight: "700", textDecorationLine: "underline" }}>이 제안 무시</Text>
+                                </TouchableOpacity>
+                              </View>
+                            </>
+                          );
+                        })()}
                       </View>
                     ))}
                   </ScrollView>
