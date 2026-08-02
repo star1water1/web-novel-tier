@@ -2,9 +2,166 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.15 (구색 기능 개선 Phase 4 완료 — AI 키워드 일일 캐시 · 동적 가중)      ║
+ * ║  버전: 7.59.19 (구색 기능 개선 Phase 5 완료 — 스펙트럼 rename 이전 + 빈 축 사유)   ║
  * ║  최종 수정: 2026-08-02                                                        ║
- * ║  총 라인 수: 약 79,800줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 80,040줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🔤 v7.59.19 스펙트럼 rename 이전 + 빈 축 사유 (T21 · ANA-4 HC-2) (2026-08-02)     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제 ①·ANA-4] `renameTagGlobally`가 레지스트리의 majorGenres·subGenres·        ║
+ * ║ generalTags·pinned/hidden·sentiment/attributes·tag_relations·coordinateSystems  ║
+ * ║ 를 전부 이전하면서 **spectrumGroups 하나만** 빠뜨렸다. 축에 쓰인 태그 이름을     ║
+ * ║ 바꾸면 그 축은 매칭되는 작품이 사라져 화면에서 **조용히 없어졌고**, 완료 알림은  ║
+ * ║ "관계·좌표 설정도 함께 이전됐어요"라 오히려 이전됐다고 믿게 만들었다.            ║
+ * ║ 헬스 패널의 클러스터 병합은 이 함수를 silent 루프로 반복 호출하므로 축이         ║
+ * ║ 연쇄적으로 깎일 수 있다.                                                        ║
+ * ║                                                                              ║
+ * ║ [문제 ②·HC-2] 조건을 못 넘긴 축은 **아무 흔적 없이** 사라졌다 — '태그 이름을     ║
+ * ║ 바꿔서 비었다'와 '원래 작품이 적다'가 화면상 구분되지 않았다.                     ║
+ * ║                                                                              ║
+ * ║ [수정 ①] rename 시 spectrumGroups 각 축의 tags에도 동일한 `ren()`(치환+dedupe)  ║
+ * ║ 적용. `prev.spectrumGroups`가 없으면 applyTagRegistry와 **같은 FACTORY 폴백**을  ║
+ * ║ 써서 첫 rename이 축을 팩토리로 되돌리지 않게 한다. 알림 문구도 '스펙트럼' 추가.  ║
+ * ║                                                                              ║
+ * ║ [수정 ②] 분석이 `spectrumSkipped`(축 id·이름·사유·표본)를 함께 반환하고, 화면    ║
+ * ║ 하단에 '표시되지 않은 축 N개 + 사유' 행을 낸다. 사유는 두 갈래 —                 ║
+ * ║ **tags**(축 태그가 2개 미만 → 병합으로 줄었을 수 있음) / **sample**(해당 태그    ║
+ * ║ 작품이 SPECTRUM_MIN_NOVELS 미만). 표시할 축이 0개여도 사유가 있으면 섹션을 연다  ║
+ * ║ (종전엔 섹션째 사라져 설명할 자리가 없었다).                                     ║
+ * ║                                                                              ║
+ * ║ [설계 변경] 카드의 '축소된 축을 비활성 처리'는 **레지스트리에 플래그를 넣지 않고**║
+ * ║ 분석 단계 판정으로 했다. tags<2면 normalizedPosition이 전부 0.5로 고정돼         ║
+ * ║ 어떤 서재에서도 '중간 성향'만 나오는데, 그 무의미한 축을 그리는 대신 사유로       ║
+ * ║ 돌린다. 축 자체는 지우지 않는다 — 사용자가 태그를 다시 나누면 그대로 살아난다.    ║
+ * ║                                                                              ║
+ * ║ [검증] 실제 레지스트리 rename 블록·팩토리 상수를 소스에서 떼어내 실행 — 축 이전   ║
+ * ║ 재현/해소, 같은 축 3연속 병합(4→3→2→1개), spectrumGroups 없을 때 팩토리 폴백,    ║
+ * ║ 손상 데이터(null/tags 없음/배열형) 방어, 사유 문구 3케이스. 레지스트리 재구성     ║
+ * ║ 5지점 점검 — 모드 전환은 `curReg?.spectrumGroups` 보존, seed는 tag_registry가    ║
+ * ║ 없을 때만, 백업 `payload.TR`은 registry 전체라 왕복 보존. esbuild 통과.          ║
+ * ║ APP_VERSION 7.59.19.                                                          ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📏 v7.59.18 표본 정직 표시 (T20 · ANA-3 ANA-7) (2026-08-02)                       ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제 ①·ANA-7] '상위 티어 집중도'가 `topTierRatio` 단독 내림차순이라 **N=2에서    ║
+ * ║ 2작 다 상위 티어면 100%**가 되어 N=20·80%짜리를 제치고 1위로 올라섰다. 표본       ║
+ * ║ 임계(2/2/3/3)는 목록 진입만 막을 뿐 순위는 못 막는다. 정작 표본 보정용            ║
+ * ║ **윌슨 신뢰구간을 computeTierStratification이 이미 계산해 저장(topTierCI)**       ║
+ * ║ 해 두고도 화면에서 아무도 쓰지 않았다.                                            ║
+ * ║                                                                              ║
+ * ║ [문제 ②·ANA-3] '취향 스펙트럼'의 선호 배지가 작품 2개짜리 판정과 40개짜리 판정을  ║
+ * ║ 같은 모습으로 보였다(표본 수는 펼쳐야만 노출). 게다가 고평가작이 **0작이면**       ║
+ * ║ `highRatedAvgPos`가 전체 평균으로 폴백하는데, UI는 그 값을 '고평점 작품 성향'      ║
+ * ║ 이라 불렀다 — 같은 숫자를 두 번 말하면서 새 정보인 척한 셈.                        ║
+ * ║                                                                              ║
+ * ║ [수정 ①] 집중도 정렬 키를 **윌슨 하한(`topTierCI.lower`)**으로. 실측 5엔티티      ║
+ * ║ 배치에서 N=2·100%가 **1위 → 5위**로, N=20·80%가 1위로 올라온다. 하한 동률이면     ║
+ * ║ 표본 큰 쪽 우선. 임계 상향은 하지 않았다 — 윌슨이 이미 강등하므로 상향은 소형     ║
+ * ║ 서재에서 목록만 비운다. 정렬 근거를 섹션 캡션에 명시(표시 %는 내림차순이 아니게    ║
+ * ║ 되므로). ⚠️ 이 배열은 `preference_patterns`/`insight_queue`로도 흘러 slice        ║
+ * ║ 멤버십이 바뀌지만, 저장 직전 해당 category를 DELETE 후 재삽입하므로 자가 치유.     ║
+ * ║                                                                              ║
+ * ║ [수정 ②] 스펙트럼 — 접힌 배지에 `· N작` 병기, 확장 시 '전체 분포'와 '특히 높게    ║
+ * ║ 평가한 N작'을 **나란히**, 고평가작 0작이면 폴백값을 보여 주는 대신 비교하지        ║
+ * ║ 않았음을 밝힌다. 게이트 2는 값 그대로 `SPECTRUM_MIN_NOVELS` 상수로만 승격 —       ║
+ * ║ 상향은 '축이 왜 비었는지' 사유 표시(T21)와 동시에 해야 침묵이 늘지 않는다.         ║
+ * ║ analyzePreferences에 `highRatedCount` 필드 추가(영속 대상 아님 — 런타임 산출).     ║
+ * ║                                                                              ║
+ * ║ [수정 ③] entropy 목록('강한 선호'·'균등 분산')에도 N 병기 — 형제 섹션인 집중도는  ║
+ * ║ N을 보이는데 여기만 없었다.                                                       ║
+ * ║                                                                              ║
+ * ║ [검증] 실제 `_toSortedArray`·`topTierCI` 후처리·`wilsonConfidenceInterval`을     ║
+ * ║ 소스에서 떼어내 실행 — 5엔티티 순위 역전, 임계 필터 불변, 하한 동률 타이브레이크,  ║
+ * ║ topTierCI 없는 stat 방어, 스펙트럼 4케이스 문구. esbuild 통과. APP_VERSION       ║
+ * ║ 7.59.18.                                                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🧭 v7.59.17 핵심 취향 헤드라인 정직화 (T19 · ANA-2 ANA-8) (2026-08-02)            ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제 ①·ANA-2] 취향 분석 최상단 '항상 펼침' 카드의 한 문장이 사실상 **개수 1위**  ║
+ * ║ 만 읊었다. majorGenreAnalysis 정렬 키가 `weightedCount` 1차이고 adjRating(수축   ║
+ * ║ 평균)은 동점일 때만 쓰이는 2차 키인데, weightedCount가 다회독 가중 실수라 동점이  ║
+ * ║ 사실상 없다 → 많이 등록했지만 낮게 평가한 장르가 대표 문장에 못박히고, 높게       ║
+ * ║ 평가한 소수 장르는 이 문장에 등장할 수 없었다. 표본 게이트도                      ║
+ * ║ `novels.length === 0` 하나뿐이라 3작짜리 서재도 같은 확신 어조였다.               ║
+ * ║                                                                              ║
+ * ║ [문제 ②·ANA-8] `preferredLength`에 count 조건이 전무했다. `avg`가 빈 배열에 0을   ║
+ * ║ 주는데 lens 길이가 **항상 3**이라 `|| "unknown"` 폴백이 **도달 불가** — 회차를    ║
+ * ║ 아무도 입력하지 않은 서재에서 안정정렬이 short를 1위로 만들어 헤드라인이           ║
+ * ║ '단편(100화 미만)의 작품을 즐겨 읽습니다'로 **단정**됐다(실측 재현). 400화 한 편이 ║
+ * ║ 우연히 최상위 티어면 즉시 '장편 선호'가 되던 것도 같은 뿌리.                       ║
+ * ║                                                                              ║
+ * ║ [수정 ①] 빈도 1위와 만족도 1위(adjRating, 표본 3작 이상)를 **함께** 말한다 —      ║
+ * ║ 다르면 "가장 많이 읽은 장르는 A, 가장 높게 평가한 장르는 B입니다", 같으면 "…도    ║
+ * ║ …도 A입니다". ⚠️ majorGenreAnalysis는 '선호 장르' 칩·장르 차트·신뢰도 정렬        ║
+ * ║ 토글이 **빈도 순서 그대로** 소비하는 공유 배열이라 반드시 사본을 정렬한다.         ║
+ * ║                                                                              ║
+ * ║ [수정 ②] 길이 버킷에 표본 하한(`LENGTH_BUCKET_MIN`=5) + 비교 가능 버킷 2개 미만   ║
+ * ║ 이면 "unknown". 이때 '다양한 길이'로 얼버무리지 않고 **판단 보류를 밝힌다**       ║
+ * ║ (회차 미입력 서재는 길이가 '다양한' 게 아니라 '모르는' 것이다). 사장돼 있던        ║
+ * ║ '다양한 길이' 라벨은 제거. 파이 차트·읽기 패턴 섹션은 lengthPreference의          ║
+ * ║ count/avgRating을 직접 읽으므로 표시 불변.                                       ║
+ * ║                                                                              ║
+ * ║ [수정 ③] 표본 게이트(`CORE_PREF_MIN_TOTAL`=10)를 **총 작품이 아니라 분석          ║
+ * ║ 모집단(reliable)**으로 잡았다 — 장르·길이 통계가 전부 그 위에서 계산되므로 총     ║
+ * ║ 50작이어도 reliable이 6작이면 문장이 기대는 근거는 6작이다. 둘이 다르면 그        ║
+ * ║ 사실까지 문구에 적는다.                                                          ║
+ * ║                                                                              ║
+ * ║ [기각] 버킷 경계(100/400) 편집 UI·모드별 기본값 — 같은 경계가                     ║
+ * ║ `processPatternUpdates`의 `getEpBucket`에도 있고 그건 `episode_length` 패턴 키로  ║
+ * ║ **DB에 영속**된다. 값을 바꾸면 누적 통계가 조용히 어긋난다(카드 미인용 사실).      ║
+ * ║ 표본 하한만으로 웹툰 슬롯 편중·1작 확정이 모두 'unknown'으로 떨어져 실익도 없다.   ║
+ * ║                                                                              ║
+ * ║ [검증] 실제 preferredLength IIFE·corePreference 산출부를 소스에서 떼어내 실행 —   ║
+ * ║ 길이 8시나리오(종전 대조: 미입력→short/장편1작→long 재현 후 전부 해소), 헤드라인   ║
+ * ║ 7시나리오, 공유 배열 순서 불변, 사장 라벨 제거. esbuild 통과. APP_VERSION 7.59.17. ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🏆 v7.59.16 수상 pre-select를 patrick truth와 정합 (T18 · ANA-1) (2026-08-02)     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제 ①] '자동 후보'의 pre-select가 calculateWinProbability 내림차순인데, 그      ║
+ * ║ 점수식은 hybrid/manual에서도 태그매칭(≤50)·완결(25)·재독(≤30)·신뢰도(≤15)를       ║
+ * ║ 그대로 더한다. 같은 티어 안에서 manual_order 항은 `max(0, 15 - order/200)`이라    ║
+ * ║ 변동폭이 ~15뿐 — **사용자가 직접 1위로 올려 둔 작품을 보너스가 눌러버렸다.**       ║
+ * ║ 실측(A티어 3작 + B티어 1작, 정원 2): 종전 pre-select는 A2·A3이고 사용자의 A1은    ║
+ * ║ 3순위로 밀려 아예 수여 대상에서 빠졌다. calculateNovelScore의 v7.10.0 주석이       ║
+ * ║ 적어 둔 원 가정('정렬은 compareNovels라 무관 — 확률 배지만 정합')이 이 경로에서    ║
+ * ║ 만 깨져 있었다. 후보 목록(filteredCandidates·candidatesForThisAward)은 둘 다      ║
+ * ║ compareNovels 정렬이라 표시 순서와 pre-select 순서가 서로 어긋나 있기도 했다.     ║
+ * ║                                                                              ║
+ * ║ [문제 ②] 확률 표기가 1~99 클램프 + `toFixed(1)`. 하이브리드는 티어 격차가 200점   ║
+ * ║ (temperature 50 → exp(-4)/티어)이라 2티어 아래부터 소프트맥스가 0.03% 밑인데,     ║
+ * ║ 클램프가 그걸 전부 '1.0%'라는 존재하지 않는 수치로 바꿨다(실측 5티어 열 합계       ║
+ * ║ 102.97%). 소수점 한 자리는 애초에 근거 없는 정밀도다.                             ║
+ * ║                                                                              ║
+ * ║ [수정 ①] hybrid/manual은 pre-select 재정렬을 **생략**하고 pool 순서를 그대로      ║
+ * ║ 쓴다 — pool은 이미 getCandidatesForAward가 compareNovels(=manual_tier→          ║
+ * ║ manual_order)로 정렬한 patrick truth다. **점수식은 무수정** — 티어 200점 독점은   ║
+ * ║ 티어 횡단 역전을 막는 v7.10.0 의도 동작이고, 동티어 밴드를 넓히면 그게 깨진다.     ║
+ * ║ ELO 모드는 종전대로 prob 정렬(pool이 rating desc라 순서가 대체로 같고, 승률·      ║
+ * ║ 신뢰도 등 rating 밖 신호를 반영하는 편이 모드 의도에 맞다).                        ║
+ * ║                                                                              ║
+ * ║ [수정 ②] 클램프 제거 + 표기 헬퍼 `winProbText` — 0.5% 미만은 `<1%`, 99.5% 이상은  ║
+ * ║ `>99%`, 그 사이는 정수 %. 숫자를 지어내지 않으면서 '무시할 만큼'과 '없음'을 구분   ║
+ * ║ 한다. 표기 3곳(자동 후보 행·후보작 배지·결과 탭 썸네일)을 한 함수로 통일.          ║
+ * ║                                                                              ║
+ * ║ [수정 ③] hybrid/manual의 자동 후보 행은 `%` 대신 **tierRankText("A 3위")**를      ║
+ * ║ 보인다. 재정렬을 없애면 확률이 내림차순이 아니게 되는데(위 14% · 아래 47%),        ║
+ * ║ 그대로 두면 목록이 잘못 정렬된 것처럼 읽힌다. 섹션 안내문도 모드별로 갈라          ║
+ * ║ '무엇을 보고 골랐는지'(내 순위 / 예상 확률)를 밝힌다.                             ║
+ * ║                                                                              ║
+ * ║ [기각] 티어 가중(30/170)·temperature(50) 설정 노출 — 두 모드의 score 스케일이     ║
+ * ║ 달라(hybrid 200/티어 vs match rating×0.5) 단일 노브로 둘 다 다룰 수 없다.          ║
+ * ║                                                                              ║
+ * ║ [검증] 실제 calculateWinProbability 본문·winProbText·선정부를 소스에서 떼어내      ║
+ * ║ 실행 — 동티어 역행 재현/해소, ELO 불변, 5티어 클램프 대조(102.97% → 100.00%),     ║
+ * ║ 경계 14종, 정원 4경로, 조기 반환 3종. esbuild 통과. APP_VERSION 7.59.16.          ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -21713,7 +21870,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.15";
+const APP_VERSION = "7.59.19";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -31807,6 +31964,21 @@ const PlatformChips = memo(({ platforms, onChange, options, extraPlatforms, them
    - 상 설정 커스터마이즈
    - 후보작 기준: 해당 연도 완결 또는 연재시작 작품
    ========================================================= */
+
+// 🆕 v7.59.16 (T18·ANA-1): 수상 확률 표기 헬퍼.
+//   [문제] 종전엔 calculateWinProbability가 결과를 1~99로 클램프한 뒤 화면이 `toFixed(1)`로 찍었다.
+//   하이브리드는 티어 격차가 200점(=exp(-4)/티어)이라 2티어 아래부터 소프트맥스 값이 0.03% 밑으로 떨어지는데,
+//   클램프가 그걸 전부 '1.0%'라는 **존재하지 않는 수치**로 바꿔 놓았다(합계도 100%를 넘김).
+//   [해결] 클램프를 걷고 표기 단계에서 정직하게 — 0.5% 미만은 `<1%`, 99.5% 이상은 `>99%`, 그 사이는 정수 %.
+//   소수점 한 자리는 애초에 근거 없는 정밀도라 버린다.
+function winProbText(p) {
+  if (!Number.isFinite(p)) return "0%";
+  if (p >= 100) return "100%";       // 후보가 1작뿐인 경우(조기 반환)
+  if (p > 0 && p < 0.5) return "<1%"; // 반올림하면 0%가 되는 구간 — '없음'이 아니라 '무시할 만큼'
+  if (p >= 99.5) return ">99%";       // 반올림하면 100%가 되지만 확정은 아닌 구간
+  return `${Math.round(p)}%`;
+}
+
 const AwardsScreen = memo(({
   list,
   awardSystemSettings,
@@ -32200,8 +32372,10 @@ const AwardsScreen = memo(({
     
     const probability = (novelExpScore.exp / sumExp) * 100;
 
-    // 범위 제한 (1% ~ 99%)
-    return Math.min(99, Math.max(1, probability));
+    // 🔧 v7.59.16 (T18·ANA-1): 범위 제한(1~99) 제거 — 정규화된 소프트맥스 값을 그대로 돌려준다.
+    //   클램프는 하위 티어를 전부 '1.0%'로 뭉개 후보 간 구분을 없애고, 열의 합을 100% 밖으로 밀어냈다.
+    //   표기의 하한/상한은 winProbText가 `<1%` / `>99%`로 처리한다 (숫자를 지어내지 않는 쪽).
+    return probability;
     // 🔧 v7.0.7 (MAJ-4): isManualOrHybrid 추가 — manual↔match 라이브 전환 시 stale closure 방지
     // (이전: isHybrid만 deps → match→manual 변경 시 isHybrid는 false→false 불변, isManualOrHybrid가 false→true이지만 invalidate 안 됨)
   }, [list.length, isHybrid, isManualOrHybrid]);
@@ -32262,16 +32436,22 @@ const AwardsScreen = memo(({
       if (remaining <= 0) continue; // 정원 충족 → 추천 없음
       const pool = getCandidatesForAward(award); // matchTags+tierMin+미수상 필터 완료
       if (pool.length === 0) continue;
-      const ranked = pool
-        .map(n => ({ novel: n, prob: calculateWinProbability(n, award, pool) }))
-        .sort((a, b) => b.prob - a.prob);
+      // 🔧 v7.59.16 (T18·ANA-1): hybrid/manual은 pool 순서(=compareNovels, patrick truth) 그대로 pre-select.
+      //   [문제] prob 내림차순 재정렬은 같은 티어 안에서 태그매칭(≤50)·완결(25)·재독(≤30)이 manual_order 항
+      //   (`Math.max(0, 15 - order/200)`, 티어 내 변동폭 ~15)을 압도해, 사용자가 직접 1위로 올려 둔 작품 대신
+      //   완결·다회독 표시가 붙은 아래 작품이 pre-select됐다. calculateNovelScore의 v7.10.0 주석이 말한
+      //   '정렬은 compareNovels라 무관 — 확률 배지만 정합'이라는 원 가정이 이 경로에서만 깨져 있던 것.
+      //   [해결] 두 모드에선 재정렬을 생략한다. 점수식(티어 200점 독점)은 그대로 — 티어 횡단 역전 방지는 의도 동작이다.
+      //   ELO 모드는 종전대로 prob 정렬 (pool이 rating desc라 순서가 대체로 같고, 승률·신뢰도 등 rating 밖 신호를 반영).
+      const ranked = pool.map(n => ({ novel: n, prob: calculateWinProbability(n, award, pool) }));
+      if (!isManualOrHybrid) ranked.sort((a, b) => b.prob - a.prob);
       const take = Number.isFinite(remaining) ? remaining : 5;
       const suggested = ranked.slice(0, take);
       if (suggested.length === 0) continue;
       out.push({ award, suggested, remaining: Number.isFinite(remaining) ? remaining : suggested.length });
     }
     return out;
-  }, [autoAwardSuggest, currentYearAwards, awardWinners, getCandidatesForAward, calculateWinProbability]);
+  }, [autoAwardSuggest, currentYearAwards, awardWinners, getCandidatesForAward, calculateWinProbability, isManualOrHybrid]);
 
   // 선택 여부 판정: override 우선, 없으면 pre-select(suggested 전부 기본 선택)
   const isSuggestSelected = useCallback((awardId, novelId) => {
@@ -32822,8 +33002,11 @@ const AwardsScreen = memo(({
           {/* 🆕 자동 수상 후보 추천(반자동): 정원/조건 준수 상위 후보 pre-select. 체크박스로 가감 후 '선택 수여' */}
           {autoAwardSuggest && autoSuggestions.length > 0 && (
             <Section title="🏆 자동 후보">
+              {/* 🆕 v7.59.16 (T18·ANA-1): 선택 기준을 모드별로 명시 — 무엇을 보고 골랐는지 알아야 체크를 가감할 수 있다 */}
               <Text style={{ color: C.sub, marginBottom: 10, fontSize: 12 }}>
-                각 상의 정원·조건에 맞는 상위 후보를 자동 선택했습니다. 체크를 가감한 뒤 수여하세요.
+                {isManualOrHybrid
+                  ? "각 상의 정원·조건에 맞는 후보를 내 순위(티어 → 티어 내 순서) 상위부터 자동 선택했습니다. 체크를 가감한 뒤 수여하세요."
+                  : "각 상의 정원·조건에 맞는 후보를 예상 확률 상위부터 자동 선택했습니다. 체크를 가감한 뒤 수여하세요."}
               </Text>
               {autoSuggestions.map(grp => (
                 <View key={grp.award.id} style={{ marginBottom: 14 }}>
@@ -32853,8 +33036,12 @@ const AwardsScreen = memo(({
                         <Text style={{ color: C.text, fontWeight: "700", flex: 1 }} numberOfLines={1}>
                           {novel.title}
                         </Text>
+                        {/* 🔧 v7.59.16 (T18·ANA-1): hybrid/manual은 선택 근거가 확률이 아니라 내 순위다.
+                            확률을 그대로 두면 목록이 내림차순이 아니어서(위 40% · 아래 55%) 잘못 정렬된 것처럼 보인다. */}
                         <Text style={{ color: C.sub, fontSize: 12, marginLeft: 8 }}>
-                          {getDisplayTier(novel, globalTierConfig)} · {Math.round(prob)}%
+                          {isManualOrHybrid
+                            ? (tierRankText(novel.id, true) || getDisplayTier(novel, globalTierConfig))
+                            : `${getDisplayTier(novel, globalTierConfig)} · ${winProbText(prob)}`}
                         </Text>
                       </TouchableOpacity>
                     );
@@ -33003,7 +33190,7 @@ const AwardsScreen = memo(({
                               fontSize: 11,
                               fontWeight: "700"
                             }}>
-                              📊 수상 확률: {winProbability.toFixed(1)}%
+                              📊 수상 확률: {winProbText(winProbability)}
                             </Text>
                           </View>
                         )}
@@ -33555,7 +33742,7 @@ const AwardsScreen = memo(({
                                         fontWeight: "700",
                                         marginTop: 2,
                                       }}>
-                                        {prob.toFixed(0)}%
+                                        {winProbText(prob)}
                                       </Text>
                                     </View>
                                   );
@@ -35372,7 +35559,7 @@ const TasteAnalysisScreen = memo(({
 
   const { basicStats, majorGenreAnalysis, subGenreAnalysis, tagAnalysis,
           comboAnalysis, platformAnalysis, loyalAuthors, readingPattern,
-          matchAnalysis, trendAnalysis, anomalies, insights, spectrumAnalysis,
+          matchAnalysis, trendAnalysis, anomalies, insights, spectrumAnalysis, spectrumSkipped,
           // 🆕 v7.1: 티어 인사이트
           tierStratification, tierConcentration, tierEntropy, tierInversion,
           awardTierCorrelation, tierDistribution } = analysis;
@@ -36394,8 +36581,11 @@ const TasteAnalysisScreen = memo(({
       {isTierMode && isGroupExpanded("tier") && tierConcentration && (
         <TouchableOpacity onPress={() => toggleSection("tierConcentration")}>
           <Section title={`🏆 상위 티어 집중도 ${isExpanded("tierConcentration") ? "▼" : "▶"}`}>
+            {/* 🔧 v7.59.18 (T20·ANA-7): 정렬 기준을 밝힌다 — 윌슨 하한 순이라 표시되는 %가 내림차순이
+                아닐 수 있고(예: 80%·N=20이 100%·N=2보다 위), 근거를 안 적으면 잘못 정렬된 것처럼 보인다. */}
             <Text style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>
-              내 상위 티어에 가장 많이 등장하는 작가/태그/장르
+              내 상위 티어에 가장 많이 등장하는 작가/태그/장르{"\n"}
+              표본 크기를 반영한 신뢰 하한 순 — 표본이 작으면 비율이 높아도 아래로 내려갑니다.
             </Text>
             {isExpanded("tierConcentration") && (
               <View style={{ gap: 14 }}>
@@ -36532,7 +36722,8 @@ const TasteAnalysisScreen = memo(({
                         <Text style={{ color: C.text, fontSize: 12, flex: 1 }} numberOfLines={1}>
                           {s.kind === "tag" ? "🏷️" : s.kind === "author" ? "✍️" : "📚"} {s.key}
                         </Text>
-                        <Text style={{ color: C.sub, fontSize: 11 }}>상위 {(s.topTierRatio * 100).toFixed(0)}%</Text>
+                        {/* 🔧 v7.59.18 (T20·ANA-7): 표본 병기 — 집중도 목록은 N을 보이는데 여기만 없었다 */}
+                        <Text style={{ color: C.sub, fontSize: 11 }}>상위 {(s.topTierRatio * 100).toFixed(0)}% (N={s.totalCount})</Text>
                       </View>
                     ))}
                   </View>
@@ -36545,7 +36736,7 @@ const TasteAnalysisScreen = memo(({
                         <Text style={{ color: C.text, fontSize: 12, flex: 1 }} numberOfLines={1}>
                           {s.kind === "tag" ? "🏷️" : s.kind === "author" ? "✍️" : "📚"} {s.key}
                         </Text>
-                        <Text style={{ color: C.sub, fontSize: 11 }}>모든 티어 산재</Text>
+                        <Text style={{ color: C.sub, fontSize: 11 }}>모든 티어 산재 (N={s.totalCount})</Text>
                       </View>
                     ))}
                   </View>
@@ -37099,7 +37290,10 @@ const TasteAnalysisScreen = memo(({
       )}
 
       {/* 🎯 v3.1.2 스펙트럼 분석 UI */}
-      {isGroupExpanded("genreTag") && spectrumAnalysis && Object.keys(spectrumAnalysis).length > 0 && (
+      {/* 🔧 v7.59.19 (T21·ANA-4): 표시할 축이 하나도 없어도 **사유가 있으면** 섹션을 연다.
+          종전엔 축이 전부 조건을 못 넘기면 섹션 자체가 사라져, '왜 안 보이는지'를 말할 자리가 없었다. */}
+      {isGroupExpanded("genreTag") && spectrumAnalysis
+        && (Object.keys(spectrumAnalysis).length > 0 || (spectrumSkipped || []).length > 0) && (
         <TouchableOpacity onPress={() => toggleSection("spectrum")}>
           <Section title={`📊 취향 스펙트럼 ${isExpanded("spectrum") ? "▼" : "▶"}`}>
             <Text style={{ color: C.sub, fontSize: 12, marginBottom: 12 }}>
@@ -37139,8 +37333,10 @@ const TasteAnalysisScreen = memo(({
                       paddingVertical: 3, 
                       borderRadius: 10 
                     }}>
+                      {/* 🔧 v7.59.18 (T20·ANA-3): 접힌 상태에서도 표본을 보인다 — 종전엔 작품 2개짜리 판정과
+                          40개짜리 판정이 같은 배지로 보였고, 표본 수는 펼쳐야만 나왔다. */}
                       <Text style={{ color: posColor, fontSize: 11, fontWeight: "700" }}>
-                        {data.preferenceLabel}
+                        {data.preferenceLabel} · {data.novelCount}작
                       </Text>
                     </View>
                   </View>
@@ -37194,12 +37390,24 @@ const TasteAnalysisScreen = memo(({
                   {/* 상세 정보 (확장 시) */}
                   {isExpanded("spectrum") && (
                     <View style={{ marginTop: 8 }}>
+                      {/* 🔧 v7.59.18 (T20·ANA-3): '전체 분포'와 '고평가 성향'을 나란히 — 둘은 다른 값인데
+                          종전엔 고평가 쪽만 보였고, 고평가작이 0작이면 폴백된 전체 평균이 '고평점 작품 성향'
+                          이라는 이름을 달고 나왔다(같은 숫자를 두 번 말하면서 새 정보인 척). */}
                       <Text style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>
-                        {data.novelCount}개 작품 분석 · 고평점 작품 성향: {
-                          data.highRatedAvgPosition < 0.35 ? leftTag
-                          : data.highRatedAvgPosition > 0.65 ? rightTag
+                        전체 분포({data.novelCount}작): {
+                          data.avgPosition < 0.35 ? leftTag
+                          : data.avgPosition > 0.65 ? rightTag
                           : "중간"
                         }
+                      </Text>
+                      <Text style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>
+                        {data.highRatedCount > 0
+                          ? `특히 높게 평가한 ${data.highRatedCount}작: ${
+                              data.highRatedAvgPosition < 0.35 ? leftTag
+                              : data.highRatedAvgPosition > 0.65 ? rightTag
+                              : "중간"
+                            }`
+                          : "특히 높게 평가한 작품 없음 — 고평가 성향은 비교하지 않았습니다"}
                       </Text>
                       {/* 🆕 v7.23.1: 대표 예시 작품 */}
                       {data.topNovel && (
@@ -37242,6 +37450,25 @@ const TasteAnalysisScreen = memo(({
                 </View>
               );
             })}
+
+            {/* 🆕 v7.59.19 (T21·ANA-4+HC-2): 표시되지 못한 축의 사유. 종전엔 흔적 없이 사라져
+                '태그 이름을 바꿔서 축이 비었다'와 '원래 작품이 적다'를 구분할 수 없었다. */}
+            {(spectrumSkipped || []).length > 0 && (
+              <View style={{ marginTop: 4, paddingTop: 10, borderTopWidth: 1, borderTopColor: C.line + "60" }}>
+                <Text style={{ color: C.sub, fontSize: 11, fontWeight: "700", marginBottom: 4 }}>
+                  표시되지 않은 축 {spectrumSkipped.length}개
+                </Text>
+                {spectrumSkipped.map(sk => (
+                  <Text key={sk.id} style={{ color: C.sub, fontSize: 11, marginBottom: 2 }}>
+                    · {sk.name} — {sk.reason === "tags"
+                      ? `축을 이루는 태그가 ${sk.tagCount}개뿐이라 비교할 수 없어요 (태그 이름 변경·병합으로 줄었을 수 있어요)`
+                      : sk.novelCount === 0
+                        ? `이 축의 태그가 달린 작품이 없어요 (최소 ${SPECTRUM_MIN_NOVELS}개 필요)`
+                        : `이 축의 태그가 달린 작품이 ${sk.novelCount}개뿐이에요 (최소 ${SPECTRUM_MIN_NOVELS}개 필요)`}
+                  </Text>
+                ))}
+              </View>
+            )}
           </Section>
         </TouchableOpacity>
       )}
@@ -39424,6 +39651,19 @@ function computeReliability(novel, totalNovelCount) {
    🎯 취향 분석 시스템
    ========================================================= */
 
+// 🆕 v7.59.17 (T19·ANA-2/ANA-8): '핵심 취향' 헤드라인이 근거 없이 단정하지 않도록 하는 표본 하한 3종.
+//   이 문장은 취향 분석 최상단 '항상 펼침' 카드라 사용자가 가장 먼저·거의 유일하게 읽는 결론이다.
+//   → 표본이 뒷받침하지 못하는 절은 말하지 않는다(생략 또는 보류 문구).
+const CORE_PREF_MIN_TOTAL = 10;   // 이 미만이면 성향 단정 자체를 보류
+const CORE_PREF_GENRE_MIN = 3;    // '가장 높게 평가한 장르' 후보 자격 (adjRating 수축 위의 2차 방어)
+const LENGTH_BUCKET_MIN = 5;      // 길이 버킷이 '선호 비교'에 참여할 최소 작품 수
+
+// 🆕 v7.59.18 (T20·ANA-3): 스펙트럼 축이 표시될 최소 작품 수. 값은 종전(2) 그대로 두고 상수로만 승격한다 —
+//   상향은 '축이 왜 비었는지' 사유 표시(T21)와 **동시에** 해야 한다. 지금 올리면 축이 조용히 사라져
+//   ANA-4가 지적한 '태그 rename 후 축이 말없이 빈다'와 같은 종류의 침묵이 하나 더 생긴다.
+//   대신 이 값이 낮다는 사실을 화면에 드러낸다(접힌 배지에 표본 수 병기 → 2작짜리 판정임을 사용자가 안다).
+const SPECTRUM_MIN_NOVELS = 2;
+
 // 작품별 신뢰도 점수 계산 (분석용 확장 버전)
 function calcNovelReliabilityScore(novel, totalCount) {
   let score = 0;
@@ -40086,13 +40326,22 @@ async function analyzePreferences(novels, matches) {
       medium: { count: lengthGroups.medium.length, avgRating: avg(lengthGroups.medium.map(n => n.prefScore)) },
       long: { count: lengthGroups.long.length, avgRating: avg(lengthGroups.long.map(n => n.prefScore)) },
     },
+    // 🔧 v7.59.17 (T19·ANA-8): 버킷 표본 하한 + '비교 가능 버킷 2개 미만이면 unknown'.
+    //   [문제] 종전엔 count 조건이 전혀 없었고, `avg`(39548)가 빈 배열에 0을 주는데 lens 길이는 **항상 3**이라
+    //   `|| "unknown"` 폴백이 **도달 불가**였다 → 회차를 아무도 입력하지 않은 서재(세 버킷 전부 0점)에서
+    //   안정정렬이 short를 1위로 만들어 헤드라인이 '단편(100화 미만)의 작품을 즐겨 읽습니다'로 단정됐다.
+    //   400화짜리 한 편이 우연히 최상위 티어면 즉시 '장편 선호'가 되던 것도 같은 뿌리(표본 1로 확정).
+    //   [해결] count>=LENGTH_BUCKET_MIN인 버킷만 비교에 넣고, 비교 대상이 2개 미만이면 '선호'가 성립하지
+    //   않으므로 "unknown". 소비처는 generateInsights의 lengthLabel 한 곳뿐이라 파급 없음(파이 차트·읽기 패턴
+    //   섹션은 lengthPreference의 count/avgRating을 직접 읽으므로 이 판정과 무관하게 종전 그대로 표시된다).
     preferredLength: (() => {
       const lens = [
-        { key: "short", rating: avg(lengthGroups.short.map(n => n.prefScore)) || 0 },
-        { key: "medium", rating: avg(lengthGroups.medium.map(n => n.prefScore)) || 0 },
-        { key: "long", rating: avg(lengthGroups.long.map(n => n.prefScore)) || 0 },
-      ];
-      return lens.sort((a, b) => b.rating - a.rating)[0]?.key || "unknown";
+        { key: "short", count: lengthGroups.short.length, rating: avg(lengthGroups.short.map(n => n.prefScore)) || 0 },
+        { key: "medium", count: lengthGroups.medium.length, rating: avg(lengthGroups.medium.map(n => n.prefScore)) || 0 },
+        { key: "long", count: lengthGroups.long.length, rating: avg(lengthGroups.long.map(n => n.prefScore)) || 0 },
+      ].filter(l => l.count >= LENGTH_BUCKET_MIN);
+      if (lens.length < 2) return "unknown";
+      return lens.sort((a, b) => b.rating - a.rating)[0].key;
     })(),
     completedVsOngoing: {
       completed: reliable.filter(n => n.work_status === "completed"),
@@ -40309,12 +40558,26 @@ async function analyzePreferences(novels, matches) {
 
   // 13. 🎯 v3.1.2 스펙트럼 분석 (태그 연속 스케일 분석)
   const spectrumAnalysis = {};
+  // 🆕 v7.59.19 (T21·ANA-4): 표시되지 못한 축과 **그 사유**를 함께 내보낸다.
+  //   종전엔 조건을 못 넘긴 축이 아무 흔적 없이 사라져, 태그 이름을 바꿔 축이 비었을 때와
+  //   원래 작품이 적을 때가 화면상 구분되지 않았다(둘 다 '그냥 없음').
+  const spectrumSkipped = [];
   const spectrumIds = Object.keys(TAG_SPECTRUM_GROUPS);
-  
+
   for (const spectrumId of spectrumIds) {
     const spectrum = TAG_SPECTRUM_GROUPS[spectrumId];
-    const spectrumLength = spectrum.tags.length;
-    
+    const spectrumLength = Array.isArray(spectrum?.tags) ? spectrum.tags.length : 0;
+    const _skipBase = { id: spectrumId, name: spectrum?.name || spectrumId, tagCount: spectrumLength };
+
+    // 축의 태그가 2개 미만이면 위치 계산 자체가 성립하지 않는다 —
+    //   normalizedPosition이 `spectrumLength > 1 ? … : 0.5`라 모든 작품이 0.5로 고정되어
+    //   어떤 서재에서도 '중간 성향'만 나온다. 태그 이름 변경/병합으로 같은 축의 두 태그가
+    //   하나로 합쳐지면 실제로 이 상태가 되므로, 무의미한 축을 그리는 대신 사유로 돌린다.
+    if (spectrumLength < 2) {
+      spectrumSkipped.push({ ..._skipBase, reason: "tags", novelCount: 0 });
+      continue;
+    }
+
     // 각 작품별 스펙트럼 분석
     const novelAnalyses = [];
     for (const n of reliable) {
@@ -40359,15 +40622,18 @@ async function analyzePreferences(novels, matches) {
       }
     }
     
-    if (novelAnalyses.length >= 2) {
+    if (novelAnalyses.length >= SPECTRUM_MIN_NOVELS) {
       // 통계 계산
       const positions = novelAnalyses.map(n => n.normalizedPosition);
       const avgPos = positions.reduce((a, b) => a + b, 0) / positions.length;
-      
+
       // 고평점 작품의 평균 위치 — 🆕 v7.1: mean+1σ 기반 (mode-aware)
+      // 🔧 v7.59.18 (T20·ANA-3): 0작일 때 avgPos로 폴백하는 구조는 유지하되 **개수를 함께 내보낸다**.
+      //   폴백 자체는 계산상 필요하지만, UI가 그 값을 '고평점 작품 성향'이라 부르면 고평가작이 하나도
+      //   없는 축에서 전체 평균을 고평가 신호로 둔갑시킨다 → 소비부가 개수를 보고 문구를 가른다.
       const highRated = novelAnalyses.filter(n => n.rating >= HIGH_THRESHOLD);
-      const highRatedAvgPos = highRated.length > 0 
-        ? highRated.reduce((sum, n) => sum + n.normalizedPosition, 0) / highRated.length 
+      const highRatedAvgPos = highRated.length > 0
+        ? highRated.reduce((sum, n) => sum + n.normalizedPosition, 0) / highRated.length
         : avgPos;
       
       // 위치별 레이팅 분포 (5구간)
@@ -40412,14 +40678,18 @@ async function analyzePreferences(novels, matches) {
         } : null,
         avgPosition: avgPos,
         highRatedAvgPosition: highRatedAvgPos,
+        highRatedCount: highRated.length, // 🆕 v7.59.18 (T20·ANA-3): 고평가 성향 문구의 표본 (0이면 폴백값이라 비교 불가)
         segments,
         preferredSegment: preferredSegment?.range || null,
         preferredSegmentAvgRating: preferredSegment?.avgRating || 0,
         // 선호 성향 해석 (0~1 범위를 텍스트로)
-        preferenceLabel: avgPos < 0.35 ? spectrum.tags[0] + " 선호" 
+        preferenceLabel: avgPos < 0.35 ? spectrum.tags[0] + " 선호"
                        : avgPos > 0.65 ? spectrum.tags[spectrumLength - 1] + " 선호"
                        : "중간 성향",
       };
+    } else {
+      // 표본 미달 — 종전엔 여기서 아무 기록 없이 빠져나갔다
+      spectrumSkipped.push({ ..._skipBase, reason: "sample", novelCount: novelAnalyses.length });
     }
   }
 
@@ -40544,10 +40814,20 @@ async function analyzePreferences(novels, matches) {
   };
 
   // 2. 상위 티어 집중도 (sample_size 임계치 적용)
+  // 🔧 v7.59.18 (T20·ANA-7): 정렬 키를 raw 비율에서 **윌슨 신뢰구간 하한**으로.
+  //   [문제] `topTierRatio` 단독 정렬은 N=2에서 우연히 2작 다 상위 티어면 100%가 되어 N=20·80%짜리를
+  //   제친다. 임계(2/2/3/3)는 목록 진입만 막을 뿐 순위는 못 막는다. 정작 표본 보정용 윌슨 CI는
+  //   computeTierStratification이 **이미 계산해 저장**해 두고도(topTierCI) 아무도 안 썼다.
+  //   [해결] 하한으로 비교하면 소표본이 자동으로 강등된다(N=2 100% → 하한 0.34, N=20 80% → 하한 0.58).
+  //   임계 상향은 하지 않는다 — 윌슨이 이미 강등하므로 상향은 소형 서재에서 목록만 비우는 부작용뿐이다.
+  //   ⚠️ 이 배열은 UI뿐 아니라 `_addConcentrationRow`(→ preference_patterns/insight_queue)로도 흘러
+  //   slice(0,5/10) 멤버십이 바뀐다. 저장 직전 해당 category를 DELETE 후 재삽입하므로 자가 치유된다.
   const _toSortedArray = (map, sampleThreshold) =>
     Array.from(map.values())
       .filter(s => s.totalCount >= sampleThreshold)
-      .sort((a, b) => b.topTierRatio - a.topTierRatio);
+      .sort((a, b) =>
+        ((b.topTierCI?.lower ?? b.topTierRatio ?? 0) - (a.topTierCI?.lower ?? a.topTierRatio ?? 0))
+        || (b.totalCount - a.totalCount)); // 하한 동률이면 표본 큰 쪽 우선
 
   const tierConcentration = {
     topGenres: _toSortedArray(tierStratification.byMajorGenre, 2).slice(0, 5),
@@ -40854,6 +41134,7 @@ async function analyzePreferences(novels, matches) {
     trendAnalysis,
     anomalies,
     spectrumAnalysis, // 🎯 v3.1.2: 스펙트럼 분석
+    spectrumSkipped,  // 🆕 v7.59.19 (T21·ANA-4): 표시 못 한 축 + 사유 (tags 부족 / 표본 부족)
     matchBehavior, // 🧠 v3.5.4: 매칭 행동 분석
     discontinuedAnalysis, // 🆕 v7.0.4: 연중 원인 분석
     insights,
@@ -41021,17 +41302,67 @@ function generateInsights(data) {
   const topMajorGenres = majorGenreAnalysis.slice(0, 3).map(g => g.genre);
   const topSubGenres = subGenreAnalysis.slice(0, 3).map(g => g.genre);
   const topPlatform = platformAnalysis[0]?.platform || "";
-  
-  // 선호 길이
+
+  // 선호 길이 — "unknown"이면 라벨 자체가 없다(아래에서 절을 통째로 보류 문구로 대체)
   const lengthLabel = {
     short: "단편(100화 미만)",
     medium: "중편(100~400화)",
     long: "장편(400화 이상)",
-    unknown: "다양한 길이"
-  }[readingPattern.preferredLength];
-  
-  // 핵심 취향 문장
-  const corePreference = `${topMajorGenres[0] || "다양한 장르"} 기반에 ${topSubGenres.slice(0, 2).join(", ") || "다양한 소재"}를 선호하며, ${lengthLabel}의 작품을 즐겨 읽습니다.${topPlatform ? ` ${topPlatform} 플랫폼을 주로 이용합니다.` : ""}`;
+  }[readingPattern.preferredLength] || "";
+
+  // ═══════════════════════════════════════════════════════════════
+  // 🔧 v7.59.17 (T19·ANA-2+ANA-8): 핵심 취향 문장 정직화
+  //   [문제 ①] 재료의 정렬 키가 전부 **빈도**다(majorGenreAnalysis 39919 `weightedCount` 1차, adjRating은
+  //   동점 시에만 쓰이는 2차 키인데 weightedCount가 실수라 동점이 거의 없다). 즉 '선호 장르'는 사실상
+  //   '많이 등록한 장르'였고, 많이 읽었지만 낮게 평가한 장르가 대표 문장에 못박혔다.
+  //   [문제 ②] 표본 게이트가 `novels.length === 0` 하나뿐이라 3작짜리 서재도 같은 확신 어조였다.
+  //   [해결] 빈도 1위와 만족도(adjRating=수축평균) 1위를 **함께** 말하고, 다르면 두 축을 나란히 밝힌다.
+  //   분석 모집단이 CORE_PREF_MIN_TOTAL 미만이면 단정 대신 보류 문구.
+  //   ⚠️ majorGenreAnalysis는 '선호 장르' 칩(35661)·장르 차트(35473)·신뢰도 정렬 토글(35457)이 **빈도 순서
+  //   그대로** 소비하는 공유 배열이다 → 반드시 사본을 정렬한다(제자리 sort 금지).
+  // ═══════════════════════════════════════════════════════════════
+  const freqTopGenre = topMajorGenres[0] || "";
+  //   adjRating은 k=4 수축이라 1~2작 장르가 상위를 점령하기 어렵지만, 그래도 '가장 높게 평가'라고
+  //   단언하는 자리라 표본 하한을 한 겹 더 둔다.
+  const satTopGenre = [...majorGenreAnalysis]
+    .filter(g => g.count >= CORE_PREF_GENRE_MIN)
+    .sort((a, b) => b.adjRating - a.adjRating)[0]?.genre || "";
+  const subTop2 = topSubGenres.slice(0, 2).join(", ");
+  const subSentence = subTop2 ? ` ${subTop2} 소재를 즐겨 봅니다.` : "";
+  const platformSentence = topPlatform ? ` ${topPlatform} 플랫폼을 주로 이용합니다.` : "";
+  // 길이 절 — 표본이 못 받치면 '다양한 길이'로 얼버무리지 않고 판단 보류를 밝힌다.
+  //   (회차 미입력 서재는 길이가 '다양한' 게 아니라 '모르는' 것이다.)
+  const epKnownCount = readingPattern.lengthPreference.short.count
+    + readingPattern.lengthPreference.medium.count
+    + readingPattern.lengthPreference.long.count;
+  const lengthSentence = lengthLabel
+    ? ` 작품 길이는 주로 ${lengthLabel}입니다.`
+    : (epKnownCount === 0
+        ? " 회차 수가 입력된 작품이 없어 길이 선호는 판단하지 않았습니다."
+        : " 길이는 표본이 부족해 선호를 판단하지 않았습니다.");
+
+  // 표본 게이트는 '총 작품'이 아니라 **분석 모집단(reliable)**으로 잡는다 — 장르·길이 통계가 전부 그 위에서
+  //   계산되므로(39875 등), 총 50작이어도 reliable이 6작이면 이 문장이 기대는 근거는 6작이다.
+  //   (reliable은 신뢰도>=30 필터, 5작 미만이면 전체로 폴백하므로 reliableTotal <= total이 항상 성립.)
+  const coreN = basicStats.reliableTotal || 0;
+  let corePreference;
+  if (coreN < CORE_PREF_MIN_TOTAL) {
+    const why = coreN === basicStats.total
+      ? `아직 ${coreN}작이라`
+      : `분석 기준(읽은 회차·매칭 기록 등)을 충족하는 작품이 ${coreN}작뿐이라`;
+    corePreference = `${why} 취향을 단정하기에는 표본이 적습니다.`
+      + (freqTopGenre ? ` 지금까지 가장 많이 읽은 장르는 ${freqTopGenre}입니다.` : "")
+      + subSentence;
+  } else {
+    const lead = !freqTopGenre
+      ? "장르가 기록된 작품이 없어 장르 취향은 판단하지 않았습니다." // '다양한 장르'로 얼버무리지 않는다
+      : satTopGenre && satTopGenre !== freqTopGenre
+        ? `가장 많이 읽은 장르는 ${freqTopGenre}, 가장 높게 평가한 장르는 ${satTopGenre}입니다.`
+        : satTopGenre
+          ? `가장 많이 읽은 장르도, 가장 높게 평가한 장르도 ${freqTopGenre}입니다.`
+          : `가장 많이 읽은 장르는 ${freqTopGenre}입니다.`; // 표본 3작 이상 장르 없음 → 만족도 축만 보류
+    corePreference = `${lead}${subSentence}${lengthSentence}${platformSentence}`;
+  }
 
   // 숨겨진 패턴
   const hiddenPatterns = [];
@@ -51888,6 +52219,21 @@ function AppContent() {
         const ng = {};
         for (const [cat, tags] of Object.entries(nr.generalTags || {})) ng[cat] = ren(tags);
         nr.generalTags = ng;
+        // 🆕 v7.59.19 (T21·ANA-4): 스펙트럼 축의 tags도 이전한다.
+        //   [문제] 레지스트리의 다른 필드는 전부 이전하면서 spectrumGroups **하나만** 빠져 있었다.
+        //   → 축에 쓰인 태그 이름을 바꾸면 그 축은 매칭되는 작품이 사라져 화면에서 조용히 없어졌고,
+        //   완료 알림은 "관계·좌표 설정도 함께 이전됐어요"라 오히려 이전됐다고 믿게 만들었다.
+        //   [주의] prev.spectrumGroups가 없으면 applyTagRegistry가 FACTORY로 폴백하므로(15909),
+        //   여기서도 같은 폴백을 적용해야 '첫 rename이 축을 팩토리로 되돌린 뒤 이전'하는 일이 없다.
+        //   [축소] ren()의 dedupe로 tags가 1개 이하로 줄 수 있다(같은 축의 두 태그를 병합한 경우).
+        //   그 축은 지우지 않고 그대로 둔다 — 사라진 이유를 분석 쪽에서 사유 행으로 밝힌다(아래 spectrumSkipped).
+        const _curSpectra = (nr.spectrumGroups && typeof nr.spectrumGroups === "object" && !Array.isArray(nr.spectrumGroups))
+          ? nr.spectrumGroups : FACTORY_TAG_SPECTRUM_GROUPS;
+        const nsp = {};
+        for (const [sid, grp] of Object.entries(_curSpectra)) {
+          nsp[sid] = (grp && Array.isArray(grp.tags)) ? { ...grp, tags: ren(grp.tags) } : grp;
+        }
+        nr.spectrumGroups = nsp;
         return nr;
       });
 
@@ -51968,7 +52314,8 @@ function AppContent() {
 
       if (!silent) {
         await loadList(undefined, undefined, "tag_rename");
-        Alert.alert("완료", `"${from}" → "${to}" 이름 변경/병합 완료 (${affected}개 작품 수정).\n\n관계·좌표 설정도 함께 이전됐어요.`);
+        // 🔧 v7.59.19 (T21·ANA-4): 스펙트럼도 실제로 이전하므로 문구에 추가 (종전엔 이전 안 하면서 관계·좌표만 말했다)
+        Alert.alert("완료", `"${from}" → "${to}" 이름 변경/병합 완료 (${affected}개 작품 수정).\n\n관계·좌표·스펙트럼 설정도 함께 이전됐어요.`);
       }
     } catch (e) {
       console.warn('[renameTag] failed:', e?.message);
