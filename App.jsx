@@ -2,9 +2,50 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.1 (구색 기능 개선 Phase 1 — AI 장르 어휘 전량 전송, 베타)              ║
+ * ║  버전: 7.59.2 (구색 기능 개선 Phase 1 — AI 어휘 범위 실질화, 베타)                 ║
  * ║  최종 수정: 2026-08-02                                                        ║
- * ║  총 라인 수: 약 78,400줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 78,600줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📚 v7.59.2 AI 어휘 범위 3분기 실질화 + 폐기 고지 (T03 · AI-3) (2026-08-02)        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제] '어휘 범위' 칩(내 태그만/표준까지/새 태그 허용)이 프롬프트에서 사실상      ║
+ * ║ 같은 문자열이었다 — 분기는 `if (c.allowNew)` 한 줄뿐. 사용자 어휘는 '자주 쓰는    ║
+ * ║ 태그' 상위 40개가 스타일 참고로만 갔고, '고를 수 있는 목록'으로는 아예 안 갔다.   ║
+ * ║ 그런데 응답을 거르는 필터는 전체 어휘 기준이라, AI가 목록 밖을 말하면 화면에      ║
+ * ║ 아무 흔적 없이 사라졌다(else가 없는 체인). 총합 0일 때만 막연한 Alert.            ║
+ * ║ → 태그를 많이 쓰는 사용자일수록 결과가 비고, 왜 비었는지 알 방법이 없었다.        ║
+ * ║                                                                              ║
+ * ║ [수정 ①] 프롬프트에 어휘 목록을 실제로 싣는다 — 세 모드가 서로 다른 프롬프트      ║
+ * ║ · mine: 서재에서 실제 쓰는 일반 태그 **전량**(빈도순) = 사후 필터(usedKeys)와 동일 집합 ║
+ * ║ · std : 위 + 표준 어휘 **전량**을 카테고리별로(실측 378개/13카테고리) = stdMap과 동일 ║
+ * ║ · new : 같은 목록 + 목록 밖 새 태그 허용                                          ║
+ * ║ 로드맵 설계의 '상위 200/150개 상한'과 '표준은 카테고리명만'은 **실측 후 기각**했다. ║
+ * ║ 표준 전량이 2,011자(≈900토큰)라 '비현실적'이 아니었고, 상한을 두는 순간 프롬프트와 ║
+ * ║ 필터가 다시 어긋나 같은 결함이 되살아난다. 보낸 목록 = 받아들이는 목록이 원칙.    ║
+ * ║                                                                              ║
+ * ║ [수정 ②] 조용한 폐기 → 고지. 어휘 밖이라 버린 제안을 이름까지 모아 단건은 결과    ║
+ * ║ 상단 배너, 배치는 카드에 '제외 N'과 목록으로 보여주고 '어느 범위로 바꾸면 쓸 수   ║
+ * ║ 있는지'까지 알려준다. 결과 0건 Alert도 막연한 안내에서 실제 폐기 목록으로 교체.   ║
+ * ║                                                                              ║
+ * ║ [수정 ③] 단건·배치가 각자 복제해 갖고 있던 어휘 조립 30여 줄을 공용 헬퍼로 통일   ║
+ * ║ (collectTagProfile / buildAiGenreMaps / buildAiTagVocab). 한쪽만 고쳐 결과가      ║
+ * ║ 갈리던 구조 자체를 없앴다 — v7.58.4·v7.59.1 수정도 이제 한 곳에 모인다.           ║
+ * ║                                                                              ║
+ * ║ [수정 ④] 어휘 범위 칩 아래에 실제 전송량 표시("장르 140 + 내 태그 87 + 표준       ║
+ * ║ 378개를 후보로 보내요"). 프롬프트를 만드는 그 헬퍼로 세므로 미리보기와 실제가     ║
+ * ║ 어긋날 수 없다. 배치는 '작품마다 전송'까지 명시.                                  ║
+ * ║                                                                              ║
+ * ║ [안전판] AI_VOCAB_CHAR_BUDGET(9,000자). 원칙은 전량 전송이고 이 예산은 비정상적   ║
+ * ║ 레지스트리에서 요청이 터지는 것만 막는다. 실제로 걸리면 프롬프트와 화면 양쪽에    ║
+ * ║ '자주 쓰는 순 상위 N개만 표시'를 명시한다(조용한 절단 금지). 태그 3,000개 서재    ║
+ * ║ 회귀: 911개 전송(8,998자) + 고지 표시 확인.                                       ║
+ * ║                                                                              ║
+ * ║ [비용] 실측(내 어휘 30/150/500개): mine +379/+1,268/+2,548자, std +2,520/+3,409/  ║
+ * ║ +4,689자. 최악 ≈2,800토큰/호출 — 화면에 숫자로 노출되므로 사용자가 알고 고른다.   ║
+ * ║ 빈 서재에서 mine을 고르면 '장르만 답하라'로 보내 헛제안을 막는다(신규 사용자 경로). ║
+ * ║ esbuild 통과, scraper-test 526/526. APP_VERSION 7.59.2.                           ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -16285,6 +16326,108 @@ async function callGeminiForPlacements(tags, apiKey, model = GEMINI_AI_MODEL, co
 }
 
 /* =========================================================
+   🆕 v7.59.2 (T03·AI-3): AI 태깅 어휘 조립 — '프롬프트에 보낸 목록'과 '응답을 걸러내는 집합'의
+   단일 출처. 종전엔 ① 단건·배치가 같은 30여 줄을 각자 복사해 갖고 있었고(한쪽만 고치면 결과가
+   갈렸다), ② 프롬프트엔 상위 40개만 보내면서 사후 필터는 전체 어휘로 판정해, AI가 목록 밖을
+   말하면 화면에 아무 말 없이 사라졌다. 여기서 만든 목록을 그대로 프롬프트에 싣고 그대로 필터에
+   쓰므로 두 집합이 어긋날 수 없다.
+   ========================================================= */
+
+/** 프로필 문구('자주 쓰는 태그')에 실을 개수 — 취향 신호용이라 전량일 필요가 없다(어휘 목록은 별도 전량 전송). */
+const AI_PROFILE_TOP_TAGS = 40;
+/**
+ * 프롬프트 1회에 실을 어휘 목록의 문자 예산(내 어휘·표준 각각 독립 적용, 최대 합 2배).
+ * 원칙은 '전량 전송' — 상위 N개만 보내면 프롬프트와 필터가 어긋나 조용한 폐기가 생긴다.
+ * 이 값은 비정상적으로 큰 레지스트리에서 요청 자체가 터지는 것만 막는 안전판이고,
+ * 실제로 걸리면 프롬프트와 화면 양쪽에 '상위 N개만 보냄'을 명시한다(조용한 절단 금지).
+ * 실측(소설 모드 팩토리 기준): 표준 일반태그 393개 = 2,011자. 9,000자면 태그 약 1,400개분.
+ */
+const AI_VOCAB_CHAR_BUDGET = 9000;
+
+/** 서재 전체의 태그 빈도 프로필 (단건·배치·어휘 미리보기 공용) */
+function collectTagProfile(list) {
+  const freq = new Map(); const disp = new Map(); let totalTagCount = 0, worksWithTags = 0;
+  for (const n of (list || [])) {
+    const g = (n.tags || "").split(",").map(t => t.trim()).filter(Boolean);
+    const raw = [...parseMajorSub(n.major_genre), ...parseMajorSub(n.sub_genre), ...g];
+    const seen = new Set();
+    for (const t of raw) { const k = normalizeTagKey(t); if (!k || seen.has(k)) continue; seen.add(k); freq.set(k, (freq.get(k) || 0) + 1); if (!disp.has(k)) disp.set(k, t); }
+    if (seen.size > 0) { totalTagCount += seen.size; worksWithTags++; }
+  }
+  const byFreq = [...freq.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  return {
+    freq, disp, byFreq,
+    topTags: byFreq.slice(0, AI_PROFILE_TOP_TAGS).map(k => disp.get(k)),
+    avgTags: worksWithTags ? Math.max(2, Math.round(totalTagCount / worksWithTags)) : 0,
+    usedKeys: new Set(disp.keys()),
+    usedList: [...disp.entries()],
+  };
+}
+
+/**
+ * 활성 모드 팩토리 + 사용자 추가분 합집합 → 장르/표준 일반태그 키맵 (단건·배치 공용).
+ * 🔧 v7.58.4의 '사용자추가분만 폴백' 수정과 v7.59.1의 slice 제거가 이 한 곳으로 모인다.
+ */
+function buildAiGenreMaps(userMajorGenres, userSubGenres) {
+  const unionVocab = (base, extra) => {
+    const out = [], seen = new Set();
+    for (const t of [...(Array.isArray(base) ? base : []), ...(Array.isArray(extra) ? extra : [])]) {
+      const k = normalizeTagKey(t); if (!t || !k || seen.has(k)) continue; seen.add(k); out.push(t);
+    }
+    return out;
+  };
+  const majorVocab = unionVocab(MAJOR_GENRES, userMajorGenres);
+  const subVocab = unionVocab(SUB_GENRES, userSubGenres);
+  const majorMap = new Map(majorVocab.map(t => [normalizeTagKey(t), t]));
+  const subMap = new Map(subVocab.map(t => [normalizeTagKey(t), t]));
+  const stdMap = new Map();
+  if (typeof ALL_DEFAULT_TAGS !== "undefined" && Array.isArray(ALL_DEFAULT_TAGS)) {
+    for (const t of ALL_DEFAULT_TAGS) { const k = normalizeTagKey(t); if (!majorMap.has(k) && !subMap.has(k) && !stdMap.has(k)) stdMap.set(k, t); }
+  }
+  return { majorVocab, subVocab, majorMap, subMap, stdMap };
+}
+
+/** 문자 예산 안에서 앞에서부터 담기 (넘치면 거기서 끊고, 끊긴 개수는 호출자가 고지한다) */
+function takeTagsWithinBudget(tags, budget) {
+  const out = []; let acc = 0;
+  for (const t of tags) {
+    const cost = String(t).length + 2; // ", " 구분자 포함
+    if (acc + cost > budget) break;
+    acc += cost; out.push(t);
+  }
+  return out;
+}
+
+/**
+ * 어휘 범위(mine/std/new)에 맞춰 '프롬프트에 실을 일반 태그 목록'을 만든다.
+ * - mine: 서재에서 실제로 쓰고 있는 일반 태그 **전량**(빈도 내림차순). 사후 필터(usedKeys)와 동일 집합.
+ * - std/new: 위 목록 + 표준 어휘 전량(카테고리별). 사후 필터(stdMap)와 동일 집합.
+ *   표준 어휘는 카테고리로 묶어 보낸다 — 평평하게 나열하는 것보다 100자 남짓 더 들면서 분류 힌트를 준다.
+ * 장르(대/부)는 별도 목록으로 전량 전송되므로 여기서는 뺀다(중복 전송 방지).
+ */
+function buildAiTagVocab(profile, maps, mode) {
+  const { disp, byFreq } = profile;
+  const { majorMap, subMap, stdMap } = maps;
+  const myAll = (byFreq || []).filter(k => !majorMap.has(k) && !subMap.has(k)).map(k => disp.get(k)).filter(Boolean);
+  const myTags = takeTagsWithinBudget(myAll, AI_VOCAB_CHAR_BUDGET);
+  const stdGroups = []; let stdCount = 0, stdTruncated = 0;
+  if (mode !== "mine") {
+    const mineKeys = new Set(myAll.map(t => normalizeTagKey(t)));
+    let budget = AI_VOCAB_CHAR_BUDGET;
+    for (const [cat, tags] of Object.entries(GENERAL_TAGS || {})) {
+      const picked = (Array.isArray(tags) ? tags : []).filter(t => { const k = normalizeTagKey(t); return k && !mineKeys.has(k) && stdMap.has(k); });
+      if (!picked.length) continue;
+      const fit = takeTagsWithinBudget(picked, Math.max(0, budget - String(cat).length - 6));
+      stdTruncated += picked.length - fit.length;
+      if (!fit.length) continue;
+      budget -= fit.join(", ").length + String(cat).length + 6;
+      stdGroups.push({ cat, tags: fit }); stdCount += fit.length;
+    }
+  }
+  return { myTags, myTotal: myAll.length, myTruncated: myAll.length - myTags.length, stdGroups, stdCount, stdTruncated };
+}
+
+/* =========================================================
    🆕 v7.28.14: AI 태그 추천 — 제목(+작가·앵커·옵트인 감상)으로 대/부장르·태그·
    강도 제안. 사용자 태깅 프로필(개수·어휘) 보정. 어휘 필터는 호출자(run)에서.
    ========================================================= */
@@ -16305,8 +16448,29 @@ function buildTaggingPrompt(context = {}) {
   }
   if (Array.isArray(c.majorOptions) && c.majorOptions.length) s += `\n\n대장르는 다음 중에서만 고르세요: ${c.majorOptions.join(", ")}`;
   if (Array.isArray(c.subOptions) && c.subOptions.length) s += `\n부장르는 다음 중에서만 고르세요: ${c.subOptions.join(", ")}`;
+  // 🆕 v7.59.2 (T03·AI-3): 어휘 범위 3분기를 프롬프트에 실제로 반영.
+  //   종전엔 mine/std가 완전히 같은 프롬프트였고(분기는 allowNew 한 줄뿐), 사용자 어휘는
+  //   상위 40개만 '스타일 참고'로 갈 뿐 '고를 수 있는 목록'으로는 아예 안 갔다.
+  //   여기서 싣는 목록 = 호출자가 응답을 거르는 집합. 둘이 같아야 조용한 폐기가 안 생긴다.
+  const vm = (c.vocabMode === "std" || c.vocabMode === "new" || c.vocabMode === "mine") ? c.vocabMode : null;
+  if (vm) {
+    const myTags = Array.isArray(c.myTags) ? c.myTags : [];
+    const stdGroups = Array.isArray(c.stdGroups) ? c.stdGroups : [];
+    if (vm === "mine" && !myTags.length) {
+      // 아직 아무 태그도 안 쓴 서재 — '내 태그만'으로는 고를 수 있는 게 없다. 지어내게 두지 말고 장르만 받는다.
+      s += `\n\n[일반 태그: 사용자가 아직 쓰는 일반 태그가 없습니다. 일반 태그(tags)는 비워 두고 장르만 답하세요.]`;
+    } else {
+      s += vm === "new"
+        ? `\n\n[일반 태그 어휘 — 아래 목록을 우선 쓰되, 정말 필요하면 목록 밖 새 태그도 만들 수 있습니다]`
+        : `\n\n[일반 태그는 아래 목록 안에서만 고르세요 — 목록에 없는 태그는 채택되지 않고 버려집니다]`;
+      if (myTags.length) s += `\n· 사용자가 이미 쓰는 태그(가장 우선${c.myTruncated ? ` · 자주 쓰는 순 상위 ${myTags.length}개만 표시` : ""}): ${myTags.join(", ")}`;
+      for (const g of stdGroups) s += `\n· 표준 ${g.cat}: ${(g.tags || []).join(", ")}`;
+      if (vm !== "new") s += `\n목록에 있는 표현 그대로 답하세요 — 비슷한 다른 말로 바꾸면 버려집니다(예: 목록이 '먼치킨'이면 '먼치킨물'이 아니라 '먼치킨').`;
+    }
+  }
   s += `\n\n대장르(majorGenres)·부장르(subGenres)·일반 태그(tags)로 나눠 추천하세요. 확실한 것 위주로, 애매하면 confidence를 low로. 작품을 모르면 지어내지 말고 적게 답하세요. 일반 태그는 위 '자주 쓰는 태그' 스타일을 우선 활용하세요.`;
   if (c.allowNew) s += ` 목록·어휘에 없는 새 태그도 꼭 필요할 때만 제안 가능하되 남발 금지, 기존 태그의 변형(예: '먼치킨'이 있는데 '먼치킨물')은 만들지 마세요.`;
+  else if (vm) s += ` 위 어휘 목록 밖의 일반 태그는 답하지 마세요 — 마땅한 게 없으면 억지로 채우지 말고 적게 답하세요.`;
   else s += ` 알려진 일반적인 태그 위주로만 제안하세요.`;
   s += ` 각 일반 태그에 sentiment(positive/neutral/negative)도 매기되, 대부분은 neutral입니다. 명확히 좋게 받아들여지는 것(예: 사이다=positive)·나쁘게 받아들여지는 것(예: 고구마=negative)만 valence를 주세요.`;
   if (c.wantIntensity) s += ` 각 일반 태그에 작품 내 강도 intensity(1~5)도 매기세요(애매하면 3).`;
@@ -20913,7 +21077,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.1";
+const APP_VERSION = "7.59.2";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -47375,6 +47539,33 @@ function AppContent() {
     return { title: (title || "").trim(), author: (author || "").trim(), note: note || "", major: Array.isArray(newMajorGenre) ? newMajorGenre : [], sub: Array.isArray(newSubGenre) ? newSubGenre : [], tagsStr: tags || "", tagData: Array.isArray(newTagData) ? newTagData : [] };
   }
 
+  // 🆕 v7.59.2 (T03·AI-3): '어휘 범위' 칩이 실제 전송량을 보여주도록 — 프롬프트를 만드는 것과
+  //   **같은 헬퍼**로 계산해서 미리보기와 실제가 어긋날 수 없게 한다.
+  //   모달이 닫혀 있으면 계산하지 않는다(매칭 중 list가 매 판 바뀌므로 상시 계산은 낭비).
+  const aiVocabPreview = useMemo(() => {
+    if (!aiTagModalOpen && !batchTagOpen) return null;
+    const profile = collectTagProfile(list);
+    const maps = buildAiGenreMaps(userMajorGenres, userSubGenres);
+    const mine = buildAiTagVocab(profile, maps, "mine");
+    const std = buildAiTagVocab(profile, maps, "std");
+    return {
+      genres: maps.majorVocab.length + maps.subVocab.length,
+      mine: mine.myTags.length, mineCut: mine.myTruncated,
+      std: std.stdCount, stdCut: std.stdTruncated,
+    };
+  }, [aiTagModalOpen, batchTagOpen, list, userMajorGenres, userSubGenres]);
+
+  // 🆕 v7.59.2: 어휘 범위 칩 아래 캡션 문구 (단건·배치 공용 — 문구가 갈리면 또 반쪽이 된다)
+  function aiVocabCaption(mode, perWork) {
+    const v = aiVocabPreview;
+    if (!v) return "";
+    const cut = v.mineCut ? ` (내 어휘 ${v.mineCut}개는 예산 초과로 제외)` : "";
+    const tail = perWork ? ` · 작품마다 함께 전송돼요` : "";
+    if (mode === "std") return `장르 ${v.genres} + 내 태그 ${v.mine} + 표준 ${v.std}개를 후보로 보내요. 이 목록 밖 제안은 걸러지고 개수를 알려줘요${cut}.${tail}`;
+    if (mode === "new") return `장르 ${v.genres} + 내 태그 ${v.mine} + 표준 ${v.std}개를 보내고, 목록에 없는 새 태그도 받아요${cut}.${tail}`;
+    return `장르 ${v.genres} + 내 태그 ${v.mine}개만 후보로 보내요. 목록 밖 제안은 걸러지고 개수를 알려줘요${cut}.${tail}`;
+  }
+
   // 🆕 v7.28.14: AI 태그 추천 실행 — 프로필 보정 + 어휘 필터 + 분류
   async function runAiTagSuggest() {
     const provider = aiProvider === "gemini" ? "gemini" : "claude";
@@ -47385,40 +47576,16 @@ function AppContent() {
     setAiTagBusy(true);
     setAiTagSuggest(null);
     try {
-      // 사용자 어휘·프로필 집계
-      const freq = new Map(); const disp = new Map(); let totalTagCount = 0, worksWithTags = 0;
-      for (const n of (list || [])) {
-        const g = (n.tags || "").split(",").map(t => t.trim()).filter(Boolean);
-        const raw = [...parseMajorSub(n.major_genre), ...parseMajorSub(n.sub_genre), ...g];
-        const seen = new Set();
-        for (const t of raw) { const k = normalizeTagKey(t); if (!k || seen.has(k)) continue; seen.add(k); freq.set(k, (freq.get(k) || 0) + 1); if (!disp.has(k)) disp.set(k, t); }
-        if (seen.size > 0) { totalTagCount += seen.size; worksWithTags++; }
-      }
-      const topTags = [...freq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([k]) => disp.get(k));
-      const avgTags = worksWithTags ? Math.max(2, Math.round(totalTagCount / worksWithTags)) : 0;
-      const usedKeys = new Set(disp.keys()); const usedList = [...disp.entries()];
-      // 🔧 v7.58.4: 종전 `사용자추가분.length ? 사용자추가분 : FACTORY_*` 는 두 가지가 동시에 깨졌다.
-      //   ① deriveUserMajorGenres는 '팩토리를 뺀 사용자 추가분만' 돌려준다(15055~) → 커스텀 장르를 하나만
-      //      추가해도 AI에게 보내는 장르 후보가 그 하나로 줄어, 장르를 손댄 사용자일수록 AI가 장르를 못 단다.
-      //   ② 폴백이 모드 무관 FACTORY_*(소설 전용) → 웹툰 슬롯에서 '무협·선협' 같은 소설 장르가 후보로 나갔다.
-      //   앱의 다른 모든 곳은 이미 합집합을 쓴다(25449·27223 `[...SUB_GENRES, ...userSubGenres]`) → 동일하게 맞춘다.
-      //   MAJOR_GENRES/SUB_GENRES는 슬롯 모드 전환 시 재대입되는 '활성 모드 팩토리'다(19672~).
-      const unionVocab = (base, extra) => {
-        const out = [], seen = new Set();
-        for (const t of [...(Array.isArray(base) ? base : []), ...(Array.isArray(extra) ? extra : [])]) {
-          const k = normalizeTagKey(t); if (!t || !k || seen.has(k)) continue; seen.add(k); out.push(t);
-        }
-        return out;
-      };
-      const majorVocab = unionVocab(MAJOR_GENRES, userMajorGenres);
-      const subVocab = unionVocab(SUB_GENRES, userSubGenres);
-      const majorMap = new Map(majorVocab.map(t => [normalizeTagKey(t), t]));
-      const subMap = new Map(subVocab.map(t => [normalizeTagKey(t), t]));
-      // 표준 일반태그 키맵(장르 제외)
-      const stdMap = new Map();
-      if (typeof ALL_DEFAULT_TAGS !== "undefined" && Array.isArray(ALL_DEFAULT_TAGS)) for (const t of ALL_DEFAULT_TAGS) { const k = normalizeTagKey(t); if (!majorMap.has(k) && !subMap.has(k) && !stdMap.has(k)) stdMap.set(k, t); }
+      // 사용자 어휘·프로필 집계 (🔧 v7.59.2: 단건·배치가 복사해 갖고 있던 30여 줄을 공용 헬퍼로 통일 —
+      //   한쪽만 고쳐 결과가 갈리던 구조 자체를 없앴다. v7.58.4의 합집합 수정·v7.59.1의 slice 제거도
+      //   이제 buildAiGenreMaps 한 곳에 있다.)
+      const profile = collectTagProfile(list);
+      const { topTags, avgTags, disp, usedKeys, usedList } = profile;
+      const maps = buildAiGenreMaps(userMajorGenres, userSubGenres);
+      const { majorVocab, subVocab, majorMap, subMap, stdMap } = maps;
       const mode = aiTagVocabMode === "std" ? "std" : aiTagVocabMode === "new" ? "new" : "mine";
       const allowNew = mode === "new";
+      const vocab = buildAiTagVocab(profile, maps, mode);
       // 🆕 v7.28.15 few-shot 예시(옵트인): 같은 작가>같은 대장르>태그 풍부 순으로 3개
       let examples = [];
       if (aiTagUseFewshot) {
@@ -47452,15 +47619,21 @@ function AppContent() {
         //   이 slice 때문에 부장르에선 100% 무효였다.
         //   목록 전량(106+커스텀)이라야 수백 토큰이라 상한 자체가 불필요하다.
         majorOptions: majorVocab, subOptions: subVocab,
+        // 🆕 v7.59.2 (T03·AI-3): 어휘 범위를 프롬프트에 실제로 반영 — 여기 싣는 목록이 아래 필터 집합과 같다.
+        vocabMode: mode, myTags: vocab.myTags, myTruncated: vocab.myTruncated, stdGroups: vocab.stdGroups,
         wantIntensity: aiTagSuggestIntensity, allowNew,
       };
       const out = provider === "gemini"
         ? await callGeminiForTagging(ctx, key, GEMINI_AI_MODEL)
         : await callClaudeForTagging(ctx, key, SYNONYM_AI_MODEL);
       // 분류·필터: 장르 / 기존(used) / 신규(표준 미사용·창작)
+      // 🆕 v7.59.2 (T03·AI-3): 어휘 밖이라 버리는 제안을 모은다. 종전엔 else가 없어 화면에 아무 흔적도
+      //   안 남았다 — 사용자는 '왜 이것밖에 안 나오지'를 알 방법이 없었다.
+      const dropped = []; const seenDrop = new Set();
+      const noteDrop = (name) => { const k = normalizeTagKey(name); if (!k || seenDrop.has(k)) return; seenDrop.add(k); dropped.push(String(name).trim()); };
       const majSug = []; const subSug = []; const seenM = new Set(), seenS = new Set();
-      const pushMajor = (name) => { const k = normalizeTagKey(name); if (!majorMap.has(k) || seenM.has(k) || existingKeys.has(k)) return; seenM.add(k); majSug.push({ name: majorMap.get(k), checked: true }); };
-      const pushSub = (name) => { const k = normalizeTagKey(name); if (!subMap.has(k) || seenS.has(k) || existingKeys.has(k)) return; seenS.add(k); subSug.push({ name: subMap.get(k), checked: true }); };
+      const pushMajor = (name) => { const k = normalizeTagKey(name); if (seenM.has(k) || existingKeys.has(k)) return; if (!majorMap.has(k)) { noteDrop(name); return; } seenM.add(k); majSug.push({ name: majorMap.get(k), checked: true }); };
+      const pushSub = (name) => { const k = normalizeTagKey(name); if (seenS.has(k) || existingKeys.has(k)) return; if (!subMap.has(k)) { noteDrop(name); return; } seenS.add(k); subSug.push({ name: subMap.get(k), checked: true }); };
       for (const m of (out.majorGenres || [])) pushMajor(m);
       for (const s of (out.subGenres || [])) pushSub(s);
       const sentOf = (v) => { const x = String(v || "").toLowerCase(); return (x === "positive" || x === "negative") ? x : "neutral"; };
@@ -47487,11 +47660,15 @@ function AppContent() {
           tagsNew.push({ tag: stdMap.get(k), intensity: intv, confidence: conf, sentSuggest: sentOf(it.sentiment), sent: null, needsRegister: false, similarTo: null, checked: false });
         } else if (allowNew) {
           tagsNew.push({ tag: name, intensity: intv, confidence: conf, sentSuggest: sentOf(it.sentiment), sent: null, needsRegister: true, similarTo: findSimilarUsed(k), checked: false });
+        } else {
+          noteDrop(name); // 🆕 v7.59.2: 어휘 범위 밖 — 종전엔 여기서 조용히 사라졌다
         }
       }
       const total = majSug.length + subSug.length + tagsExisting.length + tagsNew.length;
-      setAiTagSuggest({ major: majSug, sub: subSug, tagsExisting, tagsNew });
-      if (!total) Alert.alert("AI 태그", "추천할 게 마땅치 않아요. 작품을 모르거나 어휘가 부족할 수 있어요. '어휘 범위'를 넓히거나 제목·작가를 확인해 주세요.");
+      setAiTagSuggest({ major: majSug, sub: subSug, tagsExisting, tagsNew, dropped, vocabMode: mode });
+      if (!total) Alert.alert("AI 태그", dropped.length
+        ? `제안 ${dropped.length}개가 전부 '${mode === "mine" ? "내 태그만" : "표준까지"}' 어휘 밖이라 걸러졌어요.\n\n${dropped.slice(0, 8).join(", ")}${dropped.length > 8 ? " …" : ""}\n\n어휘 범위를 '${mode === "mine" ? "표준까지" : "새 태그 허용"}'로 바꾸면 받을 수 있어요.`
+        : "추천할 게 마땅치 않아요. 작품을 모르거나 어휘가 부족할 수 있어요. '어휘 범위'를 넓히거나 제목·작가를 확인해 주세요.");
     } catch (e) {
       Alert.alert("AI 태그 실패", e?.message || String(e));
     } finally {
@@ -49004,33 +49181,14 @@ function AppContent() {
     const key = ((provider === "gemini" ? geminiApiKey : claudeApiKey) || "").trim();
     if (!key) { Alert.alert("AI 태그", `먼저 설정 > 🔌 연결의 ‘AI 제공자·API 키’에서 ${provider === "gemini" ? "Gemini" : "Claude"} 키를 넣거나, 제공자를 바꿔 주세요.`); return; }
     if (!works || !works.length) { Alert.alert("AI 태그", "작품을 선택해 주세요."); return; }
-    const freq = new Map(); const disp = new Map(); let totalTagCount = 0, worksWithTags = 0;
-    for (const n of (list || [])) {
-      const g = (n.tags || "").split(",").map(t => t.trim()).filter(Boolean);
-      const raw = [...parseMajorSub(n.major_genre), ...parseMajorSub(n.sub_genre), ...g];
-      const seen = new Set();
-      for (const t of raw) { const k = normalizeTagKey(t); if (!k || seen.has(k)) continue; seen.add(k); freq.set(k, (freq.get(k) || 0) + 1); if (!disp.has(k)) disp.set(k, t); }
-      if (seen.size > 0) { totalTagCount += seen.size; worksWithTags++; }
-    }
-    const topTags = [...freq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([k]) => disp.get(k));
-    const avgTags = worksWithTags ? Math.max(2, Math.round(totalTagCount / worksWithTags)) : 0;
-    const usedKeys = new Set(disp.keys()); const usedList = [...disp.entries()];
-    // 🔧 v7.58.4: 위 단건 경로와 동일 수정(활성 모드 팩토리 + 사용자 추가분 합집합). 배치 태깅도 같은 결함이 있었다.
-    const unionVocab = (base, extra) => {
-      const out = [], seen = new Set();
-      for (const t of [...(Array.isArray(base) ? base : []), ...(Array.isArray(extra) ? extra : [])]) {
-        const k = normalizeTagKey(t); if (!t || !k || seen.has(k)) continue; seen.add(k); out.push(t);
-      }
-      return out;
-    };
-    const majorVocab = unionVocab(MAJOR_GENRES, userMajorGenres);
-    const subVocab = unionVocab(SUB_GENRES, userSubGenres);
-    const majorMap = new Map(majorVocab.map(t => [normalizeTagKey(t), t]));
-    const subMap = new Map(subVocab.map(t => [normalizeTagKey(t), t]));
-    const stdMap = new Map();
-    if (typeof ALL_DEFAULT_TAGS !== "undefined" && Array.isArray(ALL_DEFAULT_TAGS)) for (const t of ALL_DEFAULT_TAGS) { const k = normalizeTagKey(t); if (!majorMap.has(k) && !subMap.has(k) && !stdMap.has(k)) stdMap.set(k, t); }
+    // 🔧 v7.59.2: 단건과 같은 공용 헬퍼 — 종전엔 이 30여 줄이 통째로 복제돼 있었다(단건만 고치면 배치가 남는 구조).
+    const profile = collectTagProfile(list);
+    const { topTags, avgTags, disp, usedKeys, usedList } = profile;
+    const maps = buildAiGenreMaps(userMajorGenres, userSubGenres);
+    const { majorVocab, subVocab, majorMap, subMap, stdMap } = maps;
     const mode = batchVocabMode === "std" ? "std" : batchVocabMode === "new" ? "new" : "mine";
     const allowNew = mode === "new";
+    const vocab = buildAiTagVocab(profile, maps, mode);
     const sentOf = (v) => { const x = String(v || "").toLowerCase(); return (x === "positive" || x === "negative") ? x : "neutral"; };
     const findSimilarUsed = (k) => {
       for (const [uk, ud] of usedList) {
@@ -49041,9 +49199,12 @@ function AppContent() {
       return null;
     };
     const classify = (out, existingKeys) => {
+      // 🆕 v7.59.2 (T03·AI-3): 단건과 동일하게 '어휘 밖이라 버린 제안'을 모은다.
+      const dropped = []; const seenDrop = new Set();
+      const noteDrop = (name) => { const k = normalizeTagKey(name); if (!k || seenDrop.has(k)) return; seenDrop.add(k); dropped.push(String(name).trim()); };
       const majSug = []; const subSug = []; const seenM = new Set(), seenS = new Set();
-      const pushMajor = (name) => { const k = normalizeTagKey(name); if (!majorMap.has(k) || seenM.has(k) || existingKeys.has(k)) return; seenM.add(k); majSug.push({ name: majorMap.get(k), checked: true }); };
-      const pushSub = (name) => { const k = normalizeTagKey(name); if (!subMap.has(k) || seenS.has(k) || existingKeys.has(k)) return; seenS.add(k); subSug.push({ name: subMap.get(k), checked: true }); };
+      const pushMajor = (name) => { const k = normalizeTagKey(name); if (seenM.has(k) || existingKeys.has(k)) return; if (!majorMap.has(k)) { noteDrop(name); return; } seenM.add(k); majSug.push({ name: majorMap.get(k), checked: true }); };
+      const pushSub = (name) => { const k = normalizeTagKey(name); if (seenS.has(k) || existingKeys.has(k)) return; if (!subMap.has(k)) { noteDrop(name); return; } seenS.add(k); subSug.push({ name: subMap.get(k), checked: true }); };
       for (const m of (out.majorGenres || [])) pushMajor(m);
       for (const s of (out.subGenres || [])) pushSub(s);
       const tagsExisting = []; const tagsNew = []; const seenT = new Set();
@@ -49058,8 +49219,9 @@ function AppContent() {
         if (usedKeys.has(k)) tagsExisting.push({ tag: disp.get(k), intensity: intv, confidence: conf, checked: conf !== "low" });
         else if (stdMap.has(k) && (mode === "std" || mode === "new")) tagsNew.push({ tag: stdMap.get(k), intensity: intv, confidence: conf, sentSuggest: sentOf(it.sentiment), sent: null, needsRegister: false, similarTo: null, checked: false });
         else if (allowNew) tagsNew.push({ tag: nm, intensity: intv, confidence: conf, sentSuggest: sentOf(it.sentiment), sent: null, needsRegister: true, similarTo: findSimilarUsed(k), checked: false });
+        else noteDrop(nm); // 🆕 v7.59.2: 어휘 범위 밖 — 종전엔 조용히 사라졌다
       }
-      return { major: majSug, sub: subSug, tagsExisting, tagsNew };
+      return { major: majSug, sub: subSug, tagsExisting, tagsNew, dropped };
     };
     batchCancelRef.current = false;
     setBatchBusy(true); setBatchResults([]); setBatchProgress({ done: 0, total: works.length });
@@ -49072,7 +49234,7 @@ function AppContent() {
         const existingKeys = new Set(existingTags.map(t => normalizeTagKey(t)));
         // 🔧 v7.59.1 (T02·AI-2): 단건 경로와 동일 — 어휘 slice 제거(전량 전송). 한쪽만 고치면
         //   같은 작품이 단건/배치에서 다른 장르를 받는다.
-        const ctx = { title: (n.title || "").trim(), author: (n.author || "").trim(), existingTags, profile: { avgTags, topTags }, majorOptions: majorVocab, subOptions: subVocab, wantIntensity: batchIntensity, allowNew };
+        const ctx = { title: (n.title || "").trim(), author: (n.author || "").trim(), existingTags, profile: { avgTags, topTags }, majorOptions: majorVocab, subOptions: subVocab, vocabMode: mode, myTags: vocab.myTags, myTruncated: vocab.myTruncated, stdGroups: vocab.stdGroups, wantIntensity: batchIntensity, allowNew };
         let res;
         const ctrl = new AbortController(); batchAbortRef.current = ctrl; // 🆕 v7.28.17: 취소 버튼이 이 요청을 즉시 끊을 수 있게
         const to = setTimeout(() => { try { ctrl.abort(); } catch {} }, 30000); // 🆕 v7.28.17: 응답 없는 요청 30초 후 자동 중단(다음 작품으로)
@@ -49080,7 +49242,7 @@ function AppContent() {
           const out = provider === "gemini" ? await callGeminiForTagging(ctx, key, GEMINI_AI_MODEL, { signal: ctrl.signal }) : await callClaudeForTagging(ctx, key, SYNONYM_AI_MODEL, { signal: ctrl.signal });
           const sg = classify(out, existingKeys);
           const tot = sg.major.length + sg.sub.length + sg.tagsExisting.length + sg.tagsNew.length;
-          res = { id: n.id, title: n.title, author: n.author, suggest: sg, status: tot > 0 ? "ok" : "empty", expanded: false };
+          res = { id: n.id, title: n.title, author: n.author, suggest: sg, status: tot > 0 ? "ok" : "empty", expanded: false, vocabMode: mode };
         } catch (e) {
           if (batchCancelRef.current) break; // 🆕 v7.28.17: 사용자 취소 → 에러 행 남기지 않고 종료
           res = { id: n.id, title: n.title, author: n.author, suggest: null, status: "error", error: e?.message || String(e), expanded: false };
@@ -77709,6 +77871,10 @@ async function importJSON(directText, onSuccess, onSettled) {
                   );
                 })}
               </View>
+              {/* 🆕 v7.59.2 (T03·AI-3): 고른 범위가 실제로 뭘 바꾸는지 숫자로 — 프롬프트 조립과 같은 헬퍼로 센다 */}
+              {aiVocabPreview ? (
+                <Text style={{ color: C.sub, fontSize: 10, lineHeight: 14, marginTop: -6, marginBottom: 10 }}>{aiVocabCaption(aiTagVocabMode, false)}</Text>
+              ) : null}
               <TouchableOpacity disabled={aiTagBusy} onPress={runAiTagSuggest} style={{ backgroundColor: aiTagBusy ? C.line : (isDark ? "#3730a3" : "#4338ca"), borderRadius: 12, paddingVertical: 12, alignItems: "center", marginBottom: 4, opacity: aiTagBusy ? 0.6 : 1 }}>
                 <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>{aiTagBusy ? "분석 중…" : "제목 보고 추천 받기"}</Text>
               </TouchableOpacity>
@@ -77723,10 +77889,22 @@ async function importJSON(directText, onSuccess, onSettled) {
                 ];
                 const newItems = aiTagSuggest.tagsNew || [];
                 const total = genreSecs.reduce((a, s) => a + s.items.length, 0) + newItems.length;
-                if (!total) return <Text style={{ color: C.sub, fontSize: 13, marginBottom: 8 }}>추천 결과가 없어요.</Text>;
+                // 🆕 v7.59.2 (T03·AI-3): 어휘 밖이라 버려진 제안 고지 — 종전엔 흔적조차 없었다
+                const drop = aiTagSuggest.dropped || [];
+                const dropNote = drop.length ? (
+                  <View style={{ backgroundColor: isDark ? "#3f2d0f" : "#fef3c7", borderRadius: 10, padding: 9, marginBottom: 10, borderWidth: 1, borderColor: isDark ? "#b45309" : "#fcd34d" }}>
+                    <Text style={{ color: isDark ? "#fde68a" : "#92400e", fontSize: 11.5, fontWeight: "700" }}>어휘 범위 밖이라 제외 {drop.length}개</Text>
+                    <Text style={{ color: isDark ? "#fde68a" : "#92400e", fontSize: 11, marginTop: 2 }}>{drop.slice(0, 12).join(", ")}{drop.length > 12 ? ` 외 ${drop.length - 12}개` : ""}</Text>
+                    {aiTagSuggest.vocabMode !== "new" ? (
+                      <Text style={{ color: isDark ? "#fcd34d" : "#b45309", fontSize: 10.5, marginTop: 3 }}>‘{aiTagSuggest.vocabMode === "mine" ? "표준까지" : "새 태그 허용"}’로 바꾸고 다시 받으면 이 중 일부를 쓸 수 있어요.</Text>
+                    ) : null}
+                  </View>
+                ) : null;
+                if (!total) return <View>{dropNote}<Text style={{ color: C.sub, fontSize: 13, marginBottom: 8 }}>추천 결과가 없어요.</Text></View>;
                 const sentMeta = { positive: { t: "긍정", c: isDark ? "#4ade80" : "#16a34a" }, negative: { t: "부정", c: isDark ? "#f87171" : "#dc2626" }, neutral: { t: "중립", c: C.sub } };
                 return (
                   <View>
+                    {dropNote}
                     {genreSecs.map(sec => sec.items.length > 0 ? (
                       <View key={sec.kind} style={{ marginBottom: 10 }}>
                         <Text style={{ color: C.text, fontWeight: "700", fontSize: 12, marginBottom: 5 }}>{sec.title} ({sec.items.length})</Text>
@@ -77818,6 +77996,10 @@ async function importJSON(directText, onSuccess, onSettled) {
                           return (<TouchableOpacity key={opt.id} onPress={() => setBatchVocabMode(opt.id)} style={{ flex: 1, paddingVertical: 7, borderRadius: 8, alignItems: "center", backgroundColor: on ? C.primary : C.bg, borderWidth: 1, borderColor: on ? C.primary : C.line }}><Text style={{ color: on ? "#fff" : C.sub, fontWeight: "700", fontSize: 11 }}>{opt.label}</Text></TouchableOpacity>);
                         })}
                       </View>
+                      {/* 🆕 v7.59.2 (T03·AI-3): 단건과 같은 어휘가 작품마다 전송된다는 사실까지 숫자로 */}
+                      {aiVocabPreview ? (
+                        <Text style={{ color: C.sub, fontSize: 10, lineHeight: 14, marginBottom: 10 }}>{aiVocabCaption(batchVocabMode, true)}</Text>
+                      ) : null}
                       <TouchableOpacity onPress={() => setBatchIntensity(v => !v)} style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 }}>
                         <View style={{ width: 18, height: 18, borderRadius: 5, borderWidth: 2, borderColor: batchIntensity ? C.primary : C.line, backgroundColor: batchIntensity ? C.primary : "transparent", alignItems: "center", justifyContent: "center" }}>{batchIntensity ? <Text style={{ color: "#fff", fontSize: 11, fontWeight: "900" }}>✓</Text> : null}</View>
                         <Text style={{ color: C.sub, fontSize: 12 }}>태그 강도(1~5)도 제안</Text>
@@ -77873,15 +78055,23 @@ async function importJSON(directText, onSuccess, onSettled) {
                     if (r.status === "error") return <Text key={r.id + "_" + wi} numberOfLines={1} style={{ color: C.warn, fontSize: 12, marginBottom: 6 }}>⚠ {r.title} — {r.error}</Text>;
                     const sg = r.suggest;
                     const cnt = sg ? (sg.major.length + sg.sub.length + sg.tagsExisting.length + sg.tagsNew.length) : 0;
-                    if (r.status === "empty" || !cnt) return <Text key={r.id + "_" + wi} numberOfLines={1} style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>· {r.title} — 추천 없음</Text>;
+                    // 🆕 v7.59.2 (T03·AI-3): 어휘 밖이라 버려진 제안 — 배치도 단건과 동일하게 고지
+                    const drop = (sg && sg.dropped) || [];
+                    if (r.status === "empty" || !cnt) return <Text key={r.id + "_" + wi} numberOfLines={1} style={{ color: C.sub, fontSize: 12, marginBottom: 6 }}>· {r.title} — 추천 없음{drop.length ? ` (어휘 밖 ${drop.length}개 제외)` : ""}</Text>;
                     return (
                       <View key={r.id + "_" + wi} style={{ backgroundColor: C.chip, borderRadius: 12, padding: 10, marginBottom: 8 }}>
                         <TouchableOpacity onPress={() => toggleBatchExpand(wi)} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
                           <Text numberOfLines={1} style={{ flex: 1, color: C.text, fontWeight: "700", fontSize: 13 }}>{r.expanded ? "▾ " : "▸ "}{r.title}</Text>
-                          <Text style={{ color: C.sub, fontSize: 11 }}>기존 {sg.tagsExisting.length}·신규 {sg.tagsNew.length}</Text>
+                          <Text style={{ color: C.sub, fontSize: 11 }}>기존 {sg.tagsExisting.length}·신규 {sg.tagsNew.length}{drop.length ? `·제외 ${drop.length}` : ""}</Text>
                         </TouchableOpacity>
                         {r.expanded ? (
                           <View style={{ marginTop: 8 }}>
+                            {drop.length ? (
+                              <Text style={{ color: isDark ? "#fcd34d" : "#b45309", fontSize: 10.5, marginBottom: 8 }}>
+                                어휘 범위 밖 제외 {drop.length}개: {drop.slice(0, 10).join(", ")}{drop.length > 10 ? ` 외 ${drop.length - 10}개` : ""}
+                                {r.vocabMode && r.vocabMode !== "new" ? ` — ‘${r.vocabMode === "mine" ? "표준까지" : "새 태그 허용"}’로 다시 받으면 일부 사용 가능` : ""}
+                              </Text>
+                            ) : null}
                             {[{ kind: "major", title: "대장르" }, { kind: "sub", title: "부장르" }, { kind: "tagsExisting", title: "태그·기존" }].map(sec => (sg[sec.kind] || []).length > 0 ? (
                               <View key={sec.kind} style={{ marginBottom: 8 }}>
                                 <Text style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>{sec.title}</Text>
