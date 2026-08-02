@@ -2,9 +2,62 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.4 (구색 기능 개선 Phase 2 — 클라우드 push 충돌 감지, 베타)             ║
+ * ║  버전: 7.59.5 (구색 기능 개선 Phase 2 — 백업 고지 정직화)                        ║
  * ║  최종 수정: 2026-08-02                                                        ║
- * ║  총 라인 수: 약 78,750줄 (단일 컴포넌트)                                      ║
+ * ║  총 라인 수: 약 78,850줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 💾 v7.59.5 백업 고지 정직화 (T06 · DAT-3 + DAT-4 + DAT-7 최소 조치) (2026-08-02)  ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제 ①·DAT-3] 동기화 카드가 조건 없이 "표지·갤러리 이미지도 함께 백업돼요"라고   ║
+ * ║ 단언했지만, 표지가 스냅샷에 담기는 건 `embedCovers` 기본값이 사는 **수동 push**    ║
+ * ║ 뿐이다. 앱을 내릴 때 도는 백그라운드 push는 `embedCovers:false`(57504)라 LCV       ║
+ * ║ 블록을 통째로 건너뛴다. 스냅샷은 rev마다 통째 교체되고 옛 스냅샷은 삭제되므로     ║
+ * ║ (57360) **자동 push가 마지막이면 클라우드에 표지가 하나도 없다** — 새 기기에서     ║
+ * ║ 복원하면 표지가 전부 빈다. 용량 상한(장당 500KB·합계 8MB) 초과 고지도 수동        ║
+ * ║ 버튼 Alert에만 있어 자동 경로에는 아무 흔적이 없었다.                             ║
+ * ║                                                                              ║
+ * ║ [문제 ②·DAT-4] 수동 JSON 요약은 `표지 3개, 갤러리 5장`이라 적어 사진까지 담긴     ║
+ * ║ 백업으로 읽혔다. 실제로는 표지=URL 문자열만(getExportableImageUrl이 http만        ║
+ * ║ 통과), 갤러리=경로 메타뿐이다. 복원 측은 파일이 없으면 조용히 드롭하고 완료       ║
+ * ║ Alert에도 갤러리 항목이 없어, '백업했으니 원본을 지워도 된다'가 성립했다.         ║
+ * ║                                                                              ║
+ * ║ [문제 ③·DAT-7] 도움말 '백업과 복원' 팁이 "가져오기 시 기존 데이터와 병합하거나    ║
+ * ║ 덮어쓸 수 있어요"라고 안내했지만 importJSON에 병합 경로는 없다 — 항상 전량 교체다.║
+ * ║                                                                              ║
+ * ║ [수정 ①] 표지 수지를 센다 — exportJSON이 `localCoverCount`(백업 CV에 못 담기는    ║
+ * ║ 표지 전부)와 `fileCoverCount`(그중 file: 실체 = 클라우드 LCV 대상)를 한 번에      ║
+ * ║ 세고, LCV 블록이 `_cloudLastCoverEmbedded`(동봉분)를 남긴다. 판정은               ║
+ * ║ `getExportableImageUrl` 그 자체를 써서 '담긴 집합'과 어긋날 수 없게 했다.         ║
+ * ║ `l = e + d`가 항상 성립(검증 [2]).                                                ║
+ * ║                                                                              ║
+ * ║ [수정 ②] push 성공 시 `cloud_cover_note`(app_meta, 슬롯별) 기록 → 동기화 카드     ║
+ * ║ 배지. 자동 push는 **앱을 내릴 때** 도니 메모리 state만으론 다음 실행에 사라져     ║
+ * ║ rev·lastSync와 같은 방식으로 영속한다(선로드·슬롯 전환 2지점 동기화, pull         ║
+ * ║ 성공 시 비움 — 그때 클라우드 정본은 남의 스냅샷이라 이 기기 수지가 설명 못 함).   ║
+ * ║ 배지는 `l>0 && (자동이라 안 담김 || 상한 초과)`일 때만 — 담을 표지가 없는 슬롯에  ║
+ * ║ 뜨는 잡음을 막는다. 수동 완료 Alert도 제외분뿐 아니라 **포함된 표지 수**를 말한다 ║
+ * ║ (`cloudPushDoneMsg` 공용 — '지금 백업'과 '덮어쓰기 재시도' 두 경로가 같은 문장).  ║
+ * ║                                                                              ║
+ * ║ [수정 ③] 수동 백업 요약을 `표지 N개(URL) · 갤러리 N장(경로만)`로 바꾸고, 빠지는   ║
+ * ║ 것이 있을 때만 ⚠️ 한 줄 — 미포함 표지 수·갤러리 경로만 여부·같은 기기면 다시     ║
+ * ║ 연결된다는 사실·클라우드 대안까지. 복원 완료 Alert엔 `갤러리 X/Y장` (전량         ║
+ * ║ 드롭이 가장 중요한 고지라 0장도 표기).                                            ║
+ * ║                                                                              ║
+ * ║ [수정 ④] 도움말 팁의 거짓 문장을 '항상 전량 교체(병합·합치기 미지원)'로 교체 +    ║
+ * ║ import 최종 확인·백업 화면 안내에도 같은 사실 1줄씩.                              ║
+ * ║                                                                              ║
+ * ║ [안 한 것] 수동 백업에 `embedLocalCovers` 옵션 노출 — importJSON에 LCV 복원       ║
+ * ║ 경로가 없어(57436은 클라우드 pull 전용) 옵션만 켜면 담기기만 하고 복원은 안 되는  ║
+ * ║ 새 hollow feature가 된다. 자동 push의 표지 포함(자산화)은 T31 범위.               ║
+ * ║                                                                              ║
+ * ║ [검증] 실제 소스의 카운트 루프·LCV 블록·요약 조립·완료 문구·배지 조건·갤러리     ║
+ * ║ 고지를 문자열로 떼어내 스텁 스코프에서 44개 단언 실행 — 카드 시나리오(로컬 표지   ║
+ * ║ 2 + URL 표지 1 + 갤러리 3) 카운트 일치, 이미지 0일 때 경고 미출력, data: 표지는   ║
+ * ║ 미포함으로 세되 LCV 분모 제외, 자동 push에서 l 유지·e/d=0, 배지 5조건, 갤러리     ║
+ * ║ 3/3·1/3·0/3 문구, 거짓 단언 2종 소거. 전부 통과. 백업 스키마 무변경(v9 하위호환). ║
+ * ║ esbuild 통과, scraper-test 526/526. APP_VERSION 7.59.5.                           ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -9647,6 +9700,24 @@ function cloudHashStr(s) {
 }
 // 🆕 v7.54.3(NS3e): 직전 push에서 용량 상한으로 제외된 표지 수(사용자 고지용).
 let _cloudLastCoverDropped = 0;
+// 🆕 v7.59.5 (T06·DAT-3): 직전 스냅샷의 표지 수지 — `_cloudLastCoverLocal`은 이 슬롯이 가진 기기 저장(file:) 표지,
+//   `_cloudLastCoverEmbedded`는 그중 실제로 스냅샷에 base64로 담긴 수. dropped와 합쳐 '표지가 올라갔나'를 판정한다.
+//   embedCovers=false(백그라운드 자동 push)면 LCV 블록 자체를 건너뛰므로 embedded=0·dropped=0이 되어,
+//   dropped만으로는 '자동이라 안 담김'과 '담을 표지가 없음'을 구분할 수 없다 → local을 별도로 센다.
+let _cloudLastCoverLocal = 0;
+let _cloudLastCoverEmbedded = 0;
+// 🆕 v7.59.5 (T06·DAT-3): 수동 push 완료 문구를 한 곳에서 만든다 — '지금 백업'과 '덮어쓰기 재시도' 두 경로가
+//   같은 문장을 써야 한쪽만 정직해지는 일이 없다. 담을 표지가 없으면(l=0) 표지 얘기를 아예 안 한다.
+function cloudPushDoneMsg(r) {
+  const n = r && r.coverNote;
+  let cover = "";
+  if (n && n.l > 0) {
+    if (n.m === 0) cover = `\n🖼️ 표지는 안 담겼어요(자동 백업 경로).`;
+    else if (n.d > 0) cover = `\n⚠️ 표지 ${n.e}장 포함 · ${n.d}장은 용량 상한(장당 500KB · 합계 8MB)으로 제외됐어요.`;
+    else cover = `\n🖼️ 표지 ${n.e}장도 함께 올라갔어요.`;
+  }
+  return `클라우드에 저장했어요 (rev ${r.rev}).${cover}`;
+}
 /* ── /클라우드 토대 끝 ── */
 
 // 슬롯 생성 (이름 지정, 다음 빈 ID 자동 할당)
@@ -21153,7 +21224,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.4";
+const APP_VERSION = "7.59.5";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -24265,7 +24336,9 @@ const GUIDE_CONTENT = [
         description: "전체 데이터를 JSON 파일로 내보내거나, 이전 백업에서 복원합니다. 커스텀 초기화로 특정 데이터만 선택적으로 지울 수도 있어요.",
         tips: [
           "정기적으로 백업하면 데이터 손실을 방지할 수 있어요.",
-          "가져오기 시 기존 데이터와 병합하거나 덮어쓸 수 있어요.",
+          // 🔧 v7.59.5 (T06·DAT-7): 종전 문구 '병합하거나 덮어쓸 수 있어요'는 사실이 아니다 — importJSON은 항상 전량 교체다.
+          "가져오기는 항상 전량 교체예요 — 기존 데이터를 지우고 백업 내용으로 바꿔요(병합·합치기 미지원).",
+          "JSON 백업에는 사진 '파일'이 안 담겨요 — 직접 저장한 표지는 빠지고 갤러리는 경로만 담겨요. 사진까지 옮기려면 설정 › 연결 › ☁️ 클라우드 백업을 쓰세요.",
         ],
       },
     ],
@@ -41116,6 +41189,10 @@ function AppContent() {
   // 🆕 v7.59.4 (T05·DAT-2): push 전 감지된 '발산' 상태 — null | { remoteRev, localRev, updatedAt, slotName }.
   //   자동(무음) push가 중단됐다는 사실을 동기화 카드 배지로 남기는 유일한 경로다(자동 경로엔 Alert 금지).
   const [cloudConflict, setCloudConflict] = useState(null);
+  // 🆕 v7.59.5 (T06·DAT-3): 마지막 업로드의 표지 수지 — null | { m: 1|0(표지 담기 시도), l: 기기표지, e: 동봉, d: 제외, t: ts }.
+  //   백그라운드 자동 push는 표지를 빼고 올리는데(embedCovers=false) 그 사실이 남는 곳이 없었다.
+  //   자동 경로엔 Alert을 못 띄우므로(불변 #1과 같은 이유) 카드 배지가 유일한 통로 + app_meta 영속(슬롯별).
+  const [cloudCoverNote, setCloudCoverNote] = useState(null);
   const cloudSyncingRef = useRef(false);                          // 동시 동기화 가드
   const cloudAutoRef = useRef(false);                             // AppState 콜백용 최신 enabled
   const cloudPushRef = useRef(null);                              // AppState 콜백이 최신 push 클로저 참조(불변 #2)
@@ -41134,8 +41211,10 @@ function AppContent() {
         const en = (await getAppMeta("cloud_enabled")) === "1";
         const rev = Number(await getAppMeta("cloud_rev")) || 0;
         const ls = Number(await getAppMeta("cloud_last_sync")) || 0;
+        const cn = await getAppMeta("cloud_cover_note"); // 🆕 v7.59.5(T06): rev/lastSync와 같은 슬롯별 값
         if (!alive) return;
         setCloudSignedIn(si); setCloudEnabled(en); setCloudRev(rev); setCloudLastSync(ls);
+        setCloudCoverNote(cn && typeof cn === "object" ? cn : null);
       } catch {}
     })();
     return () => { alive = false; };
@@ -41482,9 +41561,11 @@ function AppContent() {
         const en = (await getAppMeta("cloud_enabled")) === "1";
         const rev = Number(await getAppMeta("cloud_rev")) || 0;
         const ls = Number(await getAppMeta("cloud_last_sync")) || 0;
+        const cn = await getAppMeta("cloud_cover_note"); // 🆕 v7.59.5(T06)
         if (!alive) return;
         setCloudEnabled(en); setCloudRev(rev); setCloudLastSync(ls);
         setCloudConflict(null); // 🆕 v7.59.4(T05): 충돌 상태도 슬롯별 — 전환 시 이전 슬롯 배지가 남지 않도록
+        setCloudCoverNote(cn && typeof cn === "object" ? cn : null); // 🆕 v7.59.5(T06): 표지 고지도 슬롯별
       } catch {}
     })();
     return () => { alive = false; };
@@ -57344,15 +57425,20 @@ async function cloudPushCurrentSlot({ silent = true, embedCovers = true, force =
     await driveUploadText("manifest.json", folderId, JSON.stringify(manifest), manFile?.id);
     // 옛 스냅샷 정리(현재 것 제외) — best-effort.
     try { for (const f of (await driveList(folderId) || [])) { if ((/^snapshot-/.test(f.name) && f.name !== snapName) || f.name === "snapshot.json") { try { await driveDelete(f.id); } catch {} } } } catch {}
+    // 🆕 v7.59.5 (T06·DAT-3): 이 업로드에 표지가 담겼는지 기록. 옛 스냅샷은 위에서 지워지므로 방금 올린 것이
+    //   유일한 정본이다 — 자동 push(embedCovers=false)가 마지막이면 클라우드에 표지가 하나도 없는 상태가 된다.
+    const coverNote = { m: embedCovers ? 1 : 0, l: _cloudLastCoverLocal, e: _cloudLastCoverEmbedded, d: _cloudLastCoverDropped, t: manifest.updatedAt };
     if (_slotGeneration === gen) { // 🔧 C2: 전환됐으면 현재(다른) 슬롯에 rev를 쓰지 않음
       await setAppMeta("cloud_rev", String(newRev));
       await setAppMeta("cloud_last_sync", String(manifest.updatedAt));
       await setAppMeta("cloud_pushed_hash", contentHash); // 🔧 R2/NS5: 변경 감지 기준
+      await setAppMeta("cloud_cover_note", coverNote);    // 🆕 v7.59.5(T06): 자동 push는 앱을 내릴 때 도니 메모리 state만으론 다음 실행에서 사라진다
       setCloudRev(newRev); setCloudLastSync(manifest.updatedAt);
       setCloudConflict(null); // 🆕 v7.59.4(T05): 업로드 성공 = 이 기기가 최신 정본 → 배지 해제
+      setCloudCoverNote(coverNote);
     }
     setCloudSyncStatus("idle");
-    return { ok: true, rev: newRev, coverDropped: _cloudLastCoverDropped };
+    return { ok: true, rev: newRev, coverDropped: _cloudLastCoverDropped, coverNote };
   } catch (e) {
     console.warn("[cloud] push 실패:", e?.message); setCloudSyncStatus("error");
     if (!silent) Alert.alert("클라우드 백업 실패", e?.message || "알 수 없는 오류");
@@ -57428,9 +57514,12 @@ async function cloudPullCurrentSlot({ silent = true, targetUuid = null } = {}) {
         try {
           await setAppMeta("cloud_rev", String(remoteRev));
           await setAppMeta("cloud_last_sync", String(Date.now()));
+          // 🆕 v7.59.5 (T06·DAT-3): 클라우드 정본이 이제 남의(또는 옛) 스냅샷이라 이 기기의 표지 수지는 더 이상 그걸 설명하지 못한다 → 비운다.
+          await setAppMeta("cloud_cover_note", null);
         } catch {}
         setCloudRev(remoteRev); setCloudLastSync(Date.now());
         setCloudConflict(null); // 🆕 v7.59.4(T05): 원격을 받아왔으니 발산 해소 → 배지 해제
+        setCloudCoverNote(null);
       },
       () => { cloudRestoreInProgressRef.current = false; setCloudSyncStatus(s => (s === "syncing" ? "idle" : s)); } // onSettled: 성공/실패/취소 모두
     );
@@ -57524,7 +57613,19 @@ async function exportJSON(opts) {
     // 📷 URL 표지 이미지 자동 수집 (로컬 이미지는 제외)
     const coverImages = collectCoverImageUrls(novels);
     const coverCount = Object.keys(coverImages).length;
-    
+    // 🆕 v7.59.5 (T06·DAT-3/4): '이 백업에 실체가 안 담기는 표지' 집계 — 요약 고지와 클라우드 배지의 분모.
+    //   localCoverCount = CV(URL 맵)에 못 들어가는 표지 전부, fileCoverCount = 그중 file: 실체가 있어
+    //   클라우드 LCV(base64 동봉) 대상이 되는 것. 판정은 collectCoverImageUrls와 같은 헬퍼를 써서 어긋날 수 없게 한다.
+    let localCoverCount = 0, fileCoverCount = 0;
+    for (const n of novels) {
+      const ci = n.cover_image;
+      if (!ci || getExportableImageUrl(ci)) continue;
+      localCoverCount++;
+      if (/^file:/.test(ci)) fileCoverCount++;
+    }
+    _cloudLastCoverLocal = fileCoverCount; // 클라우드 push 경로가 읽는다(embedCovers=false면 아래 LCV 블록이 안 돌아 여기서만 채워짐)
+    _cloudLastCoverEmbedded = 0;
+
     // 🎯 v3.0.4: 분석 데이터 수집
     const analysisData = {
       matchInsights,
@@ -57785,6 +57886,7 @@ async function exportJSON(opts) {
         }
         if (Object.keys(lcv).length > 0) payload.LCV = lcv;
         _cloudLastCoverDropped = _lcvDropped; // 🔧 NS3e: 제외된 표지 수(사용자 고지용)
+        _cloudLastCoverEmbedded = Object.keys(lcv).length; // 🆕 v7.59.5(T06): 실제 동봉된 표지 수(고지 분자)
       } catch (lcvErr) { console.warn("[cloud] 로컬 표지 임베드 실패:", lcvErr?.message); }
     }
 
@@ -57803,18 +57905,30 @@ async function exportJSON(opts) {
       ? `${(sizeKB / 1024).toFixed(1)}MB` 
       : `${sizeKB}KB`;
 
-    const coverInfo = coverCount > 0 ? `, 표지 ${coverCount}개` : "";
+    // 🔧 v7.59.5 (T06·DAT-4): 표지·갤러리 표기에 '무엇이 담겼는지'를 붙인다. 종전 `표지 3개, 갤러리 5장`은
+    //   사진까지 들어간 백업으로 읽혔지만 실제로는 표지=URL 문자열, 갤러리=경로 메타뿐이다.
+    const coverInfo = coverCount > 0 ? `, 표지 ${coverCount}개(URL)` : "";
     const analysisInfo = payload.AD ? ", 분석 데이터" : "";
     const tagMetaInfo = payload.TM ? ", 태그 설정" : "";
     const tagRegistryInfo = payload.TR ? ", 태그 체계" : "";
     const plannedInfo = payload.PL ? `, 예정 ${payload.PL.length}개` : "";
     const patternInfo = payload.PP ? `, 학습 패턴 ${payload.PP.length}개` : "";
-    const galleryInfo = payload.GI ? `, 갤러리 ${payload.GI.length}장` : "";
+    const galleryInfo = payload.GI ? `, 갤러리 ${payload.GI.length}장(경로만)` : "";
     // 🆕 v7.49.20: 이미지 명대사 base64는 작품당 3개까지만 백업 → 타기기 복원 시 4번째+ 이미지는 깨진 참조가 되므로 누락 작품 수 고지(이전엔 무고지).
     let _qCapWorks = 0, _qCapExcess = 0;
     try { for (const n of novels) { if (!n.memorable_quote) continue; const imgs = parseQuotes(n.memorable_quote).filter(q => isImageQuote(q)).length; if (imgs > 3) { _qCapWorks++; _qCapExcess += (imgs - 3); } } } catch {}
     const quoteCapInfo = _qCapWorks > 0 ? `\n⚠️ 이미지 명대사 ${_qCapWorks}개 작품의 일부(${_qCapExcess}장, 작품당 3장 초과분)는 타기기 복원 시 빠져요.` : "";
-    const summary = `${novels.length}작품, ${matches.length}매치${plannedInfo}${coverInfo}${galleryInfo}${analysisInfo}${tagMetaInfo}${tagRegistryInfo}${patternInfo}\n크기: ${sizeText}${quoteCapInfo}`;
+    // 🆕 v7.59.5 (T06·DAT-4): 수동 JSON은 이미지 '실체'를 담지 않는다 — 직접 저장한 표지는 아예 빠지고,
+    //   갤러리는 경로만 담겨 다른 기기에서는 파일이 없어 조용히 드롭된다. 종전엔 이 사실이 요약 어디에도 없어
+    //   '백업했으니 원본을 지워도 된다'는 오해가 가능했다.
+    const _giCount = payload.GI ? payload.GI.length : 0;
+    const _missParts = [];
+    if (localCoverCount > 0) _missParts.push(`직접 저장한 표지 ${localCoverCount}장은 미포함`);
+    if (_giCount > 0) _missParts.push(`갤러리 ${_giCount}장은 경로만 포함`);
+    const imageMissInfo = _missParts.length
+      ? `\n⚠️ 사진 '파일'은 이 백업에 안 담겨요 — ${_missParts.join(" · ")}. 같은 기기에서 복원하면 다시 연결되지만, 기기를 바꾸거나 앱을 지웠다 깔면 비어요. (사진까지 옮기려면 설정 › 연결 › ☁️ 클라우드 백업)`
+      : "";
+    const summary = `${novels.length}작품, ${matches.length}매치${plannedInfo}${coverInfo}${galleryInfo}${analysisInfo}${tagMetaInfo}${tagRegistryInfo}${patternInfo}\n크기: ${sizeText}${quoteCapInfo}${imageMissInfo}`;
     
     if (_pt) PerfMonitor.trackFunc("exportJSON", Date.now() - _pt); // 🔬
     setIsLoading(false);
@@ -58089,7 +58203,8 @@ async function importJSON(directText, onSuccess, onSettled) {
 
       Alert.alert(
         "최종 확인",
-        `${lenN}개 작품과 ${lenM}개 대진 기록을 가져옵니다.\n\n⚠️ 기존 데이터는 모두 삭제됩니다!${_modeMismatch ? `\n\n🎨 모드 다름: 이 백업은 '${_bkMode === "webtoon" ? "웹툰" : "웹소설"}' 데이터예요. 현재 '${getModeProfile(globalSlotMode).label}' 슬롯에 넣으면 장르/연재처 목록이 섞일 수 있어요.` : ""}`,
+        // 🆕 v7.59.5 (T06·DAT-7 최소 조치): '합치기'를 기대하고 누르는 사용자가 있다 — 이 경로는 전량 교체뿐임을 못박는다.
+        `${lenN}개 작품과 ${lenM}개 대진 기록을 가져옵니다.\n\n⚠️ 기존 데이터는 모두 삭제됩니다!\n(지금 데이터에 '더하기'나 두 백업 '합치기'는 지원하지 않아요 — 이 백업 내용으로 통째로 바뀝니다.)${_modeMismatch ?`\n\n🎨 모드 다름: 이 백업은 '${_bkMode === "webtoon" ? "웹툰" : "웹소설"}' 데이터예요. 현재 '${getModeProfile(globalSlotMode).label}' 슬롯에 넣으면 장르/연재처 목록이 섞일 수 있어요.` : ""}`,
         [
           { text: "취소", onPress: () => { if (typeof onSettled === "function") { try { onSettled(); } catch {} } } }, // ☁️ v7.54.2(H0): 취소도 종료 신호
           {
@@ -58758,7 +58873,11 @@ async function importJSON(directText, onSuccess, onSettled) {
               }
 
               // 🎨 v3.8.0: 갤러리 이미지 복원
+              // 🆕 v7.59.5 (T06·DAT-4): 백업엔 갤러리 '경로'만 담기므로 파일이 없는 기기에서는 전량 조용히 드롭됐다 →
+              //   완료 Alert에 수치를 남기려고 블록 밖에 카운터를 둔다(validGI는 try 스코프라 밖에서 못 읽음).
+              let giTotal = 0, giRestored = 0;
               if (Array.isArray(data.GI) && data.GI.length > 0) {
+                giTotal = data.GI.length;
                 try {
                   // 🔧 v7.54.2(H2): file_path를 현재 기기 documentDirectory 기준으로 정규화 후 존재 확인·INSERT.
                   //   (이전엔 옛 기기 경로로 확인 → iOS처럼 설치마다 경로가 바뀌는 기기에서 전부 스킵돼 갤러리 유실.
@@ -58773,6 +58892,7 @@ async function importJSON(directText, onSuccess, onSettled) {
                       if (fInfo.exists) validGI.push({ ...gi, fp });
                     } catch {}
                   }
+                  giRestored = validGI.length; // 🆕 v7.59.5(T06): 0장이어도 기록(전량 드롭이 가장 중요한 고지)
                   if (validGI.length > 0) {
                     const giQueries = validGI.map(gi => ({
                       sql: "INSERT OR IGNORE INTO gallery_images (id,novel_id,file_path,caption,created_at) VALUES (?,?,?,?,?);",
@@ -58909,6 +59029,13 @@ async function importJSON(directText, onSuccess, onSettled) {
               const plannedInfo = plannedRestored ? `\n(예정 작품 ${data.PL.length}개 복원)` : "";
               const patternInfo = patternsRestored ? `\n(학습 패턴 ${data.PP.length}개 복원)` : "";
               const pcInfo = platformCoversRestored ? "\n(플랫폼 표지 복원됨)" : "";
+              // 🆕 v7.59.5 (T06·DAT-4): 갤러리 복원 결과 — 종전엔 파일이 없으면 무음 드롭이라 사진이 사라진 걸
+              //   사용자가 갤러리를 열어보기 전까지 알 수 없었다.
+              const giInfo = giTotal > 0
+                ? (giRestored >= giTotal
+                    ? `\n(갤러리 ${giRestored}장 복원)`
+                    : `\n⚠️ 갤러리 ${giRestored}/${giTotal}장만 복원 — 나머지 ${giTotal - giRestored}장은 이 기기에 사진 파일이 없어요(백업엔 경로만 담겨요).`)
+                : "";
               // 🔧 v3.5.8: 복원 검증 결과 포함
               const verifyInfo = insertedCount < lenN ? `\n⚠️ 주의: ${lenN}개 중 ${insertedCount}개만 복원됨` : "";
               if (_pt) PerfMonitor.trackFunc("importJSON", Date.now() - _pt); // 🔬
@@ -58918,7 +59045,7 @@ async function importJSON(directText, onSuccess, onSettled) {
               if (typeof onSuccess === "function") { try { await onSuccess(); } catch (cbErr) { console.warn("[import] onSuccess 콜백 오류:", cbErr?.message); } }
               cloudRestoreInProgressRef.current = false; // 🔧 v7.54.3(NS7): 수동 import 경로도 해제(onSettled 없는 호출 대비)
               if (typeof onSettled === "function") { try { onSettled(); } catch {} } // ☁️ v7.54.2(H0): 복원 성공 종료 신호(클라우드 뮤텍스 해제)
-              Alert.alert("완료", `데이터를 성공적으로 가져왔습니다!\n(Elo 데이터 완전 복원)${verifyInfo}${extraInfo}${histInfo}${analysisInfo}${comboInfo}${tagMetaInfo}${plannedInfo}${patternInfo}${pcInfo}`);
+              Alert.alert("완료", `데이터를 성공적으로 가져왔습니다!\n(Elo 데이터 완전 복원)${verifyInfo}${extraInfo}${histInfo}${analysisInfo}${comboInfo}${tagMetaInfo}${plannedInfo}${patternInfo}${pcInfo}${giInfo}`);
               } catch (restoreErr) {
                 // 🔧 v3.5.9: 복원 실패 시 자동 재시도 옵션 제공
                 if (_pt) PerfMonitor.logError("importJSON", restoreErr); // 🔬
@@ -70170,8 +70297,12 @@ async function importJSON(directText, onSuccess, onSettled) {
                     ⚠️ 설정 필요 — 구글 OAuth 클라이언트 ID(GOOGLE_OAUTH_CLIENT_ID)와 동의 화면을 먼저 구성해야 사용할 수 있어요. (docs/cloud-sync-plan.md 참고)
                   </Text>
                 ) : (<>
+                  {/* 🔧 v7.59.5 (T06·DAT-3): 종전엔 조건 없이 "표지·갤러리 이미지도 함께 백업돼요"였지만,
+                      표지는 수동 push(embedCovers 기본 true)에만 base64로 담기고 백그라운드 자동 push는 빼고 올린다.
+                      스냅샷은 매 rev 통째 교체(옛 스냅샷 삭제)라 자동 push가 마지막이면 클라우드에 표지가 남지 않는다. */}
                   <Text style={{ color: C.sub, fontSize: 11, lineHeight: 16, marginBottom: 10 }}>
-                    현재 슬롯을 구글 드라이브(앱 전용 폴더)에 백업하고 다른 기기에서 이어서 써요. 데이터는 본인 드라이브에만 저장돼요(개발자 서버 없음). 표지·갤러리 이미지도 함께 백업돼요.
+                    현재 슬롯을 구글 드라이브(앱 전용 폴더)에 백업하고 다른 기기에서 이어서 써요. 데이터는 본인 드라이브에만 저장돼요(개발자 서버 없음).
+                    {"\n"}갤러리 사진은 항상 함께 올라가요. 기기에 저장한 표지는 ‘⬆️ 지금 백업’(수동)일 때만 담기고, 앱을 내릴 때 도는 자동 백업은 표지를 빼고 올려요 — 그 뒤엔 클라우드에 표지가 없어요.
                   </Text>
                   {!cloudSignedIn ? (
                     <TouchableOpacity onPress={cloudUiSignIn} disabled={cloudBusy}
@@ -70197,11 +70328,23 @@ async function importJSON(directText, onSuccess, onSettled) {
                         </Text>
                       </View>
                     )}
+                    {/* 🖼️ v7.59.5 (T06·DAT-3): 표지 배지 — 자동 push는 표지를 빼고 올리는데 무음이라 알 길이 없었다.
+                        `l`(기기 저장 표지)이 0이면 애초에 담을 표지가 없다는 뜻이라 띄우지 않는다(잡음 방지). */}
+                    {cloudCoverNote && cloudCoverNote.l > 0 && (cloudCoverNote.m === 0 || cloudCoverNote.d > 0) && (
+                      <View style={{ backgroundColor: isDark ? "#1e293b" : "#f1f5f9", borderRadius: 10, padding: 10, marginBottom: 10, borderWidth: 1, borderColor: C.line }}>
+                        <Text style={{ color: C.sub, fontSize: 11, lineHeight: 16 }}>
+                          {cloudCoverNote.m === 0
+                            ? `🖼️ 마지막 업로드는 자동 백업이라 기기에 저장한 표지 ${cloudCoverNote.l}장이 안 담겼어요.`
+                            : `🖼️ 마지막 업로드에서 표지 ${cloudCoverNote.d}장이 용량 상한(장당 500KB · 합계 8MB)으로 빠졌어요${cloudCoverNote.e > 0 ? ` (${cloudCoverNote.e}장은 담김)` : ""}.`}
+                          {"\n"}{cloudCoverNote.m === 0 ? "‘⬆️ 지금 백업’을 한 번 누르면 표지까지 올라가요." : "상한을 넘는 표지는 더 작은 이미지로 바꾸면 담겨요."}
+                        </Text>
+                      </View>
+                    )}
                     <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
                       <TouchableOpacity onPress={async () => {
                         const r = await cloudPushCurrentSlot({ silent: false });
                         if (r.ok && r.unchanged) Alert.alert("최신 상태", "변경 사항이 없어 그대로예요.");
-                        else if (r.ok) Alert.alert("백업 완료", `클라우드에 저장했어요 (rev ${r.rev}).` + (r.coverDropped > 0 ? `\n⚠️ 표지 ${r.coverDropped}개는 용량 상한으로 제외됐어요.` : ""));
+                        else if (r.ok) Alert.alert("백업 완료", cloudPushDoneMsg(r)); // 🔧 v7.59.5(T06): 제외분뿐 아니라 '포함된 표지 수'까지 고지
                         else if (r.conflict && r.kind === "stale") {
                           // 🆕 v7.59.4 (T05·DAT-2): 조용한 덮어쓰기 대신 '1회 선택'(cloud-sync-plan 설계5).
                           //   옛 스냅샷은 push 성공 시 삭제되고 리비전 보관은 아직 없으므로 덮어쓰기는 2단 확인.
@@ -70214,7 +70357,7 @@ async function importJSON(directText, onSuccess, onSettled) {
                                 { text: "덮어쓰기", style: "destructive", onPress: async () => {
                                   const r2 = await cloudPushCurrentSlot({ silent: false, force: true });
                                   if (r2.ok && r2.unchanged) Alert.alert("최신 상태", "변경 사항이 없어 그대로예요.");
-                                  else if (r2.ok) Alert.alert("백업 완료", `클라우드에 저장했어요 (rev ${r2.rev}).` + (r2.coverDropped > 0 ? `\n⚠️ 표지 ${r2.coverDropped}개는 용량 상한으로 제외됐어요.` : ""));
+                                  else if (r2.ok) Alert.alert("백업 완료", cloudPushDoneMsg(r2)); // 🔧 v7.59.5(T06): '지금 백업'과 동일 문구(반쪽 방지)
                                   else if (r2.conflict) Alert.alert("동기화 충돌", r2.error);
                                 } },
                               ]);
@@ -71921,9 +72064,13 @@ async function importJSON(directText, onSuccess, onSettled) {
             {settingsSubTab === "backup" && (
               <>
             <Section title="데이터 백업 / 복원">
+              {/* 🔧 v7.59.5 (T06·DAT-4/7): 'URL 표지는 포함' 한 줄로는 '나머지는 안 담긴다'가 읽히지 않는다 —
+                  기기 저장 표지·갤러리 사진의 실체가 빠진다는 것과, 가져오기가 전량 교체라는 것을 명시. */}
               <Text style={{ color: C.sub, marginBottom: 8 }}>
                 작품과 대진 기록을 JSON으로 내보내거나 가져올 수 있습니다.
                 URL 표지 이미지는 자동으로 포함됩니다.
+                {"\n"}⚠️ 기기에 저장한 표지·갤러리 사진의 '파일'은 안 담겨요(갤러리는 경로만). 같은 기기에서는 다시 연결되지만 기기를 바꾸면 비어요 — 사진까지 옮기려면 설정 › 연결 › ☁️ 클라우드 백업을 쓰세요.
+                {"\n"}가져오기는 전량 교체예요(병합 미지원).
               </Text>
               <PrimaryButton
                 title="📦 JSON 내보내기 (백업)"
