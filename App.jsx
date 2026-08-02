@@ -2,9 +2,36 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.2 (구색 기능 개선 Phase 1 — AI 어휘 범위 실질화, 베타)                 ║
+ * ║  버전: 7.59.3 (구색 기능 개선 Phase 1 — AI 태그 근거 표시, 베타)                   ║
  * ║  최종 수정: 2026-08-02                                                        ║
  * ║  총 라인 수: 약 78,600줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 💬 v7.59.3 AI 태그 근거(reason) 표시 (T04 · AI-4) (2026-08-02)                    ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제] 두 제공자 스키마가 태그마다 `reason`(짧은 근거)을 **요구**하고(Claude      ║
+ * ║ 16512 · Gemini 16567 propertyOrdering까지) 매 호출 그 출력 토큰을 과금하는데,     ║
+ * ║ 태그 추천 경로의 결과 객체엔 아예 안 실렸다. 받아 놓고 통째로 버린 것이다.        ║
+ * ║ 같은 앱의 좌표 제안·상반 후보는 이미 근거를 띄우고 있어 일관성도 없었다.          ║
+ * ║                                                                              ║
+ * ║ [수정] 소비부 6곳(단건 3 · 배치 3)에 `reason: aiTagReason(it.reason)` —           ║
+ * ║ 스키마·프롬프트·요청은 한 글자도 안 건드렸다. **추가 비용 0.**                    ║
+ * ║ · 신규 태그 행: 행 아래 `↳ 근거` 한 줄(2줄까지 wrap). 신규는 기본 꺼짐이라        ║
+ * ║   '왜 이걸 제안했나'가 켤지 말지 판단에 직접 쓰인다 — 가장 값어치 있는 자리.      ║
+ * ║ · 기존 태그 칩: 칩이 좁아 본문에 못 실으므로 'ⓘ' 표시 + **길게 눌러** 근거        ║
+ * ║   Alert. 칩 롱프레스는 비어 있던 제스처라 기존 조작과 충돌 없음.                  ║
+ * ║ · 대장르·부장르는 스키마상 문자열 배열이라 reason 자체가 없다 → 표시 없음(정상).  ║
+ * ║ · 안내 문구에 "'ⓘ'는 길게 누르면 AI 근거" 추가.                                   ║
+ * ║                                                                              ║
+ * ║ `aiTagReason()`: 공백 정규화 + 100자 초과 시 말줄임. 근거가 없으면 빈 문자열이라  ║
+ * ║ ⓘ·↳ 둘 다 안 붙는다(있을 때만 보인다).                                            ║
+ * ║                                                                              ║
+ * ║ [검증] 실제 소스의 배치 `classify` 클로저를 그대로 떼어내 스텁 스코프에서 실행 —  ║
+ * ║ reason이 tagsExisting·tagsNew 양쪽에 실리고, AI가 근거를 빼먹은 태그는 빈 문자열, ║
+ * ║ mine/std/new 세 모드의 분류·제외 집계가 의도대로임을 확인(T03 폐기 고지 회귀 포함: ║
+ * ║ 이미 단 태그는 '제외'로 오집계되지 않음). esbuild 통과, scraper-test 526/526.     ║
+ * ║ APP_VERSION 7.59.3.                                                               ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -16387,6 +16414,16 @@ function buildAiGenreMaps(userMajorGenres, userSubGenres) {
   return { majorVocab, subVocab, majorMap, subMap, stdMap };
 }
 
+/**
+ * 🆕 v7.59.3 (T04·AI-4): AI가 태그마다 붙여 보내는 reason(짧은 근거)을 화면에 실을 형태로 정리.
+ * 두 제공자 스키마가 이미 요구·과금하는 값인데 종전엔 결과 객체에 안 실려 통째로 버려졌다.
+ */
+function aiTagReason(v) {
+  const s = String(v == null ? "" : v).replace(/\s+/g, " ").trim();
+  if (!s) return "";
+  return s.length > 100 ? s.slice(0, 100) + "…" : s;
+}
+
 /** 문자 예산 안에서 앞에서부터 담기 (넘치면 거기서 끊고, 끊긴 개수는 호출자가 고지한다) */
 function takeTagsWithinBudget(tags, budget) {
   const out = []; let acc = 0;
@@ -21077,7 +21114,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.2";
+const APP_VERSION = "7.59.3";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -47654,12 +47691,16 @@ function AppContent() {
         seenT.add(k);
         const conf = String(it.confidence || "med").toLowerCase();
         const intv = aiTagSuggestIntensity ? Math.min(5, Math.max(1, Math.round(Number(it.intensity) || 3))) : 3;
+        // 🆕 v7.59.3 (T04·AI-4): 두 제공자 스키마가 태그마다 reason(짧은 근거)을 요구하고
+        //   매 호출 그 토큰을 과금하는데(16512·16567), 종전엔 결과 객체에 아예 안 실었다.
+        //   추가 비용 0 — 이미 받아 놓고 버리던 값이다.
+        const rsn = aiTagReason(it.reason);
         if (usedKeys.has(k)) {
-          tagsExisting.push({ tag: disp.get(k), intensity: intv, confidence: conf, checked: conf !== "low" });
+          tagsExisting.push({ tag: disp.get(k), intensity: intv, confidence: conf, checked: conf !== "low", reason: rsn });
         } else if (stdMap.has(k) && (mode === "std" || mode === "new")) {
-          tagsNew.push({ tag: stdMap.get(k), intensity: intv, confidence: conf, sentSuggest: sentOf(it.sentiment), sent: null, needsRegister: false, similarTo: null, checked: false });
+          tagsNew.push({ tag: stdMap.get(k), intensity: intv, confidence: conf, sentSuggest: sentOf(it.sentiment), sent: null, needsRegister: false, similarTo: null, checked: false, reason: rsn });
         } else if (allowNew) {
-          tagsNew.push({ tag: name, intensity: intv, confidence: conf, sentSuggest: sentOf(it.sentiment), sent: null, needsRegister: true, similarTo: findSimilarUsed(k), checked: false });
+          tagsNew.push({ tag: name, intensity: intv, confidence: conf, sentSuggest: sentOf(it.sentiment), sent: null, needsRegister: true, similarTo: findSimilarUsed(k), checked: false, reason: rsn });
         } else {
           noteDrop(name); // 🆕 v7.59.2: 어휘 범위 밖 — 종전엔 여기서 조용히 사라졌다
         }
@@ -49216,9 +49257,10 @@ function AppContent() {
         seenT.add(k);
         const conf = String(it.confidence || "med").toLowerCase();
         const intv = batchIntensity ? Math.min(5, Math.max(1, Math.round(Number(it.intensity) || 3))) : 3;
-        if (usedKeys.has(k)) tagsExisting.push({ tag: disp.get(k), intensity: intv, confidence: conf, checked: conf !== "low" });
-        else if (stdMap.has(k) && (mode === "std" || mode === "new")) tagsNew.push({ tag: stdMap.get(k), intensity: intv, confidence: conf, sentSuggest: sentOf(it.sentiment), sent: null, needsRegister: false, similarTo: null, checked: false });
-        else if (allowNew) tagsNew.push({ tag: nm, intensity: intv, confidence: conf, sentSuggest: sentOf(it.sentiment), sent: null, needsRegister: true, similarTo: findSimilarUsed(k), checked: false });
+        const rsn = aiTagReason(it.reason); // 🆕 v7.59.3 (T04·AI-4): 단건과 동일 — 받아 놓고 버리던 근거를 싣는다
+        if (usedKeys.has(k)) tagsExisting.push({ tag: disp.get(k), intensity: intv, confidence: conf, checked: conf !== "low", reason: rsn });
+        else if (stdMap.has(k) && (mode === "std" || mode === "new")) tagsNew.push({ tag: stdMap.get(k), intensity: intv, confidence: conf, sentSuggest: sentOf(it.sentiment), sent: null, needsRegister: false, similarTo: null, checked: false, reason: rsn });
+        else if (allowNew) tagsNew.push({ tag: nm, intensity: intv, confidence: conf, sentSuggest: sentOf(it.sentiment), sent: null, needsRegister: true, similarTo: findSimilarUsed(k), checked: false, reason: rsn });
         else noteDrop(nm); // 🆕 v7.59.2: 어휘 범위 밖 — 종전엔 조용히 사라졌다
       }
       return { major: majSug, sub: subSug, tagsExisting, tagsNew, dropped };
@@ -77913,10 +77955,12 @@ async function importJSON(directText, onSuccess, onSettled) {
                             const label = (sec.kind === "major" || sec.kind === "sub") ? it.name : it.tag;
                             const on = it.checked; const low = it.confidence === "low";
                             return (
+                              // 🆕 v7.59.3 (T04·AI-4): 칩은 좁아서 근거를 못 실으므로 길게 눌러 확인
                               <TouchableOpacity key={label + i} onPress={() => toggleAiTagItem(sec.kind, i)}
+                                onLongPress={it.reason ? () => Alert.alert(`AI 근거 · ${label}`, it.reason) : undefined}
                                 style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 16, backgroundColor: on ? (isDark ? "#3730a3" : "#eef2ff") : C.bg, borderWidth: 1, borderColor: on ? (isDark ? "#6366f1" : "#c7d2fe") : C.line }}>
                                 <Text style={{ color: on ? (isDark ? "#c7d2fe" : "#4338ca") : C.sub, fontSize: 12.5, fontWeight: on ? "700" : "500" }}>
-                                  {on ? "✓ " : ""}{label}{sec.kind === "tagsExisting" && aiTagSuggestIntensity ? ` ·${it.intensity}` : ""}{low ? " ?" : ""}
+                                  {on ? "✓ " : ""}{label}{sec.kind === "tagsExisting" && aiTagSuggestIntensity ? ` ·${it.intensity}` : ""}{low ? " ?" : ""}{it.reason ? " ⓘ" : ""}
                                 </Text>
                               </TouchableOpacity>
                             );
@@ -77931,15 +77975,19 @@ async function importJSON(directText, onSuccess, onSettled) {
                         {newItems.map((it, i) => {
                           const on = it.checked; const applied = it.sent != null; const sm = sentMeta[applied ? it.sent : it.sentSuggest] || sentMeta.neutral;
                           return (
-                            <View key={it.tag + i} style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 5 }}>
-                              <TouchableOpacity onPress={() => toggleAiTagItem("tagsNew", i)} style={{ flex: 1, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 9, backgroundColor: on ? (isDark ? "#3730a3" : "#eef2ff") : C.bg, borderWidth: 1, borderColor: on ? (isDark ? "#6366f1" : "#c7d2fe") : C.line }}>
-                                <Text style={{ color: on ? (isDark ? "#c7d2fe" : "#4338ca") : C.sub, fontSize: 12.5, fontWeight: on ? "700" : "500" }}>
-                                  {on ? "✓ " : ""}{it.tag}{aiTagSuggestIntensity ? ` ·${it.intensity}` : ""}{it.similarTo ? `  ↔ 비슷: ${it.similarTo}` : ""}
-                                </Text>
-                              </TouchableOpacity>
-                              <TouchableOpacity onPress={() => cycleAiTagSentiment(i)} onLongPress={() => resetAiTagSentiment(i)} style={{ paddingHorizontal: 9, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: sm.c, backgroundColor: applied ? sm.c : "transparent" }}>
-                                <Text style={{ color: applied ? "#fff" : sm.c, fontSize: 11, fontWeight: "700" }}>{applied ? `${sm.t} ✓` : `추천 ${sm.t}`}</Text>
-                              </TouchableOpacity>
+                            <View key={it.tag + i} style={{ marginBottom: 5 }}>
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                                <TouchableOpacity onPress={() => toggleAiTagItem("tagsNew", i)} style={{ flex: 1, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 9, backgroundColor: on ? (isDark ? "#3730a3" : "#eef2ff") : C.bg, borderWidth: 1, borderColor: on ? (isDark ? "#6366f1" : "#c7d2fe") : C.line }}>
+                                  <Text style={{ color: on ? (isDark ? "#c7d2fe" : "#4338ca") : C.sub, fontSize: 12.5, fontWeight: on ? "700" : "500" }}>
+                                    {on ? "✓ " : ""}{it.tag}{aiTagSuggestIntensity ? ` ·${it.intensity}` : ""}{it.similarTo ? `  ↔ 비슷: ${it.similarTo}` : ""}
+                                  </Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={() => cycleAiTagSentiment(i)} onLongPress={() => resetAiTagSentiment(i)} style={{ paddingHorizontal: 9, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: sm.c, backgroundColor: applied ? sm.c : "transparent" }}>
+                                  <Text style={{ color: applied ? "#fff" : sm.c, fontSize: 11, fontWeight: "700" }}>{applied ? `${sm.t} ✓` : `추천 ${sm.t}`}</Text>
+                                </TouchableOpacity>
+                              </View>
+                              {/* 🆕 v7.59.3 (T04·AI-4): 신규 태그는 기본 꺼짐이라 '왜 이걸 제안했는지'가 판단에 직접 쓰인다 */}
+                              {it.reason ? <Text numberOfLines={2} style={{ color: C.sub, fontSize: 10.5, lineHeight: 14, marginTop: 2, marginLeft: 4 }}>↳ {it.reason}</Text> : null}
                             </View>
                           );
                         })}
@@ -77948,7 +77996,7 @@ async function importJSON(directText, onSuccess, onSettled) {
                     <TouchableOpacity onPress={applyAiTagSuggestions} style={{ backgroundColor: C.primary, borderRadius: 12, paddingVertical: 12, alignItems: "center", marginTop: 4 }}>
                       <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>선택 적용</Text>
                     </TouchableOpacity>
-                    <Text style={{ color: C.sub, fontSize: 10, marginTop: 6 }}>탭으로 켜고 끄세요. '?'는 확신 낮음. 신규는 기본 꺼짐 — 검토 후 켜세요. 강도는 적용 후 태그 화면에서 조정돼요.</Text>
+                    <Text style={{ color: C.sub, fontSize: 10, marginTop: 6 }}>탭으로 켜고 끄세요. '?'는 확신 낮음, 'ⓘ'는 길게 누르면 AI 근거. 신규는 기본 꺼짐 — 검토 후 켜세요. 강도는 적용 후 태그 화면에서 조정돼요.</Text>
                   </View>
                 );
               })()}
@@ -78076,9 +78124,10 @@ async function importJSON(directText, onSuccess, onSettled) {
                               <View key={sec.kind} style={{ marginBottom: 8 }}>
                                 <Text style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>{sec.title}</Text>
                                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 5 }}>
+                                  {/* 🆕 v7.59.3 (T04·AI-4): 단건과 동일 — 'ⓘ' 칩을 길게 누르면 AI 근거 */}
                                   {sg[sec.kind].map((it, i) => { const label = (sec.kind === "tagsExisting") ? it.tag : it.name; const on = it.checked; return (
-                                    <TouchableOpacity key={label + i} onPress={() => toggleBatchItem(wi, sec.kind, i)} style={{ paddingHorizontal: 9, paddingVertical: 5, borderRadius: 14, backgroundColor: on ? (isDark ? "#3730a3" : "#eef2ff") : C.bg, borderWidth: 1, borderColor: on ? (isDark ? "#6366f1" : "#c7d2fe") : C.line }}>
-                                      <Text style={{ color: on ? (isDark ? "#c7d2fe" : "#4338ca") : C.sub, fontSize: 12, fontWeight: on ? "700" : "500" }}>{on ? "✓ " : ""}{label}{sec.kind === "tagsExisting" && batchIntensity ? ` ·${it.intensity}` : ""}</Text>
+                                    <TouchableOpacity key={label + i} onPress={() => toggleBatchItem(wi, sec.kind, i)} onLongPress={it.reason ? () => Alert.alert(`AI 근거 · ${label}`, it.reason) : undefined} style={{ paddingHorizontal: 9, paddingVertical: 5, borderRadius: 14, backgroundColor: on ? (isDark ? "#3730a3" : "#eef2ff") : C.bg, borderWidth: 1, borderColor: on ? (isDark ? "#6366f1" : "#c7d2fe") : C.line }}>
+                                      <Text style={{ color: on ? (isDark ? "#c7d2fe" : "#4338ca") : C.sub, fontSize: 12, fontWeight: on ? "700" : "500" }}>{on ? "✓ " : ""}{label}{sec.kind === "tagsExisting" && batchIntensity ? ` ·${it.intensity}` : ""}{it.reason ? " ⓘ" : ""}</Text>
                                     </TouchableOpacity>); })}
                                 </View>
                               </View>
@@ -78087,13 +78136,17 @@ async function importJSON(directText, onSuccess, onSettled) {
                               <View>
                                 <Text style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>태그·신규 (속성 추천만 · 배지 탭 적용 · 길게눌러 해제)</Text>
                                 {sg.tagsNew.map((it, i) => { const on = it.checked; const applied = it.sent != null; const sm = ({ positive: { t: "긍정", c: isDark ? "#4ade80" : "#16a34a" }, negative: { t: "부정", c: isDark ? "#f87171" : "#dc2626" }, neutral: { t: "중립", c: C.sub } })[applied ? it.sent : it.sentSuggest] || { t: "중립", c: C.sub }; return (
-                                  <View key={it.tag + i} style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 5 }}>
-                                    <TouchableOpacity onPress={() => toggleBatchItem(wi, "tagsNew", i)} style={{ flex: 1, paddingHorizontal: 9, paddingVertical: 5, borderRadius: 8, backgroundColor: on ? (isDark ? "#3730a3" : "#eef2ff") : C.bg, borderWidth: 1, borderColor: on ? (isDark ? "#6366f1" : "#c7d2fe") : C.line }}>
-                                      <Text style={{ color: on ? (isDark ? "#c7d2fe" : "#4338ca") : C.sub, fontSize: 12, fontWeight: on ? "700" : "500" }}>{on ? "✓ " : ""}{it.tag}{batchIntensity ? ` ·${it.intensity}` : ""}{it.similarTo ? ` ↔ 비슷:${it.similarTo}` : ""}</Text>
-                                    </TouchableOpacity>
-                                    <TouchableOpacity onPress={() => cycleBatchSentiment(wi, i)} onLongPress={() => resetBatchSentiment(wi, i)} style={{ paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: sm.c, backgroundColor: applied ? sm.c : "transparent" }}>
-                                      <Text style={{ color: applied ? "#fff" : sm.c, fontSize: 10.5, fontWeight: "700" }}>{applied ? `${sm.t}✓` : `추천 ${sm.t}`}</Text>
-                                    </TouchableOpacity>
+                                  <View key={it.tag + i} style={{ marginBottom: 5 }}>
+                                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                                      <TouchableOpacity onPress={() => toggleBatchItem(wi, "tagsNew", i)} style={{ flex: 1, paddingHorizontal: 9, paddingVertical: 5, borderRadius: 8, backgroundColor: on ? (isDark ? "#3730a3" : "#eef2ff") : C.bg, borderWidth: 1, borderColor: on ? (isDark ? "#6366f1" : "#c7d2fe") : C.line }}>
+                                        <Text style={{ color: on ? (isDark ? "#c7d2fe" : "#4338ca") : C.sub, fontSize: 12, fontWeight: on ? "700" : "500" }}>{on ? "✓ " : ""}{it.tag}{batchIntensity ? ` ·${it.intensity}` : ""}{it.similarTo ? ` ↔ 비슷:${it.similarTo}` : ""}</Text>
+                                      </TouchableOpacity>
+                                      <TouchableOpacity onPress={() => cycleBatchSentiment(wi, i)} onLongPress={() => resetBatchSentiment(wi, i)} style={{ paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: sm.c, backgroundColor: applied ? sm.c : "transparent" }}>
+                                        <Text style={{ color: applied ? "#fff" : sm.c, fontSize: 10.5, fontWeight: "700" }}>{applied ? `${sm.t}✓` : `추천 ${sm.t}`}</Text>
+                                      </TouchableOpacity>
+                                    </View>
+                                    {/* 🆕 v7.59.3 (T04·AI-4): 배치는 한 번에 20작품이라 근거가 있어야 빠르게 판단된다 */}
+                                    {it.reason ? <Text numberOfLines={2} style={{ color: C.sub, fontSize: 10, lineHeight: 13.5, marginTop: 2, marginLeft: 3 }}>↳ {it.reason}</Text> : null}
                                   </View>); })}
                               </View>
                             ) : null}
