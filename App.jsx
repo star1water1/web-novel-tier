@@ -2,9 +2,20 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.22 (사진 백업·복원 — 표지·갤러리·인용구 사진을 ZIP으로)                ║
+ * ║  버전: 7.59.23 (파일 복원 시 직접 저장한 작품 표지·표지 라이브러리 다시 연결)        ║
  * ║  최종 수정: 2026-11-02                                                        ║
  * ║  총 라인 수: 약 80,040줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🖼️ v7.59.23 파일 복원 시 표지 다시 연결 (2026-11-02)                             ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제] 백업 JSON에 직접 저장한 작품 표지 경로와 cover_library가 없어, 사진 ZIP을   ║
+ * ║ 복원해도 표지 연결이 끊기고 라이브러리가 비었다. import 중 재조정은 연결 전에      ║
+ * ║ 돌아 쓰는 표지까지 unused로 바꿨다.                                                ║
+ * ║ [수정] 파일 백업 JSON에만 선택 항목 CL 추가(사용자 승인). 파일 복원 onSuccess에서  ║
+ * ║ applyCoverLinks로 재연결·라이브러리 복구·상태 재조정. 기존 항목·JSON 내보내기·     ║
+ * ║ 클라우드 경로의 내용은 그대로이고, CL 없는 이전 백업도 복원된다.                   ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -9690,7 +9701,7 @@ import { captureRef } from "react-native-view-shot"; // 📷 v7.4.0 티어표 �
 import { WebView } from "react-native-webview"; // 🔐 v7.40.0 노벨피아 로그인(성인물 게이트 해제) — WebView 로그인
 import CookieManager from "@react-native-cookies/cookies"; // 🔐 v7.40.0 OS 쿠키스토어 읽기(세션 쿠키 → fetch 주입)
 import { showFileAccessDiagnostics } from "./src/features/file-access"; // 🧩 v7.59.20 파일 접근 모듈 (사용법: 해당 폴더 README)
-import { saveBackupToFile, restoreBackupFromFile, saveMediaToFile, restoreMediaFromFile } from "./src/features/file-backup"; // 📁 v7.59.21 파일 백업·복원, 🖼️ v7.59.22 사진 백업·복원
+import { saveBackupToFile, restoreBackupFromFile, saveMediaToFile, restoreMediaFromFile, buildCoverLinks, applyCoverLinks } from "./src/features/file-backup"; // 📁 v7.59.21 파일 백업·복원, 🖼️ v7.59.22 사진 백업·복원, v7.59.23 표지 연결
 // 🆕 v7.8.0: 명대사 텍스트 서식 — 한글 웹폰트 번들 (expo-font + @expo-google-fonts)
 import { useFonts as useExpoFonts } from "expo-font";
 import { NanumGothic_400Regular, NanumGothic_700Bold } from "@expo-google-fonts/nanum-gothic";
@@ -21903,7 +21914,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.22";
+const APP_VERSION = "7.59.23";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -59144,6 +59155,8 @@ async function exportJSON(opts) {
       } catch (lcvErr) { console.warn("[cloud] 로컬 표지 임베드 실패:", lcvErr?.message); }
     }
 
+    // 🖼️ v7.59.23: 파일 백업 전용 선택 항목. 기존 백업·클라우드 경로의 내용은 그대로다.
+    if (opts && opts.includeCoverLinks) payload.CL = buildCoverLinks(novels, await all("SELECT * FROM cover_library;"));
     const json = JSON.stringify(payload);
 
     // ☁️ v7.54.0: 클라우드 push 경로 — 공유 UI 없이 payload만 반환
@@ -73399,7 +73412,7 @@ async function importJSON(directText, onSuccess, onSettled, importOptions) {
               <PrimaryButton
                 title="📁 파일로 백업"
                 onPress={() => saveBackupToFile({
-                  createBackupJson: () => exportJSON({ returnJson: true, silent: true }),
+                  createBackupJson: () => exportJSON({ returnJson: true, silent: true, includeCoverLinks: true }),
                   label: slotMeta?.slots?.find(s => s.id === slotMeta.activeSlotId)?.name,
                   setBusy: setIsLoading,
                   isBlocked: () => isAutoMatchingRef.current,
@@ -73411,7 +73424,12 @@ async function importJSON(directText, onSuccess, onSettled, importOptions) {
                 onPress={() => restoreBackupFromFile({
                   restore: async (text) => {
                     if (!(await waitForMatchQueueDrain(3000))) throw new Error("매칭 처리 중이에요. 잠시 후 다시 시도해 주세요.");
-                    await importJSON(text, undefined, undefined, { keepGalleryFiles: true });
+                    await importJSON(text, async () => {
+                      const covers = await applyCoverLinks(text, { all, execBatch, newId: uuid });
+                      console.log("[file-backup] cover links", JSON.stringify(covers));
+                      try { await loadCoverLibrary(); } catch {}
+                      try { await loadList(undefined, undefined, "file-restore"); } catch {}
+                    }, undefined, { keepGalleryFiles: true });
                   },
                   isBlocked: () => isAutoMatchingRef.current,
                 })}

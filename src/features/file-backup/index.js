@@ -3,6 +3,8 @@
 import { Alert } from "react-native";
 import * as fileAccess from "../file-access";
 
+export { buildCoverLinks, applyCoverLinks } from "./coverLinks";
+
 const { CANCELLED, INVALID_ARGUMENT } = fileAccess.FileAccessErrorCode;
 
 function timestamp(date = new Date()) {
