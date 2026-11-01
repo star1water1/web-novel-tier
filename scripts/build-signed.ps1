@@ -70,7 +70,10 @@ New-Item -ItemType Directory -Force $outDir | Out-Null
 $signed = Join-Path $outDir "noveltier-$commit$dirty.apk"
 
 Write-Host "Signing with $Keystore"
-& $apksigner sign --ks $Keystore --v4-signing-enabled false --out $signed $built
+# EAS keystores have a separate key password. Without --key-pass, apksigner reuses
+# the keystore password and fails with "Cannot recover key".
+Write-Host 'Enter the keystore password, then the key password. Typing is not shown.'
+& $apksigner sign --ks $Keystore --key-pass stdin --v4-signing-enabled false --out $signed $built
 if ($LASTEXITCODE -ne 0) { throw 'Signing failed' }
 
 # Capture everything first: cutting the pipeline short makes the tool exit non-zero.
