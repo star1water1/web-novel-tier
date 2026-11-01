@@ -39,6 +39,24 @@ export const writeText = guarded(async (uri, text) => {
   await expoAdapter.writeText(uri, text);
 });
 
+/** 조각으로 나눠 쓴다. readText·writeText가 Java 힙 한계에 걸리는 큰 파일용. @returns {Promise<{bytes: number, sha256: string}>} */
+export const writeLargeText = guarded(async (uri, text) => {
+  assertUri(uri);
+  return nativeAdapter.writeLargeText(uri, text);
+});
+
+/** 조각으로 나눠 읽는다. @returns {Promise<string>} */
+export const readLargeText = guarded(async (uri) => {
+  assertUri(uri);
+  return nativeAdapter.readLargeText(uri);
+});
+
+/** 파일 전체를 메모리에 올리지 않고 해시를 구한다. @returns {Promise<{bytes: number, sha256: string}>} */
+export const hashFile = guarded(async (uri) => {
+  assertUri(uri);
+  return nativeAdapter.hashFile(uri);
+});
+
 /** 앱 저장공간(file://)에 폴더를 만든다. */
 export const makeAppDirectory = guarded(async (uri) => {
   assertUri(uri);

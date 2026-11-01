@@ -37,6 +37,8 @@ try {
 - **이름 변경 후에는 URI가 바뀔 수 있다.** `renameFile`의 반환값을 쓴다.
 - **권한 확인은 `hasPersistedAccess`로 한다.** Expo 신규 API의 권한 검사는 `content://`에 항상 통과한다. 폴더 URI에만 쓸 수 있고, `pickFile`로 고른 개별 파일 URI는 별도 권한으로 등록된다.
 - **유지 권한 개수에는 OS 상한이 있다.** 다 쓴 폴더는 `releaseDirectory`로 해제한다.
+- **수 MB가 넘을 수 있는 텍스트는 `writeLargeText`, `readLargeText`, `hashFile`을 쓴다.** `readText`, `writeText`는 파일 전체를 Java 힙에 올려 큰 파일에서 OutOfMemoryError가 난다.
+- **JS 문자열 한계:** Hermes는 약 256MB가 넘는 문자열을 만들지 못한다(`String length exceeds limit`). 백업 JSON도 이 한계를 넘으면 안내와 함께 실패한다. 복원은 파일 크기의 몇 배 메모리를 쓴다(200MB 파일에 약 1.5GB, RAM 8GB 환경 측정).
 - **SAF가 낀 `copyFile`, `moveFile`은 파일 전체를 메모리에 올린다.** 큰 파일에 쓰기 전에 검증한다. SAF 문서끼리의 복사는 `NOT_SUPPORTED`다.
 - **Android 정책:** 폴더 선택기에서 저장소 루트·`Download` 자체는 고를 수 없다. `MANAGE_EXTERNAL_STORAGE`를 쓰지 않는다.
 - **DB 작업은 이 모듈 대상이 아니다.** 기존 `safeDbOperation`을 쓴다. SQLite 파일을 직접 복사·이동하지 않는다.

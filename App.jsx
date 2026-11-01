@@ -2,9 +2,19 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.20 (파일 접근 모듈 기반 — 독립 서비스 + Kotlin 로컬 모듈 연결)         ║
+ * ║  버전: 7.59.21 (파일 백업·복원 — 큰 데이터도 파일로 내보내고 되돌리기)              ║
  * ║  최종 수정: 2026-11-02                                                        ║
  * ║  총 라인 수: 약 80,040줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 📁 v7.59.21 파일 백업·복원 (2026-11-02)                                          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제] 백업이 텍스트 공유·붙여넣기뿐이라 데이터가 커지면 내보낼 수도, 복원할      ║
+ * ║ 수도 없었다.                                                                     ║
+ * ║ [수정] src/features/file-backup 추가. 내용은 기존 exportJSON(returnJson)과       ║
+ * ║ importJSON(directText)을 재사용해 형식이 같다. 저장 후 다시 읽어 비교한다.        ║
+ * ║ 이 파일의 변경은 import 1줄 + 백업 탭 버튼 2개 + 안내 1줄이다. APP_VERSION 7.59.21.║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -9669,6 +9679,7 @@ import { captureRef } from "react-native-view-shot"; // 📷 v7.4.0 티어표 �
 import { WebView } from "react-native-webview"; // 🔐 v7.40.0 노벨피아 로그인(성인물 게이트 해제) — WebView 로그인
 import CookieManager from "@react-native-cookies/cookies"; // 🔐 v7.40.0 OS 쿠키스토어 읽기(세션 쿠키 → fetch 주입)
 import { showFileAccessDiagnostics } from "./src/features/file-access"; // 🧩 v7.59.20 파일 접근 모듈 (사용법: 해당 폴더 README)
+import { saveBackupToFile, restoreBackupFromFile } from "./src/features/file-backup"; // 📁 v7.59.21 파일 백업·복원
 // 🆕 v7.8.0: 명대사 텍스트 서식 — 한글 웹폰트 번들 (expo-font + @expo-google-fonts)
 import { useFonts as useExpoFonts } from "expo-font";
 import { NanumGothic_400Regular, NanumGothic_700Bold } from "@expo-google-fonts/nanum-gothic";
@@ -21881,7 +21892,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.20";
+const APP_VERSION = "7.59.21";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -73369,7 +73380,29 @@ async function importJSON(directText, onSuccess, onSettled) {
                 URL 표지 이미지는 자동으로 포함됩니다.
                 {"\n"}⚠️ 기기에 저장한 표지·갤러리 사진의 '파일'은 안 담겨요(갤러리는 경로만). 같은 기기에서는 다시 연결되지만 기기를 바꾸면 비어요 — 사진까지 옮기려면 설정 › 연결 › ☁️ 클라우드 백업을 쓰세요.
                 {"\n"}가져오기는 전량 교체예요(병합 미지원).
+                {"\n"}📁 데이터가 크면 파일 백업을 쓰세요. 현재 슬롯만 담겨요.
               </Text>
+              <PrimaryButton
+                title="📁 파일로 백업"
+                onPress={() => saveBackupToFile({
+                  createBackupJson: () => exportJSON({ returnJson: true, silent: true }),
+                  label: slotMeta?.slots?.find(s => s.id === slotMeta.activeSlotId)?.name,
+                  setBusy: setIsLoading,
+                  isBlocked: () => isAutoMatchingRef.current,
+                })}
+                disabled={isLoading}
+              />
+              <OutlineButton
+                title="📂 파일에서 복원"
+                onPress={() => restoreBackupFromFile({
+                  restore: async (text) => {
+                    if (!(await waitForMatchQueueDrain(3000))) throw new Error("매칭 처리 중이에요. 잠시 후 다시 시도해 주세요.");
+                    await importJSON(text);
+                  },
+                  isBlocked: () => isAutoMatchingRef.current,
+                })}
+                style={{ marginTop: 8, marginBottom: 8 }}
+              />
               <PrimaryButton
                 title="📦 JSON 내보내기 (백업)"
                 onPress={exportJSON}

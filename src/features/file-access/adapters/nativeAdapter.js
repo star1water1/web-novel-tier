@@ -18,3 +18,44 @@ export const listPersistedUris = () => requireNative("listPersistedUris").listPe
 export const releasePersistedUri = (uri) => requireNative("releasePersistedUri").releasePersistedUri(uri);
 
 export const renameDocument = (uri, displayName) => requireNative("renameDocument").renameDocument(uri, displayName);
+
+export const hashFile = (uri) => requireNative("hashFile").hashFile(uri);
+
+// 조각 크기(문자 수). Java 힙에 한 번에 올라가는 양을 이 크기로 제한한다.
+const CHUNK_CHARS = 1024 * 1024;
+
+const isHighSurrogate = (code) => code >= 0xd800 && code <= 0xdbff;
+
+export async function writeLargeText(uri, text) {
+  const native = requireNative("writeLargeText");
+  const id = await native.openTextWriter(uri);
+  try {
+    let start = 0;
+    while (start < text.length) {
+      let end = Math.min(start + CHUNK_CHARS, text.length);
+      // 이모지(서로게이트 쌍)를 가르면 UTF-8 인코딩에서 깨진다.
+      if (end < text.length && isHighSurrogate(text.charCodeAt(end - 1))) end += 1;
+      await native.writeTextChunk(id, text.slice(start, end));
+      start = end;
+    }
+    return await native.closeTextWriter(id);
+  } catch (error) {
+    await native.abortTextWriter(id).catch(() => {});
+    throw error;
+  }
+}
+
+export async function readLargeText(uri) {
+  const native = requireNative("readLargeText");
+  const id = await native.openTextReader(uri);
+  try {
+    const chunks = [];
+    for (;;) {
+      const chunk = await native.readTextChunk(id, CHUNK_CHARS);
+      if (chunk == null) return chunks.join("");
+      chunks.push(chunk);
+    }
+  } finally {
+    await native.closeTextReader(id).catch(() => {});
+  }
+}

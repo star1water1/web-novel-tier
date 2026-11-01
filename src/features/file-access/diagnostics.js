@@ -39,6 +39,17 @@ async function runBasicChecks(results) {
     await fileAccess.writeText(a, text);
     assertEqual(await fileAccess.readText(a), text, "내용");
   });
+  await runStep(results, "큰 텍스트 조각 쓰기·읽기·해시", async () => {
+    // 조각 경계(1MiB 문자)가 이모지 쌍을 가르도록 앞에 한 글자를 둔다.
+    const large = `x${"🎉가".repeat(400000)}`;
+    const uri = `${dir}large.txt`;
+    const written = await fileAccess.writeLargeText(uri, large);
+    const hashed = await fileAccess.hashFile(uri);
+    assertEqual(hashed.sha256, written.sha256, "해시");
+    if ((await fileAccess.readLargeText(uri)) !== large) throw new Error("내용 불일치");
+    await fileAccess.deleteFile(uri);
+    return `${written.bytes}B`;
+  });
   await runStep(results, "앱 저장공간 복사", async () => {
     await fileAccess.copyFile(a, b);
     assertEqual(await fileAccess.readText(b), text, "내용");
