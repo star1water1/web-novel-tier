@@ -20,7 +20,7 @@ export class FileAccessError extends Error {
 const NATIVE_ERROR_RULES = [
   [/ERR_FILE_ACCESS_PERMISSION_LOST|SecurityException|permission/i, FileAccessErrorCode.PERMISSION_LOST],
   [/ERR_FILE_ACCESS_NOT_FOUND|FileNotFound|does not exist|not found/i, FileAccessErrorCode.NOT_FOUND],
-  [/ERR_FILE_ACCESS_INVALID_URI/i, FileAccessErrorCode.INVALID_ARGUMENT],
+  [/ERR_FILE_ACCESS_(INVALID_URI|NOT_MEDIA_BACKUP)/i, FileAccessErrorCode.INVALID_ARGUMENT],
   [/cancel/i, FileAccessErrorCode.CANCELLED],
 ];
 

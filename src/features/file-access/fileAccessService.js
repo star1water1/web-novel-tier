@@ -57,6 +57,30 @@ export const hashFile = guarded(async (uri) => {
   return nativeAdapter.hashFile(uri);
 });
 
+/** 앱의 covers/, gallery/를 ZIP으로 쓴다. @returns {Promise<{files: number, sourceBytes: number, bytes: number, sha256: string}>} */
+export const exportMediaZip = guarded(async (uri) => {
+  assertUri(uri);
+  return nativeAdapter.exportMediaZip(uri);
+});
+
+/** 사진 ZIP 전체를 읽어 CRC를 검사한다. 사진 백업이 아니면 INVALID_ARGUMENT. @returns {Promise<{files: number, bytes: number}>} */
+export const inspectMediaZip = guarded(async (uri) => {
+  assertUri(uri);
+  return nativeAdapter.inspectMediaZip(uri);
+});
+
+/** 사진 ZIP을 앱 폴더로 푼다. 이미 있는 파일은 건드리지 않는다. @returns {Promise<{restored: number, skipped: number, bytes: number}>} */
+export const importMediaZip = guarded(async (uri) => {
+  assertUri(uri);
+  return nativeAdapter.importMediaZip(uri);
+});
+
+/** SAF 문서를 임시 복사 없이 공유 시트로 보낸다. 받는 앱이 읽는 동안 폴더 권한을 해제하지 말 것. */
+export const shareDocument = guarded(async (uri, mimeType, title) => {
+  assertUri(uri);
+  await nativeAdapter.shareDocument(uri, mimeType, title);
+});
+
 /** 앱 저장공간(file://)에 폴더를 만든다. */
 export const makeAppDirectory = guarded(async (uri) => {
   assertUri(uri);

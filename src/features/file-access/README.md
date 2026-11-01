@@ -39,6 +39,8 @@ try {
 - **유지 권한 개수에는 OS 상한이 있다.** 다 쓴 폴더는 `releaseDirectory`로 해제한다.
 - **수 MB가 넘을 수 있는 텍스트는 `writeLargeText`, `readLargeText`, `hashFile`을 쓴다.** `readText`, `writeText`는 파일 전체를 Java 힙에 올려 큰 파일에서 OutOfMemoryError가 난다.
 - **JS 문자열 한계:** Hermes는 약 256MB가 넘는 문자열을 만들지 못한다(`String length exceeds limit`). 백업 JSON도 이 한계를 넘으면 안내와 함께 실패한다. 복원은 파일 크기의 몇 배 메모리를 쓴다(200MB 파일에 약 1.5GB, RAM 8GB 환경 측정).
+- **사진 ZIP에는 `covers/`, `gallery/`만 담긴다.** 폴더 목록은 Kotlin에 고정되어 있다. 같은 앱 폴더의 `ai_config.json`, `cloud_auth.json`(키·인증 정보)과 DB를 백업 파일에 넣지 않기 위해서다.
+- **복원 순서는 사진 먼저, 작품 데이터 나중이다.** 갤러리 행은 복원 시점에 파일이 있어야 다시 연결된다. 파일 복원은 `keepGalleryFiles`로 갤러리 파일을 지우지 않지만, 기존 `JSON 가져오기`와 클라우드 복원은 지금도 지운다.
 - **SAF가 낀 `copyFile`, `moveFile`은 파일 전체를 메모리에 올린다.** 큰 파일에 쓰기 전에 검증한다. SAF 문서끼리의 복사는 `NOT_SUPPORTED`다.
 - **Android 정책:** 폴더 선택기에서 저장소 루트·`Download` 자체는 고를 수 없다. `MANAGE_EXTERNAL_STORAGE`를 쓰지 않는다.
 - **DB 작업은 이 모듈 대상이 아니다.** 기존 `safeDbOperation`을 쓴다. SQLite 파일을 직접 복사·이동하지 않는다.

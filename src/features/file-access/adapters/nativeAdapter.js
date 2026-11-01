@@ -21,6 +21,14 @@ export const renameDocument = (uri, displayName) => requireNative("renameDocumen
 
 export const hashFile = (uri) => requireNative("hashFile").hashFile(uri);
 
+export const exportMediaZip = (uri) => requireNative("exportMediaZip").exportMediaZip(uri);
+
+export const inspectMediaZip = (uri) => requireNative("inspectMediaZip").inspectMediaZip(uri);
+
+export const importMediaZip = (uri) => requireNative("importMediaZip").importMediaZip(uri);
+
+export const shareDocument = (uri, mimeType, title) => requireNative("shareDocument").shareDocument(uri, mimeType, title);
+
 // 조각 크기(문자 수). Java 힙에 한 번에 올라가는 양을 이 크기로 제한한다.
 const CHUNK_CHARS = 1024 * 1024;
 

@@ -2,9 +2,20 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.21 (파일 백업·복원 — 큰 데이터도 파일로 내보내고 되돌리기)              ║
+ * ║  버전: 7.59.22 (사진 백업·복원 — 표지·갤러리·인용구 사진을 ZIP으로)                ║
  * ║  최종 수정: 2026-11-02                                                        ║
  * ║  총 라인 수: 약 80,040줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🖼️ v7.59.22 사진 백업·복원 (2026-11-02)                                          ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제 ①] JSON 백업에는 표지·갤러리 파일과 작품당 4장째부터의 인용구 사진이 없다. ║
+ * ║ [문제 ②] importJSON의 doClearAll이 gallery/ 파일을 실제로 지워, 같은 기기 복원도  ║
+ * ║ 갤러리 사진을 잃는다. 백업 탭의 '다시 연결된다' 안내와 어긋난다.                  ║
+ * ║ [수정] src/features/file-backup에 ZIP 백업·복원 추가(covers/, gallery/만 담음).    ║
+ * ║ 파일 복원 경로만 keepGalleryFiles로 삭제를 건너뛴다. 기존 'JSON 가져오기'와        ║
+ * ║ 클라우드 복원의 동작은 그대로다(문제 ②는 그 경로에 남아 있다). APP_VERSION 7.59.22.║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -9679,7 +9690,7 @@ import { captureRef } from "react-native-view-shot"; // 📷 v7.4.0 티어표 �
 import { WebView } from "react-native-webview"; // 🔐 v7.40.0 노벨피아 로그인(성인물 게이트 해제) — WebView 로그인
 import CookieManager from "@react-native-cookies/cookies"; // 🔐 v7.40.0 OS 쿠키스토어 읽기(세션 쿠키 → fetch 주입)
 import { showFileAccessDiagnostics } from "./src/features/file-access"; // 🧩 v7.59.20 파일 접근 모듈 (사용법: 해당 폴더 README)
-import { saveBackupToFile, restoreBackupFromFile } from "./src/features/file-backup"; // 📁 v7.59.21 파일 백업·복원
+import { saveBackupToFile, restoreBackupFromFile, saveMediaToFile, restoreMediaFromFile } from "./src/features/file-backup"; // 📁 v7.59.21 파일 백업·복원, 🖼️ v7.59.22 사진 백업·복원
 // 🆕 v7.8.0: 명대사 텍스트 서식 — 한글 웹폰트 번들 (expo-font + @expo-google-fonts)
 import { useFonts as useExpoFonts } from "expo-font";
 import { NanumGothic_400Regular, NanumGothic_700Bold } from "@expo-google-fonts/nanum-gothic";
@@ -21892,7 +21903,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.21";
+const APP_VERSION = "7.59.22";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -59364,7 +59375,9 @@ function validateImportData(text) {
   return result;
 }
 
-async function importJSON(directText, onSuccess, onSettled) {
+async function importJSON(directText, onSuccess, onSettled, importOptions) {
+  // 🖼️ v7.59.22: 파일 복원은 사진 복원 뒤에 오므로 갤러리 파일을 지우면 안 된다. 인자 없는 기존 경로는 그대로 삭제.
+  const _keepGalleryFiles = !!(importOptions && importOptions.keepGalleryFiles);
   const _pt = PerfMonitor.enabled ? Date.now() : 0; // 🔬
   Breadcrumbs.action("data_import");
   // ☁️ v7.54.0: directText(클라우드 다운로드 텍스트)가 오면 importText/importValidation 상태 게이트를 우회하고
@@ -59427,7 +59440,7 @@ async function importJSON(directText, onSuccess, onSettled) {
       invalidatePatternCache(); // 🔧 v3.5.14
       invalidateWeightsCache(); // 🔧 v3.5.14
       // 🎨 v3.8.0: 갤러리 파일 전체 삭제
-      try {
+      if (!_keepGalleryFiles) try {
         const gdInfo = await FileSystem.getInfoAsync(GALLERY_DIR);
         if (gdInfo.exists) await FileSystem.deleteAsync(GALLERY_DIR, { idempotent: true });
       } catch {}
@@ -73381,6 +73394,7 @@ async function importJSON(directText, onSuccess, onSettled) {
                 {"\n"}⚠️ 기기에 저장한 표지·갤러리 사진의 '파일'은 안 담겨요(갤러리는 경로만). 같은 기기에서는 다시 연결되지만 기기를 바꾸면 비어요 — 사진까지 옮기려면 설정 › 연결 › ☁️ 클라우드 백업을 쓰세요.
                 {"\n"}가져오기는 전량 교체예요(병합 미지원).
                 {"\n"}📁 데이터가 크면 파일 백업을 쓰세요. 현재 슬롯만 담겨요.
+                {"\n"}🖼️ 사진 파일은 사진 백업으로 따로 받으세요. 복원은 사진 먼저, 작품 데이터 나중이에요.
               </Text>
               <PrimaryButton
                 title="📁 파일로 백업"
@@ -73397,9 +73411,23 @@ async function importJSON(directText, onSuccess, onSettled) {
                 onPress={() => restoreBackupFromFile({
                   restore: async (text) => {
                     if (!(await waitForMatchQueueDrain(3000))) throw new Error("매칭 처리 중이에요. 잠시 후 다시 시도해 주세요.");
-                    await importJSON(text);
+                    await importJSON(text, undefined, undefined, { keepGalleryFiles: true });
                   },
                   isBlocked: () => isAutoMatchingRef.current,
+                })}
+                style={{ marginTop: 8 }}
+              />
+              <OutlineButton
+                title="🖼️ 사진 백업 (ZIP)"
+                onPress={() => saveMediaToFile({ setBusy: setIsLoading, isBlocked: () => isAutoMatchingRef.current })}
+                style={{ marginTop: 8 }}
+              />
+              <OutlineButton
+                title="🖼️ 사진 복원 (ZIP)"
+                onPress={() => restoreMediaFromFile({
+                  setBusy: setIsLoading,
+                  isBlocked: () => isAutoMatchingRef.current,
+                  onRestored: () => { loadCoverLibrary().catch(() => {}); loadGalleryImages().catch(() => {}); },
                 })}
                 style={{ marginTop: 8, marginBottom: 8 }}
               />
