@@ -1,0 +1,15 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.star1water.noveltier'
+version = '0.1.0'
+
+android {
+  namespace "expo.modules.fileaccessnative"
+  defaultConfig {
+    versionCode 1
+    versionName '0.1.0'
+  }
+}
