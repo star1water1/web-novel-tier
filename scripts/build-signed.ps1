@@ -3,6 +3,7 @@
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\build-signed.ps1
 #   ... -Install            연결된 폰 1대에 설치 (adb install -r)
+#   ... -OpenFolder         끝나면 APK가 있는 폴더를 연다 (폰 연결 불필요, build-apk.bat)
 #   ... -SkipBuild          마지막 빌드 결과를 서명
 #   ... -ForgetPasswords    저장된 서명 비밀번호를 지우고 끝낸다
 #   ... -Keystore <경로>     기본값: $env:NOVELTIER_KEYSTORE, 그다음 ~\.keys\noveltier\keystore.jks
@@ -14,6 +15,7 @@ param(
   [switch]$SkipBuild,
   [switch]$Install,
   [switch]$ForgetPasswords,
+  [switch]$OpenFolder,
   [string]$Keystore
 )
 
@@ -130,7 +132,8 @@ $commit = git -C $repo rev-parse --short HEAD
 $dirty = if (git -C $repo status --short) { '-dirty' } else { '' }
 $outDir = Join-Path $repo 'dist'
 New-Item -ItemType Directory -Force $outDir | Out-Null
-$signed = Join-Path $outDir "noveltier-$commit$dirty.apk"
+$appVersion = (Select-String -LiteralPath (Join-Path $repo 'App.jsx') -Pattern '^const APP_VERSION = "([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+$signed = Join-Path $outDir "noveltier-v$appVersion-$commit$dirty.apk"
 
 Write-Host '서명 중이에요...'
 # 비밀번호는 이 프로세스의 환경변수로만 넘기고 곧바로 지운다. 명령줄과 파일에 평문을 남기지 않는다.
@@ -165,6 +168,11 @@ if ($passwords.IsNew) {
   Write-Host '비밀번호를 암호화해 저장했어요. 다음부터는 묻지 않아요.'
 }
 
+if ($OpenFolder) {
+  Write-Host ''
+  Write-Host '완료! 열린 폴더의 APK를 드라이브나 메일로 폰에 보내 설치하세요.'
+  Start-Process explorer.exe -ArgumentList "/select,`"$signed`""
+}
 if (-not $Install) { return }
 
 $dump = (& $adb shell dumpsys package $package) -join "`n"
