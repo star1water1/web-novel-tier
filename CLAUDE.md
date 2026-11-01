@@ -59,7 +59,8 @@ eas build -p android --profile preview  # APK 빌드 (EAS 클라우드)
 - prebuild가 `package.json`의 스크립트·`name`·`version`을 바꾸므로 실행 후 `git restore package.json`으로 되돌린다.
 - 릴리스 변형은 lint 메모리 부족을 피하려고 `"-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1536m -Dfile.encoding=UTF-8"`를 붙인다.
 - Gradle로 바로 만든 APK는 디버그 키 서명이라 EAS로 설치한 앱에 덮어쓸 수 없다. 기존 앱을 지우면 앱 데이터가 삭제되므로 절대 지우지 않는다.
-- 실사용 앱에 덮어 설치할 APK는 `powershell -ExecutionPolicy Bypass -File scripts\build-signed.ps1 -Install`로 만든다. 실제 서명 키로 서명해 `dist/`에 저장하고 `adb install -r`만 쓴다.
+- 실사용 앱에 덮어 설치하려면 `install-to-phone.bat`을 더블클릭한다 (`scripts\build-signed.ps1 -Install` 실행). 실제 서명 키로 서명해 `dist/`에 저장하고 `adb install -r`만 쓴다.
+- 서명 비밀번호는 키 옆의 `signing-passwords.dat`에 DPAPI로 암호화해 둔다 (이 Windows 계정 전용). 지우려면 `-ForgetPasswords`. `build-signed.ps1`은 UTF-8 BOM을 유지해야 PowerShell 5.1에서 한글이 깨지지 않는다.
 - 에뮬레이터는 `adb shell reboot -p`로 끈다. 설치 직후 `adb emu kill`로 끄면 APK가 잘려 다음 부팅에서 앱이 사라진다 (앱 데이터는 남음).
 - 서명 키는 저장소 밖(`~\.keys\noveltier\keystore.jks`)에 둔다. 키, 비밀번호, `credentials.json`은 커밋하지 않고 채팅에도 붙여넣지 않는다.
 
