@@ -1,9 +1,10 @@
 ﻿# 릴리스 APK를 빌드해 실제 키로 서명한다. 데이터를 유지한 채 설치된 앱을 업데이트할 수 있다.
-# 보통은 install-to-phone.bat을 더블클릭하면 된다.
+# 보통은 build.bat을 더블클릭하면 된다.
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\build-signed.ps1
+#   ... -Auto               폰이 연결돼 있으면 설치, 아니면 APK 폴더를 연다 (build.bat)
 #   ... -Install            연결된 폰 1대에 설치 (adb install -r)
-#   ... -OpenFolder         끝나면 APK가 있는 폴더를 연다 (폰 연결 불필요, build-apk.bat)
+#   ... -OpenFolder         끝나면 APK가 있는 폴더를 연다
 #   ... -SkipBuild          마지막 빌드 결과를 서명
 #   ... -ForgetPasswords    저장된 서명 비밀번호를 지우고 끝낸다
 #   ... -Keystore <경로>     기본값: $env:NOVELTIER_KEYSTORE, 그다음 ~\.keys\noveltier\keystore.jks
@@ -16,6 +17,7 @@ param(
   [switch]$Install,
   [switch]$ForgetPasswords,
   [switch]$OpenFolder,
+  [switch]$Auto,
   [string]$Keystore
 )
 
@@ -95,13 +97,31 @@ function Get-SigningPasswords {
 Write-Host ''
 Write-Host '=== Novel Tier 빌드 ==='
 Write-Host "브랜치: $(git -C $repo rev-parse --abbrev-ref HEAD) ($(git -C $repo rev-parse --short HEAD))"
+
+$lines = @(& $adb devices | Select-Object -Skip 1 | Where-Object { $_.Trim() })
+$ready = @($lines | Where-Object { $_ -match '\tdevice$' })
+$unauthorized = @($lines | Where-Object { $_ -match '\tunauthorized$' })
+
+if ($Auto) {
+  if ($ready.Count -eq 1 -and $unauthorized.Count -eq 0) {
+    $Install = $true
+    Write-Host '폰이 연결돼 있어요. 빌드 후 바로 설치할게요.'
+  } else {
+    $OpenFolder = $true
+    if ($unauthorized.Count -gt 0) {
+      Write-Host '폰에서 USB 디버깅이 아직 허용되지 않았어요. APK 파일만 만들게요.'
+    } elseif ($ready.Count -gt 1) {
+      Write-Host "기기가 $($ready.Count)대 연결돼 있어요. 설치하지 않고 APK 파일만 만들게요."
+    } else {
+      Write-Host '폰이 연결돼 있지 않아요. APK 파일을 만들고 폴더를 열어 드릴게요.'
+    }
+  }
+}
 if ($Install) { Write-Host '업데이트 전에 앱에서 파일 백업과 사진 백업을 받아 두면 안전해요.' }
 
 # 긴 빌드를 기다린 뒤에 실패하지 않도록 폰 연결과 비밀번호를 먼저 확인한다.
 if ($Install) {
-  $lines = @(& $adb devices | Select-Object -Skip 1 | Where-Object { $_.Trim() })
-  $ready = @($lines | Where-Object { $_ -match '\tdevice$' })
-  if ($lines | Where-Object { $_ -match '\tunauthorized$' }) {
+  if ($unauthorized.Count -gt 0) {
     throw '폰 화면의 USB 디버깅 허용 창에서 [허용]을 눌러 주세요.'
   }
   if ($ready.Count -eq 0) { throw '폰이 연결되어 있지 않아요. USB 케이블과 USB 디버깅을 확인해 주세요.' }
