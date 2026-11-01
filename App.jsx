@@ -2,9 +2,21 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.23 (파일 복원 시 직접 저장한 작품 표지·표지 라이브러리 다시 연결)        ║
+ * ║  버전: 7.59.24 (복원할 때 갤러리 사진 파일을 지우지 않음)                         ║
  * ║  최종 수정: 2026-11-02                                                        ║
  * ║  총 라인 수: 약 80,040줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🖼️ v7.59.24 복원 시 갤러리 파일 보존 (2026-11-02)                                ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제] 'JSON 가져오기'와 클라우드 복원의 doClearAll이 gallery/ 폴더를 지웠다.     ║
+ * ║ 같은 기기 복원도 갤러리가 0장이 됐고, 폴더를 함께 쓰는 다른 슬롯의 사진까지       ║
+ * ║ 사라졌으며, 클라우드 복원은 방금 받은 사진을 지울 수 있었다.                      ║
+ * ║ [수정] importJSON은 사진 파일을 지우지 않는다. keepGalleryFiles 옵션은 필요가     ║
+ * ║ 없어져 제거. 복원 실패 시 롤백도 행과 파일이 함께 유지된다. 전체 초기화 등 다른   ║
+ * ║ 삭제 경로는 그대로다. 안내 문구에서 미완성인 클라우드 백업 대신 사진 ZIP을 안내.  ║
+ * ║ [남은 것] 복원한 백업이 쓰지 않는 사진은 폴더에 남는다(자동 정리 없음).           ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -21914,7 +21926,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.23";
+const APP_VERSION = "7.59.24";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -25028,7 +25040,7 @@ const GUIDE_CONTENT = [
           "정기적으로 백업하면 데이터 손실을 방지할 수 있어요.",
           // 🔧 v7.59.5 (T06·DAT-7): 종전 문구 '병합하거나 덮어쓸 수 있어요'는 사실이 아니다 — importJSON은 항상 전량 교체다.
           "가져오기는 항상 전량 교체예요 — 기존 데이터를 지우고 백업 내용으로 바꿔요(병합·합치기 미지원).",
-          "JSON 백업에는 사진 '파일'이 안 담겨요 — 직접 저장한 표지는 빠지고 갤러리는 경로만 담겨요. 사진까지 옮기려면 설정 › 연결 › ☁️ 클라우드 백업을 쓰세요.",
+          "JSON 백업에는 사진 '파일'이 안 담겨요 — 직접 저장한 표지는 빠지고 갤러리는 경로만 담겨요. 사진까지 옮기려면 설정 › 백업의 '🖼️ 사진 백업 (ZIP)'도 함께 받으세요.",
         ],
       },
     ],
@@ -59193,7 +59205,7 @@ async function exportJSON(opts) {
     if (localCoverCount > 0) _missParts.push(`직접 저장한 표지 ${localCoverCount}장은 미포함`);
     if (_giCount > 0) _missParts.push(`갤러리 ${_giCount}장은 경로만 포함`);
     const imageMissInfo = _missParts.length
-      ? `\n⚠️ 사진 '파일'은 이 백업에 안 담겨요 — ${_missParts.join(" · ")}. 같은 기기에서 복원하면 다시 연결되지만, 기기를 바꾸거나 앱을 지웠다 깔면 비어요. (사진까지 옮기려면 설정 › 연결 › ☁️ 클라우드 백업)`
+      ? `\n⚠️ 사진 '파일'은 이 백업에 안 담겨요 — ${_missParts.join(" · ")}. 같은 기기에서 복원하면 갤러리는 그대로 이어지지만, 직접 저장한 표지는 연결이 풀려요. 기기를 바꾸거나 앱을 지웠다 깔면 갤러리도 비어요. (사진까지 옮기려면 설정 › 백업의 '📁 파일로 백업'과 '🖼️ 사진 백업 (ZIP)'을 함께 쓰세요)`
       : "";
     // 🆕 v7.59.6 (T07·DAT-8): 하이브리드 검증 기록 절단 고지 — 종전엔 상한을 넘긴 만큼이 아무 표시 없이 사라졌다.
     const _trcParts = [];
@@ -59388,9 +59400,7 @@ function validateImportData(text) {
   return result;
 }
 
-async function importJSON(directText, onSuccess, onSettled, importOptions) {
-  // 🖼️ v7.59.22: 파일 복원은 사진 복원 뒤에 오므로 갤러리 파일을 지우면 안 된다. 인자 없는 기존 경로는 그대로 삭제.
-  const _keepGalleryFiles = !!(importOptions && importOptions.keepGalleryFiles);
+async function importJSON(directText, onSuccess, onSettled) {
   const _pt = PerfMonitor.enabled ? Date.now() : 0; // 🔬
   Breadcrumbs.action("data_import");
   // ☁️ v7.54.0: directText(클라우드 다운로드 텍스트)가 오면 importText/importValidation 상태 게이트를 우회하고
@@ -59452,11 +59462,7 @@ async function importJSON(directText, onSuccess, onSettled, importOptions) {
       ]);
       invalidatePatternCache(); // 🔧 v3.5.14
       invalidateWeightsCache(); // 🔧 v3.5.14
-      // 🎨 v3.8.0: 갤러리 파일 전체 삭제
-      if (!_keepGalleryFiles) try {
-        const gdInfo = await FileSystem.getInfoAsync(GALLERY_DIR);
-        if (gdInfo.exists) await FileSystem.deleteAsync(GALLERY_DIR, { idempotent: true });
-      } catch {}
+      // 🖼️ v7.59.24: 갤러리 파일은 지우지 않는다. GI 복원이 이 파일을 다시 연결하고, 폴더는 모든 슬롯이 함께 쓰며, 클라우드 복원은 방금 받은 파일이 여기 있다.
       setGalleryImages([]);
       setGalleryCount(0);
     };
@@ -59514,7 +59520,7 @@ async function importJSON(directText, onSuccess, onSettled, importOptions) {
               let deleteCompleted = false;
               // 🆕 v7.49.18: 복원 전 자동 스냅샷 — DELETE 후 INSERT가 크래시/부분 실패해도 원본 데이터를 자동 복구(롤백).
               //   doClearAll이 지우는 전 테이블 + planned_novels를 임시테이블로 복제(SQL 내부 복사 — 파일/DB연결 조작 없어 안전).
-              //   ※갤러리 이미지 '파일'은 doClearAll이 물리 삭제하므로 복구 불가(메타 행만 복구). 핵심(작품·매치)은 완전 복구.
+              //   ※갤러리 이미지 '파일'은 v7.59.24부터 지우지 않으므로 복구된 행이 그대로 파일을 가리킨다.
               const _SNAP_TABLES = IMPORT_SNAP_TABLES; // 🆕 v7.49.19: 모듈 공용 목록(initDb startup 복구와 단일 소스)
               const _snapName = (t) => `_imp_snap_${t}`;
               let _snapCreated = false;
@@ -60354,7 +60360,8 @@ async function importJSON(directText, onSuccess, onSettled, importOptions) {
                     try { await loadList(undefined, undefined, "import-rollback"); } catch {}
                     try { await loadPlannedList(); } catch {}
                     try { await loadCoverLibrary(); } catch {}
-                    Alert.alert("⚠️ 복원 실패 — 원본 복구됨", "복원 도중 오류가 발생해 기존 데이터를 자동 복구했습니다.\n(갤러리 이미지 '파일'은 복구되지 않을 수 있어요.)\n\n오류: " + (restoreErr.message || restoreErr));
+                    try { await loadGalleryImages(); } catch {} // 🖼️ v7.59.24: doClearAll이 비운 갤러리 상태도 복구된 행으로 되돌림
+                    Alert.alert("⚠️ 복원 실패 — 원본 복구됨", "복원 도중 오류가 발생해 기존 데이터를 자동 복구했습니다.\n\n오류: " + (restoreErr.message || restoreErr));
                   } else {
                     // 롤백도 실패(스냅샷 손상 등) — 원본 JSON 재시도 유도(기존 폴백)
                     Alert.alert("⚠️ 복원 중 오류 — 자동 복구 실패", "복원 도중 오류가 발생했고 자동 복구도 실패했습니다.\n원본 백업으로 재시도해 주세요.\n\n오류: " + (restoreErr.message || restoreErr),
@@ -73404,10 +73411,10 @@ async function importJSON(directText, onSuccess, onSettled, importOptions) {
               <Text style={{ color: C.sub, marginBottom: 8 }}>
                 작품과 대진 기록을 JSON으로 내보내거나 가져올 수 있습니다.
                 URL 표지 이미지는 자동으로 포함됩니다.
-                {"\n"}⚠️ 기기에 저장한 표지·갤러리 사진의 '파일'은 안 담겨요(갤러리는 경로만). 같은 기기에서는 다시 연결되지만 기기를 바꾸면 비어요 — 사진까지 옮기려면 설정 › 연결 › ☁️ 클라우드 백업을 쓰세요.
+                {"\n"}⚠️ 기기에 저장한 표지·갤러리 사진의 '파일'은 안 담겨요(갤러리는 경로만). 같은 기기에서 복원하면 갤러리 사진은 그대로 이어져요. 직접 저장한 표지는 '파일로 백업'한 파일을 '파일에서 복원'할 때만 다시 연결돼요.
                 {"\n"}가져오기는 전량 교체예요(병합 미지원).
                 {"\n"}📁 데이터가 크면 파일 백업을 쓰세요. 현재 슬롯만 담겨요.
-                {"\n"}🖼️ 사진 파일은 사진 백업으로 따로 받으세요. 복원은 사진 먼저, 작품 데이터 나중이에요.
+                {"\n"}🖼️ 기기를 바꾸거나 앱을 지웠다 깔면 사진이 비어요. 사진 백업으로 따로 받아 두세요(모든 슬롯의 사진이 담겨요). 복원은 사진 먼저, 작품 데이터 나중이에요.
               </Text>
               <PrimaryButton
                 title="📁 파일로 백업"
@@ -73429,7 +73436,7 @@ async function importJSON(directText, onSuccess, onSettled, importOptions) {
                       console.log("[file-backup] cover links", JSON.stringify(covers));
                       try { await loadCoverLibrary(); } catch {}
                       try { await loadList(undefined, undefined, "file-restore"); } catch {}
-                    }, undefined, { keepGalleryFiles: true });
+                    });
                   },
                   isBlocked: () => isAutoMatchingRef.current,
                 })}
