@@ -2,9 +2,19 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.19 (구색 기능 개선 Phase 5 완료 — 스펙트럼 rename 이전 + 빈 축 사유)   ║
- * ║  최종 수정: 2026-08-02                                                        ║
+ * ║  버전: 7.59.20 (파일 접근 모듈 기반 — 독립 서비스 + Kotlin 로컬 모듈 연결)         ║
+ * ║  최종 수정: 2026-11-02                                                        ║
  * ║  총 라인 수: 약 80,040줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🧩 v7.59.20 파일 접근 모듈 기반 (2026-11-02)                                     ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ 신규 기능을 App.jsx 밖에서 추가하기 위한 첫 기반. 로직은 전부 별도 파일이다.      ║
+ * ║ - src/features/file-access: 파일 접근 서비스 (Expo·Kotlin 어댑터 분리)           ║
+ * ║ - modules/file-access-native: SAF 이름 변경·유지 권한 조회/해제 (Kotlin)         ║
+ * ║ 이 파일의 변경은 import 1줄 + 진단 화면 점검 버튼 1개뿐이다. DB 스키마·백업      ║
+ * ║ 형식·기존 파일 접근 코드(legacy API)는 그대로다. APP_VERSION 7.59.20.             ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -9658,6 +9668,7 @@ import * as Crypto from "expo-crypto"; // ☁️ v7.54.0 expo-auth-session PKCE 
 import { captureRef } from "react-native-view-shot"; // 📷 v7.4.0 티어표 캡처
 import { WebView } from "react-native-webview"; // 🔐 v7.40.0 노벨피아 로그인(성인물 게이트 해제) — WebView 로그인
 import CookieManager from "@react-native-cookies/cookies"; // 🔐 v7.40.0 OS 쿠키스토어 읽기(세션 쿠키 → fetch 주입)
+import { showFileAccessDiagnostics } from "./src/features/file-access"; // 🧩 v7.59.20 파일 접근 모듈 (사용법: 해당 폴더 README)
 // 🆕 v7.8.0: 명대사 텍스트 서식 — 한글 웹폰트 번들 (expo-font + @expo-google-fonts)
 import { useFonts as useExpoFonts } from "expo-font";
 import { NanumGothic_400Regular, NanumGothic_700Bold } from "@expo-google-fonts/nanum-gothic";
@@ -21870,7 +21881,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.19";
+const APP_VERSION = "7.59.20";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -74667,6 +74678,13 @@ async function importJSON(directText, onSuccess, onSettled) {
                   }
                 }}
               />
+              {/* 🧩 v7.59.20: 파일 접근 모듈 연결 점검 */}
+              <View style={{ marginTop: 8 }}>
+                <PrimaryButton
+                  title="🧩 파일 접근 모듈 점검"
+                  onPress={() => showFileAccessDiagnostics({ isBlocked: () => isAutoMatchingRef.current })}
+                />
+              </View>
               {/* 🆕 v7.0.9 (N): JSON Export — LLM/외부 도구 분석용 */}
               <View style={{ marginTop: 8 }}>
                 <PrimaryButton

@@ -5,7 +5,8 @@ ELO 매칭 시스템으로 작품 간 대전을 통해 자동으로 티어를 �
 
 ## 아키텍처
 
-- **단일 파일 구조**: `App.jsx` (~78,300줄, v7.58.4 기준) 하나에 모든 로직이 들어있음
+- **기존 기능은 단일 파일**: `App.jsx` (~78,300줄, v7.58.4 기준)에 v7.59.19까지의 로직이 들어있음. 전면 리팩터링·대규모 분리 금지
+- **신규 기능은 별도 파일** (v7.59.20~): `src/features/<기능>/` + 네이티브가 필요하면 `modules/<모듈>/`. 파일 접근은 `src/features/file-access/README.md` 참고
 - **SQLite** (expo-sqlite, WAL 모드) — 33+ 테이블 (v7.0: tier_verification_queue, tier_validation_log, tier_repositioning_session 추가)
 - **다중 슬롯**: 최대 10개 독립 데이터셋, 슬롯별 별도 DB 파일
 
@@ -50,8 +51,14 @@ Stage 5 모드별 동작:
 
 ```bash
 npx expo start          # 개발 서버
-eas build -p android --profile preview  # APK 빌드
+eas build -p android --profile preview  # APK 빌드 (EAS 클라우드)
 ```
+
+로컬 APK 빌드는 `npx expo prebuild --platform android --no-install` 후 `android/`에서 Gradle Wrapper로 한다.
+- `android/`는 `.gitignore` 대상(생성물)이다. 직접 고치지 말고 네이티브 코드는 `modules/`에 둔다. `--clean`은 사용자 승인 없이 쓰지 않는다.
+- prebuild가 `package.json`의 스크립트·`name`·`version`을 바꾸므로 실행 후 `git restore package.json`으로 되돌린다.
+- 릴리스 변형은 lint 메모리 부족을 피하려고 `"-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1536m -Dfile.encoding=UTF-8"`를 붙인다.
+- 로컬 APK는 디버그 키 서명이라 EAS로 설치한 앱에 덮어쓸 수 없다. 기존 앱을 지우면 앱 데이터가 삭제되므로 에뮬레이터나 데이터가 없는 기기에서 테스트한다.
 
 ## App.jsx 섹션 맵
 
@@ -117,7 +124,7 @@ eas build -p android --profile preview  # APK 빌드
 
 - 새 기능 추가 시 해당 섹션의 기존 패턴을 먼저 읽고 동일 패턴으로 작성
 - DB 작업은 반드시 `safeDbOperation` 래퍼 사용
-- 현재 단일 파일 구조 — 새 파일 생성 불필요, App.jsx 내에서 작업
+- 기존 기능 수정은 App.jsx 내에서 작업한다. 신규 기능은 별도 파일로 만들고 App.jsx에는 최소한의 연결만 둔다. 기존 코드를 옮기기만 하는 분리는 하지 않는다
 - memo() 컴포넌트는 props 변경에만 리렌더링됨을 고려하여 설계
 - App.jsx 수정 시 반드시 헤더 버전 히스토리 (1~290줄) 업데이트: 버전 번호 증가, 날짜 갱신, 변경 내역 추가
 
