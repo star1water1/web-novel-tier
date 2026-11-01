@@ -1,8 +1,7 @@
 name: Build APK
 
+# APK는 PC에서 빌드한다 (scripts/build-signed.ps1). 이 워크플로는 Actions 화면에서 수동으로만 실행한다.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
