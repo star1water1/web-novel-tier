@@ -12114,22 +12114,28 @@ async function deleteCoverFromLibrary(filePath) {
 
 // 🖼️ v7.59.25: gallery/는 모든 슬롯이 함께 쓰고, 복제한 슬롯은 같은 파일을 가리킨다. 다른 슬롯 DB가 쓰는 파일은 지우지 않는다.
 //   슬롯 DB를 하나라도 못 읽으면 아무것도 지우지 않는다(사진 파일이 남는 쪽이 잃는 쪽보다 낫다). 슬롯 메타 대신 실제 DB 파일을 본다.
+async function forEachOtherSlotDb(readDb) {
+  const activeDbName = getSlotDbFilename(activeSlotId);
+  const dbNames = await FileSystem.readDirectoryAsync(FileSystem.documentDirectory + "SQLite/");
+  for (const dbName of dbNames) {
+    if (dbName === activeDbName || !/^novel_tiers(_slot\d+)?\.db$/.test(dbName)) continue;
+    const otherDb = await SQLite.openDatabaseAsync(dbName, { useNewConnection: true });
+    try {
+      await readDb(otherDb);
+    } finally {
+      try { await otherDb.closeAsync(); } catch {}
+    }
+  }
+}
+
 async function deleteGalleryFilesUnusedByOtherSlots(filePaths) {
   const usedNames = new Set();
   try {
-    const activeDbName = getSlotDbFilename(activeSlotId);
-    const dbNames = await FileSystem.readDirectoryAsync(FileSystem.documentDirectory + "SQLite/");
-    for (const dbName of dbNames) {
-      if (dbName === activeDbName || !/^novel_tiers(_slot\d+)?\.db$/.test(dbName)) continue;
-      const otherDb = await SQLite.openDatabaseAsync(dbName, { useNewConnection: true });
-      try {
-        const hasTable = await otherDb.getFirstAsync("SELECT 1 FROM sqlite_master WHERE type='table' AND name='gallery_images'");
-        const rows = hasTable ? await otherDb.getAllAsync("SELECT file_path FROM gallery_images") : [];
-        for (const r of rows) { if (r.file_path) usedNames.add(r.file_path.split("/").pop()); }
-      } finally {
-        try { await otherDb.closeAsync(); } catch {}
-      }
-    }
+    await forEachOtherSlotDb(async (otherDb) => {
+      const hasTable = await otherDb.getFirstAsync("SELECT 1 FROM sqlite_master WHERE type='table' AND name='gallery_images'");
+      const rows = hasTable ? await otherDb.getAllAsync("SELECT file_path FROM gallery_images") : [];
+      for (const r of rows) { if (r.file_path) usedNames.add(r.file_path.split("/").pop()); }
+    });
   } catch (e) {
     console.warn("deleteGalleryFilesUnusedByOtherSlots: 다른 슬롯 확인 실패, 파일 유지:", e?.message);
     return;
@@ -12137,6 +12143,63 @@ async function deleteGalleryFilesUnusedByOtherSlots(filePaths) {
   for (const p of filePaths) {
     if (p && !usedNames.has(p.split("/").pop())) await deleteCoverFromLibrary(p);
   }
+}
+
+// 🖼️ v7.59.26: 표지·명대사 이미지·서식 배경은 복제한 슬롯, 다른 작품, 기본 서식이 같은 파일을 가리킬 수 있다.
+//   한 DB에서 파일 경로가 들어 있는 값을 모두 모은다. 파일 이름이 uuid라 문자열 포함 여부로 참조를 판단한다.
+const FILE_REF_QUERIES = [
+  ["novels", "SELECT cover_image AS a, memorable_quote AS b FROM novels"],
+  ["planned_novels", "SELECT cover_image AS a, memorable_quote AS b FROM planned_novels"],
+  ["cover_library", "SELECT file_path AS a, NULL AS b FROM cover_library"],
+  ["gallery_images", "SELECT file_path AS a, NULL AS b FROM gallery_images"],
+];
+async function readFileRefs(getRows) {
+  const tables = new Set((await getRows("SELECT name FROM sqlite_master WHERE type='table'")).map(r => r.name));
+  const refs = [];
+  for (const [table, sql] of FILE_REF_QUERIES) {
+    if (!tables.has(table)) continue;
+    for (const r of await getRows(sql)) {
+      if (r.a) refs.push(r.a);
+      if (r.b) refs.push(r.b);
+    }
+  }
+  return refs.join("\n");
+}
+
+// 어느 슬롯도 쓰지 않는 파일만 지운다. 호출 전에 지울 행을 먼저 지우거나 고친다(남아 있으면 사용 중으로 본다).
+//   activeSettings는 현재 슬롯의 설정이다(DB 저장이 늦을 수 있어 메모리 값을 받는다). 하나라도 못 읽으면 아무것도 지우지 않는다.
+async function deleteFilesUnusedAnywhere(filePaths, activeSettings) {
+  const paths = [...new Set((filePaths || []).filter(Boolean))];
+  if (paths.length === 0) return;
+  const refs = [JSON.stringify(activeSettings || {})];
+  try {
+    refs.push(await readFileRefs(all));
+    await forEachOtherSlotDb(async (otherDb) => {
+      refs.push(await readFileRefs((sql) => otherDb.getAllAsync(sql)));
+      const settings = await otherDb.getFirstAsync("SELECT value FROM app_meta WHERE key='app_settings'").catch(() => null);
+      if (settings?.value) refs.push(settings.value);
+    });
+  } catch (e) {
+    console.warn("deleteFilesUnusedAnywhere: 참조 확인 실패, 파일 유지:", e?.message);
+    return;
+  }
+  const allRefs = refs.join("\n");
+  for (const p of paths) {
+    if (!allRefs.includes(String(p).split("/").pop())) await deleteCoverFromLibrary(p);
+  }
+}
+
+// 명대사 값이 가리키는 이미지와 서식 배경 파일 경로
+function quoteFilePaths(memorableQuote) {
+  const paths = [];
+  try {
+    for (const q of parseQuotes(memorableQuote)) {
+      if (isImageQuote(q) && q.uri) paths.push(q.uri);
+      const style = getQuoteStyle(q);
+      if (style && style.bgImage) paths.push(style.bgImage);
+    }
+  } catch {}
+  return paths;
 }
 
 // 표지 라이브러리 전체 용량 계산 (레거시 API)
@@ -12321,7 +12384,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.25";
+const APP_VERSION = "7.59.26";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -35328,6 +35391,10 @@ function AppContent() {
     setIsLoading(false);
   }
   
+  function deleteSharedFiles(paths) {
+    return deleteFilesUnusedAnywhere(paths, appSettingsRef.current);
+  }
+
   async function removePlannedNovel(id) {
     Alert.alert("확인", "이 예정 작품을 삭제할까요?", [
       { text: "취소" },
@@ -35352,18 +35419,10 @@ function AppContent() {
             //   이전엔 novel_folders를 안 지워 고아 잔존 + 폴더 '작품 수' 배지 부풀림(removeNovel/batchDelete는 정리함). 다음 정합성 sweep 전까지 누수.
             try { await exec("DELETE FROM novel_folders WHERE novel_id=?", [id]); } catch {}
 
-            // 인용구 이미지 파일 정리 (이미지 인용구 + 텍스트 서식 배경이미지)
-            try {
-              if (planned?.memorable_quote) {
-                for (const q of parseQuotes(planned.memorable_quote)) {
-                  if (isImageQuote(q) && q.uri) FileSystem.deleteAsync(q.uri, { idempotent: true }).catch(() => {});
-                  const _st = getQuoteStyle(q);
-                  if (_st && _st.bgImage) FileSystem.deleteAsync(_st.bgImage, { idempotent: true }).catch(() => {});
-                }
-              }
-            } catch (qErr) { console.warn("[removePlannedNovel] quote image cleanup:", qErr?.message); }
-
             await exec("DELETE FROM planned_novels WHERE id=?", [id]);
+
+            // 인용구 이미지 파일 정리 (이미지 인용구 + 텍스트 서식 배경이미지). 🖼️ v7.59.26: 행 삭제 후, 아무도 안 쓰는 파일만
+            await deleteSharedFiles(quoteFilePaths(planned?.memorable_quote));
 
             // 🖼️ 표지가 있었으면 미사용으로 변경
             if (coverPath) {
@@ -35458,10 +35517,7 @@ function AppContent() {
       syncTagsToCustom(n.tags?.trim() || ""); // 🔧 v3.5.9: 태그 동기화
       // 💬 v7.6.2: 편집 중 삭제된 명대사 이미지 파일 정리 (저장 성공 후에만 — 본작 saveEdit과 동일)
       if (removedQuoteImagesRef.current.length > 0) {
-        for (const uri of removedQuoteImagesRef.current) {
-          if (uri && uri === appSettings.quoteDefaultStyle?.bgImage) continue; // 🔧 v7.14.0 (P0): 공유 프리셋 배경 파일 보존
-          FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
-        }
+        deleteSharedFiles(removedQuoteImagesRef.current); // 🖼️ v7.59.26: 기본 서식·다른 작품·다른 슬롯이 쓰는 파일은 보존
         removedQuoteImagesRef.current = [];
       }
       editNewQuoteImagesRef.current = []; // 저장 성공 → 새 이미지 추적 해제 (파일 유지)
@@ -35809,26 +35865,18 @@ function AppContent() {
               try { await exec(`DELETE FROM novel_folders WHERE novel_id IN (${placeholders})`, ids); } catch (e) { console.warn("[v7.49.20] novel_folders 정리 실패:", e?.message); }
 
               // 🛠️ v7.3.4: memorable_quote 이미지 파일 cleanup 추가 (removeNovel/batchDelete와 동일 패턴)
+              // 🖼️ v7.59.26: 경로만 모아 두고 행 삭제 후에 지운다
+              const quoteFiles = [];
               try {
                 const qPlanned = await all(
                   `SELECT memorable_quote FROM planned_novels WHERE id IN (${placeholders}) AND memorable_quote IS NOT NULL AND memorable_quote != ''`,
                   ids
                 );
-                for (const p of (qPlanned || [])) {
-                  try {
-                    const quotes = parseQuotes(p.memorable_quote);
-                    for (const q of quotes) {
-                      if (isImageQuote(q) && q.uri) {
-                        FileSystem.deleteAsync(q.uri, { idempotent: true }).catch(() => {});
-                      }
-                      const _st = getQuoteStyle(q); // 🆕 v7.8.0: 텍스트 서식 배경이미지도 정리
-                      if (_st && _st.bgImage) FileSystem.deleteAsync(_st.bgImage, { idempotent: true }).catch(() => {});
-                    }
-                  } catch {}
-                }
+                for (const p of (qPlanned || [])) quoteFiles.push(...quoteFilePaths(p.memorable_quote));
               } catch (qErr) { console.warn("[v7.3.4] batchDeletePlanned quote image cleanup:", qErr?.message); }
 
               await exec(`DELETE FROM planned_novels WHERE id IN (${placeholders})`, ids);
+              await deleteSharedFiles(quoteFiles);
               await loadPlannedList();
               await loadCoverLibrary();
               setPlannedSelectedIds([]);
@@ -37629,10 +37677,10 @@ function AppContent() {
               Alert.alert("알림", "이 표지를 아직 사용 중인 작품이 있어 삭제하지 않았습니다.");
               return;
             }
-            // 파일 삭제
-            await deleteCoverFromLibrary(cover.file_path);
             // DB에서 삭제
             await exec("DELETE FROM cover_library WHERE id=?", [coverId]);
+            // 파일 삭제. 🖼️ v7.59.26: 행 삭제 후, 다른 슬롯이 안 쓸 때만
+            await deleteSharedFiles([cover.file_path]);
             await loadCoverLibrary();
           },
         },
@@ -37672,18 +37720,20 @@ function AppContent() {
               } catch (refErr) { console.warn("[removeAllUnusedCovers] 참조 조회 실패:", refErr?.message); }
 
               let deleted = 0, skipped = 0;
+              const deletedPaths = [];
               for (let i = 0; i < unusedCovers.length; i++) {
                 const cv = unusedCovers[i];
                 if (usedPaths.has(cv.file_path)) {
                   await exec("UPDATE cover_library SET status='used' WHERE id=?", [cv.id]).catch(() => {});
                   skipped++;
                 } else {
-                  await deleteCoverFromLibrary(cv.file_path);
                   await exec("DELETE FROM cover_library WHERE id=?", [cv.id]).catch(() => {});
+                  deletedPaths.push(cv.file_path);
                   deleted++;
                 }
                 setCoverLibraryProgress({ current: i + 1, total: unusedCovers.length });
               }
+              await deleteSharedFiles(deletedPaths); // 🖼️ v7.59.26: 다른 슬롯이 쓰는 파일은 보존
 
               await loadCoverLibrary();
               Alert.alert("완료", `${deleted}개의 미사용 표지를 삭제했습니다.${skipped ? `\n(사용 중인 표지 ${skipped}개는 보존)` : ""}`);
@@ -44385,20 +44435,9 @@ function AppContent() {
               await loadCoverLibrary();
             }
 
-            // 📷 v6.0.1: 명대사 이미지 파일 정리 (고아 방지)
-            if (novel?.memorable_quote) {
-              try {
-                const quotes = parseQuotes(novel.memorable_quote);
-                for (const q of quotes) {
-                  if (isImageQuote(q)) {
-                    FileSystem.deleteAsync(q.uri, { idempotent: true }).catch(() => {});
-                  }
-                  const _st = getQuoteStyle(q); // 🆕 v7.8.0: 텍스트 서식 배경이미지도 정리
-                  if (_st && _st.bgImage) FileSystem.deleteAsync(_st.bgImage, { idempotent: true }).catch(() => {});
-                }
-              } catch {}
-            }
-            
+            // 📷 v6.0.1: 명대사 이미지 파일 정리 (고아 방지). 🖼️ v7.59.26: 아무도 안 쓰는 파일만
+            await deleteSharedFiles(quoteFilePaths(novel?.memorable_quote));
+
             await rebuildAllFromMatches(tagAttributes);
             await loadList(undefined, undefined, "rebuild");
             await loadGalleryImages(); // 🎨 v3.8.0
@@ -45093,10 +45132,7 @@ function AppContent() {
       await exec(`UPDATE ${tbl} SET memorable_quote=? WHERE id=?`, [serializeQuotes(quotes), qe.novelId]);
       // 🔧 v7.14.0 (P0): 공유 전역 프리셋 배경 파일은 삭제 금지 — quick-edit 시드가 프리셋 경로를
       //   그대로 참조(CoW 부재)해, 변경/제거 시 프리셋+모든 프리셋 적용 명대사의 배경이 동시 소실되던 버그.
-      for (const uri of quickQuoteRemovedImagesRef.current) {
-        if (uri && uri === appSettings.quoteDefaultStyle?.bgImage) continue;
-        FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
-      }
+      deleteSharedFiles(quickQuoteRemovedImagesRef.current); // 🖼️ v7.59.26: 참조 확인으로 일반화
       quickQuoteRemovedImagesRef.current = [];
       quickQuoteNewImagesRef.current = []; // 저장됨 → 새 이미지 파일 유지
       setQuoteQuickEdit(null);
@@ -45287,10 +45323,7 @@ function AppContent() {
       
       // 📷 v3.6.1: 편집 중 삭제된 명대사 이미지 파일 정리 (저장 성공 후에만)
       if (removedQuoteImagesRef.current.length > 0) {
-        for (const uri of removedQuoteImagesRef.current) {
-          if (uri && uri === appSettings.quoteDefaultStyle?.bgImage) continue; // 🔧 v7.14.0 (P0): 공유 프리셋 배경 파일 보존
-          FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
-        }
+        deleteSharedFiles(removedQuoteImagesRef.current); // 🖼️ v7.59.26: 기본 서식·다른 작품·다른 슬롯이 쓰는 파일은 보존
         removedQuoteImagesRef.current = [];
       }
       editNewQuoteImagesRef.current = []; // 📷 v6.0.1: 저장 성공 → 추적 해제 (파일 유지)
@@ -48426,23 +48459,14 @@ function AppContent() {
             } catch (gErr) { console.warn("batchDelete gallery cleanup:", gErr); }
 
             // 🛠️ v7.3.4: memorable_quote 이미지 파일 삭제 (removeNovel과 동일 패턴) — 일괄 삭제 시 파일시스템 누수 방지
+            // 🖼️ v7.59.26: 경로만 모아 두고 행 삭제 후에 지운다
+            const quoteFiles = [];
             try {
               const qNovels = await all(
                 `SELECT memorable_quote FROM novels WHERE id IN (${placeholders}) AND memorable_quote IS NOT NULL AND memorable_quote != ''`,
                 ids
               );
-              for (const n of (qNovels || [])) {
-                try {
-                  const quotes = parseQuotes(n.memorable_quote);
-                  for (const q of quotes) {
-                    if (isImageQuote(q) && q.uri) {
-                      FileSystem.deleteAsync(q.uri, { idempotent: true }).catch(() => {});
-                    }
-                    const _st = getQuoteStyle(q); // 🆕 v7.8.0: 텍스트 서식 배경이미지도 정리
-                    if (_st && _st.bgImage) FileSystem.deleteAsync(_st.bgImage, { idempotent: true }).catch(() => {});
-                  }
-                } catch {}
-              }
+              for (const n of (qNovels || [])) quoteFiles.push(...quoteFilePaths(n.memorable_quote));
             } catch (qErr) { console.warn("batchDelete quote image cleanup:", qErr?.message); }
 
             const queries = [];
@@ -48496,6 +48520,7 @@ function AppContent() {
               });
             }
             await execBatch(queries, (cur, tot) => setLoadingProgress({ current: cur, total: tot, label: "작품 삭제 중..." }));
+            await deleteSharedFiles(quoteFiles);
             await loadNovelFolderMap();
             // 🔧 v3.5.15e: 미플러시 choiceLog에서도 삭제 대상 제거 (고아 재삽입 방지)
             const deletedSet = new Set(ids);
@@ -56995,10 +57020,7 @@ async function importJSON(directText, onSuccess, onSettled) {
                           
                           // 📷 v6.0.1: 보충 편집에서 삭제된 명대사 이미지 파일 정리
                           if (removedQuoteImagesRef.current.length > 0) {
-                            for (const uri of removedQuoteImagesRef.current) {
-                              if (uri && uri === appSettings.quoteDefaultStyle?.bgImage) continue; // 🔧 v7.14.0 (P0): 공유 프리셋 배경 파일 보존
-                              FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
-                            }
+                            deleteSharedFiles(removedQuoteImagesRef.current); // 🖼️ v7.59.26: 기본 서식·다른 작품·다른 슬롯이 쓰는 파일은 보존
                             removedQuoteImagesRef.current = [];
                           }
 
@@ -60346,10 +60368,10 @@ async function importJSON(directText, onSuccess, onSettled) {
                   } catch (e) { Alert.alert("오류", "배경 이미지 선택 실패: " + (e?.message || e)); }
                   return null;
                 }}
-                onClearBgImage={(uri) => { FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {}); }}
+                onClearBgImage={(uri) => { deleteFilesUnusedAnywhere([uri], { ...appSettingsRef.current, quoteDefaultStyle: null }); }} // 🖼️ v7.59.26: 명대사나 다른 슬롯이 쓰면 보존
               />
               {appSettings.quoteDefaultStyle ? (
-                <TouchableOpacity onPress={() => { const _bg = appSettings.quoteDefaultStyle?.bgImage; if (_bg) FileSystem.deleteAsync(_bg, { idempotent: true }).catch(() => {}); saveAppSettings({ quoteDefaultStyle: null }); }} style={{ marginTop: 10, alignSelf: "flex-start", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: C.chip }}>
+                <TouchableOpacity onPress={() => { const _bg = appSettings.quoteDefaultStyle?.bgImage; if (_bg) deleteFilesUnusedAnywhere([_bg], { ...appSettingsRef.current, quoteDefaultStyle: null }); saveAppSettings({ quoteDefaultStyle: null }); }} style={{ marginTop: 10, alignSelf: "flex-start", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: C.chip }}>
                   <Text style={{ color: C.warn, fontWeight: "700", fontSize: 13 }}>기본 서식 초기화</Text>
                 </TouchableOpacity>
               ) : null}
