@@ -81,6 +81,7 @@ import { captureRef } from "react-native-view-shot"; // 📷 v7.4.0 티어표 �
 import { WebView } from "react-native-webview"; // 🔐 v7.40.0 노벨피아 로그인(성인물 게이트 해제) — WebView 로그인
 import CookieManager from "@react-native-cookies/cookies"; // 🔐 v7.40.0 OS 쿠키스토어 읽기(세션 쿠키 → fetch 주입)
 import { showFileAccessDiagnostics } from "./src/features/file-access"; // 🧩 v7.59.20 파일 접근 모듈 (사용법: 해당 폴더 README)
+import { ScrollTopButton } from "./src/features/scroll-top"; // ↑ 맨 위로 버튼 (사용법: 해당 폴더 README)
 import { QuickRankScreen, QUICK_RANK_CLEAR_QUERIES, QUICK_RANK_TABLES, buildQuickRankBackup, ensureQuickRankSchema, quickRankRestoreQueries, revertQuickRankApply } from "./src/features/quick-rank"; // ⚡ 최소 매칭 (사용법: 해당 폴더 README)
 import { saveBackupToFile, restoreBackupFromFile, saveMediaToFile, restoreMediaFromFile, buildCoverLinks, applyCoverLinks } from "./src/features/file-backup"; // 📁 v7.59.21 파일 백업·복원, 🖼️ v7.59.22 사진 백업·복원, v7.59.23 표지 연결
 // 🆕 v7.8.0: 명대사 텍스트 서식 — 한글 웹폰트 번들 (expo-font + @expo-google-fonts)
@@ -12442,7 +12443,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.60.2";
+const APP_VERSION = "7.60.3";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -12474,6 +12475,14 @@ function pickWhatsNewEntries(entries, lastSeen, currentVersion) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.60.3", date: "2026-11-03",
+    title: "↑ 맨 위로 버튼",
+    highlights: [
+      { type: "new", text: "↑ 긴 화면을 내리면 오른쪽 아래에 맨 위로 버튼이 나타나요. 누르면 탭 메뉴로 바로 돌아갑니다." },
+    ],
+    details: [],
+  },
   {
     version: "7.60.2", date: "2026-11-03",
     title: "⚡ 최소 매칭 계산 개선",
@@ -32747,6 +32756,8 @@ function AppContent() {
   const [gatekeeperCandidates, setGatekeeperCandidates] = useState([]);
   const [gatekeeperModalOpen, setGatekeeperModalOpen] = useState(false);
   const [quickRankOpen, setQuickRankOpen] = useState(false); // ⚡ 최소 매칭
+  const mainScrollRef = useRef(null); // ↑ 맨 위로 버튼
+  const scrollTopButtonRef = useRef(null);
   const quickRankAvailable = globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid"; // 매칭 기반은 순위를 rating으로 정해 결과가 반영되지 않는다
   const verificationSessionIdRef = useRef(null); // 매 시퀀스 고유 sessionId (응답 로그 묶음용)
   const verificationLoadingRef = useRef(false); // 🆕 v7.0: 재진입 가드 (state는 React 배칭 → 동기 가드 필요)
@@ -51528,6 +51539,9 @@ async function importJSON(directText, onSuccess, onSettled) {
         </View>
       </Modal>
       <ScrollView
+        ref={mainScrollRef}
+        onScroll={(e) => scrollTopButtonRef.current?.setOffset(e.nativeEvent.contentOffset.y)}
+        scrollEventThrottle={100}
         contentContainerStyle={{ padding: 16, paddingBottom: 48 }}
         showsVerticalScrollIndicator={true}
         indicatorStyle={isDark ? "white" : "black"}
@@ -65664,6 +65678,7 @@ async function importJSON(directText, onSuccess, onSettled) {
           </>
         )}
       </ScrollView>
+      <ScrollTopButton ref={scrollTopButtonRef} C={C} onPress={() => mainScrollRef.current?.scrollTo({ y: 0, animated: false })} />
 
       {/* ═══════════════════════════════════════════════════════════════ */}
       {/* ℹ️ What's New 모달 */}
