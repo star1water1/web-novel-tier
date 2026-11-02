@@ -42,7 +42,6 @@ import React, { useEffect, useMemo, useState, useRef, useCallback, memo, Compone
 import {
   Alert,
   FlatList,
-  Modal,
   Pressable,
   ScrollView,
   Text,
@@ -51,7 +50,6 @@ import {
   View,
   Switch,
   Share,
-  SafeAreaView,
   Linking,
   useColorScheme,
   ActivityIndicator,
@@ -64,6 +62,8 @@ import {
   UIManager,
   findNodeHandle,
 } from "react-native";
+import { SafeAreaProvider, SafeAreaView, initialWindowMetrics } from "react-native-safe-area-context"; // 🛠️ v7.59.27 RN 기본 SafeAreaView는 안드로이드 시스템 바를 피하지 못한다
+import { Modal, KeyboardSpacer } from "./src/features/system-insets"; // 🛠️ v7.59.27 모달과 키보드 여백
 import { Image as ExpoImage } from "expo-image";
 import * as SQLite from "expo-sqlite";
 import * as ImagePicker from "expo-image-picker";
@@ -12384,7 +12384,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.26";
+const APP_VERSION = "7.59.27";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -20972,7 +20972,7 @@ const TagManagerModal = memo(({
   
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} onShow={() => _setTmScrollKey(k => k + 1)}>
-      <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+      <SafeAreaView edges={["top", "left", "right"]} style={{ flex: 1, backgroundColor: C.bg }}>
         {/* 헤더 */}
         <View style={{ 
           flexDirection: "row", 
@@ -22254,7 +22254,7 @@ const FolderManagerModal = memo(({ visible, onClose, folders, onCreateFolder, on
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+      <SafeAreaView edges={["top", "left", "right"]} style={{ flex: 1, backgroundColor: C.bg }}>
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 16 }}>
           <Text style={{ fontSize: 20, fontWeight: "800", color: C.text }}>📂 폴더 관리</Text>
           <TouchableOpacity onPress={onClose}><Text style={{ fontSize: 16, color: C.primary, fontWeight: "700" }}>닫기</Text></TouchableOpacity>
@@ -53132,7 +53132,7 @@ async function importJSON(directText, onSuccess, onSettled) {
 
     {/* 🌐 v7.53: 전용 키워드 관리 화면 — 카테고리 on/off · 밴·내 키워드 · 검색어 미리보기 · 수확 풀 정리 */}
     <Modal visible={keywordManagerOpen} animationType="slide" onRequestClose={() => setKeywordManagerOpen(false)} statusBarTranslucent>
-      <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+      <SafeAreaView edges={["top", "left", "right"]} style={{ flex: 1, backgroundColor: C.bg }}>
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: C.line }}>
           <Text style={{ color: C.text, fontSize: 18, fontWeight: "800" }}>🛠️ 키워드 관리</Text>
           <TouchableOpacity onPress={() => setKeywordManagerOpen(false)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}><Text style={{ color: C.sub, fontSize: 22 }}>✕</Text></TouchableOpacity>
@@ -62692,7 +62692,7 @@ async function importJSON(directText, onSuccess, onSettled) {
               {/* 🆕 v7.28.10: API 키 발급 안내 모달 (제공자별 단계·주의·바로가기) */}
               {/* 🔐 v7.40.0: 노벨피아 WebView 로그인 모달 — 사용자가 직접 로그인 → ‘로그인 완료’로 세션 캡처 */}
               <Modal visible={npLoginModalOpen} animationType="slide" statusBarTranslucent onRequestClose={() => setNpLoginModalOpen(false)}>
-                <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+                <SafeAreaView edges={["top", "left", "right"]} style={{ flex: 1, backgroundColor: C.bg }}>
                   <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line }}>
                     <TouchableOpacity onPress={() => setNpLoginModalOpen(false)} activeOpacity={0.7} style={{ padding: 6 }}>
                       <Text style={{ color: C.sub, fontSize: 15, fontWeight: "800" }}>✕ 닫기</Text>
@@ -62730,7 +62730,7 @@ async function importJSON(directText, onSuccess, onSettled) {
 
               {/* 🛠️ v7.57.4: 카카오웹툰(webtoon.kakao.com) 로그인/열기 모달 — 로그인 쿠키는 회차수 캡처 WebView와 공유(sharedCookies). page.kakao(카카오페이지)와 무관. */}
               <Modal visible={kkWebtoonLoginOpen} animationType="slide" statusBarTranslucent onRequestClose={() => setKkWebtoonLoginOpen(false)}>
-                <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+                <SafeAreaView edges={["top", "left", "right"]} style={{ flex: 1, backgroundColor: C.bg }}>
                   <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line }}>
                     <TouchableOpacity onPress={() => setKkWebtoonLoginOpen(false)} activeOpacity={0.7} style={{ padding: 6 }}>
                       <Text style={{ color: C.sub, fontSize: 15, fontWeight: "800" }}>✕ 닫기</Text>
@@ -62776,7 +62776,7 @@ async function importJSON(directText, onSuccess, onSettled) {
 
               {/* 🔐 v7.41.5: 문피아 WebView 로그인 모달 */}
               <Modal visible={mpLoginModalOpen} animationType="slide" statusBarTranslucent onRequestClose={() => setMpLoginModalOpen(false)}>
-                <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+                <SafeAreaView edges={["top", "left", "right"]} style={{ flex: 1, backgroundColor: C.bg }}>
                   <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line }}>
                     <TouchableOpacity onPress={() => setMpLoginModalOpen(false)} activeOpacity={0.7} style={{ padding: 6 }}>
                       <Text style={{ color: C.sub, fontSize: 15, fontWeight: "800" }}>✕ 닫기</Text>
@@ -62814,7 +62814,7 @@ async function importJSON(directText, onSuccess, onSettled) {
 
               {/* 🆕 v7.43.0: 카카오 세션 부트스트랩 WebView — 카카오 페이지를 열어 JS가 _kawlt 익명 토큰을 쿠키에 심게 함(로그인 불필요) */}
               <Modal visible={kkSessionModalOpen} animationType="slide" statusBarTranslucent onRequestClose={() => setKkSessionModalOpen(false)}>
-                <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+                <SafeAreaView edges={["top", "left", "right"]} style={{ flex: 1, backgroundColor: C.bg }}>
                   <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line }}>
                     <TouchableOpacity onPress={() => setKkSessionModalOpen(false)} activeOpacity={0.7} style={{ padding: 6 }}>
                       <Text style={{ color: C.sub, fontSize: 15, fontWeight: "800" }}>✕ 닫기</Text>
@@ -62852,7 +62852,7 @@ async function importJSON(directText, onSuccess, onSettled) {
 
               {/* 🆕 v7.44.0/v7.44.4: 카카오 응답 가로채기 WebView — 실제로 보이게(불투명) 띄워 JS 실행 보장. 상단 배너로 안내, 페이지는 그대로 노출 */}
               <Modal visible={!!kkCaptureUrl} animationType="slide" statusBarTranslucent onRequestClose={() => { const r = kkCaptureResolver.current; if (r) r.finish(null, "사용자가 창을 닫음"); }}>
-                <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+                <SafeAreaView edges={["top", "left", "right"]} style={{ flex: 1, backgroundColor: C.bg }}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line }}>
                     <ActivityIndicator size="small" color={C.primary} />
                     <Text style={{ color: C.text, fontSize: 13.5, fontWeight: "800", flex: 1 }}>카카오에서 작품 정보를 가져오는 중…</Text>
@@ -70680,6 +70680,7 @@ async function importJSON(directText, onSuccess, onSettled) {
         </View>
       </Modal>
 
+      <KeyboardSpacer />
     </SafeAreaView>
   );
 }
@@ -70697,8 +70698,10 @@ export default function App() {
     Jua_400Regular,
   });
   return (
-    <AppErrorBoundary>
-      <AppContent />
-    </AppErrorBoundary>
+    <SafeAreaProvider initialMetrics={initialWindowMetrics}>
+      <AppErrorBoundary>
+        <AppContent />
+      </AppErrorBoundary>
+    </SafeAreaProvider>
   );
 }

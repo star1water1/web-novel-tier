@@ -30,4 +30,5 @@ APK는 `build.bat`을 더블클릭해 빌드합니다. 자세한 내용과 주�
 - [docs/hybrid-verification.md](docs/hybrid-verification.md): 하이브리드 모드 설계
 - [docs/scraper-plan.md](docs/scraper-plan.md): 플랫폼 스크래퍼 메모
 - [docs/cloud-sync-plan.md](docs/cloud-sync-plan.md): 클라우드 동기화 설계
+- `src/features/system-insets`: 시스템 바와 키보드 여백
 - [src/features/file-access/README.md](src/features/file-access/README.md): 파일 접근 모듈 사용법

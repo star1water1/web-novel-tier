@@ -28,6 +28,7 @@ Expo SDK 54 · React Native 기반 Android 앱. 슬롯(최대 10개, 슬롯별 S
 - DB 작업은 `safeDbOperation`을 거친다. SQLite 파일을 직접 복사·이동하지 않는다.
 - hybrid 모드의 시스템 경로(finalize의 `manual_order`/`manual_tier` UPDATE)는 검증 트리거를 걸지 않는다 (무한 루프 방지). 자세한 설계는 `docs/hybrid-verification.md`.
 - `memo()` 컴포넌트는 props 변경에만 리렌더링됨을 고려한다.
+- 앱은 화면 전체를 쓰므로(edge-to-edge) 시스템 바와 키보드 여백을 직접 둔다. `Modal`은 `src/features/system-insets`의 것을, `SafeAreaView`는 `react-native-safe-area-context`의 것을 쓴다. 모달 안의 `SafeAreaView`는 `edges`에서 아래쪽을 뺀다(여백 이중 방지).
 
 ## App.jsx 찾아보기
 
