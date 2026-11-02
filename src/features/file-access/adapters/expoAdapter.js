@@ -28,6 +28,14 @@ export async function writeText(uri, text) {
   else await LegacyFS.writeAsStringAsync(uri, text);
 }
 
+export async function readBytes(uri) {
+  return new File(uri).bytes();
+}
+
+export async function writeBytes(uri, bytes) {
+  new File(uri).write(bytes);
+}
+
 export async function makeAppDirectory(uri) {
   await LegacyFS.makeDirectoryAsync(uri, { intermediates: true });
 }

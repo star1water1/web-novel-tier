@@ -39,6 +39,18 @@ export const writeText = guarded(async (uri, text) => {
   await expoAdapter.writeText(uri, text);
 });
 
+/** 파일 전체를 메모리에 올린다. 작은 파일용. @returns {Promise<Uint8Array>} */
+export const readBytes = guarded(async (uri) => {
+  assertUri(uri);
+  return expoAdapter.readBytes(uri);
+});
+
+/** 파일 전체를 메모리에 올린다. 작은 파일용. @param {Uint8Array} bytes */
+export const writeBytes = guarded(async (uri, bytes) => {
+  assertUri(uri);
+  await expoAdapter.writeBytes(uri, bytes);
+});
+
 /** 조각으로 나눠 쓴다. readText·writeText가 Java 힙 한계에 걸리는 큰 파일용. @returns {Promise<{bytes: number, sha256: string}>} */
 export const writeLargeText = guarded(async (uri, text) => {
   assertUri(uri);
