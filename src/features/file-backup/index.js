@@ -1,6 +1,6 @@
 // 백업 JSON과 사진을 파일로 저장·복원한다. 텍스트 공유와 달리 크기 제한(Binder)을 받지 않는다.
 // JSON 내용 생성(exportJSON)과 복원(importJSON)은 App.jsx의 기존 함수를 그대로 쓰므로 형식이 같다.
-import { Alert } from "react-native";
+import { Alert, AppState } from "react-native";
 import * as fileAccess from "../file-access";
 
 export { buildCoverLinks, applyCoverLinks } from "./coverLinks";
@@ -41,7 +41,25 @@ async function pickBackupFile(failureTitle) {
   }
 }
 
-// 받는 앱이 파일을 읽는 동안 필요하므로, 보내기를 고르면 폴더 권한을 해제하지 않는다.
+// 공유 창이 받는 앱에 읽기 권한을 넘길 때 이 앱의 권한이 필요하므로, 공유 창에서 돌아온 뒤에 폴더 권한을 해제한다.
+// 받는 앱은 읽기 권한을 따로 받으므로 해제해도 계속 읽을 수 있다.
+function shareThenRelease({ fileUri, mimeType, name, directoryUri }) {
+  let left = false;
+  const subscription = AppState.addEventListener("change", (state) => {
+    if (state !== "active") {
+      left = true;
+    } else if (left) {
+      subscription.remove();
+      releaseQuietly(directoryUri);
+    }
+  });
+  fileAccess.shareDocument(fileUri, mimeType, name).catch((error) => {
+    subscription.remove();
+    releaseQuietly(directoryUri);
+    Alert.alert("보내기 실패", `파일은 폴더에 저장되어 있어요.\n${error.message}`);
+  });
+}
+
 function showSavedAlert({ title, message, name, fileUri, directoryUri, mimeType }) {
   Alert.alert(
     title,
@@ -50,11 +68,7 @@ function showSavedAlert({ title, message, name, fileUri, directoryUri, mimeType 
       { text: "닫기", style: "cancel", onPress: () => releaseQuietly(directoryUri) },
       {
         text: "다른 앱으로 보내기",
-        onPress: () => {
-          fileAccess.shareDocument(fileUri, mimeType, name).catch((error) => {
-            Alert.alert("보내기 실패", `파일은 폴더에 저장되어 있어요.\n${error.message}`);
-          });
-        },
+        onPress: () => shareThenRelease({ fileUri, mimeType, name, directoryUri }),
       },
     ],
     { onDismiss: () => releaseQuietly(directoryUri) }
