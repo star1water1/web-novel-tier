@@ -12442,7 +12442,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.60.0";
+const APP_VERSION = "7.60.1";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -12467,7 +12467,24 @@ function compareVersions(a, b) {
   return 0;
 }
 
-const CHANGELOG_DATA = [
+// '새로운 소식'에 보여 줄 항목. 처음 보는 슬롯은 이번 버전 항목만 보여 준다. 항목이 없는 버전에 옛 내용을 대신 보여 주지 않는다.
+function pickWhatsNewEntries(entries, lastSeen, currentVersion) {
+  if (!lastSeen) return entries.filter(e => e.version === currentVersion);
+  return entries.filter(e => compareVersions(e.version, lastSeen) > 0 && compareVersions(e.version, currentVersion) <= 0);
+}
+
+const CHANGELOG_DATA = [
+  {
+    version: "7.60.1", date: "2026-11-02",
+    title: "⚡ 최소 매칭",
+    highlights: [
+      { type: "new", text: "⚡ 전체 매칭보다 적은 횟수로 순위를 만드는 '최소 매칭'을 추가했어요. 작품마다 티어 칸을 한 번 고르고, 5개 중 제일 좋은 작품을 고른 뒤, 결과를 미리 보고 적용합니다." },
+      { type: "improve", text: "🏷️ 직접 배정과 혼합 모드의 '배정' 탭 맨 위에 있어요. 언제든 멈췄다 이어 할 수 있고, 적용해도 되돌릴 수 있어요." },
+    ],
+    details: [
+      { type: "improve", text: "전체 매칭 기록과 점수는 건드리지 않아요. 진행 상황과 비교 기록은 백업에 함께 담깁니다." },
+    ],
+  },
   {
     version: "7.58.4", date: "2026-08-02",
     title: "🔧 커스텀 장르를 쓰면 AI가 장르를 못 달던 문제",
@@ -34541,9 +34558,7 @@ function AppContent() {
           try {
             const lastSeenVer = await getAppMeta("last_seen_version");
             if (lastSeenVer !== APP_VERSION) {
-              const newChanges = lastSeenVer
-                ? CHANGELOG_DATA.filter(e => compareVersions(e.version, lastSeenVer) > 0)
-                : CHANGELOG_DATA.slice(0, 1);
+              const newChanges = pickWhatsNewEntries(CHANGELOG_DATA, lastSeenVer, APP_VERSION);
               if (newChanges.length > 0) {
                 setTimeout(() => {
                   if (!mounted) return;
@@ -65673,7 +65688,7 @@ async function importJSON(directText, onSuccess, onSettled) {
             <View style={{ alignItems: "center", marginBottom: 16 }}>
               <Text style={{ fontSize: 32 }}>🎉</Text>
               <Text style={{ fontSize: 20, fontWeight: "900", color: C.text, marginTop: 8 }}>새로운 소식</Text>
-              <Text style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>v{APP_VERSION} 업데이트</Text>
+              <Text style={{ fontSize: 13, color: C.sub, marginTop: 4 }}>v{whatsNewEntries[0]?.version || APP_VERSION} 업데이트</Text>
             </View>
 
             <ScrollView style={{ maxHeight: 300 }}>

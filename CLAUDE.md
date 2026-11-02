@@ -67,7 +67,7 @@ npm test
 
 ## 기록
 
-`App.jsx`의 동작을 바꾸면 `APP_VERSION`을 올리고 `docs/history.md`의 "최신 기록" 맨 위에 항목을 추가한다. `App.jsx` 헤더에는 이력을 쓰지 않는다.
+`App.jsx`의 동작을 바꾸면 `APP_VERSION`을 올리고 `docs/history.md`의 "최신 기록" 맨 위에 항목을 추가한다. 사용자에게 알릴 변경이면 `CHANGELOG_DATA` 맨 위에도 쉬운 말로 추가한다. 항목이 없는 버전에는 업데이트 창이 뜨지 않는다. `App.jsx` 헤더에는 이력을 쓰지 않는다.
 
 ## 빌드
 
