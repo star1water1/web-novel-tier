@@ -1,141 +1,111 @@
-# 웹소설 티어 랭킹 앱 (Novel Tier Ranking)
+# 웹소설 티어 랭킹 앱 (Novel Tier)
 
-Expo React Native (SDK 54) 기반 웹소설 티어 랭킹 앱.
-ELO 매칭 시스템으로 작품 간 대전을 통해 자동으로 티어를 산출한다.
+Expo SDK 54 · React Native 기반 Android 앱. 슬롯(최대 10개, 슬롯별 SQLite 파일)마다 웹소설/웹툰 모드와 티어 방식(ELO 매칭, hybrid, manual)을 갖는다.
 
-## 아키텍처
+## 개발 원칙
 
-- **기존 기능은 단일 파일**: `App.jsx` (~78,300줄, v7.58.4 기준)에 v7.59.19까지의 로직이 들어있음. 전면 리팩터링·대규모 분리 금지
-- **신규 기능은 별도 파일** (v7.59.20~): `src/features/<기능>/` + 네이티브가 필요하면 `modules/<모듈>/`. 파일 접근은 `src/features/file-access/README.md` 참고
-- **SQLite** (expo-sqlite, WAL 모드) — 33+ 테이블 (v7.0: tier_verification_queue, tier_validation_log, tier_repositioning_session 추가)
-- **다중 슬롯**: 최대 10개 독립 데이터셋, 슬롯별 별도 DB 파일
+목표는 앱을 다시 만드는 것이 아니라, 기존 자산을 보존하면서 앞으로의 개발을 독립적으로 만드는 것이다.
 
-## v7.0 하이브리드 모드 동적 자리 탐색 시스템 (Stage 1~5 완료)
+- **기존 코드 보존:** `App.jsx`를 전면 리팩터링하거나 코드를 옮기기만 하는 분리를 하지 않는다. 기존 기능의 수정·보강은 `App.jsx` 안에서 기존 패턴대로 한다.
+- **신규 기능 독립:** `src/features/<기능>/`에 만들고 `App.jsx`에는 import와 호출만 둔다. `App.jsx`를 import하지 않는다. DB 함수나 `isBlocked` 같은 의존성은 인자로 받는다 (`src/features/file-backup` 참고).
+- **네이티브:** Expo API로 충분한지 먼저 보고, 부족한 부분만 `modules/`에 Kotlin으로 만든다. 파일 접근은 `src/features/file-access/README.md`를 따른다.
+- **작은 단위:** 한 번에 하나씩 바꾸고 검증한다.
+- **데이터 호환:** DB·백업·설정은 추가만 한다. 기존 항목의 의미를 바꾸거나 없애지 않고, 옛 백업과 옛 DB도 계속 읽혀야 한다. 파일 삭제·덮어쓰기는 안전장치를 둔다. 복제한 슬롯은 표지·명대사 이미지·배경·갤러리 파일을 함께 쓰므로, 저장된 파일은 `FileSystem.deleteAsync`로 바로 지우지 않고 행을 지운 뒤 `deleteFilesUnusedAnywhere`(갤러리는 `deleteGalleryFilesUnusedByOtherSlots`)를 거친다. 되돌릴 수 있는 삭제는 파일을 `holdUndoFiles`로 맡기고 되돌리기 기록의 `payload.files`에 넣으면, 기록이 사라질 때 정리된다.
+- **제품:** 재미보다 정확성·신뢰성·편의성을 앞세운다. 등록·매칭·순위의 안정성이 최우선이고, 실험적 기능보다 기존 기능의 완성도를 중시한다. 의견이 갈리는 동작은 옵션으로 열되, 아무 설정 없이도 잘 돌아가는 기본값을 둔다.
 
-`globalTierConfig.mode === "hybrid"`일 때 활성. 기존 ELO/자동매칭과 분리된 패러다임:
+## 절대 준수 규칙
 
-- **patrick truth**: 사용자 manual_tier + manual_order
-- **검증 트리거**: 사용자 편집 행위 (작품 추가/메타 변경/티어 변경/순위 변경) → 검증 큐 INSERT
-- **자동 탐색 시퀀스**: 의심작 인접 후보 점진 매칭 → 변곡점(승패 변동) 발견 → K=2 추가 검증 → 자리 결정
-- **수문장 식별**: 시퀀스 내 첫 변곡점 작품 + 5개 누적 시퀀스 통계 → 제안 모달 (1단계 위/아래 변경 버튼)
-- **시스템/사용자 path 분리**: finalize의 manual_order/tier UPDATE는 트리거 X (무한 루프 방지)
-- **매칭 탭 분기**: hybrid → HybridVerificationView (검증 시퀀스 UI), 그 외 → 기존 ELO 매칭
+매칭 시스템 5대 불변조건. **위반 시 크래시/데이터 오염이 발생한다.**
 
-신규 헬퍼 함수:
-- DB/판정: `detectViolation`, `enqueueVerification`, `getCandidatesForVerification`, `backfillManualOrder`, `getNextVerificationTarget`
-- 시퀀스: `findInflectionPoint`, `evaluateSequenceProgress`, `computeNewPosition`, `finalizeVerificationSession`, `logVerificationMatch`, `getGatekeeperCandidates`
+1. **자동매칭 중 `Alert.alert()` 호출 금지:** `isAutoMatchingRef.current === true`일 때. 새 모듈은 `isBlocked`를 받아 지킨다.
+2. **매칭 큐 내부에서 React state 직접 참조 금지:** 스냅샷만 쓴다 (stale closure 방지).
+3. **큐 외부 write 타이머는 flush 전 queue drain 대기:** `waitForMatchQueueDrain()` 호출.
+4. **`SQLITE_BUSY` 시 `resetDbConnection` 금지:** 경합은 jitter 재시도만 하고 연결 오류와 분리한다.
+5. **자동매칭 루프의 모든 비동기 경로에 catch/finally 강제:** 누락 시 unhandled rejection 크래시.
 
-검증 예산 (v7.59.10~ **상수가 아니라 `suspicionConfig` 설정값**):
-- `gallopMax` (5~8, 기본 7) — 갤로핑 경계탐색 probe 상한. 설정 '한 작품 점검 길이'.
-- `VERIFICATION_BINARY_MAX = 4` (고정) — 경계 발견 후 이진 정제 예산.
-- 파생: `verificationMaxResponses()` = gallopMax + 4 (기본 11) · `verificationCandidatePool()` = **2^(gallopMax−1)** (기본 64).
-  ⚠️ probe 인덱스는 0,1,3,7,15,31,63… (`next = lo + jump`, jump는 *다음* 라운드용으로 2배) → g회에 2^(g−1)−1까지만 닿는다. `2^g−1`이 아니다.
-- `gatekeeperThreshold` (2~5, 기본 3) — 수문장 제안 임계. `decay` (0.5~0.95, 기본 0.85, 읽는 쪽 하한 가드).
-- 진행 중 세션은 `session.limits` 스냅샷으로 끝까지 간다 (런타임 변경은 다음 세션부터). 없으면 `limitsOf()`가 현재 설정으로 폴백.
-- 구 상수 `VERIFICATION_MAX_RESPONSES` · `VERIFICATION_CANDIDATE_POOL`은 **제거됨**(파생 함수가 유일한 진실원천).
+그 밖의 규칙:
 
-기타 상수: `VERIFICATION_K_AFTER_INFLECTION = 2` (코어 루프 미사용 — 진단/하위호환 잔존), `VERIFICATION_PRIORITY` (gatekeeper=5, tier_change=4, order_change=3, new=2, meta_edit=1)
+- DB 작업은 `safeDbOperation`을 거친다. SQLite 파일을 직접 복사·이동하지 않는다.
+- hybrid 모드의 시스템 경로(finalize의 `manual_order`/`manual_tier` UPDATE)는 검증 트리거를 걸지 않는다 (무한 루프 방지). 자세한 설계는 `docs/hybrid-verification.md`.
+- `memo()` 컴포넌트는 props 변경에만 리렌더링됨을 고려한다.
+- 앱은 화면 전체를 쓰므로(edge-to-edge) 시스템 바와 키보드 여백을 직접 둔다. `Modal`은 `src/features/system-insets`의 것을, `SafeAreaView`는 `react-native-safe-area-context`의 것을 쓴다. 모달 안의 `SafeAreaView`는 `edges`에서 아래쪽을 뺀다(여백 이중 방지).
 
-CRUD 트리거 hook 위치 (App.jsx, hybrid 모드만):
-- `addNovel` (manual_tier 설정 시): `new` / `underrated`
-- `saveEdit`: manual_tier 변경 시 방향 판정으로 `tier_change`, 그 외 메타 변경 시 `meta_edit`
-- `batchSetTier`: 작품별 prev 캡처 후 방향 판정으로 `tier_change`
-- 인라인 티어 칩(순위 탭): `tier_change`
-- `swapRating(▲/▼)`: `order_change`
+## App.jsx 찾아보기
 
-Stage 5 모드별 동작:
-- TasteAnalysisScreen: 매칭/심화 그룹 비활성 (`!isHybridMode && isGroupExpanded(...)`), 통계/장르/좌표계/스펙트럼만 표시
-- AwardsScreen: hybrid에서 `compareNovels` (manual_tier+order) 정렬, 점수에서 ELO rating 항 비활성, 표시도 "{tier} #{order}"
+약 7만 줄이다. **전체를 읽지 말고** 이름으로 Grep한 뒤 offset/limit으로 읽는다. 줄번호를 문서에 적지 않는다.
 
-## 빌드/실행
+| 영역 | 검색어 |
+|---|---|
+| DB·슬롯 | `safeDbOperation`, `ensureColumn`, `getSlotDbFilename`, `applySlotMode`, `MODE_PROFILES` |
+| 티어·매칭 | `TIER_PRESETS`, `applyElo`, `enqueueMatchTask`, `waitForMatchQueueDrain` |
+| hybrid 검증 | `HybridVerificationView`, `enqueueVerification`, `finalizeVerificationSession` |
+| 태그 | `MAJOR_GENRES`, `TagManagerModal`, `updateTagRegistryFn` |
+| 백업·클라우드 | `exportJSON`, `importJSON`, `buildUltraCompactBackup`, `buildExtendedBackup`, `cloudIsConfigured` |
+| 스크래퍼·추천 | `fetchNovelMeta`, `searchNovels`, `fetchWebRecommendations`, `refreshDailyRecommendation` |
+| 화면 | `AwardsScreen`, `TasteAnalysisScreen`, `NovelCard`, `screen ===` |
+
+## 검증
 
 ```bash
-npx expo start          # 개발 서버
-eas build -p android --profile preview  # APK 빌드 (EAS 클라우드)
+npx --yes esbuild App.jsx --loader:.jsx=jsx --jsx=automatic --outfile=/dev/null
+npm test
 ```
 
-로컬 APK 빌드는 `npx expo prebuild --platform android --no-install` 후 `android/`에서 Gradle Wrapper로 한다.
-- `android/`는 `.gitignore` 대상(생성물)이다. 직접 고치지 말고 네이티브 코드는 `modules/`에 둔다. `--clean`은 사용자 승인 없이 쓰지 않는다.
-- prebuild가 `package.json`의 스크립트·`name`·`version`을 바꾸므로 실행 후 `git restore package.json`으로 되돌린다.
-- 릴리스 변형은 lint 메모리 부족을 피하려고 `"-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1536m -Dfile.encoding=UTF-8"`를 붙인다.
-- Gradle로 바로 만든 APK는 디버그 키 서명이라 EAS로 설치한 앱에 덮어쓸 수 없다. 기존 앱을 지우면 앱 데이터가 삭제되므로 절대 지우지 않는다.
-- 빌드는 `build.bat`을 더블클릭한다 (`scripts\build-signed.ps1 -Auto` 실행). 실제 서명 키로 서명해 `dist/noveltier-v<버전>-<커밋>.apk`로 저장하고, 폰 1대가 연결돼 있으면 `adb install -r`로 설치, 아니면 APK 폴더를 연다.
-- 서명 비밀번호는 키 옆의 `signing-passwords.dat`에 DPAPI로 암호화해 둔다 (이 Windows 계정 전용). 지우려면 `-ForgetPasswords`. `build-signed.ps1`은 UTF-8 BOM을 유지해야 PowerShell 5.1에서 한글이 깨지지 않는다.
-- 에뮬레이터는 `adb shell reboot -p`로 끈다. 설치 직후 `adb emu kill`로 끄면 APK가 잘려 다음 부팅에서 앱이 사라진다 (앱 데이터는 남음).
-- 서명 키는 저장소 밖(`~\.keys\noveltier\keystore.jks`)에 둔다. 키, 비밀번호, `credentials.json`은 커밋하지 않고 채팅에도 붙여넣지 않는다.
+구문, 스크래퍼 회귀, 백업 형식 호환성, 공유 파일 삭제 판단, 최소 매칭의 계산과 저장만 확인된다. 기기 동작은 에뮬레이터 `noveltier_test`(Android 15, `adb root` 가능)에서 확인할 수 있다. `android/`에서 `gradlew :app:assembleRelease`로 빌드해 `adb install -r`로 설치한다. 실제 복원을 포함한 화면과 기기 동작은 폰에서 확인해야 하므로, 확인하지 못했으면 그렇게 보고한다.
 
-## App.jsx 섹션 맵
+백업 형식에 항목을 추가하면 복원 코드도 함께 고치고 `tests/backup-compat.test.mjs`의 목록에 더한 뒤 `--write-fixture`로 픽스처를 갱신한다. 이 테스트가 실패하면 옛 백업을 못 읽게 된 것일 수 있으니 목록이나 픽스처부터 고치지 않는다.
 
-> 줄 번호는 근사값. 정확한 위치는 섹션 마커 `═══`이나 함수명으로 검색할 것.
-> **전체를 읽지 말고, 아래 맵을 참고하여 offset/limit으로 필요 섹션만 읽을 것.**
-> ⚠️ 이 맵은 파일이 ~41,400줄이던 시점 작성 — 현재 ~78,300줄이라 **후반부(매칭 엔진·hybrid 검증·AI 태깅·웹 추천·설정 JSX)는 맵에 없다**. 그 영역은 `docs/hollow-fix-roadmap.md` 작업 카드의 줄번호나 함수명 Grep으로 찾을 것.
+### 에뮬레이터 기준 데이터
 
-| 줄 범위 (약) | 섹션 | 검색 키워드 |
-|---|---|---|
-| 1-2440 | 헤더 문서 (v7.0 + v6.2 + ... 버전 히스토리, 불변규칙, 버그 수정 기록) | `╔══`, `불변조건` |
-| 2441-2470 | import 선언 | `import React` |
-| 2470-2560 | 글로벌 변수/ErrorBoundary/슬롯 시스템 | `ErrorBoundary`, `slotSystem` |
-| 2560-2780 | 슬롯 CRUD, DB 슬롯 전환, flush | `슬롯 생성`, `슬롯 전환` |
-| 2780-2880 | DB 초기화 (openDb, initDb), backfillManualOrder | `데이터베이스 초기화`, `openDb`, `backfillManualOrder` |
-| 2880-3150 | 성능 모니터링 시스템 | `Performance Monitor`, `perfMonitor` |
-| 3150-3450 | safeDbOperation + 매칭 큐 시스템 | `safeDbOperation`, `matchQueue` |
-| 3450-3920 | DB 유틸리티 (exec, all, first, execBatch, 마이그레이션) | `ensureColumn`, `migration` |
-| 3920-4520 | 취향 분석 시스템 (analyzePreferences, preference_patterns) | `analyzePreferences`, `preference_patterns` |
-| 4520-4670 | 티어 시스템 상수 (TIER_ORDER, DEFAULT_TIER_SYSTEM_CONFIG, TIER_PRESETS) | `TIER_ORDER`, `TIER_PRESETS` |
-| 4670-4810 | 티어 헬퍼 함수 (getTierColor, tierFromRating, **detectViolation**, **enqueueVerification**, **getCandidatesForVerification**) | `detectViolation`, `enqueueVerification` |
-| 4810-5030 | 순수 유틸리티 (uuid, safeParseJSON, parsePlatforms 등) | `uuid()`, `safeParseJSON` |
-| 4950-5090 | 장르/태그 파싱, 통계 헬퍼 | `getWinRate`, `wilsonConfidence` |
-| 5090-5360 | 색상 상수(C), 플랫폼/상태 옵션, 대형 장르 상수 | `const C =`, `PLATFORM_OPTIONS` |
-| 5360-5870 | 태그 상수 (MAJOR_GENRES, SUB_GENRES, ALL_GENERAL_TAGS) | `MAJOR_GENRES`, `SUB_GENRES` |
-| 5870-6910 | 태그 관련 유틸리티 (WORK_IDENTIFIERS, TAG_ALIASES 등) | `WORK_IDENTIFIERS`, `TAG_ALIASES` |
-| 6910-7510 | 스펙트럼/좌표계, ELO 계산 | `SPECTRUM_GROUPS`, `expected()`, `applyElo` |
-| 7510-8460 | 백업/복원 시스템 (JSON v9) | `exportAllData`, `importBackup` |
-| 8460-9500 | UI 기본 컴포넌트 (Chip, PrimaryButton, TierTag, GenreBadge 등) | `const Chip = memo`, `TierTag` |
-| 9500-12200 | NovelCard + TagSelectModal | `const NovelCard = memo` |
-| 12200-12890 | SearchTagModal, TagEditModal | `SearchTagModal`, `TagEditModal` |
-| 12890-13700 | TagRelationModal, CoordinateGridView | `TagRelationModal`, `CoordinateGridView` |
-| 13700-15160 | TagManagerModal | `TagManagerModal` |
-| 15160-15220 | PlatformChips | `PlatformChips` |
-| 15220-16960 | AwardsScreen | `AwardsScreen` |
-| 16960-17080 | 차트 컴포넌트 (BarChart, RadarChart, PieChart, Heatmap) | `BarChart`, `RadarChartSimple` |
-| 17080-20300 | TasteAnalysisScreen | `TasteAnalysisScreen` |
-| 20300-41400 | App() 메인 컴포넌트 (useState ~200개, useEffect, 매칭 엔진, CRUD, 모든 탭 JSX) | `export default function App` |
-| 41400-41427 | App() export | `export default` |
+`C:\Projects\data_ex`에 사용자의 실사용 데이터 사본(백업 JSON, 사진 ZIP)이 있다(2026-11-02 사용자 지정). 화면, 복원, 속도를 에뮬레이터에서 확인할 때 기본으로 쓴다. 완성된 데이터가 아니며, 2026-11-02 사본 기준 작품 226개, 매칭 기반 모드, 대진 기록 0개다. 사용자가 파일을 바꿀 수 있으니 쓰기 전에 다시 확인한다.
 
-## 절대 준수 규칙 (App.jsx 11-42줄)
+- **원본은 읽기만 한다.** 편집은 에뮬레이터에 복원한 사본에서 마음대로 해도 된다. 복원은 시험용 슬롯에 한다.
+- **저장소에 넣지 않는다.** 내용을 커밋, 테스트 픽스처, 문서, 공개 게시물에 옮기지 않는다. 문서와 보고에는 개수와 크기 같은 요약만 적는다.
+- **`npm test`는 이 폴더에 의존하지 않는다.** 폴더가 없거나 파일이 바뀌어도 테스트가 그대로 돌아야 한다.
+- **가상 데이터도 계속 쓴다.** 정확도 측정(정답 순위가 필요), 매칭 기록, 작품 300개 이상의 규모, 극단적인 값은 만들어서 시험한다.
+- **보고에 구분해 적는다.** 어떤 데이터로 확인했는지 밝힌다. 이 사본으로 확인해도 폰 확인을 대신하지 않는다.
 
-매칭 시스템 5대 불변조건 — **위반 시 크래시/데이터 오염 발생**:
+## 기록
 
-1. **자동매칭 중 Alert.alert() 호출 금지** — `isAutoMatchingRef.current === true`일 때 Alert 금지
-2. **매칭 큐 내부에서 React state 직접 참조 금지** — 스냅샷만 사용 (stale closure 방지)
-3. **큐 외부 write 타이머는 flush 전 queue drain 대기** — `waitForMatchQueueDrain()` 호출 필수
-4. **SQLITE_BUSY 시 resetDbConnection 금지** — 경합은 jitter 재시도만, 연결 오류와 분리
-5. **자동매칭 루프는 모든 비동기 경로에 catch/finally 강제** — 누락 시 unhandled rejection 크래시
+`App.jsx`의 동작을 바꾸면 `APP_VERSION`을 올리고 `docs/history.md`의 "최신 기록" 맨 위에 항목을 추가한다. 사용자에게 알릴 변경이면 `CHANGELOG_DATA` 맨 위에도 쉬운 말로 추가한다. 항목이 없는 버전에는 업데이트 창이 뜨지 않는다. `App.jsx` 헤더에는 이력을 쓰지 않는다.
 
-## 진행 중인 작업 목록
+## 빌드
 
-- **사용자가 "다음 작업 진행해줘"(또는 유사 문구)라고 하면** → `docs/hollow-fix-roadmap.md`를 열고
-  그 문서의 **세션 프로토콜**을 그대로 따를 것: 순서표의 첫 ⬜ 작업 선택 → 전제 사전 검증(설계 맹신 금지,
-  줄번호는 코드 문자열 Grep으로 재확인) → 구현 → 사후 검증(esbuild 구문 체크 + 완료 기준) → 기록(버전 히스토리·
-  순서표 상태·감사 체크박스) → 커밋/푸시. 전제가 깨져 있으면 구현하지 말고 설계부터 수정한다.
-- `docs/hollow-fix-roadmap.md` — 감사 47건의 **실행 로드맵** (2차 재검증 반영, Phase별 작업 카드).
-- `docs/hollow-feature-audit.md` — **'있으나 마나 한 기능' 감사 47건** (v7.58.4 시점, 증거 원본).
-  죽은 코드가 아니라 '코드는 도는데 실질 가치가 없거나·반쪽이거나·하드코딩된' 항목들.
-  ⚠️ 1차 감사는 기각 0건이라 판정을 그대로 신뢰하면 안 된다. 2차 재검증 결과와 항목별 판정 변경은
-  로드맵의 '재검증 요약'에 있다 — 그래도 고치기 전에 해당 줄을 직접 열어 확인할 것.
+```bash
+npx expo start
+```
 
-## 개발 지침
+APK는 `build.bat`을 더블클릭한다 (`scripts\build-signed.ps1 -Auto` 실행). 실제 키로 서명해 `dist/noveltier-v<버전>-<커밋>.apk`로 저장하고, 폰 1대가 연결돼 있으면 `adb install -r`로 설치한다.
 
-- 새 기능 추가 시 해당 섹션의 기존 패턴을 먼저 읽고 동일 패턴으로 작성
-- DB 작업은 반드시 `safeDbOperation` 래퍼 사용
-- 기존 기능 수정은 App.jsx 내에서 작업한다. 신규 기능은 별도 파일로 만들고 App.jsx에는 최소한의 연결만 둔다. 기존 코드를 옮기기만 하는 분리는 하지 않는다
-- memo() 컴포넌트는 props 변경에만 리렌더링됨을 고려하여 설계
-- App.jsx 수정 시 반드시 헤더 버전 히스토리 (1~290줄) 업데이트: 버전 번호 증가, 날짜 갱신, 변경 내역 추가
+- **기존 앱을 지우지 않는다.** 앱 데이터가 함께 삭제된다. Gradle로 바로 만든 APK는 디버그 키 서명이라 덮어쓸 수 없다.
+- **비밀 정보:** 서명 키는 저장소 밖(`~\.keys\noveltier\keystore.jks`)에 둔다. 키, 비밀번호, `credentials.json`은 커밋하지 않고 채팅에도 붙여넣지 않는다.
+- **비밀번호 저장:** 키 옆의 `signing-passwords.dat`에 DPAPI로 암호화된다. 지우려면 `-ForgetPasswords`.
+- **`build-signed.ps1`은 UTF-8 BOM을 유지한다.** 없으면 PowerShell 5.1에서 한글이 깨진다.
+- **`android/`는 생성물이다.** 직접 고치지 않는다. `expo prebuild --clean`은 사용자 승인 없이 쓰지 않는다.
+- **prebuild 후 `git restore package.json`:** prebuild가 스크립트·`name`·`version`을 바꾼다.
+- **Kotlin 변경은 APK를 다시 빌드해야 반영된다.** OTA(`eas update`)는 쓰지 않으며 `app.json`에서 꺼 두었다 (2026-11-02 사용자 지정).
+- **`app.json`을 바꾸면 빌드 전에 prebuild를 직접 돌린다.** `android/`가 이미 있으면 `build-signed.ps1`이 prebuild를 건너뛰어 설정이 반영되지 않는다. `npx expo prebuild --platform android --no-install` 후 `git restore package.json`.
+- **에뮬레이터는 `adb shell reboot -p`로 끈다.** 설치 직후 `adb emu kill`로 끄면 APK가 잘려 앱이 사라진다.
 
-## Git 워크플로
+수동 빌드와 릴리스 변형의 메모리 옵션은 `scripts/build-signed.ps1`을 참고한다.
 
-- 개발은 작업 브랜치에서 계속하고, 커밋·푸시도 작업 브랜치에 한다. `main` 병합은 EAS 빌드를 돌리지 않는다 (`.github/workflows/build.yml`은 수동 실행 전용, 2026-11-02 사용자 지정). APK는 PC에서 `scripts/build-signed.ps1`로 빌드한다.
-- **`main` 병합은 사용자가 "병합해"라고 할 때만 한다** (2026-08-02 사용자 지정). 작업이 끝났다고 알아서 병합하지 않는다 — 브랜치에 쌓아 두고 지시를 기다린다.
-- **병합은 PR(Pull Request)로 한다.** 병합 지시를 받으면 그 시점에 PR 생성(base `main`) → GitHub에서 병합.
-  로컬 `git merge` 후 `main`에 직접 push하지 않는다 — PR이 없으면 GitHub에 보라색 `Merged` 배지도, 리뷰·논의 이력도 남지 않는다.
-  (v7.59.5/v7.59.6은 이 지정 전이라 직접 병합으로 들어갔다.)
+## Git
+
+- 커밋과 푸시는 작업 브랜치에 한다.
+- **`main` 병합은 사용자가 "병합해"라고 할 때만 한다.** 그때 PR을 만들어(base `main`) GitHub에서 병합한다. 로컬에서 병합해 `main`에 직접 push하지 않는다.
+- `main` 병합은 EAS 빌드를 돌리지 않는다. `.github/workflows/build.yml`은 수동 실행 전용이다.
+
+## 진행 중인 작업
+
+사용자가 **"다음 작업 진행해줘"**(또는 유사 문구)라고 하면 `docs/hollow-fix-roadmap.md`를 열고 그 문서의 세션 프로토콜을 따른다.
+
+## 문서
+
+| 문서 | 내용 |
+|---|---|
+| `docs/hollow-fix-roadmap.md` | 남은 작업과 절차 |
+| `docs/history.md` | 변경 이력 (크니 Grep으로) |
+| `docs/hybrid-verification.md` | 하이브리드 자리 탐색 설계와 검증 예산 |
+| `docs/scraper-plan.md` | 스크래퍼 설계 이유와 플랫폼별 실측 사실 |
+| `docs/cloud-sync-plan.md` | 클라우드 동기화 설계 |
+| `src/features/*/README.md` | 신규 기능 모듈별 사용법 |

@@ -40,7 +40,7 @@ try {
 - **수 MB가 넘을 수 있는 텍스트는 `writeLargeText`, `readLargeText`, `hashFile`을 쓴다.** `readText`, `writeText`는 파일 전체를 Java 힙에 올려 큰 파일에서 OutOfMemoryError가 난다.
 - **JS 문자열 한계:** Hermes는 약 256MB가 넘는 문자열을 만들지 못한다(`String length exceeds limit`). 백업 JSON도 이 한계를 넘으면 안내와 함께 실패한다. 복원은 파일 크기의 몇 배 메모리를 쓴다(200MB 파일에 약 1.5GB, RAM 8GB 환경 측정).
 - **사진 ZIP에는 `covers/`, `gallery/`만 담긴다.** 폴더 목록은 Kotlin에 고정되어 있다. 같은 앱 폴더의 `ai_config.json`, `cloud_auth.json`(키·인증 정보)과 DB를 백업 파일에 넣지 않기 위해서다.
-- **복원 순서는 사진 먼저, 작품 데이터 나중이다.** 갤러리 행은 복원 시점에 파일이 있어야 다시 연결된다. 파일 복원은 `keepGalleryFiles`로 갤러리 파일을 지우지 않지만, 기존 `JSON 가져오기`와 클라우드 복원은 지금도 지운다.
+- **복원 순서는 사진 먼저, 작품 데이터 나중이다.** 갤러리 행은 복원 시점에 파일이 있어야 다시 연결된다. 복원(`importJSON`)은 어느 경로든 갤러리 파일을 지우지 않는다(v7.59.24~). 복원한 백업이 쓰지 않는 사진은 폴더에 남는다.
 - **파일 백업 JSON에는 선택 항목 `CL`이 있다.** 직접 저장한 작품 표지 경로와 표지 라이브러리 목록이다. 기존 복원 코드는 읽지 않으며 `CL` 없는 이전 백업도 복원된다. 구현은 `src/features/file-backup/coverLinks.js`다.
 - **SAF가 낀 `copyFile`, `moveFile`은 파일 전체를 메모리에 올린다.** 큰 파일에 쓰기 전에 검증한다. SAF 문서끼리의 복사는 `NOT_SUPPORTED`다.
 - **Android 정책:** 폴더 선택기에서 저장소 루트·`Download` 자체는 고를 수 없다. `MANAGE_EXTERNAL_STORAGE`를 쓰지 않는다.
@@ -52,5 +52,5 @@ try {
 1. Expo API로 되면 `expoAdapter`에만 추가한다.
 2. 안 되면 이유와 Android API를 확인한 뒤 Kotlin 모듈과 `nativeAdapter`에 추가한다.
 3. 공개 함수는 `fileAccessService`에 두고 `guarded`로 감싼다.
-4. Kotlin을 고치면 APK를 다시 빌드해야 한다. OTA로는 반영되지 않는다.
+4. Kotlin을 고치면 APK를 다시 빌드해야 한다.
 5. 새 네이티브 호출은 `diagnostics.js`에 점검 단계를 추가한다.
