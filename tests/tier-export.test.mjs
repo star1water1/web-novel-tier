@@ -291,6 +291,55 @@ check("초기화 쿼리가 기록을 비운다", (await T.listSnapshots(db)).len
 check("복원 스냅샷 대상에 표가 등록되어 있다", T.TIER_EXPORT_TABLES.includes("tier_export_snapshot") && appSrc.includes("...TIER_EXPORT_TABLES]"));
 check("초기화·복원 세 곳이 기록을 비운다", (appSrc.match(/\.\.\.TIER_EXPORT_CLEAR_QUERIES/g) || []).length === 3);
 
+// ── 폴더 권한 해제 ──
+const screenSrc = read("src/features/tier-export/TierExportScreen.js");
+check("내보내기 화면은 닫을 때 보냈어도 폴더 권한을 해제한다", !screenSrc.includes("sharedRef") && /if \(directoryUri\) fileAccess\.releaseDirectory/.test(screenSrc));
+
+function loadShareThenRelease(share) {
+  const log = { released: [], alerts: [], listeners: new Set() };
+  const sandbox = {
+    console,
+    Alert: { alert: (title) => log.alerts.push(title) },
+    AppState: {
+      addEventListener: (_, fn) => {
+        log.listeners.add(fn);
+        return { remove: () => log.listeners.delete(fn) };
+      },
+    },
+    fileAccess: {
+      FileAccessErrorCode: {},
+      releaseDirectory: async (uri) => { log.released.push(uri); },
+      shareDocument: share,
+    },
+  };
+  vm.createContext(sandbox);
+  const source = read("src/features/file-backup/index.js")
+    .replace(/^import .*$/gm, "")
+    .replace(/^export \{.*$/gm, "")
+    .replace(/^export /gm, "");
+  vm.runInContext(`${source}\nglobalThis.__S = shareThenRelease;`, sandbox, { filename: "file-backup" });
+  const emit = (state) => { for (const fn of [...log.listeners]) fn(state); };
+  return { run: sandbox.__S, log, emit };
+}
+{
+  const { run, log, emit } = loadShareThenRelease(async () => {});
+  run({ fileUri: "f", mimeType: "m", name: "n", directoryUri: "dir" });
+  await new Promise((resolve) => setImmediate(resolve));
+  check("백업 보내기: 공유 창을 띄우는 동안은 해제하지 않는다", log.released.length === 0);
+  emit("active");
+  check("백업 보내기: 앱을 떠나기 전의 active로는 해제하지 않는다", log.released.length === 0);
+  emit("background");
+  check("백업 보내기: 공유 창이 떠 있는 동안 해제하지 않는다", log.released.length === 0);
+  emit("active");
+  check("백업 보내기: 돌아오면 한 번 해제하고 듣기를 멈춘다", same(log.released, ["dir"]) && log.listeners.size === 0);
+}
+{
+  const { run, log } = loadShareThenRelease(async () => { throw new Error("실패"); });
+  run({ fileUri: "f", mimeType: "m", name: "n", directoryUri: "dir" });
+  await new Promise((resolve) => setImmediate(resolve));
+  check("백업 보내기: 공유 창을 못 띄우면 해제하고 알린다", same(log.released, ["dir"]) && same(log.alerts, ["보내기 실패"]) && log.listeners.size === 0);
+}
+
 // ── 시트 확인용 파일 ──
 const sampleAt = process.argv.indexOf("--write-sample");
 if (sampleAt > 0) {

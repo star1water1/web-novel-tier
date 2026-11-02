@@ -36,7 +36,7 @@ try {
 - **`content://` URI는 경로가 아니다.** 문자열로 조립하지 말고 API가 돌려준 값만 쓴다. `listDirectory`의 `name`도 URI에서 추정한 값이라 제공자에 따라 실제 이름과 다를 수 있다.
 - **이름 변경 후에는 URI가 바뀔 수 있다.** `renameFile`의 반환값을 쓴다.
 - **권한 확인은 `hasPersistedAccess`로 한다.** Expo 신규 API의 권한 검사는 `content://`에 항상 통과한다. 폴더 URI에만 쓸 수 있고, `pickFile`로 고른 개별 파일 URI는 별도 권한으로 등록된다.
-- **유지 권한 개수에는 OS 상한이 있다.** 다 쓴 폴더는 `releaseDirectory`로 해제한다.
+- **유지 권한 개수에는 OS 상한이 있다.** 다 쓴 폴더는 `releaseDirectory`로 해제한다. `shareDocument`로 보낸 뒤에도 해제한다. 받는 앱은 읽기 권한을 따로 받아 해제 후에도 읽는다(Android 15 에뮬레이터 확인). 다만 공유 창이 받는 앱에 권한을 넘길 때 이 앱의 권한이 필요하므로, 공유 창에서 돌아온 뒤에 해제한다.
 - **수 MB가 넘을 수 있는 텍스트는 `writeLargeText`, `readLargeText`, `hashFile`을 쓴다.** `readText`, `writeText`는 파일 전체를 Java 힙에 올려 큰 파일에서 OutOfMemoryError가 난다.
 - **JS 문자열 한계:** Hermes는 약 256MB가 넘는 문자열을 만들지 못한다(`String length exceeds limit`). 백업 JSON도 이 한계를 넘으면 안내와 함께 실패한다. 복원은 파일 크기의 몇 배 메모리를 쓴다(200MB 파일에 약 1.5GB, RAM 8GB 환경 측정).
 - **사진 ZIP에는 `covers/`, `gallery/`만 담긴다.** 폴더 목록은 Kotlin에 고정되어 있다. 같은 앱 폴더의 `ai_config.json`, `cloud_auth.json`(키·인증 정보)과 DB를 백업 파일에 넣지 않기 위해서다.

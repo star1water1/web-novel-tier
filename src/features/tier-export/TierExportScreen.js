@@ -88,7 +88,6 @@ export function TierExportScreen({ onClose, db, getWorks, filePrefix, theme: C, 
   const [saved, setSaved] = useState(null); // { name, uri, directoryUri, warning }
   const generationRef = useRef(getSlotGeneration());
   const savedRef = useRef(null);
-  const sharedRef = useRef(false);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -111,11 +110,11 @@ export function TierExportScreen({ onClose, db, getWorks, filePrefix, theme: C, 
     return () => { alive = false; };
   }, []);
 
-  // 받는 앱이 파일을 읽는 동안 필요하므로, 보내기를 고른 뒤에는 폴더 권한을 해제하지 않는다.
+  // 받는 앱은 보내기 때 읽기 권한을 따로 받으므로 화면을 닫으면 폴더 권한을 해제한다. 유지 권한 개수에는 OS 상한이 있다.
   useEffect(() => () => {
     mountedRef.current = false;
     const directoryUri = savedRef.current?.directoryUri;
-    if (directoryUri && !sharedRef.current) fileAccess.releaseDirectory(directoryUri).catch(() => {});
+    if (directoryUri) fileAccess.releaseDirectory(directoryUri).catch(() => {});
   }, []);
 
   const result = useMemo(() => (table ? compareToBaseline(table.rows, table, baseline) : null), [table, baseline]);
@@ -196,11 +195,9 @@ export function TierExportScreen({ onClose, db, getWorks, filePrefix, theme: C, 
 
   async function share() {
     if (!saved) return;
-    sharedRef.current = true;
     try {
       await fileAccess.shareDocument(saved.uri, XLSX_MIME, saved.name);
     } catch (e) {
-      sharedRef.current = false;
       setError(`보내지 못했어요. 파일은 폴더에 저장되어 있어요. ${e.message}`);
     }
   }
