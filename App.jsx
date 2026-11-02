@@ -2,9 +2,22 @@
  * ╔══════════════════════════════════════════════════════════════════════════════╗
  * ║                     웹소설 티어 랭킹 앱 (Novel Tier Ranking App)                ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
- * ║  버전: 7.59.24 (복원할 때 갤러리 사진 파일을 지우지 않음)                         ║
+ * ║  버전: 7.59.25 (다른 슬롯이 쓰는 갤러리 사진 파일을 지우지 않음)                  ║
  * ║  최종 수정: 2026-11-02                                                        ║
  * ║  총 라인 수: 약 80,040줄 (단일 컴포넌트)                                      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ 🖼️ v7.59.25 슬롯 간 갤러리 파일 보호 (2026-11-02)                                ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ [문제] gallery/는 모든 슬롯이 함께 쓰는데, 전체 초기화가 폴더째 지워 다른 슬롯    ║
+ * ║ 사진까지 사라졌다. 복제한 슬롯은 같은 파일을 가리켜, 커스텀 초기화·작품 삭제·     ║
+ * ║ 사진 삭제도 원본 슬롯의 사진을 지웠다.                                            ║
+ * ║ [수정] deleteGalleryFilesUnusedByOtherSlots: 다른 슬롯 DB가 쓰지 않는 파일만      ║
+ * ║ 지운다. 슬롯 DB를 못 읽으면 지우지 않는다. 전체 초기화는 폴더 대신 이 함수를      ║
+ * ║ 거쳐, 어느 슬롯도 안 쓰는 파일은 전처럼 정리된다.                                 ║
+ * ║ [판단] 자동 정리는 넣지 않는다. 남은 사진은 옛 JSON 백업 복원 때 다시 연결된다.   ║
+ * ║ [남은 것] covers/의 표지 파일은 같은 위험이 있으나 이번 범위 밖.                  ║
  * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -21744,6 +21757,33 @@ async function deleteCoverFromLibrary(filePath) {
   }
 }
 
+// 🖼️ v7.59.25: gallery/는 모든 슬롯이 함께 쓰고, 복제한 슬롯은 같은 파일을 가리킨다. 다른 슬롯 DB가 쓰는 파일은 지우지 않는다.
+//   슬롯 DB를 하나라도 못 읽으면 아무것도 지우지 않는다(사진 파일이 남는 쪽이 잃는 쪽보다 낫다). 슬롯 메타 대신 실제 DB 파일을 본다.
+async function deleteGalleryFilesUnusedByOtherSlots(filePaths) {
+  const usedNames = new Set();
+  try {
+    const activeDbName = getSlotDbFilename(activeSlotId);
+    const dbNames = await FileSystem.readDirectoryAsync(FileSystem.documentDirectory + "SQLite/");
+    for (const dbName of dbNames) {
+      if (dbName === activeDbName || !/^novel_tiers(_slot\d+)?\.db$/.test(dbName)) continue;
+      const otherDb = await SQLite.openDatabaseAsync(dbName, { useNewConnection: true });
+      try {
+        const hasTable = await otherDb.getFirstAsync("SELECT 1 FROM sqlite_master WHERE type='table' AND name='gallery_images'");
+        const rows = hasTable ? await otherDb.getAllAsync("SELECT file_path FROM gallery_images") : [];
+        for (const r of rows) { if (r.file_path) usedNames.add(r.file_path.split("/").pop()); }
+      } finally {
+        try { await otherDb.closeAsync(); } catch {}
+      }
+    }
+  } catch (e) {
+    console.warn("deleteGalleryFilesUnusedByOtherSlots: 다른 슬롯 확인 실패, 파일 유지:", e?.message);
+    return;
+  }
+  for (const p of filePaths) {
+    if (p && !usedNames.has(p.split("/").pop())) await deleteCoverFromLibrary(p);
+  }
+}
+
 // 표지 라이브러리 전체 용량 계산 (레거시 API)
 async function getCoverLibrarySize() {
   try {
@@ -21926,7 +21966,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.24";
+const APP_VERSION = "7.59.25";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -44950,7 +44990,7 @@ function AppContent() {
             // 갤러리 이미지 파일 + DB row 정리
             try {
               const gImgs = await all("SELECT file_path FROM gallery_images WHERE novel_id=?", [id]);
-              for (const g of (gImgs || [])) { await deleteCoverFromLibrary(g.file_path).catch(() => {}); }
+              await deleteGalleryFilesUnusedByOtherSlots((gImgs || []).map(g => g.file_path));
             } catch (gErr) { console.warn("[removePlannedNovel] gallery file cleanup:", gErr?.message); }
             try { await exec("DELETE FROM gallery_images WHERE novel_id=?", [id]); } catch {}
             // 🔧 v7.49.20: novel_folders 고아 정리 — id 보존 변환(convertNovelToPlanned)으로 폴더 매핑을 유지한 예정작을 삭제할 때
@@ -45403,9 +45443,7 @@ function AppContent() {
                   `SELECT file_path FROM gallery_images WHERE novel_id IN (${placeholders})`,
                   ids
                 );
-                for (const g of (gImgs || [])) {
-                  await deleteCoverFromLibrary(g.file_path).catch(() => {});
-                }
+                await deleteGalleryFilesUnusedByOtherSlots((gImgs || []).map(g => g.file_path));
               } catch (gErr) { console.warn("[v7.3.4] batchDeletePlanned gallery file cleanup:", gErr?.message); }
 
               // 갤러리 이미지(round-trip 보존) DB row 정리
@@ -47522,7 +47560,7 @@ function AppContent() {
           try {
             // DB 먼저 삭제 (트랜잭션 안전), 파일은 실패해도 허용
             await exec("DELETE FROM gallery_images WHERE id=?", [imgId]);
-            deleteCoverFromLibrary(filePath).catch(() => {});
+            deleteGalleryFilesUnusedByOtherSlots([filePath]).catch(() => {});
             await loadGalleryImages();
           } catch (e) {
             console.warn("deleteGalleryImage error:", e);
@@ -53963,9 +54001,7 @@ function AppContent() {
             // 🎨 v3.8.0: 갤러리 이미지 파일 삭제 (DB 삭제 전)
             try {
               const gImgs = await all("SELECT file_path FROM gallery_images WHERE novel_id=?", [id]);
-              for (const g of gImgs) {
-                await deleteCoverFromLibrary(g.file_path);
-              }
+              await deleteGalleryFilesUnusedByOtherSlots(gImgs.map(g => g.file_path));
             } catch (gErr) { console.warn("removeNovel gallery cleanup:", gErr); }
 
             await execBatch([
@@ -54237,7 +54273,7 @@ function AppContent() {
               if (effectiveSel.gallery) {
                 try {
                   const gImgs = await all("SELECT file_path FROM gallery_images");
-                  for (const g of gImgs) await deleteCoverFromLibrary(g.file_path);
+                  await deleteGalleryFilesUnusedByOtherSlots(gImgs.map(g => g.file_path));
                 } catch {}
                 await exec("DELETE FROM gallery_images;");
                 setGalleryImages([]);
@@ -54368,10 +54404,13 @@ function AppContent() {
                       await exec("UPDATE cover_library SET status='unused', novel_id=NULL");
                       await loadCoverLibrary();
 
-                      // 🎨 v3.8.0: 갤러리 파일 전체 삭제
+                      // 🖼️ v7.59.25: 폴더째 지우지 않고, 다른 슬롯이 쓰지 않는 갤러리 파일만 삭제 (어느 슬롯도 안 쓰는 파일도 여기서 정리됨)
                       try {
                         const gdInfo = await FileSystem.getInfoAsync(GALLERY_DIR);
-                        if (gdInfo.exists) await FileSystem.deleteAsync(GALLERY_DIR, { idempotent: true });
+                        if (gdInfo.exists) {
+                          const gdNames = await FileSystem.readDirectoryAsync(GALLERY_DIR);
+                          await deleteGalleryFilesUnusedByOtherSlots(gdNames.map(n => GALLERY_DIR + n));
+                        }
                       } catch {}
                       setGalleryImages([]);
                       setGalleryCount(0);
@@ -58028,9 +58067,7 @@ function AppContent() {
                 `SELECT file_path FROM gallery_images WHERE novel_id IN (${placeholders})`,
                 ids
               );
-              for (const g of (gImgs || [])) {
-                await deleteCoverFromLibrary(g.file_path).catch(() => {});
-              }
+              await deleteGalleryFilesUnusedByOtherSlots((gImgs || []).map(g => g.file_path));
             } catch (gErr) { console.warn("batchDelete gallery cleanup:", gErr); }
 
             // 🛠️ v7.3.4: memorable_quote 이미지 파일 삭제 (removeNovel과 동일 패턴) — 일괄 삭제 시 파일시스템 누수 방지
