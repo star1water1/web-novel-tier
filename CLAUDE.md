@@ -10,7 +10,7 @@ Expo SDK 54 · React Native 기반 Android 앱. 슬롯(최대 10개, 슬롯별 S
 - **신규 기능 독립:** `src/features/<기능>/`에 만들고 `App.jsx`에는 import와 호출만 둔다. `App.jsx`를 import하지 않는다. DB 함수나 `isBlocked` 같은 의존성은 인자로 받는다 (`src/features/file-backup` 참고).
 - **네이티브:** Expo API로 충분한지 먼저 보고, 부족한 부분만 `modules/`에 Kotlin으로 만든다. 파일 접근은 `src/features/file-access/README.md`를 따른다.
 - **작은 단위:** 한 번에 하나씩 바꾸고 검증한다.
-- **데이터 호환:** DB·백업·설정은 추가만 한다. 기존 항목의 의미를 바꾸거나 없애지 않고, 옛 백업과 옛 DB도 계속 읽혀야 한다. 파일 삭제·덮어쓰기는 안전장치를 둔다. 복제한 슬롯은 표지·명대사 이미지·배경·갤러리 파일을 함께 쓰므로, 저장된 파일은 `FileSystem.deleteAsync`로 바로 지우지 않고 행을 지운 뒤 `deleteFilesUnusedAnywhere`(갤러리는 `deleteGalleryFilesUnusedByOtherSlots`)를 거친다.
+- **데이터 호환:** DB·백업·설정은 추가만 한다. 기존 항목의 의미를 바꾸거나 없애지 않고, 옛 백업과 옛 DB도 계속 읽혀야 한다. 파일 삭제·덮어쓰기는 안전장치를 둔다. 복제한 슬롯은 표지·명대사 이미지·배경·갤러리 파일을 함께 쓰므로, 저장된 파일은 `FileSystem.deleteAsync`로 바로 지우지 않고 행을 지운 뒤 `deleteFilesUnusedAnywhere`(갤러리는 `deleteGalleryFilesUnusedByOtherSlots`)를 거친다. 되돌릴 수 있는 삭제는 파일을 `holdUndoFiles`로 맡기고 되돌리기 기록의 `payload.files`에 넣으면, 기록이 사라질 때 정리된다.
 - **제품:** 재미보다 정확성·신뢰성·편의성을 앞세운다. 등록·매칭·순위의 안정성이 최우선이고, 실험적 기능보다 기존 기능의 완성도를 중시한다. 의견이 갈리는 동작은 옵션으로 열되, 아무 설정 없이도 잘 돌아가는 기본값을 둔다.
 
 ## 절대 준수 규칙

@@ -12112,6 +12112,10 @@ async function deleteCoverFromLibrary(filePath) {
   }
 }
 
+const UNDO_FILES_PATH = FileSystem.documentDirectory + "undo_pending_files.json";
+const undoHeldFiles = new Set(); // 되돌리기 기록이 남은 작품의 파일. 다른 삭제 경로도 지우지 않는다.
+let undoFilesQueue = Promise.resolve();
+
 // 🖼️ v7.59.25: gallery/는 모든 슬롯이 함께 쓰고, 복제한 슬롯은 같은 파일을 가리킨다. 다른 슬롯 DB가 쓰는 파일은 지우지 않는다.
 //   슬롯 DB를 하나라도 못 읽으면 아무것도 지우지 않는다(사진 파일이 남는 쪽이 잃는 쪽보다 낫다). 슬롯 메타 대신 실제 DB 파일을 본다.
 async function forEachOtherSlotDb(readDb) {
@@ -12129,7 +12133,7 @@ async function forEachOtherSlotDb(readDb) {
 }
 
 async function deleteGalleryFilesUnusedByOtherSlots(filePaths) {
-  const usedNames = new Set();
+  const usedNames = new Set([...undoHeldFiles].map(p => p.split("/").pop()));
   try {
     await forEachOtherSlotDb(async (otherDb) => {
       const hasTable = await otherDb.getFirstAsync("SELECT 1 FROM sqlite_master WHERE type='table' AND name='gallery_images'");
@@ -12168,25 +12172,74 @@ async function readFileRefs(getRows) {
 
 // 어느 슬롯도 쓰지 않는 파일만 지운다. 호출 전에 지울 행을 먼저 지우거나 고친다(남아 있으면 사용 중으로 본다).
 //   activeSettings는 현재 슬롯의 설정이다(DB 저장이 늦을 수 있어 메모리 값을 받는다). 하나라도 못 읽으면 아무것도 지우지 않는다.
+//   🖼️ v7.59.28: 되돌리기를 기다리는 파일과 플랫폼 기본 표지도 사용 중으로 본다. 참조를 모두 확인했으면 true를 돌려준다.
 async function deleteFilesUnusedAnywhere(filePaths, activeSettings) {
   const paths = [...new Set((filePaths || []).filter(Boolean))];
-  if (paths.length === 0) return;
-  const refs = [JSON.stringify(activeSettings || {})];
+  if (paths.length === 0) return true;
+  const refs = [JSON.stringify(activeSettings || {}), [...undoHeldFiles].join("\n")];
   try {
     refs.push(await readFileRefs(all));
+    const platformCovers = await all("SELECT value FROM app_meta WHERE key='platform_covers'");
+    for (const row of platformCovers) refs.push(row.value);
     await forEachOtherSlotDb(async (otherDb) => {
       refs.push(await readFileRefs((sql) => otherDb.getAllAsync(sql)));
-      const settings = await otherDb.getFirstAsync("SELECT value FROM app_meta WHERE key='app_settings'").catch(() => null);
-      if (settings?.value) refs.push(settings.value);
+      const metaRows = await otherDb.getAllAsync("SELECT value FROM app_meta WHERE key IN ('app_settings','platform_covers')").catch(() => []);
+      for (const row of metaRows) { if (row.value) refs.push(row.value); }
     });
   } catch (e) {
     console.warn("deleteFilesUnusedAnywhere: 참조 확인 실패, 파일 유지:", e?.message);
-    return;
+    return false;
   }
   const allRefs = refs.join("\n");
   for (const p of paths) {
     if (!allRefs.includes(String(p).split("/").pop())) await deleteCoverFromLibrary(p);
   }
+  return true;
+}
+
+// 🖼️ v7.59.28: 삭제를 되돌리면 이미지도 돌아오도록, 되돌리기 기록이 사라질 때 파일을 지운다.
+//   되돌리기 기록은 메모리에만 있어 앱이 꺼지면 사라진다. 대기 목록을 파일로 남겨 다음 실행 때 지운다.
+function undoStackFiles(stack) {
+  return [...new Set(stack.flatMap(item => item.payload?.files || []))];
+}
+function runUndoFilesTask(task) {
+  undoFilesQueue = undoFilesQueue.then(task).catch(e => console.warn("되돌리기 대기 파일 처리 실패:", e?.message));
+  return undoFilesQueue;
+}
+async function writeUndoHeldFiles() {
+  await FileSystem.writeAsStringAsync(UNDO_FILES_PATH, JSON.stringify([...undoHeldFiles]));
+}
+function holdUndoFiles(paths) {
+  return runUndoFilesTask(async () => {
+    for (const p of paths) undoHeldFiles.add(p);
+    await writeUndoHeldFiles();
+  });
+}
+// 참조를 확인하지 못하면 목록에 남겨 다음 실행 때 다시 시도한다. 현재 슬롯 설정은 메모리와 DB 값을 모두 사용 중으로 본다(슬롯 전환 직후 대비).
+async function deleteHeldFiles(paths, memorySettings) {
+  for (const p of paths) undoHeldFiles.delete(p);
+  let done = false;
+  try {
+    const saved = await all("SELECT value FROM app_meta WHERE key='app_settings'");
+    done = await deleteFilesUnusedAnywhere(paths, { memorySettings, saved });
+  } catch (e) {
+    console.warn("되돌리기 대기 파일 확인 실패, 파일 유지:", e?.message);
+  }
+  if (!done) for (const p of paths) undoHeldFiles.add(p);
+  await writeUndoHeldFiles();
+}
+function releaseUndoFiles(paths, memorySettings) {
+  return runUndoFilesTask(() => deleteHeldFiles(paths, memorySettings));
+}
+// 앱 시작 때 호출한다. 지난 실행의 되돌리기 기록은 이미 사라졌다.
+function releaseLeftoverUndoFiles(memorySettings) {
+  return runUndoFilesTask(async () => {
+    const info = await FileSystem.getInfoAsync(UNDO_FILES_PATH);
+    if (!info.exists) return;
+    const paths = JSON.parse(await FileSystem.readAsStringAsync(UNDO_FILES_PATH));
+    if (!Array.isArray(paths) || paths.length === 0) return;
+    await deleteHeldFiles(paths, memorySettings);
+  });
 }
 
 // 명대사 값이 가리키는 이미지와 서식 배경 파일 경로
@@ -12384,7 +12437,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.27";
+const APP_VERSION = "7.59.28";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -32297,6 +32350,15 @@ function AppContent() {
   const appSettingsRef = useRef(appSettings);
   appSettingsRef.current = appSettings;
   const [undoStack, setUndoStack] = useState([]); // 전역 되돌리기 스택 [{type, payload, description, at}]
+  // 🖼️ v7.59.28: 기록에서 빠진 작품의 파일을 정리한다. 넘침, 비우기, 슬롯 전환, 초기화, 복원을 여기서 함께 처리한다.
+  //   되돌린 작품은 행이 돌아와 있어 사용 중으로 판단되므로 파일이 남는다.
+  const undoStackFilesRef = useRef([]);
+  useEffect(() => {
+    const files = undoStackFiles(undoStack);
+    const dropped = undoStackFilesRef.current.filter(p => !files.includes(p));
+    undoStackFilesRef.current = files;
+    if (dropped.length > 0) releaseUndoFiles(dropped, appSettingsRef.current);
+  }, [undoStack]);
 
   // 등록 입력
   const [title, setTitle] = useState("");
@@ -34486,6 +34548,7 @@ function AppContent() {
           } catch (e) { console.warn("What's New check error:", e); }
 
           setLoadingProgress(null);  // 🆕 v7.3.0: 초기화 진행도 클리어
+          releaseLeftoverUndoFiles(appSettingsRef.current); // 🖼️ v7.59.28
           setIsLoading(false);
           return; // 성공하면 종료
 
@@ -43461,6 +43524,14 @@ function AppContent() {
             }
             await rebuildAllFromMatches(tagAttributes);
           }
+          // 🖼️ v7.59.28: 갤러리 행 복원. 파일은 기록이 남아 있는 동안 지우지 않는다.
+          for (const g of item.payload.gallery || []) {
+            await exec(
+              "INSERT OR IGNORE INTO gallery_images (id,novel_id,file_path,caption,created_at) VALUES (?,?,?,?,?);",
+              [g.id, g.novel_id, g.file_path, g.caption, g.created_at]
+            );
+          }
+          if (item.payload.gallery?.length > 0) await loadGalleryImages();
           // 🔧 v3.6.2: 복원된 작품의 표지를 라이브러리에서 "사용중"으로 동기화
           if (n.cover_image) {
             await applyNovelCover(n.id, n.cover_image, null);
@@ -44370,6 +44441,11 @@ function AppContent() {
             try {
               _undoMatches = await all("SELECT * FROM matches WHERE a_id=? OR b_id=?", [id, id]);
             } catch (e) { console.warn("removeNovel 매치 스냅샷 실패:", e?.message); }
+            // 🖼️ v7.59.28: 파일은 지우지 않고 되돌리기 기록이 사라질 때까지 맡겨 둔다. 표지는 라이브러리 행이 지워져도 되돌릴 수 있게 함께 맡긴다.
+            const _undoGallery = await all("SELECT * FROM gallery_images WHERE novel_id=?", [id]);
+            const _undoFiles = [...new Set([coverPath, ...quoteFilePaths(novel?.memorable_quote), ..._undoGallery.map(g => g.file_path)])]
+              .filter(p => typeof p === "string" && p.startsWith("file:"));
+            await holdUndoFiles(_undoFiles);
             
             // 🔄 v3.5.0: 상태 동기화 - 삭제 대상과 관련된 모든 상태 초기화
             if (pair && (pair.A?.id === id || pair.B?.id === id)) {
@@ -44403,12 +44479,6 @@ function AppContent() {
             }
 
             // 🔧 v3.5.8: choice_logs도 함께 삭제 (고아 방지)
-            // 🎨 v3.8.0: 갤러리 이미지 파일 삭제 (DB 삭제 전)
-            try {
-              const gImgs = await all("SELECT file_path FROM gallery_images WHERE novel_id=?", [id]);
-              await deleteGalleryFilesUnusedByOtherSlots(gImgs.map(g => g.file_path));
-            } catch (gErr) { console.warn("removeNovel gallery cleanup:", gErr); }
-
             await execBatch([
               { sql: "DELETE FROM choice_logs WHERE winner_id=? OR loser_id=?", params: [id, id] },
               { sql: "DELETE FROM matches WHERE a_id=? OR b_id=?", params: [id, id] },
@@ -44435,15 +44505,12 @@ function AppContent() {
               await loadCoverLibrary();
             }
 
-            // 📷 v6.0.1: 명대사 이미지 파일 정리 (고아 방지). 🖼️ v7.59.26: 아무도 안 쓰는 파일만
-            await deleteSharedFiles(quoteFilePaths(novel?.memorable_quote));
-
             await rebuildAllFromMatches(tagAttributes);
             await loadList(undefined, undefined, "rebuild");
             await loadGalleryImages(); // 🎨 v3.8.0
-            // 🆕 v7.21.0: 삭제 되돌리기 — 작품 행 + 매치 복원 (갤러리/명대사 이미지 파일은 물리 삭제되어 복구 불가)
+            // 🆕 v7.21.0: 삭제 되돌리기 — 작품 행 + 매치 + 갤러리 행과 이미지 파일 복원
             if (novel) {
-              pushUndo('novel_delete', { novel, matches: _undoMatches }, `'${novel.title}' 삭제`);
+              pushUndo('novel_delete', { novel, matches: _undoMatches, gallery: _undoGallery, files: _undoFiles }, `'${novel.title}' 삭제`);
             }
           } catch (e) {
             console.warn("removeNovel 오류:", e);
