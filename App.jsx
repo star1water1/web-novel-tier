@@ -12474,7 +12474,7 @@ function pickWhatsNewEntries(entries, lastSeen, currentVersion) {
   return entries.filter(e => compareVersions(e.version, lastSeen) > 0 && compareVersions(e.version, currentVersion) <= 0);
 }
 
-const CHANGELOG_DATA = [
+const CHANGELOG_DATA = [
   {
     version: "7.60.3", date: "2026-11-03",
     title: "↑ 맨 위로 버튼",
@@ -12493,7 +12493,7 @@ const CHANGELOG_DATA = [
       { type: "improve", text: "진행 중이던 최소 매칭은 고른 기록 그대로 이어져요. 점수만 새 방식으로 다시 계산합니다." },
     ],
   },
-  {
+  {
     version: "7.60.1", date: "2026-11-02",
     title: "⚡ 최소 매칭",
     highlights: [
