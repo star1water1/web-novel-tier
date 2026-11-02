@@ -25,6 +25,7 @@ APK는 `build.bat`을 더블클릭해 빌드합니다. 자세한 내용과 주�
 
 - [CLAUDE.md](CLAUDE.md): 개발 규칙과 불변조건
 - [docs/hollow-fix-roadmap.md](docs/hollow-fix-roadmap.md): 남은 작업
+- [docs/history.md](docs/history.md): 변경 이력
 - [docs/hybrid-verification.md](docs/hybrid-verification.md): 하이브리드 모드 설계
 - [docs/scraper-plan.md](docs/scraper-plan.md): 플랫폼 스크래퍼 메모
 - [docs/cloud-sync-plan.md](docs/cloud-sync-plan.md): 클라우드 동기화 설계

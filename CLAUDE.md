@@ -11,7 +11,7 @@ Expo SDK 54 · React Native 기반 Android 앱. 슬롯(최대 10개, 슬롯별 S
 - **네이티브:** Expo API로 충분한지 먼저 보고, 부족한 부분만 `modules/`에 Kotlin으로 만든다. 파일 접근은 `src/features/file-access/README.md`를 따른다.
 - **작은 단위:** 한 번에 하나씩 바꾸고 검증한다.
 - **데이터 호환:** DB·백업·설정은 추가만 한다. 기존 항목의 의미를 바꾸거나 없애지 않고, 옛 백업과 옛 DB도 계속 읽혀야 한다. 파일 삭제·덮어쓰기는 슬롯 간 공유 파일을 확인하고 안전장치를 둔다.
-- **제품:** 의견이 갈리는 동작은 옵션으로 열되, 아무 설정 없이도 잘 돌아가는 기본값을 둔다.
+- **제품:** 재미보다 정확성·신뢰성·편의성을 앞세운다. 등록·매칭·순위의 안정성이 최우선이고, 실험적 기능보다 기존 기능의 완성도를 중시한다. 의견이 갈리는 동작은 옵션으로 열되, 아무 설정 없이도 잘 돌아가는 기본값을 둔다.
 
 ## 절대 준수 규칙
 
@@ -31,7 +31,7 @@ Expo SDK 54 · React Native 기반 Android 앱. 슬롯(최대 10개, 슬롯별 S
 
 ## App.jsx 찾아보기
 
-약 8만 줄이다. **전체를 읽지 말고** 이름으로 Grep한 뒤 offset/limit으로 읽는다. 줄번호를 문서에 적지 않는다.
+약 7만 줄이다. **전체를 읽지 말고** 이름으로 Grep한 뒤 offset/limit으로 읽는다. 줄번호를 문서에 적지 않는다.
 
 | 영역 | 검색어 |
 |---|---|
@@ -54,7 +54,7 @@ node docs/scraper-test.mjs
 
 ## 기록
 
-`App.jsx`를 수정하면 맨 위 헤더에 새 항목을 추가하고, 헤더 버전·날짜와 `APP_VERSION`을 함께 올린다.
+`App.jsx`의 동작을 바꾸면 `APP_VERSION`을 올리고 `docs/history.md`의 "최신 기록" 맨 위에 항목을 추가한다. `App.jsx` 헤더에는 이력을 쓰지 않는다.
 
 ## 빌드
 
@@ -90,6 +90,7 @@ APK는 `build.bat`을 더블클릭한다 (`scripts\build-signed.ps1 -Auto` 실�
 | 문서 | 내용 |
 |---|---|
 | `docs/hollow-fix-roadmap.md` | 남은 작업과 절차 |
+| `docs/history.md` | 변경 이력 (크니 Grep으로) |
 | `docs/hybrid-verification.md` | 하이브리드 자리 탐색 설계와 검증 예산 |
 | `docs/scraper-plan.md` | 스크래퍼 설계 이유와 플랫폼별 실측 사실 |
 | `docs/cloud-sync-plan.md` | 클라우드 동기화 설계 |
