@@ -81,6 +81,7 @@ import { captureRef } from "react-native-view-shot"; // 📷 v7.4.0 티어표 �
 import { WebView } from "react-native-webview"; // 🔐 v7.40.0 노벨피아 로그인(성인물 게이트 해제) — WebView 로그인
 import CookieManager from "@react-native-cookies/cookies"; // 🔐 v7.40.0 OS 쿠키스토어 읽기(세션 쿠키 → fetch 주입)
 import { showFileAccessDiagnostics } from "./src/features/file-access"; // 🧩 v7.59.20 파일 접근 모듈 (사용법: 해당 폴더 README)
+import { QuickRankScreen, QUICK_RANK_CLEAR_QUERIES, QUICK_RANK_TABLES, buildQuickRankBackup, ensureQuickRankSchema, quickRankRestoreQueries, revertQuickRankApply } from "./src/features/quick-rank"; // ⚡ 최소 매칭 (사용법: 해당 폴더 README)
 import { saveBackupToFile, restoreBackupFromFile, saveMediaToFile, restoreMediaFromFile, buildCoverLinks, applyCoverLinks } from "./src/features/file-backup"; // 📁 v7.59.21 파일 백업·복원, 🖼️ v7.59.22 사진 백업·복원, v7.59.23 표지 연결
 // 🆕 v7.8.0: 명대사 텍스트 서식 — 한글 웹폰트 번들 (expo-font + @expo-google-fonts)
 import { useFonts as useExpoFonts } from "expo-font";
@@ -2020,7 +2021,8 @@ function seededShuffleValue(id, seed) {
 // 🆕 v7.3.0: progressCb 옵션 — initDb 진행 단계를 UI overlay에 표시.
 // progressCb({ label: "..." }) 형태로 호출. null/undefined 시 무시.
 // 🆕 v7.49.19: import 자동 롤백 스냅샷 대상 테이블(doClearAll이 지우는 전 테이블 + planned_novels). importJSON·initDb 공용.
-const IMPORT_SNAP_TABLES = ["novels", "matches", "choice_logs", "preference_patterns", "insight_queue", "folders", "novel_folders", "gallery_images", "tier_verification_queue", "tier_validation_log", "tier_repositioning_session", "trigger_fire_log", "planned_novels", "web_reco", "web_reco_keywords", "reco_hidden_works"]; // 🆕 v7.53.8: reco 학습 테이블도 스냅샷 — doClearAll이 이들을 비우므로, import 실패 시 롤백에서 함께 원복(성공 시엔 비운 채 유지 = 의도).
+const QUICK_RANK_DB = { exec, all, first, execBatch, newId: uuid }; // ⚡ 최소 매칭이 쓰는 DB 함수
+const IMPORT_SNAP_TABLES = ["novels", "matches", "choice_logs", "preference_patterns", "insight_queue", "folders", "novel_folders", "gallery_images", "tier_verification_queue", "tier_validation_log", "tier_repositioning_session", "trigger_fire_log", "planned_novels", "web_reco", "web_reco_keywords", "reco_hidden_works", ...QUICK_RANK_TABLES]; // 🆕 v7.53.8: reco 학습 테이블도 스냅샷 — doClearAll이 이들을 비우므로, import 실패 시 롤백에서 함께 원복(성공 시엔 비운 채 유지 = 의도).
 async function initDb(progressCb) {
   if (progressCb) progressCb({ label: "데이터베이스 연결 중..." });
   // DB 연결 확보
@@ -2647,6 +2649,9 @@ async function initDb(progressCb) {
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tfl_created ON trigger_fire_log(created_at DESC);`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tfl_trigger ON trigger_fire_log(trigger_type);`);
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_tfl_source ON trigger_fire_log(source);`);
+
+  // ⚡ 최소 매칭의 표. 아래 복원 복구가 IMPORT_SNAP_TABLES를 쓰므로 그 전에 만든다.
+  await ensureQuickRankSchema((sql) => database.runAsync(sql));
 
   // manual_order 인덱스 (티어 그룹별 정렬 빠르게)
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_novels_manual_order ON novels(manual_tier, manual_order);`);
@@ -12437,7 +12442,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.59.28";
+const APP_VERSION = "7.60.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -32714,6 +32719,8 @@ function AppContent() {
   // Stage 4: 수문장 후보 (5개 누적 시 제안 모달)
   const [gatekeeperCandidates, setGatekeeperCandidates] = useState([]);
   const [gatekeeperModalOpen, setGatekeeperModalOpen] = useState(false);
+  const [quickRankOpen, setQuickRankOpen] = useState(false); // ⚡ 최소 매칭
+  const quickRankAvailable = globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid"; // 매칭 기반은 순위를 rating으로 정해 결과가 반영되지 않는다
   const verificationSessionIdRef = useRef(null); // 매 시퀀스 고유 sessionId (응답 로그 묶음용)
   const verificationLoadingRef = useRef(false); // 🆕 v7.0: 재진입 가드 (state는 React 배칭 → 동기 가드 필요)
   // 🛠️ v7.0.12: batchSetTier가 useCallback([])이라 verificationSession state stale capture 발생 → ref로 최신값 동기 노출
@@ -34712,6 +34719,7 @@ function AppContent() {
       setVerificationSession(null);
       setVerificationStats({ pending: 0, resolved: 0 });
       setVerificationLoading(false);
+      setQuickRankOpen(false);
       setGatekeeperCandidates([]);
       setGatekeeperModalOpen(false);
       verificationSessionIdRef.current = null;
@@ -43423,6 +43431,17 @@ function AppContent() {
     });
   }
   
+  // ⚡ 최소 매칭: 순위를 통째로 바꾼 뒤의 공통 처리. 시스템 경로이므로 enqueueVerification을 부르지 않는다.
+  //   진행 중인 검증 세션만 되돌리기 경로와 같은 방식으로 멈춘다(대기 큐는 그대로, 다음에 새로 시작).
+  function stopVerificationForRankChange() {
+    setVerificationSession(null);
+    verificationSessionIdRef.current = null;
+  }
+  async function afterQuickRankRevert(result) {
+    for (const tier of result.tiersToReorder || []) await rebalanceTierOrder(tier);
+    stopVerificationForRankChange();
+  }
+
   // 마지막 작업 되돌리기
   async function performUndo() {
     if (undoStack.length === 0) {
@@ -43549,6 +43568,18 @@ function AppContent() {
           );
           await rebuildAllFromMatches(tagAttributes);
           break;
+
+        // ⚡ 최소 매칭 적용 되돌리기. tier_batch와 달리 혼합 모드의 대기 큐를 취소하지 않는다.
+        case 'quick_rank_apply': {
+          const _qrResult = await revertQuickRankApply(QUICK_RANK_DB, item.payload.applyId);
+          if (!_qrResult.ok) {
+            Alert.alert("되돌릴 수 없음", "이미 되돌렸거나 그 뒤에 다시 적용한 결과입니다. 최소 매칭 화면에서 확인해 주세요.");
+            setUndoStack(prev => prev.slice(1));
+            return;
+          }
+          await afterQuickRankRevert(_qrResult);
+          break;
+        }
 
         // 🆕 v7.13.0: 일괄 작업 되돌리기 (광범위 변경인데 undo 불가하던 도태 해소)
         case 'read_count_batch':
@@ -44627,6 +44658,7 @@ function AppContent() {
                 batch.push({ sql: "DELETE FROM tier_validation_log;" });
                 batch.push({ sql: "DELETE FROM tier_repositioning_session;" });
                 batch.push({ sql: "DELETE FROM trigger_fire_log;" });
+                batch.push(...QUICK_RANK_CLEAR_QUERIES);
               }
               if (effectiveSel.matches) {
                 batch.push({ sql: "DELETE FROM matches;" });
@@ -44859,6 +44891,7 @@ function AppContent() {
                         { sql: "DELETE FROM tier_validation_log;" },
                         { sql: "DELETE FROM tier_repositioning_session;" },
                         { sql: "DELETE FROM trigger_fire_log;" },
+                        ...QUICK_RANK_CLEAR_QUERIES,
                       ]);
 
                       // 🖼️ v3.4.5: 모든 표지를 미사용 상태로 변경
@@ -49552,6 +49585,14 @@ async function exportJSON(opts) {
         if (!payload.NID) payload.NID = novels.map(n => n.id);
       }
     } catch (vqErr) { console.warn("tier_verification_queue 백업 실패:", vqErr); }
+    // ⚡ 최소 매칭의 진행 상황과 비교 기록(QR). 사용자 결정으로 포함. novel id는 NID 매핑으로 복원 시 remapNovelId.
+    try {
+      const qrBackup = await buildQuickRankBackup(QUICK_RANK_DB, novels.map(n => n.id));
+      if (qrBackup) {
+        payload.QR = qrBackup;
+        if (!payload.NID) payload.NID = novels.map(n => n.id);
+      }
+    } catch (qrErr) { console.warn("최소 매칭 백업 실패:", qrErr); }
     // 🆕 v7.59.6 (T07·DAT-8): 잘린 게 있을 때만 실린다 — 복원 측이 '이 백업은 일부만 담고 있었다'를 말할 수 있게.
     if (Object.keys(backupTrunc).length > 0) payload.TRC = backupTrunc;
 
@@ -49943,6 +49984,7 @@ async function importJSON(directText, onSuccess, onSettled) {
         { sql: "DELETE FROM web_reco;", params: [] },
         { sql: "DELETE FROM web_reco_keywords;", params: [] },
         { sql: "DELETE FROM reco_hidden_works;", params: [] },
+        ...QUICK_RANK_CLEAR_QUERIES,
       ]);
       invalidatePatternCache(); // 🔧 v3.5.14
       invalidateWeightsCache(); // 🔧 v3.5.14
@@ -50640,6 +50682,14 @@ async function importJSON(directText, onSuccess, onSettled) {
                   }
                   if (vqQueries.length > 0) await execBatch(vqQueries);
                 } catch (vqErr) { console.warn("verification_queue 복원 실패:", vqErr); }
+              }
+
+              // ⚡ 최소 매칭 진행 상황과 비교 기록(QR) 복원 — 옛 백업에는 없다.
+              if (data.QR) {
+                try {
+                  const qrQueries = quickRankRestoreQueries(data.QR, remapNovelId, uuid);
+                  if (qrQueries.length > 0) await execBatch(qrQueries);
+                } catch (qrErr) { console.warn("최소 매칭 복원 실패:", qrErr); }
               }
 
               // 🎨 v3.8.0: 갤러리 이미지 복원
@@ -57187,6 +57237,16 @@ async function importJSON(directText, onSuccess, onSettled) {
         {screen === "tierManage" && (
           <>
             <H>🏷️ 티어 배정</H>
+
+            {quickRankAvailable && (
+              <TouchableOpacity
+                onPress={() => { if (!isAutoMatchingRef.current) setQuickRankOpen(true); }}
+                style={{ marginBottom: 12, padding: 14, borderRadius: 12, backgroundColor: C.card, borderWidth: 1, borderColor: C.primary }}
+              >
+                <Text style={{ color: C.primary, fontSize: 15, fontWeight: "800" }}>⚡ 최소 매칭</Text>
+                <Text style={{ color: C.sub, fontSize: 12, marginTop: 3 }}>칸 고르기와 5개 중 1개 고르기로 순위를 빠르게 만들어요</Text>
+              </TouchableOpacity>
+            )}
 
             <Section title="검색 / 필터">
               <Input
@@ -70747,6 +70807,29 @@ async function importJSON(directText, onSuccess, onSettled) {
         </View>
       </Modal>
 
+      {quickRankOpen && quickRankAvailable && (
+        <QuickRankScreen
+          onClose={() => setQuickRankOpen(false)}
+          db={QUICK_RANK_DB}
+          tierOrder={getActiveTierOrder(globalTierConfig)}
+          tierLabel={(tier) => getTierLabel(tier, globalTierConfig)}
+          tierColor={(tier) => getTierColor(tier, globalTierConfig)}
+          theme={C}
+          isBlocked={() => isAutoMatchingRef.current}
+          getSlotGeneration={() => _slotGeneration}
+          beforeRankWrite={async () => { if (!isMatchQueueIdle()) await waitForMatchQueueDrain(3000); }}
+          onApplied={async ({ applyId, count }) => {
+            pushUndo("quick_rank_apply", { applyId }, `최소 매칭 결과 적용 (${count}개)`);
+            stopVerificationForRankChange();
+            await loadList(undefined, undefined, "quick-rank");
+          }}
+          onReverted={async (result) => {
+            setUndoStack(prev => prev.filter(u => u.payload?.applyId !== result.applyId));
+            await afterQuickRankRevert(result);
+            await loadList(undefined, undefined, "quick-rank");
+          }}
+        />
+      )}
       <KeyboardSpacer />
     </SafeAreaView>
   );

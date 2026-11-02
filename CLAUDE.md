@@ -51,7 +51,7 @@ npx --yes esbuild App.jsx --loader:.jsx=jsx --jsx=automatic --outfile=/dev/null
 npm test
 ```
 
-구문, 스크래퍼 회귀, 백업 형식 호환성, 공유 파일 삭제 판단만 확인된다. 기기 동작은 에뮬레이터 `noveltier_test`(Android 15, `adb root` 가능)에서 확인할 수 있다. `android/`에서 `gradlew :app:assembleRelease`로 빌드해 `adb install -r`로 설치한다. 실제 복원을 포함한 화면과 기기 동작은 폰에서 확인해야 하므로, 확인하지 못했으면 그렇게 보고한다.
+구문, 스크래퍼 회귀, 백업 형식 호환성, 공유 파일 삭제 판단, 최소 매칭의 계산과 저장만 확인된다. 기기 동작은 에뮬레이터 `noveltier_test`(Android 15, `adb root` 가능)에서 확인할 수 있다. `android/`에서 `gradlew :app:assembleRelease`로 빌드해 `adb install -r`로 설치한다. 실제 복원을 포함한 화면과 기기 동작은 폰에서 확인해야 하므로, 확인하지 못했으면 그렇게 보고한다.
 
 백업 형식에 항목을 추가하면 복원 코드도 함께 고치고 `tests/backup-compat.test.mjs`의 목록에 더한 뒤 `--write-fixture`로 픽스처를 갱신한다. 이 테스트가 실패하면 옛 백업을 못 읽게 된 것일 수 있으니 목록이나 픽스처부터 고치지 않는다.
 

@@ -167,7 +167,7 @@ check("최상위: 내보낸 항목을 복원이 모두 읽는다", payloadUnread
 
 // 옛 백업에 들어 있는 항목이다. 복원에서 빼면 옛 백업의 데이터가 사라진다. 지우지 말고 추가만 한다.
 const OPT_READ_FOREVER = "a,al,art,c,ch,cma,ds,e,et,ey,gca,gd,ge,gr,gs,gsa,i,l,ll,mb,mg,mo,mq,mqImg,mt,n,p,pdy,pl,pv,r,rr,s,sg,ss,sy,td,u,uf,ul,vc,vl,vw,w".split(",");
-const DATA_READ_FOREVER = "A,AD,AW,CE,FD,GI,H,M,N,NF,NID,P,PC,PL,PP,PR,RS,S,T,TM,TR,TRC,VL,VQ,b,m,mode,v".split(",");
+const DATA_READ_FOREVER = "A,AD,AW,CE,FD,GI,H,M,N,NF,NID,P,PC,PL,PP,PR,QR,RS,S,T,TM,TR,TRC,VL,VQ,b,m,mode,v".split(",");
 const SETTINGS_READ_FOREVER = "aa,al,am,as,aw,ec,pf,qd,rb,rc,sc,tc,th,us".split(",");
 check("복원이 옛 작품 옵션 항목을 계속 읽는다", missing(OPT_READ_FOREVER, optRead).length === 0, missing(OPT_READ_FOREVER, optRead).join(","));
 check("복원이 옛 최상위 항목을 계속 읽는다", missing(DATA_READ_FOREVER, dataRead).length === 0, missing(DATA_READ_FOREVER, dataRead).join(","));
