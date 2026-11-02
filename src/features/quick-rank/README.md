@@ -11,7 +11,7 @@
 ## 지키는 것
 
 - `matches`, `choice_logs`, `rating`, 승패를 건드리지 않는다.
-- 점수의 원본은 칸과 `quick_rank_log`다. `loadState`가 읽을 때 다시 계산하므로 `quick_rank_item`의 `score`, `rd`는 믿지 않는다. 미리보기와 적용은 `fitScores`로 같은 값을 쓴다.
+- 점수의 원본은 칸과 `quick_rank_log`다. `loadState`가 읽을 때 다시 계산하므로 `quick_rank_item`의 `score`, `rd`는 믿지 않는다. 미리보기와 적용은 `fitScores`로 같은 값을 쓴다. 그래서 백업은 진행 중인 세션의 기록을 전부 담고, 5,000개 한도는 지난 세션에만 쓴다.
 - 적용과 되돌리기는 시스템 경로라 `enqueueVerification`을 부르지 않는다. 진행 중인 검증 세션은 `App.jsx`의 콜백이 멈춘다.
 - 적용은 전후 값을 `quick_rank_apply_item`에 쓴 뒤 `UPDATE` 한 문장으로 한다. `execBatch`가 50개씩 쪼개도 일부만 적용되지 않는다.
 - 작품을 지워도 행을 남겨 삭제 되돌리기에 대비한다. `loadState`가 읽을 때 현재 작품과 맞춘다.

@@ -122,6 +122,7 @@ export function QuickRankScreen({
   const reload = useCallback(async (shownIds = null) => {
     const next = await loadState(db, tierOrder);
     setState(next);
+    setCanUndoPick(next.canUndo);
     setLatestApply(await getLatestApply(db));
     if (next.needCell.length === 0) {
       const shown = shownIds?.map((id) => next.entries.find((entry) => entry.id === id)).filter(Boolean);

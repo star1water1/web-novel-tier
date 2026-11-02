@@ -12443,7 +12443,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.60.3";
+const APP_VERSION = "7.60.4";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -12474,7 +12474,16 @@ function pickWhatsNewEntries(entries, lastSeen, currentVersion) {
   return entries.filter(e => compareVersions(e.version, lastSeen) > 0 && compareVersions(e.version, currentVersion) <= 0);
 }
 
-const CHANGELOG_DATA = [
+const CHANGELOG_DATA = [
+  {
+    version: "7.60.4", date: "2026-11-03",
+    title: "⚡ 최소 매칭 보완",
+    highlights: [
+      { type: "fix", text: "↩ 최소 매칭을 닫았다 다시 열어도 방금 고른 것을 취소할 수 있어요." },
+      { type: "fix", text: "💾 5,000번 넘게 고른 최소 매칭도 백업에 기록이 모두 담겨, 복원해도 순위가 그대로예요." },
+    ],
+    details: [],
+  },
   {
     version: "7.60.3", date: "2026-11-03",
     title: "↑ 맨 위로 버튼",
@@ -12493,7 +12502,7 @@ const CHANGELOG_DATA = [
       { type: "improve", text: "진행 중이던 최소 매칭은 고른 기록 그대로 이어져요. 점수만 새 방식으로 다시 계산합니다." },
     ],
   },
-  {
+  {
     version: "7.60.1", date: "2026-11-02",
     title: "⚡ 최소 매칭",
     highlights: [
