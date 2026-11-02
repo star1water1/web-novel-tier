@@ -83,6 +83,7 @@ import CookieManager from "@react-native-cookies/cookies"; // 🔐 v7.40.0 OS �
 import { showFileAccessDiagnostics } from "./src/features/file-access"; // 🧩 v7.59.20 파일 접근 모듈 (사용법: 해당 폴더 README)
 import { ScrollTopButton } from "./src/features/scroll-top"; // ↑ 맨 위로 버튼 (사용법: 해당 폴더 README)
 import { QuickRankScreen, QUICK_RANK_CLEAR_QUERIES, QUICK_RANK_TABLES, buildQuickRankBackup, ensureQuickRankSchema, quickRankRestoreQueries, revertQuickRankApply } from "./src/features/quick-rank"; // ⚡ 최소 매칭 (사용법: 해당 폴더 README)
+import { TierExportScreen, TIER_EXPORT_CLEAR_QUERIES, TIER_EXPORT_TABLES, buildTierExportBackup, buildTierExportRows, ensureTierExportSchema, tierExportRestoreQueries } from "./src/features/tier-export"; // 📊 티어표 엑셀 내보내기 (사용법: 해당 폴더 README)
 import { saveBackupToFile, restoreBackupFromFile, saveMediaToFile, restoreMediaFromFile, buildCoverLinks, applyCoverLinks } from "./src/features/file-backup"; // 📁 v7.59.21 파일 백업·복원, 🖼️ v7.59.22 사진 백업·복원, v7.59.23 표지 연결
 // 🆕 v7.8.0: 명대사 텍스트 서식 — 한글 웹폰트 번들 (expo-font + @expo-google-fonts)
 import { useFonts as useExpoFonts } from "expo-font";
@@ -2023,7 +2024,8 @@ function seededShuffleValue(id, seed) {
 // progressCb({ label: "..." }) 형태로 호출. null/undefined 시 무시.
 // 🆕 v7.49.19: import 자동 롤백 스냅샷 대상 테이블(doClearAll이 지우는 전 테이블 + planned_novels). importJSON·initDb 공용.
 const QUICK_RANK_DB = { exec, all, first, execBatch, newId: uuid }; // ⚡ 최소 매칭이 쓰는 DB 함수
-const IMPORT_SNAP_TABLES = ["novels", "matches", "choice_logs", "preference_patterns", "insight_queue", "folders", "novel_folders", "gallery_images", "tier_verification_queue", "tier_validation_log", "tier_repositioning_session", "trigger_fire_log", "planned_novels", "web_reco", "web_reco_keywords", "reco_hidden_works", ...QUICK_RANK_TABLES]; // 🆕 v7.53.8: reco 학습 테이블도 스냅샷 — doClearAll이 이들을 비우므로, import 실패 시 롤백에서 함께 원복(성공 시엔 비운 채 유지 = 의도).
+const TIER_EXPORT_DB = QUICK_RANK_DB; // 📊 엑셀 내보내기가 쓰는 DB 함수
+const IMPORT_SNAP_TABLES = ["novels", "matches", "choice_logs", "preference_patterns", "insight_queue", "folders", "novel_folders", "gallery_images", "tier_verification_queue", "tier_validation_log", "tier_repositioning_session", "trigger_fire_log", "planned_novels", "web_reco", "web_reco_keywords", "reco_hidden_works", ...QUICK_RANK_TABLES, ...TIER_EXPORT_TABLES]; // 🆕 v7.53.8: reco 학습 테이블도 스냅샷 — doClearAll이 이들을 비우므로, import 실패 시 롤백에서 함께 원복(성공 시엔 비운 채 유지 = 의도).
 async function initDb(progressCb) {
   if (progressCb) progressCb({ label: "데이터베이스 연결 중..." });
   // DB 연결 확보
@@ -2653,6 +2655,7 @@ async function initDb(progressCb) {
 
   // ⚡ 최소 매칭의 표. 아래 복원 복구가 IMPORT_SNAP_TABLES를 쓰므로 그 전에 만든다.
   await ensureQuickRankSchema((sql) => database.runAsync(sql));
+  await ensureTierExportSchema((sql) => database.runAsync(sql));
 
   // manual_order 인덱스 (티어 그룹별 정렬 빠르게)
   await database.runAsync(`CREATE INDEX IF NOT EXISTS idx_novels_manual_order ON novels(manual_tier, manual_order);`);
@@ -12443,7 +12446,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.60.4";
+const APP_VERSION = "7.61.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -12475,6 +12478,16 @@ function pickWhatsNewEntries(entries, lastSeen, currentVersion) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.61.0", date: "2026-11-03",
+    title: "📊 티어표 엑셀 내보내기",
+    highlights: [
+      { type: "new", text: "📊 순위 탭의 '티어표 공유'에서 티어표를 엑셀 파일로 저장할 수 있어요. 저장할 폴더는 직접 골라요." },
+      { type: "new", text: "🎨 두 번째 출력부터 지난 출력본과 비교해 색을 칠해요. 신규는 노랑, 순위 상승은 연두, 하락은 붉은색, 읽은 화수가 바뀌면 그 칸만 연두예요." },
+      { type: "improve", text: "🔎 추가·삭제나 다른 작품 때문에 밀린 작품은 빼고, 순서를 깬 작품만 칠해요. 맞바뀌거나 짧게 움직이면 실제와 다를 수 있어요." },
+    ],
+    details: [],
+  },
   {
     version: "7.60.4", date: "2026-11-03",
     title: "⚡ 최소 매칭 보완",
@@ -32765,6 +32778,7 @@ function AppContent() {
   const [gatekeeperCandidates, setGatekeeperCandidates] = useState([]);
   const [gatekeeperModalOpen, setGatekeeperModalOpen] = useState(false);
   const [quickRankOpen, setQuickRankOpen] = useState(false); // ⚡ 최소 매칭
+  const [tierExportOpen, setTierExportOpen] = useState(false); // 📊 엑셀 내보내기
   const mainScrollRef = useRef(null); // ↑ 맨 위로 버튼
   const scrollTopButtonRef = useRef(null);
   const quickRankAvailable = globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid"; // 매칭 기반은 순위를 rating으로 정해 결과가 반영되지 않는다
@@ -34765,6 +34779,7 @@ function AppContent() {
       setVerificationStats({ pending: 0, resolved: 0 });
       setVerificationLoading(false);
       setQuickRankOpen(false);
+      setTierExportOpen(false);
       setGatekeeperCandidates([]);
       setGatekeeperModalOpen(false);
       verificationSessionIdRef.current = null;
@@ -44704,6 +44719,7 @@ function AppContent() {
                 batch.push({ sql: "DELETE FROM tier_repositioning_session;" });
                 batch.push({ sql: "DELETE FROM trigger_fire_log;" });
                 batch.push(...QUICK_RANK_CLEAR_QUERIES);
+                batch.push(...TIER_EXPORT_CLEAR_QUERIES);
               }
               if (effectiveSel.matches) {
                 batch.push({ sql: "DELETE FROM matches;" });
@@ -44937,6 +44953,7 @@ function AppContent() {
                         { sql: "DELETE FROM tier_repositioning_session;" },
                         { sql: "DELETE FROM trigger_fire_log;" },
                         ...QUICK_RANK_CLEAR_QUERIES,
+                        ...TIER_EXPORT_CLEAR_QUERIES,
                       ]);
 
                       // 🖼️ v3.4.5: 모든 표지를 미사용 상태로 변경
@@ -49638,6 +49655,14 @@ async function exportJSON(opts) {
         if (!payload.NID) payload.NID = novels.map(n => n.id);
       }
     } catch (qrErr) { console.warn("최소 매칭 백업 실패:", qrErr); }
+    // 📊 엑셀 출력 기록(XS). 폰을 바꿔도 지난 출력본과 비교하도록 포함. novel id는 NID 매핑으로 복원 시 remapNovelId.
+    try {
+      const xsBackup = await buildTierExportBackup(TIER_EXPORT_DB);
+      if (xsBackup) {
+        payload.XS = xsBackup;
+        if (!payload.NID) payload.NID = novels.map(n => n.id);
+      }
+    } catch (xsErr) { console.warn("엑셀 출력 기록 백업 실패:", xsErr); }
     // 🆕 v7.59.6 (T07·DAT-8): 잘린 게 있을 때만 실린다 — 복원 측이 '이 백업은 일부만 담고 있었다'를 말할 수 있게.
     if (Object.keys(backupTrunc).length > 0) payload.TRC = backupTrunc;
 
@@ -50030,6 +50055,7 @@ async function importJSON(directText, onSuccess, onSettled) {
         { sql: "DELETE FROM web_reco_keywords;", params: [] },
         { sql: "DELETE FROM reco_hidden_works;", params: [] },
         ...QUICK_RANK_CLEAR_QUERIES,
+        ...TIER_EXPORT_CLEAR_QUERIES,
       ]);
       invalidatePatternCache(); // 🔧 v3.5.14
       invalidateWeightsCache(); // 🔧 v3.5.14
@@ -50735,6 +50761,14 @@ async function importJSON(directText, onSuccess, onSettled) {
                   const qrQueries = quickRankRestoreQueries(data.QR, remapNovelId, uuid);
                   if (qrQueries.length > 0) await execBatch(qrQueries);
                 } catch (qrErr) { console.warn("최소 매칭 복원 실패:", qrErr); }
+              }
+
+              // 📊 엑셀 출력 기록(XS) 복원 — 옛 백업에는 없다. 없으면 다음 출력이 첫 출력이 된다.
+              if (data.XS) {
+                try {
+                  const xsQueries = tierExportRestoreQueries(data.XS, remapNovelId, uuid);
+                  if (xsQueries.length > 0) await execBatch(xsQueries);
+                } catch (xsErr) { console.warn("엑셀 출력 기록 복원 실패:", xsErr); }
               }
 
               // 🎨 v3.8.0: 갤러리 이미지 복원
@@ -53657,8 +53691,14 @@ async function importJSON(directText, onSuccess, onSettled) {
                 onPress={openExportScopeChoice}
                 disabled={isLoading || rankedEntries.length === 0 || !!exportProgress}
               />
+              <View style={{ height: 8 }} />
+              <PrimaryButton
+                title="엑셀로 내보내기"
+                onPress={() => { if (!isAutoMatchingRef.current) setTierExportOpen(true); }}
+                disabled={isLoading || !list || list.length === 0 || !!exportProgress}
+              />
               <Text style={{ color: C.sub, marginTop: 6, fontSize: 11 }}>
-                ※ 텍스트는 티어별 순위, 이미지는 화면 높이에 맞춰 작품 카드 단위로 나뉘어 갤러리에 저장됩니다.
+                ※ 텍스트는 티어별 순위, 이미지는 화면 높이에 맞춰 작품 카드 단위로 나뉘어 갤러리에 저장됩니다. 엑셀은 고른 폴더에 저장되고, 지난 출력본과 달라진 작품이 칠해집니다.
               </Text>
             </Section>
           </>
@@ -70877,6 +70917,34 @@ async function importJSON(directText, onSuccess, onSettled) {
             await afterQuickRankRevert(result);
             await loadList(undefined, undefined, "quick-rank");
           }}
+        />
+      )}
+      {tierExportOpen && (
+        <TierExportScreen
+          onClose={() => setTierExportOpen(false)}
+          db={TIER_EXPORT_DB}
+          getWorks={async () => {
+            if (!isMatchQueueIdle()) await waitForMatchQueueDrain(3000);
+            await loadList(undefined, undefined, "tier-export"); // 비율 모드의 티어 맵까지 최신으로 맞춘다
+            const rows = ((await all("SELECT * FROM novels;")) || []).map(normalizeNovel);
+            const cfg = globalTierConfig;
+            const sorted = rows.sort((a, b) =>
+              tierRank(getDisplayTier(a, cfg), cfg) - tierRank(getDisplayTier(b, cfg), cfg) || compareWithinTier(a, b, cfg)
+            );
+            return {
+              rows: buildTierExportRows(sorted, {
+                getTier: (novel) => getDisplayTier(novel, cfg),
+                tierLabel: (tier) => getTierLabel(tier, cfg),
+                tierColor: (tier) => getTierColor(tier, cfg),
+              }),
+              tierMode: cfg.mode || "match",
+              tierOrder: getActiveTierOrder(cfg),
+            };
+          }}
+          filePrefix={globalSlotMode === "webtoon" ? "Webtoon_Tier_List" : "WebNovel_Tier_List"}
+          theme={C}
+          isBlocked={() => isAutoMatchingRef.current}
+          getSlotGeneration={() => _slotGeneration}
         />
       )}
       <KeyboardSpacer />
