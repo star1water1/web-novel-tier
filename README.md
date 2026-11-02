@@ -19,6 +19,7 @@ APK는 `build.bat`을 더블클릭해 빌드합니다. 자세한 내용과 주�
 | `src/features/` | v7.59.20 이후의 신규 기능 |
 | `modules/` | Kotlin 네이티브 모듈 |
 | `docs/` | 로드맵과 설계 메모 |
+| `tests/` | 회귀 테스트 (`npm test`) |
 | `scripts/` | 서명 APK 빌드 스크립트 |
 
 ## 문서

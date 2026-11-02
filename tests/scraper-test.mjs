@@ -1,7 +1,7 @@
 // 스크래퍼 엔진 오프라인 회귀 테스트 (node — RN 불필요)
 //   App.jsx의 실제 스크래퍼 함수 소스를 그대로 떼어 vm에서 실행한다(로직 복제 없음 → 드리프트 0).
 //   ① 합성 작품 HTML 3종 파싱(§5)  ② 실측 차단 픽스처(scraper-fixtures) 판별  ③ 플랫폼 판별.
-//   실행: node docs/scraper-test.mjs
+//   실행: node tests/scraper-test.mjs
 import fs from "node:fs";
 import vm from "node:vm";
 import path from "node:path";

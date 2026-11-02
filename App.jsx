@@ -8306,7 +8306,7 @@ function scraperRefineKakao(meta, html) {
 }
 
 // 응답이 작품 정보가 아니라 차단/챌린지/로그인 벽인지 판별 → 사용자에게 명확한 안내.
-//   폰에서 직접 열면 풀리는 종류(보안확인/로그인)와 "정보 없음"을 구분. 실측: docs/scraper-fixtures.
+//   폰에서 직접 열면 풀리는 종류(보안확인/로그인)와 "정보 없음"을 구분. 실측: tests/scraper-fixtures.
 function scraperDetectBlock(status, html) {
   const h = html || "";
   // Cloudflare/Turnstile 등 JS 보안확인 — 요청 헤더로는 못 뚫음(브라우저/폰에서 직접 열어야)

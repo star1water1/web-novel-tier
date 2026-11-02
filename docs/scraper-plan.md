@@ -38,7 +38,7 @@
 
 - **개발 환경에서는 실측이 잘 안 된다:** 노벨피아는 데이터센터 IP를 막고(403), 문피아는 Cloudflare 챌린지를 건다. 폰의 주거망에서는 통과한다.
 - **차단은 "정보 없음"과 구분한다:** `scraperDetectBlock`이 판별해 안내한다.
-- **새 파서는 픽스처로 검증한다:** 폰의 '🔧 긁기 진단'이나 페이지 소스로 원본을 확보해 `docs/scraper-fixtures/`에 넣고 `docs/scraper-test.mjs`에 케이스를 추가한다.
+- **새 파서는 픽스처로 검증한다:** 폰의 '🔧 긁기 진단'이나 페이지 소스로 원본을 확보해 `tests/scraper-fixtures/`에 넣고 `tests/scraper-test.mjs`에 케이스를 추가한다.
 
 ## 보류
 
