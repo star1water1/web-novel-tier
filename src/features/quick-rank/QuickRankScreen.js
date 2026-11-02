@@ -5,7 +5,7 @@ import { ActivityIndicator, Alert, FlatList, ScrollView, Text, TouchableOpacity,
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Image as ExpoImage } from "expo-image";
 import { Modal } from "../system-insets";
-import { computeResult, pickRound } from "./scoring";
+import { computeResult, fitScores, pickRound, refineScores } from "./scoring";
 import {
   applyResult,
   fillCellsFromCurrentTier,
@@ -19,8 +19,7 @@ import {
 } from "./store";
 
 const PREVIEW_ROW_HEIGHT = 48;
-const RECOMMEND_MIN = 3; // 작품 수의 배수. 가상 계산에서 나온 값이라 화면에도 그렇게 적는다.
-const RECOMMEND_MAX = 5;
+const RECOMMEND_TIMES = 2; // 작품 수의 배수. 가상 계산에서 나온 값이라 화면에도 그렇게 적는다.
 
 const format = (value) => Number(value).toLocaleString("ko-KR");
 
@@ -137,7 +136,7 @@ export function QuickRankScreen({
     if (view !== "preview" || !state || state.needCell.length > 0) return [];
     const info = new Map(state.entries.map((entry) => [entry.id, entry]));
     for (const work of state.held) info.set(work.id, work);
-    return computeResult({ entries: state.entries, held: state.held, tierOrder, moveTiers })
+    return computeResult({ entries: fitScores(state.entries, state.logs, tierOrder), held: state.held, tierOrder, moveTiers })
       .map((row, index) => ({ ...row, rank: index + 1, title: info.get(row.id)?.title || "" }));
   }, [view, state, tierOrder, moveTiers]);
 
@@ -168,8 +167,9 @@ export function QuickRankScreen({
   const choose = (winnerId) => run(async () => {
     const updated = await savePick(db, state.session.id, round, winnerId);
     const byId = new Map(updated.map((entry) => [entry.id, entry]));
-    const entries = state.entries.map((entry) => byId.get(entry.id) || entry);
-    setState({ ...state, entries, decisions: state.decisions + 1 });
+    const logs = [...state.logs, { shown: round.map((entry) => entry.id), chosen: winnerId }];
+    const entries = refineScores(state.entries.map((entry) => byId.get(entry.id) || entry), logs, tierOrder);
+    setState({ ...state, entries, logs, decisions: state.decisions + 1 });
     setRound(pickRound(entries));
     setCanUndoPick(true);
   });
@@ -236,7 +236,7 @@ export function QuickRankScreen({
   }
 
   const count = state.workCount;
-  const recommend = `${format(count * RECOMMEND_MIN)}~${format(count * RECOMMEND_MAX)}번`;
+  const recommend = `${format(count * RECOMMEND_TIMES)}번`;
 
   // ── 시작 ──
   if (!state.session && !started) {
@@ -368,7 +368,7 @@ export function QuickRankScreen({
   }
 
   // ── 고르기 ──
-  const ratio = Math.min(1, state.decisions / Math.max(1, count * RECOMMEND_MAX));
+  const ratio = Math.min(1, state.decisions / Math.max(1, count * RECOMMEND_TIMES));
   return (
     <Frame {...frame} title="2단계: 제일 좋은 작품 고르기">
       <View style={{ paddingHorizontal: 12, paddingTop: 8 }}>

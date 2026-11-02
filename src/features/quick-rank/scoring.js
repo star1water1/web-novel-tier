@@ -1,11 +1,15 @@
 // 최소 매칭의 숨은 내부 점수와 순위 계산. DB와 화면을 모른다.
 // 점수는 다음 작품을 고르는 데와 최종 순서에만 쓴다. 화면에 보이지 않고 작품의 rating과 섞지 않는다.
+// 칸을 사전 정보로, 고르기 기록 전체를 Plackett-Luce 우도로 다시 추정한다. 기록이 원본이고 점수는 계산 결과다.
 
 export const ROUND_SIZE = 5;
-const NEAR_POOL = 12;
 const TIER_SCORES = [1900, 1700, 1560, 1440, 1300, 1100];
-const START_RD = 350;
-const MIN_RD = 60;
+const SCORE_PER_LOGIT = 50;
+const PRIOR_RD = 100;
+const FIT_STEP = 0.7;
+const FIT_MAX_STEP = 1; // 곡률이 작은 작품의 점수가 튀어 발산하지 않게 한 번에 움직이는 양을 묶는다.
+const FIT_MAX_PASSES = 80;
+const FIT_TOLERANCE = 0.01;
 
 /** 티어 칸에 넣었을 때의 시작 점수. 티어 수가 6개가 아니면 사이 값을 쓴다. */
 export function startScore(tierIndex, tierCount) {
@@ -21,36 +25,74 @@ export function newEntry(id, cellTier, tierOrder, extra = {}) {
     id,
     cellTier,
     score: startScore(tierOrder.indexOf(cellTier), tierOrder.length),
-    rd: START_RD,
+    rd: PRIOR_RD,
     matchCount: 0,
     ...extra,
   };
 }
 
-function kFactor(matchCount, rd) {
-  const byCount = Math.min(1.25, Math.max(0.75, 1.25 - matchCount / 80));
-  const byRd = Math.min(1.25, Math.max(0.75, rd / START_RD));
-  return 24 * (byCount * 0.6 + byRd * 0.4);
+/** 비교 횟수만 센다. 고른 작품은 나머지를 하나씩 이긴 것으로 친다. 넘긴 배열은 바꾸지 않는다. */
+export function countChoice(group, winnerId) {
+  if (!group.some((entry) => entry.id === winnerId)) throw new Error("고른 작품이 후보에 없습니다.");
+  return group.map((entry) => ({
+    ...entry,
+    matchCount: entry.matchCount + (entry.id === winnerId ? group.length - 1 : 1),
+  }));
 }
 
-/** 고른 작품이 나머지를 하나씩 이긴 것으로 친다. 넘긴 배열은 바꾸지 않는다. */
-export function applyChoice(group, winnerId) {
-  const copies = group.map((entry) => ({ ...entry }));
-  const winner = copies.find((entry) => entry.id === winnerId);
-  if (!winner) throw new Error("고른 작품이 후보에 없습니다.");
-  for (const loser of copies) {
-    if (loser === winner) continue;
-    const expected = 1 / (1 + Math.pow(10, (loser.score - winner.score) / 400));
-    const kWinner = kFactor(winner.matchCount, winner.rd);
-    const kLoser = kFactor(loser.matchCount, loser.rd);
-    winner.score += kWinner * (1 - expected);
-    loser.score -= kLoser * expected;
-    winner.rd = Math.max(MIN_RD, winner.rd * 0.98);
-    loser.rd = Math.max(MIN_RD, loser.rd * 0.98);
-    winner.matchCount += 1;
-    loser.matchCount += 1;
+function estimate(entries, logs, tierOrder, start, maxPasses) {
+  const indexById = new Map(entries.map((entry, index) => [entry.id, index]));
+  const prior = entries.map((entry) => (startScore(tierOrder.indexOf(entry.cellTier), tierOrder.length) - 1500) / SCORE_PER_LOGIT);
+  const precision = (SCORE_PER_LOGIT / PRIOR_RD) ** 2;
+  // 지운 작품은 기록에서 뺀다. 고른 작품이 없어진 기록은 건너뛴다.
+  const rounds = [];
+  for (const log of logs) {
+    const win = indexById.get(log.chosen);
+    if (win === undefined) continue;
+    const members = log.shown.map((id) => indexById.get(id)).filter((index) => index !== undefined);
+    if (members.length >= 2) rounds.push({ members, win });
   }
-  return copies;
+  const theta = start ? start.map((score) => (score - 1500) / SCORE_PER_LOGIT) : [...prior];
+  const gradient = new Array(entries.length);
+  const curvature = new Array(entries.length).fill(precision);
+  for (let pass = 0; pass < maxPasses; pass++) {
+    for (let i = 0; i < entries.length; i++) {
+      gradient[i] = precision * (prior[i] - theta[i]);
+      curvature[i] = precision;
+    }
+    for (const { members, win } of rounds) {
+      let sum = 0;
+      for (const i of members) sum += Math.exp(theta[i]);
+      for (const i of members) {
+        const share = Math.exp(theta[i]) / sum;
+        gradient[i] -= share;
+        curvature[i] += share * (1 - share);
+      }
+      gradient[win] += 1;
+    }
+    let largest = 0;
+    for (let i = 0; i < entries.length; i++) {
+      const step = Math.max(-FIT_MAX_STEP, Math.min(FIT_MAX_STEP, FIT_STEP * gradient[i] / curvature[i]));
+      theta[i] += step;
+      largest = Math.max(largest, Math.abs(step));
+    }
+    if (largest * SCORE_PER_LOGIT < FIT_TOLERANCE) break;
+  }
+  return entries.map((entry, i) => ({
+    ...entry,
+    score: 1500 + theta[i] * SCORE_PER_LOGIT,
+    rd: SCORE_PER_LOGIT / Math.sqrt(curvature[i]),
+  }));
+}
+
+/** 칸과 기록 전체로 점수를 처음부터 계산한다. 같은 입력이면 결과가 같아 미리보기와 적용이 일치한다. logs: [{shown, chosen}] */
+export function fitScores(entries, logs, tierOrder) {
+  return estimate(entries, logs, tierOrder, null, FIT_MAX_PASSES);
+}
+
+/** 고를 때마다 부른다. 지금 점수에서 한 번만 고쳐 다음 후보에 쓴다. */
+export function refineScores(entries, logs, tierOrder) {
+  return estimate(entries, logs, tierOrder, entries.map((entry) => entry.score), 1);
 }
 
 function shuffled(items, random) {
@@ -63,18 +105,29 @@ function shuffled(items, random) {
 }
 
 /**
- * 다음에 보여 줄 작품들. 비교가 가장 적은 작품 하나와, 점수가 가까운 작품 중 무작위 4개.
+ * 다음에 보여 줄 작품들. 가장 불확실한 작품 하나와, 점수가 비슷하고 아직 불확실한 작품 4개.
  * 어느 줄에 나오는지가 판단에 영향을 주지 않게 순서도 섞는다.
  */
 export function pickRound(entries, random = Math.random) {
   if (entries.length < 2) return [];
-  const fewest = Math.min(...entries.map((entry) => entry.matchCount));
-  const targets = entries.filter((entry) => entry.matchCount === fewest);
-  const target = targets[Math.floor(random() * targets.length)];
-  const near = shuffled(entries.filter((entry) => entry !== target), random)
-    .sort((a, b) => Math.abs(a.score - target.score) - Math.abs(b.score - target.score))
-    .slice(0, NEAR_POOL);
-  const others = shuffled(near, random).slice(0, ROUND_SIZE - 1);
+  const variance = (entry) => (entry.rd / SCORE_PER_LOGIT) ** 2;
+  let target = entries[0];
+  let widest = -1;
+  for (const entry of entries) {
+    const value = variance(entry) * (1 + 0.001 * random());
+    if (value > widest) { widest = value; target = entry; }
+  }
+  const others = entries
+    .filter((entry) => entry !== target)
+    .map((entry) => ({
+      entry,
+      rank: Math.abs(entry.score - target.score) / SCORE_PER_LOGIT / Math.sqrt(variance(target) + variance(entry) + 1)
+        - 0.3 * Math.sqrt(variance(entry))
+        + 0.02 * random(),
+    }))
+    .sort((a, b) => a.rank - b.rank)
+    .slice(0, ROUND_SIZE - 1)
+    .map((item) => item.entry);
   return shuffled([target, ...others], random);
 }
 

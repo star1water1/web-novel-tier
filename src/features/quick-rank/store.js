@@ -1,6 +1,6 @@
 // 최소 매칭의 저장. 슬롯 DB의 새 표만 쓰고 matches와 rating은 건드리지 않는다.
 // db: App.jsx가 넘기는 { exec, all, first, execBatch, newId }. 모두 safeDbOperation을 거친다.
-import { applyChoice, computeResult, newEntry } from "./scoring";
+import { computeResult, countChoice, fitScores, newEntry } from "./scoring";
 
 export const QUICK_RANK_TABLES = [
   "quick_rank_session",
@@ -63,6 +63,15 @@ export async function ensureQuickRankSchema(run) {
 /** 복원과 초기화가 작품을 통째로 지울 때 함께 비운다. 복원은 작품 ID를 새로 만들 수 있다. */
 export const QUICK_RANK_CLEAR_QUERIES = QUICK_RANK_TABLES.map((table) => ({ sql: `DELETE FROM ${table};`, params: [] }));
 
+const parseLog = (row) => {
+  try {
+    const shown = JSON.parse(row.shown);
+    return Array.isArray(shown) ? { shown, chosen: row.chosen_id } : null;
+  } catch {
+    return null;
+  }
+};
+
 const toEntry = (row, work) => ({
   id: row.novel_id,
   cellTier: row.cell_tier,
@@ -103,12 +112,16 @@ export async function loadState(db, tierOrder) {
     if (row && tierOrder.includes(row.cell_tier)) entries.push(toEntry(row, work));
     else needCell.push(work);
   }
+  const logs = session
+    ? (await db.all("SELECT shown, chosen_id FROM quick_rank_log WHERE session_id=? ORDER BY created_at ASC, rowid ASC", [session.id])).map(parseLog).filter(Boolean)
+    : [];
   return {
     session,
     decisions: Number(session?.decisions) || 0,
     workCount: entries.length + needCell.length,
     withTierCount: needCell.filter((work) => tierOrder.includes(work.manual_tier)).length,
-    entries,
+    entries: fitScores(entries, logs, tierOrder),
+    logs,
     needCell,
     held,
   };
@@ -123,7 +136,7 @@ async function ensureSession(db) {
   return id;
 }
 
-/** 칸을 정한다. 이미 비교한 작품은 쌓인 점수를 유지하고 칸만 바꾼다. */
+/** 칸을 정한다. 이미 비교한 작품은 기록을 유지하고, 점수는 읽을 때 새 칸과 기록으로 다시 계산한다. */
 function cellQuery(sessionId, novelId, tier, tierOrder) {
   const start = newEntry(novelId, tier, tierOrder);
   return {
@@ -150,9 +163,9 @@ export async function fillCellsFromCurrentTier(db, needCell, tierOrder) {
   return queries.length;
 }
 
-/** 고른 결과와 기록을 한 트랜잭션으로 저장한다. 앱이 꺼져도 절반만 저장되지 않는다. */
+/** 고른 결과와 기록을 한 트랜잭션으로 저장한다. 앱이 꺼져도 절반만 저장되지 않는다. 점수의 원본은 기록이고 행의 score, rd는 그때 값이다. */
 export async function savePick(db, sessionId, group, winnerId) {
-  const updated = applyChoice(group, winnerId);
+  const updated = countChoice(group, winnerId);
   const now = Date.now();
   const before = group.map((entry) => [entry.id, entry.score, entry.rd, entry.matchCount]);
   await db.execBatch([

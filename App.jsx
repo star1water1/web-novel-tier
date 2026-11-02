@@ -12442,7 +12442,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.60.1";
+const APP_VERSION = "7.60.2";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -12474,6 +12474,16 @@ function pickWhatsNewEntries(entries, lastSeen, currentVersion) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.60.2", date: "2026-11-03",
+    title: "⚡ 최소 매칭 계산 개선",
+    highlights: [
+      { type: "improve", text: "⚡ 최소 매칭이 지금까지 고른 기록 전체로 순위를 다시 계산해요. 권장 횟수는 작품 수의 2배로 줄었습니다." },
+    ],
+    details: [
+      { type: "improve", text: "진행 중이던 최소 매칭은 고른 기록 그대로 이어져요. 점수만 새 방식으로 다시 계산합니다." },
+    ],
+  },
   {
     version: "7.60.1", date: "2026-11-02",
     title: "⚡ 최소 매칭",

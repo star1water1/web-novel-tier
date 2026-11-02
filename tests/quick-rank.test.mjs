@@ -17,7 +17,7 @@ const box = { console, Date, Math, JSON, Map, Set, Number, String, Array };
 vm.createContext(box);
 vm.runInContext(
   `${strip(read("src/features/quick-rank/scoring.js"))}\n${strip(read("src/features/quick-rank/store.js"))}
-  globalThis.__Q = { startScore, newEntry, applyChoice, pickRound, computeResult, ensureQuickRankSchema, QUICK_RANK_TABLES, QUICK_RANK_CLEAR_QUERIES, loadState, setCell, fillCellsFromCurrentTier, savePick, undoLastPick, resetSession, applyResult, getLatestApply, revertApply, buildBackup, restoreQueries };`,
+  globalThis.__Q = { startScore, newEntry, countChoice, fitScores, refineScores, pickRound, computeResult, ensureQuickRankSchema, QUICK_RANK_TABLES, QUICK_RANK_CLEAR_QUERIES, loadState, setCell, fillCellsFromCurrentTier, savePick, undoLastPick, resetSession, applyResult, getLatestApply, revertApply, buildBackup, restoreQueries };`,
   box,
   { filename: "quick-rank" }
 );
@@ -53,23 +53,43 @@ check("1칸이면 오류 없이 중간값", Q.startScore(0, 1) === 1500);
 
 const group = ["a", "b", "c", "d", "e"].map((id) => Q.newEntry(id, "A", TIERS));
 const snapshot = JSON.stringify(group);
-const after = Q.applyChoice(group, "c");
+const after = Q.countChoice(group, "c");
 const winner = after.find((x) => x.id === "c");
-check("고른 작품만 점수가 오른다", winner.score > 1700 && after.filter((x) => x.id !== "c").every((x) => x.score < 1700));
 check("고른 작품은 4번, 나머지는 1번 비교로 센다", winner.matchCount === 4 && after.filter((x) => x.id !== "c").every((x) => x.matchCount === 1));
 check("넘긴 배열을 바꾸지 않는다", JSON.stringify(group) === snapshot);
 let threw = false;
-try { Q.applyChoice(group, "없음"); } catch { threw = true; }
+try { Q.countChoice(group, "없음"); } catch { threw = true; }
 check("후보에 없는 작품을 고르면 오류", threw);
 
+const oneLog = [{ shown: ["a", "b", "c", "d", "e"], chosen: "c" }];
+const fitted = Q.fitScores(group, oneLog, TIERS);
+const fittedScore = (id, list = fitted) => list.find((x) => x.id === id).score;
+check("고른 작품만 점수가 오른다", fittedScore("c") > 1700 && fitted.filter((x) => x.id !== "c").every((x) => x.score < 1700));
+check("비교한 작품은 불확실성이 줄어든다", fitted.every((x) => x.rd < 100));
+check("기록이 없으면 칸의 시작 점수 그대로", plain(Q.fitScores(group, [], TIERS)).every((x) => x.score === 1700 && x.rd === 100));
+check("같은 입력이면 다시 계산해도 같다", JSON.stringify(Q.fitScores(group, oneLog, TIERS)) === JSON.stringify(fitted));
+const withoutLoser = Q.fitScores(group.filter((x) => x.id !== "a"), oneLog, TIERS);
+check("지운 작품을 빼고 남은 기록만 쓴다", withoutLoser.length === 4 && fittedScore("c", withoutLoser) > 1700);
+check("고른 작품이 지워진 기록은 건너뛴다", plain(Q.fitScores(group.filter((x) => x.id !== "c"), oneLog, TIERS)).every((x) => x.score === 1700));
+let chain = group;
+const chainLogs = [{ shown: ["a", "b"], chosen: "a" }, { shown: ["b", "c"], chosen: "b" }, { shown: ["c", "d"], chosen: "c" }, { shown: ["d", "e"], chosen: "d" }];
+const chainFit = Q.fitScores(group, chainLogs, TIERS);
+check("직접 비교하지 않은 작품도 기록을 타고 순서가 정해진다", ["a", "b", "c", "d", "e"].every((id, i, ids) => i === 0 || fittedScore(ids[i - 1], chainFit) > fittedScore(id, chainFit)));
+for (let i = 0; i < 300; i++) chain = Q.refineScores(chain, chainLogs, TIERS);
+check("한 번씩 고쳐도 처음부터 계산한 값에 수렴한다", chain.every((x) => Math.abs(x.score - fittedScore(x.id, chainFit)) < 0.1));
+const moveCell = Q.fitScores(group.map((x) => (x.id === "c" ? { ...x, cellTier: "B" } : x)), oneLog, TIERS);
+check("칸을 바꾸면 새 칸과 기록으로 계산한다", fittedScore("c", moveCell) < fittedScore("c"));
+
 // ── ② 다음 후보 ──
-const many = Array.from({ length: 40 }, (_, i) => Q.newEntry(`w${i}`, TIERS[i % 6], TIERS, { matchCount: i === 7 ? 0 : 3 }));
+const many = Array.from({ length: 40 }, (_, i) => Q.newEntry(`w${i}`, TIERS[i % 6], TIERS, { rd: i === 7 ? 100 : 60 }));
 const round = Q.pickRound(many, seeded(1));
 check("5개를 겹치지 않게 내준다", round.length === 5 && new Set(round.map((x) => x.id)).size === 5);
-check("비교가 가장 적은 작품이 들어간다", round.some((x) => x.id === "w7"));
+check("가장 불확실한 작품이 들어간다", round.some((x) => x.id === "w7"));
 const w7Score = many[7].score;
 const nearest = [...many].filter((x) => x.id !== "w7").map((x) => Math.abs(x.score - w7Score)).sort((a, b) => a - b)[11];
-check("나머지는 점수가 가까운 12개 안에서 고른다", round.every((x) => x.id === "w7" || Math.abs(x.score - w7Score) <= nearest));
+check("나머지는 점수가 비슷한 작품에서 고른다", round.every((x) => x.id === "w7" || Math.abs(x.score - w7Score) <= nearest));
+const uncertainPick = Q.pickRound(many.map((x) => ({ ...x, score: 1500, rd: x.id === "w7" ? 100 : x.id === "w1" ? 90 : 40 })), seeded(3));
+check("점수가 같으면 더 불확실한 작품을 먼저 고른다", uncertainPick.some((x) => x.id === "w1"));
 const firsts = new Set(Array.from({ length: 40 }, (_, i) => Q.pickRound(many, seeded(i))[0].id));
 check("맨 윗줄이 늘 같은 작품이 아니다", firsts.size > 1);
 check("작품이 5개보다 적으면 있는 만큼", Q.pickRound(many.slice(0, 3).map((x) => ({ ...x })), seeded(2)).length === 3);
@@ -107,12 +127,15 @@ function virtualRun(seed, decisions, cellNoise, noise) {
   const tierOf = (v) => { const i = cuts.findIndex((c) => v > c); return TIERS[i < 0 ? 5 : i]; };
   const truth = Array.from({ length: 300 }, randn);
   let entries = truth.map((v, i) => Q.newEntry(i, tierOf(v + cellNoise * randn()), TIERS));
+  const logs = [];
   for (let d = 0; d < decisions; d++) {
     const shown = Q.pickRound(entries, random);
     const best = shown.map((x) => [truth[x.id] + noise * randn(), x.id]).sort((a, b) => b[0] - a[0])[0][1];
-    const updated = new Map(Q.applyChoice(shown, best).map((x) => [x.id, x]));
-    entries = entries.map((x) => updated.get(x.id) || x);
+    const updated = new Map(Q.countChoice(shown, best).map((x) => [x.id, x]));
+    logs.push({ shown: shown.map((x) => x.id), chosen: best });
+    entries = Q.refineScores(entries.map((x) => updated.get(x.id) || x), logs, TIERS);
   }
+  entries = Q.fitScores(entries, logs, TIERS);
   const order = [...entries].sort((a, b) => b.score - a.score).map((x) => x.id);
   const trueRank = new Array(300);
   [...truth.keys()].sort((a, b) => truth[b] - truth[a]).forEach((id, i) => { trueRank[id] = i; });
@@ -127,12 +150,30 @@ function virtualRun(seed, decisions, cellNoise, noise) {
   }
   return { tier: sameBand / 300, top: top / 30 };
 }
+// 판단이 많이 흔들리고 한 작품이 자주 뽑히는 기록에서 점수가 튀던 문제. 시작 점수 차가 800이므로 그보다 훨씬 커지면 발산이다.
+function stressLogs(seed) {
+  const random = seeded(seed);
+  const randn = () => Math.sqrt(-2 * Math.log(1 - random())) * Math.cos(2 * Math.PI * random());
+  const truth = Array.from({ length: 300 }, randn);
+  const list = truth.map((v, i) => Q.newEntry(i, TIERS[Math.min(5, Math.floor(random() * 6))], TIERS));
+  const logs = [];
+  for (let d = 0; d < 4000; d++) {
+    const anchor = Math.floor(random() * 6);
+    const shown = [anchor, ...Array.from({ length: 4 }, () => 6 + Math.floor(random() * 294))];
+    const best = shown.map((id) => [truth[id] + 0.4 * randn(), id]).sort((a, b) => b[0] - a[0])[0][1];
+    logs.push({ shown, chosen: best });
+  }
+  return { list, logs };
+}
+const stress = [1, 2, 3].map(stressLogs).map(({ list, logs }) => Math.max(...Q.fitScores(list, logs, TIERS).map((x) => Math.abs(x.score - 1500))));
+check("기록이 몰리고 판단이 흔들려도 점수가 발산하지 않는다", stress.every((v) => Number.isFinite(v) && v < 3000), JSON.stringify(stress));
+
 const avg = (runs) => ({ tier: runs.reduce((s, r) => s + r.tier, 0) / runs.length, top: runs.reduce((s, r) => s + r.top, 0) / runs.length });
 const r900 = avg([1, 2, 3, 4].map((s) => virtualRun(s, 600, 0.5, 0.25)));
 const r1500 = avg([5, 6, 7, 8].map((s) => virtualRun(s, 1200, 0.5, 0.25)));
 console.log(`   (가상) 칸+600번 티어 ${(r900.tier * 100).toFixed(0)}% 상위 ${(r900.top * 100).toFixed(0)}% / 칸+1200번 티어 ${(r1500.tier * 100).toFixed(0)}% 상위 ${(r1500.top * 100).toFixed(0)}%`);
-check("가상 계산이 시뮬레이션 수치 근처 (총 900번: 76/83)", r900.tier > 0.66 && r900.top > 0.70, JSON.stringify(r900));
-check("가상 계산이 시뮬레이션 수치 근처 (총 1500번: 84/88)", r1500.tier > 0.74 && r1500.top > 0.76, JSON.stringify(r1500));
+check("가상 계산이 크게 어긋나지 않는다 (칸+600번)", r900.tier > 0.66 && r900.top > 0.70, JSON.stringify(r900));
+check("가상 계산이 크게 어긋나지 않는다 (칸+1200번)", r1500.tier > 0.74 && r1500.top > 0.76, JSON.stringify(r1500));
 check("더 많이 고를수록 나아진다", r1500.tier > r900.tier);
 
 // ── ⑤ 저장 (진짜 SQLite) ──
@@ -240,7 +281,7 @@ check("티어 구성이 바뀌어 없어진 칸의 작품은 다시 묻는다", 
 
 await Q.setCell(db, "n4", "A", TIERS);
 state = await Q.loadState(db, TIERS);
-check("이미 비교한 작품은 칸을 바꿔도 쌓인 점수를 유지한다", state.entries.find((e) => e.id === "n4").score > 1100 && state.entries.find((e) => e.id === "n4").cellTier === "A");
+check("이미 비교한 작품은 칸을 바꿔도 비교 기록을 유지한다", state.entries.find((e) => e.id === "n4").matchCount > 0 && state.entries.find((e) => e.id === "n4").score > Q.startScore(1, 6) && state.entries.find((e) => e.id === "n4").cellTier === "A");
 
 // 적용과 되돌리기
 const beforeApply = tiersOf(db);
@@ -311,10 +352,23 @@ const original = (await Q.loadState(db, TIERS));
 check("복원하면 진행 횟수가 이어진다", restoredState.decisions === original.decisions);
 check("복원하면 칸과 점수가 새 ID로 이어진다", original.entries.every((e) => {
   const r = restoredState.entries.find((x) => x.id === remap(e.id));
-  return r && r.score === e.score && r.cellTier === e.cellTier && r.matchCount === e.matchCount;
+  return r && Math.abs(r.score - e.score) < 1e-6 && r.cellTier === e.cellTier && r.matchCount === e.matchCount;
 }));
 const restoredLog = restored.raw.prepare("SELECT shown, chosen_id, before_state FROM quick_rank_log").all();
 check("복원하면 비교 기록이 새 ID로 이어진다", restoredLog.length === db.raw.prepare("SELECT COUNT(*) c FROM quick_rank_log").get().c && restoredLog.every((l) => l.chosen_id.startsWith("new-") && JSON.parse(l.shown).every((id) => id.startsWith("new-"))));
+const pickOldDb = openDbWithSchema();
+addNovels(pickOldDb, [["o1", "S", 100], ["o2", "S", 200], ["o3", "S", 300]]);
+await Q.fillCellsFromCurrentTier(pickOldDb, (await Q.loadState(pickOldDb, TIERS)).needCell, TIERS);
+const oldSession = (await Q.loadState(pickOldDb, TIERS)).session.id;
+pickOldDb.raw.prepare("INSERT INTO quick_rank_log (id, session_id, shown, chosen_id, before_state, created_at) VALUES ('old', ?, ?, 'o3', NULL, 1)").run(oldSession, JSON.stringify(["o1", "o2", "o3"]));
+pickOldDb.raw.prepare("INSERT INTO quick_rank_log (id, session_id, shown, chosen_id, before_state, created_at) VALUES ('bad', ?, 'not json', 'o1', NULL, 2)").run(oldSession);
+pickOldDb.raw.exec("UPDATE quick_rank_item SET score=5000, rd=350");
+const oldState = await Q.loadState(pickOldDb, TIERS);
+check("옛 버전의 진행 상황은 저장된 값 대신 기록으로 다시 계산한다", oldState.entries.every((e) => e.score < 2500 && e.rd <= 100) && oldState.entries.find((e) => e.id === "o3").score > oldState.entries.find((e) => e.id === "o1").score);
+check("읽을 수 없는 기록은 건너뛴다", oldState.logs.length === 1);
+const previewFit = Q.computeResult({ entries: Q.fitScores(oldState.entries, oldState.logs, TIERS), held: oldState.held, tierOrder: TIERS, moveTiers: true });
+const appliedFit = Q.computeResult({ entries: (await Q.loadState(pickOldDb, TIERS)).entries, held: oldState.held, tierOrder: TIERS, moveTiers: true });
+check("미리보기와 적용의 순위가 같다", JSON.stringify(previewFit) === JSON.stringify(appliedFit));
 check("복원한 기록은 취소 대상이 아니다 (적용 전 값이 없다)", (await Q.undoLastPick(restored, restoredState.session.id)) === null);
 check("옛 백업(항목 없음)은 아무것도 하지 않는다", Q.restoreQueries(undefined, remap, () => "x").length === 0);
 check("형식이 틀린 항목은 건너뛴다", plain(Q.restoreQueries({ ids: ["a"], s: { id: "s" }, i: [[9, "S", 1, 1, 0], [0, "S", "x", 1, 0]], l: [["s", 9, [0], 1], ["s", 0, "x", 1]] }, remap, () => "x")).length === 1);
