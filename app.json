@@ -40,6 +40,7 @@
     ],
     "sdkVersion": "54.0.0",
     "updates": {
+      "enabled": false,
       "url": "https://u.expo.dev/98ffeff1-a782-48be-a747-f122336c5f2e"
     },
     "runtimeVersion": {

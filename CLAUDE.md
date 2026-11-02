@@ -72,7 +72,8 @@ APK는 `build.bat`을 더블클릭한다 (`scripts\build-signed.ps1 -Auto` 실�
 - **`build-signed.ps1`은 UTF-8 BOM을 유지한다.** 없으면 PowerShell 5.1에서 한글이 깨진다.
 - **`android/`는 생성물이다.** 직접 고치지 않는다. `expo prebuild --clean`은 사용자 승인 없이 쓰지 않는다.
 - **prebuild 후 `git restore package.json`:** prebuild가 스크립트·`name`·`version`을 바꾼다.
-- **Kotlin 변경은 APK를 다시 빌드해야 반영된다.**
+- **Kotlin 변경은 APK를 다시 빌드해야 반영된다.** OTA(`eas update`)는 쓰지 않으며 `app.json`에서 꺼 두었다 (2026-11-02 사용자 지정).
+- **`app.json`을 바꾸면 빌드 전에 prebuild를 직접 돌린다.** `android/`가 이미 있으면 `build-signed.ps1`이 prebuild를 건너뛰어 설정이 반영되지 않는다. `npx expo prebuild --platform android --no-install` 후 `git restore package.json`.
 - **에뮬레이터는 `adb shell reboot -p`로 끈다.** 설치 직후 `adb emu kill`로 끄면 APK가 잘려 앱이 사라진다.
 
 수동 빌드와 릴리스 변형의 메모리 옵션은 `scripts/build-signed.ps1`을 참고한다.

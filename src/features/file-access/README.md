@@ -52,5 +52,5 @@ try {
 1. Expo API로 되면 `expoAdapter`에만 추가한다.
 2. 안 되면 이유와 Android API를 확인한 뒤 Kotlin 모듈과 `nativeAdapter`에 추가한다.
 3. 공개 함수는 `fileAccessService`에 두고 `guarded`로 감싼다.
-4. Kotlin을 고치면 APK를 다시 빌드해야 한다. OTA로는 반영되지 않는다.
+4. Kotlin을 고치면 APK를 다시 빌드해야 한다.
 5. 새 네이티브 호출은 `diagnostics.js`에 점검 단계를 추가한다.

@@ -60,7 +60,7 @@
 
 **진행 기록**:
 - 2026-11-02 · 완료. `npm test`로 두 테스트를 함께 돌린다. `importJSON`은 Alert·DB·React 상태에 묶여 node에서 실행할 수 없어, 검증 함수 실행과 항목 대조로 대신했다. 실제 복원은 폰에서 확인해야 한다. v9~v12는 진짜 옛 백업이 없어 버전 번호 수용만 확인했다.
-- OTA 설정과 `package.json`의 `build` 스크립트는 바꾸지 않았다. 사용자 답변을 기다린다.
+- 사용자 답변에 따라 OTA를 끄고(`updates.enabled: false`) 안 쓰는 `build`, `build:prod` 스크립트를 지웠다. `expo-updates` 패키지는 남겼다.
 
 ### S3 — 파일 삭제 코드 점검 ⬜
 
