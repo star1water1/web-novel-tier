@@ -21,6 +21,8 @@ function check(name, ok, detail = "") {
   else { fail++; console.log(`❌ ${name}${detail ? ` — ${detail}` : ""}`); }
 }
 
+check("App.jsx에 겹친 CR이 없다 (있으면 git이 텍스트로 보지 못한다)", !src.includes("\r"));
+
 const box = {};
 vm.createContext(box);
 vm.runInContext(

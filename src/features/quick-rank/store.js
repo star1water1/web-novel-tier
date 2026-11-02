@@ -115,9 +115,13 @@ export async function loadState(db, tierOrder) {
   const logs = session
     ? (await db.all("SELECT shown, chosen_id FROM quick_rank_log WHERE session_id=? ORDER BY created_at ASC, rowid ASC", [session.id])).map(parseLog).filter(Boolean)
     : [];
+  const lastLog = session
+    ? await db.first("SELECT before_state FROM quick_rank_log WHERE session_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1", [session.id])
+    : null;
   return {
     session,
     decisions: Number(session?.decisions) || 0,
+    canUndo: Boolean(lastLog?.before_state),
     workCount: entries.length + needCell.length,
     withTierCount: needCell.filter((work) => tierOrder.includes(work.manual_tier)).length,
     entries: fitScores(entries, logs, tierOrder),
@@ -289,9 +293,15 @@ export async function buildBackup(db, aliveIds) {
     ? (await db.all("SELECT novel_id, cell_tier, score, rd, match_count FROM quick_rank_item WHERE session_id=?", [session.id]))
       .filter((row) => alive.has(row.novel_id))
     : [];
-  const logs = await db.all(
-    `SELECT session_id, shown, chosen_id, created_at FROM quick_rank_log ORDER BY created_at DESC LIMIT ${BACKUP_LOG_LIMIT}`
+  // 점수는 복원할 때 기록으로 다시 계산하므로 진행 중인 세션의 기록은 전부 담는다. 한도는 지난 세션에만 쓴다.
+  const currentLogs = session
+    ? await db.all("SELECT session_id, shown, chosen_id, created_at FROM quick_rank_log WHERE session_id=? ORDER BY created_at DESC", [session.id])
+    : [];
+  const pastLogs = await db.all(
+    `SELECT session_id, shown, chosen_id, created_at FROM quick_rank_log WHERE session_id != ? ORDER BY created_at DESC LIMIT ${Math.max(0, BACKUP_LOG_LIMIT - currentLogs.length)}`,
+    [session?.id ?? ""]
   );
+  const logs = [...currentLogs, ...pastLogs];
   if (!session && logs.length === 0) return null;
   const ids = [];
   const indexOf = new Map();
