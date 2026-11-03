@@ -168,7 +168,8 @@ export function TierExportScreen({ onClose, db, getWorks, filePrefix, theme: C, 
     try {
       const now = new Date();
       const name = `${filePrefix}_${fileStamp(now)}.xlsx`;
-      const bytes = buildXlsx(buildSheet(table.rows, result.status), now);
+      const exportId = db.newId();
+      const bytes = buildXlsx(buildSheet(table.rows, result.status, exportId), now);
       fileUri = (await fileAccess.createFileInDirectory(directoryUri, name, XLSX_MIME)).uri;
       await fileAccess.writeBytes(fileUri, bytes);
       // 저장소 오류로 파일이 잘리는 경우를 잡기 위해 다시 읽어 비교한다. 작은 파일이라 전체를 읽어도 된다.
@@ -177,7 +178,7 @@ export function TierExportScreen({ onClose, db, getWorks, filePrefix, theme: C, 
 
       let warning = "";
       try {
-        await saveSnapshot(db, { fileName: name, tierMode: table.tierMode, tierOrder: table.tierOrder, rows: table.rows });
+        await saveSnapshot(db, { id: exportId, fileName: name, tierMode: table.tierMode, tierOrder: table.tierOrder, rows: table.rows });
       } catch (e) {
         warning = `파일은 저장했지만 출력 기록을 남기지 못해, 다음 출력은 이번 표와 비교하지 못해요. ${e?.message || ""}`;
       }

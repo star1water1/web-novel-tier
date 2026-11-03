@@ -116,6 +116,7 @@ function registry(initial = []) {
  * @param {string} sheet.fontName
  * @param {number} sheet.fontSize
  * @param {number[]} sheet.columnWidths A열부터의 너비
+ * @param {number[]} [sheet.hiddenColumns] 숨길 열 번호. A열이 0
  * @param {Array<Array<{value?: string|number|null, style?: object}|null>>} sheet.rows
  *   style: { bold, color, fill, border: { left, right, top, bottom: { style, color } } }. 색은 RRGGBB.
  * @param {Date} [date] 파일 안에 기록할 시각
@@ -187,7 +188,7 @@ export function buildXlsx(sheet, date = new Date()) {
       },
       {
         name: "xl/worksheets/sheet1.xml",
-        data: `${head}<worksheet xmlns="${main}"><dimension ref="A1:${lastColumn}${Math.max(1, sheet.rows.length)}"/><sheetFormatPr defaultRowHeight="16.5"/><cols>${sheet.columnWidths.map((width, i) => `<col min="${i + 1}" max="${i + 1}" width="${width}" customWidth="1"/>`).join("")}</cols><sheetData>${rowsXml.join("")}</sheetData><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>`,
+        data: `${head}<worksheet xmlns="${main}"><dimension ref="A1:${lastColumn}${Math.max(1, sheet.rows.length)}"/><sheetFormatPr defaultRowHeight="16.5"/><cols>${sheet.columnWidths.map((width, i) => `<col min="${i + 1}" max="${i + 1}" width="${width}" customWidth="1"${sheet.hiddenColumns?.includes(i) ? ' hidden="1"' : ""}/>`).join("")}</cols><sheetData>${rowsXml.join("")}</sheetData><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>`,
       },
       {
         name: "xl/styles.xml",

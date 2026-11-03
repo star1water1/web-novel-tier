@@ -6,7 +6,7 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "test": "node tests/scraper-test.mjs && node tests/backup-compat.test.mjs && node tests/shared-files.test.mjs && node --no-warnings tests/quick-rank.test.mjs && node tests/whats-new.test.mjs && node tests/scroll-top.test.mjs && node --no-warnings tests/tier-export.test.mjs"
+    "test": "node tests/scraper-test.mjs && node tests/backup-compat.test.mjs && node tests/shared-files.test.mjs && node --no-warnings tests/quick-rank.test.mjs && node tests/whats-new.test.mjs && node tests/scroll-top.test.mjs && node --no-warnings tests/tier-export.test.mjs && node --no-warnings tests/tier-import.test.mjs"
   },
   "dependencies": {
     "@expo-google-fonts/gowun-batang": "^0.4.1",

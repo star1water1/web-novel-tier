@@ -1,4 +1,5 @@
 export { TierExportScreen } from "./TierExportScreen";
+export { TierImportScreen } from "./TierImportScreen";
 export { buildRows as buildTierExportRows } from "./sheet";
 export {
   TIER_EXPORT_CLEAR_QUERIES,
@@ -6,4 +7,5 @@ export {
   buildBackup as buildTierExportBackup,
   ensureTierExportSchema,
   restoreQueries as tierExportRestoreQueries,
+  revertImport as revertTierImport,
 } from "./store";
