@@ -11,6 +11,10 @@ export const EXPORT_COLORS = {
 const HEADERS = ["Tier", "순위", "제목", "읽은 화수", "플랫폼", "대장르", "작가"];
 const MIN_WIDTHS = [7.1, 7, 7, 40.75, 10.2, 13.5, 13.5, 13.75];
 const MAX_WIDTH = 70;
+// 숨긴 열. 머리글에 출력본 ID를, 행마다 작품 ID를 넣어 가져올 때 알아본다.
+export const ID_HEADER = "작품ID";
+const ID_COLUMN = HEADERS.length + 1;
+const ID_WIDTH = 10;
 const BLACK = "000000";
 const GRAY = "D9D9D9";
 const medium = { style: "medium", color: BLACK };
@@ -72,6 +76,10 @@ export function buildRows(works, { getTier, tierLabel, tierColor }) {
       genre: cleanList(work.major_genre)[0] || "",
       author: String(work.author || "").trim(),
       rating: Number(work.rating) || 0,
+      hasGaiden: Boolean(work.gaiden_status && work.gaiden_status !== "none"),
+      manualTier: work.manual_tier || null,
+      manualOrder: Number(work.manual_order) || 0,
+      readUpdatedAt: work.read_count_updated_at ?? null,
     };
   });
 }
@@ -99,9 +107,10 @@ function fillsOf(state) {
 /**
  * @param {ReturnType<typeof buildRows>} rows
  * @param {Map<string, {change: string|null, readChanged: boolean}>} status
+ * @param {string} [exportId] 이 파일의 출력 기록 ID
  * @returns xlsxWriter의 buildXlsx에 넘길 시트. A열은 비워 둔다.
  */
-export function buildSheet(rows, status) {
+export function buildSheet(rows, status, exportId = "") {
   const lastCol = HEADERS.length - 1;
   const headerCells = HEADERS.map((value, col) => ({
     value,
@@ -131,6 +140,7 @@ export function buildSheet(rows, status) {
           border: { left: col === 0 ? medium : thin, right: col === lastCol ? medium : thin, top: thin, bottom },
         },
       })),
+      { value: row.id },
     ];
   });
 
@@ -147,7 +157,8 @@ export function buildSheet(rows, status) {
     name: "티어표",
     fontName: "맑은 고딕",
     fontSize: 11,
-    columnWidths,
-    rows: [[null, ...headerCells], ...bodyRows],
+    columnWidths: [...columnWidths, ID_WIDTH],
+    hiddenColumns: [ID_COLUMN],
+    rows: [[null, ...headerCells, { value: exportId ? `${ID_HEADER}:${exportId}` : ID_HEADER }], ...bodyRows],
   };
 }

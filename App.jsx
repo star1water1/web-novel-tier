@@ -83,7 +83,7 @@ import CookieManager from "@react-native-cookies/cookies"; // 🔐 v7.40.0 OS �
 import { showFileAccessDiagnostics } from "./src/features/file-access"; // 🧩 v7.59.20 파일 접근 모듈 (사용법: 해당 폴더 README)
 import { ScrollTopButton } from "./src/features/scroll-top"; // ↑ 맨 위로 버튼 (사용법: 해당 폴더 README)
 import { QuickRankScreen, QUICK_RANK_CLEAR_QUERIES, QUICK_RANK_TABLES, buildQuickRankBackup, ensureQuickRankSchema, quickRankRestoreQueries, revertQuickRankApply } from "./src/features/quick-rank"; // ⚡ 최소 매칭 (사용법: 해당 폴더 README)
-import { TierExportScreen, TIER_EXPORT_CLEAR_QUERIES, TIER_EXPORT_TABLES, buildTierExportBackup, buildTierExportRows, ensureTierExportSchema, tierExportRestoreQueries } from "./src/features/tier-export"; // 📊 티어표 엑셀 내보내기 (사용법: 해당 폴더 README)
+import { TierExportScreen, TierImportScreen, TIER_EXPORT_CLEAR_QUERIES, TIER_EXPORT_TABLES, buildTierExportBackup, buildTierExportRows, ensureTierExportSchema, revertTierImport, tierExportRestoreQueries } from "./src/features/tier-export"; // 📊 티어표 엑셀 내보내기·가져오기 (사용법: 해당 폴더 README)
 import { saveBackupToFile, restoreBackupFromFile, saveMediaToFile, restoreMediaFromFile, buildCoverLinks, applyCoverLinks } from "./src/features/file-backup"; // 📁 v7.59.21 파일 백업·복원, 🖼️ v7.59.22 사진 백업·복원, v7.59.23 표지 연결
 // 🆕 v7.8.0: 명대사 텍스트 서식 — 한글 웹폰트 번들 (expo-font + @expo-google-fonts)
 import { useFonts as useExpoFonts } from "expo-font";
@@ -12446,7 +12446,7 @@ const Section = ({ title, headerRight, hideTitle, children }) => (
 /* ═══════════════════════════════════════════════════════════════════════
    ℹ️ 앱 버전 · 가이드 콘텐츠 · 변경 이력 데이터
    ═══════════════════════════════════════════════════════════════════════ */
-const APP_VERSION = "7.61.1";
+const APP_VERSION = "7.62.0";
 
 const CHANGE_TYPE_CONFIG = {
   new:     { emoji: "🆕", label: "신규", color: "#22c55e" },
@@ -12478,6 +12478,16 @@ function pickWhatsNewEntries(entries, lastSeen, currentVersion) {
 }
 
 const CHANGELOG_DATA = [
+  {
+    version: "7.62.0", date: "2026-11-03",
+    title: "📥 엑셀에서 고친 내용 가져오기",
+    highlights: [
+      { type: "new", text: "📥 순위 탭의 '티어표 공유'에서 내보낸 엑셀을 다시 가져올 수 있어요. 엑셀에서 고친 티어, 순서, 읽은 화수를 앱에 반영해요." },
+      { type: "improve", text: "🔎 적용하기 전에 바뀌는 작품을 보여 주고, 내보낸 뒤 앱에서도 바뀐 값은 앱 값을 지키는 것을 기본으로 골라 줘요. 적용한 뒤에는 되돌릴 수 있어요." },
+      { type: "improve", text: "ℹ️ 티어와 순서는 직접 배정과 혼합 방식에서만 바뀌어요. 작품을 추가하거나 삭제하지 않고, 제목·플랫폼·대장르·작가 칸은 읽지 않아요. 이번 버전부터 내보낸 파일이 가장 정확하게 비교돼요." },
+    ],
+    details: [],
+  },
   {
     version: "7.61.0", date: "2026-11-03",
     title: "📊 티어표 엑셀 내보내기",
@@ -32779,6 +32789,7 @@ function AppContent() {
   const [gatekeeperModalOpen, setGatekeeperModalOpen] = useState(false);
   const [quickRankOpen, setQuickRankOpen] = useState(false); // ⚡ 최소 매칭
   const [tierExportOpen, setTierExportOpen] = useState(false); // 📊 엑셀 내보내기
+  const [tierImportOpen, setTierImportOpen] = useState(false); // 📊 엑셀 가져오기
   const mainScrollRef = useRef(null); // ↑ 맨 위로 버튼
   const scrollTopButtonRef = useRef(null);
   const quickRankAvailable = globalTierConfig.mode === "manual" || globalTierConfig.mode === "hybrid"; // 매칭 기반은 순위를 rating으로 정해 결과가 반영되지 않는다
@@ -34780,6 +34791,7 @@ function AppContent() {
       setVerificationLoading(false);
       setQuickRankOpen(false);
       setTierExportOpen(false);
+      setTierImportOpen(false);
       setGatekeeperCandidates([]);
       setGatekeeperModalOpen(false);
       verificationSessionIdRef.current = null;
@@ -43502,6 +43514,28 @@ function AppContent() {
     stopVerificationForRankChange();
   }
 
+  // 📊 엑셀 내보내기·가져오기가 쓰는 표. 순위 탭과 같은 순서다.
+  async function loadTierExportTable() {
+    if (!isMatchQueueIdle()) await waitForMatchQueueDrain(3000);
+    await loadList(undefined, undefined, "tier-export"); // 비율 모드의 티어 맵까지 최신으로 맞춘다
+    const rows = ((await all("SELECT * FROM novels;")) || []).map(normalizeNovel);
+    const cfg = globalTierConfig;
+    const sorted = rows.sort((a, b) =>
+      tierRank(getDisplayTier(a, cfg), cfg) - tierRank(getDisplayTier(b, cfg), cfg) || compareWithinTier(a, b, cfg)
+    );
+    const tierOrder = getActiveTierOrder(cfg);
+    return {
+      rows: buildTierExportRows(sorted, {
+        getTier: (novel) => getDisplayTier(novel, cfg),
+        tierLabel: (tier) => getTierLabel(tier, cfg),
+        tierColor: (tier) => getTierColor(tier, cfg),
+      }),
+      tierMode: cfg.mode || "match",
+      tierOrder,
+      tierLabels: Object.fromEntries(tierOrder.map((tier) => [tier, getTierLabel(tier, cfg)])),
+    };
+  }
+
   // 마지막 작업 되돌리기
   async function performUndo() {
     if (undoStack.length === 0) {
@@ -43638,6 +43672,18 @@ function AppContent() {
             return;
           }
           await afterQuickRankRevert(_qrResult);
+          break;
+        }
+
+        // 📊 엑셀 가져오기 되돌리기. 최소 매칭과 같은 시스템 경로다.
+        case 'tier_import_apply': {
+          const _tiResult = await revertTierImport(TIER_EXPORT_DB, item.payload.applyId);
+          if (!_tiResult.ok) {
+            Alert.alert("되돌릴 수 없음", "이미 되돌렸거나 그 뒤에 다시 가져온 결과입니다.");
+            setUndoStack(prev => prev.slice(1));
+            return;
+          }
+          await afterQuickRankRevert(_tiResult);
           break;
         }
 
@@ -53697,8 +53743,14 @@ async function importJSON(directText, onSuccess, onSettled) {
                 onPress={() => { if (!isAutoMatchingRef.current) setTierExportOpen(true); }}
                 disabled={isLoading || !list || list.length === 0 || !!exportProgress}
               />
+              <View style={{ height: 8 }} />
+              <PrimaryButton
+                title="엑셀에서 가져오기"
+                onPress={() => { if (!isAutoMatchingRef.current) setTierImportOpen(true); }}
+                disabled={isLoading || !list || list.length === 0 || !!exportProgress}
+              />
               <Text style={{ color: C.sub, marginTop: 6, fontSize: 11 }}>
-                ※ 텍스트는 티어별 순위, 이미지는 화면 높이에 맞춰 작품 카드 단위로 나뉘어 갤러리에 저장됩니다. 엑셀은 고른 폴더에 저장되고, 지난 출력본과 달라진 작품이 칠해집니다.
+                ※ 텍스트는 티어별 순위, 이미지는 화면 높이에 맞춰 작품 카드 단위로 나뉘어 갤러리에 저장됩니다. 엑셀은 고른 폴더에 저장되고, 지난 출력본과 달라진 작품이 칠해집니다. 내보낸 파일에서 고친 티어, 순서, 읽은 화수는 다시 가져올 수 있습니다.
               </Text>
             </Section>
           </>
@@ -70923,28 +70975,32 @@ async function importJSON(directText, onSuccess, onSettled) {
         <TierExportScreen
           onClose={() => setTierExportOpen(false)}
           db={TIER_EXPORT_DB}
-          getWorks={async () => {
-            if (!isMatchQueueIdle()) await waitForMatchQueueDrain(3000);
-            await loadList(undefined, undefined, "tier-export"); // 비율 모드의 티어 맵까지 최신으로 맞춘다
-            const rows = ((await all("SELECT * FROM novels;")) || []).map(normalizeNovel);
-            const cfg = globalTierConfig;
-            const sorted = rows.sort((a, b) =>
-              tierRank(getDisplayTier(a, cfg), cfg) - tierRank(getDisplayTier(b, cfg), cfg) || compareWithinTier(a, b, cfg)
-            );
-            return {
-              rows: buildTierExportRows(sorted, {
-                getTier: (novel) => getDisplayTier(novel, cfg),
-                tierLabel: (tier) => getTierLabel(tier, cfg),
-                tierColor: (tier) => getTierColor(tier, cfg),
-              }),
-              tierMode: cfg.mode || "match",
-              tierOrder: getActiveTierOrder(cfg),
-            };
-          }}
+          getWorks={loadTierExportTable}
           filePrefix={globalSlotMode === "webtoon" ? "Webtoon_Tier_List" : "WebNovel_Tier_List"}
           theme={C}
           isBlocked={() => isAutoMatchingRef.current}
           getSlotGeneration={() => _slotGeneration}
+        />
+      )}
+      {tierImportOpen && (
+        <TierImportScreen
+          onClose={() => setTierImportOpen(false)}
+          db={TIER_EXPORT_DB}
+          getWorks={loadTierExportTable}
+          theme={C}
+          isBlocked={() => isAutoMatchingRef.current}
+          getSlotGeneration={() => _slotGeneration}
+          beforeRankWrite={async () => { if (!isMatchQueueIdle()) await waitForMatchQueueDrain(3000); }}
+          onApplied={async ({ applyId, count }) => {
+            pushUndo("tier_import_apply", { applyId }, `엑셀 가져오기 (${count}개)`);
+            stopVerificationForRankChange();
+            await loadList(undefined, undefined, "tier-import");
+          }}
+          onReverted={async (result) => {
+            setUndoStack(prev => prev.filter(u => u.payload?.applyId !== result.applyId));
+            await afterQuickRankRevert(result);
+            await loadList(undefined, undefined, "tier-import");
+          }}
         />
       )}
       <KeyboardSpacer />

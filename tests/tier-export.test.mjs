@@ -155,10 +155,10 @@ const sheetStatus = new Map([
   ["z", { change: null, readChanged: false }],
 ]);
 const sheet = T.buildSheet(sheetRows, sheetStatus);
-const fills = (i) => sheet.rows[i + 1].slice(1).map((c) => c.style.fill);
+const fills = (i) => sheet.rows[i + 1].slice(1, 8).map((c) => c.style.fill);
 const C = T.EXPORT_COLORS;
 check("A열은 비워 둔다", sheet.rows.every((r) => r[0] === null));
-check("머리글은 양식과 같다", same(sheet.rows[0].slice(1).map((c) => c.value), ["Tier", "순위", "제목", "읽은 화수", "플랫폼", "대장르", "작가"]));
+check("머리글은 양식과 같다", same(sheet.rows[0].slice(1, 8).map((c) => c.value), ["Tier", "순위", "제목", "읽은 화수", "플랫폼", "대장르", "작가"]));
 check("신규는 행 전체가 노랑", fills(0).every((f) => f === C.new));
 check("상승은 행 전체가 연두", fills(1).every((f) => f === C.up));
 check("하락은 행 전체가 붉은색", fills(2).every((f) => f === C.down));
